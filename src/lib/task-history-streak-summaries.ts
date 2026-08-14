@@ -5,8 +5,6 @@ import {
   getTaskHistoryLastDone,
   type TaskHistoryStreakEntry,
 } from "@/lib/task-history";
-import { adaptLegacyTaskState } from "@/lib/task-state-engine/legacy-adapter";
-import { buildTaskEffectiveTimeline } from "@/lib/task-state-engine/effective-timeline";
 
 export const TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at";
 
@@ -27,29 +25,11 @@ export function buildTaskHistoryStreakSummary(
   const normalizedHistory = deduplicateTaskHistoryByLogicalDate(history);
   const stats = computeTaskSpecificHistoryStats(task, normalizedHistory, todayDateKey);
   const lastDone = getTaskHistoryLastDone(normalizedHistory);
-  const adapted = task.status === "archived" || task.status === "trashed"
-    ? null
-    : adaptLegacyTaskState(task, normalizedHistory, {
-      now: `${todayDateKey}T12:00:00.000Z`,
-      timezone: "UTC",
-      logicalDayRollover: "00:00",
-    });
-  const timeline = adapted
-    ? buildTaskEffectiveTimeline({
-      task: adapted.engineInput.task,
-      history: adapted.engineInput.history,
-      logicalDate: todayDateKey,
-      calendarStart: todayDateKey,
-      calendarEnd: todayDateKey,
-    })
-    : null;
-  const effectiveMissedStreak = timeline?.currentMissedStreak ?? stats.missedStreak;
-  const effectiveCompletedStreak = timeline?.currentCompletedStreak ?? stats.currentStreak;
   return {
-    currentStreak: effectiveMissedStreak > 0 ? 0 : effectiveCompletedStreak,
+    currentStreak: stats.currentStreak,
     lastDoneAt: lastDone?.timestamp ?? null,
     lastDoneDate: lastDone?.dateKey ?? null,
-    missedStreak: effectiveMissedStreak,
+    missedStreak: stats.missedStreak,
   };
 }
 

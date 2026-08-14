@@ -14,6 +14,14 @@ export function isTaskCompletedForHistory(status: TaskStatus) {
   return status === "done" || status === "did_my_best" || status === "complete";
 }
 
+export function isTaskHistoryStreakSuccessStatus(status: TaskStatus) {
+  return status === "done" || status === "did_my_best";
+}
+
+export function isTaskHistoryStreakMissedStatus(status: TaskStatus) {
+  return status === "missed";
+}
+
 export function isTaskHistoryStatus(status: TaskStatus) {
   return status === "done" || status === "did_my_best" || status === "delayed" || status === "missed" || status === "complete";
 }
@@ -937,6 +945,7 @@ export function computeTaskSpecificHistoryStats(
   todayDateKey: string,
   startDateKey = shiftDateKey(todayDateKey, -139),
 ): TaskHistoryStats & { dueDays: number } {
+  void task;
   void todayDateKey;
   void startDateKey;
 
@@ -947,33 +956,15 @@ export function computeTaskSpecificHistoryStats(
   const loggedDays = sortedHistory.length;
   let missedStreak = 0;
   for (let index = sortedHistory.length - 1; index >= 0; index -= 1) {
-    if (sortedHistory[index]?.status !== "missed") {
+    if (!sortedHistory[index] || !isTaskHistoryStreakMissedStatus(sortedHistory[index].status)) {
       break;
     }
     missedStreak += 1;
   }
 
-  if (task.repeat_frequency === "none") {
-    const latestEntry = sortedHistory.at(-1) ?? null;
-    const currentStreak = latestEntry?.was_completed ? 1 : 0;
-    const bestStreak = completedDays > 0 ? 1 : 0;
-    const completionRate = loggedDays === 0 ? 0 : Math.round((completedDays / loggedDays) * 100);
-    return {
-      bestStreak,
-      completedDays,
-      completionRate,
-      currentStreak,
-      doneRate: completionRate,
-      dueDays: loggedDays,
-      loggedDays,
-      missedDays,
-      missedStreak,
-    };
-  }
-
   let currentStreak = 0;
   for (let index = sortedHistory.length - 1; index >= 0; index -= 1) {
-    if (!sortedHistory[index]?.was_completed) {
+    if (!sortedHistory[index] || !isTaskHistoryStreakSuccessStatus(sortedHistory[index].status)) {
       break;
     }
     currentStreak += 1;
@@ -982,7 +973,7 @@ export function computeTaskSpecificHistoryStats(
   let bestStreak = 0;
   let runningCompleted = 0;
   for (const entry of sortedHistory) {
-    if (entry.was_completed) {
+    if (isTaskHistoryStreakSuccessStatus(entry.status)) {
       runningCompleted += 1;
       bestStreak = Math.max(bestStreak, runningCompleted);
     } else {

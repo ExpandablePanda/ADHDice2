@@ -4,6 +4,8 @@ import test from "node:test";
 
 import { createTask } from "../src/lib/task-buckets.ts";
 import type { TaskHistory } from "../src/lib/database.types.ts";
+import { adaptLegacyTaskState } from "../src/lib/task-state-engine/legacy-adapter.ts";
+import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
 import {
   buildTaskHistoryStreakSummaryMap,
   TASK_HISTORY_STREAK_SUMMARY_COLUMNS,
@@ -70,6 +72,96 @@ test("compact summaries count three trailing missed entries", () => {
   ], "2026-08-03");
 
   assert.equal(summaries[currentTask.id]?.missedStreak, 3);
+});
+
+test("success streaks combine Done and Did My Best across calendar gaps", () => {
+  const currentTask = task();
+  const summaries = buildTaskHistoryStreakSummaryMap([currentTask], [
+    history("done-1", "2026-07-01", "done", true),
+    history("best-2", "2026-07-08", "did_my_best", true),
+    history("done-3", "2026-07-15", "done", true),
+    history("done-4", "2026-07-22", "done", true),
+  ], "2026-07-22");
+
+  assert.equal(summaries[currentTask.id]?.currentStreak, 4);
+});
+
+test("missed streaks combine recorded Missed outcomes across calendar gaps", () => {
+  const currentTask = task();
+  const summaries = buildTaskHistoryStreakSummaryMap([currentTask], [
+    history("missed-1", "2026-06-01", "missed", false),
+    history("missed-2", "2026-06-05", "missed", false),
+    history("missed-3", "2026-06-20", "missed", false),
+  ], "2026-06-20");
+
+  assert.equal(summaries[currentTask.id]?.missedStreak, 3);
+});
+
+test("Complete and Delayed outcomes break both recorded streaks", () => {
+  const currentTask = task();
+  const successBreak = buildTaskHistoryStreakSummaryMap([currentTask], [
+    history("done-1", "2026-08-01", "done", true),
+    history("done-2", "2026-08-02", "done", true),
+    history("complete", "2026-08-03", "complete", true),
+  ], "2026-08-03");
+  const missedBreak = buildTaskHistoryStreakSummaryMap([currentTask], [
+    history("missed-1", "2026-08-01", "missed", false),
+    history("missed-2", "2026-08-02", "missed", false),
+    history("delayed", "2026-08-03", "delayed", false),
+  ], "2026-08-03");
+
+  assert.equal(successBreak[currentTask.id]?.currentStreak, 0);
+  assert.equal(successBreak[currentTask.id]?.missedStreak, 0);
+  assert.equal(missedBreak[currentTask.id]?.currentStreak, 0);
+  assert.equal(missedBreak[currentTask.id]?.missedStreak, 0);
+});
+
+test("non-authoritative migration reconstruction History still counts toward streaks", () => {
+  const currentTask = task();
+  const migrated = history("migration-missed", "2026-08-01", "missed", false);
+  migrated.canonical_provenance_kind = "migration_reconstruction";
+  migrated.recurrence_authoritative = false;
+
+  const summaries = buildTaskHistoryStreakSummaryMap([currentTask], [migrated], "2026-08-03");
+
+  assert.equal(summaries[currentTask.id]?.missedStreak, 1);
+});
+
+test("No Soda-style recorded Missed history is not reduced to a recurrence span", () => {
+  const currentTask = createTask({
+    due_on: "2026-07-24",
+    id: "no-soda",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    status: "missed",
+    title: "No Soda",
+  });
+  const rows = Array.from({ length: 50 }, (_, index) => {
+    const date = new Date(Date.UTC(2026, 5, 18 + index)).toISOString().slice(0, 10);
+    const row = history(`missed-${index}`, date, "missed", false, currentTask.id);
+    row.canonical_provenance_kind = "migration_reconstruction";
+    row.recurrence_authoritative = false;
+    return row;
+  });
+
+  const summary = buildTaskHistoryStreakSummaryMap([currentTask], rows, "2026-08-06")[currentTask.id];
+  const adapted = adaptLegacyTaskState(currentTask, rows, {
+    now: "2026-08-06T12:00:00.000Z",
+    timezone: "UTC",
+    logicalDayRollover: "00:00",
+  });
+  const recurrenceTimeline = buildTaskEffectiveTimeline({
+    task: adapted.engineInput.task,
+    history: adapted.engineInput.history,
+    logicalDate: "2026-08-06",
+    calendarStart: "2026-08-06",
+    calendarEnd: "2026-08-06",
+  });
+
+  assert.equal(rows.length, 50);
+  assert.equal(recurrenceTimeline.currentMissedStreak, 14);
+  assert.equal(summary?.missedStreak, 50);
+  assert.doesNotMatch(streakSummarySource, /buildTaskEffectiveTimeline|adaptLegacyTaskState/);
 });
 
 test("a nonmatching trailing status breaks the corresponding streak", () => {
@@ -195,4 +287,5 @@ test("modal calendar and statistics normalize saved Done, Did My Best, and Misse
   assert.doesNotMatch(modalSource, /<span>Clear<\/span>/);
   assert.match(modalSource, /entry\.status === "missed"/);
   assert.match(modalSource, /entry\.status === "did_my_best"/);
+  assert.doesNotMatch(modalSource, /effectiveMissedStreak|effectiveCompletedStreak/);
 });

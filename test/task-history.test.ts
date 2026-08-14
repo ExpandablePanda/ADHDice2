@@ -33,7 +33,7 @@ function createHistoryEntry({
   id: string;
   occurrenceDueOn?: string | null;
   occurrenceKey?: string | null;
-  status: "complete" | "did_my_best" | "done" | "missed";
+  status: "complete" | "delayed" | "did_my_best" | "done" | "missed";
   taskId?: string;
   wasCompleted: boolean;
 }): DbTaskHistory {
@@ -501,6 +501,32 @@ test("did_my_best still counts as completed for streak calculations", () => {
   assert.equal(stats.missedStreak, 0);
 });
 
+test("streak membership uses explicit outcomes while completion totals keep was_completed semantics", () => {
+  const task = createTask({
+    due_on: "2026-06-04",
+    id: "explicit-streak-statuses",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "complete",
+    title: "Explicit streak statuses",
+  });
+  const history = [
+    createHistoryEntry({ entryDate: "2026-06-01", id: "s1", status: "done", taskId: task.id, wasCompleted: true }),
+    createHistoryEntry({ entryDate: "2026-06-02", id: "s2", status: "complete", taskId: task.id, wasCompleted: true }),
+    createHistoryEntry({ entryDate: "2026-06-03", id: "s3", status: "delayed", taskId: task.id, wasCompleted: false }),
+  ];
+
+  const stats = computeTaskSpecificHistoryStats(task, history, "2026-06-03");
+
+  assert.equal(stats.currentStreak, 0);
+  assert.equal(stats.missedStreak, 0);
+  assert.equal(stats.bestStreak, 1);
+  assert.equal(stats.completedDays, 2);
+  assert.equal(stats.missedDays, 1);
+  assert.equal(stats.completionRate, 67);
+});
+
 test("missed history breaks a current streak for recurring tasks", () => {
   const task = createTask({
     created_at: "2026-06-01T08:00:00.000Z",
@@ -523,7 +549,7 @@ test("missed history breaks a current streak for recurring tasks", () => {
   assert.equal(stats.missedStreak, 1);
 });
 
-test("one-off tasks show no streak without completed history and one streak with it", () => {
+test("one-off tasks do not treat Complete history as a streak success", () => {
   const task = createTask({
     created_at: "2026-06-01T08:00:00.000Z",
     due_on: "2026-06-03",
@@ -540,7 +566,7 @@ test("one-off tasks show no streak without completed history and one streak with
     createHistoryEntry({ entryDate: "2026-06-03", id: "oc1", status: "complete", taskId: task.id, wasCompleted: true }),
   ];
 
-  assert.equal(computeTaskSpecificHistoryStats(task, history, "2026-06-03").currentStreak, 1);
+  assert.equal(computeTaskSpecificHistoryStats(task, history, "2026-06-03").currentStreak, 0);
 });
 
 test("history facts use saved rows for completed and missed windows", () => {
