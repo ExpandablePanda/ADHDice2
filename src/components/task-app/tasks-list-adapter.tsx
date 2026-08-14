@@ -2487,9 +2487,10 @@ function TasksSimpleList({
     () => sortListParentTasks(tableProps.tasks, listSortPreference, {
       taskDisplayStatusByTaskId: tableProps.rowContext.taskDisplayStatusByTaskId,
       taskHistoryByTaskId: tableProps.rowContext.taskHistoryByTaskId,
+      taskHistoryStreakSummaryByTaskId: tableProps.rowContext.taskHistoryStreakSummaryByTaskId,
       todayDateKey: tableProps.rowContext.todayDateKey,
     }),
-    [listSortPreference, tableProps.rowContext.taskDisplayStatusByTaskId, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.todayDateKey, tableProps.tasks],
+    [listSortPreference, tableProps.rowContext.taskDisplayStatusByTaskId, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.taskHistoryStreakSummaryByTaskId, tableProps.rowContext.todayDateKey, tableProps.tasks],
   );
   const committedResultRevision = useMemo(
     () => tasks.map((task) => `${task.id}:${task.revision}`).join("|"),

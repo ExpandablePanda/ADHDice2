@@ -1,5 +1,5 @@
 import type { Task, TaskHistory, TaskStatus } from "@/lib/database.types";
-import { computeTaskSpecificHistoryStats } from "@/lib/task-history";
+import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import { getTaskPriorityLevel } from "@/lib/task-priority";
 
 export type ListSortField =
@@ -80,6 +80,7 @@ export function sortListParentTasks(
   context: {
     taskDisplayStatusByTaskId?: Record<string, TaskStatus>;
     taskHistoryByTaskId?: Record<string, TaskHistory[]>;
+    taskHistoryStreakSummaryByTaskId?: Record<string, TaskHistoryStreakSummary>;
     todayDateKey?: string;
   } = {},
 ) {
@@ -114,8 +115,8 @@ export function sortListParentTasks(
         result = left.updated_at.localeCompare(right.updated_at);
         break;
       case "streak":
-        result = computeTaskSpecificHistoryStats(left, historyByTaskId[left.id] ?? [], todayDateKey).currentStreak
-          - computeTaskSpecificHistoryStats(right, historyByTaskId[right.id] ?? [], todayDateKey).currentStreak;
+        result = (context.taskHistoryStreakSummaryByTaskId?.[left.id]?.currentStreak ?? 0)
+          - (context.taskHistoryStreakSummaryByTaskId?.[right.id]?.currentStreak ?? 0);
         break;
       case "estimated_duration":
         if ((left.estimated_minutes == null) !== (right.estimated_minutes == null)) return left.estimated_minutes == null ? 1 : -1;

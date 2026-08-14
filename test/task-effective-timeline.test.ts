@@ -314,7 +314,7 @@ test("overdue Open continues yesterday's current Missed streak", () => {
   assert.equal(result.currentMissedStreak, 2);
 });
 
-test("Due-today Open does not inherit a historical Missed streak", () => {
+test("Due-today Open skips itself and counts finalized historical Missed outcomes", () => {
   const result = timeline({
     task: {
       dueOn: "2026-08-06",
@@ -343,7 +343,7 @@ test("Due-today Open does not inherit a historical Missed streak", () => {
   assert.equal(result.days["2026-08-05"]?.state, "missed");
   assert.equal(result.days["2026-08-06"]?.state, "open");
   assert.equal(result.days["2026-08-06"]?.obligation, "due");
-  assert.equal(result.currentMissedStreak, 0);
+  assert.equal(result.currentMissedStreak, 2);
 });
 
 test("Test V5 counts only the current Effective Timeline completion streak", () => {
@@ -581,7 +581,7 @@ test("an old explicit Missed row does not rewind a future cursor", () => {
     assert.equal(result.days[date]?.state, "not_due", date);
   }
   assert.equal(result.unresolvedDueOn, null);
-  assert.equal(result.currentMissedStreak, 0);
+  assert.equal(result.currentMissedStreak, 1);
 });
 
 test("an active cursor after prior success is not advanced twice", () => {

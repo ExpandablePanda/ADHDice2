@@ -76,7 +76,15 @@ test("List sorting preserves Manual order and sorts the filtered parent projecti
     beta: [history("beta", "2026-07-17"), history("beta", "2026-07-18")],
     gamma: [],
   };
-  const ids = (field: ListSortField, direction: "asc" | "desc" = "asc") => sortListParentTasks(tasks, { field, direction }, { taskHistoryByTaskId, todayDateKey: "2026-07-19" }).map((entry) => entry.id);
+  const ids = (field: ListSortField, direction: "asc" | "desc" = "asc") => sortListParentTasks(tasks, { field, direction }, {
+    taskHistoryByTaskId,
+    taskHistoryStreakSummaryByTaskId: {
+      alpha: { currentStreak: 1, lastDoneAt: "2026-07-18T12:00:00.000Z", lastDoneDate: "2026-07-18", missedStreak: 0 },
+      beta: { currentStreak: 2, lastDoneAt: "2026-07-18T12:00:00.000Z", lastDoneDate: "2026-07-18", missedStreak: 0 },
+      gamma: { currentStreak: 0, lastDoneAt: null, lastDoneDate: null, missedStreak: 0 },
+    },
+    todayDateKey: "2026-07-19",
+  }).map((entry) => entry.id);
 
   assert.deepEqual(ids("manual", "desc"), ["beta", "alpha", "gamma"]);
   assert.deepEqual(ids("due_date"), ["alpha", "gamma", "beta"]);

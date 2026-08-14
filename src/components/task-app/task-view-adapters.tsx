@@ -41,6 +41,7 @@ import type { AppPage } from "@/lib/task-ui-state";
 import type { ImportTasksResult } from "@/hooks/useTaskCrudActions";
 import { getTaskHistoryCalendarVisibleActionStatuses } from "@/lib/task-complete";
 import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
+import { computeTaskEffectiveTimelineStreaks } from "@/lib/task-state-engine/effective-timeline";
 import type {
   Task,
   TaskHistory as DbTaskHistory,
@@ -618,7 +619,18 @@ export function TaskHistoryModal({
   const sortedDueDates = [...dueDates].sort();
   const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
   const savedHistoryStats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);
-  const stats = savedHistoryStats;
+  const resolvedStreaks = calendarRead?.timeline
+    ? calendarRead.timeline
+    : calendarRead
+      ? computeTaskEffectiveTimelineStreaks(calendarRead.states, today)
+      : null;
+  const stats = resolvedStreaks
+    ? {
+      ...savedHistoryStats,
+      currentStreak: resolvedStreaks.currentCompletedStreak,
+      missedStreak: resolvedStreaks.currentMissedStreak,
+    }
+    : savedHistoryStats;
   const lastDone = getTaskHistoryLastDone(normalizedTaskHistory);
   const sortedHistory = [...normalizedTaskHistory].sort((left, right) => right.entry_date.localeCompare(left.entry_date));
   const selectedEntry = historyByDate.get(selectedDate) ?? null;

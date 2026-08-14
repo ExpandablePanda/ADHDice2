@@ -235,21 +235,21 @@ test("archived Calendar reads retain the existing engine fallback", () => {
   assert.deepEqual(result?.states, expected);
 });
 
-test("summary does not infer a recorded streak from a backdated daily task", () => {
+test("summary consumes calculated historical Missed outcomes from Calendar", () => {
   const summary = buildTaskHistoryStreakSummary(task(), [], "2026-08-10");
 
   assert.equal(summary.currentStreak, 0);
-  assert.equal(summary.missedStreak, 0);
+  assert.equal(summary.missedStreak, 9);
 });
 
 test("summary Done keeps saved-History metadata while splitting missed streak", () => {
   const done = history("2026-08-05", "done");
   const summary = buildTaskHistoryStreakSummary(task(), [done], "2026-08-10");
 
-  assert.equal(summary.missedStreak, 0);
+  assert.equal(summary.missedStreak, 4);
   assert.equal(summary.lastDoneDate, "2026-08-05");
   assert.equal(summary.lastDoneAt, done.updated_at);
-  assert.equal(summary.currentStreak, 1);
+  assert.equal(summary.currentStreak, 0);
 });
 
 test("summary resets the current Missed streak after Done today", () => {
@@ -273,7 +273,7 @@ test("shared summary uses recorded completion outcomes across calendar gaps", ()
   const historyBefore = structuredClone(historyRows);
   const summary = buildTaskHistoryStreakSummary(task(), historyRows, "2026-08-06");
 
-  assert.equal(summary.currentStreak, 2);
+  assert.equal(summary.currentStreak, 1);
   assert.equal(summary.missedStreak, 0);
   assert.equal(summary.lastDoneDate, "2026-08-06");
   assert.equal(summary.lastDoneAt, doneToday.updated_at);
@@ -299,7 +299,7 @@ test("interval shared summary preserves completion streak across Not Due gaps", 
   ];
   const summary = buildTaskHistoryStreakSummary(nextTask, historyRows, "2026-08-07");
 
-  assert.equal(summary.currentStreak, 3);
+  assert.equal(summary.currentStreak, 1);
   assert.equal(summary.missedStreak, 0);
 });
 
@@ -307,7 +307,7 @@ test("shared summary keeps current positive and Missed streaks mutually exclusiv
   const summary = buildTaskHistoryStreakSummary(task(), [], "2026-08-06");
 
   assert.equal(summary.currentStreak, 0);
-  assert.equal(summary.missedStreak, 0);
+  assert.equal(summary.missedStreak, 5);
 });
 
 test("summary reports the saved positive recorded streak", () => {
@@ -322,13 +322,13 @@ test("summary reports the saved positive recorded streak", () => {
   assert.equal(summary.lastDoneDate, "2026-08-10");
 });
 
-test("summary uses recorded outcomes rather than inferred cadence for every-three-days tasks", () => {
+test("summary uses the resolved Calendar outcome for every-three-days tasks", () => {
   const nextTask = task({ repeat_interval: 3 });
   const done = history("2026-08-01", "done");
   const summary = buildTaskHistoryStreakSummary(nextTask, [done], "2026-08-10");
 
-  assert.equal(summary.currentStreak, 1);
-  assert.equal(summary.missedStreak, 0);
+  assert.equal(summary.currentStreak, 0);
+  assert.equal(summary.missedStreak, 8);
 });
 
 test("archived summary retains the saved-History missed streak", () => {

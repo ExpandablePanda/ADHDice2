@@ -116,7 +116,10 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   tasks: Task[];
   taskGridStarterLayout: TTaskGridItem[];
   taskListDataGeneration: MutableRefObject<number>;
+  logicalDayRollover: string;
+  now: Date | string;
   todayKey: string;
+  timezone: string;
 };
 
 const TASK_RESUME_SYNC_COOLDOWN_MS = 1500;
@@ -215,7 +218,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   tasks,
   taskGridStarterLayout,
   taskListDataGeneration,
+  logicalDayRollover,
+  now,
   todayKey,
+  timezone,
 }: UseWorkspaceDataOptions<TTaskGridItem>) {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [taskHistoryLoadedUserId, setTaskHistoryLoadedUserId] = useState<string | null>(null);
@@ -816,7 +822,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             return false;
           }
 
-          const nextSummaries = buildTaskHistoryStreakSummaryMap(nextTasks, compactHistory, todayKeyRef.current);
+          const nextSummaries = buildTaskHistoryStreakSummaryMap(nextTasks, compactHistory, todayKeyRef.current, {
+            logicalDayRollover,
+            now,
+            timezone,
+          });
           setTaskHistoryStreakSummaries((current) => keepCurrentIfStructurallyEqual(current, nextSummaries));
           return true;
         } finally {
@@ -860,11 +870,19 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             if (hasPrivateTaskHistory) {
               setTaskHistoryCacheForTask(taskId, taskHistory);
             }
-            const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current);
+            const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current, {
+              logicalDayRollover,
+              now,
+              timezone,
+            });
             setTaskHistoryStreakSummaries((current) => (
               JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
                 ? current
-                : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current)
+                : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current, {
+                  logicalDayRollover,
+                  now,
+                  timezone,
+                })
             ));
             return true;
           }
@@ -879,11 +897,19 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
                 ...taskHistory,
               ]);
             }
-            const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current);
+            const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current, {
+              logicalDayRollover,
+              now,
+              timezone,
+            });
             setTaskHistoryStreakSummaries((current) => (
               JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
                 ? current
-                : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current)
+                : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current, {
+                  logicalDayRollover,
+                  now,
+                  timezone,
+                })
             ));
             return true;
           }
@@ -904,11 +930,19 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           const streakRows: TaskHistoryStreakEntry[] = useCanonicalHistory
             ? mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[])
             : (result.data ?? []) as TaskHistoryStreakEntry[];
-          const nextSummary = buildTaskHistoryStreakSummary(task, streakRows, todayKeyRef.current);
+          const nextSummary = buildTaskHistoryStreakSummary(task, streakRows, todayKeyRef.current, {
+            logicalDayRollover,
+            now,
+            timezone,
+          });
           setTaskHistoryStreakSummaries((current) => (
             JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
               ? current
-              : updateTaskHistoryStreakSummaryMap(current, task, streakRows, todayKeyRef.current)
+              : updateTaskHistoryStreakSummaryMap(current, task, streakRows, todayKeyRef.current, {
+                logicalDayRollover,
+                now,
+                timezone,
+              })
           ));
           return true;
         } finally {

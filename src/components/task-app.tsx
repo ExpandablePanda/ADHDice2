@@ -275,7 +275,6 @@ import {
   buildTaskHistoryFacts,
   buildTaskHistoryByTaskId,
   computeTaskHistoryStats,
-  computeTaskSpecificHistoryStats,
   deduplicateTaskHistoryByLogicalDate,
   isTaskCompletedForHistory,
   isTaskHistoryStatus,
@@ -583,7 +582,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.8.23";
+const APP_VERSION = "7.8.24";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1840,7 +1839,10 @@ export function TaskApp() {
     tasks,
     taskGridStarterLayout: TASK_GRID_STARTER_LAYOUT,
     taskListDataGeneration,
+    logicalDayRollover: dayStartTime,
+    now: new Date(logicalDayNow),
     todayKey,
+    timezone: userTimeZone,
   });
   const actionWorkspaceGeneration = workspaceGenerationRef.current;
 
@@ -2701,23 +2703,27 @@ export function TaskApp() {
     () => Object.fromEntries(
       tasks.map((task) => [
         task.id,
-        buildTaskHistoryFacts(taskHistoryByTaskId[task.id] ?? [], todayKey),
+        (() => {
+          const facts = buildTaskHistoryFacts(taskHistoryByTaskId[task.id] ?? [], todayKey);
+          const summary = taskHistoryStreakSummaries[task.id];
+          return {
+            ...facts,
+            currentCompletedStreak: summary?.currentStreak ?? 0,
+            currentMissedStreak: summary?.missedStreak ?? 0,
+          };
+        })(),
       ]),
     ),
-    [taskHistoryByTaskId, tasks, todayKey],
+    [taskHistoryByTaskId, taskHistoryStreakSummaries, tasks, todayKey],
   );
   const currentStreakByTaskId = useMemo(
     () => Object.fromEntries(
       tasks.map((task) => [
         task.id,
-        computeTaskSpecificHistoryStats(
-          task,
-          taskHistoryByTaskId[task.id] ?? [],
-          todayKey,
-        ).currentStreak,
+        taskHistoryStreakSummaries[task.id]?.currentStreak ?? 0,
       ]),
     ),
-    [taskHistoryByTaskId, tasks, todayKey],
+    [taskHistoryStreakSummaries, tasks],
   );
   const taskDomainRevision = useMemo(
     () => createProjectionDomainRevision("tasks", tasks),

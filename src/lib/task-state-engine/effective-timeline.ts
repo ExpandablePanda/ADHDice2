@@ -28,6 +28,52 @@ export type BuildTaskEffectiveTimelineInput = {
 
 const SUCCESSFUL_OUTCOMES = new Set<TaskHistoryOutcome>(["done", "did_my_best", "complete"]);
 
+export type TaskEffectiveTimelineStreaks = {
+  currentCompletedStreak: number;
+  currentMissedStreak: number;
+};
+
+function classifyFinalizedCalendarState(state: string | undefined): "success" | "missed" | "break" | null {
+  if (state === "done" || state === "did_my_best") return "success";
+  if (state === "missed") return "missed";
+  if (state === "complete" || state === "delayed") return "break";
+  if (state === "open" || state === "in_progress" || state === "due" || state === "upcoming"
+    || state === "scheduled" || state === "not_due" || state === "no_entry") return null;
+  return "break";
+}
+
+/**
+ * Calculate streaks from the resolved Calendar states, not from persisted rows.
+ * Non-final Calendar states are intentionally skipped; finalized break states
+ * terminate both streaks.
+ */
+export function computeTaskEffectiveTimelineStreaks(
+  states: Record<string, string>,
+  logicalDate: string,
+): TaskEffectiveTimelineStreaks {
+  let cursor: string | null = logicalDate;
+  let streakKind: "success" | "missed" | null = null;
+  let streakLength = 0;
+
+  while (cursor && Object.hasOwn(states, cursor)) {
+    const finalizedKind = classifyFinalizedCalendarState(states[cursor]);
+    if (!finalizedKind) {
+      cursor = shiftDateKey(cursor, -1);
+      continue;
+    }
+    if (finalizedKind === "break") break;
+    streakKind ??= finalizedKind;
+    if (streakKind !== finalizedKind) break;
+    streakLength += 1;
+    cursor = shiftDateKey(cursor, -1);
+  }
+
+  return {
+    currentCompletedStreak: streakKind === "success" ? streakLength : 0,
+    currentMissedStreak: streakKind === "missed" ? streakLength : 0,
+  };
+}
+
 function occurrenceDateFromIdentity(identity: string | null | undefined) {
   const date = identity?.match(/(\d{4}-\d{2}-\d{2})$/)?.[1] ?? null;
   return date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
@@ -131,7 +177,7 @@ export function buildTaskEffectiveTimeline(
     }
   }
 
-  let activeDueOn = initialDueOn;
+  let activeDueOn: string | null = initialDueOn;
   let unresolvedDueOn: string | null = null;
   let completed = input.task.lifecycle === "complete";
   const consumed = new Set<string>();
@@ -257,72 +303,15 @@ export function buildTaskEffectiveTimeline(
 
   const currentDay = effectiveDays[input.logicalDate];
   const currentObligation = currentDay?.state === "open" ? currentDay.obligation : "none";
-  let streakStart: string | null = null;
-
-  if (currentDay?.state === "missed") {
-    streakStart = input.logicalDate;
-  } else if (
-    currentDay?.state === "open"
-    && currentDay.obligation === "overdue"
-  ) {
-    streakStart = shiftDateKey(input.logicalDate, -1);
-  }
-
-  let currentMissedStreak = 0;
-  while (
-    streakStart
-    && effectiveDays[streakStart]?.state === "missed"
-  ) {
-    currentMissedStreak += 1;
-    streakStart = shiftDateKey(streakStart, -1);
-  }
-
-  let currentCompletedStreak = 0;
-  let completedCursor: string | null = input.logicalDate;
-
-  while (completedCursor) {
-    const day = effectiveDays[completedCursor];
-
-    if (!day) {
-      break;
-    }
-
-    const isCurrentLogicalDate = completedCursor === input.logicalDate;
-
-    if (
-      day.state === "not_due"
-      || day.state === "no_entry"
-      || day.state === "scheduled"
-    ) {
-      completedCursor = shiftDateKey(completedCursor, -1);
-      continue;
-    }
-
-    if (
-      isCurrentLogicalDate
-      && (day.state === "open" || day.state === "in_progress")
-    ) {
-      completedCursor = shiftDateKey(completedCursor, -1);
-      continue;
-    }
-
-    if (
-      day.state === "done"
-      || day.state === "did_my_best"
-      || day.state === "complete"
-    ) {
-      currentCompletedStreak += 1;
-      completedCursor = shiftDateKey(completedCursor, -1);
-      continue;
-    }
-
-    break;
-  }
+  const streaks = computeTaskEffectiveTimelineStreaks(
+    Object.fromEntries(Object.entries(effectiveDays).map(([date, day]) => [date, day.state])),
+    input.logicalDate,
+  );
 
   return {
     days,
-    currentCompletedStreak,
-    currentMissedStreak,
+    currentCompletedStreak: streaks.currentCompletedStreak,
+    currentMissedStreak: streaks.currentMissedStreak,
     currentObligation,
     unresolvedDueOn: currentUnresolvedDueOn,
   };

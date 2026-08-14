@@ -13,6 +13,7 @@ import {
   updateTaskHistoryStreakSummaryMap,
 } from "../src/lib/task-history-streak-summaries.ts";
 import { computeTaskSpecificHistoryStats, deduplicateTaskHistoryByLogicalDate } from "../src/lib/task-history.ts";
+import { resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/calendar-authority.ts";
 import { selectCriticalTaskHistoryFacts } from "../src/lib/workspace-critical-task-facts.ts";
 
 const workspaceSource = readFileSync(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
@@ -111,8 +112,8 @@ test("pre-cutover migration Done and Did My Best expose only their historical da
   }
 });
 
-test("Appanda historical sequence ends with Missed and does not use migration insertion time", () => {
-  const currentTask = task("appanda");
+test("Appanda uses the exact resolved Calendar sequence and does not use migration insertion time", () => {
+  const currentTask = { ...task("appanda"), due_on: "2026-08-08" };
   const done = history("appanda-best", "2026-08-07", "did_my_best", true, currentTask.id);
   const missed = history("appanda-missed", "2026-08-08", "missed", false, currentTask.id);
   for (const row of [done, missed]) {
@@ -123,14 +124,83 @@ test("Appanda historical sequence ends with Missed and does not use migration in
   }
   const historyBefore = structuredClone([done, missed]);
 
-  const summary = buildTaskHistoryStreakSummaryMap([currentTask], [done, missed], "2026-08-14")[currentTask.id];
+  const summary = buildTaskHistoryStreakSummaryMap([currentTask], [done, missed], "2026-08-13")[currentTask.id];
 
   assert.equal(summary?.currentStreak, 0);
-  assert.equal(summary?.missedStreak, 1);
+  assert.equal(summary?.missedStreak, 5);
   assert.equal(summary?.lastDoneDate, "2026-08-07");
   assert.equal(summary?.lastDoneAt, null);
   assert.notEqual(summary?.lastDoneAt, done.updated_at);
   assert.deepEqual([done, missed], historyBefore);
+});
+
+test("a current Open overdue day is excluded until rollover finalizes it as Missed", () => {
+  const currentTask = { ...task("open-overdue"), due_on: "2026-08-08", status: "pending" as const };
+  const missed = history("open-overdue-missed", "2026-08-08", "missed", false, currentTask.id);
+
+  const beforeRollover = buildTaskHistoryStreakSummaryMap([currentTask], [missed], "2026-08-09")[currentTask.id];
+  const afterRollover = buildTaskHistoryStreakSummaryMap([currentTask], [missed], "2026-08-10")[currentTask.id];
+
+  assert.equal(beforeRollover?.missedStreak, 1);
+  assert.equal(afterRollover?.missedStreak, 2);
+});
+
+test("explicit Done and Did My Best win over a calculated Missed on the same date", () => {
+  for (const outcome of ["done", "did_my_best"] as const) {
+    const currentTask = { ...task(`explicit-${outcome}`), due_on: "2026-08-08", status: "pending" as const };
+    const explicit = history(`explicit-${outcome}-row`, "2026-08-08", outcome, true, currentTask.id);
+    const summary = buildTaskHistoryStreakSummaryMap([currentTask], [explicit], "2026-08-09")[currentTask.id];
+
+    assert.equal(summary?.currentStreak, 1, outcome);
+    assert.equal(summary?.missedStreak, 0, outcome);
+  }
+});
+
+test("calculated historical Missed days count without persisted History rows", () => {
+  const currentTask = { ...task("virtual-missed"), due_on: "2026-08-08", status: "pending" as const };
+  const summary = buildTaskHistoryStreakSummaryMap([currentTask], [], "2026-08-13")[currentTask.id];
+
+  assert.equal(summary?.currentStreak, 0);
+  assert.equal(summary?.missedStreak, 5);
+});
+
+test("Calendar states and streak input use one resolved timeline for the same range", () => {
+  const currentTask = { ...task("same-projection"), due_on: "2026-08-08", status: "pending" as const };
+  const missed = history("same-projection-missed", "2026-08-08", "missed", false, currentTask.id);
+  const context = {
+    logicalDayRollover: "00:00",
+    now: "2026-08-13T12:00:00.000Z",
+    timezone: "UTC",
+  } as const;
+  const calendarRead = resolveTaskHistoryCalendarRead({
+    ...context,
+    calendarStart: "2026-08-08",
+    calendarEnd: "2026-08-13",
+    history: [missed],
+    task: currentTask,
+  });
+  const summary = buildTaskHistoryStreakSummaryMap([currentTask], [missed], "2026-08-13", context)[currentTask.id];
+
+  assert.ok(calendarRead?.timeline);
+  assert.deepEqual(
+    calendarRead?.states,
+    Object.fromEntries(Object.entries(calendarRead?.timeline?.days ?? {}).map(([date, day]) => [date, day.state === "scheduled" ? "due" : day.state === "no_entry" ? "not_due" : day.state])),
+  );
+  assert.equal(summary?.currentStreak, calendarRead?.timeline?.currentCompletedStreak);
+  assert.equal(summary?.missedStreak, calendarRead?.timeline?.currentMissedStreak);
+});
+
+test("summary resolution is read-only and modern post-cutover Task State remains intact", () => {
+  const currentTask = { ...task("modern-read"), due_on: TASK_STATE_HISTORY_CUTOVER_DATE, status: "pending" as const };
+  const modernDone = history("modern-read-done", TASK_STATE_HISTORY_CUTOVER_DATE, "done", true, currentTask.id);
+  modernDone.canonical_provenance_kind = "user";
+  modernDone.recurrence_authoritative = true;
+  const historyBefore = structuredClone([modernDone]);
+  const summary = buildTaskHistoryStreakSummaryMap([currentTask], [modernDone], TASK_STATE_HISTORY_CUTOVER_DATE)[currentTask.id];
+
+  assert.equal(summary?.currentStreak, 1);
+  assert.equal(summary?.missedStreak, 0);
+  assert.deepEqual([modernDone], historyBefore);
 });
 
 test("post-cutover modern Done and Did My Best preserve legitimate event timestamps", () => {
@@ -175,7 +245,7 @@ test("non-authoritative migration reconstruction History still counts toward str
   assert.equal(summaries[currentTask.id]?.missedStreak, 1);
 });
 
-test("No Soda-style recorded Missed history is not reduced to a recurrence span", () => {
+test("No Soda streak matches the resolved Calendar outcomes rather than a row count", () => {
   const currentTask = createTask({
     due_on: "2026-07-24",
     id: "no-soda",
@@ -209,7 +279,8 @@ test("No Soda-style recorded Missed history is not reduced to a recurrence span"
   assert.equal(rows.length, 50);
   assert.equal(recurrenceTimeline.currentMissedStreak, 14);
   assert.equal(summary?.missedStreak, 50);
-  assert.doesNotMatch(streakSummarySource, /buildTaskEffectiveTimeline|adaptLegacyTaskState/);
+  assert.match(streakSummarySource, /resolveTaskHistoryCalendarRead/);
+  assert.doesNotMatch(streakSummarySource, /computeTaskSpecificHistoryStats/);
 });
 
 test("a nonmatching trailing status breaks the corresponding streak", () => {
