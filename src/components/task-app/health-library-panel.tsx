@@ -118,6 +118,7 @@ const EMPTY_MEAL_DRAFT: MealDraft = {
 };
 
 type HealthLibraryPanelProps = {
+  className?: string;
   favorites: HealthFoodLibraryItem[];
   recipes: HealthRecipe[];
   savedMeals: HealthSavedMeal[];
@@ -163,6 +164,7 @@ type HealthLibraryPanelProps = {
 };
 
 export function HealthLibraryPanel({
+  className,
   favorites,
   recipes,
   savedMeals,
@@ -372,7 +374,7 @@ export function HealthLibraryPanel({
 
   return (
     <HealthCollapsiblePanel
-      className="xl:col-span-2"
+      className={className}
       subtitle="Create reusable foods, combine ingredients into recipes, or bundle foods and recipes into one-tap meals."
       title="Custom nutrition library"
     >
@@ -423,24 +425,24 @@ export function HealthLibraryPanel({
               </div>
               {foodImportReviews.length > 0 ? (
                 <div className="mt-5 grid gap-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#6d7894] dark:text-white/55">
-                    <span>
+                  <div className="flex items-center gap-2 text-xs text-[#6d7894] dark:text-white/55">
+                    <span className="min-w-0 flex-1 break-words">
                       Ready {foodImportReviews.filter((review) => review.selected && !review.duplicate && review.errors.length === 0).length} / {foodImportReviews.length}
                       {" · "}Duplicates {foodImportReviews.filter((review) => review.duplicate).length}
                       {" · "}Invalid {foodImportReviews.filter((review) => review.errors.length > 0).length}
                     </span>
-                    <AdhdChip disabled={isSavingFoodImport} onClick={() => { void handleSaveFoodImport(); }} selected>
+                    <AdhdChip className="shrink-0" disabled={isSavingFoodImport} onClick={() => { void handleSaveFoodImport(); }} selected>
                       {isSavingFoodImport ? "Importing..." : "Confirm Import"}
                     </AdhdChip>
                   </div>
                   {foodImportReviews.map((review, index) => (
                     <div className="grid gap-3 rounded-[1rem] border border-[#e8e2f7] bg-white/80 p-3 dark:border-white/10 dark:bg-white/[0.04]" key={review.id}>
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-[#26324f] dark:text-white">Food {index + 1}</p>
-                          <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">Source line {review.lineStart}</p>
+                      <div className="flex items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">Food {index + 1}</p>
+                          <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">Source line {review.lineStart}</p>
                         </div>
-                        <label className="flex items-center gap-2 text-xs text-[#66718f] dark:text-white/60">
+                        <label className="flex shrink-0 items-center gap-2 text-xs text-[#66718f] dark:text-white/60">
                           <input
                             checked={review.selected && !review.duplicate}
                             disabled={review.duplicate}
@@ -792,9 +794,9 @@ function SourcePicker({ empty, items, title }: { empty: string; items: Array<{ i
 
 function IngredientRow({ name, onQuantity, onRemove, quantity }: { name: string; onQuantity: (quantity: number) => void; onRemove: () => void; quantity: number }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1rem] border border-[#efe9ff] bg-white/80 px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]">
-      <span className="text-sm font-medium text-[#595378] dark:text-white/68">{name}</span>
-      <div className="flex items-center gap-2">
+    <div className="flex items-start gap-3 rounded-[1rem] border border-[#efe9ff] bg-white/80 px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]">
+      <span className="min-w-0 flex-1 break-words text-sm font-medium text-[#595378] dark:text-white/68">{name}</span>
+      <div className="flex shrink-0 flex-nowrap items-center gap-2">
         <label className="flex items-center gap-2 text-xs text-[#7d7598] dark:text-white/55">
           Servings
           <input className="health-input w-20" inputMode="decimal" min="0.01" onChange={(event) => onQuantity(parsePositive(event.target.value))} type="number" value={quantity} />
@@ -823,8 +825,8 @@ function LibraryField({ children, label }: { children: ReactNode; label: string 
 function LibraryCardHeader({ detail, title }: { detail: string; title: string }) {
   return (
     <div>
-      <p className="text-sm font-semibold text-[#26324f] dark:text-white">{title}</p>
-      <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{detail}</p>
+      <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{title}</p>
+      <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">{detail}</p>
     </div>
   );
 }

@@ -81,3 +81,47 @@ test("Apple Health sleep remains separate from Focus Sleep totals", async () => 
   assert.match(healthUtils, /const focusMinutes = getSleepFocusSessions\(focusHistory, focusCategories\)/);
   assert.match(healthUtils, /totalMinutes: importedMinutes \+ focusMinutes/);
 });
+
+test("Health stacked tabs use independent columns and preserve narrow-screen order", async () => {
+  const [health, water] = await Promise.all([
+    readFile(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/task-app/health-water-panel.tsx", import.meta.url), "utf8"),
+  ]);
+  const food = health.slice(health.indexOf('activeTab === "Food"'), health.indexOf('activeTab === "Water"'));
+  const sleep = health.slice(health.indexOf('activeTab === "Sleep"'), health.indexOf('activeTab === "Insights"'));
+
+  assert.equal((food.match(/className="contents xl:grid xl:content-start xl:gap-5"/g) ?? []).length, 2);
+  assert.match(food, /<HealthPanel className="order-1 xl:order-none"[\s\S]*?subtitle="Meal logging"/);
+  assert.match(food, /<HealthLibraryPanel[\s\S]*?className="order-3 xl:order-none"/);
+  assert.match(food, /<HealthPanel[\s\S]*?className="order-2 xl:order-none"[\s\S]*?subtitle="Daily totals"/);
+  assert.match(food, /title="Favorites & Recent Foods"/);
+  assert.equal((food.match(/subtitle="Meal logging"/g) ?? []).length, 1);
+  assert.equal((food.match(/subtitle="Daily totals"/g) ?? []).length, 1);
+  assert.equal((food.match(/title="Favorites & Recent Foods"/g) ?? []).length, 1);
+
+  assert.equal((sleep.match(/className="contents xl:grid xl:content-start xl:gap-5"/g) ?? []).length, 2);
+  assert.match(sleep, /className="order-1 xl:order-none"[\s\S]*?title="Health sleep totals"/);
+  assert.match(sleep, /className="order-2 xl:order-none"[\s\S]*?subtitle="Manual entry"/);
+  assert.match(sleep, /className="order-3 xl:order-none"[\s\S]*?title="Sleep sources"/);
+  assert.match(sleep, /className="order-4 xl:order-none"[\s\S]*?title="Sleep Ledger"/);
+  assert.equal((sleep.match(/<HealthPanel/g) ?? []).length, 4);
+
+  assert.equal((water.match(/<div className="grid content-start gap-5">/g) ?? []).length, 2);
+});
+
+test("Health descriptive rows let text wrap before fixed actions", async () => {
+  const [health, library, water] = await Promise.all([
+    readFile(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/task-app/health-water-panel.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(health, /<p className="break-words text-sm font-semibold[^>]*>\{result\.foodName\}<\/p>[\s\S]*?className="ui-pill-button-strong-light shrink-0"/);
+  assert.match(health, /formatHealthMealSummary\(entry\)[\s\S]*?flex shrink-0 flex-nowrap gap-2/);
+  assert.match(health, /title="Favorites & Recent Foods">[\s\S]*?max-h-\[26rem\] space-y-5 overflow-y-auto/);
+  assert.match(health, /Sleep Focus Clock[\s\S]*?className="flex shrink-0 flex-nowrap items-center gap-2"/);
+  assert.match(health, /resolveHealthSleepKind\(session,[\s\S]*?className="flex shrink-0 items-center gap-2"/);
+  assert.match(health, /importPreview\.fileName[\s\S]*?className="shrink-0 rounded-full/);
+  assert.match(library, /className="flex items-start gap-3 rounded-\[1rem\]/);
+  assert.match(library, /className="flex shrink-0 flex-nowrap items-center gap-2"/);
+  assert.match(water, /className="flex items-start gap-3">[\s\S]*?className="min-w-0 flex-1"[\s\S]*?flex shrink-0 flex-nowrap justify-end gap-2/);
+});

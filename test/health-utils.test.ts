@@ -416,12 +416,21 @@ test("Health Sleep classifications normalize supported and legacy subtypes", () 
 
 test("Health Sleep resolver prioritizes explicit subtype over session title", () => {
   assert.equal(resolveHealthSleepKind({ focusSubtype: "CPAP Nap", title: "Sleep" }), "CPAP Nap");
+  assert.equal(resolveHealthSleepKind({ focusSubtype: "CPAP Sleep", title: "Sleep" }), "CPAP Sleep");
+  assert.equal(resolveHealthSleepKind({ focusSubtype: "Nap", title: "CPAP Sleep" }), "Nap");
 });
 
 test("Health Sleep resolver recovers normalized legacy session titles", () => {
-  assert.equal(resolveHealthSleepKind({ focusSubtype: null, title: "CPAP Sleep" }), "CPAP Sleep");
+  assert.equal(resolveHealthSleepKind({ focusSubtype: "Sleep", title: "CPAP Sleep" }), "CPAP Sleep");
+  assert.equal(resolveHealthSleepKind({ focusSubtype: "Sleep", title: "Nap" }), "Nap");
+  assert.equal(resolveHealthSleepKind({ focusSubtype: "Sleep", title: "CPAP Nap" }), "CPAP Nap");
   assert.equal(resolveHealthSleepKind({ focusSubtype: null, title: "  cpap-NAP  " }), "CPAP Nap");
   assert.equal(resolveHealthSleepKind({ focusSubtype: undefined, title: "Nap" }), "Nap");
+});
+
+test("Health Sleep resolver keeps generic and unrecognized legacy fallbacks", () => {
+  assert.equal(resolveHealthSleepKind({ focusSubtype: "Sleep", title: "Sleep" }), "Sleep");
+  assert.equal(resolveHealthSleepKind({ focusSubtype: "Sleep", title: "Overslept" }), "Sleep");
 });
 
 test("Health Sleep resolver uses the linked category only after session metadata", () => {

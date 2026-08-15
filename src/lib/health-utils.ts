@@ -271,8 +271,17 @@ export function resolveHealthSleepKind(
   session: Pick<HistoricalFocusSession, "focusSubtype" | "title">,
   linkedCategory?: Pick<FocusCategory, "title"> | null,
 ): HealthSleepKind {
-  return normalizeRecognizedHealthSleepKind(session.focusSubtype)
-    ?? normalizeRecognizedHealthSleepKind(session.title)
+  const focusSubtype = normalizeRecognizedHealthSleepKind(session.focusSubtype);
+  if (focusSubtype && focusSubtype !== "Sleep") {
+    return focusSubtype;
+  }
+
+  const sessionTitle = normalizeRecognizedHealthSleepKind(session.title);
+  if (sessionTitle) {
+    return sessionTitle;
+  }
+
+  return focusSubtype
     ?? normalizeRecognizedHealthSleepKind(linkedCategory?.title)
     ?? "Sleep";
 }

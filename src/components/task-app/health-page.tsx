@@ -1400,7 +1400,8 @@ export function HealthPage({
 
       {activeTab === "Food" ? (
         <div aria-labelledby="health-tab-food" className="mt-6 grid gap-5 xl:grid-cols-[1.08fr_0.92fr]" id={getHealthTabPanelId("Food")} role="tabpanel">
-          <HealthPanel icon={<Salad />} subtitle="Meal logging">
+          <div className="contents xl:grid xl:content-start xl:gap-5">
+          <HealthPanel className="order-1 xl:order-none" icon={<Salad />} subtitle="Meal logging">
             <HealthCollapsiblePanel
               className="mb-5"
               defaultOpen={false}
@@ -1502,9 +1503,9 @@ export function HealthPage({
                   <SectionMiniTitle title="Lookup results" />
                   {foodLookupResults.map((result) => (
                     <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/90 px-4 py-3 dark:border-white/10 dark:bg-white/[0.05]" key={`${result.provider}-${result.providerItemId}`}>
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-[#26324f] dark:text-white">{result.foodName}</p>
+                      <div className="flex items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{result.foodName}</p>
                           <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">
                             {result.brandName || "No brand"} / {result.servingLabel || "Serving not listed"} / {result.calories} kcal
                           </p>
@@ -1513,7 +1514,7 @@ export function HealthPage({
                           </p>
                         </div>
                         <button
-                          className="ui-pill-button-strong-light"
+                          className="ui-pill-button-strong-light shrink-0"
                           onClick={() => applyLookupResult(result)}
                           type="button"
                         >
@@ -1618,9 +1619,9 @@ export function HealthPage({
                   <input checked={saveQuickEntryToLibrary} onChange={(event) => setSaveQuickEntryToLibrary(event.target.checked)} type="checkbox" />
                   Save to Custom Nutrition Library
                 </label>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs text-[#73809c] dark:text-white/50">Meal, date, and time use the controls above.</span>
-                  <AdhdChip onClick={closeQuickEntry}>Use Library Food</AdhdChip>
+                <div className="flex items-start gap-2">
+                  <span className="min-w-0 flex-1 break-words text-xs text-[#73809c] dark:text-white/50">Meal, date, and time use the controls above.</span>
+                  <AdhdChip className="shrink-0" onClick={closeQuickEntry}>Use Library Food</AdhdChip>
                 </div>
               </div>
             ) : null}
@@ -1740,11 +1741,11 @@ export function HealthPage({
                     <div className="flex items-start gap-3">
                       <div className="min-w-0 flex-1">
                         <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(entry)}</p>
-                        <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{formatHealthMealSummary(entry)}</p>
+                        <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">{formatHealthMealSummary(entry)}</p>
                       </div>
-                      <div className="flex shrink-0 gap-2">
+                      <div className="flex shrink-0 flex-nowrap gap-2">
                         <button
-                          className="ui-pill-button-light inline-flex items-center gap-1.5"
+                          className="ui-pill-button-light inline-flex shrink-0 items-center gap-1.5"
                           onClick={() => startEditingMeal(entry)}
                           type="button"
                         >
@@ -1754,14 +1755,14 @@ export function HealthPage({
                         <button
                           aria-label={isMealSavedAsFavorite(entry) ? "Saved to favorites" : "Save favorite"}
                           aria-pressed={isMealSavedAsFavorite(entry)}
-                          className={`ui-pill-button-light inline-flex items-center gap-1.5 ${isMealSavedAsFavorite(entry) ? "border-[#ffd1dc] bg-[#fff0f4] text-[#d64b6b] dark:border-[#703043] dark:bg-[#341821] dark:text-[#ff9fb5]" : ""}`}
+                          className={`ui-pill-button-light inline-flex shrink-0 items-center gap-1.5 ${isMealSavedAsFavorite(entry) ? "border-[#ffd1dc] bg-[#fff0f4] text-[#d64b6b] dark:border-[#703043] dark:bg-[#341821] dark:text-[#ff9fb5]" : ""}`}
                           onClick={() => { void handleSaveFavoriteFromMeal(entry); }}
                           type="button"
                         >
                           <Heart aria-hidden="true" className="h-4 w-4" fill={isMealSavedAsFavorite(entry) ? "currentColor" : "none"} />
                           <span className="sr-only">Favorite</span>
                         </button>
-                        <button className="ui-pill-button-danger-light" onClick={() => { void deleteMealEntry(entry.id); }} type="button">
+                        <button className="ui-pill-button-danger-light shrink-0" onClick={() => { void deleteMealEntry(entry.id); }} type="button">
                           Remove
                         </button>
                       </div>
@@ -1879,22 +1880,37 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <div className="grid gap-5">
-            <HealthPanel
-              headerActions={<FoodHistoryDateChip date={foodHistoryDate} onChange={setFoodHistoryDate} today={today} />}
-              icon={<Target />}
-              subtitle="Daily totals"
-            >
-              <div className="grid gap-3 sm:grid-cols-2">
-                <CompactStat detail={profile.calorie_goal ? `goal ${profile.calorie_goal}` : "set in goals"} label="Calories" progressPercent={profile.calorie_goal ? clampPercent((selectedNutrition.calories / profile.calorie_goal) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
-                <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" progressPercent={profile.protein_goal_grams ? clampPercent((selectedNutrition.protein / profile.protein_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.protein)}g`} />
-                <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.carbs)}g`} />
-                <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.fat)}g`} />
-              </div>
-              <HealthCalorieLineChart series={dailyCalorieSeries} />
-            </HealthPanel>
+          <HealthLibraryPanel
+            className="order-3 xl:order-none"
+            deleteFood={deleteFavoriteFood}
+            deleteRecipe={deleteRecipe}
+            deleteSavedMeal={deleteSavedMeal}
+            favorites={favorites}
+            recipes={recipes}
+            saveFood={saveFavoriteFood}
+            saveRecipe={saveRecipe}
+            savedMeals={savedMeals}
+            saveSavedMeal={saveSavedMeal}
+          />
+          </div>
 
-            <HealthPanel icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
+          <div className="contents xl:grid xl:content-start xl:gap-5">
+          <HealthPanel
+            className="order-2 xl:order-none"
+            headerActions={<FoodHistoryDateChip date={foodHistoryDate} onChange={setFoodHistoryDate} today={today} />}
+            icon={<Target />}
+            subtitle="Daily totals"
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <CompactStat detail={profile.calorie_goal ? `goal ${profile.calorie_goal}` : "set in goals"} label="Calories" progressPercent={profile.calorie_goal ? clampPercent((selectedNutrition.calories / profile.calorie_goal) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
+              <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" progressPercent={profile.protein_goal_grams ? clampPercent((selectedNutrition.protein / profile.protein_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.protein)}g`} />
+              <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.carbs)}g`} />
+              <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.fat)}g`} />
+            </div>
+            <HealthCalorieLineChart series={dailyCalorieSeries} />
+          </HealthPanel>
+
+          <HealthPanel className="order-2 xl:order-none" icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
               <div className="adhdice-scrollbar max-h-[26rem] space-y-5 overflow-y-auto pr-1">
                 <section className="space-y-3" aria-labelledby="health-favorites-heading">
                   <SectionMiniTitle title="Favorites" />
@@ -1985,19 +2001,9 @@ export function HealthPage({
                   )}
                 </section>
               </div>
-            </HealthPanel>
+          </HealthPanel>
           </div>
-          <HealthLibraryPanel
-            deleteFood={deleteFavoriteFood}
-            deleteRecipe={deleteRecipe}
-            deleteSavedMeal={deleteSavedMeal}
-            favorites={favorites}
-            recipes={recipes}
-            saveFood={saveFavoriteFood}
-            saveRecipe={saveRecipe}
-            savedMeals={savedMeals}
-            saveSavedMeal={saveSavedMeal}
-          />
+
         </div>
       ) : null}
 
@@ -2071,7 +2077,9 @@ export function HealthPage({
 
       {activeTab === "Sleep" ? (
         <div aria-labelledby="health-tab-sleep" className="mt-6 grid gap-5 xl:grid-cols-[1fr_1fr]" id={getHealthTabPanelId("Sleep")} role="tabpanel">
+          <div className="contents xl:grid xl:content-start xl:gap-5">
           <HealthPanel
+            className="order-1 xl:order-none"
             collapseAfterHeaderActions
             headerActions={<FoodHistoryDateChip ariaLabel="Sleep ledger date" date={sleepLedgerDate} dayStepper today={today} onChange={setSleepLedgerDate} />}
             icon={<MoonStar />}
@@ -2086,20 +2094,20 @@ export function HealthPage({
             </div>
             <HealthSleepLineChart series={sleepActivitySeries} />
             <div className="mt-4 rounded-[1.25rem] border border-[#e6ebfb] bg-white/80 px-4 py-4 dark:border-white/10 dark:bg-white/[0.04]">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-[#26324f] dark:text-white">Sleep Focus Clock</p>
                   <p className="mt-1 text-xs leading-5 text-[#73809c] dark:text-white/50">
                     {sleepCategory ? "The Focus Sleep runtime stays authoritative while you remain on Health." : "Create a Sleep Focus category to enable the clock."}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex shrink-0 flex-nowrap items-center gap-2">
                   <span className="text-3xl font-black tabular-nums text-[#26324f] dark:text-white">{formatSleepClock(sleepClockSeconds)}</span>
-                  <button className="ui-pill-button-strong-light" onClick={onToggleSleepClock} type="button">
+                  <button className="ui-pill-button-strong-light shrink-0" onClick={onToggleSleepClock} type="button">
                     {!sleepActiveSession ? "Start Sleep" : sleepActiveSession.isRunning ? "Pause" : "Resume"}
                   </button>
                   {sleepActiveSession ? (
-                    <button className="ui-pill-button-light" onClick={() => onFinishSleepClock(sleepKind)} type="button">Finish</button>
+                    <button className="ui-pill-button-light shrink-0" onClick={() => onFinishSleepClock(sleepKind)} type="button">Finish</button>
                   ) : null}
                 </div>
               </div>
@@ -2107,7 +2115,7 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel icon={<MoonStar />} subtitle="Manual entry" title="Log sleep">
+          <HealthPanel className="order-2 xl:order-none" icon={<MoonStar />} subtitle="Manual entry" title="Log sleep">
             <SleepKindSelector onChange={(kind) => setManualSleepDraft((current) => ({ ...current, kind }))} value={manualSleepDraft.kind} />
             <SleepDraftFields draft={manualSleepDraft} onChange={(next) => setManualSleepDraft(next)} />
             {sleepFormError ? <p className="mt-3 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{sleepFormError}</p> : null}
@@ -2116,7 +2124,7 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel icon={<Activity />} subtitle="Last 7 days" title="Sleep sources">
+          <HealthPanel className="order-3 xl:order-none" icon={<Activity />} subtitle="Last 7 days" title="Sleep sources">
             <div className="grid gap-3 sm:grid-cols-3">
               <CompactStat detail="combined week" label="Total" value={formatHealthSleepDuration(recentSleepTotalMinutes)} />
               <CompactStat detail="Sleep Focus timers" label="Clock" value={formatHealthSleepDuration(recentSleepFocusMinutes)} />
@@ -2138,24 +2146,27 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel icon={<Sparkles />} subtitle="Selected date" title="Sleep Ledger">
+          </div>
+
+          <div className="contents xl:grid xl:content-start xl:gap-5">
+          <HealthPanel className="order-4 xl:order-none" icon={<Sparkles />} subtitle="Selected date" title="Sleep Ledger">
             <div className="space-y-3">
               {selectedSleepFocusSessions.length === 0 ? (
                 <EmptyCopy text={`No Sleep Focus sessions logged for ${formatHealthDateLabel(sleepLedgerDate)}.`} />
               ) : (
                 selectedSleepFocusSessions.map((session) => (
                   <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={session.id}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <AdhdChip tone="purple">{resolveHealthSleepKind(session, session.categoryId ? focusCategories.find((category) => category.id === session.categoryId) : null)}</AdhdChip>
                           <span className="text-xs text-[#74809b] dark:text-white/45">{formatHealthDateLabel(session.date)}</span>
                           <span className="text-xs text-[#74809b] dark:text-white/45">{formatHealthSleepStartTime(session)}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex shrink-0 items-center gap-2">
                         <span className="text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthSleepDuration(session.durationSeconds / 60)}</span>
-                        <button className="ui-pill-button-light" onClick={() => openSleepEdit(session)} type="button">Edit</button>
+                        <button className="ui-pill-button-light shrink-0" onClick={() => openSleepEdit(session)} type="button">Edit</button>
                       </div>
                     </div>
                     {editingSleepId === session.id && sleepEditDraft ? (
@@ -2174,6 +2185,7 @@ export function HealthPage({
               )}
             </div>
           </HealthPanel>
+          </div>
         </div>
       ) : null}
 
@@ -2214,15 +2226,15 @@ export function HealthPage({
             {importError ? <div className="mt-4"><EmptyCopy text={importError} /></div> : null}
             {importPreview ? (
               <div className="mt-4 rounded-[1.5rem] border border-[#e6ebfb] bg-white/85 p-4 dark:border-white/10 dark:bg-white/[0.04]">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-[#22304b] dark:text-white">{importPreview.fileName}</p>
                     <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">
                       {importPreview.startDate ? formatHealthDateLabel(importPreview.startDate) : "Unknown start"} to {importPreview.endDate ? formatHealthDateLabel(importPreview.endDate) : "Unknown end"}
                     </p>
                   </div>
                   <button
-                    className="rounded-full bg-[#6f57f6] px-4 py-2 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] disabled:cursor-not-allowed disabled:opacity-60 dark:bg-[#cabfff] dark:text-[#1a1431]"
+                    className="shrink-0 rounded-full bg-[#6f57f6] px-4 py-2 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] disabled:cursor-not-allowed disabled:opacity-60 dark:bg-[#cabfff] dark:text-[#1a1431]"
                     disabled={isSavingImport || importNewMetricCount === 0}
                     onClick={() => { void handleSaveImport(); }}
                     type="button"
@@ -2343,6 +2355,7 @@ export function HealthPage({
 }
 
 function HealthPanel({
+  className,
   collapseAfterHeaderActions = false,
   children,
   headerActions,
@@ -2350,6 +2363,7 @@ function HealthPanel({
   subtitle,
   title,
 }: {
+  className?: string;
   collapseAfterHeaderActions?: boolean;
   children: ReactNode;
   headerActions?: ReactNode;
@@ -2385,7 +2399,7 @@ function HealthPanel({
   );
 
   return (
-    <div className="rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]">
+    <div className={`${className ? `${className} ` : ""}rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]`}>
       <div className="flex items-center gap-2 px-5 py-5">
         {collapseAfterHeaderActions ? (
           <div className="flex min-w-0 flex-1 items-center gap-3">

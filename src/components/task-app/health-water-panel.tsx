@@ -298,8 +298,8 @@ function WaterEntryCard({
 
   return (
     <AdhdCard>
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-[#26324f] dark:text-white">
             {formatQuantity(entry.amount)} {entry.unit === "cup" ? (entry.amount === 1 ? "cup" : "cups") : "fl oz"}
           </p>
@@ -310,8 +310,9 @@ function WaterEntryCard({
             {formatQuantity(millilitersToWaterAmount(entry.amount_ml, entry.unit === "cup" ? "fl_oz" : "cup"))} {entry.unit === "cup" ? "fl oz" : "cups"}
           </p>
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex shrink-0 flex-nowrap justify-end gap-2">
           <AdhdChip
+            className="shrink-0"
             contentClassName="gap-1"
             icon={<Pencil aria-hidden="true" className="h-3 w-3" />}
             onClick={() => onStartEdit(entry)}
@@ -319,6 +320,7 @@ function WaterEntryCard({
             Edit
           </AdhdChip>
           <AdhdChip
+            className="shrink-0"
             contentClassName="gap-1"
             icon={<Trash2 aria-hidden="true" className="h-3 w-3" />}
             onClick={() => { void deleteWaterEntry(entry.id); }}
