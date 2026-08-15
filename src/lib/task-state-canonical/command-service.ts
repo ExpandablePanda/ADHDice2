@@ -101,6 +101,7 @@ export type CanonicalDelayCommand = CanonicalTaskStateCommandBase & {
 export type CanonicalScheduleCommand = CanonicalTaskStateCommandBase & {
   type: "schedule_change";
   changeKind: "due_date" | "repeat";
+  manual_action?: "unscheduled_status";
   scheduleBoundary: CanonicalTaskScheduleBoundary;
 };
 
@@ -238,6 +239,9 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
   };
   if (command.commandType === "clear_outcome") {
     payload.clear_logical_date = command.payload.clear_logical_date;
+  }
+  if (command.commandType === "set_due_date" && command.payload.manual_action === "unscheduled_status") {
+    payload.manual_action = "unscheduled_status";
   }
   if (history) {
     payload.history_fact = {

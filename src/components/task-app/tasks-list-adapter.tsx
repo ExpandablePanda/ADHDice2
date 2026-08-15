@@ -316,7 +316,7 @@ type TasksTableSourceProps = {
   onClearSelection?: () => void;
   onDeleteTaskActualTimeEntry?: (entryId: string) => void;
   onSetActualSeconds?: (taskId: string, seconds: number) => void;
-  onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }) => void;
+  onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }, options?: { manualAction?: "unscheduled_status" }) => void;
   onSetEnergy?: (taskId: string, energy: PrototypeTaskRow["energy"]) => void;
   onSetEstimatedMinutes?: (taskId: string, minutes: number | null) => void;
   onSetLink?: (taskId: string, nextLink: { label: string; url: string }) => void;
@@ -996,7 +996,7 @@ function StepsCardPreview({
   onOpenActualTime?: (taskId: string) => void;
   onDelayTaskUntil?: (taskId: string, dueOn: string | null) => Promise<boolean> | boolean;
   onSetActualSeconds?: (taskId: string, seconds: number) => void;
-  onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }) => void;
+  onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }, options?: { manualAction?: "unscheduled_status" }) => void;
   onSetEnergy?: (taskId: string, energy: PrototypeTaskRow["energy"]) => void;
   onSetEstimatedMinutes?: (taskId: string, minutes: number | null) => void;
   onSetLink?: (taskId: string, nextLink: { label: string; url: string }) => void;
@@ -1564,7 +1564,7 @@ function StepsCardPreview({
                               return;
                             }
                             if (status === "unscheduled") {
-                              onSetDue?.(item.id, { dueOn: "", dueTime: "" });
+                              onSetDue?.(item.id, { dueOn: "", dueTime: "" }, { manualAction: "unscheduled_status" });
                             } else {
                               onSetStatus?.(item.id, status, childTask, [item.id]);
                             }
@@ -3302,7 +3302,7 @@ function TasksSimpleList({
                       setRowContextMenu(null);
                       closeQuickPanel();
                       if (status === "unscheduled") {
-                        tableProps.onSetDue?.(task.id, { dueOn: "", dueTime: "" });
+                        tableProps.onSetDue?.(task.id, { dueOn: "", dueTime: "" }, { manualAction: "unscheduled_status" });
                       } else {
                         tableProps.onSetStatus?.(task.id, status, task, queueMeasuredListStatusScrollAnchor(task.id));
                       }

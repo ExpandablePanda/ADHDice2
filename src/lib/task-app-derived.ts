@@ -463,7 +463,12 @@ export function buildChildTaskPreviewLookup(
             timestamp: streakSummary.lastDoneAt,
           }
           : getTaskHistoryLastDone(taskHistoryByTaskId[descendant.id] ?? [], todayDateKey);
-        const lastHandled = getTaskHistoryLastHandled(taskHistoryByTaskId[descendant.id] ?? [], todayDateKey);
+        const lastHandled = streakSummary?.lastHandledDate !== undefined
+          ? {
+            dateKey: streakSummary.lastHandledDate,
+            timestamp: streakSummary.lastHandledAt ?? null,
+          }
+          : getTaskHistoryLastHandled(taskHistoryByTaskId[descendant.id] ?? [], todayDateKey);
 
         return {
           actualSeconds: descendant.actual_seconds,

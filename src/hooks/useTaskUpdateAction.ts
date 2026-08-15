@@ -28,6 +28,7 @@ type Message = {
 
 type UpdateTaskActionOptions = {
   canonicalIntent?: TaskStateRuntimeCanonicalIntent;
+  manualAction?: "unscheduled_status";
   replayIdentity?: string;
   engineManaged?: boolean;
   expectedTask?: Task | null;
@@ -172,6 +173,7 @@ export function useTaskUpdateAction({
         task: initialCanonicalTask,
         values,
         canonicalIntent: options?.canonicalIntent,
+        manualAction: options?.manualAction,
         ...(options?.replayIdentity ? { replayIdentity: options.replayIdentity } : {}),
       });
       if (initialRuntimeAction.kind !== "canonical_action") {
@@ -202,6 +204,7 @@ export function useTaskUpdateAction({
           task: currentCanonicalTask,
           values,
           canonicalIntent: options?.canonicalIntent,
+          manualAction: options?.manualAction,
           ...(options?.replayIdentity ? { replayIdentity: options.replayIdentity } : {}),
         });
         if (runtimeAction.kind !== "canonical_action") {
@@ -256,6 +259,10 @@ export function useTaskUpdateAction({
           } else {
             await onTaskHistoryMutation?.(taskId, refreshed.history, canonicalResult.task as Task);
           }
+        } else {
+          // Lifecycle, workflow, Calendar, and explicit schedule-origin commands
+          // are manual handling even when they do not create a History fact.
+          await onTaskHistoryMutation?.(taskId, taskHistory?.filter((entry) => entry.task_id === taskId) ?? [], canonicalResult.task as Task);
         }
         const canonicalRewardEntitlementId = canonicalResult.response.side_effect_ids.reward_entitlement_id;
         if (canonicalRewardEntitlementId && ["complete_task", "set_outcome"].includes(runtimeAction.actionType)) {

@@ -56,9 +56,9 @@ export function taskEffectiveTimelineDaysFromStates(
   }]));
 }
 
-function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | undefined): "success" | "missed" | "break" | null {
+function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | undefined): "success" | "missed" | "break" | "neutral" | null {
   if (!day) return null;
-  if (day.state === "not_due" && day.calendarOverrideId) return "break";
+  if (day.state === "not_due" && day.calendarOverrideId) return "neutral";
   const { state } = day;
   if (state === "done" || state === "did_my_best") return "success";
   if (state === "missed") return "missed";
@@ -70,8 +70,8 @@ function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | unde
 
 /**
  * Calculate streaks from resolved Effective Timeline days, not persisted rows.
- * Calculated neutral days are skipped; explicit manual Not Due boundaries and
- * other finalized break states terminate both streaks.
+ * Calculated neutral days are skipped; manual Not Due is neutral for positive
+ * streaks but remains a boundary for the current Missed streak.
  */
 export function computeTaskEffectiveTimelineStreaks(
   days: Readonly<Record<string, TaskEffectiveTimelineStreakDay>>,
@@ -80,6 +80,7 @@ export function computeTaskEffectiveTimelineStreaks(
   let cursor: string | null = logicalDate;
   let streakKind: "success" | "missed" | null = null;
   let streakLength = 0;
+  let crossedManualNotDue = false;
 
   while (cursor && Object.hasOwn(days, cursor)) {
     const finalizedKind = classifyFinalizedCalendarDay(days[cursor]);
@@ -88,6 +89,12 @@ export function computeTaskEffectiveTimelineStreaks(
       continue;
     }
     if (finalizedKind === "break") break;
+    if (finalizedKind === "neutral") {
+      crossedManualNotDue = true;
+      cursor = shiftDateKey(cursor, -1);
+      continue;
+    }
+    if (finalizedKind === "missed" && crossedManualNotDue) break;
     streakKind ??= finalizedKind;
     if (streakKind !== finalizedKind) break;
     streakLength += 1;

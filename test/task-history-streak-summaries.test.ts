@@ -6,7 +6,7 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import type { TaskHistory } from "../src/lib/database.types.ts";
 import { TASK_STATE_HISTORY_CUTOVER_DATE } from "../src/lib/task-history-cutover.ts";
 import { adaptLegacyTaskState } from "../src/lib/task-state-engine/legacy-adapter.ts";
-import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
+import { buildTaskEffectiveTimeline, computeTaskEffectiveTimelineStreaks } from "../src/lib/task-state-engine/effective-timeline.ts";
 import {
   buildTaskHistoryStreakSummaryMap,
   TASK_HISTORY_STREAK_SUMMARY_COLUMNS,
@@ -212,6 +212,43 @@ test("explicit Done and Did My Best win over a calculated Missed on the same dat
     assert.equal(summary?.currentStreak, 1, outcome);
     assert.equal(summary?.missedStreak, 0, outcome);
   }
+});
+
+test("manual Not Due is neutral for positive streaks but a boundary for Missed streaks", () => {
+  const successSuccessNotDueOpen = {
+    "2026-08-12": { calendarOverrideId: null, state: "did_my_best" as const },
+    "2026-08-13": { calendarOverrideId: null, state: "done" as const },
+    "2026-08-14": { calendarOverrideId: "manual-not-due", state: "not_due" as const },
+    "2026-08-15": { calendarOverrideId: null, state: "open" as const },
+  };
+  const positiveStreaks = computeTaskEffectiveTimelineStreaks(successSuccessNotDueOpen, "2026-08-15");
+  assert.equal(positiveStreaks.currentCompletedStreak, 2);
+  assert.equal(positiveStreaks.currentMissedStreak, 0);
+
+  const missedMissedNotDueOpen = {
+    "2026-08-12": { calendarOverrideId: null, state: "missed" as const },
+    "2026-08-13": { calendarOverrideId: null, state: "missed" as const },
+    "2026-08-14": { calendarOverrideId: "manual-not-due", state: "not_due" as const },
+    "2026-08-15": { calendarOverrideId: null, state: "open" as const },
+  };
+  assert.equal(computeTaskEffectiveTimelineStreaks(missedMissedNotDueOpen, "2026-08-15").currentMissedStreak, 0);
+});
+
+test("calculated Not Due stays neutral and explicit Missed breaks positive streak", () => {
+  const calculatedNotDue = {
+    "2026-08-12": { calendarOverrideId: null, state: "done" as const },
+    "2026-08-13": { calendarOverrideId: null, state: "not_due" as const },
+    "2026-08-14": { calendarOverrideId: null, state: "done" as const },
+    "2026-08-15": { calendarOverrideId: null, state: "open" as const },
+  };
+  assert.equal(computeTaskEffectiveTimelineStreaks(calculatedNotDue, "2026-08-15").currentCompletedStreak, 2);
+
+  const explicitMissed = {
+    "2026-08-13": { calendarOverrideId: null, state: "done" as const },
+    "2026-08-14": { calendarOverrideId: null, state: "missed" as const },
+    "2026-08-15": { calendarOverrideId: null, state: "open" as const },
+  };
+  assert.equal(computeTaskEffectiveTimelineStreaks(explicitMissed, "2026-08-15").currentCompletedStreak, 0);
 });
 
 test("calculated historical Missed days count without persisted History rows", () => {
@@ -437,6 +474,8 @@ test("normal Tasks startup uses a paged compact query and never starts full Hist
   assert.equal(TASK_HISTORY_STREAK_SUMMARY_COLUMNS, "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at");
   assert.match(streakSummarySource, /TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at"/);
   assert.match(workspaceSource, /fetchAllPagedRows<TaskHistoryStreakEntry>/);
+  assert.match(workspaceSource, /adhdice_task_command_operations/);
+  assert.match(workspaceSource, /manualActionCommandOperations/);
   assert.match(workspaceSource, /\.range\(from, to\)/);
   assert.match(coreLoader, /void loadTaskHistoryStreakSummaries\(nextTasks\)/);
   assert.doesNotMatch(coreLoader, /loadTaskHistory\(\{ silent: true, source: "secondary" \}\)/);

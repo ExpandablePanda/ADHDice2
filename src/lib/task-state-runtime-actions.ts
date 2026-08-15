@@ -151,6 +151,7 @@ export type ClassifyTaskStateRuntimeActionInput = {
   values?: TaskUpdate;
   /** Use for Calendar/rollover and other actions not expressible as TaskUpdate. */
   canonicalIntent?: TaskStateRuntimeCanonicalIntent & { replay_identity?: string };
+  manualAction?: "unscheduled_status";
   replayIdentity?: string;
 };
 
@@ -399,7 +400,7 @@ export function classifyTaskStateRuntimeAction(
     }
     const schedule = canonicalScheduleIntent(input.task, values);
     return schedule
-      ? canonicalAction(input.task, "set_due_date", fields, replayIdentity, { type: "set_due_date", schedule }, Object.fromEntries(scheduleDueFields.map((field) => [field, values[field]])) as TaskStateScheduleChanges)
+      ? canonicalAction(input.task, "set_due_date", fields, replayIdentity, { type: "set_due_date", schedule, ...(input.manualAction ? { manual_action: input.manualAction } : {}) }, Object.fromEntries(scheduleDueFields.map((field) => [field, values[field]])) as TaskStateScheduleChanges)
       : unsupported(fields, stateFields, metadataFields, "The due-date change does not contain enough canonical schedule information.");
   }
   if (scheduleRepeatFields.length > 0) {

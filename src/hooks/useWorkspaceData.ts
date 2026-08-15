@@ -22,7 +22,7 @@ import type {
 } from "@/lib/database.types";
 import { loadProfileMedia, setActiveProfileUserId, WORKSPACE_PROFILE_COLUMNS, type WorkspaceProfileRow } from "@/lib/profile-store";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { CanonicalTaskCalendarOverride, CanonicalTaskHistoryFact, CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
+import type { CanonicalTaskCalendarOverride, CanonicalTaskCommandOperation, CanonicalTaskHistoryFact, CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
 import { taskCalendarOverrideFromCanonical } from "@/lib/task-state-canonical/engine-input";
 import { projectTasksWithCanonicalScheduleBoundaries } from "@/lib/task-state-canonical/schedule-projection";
 import {
@@ -456,6 +456,18 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       return (result.data ?? []) as CanonicalTaskCalendarOverride[];
     }
 
+    async function loadManualActionCommandOperations(taskId?: string) {
+      let query = client
+        .from("adhdice_task_command_operations")
+        .select("id,user_id,entity_id,command_type,requested_logical_date,state,result_references,source_kind,created_at,completed_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+      if (taskId) query = query.eq("entity_id", taskId);
+      const result = await query;
+      if (result.error) return [] as CanonicalTaskCommandOperation[];
+      return (result.data ?? []) as CanonicalTaskCommandOperation[];
+    }
+
     function indexActiveCalendarOverrides(rows: readonly CanonicalTaskCalendarOverride[]) {
       const byTaskId: Record<string, TaskCalendarOverride[]> = {};
       for (const row of rows) {
@@ -851,7 +863,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             return false;
           }
 
-          const activeCalendarOverrides = await loadActiveCalendarOverrides();
+          const [activeCalendarOverrides, manualActionCommandOperations] = await Promise.all([
+            loadActiveCalendarOverrides(),
+            loadManualActionCommandOperations(),
+          ]);
           if (!activeCalendarOverrides || !isActive || !canApplyCoreWorkspaceResult()) {
             return false;
           }
@@ -859,6 +874,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           const nextSummaries = buildTaskHistoryStreakSummaryMap(nextTasks, compactHistory, todayKeyRef.current, {
             calendarOverridesByTaskId: indexActiveCalendarOverrides(activeCalendarOverrides),
             logicalDayRollover,
+            manualActionCalendarOverrides: activeCalendarOverrides,
+            manualActionCommandOperations,
             now,
             timezone,
           });
@@ -899,10 +916,15 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
           const task = nextTask ?? tasksRef.current.find((candidate) => candidate.id === taskId);
           if (!task) return false;
-          const activeCalendarOverrides = await loadActiveCalendarOverrides(taskId);
+          const [activeCalendarOverrides, manualActionCommandOperations] = await Promise.all([
+            loadActiveCalendarOverrides(taskId),
+            loadManualActionCommandOperations(taskId),
+          ]);
           if (!activeCalendarOverrides || !isActive || !canApplyCoreWorkspaceResult()) return false;
           const summaryContext = {
             calendarOverrides: activeCalendarOverrides.map(taskCalendarOverrideFromCanonical),
+            manualActionCalendarOverrides: activeCalendarOverrides,
+            manualActionCommandOperations,
             logicalDayRollover,
             now,
             timezone,

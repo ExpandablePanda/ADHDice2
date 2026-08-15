@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.5`.
+- Current working app version: `7.9.6`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,12 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.9.6 QA correction pass
+
+- Repeat structured filtering and normal ascending/descending sorting classify the exact Monday-Friday weekly interval-1 preset as the derived `weekdays` category. Weekdays has no separate sort mode and remains a normal category between Daily/Daily Until Complete and generic Weekly; recurrence persistence and editor labels are unchanged.
+- Last Handled is the latest logical date of an explicit manual Task State action. Its compact workspace summary unions canonical user History facts, active manual Calendar overrides, and committed runtime/manual command operations, while excluding calculated states, rollover, automation, migration reconstruction, repeat configuration, and metadata-only edits. Logical date orders first; legitimate same-date timestamps remain presentation metadata under cutover/provenance rules. Explicit Unscheduled carries an action-origin marker through the existing canonical command result reference so ordinary due-date clears do not count.
+- Manual Not Due is neutral for the current positive completion streak and therefore does not break `Did My Best`, `Done`, or `Complete` success continuity. It remains a Missed-streak boundary. Calculated Not Due remains neutral. Browser QA, live Supabase validation, and deployment verification remain unrun.
 
 ### 7.9.5 Historical rolling-outcome replay correction
 
@@ -31,7 +37,7 @@ Role: active working
 
 ### 7.9.3 Tasks workspace refinements
 
-- Manual-list context removal, exact Weekdays-first Repeat sorting, and History-authoritative Last Handled presentation are implemented without schema or recurrence-engine changes. Browser QA, live Supabase validation, and deployment verification remain unrun for this release.
+- Manual-list context removal and the initial Last Handled/Repeat presentation pass were corrected by 7.9.6; see the current release contract above.
 
 ### 7.8.18 Legacy History promotion rollback recovery
 

@@ -1,5 +1,6 @@
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
-import type { TaskEnergy, TaskRepeatFrequency } from "@/lib/database.types";
+import type { TaskEnergy } from "@/lib/database.types";
+import type { TaskRepeatCategory } from "@/lib/task-repeat";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskPriorityLevelOption } from "@/lib/task-priority";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
@@ -11,7 +12,7 @@ export type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused"
 export type TaskTableTextFilterColumnId = "title" | "lists" | "tags" | "link" | "notes";
 export type TaskTableColumnFilters = {
   priority: TaskPriorityLevelOption[];
-  repeat: TaskRepeatFrequency[];
+  repeat: TaskRepeatCategory[];
   text: Partial<Record<TaskTableTextFilterColumnId, string>>;
 };
 export type AppPage =

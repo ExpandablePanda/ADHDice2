@@ -55,6 +55,7 @@ import { TaskHierarchyChevronButton } from "@/components/task-app/task-hierarchy
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import {
   formatRepeatFrequencyLabel,
+  getTaskRepeatCategory,
   REPEAT_MONTHLY_MODE_OPTIONS,
   REPEAT_MONTHLY_ORDINAL_OPTIONS,
   isWeekdaysRepeatSelection,
@@ -86,6 +87,7 @@ import { resolveTaskTableLayoutPublishDecision, type TaskTableLayoutPreferences 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = TaskPriorityLevelOption;
 type TaskRepeat = "custom" | "daily" | "daily_until_complete" | "monthly" | "none" | "weekly";
+type TaskRepeatCategory = TaskRepeat | "weekdays";
 type SortOptionId =
   | "status_asc"
   | "status_desc"
@@ -95,7 +97,6 @@ type SortOptionId =
   | "energy_desc"
   | "repeat_asc"
   | "repeat_desc"
-  | "repeat_weekdays_first"
   | "text_asc"
   | "text_desc"
   | "due_asc"
@@ -137,7 +138,7 @@ type StructuredFilterColumnId = "status" | "priority" | "energy" | "repeat";
 type StructuredFilters = {
   energy: TaskEnergy[];
   priority: TaskPriority[];
-  repeat: TaskRepeat[];
+  repeat: TaskRepeatCategory[];
   status: TaskDisplayStatus[];
 };
 type OverlayMode = "actual" | "delay" | "due" | "energy" | "estimated" | "full" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
@@ -1135,7 +1136,7 @@ type TaskManagementTableV2Props = {
   onTaskActualSecondsChange?: (taskId: string, seconds: number) => void;
   taskActualTimeEntriesByTaskId?: Record<string, TaskActualTimeEntry[]>;
   learnedTaskDurationStatisticsByTaskId?: Record<string, { averageSeconds: number | null; completedSampleCount: number; latestSeconds: number | null; typicalSeconds: number | null }>;
-  onTaskDueChange?: (taskId: string, schedule: { dueOn: string; dueTime: string }) => void;
+  onTaskDueChange?: (taskId: string, schedule: { dueOn: string; dueTime: string }, options?: { manualAction?: "unscheduled_status" }) => void;
   onTaskEnergyChange?: (taskId: string, energy: TaskEnergy) => void;
   onTaskEstimatedMinutesChange?: (taskId: string, minutes: number | null) => void;
   onTaskLinkChange?: (taskId: string, nextLink: { label: string; url: string }) => void;
@@ -1430,6 +1431,15 @@ const REPEAT_OPTIONS: Array<{ label: string; value: TaskRepeat }> = [
   { label: "Monthly", value: "monthly" },
   { label: "Custom Cadence", value: "custom" },
 ];
+const REPEAT_CATEGORY_OPTIONS: Array<{ label: string; value: TaskRepeatCategory }> = [
+  { label: "No Repeat", value: "none" },
+  { label: "Daily", value: "daily" },
+  { label: "Daily Until Complete", value: "daily_until_complete" },
+  { label: "Weekdays", value: "weekdays" },
+  { label: "Weekly", value: "weekly" },
+  { label: "Monthly", value: "monthly" },
+  { label: "Custom", value: "custom" },
+];
 const WEEKDAYS_REPEAT_DAYS = [1, 2, 3, 4, 5] as const;
 
 const REPEAT_WEEKDAY_OPTIONS = [
@@ -1573,7 +1583,7 @@ const HEADER_COLUMNS: HeaderColumn[] = [
   { id: "notes", label: "Notes", menuLabel: "Notes", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search notes" },
   { id: "priority", label: "Priority", menuLabel: "Priority", options: [{ id: "priority_desc", label: "Sort high-low" }, { id: "priority_asc", label: "Sort low-high" }] },
   { id: "energy", label: "Energy", menuLabel: "Energy", options: [{ id: "energy_desc", label: "Sort high first" }, { id: "energy_asc", label: "Sort none first" }] },
-  { id: "repeat", label: "Repeat", menuLabel: "Repeat", options: [{ id: "repeat_desc", label: "Sort repeating first" }, { id: "repeat_asc", label: "Sort no repeat first" }, { id: "repeat_weekdays_first", label: "Weekdays first" }] },
+  { id: "repeat", label: "Repeat", menuLabel: "Repeat", options: [{ id: "repeat_desc", label: "Sort repeating first" }, { id: "repeat_asc", label: "Sort no repeat first" }] },
 ];
 const DEFAULT_STRUCTURED_FILTERS: StructuredFilters = {
   energy: [],
@@ -1590,7 +1600,7 @@ function summarizeInlineItems<T>(items: T[], maxVisible = 1) {
 }
 const PRIORITY_SORT_ORDER: TaskPriority[] = ["0", "1", "2", "3", "4", "5"];
 const ENERGY_SORT_ORDER: TaskEnergy[] = ["none", "low", "medium", "high"];
-const REPEAT_SORT_ORDER: TaskRepeat[] = ["none", "daily", "weekly", "monthly", "custom"];
+const REPEAT_SORT_ORDER: TaskRepeatCategory[] = ["none", "daily", "daily_until_complete", "weekdays", "weekly", "monthly", "custom"];
 const STATUS_SORT_ORDER: TaskDisplayStatus[] = [
   "unscheduled",
   "pending",
@@ -1952,7 +1962,7 @@ function priorityTone(priority: TaskPriority) {
   return getTaskPriorityToneClass(priority);
 }
 
-function repeatTone(repeat: TaskRepeat) {
+function repeatTone(repeat: TaskRepeatCategory) {
   return repeat === "none"
     ? "border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60"
     : "border-[#ddd2ff] bg-[#efe9ff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
@@ -2145,7 +2155,7 @@ function textSortValue(task: PrototypeTaskRow, columnId: SortColumnId) {
     case "energy":
       return task.energy;
     case "repeat":
-      return REPEAT_OPTIONS.find((option) => option.value === task.repeat)?.label ?? task.repeat;
+      return REPEAT_CATEGORY_OPTIONS.find((option) => option.value === getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval))?.label ?? task.repeat;
     default:
       return "";
   }
@@ -2180,7 +2190,7 @@ function energySortValue(task: PrototypeTaskRow) {
 }
 
 function repeatSortValue(task: PrototypeTaskRow) {
-  return REPEAT_SORT_ORDER.indexOf(task.repeat);
+  return REPEAT_SORT_ORDER.indexOf(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval));
 }
 
 function statusOrderValue(task: PrototypeTaskRow) {
@@ -2295,13 +2305,6 @@ function sortRows(
       comparison = prioritySortValue(left) - prioritySortValue(right);
     } else if (optionId === "energy_asc" || optionId === "energy_desc") {
       comparison = energySortValue(left) - energySortValue(right);
-    } else if (optionId === "repeat_weekdays_first") {
-      const leftIsWeekdays = isWeekdaysRepeatSelection(left.repeat, left.repeatDaysOfWeek, left.repeatInterval);
-      const rightIsWeekdays = isWeekdaysRepeatSelection(right.repeat, right.repeatDaysOfWeek, right.repeatInterval);
-      comparison = Number(rightIsWeekdays) - Number(leftIsWeekdays);
-      if (comparison === 0) {
-        comparison = repeatSortValue(left) - repeatSortValue(right);
-      }
     } else if (optionId === "repeat_asc" || optionId === "repeat_desc") {
       comparison = repeatSortValue(left) - repeatSortValue(right);
     } else {
@@ -2509,7 +2512,7 @@ export function TaskManagementTableV2({
   const structuredFilters = useMemo<StructuredFilters>(() => ({
     energy: energyColumnFilters ?? localStructuredFilters.energy,
     priority: columnFilters?.priority ?? localStructuredFilters.priority,
-    repeat: (columnFilters?.repeat as TaskRepeat[] | undefined) ?? localStructuredFilters.repeat,
+    repeat: (columnFilters?.repeat as TaskRepeatCategory[] | undefined) ?? localStructuredFilters.repeat,
     status: statusColumnFilters ?? localStructuredFilters.status,
   }), [columnFilters, energyColumnFilters, localStructuredFilters, statusColumnFilters]);
   const getShowAllSearchStepsKey = (taskId: string) => `${hierarchyScopeKey}:${taskId}`;
@@ -2722,7 +2725,7 @@ export function TaskManagementTableV2({
       && (structuredFilters.status.length === 0 || structuredFilters.status.includes(task.status))
       && (structuredFilters.priority.length === 0 || task.priorities.some((priority) => structuredFilters.priority.includes(priority)))
       && (structuredFilters.energy.length === 0 || structuredFilters.energy.includes(task.energy))
-      && (structuredFilters.repeat.length === 0 || structuredFilters.repeat.includes(task.repeat)));
+      && (structuredFilters.repeat.length === 0 || structuredFilters.repeat.includes(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval))));
 
     const nextDisplayedTasks = sortState
       ? sortRows(filtered, sortState.columnId, sortState.optionId, {
@@ -4442,7 +4445,7 @@ export function TaskManagementTableV2({
 
   function setTaskDisplayStatus(taskId: string, status: TaskDisplayStatus) {
     if (status === "unscheduled") {
-      onTaskDueChange?.(taskId, { dueOn: "", dueTime: "" });
+      onTaskDueChange?.(taskId, { dueOn: "", dueTime: "" }, { manualAction: "unscheduled_status" });
       return;
     }
     setTaskStatus(taskId, status);
@@ -6170,7 +6173,7 @@ export function TaskManagementTableV2({
         ) : null}
         {column.id === "repeat" ? (
           <div className="mb-2 flex flex-wrap gap-2 px-1">
-            {REPEAT_OPTIONS.map((option, optionIndex) => {
+            {REPEAT_CATEGORY_OPTIONS.map((option, optionIndex) => {
               const selected = structuredFilters.repeat.includes(option.value);
               return (
                 <button

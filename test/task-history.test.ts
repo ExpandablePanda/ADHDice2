@@ -667,7 +667,7 @@ test("Missed rows never qualify as Last Done and migration timestamps stay suppr
   });
 });
 
-test("Last Handled includes final outcomes, excludes Delayed, and uses the latest logical outcome", () => {
+test("Last Handled includes every manual History outcome, including Delayed, and uses the latest logical outcome", () => {
   const entries = [
     createHistoryEntry({ entryDate: "2026-08-10", id: "handled-done", status: "done", wasCompleted: true }),
     createHistoryEntry({ entryDate: "2026-08-11", id: "handled-delayed", status: "delayed", wasCompleted: false }),
@@ -684,7 +684,10 @@ test("Last Handled includes final outcomes, excludes Delayed, and uses the lates
     dateKey: "2026-08-13",
     timestamp: "2026-08-13T09:00:00.000Z",
   });
-  assert.equal(getTaskHistoryLastHandled([entries[1]], "2026-08-14"), null);
+  assert.deepEqual(getTaskHistoryLastHandled([entries[1]], "2026-08-14"), {
+    dateKey: "2026-08-11",
+    timestamp: "2026-08-11T09:00:00.000Z",
+  });
   assert.equal(getTaskHistoryLastDone(entries, "2026-08-14")?.dateKey, "2026-08-12");
 });
 

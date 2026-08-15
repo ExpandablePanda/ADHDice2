@@ -38,7 +38,8 @@ export type TaskStateCommandIntent =
   | { type: "set_outcome"; task_id: string; replay_identity: string; expected_revision?: number; outcome: "done" | "did_my_best" | "missed"; logical_date?: string; occurrence_key?: string; scheduled_due_on?: string }
   | { type: "complete_task"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; occurrence_key?: string; scheduled_due_on?: string }
   | { type: "delay_occurrence"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; occurrence_key?: string; effective_due_on: string }
-  | { type: "set_due_date" | "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: ScheduleChangeIntent }
+  | { type: "set_due_date"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: ScheduleChangeIntent; manual_action?: "unscheduled_status" }
+  | { type: "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: ScheduleChangeIntent }
   | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open"; reason?: string | null }
   | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
   | { type: "archive_task" | "trash_task" | "restore_task" | "clear_in_progress" | "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
@@ -133,6 +134,10 @@ export function validateTaskStateCommandIntent(value: unknown): TaskStateCommand
     if (!isDate(value.effective_due_on)) return null;
   } else if (type === "set_due_date" || type === "set_repeat") {
     ["logical_date", "schedule"].forEach((key) => allowed.add(key));
+    if (type === "set_due_date") {
+      allowed.add("manual_action");
+      if (value.manual_action !== undefined && value.manual_action !== "unscheduled_status") return null;
+    }
     if (!validScheduleIntent(value.schedule)) return null;
   } else if (type === "calendar_override") {
     ["logical_date", "override_state", "reason"].forEach((key) => allowed.add(key));
@@ -359,8 +364,9 @@ export function buildTrustedTaskStateCommand(input: {
       return { ...base, type: "delay", logicalDate: intent.logical_date, occurrenceId: occurrence.id, scheduledDueOn: occurrence.scheduled_due_on, effectiveDueOn: intent.effective_due_on, override: serverDelayOverride(intent, occurrence, readModel, base, now), occurrence };
     }
     case "set_due_date":
+      return { ...base, type: "schedule_change", changeKind: "due_date", ...(intent.manual_action ? { manual_action: intent.manual_action } : {}), scheduleBoundary: serverScheduleBoundary(intent, readModel, base, logicalDay, now) };
     case "set_repeat":
-      return { ...base, type: "schedule_change", changeKind: intent.type === "set_repeat" ? "repeat" : "due_date", scheduleBoundary: serverScheduleBoundary(intent, readModel, base, logicalDay, now) };
+      return { ...base, type: "schedule_change", changeKind: "repeat", scheduleBoundary: serverScheduleBoundary(intent, readModel, base, logicalDay, now) };
     case "calendar_override":
       return { ...base, type: "calendar_override", calendarOverride: serverCalendarOverride(intent, base, logicalDay, now) };
     case "clear_outcome":

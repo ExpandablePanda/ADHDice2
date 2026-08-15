@@ -7,11 +7,15 @@ import {
 import { resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine/calendar-authority";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
+import type { CanonicalTaskCommandOperation, CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/types";
+import { buildTaskHistoryLastHandledSummaryMap, type TaskHistoryLastHandledSummaryMap } from "@/lib/task-history-last-handled";
 
 export const TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at";
 
 export type TaskHistoryStreakSummary = {
   currentStreak: number;
+  lastHandledAt?: string | null;
+  lastHandledDate?: string | null;
   lastDoneAt: string | null;
   lastDoneDate: string | null;
   missedStreak: number;
@@ -22,9 +26,12 @@ export type TaskHistoryStreakSummaryMap = Record<string, TaskHistoryStreakSummar
 export type TaskHistoryStreakSummaryContext = {
   calendarOverrides?: TaskCalendarOverride[];
   calendarOverridesByTaskId?: Readonly<Record<string, TaskCalendarOverride[]>>;
+  manualActionCalendarOverrides?: CanonicalTaskCalendarOverride[];
+  manualActionCommandOperations?: CanonicalTaskCommandOperation[];
   logicalDayRollover?: string;
   now?: Date | string;
   timezone?: string;
+  manualActionSummaryByTaskId?: TaskHistoryLastHandledSummaryMap;
 };
 
 function resolveCalendarRange(
@@ -66,8 +73,11 @@ export function buildTaskHistoryStreakSummary(
     ? computeTaskEffectiveTimelineStreaks(resolvedTimelineDays, todayDateKey)
     : { currentCompletedStreak: 0, currentMissedStreak: 0 };
   const lastDone = getTaskHistoryLastDone(normalizedHistory, todayDateKey);
+  const lastHandled = context.manualActionSummaryByTaskId?.[task.id];
   return {
     currentStreak: streaks.currentCompletedStreak,
+    lastHandledAt: lastHandled?.timestamp ?? null,
+    lastHandledDate: lastHandled?.dateKey ?? null,
     lastDoneAt: lastDone?.timestamp ?? null,
     lastDoneDate: lastDone?.dateKey ?? null,
     missedStreak: streaks.currentMissedStreak,
@@ -87,12 +97,21 @@ export function buildTaskHistoryStreakSummaryMap(
     historyByTaskId.set(entry.task_id, entries);
   }
 
+  const manualActionSummaryByTaskId = context.manualActionSummaryByTaskId ?? buildTaskHistoryLastHandledSummaryMap(
+    tasks,
+    history as TaskHistory[],
+    context.manualActionCalendarOverrides ?? [],
+    context.manualActionCommandOperations ?? [],
+    todayDateKey,
+  );
+
   return Object.fromEntries(
     tasks.map((task) => [
       task.id,
       buildTaskHistoryStreakSummary(task, historyByTaskId.get(task.id) ?? [], todayDateKey, {
         ...context,
         calendarOverrides: context.calendarOverridesByTaskId?.[task.id] ?? context.calendarOverrides,
+        manualActionSummaryByTaskId,
       }),
     ]),
   );
@@ -105,11 +124,19 @@ export function updateTaskHistoryStreakSummaryMap(
   todayDateKey: string,
   context: TaskHistoryStreakSummaryContext = {},
 ): TaskHistoryStreakSummaryMap {
+  const manualActionSummaryByTaskId = context.manualActionSummaryByTaskId ?? buildTaskHistoryLastHandledSummaryMap(
+    [task],
+    history as TaskHistory[],
+    context.manualActionCalendarOverrides ?? [],
+    context.manualActionCommandOperations ?? [],
+    todayDateKey,
+  );
   return {
     ...current,
     [task.id]: buildTaskHistoryStreakSummary(task, history, todayDateKey, {
       ...context,
       calendarOverrides: context.calendarOverridesByTaskId?.[task.id] ?? context.calendarOverrides,
+      manualActionSummaryByTaskId,
     }),
   };
 }

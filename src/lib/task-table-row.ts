@@ -89,7 +89,12 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
       timestamp: context.taskHistoryStreakSummary.lastDoneAt,
     }
     : getTaskHistoryLastDone(context.taskHistory, context.todayDateKey);
-  const lastHandled = getTaskHistoryLastHandled(context.taskHistory, context.todayDateKey);
+  const lastHandled = context.taskHistoryStreakSummary?.lastHandledDate !== undefined
+    ? {
+      dateKey: context.taskHistoryStreakSummary.lastHandledDate,
+      timestamp: context.taskHistoryStreakSummary.lastHandledAt ?? null,
+    }
+    : getTaskHistoryLastHandled(context.taskHistory, context.todayDateKey);
   const priorities: PrototypeTaskRow["priorities"] = [formatTaskPriorityLevel(getTaskPriorityLevel(task))];
 
   const listLabels = context.listDefinitions.flatMap((listDefinition) =>

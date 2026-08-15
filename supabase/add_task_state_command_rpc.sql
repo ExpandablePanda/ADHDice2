@@ -135,7 +135,7 @@ begin
     where key not in (
       'task_patch', 'compatibility_projection', 'history_fact', 'occurrence',
       'schedule_boundary', 'occurrence_effective_override', 'calendar_override',
-      'reward_program_version', 'occurrence_key', 'clear_logical_date'
+      'reward_program_version', 'occurrence_key', 'clear_logical_date', 'manual_action'
     )
   ) then
     raise exception 'Task State command payload contains an unknown section.'
@@ -965,6 +965,7 @@ begin
     'occurrence_id', v_occurrence_id,
     'effective_override_id', v_effective_override_id,
     'calendar_override_id', v_calendar_override_id,
+    'manual_action', nullif(v_payload->>'manual_action', ''),
     'reward_entitlement_id', v_reward_entitlement_id,
     'compatibility_projection', v_projection,
     'canonical_task_patch', v_task_patch

@@ -388,8 +388,9 @@ test("task list removal eligibility requires a real manual destination and direc
 test("Tasks workspace registers the focused context action and Table sort/column seams", () => {
   const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
   const adapterSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
-  assert.match(tableSource, /repeat_weekdays_first/);
-  assert.match(tableSource, /isWeekdaysRepeatSelection\(left\.repeat, left\.repeatDaysOfWeek, left\.repeatInterval\)/);
+  assert.match(tableSource, /value: "weekdays"/);
+  assert.match(tableSource, /getTaskRepeatCategory\(task\.repeat, task\.repeatDaysOfWeek, task\.repeatInterval\)/);
+  assert.doesNotMatch(tableSource, /repeat_weekdays_first|Weekdays first/);
   assert.match(tableSource, /id: "last_handled", label: "Last Handled"/);
   assert.match(tableSource, /No handled/);
   assert.match(adapterSource, /onRemoveFromCurrentList/);

@@ -82,6 +82,22 @@ test("browser intent accepts only command input and derives identity from the au
   assert.equal(normalized.acceptedPayloadDigest, descriptor.acceptedPayloadDigest);
 });
 
+test("explicit Unscheduled marker survives Edge validation and canonical command normalization", () => {
+  const intent = {
+    type: "set_due_date",
+    task_id: "task-1",
+    replay_identity: "ui-unscheduled-1",
+    logical_date: "2026-08-10",
+    manual_action: "unscheduled_status",
+    schedule: { schedule_model: "unscheduled", repeat_frequency: "none" },
+  } as const;
+  assert.deepEqual(validateTaskStateCommandIntent(intent), intent);
+  const command = buildTrustedTaskStateCommand({ intent, userId: "owner-1", readModel: rebuiltReadModel(3, 7), logicalDay, now: "2026-08-10T12:00:00.000Z" });
+  assert.equal(command.type, "schedule_change");
+  assert.equal(command.manual_action, "unscheduled_status");
+  assert.equal(normalizeTaskStateCommand(command).payload.manual_action, "unscheduled_status");
+});
+
 test("accepted intent digest survives replay rebuilds with newer canonical and server-derived state", () => {
   const intent = {
     type: "start_in_progress",

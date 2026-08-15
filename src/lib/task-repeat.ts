@@ -1,6 +1,8 @@
 import { formatDateKey, shiftDateKey } from "@/lib/task-grid-layout";
 import type { Task, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 
+export type TaskRepeatCategory = Task["repeat_frequency"] | "weekdays";
+
 type ResolveRecurringLiveStatusOptions = {
   currentDayKey: string;
   dayStartTime: string;
@@ -272,6 +274,16 @@ export function isWeekdaysRepeatSelection(
     && Math.max(1, repeatInterval ?? 1) === 1
     && normalizedDays.length === WEEKDAYS_REPEAT_DAYS.length
     && WEEKDAYS_REPEAT_DAYS.every((day, index) => normalizedDays[index] === day);
+}
+
+export function getTaskRepeatCategory(
+  repeatFrequency: Task["repeat_frequency"],
+  repeatDaysOfWeek: number[] | null | undefined,
+  repeatInterval: number | null | undefined,
+): TaskRepeatCategory {
+  return isWeekdaysRepeatSelection(repeatFrequency, repeatDaysOfWeek, repeatInterval)
+    ? "weekdays"
+    : repeatFrequency;
 }
 
 export function formatRepeatFrequencyLabel(

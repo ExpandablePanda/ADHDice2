@@ -345,6 +345,7 @@ function isLastDoneHistoryEntry(entry: Pick<DbTaskHistory, "status">) {
 function isLastHandledHistoryEntry(entry: Pick<DbTaskHistory, "status">) {
   return entry.status === "done"
     || entry.status === "did_my_best"
+    || entry.status === "delayed"
     || entry.status === "missed"
     || entry.status === "complete";
 }
@@ -642,7 +643,7 @@ export function resolveLiveTaskStatusFromHistory(
   }
 
   if (task.repeat_frequency === "none") {
-    if (latestEntry?.status === "done" || latestEntry?.status === "did_my_best" || latestEntry?.status === "complete") {
+    if (latestEntry?.status === "done" || latestEntry?.status === "did_my_best") {
       return {
         completedAt: task.completed_at ?? now.toISOString(),
         status: latestEntry.status,
