@@ -630,11 +630,9 @@ export function TaskHistoryModal({
   const sortedDueDates = [...dueDates].sort();
   const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
   const savedHistoryStats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);
-  const resolvedStreaks = calendarRead?.timeline
-    ? calendarRead.timeline
-    : calendarRead
-      ? computeTaskEffectiveTimelineStreaks(calendarRead.states, today)
-      : null;
+  const resolvedStreaks = calendarRead
+    ? computeTaskEffectiveTimelineStreaks(calendarRead.states, today)
+    : null;
   const stats = resolvedStreaks
     ? {
       ...savedHistoryStats,

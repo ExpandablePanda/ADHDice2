@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildManualTaskHistoryOverrideOccurrenceMetadata } from "../src/lib/task-history.ts";
-import { resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/index.ts";
+import { computeTaskEffectiveTimelineStreaks, resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/index.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 
 const recurringTask = {
@@ -69,4 +69,39 @@ test("saved Not Due Calendar override is read back into the Effective Timeline",
 
   assert.equal(result?.timeline?.days["2026-08-05"]?.state, "not_due");
   assert.equal(result?.timeline?.days["2026-08-05"]?.calendarOverrideId, "override-1");
+});
+
+test("Task History read stats recalculate Current and Longest Missed Streak after active Not Due", () => {
+  const task = createTask({
+    created_at: "2026-08-01T12:00:00.000Z",
+    due_on: "2026-08-10",
+    id: "task-streak-override",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    status: "pending",
+    title: "Updates",
+  });
+  const input = {
+    calendarEnd: "2026-08-14",
+    calendarStart: "2026-08-10",
+    history: [],
+    logicalDayRollover: "00:00",
+    now: "2026-08-14T12:00:00.000Z",
+    task,
+    timezone: "UTC",
+  };
+  const before = resolveTaskHistoryCalendarRead(input);
+  const after = resolveTaskHistoryCalendarRead({
+    ...input,
+    calendarOverrides: [{ id: "override-12", logicalDate: "2026-08-12", overrideState: "not_due" }],
+  });
+  const displayedStats = computeTaskEffectiveTimelineStreaks(after?.states ?? {}, "2026-08-14");
+
+  assert.equal(before?.states["2026-08-12"], "missed");
+  assert.equal(before?.timeline?.currentMissedStreak, 4);
+  assert.equal(before?.timeline?.longestMissedStreak, 4);
+  assert.equal(after?.states["2026-08-12"], "not_due");
+  assert.equal(displayedStats.currentMissedStreak, 3);
+  assert.equal(displayedStats.longestMissedStreak, 3);
+  assert.equal(after?.states["2026-08-14"], "open");
 });
