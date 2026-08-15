@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.3`.
+- Current working app version: `7.9.4`.
 - Current release group: `7.8.x` Historical Outcome and Recurrence Authority Separation.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -19,6 +19,10 @@ Role: active working
 
 - Unscheduled is a UI-only active/display status for open pending Tasks and Steps/Substeps without a current due date. It is projected from the canonical active-status read and is used consistently by status chips, counts, filters, sorting, and status actions.
 - Selecting Unscheduled clears the existing schedule/date mutation path; it does not write a database status or create History. Browser QA, live Supabase validation, and deployment verification remain unrun for this release.
+
+### 7.9.4 Manual-list context correction
+
+- Manual-list context removal now requires the exact Task ID to have a direct manual membership in the current eligible list; inherited hierarchy visibility remains display-only for this action. Browser QA, live Supabase validation, and deployment verification remain unrun for this release.
 
 ### 7.9.3 Tasks workspace refinements
 

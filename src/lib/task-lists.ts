@@ -103,6 +103,21 @@ export function isManualTaskListDestination(list: Pick<TaskListDefinition, "id" 
     && (list.membershipMode === "manual" || list.membershipMode === "hybrid" || list.id === "waiting");
 }
 
+export function canRemoveTaskFromCurrentList(
+  taskId: string,
+  currentListId: string | null | undefined,
+  listDefinitions: TaskListDefinition[],
+  manualMembershipsByTaskId: Record<string, TaskListId[]>,
+) {
+  const list = listDefinitions.find((definition) => definition.id === currentListId);
+  return Boolean(
+    list
+    && isManualTaskListDestination(list)
+    && currentListId
+    && (manualMembershipsByTaskId[taskId] ?? []).includes(currentListId as TaskListId),
+  );
+}
+
 export function isTaskListSettingsEligible(list: Pick<TaskListDefinition, "id">) {
   return list.id !== "routine" && list.id !== "milestones";
 }

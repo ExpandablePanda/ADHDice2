@@ -20,7 +20,7 @@ import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPrevie
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskActualTimeEntry, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import { getSelectableTaskDisplayStatuses } from "@/lib/task-complete";
-import { hasTaskManualListMembership, isManualTaskListDestination, type TaskListDefinition } from "@/lib/task-lists";
+import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
@@ -362,6 +362,7 @@ type TasksTableSourceProps = {
     linkedNotesByTaskId: Record<string, TaskEditorLinkedNote[]>;
     listDefinitions: TaskListDefinition[];
     listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
+    manualMembershipsByTaskId: Record<string, TaskListId[]>;
     subtasksByTaskId: Record<string, TaskSubtask[]>;
     taskDisplayStatusByTaskId: Record<string, TaskDisplayStatus>;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
@@ -463,21 +464,6 @@ const TASK_TABLE_COLUMN_MAP: Record<AgentPlanColumnId, TaskManagementTableColumn
   signal: "status",
 };
 
-function canRemoveTaskFromCurrentList(
-  taskId: string,
-  currentListId: string | null | undefined,
-  listDefinitions: TaskListDefinition[],
-  listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>,
-) {
-  const list = listDefinitions.find((definition) => definition.id === currentListId);
-  return Boolean(
-    list
-    && isManualTaskListDestination(list)
-    && currentListId
-    && hasTaskManualListMembership(listMembershipsByTaskId[taskId] ?? [], currentListId as TaskListDefinition["id"]),
-  );
-}
-
 export function TasksTableAdapter({
   filterRowsNode,
   tableProps,
@@ -488,7 +474,7 @@ export function TasksTableAdapter({
     taskId,
     tableProps.currentListId,
     tableProps.rowContext.listDefinitions,
-    tableProps.rowContext.listMembershipsByTaskId,
+    tableProps.rowContext.manualMembershipsByTaskId,
   );
   const committedResultRevision = useMemo(
     () => tableProps.tasks.map((task) => `${task.id}:${task.revision}`).join("|"),
@@ -2505,7 +2491,7 @@ function TasksSimpleList({
     taskId,
     tableProps.currentListId ?? selectedBucket,
     tableProps.rowContext.listDefinitions,
-    tableProps.rowContext.listMembershipsByTaskId,
+    tableProps.rowContext.manualMembershipsByTaskId,
   );
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
