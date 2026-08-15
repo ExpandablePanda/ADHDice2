@@ -780,7 +780,7 @@ function buildTaskPrioritySelection(task: Task) {
   return [formatTaskPriorityLevel(getTaskPriorityLevel(task))] as TaskPriorityLevelOption[];
 }
 
-function hasTaskManualListMembership(listMemberships: Array<{ id: string }>, listId: string) {
+function hasTaskListMembership(listMemberships: Array<{ id: string }>, listId: string) {
   return listMemberships.some((membership) => membership.id === listId);
 }
 
@@ -3070,7 +3070,7 @@ function TasksSimpleList({
         const isQuickPanelOpen = activePanelMode !== null;
         const listMemberships = rowContext.listMembershipsByTaskId[task.id] ?? [];
         const isPinned = Boolean(task.pinned_at);
-        const isRoutine = hasTaskManualListMembership(listMemberships, "routine");
+        const isRoutine = hasTaskListMembership(listMemberships, "routine");
         const isMilestone = listMemberships.some((membership) => membership.id === "milestones");
         const stepPreviewGroup = tableProps.childTaskPreviewByParentTaskId?.[task.id];
         const effectiveStepPreviewGroup = stepPreviewGroup ?? (parentStepDraftTaskId === task.id
