@@ -20,7 +20,7 @@ import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPrevie
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskActualTimeEntry, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import { getSelectableTaskDisplayStatuses } from "@/lib/task-complete";
-import type { TaskListDefinition } from "@/lib/task-lists";
+import { hasTaskManualListMembership, isManualTaskListDestination, type TaskListDefinition } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
@@ -281,6 +281,7 @@ type TasksTableSourceProps = {
   onEnergyColumnFiltersChange?: (filters: Task["energy"][]) => void;
   onStatusColumnFiltersChange?: (filters: TaskDisplayStatus[]) => void;
   currentListLabel?: string | null;
+  currentListId?: string | null;
   getFollowTaskDestination?: (taskId: string) => { id: string; label: string } | null;
   overlayNode?: ReactNode;
   overlayOnly?: boolean;
@@ -448,6 +449,7 @@ const TASK_TABLE_COLUMN_MAP: Record<AgentPlanColumnId, TaskManagementTableColumn
   date_added: "date_added",
   date_completed: "date_completed",
   last_done: "last_done",
+  last_handled: "last_handled",
   due: "due",
   energy: "energy",
   estimated_time: "estimated",
@@ -461,12 +463,33 @@ const TASK_TABLE_COLUMN_MAP: Record<AgentPlanColumnId, TaskManagementTableColumn
   signal: "status",
 };
 
+function canRemoveTaskFromCurrentList(
+  taskId: string,
+  currentListId: string | null | undefined,
+  listDefinitions: TaskListDefinition[],
+  listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>,
+) {
+  const list = listDefinitions.find((definition) => definition.id === currentListId);
+  return Boolean(
+    list
+    && isManualTaskListDestination(list)
+    && currentListId
+    && hasTaskManualListMembership(listMembershipsByTaskId[taskId] ?? [], currentListId as TaskListDefinition["id"]),
+  );
+}
+
 export function TasksTableAdapter({
   filterRowsNode,
   tableProps,
   panelProps,
 }: TasksTableAdapterProps) {
   const [rowModelCache] = useState(createStableTaskRowModelCache);
+  const canRemoveFromCurrentList = (taskId: string) => canRemoveTaskFromCurrentList(
+    taskId,
+    tableProps.currentListId,
+    tableProps.rowContext.listDefinitions,
+    tableProps.rowContext.listMembershipsByTaskId,
+  );
   const committedResultRevision = useMemo(
     () => tableProps.tasks.map((task) => `${task.id}:${task.revision}`).join("|"),
     [tableProps.tasks],
@@ -596,6 +619,12 @@ export function TasksTableAdapter({
           onStatusColumnFiltersChange={tableProps.onStatusColumnFiltersChange}
           className="max-w-none p-0"
           currentListLabel={tableProps.currentListLabel}
+          canRemoveFromCurrentList={canRemoveFromCurrentList}
+          onRemoveFromCurrentList={(taskId) => {
+            if (tableProps.currentListId) {
+              tableProps.onToggleTaskList?.(taskId, tableProps.currentListId);
+            }
+          }}
           enableInspector
           getFollowTaskDestination={tableProps.getFollowTaskDestination}
           onClearSelection={tableProps.onClearSelection}
@@ -2472,6 +2501,12 @@ function TasksSimpleList({
   tableProps,
 }: TasksListAdapterProps) {
   const [rowModelCache] = useState(createStableTaskRowModelCache);
+  const canRemoveFromCurrentList = (taskId: string) => canRemoveTaskFromCurrentList(
+    taskId,
+    tableProps.currentListId ?? selectedBucket,
+    tableProps.rowContext.listDefinitions,
+    tableProps.rowContext.listMembershipsByTaskId,
+  );
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
   const [visibleMetadataTaskIds, setVisibleMetadataTaskIds] = useState<Set<string>>(() => new Set());
@@ -2898,6 +2933,13 @@ function TasksSimpleList({
               highlightedTaskIds={tableProps.highlightedTaskIds}
               className="m-0 max-w-none p-0"
               currentListLabel={tableProps.currentListLabel}
+              canRemoveFromCurrentList={canRemoveFromCurrentList}
+              onRemoveFromCurrentList={(taskId) => {
+                const currentListId = tableProps.currentListId ?? selectedBucket;
+                if (currentListId) {
+                  tableProps.onToggleTaskList?.(taskId, currentListId);
+                }
+              }}
               enableInspector
               getFollowTaskDestination={tableProps.getFollowTaskDestination}
               onClearSelection={tableProps.onClearSelection}
@@ -3626,6 +3668,14 @@ function TasksSimpleList({
                 tableProps.onOpenTaskActualTime?.(rowContextMenuTask.id);
                 setRowContextMenu(null);
               } : undefined}
+              onRemoveFromCurrentList={canRemoveFromCurrentList(rowContextMenuTask.id) && tableProps.onToggleTaskList ? () => {
+                const currentListId = tableProps.currentListId ?? selectedBucket;
+                if (currentListId) {
+                  tableProps.onToggleTaskList?.(rowContextMenuTask.id, currentListId);
+                }
+                setRowContextMenu(null);
+              } : undefined}
+              removeFromCurrentListLabel={currentListLabel ? `Remove from ${currentListLabel}` : undefined}
               onPromoteToMilestone={tableProps.onPromoteTaskToMilestone && tableProps.milestonePromotionTaskIds?.has(rowContextMenuTask.id) ? () => {
                 tableProps.onPromoteTaskToMilestone?.(rowContextMenuTask.id);
                 setRowContextMenu(null);

@@ -130,6 +130,8 @@ export type TaskHistoryLastDone = {
   timestamp: string | null;
 };
 
+export type TaskHistoryLastHandled = TaskHistoryLastDone;
+
 export const TASK_HISTORY_COLUMNS = "id,task_id,user_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at";
 
 export type TaskHistoryStreakEntry = Pick<
@@ -340,6 +342,13 @@ function isLastDoneHistoryEntry(entry: Pick<DbTaskHistory, "status">) {
   return entry.status === "done" || entry.status === "did_my_best";
 }
 
+function isLastHandledHistoryEntry(entry: Pick<DbTaskHistory, "status">) {
+  return entry.status === "done"
+    || entry.status === "did_my_best"
+    || entry.status === "missed"
+    || entry.status === "complete";
+}
+
 function isHandledTodayHistoryEntry(entry: Pick<DbTaskHistory, "status">) {
   return entry.status === "done" || entry.status === "did_my_best" || entry.status === "missed";
 }
@@ -354,7 +363,7 @@ function getHistoryPresentationTimestamp(
   return shouldExposeHistoryEventTimestamp(entry) ? getHistoryTimestamp(entry) : null;
 }
 
-function compareLastDoneEntries(left: TaskHistoryStreakEntry, right: TaskHistoryStreakEntry) {
+function compareLatestOutcomeEntries(left: TaskHistoryStreakEntry, right: TaskHistoryStreakEntry) {
   const dateOrder = compareDateKeys(left.entry_date, right.entry_date);
   if (dateOrder !== 0) {
     return dateOrder;
@@ -379,7 +388,7 @@ function getTimestampDateKey(timestamp: string | null) {
   return timestamp?.slice(0, 10) ?? null;
 }
 
-function getLastDonePresentationTimestamp(
+function getLatestOutcomePresentationTimestamp(
   entry: TaskHistoryStreakEntry,
   currentLogicalDateKey?: string,
 ) {
@@ -396,21 +405,36 @@ function getLastDonePresentationTimestamp(
     : `${entry.entry_date}T00:00:00`;
 }
 
-export function getTaskHistoryLastDone(
+function getLatestTaskHistoryOutcome(
   history: readonly TaskHistoryStreakEntry[],
+  qualifies: (entry: Pick<DbTaskHistory, "status">) => boolean,
   currentLogicalDateKey?: string,
 ): TaskHistoryLastDone | null {
   const latestEntry = deduplicateTaskHistoryByLogicalDate(history)
-    .filter(isLastDoneHistoryEntry)
-    .sort(compareLastDoneEntries)
+    .filter(qualifies)
+    .sort(compareLatestOutcomeEntries)
     .at(-1);
 
   return latestEntry
     ? {
       dateKey: latestEntry.entry_date,
-      timestamp: getLastDonePresentationTimestamp(latestEntry, currentLogicalDateKey),
+      timestamp: getLatestOutcomePresentationTimestamp(latestEntry, currentLogicalDateKey),
     }
     : null;
+}
+
+export function getTaskHistoryLastDone(
+  history: readonly TaskHistoryStreakEntry[],
+  currentLogicalDateKey?: string,
+): TaskHistoryLastDone | null {
+  return getLatestTaskHistoryOutcome(history, isLastDoneHistoryEntry, currentLogicalDateKey);
+}
+
+export function getTaskHistoryLastHandled(
+  history: readonly TaskHistoryStreakEntry[],
+  currentLogicalDateKey?: string,
+): TaskHistoryLastHandled | null {
+  return getLatestTaskHistoryOutcome(history, isLastHandledHistoryEntry, currentLogicalDateKey);
 }
 
 export function isTaskHandledOnDate(history: DbTaskHistory[], dateKey: string) {

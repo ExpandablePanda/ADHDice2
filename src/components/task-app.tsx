@@ -585,7 +585,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.2";
+const APP_VERSION = "7.9.3";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -900,6 +900,7 @@ const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   date_added: "Date Added",
   date_completed: "Date Completed",
   last_done: "Last Done",
+  last_handled: "Last Handled",
   due: "Due",
   energy: "Energy",
   estimated_time: "Estimated Time",
@@ -912,7 +913,7 @@ const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   repeat: "Repeat",
   signal: "Indicators",
 };
-const LIST_COLUMN_PICKER_ORDER: AgentPlanColumnId[] = ["bucket", "date_added", "last_done", "due", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "energy", "repeat", "signal"];
+const LIST_COLUMN_PICKER_ORDER: AgentPlanColumnId[] = ["bucket", "date_added", "last_done", "last_handled", "due", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "energy", "repeat", "signal"];
 const TASK_KEYBOARD_SHORTCUTS: TaskKeyboardShortcut[] = [
   { action: "Search tasks", keys: ["/"] },
   { action: "New task", keys: ["N"], alternateKeys: ["A"] },
@@ -7248,6 +7249,7 @@ export function TaskApp() {
                   statusFilterActive: hierarchyStatusFilterActive,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
+                  currentListId: taskUiState.selectedBucket,
                   getFollowTaskDestination,
                   overlayNode: null,
                   onCreateTaskList: async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null }),
@@ -7393,6 +7395,7 @@ export function TaskApp() {
                 panelProps={listPanelProps}
                 selectedBucket={taskUiState.selectedBucket}
                 tableProps={{
+                  currentListId: taskUiState.selectedBucket,
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,

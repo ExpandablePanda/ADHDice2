@@ -1,4 +1,5 @@
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { createTask } from "../src/lib/task-buckets.ts";
 import {
@@ -14,6 +15,7 @@ import {
   calcNextDueDate,
   filterMissingTaskHistoryDateKeys,
   formatRepeatSummary,
+  isWeekdaysRepeatSelection,
   resolveRecurringLiveStatusFromNextDueDate,
   shouldReconcileOverdueTaskMisses,
 } from "../src/lib/task-repeat.ts";
@@ -23,7 +25,8 @@ import { isValidDateKey, normalizeTaskFocusIds } from "../src/lib/task-focus-day
 import { normalizeLogoSrc } from "../src/lib/profile-store.ts";
 import { buildAgentPlanTaskItem } from "../src/lib/task-agent-plan.ts";
 import { buildTaskTableRow } from "../src/lib/task-table-row.ts";
-import { isManualTaskListDestination, matchesTaskListRules } from "../src/lib/task-lists.ts";
+import { hasTaskManualListMembership, isManualTaskListDestination, matchesTaskListRules } from "../src/lib/task-lists.ts";
+import { migrateLegacyTaskUiState, type TaskUiState } from "../src/lib/task-ui-state.ts";
 import { buildFocusLabelOptions } from "../src/lib/task-focus-labels.ts";
 import { buildWidgetTypeGuard, parseTaskGridLayoutJson } from "../src/lib/task-grid-parser.ts";
 import { mapTaskListManualMembershipRow } from "../src/lib/task-list-mappers.ts";
@@ -81,6 +84,9 @@ test("repeat helpers compute summaries and next due date", () => {
   });
   assert.equal(formatRepeatSummary(weekdaysTask), "Weekdays");
   assert.equal(calcNextDueDate(weekdaysTask), "2026-05-25");
+  assert.equal(isWeekdaysRepeatSelection(weekdaysTask.repeat_frequency, weekdaysTask.repeat_days_of_week, weekdaysTask.repeat_interval), true);
+  assert.equal(isWeekdaysRepeatSelection("weekly", [1, 2, 3, 4, 6], 1), false);
+  assert.equal(isWeekdaysRepeatSelection("weekly", [1, 2, 3, 4, 5], 2), false);
 });
 
 test("daily until complete repeat helpers advance like daily and expose the locked label", () => {
@@ -336,6 +342,9 @@ test("task table row helper maps task directly to live table shape", () => {
 
   assert.equal(row.id, "task-table-row");
   assert.equal(row.completedAt, "2026-05-21T14:30:00.000Z");
+  assert.equal(row.lastHandledDate, null);
+  assert.equal(row.lastHandledAt, null);
+  assert.equal(row.lastDoneDate, null);
   assert.deepEqual(row.priorities, ["focus", "important"]);
   assert.deepEqual(row.lists, ["Custom"]);
   assert.equal(row.subtasks[0]?.title, "Step");
@@ -365,6 +374,31 @@ test("full Table row definitions resolve Routine without exposing it as a manual
   });
   assert.deepEqual(row.lists, ["Routine"]);
   assert.equal(isManualTaskListDestination(routine), false);
+});
+
+test("task list removal eligibility requires a real manual destination and direct membership", () => {
+  const directMembership = [{ id: "list:manual", isManual: true }];
+  assert.equal(hasTaskManualListMembership(directMembership, "list:manual"), true);
+  assert.equal(hasTaskManualListMembership([{ id: "list:smart", isManual: false }], "list:smart"), false);
+  assert.equal(isManualTaskListDestination({ id: "list:manual", membershipMode: "manual" }), true);
+  assert.equal(isManualTaskListDestination({ id: "list:smart", membershipMode: "rules" }), false);
+  assert.equal(isManualTaskListDestination({ id: "all", membershipMode: "system" }), false);
+});
+
+test("Tasks workspace registers the focused context action and Table sort/column seams", () => {
+  const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
+  const adapterSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
+  assert.match(tableSource, /repeat_weekdays_first/);
+  assert.match(tableSource, /isWeekdaysRepeatSelection\(left\.repeat, left\.repeatDaysOfWeek, left\.repeatInterval\)/);
+  assert.match(tableSource, /id: "last_handled", label: "Last Handled"/);
+  assert.match(tableSource, /No handled/);
+  assert.match(adapterSource, /onRemoveFromCurrentList/);
+  assert.match(adapterSource, /hasTaskManualListMembership/);
+});
+
+test("legacy Table column preferences insert Last Handled after Last Done", () => {
+  const columns = migrateLegacyTaskUiState({ visibleColumnsByView: { table: ["last_done", "due"] } as TaskUiState["visibleColumnsByView"] }).visibleColumnsByView.table;
+  assert.deepEqual(columns.slice(0, 3), ["last_done", "last_handled", "due"]);
 });
 
 test("task list rule evaluation memoizes duplicate list references", () => {

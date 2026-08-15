@@ -79,9 +79,9 @@ test("List sorting preserves Manual order and sorts the filtered parent projecti
   const ids = (field: ListSortField, direction: "asc" | "desc" = "asc") => sortListParentTasks(tasks, { field, direction }, {
     taskHistoryByTaskId,
     taskHistoryStreakSummaryByTaskId: {
-      alpha: { currentStreak: 1, lastDoneAt: "2026-07-18T12:00:00.000Z", lastDoneDate: "2026-07-18", missedStreak: 0 },
-      beta: { currentStreak: 2, lastDoneAt: "2026-07-18T12:00:00.000Z", lastDoneDate: "2026-07-18", missedStreak: 0 },
-      gamma: { currentStreak: 0, lastDoneAt: null, lastDoneDate: null, missedStreak: 0 },
+      alpha: { currentStreak: 1, lastDoneAt: "2026-07-18T12:00:00.000Z", lastDoneDate: "2026-07-18", lastHandledAt: null, lastHandledDate: null, missedStreak: 0 },
+      beta: { currentStreak: 2, lastDoneAt: "2026-07-18T12:00:00.000Z", lastDoneDate: "2026-07-18", lastHandledAt: null, lastHandledDate: null, missedStreak: 0 },
+      gamma: { currentStreak: 0, lastDoneAt: null, lastDoneDate: null, lastHandledAt: null, lastHandledDate: null, missedStreak: 0 },
     },
     todayDateKey: "2026-07-19",
   }).map((entry) => entry.id);
@@ -152,7 +152,7 @@ test("Table renders the active same-table QA hierarchy on a plain descendant pla
   const childTaskPreviewByParentTaskId = buildChildTaskPreviewLookup([parentTask, stepTask, substepTask]);
   const parentRow: PrototypeTaskRow = {
     actualSeconds: 0, completedAt: null, createdAt: parentTask.created_at, currentStreak: 0, dueOn: "", dueTime: "", energy: "medium",
-    estimatedMinutes: 20, id: parentTask.id, lastDoneAt: null, lastDoneDate: null, linkLabel: "", linkUrl: "", linkedNotes: [], lists: [],
+    estimatedMinutes: 20, id: parentTask.id, lastDoneAt: null, lastDoneDate: null, lastHandledAt: null, lastHandledDate: null, linkLabel: "", linkUrl: "", linkedNotes: [], lists: [],
     missedStreak: 0, notes: "", pinOrder: null, pinnedAt: null, priorities: ["3"], repeat: "none", repeatDayOfMonth: null,
     repeatDaysOfWeek: [], repeatInterval: 1, repeatMonthlyMode: "day_of_month", repeatMonthlyOrdinal: null, repeatMonthlyWeekday: null,
     status: "pending", subtasks: [], subtasksAutoReset: false, tags: [], title: parentTask.title, trashedAt: null, updatedAt: parentTask.updated_at,

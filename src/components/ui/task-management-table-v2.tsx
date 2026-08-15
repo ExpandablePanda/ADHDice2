@@ -95,6 +95,7 @@ type SortOptionId =
   | "energy_desc"
   | "repeat_asc"
   | "repeat_desc"
+  | "repeat_weekdays_first"
   | "text_asc"
   | "text_desc"
   | "due_asc"
@@ -111,6 +112,7 @@ type SortColumnId =
   | "date_added"
   | "date_completed"
   | "last_done"
+  | "last_handled"
   | "due"
   | "estimated"
   | "actual"
@@ -300,6 +302,8 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
     createdAt: row.createdAt,
     lastDoneAt: row.lastDoneAt,
     lastDoneDate: row.lastDoneDate,
+    lastHandledAt: row.lastHandledAt,
+    lastHandledDate: row.lastHandledDate,
     updatedAt: row.updatedAt,
     dueOn: row.dueOn,
     dueTime: row.dueTime,
@@ -401,6 +405,8 @@ type TaskRowContextMenuProps = {
   onOpenHistory?: () => void;
   onOpenQuickEdit?: (mode: TaskRowContextMenuQuickEditMode, sourceElement?: HTMLElement | null) => void;
   onOpenTimeLog?: () => void;
+  onRemoveFromCurrentList?: () => void;
+  removeFromCurrentListLabel?: string;
   onPromoteToMilestone?: () => void;
   onDetachAndPromoteToMilestone?: () => void;
   onRestoreTask?: () => void;
@@ -432,6 +438,8 @@ export function TaskRowContextMenu({
   onOpenHistory,
   onOpenQuickEdit,
   onOpenTimeLog,
+  onRemoveFromCurrentList,
+  removeFromCurrentListLabel,
   onPromoteToMilestone,
   onDetachAndPromoteToMilestone,
   onRestoreTask,
@@ -599,6 +607,15 @@ export function TaskRowContextMenu({
               onClick={() => onUnlinkTask()}
             >
               <span>Unlink step</span>
+              <MoveLeft className="h-3.5 w-3.5" />
+            </TaskTableChipButton>
+          ) : null}
+          {onRemoveFromCurrentList ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={onRemoveFromCurrentList}
+            >
+              <span>{removeFromCurrentListLabel ?? "Remove from list"}</span>
               <MoveLeft className="h-3.5 w-3.5" />
             </TaskTableChipButton>
           ) : null}
@@ -918,6 +935,8 @@ export type PrototypeTaskRow = {
   linkUrl: string;
   lastDoneAt: string | null;
   lastDoneDate: string | null;
+  lastHandledAt: string | null;
+  lastHandledDate: string | null;
   lists: string[];
   linkedNotes: Array<{ id: string; title: string }>;
   notes: string;
@@ -1066,6 +1085,8 @@ type TaskManagementTableV2Props = {
   onStatusColumnFiltersChange?: (filters: TaskDisplayStatus[]) => void;
   className?: string;
   currentListLabel?: string | null;
+  canRemoveFromCurrentList?: (taskId: string) => boolean;
+  onRemoveFromCurrentList?: (taskId: string) => void;
   enableInspector?: boolean;
   overlayNode?: ReactNode;
   onInspectorClose?: () => void;
@@ -1352,6 +1373,13 @@ function normalizePersistedColumnOrder(columnOrder: TaskTableLayoutPreferences["
   const storedOrder = columnOrder ?? [];
   const validStoredOrder = storedOrder.filter((columnId) => HEADER_COLUMNS.some((column) => column.id === columnId));
   const missingColumns = HEADER_COLUMNS.map((column) => column.id).filter((columnId) => !validStoredOrder.includes(columnId));
+  const lastHandledIndex = missingColumns.indexOf("last_handled");
+  const lastDoneIndex = validStoredOrder.indexOf("last_done");
+  if (lastHandledIndex >= 0 && lastDoneIndex >= 0) {
+    const nextOrder = [...validStoredOrder];
+    nextOrder.splice(lastDoneIndex + 1, 0, "last_handled");
+    return [...nextOrder, ...missingColumns.filter((columnId) => columnId !== "last_handled")];
+  }
   return [...validStoredOrder, ...missingColumns];
 }
 
@@ -1469,6 +1497,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   date_added: 116,
   date_completed: 132,
   last_done: 116,
+  last_handled: 116,
   due: 92,
   estimated: 76,
   actual: 76,
@@ -1491,6 +1520,7 @@ const MIN_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   date_added: 92,
   date_completed: 104,
   last_done: 92,
+  last_handled: 92,
   due: 64,
   estimated: 60,
   actual: 60,
@@ -1510,6 +1540,7 @@ const COLUMN_WIDTH_BUFFER: Record<TaskManagementTableColumnId, number> = {
   date_added: 8,
   date_completed: 8,
   last_done: 8,
+  last_handled: 8,
   due: 4,
   estimated: 4,
   actual: 4,
@@ -1532,6 +1563,7 @@ const HEADER_COLUMNS: HeaderColumn[] = [
   { id: "date_added", label: "Date Added", menuLabel: "Date Added", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
   { id: "date_completed", label: "Date Completed", menuLabel: "Date Completed", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
   { id: "last_done", label: "Last Done", menuLabel: "Last Done", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
+  { id: "last_handled", label: "Last Handled", menuLabel: "Last Handled", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
   { id: "due", label: "Due", menuLabel: "Due", options: [{ id: "due_asc", label: "Sort earliest first" }, { id: "due_desc", label: "Sort latest first" }] },
   { id: "estimated", label: "Est.", menuLabel: "Estimated time", options: [{ id: "number_asc", label: "Sort low-high" }, { id: "number_desc", label: "Sort high-low" }] },
   { id: "actual", label: "Actual", menuLabel: "Actual time", options: [{ id: "active_first", label: "Sort active timers first" }, { id: "number_asc", label: "Sort low-high" }, { id: "number_desc", label: "Sort high-low" }] },
@@ -1541,7 +1573,7 @@ const HEADER_COLUMNS: HeaderColumn[] = [
   { id: "notes", label: "Notes", menuLabel: "Notes", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search notes" },
   { id: "priority", label: "Priority", menuLabel: "Priority", options: [{ id: "priority_desc", label: "Sort high-low" }, { id: "priority_asc", label: "Sort low-high" }] },
   { id: "energy", label: "Energy", menuLabel: "Energy", options: [{ id: "energy_desc", label: "Sort high first" }, { id: "energy_asc", label: "Sort none first" }] },
-  { id: "repeat", label: "Repeat", menuLabel: "Repeat", options: [{ id: "repeat_desc", label: "Sort repeating first" }, { id: "repeat_asc", label: "Sort no repeat first" }] },
+  { id: "repeat", label: "Repeat", menuLabel: "Repeat", options: [{ id: "repeat_desc", label: "Sort repeating first" }, { id: "repeat_asc", label: "Sort no repeat first" }, { id: "repeat_weekdays_first", label: "Weekdays first" }] },
 ];
 const DEFAULT_STRUCTURED_FILTERS: StructuredFilters = {
   energy: [],
@@ -2027,6 +2059,15 @@ function lastDoneSortValue(task: PrototypeTaskRow) {
   return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp;
 }
 
+function lastHandledSortValue(task: PrototypeTaskRow) {
+  const value = task.lastHandledAt ?? task.lastHandledDate;
+  if (!value) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const timestamp = Date.parse(value.includes("T") ? value : `${value}T12:00:00`);
+  return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp;
+}
+
 export function stopRowActionPointerEvent(event: ReactPointerEvent<HTMLElement>) {
   event.stopPropagation();
 }
@@ -2214,6 +2255,10 @@ function sortRows(
       return left.lastDoneAt || left.lastDoneDate ? -1 : 1;
     }
 
+    if (columnId === "last_handled" && Boolean(left.lastHandledAt ?? left.lastHandledDate) !== Boolean(right.lastHandledAt ?? right.lastHandledDate)) {
+      return left.lastHandledAt || left.lastHandledDate ? -1 : 1;
+    }
+
     let comparison = 0;
 
     if (optionId === "text_asc" || optionId === "text_desc") {
@@ -2233,11 +2278,15 @@ function sortRows(
         ? dateCompletedSortValue(left)
         : columnId === "last_done"
           ? lastDoneSortValue(left)
+          : columnId === "last_handled"
+            ? lastHandledSortValue(left)
           : dateAddedSortValue(left);
       const rightDate = columnId === "date_completed"
         ? dateCompletedSortValue(right)
         : columnId === "last_done"
           ? lastDoneSortValue(right)
+          : columnId === "last_handled"
+            ? lastHandledSortValue(right)
           : dateAddedSortValue(right);
       comparison = leftDate - rightDate;
     } else if (optionId === "due_asc" || optionId === "due_desc") {
@@ -2246,6 +2295,13 @@ function sortRows(
       comparison = prioritySortValue(left) - prioritySortValue(right);
     } else if (optionId === "energy_asc" || optionId === "energy_desc") {
       comparison = energySortValue(left) - energySortValue(right);
+    } else if (optionId === "repeat_weekdays_first") {
+      const leftIsWeekdays = isWeekdaysRepeatSelection(left.repeat, left.repeatDaysOfWeek, left.repeatInterval);
+      const rightIsWeekdays = isWeekdaysRepeatSelection(right.repeat, right.repeatDaysOfWeek, right.repeatInterval);
+      comparison = Number(rightIsWeekdays) - Number(leftIsWeekdays);
+      if (comparison === 0) {
+        comparison = repeatSortValue(left) - repeatSortValue(right);
+      }
     } else if (optionId === "repeat_asc" || optionId === "repeat_desc") {
       comparison = repeatSortValue(left) - repeatSortValue(right);
     } else {
@@ -2293,6 +2349,8 @@ export function TaskManagementTableV2({
   onStatusColumnFiltersChange,
   className = "",
   currentListLabel = null,
+  canRemoveFromCurrentList,
+  onRemoveFromCurrentList,
   enableInspector = true,
   overlayNode,
   onInspectorClose,
@@ -5049,6 +5107,10 @@ export function TaskManagementTableV2({
       energy: item.energy,
       estimatedMinutes: item.estimatedMinutes,
       id: item.id,
+      lastDoneAt: item.lastDoneAt,
+      lastDoneDate: item.lastDoneDate,
+      lastHandledAt: item.lastHandledAt,
+      lastHandledDate: item.lastHandledDate,
       linkLabel: item.linkLabel,
       linkUrl: item.linkUrl,
       linkedNotes: [],
@@ -6909,6 +6971,17 @@ export function TaskManagementTableV2({
       );
     }
 
+    if (columnId === "last_handled") {
+      const lastHandledValue = task.lastHandledAt ?? task.lastHandledDate;
+      return wrapMeasuredContent(
+        <div>
+          <span className={`${CHIP_BASE} ${lastHandledValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
+            {task.lastHandledAt ? formatEntryTimestamp(task.lastHandledAt) : task.lastHandledDate ? formatCalendarDate(task.lastHandledDate) : "No handled"}
+          </span>
+        </div>
+      );
+    }
+
     if (columnId === "estimated") {
       return wrapInteractiveCell(
         wrapMeasuredContent(
@@ -7725,6 +7798,17 @@ export function TaskManagementTableV2({
         <div>
           <span className={`${CHIP_BASE} ${lastDoneValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
             {item.lastDoneAt ? formatEntryTimestamp(item.lastDoneAt) : item.lastDoneDate ? formatCalendarDate(item.lastDoneDate) : "No done yet"}
+          </span>
+        </div>
+      );
+    }
+
+    if (columnId === "last_handled") {
+      const lastHandledValue = item.lastHandledAt ?? item.lastHandledDate;
+      return (
+        <div>
+          <span className={`${CHIP_BASE} ${lastHandledValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
+            {item.lastHandledAt ? formatEntryTimestamp(item.lastHandledAt) : item.lastHandledDate ? formatCalendarDate(item.lastHandledDate) : "No handled"}
           </span>
         </div>
       );
@@ -8721,6 +8805,11 @@ export function TaskManagementTableV2({
                 setRowContextMenu(null);
                 openActualTimeEntryForTask(rowContextMenuTask.id);
               } : undefined}
+              onRemoveFromCurrentList={canRemoveFromCurrentList?.(rowContextMenuTask.id) && onRemoveFromCurrentList ? () => {
+                onRemoveFromCurrentList(rowContextMenuTask.id);
+                setRowContextMenu(null);
+              } : undefined}
+              removeFromCurrentListLabel={currentListLabel ? `Remove from ${currentListLabel}` : undefined}
               onPromoteToMilestone={onPromoteTaskToMilestone && milestonePromotionTaskIds.has(rowContextMenuTask.id) ? () => {
                 setRowContextMenu(null);
                 onPromoteTaskToMilestone(rowContextMenuTask.id);

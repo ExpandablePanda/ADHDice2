@@ -1924,6 +1924,8 @@ test("child task preview lookup exposes direct same-table children", () => {
     issueTypes: [],
     lastDoneAt: null,
     lastDoneDate: null,
+    lastHandledAt: null,
+    lastHandledDate: null,
     linkLabel: "Brief",
     linkUrl: "https://example.com/brief",
     missedStreak: 0,

@@ -9,7 +9,7 @@ import type {
   TaskStatus,
   TaskSubtask as DbTaskSubtask,
 } from "@/lib/database.types";
-import { computeTaskSpecificHistoryStats, getTaskFocusFilterFacts, getTaskHistoryLastDone } from "@/lib/task-history";
+import { computeTaskSpecificHistoryStats, getTaskFocusFilterFacts, getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
 import type { TaskHistoryStreakSummary, TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type {
@@ -91,6 +91,8 @@ export type ChildTaskPreview = {
   issueTypes: Array<TaskHierarchyIssue["type"]>;
   lastDoneAt: string | null;
   lastDoneDate: string | null;
+  lastHandledAt: string | null;
+  lastHandledDate: string | null;
   linkLabel: string;
   linkUrl: string;
   missedStreak: number;
@@ -461,6 +463,7 @@ export function buildChildTaskPreviewLookup(
             timestamp: streakSummary.lastDoneAt,
           }
           : getTaskHistoryLastDone(taskHistoryByTaskId[descendant.id] ?? [], todayDateKey);
+        const lastHandled = getTaskHistoryLastHandled(taskHistoryByTaskId[descendant.id] ?? [], todayDateKey);
 
         return {
           actualSeconds: descendant.actual_seconds,
@@ -476,6 +479,8 @@ export function buildChildTaskPreviewLookup(
           issueTypes: adapter.getNode(descendant.id)?.issueTypes ?? [],
           lastDoneAt: lastDone?.timestamp ?? null,
           lastDoneDate: lastDone?.dateKey ?? null,
+          lastHandledAt: lastHandled?.timestamp ?? null,
+          lastHandledDate: lastHandled?.dateKey ?? null,
           linkLabel: descendant.external_link_label ?? "",
           linkUrl: descendant.external_link_url ?? "",
           missedStreak: historyStats.missedStreak,

@@ -4,7 +4,7 @@ import type {
   TaskHistory,
   TaskSubtask,
 } from "@/lib/database.types";
-import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone } from "@/lib/task-history";
+import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
@@ -89,6 +89,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
       timestamp: context.taskHistoryStreakSummary.lastDoneAt,
     }
     : getTaskHistoryLastDone(context.taskHistory, context.todayDateKey);
+  const lastHandled = getTaskHistoryLastHandled(context.taskHistory, context.todayDateKey);
   const priorities: PrototypeTaskRow["priorities"] = [formatTaskPriorityLevel(getTaskPriorityLevel(task))];
 
   const listLabels = context.listDefinitions.flatMap((listDefinition) =>
@@ -112,6 +113,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     linkUrl: task.external_link_url ?? "",
     lastDoneAt: lastDone?.timestamp ?? null,
     lastDoneDate: lastDone?.dateKey ?? null,
+    lastHandledAt: lastHandled?.timestamp ?? null,
+    lastHandledDate: lastHandled?.dateKey ?? null,
     lists: listLabels,
     linkedNotes: context.linkedNotes.map((note) => ({ id: note.id, title: note.title })),
     notes: task.notes ?? "",

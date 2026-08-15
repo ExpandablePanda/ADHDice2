@@ -31,7 +31,7 @@ function task(id: string, overrides: Partial<Task> = {}) {
 function row(source: Task) {
   return {
     actualSeconds: 0, completedAt: null, createdAt: source.created_at, currentStreak: 0, dueOn: "", dueTime: "", energy: "medium",
-    estimatedMinutes: 20, id: source.id, lastDoneAt: null, lastDoneDate: null, linkLabel: "", linkUrl: "", linkedNotes: [], lists: [],
+    estimatedMinutes: 20, id: source.id, lastDoneAt: null, lastDoneDate: null, lastHandledAt: null, lastHandledDate: null, linkLabel: "", linkUrl: "", linkedNotes: [], lists: [],
     missedStreak: 0, notes: "", pinOrder: null, pinnedAt: null, priorities: ["3"], repeat: "none", repeatDayOfMonth: null,
     repeatDaysOfWeek: [], repeatInterval: 1, repeatMonthlyMode: "day_of_month", repeatMonthlyOrdinal: null, repeatMonthlyWeekday: null,
     status: "pending", subtasks: [], subtasksAutoReset: false, tags: [], title: source.title, trashedAt: null, updatedAt: source.updated_at,

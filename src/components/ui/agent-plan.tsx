@@ -45,9 +45,9 @@ export type AgentPlanMetaPill = {
   tone?: AgentPlanMetaTone;
 };
 
-export type AgentPlanColumnId = "bucket" | "date_added" | "date_completed" | "last_done" | "due" | "energy" | "estimated_time" | "actual_time" | "streak" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal";
+export type AgentPlanColumnId = "bucket" | "date_added" | "date_completed" | "last_done" | "last_handled" | "due" | "energy" | "estimated_time" | "actual_time" | "streak" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal";
 
-const REORDERABLE_COLUMN_IDS: AgentPlanColumnId[] = ["bucket", "date_added", "date_completed", "last_done", "due", "energy", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "repeat", "signal"];
+const REORDERABLE_COLUMN_IDS: AgentPlanColumnId[] = ["bucket", "date_added", "date_completed", "last_done", "last_handled", "due", "energy", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "repeat", "signal"];
 
 export type AgentPlanSubtaskItem = {
   children: AgentPlanSubtaskItem[];
@@ -272,6 +272,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   date_added: 168,
   date_completed: 176,
   last_done: 156,
+  last_handled: 156,
   due: 168,
   energy: 132,
   estimated_time: 156,
@@ -291,6 +292,7 @@ const MIN_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   date_added: 112,
   date_completed: 120,
   last_done: 112,
+  last_handled: 112,
   due: 52,
   energy: 92,
   estimated_time: 92,
@@ -310,6 +312,7 @@ const COLUMN_HEADER_LABELS: Record<ResizableColumnId, string> = {
   date_added: "Date Added",
   date_completed: "Date Completed",
   last_done: "Last Done",
+  last_handled: "Last Handled",
   due: "Due",
   energy: "Energy",
   estimated_time: "Est. Time",
@@ -338,7 +341,7 @@ type HorizontalScrollIndicator = {
   width: number;
 };
 
-type ResizableColumnId = "bucket" | "date_added" | "date_completed" | "last_done" | "due" | "energy" | "estimated_time" | "actual_time" | "streak" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal" | "status" | "task";
+type ResizableColumnId = "bucket" | "date_added" | "date_completed" | "last_done" | "last_handled" | "due" | "energy" | "estimated_time" | "actual_time" | "streak" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal" | "status" | "task";
 
 function getPriorityTone(priority: AgentPlanPriorityValue): AgentPlanMetaTone {
   if (priority === "focus") return "accent";
@@ -1729,6 +1732,7 @@ export default function AgentPlan({
                       date_added: formatDateAddedLabel(task.createdAt),
                       date_completed: task.completedAt ? formatDateAddedLabel(task.completedAt) : "Not completed",
                       last_done: getMetadataValue(task, "Last Done") || "No done yet",
+                      last_handled: getMetadataValue(task, "Last Handled") || "No handled",
                       due: dueValue,
                       energy: energyValue,
                       estimated_time: estimatedTimeValue,
@@ -2034,6 +2038,16 @@ export default function AgentPlan({
                                 <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
                                   <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`} data-column-measure>
                                     {getMetadataValue(task, "Last Done") || "No done yet"}
+                                  </span>
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "last_handled") {
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`} data-column-measure>
+                                    {getMetadataValue(task, "Last Handled") || "No handled"}
                                   </span>
                                 </td>
                               );

@@ -11,7 +11,7 @@ import { formatTaskDueLabel, getListPriorityLabel, getTaskDisplayStatus, isOverd
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import { formatActualSecondsLabel, formatRepeatSummary } from "@/lib/task-formatting";
-import { computeTaskSpecificHistoryStats } from "@/lib/task-history";
+import { computeTaskSpecificHistoryStats, getTaskHistoryLastHandled } from "@/lib/task-history";
 import { getTaskPriorityLevel } from "@/lib/task-priority";
 
 function formatEnergyLabel(value: string) {
@@ -67,6 +67,8 @@ function buildAgentPlanMetadata(
     focusedTaskIdSet: Set<string>;
     listDefinitions: TaskListDefinition[];
     listMemberships: Array<{ id: string; isManual: boolean }>;
+    taskHistory?: DbTaskHistory[];
+    todayDateKey?: string;
   },
 ) {
   const primaryListLabel = context.listMemberships
@@ -114,6 +116,12 @@ function buildAgentPlanMetadata(
       value: repeatSummary,
     });
   }
+
+  const lastHandled = getTaskHistoryLastHandled(context.taskHistory ?? [], context.todayDateKey);
+  metadata.push({
+    label: "Last Handled",
+    value: lastHandled?.timestamp ?? lastHandled?.dateKey ?? "No handled",
+  });
 
   return metadata;
 }

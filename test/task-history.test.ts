@@ -15,6 +15,7 @@ import {
   formatTaskHistoryEntryLabel,
   getTaskFocusFilterFacts,
   getTaskHistoryLastDone,
+  getTaskHistoryLastHandled,
   getTaskHistoryCalendarVirtualState,
   resolveLiveTaskStatusFromHistory,
 } from "../src/lib/task-history.ts";
@@ -664,6 +665,27 @@ test("Missed rows never qualify as Last Done and migration timestamps stay suppr
     dateKey: "2026-08-13",
     timestamp: null,
   });
+});
+
+test("Last Handled includes final outcomes, excludes Delayed, and uses the latest logical outcome", () => {
+  const entries = [
+    createHistoryEntry({ entryDate: "2026-08-10", id: "handled-done", status: "done", wasCompleted: true }),
+    createHistoryEntry({ entryDate: "2026-08-11", id: "handled-delayed", status: "delayed", wasCompleted: false }),
+    createHistoryEntry({ entryDate: "2026-08-12", id: "handled-best", status: "did_my_best", wasCompleted: true }),
+    createHistoryEntry({ entryDate: "2026-08-13", id: "handled-missed", status: "missed", wasCompleted: false }),
+    createHistoryEntry({ entryDate: "2026-08-14", id: "handled-complete", status: "complete", wasCompleted: true }),
+  ];
+
+  assert.deepEqual(getTaskHistoryLastHandled(entries, "2026-08-14"), {
+    dateKey: "2026-08-14",
+    timestamp: "2026-08-14T09:00:00.000Z",
+  });
+  assert.deepEqual(getTaskHistoryLastHandled(entries.filter((entry) => entry.status !== "complete"), "2026-08-14"), {
+    dateKey: "2026-08-13",
+    timestamp: "2026-08-13T09:00:00.000Z",
+  });
+  assert.equal(getTaskHistoryLastHandled([entries[1]], "2026-08-14"), null);
+  assert.equal(getTaskHistoryLastDone(entries, "2026-08-14")?.dateKey, "2026-08-12");
 });
 
 test("recurring live status may remain missed while today still has no saved history row", () => {
