@@ -2127,7 +2127,7 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel icon={<Activity />} subtitle="Last 7 days" title="Sleep sources">
+          <HealthPanel className="xl:order-2" icon={<Activity />} subtitle="Last 7 days" title="Sleep sources">
             <div className="grid gap-3 sm:grid-cols-3">
               <CompactStat detail="combined week" label="Total" value={formatHealthSleepDuration(recentSleepTotalMinutes)} />
               <CompactStat detail="Sleep Focus timers" label="Clock" value={formatHealthSleepDuration(recentSleepFocusMinutes)} />
@@ -2149,7 +2149,7 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel icon={<Sparkles />} subtitle="Selected date" title="Sleep Ledger">
+          <HealthPanel className="xl:order-1" icon={<Sparkles />} subtitle="Selected date" title="Sleep Ledger">
             <div className="space-y-3">
               {selectedSleepFocusSessions.length === 0 ? (
                 <EmptyCopy text={`No Sleep Focus sessions logged for ${formatHealthDateLabel(sleepLedgerDate)}.`} />
@@ -2355,6 +2355,7 @@ export function HealthPage({
 }
 
 function HealthPanel({
+  className,
   collapseAfterHeaderActions = false,
   children,
   headerActions,
@@ -2362,6 +2363,7 @@ function HealthPanel({
   subtitle,
   title,
 }: {
+  className?: string;
   collapseAfterHeaderActions?: boolean;
   children: ReactNode;
   headerActions?: ReactNode;
@@ -2397,7 +2399,10 @@ function HealthPanel({
   );
 
   return (
-    <div className="rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]">
+    <div className={[
+      "rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]",
+      className,
+    ].filter(Boolean).join(" ")}>
       <div className="flex items-center gap-2 px-5 py-5">
         {collapseAfterHeaderActions ? (
           <div className="flex min-w-0 flex-1 items-center gap-3">

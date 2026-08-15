@@ -110,7 +110,7 @@ test("Health stacked tabs use independent columns and preserve narrow-screen ord
   const secondSleepColumn = sleep.slice(secondSleepColumnStart);
   assert.match(firstSleepColumn, /title="Health sleep totals"/);
   assert.doesNotMatch(firstSleepColumn, /subtitle="Manual entry"|title="Sleep sources"|title="Sleep Ledger"/);
-  assert.match(secondSleepColumn, /subtitle="Manual entry"[\s\S]*?title="Sleep sources"[\s\S]*?title="Sleep Ledger"/);
+  assert.match(secondSleepColumn, /subtitle="Manual entry"[\s\S]*?className="xl:order-2"[\s\S]*?title="Sleep sources"[\s\S]*?className="xl:order-1"[\s\S]*?title="Sleep Ledger"/);
   assert.equal((sleep.match(/<HealthPanel/g) ?? []).length, 4);
 
   assert.equal((water.match(/<div className="grid content-start gap-5">/g) ?? []).length, 2);
