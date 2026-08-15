@@ -7,6 +7,7 @@ import type {
 import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone } from "@/lib/task-history";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import type { TaskListDefinition } from "@/lib/task-lists";
+import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { formatTaskPriorityLevel, getTaskPriorityLevel } from "@/lib/task-priority";
 import { createProjectionDomainRevision } from "@/lib/stable-task-projection";
@@ -16,7 +17,7 @@ const isDevelopment = process.env.NODE_ENV !== "production";
 let buildTaskTableRowDebugCount = 0;
 
 export type TaskTableRowContext = {
-  displayStatus?: Task["status"];
+  displayStatus?: TaskDisplayStatus;
   focusedTaskIdSet: Set<string>;
   linkedNotes: TaskEditorLinkedNote[];
   listDefinitions: TaskListDefinition[];

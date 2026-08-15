@@ -2,8 +2,9 @@ import { ArrowRight, BookOpen, CalendarClock, CalendarDays, Clock, Ellipsis, Sta
 import type { MouseEvent } from "react";
 
 import type { TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
+import type { TaskDisplayStatus as UiTaskDisplayStatus } from "@/lib/task-display-status";
 
-export type TaskDisplayStatus = TaskStatus | TaskSubtaskStatus | "unscheduled";
+export type TaskDisplayStatus = UiTaskDisplayStatus | TaskSubtaskStatus;
 
 export const TASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
   { label: "Pending", value: "pending" },
@@ -16,6 +17,11 @@ export const TASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = 
   { label: "Upcoming", value: "upcoming" },
   { label: "Not Due", value: "not_due" },
   { label: "Archived", value: "archived" },
+];
+
+export const TASK_DISPLAY_STATUS_OPTIONS: Array<{ label: string; value: UiTaskDisplayStatus }> = [
+  { label: "Unscheduled", value: "unscheduled" },
+  ...TASK_STATUS_OPTIONS,
 ];
 
 export const TASK_SUBTASK_STATUS_OPTIONS: Array<{ label: string; value: TaskSubtaskStatus }> = TASK_STATUS_OPTIONS.filter(
@@ -36,6 +42,11 @@ export const TASK_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {
   trashed: "border border-[#f4afbc] bg-white text-[#d94e67]",
 };
 
+export const TASK_DISPLAY_STATUS_CHIP_STYLES: Record<UiTaskDisplayStatus, string> = {
+  ...TASK_STATUS_CHIP_STYLES,
+  unscheduled: "border border-[#b7becd] bg-white text-[#5e687d]",
+};
+
 export const TASK_STATUS_INVERTED_CHIP_STYLES: Record<TaskStatus, string> = {
   archived: "border border-[#68738c] bg-[#68738c] text-white dark:border-[#68738c] dark:bg-[#68738c] dark:text-white",
   complete: "border border-[#256947] bg-[#256947] text-white dark:border-[#256947] dark:bg-[#256947] dark:text-white",
@@ -50,20 +61,25 @@ export const TASK_STATUS_INVERTED_CHIP_STYLES: Record<TaskStatus, string> = {
   upcoming: "border border-[#68738c] bg-[#68738c] text-white dark:border-[#68738c] dark:bg-[#68738c] dark:text-white",
 };
 
+export const TASK_DISPLAY_STATUS_INVERTED_CHIP_STYLES: Record<UiTaskDisplayStatus, string> = {
+  ...TASK_STATUS_INVERTED_CHIP_STYLES,
+  unscheduled: "border border-[#68738c] bg-[#68738c] text-white dark:border-[#68738c] dark:bg-[#68738c] dark:text-white",
+};
+
 export function getTaskStatusCircleClassName(
   status: TaskDisplayStatus,
   options: { inverted?: boolean } = {},
 ) {
-  const key = (status === "trashed" ? "trashed" : status) as TaskStatus;
+  const key = (status === "trashed" ? "trashed" : status) as UiTaskDisplayStatus;
   if (options.inverted) {
-    return TASK_STATUS_INVERTED_CHIP_STYLES[key] ?? "border border-[#6b738f] bg-[#6b738f] text-white dark:border-[#6b738f] dark:bg-[#6b738f] dark:text-white";
+    return TASK_DISPLAY_STATUS_INVERTED_CHIP_STYLES[key] ?? "border border-[#6b738f] bg-[#6b738f] text-white dark:border-[#6b738f] dark:bg-[#6b738f] dark:text-white";
   }
-  return TASK_STATUS_CHIP_STYLES[key] ?? "border border-[#6b738f] bg-white text-[#6b738f]";
+  return TASK_DISPLAY_STATUS_CHIP_STYLES[key] ?? "border border-[#6b738f] bg-white text-[#6b738f]";
 }
 
 export function getTaskStatusCircleHoverInvertedClassName(status: TaskDisplayStatus) {
-  const key = (status === "trashed" ? "trashed" : status) as TaskStatus;
-  const hoverClassMap: Record<TaskStatus, string> = {
+  const key = (status === "trashed" ? "trashed" : status) as UiTaskDisplayStatus;
+  const hoverClassMap: Record<UiTaskDisplayStatus, string> = {
     archived: "group-hover:border-[#68738c] group-hover:bg-[#68738c] group-hover:text-white dark:group-hover:border-[#68738c] dark:group-hover:bg-[#68738c] dark:group-hover:text-white",
     complete: "group-hover:border-[#256947] group-hover:bg-[#256947] group-hover:text-white dark:group-hover:border-[#256947] dark:group-hover:bg-[#256947] dark:group-hover:text-white",
     delayed: "group-hover:border-[#7d54d1] group-hover:bg-[#7d54d1] group-hover:text-white dark:group-hover:border-[#7d54d1] dark:group-hover:bg-[#7d54d1] dark:group-hover:text-white",
@@ -75,6 +91,7 @@ export function getTaskStatusCircleHoverInvertedClassName(status: TaskDisplaySta
     pending: "group-hover:border-[#d96b1c] group-hover:bg-[#d96b1c] group-hover:text-white dark:group-hover:border-[#d96b1c] dark:group-hover:bg-[#d96b1c] dark:group-hover:text-white",
     trashed: "group-hover:border-[#d94e67] group-hover:bg-[#d94e67] group-hover:text-white dark:group-hover:border-[#d94e67] dark:group-hover:bg-[#d94e67] dark:group-hover:text-white",
     upcoming: "group-hover:border-[#68738c] group-hover:bg-[#68738c] group-hover:text-white dark:group-hover:border-[#68738c] dark:group-hover:bg-[#68738c] dark:group-hover:text-white",
+    unscheduled: "group-hover:border-[#68738c] group-hover:bg-[#68738c] group-hover:text-white dark:group-hover:border-[#68738c] dark:group-hover:bg-[#68738c] dark:group-hover:text-white",
   };
   return hoverClassMap[key] ?? "group-hover:border-[#6b738f] group-hover:bg-[#6b738f] group-hover:text-white dark:group-hover:border-[#6b738f] dark:group-hover:bg-[#6b738f] dark:group-hover:text-white";
 }
@@ -182,7 +199,7 @@ export function renderTaskStatusCircle(
   );
 }
 
-export function TaskStatusCircleRail<Status extends TaskStatus | TaskSubtaskStatus>({
+export function TaskStatusCircleRail<Status extends TaskDisplayStatus>({
   className = "",
   currentStatus,
   onSetStatus,

@@ -1,4 +1,5 @@
-import type { Task, TaskHistory, TaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistory } from "@/lib/database.types";
+import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import { getTaskPriorityLevel } from "@/lib/task-priority";
 
@@ -30,18 +31,19 @@ export const LIST_SORT_FIELDS: readonly ListSortField[] = [
   "estimated_duration",
 ];
 
-const LIST_STATUS_ORDER: Record<TaskStatus, number> = {
-  pending: 0,
-  in_progress: 1,
-  missed: 2,
-  upcoming: 3,
-  not_due: 3,
-  delayed: 4,
-  done: 5,
-  did_my_best: 5,
-  complete: 5,
-  archived: 5,
-  trashed: 6,
+const LIST_STATUS_ORDER: Record<TaskDisplayStatus, number> = {
+  unscheduled: 0,
+  pending: 1,
+  in_progress: 2,
+  missed: 3,
+  upcoming: 4,
+  not_due: 4,
+  delayed: 5,
+  done: 6,
+  did_my_best: 6,
+  complete: 6,
+  archived: 6,
+  trashed: 7,
 };
 
 export function normalizeListSortPreference(value: unknown): ListSortPreference {
@@ -78,7 +80,7 @@ export function sortListParentTasks(
   tasks: readonly Task[],
   preference: ListSortPreference,
   context: {
-    taskDisplayStatusByTaskId?: Record<string, TaskStatus>;
+    taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
     taskHistoryByTaskId?: Record<string, TaskHistory[]>;
     taskHistoryStreakSummaryByTaskId?: Record<string, TaskHistoryStreakSummary>;
     todayDateKey?: string;

@@ -15,6 +15,7 @@ import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type {
   TaskBucketContext,
 } from "@/lib/task-buckets";
+import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters, TaskUiState } from "@/lib/task-ui-state";
 import type {
   TaskListDefinition,
@@ -104,7 +105,7 @@ export type ChildTaskPreview = {
   repeatMonthlyOrdinal: Task["repeat_monthly_ordinal"];
   repeatMonthlyWeekday: Task["repeat_monthly_weekday"];
   scheduledOn: string | null;
-  status: TaskStatus;
+  status: TaskDisplayStatus;
   storedStatus: TaskStatus;
   tags: string[];
   title: string;
@@ -147,7 +148,7 @@ export type TaskRailListOption = {
 
 export type CanonicalTaskEntityFact = {
   ancestorIds: string[];
-  displayStatus: TaskStatus;
+  displayStatus: TaskDisplayStatus;
   id: string;
   listMemberships: TaskListMembership[];
   rootParentId: string;
@@ -179,7 +180,7 @@ export type TaskAppWorkspaceFacts = {
   primaryTasks: Task[];
   recentlyDeletedTasks: Task[];
   taskLinkedNotesByTaskId: Record<string, TaskEditorLinkedNote[]>;
-  taskStatusCounts: Record<TaskStatus, number>;
+  taskStatusCounts: Record<TaskDisplayStatus, number>;
   todayQueueTaskCount: number;
   todayTasks: Task[];
   urgentTasks: Task[];
@@ -200,13 +201,14 @@ export type CanonicalTaskEntityProjection = {
   preStatusMatchedEntityIds: Set<string>;
   primaryFacetVisibleEntityIds: Set<string>;
   searchExpandedDescendantIds: Set<string>;
-  statusFacetCounts: Record<TaskStatus, number>;
+  statusFacetCounts: Record<TaskDisplayStatus, number>;
   taskListMembershipsByTaskId: Record<string, TaskListMembership[]>;
   visibleRootParentIds: Set<string>;
 };
 
-function createEmptyTaskStatusCounts(): Record<TaskStatus, number> {
+function createEmptyTaskStatusCounts(): Record<TaskDisplayStatus, number> {
   return {
+    unscheduled: 0,
     pending: 0,
     in_progress: 0,
     delayed: 0,
@@ -227,17 +229,18 @@ export function buildCanonicalActiveStatusCounts(
   childTaskPreviewByParentTaskId: ChildTaskPreviewLookup,
   taskHistoryByTaskId: Record<string, TaskHistory[]>,
   todayDateKey: string,
-  options: { childTaskIds?: ReadonlySet<string>; includeSteps?: boolean; parentTaskIds?: ReadonlySet<string> } = {},
+  options: { childTaskIds?: ReadonlySet<string>; displayStatusByTaskId?: TaskDisplayStatusByTaskId; includeSteps?: boolean; parentTaskIds?: ReadonlySet<string> } = {},
 ) {
   const counts = createEmptyTaskStatusCounts();
+  const displayStatus = (task: Pick<Task, "id" | "status">) => options.displayStatusByTaskId?.[task.id] ?? task.status;
   for (const task of parentTasks) {
     if (!options.parentTaskIds || options.parentTaskIds.has(task.id)) {
-      counts[task.status] += 1;
+      counts[displayStatus(task)] += 1;
     }
     if (options.includeSteps === false) continue;
     for (const item of childTaskPreviewByParentTaskId[task.id]?.items ?? []) {
       if (options.childTaskIds && !options.childTaskIds.has(item.id)) continue;
-      counts[item.status] += 1;
+      counts[options.displayStatusByTaskId?.[item.id] ?? item.status] += 1;
     }
   }
   return counts;
@@ -421,6 +424,7 @@ export function buildChildTaskPreviewLookup(
   todayDateKey = "",
   adapter = buildTaskHierarchyAdapter(tasks),
   taskHistoryStreakSummaryByTaskId: TaskHistoryStreakSummaryMap = {},
+  taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId = {},
 ): ChildTaskPreviewLookup {
   const focusedTaskIdSet = new Set(focusedTaskIds);
   const previewByParentTaskId: ChildTaskPreviewLookup = {};
@@ -486,7 +490,7 @@ export function buildChildTaskPreviewLookup(
           repeatMonthlyOrdinal: descendant.repeat_monthly_ordinal,
           repeatMonthlyWeekday: descendant.repeat_monthly_weekday,
           scheduledOn: descendant.scheduled_on,
-          status: descendant.status,
+          status: taskDisplayStatusByTaskId[descendant.id] ?? descendant.status,
           storedStatus: descendant.status,
           tags: descendant.tags ?? [],
           title: descendant.title,
@@ -510,6 +514,7 @@ export function buildTaskAppStructuralData({
   focusedTaskIds,
   taskHistoryByTaskId,
   taskHistoryStreakSummaryByTaskId,
+  taskDisplayStatusByTaskId,
   tasks,
   todayDateKey,
 }: {
@@ -517,13 +522,14 @@ export function buildTaskAppStructuralData({
   focusedTaskIds: readonly string[];
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
   taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
+  taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   tasks: Task[];
   todayDateKey: string;
 }): TaskAppStructuralData {
   const startedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const hierarchy = buildTaskHierarchyAdapter(tasks);
   const result = {
-    childTaskPreviewByParentTaskId: buildChildTaskPreviewLookup(tasks, focusedTaskIds, taskHistoryByTaskId, todayDateKey, hierarchy, taskHistoryStreakSummaryByTaskId),
+    childTaskPreviewByParentTaskId: buildChildTaskPreviewLookup(tasks, focusedTaskIds, taskHistoryByTaskId, todayDateKey, hierarchy, taskHistoryStreakSummaryByTaskId, taskDisplayStatusByTaskId),
     hierarchy,
     taskHierarchyDiagnostics: buildTaskHierarchyDiagnostics(tasks, hierarchy),
     taskPrimaryVisibility: buildTaskPrimaryVisibility(tasks, hierarchy),
@@ -564,6 +570,7 @@ export function buildStableCanonicalTaskIndex({
   taskSubtasksByTaskId,
   tasks,
   todayDateKey,
+  taskDisplayStatusByTaskId = {},
   hierarchy = buildTaskHierarchyAdapter(tasks),
 }: {
   availableTaskLists: TaskListDefinition[];
@@ -576,6 +583,7 @@ export function buildStableCanonicalTaskIndex({
   taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
   tasks: Task[];
   todayDateKey: string;
+  taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   hierarchy?: TaskHierarchyAdapter<Task>;
 }): StableCanonicalTaskIndex {
   const startedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
@@ -594,10 +602,10 @@ export function buildStableCanonicalTaskIndex({
       ...(taskListEvaluationContext.manualMembershipsByTaskId[rootParentId] ?? []),
     ];
   }
-  const taskDisplayStatusByTaskId: Record<string, TaskStatus> = {};
+  const resolvedTaskDisplayStatusByTaskId: TaskDisplayStatusByTaskId = {};
   const focusFilterFactsByTaskId: Record<string, ReturnType<typeof getTaskFocusFilterFacts>> = {};
   for (const task of tasks) {
-    taskDisplayStatusByTaskId[task.id] = task.status;
+    resolvedTaskDisplayStatusByTaskId[task.id] = taskDisplayStatusByTaskId[task.id] ?? task.status;
     focusFilterFactsByTaskId[task.id] = getTaskFocusFilterFacts(
       task,
       taskHistoryByTaskId[task.id] ?? [],
@@ -609,7 +617,7 @@ export function buildStableCanonicalTaskIndex({
     ...taskListEvaluationContext,
     focusFilterFactsByTaskId,
     manualMembershipsByTaskId: inheritedManualMembershipsByTaskId,
-    taskDisplayStatusByTaskId,
+    taskDisplayStatusByTaskId: resolvedTaskDisplayStatusByTaskId,
   };
   const taskListLookup = buildTaskListLookup(availableTaskLists);
   const listNameById = new Map(availableTaskLists.map((list) => [list.id, list.name]));
@@ -633,7 +641,7 @@ export function buildStableCanonicalTaskIndex({
     ].join("\n").toLowerCase();
     entityFactsById.set(task.id, {
       ancestorIds: ancestorIdsByTaskId.get(task.id) ?? [],
-      displayStatus: taskDisplayStatusByTaskId[task.id],
+      displayStatus: resolvedTaskDisplayStatusByTaskId[task.id]!,
       id: task.id,
       listMemberships,
       rootParentId: rootParentIdByTaskId.get(task.id) ?? task.id,
@@ -881,6 +889,7 @@ export function buildCanonicalTaskEntityProjection(input: {
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
   taskListEvaluationContext: TaskListEvaluationContext;
   taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
+  taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   taskUiState: TaskDerivedFilterState;
   tasks: Task[];
   todayDateKey: string;
@@ -901,6 +910,7 @@ export function buildTaskAppWorkspaceFacts({
   structuralData,
   stableCanonicalTaskIndex,
   tasks,
+  taskDisplayStatusByTaskId = {},
 }: {
   availableTaskNotes: TaskEditorLinkedNote[];
   bucketContext: TaskBucketContext;
@@ -908,6 +918,7 @@ export function buildTaskAppWorkspaceFacts({
   structuralData: TaskAppStructuralData;
   stableCanonicalTaskIndex: StableCanonicalTaskIndex;
   tasks: Task[];
+  taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
 }): TaskAppWorkspaceFacts {
   const hiddenChildIds = new Set(structuralData.taskPrimaryVisibility.primaryHiddenChildTaskIds);
   const primaryTasks = tasks.filter((task) => !hiddenChildIds.has(task.id));
@@ -922,8 +933,8 @@ export function buildTaskAppWorkspaceFacts({
   const lowEnergyTasks: Task[] = [];
   const tags = new Set<string>();
   const visibleTaskBaseFactsByTaskId: Record<string, VisibleTaskBaseFacts> = {};
-  const taskStatusCounts = primaryTasks.reduce<Record<TaskStatus, number>>((counts, task) => {
-    counts[task.status] += 1;
+  const taskStatusCounts = primaryTasks.reduce<Record<TaskDisplayStatus, number>>((counts, task) => {
+    counts[taskDisplayStatusByTaskId[task.id] ?? task.status] += 1;
     if (!isTaskVisibleInPrimaryViews(task)) return counts;
     visibleTasks.push(task);
     const facts = buildVisibleTaskBaseFacts(task, bucketContext.todayDateKey ?? todayISO());
@@ -1018,6 +1029,7 @@ type ComputeTaskAppDerivedDataInput = {
   taskListEvaluationContext: TaskListEvaluationContext;
   taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
   taskUiState: TaskDerivedFilterState;
+  taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   tasks: Task[];
   structuralData?: TaskAppStructuralData;
   stableCanonicalTaskIndex?: StableCanonicalTaskIndex;
@@ -1046,6 +1058,7 @@ export function computeTaskAppDerivedData({
   taskListEvaluationContext,
   taskSubtasksByTaskId,
   taskUiState,
+  taskDisplayStatusByTaskId = {},
   tasks,
   structuralData,
   stableCanonicalTaskIndex,
@@ -1057,6 +1070,7 @@ export function computeTaskAppDerivedData({
       focusedTaskIds,
       taskHistoryByTaskId,
       taskHistoryStreakSummaryByTaskId,
+      taskDisplayStatusByTaskId,
       tasks,
       todayDateKey,
     });
@@ -1067,6 +1081,7 @@ export function computeTaskAppDerivedData({
       taskHistoryByTaskId,
       taskListEvaluationContext,
       taskSubtasksByTaskId,
+      taskDisplayStatusByTaskId,
       tasks,
       todayDateKey,
       hierarchy: emptyStructuralData.hierarchy,
@@ -1138,6 +1153,7 @@ export function computeTaskAppDerivedData({
     focusedTaskIds,
     taskHistoryByTaskId,
     taskHistoryStreakSummaryByTaskId,
+    taskDisplayStatusByTaskId,
     tasks,
     todayDateKey,
   });
@@ -1160,6 +1176,7 @@ export function computeTaskAppDerivedData({
     taskHistoryByTaskId,
     taskListEvaluationContext,
     taskSubtasksByTaskId,
+    taskDisplayStatusByTaskId,
     tasks,
     todayDateKey,
     hierarchy,
@@ -1183,6 +1200,7 @@ export function computeTaskAppDerivedData({
     focusedTaskIds,
     stableCanonicalTaskIndex: canonicalIndex,
     structuralData: resolvedStructuralData,
+    taskDisplayStatusByTaskId,
     tasks,
   });
   const {
@@ -1243,7 +1261,7 @@ export function computeTaskAppDerivedData({
       return searchMatchesTaskGroup;
     }
 
-    const ownDisplayStatus = task.status;
+    const ownDisplayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const matchesOwnStatus = taskUiState.statusFilters.includes(ownDisplayStatus);
     const matchingChildStatusItems = includeStepsInStatus
       ? matchingChildSearchItems.filter((item) => taskUiState.statusFilters.includes(item.status))
@@ -1262,7 +1280,7 @@ export function computeTaskAppDerivedData({
       : taskUiState.matchAny
         ? quickChecks.some(Boolean)
         : quickChecks.every(Boolean);
-    const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(task.status);
+    const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(taskDisplayStatusByTaskId[task.id] ?? task.status);
     const matchesEnergy = taskUiState.energyFilters.length === 0 || taskUiState.energyFilters.includes(task.energy);
     return matchesQuickFilters && matchesStatus && matchesEnergy;
   };

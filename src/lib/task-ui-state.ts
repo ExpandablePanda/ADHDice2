@@ -1,5 +1,6 @@
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
-import type { TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
+import type { TaskEnergy, TaskRepeatFrequency } from "@/lib/database.types";
+import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskPriorityLevelOption } from "@/lib/task-priority";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 import { normalizeListSortBySurface, type ListSortBySurface } from "@/lib/task-list-sort";
@@ -38,7 +39,7 @@ export type TaskUiState = {
   quickFilters: TaskQuickFilter[];
   search: string;
   selectedBucket: string;
-  statusFilters: TaskStatus[];
+  statusFilters: TaskDisplayStatus[];
   tableColumnFilters: TaskTableColumnFilters;
   tasksSurface: TasksSurface;
   uiStateVersion: number;

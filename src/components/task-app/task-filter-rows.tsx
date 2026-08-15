@@ -1,13 +1,14 @@
 "use client";
 
-import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusGlyph } from "./task-status-ui";
+import { TASK_DISPLAY_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusGlyph } from "./task-status-ui";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
   TASK_TABLE_CHIP_BASE_CLASS,
   TASK_TABLE_LIST_CHIP_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
-import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
+import type { TaskEnergy } from "@/lib/database.types";
+import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import { ArrowDown, ArrowUp, ChevronDown, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -21,7 +22,8 @@ const ENERGY_OPTIONS: TaskEnergy[] = ["none", "low", "medium", "high"];
 const CHIP_BUTTON_CLASS = "shrink-0 appearance-none bg-transparent p-0 text-left";
 const FILTER_LABEL_CHIP_CLASS = TASK_TABLE_LIST_CHIP_CLASS;
 const FILTER_ACTIVE_CHIP_CLASS = TASK_TABLE_ACTIVE_LIST_CHIP_CLASS;
-const COMPACT_ACTIVE_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {
+const COMPACT_ACTIVE_STATUS_CHIP_STYLES: Record<TaskDisplayStatus, string> = {
+  unscheduled: "border-[#68738c] bg-[#68738c] text-white",
   pending: "border-[#d96b1c] bg-[#d96b1c] text-white",
   in_progress: "border-[#4473df] bg-[#4473df] text-white",
   delayed: "border-[#7d54d1] bg-[#7d54d1] text-white",
@@ -60,7 +62,7 @@ function CompactStatusFilterChip({
   count: number;
   onClick: () => void;
   selected: boolean;
-  status: TaskStatus;
+  status: TaskDisplayStatus;
 }) {
   const circleBorderClassName = status === "not_due" ? "border-dashed" : "border";
 
@@ -68,7 +70,7 @@ function CompactStatusFilterChip({
     <TaskTableChipButton
       className={`transition ${selected ? "" : "opacity-85 hover:opacity-100"}`}
       onClick={onClick}
-      toneClassName={selected ? COMPACT_ACTIVE_STATUS_CHIP_STYLES[status] : TASK_STATUS_CHIP_STYLES[status]}
+      toneClassName={selected ? COMPACT_ACTIVE_STATUS_CHIP_STYLES[status] : TASK_DISPLAY_STATUS_CHIP_STYLES[status]}
     >
       <span className="inline-flex items-center gap-1 text-inherit">
         <span className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full ${circleBorderClassName} border-current text-current`}>
@@ -102,10 +104,10 @@ type FilterRowsProps = {
   onToggleEnergy: (energy: TaskEnergy) => void;
   onToggleMatchMode: () => void;
   onToggleOpen: () => void;
-  onToggleStatusFilter: (status: TaskStatus) => void;
+  onToggleStatusFilter: (status: TaskDisplayStatus) => void;
   selectedEnergies: TaskEnergy[];
-  selectedStatuses: TaskStatus[];
-  statusCounts: Record<TaskStatus, number>;
+  selectedStatuses: TaskDisplayStatus[];
+  statusCounts: Record<TaskDisplayStatus, number>;
   tableColumnFilters?: TaskTableColumnFilters;
   onClearTableColumnFilter?: (dimension: "priority" | "repeat" | keyof TaskTableColumnFilters["text"]) => void;
   listSortPreference?: ListSortPreference;
@@ -392,7 +394,7 @@ export function FilterRowsComponent({
                     className={`transition ${selectedStatuses.includes(status) ? "ring-2 ring-[#6f57f6]/35" : "opacity-85 hover:opacity-100"}`}
                     key={status}
                     onClick={() => onToggleStatusFilter(status)}
-                    toneClassName={TASK_STATUS_CHIP_STYLES[status]}
+                    toneClassName={TASK_DISPLAY_STATUS_CHIP_STYLES[status]}
                   >
                     {renderTaskStatusChip(status, { count: statusCounts[status], size: "sm" })}
                   </TaskTableChipButton>

@@ -1,4 +1,5 @@
 import type { Task, TaskEnergy, TaskHistory, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
+import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import { buildEmptyTaskHistoryFacts, getTaskFocusFilterFacts, type TaskHistoryFacts, type TaskHistoryStreakPreset, type TaskHistoryWindowPreset } from "@/lib/task-history";
 import { getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 
@@ -24,7 +25,7 @@ export type TaskListType = "system" | "smart" | "custom";
 export type TaskListMembershipMode = "hybrid" | "manual" | "rules" | "system";
 
 export type TaskListRule =
-  | { field: "status"; op: "is" | "is_not"; value: TaskStatus | TaskStatus[] }
+  | { field: "status"; op: "is" | "is_not"; value: TaskDisplayStatus | TaskDisplayStatus[] }
   | { field: "list"; op: "is" | "is_not"; value: TaskListId }
   | { field: "steps"; op: "is" | "is_not"; value: boolean }
   | { field: "priority_level"; op: "is" | "is_not"; value: TaskPriorityLevelOption | TaskPriorityLevelOption[] }
@@ -140,7 +141,7 @@ export type TaskListEvaluationContext = {
   isOverdue: (date: string | null) => boolean;
   historyFactsByTaskId: Record<string, TaskHistoryFacts>;
   manualMembershipsByTaskId: Record<string, TaskListId[]>;
-  taskDisplayStatusByTaskId?: Record<string, TaskStatus>;
+  taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
   todayDateKey: string;
 };
@@ -163,7 +164,7 @@ type TaskListLookup = {
   usesSavedHistoryByListId: Map<TaskListId, boolean>;
 };
 
-function getTaskRuleDisplayStatus(task: Task, context: TaskListEvaluationContext): TaskStatus {
+function getTaskRuleDisplayStatus(task: Task, context: TaskListEvaluationContext): TaskDisplayStatus {
   const cachedStatus = context.taskDisplayStatusByTaskId?.[task.id];
   if (cachedStatus) {
     return cachedStatus;

@@ -1,5 +1,6 @@
-import type { Task, TaskHistory, TaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistory } from "@/lib/database.types";
 import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
+import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
 import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
 import { logicalDateForTimestamp } from "./calendar.ts";
@@ -18,7 +19,7 @@ export const TASK_STATE_ENGINE_ACTIVE_STATUS_READ_ENABLED = TASK_STATE_ENGINE_IN
 export type ActiveStatusAuthority = "engine" | "legacy";
 export type ActiveStatusReadResult = {
   authority: ActiveStatusAuthority;
-  statusesByTaskId: Record<string, TaskStatus>;
+  statusesByTaskId: TaskDisplayStatusByTaskId;
 };
 
 type ActiveStatusReadTask = Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">>;
@@ -32,7 +33,7 @@ export function resolveActiveTaskStatuses(input: {
   timezone: string;
 }): ActiveStatusReadResult {
   const enabled = input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED;
-  const statusesByTaskId: Record<string, TaskStatus> = {};
+  const statusesByTaskId: TaskDisplayStatusByTaskId = {};
   for (const task of input.tasks) {
     const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.historyByTaskId[task.id] ?? []);
     if (!enabled) {
@@ -59,7 +60,12 @@ export function resolveActiveTaskStatuses(input: {
       timezone: input.timezone,
       logicalDayRollover: input.logicalDayRollover,
     });
-    statusesByTaskId[task.id] = evaluateTaskState(adapted.engineInput).activeStatus as TaskStatus;
+    const evaluatedStatus = evaluateTaskState(adapted.engineInput).activeStatus;
+    // Unscheduled is a display projection only for an ordinary open/pending
+    // task. Preserve higher-priority live statuses with no due date.
+    statusesByTaskId[task.id] = evaluatedStatus === "unscheduled" && task.status !== "pending"
+      ? task.status
+      : evaluatedStatus;
   }
   return { authority: enabled ? "engine" : "legacy", statusesByTaskId };
 }
@@ -69,9 +75,11 @@ function logicalDayKey(now: string | Date, timezone: string, rollover: string) {
 }
 
 /** Presentation-only copies; never pass these to a persistence mutation. */
-export function projectTasksForActiveStatusRead(tasks: Task[], statusesByTaskId: Record<string, TaskStatus>) {
+export function projectTasksForActiveStatusRead(tasks: Task[], statusesByTaskId: TaskDisplayStatusByTaskId) {
   return tasks.map((task) => {
     const status = statusesByTaskId[task.id] ?? task.status;
-    return status === task.status ? task : { ...task, status };
+    // The database-backed Task row remains valid when the engine-only display
+    // status is unscheduled. Callers must consume the map for presentation.
+    return status === task.status || status === "unscheduled" ? task : { ...task, status };
   });
 }

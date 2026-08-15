@@ -19,9 +19,10 @@ import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskActualTimeEntry, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
-import { getSelectableTaskStatuses } from "@/lib/task-complete";
+import { getSelectableTaskDisplayStatuses } from "@/lib/task-complete";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
+import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { createStableTaskRowModelCache, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
@@ -275,10 +276,10 @@ type TasksTableSourceProps = {
   hierarchyScopeKey?: string;
   columnFilters?: TaskTableColumnFilters;
   energyColumnFilters?: Task["energy"][];
-  statusColumnFilters?: TaskStatus[];
+  statusColumnFilters?: TaskDisplayStatus[];
   onColumnFiltersChange?: (filters: TaskTableColumnFilters) => void;
   onEnergyColumnFiltersChange?: (filters: Task["energy"][]) => void;
-  onStatusColumnFiltersChange?: (filters: TaskStatus[]) => void;
+  onStatusColumnFiltersChange?: (filters: TaskDisplayStatus[]) => void;
   currentListLabel?: string | null;
   getFollowTaskDestination?: (taskId: string) => { id: string; label: string } | null;
   overlayNode?: ReactNode;
@@ -361,7 +362,7 @@ type TasksTableSourceProps = {
     listDefinitions: TaskListDefinition[];
     listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
     subtasksByTaskId: Record<string, TaskSubtask[]>;
-    taskDisplayStatusByTaskId: Record<string, TaskStatus>;
+    taskDisplayStatusByTaskId: Record<string, TaskDisplayStatus>;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
     taskHistoryStreakSummaryByTaskId: Record<string, TaskHistoryStreakSummary>;
     todayDateKey: string;
@@ -1264,7 +1265,7 @@ function StepsCardPreview({
             const scheduleLabel = formatStepPreviewSchedule(item);
             const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.75;
             const activePanelMode = activeQuickPanel?.taskId === item.id ? activeQuickPanel.mode : null;
-            const displayStatus = childTask?.status ?? item.status;
+            const displayStatus = item.status;
             const activePriorities = childTask ? buildTaskPrioritySelection(childTask) : item.priorityFlags;
             const categoryLabel = resolveTaskCategoryLabel({
               currentListLabel: currentListLabel ?? "All tasks",
@@ -1547,9 +1548,13 @@ function StepsCardPreview({
                               }
                               return;
                             }
-                            onSetStatus?.(item.id, status, childTask, [item.id]);
+                            if (status === "unscheduled") {
+                              onSetDue?.(item.id, { dueOn: "", dueTime: "" });
+                            } else {
+                              onSetStatus?.(item.id, status, childTask, [item.id]);
+                            }
                           }}
-                          options={getSelectableTaskStatuses(childTask ?? { repeat_frequency: item.repeat }).map((status) => ({
+                          options={getSelectableTaskDisplayStatuses(childTask ?? { repeat_frequency: item.repeat }).map((status) => ({
                             label: formatTaskStatusLabel(status),
                             value: status,
                           }))}
@@ -3268,9 +3273,13 @@ function TasksSimpleList({
                       }
                       setRowContextMenu(null);
                       closeQuickPanel();
-                      tableProps.onSetStatus?.(task.id, status, task, queueMeasuredListStatusScrollAnchor(task.id));
+                      if (status === "unscheduled") {
+                        tableProps.onSetDue?.(task.id, { dueOn: "", dueTime: "" });
+                      } else {
+                        tableProps.onSetStatus?.(task.id, status, task, queueMeasuredListStatusScrollAnchor(task.id));
+                      }
                     }}
-                    options={getSelectableTaskStatuses(task).map((status) => ({
+                    options={getSelectableTaskDisplayStatuses(task).map((status) => ({
                       label: formatTaskStatusLabel(status),
                       value: status,
                     }))}

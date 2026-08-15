@@ -1,4 +1,5 @@
 import type { Task, TaskHistoryInsert, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
+import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import { getTaskDescendants } from "@/lib/task-hierarchy";
 
 export const COMPLETE_CONFIRMATION_MESSAGE = "Mark permanently Complete? This task will stop recurring and move to Archive.";
@@ -49,6 +50,14 @@ export function getSelectableTaskStatusesForRepeatFrequency(repeatFrequency: Tas
 
 export function getSelectableTaskStatuses(task: Pick<Task, "repeat_frequency">) {
   return getSelectableTaskStatusesForRepeatFrequency(task.repeat_frequency);
+}
+
+export function getSelectableTaskDisplayStatusesForRepeatFrequency(repeatFrequency: TaskRepeatFrequency): TaskDisplayStatus[] {
+  return [...getSelectableTaskStatusesForRepeatFrequency(repeatFrequency), "unscheduled"];
+}
+
+export function getSelectableTaskDisplayStatuses(task: Pick<Task, "repeat_frequency">) {
+  return getSelectableTaskDisplayStatusesForRepeatFrequency(task.repeat_frequency);
 }
 
 export function getBatchSelectableTaskStatuses() {

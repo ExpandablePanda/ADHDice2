@@ -2,9 +2,10 @@ import {
   DEFAULT_TASK_UI_STATE,
   type TaskUiState,
 } from "@/lib/task-ui-state";
-import type { TaskStatus } from "@/lib/database.types";
+import type { TaskDisplayStatus } from "@/lib/task-display-status";
 
-export const TASK_FILTER_STATUS_OPTIONS: TaskStatus[] = [
+export const TASK_FILTER_STATUS_OPTIONS: TaskDisplayStatus[] = [
+  "unscheduled",
   "pending",
   "in_progress",
   "delayed",

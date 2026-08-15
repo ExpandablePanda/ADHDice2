@@ -8,6 +8,7 @@ export { createEngineRolloverPlan, engineRolloverPlanHasMutations, engineRollove
 export type { EngineRolloverPlan, EngineRolloverTaskPlan } from "./rollover-authority.ts";
 export { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead, resolveTaskHistoryCalendarStates } from "./calendar-authority.ts";
 export type { TaskHistoryCalendarReadResult } from "./calendar-authority.ts";
+export type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "../task-display-status.ts";
 export { buildManualDueDateTaskUpdate, reconcileManualDueDateChange } from "./due-date-authority.ts";
 export {
   buildTaskEffectiveTimeline,

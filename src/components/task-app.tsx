@@ -585,7 +585,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.1";
+const APP_VERSION = "7.9.2";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2976,6 +2976,7 @@ export function TaskApp() {
         focusedTaskIds,
         taskHistoryByTaskId,
         taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries,
+        taskDisplayStatusByTaskId,
         tasks: tasksForActiveStatusRead,
         todayDateKey: todayKey,
       });
@@ -3005,6 +3006,7 @@ export function TaskApp() {
         taskHistoryByTaskId,
         taskListEvaluationContext,
         taskSubtasksByTaskId,
+        taskDisplayStatusByTaskId,
         tasks: tasksForActiveStatusRead,
         todayDateKey: todayKey,
       });
@@ -3083,6 +3085,7 @@ export function TaskApp() {
       focusedTaskIds,
       stableCanonicalTaskIndex,
       structuralData: taskAppStructuralData,
+      taskDisplayStatusByTaskId,
       tasks: tasksForActiveStatusRead,
     })),
     // Search, view/editor state, menus, and overlays are not workspace facts.
@@ -3163,6 +3166,7 @@ export function TaskApp() {
       taskListEvaluationContext,
       taskSubtasksByTaskId,
       taskUiState: taskUiStateForDerivedData,
+      taskDisplayStatusByTaskId,
       tasks: tasksForActiveStatusRead,
       structuralData: taskAppStructuralData,
       stableCanonicalTaskIndex,

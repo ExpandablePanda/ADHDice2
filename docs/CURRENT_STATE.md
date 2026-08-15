@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-11
+Last reviewed: 2026-08-15
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.1`.
+- Current working app version: `7.9.2`.
 - Current release group: `7.8.x` Historical Outcome and Recurrence Authority Separation.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,11 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.9.2 Derived Unscheduled display status
+
+- Unscheduled is a UI-only active/display status for open pending Tasks and Steps/Substeps without a current due date. It is projected from the canonical active-status read and is used consistently by status chips, counts, filters, sorting, and status actions.
+- Selecting Unscheduled clears the existing schedule/date mutation path; it does not write a database status or create History. Browser QA, live Supabase validation, and deployment verification remain unrun for this release.
 
 ### 7.8.18 Legacy History promotion rollback recovery
 

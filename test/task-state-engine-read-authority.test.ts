@@ -46,6 +46,42 @@ test("stored Pending dormant tasks remain engine-derived Unscheduled on read", (
   assert.equal(engine.statusesByTaskId["task-1"], "unscheduled");
 });
 
+test("Unscheduled only projects the ordinary open state", () => {
+  const statuses = [
+    ["pending", "pending"],
+    ["pending-today", "pending"],
+    ["pending-future", "pending"],
+    ["in-progress", "in_progress"],
+    ["delayed", "delayed"],
+    ["done", "done"],
+    ["did-my-best", "did_my_best"],
+    ["missed", "missed"],
+    ["complete", "complete"],
+  ] as const;
+  const tasks = statuses.map(([id, status]) => task({
+    id,
+    status,
+    due_on: id === "pending-today" ? "2026-07-30" : id === "pending-future" ? "2026-08-02" : null,
+  }));
+  const engine = resolveActiveTaskStatuses({
+    historyByTaskId: Object.fromEntries(tasks.map((source) => [source.id, []])),
+    logicalDayRollover: "06:00",
+    now: "2026-07-30T14:00:00.000Z",
+    tasks,
+    timezone: "America/New_York",
+  });
+
+  assert.equal(engine.statusesByTaskId.pending, "unscheduled");
+  assert.equal(engine.statusesByTaskId["pending-today"], "pending");
+  assert.equal(engine.statusesByTaskId["pending-future"], "upcoming");
+  assert.equal(engine.statusesByTaskId["in-progress"], "in_progress");
+  assert.equal(engine.statusesByTaskId.delayed, "delayed");
+  assert.equal(engine.statusesByTaskId.done, "done");
+  assert.equal(engine.statusesByTaskId["did-my-best"], "did_my_best");
+  assert.equal(engine.statusesByTaskId.missed, "missed");
+  assert.equal(engine.statusesByTaskId.complete, "complete");
+});
+
 test("canonical current-day In Progress workflow is visible when legacy date is null", () => {
   const source = task({
     active_status_logical_date: null,

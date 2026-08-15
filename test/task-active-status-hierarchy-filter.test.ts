@@ -6,6 +6,8 @@ import { filterChildTaskPreviewItemsToMatchingHierarchy, buildChildTaskPreviewVi
 import { buildCanonicalActiveStatusCounts, computeTaskAppDerivedData } from "../src/lib/task-app-derived.ts";
 import { getBuiltInTaskLists, type TaskListDefinition, type TaskListId } from "../src/lib/task-lists.ts";
 import { DEFAULT_TASK_UI_STATE } from "../src/lib/task-ui-state.ts";
+import type { TaskDisplayStatus } from "../src/lib/task-display-status.ts";
+import { sortListParentTasks } from "../src/lib/task-list-sort.ts";
 
 function derive(
   tasks: ReturnType<typeof createTask>[],
@@ -18,6 +20,7 @@ function derive(
     manualMembershipsByTaskId?: Record<string, TaskListId[]>;
     selectedBucket?: string;
     tableColumnFilters?: typeof DEFAULT_TASK_UI_STATE.tableColumnFilters;
+    taskDisplayStatusByTaskId?: Record<string, TaskDisplayStatus>;
   } = {},
 ) {
   return computeTaskAppDerivedData({
@@ -41,6 +44,7 @@ function derive(
       isOverdue: () => false, manualMembershipsByTaskId: options.manualMembershipsByTaskId ?? {}, taskHistoryByTaskId: {}, todayDateKey: "2026-07-17",
     },
     taskSubtasksByTaskId: {},
+    taskDisplayStatusByTaskId: options.taskDisplayStatusByTaskId,
     taskUiState: {
       ...DEFAULT_TASK_UI_STATE,
       includeStepsByView: { ...DEFAULT_TASK_UI_STATE.includeStepsByView, [view]: includeSteps },
@@ -53,6 +57,27 @@ function derive(
     tasks,
   });
 }
+
+test("Unscheduled is an independent status facet and filter for parents and Steps", () => {
+  const parent = createTask({ id: "unscheduled-parent", status: "pending", due_on: null, title: "Parent" });
+  const pendingToday = createTask({ id: "pending-today", status: "pending", due_on: "2026-07-17", title: "Today" });
+  const step = createTask({ id: "unscheduled-step", parent_task_id: parent.id, status: "pending", due_on: null, title: "Step" });
+  const displayStatusByTaskId: Record<string, TaskDisplayStatus> = {
+    [parent.id]: "unscheduled",
+    [pendingToday.id]: "pending",
+    [step.id]: "unscheduled",
+  };
+
+  const parentOnly = derive([parent, pendingToday, step], ["unscheduled"], "", false, "table", { taskDisplayStatusByTaskId: displayStatusByTaskId });
+  assert.deepEqual(parentOnly.filteredTasksSorted.map((task) => task.id), [parent.id]);
+  assert.equal(parentOnly.tableStatusCounts.unscheduled, 1);
+  assert.equal(parentOnly.tableStatusCounts.pending, 1);
+
+  const withSteps = derive([parent, pendingToday, step], ["unscheduled"], "", true, "table", { taskDisplayStatusByTaskId: displayStatusByTaskId });
+  assert.deepEqual(withSteps.filteredTasksSorted.map((task) => task.id), [parent.id]);
+  assert.equal(withSteps.tableStatusCounts.unscheduled, 2);
+  assert.equal(withSteps.tableStatusCounts.pending, 1);
+});
 
 test("Include Steps changes counters only; child search remains discoverable", () => {
   const parent = createTask({ id: "include-parent", sort_order: 1, status: "pending", title: "Parent" });
@@ -85,6 +110,29 @@ test("Include Steps changes counters only; child search remains discoverable", (
     { childTaskIds: new Set(included.searchMatchedChildTaskIds), includeSteps: true, parentTaskIds: new Set(included.searchMatchedParentTaskIds) },
   );
   assert.equal(includedCounts.done, 1);
+});
+
+test("Table status ordering and Unscheduled action use the display-only schedule path", () => {
+  const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
+  assert.match(tableSource, /const STATUS_SORT_ORDER[\s\S]*?"unscheduled",\s*"pending"/);
+  const displayAction = tableSource.match(/function setTaskDisplayStatus[\s\S]*?\n  }/);
+  assert.ok(displayAction);
+  assert.match(displayAction[0], /status === "unscheduled"[\s\S]*?onTaskDueChange\?\.\(taskId, \{ dueOn: "", dueTime: "" \}\)/);
+  assert.doesNotMatch(displayAction[0], /onTaskStatusChange/);
+});
+
+test("List status sorting places Unscheduled immediately before Pending", () => {
+  const unscheduled = createTask({ id: "sort-unscheduled", status: "pending" });
+  const pending = createTask({ id: "sort-pending", status: "pending" });
+  const inProgress = createTask({ id: "sort-in-progress", status: "in_progress" });
+  const sorted = sortListParentTasks([pending, inProgress, unscheduled], { field: "status", direction: "asc" }, {
+    taskDisplayStatusByTaskId: {
+      [unscheduled.id]: "unscheduled",
+      [pending.id]: "pending",
+      [inProgress.id]: "in_progress",
+    },
+  });
+  assert.deepEqual(sorted.map((task) => task.id), [unscheduled.id, pending.id, inProgress.id]);
 });
 
 test("canonical facets use parents only when Include Steps is off and every entity once when on", () => {
