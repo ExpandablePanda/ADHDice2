@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.8.41`.
+- Current working app version: `7.9.1`.
 - Current release group: `7.8.x` Historical Outcome and Recurrence Authority Separation.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
