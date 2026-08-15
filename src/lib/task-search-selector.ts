@@ -1,6 +1,7 @@
 import type { Task, TaskStatus } from "@/lib/database.types";
 import { isArchiveLikeTask } from "@/lib/task-complete";
 import { isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
+import { getTaskRepeatCategory } from "@/lib/task-repeat";
 import { isTaskInRecentTrash } from "@/lib/task-trash";
 import type { TaskQuickFilter, TaskTableColumnFilters } from "@/lib/task-ui-state";
 
@@ -63,7 +64,10 @@ function matchesQuickFilter(task: Task, filter: TaskQuickFilter, focusedTaskIds:
 
 function matchesTableFilters(task: Task, filters: TaskTableColumnFilters, listIds: readonly string[] = [], listNameById?: ReadonlyMap<string, string>) {
   if (filters.priority.length > 0 && !filters.priority.includes(task.priority)) return false;
-  if (filters.repeat.length > 0 && !filters.repeat.includes(task.repeat_frequency)) return false;
+  if (
+    filters.repeat.length > 0
+    && !filters.repeat.includes(getTaskRepeatCategory(task.repeat_frequency, task.repeat_days_of_week, task.repeat_interval))
+  ) return false;
   return Object.entries(filters.text).every(([columnId, query]) => {
     const normalized = query?.trim().toLowerCase();
     if (!normalized) return true;

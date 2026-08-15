@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.6`.
+- Current working app version: `7.9.7`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,10 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.9.7 Repeat filter correction
+
+- The canonical Tasks workspace Repeat filter uses the same `getTaskRepeatCategory` classification as the visible Repeat column. A task displayed as `Weekdays` therefore matches the `Weekdays` filter and does not match `Weekly`; ordinary Weekly, Daily, Daily Until Complete, Monthly, Custom, and No Repeat categories retain their existing identities. Weekdays remains a derived UI/read-model category backed by the existing weekly recurrence configuration; no storage value, recurrence persistence, or scheduling behavior changes.
 
 ### 7.9.6 QA correction pass
 

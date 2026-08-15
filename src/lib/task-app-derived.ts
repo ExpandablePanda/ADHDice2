@@ -25,6 +25,7 @@ import type {
 import { buildTaskListLookup, evaluateTaskListMemberships, isManualTaskListDestination } from "@/lib/task-lists";
 import { isTaskFinished, isTaskOpen, isTaskUrgent, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
+import { getTaskRepeatCategory } from "@/lib/task-repeat";
 import { isTaskInRecentTrash } from "@/lib/task-trash";
 import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
 import { todayISO } from "@/lib/utils";
@@ -555,7 +556,10 @@ function matchesCanonicalTableColumnFilters(
   listNameById: ReadonlyMap<string, string>,
 ) {
   if (filters.priority.length > 0 && !filters.priority.includes(String(getTaskPriorityLevel(task)) as TaskPriorityLevelOption)) return false;
-  if (filters.repeat.length > 0 && !filters.repeat.includes(task.repeat_frequency)) return false;
+  if (
+    filters.repeat.length > 0
+    && !filters.repeat.includes(getTaskRepeatCategory(task.repeat_frequency, task.repeat_days_of_week, task.repeat_interval))
+  ) return false;
 
   return Object.entries(filters.text).every(([columnId, rawQuery]) => {
     const query = rawQuery?.trim().toLowerCase();
