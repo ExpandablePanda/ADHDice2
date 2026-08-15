@@ -44,6 +44,13 @@ test("Task Status History projects calculated Missed rows and uses neutral entry
   assert.doesNotMatch(modalSource, /\{sortedHistory\.length\} logged/);
 });
 
+test("Task History stats expose current and longest Missed streaks from the effective timeline", () => {
+  assert.match(modalSource, /label: "Current Missed Streak"/);
+  assert.match(modalSource, /label: "Longest Missed Streak"/);
+  assert.match(modalSource, /longestMissedStreak: resolvedStreaks\.longestMissedStreak/);
+  assert.match(modalSource, /computeTaskEffectiveTimelineStreaks\(calendarRead\.states, today\)/);
+});
+
 test("parent, Step, Substep, and context-menu History actions preserve their row IDs", () => {
   assert.match(tableSource, /onOpenTaskHistory\(task\.id\)/);
   assert.equal((tableSource.match(/onOpenTaskHistory\(item\.id\)/g) ?? []).length, 2);

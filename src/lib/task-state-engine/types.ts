@@ -133,6 +133,7 @@ export type TaskEffectiveTimeline = {
   activeOccurrenceDueOn: string | null;
   currentCompletedStreak: number;
   currentMissedStreak: number;
+  longestMissedStreak: number;
   currentObligation: TaskEffectiveTimelineObligation;
   nextDueOn: string | null;
   recurrenceAnchor: string | null;

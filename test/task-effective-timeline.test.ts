@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildTaskEffectiveTimeline,
+  computeTaskEffectiveTimelineStreaks,
   type TaskCalendarOverride,
   type TaskHistoryOutcome,
   type TaskStateHistoryRow,
@@ -679,6 +680,45 @@ test("Calendar override states preserve due/open rollover semantics", () => {
   assert.equal(currentOverride.days["2026-08-10"]?.obligation, "due");
   assert.equal(historicalOverride.days["2026-08-09"]?.state, "missed");
   assert.equal(historicalOverride.days["2026-08-09"]?.obligation, "overdue");
+});
+
+test("longest Missed streak uses calculated timeline days and skips neutral states", () => {
+  const result = timeline({
+    task: { dueOn: "2026-08-01", activeOccurrenceDueOn: "2026-08-01" },
+    history: [
+      history("2026-08-04", "done"),
+      history("2026-08-08", "did_my_best"),
+    ],
+    logicalDate: "2026-08-10",
+    calendarStart: "2026-08-01",
+    calendarEnd: "2026-08-10",
+    calendarOverrides: [calendarOverride("2026-08-06", "not_due")],
+  });
+
+  assert.equal(result.days["2026-08-01"]?.state, "missed");
+  assert.equal(result.days["2026-08-06"]?.state, "not_due");
+  assert.equal(result.days["2026-08-04"]?.state, "done");
+  assert.equal(result.days["2026-08-08"]?.state, "did_my_best");
+  assert.equal(result.longestMissedStreak, 3);
+  assert.equal(result.currentMissedStreak, 1);
+});
+
+test("longest Missed streak resets at Done, Did My Best, Delayed, and Complete", () => {
+  const result = computeTaskEffectiveTimelineStreaks({
+    "2026-08-01": "missed",
+    "2026-08-02": "missed",
+    "2026-08-03": "done",
+    "2026-08-04": "missed",
+    "2026-08-05": "did_my_best",
+    "2026-08-06": "missed",
+    "2026-08-07": "delayed",
+    "2026-08-08": "missed",
+    "2026-08-09": "complete",
+    "2026-08-10": "open",
+  }, "2026-08-10");
+
+  assert.equal(result.longestMissedStreak, 2);
+  assert.equal(result.currentMissedStreak, 0);
 });
 
 test("historical Due/Open remains continuously overdue through the current day", () => {

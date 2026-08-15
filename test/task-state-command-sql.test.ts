@@ -56,6 +56,27 @@ test("canonical Delay materializes occurrence before validating History ownershi
   assert.ok(occurrenceInsert < historyOwnershipCheck);
 });
 
+test("Calendar override commands replace the active row without deleting audit history", () => {
+  const overrideBranchStart = sql.indexOf("if v_calendar_override <> '{}'::jsonb then");
+  const entitlementStart = sql.indexOf("-- The entitlement is canonical", overrideBranchStart);
+  const overrideBranch = sql.slice(overrideBranchStart, entitlementStart);
+  const retireIndex = overrideBranch.indexOf("update public.adhdice_task_calendar_overrides existing_override");
+  const insertIndex = overrideBranch.indexOf("insert into public.adhdice_task_calendar_overrides");
+
+  assert.ok(retireIndex >= 0);
+  assert.ok(insertIndex > retireIndex);
+  assert.match(overrideBranch, /existing_override\.user_id = p_user_id/);
+  assert.match(overrideBranch, /existing_override\.entity_id = v_entity_id/);
+  assert.match(overrideBranch, /existing_override\.logical_date = nullif\(v_calendar_override->>'logical_date', ''\)::date/);
+  assert.match(overrideBranch, /existing_override\.is_active/);
+  assert.match(overrideBranch, /is_active = false/);
+  assert.match(overrideBranch, /cleared_at = now\(\)/);
+  assert.match(overrideBranch, /cleared_by_command_id = v_command_id/);
+  assert.match(overrideBranch, /revision = existing_override\.revision \+ 1/);
+  assert.doesNotMatch(overrideBranch, /delete\s+from\s+public\.adhdice_task_calendar_overrides/i);
+  assert.match(schema, /create unique index if not exists adhdice_task_calendar_overrides_active_key[\s\S]*where is_active/i);
+});
+
 test("7.7.47 migration changes only the stale Delay occurrence predicate and preserves service-role grants", () => {
   assert.match(delayMigration, /pg_get_functiondef\(p\.oid\)/i);
   assert.match(delayMigration, /or v_occurrence <> '\{\}'::jsonb/);

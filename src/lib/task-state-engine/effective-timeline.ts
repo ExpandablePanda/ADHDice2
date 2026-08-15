@@ -39,6 +39,7 @@ const SUCCESSFUL_OUTCOMES = new Set<TaskHistoryOutcome>(["done", "did_my_best", 
 export type TaskEffectiveTimelineStreaks = {
   currentCompletedStreak: number;
   currentMissedStreak: number;
+  longestMissedStreak: number;
 };
 
 function classifyFinalizedCalendarState(state: string | undefined): "success" | "missed" | "break" | null {
@@ -76,9 +77,23 @@ export function computeTaskEffectiveTimelineStreaks(
     cursor = shiftDateKey(cursor, -1);
   }
 
+  let longestMissedStreak = 0;
+  let runningMissedStreak = 0;
+  for (const date of Object.keys(states).sort()) {
+    const finalizedKind = classifyFinalizedCalendarState(states[date]);
+    if (!finalizedKind) continue;
+    if (finalizedKind === "missed") {
+      runningMissedStreak += 1;
+      longestMissedStreak = Math.max(longestMissedStreak, runningMissedStreak);
+    } else {
+      runningMissedStreak = 0;
+    }
+  }
+
   return {
     currentCompletedStreak: streakKind === "success" ? streakLength : 0,
     currentMissedStreak: streakKind === "missed" ? streakLength : 0,
+    longestMissedStreak,
   };
 }
 
@@ -506,6 +521,7 @@ export function buildTaskEffectiveTimeline(
     activeOccurrenceDueOn: currentDay?.occurrenceDueOn ?? activeDueOn,
     currentCompletedStreak: streaks.currentCompletedStreak,
     currentMissedStreak: streaks.currentMissedStreak,
+    longestMissedStreak: streaks.longestMissedStreak,
     currentObligation,
     nextDueOn: completed ? null : activeDueOn,
     recurrenceAnchor: replayCheckpoint?.kind === "success" ? replayCheckpoint.logicalDate : null,

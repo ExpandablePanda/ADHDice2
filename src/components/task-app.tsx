@@ -66,6 +66,7 @@ import {
 } from "lucide-react";
 import dynamicIconImports from "lucide-react/dynamicIconImports";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { createPortal } from "react-dom";
 import {
   BottomDockAdapter as BottomDock,
   FilterRowsAdapter as FilterRows,
@@ -584,7 +585,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.8.33";
+const APP_VERSION = "7.8.34";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -8057,10 +8058,14 @@ function StatusBanner({
     return null;
   }
 
-  return (
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
     <div
       aria-live={message.tone === "warn" ? "assertive" : "polite"}
-      className={`fixed right-3 top-[calc(env(safe-area-inset-top)+1rem)] z-[140] flex w-[calc(100vw-1.5rem)] max-w-xl items-center justify-between gap-3 rounded-[1.25rem] border px-4 py-3 text-sm font-medium shadow-[0_18px_48px_rgba(39,28,89,0.18)] sm:right-4 sm:w-auto sm:min-w-80 ${className}`}
+      className={`fixed right-3 top-[calc(env(safe-area-inset-top)+1rem)] z-[160] flex w-[calc(100vw-1.5rem)] max-w-xl items-center justify-between gap-3 rounded-[1.25rem] border px-4 py-3 text-sm font-medium shadow-[0_18px_48px_rgba(39,28,89,0.18)] sm:right-4 sm:w-auto sm:min-w-80 ${className}`}
       role={message.tone === "warn" ? "alert" : "status"}
     >
       <span className="min-w-0 flex-1">{message.text}</span>
@@ -8071,7 +8076,8 @@ function StatusBanner({
       >
         Dismiss
       </TaskTableChipButton>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

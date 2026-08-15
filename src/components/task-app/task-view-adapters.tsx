@@ -636,8 +636,9 @@ export function TaskHistoryModal({
       ...savedHistoryStats,
       currentStreak: resolvedStreaks.currentCompletedStreak,
       missedStreak: resolvedStreaks.currentMissedStreak,
+      longestMissedStreak: resolvedStreaks.longestMissedStreak,
     }
-    : savedHistoryStats;
+    : { ...savedHistoryStats, longestMissedStreak: 0 };
   const lastDone = getTaskHistoryLastDone(normalizedTaskHistory, today);
   const historyRows = buildTaskHistoryRowProjections(
     normalizedTaskHistory,
@@ -1012,7 +1013,8 @@ export function TaskHistoryModal({
                 { label: "Last Done", value: lastDone ? (lastDone.timestamp ? formatHistoryDateTime(lastDone.timestamp) : formatCalendarDate(lastDone.dateKey)) : "None", detail: "latest Done or Did My Best" },
                 { label: "Current Streak", value: stats.currentStreak, detail: "completed due dates in a row" },
                 { label: "Best Streak", value: stats.bestStreak, detail: "best completion streak" },
-                { label: "Missed Streak", value: stats.missedStreak, detail: "missed due dates in a row" },
+                { label: "Current Missed Streak", value: stats.missedStreak, detail: "missed due dates in a row" },
+                { label: "Longest Missed Streak", value: stats.longestMissedStreak, detail: "longest missed run in range" },
                 { label: "Completion Rate", value: `${stats.completionRate}%`, detail: task.repeat_frequency === "none" ? "based on logged history" : `${stats.dueDays} due dates in range` },
               ].map((stat) => (
                 <div className="rounded-[1.25rem] bg-[#f8f5ff] px-4 py-4 dark:bg-white/[0.05]" key={stat.label}>

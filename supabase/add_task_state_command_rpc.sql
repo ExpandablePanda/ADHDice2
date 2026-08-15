@@ -875,6 +875,19 @@ begin
   end if;
 
   if v_calendar_override <> '{}'::jsonb then
+    -- Replaceable instructions retire the prior active row in this same
+    -- transaction, preserving it as audit history and keeping the active
+    -- unique key clear before the new row is inserted.
+    update public.adhdice_task_calendar_overrides existing_override
+       set is_active = false,
+           cleared_at = now(),
+           cleared_by_command_id = v_command_id,
+           revision = existing_override.revision + 1,
+           updated_at = now()
+     where existing_override.user_id = p_user_id
+       and existing_override.entity_id = v_entity_id
+       and existing_override.logical_date = nullif(v_calendar_override->>'logical_date', '')::date
+       and existing_override.is_active;
     v_calendar_override := jsonb_set(v_calendar_override, '{id}', to_jsonb(coalesce(nullif(v_calendar_override->>'id', '')::uuid, gen_random_uuid())), true);
     v_calendar_override := jsonb_set(v_calendar_override, '{user_id}', to_jsonb(p_user_id), true);
     v_calendar_override := jsonb_set(v_calendar_override, '{entity_id}', to_jsonb(v_entity_id), true);
