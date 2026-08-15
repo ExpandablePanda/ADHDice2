@@ -11,6 +11,14 @@ import { resolveTaskRewardTier, type PendingTaskReward } from "@/lib/task-reward
 
 const sql = readFileSync(new URL("../supabase/add_pending_reward_dice.sql", import.meta.url), "utf8");
 const controller = readFileSync(new URL("../src/hooks/useTaskRewardController.ts", import.meta.url), "utf8");
+const awardFunction = sql.slice(
+  sql.indexOf("create or replace function public.adhdice_award_pending_reward_dice"),
+  sql.indexOf("create or replace function public.adhdice_migrate_pending_reward_dice"),
+);
+const claimFunction = sql.slice(
+  sql.indexOf("create or replace function public.adhdice_claim_pending_reward_dice"),
+  sql.indexOf("revoke all on function public.adhdice_award_pending_reward_dice"),
+);
 
 function reward(overrides: Partial<PendingTaskReward> = {}): PendingTaskReward {
   return {
@@ -82,6 +90,40 @@ test("SQL contract is user-scoped, authenticated-only, and Realtime-published", 
   assert.match(sql, /grant execute .* to authenticated/si);
   assert.match(sql, /tablename = 'adhdice_pending_reward_dice'/i);
   assert.match(sql, /alter publication supabase_realtime add table public\.adhdice_pending_reward_dice/i);
+});
+
+test("a deleted source Task cannot abort settlement of an already-owned pending reward", () => {
+  assert.match(claimFunction, /if exists \([\s\S]*from public\.adhdice_clean_tasks task[\s\S]*task\.user_id = v_user_id[\s\S]*\) and \([\s\S]*then\s+insert into public\.adhdice_task_reward_claims/i);
+  assert.doesNotMatch(claimFunction, /A pending reward task is not owned by the authenticated user/i);
+});
+
+test("a deleted source Subtask skips only its legacy claim row", () => {
+  assert.match(claimFunction, /nullif\(v_claim ->> 'subtaskId', ''\) is null\s+or exists \([\s\S]*from public\.adhdice_task_subtasks subtask[\s\S]*subtask\.task_id = \(v_claim ->> 'taskId'\)::uuid[\s\S]*subtask\.user_id = v_user_id[\s\S]*\)/i);
+  assert.doesNotMatch(claimFunction, /A pending reward subtask is not owned by the authenticated user/i);
+});
+
+test("live Task and Subtask references still insert the existing claim row", () => {
+  assert.match(claimFunction, /task\.id = \(v_claim ->> 'taskId'\)::uuid and task\.user_id = v_user_id[\s\S]*subtask\.id = nullif\(v_claim ->> 'subtaskId', ''\)::uuid[\s\S]*subtask\.task_id = \(v_claim ->> 'taskId'\)::uuid[\s\S]*subtask\.user_id = v_user_id[\s\S]*insert into public\.adhdice_task_reward_claims/i);
+  assert.match(claimFunction, /user_id, task_id, subtask_id, reward_roll_id, reward_date, awarded_token/i);
+});
+
+test("one stale reference in mixed claim refs does not lose the reward settlement", () => {
+  const claimLoopEnd = claimFunction.indexOf("end loop;", claimFunction.indexOf("for v_claim in"));
+  const economySettlement = claimFunction.indexOf("v_total_points := v_total_points + v_final_points", claimLoopEnd);
+  assert.ok(claimLoopEnd >= 0 && economySettlement > claimLoopEnd);
+  assert.match(claimFunction, /for v_claim in select value from jsonb_array_elements\(v_reward -> 'claimRefs'\)/i);
+  assert.match(claimFunction, /end if;\s+end loop;[\s\S]*insert into public\.adhdice_point_ledger[\s\S]*update public\.adhdice_pending_reward_dice_items/i);
+  assert.doesNotMatch(claimFunction, /raise exception[\s\S]*pending reward (?:task|subtask)/i);
+});
+
+test("claim settlement selects only unclaimed pending items owned by the authenticated user", () => {
+  assert.match(claimFunction, /from public\.adhdice_pending_reward_dice_items item\s+where item\.user_id = v_user_id and item\.claimed_operation_id is null\s+order by item\.created_at, item\.id/i);
+  assert.match(claimFunction, /select sum\(item\.dice_count\)[\s\S]*from public\.adhdice_pending_reward_dice_items item[\s\S]*item\.user_id = v_user_id and item\.claimed_operation_id is null/i);
+});
+
+test("award-time Task and Subtask ownership validation remains strict", () => {
+  assert.match(awardFunction, /from public\.adhdice_clean_tasks task\s+where task\.id = p_task_id and task\.user_id = v_user_id[\s\S]*The task is not owned by the authenticated user/i);
+  assert.match(awardFunction, /from public\.adhdice_task_subtasks subtask\s+where subtask\.id = p_subtask_id and subtask\.task_id = p_task_id and subtask\.user_id = v_user_id[\s\S]*The subtask is not owned by the authenticated user/i);
 });
 
 test("pending rewards do not use the Roll-page bank or its RPC", () => {

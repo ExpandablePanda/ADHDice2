@@ -506,30 +506,29 @@ begin
     if v_reward ->> 'kind' is distinct from 'legacy_fallback' then
       for v_claim in select value from jsonb_array_elements(v_reward -> 'claimRefs')
       loop
-        if not exists (
+        if exists (
           select 1 from public.adhdice_clean_tasks task
           where task.id = (v_claim ->> 'taskId')::uuid and task.user_id = v_user_id
+        ) and (
+          nullif(v_claim ->> 'subtaskId', '') is null
+          or exists (
+            select 1 from public.adhdice_task_subtasks subtask
+            where subtask.id = nullif(v_claim ->> 'subtaskId', '')::uuid
+              and subtask.task_id = (v_claim ->> 'taskId')::uuid
+              and subtask.user_id = v_user_id
+          )
         ) then
-          raise exception using errcode = '42501', message = 'A pending reward task is not owned by the authenticated user.';
+          insert into public.adhdice_task_reward_claims (
+            user_id, task_id, subtask_id, reward_roll_id, reward_date, awarded_token
+          ) values (
+            v_user_id,
+            (v_claim ->> 'taskId')::uuid,
+            nullif(v_claim ->> 'subtaskId', '')::uuid,
+            v_roll_id,
+            coalesce((v_reward ->> 'rewardDate')::date, current_date),
+            true
+          );
         end if;
-        if nullif(v_claim ->> 'subtaskId', '') is not null and not exists (
-          select 1 from public.adhdice_task_subtasks subtask
-          where subtask.id = nullif(v_claim ->> 'subtaskId', '')::uuid
-            and subtask.task_id = (v_claim ->> 'taskId')::uuid
-            and subtask.user_id = v_user_id
-        ) then
-          raise exception using errcode = '42501', message = 'A pending reward subtask is not owned by the authenticated user.';
-        end if;
-        insert into public.adhdice_task_reward_claims (
-          user_id, task_id, subtask_id, reward_roll_id, reward_date, awarded_token
-        ) values (
-          v_user_id,
-          (v_claim ->> 'taskId')::uuid,
-          nullif(v_claim ->> 'subtaskId', '')::uuid,
-          v_roll_id,
-          coalesce((v_reward ->> 'rewardDate')::date, current_date),
-          true
-        );
       end loop;
     end if;
 
