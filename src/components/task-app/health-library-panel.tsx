@@ -118,7 +118,6 @@ const EMPTY_MEAL_DRAFT: MealDraft = {
 };
 
 type HealthLibraryPanelProps = {
-  className?: string;
   favorites: HealthFoodLibraryItem[];
   recipes: HealthRecipe[];
   savedMeals: HealthSavedMeal[];
@@ -164,7 +163,6 @@ type HealthLibraryPanelProps = {
 };
 
 export function HealthLibraryPanel({
-  className,
   favorites,
   recipes,
   savedMeals,
@@ -374,7 +372,6 @@ export function HealthLibraryPanel({
 
   return (
     <HealthCollapsiblePanel
-      className={className}
       subtitle="Create reusable foods, combine ingredients into recipes, or bundle foods and recipes into one-tap meals."
       title="Custom nutrition library"
     >

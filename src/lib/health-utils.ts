@@ -326,6 +326,30 @@ export function getHealthSleepStartTimestamp(session: Pick<HistoricalFocusSessio
   return null;
 }
 
+export function sortHealthSleepSessionsByStart(sessions: HistoricalFocusSession[]) {
+  return sessions
+    .map((session, index) => ({
+      index,
+      session,
+      startTime: getHealthSleepStartTimestamp(session),
+    }))
+    .sort((left, right) => {
+      const leftTime = left.startTime ? Date.parse(left.startTime) : Number.NaN;
+      const rightTime = right.startTime ? Date.parse(right.startTime) : Number.NaN;
+      const leftHasTime = Number.isFinite(leftTime);
+      const rightHasTime = Number.isFinite(rightTime);
+
+      if (leftHasTime && rightHasTime && leftTime !== rightTime) {
+        return leftTime - rightTime;
+      }
+      if (leftHasTime !== rightHasTime) {
+        return leftHasTime ? -1 : 1;
+      }
+      return left.index - right.index;
+    })
+    .map(({ session }) => session);
+}
+
 export function getHealthSleepElapsedSeconds(session: { accumulatedSeconds: number; isRunning: boolean; startTime: number | null }, nowMs = Date.now()) {
   const runningSeconds = session.isRunning && session.startTime !== null
     ? Math.max(0, Math.floor((nowMs - session.startTime) / 1000))

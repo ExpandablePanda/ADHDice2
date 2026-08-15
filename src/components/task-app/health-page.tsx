@@ -50,6 +50,7 @@ import {
   getHealthSleepDayTotal,
   buildHealthDailySleepSeries,
   getSleepFocusSessions,
+  sortHealthSleepSessionsByStart,
   getLatestWeight,
   getMealSlotLabel,
   getWeightTrend,
@@ -549,7 +550,7 @@ export function HealthPage({
     [focusCategories, focusHistory, metricEntries, sleepLedgerDate],
   );
   const selectedSleepFocusSessions = useMemo(
-    () => sleepFocusSessions.filter((session) => session.date === sleepLedgerDate),
+    () => sortHealthSleepSessionsByStart(sleepFocusSessions.filter((session) => session.date === sleepLedgerDate)),
     [sleepFocusSessions, sleepLedgerDate],
   );
   const sleepActivitySeries = useMemo(
@@ -1400,8 +1401,8 @@ export function HealthPage({
 
       {activeTab === "Food" ? (
         <div aria-labelledby="health-tab-food" className="mt-6 grid gap-5 xl:grid-cols-[1.08fr_0.92fr]" id={getHealthTabPanelId("Food")} role="tabpanel">
-          <div className="contents xl:grid xl:content-start xl:gap-5">
-          <HealthPanel className="order-1 xl:order-none" icon={<Salad />} subtitle="Meal logging">
+          <div className="grid content-start gap-5">
+          <HealthPanel icon={<Salad />} subtitle="Meal logging">
             <HealthCollapsiblePanel
               className="mb-5"
               defaultOpen={false}
@@ -1879,24 +1880,10 @@ export function HealthPage({
               )}
             </div>
           </HealthPanel>
-
-          <HealthLibraryPanel
-            className="order-3 xl:order-none"
-            deleteFood={deleteFavoriteFood}
-            deleteRecipe={deleteRecipe}
-            deleteSavedMeal={deleteSavedMeal}
-            favorites={favorites}
-            recipes={recipes}
-            saveFood={saveFavoriteFood}
-            saveRecipe={saveRecipe}
-            savedMeals={savedMeals}
-            saveSavedMeal={saveSavedMeal}
-          />
           </div>
 
-          <div className="contents xl:grid xl:content-start xl:gap-5">
+          <div className="grid content-start gap-5">
           <HealthPanel
-            className="order-2 xl:order-none"
             headerActions={<FoodHistoryDateChip date={foodHistoryDate} onChange={setFoodHistoryDate} today={today} />}
             icon={<Target />}
             subtitle="Daily totals"
@@ -1910,7 +1897,7 @@ export function HealthPage({
             <HealthCalorieLineChart series={dailyCalorieSeries} />
           </HealthPanel>
 
-          <HealthPanel className="order-2 xl:order-none" icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
+          <HealthPanel icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
               <div className="adhdice-scrollbar max-h-[26rem] space-y-5 overflow-y-auto pr-1">
                 <section className="space-y-3" aria-labelledby="health-favorites-heading">
                   <SectionMiniTitle title="Favorites" />
@@ -2004,6 +1991,20 @@ export function HealthPage({
           </HealthPanel>
           </div>
 
+          <div className="order-4 xl:col-span-2 xl:order-none">
+          <HealthLibraryPanel
+            deleteFood={deleteFavoriteFood}
+            deleteRecipe={deleteRecipe}
+            deleteSavedMeal={deleteSavedMeal}
+            favorites={favorites}
+            recipes={recipes}
+            saveFood={saveFavoriteFood}
+            saveRecipe={saveRecipe}
+            savedMeals={savedMeals}
+            saveSavedMeal={saveSavedMeal}
+          />
+          </div>
+
         </div>
       ) : null}
 
@@ -2077,9 +2078,8 @@ export function HealthPage({
 
       {activeTab === "Sleep" ? (
         <div aria-labelledby="health-tab-sleep" className="mt-6 grid gap-5 xl:grid-cols-[1fr_1fr]" id={getHealthTabPanelId("Sleep")} role="tabpanel">
-          <div className="contents xl:grid xl:content-start xl:gap-5">
+          <div className="grid content-start gap-5">
           <HealthPanel
-            className="order-1 xl:order-none"
             collapseAfterHeaderActions
             headerActions={<FoodHistoryDateChip ariaLabel="Sleep ledger date" date={sleepLedgerDate} dayStepper today={today} onChange={setSleepLedgerDate} />}
             icon={<MoonStar />}
@@ -2115,7 +2115,10 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel className="order-2 xl:order-none" icon={<MoonStar />} subtitle="Manual entry" title="Log sleep">
+          </div>
+
+          <div className="grid content-start gap-5">
+          <HealthPanel icon={<MoonStar />} subtitle="Manual entry" title="Log sleep">
             <SleepKindSelector onChange={(kind) => setManualSleepDraft((current) => ({ ...current, kind }))} value={manualSleepDraft.kind} />
             <SleepDraftFields draft={manualSleepDraft} onChange={(next) => setManualSleepDraft(next)} />
             {sleepFormError ? <p className="mt-3 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{sleepFormError}</p> : null}
@@ -2124,7 +2127,7 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel className="order-3 xl:order-none" icon={<Activity />} subtitle="Last 7 days" title="Sleep sources">
+          <HealthPanel icon={<Activity />} subtitle="Last 7 days" title="Sleep sources">
             <div className="grid gap-3 sm:grid-cols-3">
               <CompactStat detail="combined week" label="Total" value={formatHealthSleepDuration(recentSleepTotalMinutes)} />
               <CompactStat detail="Sleep Focus timers" label="Clock" value={formatHealthSleepDuration(recentSleepFocusMinutes)} />
@@ -2146,10 +2149,7 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          </div>
-
-          <div className="contents xl:grid xl:content-start xl:gap-5">
-          <HealthPanel className="order-4 xl:order-none" icon={<Sparkles />} subtitle="Selected date" title="Sleep Ledger">
+          <HealthPanel icon={<Sparkles />} subtitle="Selected date" title="Sleep Ledger">
             <div className="space-y-3">
               {selectedSleepFocusSessions.length === 0 ? (
                 <EmptyCopy text={`No Sleep Focus sessions logged for ${formatHealthDateLabel(sleepLedgerDate)}.`} />
@@ -2355,7 +2355,6 @@ export function HealthPage({
 }
 
 function HealthPanel({
-  className,
   collapseAfterHeaderActions = false,
   children,
   headerActions,
@@ -2363,7 +2362,6 @@ function HealthPanel({
   subtitle,
   title,
 }: {
-  className?: string;
   collapseAfterHeaderActions?: boolean;
   children: ReactNode;
   headerActions?: ReactNode;
@@ -2399,7 +2397,7 @@ function HealthPanel({
   );
 
   return (
-    <div className={`${className ? `${className} ` : ""}rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]`}>
+    <div className="rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-center gap-2 px-5 py-5">
         {collapseAfterHeaderActions ? (
           <div className="flex min-w-0 flex-1 items-center gap-3">

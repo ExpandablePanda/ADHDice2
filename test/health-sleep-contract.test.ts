@@ -90,20 +90,27 @@ test("Health stacked tabs use independent columns and preserve narrow-screen ord
   const food = health.slice(health.indexOf('activeTab === "Food"'), health.indexOf('activeTab === "Water"'));
   const sleep = health.slice(health.indexOf('activeTab === "Sleep"'), health.indexOf('activeTab === "Insights"'));
 
-  assert.equal((food.match(/className="contents xl:grid xl:content-start xl:gap-5"/g) ?? []).length, 2);
-  assert.match(food, /<HealthPanel className="order-1 xl:order-none"[\s\S]*?subtitle="Meal logging"/);
-  assert.match(food, /<HealthLibraryPanel[\s\S]*?className="order-3 xl:order-none"/);
-  assert.match(food, /<HealthPanel[\s\S]*?className="order-2 xl:order-none"[\s\S]*?subtitle="Daily totals"/);
+  assert.equal((food.match(/className="grid content-start gap-5"/g) ?? []).length, 2);
+  assert.match(food, /<HealthPanel[\s\S]*?subtitle="Meal logging"/);
+  assert.match(food, /<HealthPanel[\s\S]*?subtitle="Daily totals"/);
   assert.match(food, /title="Favorites & Recent Foods"/);
+  assert.match(food, /<div className="order-4 xl:col-span-2 xl:order-none">\s*<HealthLibraryPanel/);
   assert.equal((food.match(/subtitle="Meal logging"/g) ?? []).length, 1);
   assert.equal((food.match(/subtitle="Daily totals"/g) ?? []).length, 1);
   assert.equal((food.match(/title="Favorites & Recent Foods"/g) ?? []).length, 1);
+  assert.equal((food.match(/<HealthLibraryPanel/g) ?? []).length, 1);
+  assert.ok(food.indexOf('subtitle="Meal logging"') < food.indexOf('subtitle="Daily totals"'));
+  assert.ok(food.indexOf('title="Favorites & Recent Foods"') < food.indexOf("<HealthLibraryPanel"));
 
-  assert.equal((sleep.match(/className="contents xl:grid xl:content-start xl:gap-5"/g) ?? []).length, 2);
-  assert.match(sleep, /className="order-1 xl:order-none"[\s\S]*?title="Health sleep totals"/);
-  assert.match(sleep, /className="order-2 xl:order-none"[\s\S]*?subtitle="Manual entry"/);
-  assert.match(sleep, /className="order-3 xl:order-none"[\s\S]*?title="Sleep sources"/);
-  assert.match(sleep, /className="order-4 xl:order-none"[\s\S]*?title="Sleep Ledger"/);
+  assert.equal((sleep.match(/className="grid content-start gap-5"/g) ?? []).length, 2);
+  assert.doesNotMatch(sleep, /contents xl:grid/);
+  const firstSleepColumnStart = sleep.indexOf('<div className="grid content-start gap-5">');
+  const secondSleepColumnStart = sleep.indexOf('<div className="grid content-start gap-5">', firstSleepColumnStart + 1);
+  const firstSleepColumn = sleep.slice(firstSleepColumnStart, secondSleepColumnStart);
+  const secondSleepColumn = sleep.slice(secondSleepColumnStart);
+  assert.match(firstSleepColumn, /title="Health sleep totals"/);
+  assert.doesNotMatch(firstSleepColumn, /subtitle="Manual entry"|title="Sleep sources"|title="Sleep Ledger"/);
+  assert.match(secondSleepColumn, /subtitle="Manual entry"[\s\S]*?title="Sleep sources"[\s\S]*?title="Sleep Ledger"/);
   assert.equal((sleep.match(/<HealthPanel/g) ?? []).length, 4);
 
   assert.equal((water.match(/<div className="grid content-start gap-5">/g) ?? []).length, 2);

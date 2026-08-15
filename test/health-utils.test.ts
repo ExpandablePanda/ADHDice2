@@ -21,6 +21,7 @@ import {
   getEligibleHealthAchievements,
   getHealthSleepDayTotal,
   getSleepFocusSessions,
+  sortHealthSleepSessionsByStart,
   HEALTH_SLEEP_KINDS,
   normalizeHealthSleepKind,
   resolveHealthSleepKind,
@@ -462,6 +463,31 @@ test("Health Sleep timestamps preserve local start plus duration across midnight
   assert.equal(Date.parse(timestamps!.endedAt) - Date.parse(timestamps!.startedAt), durationSeconds! * 1000);
   const inferred = getHealthSleepStartTimestamp({ startedAt: null, endedAt: timestamps!.endedAt, durationSeconds: durationSeconds! });
   assert.equal(Date.parse(inferred!), Date.parse(timestamps!.startedAt));
+});
+
+test("Health Sleep ledger sorting uses semantic starts without mutating Focus history", () => {
+  const sessions = [
+    { id: "invalid-a", startedAt: null, endedAt: null, durationSeconds: 3600 },
+    { id: "2057", startedAt: "2026-08-04T20:57:00.000Z", endedAt: null, durationSeconds: 3600 },
+    { id: "0502", startedAt: null, endedAt: "2026-08-04T06:02:00.000Z", durationSeconds: 3600 },
+    { id: "0157", startedAt: "2026-08-04T01:57:00.000Z", endedAt: "2026-08-04T03:00:00.000Z", durationSeconds: 3600 },
+    { id: "invalid-b", startedAt: "not-a-time", endedAt: "also-not-a-time", durationSeconds: 3600 },
+    { id: "1653", startedAt: "2026-08-04T16:53:00.000Z", endedAt: null, durationSeconds: 3600 },
+    { id: "0845", startedAt: "2026-08-04T08:45:00.000Z", endedAt: null, durationSeconds: 3600 },
+  ].map((session) => ({
+    categoryId: "sleep-category",
+    date: "2026-08-04",
+    focusType: "Sleep",
+    title: "Sleep",
+    ...session,
+  }));
+  const original = [...sessions];
+  const sorted = sortHealthSleepSessionsByStart(sessions);
+
+  assert.deepEqual(sorted.map((session) => session.id), ["0157", "0502", "0845", "1653", "2057", "invalid-a", "invalid-b"]);
+  assert.equal(getHealthSleepStartTimestamp(sessions[3]), "2026-08-04T01:57:00.000Z");
+  assert.equal(getHealthSleepStartTimestamp(sessions[2]), "2026-08-04T05:02:00.000Z");
+  assert.deepEqual(sessions, original);
 });
 
 test("Health Sleep rejects invalid local date/time and recomputes edited duration", () => {
