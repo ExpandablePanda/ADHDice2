@@ -109,27 +109,33 @@ test("Task History read stats recalculate Current and Longest Missed Streak afte
 test("Updates regression: manual Not Due at 8/9 ends the older missed run", () => {
   const task = createTask({
     created_at: "2026-08-01T12:00:00.000Z",
-    due_on: "2026-08-09",
+    due_on: "2026-07-20",
     id: "task-updates",
     repeat_frequency: "daily",
     repeat_interval: 1,
     status: "pending",
     title: "Updates",
   });
-  const result = resolveTaskHistoryCalendarRead({
+  const input = {
     calendarEnd: "2026-08-14",
-    calendarOverrides: [{ id: "override-09", logicalDate: "2026-08-09", overrideState: "not_due" }],
-    calendarStart: "2026-08-09",
+    calendarStart: "2026-07-20",
     history: [],
     logicalDayRollover: "00:00",
     now: "2026-08-14T12:00:00.000Z",
     task,
     timezone: "UTC",
+  };
+  const before = resolveTaskHistoryCalendarRead(input);
+  const result = resolveTaskHistoryCalendarRead({
+    ...input,
+    calendarOverrides: [{ id: "override-09", logicalDate: "2026-08-09", overrideState: "not_due" }],
   });
   const streaks = computeTaskEffectiveTimelineStreaks(result?.timeline?.days ?? {}, "2026-08-14");
 
+  assert.ok((before?.timeline?.currentMissedStreak ?? 0) > 4);
+  assert.equal(result?.timeline?.days["2026-08-08"]?.state, "missed");
   assert.equal(result?.timeline?.days["2026-08-09"]?.state, "not_due");
   assert.equal(result?.timeline?.days["2026-08-09"]?.calendarOverrideId, "override-09");
   assert.equal(streaks.currentMissedStreak, 4);
-  assert.equal(streaks.longestMissedStreak, 4);
+  assert.equal(streaks.longestMissedStreak, 20);
 });
