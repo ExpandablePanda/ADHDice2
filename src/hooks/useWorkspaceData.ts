@@ -22,7 +22,8 @@ import type {
 } from "@/lib/database.types";
 import { loadProfileMedia, setActiveProfileUserId, WORKSPACE_PROFILE_COLUMNS, type WorkspaceProfileRow } from "@/lib/profile-store";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
+import type { CanonicalTaskCalendarOverride, CanonicalTaskHistoryFact, CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
+import { taskCalendarOverrideFromCanonical } from "@/lib/task-state-canonical/engine-input";
 import { projectTasksWithCanonicalScheduleBoundaries } from "@/lib/task-state-canonical/schedule-projection";
 import {
   deduplicateTaskHistoryByLogicalDate,
@@ -56,7 +57,7 @@ import {
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
-import type { CanonicalTaskHistoryFact } from "@/lib/task-state-canonical/types";
+import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type ResolvedSupabaseClient = NonNullable<SupabaseClient>;
@@ -434,6 +435,34 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
     function mapCanonicalHistoryRows(rows: CanonicalTaskHistoryFact[]) {
       return mapCanonicalTaskHistoryFacts(rows) as DbTaskHistory[];
+    }
+
+    async function loadActiveCalendarOverrides(taskId?: string) {
+      const result = taskId
+        ? await client
+          .from("adhdice_task_calendar_overrides")
+          .select("*")
+          .eq("user_id", userId)
+          .eq("entity_id", taskId)
+          .eq("is_active", true)
+          .order("logical_date", { ascending: false })
+        : await client
+          .from("adhdice_task_calendar_overrides")
+          .select("*")
+          .eq("user_id", userId)
+          .eq("is_active", true)
+          .order("logical_date", { ascending: false });
+      if (result.error) return null;
+      return (result.data ?? []) as CanonicalTaskCalendarOverride[];
+    }
+
+    function indexActiveCalendarOverrides(rows: readonly CanonicalTaskCalendarOverride[]) {
+      const byTaskId: Record<string, TaskCalendarOverride[]> = {};
+      for (const row of rows) {
+        const override = taskCalendarOverrideFromCanonical(row);
+        (byTaskId[row.entity_id] ??= []).push(override);
+      }
+      return byTaskId;
     }
 
     function createTaskRowsRequest() {
@@ -822,7 +851,13 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             return false;
           }
 
+          const activeCalendarOverrides = await loadActiveCalendarOverrides();
+          if (!activeCalendarOverrides || !isActive || !canApplyCoreWorkspaceResult()) {
+            return false;
+          }
+
           const nextSummaries = buildTaskHistoryStreakSummaryMap(nextTasks, compactHistory, todayKeyRef.current, {
+            calendarOverridesByTaskId: indexActiveCalendarOverrides(activeCalendarOverrides),
             logicalDayRollover,
             now,
             timezone,
@@ -864,25 +899,25 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
           const task = nextTask ?? tasksRef.current.find((candidate) => candidate.id === taskId);
           if (!task) return false;
+          const activeCalendarOverrides = await loadActiveCalendarOverrides(taskId);
+          if (!activeCalendarOverrides || !isActive || !canApplyCoreWorkspaceResult()) return false;
+          const summaryContext = {
+            calendarOverrides: activeCalendarOverrides.map(taskCalendarOverrideFromCanonical),
+            logicalDayRollover,
+            now,
+            timezone,
+          };
           const hasPrivateTaskHistory = Object.hasOwn(taskHistoryByTaskIdRef.current, taskId);
           if (nextTaskHistory) {
             const taskHistory = deduplicateTaskHistoryByLogicalDate(nextTaskHistory);
             if (hasPrivateTaskHistory) {
               setTaskHistoryCacheForTask(taskId, taskHistory);
             }
-            const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current, {
-              logicalDayRollover,
-              now,
-              timezone,
-            });
+            const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current, summaryContext);
             setTaskHistoryStreakSummaries((current) => (
               JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
                 ? current
-                : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current, {
-                  logicalDayRollover,
-                  now,
-                  timezone,
-                })
+                : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current, summaryContext)
             ));
             return true;
           }
@@ -897,19 +932,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
                 ...taskHistory,
               ]);
             }
-            const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current, {
-              logicalDayRollover,
-              now,
-              timezone,
-            });
+            const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current, summaryContext);
             setTaskHistoryStreakSummaries((current) => (
               JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
                 ? current
-                : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current, {
-                  logicalDayRollover,
-                  now,
-                  timezone,
-                })
+                : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current, summaryContext)
             ));
             return true;
           }
@@ -930,19 +957,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           const streakRows: TaskHistoryStreakEntry[] = useCanonicalHistory
             ? mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[])
             : (result.data ?? []) as TaskHistoryStreakEntry[];
-          const nextSummary = buildTaskHistoryStreakSummary(task, streakRows, todayKeyRef.current, {
-            logicalDayRollover,
-            now,
-            timezone,
-          });
+          const nextSummary = buildTaskHistoryStreakSummary(task, streakRows, todayKeyRef.current, summaryContext);
           setTaskHistoryStreakSummaries((current) => (
             JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
               ? current
-              : updateTaskHistoryStreakSummaryMap(current, task, streakRows, todayKeyRef.current, {
-                logicalDayRollover,
-                now,
-                timezone,
-              })
+              : updateTaskHistoryStreakSummaryMap(current, task, streakRows, todayKeyRef.current, summaryContext)
           ));
           return true;
         } finally {

@@ -121,6 +121,28 @@ test("streak-summary resolution is rejected after the owning effect unmounts", a
   assert.match(summaryLoader, /if \(!isActive \|\| !canApplyCoreWorkspaceResult\(\)\)[\s\S]*buildTaskHistoryStreakSummaryMap/);
 });
 
+test("workspace streak summaries batch-load active Calendar overrides and index them by task", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const summaryLoader = source.slice(source.indexOf("async function loadTaskHistoryStreakSummaries"), source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"));
+
+  assert.match(source, /async function loadActiveCalendarOverrides\(taskId\?: string\)/);
+  assert.match(summaryLoader, /await loadActiveCalendarOverrides\(\)/);
+  assert.match(summaryLoader, /calendarOverridesByTaskId: indexActiveCalendarOverrides\(activeCalendarOverrides\)/);
+  assert.match(source, /\.from\("adhdice_task_calendar_overrides"\)/);
+  assert.match(source, /\.eq\("is_active", true\)/);
+  assert.match(source, /taskCalendarOverrideFromCanonical/);
+  assert.doesNotMatch(summaryLoader, /loadActiveCalendarOverrides\(task\.id\)/);
+});
+
+test("task-scoped streak summary reloads fetch current active Calendar overrides", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const reload = source.slice(source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"), source.indexOf("async function loadNotes"));
+
+  assert.match(reload, /await loadActiveCalendarOverrides\(taskId\)/);
+  assert.match(reload, /calendarOverrides: activeCalendarOverrides\.map\(taskCalendarOverrideFromCanonical\)/);
+  assert.match(source, /\.eq\("entity_id", taskId\)/);
+});
+
 test("streak-summary resolution checks the captured user before applying", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const ownership = source.slice(source.indexOf("function canApplyCoreWorkspaceResult"), source.indexOf("async function loadCoreWorkspaceData"));

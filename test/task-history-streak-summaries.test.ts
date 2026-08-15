@@ -14,6 +14,7 @@ import {
 } from "../src/lib/task-history-streak-summaries.ts";
 import { computeTaskSpecificHistoryStats, deduplicateTaskHistoryByLogicalDate } from "../src/lib/task-history.ts";
 import { resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/calendar-authority.ts";
+import type { TaskCalendarOverride } from "../src/lib/task-state-engine/types.ts";
 import { selectCriticalTaskHistoryFacts } from "../src/lib/workspace-critical-task-facts.ts";
 
 const workspaceSource = readFileSync(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
@@ -51,6 +52,15 @@ function history(id: string, entryDate: string, status: TaskHistory["status"], w
   };
 }
 
+function manualNotDue(logicalDate: string, taskId = "task-streak"): TaskCalendarOverride {
+  return {
+    id: `override-${taskId}-${logicalDate}`,
+    logicalDate,
+    overrideState: "not_due",
+    provenance: "manual",
+  };
+}
+
 test("narrow critical History can coexist with a three-day compact completion streak", () => {
   const currentTask = task();
   const rows = [
@@ -74,6 +84,54 @@ test("compact summaries count three trailing missed entries", () => {
   ], "2026-08-03");
 
   assert.equal(summaries[currentTask.id]?.missedStreak, 3);
+});
+
+test("active manual Not Due boundaries reach the compact summary and shorten the current Missed streak", () => {
+  const currentTask = { ...task("updates"), due_on: "2026-08-08", status: "pending" as const };
+  const rows = [
+    history("missed-8", "2026-08-08", "missed", false, currentTask.id),
+    history("missed-10", "2026-08-10", "missed", false, currentTask.id),
+    history("missed-11", "2026-08-11", "missed", false, currentTask.id),
+    history("missed-12", "2026-08-12", "missed", false, currentTask.id),
+    history("missed-13", "2026-08-13", "missed", false, currentTask.id),
+  ];
+
+  const withoutOverride = buildTaskHistoryStreakSummaryMap([currentTask], rows, "2026-08-14")[currentTask.id];
+  const withOverride = buildTaskHistoryStreakSummaryMap([currentTask], rows, "2026-08-14", {
+    calendarOverridesByTaskId: { [currentTask.id]: [manualNotDue("2026-08-09", currentTask.id)] },
+  })[currentTask.id];
+
+  assert.equal(withoutOverride?.missedStreak, 6);
+  assert.equal(withOverride?.missedStreak, 4);
+});
+
+test("explicit Missed History remains authoritative over an active manual Not Due override", () => {
+  const currentTask = { ...task("explicit-missed"), due_on: "2026-08-08", status: "pending" as const };
+  const summary = buildTaskHistoryStreakSummaryMap([currentTask], [
+    history("missed-8", "2026-08-08", "missed", false, currentTask.id),
+    history("missed-9", "2026-08-09", "missed", false, currentTask.id),
+  ], "2026-08-09", {
+    calendarOverridesByTaskId: { [currentTask.id]: [manualNotDue("2026-08-09", currentTask.id)] },
+  })[currentTask.id];
+
+  assert.equal(summary?.missedStreak, 2);
+});
+
+test("task-specific active overrides are only supplied to their matching summary", () => {
+  const firstTask = { ...task("first-task"), due_on: "2026-08-08", status: "pending" as const };
+  const secondTask = { ...task("second-task"), due_on: "2026-08-08", status: "pending" as const };
+  const rows = [
+    history("first-8", "2026-08-08", "missed", false, firstTask.id),
+    history("first-10", "2026-08-10", "missed", false, firstTask.id),
+    history("second-8", "2026-08-08", "missed", false, secondTask.id),
+    history("second-10", "2026-08-10", "missed", false, secondTask.id),
+  ];
+  const summaries = buildTaskHistoryStreakSummaryMap([firstTask, secondTask], rows, "2026-08-10", {
+    calendarOverridesByTaskId: { [firstTask.id]: [manualNotDue("2026-08-09", firstTask.id)] },
+  });
+
+  assert.equal(summaries[firstTask.id]?.missedStreak, 1);
+  assert.equal(summaries[secondTask.id]?.missedStreak, 3);
 });
 
 test("success streaks combine Done and Did My Best across calendar gaps", () => {

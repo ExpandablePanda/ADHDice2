@@ -6,6 +6,7 @@ import {
 } from "@/lib/task-history";
 import { resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine/calendar-authority";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
+import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 
 export const TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at";
 
@@ -19,6 +20,8 @@ export type TaskHistoryStreakSummary = {
 export type TaskHistoryStreakSummaryMap = Record<string, TaskHistoryStreakSummary>;
 
 export type TaskHistoryStreakSummaryContext = {
+  calendarOverrides?: TaskCalendarOverride[];
+  calendarOverridesByTaskId?: Readonly<Record<string, TaskCalendarOverride[]>>;
   logicalDayRollover?: string;
   now?: Date | string;
   timezone?: string;
@@ -55,6 +58,7 @@ export function buildTaskHistoryStreakSummary(
     now: context.now ?? `${todayDateKey}T12:00:00.000Z`,
     task,
     timezone: context.timezone ?? "UTC",
+    calendarOverrides: context.calendarOverrides,
   });
   const resolvedTimelineDays = calendarRead?.timeline?.days
     ?? (calendarRead ? taskEffectiveTimelineDaysFromStates(calendarRead.states) : null);
@@ -86,7 +90,10 @@ export function buildTaskHistoryStreakSummaryMap(
   return Object.fromEntries(
     tasks.map((task) => [
       task.id,
-      buildTaskHistoryStreakSummary(task, historyByTaskId.get(task.id) ?? [], todayDateKey, context),
+      buildTaskHistoryStreakSummary(task, historyByTaskId.get(task.id) ?? [], todayDateKey, {
+        ...context,
+        calendarOverrides: context.calendarOverridesByTaskId?.[task.id] ?? context.calendarOverrides,
+      }),
     ]),
   );
 }
@@ -100,6 +107,9 @@ export function updateTaskHistoryStreakSummaryMap(
 ): TaskHistoryStreakSummaryMap {
   return {
     ...current,
-    [task.id]: buildTaskHistoryStreakSummary(task, history, todayDateKey, context),
+    [task.id]: buildTaskHistoryStreakSummary(task, history, todayDateKey, {
+      ...context,
+      calendarOverrides: context.calendarOverridesByTaskId?.[task.id] ?? context.calendarOverrides,
+    }),
   };
 }

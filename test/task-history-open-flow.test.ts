@@ -26,6 +26,7 @@ test("Task History Calendar overrides use the canonical calendar_override intent
   assert.match(flow, /type: "calendar_override"/);
   assert.match(flow, /override_state: overrideState/);
   assert.match(flow, /await loadTaskCalendarOverridesForTask\(taskHistoryModalTaskId\)/);
+  assert.match(flow, /if \(refreshed\) \{\s*await refreshTaskHistoryStreakSummary\(taskHistoryModalTaskId\)/);
   assert.doesNotMatch(flow, /syncTaskHistoryEntries\(taskHistoryModalTaskId,.*overrideState/s);
   assert.match(flow, /replayIdentity: createTaskStateReplayIdentity\(\)/);
   assert.doesNotMatch(flow, /calendar-override:/);
