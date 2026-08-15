@@ -5,7 +5,7 @@ import {
   type TaskHistoryStreakEntry,
 } from "@/lib/task-history";
 import { resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine/calendar-authority";
-import { computeTaskEffectiveTimelineStreaks } from "@/lib/task-state-engine/effective-timeline";
+import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 
 export const TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at";
 
@@ -56,11 +56,11 @@ export function buildTaskHistoryStreakSummary(
     task,
     timezone: context.timezone ?? "UTC",
   });
-  const streaks = calendarRead?.timeline
-    ? calendarRead.timeline
-    : calendarRead
-      ? computeTaskEffectiveTimelineStreaks(calendarRead.states, todayDateKey)
-      : { currentCompletedStreak: 0, currentMissedStreak: 0 };
+  const resolvedTimelineDays = calendarRead?.timeline?.days
+    ?? (calendarRead ? taskEffectiveTimelineDaysFromStates(calendarRead.states) : null);
+  const streaks = resolvedTimelineDays
+    ? computeTaskEffectiveTimelineStreaks(resolvedTimelineDays, todayDateKey)
+    : { currentCompletedStreak: 0, currentMissedStreak: 0 };
   const lastDone = getTaskHistoryLastDone(normalizedHistory, todayDateKey);
   return {
     currentStreak: streaks.currentCompletedStreak,

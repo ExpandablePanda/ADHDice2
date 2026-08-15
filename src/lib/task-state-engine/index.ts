@@ -9,8 +9,12 @@ export type { EngineRolloverPlan, EngineRolloverTaskPlan } from "./rollover-auth
 export { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead, resolveTaskHistoryCalendarStates } from "./calendar-authority.ts";
 export type { TaskHistoryCalendarReadResult } from "./calendar-authority.ts";
 export { buildManualDueDateTaskUpdate, reconcileManualDueDateChange } from "./due-date-authority.ts";
-export { buildTaskEffectiveTimeline, computeTaskEffectiveTimelineStreaks } from "./effective-timeline.ts";
-export type { BuildTaskEffectiveTimelineInput, TaskEffectiveTimelineStreaks } from "./effective-timeline.ts";
+export {
+  buildTaskEffectiveTimeline,
+  computeTaskEffectiveTimelineStreaks,
+  taskEffectiveTimelineDaysFromStates,
+} from "./effective-timeline.ts";
+export type { BuildTaskEffectiveTimelineInput, TaskEffectiveTimelineStreakDay, TaskEffectiveTimelineStreaks } from "./effective-timeline.ts";
 export {
   projectTasksForActiveStatusRead,
   resolveActiveTaskStatuses,

@@ -58,7 +58,8 @@ test("Task History stats expose current and longest Missed streaks from the effe
   assert.match(modalSource, /label: "Current Missed Streak"/);
   assert.match(modalSource, /label: "Longest Missed Streak"/);
   assert.match(modalSource, /longestMissedStreak: resolvedStreaks\.longestMissedStreak/);
-  assert.match(modalSource, /const resolvedStreaks = calendarRead\s*\? computeTaskEffectiveTimelineStreaks\(calendarRead\.states, today\)/);
+  assert.match(modalSource, /const resolvedTimelineDays = calendarRead\?\.timeline\?\.days/);
+  assert.match(modalSource, /computeTaskEffectiveTimelineStreaks\(resolvedTimelineDays, today\)/);
 });
 
 test("parent, Step, Substep, and context-menu History actions preserve their row IDs", () => {

@@ -705,20 +705,61 @@ test("longest Missed streak uses calculated timeline days and skips neutral stat
 
 test("longest Missed streak resets at Done, Did My Best, Delayed, and Complete", () => {
   const result = computeTaskEffectiveTimelineStreaks({
-    "2026-08-01": "missed",
-    "2026-08-02": "missed",
-    "2026-08-03": "done",
-    "2026-08-04": "missed",
-    "2026-08-05": "did_my_best",
-    "2026-08-06": "missed",
-    "2026-08-07": "delayed",
-    "2026-08-08": "missed",
-    "2026-08-09": "complete",
-    "2026-08-10": "open",
+    "2026-08-01": { calendarOverrideId: null, state: "missed" },
+    "2026-08-02": { calendarOverrideId: null, state: "missed" },
+    "2026-08-03": { calendarOverrideId: null, state: "done" },
+    "2026-08-04": { calendarOverrideId: null, state: "missed" },
+    "2026-08-05": { calendarOverrideId: null, state: "did_my_best" },
+    "2026-08-06": { calendarOverrideId: null, state: "missed" },
+    "2026-08-07": { calendarOverrideId: null, state: "delayed" },
+    "2026-08-08": { calendarOverrideId: null, state: "missed" },
+    "2026-08-09": { calendarOverrideId: null, state: "complete" },
+    "2026-08-10": { calendarOverrideId: null, state: "open" },
   }, "2026-08-10");
 
   assert.equal(result.longestMissedStreak, 2);
   assert.equal(result.currentMissedStreak, 0);
+});
+
+test("manual Not Due breaks missed streaks while calculated Not Due stays neutral", () => {
+  const manualBoundary = timeline({
+    task: { dueOn: "2026-08-09", activeOccurrenceDueOn: "2026-08-09" },
+    logicalDate: "2026-08-14",
+    calendarStart: "2026-08-09",
+    calendarEnd: "2026-08-14",
+    calendarOverrides: [calendarOverride("2026-08-09", "not_due")],
+  });
+  assert.equal(manualBoundary.days["2026-08-09"]?.state, "not_due");
+  assert.equal(manualBoundary.days["2026-08-09"]?.calendarOverrideId, "calendar-override-2026-08-09-not_due");
+  assert.equal(manualBoundary.currentMissedStreak, 4);
+  assert.equal(manualBoundary.longestMissedStreak, 4);
+
+  const calculatedNeutral = computeTaskEffectiveTimelineStreaks({
+    "2026-08-01": { calendarOverrideId: null, state: "missed" },
+    "2026-08-02": { calendarOverrideId: null, state: "not_due" },
+    "2026-08-03": { calendarOverrideId: null, state: "not_due" },
+    "2026-08-04": { calendarOverrideId: null, state: "missed" },
+    "2026-08-05": { calendarOverrideId: null, state: "open" },
+  }, "2026-08-05");
+  assert.equal(calculatedNeutral.currentMissedStreak, 2);
+  assert.equal(calculatedNeutral.longestMissedStreak, 2);
+});
+
+test("explicit Missed History remains a Missed streak day over a manual Not Due override", () => {
+  const result = timeline({
+    task: { dueOn: "2026-08-09", activeOccurrenceDueOn: "2026-08-09" },
+    history: [history("2026-08-09", "missed")],
+    logicalDate: "2026-08-10",
+    calendarStart: "2026-08-09",
+    calendarEnd: "2026-08-10",
+    calendarOverrides: [calendarOverride("2026-08-09", "not_due")],
+  });
+  const streaks = computeTaskEffectiveTimelineStreaks(result.days, "2026-08-10");
+
+  assert.equal(result.days["2026-08-09"]?.state, "missed");
+  assert.equal(result.days["2026-08-09"]?.calendarOverrideId, null);
+  assert.equal(streaks.currentMissedStreak, 1);
+  assert.equal(streaks.longestMissedStreak, 1);
 });
 
 test("historical Due/Open remains continuously overdue through the current day", () => {

@@ -42,7 +42,24 @@ export type TaskEffectiveTimelineStreaks = {
   longestMissedStreak: number;
 };
 
-function classifyFinalizedCalendarState(state: string | undefined): "success" | "missed" | "break" | null {
+export type TaskEffectiveTimelineStreakDay = {
+  calendarOverrideId: string | null;
+  state: TaskEffectiveTimelineDay["state"] | "due" | "upcoming";
+};
+
+export function taskEffectiveTimelineDaysFromStates(
+  states: Readonly<Record<string, string>>,
+): Record<string, TaskEffectiveTimelineStreakDay> {
+  return Object.fromEntries(Object.entries(states).map(([logicalDate, state]) => [logicalDate, {
+    calendarOverrideId: null,
+    state: state as TaskEffectiveTimelineStreakDay["state"],
+  }]));
+}
+
+function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | undefined): "success" | "missed" | "break" | null {
+  if (!day) return null;
+  if (day.state === "not_due" && day.calendarOverrideId) return "break";
+  const { state } = day;
   if (state === "done" || state === "did_my_best") return "success";
   if (state === "missed") return "missed";
   if (state === "complete" || state === "delayed") return "break";
@@ -52,20 +69,20 @@ function classifyFinalizedCalendarState(state: string | undefined): "success" | 
 }
 
 /**
- * Calculate streaks from the resolved Calendar states, not from persisted rows.
- * Non-final Calendar states are intentionally skipped; finalized break states
- * terminate both streaks.
+ * Calculate streaks from resolved Effective Timeline days, not persisted rows.
+ * Calculated neutral days are skipped; explicit manual Not Due boundaries and
+ * other finalized break states terminate both streaks.
  */
 export function computeTaskEffectiveTimelineStreaks(
-  states: Record<string, string>,
+  days: Readonly<Record<string, TaskEffectiveTimelineStreakDay>>,
   logicalDate: string,
 ): TaskEffectiveTimelineStreaks {
   let cursor: string | null = logicalDate;
   let streakKind: "success" | "missed" | null = null;
   let streakLength = 0;
 
-  while (cursor && Object.hasOwn(states, cursor)) {
-    const finalizedKind = classifyFinalizedCalendarState(states[cursor]);
+  while (cursor && Object.hasOwn(days, cursor)) {
+    const finalizedKind = classifyFinalizedCalendarDay(days[cursor]);
     if (!finalizedKind) {
       cursor = shiftDateKey(cursor, -1);
       continue;
@@ -79,8 +96,8 @@ export function computeTaskEffectiveTimelineStreaks(
 
   let longestMissedStreak = 0;
   let runningMissedStreak = 0;
-  for (const date of Object.keys(states).sort()) {
-    const finalizedKind = classifyFinalizedCalendarState(states[date]);
+  for (const date of Object.keys(days).sort()) {
+    const finalizedKind = classifyFinalizedCalendarDay(days[date]);
     if (!finalizedKind) continue;
     if (finalizedKind === "missed") {
       runningMissedStreak += 1;
@@ -495,7 +512,7 @@ export function buildTaskEffectiveTimeline(
     ? currentDay.obligation
     : "none";
   const streaks = computeTaskEffectiveTimelineStreaks(
-    Object.fromEntries(Object.entries(effectiveDays).map(([date, day]) => [date, day.state])),
+    effectiveDays,
     input.logicalDate,
   );
 

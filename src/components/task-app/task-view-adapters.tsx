@@ -42,7 +42,7 @@ import type { AppPage } from "@/lib/task-ui-state";
 import type { ImportTasksResult } from "@/hooks/useTaskCrudActions";
 import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleActionStatuses } from "@/lib/task-complete";
 import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
-import { computeTaskEffectiveTimelineStreaks } from "@/lib/task-state-engine/effective-timeline";
+import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 import type {
   Task,
@@ -630,8 +630,10 @@ export function TaskHistoryModal({
   const sortedDueDates = [...dueDates].sort();
   const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
   const savedHistoryStats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);
-  const resolvedStreaks = calendarRead
-    ? computeTaskEffectiveTimelineStreaks(calendarRead.states, today)
+  const resolvedTimelineDays = calendarRead?.timeline?.days
+    ?? (calendarRead ? taskEffectiveTimelineDaysFromStates(calendarRead.states) : null);
+  const resolvedStreaks = resolvedTimelineDays
+    ? computeTaskEffectiveTimelineStreaks(resolvedTimelineDays, today)
     : null;
   const stats = resolvedStreaks
     ? {
