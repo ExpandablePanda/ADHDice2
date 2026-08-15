@@ -1064,6 +1064,133 @@ test("manual due-date replay preserves earlier History and derives the future ob
   assert.deepEqual(historyRows, before);
 });
 
+test("rolling historical replay advances through a later authoritative success", () => {
+  const historyRows = [
+    history("2026-08-12", "did_my_best"),
+    history("2026-08-13", "did_my_best", { occurrenceDueOn: "2026-08-13" }),
+  ];
+  const before = structuredClone(historyRows);
+  const result = buildTaskEffectiveTimeline({
+    task: task({ dueOn: "2026-08-15", recurrence: { kind: "rolling", intervalDays: 2 } }),
+    history: historyRows,
+    logicalDate: "2026-08-15",
+    calendarStart: "2026-08-12",
+    calendarEnd: "2026-08-15",
+    replay: { changedLogicalDate: "2026-08-12", kind: "outcome" },
+  });
+
+  assert.equal(result.nextDueOn, "2026-08-15");
+  assert.equal(result.activeStatus, "pending");
+  assert.equal(result.days["2026-08-14"]?.state, "not_due");
+  assert.equal(result.days["2026-08-13"]?.state, "did_my_best");
+  assert.deepEqual(historyRows, before);
+});
+
+test("rolling replay is independent of History entry order", () => {
+  const rows = [
+    history("2026-08-12", "did_my_best"),
+    history("2026-08-13", "did_my_best", { occurrenceDueOn: "2026-08-13" }),
+  ];
+  const build = (historyRows: TaskStateHistoryRow[]) => buildTaskEffectiveTimeline({
+    task: task({ dueOn: "2026-08-15", recurrence: { kind: "rolling", intervalDays: 2 } }),
+    history: historyRows,
+    logicalDate: "2026-08-15",
+    calendarStart: "2026-08-12",
+    calendarEnd: "2026-08-15",
+    replay: { changedLogicalDate: "2026-08-12", kind: "outcome" },
+  });
+
+  const chronological = build(rows);
+  const reverseOrder = build([...rows].reverse());
+  assert.equal(chronological.nextDueOn, "2026-08-15");
+  assert.deepEqual(reverseOrder, chronological);
+});
+
+test("replacing an older success with Missed still replays a later success", () => {
+  const result = buildTaskEffectiveTimeline({
+    task: task({ dueOn: "2026-08-15", recurrence: { kind: "rolling", intervalDays: 2 } }),
+    history: [
+      history("2026-08-12", "missed"),
+      history("2026-08-13", "did_my_best", { occurrenceDueOn: "2026-08-13" }),
+    ],
+    logicalDate: "2026-08-15",
+    calendarStart: "2026-08-12",
+    calendarEnd: "2026-08-15",
+    replay: { changedLogicalDate: "2026-08-12", kind: "outcome" },
+  });
+
+  assert.equal(result.nextDueOn, "2026-08-15");
+  assert.equal(result.days["2026-08-13"]?.state, "did_my_best");
+});
+
+test("clearing an older outcome leaves the later rolling success as the cursor", () => {
+  const result = buildTaskEffectiveTimeline({
+    task: task({ dueOn: "2026-08-15", recurrence: { kind: "rolling", intervalDays: 2 } }),
+    history: [history("2026-08-13", "did_my_best", { occurrenceDueOn: "2026-08-13" })],
+    logicalDate: "2026-08-15",
+    calendarStart: "2026-08-12",
+    calendarEnd: "2026-08-15",
+    replay: { changedLogicalDate: "2026-08-12", kind: "outcome" },
+  });
+
+  assert.equal(result.nextDueOn, "2026-08-15");
+  assert.notEqual(result.days["2026-08-14"]?.state, "missed");
+});
+
+test("a real later rolling Missed outcome still holds the overdue cursor", () => {
+  const result = buildTaskEffectiveTimeline({
+    task: task({ dueOn: "2026-08-15", recurrence: { kind: "rolling", intervalDays: 2 } }),
+    history: [
+      history("2026-08-12", "did_my_best"),
+      history("2026-08-13", "missed", { occurrenceDueOn: "2026-08-13" }),
+    ],
+    logicalDate: "2026-08-15",
+    calendarStart: "2026-08-12",
+    calendarEnd: "2026-08-15",
+    replay: { changedLogicalDate: "2026-08-12", kind: "outcome" },
+  });
+
+  assert.equal(result.nextDueOn, "2026-08-14");
+  assert.equal(result.activeStatus, "missed");
+  assert.equal(result.days["2026-08-13"]?.state, "missed");
+});
+
+test("fixed weekly replay retains its existing calendar cursor guard", () => {
+  const result = buildTaskEffectiveTimeline({
+    task: task({
+      dueOn: "2026-08-24",
+      recurrence: { kind: "weekly", intervalWeeks: 1, weekdays: [1], anchorDate: "2026-08-03" },
+    }),
+    history: [
+      history("2026-08-10", "did_my_best", { occurrenceDueOn: "2026-08-10" }),
+      history("2026-08-17", "did_my_best", { occurrenceDueOn: "2026-08-17" }),
+    ],
+    logicalDate: "2026-08-24",
+    calendarStart: "2026-08-10",
+    calendarEnd: "2026-08-24",
+    replay: { changedLogicalDate: "2026-08-10", kind: "outcome" },
+  });
+
+  assert.equal(result.nextDueOn, "2026-08-24");
+  assert.equal(result.days["2026-08-17"]?.state, "did_my_best");
+});
+
+test("ordinary chronological rolling completions retain their interval", () => {
+  const result = timeline({
+    task: { dueOn: "2026-08-12", recurrence: { kind: "rolling", intervalDays: 2 } },
+    history: [
+      history("2026-08-12", "did_my_best", { occurrenceDueOn: "2026-08-12" }),
+      history("2026-08-14", "did_my_best", { occurrenceDueOn: "2026-08-14" }),
+    ],
+    logicalDate: "2026-08-15",
+    calendarStart: "2026-08-12",
+    calendarEnd: "2026-08-15",
+  });
+
+  assert.equal(result.nextDueOn, "2026-08-16");
+  assert.equal(result.activeStatus, "upcoming");
+});
+
 test("removing a later success replays from the prior success checkpoint", () => {
   const result = buildTaskEffectiveTimeline({
     task: task({ dueOn: "2026-08-18", recurrence: { kind: "rolling", intervalDays: 5 } }),

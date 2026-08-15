@@ -626,6 +626,76 @@ test("trusted historical replacement derives replaceExisting and previous outcom
   assert.equal(plan.command.payload.occurrenceKey, null);
 });
 
+test("historical rolling edit replays through a later canonical success", () => {
+  const historicalLogicalDay = {
+    ...logicalDay,
+    identity: "user-1:2026-08-15:America/New_York:06:00:3",
+    logicalDate: "2026-08-15",
+  };
+  const planningState = state({
+    due_on: "2026-08-15",
+    repeat_frequency: "daily",
+    repeat_interval: 2,
+  });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-08-15T12:00:00.000Z",
+    task: {
+      ...planningState.engineInput!.task,
+      dueOn: "2026-08-15",
+      recurrence: { kind: "rolling", intervalDays: 2 },
+    },
+    history: [doneHistory("2026-08-13")],
+  };
+
+  const plan = planTaskStateCommand(planningState, command({
+    commandId: "00000000-0000-4000-8000-000000000032",
+    logicalDay: historicalLogicalDay,
+    logicalDate: "2026-08-12",
+    // The canonical History fact is authoritative, but this older edit has no
+    // materialized occurrence identity and must still replay through 8/13.
+    scheduledDueOn: null,
+    occurrenceKey: null,
+  }));
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-15");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "pending");
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn === "2026-08-14", false);
+  assert.equal(planningState.engineInput.history.some((row) => row.logicalDate === "2026-08-13" && row.outcome === "done"), true);
+});
+
+test("replacing an older rolling outcome preserves a later authoritative success", () => {
+  const historicalLogicalDay = {
+    ...logicalDay,
+    identity: "user-1:2026-08-15:America/New_York:06:00:3",
+    logicalDate: "2026-08-15",
+  };
+  const planningState = state({ due_on: "2026-08-15", repeat_frequency: "daily", repeat_interval: 2 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-08-15T12:00:00.000Z",
+    task: { ...planningState.engineInput!.task, dueOn: "2026-08-15", recurrence: { kind: "rolling", intervalDays: 2 } },
+    history: [
+      { ...missedHistory("2026-08-12"), occurrenceIdentity: null, occurrenceDueOn: null },
+      doneHistory("2026-08-13"),
+    ],
+  };
+
+  const plan = planTaskStateCommand(planningState, command({
+    commandId: "00000000-0000-4000-8000-000000000033",
+    logicalDay: historicalLogicalDay,
+    logicalDate: "2026-08-12",
+    outcome: "did_my_best",
+    scheduledDueOn: null,
+    occurrenceKey: null,
+  }));
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-15");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "pending");
+  assert.equal(plan.normalizedResult.historyFact?.logical_date, "2026-08-12");
+  assert.equal(planningState.engineInput.history.some((row) => row.logicalDate === "2026-08-13" && row.outcome === "done"), true);
+});
+
 test("trusted planner accepts calculated-only historical success without an occurrence", () => {
   const planningState = state({ due_on: "2026-08-08" });
   planningState.engineInput = {

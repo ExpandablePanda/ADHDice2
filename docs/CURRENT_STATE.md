@@ -5,8 +5,8 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.4`.
-- Current release group: `7.8.x` Historical Outcome and Recurrence Authority Separation.
+- Current working app version: `7.9.5`.
+- Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
@@ -14,6 +14,11 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.9.5 Historical rolling-outcome replay correction
+
+- Historical outcome replay for rolling recurrence processes every later authoritative History row in logical-date order. An older edit cannot leave the rolling cursor at an intermediate date before a later success; the existing Effective Timeline remains the sole replay authority.
+- The protected regression is the confirmed Shop sequence: rolling every 2 days, authoritative 2026-08-12 and 2026-08-13 `Did My Best`, then editing 2026-08-12. The projection remains pending with `due_on = 2026-08-15`, keeps the 2026-08-13 fact, and does not synthesize Missed on 2026-08-14. Fixed weekly/monthly cursor protection and ordinary rolling replay remain unchanged. Browser QA, live Supabase validation, and deployment verification remain unrun.
 
 ### 7.9.2 Derived Unscheduled display status
 

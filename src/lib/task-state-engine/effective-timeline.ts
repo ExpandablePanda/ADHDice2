@@ -399,11 +399,16 @@ export function buildTaskEffectiveTimeline(
       unresolvedDueOn = null;
       return;
     }
-    // Keep this guard for rows that predate the replay seed; normal reads now
-    // seed from historicalScheduleAnchor, so a later current due cursor cannot
-    // hide legitimate History that must advance the reconstructed timeline.
+    // Fixed-calendar rows, ordinary reads, and non-outcome replays that predate
+    // the cursor have already been consumed by that cursor. A rolling
+    // historical outcome replay is different: every authoritative row must be
+    // replayed in logical-date order, so an older edit cannot hide a later
+    // success.
+    const replaysRollingHistoricalOutcome = input.task.recurrence.kind === "rolling"
+      && input.replay?.kind === "outcome";
     const predatesActiveCursor = Boolean(
-      activeDueOn
+      !replaysRollingHistoricalOutcome
+      && activeDueOn
       && row.logicalDate < activeDueOn,
     );
     if (predatesActiveCursor) return;
