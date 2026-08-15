@@ -585,7 +585,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.8.34";
+const APP_VERSION = "7.8.35";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2846,6 +2846,7 @@ export function TaskApp() {
         revision: override.revision,
         source: override.source,
         provenance: override.provenance_kind,
+        createdAt: override.created_at,
       } satisfies TaskCalendarOverride;
     });
     setTaskCalendarOverridesByTaskId((current) => ({ ...current, [taskId]: activeOverrides }));

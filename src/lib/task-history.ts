@@ -3,7 +3,7 @@ import { shiftDateKey } from "@/lib/task-grid-layout";
 import { calcNextDueDateFromDate, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
 import { shouldExposeHistoryEventTimestamp } from "@/lib/task-history-cutover";
 import { isScheduledOccurrence, scheduledOccurrences } from "@/lib/task-state-engine/recurrence";
-import type { TaskEffectiveTimelineDay, TaskRecurrence } from "@/lib/task-state-engine/types";
+import type { TaskCalendarOverride, TaskEffectiveTimelineDay, TaskRecurrence } from "@/lib/task-state-engine/types";
 
 export type TaskHistoryLoadResult =
   | { status: "ready"; history: DbTaskHistory[]; error: null }
@@ -35,18 +35,20 @@ function isFinalizedTaskHistoryStatus(status: TaskStatus): status is FinalizedTa
 }
 
 export type TaskHistoryRowProjection = {
+  calendarOverride: TaskCalendarOverride | null;
   entry: DbTaskHistory | null;
   isCalculated: boolean;
   isDueOpportunity: boolean;
   logicalDate: string;
-  status: FinalizedTaskHistoryStatus;
+  status: FinalizedTaskHistoryStatus | "not_due";
 };
 
-/** Merge explicit History metadata with finalized Effective Timeline days for the modal list. */
+/** Merge explicit History, active manual Calendar overrides, and finalized Effective Timeline days. */
 export function buildTaskHistoryRowProjections(
   history: readonly DbTaskHistory[],
   effectiveDays: Readonly<Record<string, Pick<TaskEffectiveTimelineDay, "state" | "obligation">>> = {},
   dueDateKeys: ReadonlySet<string> = new Set(),
+  calendarOverrides: readonly TaskCalendarOverride[] = [],
 ): TaskHistoryRowProjection[] {
   const normalizedHistory = deduplicateTaskHistoryByLogicalDate(history);
   const rowsByDate = new Map<string, TaskHistoryRowProjection>();
@@ -55,6 +57,7 @@ export function buildTaskHistoryRowProjections(
     if (!isFinalizedTaskHistoryStatus(entry.status)) continue;
     const day = effectiveDays[entry.entry_date];
     rowsByDate.set(entry.entry_date, {
+      calendarOverride: null,
       entry,
       isCalculated: false,
       isDueOpportunity: dueDateKeys.has(entry.entry_date) || day?.obligation === "due" || day?.obligation === "overdue",
@@ -63,9 +66,22 @@ export function buildTaskHistoryRowProjections(
     });
   }
 
+  for (const override of calendarOverrides) {
+    if (override.overrideState !== "not_due" || rowsByDate.has(override.logicalDate)) continue;
+    rowsByDate.set(override.logicalDate, {
+      calendarOverride: override,
+      entry: null,
+      isCalculated: false,
+      isDueOpportunity: false,
+      logicalDate: override.logicalDate,
+      status: "not_due",
+    });
+  }
+
   for (const [logicalDate, day] of Object.entries(effectiveDays)) {
     if (rowsByDate.has(logicalDate) || day.state !== "missed") continue;
     rowsByDate.set(logicalDate, {
+      calendarOverride: null,
       entry: null,
       isCalculated: true,
       isDueOpportunity: true,

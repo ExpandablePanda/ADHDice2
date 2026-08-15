@@ -86,7 +86,13 @@ test("History Calendar multi-select exposes batch occurrence actions independent
   }), ["done", "did_my_best", "missed"]);
 });
 
-test("History Calendar exposes Not Due and Due / Open only for one past/current date", () => {
+test("History Calendar exposes Not Due for past dates but Due / Open only for today", () => {
+  assert.deepEqual(getTaskHistoryCalendarOverrideActions({
+    isMultiSelect: false,
+    selectedDate: "2026-08-09",
+    task: { status: "pending" },
+    todayDateKey: "2026-08-10",
+  }), ["not_due"]);
   assert.deepEqual(getTaskHistoryCalendarOverrideActions({
     isMultiSelect: false,
     selectedDate: "2026-08-10",

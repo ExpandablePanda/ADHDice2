@@ -100,6 +100,7 @@ export function getTaskHistoryCalendarOverrideActions({
   if (isMultiSelect || selectedDate > todayDateKey || task.status === "complete" || task.status === "archived" || task.status === "trashed") {
     return [] as Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]>;
   }
+  if (selectedDate < todayDateKey) return ["not_due"];
   return [...HISTORY_CALENDAR_OVERRIDE_ACTIONS];
 }
 

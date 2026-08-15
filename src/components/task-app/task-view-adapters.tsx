@@ -130,6 +130,10 @@ function formatTaskHistoryEditedLine(entry: Pick<DbTaskHistory, "created_at" | "
   return `Edited ${formatHistoryDateTime(timestamp)}`;
 }
 
+function formatTaskCalendarOverrideChangedLine(override: TaskCalendarOverride) {
+  return override.createdAt ? `Changed ${formatHistoryDateTime(override.createdAt)}` : null;
+}
+
 const HISTORY_STATUS_CHIP_BASE = "inline-flex items-center justify-center rounded-full border px-2 py-1 text-[13px] font-medium leading-none whitespace-nowrap";
 function statusTone(status: TaskStatus) {
   return TASK_STATUS_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
@@ -644,6 +648,7 @@ export function TaskHistoryModal({
     normalizedTaskHistory,
     calendarRead?.timeline?.days,
     dueDates,
+    calendarOverrides,
   );
   const selectedEntry = historyByDate.get(selectedDate) ?? null;
   const selectedDateSet = new Set(selectedDates);
@@ -1002,7 +1007,7 @@ export function TaskHistoryModal({
   const historySection = (
     <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
       <div className="mb-4 flex items-center justify-between gap-3"><div><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Task Status History</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">Effective results for this task.</p></div><span className="text-xs font-semibold text-[#8d87a7] dark:text-white/40">{historyRows.length} entries</span></div>
-      <div className="space-y-2">{historyRows.length === 0 ? <EmptyTaskState text="No task history entries yet." /> : null}{historyRows.map((row) => <button className={`flex w-full items-center justify-between rounded-[1.25rem] border px-4 py-3 text-left transition ${selectedDateSet.has(row.logicalDate) ? "border-[#cfc3ff] bg-[#f8f5ff] dark:border-[#6f57f6] dark:bg-[#22193d]" : "border-[#efebfb] bg-[#fcfbff] hover:border-[#ddd3ff] dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20"}`} key={row.logicalDate} onClick={() => selectDate(row.logicalDate)} type="button"><div><p className="text-sm font-semibold text-[#27304c] dark:text-white">{formatCalendarDate(row.logicalDate)}</p><p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{row.isDueOpportunity ? "Due opportunity" : "Manual history entry"}</p>{row.entry && formatTaskHistoryLoggedLine(row.entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryLoggedLine(row.entry)}</p> : null}{row.entry && formatTaskHistoryEditedLine(row.entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryEditedLine(row.entry)}</p> : null}{row.isCalculated ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">Calculated from task timeline</p> : null}</div>{renderStatusPill(row.entry, row.status)}</button>)}</div>
+      <div className="space-y-2">{historyRows.length === 0 ? <EmptyTaskState text="No task history entries yet." /> : null}{historyRows.map((row) => <button className={`flex w-full items-center justify-between rounded-[1.25rem] border px-4 py-3 text-left transition ${selectedDateSet.has(row.logicalDate) ? "border-[#cfc3ff] bg-[#f8f5ff] dark:border-[#6f57f6] dark:bg-[#22193d]" : "border-[#efebfb] bg-[#fcfbff] hover:border-[#ddd3ff] dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20"}`} key={row.logicalDate} onClick={() => selectDate(row.logicalDate)} type="button"><div><p className="text-sm font-semibold text-[#27304c] dark:text-white">{formatCalendarDate(row.logicalDate)}</p><p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{row.calendarOverride ? "Manual schedule override" : row.isDueOpportunity ? "Due opportunity" : "Manual history entry"}</p>{row.calendarOverride ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">Changed to Not Due</p> : null}{row.calendarOverride && formatTaskCalendarOverrideChangedLine(row.calendarOverride) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskCalendarOverrideChangedLine(row.calendarOverride)}</p> : null}{row.entry && formatTaskHistoryLoggedLine(row.entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryLoggedLine(row.entry)}</p> : null}{row.entry && formatTaskHistoryEditedLine(row.entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryEditedLine(row.entry)}</p> : null}{row.isCalculated ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">Calculated from task timeline</p> : null}</div>{renderStatusPill(row.entry, row.status)}</button>)}</div>
     </section>
   );
   const statsSection = (

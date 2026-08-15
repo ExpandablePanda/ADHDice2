@@ -90,6 +90,7 @@ export type TaskCalendarOverride = {
   revision?: number | null;
   source?: string | null;
   provenance?: string | null;
+  createdAt?: string | null;
 };
 
 export type TaskWorkflowState = {

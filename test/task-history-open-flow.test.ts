@@ -44,6 +44,16 @@ test("Task Status History projects calculated Missed rows and uses neutral entry
   assert.doesNotMatch(modalSource, /\{sortedHistory\.length\} logged/);
 });
 
+test("Task Status History merges active Calendar overrides and presents manual Not Due metadata", () => {
+  assert.match(modalSource, /buildTaskHistoryRowProjections\(\s*normalizedTaskHistory,[\s\S]*calendarOverrides/);
+  assert.match(modalSource, /Manual schedule override/);
+  assert.match(modalSource, /Changed to Not Due/);
+  assert.match(modalSource, /formatTaskCalendarOverrideChangedLine/);
+  assert.match(modalSource, /createdAt/);
+  assert.match(modalSource, /key=\{row\.logicalDate\} onClick=\{\(\) => selectDate\(row\.logicalDate\)\}/);
+  assert.doesNotMatch(modalSource, /syncTaskHistoryEntries\([^)]*not_due/);
+});
+
 test("Task History stats expose current and longest Missed streaks from the effective timeline", () => {
   assert.match(modalSource, /label: "Current Missed Streak"/);
   assert.match(modalSource, /label: "Longest Missed Streak"/);
