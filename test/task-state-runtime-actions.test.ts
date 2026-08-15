@@ -184,6 +184,24 @@ test("explicit canonical intents fail closed for empty replay identities", () =>
   }
 });
 
+test("three Calendar override edits receive distinct canonical replay identities", () => {
+  const executed = (["not_due", "due_open", "not_due"] as const).map((overrideState) => {
+    const replayIdentity = createTaskStateReplayIdentity();
+    const action = classifyTaskStateRuntimeAction({
+      task: task(),
+      canonicalIntent: { type: "calendar_override", logical_date: "2026-08-10", override_state: overrideState },
+      replayIdentity,
+    });
+    assert.equal(action.kind, "canonical_action");
+    assert.equal(action.actionType, "calendar_override");
+    return { replayIdentity: action.replayIdentity, overrideState: action.intent?.override_state };
+  });
+
+  assert.equal(new Set(executed.map((command) => command.replayIdentity)).size, 3);
+  assert.deepEqual(executed.map((command) => command.overrideState), ["not_due", "due_open", "not_due"]);
+  assert.notEqual(executed[2]?.replayIdentity, executed[0]?.replayIdentity);
+});
+
 test("no classification result authorizes legacy Task State fallback", () => {
   const results = [
     classify({ title: "metadata" }),

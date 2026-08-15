@@ -228,7 +228,7 @@ import { buildTaskDurationEvidence, type TaskDurationEvidence } from "@/lib/task
 import { computeLearnedTaskDurationStatistics } from "@/lib/task-duration-statistics";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
-import { classifyTaskStateRuntimeAction, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
+import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
@@ -584,7 +584,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.8.32";
+const APP_VERSION = "7.8.33";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -6378,7 +6378,7 @@ export function TaskApp() {
           override_state: overrideState,
         },
         expectedTask: currentTask,
-        replayIdentity: `calendar-override:${taskHistoryModalTaskId}:${logicalDate}:${overrideState}`,
+        replayIdentity: createTaskStateReplayIdentity(),
       });
       if (committed) {
         await loadTaskCalendarOverridesForTask(taskHistoryModalTaskId);
