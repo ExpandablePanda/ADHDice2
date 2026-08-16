@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.15`.
+- Current working app version: `7.9.16`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -24,6 +24,10 @@ Role: active working
 ### 7.9.15 Batch Edit committed-row reconciliation
 
 - Authoritative Task rows returned by a committed update are reconciled into local Task state even when the containing plan later fails its required History write. Plan accounting remains unchanged: the plan is processed and failed, but not updated. No rollback, schema, or live-data change was introduced.
+
+### 7.9.16 Batch Edit selection cleanup
+
+- Batch Edit now clears selection after any actually applied batch effect, including a committed Task row whose required History write later failed. Plan accounting remains unchanged.
 
 ### 7.9.11 Independent Step/Substep pinning
 

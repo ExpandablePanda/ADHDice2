@@ -365,16 +365,17 @@ export function useTaskBatchEditAction({
       setBatchEditProgress(progress);
     }
 
+    const didApplyBatchEffect = hasAuthoritativeTaskRowsToReconcile || progress.updated > 0;
     try {
-      if (hasAuthoritativeTaskRowsToReconcile || progress.updated > 0) {
+      if (didApplyBatchEffect) {
         setTasks(sortTasksForUi(nextTasks));
-      }
-      if (progress.updated > 0) {
-        if (completedCandidates.length > 0) {
-          await onTasksCompleted(completedCandidates);
-        }
-        if (draft.route === "focus" || draft.focusToday !== "unchanged") {
-          await saveFocusSelection([...nextFocusedTaskIds], new Set(nextTasks.map((task) => task.id)));
+        if (progress.updated > 0) {
+          if (completedCandidates.length > 0) {
+            await onTasksCompleted(completedCandidates);
+          }
+          if (draft.route === "focus" || draft.focusToday !== "unchanged") {
+            await saveFocusSelection([...nextFocusedTaskIds], new Set(nextTasks.map((task) => task.id)));
+          }
         }
         clearListTaskSelection();
       }

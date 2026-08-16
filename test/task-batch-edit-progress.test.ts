@@ -171,6 +171,7 @@ test("required History save failure is a failed plan, not a simultaneous success
   assert.equal(harnessState.progress?.updated, 0);
   assert.equal(harnessState.progress?.failed, 1);
   assert.equal(harnessState.localTasks[0]?.priority_level, 3);
+  assert.equal(harnessState.events.filter((event) => event === "selection:cleared").length, 1);
 });
 
 test("mixed full success and History failure reconcile both committed Task rows", async () => {
@@ -194,6 +195,7 @@ test("mixed full success and History failure reconcile both committed Task rows"
   assert.equal(harnessState.localTasks.find((candidate) => candidate.id === "full-success")?.priority_level, 2);
   assert.equal(harnessState.localTasks.find((candidate) => candidate.id === "history-failure")?.priority_level, 3);
   assert.equal(completedCandidateCount, 1);
+  assert.equal(harnessState.events.filter((event) => event === "selection:cleared").length, 1);
 });
 
 test("a genuine Task-row write failure does not fabricate local mutation", async () => {
@@ -205,6 +207,7 @@ test("a genuine Task-row write failure does not fabricate local mutation", async
   assert.equal(harnessState.progress?.processed, 1);
   assert.equal(harnessState.progress?.failed, 1);
   assert.equal(harnessState.localTasks[0]?.priority_level, selected.priority_level);
+  assert.equal(harnessState.events.includes("selection:cleared"), false);
 });
 
 test("a no-row-mutation routing plan is successful without route confirmation", async () => {
@@ -215,6 +218,7 @@ test("a no-row-mutation routing plan is successful without route confirmation", 
   assert.equal(harnessState.progress?.updated, 1);
   assert.equal(harnessState.progress?.failed, 0);
   assert.equal(harnessState.events.includes("route:route-only"), true);
+  assert.equal(harnessState.events.filter((event) => event === "selection:cleared").length, 1);
 });
 
 test("finalization exceptions become terminal warnings with plan counts", async () => {
