@@ -791,6 +791,7 @@ export function queryCanonicalTaskEntityProjection({
       )));
     }
     const resultIds = new Set(Array.from(directMatchIds).filter((id) => candidateIds.has(id)));
+    if (preserveDirectPinnedChildren) return resultIds;
     if (!includeDescendants) return resultIds;
 
     const directlyMatchingRootIds = new Set(Array.from(directMatchIds).filter((id) => (

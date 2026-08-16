@@ -12,6 +12,7 @@ import {
   type TaskListId,
   type TaskListEvaluationContext,
 } from "../src/lib/task-lists.ts";
+import { buildStableTaskSearchScope, queryTaskSearch } from "../src/lib/task-search-selector.ts";
 import { DEFAULT_TASK_UI_STATE } from "../src/lib/task-ui-state.ts";
 
 const smartList: TaskListDefinition = {
@@ -86,6 +87,39 @@ function project(
   });
 }
 
+function pinnedSearchFilters() {
+  return {
+    energyFilters: [],
+    focusedTaskIds: [],
+    matchAny: false,
+    quickFilters: [],
+    selectedBucket: "pinned",
+    statusFilters: [],
+    tableColumnFilters: { priority: [], repeat: [], text: {} },
+  } as const;
+}
+
+function taskSearchEntities(tasks: ReturnType<typeof createTask>[]) {
+  const index = buildStableCanonicalTaskIndex({
+    availableTaskLists: getBuiltInTaskLists(),
+    focusedTaskIds: [],
+    taskHistoryByTaskId: {},
+    taskListEvaluationContext: evaluationContext(),
+    taskSubtasksByTaskId: {},
+    tasks,
+    todayDateKey: "2026-08-03",
+  });
+  return Array.from(index.entityFactsById.values()).map((fact) => ({
+    ancestorIds: fact.ancestorIds,
+    displayStatus: fact.displayStatus,
+    id: fact.id,
+    listIds: fact.listMemberships.map((membership) => membership.id),
+    rootParentId: fact.rootParentId,
+    searchDocument: fact.searchDocument,
+    task: fact.task,
+  }));
+}
+
 test("smart selected root makes an unlisted descendant searchable without smart membership inheritance", () => {
   const root = createTask({ created_at: "2026-08-03T08:00:00.000Z", energy: "high", id: "root", sort_order: 1, status: "pending", title: "Appanda" });
   const step = createTask({ created_at: "2026-08-03T08:01:00.000Z", energy: "low", id: "step", parent_task_id: root.id, sort_order: 1, status: "pending", title: "magic" });
@@ -140,4 +174,59 @@ test("canonical Pinned membership does not expand an explicitly pinned parent", 
   assert.deepEqual([...result.postStatusMatchedEntityIds], [parent.id]);
   assert.equal(result.matchingDescendantIdsByRootParentId.has(parent.id), false);
   assert.equal(result.listFacetCounts.pinned, 1);
+});
+
+test("canonical Pinned active search matches only the directly searched entity with or without Include Steps", () => {
+  const parent = createTask({ id: "video-games", pinned_at: "2026-08-03T08:00:00Z", status: "pending", title: "Video Games" });
+  const child = createTask({ id: "buy-groceries", parent_task_id: parent.id, pinned_at: "2026-08-03T08:01:00Z", status: "pending", title: "Buy Groceries" });
+  const sibling = createTask({ id: "buy-medicine", parent_task_id: parent.id, pinned_at: "2026-08-03T08:02:00Z", status: "pending", title: "Buy Medicine" });
+
+  for (const includeSteps of [true, false]) {
+    const result = project([parent, child, sibling], "pinned", "video games", getBuiltInTaskLists(), {}, includeSteps);
+
+    assert.deepEqual([...result.directSearchMatchedEntityIds], [parent.id]);
+    assert.deepEqual([...result.preStatusMatchedEntityIds], [parent.id]);
+    assert.deepEqual([...result.postStatusMatchedEntityIds], [parent.id]);
+    assert.deepEqual([...result.searchExpandedDescendantIds], []);
+    assert.equal(result.matchingDescendantIdsByRootParentId.has(parent.id), false);
+    assert.equal(result.listFacetCounts.pinned, 1);
+    assert.equal(result.statusFacetCounts.pending, 1);
+  }
+});
+
+test("canonical Pinned child search keeps the parent as context and excludes unrelated pinned siblings", () => {
+  const parent = createTask({ id: "video-games", status: "pending", title: "Video Games" });
+  const child = createTask({ id: "buy-groceries", parent_task_id: parent.id, pinned_at: "2026-08-03T08:01:00Z", status: "pending", title: "Buy Groceries" });
+  const sibling = createTask({ id: "buy-medicine", parent_task_id: parent.id, pinned_at: "2026-08-03T08:02:00Z", status: "pending", title: "Buy Medicine" });
+  const result = project([parent, child, sibling], "pinned", "groceries", getBuiltInTaskLists(), {}, true);
+
+  assert.deepEqual([...result.directSearchMatchedEntityIds], [child.id]);
+  assert.deepEqual([...result.preStatusMatchedEntityIds], [child.id]);
+  assert.deepEqual([...result.postStatusMatchedEntityIds], [child.id]);
+  assert.deepEqual([...result.matchingDescendantIdsByRootParentId.get(parent.id)!], [child.id]);
+  assert.equal(result.contextAncestorIds.has(parent.id), true);
+  assert.equal(result.postStatusMatchedEntityIds.has(parent.id), false);
+  assert.equal(result.postStatusMatchedEntityIds.has(sibling.id), false);
+  assert.equal(result.statusFacetCounts.pending, 1);
+  assert.equal(result.listFacetCounts.pinned, 1);
+});
+
+test("canonical Pinned active search matches Task Search selector direct entities without expansion", () => {
+  const parent = createTask({ id: "video-games", pinned_at: "2026-08-03T08:00:00Z", status: "pending", title: "Video Games" });
+  const child = createTask({ id: "buy-groceries", parent_task_id: parent.id, pinned_at: "2026-08-03T08:01:00Z", status: "pending", title: "Buy Groceries" });
+  const sibling = createTask({ id: "buy-medicine", parent_task_id: parent.id, pinned_at: "2026-08-03T08:02:00Z", status: "pending", title: "Buy Medicine" });
+  const tasks = [parent, child, sibling];
+  const canonicalParentResult = project(tasks, "pinned", "video games", getBuiltInTaskLists(), {}, true);
+  const canonicalChildResult = project(tasks, "pinned", "groceries", getBuiltInTaskLists(), {}, true);
+  const selectorParentResult = queryTaskSearch("video games", buildStableTaskSearchScope(taskSearchEntities(tasks), pinnedSearchFilters()), true);
+  const selectorChildResult = queryTaskSearch("groceries", buildStableTaskSearchScope(taskSearchEntities(tasks), pinnedSearchFilters()), true);
+
+  assert.deepEqual([...canonicalParentResult.directSearchMatchedEntityIds], [...selectorParentResult.directSearchMatchedEntityIds]);
+  assert.deepEqual([...canonicalParentResult.searchExpandedDescendantIds], [...selectorParentResult.searchExpandedDescendantIds]);
+  assert.deepEqual([...(canonicalParentResult.matchingDescendantIdsByRootParentId.get(parent.id) ?? [])], [...(selectorParentResult.matchingDescendantIdsByRootParentId.get(parent.id) ?? [])]);
+  assert.equal(canonicalParentResult.listFacetCounts.pinned, selectorParentResult.listFacetCounts.pinned);
+  assert.deepEqual([...canonicalChildResult.directSearchMatchedEntityIds], [...selectorChildResult.directSearchMatchedEntityIds]);
+  assert.deepEqual([...canonicalChildResult.searchExpandedDescendantIds], [...selectorChildResult.searchExpandedDescendantIds]);
+  assert.deepEqual([...(canonicalChildResult.matchingDescendantIdsByRootParentId.get(parent.id) ?? [])], [...(selectorChildResult.matchingDescendantIdsByRootParentId.get(parent.id) ?? [])]);
+  assert.equal(canonicalChildResult.listFacetCounts.pinned, selectorChildResult.listFacetCounts.pinned);
 });

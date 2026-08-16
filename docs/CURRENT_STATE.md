@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.11`.
+- Current working app version: `7.9.12`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -20,6 +20,10 @@ Role: active working
 - Pinning is entity-local for canonical Task, Step, and Substep rows. Table and List child rows can Pin/Unpin independently through the existing Task mutation callback, and the canonical child preview exposes the Task row's `pinned_at` state.
 - Pinned membership is the exact entity's non-null `pinned_at`. Directly pinned children appear in Pinned even when Include Steps is off; a pinned parent does not pull unpinned descendants into Pinned.
 - Required ancestors may render as hierarchy context only. Context ancestors are not Pinned members and do not inflate the Pinned count. No schema, SQL, or Task State changes are included.
+
+### 7.9.12 Pinned active-search parity
+
+- Pinned active search is direct-entity only: a matching pinned parent does not expand independently pinned descendants, and Include Steps does not change that membership rule. Required ancestors remain hierarchy context only and do not enter Pinned counts or status facets. No persistence or schema changes are included.
 
 ### 7.9.10 Browser-QA correction: Table hierarchy origin and status footprint
 
