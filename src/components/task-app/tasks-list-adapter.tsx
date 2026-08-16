@@ -1445,6 +1445,22 @@ function StepsCardPreview({
                                 <Footprints className="h-3.5 w-3.5" />
                               </button>
                             ) : null}
+                            {tableProps.onTogglePinned ? (
+                              <AdhdIconButton
+                                aria-label={`${item.pinnedAt ? "Unpin" : "Pin"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                                aria-pressed={Boolean(item.pinnedAt)}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  tableProps.onTogglePinned?.(item.id);
+                                }}
+                                selected={Boolean(item.pinnedAt)}
+                                size="sm"
+                                tone="purple"
+                                variant="rowToolbar"
+                              >
+                                <Pin className={`h-3.5 w-3.5 ${item.pinnedAt ? "fill-current" : ""}`} />
+                              </AdhdIconButton>
+                            ) : null}
                             {onOpenHistory ? (
                               <button
                                 aria-label={`Open history for step ${item.title || "Untitled step"}`}
@@ -1514,6 +1530,22 @@ function StepsCardPreview({
                           >
                             <Footprints className="h-3.5 w-3.5" />
                           </button>
+                        ) : null}
+                        {tableProps.onTogglePinned ? (
+                          <AdhdIconButton
+                            aria-label={`${item.pinnedAt ? "Unpin" : "Pin"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                            aria-pressed={Boolean(item.pinnedAt)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              tableProps.onTogglePinned?.(item.id);
+                            }}
+                            selected={Boolean(item.pinnedAt)}
+                            size="sm"
+                            tone="purple"
+                            variant="rowToolbar"
+                          >
+                            <Pin className={`h-3.5 w-3.5 ${item.pinnedAt ? "fill-current" : ""}`} />
+                          </AdhdIconButton>
                         ) : null}
                         {onOpenHistory ? (
                           <button

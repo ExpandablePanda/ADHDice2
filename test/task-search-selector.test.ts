@@ -67,6 +67,38 @@ test("facet counts use root entities when steps are excluded and expand the exis
   assert.equal(withSteps.listFacetCounts["list:custom"], 1);
 });
 
+test("Pinned selection is entity-local and keeps directly pinned children visible without Include Steps", () => {
+  const parent = entity("pinned-parent", "Pinned parent", { pinned_at: "2026-08-03T08:00:00Z" });
+  const step = entity("pinned-step", "Pinned step", { parent_task_id: parent.id });
+  const substep = {
+    ...entity("pinned-substep", "Pinned substep", { parent_task_id: step.id, pinned_at: "2026-08-03T08:02:00Z" }),
+    ancestorIds: [step.id, parent.id],
+    rootParentId: parent.id,
+  };
+  const scope = buildStableTaskSearchScope([parent, step, substep], filtersFor("pinned"));
+  const result = queryTaskSearch("", scope, false);
+
+  assert.deepEqual([...scope.selectedScopeEligibleEntityIds], [parent.id, substep.id]);
+  assert.deepEqual([...result.matchingEntityIds], [parent.id, substep.id]);
+  assert.deepEqual(result.visibleRootTaskIds, [parent.id]);
+  assert.deepEqual([...result.matchingStepIds], [substep.id]);
+  assert.deepEqual([...result.searchExpandedDescendantIds], []);
+  assert.deepEqual(Object.keys(result.listFacetCounts).sort(), ["all", "inbox", "pinned"]);
+  assert.equal(result.listFacetCounts.pinned, 2);
+});
+
+test("Pinned parent does not expand unpinned descendants when Include Steps is on", () => {
+  const parent = entity("pinned-root", "Pinned root", { pinned_at: "2026-08-03T08:00:00Z" });
+  const step = entity("unpinned-step", "Unpinned step", { parent_task_id: parent.id });
+  const scope = buildStableTaskSearchScope([parent, step], filtersFor("pinned"));
+  const result = queryTaskSearch("", scope, true);
+
+  assert.deepEqual([...result.matchingEntityIds], [parent.id]);
+  assert.deepEqual([...result.matchingStepIds], []);
+  assert.deepEqual([...result.searchExpandedDescendantIds], []);
+  assert.equal(result.listFacetCounts.pinned, 1);
+});
+
 test("child-title search keeps the root as context without expanding siblings", () => {
   const result = queryTaskSearch("sonic", buildStableTaskSearchScope([
     entity("root", "Video Game Tasks"),

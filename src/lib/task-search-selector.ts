@@ -17,6 +17,7 @@ export type TaskSearchEntity = {
 
 export type StableTaskSearchScope = {
   primaryFacetEligibleEntityIds: ReadonlySet<string>;
+  selectedBucket: string;
   selectedScopeEligibleEntityIds: ReadonlySet<string>;
   statusFilters: readonly TaskStatus[];
   /** @deprecated Use selectedScopeEligibleEntityIds. */
@@ -123,17 +124,19 @@ export function buildStableTaskSearchScope(
   const selectedScopeEligibleEntityIds = new Set<string>();
   const selectedScopeRootIds = new Set<string>();
   const primaryFacetEligibleEntityIds = new Set<string>();
+  const isPinnedBucket = filters.selectedBucket === "pinned";
   for (const entity of entities) {
     if (!matchesScopeFilters(entity, filters, focusedTaskIds, { ignoreStatus: true })) continue;
     if (isInSelectedBucket(entity, filters, entitiesById)) {
       selectedScopeEligibleEntityIds.add(entity.id);
-      if (entity.id === entity.rootParentId) selectedScopeRootIds.add(entity.id);
+      if (!isPinnedBucket && entity.id === entity.rootParentId) selectedScopeRootIds.add(entity.id);
     }
     if (isInPrimaryFacetScope(entity, entitiesById)) primaryFacetEligibleEntityIds.add(entity.id);
   }
   for (const entity of entities) {
     if (
-      !selectedScopeEligibleEntityIds.has(entity.id)
+      !isPinnedBucket
+      && !selectedScopeEligibleEntityIds.has(entity.id)
       && selectedScopeRootIds.has(entity.rootParentId)
       && matchesScopeFilters(entity, filters, focusedTaskIds, { ignoreStatus: true })
     ) {
@@ -145,6 +148,7 @@ export function buildStableTaskSearchScope(
     entitiesById,
     hierarchyById: new Map(entities.map((entity) => [entity.id, entity])),
     primaryFacetEligibleEntityIds,
+    selectedBucket: filters.selectedBucket,
     selectedScopeEligibleEntityIds,
     statusFilters: filters.statusFilters,
   };
@@ -170,7 +174,7 @@ export function queryTaskSearch(
   const directSearchMatchedEntityIds = new Set(directlyMatchingIds);
   const searchExpandedDescendantIds = new Set<string>();
   const matchedHierarchyEntityIds = new Set(directlyMatchingIds);
-  if (includeSteps && directlyMatchingIds.size > 0) {
+  if (includeSteps && directlyMatchingIds.size > 0 && scope.selectedBucket !== "pinned") {
     const directlyMatchingRootIds = new Set(
       Array.from(directlyMatchingIds)
         .filter((id) => (scope.hierarchyById.get(id)?.rootParentId ?? id) === id),
@@ -222,7 +226,7 @@ export function queryTaskSearch(
     if (entity.rootParentId !== id) matchingStepIds.add(id);
   }
   const visibleRootTaskIds = Array.from(visibleRootParentIds).filter((id) => (
-    query.length > 0 || includeSteps || matchingEntityIds.has(id)
+    query.length > 0 || includeSteps || matchingEntityIds.has(id) || scope.selectedBucket === "pinned"
   ));
   const primaryDirectMatchIds = new Set<string>();
   for (const id of scope.primaryFacetEligibleEntityIds) {
@@ -252,14 +256,24 @@ export function queryTaskSearch(
       if (entity && entity.rootParentId === id) primaryFacetVisibleEntityIds.add(id);
     }
   }
+  const pinnedFacetVisibleEntityIds = new Set(
+    Array.from(scope.primaryFacetEligibleEntityIds).filter((id) => {
+      const entity = scope.entitiesById.get(id);
+      return Boolean(
+        entity
+        && entity.task.pinned_at
+        && matchesSelectedStatus(entity)
+        && (query.length === 0 || entity.searchDocument.includes(query)),
+      );
+    }),
+  );
   const listFacetCounts: Record<string, number> = {
     all: primaryFacetVisibleEntityIds.size,
-    pinned: 0,
+    pinned: pinnedFacetVisibleEntityIds.size,
   };
   for (const id of primaryFacetVisibleEntityIds) {
     const entity = scope.entitiesById.get(id);
     if (!entity) continue;
-    if (entity.task.pinned_at) listFacetCounts.pinned += 1;
     for (const listId of entity.listIds) listFacetCounts[listId] = (listFacetCounts[listId] ?? 0) + 1;
   }
   const highlightNavigationIds = Array.from(matchingEntityIds);

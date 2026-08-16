@@ -1931,6 +1931,7 @@ test("child task preview lookup exposes direct same-table children", () => {
     missedStreak: 0,
     notes: "Bring the small pieces together.",
     parentTaskId: "parent",
+    pinnedAt: null,
     priorityFlags: ["4"],
     repeat: "weekly",
     repeatDayOfMonth: null,

@@ -7713,6 +7713,22 @@ export function TaskManagementTableV2({
                 <Footprints className="h-3.5 w-3.5" />
               </button>
             ) : null}
+            {onTaskPinToggle ? (
+              <button
+                aria-label={`${item.pinnedAt ? "Unpin" : "Pin"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                aria-pressed={Boolean(item.pinnedAt)}
+                className={item.pinnedAt ? `${ROW_ACTION_ICON_BUTTON_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#5b3fd6] opacity-100 dark:border-[#57458f] dark:bg-[#2a2148] dark:text-[#cabfff]` : ROW_ACTION_ICON_BUTTON_CLASS}
+                data-same-table-step-pin={item.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onTaskPinToggle(item.id);
+                }}
+                onPointerDown={stopRowActionPointerEvent}
+                type="button"
+              >
+                <Pin className={`h-3.5 w-3.5 stroke-current stroke-[2.5] ${item.pinnedAt ? "fill-current" : ""}`} />
+              </button>
+            ) : null}
             {onOpenTaskHistory ? (
               <button
                 aria-label={`Open history for step ${item.title || "Untitled step"}`}

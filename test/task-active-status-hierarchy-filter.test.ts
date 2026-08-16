@@ -151,6 +151,32 @@ test("canonical facets use parents only when Include Steps is off and every enti
   assert.equal(withChildren.tableStatusCounts.done, 1);
 });
 
+test("Pinned projection keeps child pins independent and renders ancestors only as context", () => {
+  const parent = createTask({ id: "pinned-context", status: "pending", title: "Parent" });
+  const step = createTask({ id: "pinned-step", parent_task_id: parent.id, pinned_at: "2026-07-17T08:00:00Z", status: "pending", title: "Step" });
+  const substep = createTask({ id: "pinned-substep", parent_task_id: step.id, pinned_at: "2026-07-17T08:01:00Z", status: "pending", title: "Substep" });
+  const sibling = createTask({ id: "unpinned-sibling", parent_task_id: parent.id, status: "pending", title: "Sibling" });
+  const derived = derive([parent, step, substep, sibling], [], "", false, "table", { selectedBucket: "pinned" });
+
+  assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), [parent.id]);
+  assert.deepEqual(derived.statusMatchedChildTaskIds, [step.id, substep.id]);
+  assert.deepEqual(derived.childTaskPreviewByParentTaskId[parent.id]!.items.map((item) => item.id), [step.id, substep.id]);
+  assert.equal(derived.canonicalEntityProjection.contextAncestorIds.has(parent.id), true);
+  assert.equal(derived.canonicalEntityProjection.listFacetCounts.pinned, 2);
+  assert.equal(derived.canonicalEntityProjection.postStatusMatchedEntityIds.has(parent.id), false);
+});
+
+test("Pinned parent does not add unpinned child rows when Include Steps is on", () => {
+  const parent = createTask({ id: "pinned-parent-only", pinned_at: "2026-07-17T08:00:00Z", status: "pending", title: "Parent" });
+  const step = createTask({ id: "unpinned-child-only", parent_task_id: parent.id, status: "pending", title: "Step" });
+  const derived = derive([parent, step], [], "", true, "table", { selectedBucket: "pinned" });
+
+  assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), [parent.id]);
+  assert.deepEqual(derived.statusMatchedChildTaskIds, []);
+  assert.deepEqual(derived.childTaskPreviewByParentTaskId[parent.id]!.items, []);
+  assert.deepEqual([...derived.canonicalEntityProjection.postStatusMatchedEntityIds], [parent.id]);
+});
+
 test("search overrides Include Steps without changing the persisted view setting", () => {
   const parent = createTask({ id: "search-override-parent", status: "missed", title: "Watchlist" });
   const child = createTask({ id: "search-override-child", parent_task_id: parent.id, status: "pending", title: "Family Guy" });
@@ -449,6 +475,22 @@ test("Table renderer consumes descendant matches as temporary expansion-only sta
   assert.match(source, /statusMatchedStepParentTaskIdSet\.has\(task\.id\)/);
   assert.match(source, /filterChildTaskPreviewItemsToMatchingHierarchy/);
   assert.match(source, /new Set<string>\(\) : collapsedChildTaskIdSet/);
+});
+
+test("canonical child pin state and Table/List pin controls use the shared Task callback", () => {
+  const parent = createTask({ id: "preview-pin-parent", status: "pending", title: "Parent" });
+  const child = createTask({ id: "preview-pin-child", parent_task_id: parent.id, pinned_at: "2026-07-17T08:00:00Z", status: "pending", title: "Child" });
+  const derived = derive([parent, child], [], "", true);
+  assert.equal(derived.childTaskPreviewByParentTaskId[parent.id]!.items[0]!.pinnedAt, child.pinned_at);
+
+  const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
+  const listSource = readFileSync("src/components/task-app/tasks-list-adapter.tsx", "utf8");
+  const childRenderer = tableSource.slice(tableSource.indexOf("const renderChildTaskMiniCell"), tableSource.indexOf("const renderTableStepDraftCell"));
+  assert.match(childRenderer, /onTaskPinToggle\(item\.id\)/);
+  assert.match(childRenderer, /aria-label=\{`\$\{item\.pinnedAt \? "Unpin" : "Pin"\}/);
+  assert.match(listSource, /tableProps\.onTogglePinned\?\.\(item\.id\)/);
+  assert.match(listSource, /selected=\{Boolean\(item\.pinnedAt\)\}/);
+  assert.doesNotMatch(childRenderer, /useState[\s\S]*pinned/);
 });
 
 test("Table Active Status rail counts canonical parent, Step, and Substep statuses once", () => {

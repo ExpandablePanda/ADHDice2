@@ -63,6 +63,7 @@ function project(
   search: string,
   availableTaskLists: TaskListDefinition[],
   manualMembershipsByTaskId: Record<string, TaskListId[]> = {},
+  includeSteps = true,
 ) {
   const index = buildStableCanonicalTaskIndex({
     availableTaskLists,
@@ -78,7 +79,7 @@ function project(
     normalizedSearchQuery: search,
     taskUiState: {
       ...DEFAULT_TASK_UI_STATE,
-      includeStepsByView: { ...DEFAULT_TASK_UI_STATE.includeStepsByView, table: true },
+      includeStepsByView: { ...DEFAULT_TASK_UI_STATE.includeStepsByView, table: includeSteps },
       selectedBucket,
       view: "table",
     },
@@ -116,4 +117,27 @@ test("manual selected root makes a depth-two descendant searchable while context
   assert.deepEqual([...result.matchingDescendantIdsByRootParentId.get(root.id)!], [substep.id]);
   assert.deepEqual([...result.primaryFacetVisibleEntityIds], [substep.id]);
   assert.equal(result.contextRootParentIds.has(root.id), true);
+});
+
+test("canonical Pinned membership is exact-entity and preserves pinned children with Include Steps off", () => {
+  const parent = createTask({ id: "pinned-context-parent", status: "pending", title: "Context parent" });
+  const step = createTask({ id: "pinned-step", parent_task_id: parent.id, pinned_at: "2026-08-03T08:01:00Z", status: "pending", title: "Pinned step" });
+  const substep = createTask({ id: "pinned-substep", parent_task_id: step.id, pinned_at: "2026-08-03T08:02:00Z", status: "pending", title: "Pinned substep" });
+  const result = project([parent, step, substep], "pinned", "", getBuiltInTaskLists(), {}, false);
+
+  assert.deepEqual([...result.postStatusMatchedEntityIds], [step.id, substep.id]);
+  assert.deepEqual([...result.matchingDescendantIdsByRootParentId.get(parent.id)!], [step.id, substep.id]);
+  assert.equal(result.contextAncestorIds.has(parent.id), true);
+  assert.equal(result.contextAncestorIds.has(step.id), false);
+  assert.equal(result.listFacetCounts.pinned, 2);
+});
+
+test("canonical Pinned membership does not expand an explicitly pinned parent", () => {
+  const parent = createTask({ id: "pinned-parent", pinned_at: "2026-08-03T08:00:00Z", status: "pending", title: "Pinned parent" });
+  const step = createTask({ id: "unpinned-step", parent_task_id: parent.id, status: "pending", title: "Unpinned step" });
+  const result = project([parent, step], "pinned", "", getBuiltInTaskLists(), {}, true);
+
+  assert.deepEqual([...result.postStatusMatchedEntityIds], [parent.id]);
+  assert.equal(result.matchingDescendantIdsByRootParentId.has(parent.id), false);
+  assert.equal(result.listFacetCounts.pinned, 1);
 });
