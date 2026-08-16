@@ -11,6 +11,13 @@ import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, isOccurrenceSensitiveTaskMutation } from "@/lib/task-state-engine/action-authority";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
+import {
+  completeBatchEditProgress,
+  createBatchEditProgress,
+  recordBatchEditPlan,
+  warnBatchEditProgress,
+  type BatchEditProgress,
+} from "@/lib/task-batch-edit-progress";
 import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity, type TaskStateRuntimeAction } from "@/lib/task-state-runtime-actions";
 import {
   executeTaskStateRuntimeAction,
@@ -44,6 +51,7 @@ type UseTaskBatchEditActionOptions = {
   parsePositiveInteger: (value: string) => number | null;
   routeTask: (taskId: string, bucket: TaskRoutingBucket | null) => void;
   saveFocusSelection: (nextTaskIds: string[], validTaskIds?: Set<string> | Task[]) => Promise<void>;
+  setBatchEditProgress: Dispatch<SetStateAction<BatchEditProgress | null>>;
   selectedListTasks: Task[];
   setIsBatchEditModalOpen: Dispatch<SetStateAction<boolean>>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
@@ -72,6 +80,7 @@ export function useTaskBatchEditAction({
   parsePositiveInteger,
   routeTask,
   saveFocusSelection,
+  setBatchEditProgress,
   selectedListTasks,
   setIsBatchEditModalOpen,
   setMessage,
@@ -91,6 +100,8 @@ export function useTaskBatchEditAction({
       return;
     }
 
+    setBatchEditProgress(null);
+
     type BatchTaskPlan = {
       actionAuthority: ReturnType<typeof evaluateTaskActionAuthority>;
       runtimeAction: TaskStateRuntimeAction | null;
@@ -101,9 +112,6 @@ export function useTaskBatchEditAction({
     };
 
     let nextTasks = tasks;
-    let successfulCount = 0;
-    let fallbackCount = 0;
-    let firstErrorMessage: string | null = null;
     const nextFocusedTaskIds = new Set(focusedTaskIds);
     const completedCandidates: TaskRewardCandidate[] = [];
     const taskPlans: BatchTaskPlan[] = [];
@@ -242,148 +250,136 @@ export function useTaskBatchEditAction({
       taskPlans.push({ actionAuthority, dueDateOnlyEdit, runtimeAction: null, scopedHistory, task, trackedUpdateValues });
     }
 
-    for (const { actionAuthority, dueDateOnlyEdit, runtimeAction, scopedHistory, task, trackedUpdateValues } of taskPlans) {
-      const updateValues = trackedUpdateValues;
-      if (Object.keys(updateValues).length === 0) {
-        successfulCount += 1;
-        if (draft.route === "clear") {
-          routeTask(task.id, null);
-        } else if (draft.route === "focus") {
-          routeTask(task.id, "today");
-        } else if (draft.route !== "unchanged") {
-          routeTask(task.id, draft.route);
-        }
-
-        if (draft.route === "focus") {
-          nextFocusedTaskIds.add(task.id);
-        } else if (draft.focusToday === "true") {
-          nextFocusedTaskIds.add(task.id);
-        } else if (draft.focusToday === "false") {
-          nextFocusedTaskIds.delete(task.id);
-        }
-        continue;
-      }
-
-      if (canonicalCommandsEnabled && runtimeAction?.kind === "canonical_action") {
-        let canonicalResult: TaskStateRuntimeExecutionResult;
-        try {
-          canonicalResult = await canonicalCommandExecutor(runtimeAction, task as TaskStateRuntimeLocalTask);
-        } catch (error) {
-          firstErrorMessage ??= error instanceof Error ? error.message : "The canonical batch command could not be invoked.";
-          continue;
-        }
-        if (!canonicalResult.success) {
-          firstErrorMessage ??= `Task "${task.title}": ${canonicalResult.error.message}`;
-          continue;
-        }
-        nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? canonicalResult.task : currentTask);
-        successfulCount += 1;
-        if (["archive_task", "trash_task", "complete_task", "set_outcome"].includes(runtimeAction.actionType)) routeTask(task.id, null);
-        continue;
-      }
-
-      const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues, { expectedTask: task });
-
-      if (error) {
-        firstErrorMessage ??= error.message;
-        continue;
-      }
-
-      if (!data) {
-        firstErrorMessage ??= `Task "${task.title}" updated, but no task row came back from Supabase.`;
-        continue;
-      }
-
-      nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? data : currentTask);
-      successfulCount += 1;
-      if (dueDateOnlyEdit) {
-        void onTaskHistoryMutation?.(task.id, scopedHistory, data);
-      }
-      if (usedEnergyFallback) {
-        fallbackCount += 1;
-      }
-
-      if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {
-        routeTask(task.id, null);
-      }
-
-      if (!dueDateOnlyEdit && draft.status !== "unchanged") {
-        const historyEntries = actionAuthority?.mutationPlan.historyInserts;
-        const historySaved = historyEntries?.length && syncTaskHistoryEntries
-          ? await syncTaskHistoryEntries(task.id, data.status, historyEntries.map((entry) => entry.entry_date), { historyEntries, historySnapshot: scopedHistory })
-          : await syncTaskHistoryEntry(task.id, data.status, task, historyEntries?.[0]
-            ? { historyEntry: historyEntries[0], historySnapshot: scopedHistory }
-            : { historySnapshot: scopedHistory });
-        if (!historySaved) {
-          firstErrorMessage ??= `Task "${data.title}" was updated, but its history entry could not be saved.`;
-          continue;
-        }
-      }
-      if (!dueDateOnlyEdit) {
-        completedCandidates.push({
-          engineManaged: Boolean(actionAuthority),
-          forceRecurringFinalization: !TASK_STATE_ENGINE_INTEGRATION_ENABLED
-            && (draft.status === "done" || draft.status === "did_my_best"),
-          previousStatus: task.status,
-          rewardEligible: actionAuthority?.rewardEligibility.eligible,
-          task: data,
-        });
-      }
-
-      if (draft.route !== "unchanged" && draft.status !== "done" && draft.status !== "did_my_best") {
-        if (draft.route === "clear") {
-          routeTask(task.id, null);
-        } else if (draft.route === "focus") {
-          routeTask(task.id, "today");
-        } else {
-          routeTask(task.id, draft.route);
-        }
-      }
-
-      if (draft.route === "focus") {
-        nextFocusedTaskIds.add(task.id);
-      } else if (draft.focusToday === "true") {
-        nextFocusedTaskIds.add(task.id);
-      } else if (draft.focusToday === "false") {
-        nextFocusedTaskIds.delete(task.id);
-      }
-    }
-
-    if (successfulCount === 0) {
-      setMessage({ tone: "warn", text: firstErrorMessage ?? "No selected tasks were updated." });
-      return;
-    }
-
-    setTasks(sortTasksForUi(nextTasks));
-    if (completedCandidates.length > 0) {
-      await onTasksCompleted(completedCandidates);
-    }
-    if (draft.route === "focus" || draft.focusToday !== "unchanged") {
-      await saveFocusSelection([...nextFocusedTaskIds], new Set(nextTasks.map((task) => task.id)));
-    }
-
-    clearListTaskSelection();
     setIsBatchEditModalOpen(false);
+    let progress = createBatchEditProgress(taskPlans.length);
+    setBatchEditProgress(progress);
 
-    if (firstErrorMessage) {
-      setMessage({
-        tone: "warn",
-        text: fallbackCount > 0
-          ? `Updated ${successfulCount} task${successfulCount === 1 ? "" : "s"}, but some changes failed and ${fallbackCount} task${fallbackCount === 1 ? "" : "s"} used the legacy low-energy fallback. ${firstErrorMessage}`
-          : `Updated ${successfulCount} task${successfulCount === 1 ? "" : "s"}, but some changes failed. ${firstErrorMessage}`,
+    for (const { actionAuthority, dueDateOnlyEdit, runtimeAction, scopedHistory, task, trackedUpdateValues } of taskPlans) {
+      let planSuccess = false;
+      let planErrorMessage: string | null = null;
+      let planFallbackUsed = false;
+
+      try {
+        const updateValues = trackedUpdateValues;
+        if (Object.keys(updateValues).length === 0) {
+          if (draft.route === "clear") {
+            routeTask(task.id, null);
+          } else if (draft.route === "focus") {
+            routeTask(task.id, "today");
+          } else if (draft.route !== "unchanged") {
+            routeTask(task.id, draft.route);
+          }
+
+          if (draft.route === "focus") {
+            nextFocusedTaskIds.add(task.id);
+          } else if (draft.focusToday === "true") {
+            nextFocusedTaskIds.add(task.id);
+          } else if (draft.focusToday === "false") {
+            nextFocusedTaskIds.delete(task.id);
+          }
+          planSuccess = true;
+        } else if (canonicalCommandsEnabled && runtimeAction?.kind === "canonical_action") {
+          const canonicalResult = await canonicalCommandExecutor(runtimeAction, task as TaskStateRuntimeLocalTask);
+          if (!canonicalResult.success) {
+            planErrorMessage = `Task "${task.title}": ${canonicalResult.error.message}`;
+          } else {
+            nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? canonicalResult.task : currentTask);
+            if (["archive_task", "trash_task", "complete_task", "set_outcome"].includes(runtimeAction.actionType)) routeTask(task.id, null);
+            planSuccess = true;
+          }
+        } else {
+          const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues, { expectedTask: task });
+          planFallbackUsed = usedEnergyFallback;
+
+          if (error) {
+            planErrorMessage = error.message;
+          } else if (!data) {
+            planErrorMessage = `Task "${task.title}" updated, but no task row came back from Supabase.`;
+          } else {
+            nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? data : currentTask);
+            if (dueDateOnlyEdit) {
+              void onTaskHistoryMutation?.(task.id, scopedHistory, data);
+            }
+
+            if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {
+              routeTask(task.id, null);
+            }
+
+            if (!dueDateOnlyEdit && draft.status !== "unchanged") {
+              const historyEntries = actionAuthority?.mutationPlan.historyInserts;
+              const historySaved = historyEntries?.length && syncTaskHistoryEntries
+                ? await syncTaskHistoryEntries(task.id, data.status, historyEntries.map((entry) => entry.entry_date), { historyEntries, historySnapshot: scopedHistory })
+                : await syncTaskHistoryEntry(task.id, data.status, task, historyEntries?.[0]
+                  ? { historyEntry: historyEntries[0], historySnapshot: scopedHistory }
+                  : { historySnapshot: scopedHistory });
+              if (!historySaved) {
+                planErrorMessage = `Task "${data.title}" was updated, but its history entry could not be saved.`;
+              }
+            }
+
+            if (!planErrorMessage) {
+              if (!dueDateOnlyEdit) {
+                completedCandidates.push({
+                  engineManaged: Boolean(actionAuthority),
+                  forceRecurringFinalization: !TASK_STATE_ENGINE_INTEGRATION_ENABLED
+                    && (draft.status === "done" || draft.status === "did_my_best"),
+                  previousStatus: task.status,
+                  rewardEligible: actionAuthority?.rewardEligibility.eligible,
+                  task: data,
+                });
+              }
+
+              if (draft.route !== "unchanged" && draft.status !== "done" && draft.status !== "did_my_best") {
+                if (draft.route === "clear") {
+                  routeTask(task.id, null);
+                } else if (draft.route === "focus") {
+                  routeTask(task.id, "today");
+                } else {
+                  routeTask(task.id, draft.route);
+                }
+              }
+
+              if (draft.route === "focus") {
+                nextFocusedTaskIds.add(task.id);
+              } else if (draft.focusToday === "true") {
+                nextFocusedTaskIds.add(task.id);
+              } else if (draft.focusToday === "false") {
+                nextFocusedTaskIds.delete(task.id);
+              }
+              planSuccess = true;
+            }
+          }
+        }
+      } catch (error) {
+        planErrorMessage = error instanceof Error ? error.message : `Task "${task.title}" could not be processed.`;
+      }
+
+      progress = recordBatchEditPlan(progress, {
+        errorMessage: planErrorMessage,
+        fallbackUsed: planFallbackUsed,
+        success: planSuccess,
       });
+      setBatchEditProgress(progress);
+    }
+
+    try {
+      if (progress.updated > 0) {
+        setTasks(sortTasksForUi(nextTasks));
+        if (completedCandidates.length > 0) {
+          await onTasksCompleted(completedCandidates);
+        }
+        if (draft.route === "focus" || draft.focusToday !== "unchanged") {
+          await saveFocusSelection([...nextFocusedTaskIds], new Set(nextTasks.map((task) => task.id)));
+        }
+        clearListTaskSelection();
+      }
+    } catch (error) {
+      const finalizationError = error instanceof Error ? error.message : "Batch Edit finalization could not be completed.";
+      setBatchEditProgress(warnBatchEditProgress(progress, finalizationError));
       return;
     }
 
-    if (fallbackCount > 0) {
-      setMessage({
-        tone: "warn",
-        text: `Updated ${successfulCount} task${successfulCount === 1 ? "" : "s"}. ${fallbackCount} task${fallbackCount === 1 ? "" : "s"} used low energy because your database is missing the newer "none" energy level. Run \`supabase/add_task_energy_none.sql\` to enable "none".`,
-      });
-      return;
-    }
-
-    setMessage({ tone: "good", text: `Updated ${successfulCount} task${successfulCount === 1 ? "" : "s"}.` });
+    setBatchEditProgress(completeBatchEditProgress(progress));
   }
 
   return { applyBatchTaskEdit };

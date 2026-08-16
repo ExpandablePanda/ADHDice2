@@ -364,6 +364,7 @@ test("schedule-only callbacks pass the returned task for immediate Effective Tim
     routeTask: () => {},
     saveFocusSelection: async () => {},
     selectedListTasks: [batchTask],
+    setBatchEditProgress: () => {},
     setIsBatchEditModalOpen: () => {},
     setMessage: () => {},
     setTasks: () => {},

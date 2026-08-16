@@ -146,6 +146,11 @@ import { useMilestoneData } from "@/hooks/useMilestoneData";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
 import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
+import {
+  formatBatchEditProgressDetail,
+  formatBatchEditProgressText,
+  type BatchEditProgress,
+} from "@/lib/task-batch-edit-progress";
 import { clearMatchingOnTimeExecution, reconcileOnTimeManualDurationsFromTasks, type OnTimeLinkedItemOrigin } from "@/lib/on-time-plan-state";
 import { occurrenceIdentityMatches } from "@/lib/on-time-planner";
 import { buildTaskOccurrenceIdentity } from "@/lib/task-duration-evidence";
@@ -586,7 +591,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.13";
+const APP_VERSION = "7.9.14";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1155,6 +1160,7 @@ export function TaskApp() {
     canonicalTasksRef.current = tasks;
   }, [tasks]);
   const [message, setMessage] = useState<Message | null>(null);
+  const [batchEditProgress, setBatchEditProgress] = useState<BatchEditProgress | null>(null);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
   const [activeRewardBankSession, setActiveRewardBankSession] = useState<import("@/lib/task-rewards").PendingTaskReward[] | null>(null);
   const lastHudNotificationMessageRef = useRef<string | null>(null);
@@ -3779,6 +3785,7 @@ export function TaskApp() {
       parseDayOfMonth,
       parsePositiveInteger,
       selectedListTasks,
+      setBatchEditProgress,
       setIsBatchEditModalOpen,
       setMessage,
       setTasks,
@@ -7055,7 +7062,7 @@ export function TaskApp() {
           </div>
         ) : null}
 
-        {message ? <StatusBanner message={message} /> : null}
+        {batchEditProgress ? <BatchEditProgressBanner onDismiss={() => setBatchEditProgress(null)} progress={batchEditProgress} /> : message ? <StatusBanner message={message} /> : null}
 
         <ErrorBoundary
           key={shouldDeferPageRender ? "restoring-page" : activePage}
@@ -8054,9 +8061,15 @@ function AuthSplash({
 }
 
 function StatusBanner({
+  detail,
   message,
+  onDismiss,
+  showDismiss = true,
 }: {
+  detail?: string | null;
   message: Message;
+  onDismiss?: () => void;
+  showDismiss?: boolean;
 }) {
   const [isDismissed, setIsDismissed] = useState(false);
 
@@ -8084,16 +8097,55 @@ function StatusBanner({
       className={`fixed right-3 top-[calc(env(safe-area-inset-top)+1rem)] z-[160] flex w-[calc(100vw-1.5rem)] max-w-xl items-center justify-between gap-3 rounded-[1.25rem] border px-4 py-3 text-sm font-medium shadow-[0_18px_48px_rgba(39,28,89,0.18)] sm:right-4 sm:w-auto sm:min-w-80 ${className}`}
       role={message.tone === "warn" ? "alert" : "status"}
     >
-      <span className="min-w-0 flex-1">{message.text}</span>
-      <TaskTableChipButton
-        className="shrink-0"
-        onClick={() => setIsDismissed(true)}
-        toneClassName="border-current/20 bg-transparent text-current"
-      >
-        Dismiss
-      </TaskTableChipButton>
+      <span className="min-w-0 flex-1">
+        <span className="block">{message.text}</span>
+        {detail ? <span className="mt-1 block text-xs font-normal opacity-80">{detail}</span> : null}
+      </span>
+      {showDismiss && !onDismiss ? (
+        <TaskTableChipButton
+          className="shrink-0"
+          onClick={() => setIsDismissed(true)}
+          toneClassName="border-current/20 bg-transparent text-current"
+        >
+          Dismiss
+        </TaskTableChipButton>
+      ) : showDismiss ? (
+        <TaskTableChipButton
+          className="shrink-0"
+          onClick={() => {
+            setIsDismissed(true);
+            onDismiss?.();
+          }}
+          toneClassName="border-current/20 bg-transparent text-current"
+        >
+          Dismiss
+        </TaskTableChipButton>
+      ) : null}
     </div>,
     document.body,
+  );
+}
+
+function BatchEditProgressBanner({
+  onDismiss,
+  progress,
+}: {
+  onDismiss: () => void;
+  progress: BatchEditProgress;
+}) {
+  const tone = progress.phase === "running"
+    ? "neutral"
+    : progress.phase === "warning" || progress.failed > 0 || progress.fallbackCount > 0
+      ? "warn"
+      : "good";
+
+  return (
+    <StatusBanner
+      detail={formatBatchEditProgressDetail(progress)}
+      message={{ tone, text: formatBatchEditProgressText(progress) }}
+      onDismiss={progress.phase === "running" ? undefined : onDismiss}
+      showDismiss={progress.phase !== "running"}
+    />
   );
 }
 

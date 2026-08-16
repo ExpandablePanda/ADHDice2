@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.13`.
+- Current working app version: `7.9.14`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,12 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.9.14 Persistent Batch Edit progress
+
+- Batch Edit preflight remains modal-owned. After the full `taskPlans` preflight succeeds, the modal closes before sequential execution begins.
+- A TaskApp-owned session notification reports real `BatchTaskPlan` progress: processed includes both successes and failures, and remaining derives from actual plan completion.
+- The final result reports updated and failed counts, while low-energy fallback remains separate from failure accounting. There is no cancellation/retry behavior, no routing architecture change, and no schema change.
 
 ### 7.9.11 Independent Step/Substep pinning
 

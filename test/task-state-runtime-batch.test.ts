@@ -73,6 +73,7 @@ function useBatchForTest(tasks: TaskStateRuntimeLocalTask[], execute: NonNullabl
     routeTask: () => {},
     saveFocusSelection: async () => {},
     selectedListTasks: tasks,
+    setBatchEditProgress: () => {},
     setIsBatchEditModalOpen: () => {},
     setMessage: () => {},
     setTasks: (updater) => { localTasks = typeof updater === "function" ? updater(localTasks) : updater; },
