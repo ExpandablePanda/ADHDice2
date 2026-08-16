@@ -274,6 +274,7 @@ import {
 import { filterPromotedLegacySubtasks } from "@/lib/task-legacy-step-promotion";
 import { buildMilestoneLifecycleArgs, canDetachAndPromoteTaskToMilestone, canPromoteTaskToMilestone, formatMilestoneRpcError, getMilestoneEligibility, mergeAuthoritativeMilestoneTask, shouldReverseCompletedMilestoneForStatusChange } from "@/lib/milestones";
 import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
+import { filterManualListTaskCandidates } from "@/lib/manual-list-task-search";
 import {
   buildTaskHistoryFacts,
   buildTaskHistoryByTaskId,
@@ -585,7 +586,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.7";
+const APP_VERSION = "7.9.8";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3492,16 +3493,12 @@ export function TaskApp() {
     if (!selectedManualList) {
       return [];
     }
-    const normalizedSearch = manualListAddTaskSearch.trim().toLowerCase();
-    return activeTasks
-      .filter((task) =>
-        isTaskOpen(task)
-        && task.status !== "archived"
-        && task.status !== "trashed"
-        && !(manualMembershipsByTaskId[task.id] ?? []).includes(selectedManualList.id)
-        && (!normalizedSearch || task.title.toLowerCase().includes(normalizedSearch))
-      )
-      .slice(0, 6);
+    return filterManualListTaskCandidates(
+      activeTasks,
+      manualListAddTaskSearch,
+      selectedManualList.id,
+      manualMembershipsByTaskId,
+    );
   }, [activeTasks, manualListAddTaskSearch, manualMembershipsByTaskId, selectedManualList]);
   const [tableVisibleSearchMatchIds, setTableVisibleSearchMatchIds] = useState<string[] | null>(null);
   const [statusChangeScrollAnchor, setStatusChangeScrollAnchor] = useState<StatusChangeScrollAnchorState | null>(null);

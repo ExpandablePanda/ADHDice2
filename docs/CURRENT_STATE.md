@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.7`.
+- Current working app version: `7.9.8`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,11 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.9.8 Manual-list search and Table alignment parity
+
+- Add Existing Task search in an eligible manual list matches the task title or the task's own tags, case-insensitively, while preserving existing open-task, exclusion, ordering, limit, and direct-membership rules.
+- Step and Substep Table cells inherit their configured column alignment through the shared child-cell alignment authority; Task Title remains left aligned regardless of its configured alignment.
 
 ### 7.9.7 Repeat filter correction
 
