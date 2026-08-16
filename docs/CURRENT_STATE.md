@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.9`.
+- Current working app version: `7.9.10`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -15,9 +15,13 @@ Role: active working
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
 
+### 7.9.10 Browser-QA correction: Table hierarchy origin and status footprint
+
+- The 7.9.8 and 7.9.9 browser-alignment attempts remained incomplete because header/parent grids began at a 10px inset while canonical, draft, and source/legacy hierarchy grids began at zero. All Table hierarchy grids now share one origin, preserving the established parent/header geometry; title hierarchy indentation remains internal to the title cell. Normal Table current-status circles use one uniform Task/Step/Substep size, and the Unscheduled Calendar glyph uses the standard status-glyph footprint. Status-state behavior, selectable statuses, and persistence are unchanged.
+
 ### 7.9.9 Browser-QA correction: Step/Substep Table alignment
 
-- Corrected the failed 7.9.8 browser-QA portion for Step/Substep Table alignment. Child horizontal alignment follows the resolved column setting while every child cell remains vertically centered; Task Title remains horizontally left aligned with its hierarchy indentation, notes, and multiline behavior intact. Parent and child Status-circle placement now use the same resolved status-column contract in compact and expanded rail modes. No manual-list search behavior changed.
+- Attempted to correct the failed 7.9.8 browser-QA portion for Step/Substep Table alignment. Child horizontal alignment follows the resolved column setting while every child cell remains vertically centered; Task Title remains horizontally left aligned with its hierarchy indentation, notes, and multiline behavior intact. Browser QA still found the parent/child grid-origin and current-status footprint mismatches corrected by 7.9.10. No manual-list search behavior changed.
 
 ### 7.9.8 Manual-list search and Table alignment parity
 

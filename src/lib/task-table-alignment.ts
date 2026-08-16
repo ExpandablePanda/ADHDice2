@@ -1,5 +1,8 @@
 export type TaskTableColumnAlignment = "left" | "center" | "right";
 
+export const TASK_TABLE_GRID_ORIGIN_PX = 10;
+export const TASK_TABLE_GRID_ORIGIN_CLASS = "ml-[10px]";
+
 export function getTaskTableAlignmentClass(alignment: TaskTableColumnAlignment) {
   if (alignment === "left") return "items-start text-left justify-start";
   if (alignment === "right") return "items-end text-right justify-end";

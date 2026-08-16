@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import {
   getTaskTableAlignmentClass,
   getTaskTableChildAlignmentClass,
+  TASK_TABLE_GRID_ORIGIN_CLASS,
+  TASK_TABLE_GRID_ORIGIN_PX,
 } from "../src/lib/task-table-alignment.ts";
 
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
@@ -27,6 +29,50 @@ test("parent and child alignment helpers retain their separate contracts", () =>
   assert.equal(getTaskTableAlignmentClass("left"), "items-start text-left justify-start");
   assert.equal(getTaskTableAlignmentClass("center"), "items-center text-center justify-center");
   assert.equal(getTaskTableAlignmentClass("right"), "items-end text-right justify-end");
+});
+
+test("all Table hierarchy grids use one shared origin and keep indentation inside title cells", () => {
+  assert.equal(TASK_TABLE_GRID_ORIGIN_PX, 10);
+  assert.equal(TASK_TABLE_GRID_ORIGIN_CLASS, "ml-[10px]");
+
+  const gridMarkers = [
+    "data-completed-steps-section",
+    "data-table-step-draft-row",
+    "data-task-table-child-grid",
+    "data-task-table-source-step-grid",
+    "data-task-table-parent-grid",
+  ];
+  for (const marker of gridMarkers) {
+    const markerIndex = tableSource.indexOf(marker);
+    const classStart = tableSource.lastIndexOf("className=", markerIndex);
+    assert.ok(markerIndex >= 0 && classStart >= 0, `missing grid marker: ${marker}`);
+    assert.match(tableSource.slice(classStart, markerIndex), /TASK_TABLE_GRID_ORIGIN_CLASS/);
+  }
+  assert.match(tableSource, /sticky top-0 z-20 \$\{TASK_TABLE_GRID_ORIGIN_CLASS\} grid/);
+
+  assert.match(tableSource, /const parentTitleContentOffsetPx = TASK_TABLE_GRID_ORIGIN_PX \+ TABLE_GRID_START_PADDING_PX/);
+  assert.match(tableSource, /titleCellPaddingPx: titleContentOffsetPx[\s\S]*- TASK_TABLE_GRID_ORIGIN_PX/);
+  assert.match(tableSource, /column\.id === "title" \? \{ paddingLeft:/);
+  assert.doesNotMatch(tableSource, /data-task-table-child-grid[\s\S]*marginLeft/);
+});
+
+test("all normal Table current-status indicators use one shared size helper", () => {
+  const tableCurrentStatusSource = tableSource.slice(
+    tableSource.indexOf("function renderRowCell"),
+    tableSource.indexOf("const renderSourceStepMiniRows"),
+  );
+  assert.match(tableSource, /function renderTableCurrentStatusCircle\(status: TaskDisplayStatus\)/);
+  assert.match(tableSource, /renderTaskStatusCircle\(status, TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE\)/);
+  assert.equal((tableSource.match(/renderTableCurrentStatusCircle\((?:task|item|subtask|\"pending\")/g) ?? []).length, 5);
+  for (const renderer of [
+    tableSource.slice(tableSource.indexOf("const renderChildTaskMiniCell"), tableSource.indexOf("const renderTableStepDraftCell")),
+    tableSource.slice(tableSource.indexOf("const renderTableStepDraftCell"), tableSource.indexOf("const renderChildTaskMiniRows")),
+    tableSource.slice(tableSource.indexOf("const renderSourceStepMiniCell"), tableSource.indexOf("const renderSourceStepMiniRows")),
+  ]) {
+    assert.doesNotMatch(renderer, /renderTaskStatusCircle\((?:task|item|subtask)\.status, \"(?:sm|md)\"/);
+    assert.doesNotMatch(renderer, /renderTaskStatusCircle\(\"pending\", \"(?:sm|md)\"/);
+  }
+  assert.match(tableCurrentStatusSource, /renderTableCurrentStatusCircle\(task\.status\)/);
 });
 
 test("Step and Substep mini-cell paths use one shared child-cell placement authority", () => {

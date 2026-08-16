@@ -6,6 +6,8 @@ import type { TaskDisplayStatus as UiTaskDisplayStatus } from "@/lib/task-displa
 
 export type TaskDisplayStatus = UiTaskDisplayStatus | TaskSubtaskStatus;
 
+export const TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE = "md" as const;
+
 export const TASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
   { label: "Pending", value: "pending" },
   { label: "In Progress", value: "in_progress" },
@@ -159,11 +161,7 @@ export function renderTaskStatusGlyph(
   }
 
   if (status === "unscheduled") {
-    return (
-      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center leading-[0]" aria-hidden="true">
-        <CalendarDays className={`${size === "sm" ? "h-2.5 w-2.5" : "h-3 w-3"} block shrink-0`} />
-      </span>
-    );
+    return <CalendarDays className={iconSize} />;
   }
 
   if (status === "trashed") {

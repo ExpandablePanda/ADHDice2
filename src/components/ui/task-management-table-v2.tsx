@@ -44,6 +44,7 @@ import {
   TASK_DISPLAY_STATUS_CHIP_STYLES,
   TASK_DISPLAY_STATUS_INVERTED_CHIP_STYLES,
   TASK_DISPLAY_STATUS_OPTIONS,
+  TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE,
   TASK_SUBTASK_STATUS_OPTIONS,
   TaskStatusCircleRail,
   formatTaskStatusLabel,
@@ -81,7 +82,13 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { mergeMeasuredColumnWidths, normalizeMeasuredColumnWidth } from "@/lib/task-table-measurements";
-import { getTaskTableAlignmentClass, getTaskTableChildAlignmentClass, getTaskTableInlineAlignmentClass } from "@/lib/task-table-alignment";
+import {
+  getTaskTableAlignmentClass,
+  getTaskTableChildAlignmentClass,
+  getTaskTableInlineAlignmentClass,
+  TASK_TABLE_GRID_ORIGIN_CLASS,
+  TASK_TABLE_GRID_ORIGIN_PX,
+} from "@/lib/task-table-alignment";
 import { TaskTimerDial } from "@/components/task-app/task-timer-display";
 import { resolveTaskTableLayoutPublishDecision, type TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 
@@ -1477,7 +1484,6 @@ const DUE_PRESETS = [
   { label: "Next Monday", value: nextWeekdayIso(1) },
 ];
 const ESTIMATED_TIME_PRESETS = [5, 10, 15, 20, 30, 45, 60];
-const TABLE_PARENT_ROW_MARGIN_PX = 10;
 const TABLE_GRID_START_PADDING_PX = 3;
 const TABLE_PARENT_TITLE_PADDING_PX = 5;
 const TABLE_HIERARCHY_GUIDE_WIDTH_PX = 1;
@@ -1487,18 +1493,23 @@ const TABLE_SUBSTEP_TITLE_INCREMENT_PX = 14;
 
 export function getTableHierarchyTitleGeometry(depth: number) {
   const normalizedDepth = Math.max(1, Math.min(Math.trunc(depth), 4));
-  const parentTitleContentOffsetPx = TABLE_PARENT_ROW_MARGIN_PX + TABLE_GRID_START_PADDING_PX + TABLE_PARENT_TITLE_PADDING_PX;
+  const parentTitleContentOffsetPx = TASK_TABLE_GRID_ORIGIN_PX + TABLE_GRID_START_PADDING_PX + TABLE_PARENT_TITLE_PADDING_PX;
   const titleContentOffsetPx = parentTitleContentOffsetPx
     + TABLE_STEP_TITLE_INSET_PX
     + (normalizedDepth - 1) * TABLE_SUBSTEP_TITLE_INCREMENT_PX;
   return {
     parentTitleContentOffsetPx,
     titleCellPaddingPx: titleContentOffsetPx
+      - TASK_TABLE_GRID_ORIGIN_PX
       - TABLE_GRID_START_PADDING_PX
       - TABLE_HIERARCHY_GUIDE_WIDTH_PX
       - TABLE_HIERARCHY_TITLE_GAP_PX,
     titleContentOffsetPx,
   };
+}
+
+function renderTableCurrentStatusCircle(status: TaskDisplayStatus) {
+  return renderTaskStatusCircle(status, TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE);
 }
 
 const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
@@ -5768,7 +5779,7 @@ export function TaskManagementTableV2({
     return (
       <motion.div
         animate={{ height: "auto", opacity: 1, y: 0 }}
-        className="ml-[10px] mt-2 w-max min-w-full overflow-hidden rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-2.5 shadow-[0_18px_45px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#1b1530]"
+        className={`${TASK_TABLE_GRID_ORIGIN_CLASS} mt-2 w-max min-w-full overflow-hidden rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-2.5 shadow-[0_18px_45px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#1b1530]`}
         data-task-table-inline-editor={task.id}
         exit={{ height: 0, opacity: 0, y: -6 }}
         initial={{ height: 0, opacity: 0, y: -6 }}
@@ -6535,7 +6546,7 @@ export function TaskManagementTableV2({
                 onPointerUp={endStatusRailLongPress}
                 type="button"
               >
-                {renderTaskStatusCircle(task.status, "md")}
+                {renderTableCurrentStatusCircle(task.status)}
               </button>
             ) : null}
             {isStatusRailColumnExpanded ? (
@@ -6611,7 +6622,7 @@ export function TaskManagementTableV2({
               type="button"
             >
               <span className="inline-flex w-max items-center" data-column-content-measure={columnId}>
-                {renderTaskStatusCircle(task.status, "md")}
+                {renderTableCurrentStatusCircle(task.status)}
               </span>
             </button>
           ) : null}
@@ -7195,7 +7206,7 @@ export function TaskManagementTableV2({
   const renderCompletedStepsHeader = (parentTaskId: string, completedStepCount: number, isExpanded: boolean) => {
     const taskColumnIndex = Math.max(1, visibleHeaderColumns.findIndex((column) => column.id === "title") + 1);
     return (
-    <div className="grid w-max min-w-full border-t border-[#f0ebfb] px-1.5 pb-1 pt-2 dark:border-white/10" data-completed-steps-section={parentTaskId} style={{ gridTemplateColumns }}>
+    <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full border-t border-[#f0ebfb] px-1.5 pb-1 pt-2 dark:border-white/10`} data-completed-steps-section={parentTaskId} style={{ gridTemplateColumns }}>
       <div className="inline-flex items-center justify-center gap-1.5 justify-self-center leading-none" style={{ gridColumn: taskColumnIndex }}>
         <span className={TITLE_CELL_CLASS}>Completed Steps ({completedStepCount})</span>
         <TaskHierarchyChevronButton
@@ -7605,7 +7616,7 @@ export function TaskManagementTableV2({
         item,
         columnId,
         <div className="inline-flex min-w-0 self-center">
-          {renderTaskStatusCircle(item.status, "sm")}
+          {renderTableCurrentStatusCircle(item.status)}
         </div>,
       );
     }
@@ -7968,7 +7979,7 @@ export function TaskManagementTableV2({
     const creationError = tableStepCreationErrorByParentId[parentTaskId];
 
     if (columnId === "status_icon") {
-      return <div className="flex self-center">{renderTaskStatusCircle("pending", "sm")}</div>;
+      return <div className="flex self-center">{renderTableCurrentStatusCircle("pending")}</div>;
     }
 
     if (columnId === "title") {
@@ -8114,7 +8125,7 @@ export function TaskManagementTableV2({
         ) : null}
         {isDraftingStepForTask ? (
           <form
-            className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-1 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
+            className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-1 pl-[3px] pr-0 text-center transition dark:bg-[#181226]`}
             data-table-step-draft-row={task.id}
             onClick={(event) => event.stopPropagation()}
             onSubmit={(event) => {
@@ -8141,7 +8152,7 @@ export function TaskManagementTableV2({
                 data-same-table-step-row={item.id}
               >
                 <div
-                  className={`grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-0.5 pl-[3px] pr-0 text-center transition ${selectedTaskIdSet.has(item.id) ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]" : "border-transparent bg-transparent dark:bg-transparent"} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-0.5 pl-[3px] pr-0 text-center transition ${selectedTaskIdSet.has(item.id) ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]" : "border-transparent bg-transparent dark:bg-transparent"} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                   data-task-table-child-grid={item.id}
                   onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                   onDrop={(event) => dropChildTaskOnItem(event, item)}
@@ -8205,7 +8216,7 @@ export function TaskManagementTableV2({
               {renderInlineActionRow(inlineStepTask)}
               {tableStepDraftParentId === item.id ? (
                 <form
-                  className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-1 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
+                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-1 pl-[3px] pr-0 text-center transition dark:bg-[#181226]`}
                   data-table-step-draft-row={item.id}
                   onClick={(event) => event.stopPropagation()}
                   onSubmit={(event) => {
@@ -8233,7 +8244,7 @@ export function TaskManagementTableV2({
     const { depth, subtask } = row;
 
     if (columnId === "status_icon") {
-      return <div className="flex self-center">{renderTaskStatusCircle(subtask.status, "sm")}</div>;
+      return <div className="flex self-center">{renderTableCurrentStatusCircle(subtask.status)}</div>;
     }
 
     if (columnId === "title") {
@@ -8278,7 +8289,8 @@ export function TaskManagementTableV2({
             onClick={(event) => event.stopPropagation()}
           >
             <div
-              className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-transparent py-0.5 pl-[3px] pr-0 text-center transition dark:bg-transparent"
+              className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-transparent py-0.5 pl-[3px] pr-0 text-center transition dark:bg-transparent`}
+              data-task-table-source-step-grid={row.subtask.id}
               style={{ gridTemplateColumns }}
             >
               {visibleHeaderColumns.map((column) => (
@@ -8405,7 +8417,7 @@ export function TaskManagementTableV2({
             style={{ overflowAnchor: "none" }}
           >
             <div className="min-w-max space-y-1.5 pb-2">
-            <div className={`sticky top-0 z-20 ml-[10px] grid w-max min-w-full gap-0 bg-white/95 pl-[3px] pr-0 py-1 text-center shadow-[0_10px_24px_rgba(111,87,246,0.06)] backdrop-blur ${HEADER_TEXT_CLASS} dark:bg-[#140f26]/95 dark:shadow-[0_10px_24px_rgba(0,0,0,0.24)]`} style={{ gridTemplateColumns }}>
+            <div className={`sticky top-0 z-20 ${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full gap-0 bg-white/95 pl-[3px] pr-0 py-1 text-center shadow-[0_10px_24px_rgba(111,87,246,0.06)] backdrop-blur ${HEADER_TEXT_CLASS} dark:bg-[#140f26]/95 dark:shadow-[0_10px_24px_rgba(0,0,0,0.24)]`} style={{ gridTemplateColumns }}>
               {visibleHeaderColumns.map((column, columnIndex) => {
                 const isOpen = openColumnMenuId === column.id;
                 const isFiltered = isTextFilterColumn(column.id) && Boolean(textFilters[column.id]?.trim());
@@ -8574,7 +8586,7 @@ export function TaskManagementTableV2({
             ) : null}
 
             {effectiveDisplayedTasks.length === 0 ? (
-              <div className={`ml-[10px] rounded-[1.25rem] border border-dashed border-[#ddd6fb] bg-[#fbfaff] px-6 py-10 text-center ${BODY_MUTED_VALUE_CLASS}`}>
+              <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} rounded-[1.25rem] border border-dashed border-[#ddd6fb] bg-[#fbfaff] px-6 py-10 text-center ${BODY_MUTED_VALUE_CLASS}`}>
                 No rows match the current table filters.
               </div>
             ) : renderedTasks.map((task) => {
@@ -8681,7 +8693,7 @@ export function TaskManagementTableV2({
                     variants={tableRowVariants}
                     whileHover={shouldAnimateRows ? { y: -0.5 } : undefined}
                   >
-                    <div className={`ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] ${getHighlightedRowClassName(task.id)} ${
+                    <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] ${getHighlightedRowClassName(task.id)} ${
                       selectedTaskIdSet.has(task.id)
                         ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]"
                         : showInlineAccordion || rowContextMenu?.taskId === task.id
@@ -8723,7 +8735,7 @@ export function TaskManagementTableV2({
             {remainingRenderedTaskCount > 0 || hasMoreRows ? (
               <div
                 aria-hidden="true"
-                className="pointer-events-none ml-[10px] h-px w-max min-w-full"
+                className={`pointer-events-none ${TASK_TABLE_GRID_ORIGIN_CLASS} h-px w-max min-w-full`}
                 ref={loadMoreTasksRef}
               />
             ) : null}
