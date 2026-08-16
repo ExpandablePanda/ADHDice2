@@ -166,15 +166,51 @@ test("Pinned projection keeps child pins independent and renders ancestors only 
   assert.equal(derived.canonicalEntityProjection.postStatusMatchedEntityIds.has(parent.id), false);
 });
 
-test("Pinned parent does not add unpinned child rows when Include Steps is on", () => {
+test("Pinned Include Steps controls hierarchy visibility without changing direct membership", () => {
   const parent = createTask({ id: "pinned-parent-only", pinned_at: "2026-07-17T08:00:00Z", status: "pending", title: "Parent" });
   const step = createTask({ id: "unpinned-child-only", parent_task_id: parent.id, status: "pending", title: "Step" });
-  const derived = derive([parent, step], [], "", true, "table", { selectedBucket: "pinned" });
+  const substep = createTask({ id: "unpinned-grandchild-only", parent_task_id: step.id, status: "pending", title: "Substep" });
+  const excluded = derive([parent, step, substep], [], "", false, "table", { selectedBucket: "pinned" });
+  const included = derive([parent, step, substep], [], "", true, "table", { selectedBucket: "pinned" });
 
-  assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), [parent.id]);
-  assert.deepEqual(derived.statusMatchedChildTaskIds, []);
-  assert.deepEqual(derived.childTaskPreviewByParentTaskId[parent.id]!.items, []);
-  assert.deepEqual([...derived.canonicalEntityProjection.postStatusMatchedEntityIds], [parent.id]);
+  assert.deepEqual(excluded.filteredTasksSorted.map((task) => task.id), [parent.id]);
+  assert.deepEqual(excluded.childTaskPreviewByParentTaskId[parent.id]!.items, []);
+  assert.deepEqual(included.filteredTasksSorted.map((task) => task.id), [parent.id]);
+  assert.deepEqual(included.childTaskPreviewByParentTaskId[parent.id]!.items.map((item) => item.id), [step.id, substep.id]);
+  assert.equal(included.childTaskPreviewByParentTaskId[parent.id]!.items.every((item) => item.pinnedAt === null), true);
+  assert.deepEqual([...included.canonicalEntityProjection.postStatusMatchedEntityIds], [parent.id]);
+  assert.equal(included.canonicalEntityProjection.listFacetCounts.pinned, 1);
+  assert.equal(included.canonicalEntityProjection.hierarchyVisibleEntityIds.has(step.id), true);
+  assert.equal(included.canonicalEntityProjection.hierarchyVisibleEntityIds.has(substep.id), true);
+});
+
+test("Pinned hierarchy visibility includes an independently pinned child once and keeps its descendants contextual", () => {
+  const parent = createTask({ id: "pinned-parent-with-child", pinned_at: "2026-07-17T08:00:00Z", status: "pending", title: "Parent" });
+  const step = createTask({ id: "pinned-child", parent_task_id: parent.id, pinned_at: "2026-07-17T08:01:00Z", status: "pending", title: "Step" });
+  const substep = createTask({ id: "unpinned-grandchild", parent_task_id: step.id, status: "pending", title: "Substep" });
+  const derived = derive([parent, step, substep], [], "", true, "table", { selectedBucket: "pinned" });
+
+  assert.deepEqual(derived.childTaskPreviewByParentTaskId[parent.id]!.items.map((item) => item.id), [step.id, substep.id]);
+  assert.deepEqual([...derived.canonicalEntityProjection.postStatusMatchedEntityIds], [parent.id, step.id]);
+  assert.equal(derived.canonicalEntityProjection.listFacetCounts.pinned, 2);
+  assert.equal(derived.childTaskPreviewByParentTaskId[parent.id]!.items.find((item) => item.id === step.id)?.pinnedAt, step.pinned_at);
+  assert.equal(derived.childTaskPreviewByParentTaskId[parent.id]!.items.find((item) => item.id === substep.id)?.pinnedAt, null);
+});
+
+test("Pinned Step Include Steps shows ancestor context and recursive descendants in Table and List", () => {
+  const parent = createTask({ id: "unpinned-context-parent", status: "pending", title: "Parent" });
+  const step = createTask({ id: "pinned-step-context", parent_task_id: parent.id, pinned_at: "2026-07-17T08:01:00Z", status: "pending", title: "Step" });
+  const substep = createTask({ id: "unpinned-step-descendant", parent_task_id: step.id, status: "pending", title: "Substep" });
+
+  for (const view of ["table", "list"] as const) {
+    const derived = derive([parent, step, substep], [], "", true, view, { selectedBucket: "pinned" });
+
+    assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), [parent.id]);
+    assert.deepEqual(derived.childTaskPreviewByParentTaskId[parent.id]!.items.map((item) => item.id), [step.id, substep.id]);
+    assert.equal(derived.canonicalEntityProjection.contextAncestorIds.has(parent.id), true);
+    assert.deepEqual([...derived.canonicalEntityProjection.postStatusMatchedEntityIds], [step.id]);
+    assert.equal(derived.canonicalEntityProjection.listFacetCounts.pinned, 1);
+  }
 });
 
 test("search overrides Include Steps without changing the persisted view setting", () => {

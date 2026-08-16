@@ -163,6 +163,8 @@ test("canonical Pinned membership is exact-entity and preserves pinned children 
   assert.deepEqual([...result.matchingDescendantIdsByRootParentId.get(parent.id)!], [step.id, substep.id]);
   assert.equal(result.contextAncestorIds.has(parent.id), true);
   assert.equal(result.contextAncestorIds.has(step.id), false);
+  assert.equal(result.hierarchyVisibleEntityIds.has(step.id), true);
+  assert.equal(result.hierarchyVisibleEntityIds.has(substep.id), true);
   assert.equal(result.listFacetCounts.pinned, 2);
 });
 
@@ -173,6 +175,7 @@ test("canonical Pinned membership does not expand an explicitly pinned parent", 
 
   assert.deepEqual([...result.postStatusMatchedEntityIds], [parent.id]);
   assert.equal(result.matchingDescendantIdsByRootParentId.has(parent.id), false);
+  assert.equal(result.hierarchyVisibleEntityIds.has(step.id), true);
   assert.equal(result.listFacetCounts.pinned, 1);
 });
 
@@ -189,6 +192,7 @@ test("canonical Pinned active search matches only the directly searched entity w
     assert.deepEqual([...result.postStatusMatchedEntityIds], [parent.id]);
     assert.deepEqual([...result.searchExpandedDescendantIds], []);
     assert.equal(result.matchingDescendantIdsByRootParentId.has(parent.id), false);
+    assert.equal(result.hierarchyVisibleEntityIds.has(child.id), false);
     assert.equal(result.listFacetCounts.pinned, 1);
     assert.equal(result.statusFacetCounts.pending, 1);
   }
@@ -205,6 +209,8 @@ test("canonical Pinned child search keeps the parent as context and excludes unr
   assert.deepEqual([...result.postStatusMatchedEntityIds], [child.id]);
   assert.deepEqual([...result.matchingDescendantIdsByRootParentId.get(parent.id)!], [child.id]);
   assert.equal(result.contextAncestorIds.has(parent.id), true);
+  assert.equal(result.hierarchyVisibleEntityIds.has(parent.id), true);
+  assert.equal(result.hierarchyVisibleEntityIds.has(sibling.id), false);
   assert.equal(result.postStatusMatchedEntityIds.has(parent.id), false);
   assert.equal(result.postStatusMatchedEntityIds.has(sibling.id), false);
   assert.equal(result.statusFacetCounts.pending, 1);

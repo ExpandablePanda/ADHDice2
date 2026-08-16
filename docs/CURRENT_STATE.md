@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.12`.
+- Current working app version: `7.9.13`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -24,6 +24,10 @@ Role: active working
 ### 7.9.12 Pinned active-search parity
 
 - Pinned active search is direct-entity only: a matching pinned parent does not expand independently pinned descendants, and Include Steps does not change that membership rule. Required ancestors remain hierarchy context only and do not enter Pinned counts or status facets. No persistence or schema changes are included.
+
+### 7.9.13 Pinned hierarchy visibility
+
+- Pinned membership remains the exact entity-local non-null `pinned_at`. The existing Include Steps option can reveal descendants beneath directly pinned entities for hierarchy browsing; revealed descendants are visibility/context only unless independently pinned. Pinned counts remain direct-membership only, and the 7.9.12 direct-only active-search behavior is unchanged. No persistence, SQL, schema, or live-data changes are included.
 
 ### 7.9.10 Browser-QA correction: Table hierarchy origin and status footprint
 

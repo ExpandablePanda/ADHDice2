@@ -199,6 +199,7 @@ export type CanonicalTaskEntityProjection = {
   entityFactsById: Map<string, CanonicalTaskEntityFact>;
   hierarchyScopedEntityIds: Set<string>;
   hierarchyScopeKey: string;
+  hierarchyVisibleEntityIds: Set<string>;
   listFacetCounts: Record<string, number>;
   matchingDescendantIdsByRootParentId: Map<string, Set<string>>;
   postStatusMatchedEntityIds: Set<string>;
@@ -878,6 +879,23 @@ export function queryCanonicalTaskEntityProjection({
       && (matchingDescendantIdsByRootParentId.get(rootId)?.size ?? 0) > 0
     )),
   );
+  const hierarchyVisibleEntityIds = new Set<string>([
+    ...postStatusMatchedEntityIds,
+    ...contextAncestorIds,
+  ]);
+  if (isPinnedBucket && includeDescendants && !searchIsActive) {
+    const directlyPinnedVisibleEntityIds = new Set(
+      Array.from(postStatusMatchedEntityIds).filter((id) => Boolean(entityFactsById.get(id)?.task.pinned_at)),
+    );
+    for (const fact of entityFactsById.values()) {
+      if (
+        isInSelectedBaseScope(fact.task)
+        && fact.ancestorIds.some((ancestorId) => directlyPinnedVisibleEntityIds.has(ancestorId))
+      ) {
+        hierarchyVisibleEntityIds.add(fact.id);
+      }
+    }
+  }
   const hierarchyScopeKey = JSON.stringify({
     columnFilters: taskUiState.tableColumnFilters,
     energyFilters: taskUiState.energyFilters,
@@ -897,6 +915,7 @@ export function queryCanonicalTaskEntityProjection({
     entityFactsById,
     hierarchyScopedEntityIds,
     hierarchyScopeKey,
+    hierarchyVisibleEntityIds,
     listFacetCounts,
     matchingDescendantIdsByRootParentId,
     postStatusMatchedEntityIds,
@@ -1585,10 +1604,7 @@ export function computeTaskAppDerivedData({
     ? childTaskPreviewByParentTaskId
     : Object.fromEntries(Object.entries(childTaskPreviewByParentTaskId).map(([rootId, group]) => {
       const hierarchyVisibleIds = taskUiState.selectedBucket === "pinned"
-        ? new Set([
-          ...canonicalEntityProjection.postStatusMatchedEntityIds,
-          ...canonicalEntityProjection.contextAncestorIds,
-        ])
+        ? canonicalEntityProjection.hierarchyVisibleEntityIds
         : canonicalEntityProjection.hierarchyScopedEntityIds;
       const items = group.items.filter((item) => hierarchyVisibleIds.has(item.id));
       return [rootId, {
