@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.14`.
+- Current working app version: `7.9.15`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -20,6 +20,10 @@ Role: active working
 - Batch Edit preflight remains modal-owned. After the full `taskPlans` preflight succeeds, the modal closes before sequential execution begins.
 - A TaskApp-owned session notification reports real `BatchTaskPlan` progress: processed includes both successes and failures, and remaining derives from actual plan completion.
 - The final result reports updated and failed counts, while low-energy fallback remains separate from failure accounting. There is no cancellation/retry behavior, no routing architecture change, and no schema change.
+
+### 7.9.15 Batch Edit committed-row reconciliation
+
+- Authoritative Task rows returned by a committed update are reconciled into local Task state even when the containing plan later fails its required History write. Plan accounting remains unchanged: the plan is processed and failed, but not updated. No rollback, schema, or live-data change was introduced.
 
 ### 7.9.11 Independent Step/Substep pinning
 

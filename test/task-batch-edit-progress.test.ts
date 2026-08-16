@@ -16,6 +16,7 @@ import {
 } from "../src/lib/task-batch-edit-progress.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import type { Task } from "../src/lib/database.types.ts";
+import type { TaskRewardCandidate } from "../src/lib/task-rewards.ts";
 
 function task(id: string, status: Task["status"] = "pending", dueOn: string | null = null) {
   return createTask({
@@ -54,8 +55,8 @@ function draft(overrides: Partial<BatchTaskEditDraft> = {}): BatchTaskEditDraft 
 function useBatchEditTestHarness(
   selectedTasks: Task[],
   options: {
-    onTasksCompleted?: () => Promise<void>;
-    syncTaskHistoryEntry?: () => Promise<boolean>;
+    onTasksCompleted?: (candidates: TaskRewardCandidate[]) => Promise<void>;
+    syncTaskHistoryEntry?: (taskId: string) => Promise<boolean>;
     updateTask?: (task: Task) => Promise<{ data: Task | null; error: { message: string } | null; usedEnergyFallback?: boolean }>;
   } = {},
 ) {
@@ -85,7 +86,7 @@ function useBatchEditTestHarness(
       localTasks = typeof update === "function" ? update(localTasks) : update;
     },
     sortTasksForUi: (nextTasks) => nextTasks,
-    syncTaskHistoryEntry: options.syncTaskHistoryEntry ?? (async () => true),
+    syncTaskHistoryEntry: async (taskId) => options.syncTaskHistoryEntry?.(taskId) ?? true,
     tasks: selectedTasks,
     timezone: "UTC",
     updateTaskRowWithLegacyEnergyFallback: async (taskId) => {
@@ -162,12 +163,48 @@ test("required History save failure is a failed plan, not a simultaneous success
   const selected = task("history-failure", "pending", "2026-08-16");
   const harnessState = useBatchEditTestHarness([selected], {
     syncTaskHistoryEntry: async () => false,
+    updateTask: async (currentTask) => ({ data: { ...currentTask, priority_level: 3 }, error: null }),
   });
   await harnessState.actions.applyBatchTaskEdit(draft({ status: "did_my_best" }));
   assert.equal(harnessState.progress?.processed, 1);
   assert.equal(harnessState.progress?.remaining, 0);
   assert.equal(harnessState.progress?.updated, 0);
   assert.equal(harnessState.progress?.failed, 1);
+  assert.equal(harnessState.localTasks[0]?.priority_level, 3);
+});
+
+test("mixed full success and History failure reconcile both committed Task rows", async () => {
+  const selected = [
+    task("full-success", "pending", "2026-08-16"),
+    task("history-failure", "pending", "2026-08-16"),
+  ];
+  let completedCandidateCount = 0;
+  const harnessState = useBatchEditTestHarness(selected, {
+    onTasksCompleted: async (candidates) => { completedCandidateCount = candidates.length; },
+    syncTaskHistoryEntry: async (taskId) => taskId !== "history-failure",
+    updateTask: async (currentTask) => ({
+      data: { ...currentTask, priority_level: currentTask.id === "full-success" ? 2 : 3 },
+      error: null,
+    }),
+  });
+  await harnessState.actions.applyBatchTaskEdit(draft({ status: "did_my_best" }));
+  assert.equal(harnessState.progress?.processed, 2);
+  assert.equal(harnessState.progress?.updated, 1);
+  assert.equal(harnessState.progress?.failed, 1);
+  assert.equal(harnessState.localTasks.find((candidate) => candidate.id === "full-success")?.priority_level, 2);
+  assert.equal(harnessState.localTasks.find((candidate) => candidate.id === "history-failure")?.priority_level, 3);
+  assert.equal(completedCandidateCount, 1);
+});
+
+test("a genuine Task-row write failure does not fabricate local mutation", async () => {
+  const selected = task("write-failure");
+  const harnessState = useBatchEditTestHarness([selected], {
+    updateTask: async () => ({ data: null, error: { message: "Task write failed." } }),
+  });
+  await harnessState.actions.applyBatchTaskEdit(draft({ priority: "3" }));
+  assert.equal(harnessState.progress?.processed, 1);
+  assert.equal(harnessState.progress?.failed, 1);
+  assert.equal(harnessState.localTasks[0]?.priority_level, selected.priority_level);
 });
 
 test("a no-row-mutation routing plan is successful without route confirmation", async () => {

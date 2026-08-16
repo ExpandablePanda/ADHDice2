@@ -112,6 +112,7 @@ export function useTaskBatchEditAction({
     };
 
     let nextTasks = tasks;
+    let hasAuthoritativeTaskRowsToReconcile = false;
     const nextFocusedTaskIds = new Set(focusedTaskIds);
     const completedCandidates: TaskRewardCandidate[] = [];
     const taskPlans: BatchTaskPlan[] = [];
@@ -284,6 +285,7 @@ export function useTaskBatchEditAction({
             planErrorMessage = `Task "${task.title}": ${canonicalResult.error.message}`;
           } else {
             nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? canonicalResult.task : currentTask);
+            hasAuthoritativeTaskRowsToReconcile = true;
             if (["archive_task", "trash_task", "complete_task", "set_outcome"].includes(runtimeAction.actionType)) routeTask(task.id, null);
             planSuccess = true;
           }
@@ -297,6 +299,7 @@ export function useTaskBatchEditAction({
             planErrorMessage = `Task "${task.title}" updated, but no task row came back from Supabase.`;
           } else {
             nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? data : currentTask);
+            hasAuthoritativeTaskRowsToReconcile = true;
             if (dueDateOnlyEdit) {
               void onTaskHistoryMutation?.(task.id, scopedHistory, data);
             }
@@ -363,8 +366,10 @@ export function useTaskBatchEditAction({
     }
 
     try {
-      if (progress.updated > 0) {
+      if (hasAuthoritativeTaskRowsToReconcile || progress.updated > 0) {
         setTasks(sortTasksForUi(nextTasks));
+      }
+      if (progress.updated > 0) {
         if (completedCandidates.length > 0) {
           await onTasksCompleted(completedCandidates);
         }
