@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.8`.
+- Current working app version: `7.9.9`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,10 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.9.9 Browser-QA correction: Step/Substep Table alignment
+
+- Corrected the failed 7.9.8 browser-QA portion for Step/Substep Table alignment. Child horizontal alignment follows the resolved column setting while every child cell remains vertically centered; Task Title remains horizontally left aligned with its hierarchy indentation, notes, and multiline behavior intact. Parent and child Status-circle placement now use the same resolved status-column contract in compact and expanded rail modes. No manual-list search behavior changed.
 
 ### 7.9.8 Manual-list search and Table alignment parity
 

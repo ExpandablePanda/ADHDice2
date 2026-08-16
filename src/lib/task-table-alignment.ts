@@ -16,5 +16,8 @@ export function getTaskTableChildAlignmentClass(
   columnId: string,
   alignment: TaskTableColumnAlignment,
 ) {
-  return getTaskTableAlignmentClass(columnId === "title" ? "left" : alignment);
+  const resolvedAlignment = columnId === "title" ? "left" : alignment;
+  if (resolvedAlignment === "left") return "items-center text-left justify-start";
+  if (resolvedAlignment === "right") return "items-center text-right justify-end";
+  return "items-center text-center justify-center";
 }

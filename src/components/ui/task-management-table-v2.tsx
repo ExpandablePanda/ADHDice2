@@ -6011,12 +6011,12 @@ export function TaskManagementTableV2({
   }
 
   function getColumnAlignmentClass(columnId: TaskManagementTableColumnId) {
-    const alignment = columnAlignments[columnId] ?? (columnId === "status_icon" ? "left" : "center");
+    const alignment = columnAlignments[columnId] ?? "center";
     return getTaskTableAlignmentClass(alignment);
   }
 
   function getChildColumnAlignmentClass(columnId: TaskManagementTableColumnId) {
-    const alignment = columnAlignments[columnId] ?? (columnId === "status_icon" ? "left" : "center");
+    const alignment = columnAlignments[columnId] ?? "center";
     return getTaskTableChildAlignmentClass(columnId, alignment);
   }
 
@@ -6447,7 +6447,7 @@ export function TaskManagementTableV2({
 
     const wrapMeasuredContent = (content: ReactNode, className = "") => (
       <div
-        className={`inline-flex w-max max-w-none items-center justify-start ${className}`}
+        className={`inline-flex w-max max-w-none items-center ${className}`}
         data-column-content-measure={columnId}
       >
         {content}
@@ -6513,7 +6513,7 @@ export function TaskManagementTableV2({
     if (columnId === "status_icon") {
       if (!allowInlineInspector) {
         return wrapMeasuredContent(
-          <div className="flex w-full min-w-0 items-center justify-center self-center">
+          <div className="inline-flex min-w-0 self-center">
             {!isStatusRailColumnExpanded ? (
               <button
                 aria-expanded={isStatusRailColumnExpanded}
@@ -6540,7 +6540,7 @@ export function TaskManagementTableV2({
             ) : null}
             {isStatusRailColumnExpanded ? (
               <div
-                className="adhdice-scrollbar min-w-0 flex-1 overflow-x-auto"
+                className="adhdice-scrollbar min-w-0 max-w-full overflow-x-auto"
                 onClickCapture={(event) => {
                   if (statusRailLongPressTriggeredRef.current) {
                     event.preventDefault();
@@ -6581,12 +6581,12 @@ export function TaskManagementTableV2({
               </div>
             ) : null}
           </div>,
-          "justify-center"
+          ""
         );
       }
 
       return (
-        <div className="flex w-full min-w-0 items-center justify-center self-center">
+        <div className="inline-flex min-w-0 self-center">
           {!isStatusRailColumnExpanded ? (
             <button
               className={`${CONTROL_FONT_CLASS} rounded-full p-0 transition`}
@@ -6610,14 +6610,14 @@ export function TaskManagementTableV2({
               onPointerUp={endStatusRailLongPress}
               type="button"
             >
-              <span className="inline-flex w-max items-center justify-center" data-column-content-measure={columnId}>
+              <span className="inline-flex w-max items-center" data-column-content-measure={columnId}>
                 {renderTaskStatusCircle(task.status, "md")}
               </span>
             </button>
           ) : null}
           {isStatusRailColumnExpanded ? (
             <div
-              className="adhdice-scrollbar min-w-0 flex-1 overflow-x-auto"
+              className="adhdice-scrollbar min-w-0 max-w-full overflow-x-auto"
               onClickCapture={(event) => {
                 if (statusRailLongPressTriggeredRef.current) {
                   event.preventDefault();
@@ -7555,7 +7555,7 @@ export function TaskManagementTableV2({
 
     return (
       <button
-        className={`${CONTROL_FONT_CLASS} inline-flex min-w-0 max-w-full overflow-hidden rounded-[0.95rem] py-1 transition ${getChildColumnAlignmentClass(columnId)}`}
+        className={`${CONTROL_FONT_CLASS} inline-flex min-w-0 max-w-full items-center overflow-hidden rounded-[0.95rem] py-1 transition`}
         onClick={(event) => {
           event.stopPropagation();
           openTableStepActions(item.id, mode);
@@ -7577,8 +7577,8 @@ export function TaskManagementTableV2({
     if (columnId === "status_icon") {
       if (isStatusRailColumnExpanded) {
         return (
-          <div className={`flex w-full min-w-0 self-center ${getChildColumnAlignmentClass(columnId)}`}>
-            <div className="adhdice-scrollbar min-w-0 flex-1 overflow-x-auto" onClick={(event) => event.stopPropagation()}>
+          <div className="inline-flex min-w-0 self-center">
+            <div className="adhdice-scrollbar min-w-0 max-w-full overflow-x-auto" onClick={(event) => event.stopPropagation()}>
               <TaskStatusCircleRail<TaskDisplayStatus>
                 className="w-max max-w-none flex-nowrap"
                 currentStatus={item.status}
@@ -7604,7 +7604,7 @@ export function TaskManagementTableV2({
       return wrapStepMiniCellAction(
         item,
         columnId,
-        <div className={`flex w-full min-w-0 self-center ${getChildColumnAlignmentClass(columnId)}`}>
+        <div className="inline-flex min-w-0 self-center">
           {renderTaskStatusCircle(item.status, "sm")}
         </div>,
       );
@@ -7618,7 +7618,7 @@ export function TaskManagementTableV2({
       const siblingIndex = siblingItems.findIndex((sibling) => sibling.id === item.id);
       return (
         <div
-          className={`inline-flex min-w-[15rem] max-w-full flex-[0_1_auto] flex-wrap gap-x-1.5 gap-y-1 ${getChildColumnAlignmentClass(columnId)}`}
+          className="inline-flex min-w-[15rem] max-w-full flex-[0_1_auto] flex-wrap items-center gap-x-1.5 gap-y-1 text-left"
           data-column-content-measure={columnId}
         >
           <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
@@ -7867,7 +7867,7 @@ export function TaskManagementTableV2({
         return (
           <div className="flex min-w-0 flex-nowrap items-center gap-2">
             <button
-              className={`${CONTROL_FONT_CLASS} inline-flex min-w-0 max-w-full overflow-hidden rounded-[0.95rem] py-1 transition ${getChildColumnAlignmentClass(columnId)}`}
+              className={`${CONTROL_FONT_CLASS} inline-flex min-w-0 max-w-full items-center overflow-hidden rounded-[0.95rem] py-1 transition`}
               onClick={(event) => {
                 event.stopPropagation();
                 openTableStepActions(item.id, "link");
@@ -7968,7 +7968,7 @@ export function TaskManagementTableV2({
     const creationError = tableStepCreationErrorByParentId[parentTaskId];
 
     if (columnId === "status_icon") {
-      return <div className={`flex self-center ${getChildColumnAlignmentClass(columnId)}`}>{renderTaskStatusCircle("pending", "sm")}</div>;
+      return <div className="flex self-center">{renderTaskStatusCircle("pending", "sm")}</div>;
     }
 
     if (columnId === "title") {
@@ -8233,7 +8233,7 @@ export function TaskManagementTableV2({
     const { depth, subtask } = row;
 
     if (columnId === "status_icon") {
-      return <div className={`flex self-center ${getChildColumnAlignmentClass(columnId)}`}>{renderTaskStatusCircle(subtask.status, "sm")}</div>;
+      return <div className="flex self-center">{renderTaskStatusCircle(subtask.status, "sm")}</div>;
     }
 
     if (columnId === "title") {
