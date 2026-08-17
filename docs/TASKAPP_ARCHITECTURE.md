@@ -1,168 +1,122 @@
 # TaskApp Architecture
 
-Last reviewed: 2026-08-03
-Role: canonical active authority
+Last reviewed: 2026-08-17
+Role: canonical production routing and ownership contract
 
 ## Purpose
 
-This document defines current production ownership and routing boundaries around
-`TaskApp`, including where each behavior stops. It does not restate the detailed
-Task State Engine, workspace-loading, UI-system, verification, or QA contracts.
+`TaskApp` is the authenticated application composition root. It selects pages,
+composes workspace data and callbacks, owns route-level overlays and rollover
+trigger timing, and passes authoritative projections to rendered surfaces. It
+does not own independent Task State rules.
 
-## Root Composition Boundary
+Detailed behavioral rules live in [`TASK_STATE_ENGINE.md`](TASK_STATE_ENGINE.md);
+loading ownership lives in [`WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md).
 
-`TaskApp` is the authenticated application composition root. It owns:
+## One Active Status read authority
 
-- top-level page selection and dynamic page boundaries;
-- configuration, loading, and authentication shells;
-- cross-surface hook composition and callback wiring;
-- route-level overlays, reward/achievement presentation, and dock-driven routing;
-- Focus alarm state, persistence, and scheduled-ring orchestration;
-- rollover trigger wiring after the workspace is ready.
+`resolveActiveTaskStatuses` in `src/lib/task-state-engine/read-authority.ts`
+is the one Active Status read authority. `TaskApp` computes the shared
+`taskDisplayStatusByTaskId` projection and passes it through the existing
+derived-data and surface boundaries.
 
-`TaskApp` is not the direct implementation owner of every page, rendered row,
-mutation, status rule, or domain cache; extracted components, adapters, hooks,
-and shared authorities remain responsible for their own behavior.
+Table, List, Home, editor, Steps/Substeps, filters, counts, smart lists, and
+child previews consume that projection. They must not independently interpret
+stored `Task.status`, selected Calendar state, partial History, or legacy
+History. `getTaskDisplayStatusWithHistory` and other compatibility readers are
+translation evidence during convergence, not alternate production authorities.
 
-## Tasks Route and Surface Routing
+History date state and Active Status remain separate. Calendar can show today as
+Open/Due while Active Status remains Missed because an unresolved Missed has
+authority. A successful recurring outcome leaves its History date as Done/Did My
+Best while the shared Active Status immediately reflects the next due date.
 
-The production Tasks route is layered:
+## Root and surface routing
 
-1. `TaskApp` selects the Tasks page and supplies data, panels, and callbacks.
-2. `TasksWorkspace` owns Tasks tab state, tab interactions, and the workspace shell.
-3. `TaskPage` selects the active Tasks surface and Table/List/alternate view.
-4. `TasksSurfaceSwitch`, page adapters, and the rendered surface implement local
-   controls and presentation.
+The production Tasks route remains layered:
 
-The Tasks workspace includes Table, List, and alternate task views plus Paths,
-Report, On-Time, Brainstorm, and Completed Milestones. The current surface list
-is broader than the historical TaskApp page inventory.
+1. `TaskApp` selects the Tasks page and supplies data, projections, panels, and
+   callbacks.
+2. `TasksWorkspace` owns tab state and the workspace shell.
+3. `TaskPage` selects the active Table/List/alternate surface.
+4. Surface adapters and shared row components render projections and local
+   controls.
 
-## Table, List, and Edit Task Ownership
+`TasksTableAdapter`, `TasksListAdapter`, `TaskManagementTableV2`, editor flows,
+hierarchy adapters, and child previews may own presentation and local
+interaction. None may become a second status, recurrence, Calendar, History, or
+streak authority.
 
-Table and List have separate adapters and local presentation behavior, sharing substantial
-row, hierarchy, action, and inspector behavior through `TaskManagementTableV2`.
+## Mutation routing
 
-`TasksTableAdapter` builds stable row models and supplies task context to the shared table.
-`TasksListAdapter` delegates to the List surface, which owns its card/list presentation
-and local row-model window.
+Status changes and Task State changes from Table, List, Home, Calendar, editor,
+and batch flows use the same canonical command infrastructure. The owning hook
+may coordinate loading, optimistic state, errors, and reconciliation, but the
+command planner/trusted boundary owns the authoritative result.
 
-Row-model construction and rendered-table windowing are separate boundaries: the adapter
-constructs a committed window with overscan, while `TaskManagementTableV2` maintains its
-displayed-task window and table state. They must not be documented as one owner.
+The important seams are the existing `useTaskActions` façade and extracted
+action hooks, `useTaskHistoryActions`, editor/batch action hooks,
+`src/lib/task-state-canonical/command-service.ts`, and
+`supabase/functions/task-state-command/*`. A successful mutation must reconcile
+Task State, canonical History, recurrence/cursor, Calendar, streaks, rewards,
+and the shared UI projection together. Calendar editing is a command route, not
+a second Task State system.
 
-Existing-task editing uses the shared `TaskManagementTableV2` inspector and overlay.
-`TaskEditFlows` and `TaskEditorModal` remain active for creation and some secondary flows;
-they are not the sole existing-task editor authority.
+Permanent Complete may retain its guarded task/History execution exception, but
+it still uses the same authority and cannot be used to justify surface-local
+status rules.
 
-## Task Hierarchy Ownership
+## Workspace and History ownership
 
-`buildTaskHierarchyAdapter` and `buildTaskAppStructuralData` derive hierarchy relationships,
-invalid-link diagnostics, primary visibility, and child previews. Adapters and `TaskManagementTableV2`
-render those results in Table, List, and Edit Task.
+`useWorkspaceData` owns full canonical Task History loading for all Tasks at
+startup, user/workspace-scoped readiness, shared cache updates, and refresh
+coordination. TaskApp owns readiness gating and rollover trigger timing; it does
+not copy loader rules into the composition root.
 
-Same-table Steps/Substeps are current production behavior. Valid descendants are represented
-through the shared task model and remain separate from legacy
-`adhdice_task_subtasks` migration/source rows. Same-parent Move Up/Move Down and
-drag/drop use the shared sibling-reorder planner. Explicit move-into-parent or
-unlink paths exist, but cross-parent drag, promote/demote, migration scope, and
-child reward/recurrence rules remain bounded by product decisions.
+The History modal is a consumer of the shared canonical snapshot. Its private
+loading/retry state must not become more authoritative than startup History or
+change current Task state because it loaded older rows.
 
-Hierarchy rendering and mutation are distributed; no single TaskApp-level child-row conversion layer is authoritative.
+## Hierarchy and non-Task-State boundaries
 
-## Mutation and Persistence Boundaries
+`buildTaskHierarchyAdapter` and `buildTaskAppStructuralData` derive hierarchy
+relationships, visibility, and child previews. Same-table Steps/Substeps remain
+part of the shared Task model. Legacy checklist/subtask rows and migration
+mapping remain compatibility/source data; they cannot independently decide
+current status or recurrence.
 
-`useTaskActions` is a façade/aggregator delegating to extracted hooks for CRUD,
-creation, editor save, updates, History, batch edits, notes/links, routing,
-legacy subtasks, and task-list actions.
+Focus, rewards/economy, notes/links, list membership, pinning, and presentation
+metadata retain their existing owners. They consume Task State projections where
+needed and must not infer a second current status.
 
-`TaskApp` composes those hooks and supplies status, completion, reorder, move,
-editor-opening, and optimistic reconciliation handlers. Guarded task-row and
-History persistence remains below those handlers.
+## Implementation impact map (pending implementation)
 
-Mutation changes must preserve revision/conflict, optimistic rollback, no-op,
-and projection boundaries. Detailed persistence semantics belong in
-[`TASK_STATE_ENGINE.md`](TASK_STATE_ENGINE.md).
+- Keep `TaskApp`’s shared status-map wiring, `computeTaskAppDerivedData`, surface
+  adapters, and shared hierarchy model; ensure every consumer receives the map.
+- Simplify/remove direct `getTaskDisplayStatusWithHistory` calls, stored-status
+  fallbacks, List-local status derivation, and child-preview status calculations.
+- Collapse `useWorkspaceData` bounded/critical History inputs and modal-full
+  History authority into one full canonical startup snapshot as specified by
+  [`WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md).
+- Keep mutation façades and hooks as orchestration seams, but route all Task
+  State-bearing changes through the canonical command result. Do not add a new
+  repository, Task table, or parallel coordinator.
+- Rewrite/add parity tests covering all surfaces, counts/filters, Calendar vs
+  Active Status separation, canonical automatic Missed, Unscheduled blanks, and
+  mutation reconciliation. Browser behavior remains a separate QA boundary.
 
-## Status, History, Recurrence, and Rollover Boundaries
+## Known transition statements
 
-Task State Engine authorities own active-status reads, action planning, Calendar
-facts, recurrence evaluation, rollover planning, and persistable projection.
-`TaskApp` consumes the projected read result and coordinates actions; it must
-not introduce a second status authority.
+The current source still contains compatibility switches and legacy adapters.
+That is implementation debt, not a second contract. Until runtime convergence
+is completed, the source may expose an authority gap; documentation must report
+it as pending rather than present compatibility behavior as locked truth.
 
-`useWorkspaceData` owns critical current-state facts, authenticated History
-readiness, and cached History loaders. `TaskApp` owns rollover trigger timing
-and readiness gating; the engine/coordinator own the rules.
+## Related documents
 
-Normal action-authority flows may carry a task mutation plan and proposed
-History together. Permanent completion remains a qualified exception: its
-guarded task and History operations are separate and include rollback handling.
-Neither path should be described as universal single-operation atomicity.
-
-See [`TASK_STATE_ENGINE.md`](TASK_STATE_ENGINE.md) for state semantics and
-[`WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) for
-the separate loading diagnostic and freshness caveat.
-
-## Workspace Loading and Readiness Boundaries
-
-`useWorkspaceData` owns hydration, readiness, critical facts, cached per-task/full
-History loading, and workspace/task Realtime refresh. Page-specific hooks own
-their gated data; `TaskApp` passes returned data and readiness to consumers.
-
-Do not widen TaskApp startup responsibilities by copying loader details here.
-Preserve canonical task rows and bounded facts; History detail is a
-readiness-aware consumer concern.
-
-## Rewards and Focus Integration
-
-`useTaskRewardController` owns pending rewards, eligibility, dice banking,
-refresh, and compatibility behavior. `useEconomy` owns economy/profile, ledger,
-roll, claim, and reset operations. `TaskApp` integrates and routes them.
-
-`useFocus` owns Focus categories, sessions, counters, and data lifecycle.
-`TaskApp` controls page routing, task-selection integration, and the alarm
-boundary. Focus loading details remain in Focus/workspace authorities.
-
-## Known Authority Seams
-
-- Some List View paths still call `getTaskDisplayStatusWithHistory()` directly
-  instead of the same projected status path as `TaskApp`.
-- Row-model construction and rendered-table windowing have separate owners.
-- Some hierarchy preview or derived child-status paths may use stored status;
-  full engine convergence is not claimed here.
-- Browser rendering, Realtime, multi-tab/BFCache, deployed RPC state, and
-  performance behavior were not validated by this phase.
-
-## Change Rules
-
-- Trace from the active route to the rendered consumer and mutation consumer.
-- Do not add a second mutation, status, History, or rollover authority.
-- Preserve shared Table/List/Edit Task behavior unless a local divergence is
-  intentional and documented.
-- Use neighboring canonical documents for state, loading, UI, and verification
-  semantics instead of duplicating them here.
-- When routing or ownership changes, validate the exact production seam.
-- Keep extraction boundaries explicit and remove stale ownership claims when a
-  responsibility moves.
-
-## Non-Authorities
-
-This document is not:
-
-- the Task State Engine specification;
-- the workspace-loading implementation specification;
-- the UI design system or source-style guide;
-- a browser QA checklist or general verification guide;
-- release history;
-- a complete source-file or prop inventory.
-
-## Related Documents
-
-- [`TASKAPP_SOURCE_MAP.md`](TASKAPP_SOURCE_MAP.md) — current source lookup.
-- [`TASK_STATE_ENGINE.md`](TASK_STATE_ENGINE.md) — status, action, Calendar, recurrence, rollover, and persistence semantics.
-- [`WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) — source-based loading diagnostic; freshness caveat applies.
-- [`UI_SYSTEM.md`](UI_SYSTEM.md) and [`UI_SOURCE_MAP.md`](UI_SOURCE_MAP.md) — UI rules and approved source surfaces.
-- [`AGENT_WORKFLOW.md`](AGENT_WORKFLOW.md) and [`VERIFICATION.md`](VERIFICATION.md) — workflow and production-path verification rules.
-- [`task-hierarchy-plan.md`](task-hierarchy-plan.md) — active hierarchy decisions and deferred product boundaries.
-- [`qa/TASK_HIERARCHY.md`](qa/TASK_HIERARCHY.md) — focused hierarchy QA.
+- [`TASK_STATE_ENGINE.md`](TASK_STATE_ENGINE.md) — canonical behavioral contract.
+- [`WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) —
+  full startup History and cache contract.
+- [`TASKAPP_SOURCE_MAP.md`](TASKAPP_SOURCE_MAP.md) — source lookup.
+- [`CURRENT_STATE.md`](CURRENT_STATE.md) — current lock and open convergence work.
+- [`UI_SYSTEM.md`](UI_SYSTEM.md) — UI reuse and interaction rules.

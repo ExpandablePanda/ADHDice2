@@ -15,6 +15,41 @@ Role: active working
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
 
+## 2026-08-17 Task State architecture lock
+
+The simplified Task State model is now the product authority. All saved Task
+History is canonical fact with its recorded logical date; automatic Missed and
+automatic Did My Best are real History; old History without occurrence metadata
+remains valid and cannot consume an arbitrary current/future occurrence. Calendar
+projects saved past/today facts and future schedule only. One shared Active Status
+result is consumed by every surface. Scheduled unresolved obligations may
+materialize canonical automatic Missed, while Unscheduled blank dates never do.
+All status-changing surfaces use one canonical command infrastructure.
+
+Full canonical Task History for all Tasks is required at workspace startup. The
+bounded critical-vs-modal-full History distinction is transitional and must be
+removed; opening History must not become a more authoritative state read.
+Legacy paths may remain only as migration/translation evidence and must stop
+deciding current status, recurrence, Calendar truth, or streaks after convergence.
+
+Runtime convergence, SQL/RPC automatic-Missed behavior, canonical History
+canonicalization, legacy-path removal, full-startup-History loading, and browser
+validation remain pending. This architecture lock does not authorize migration,
+live data mutation, SQL application, Edge deployment, or a version change.
+
+### Confirmed legacy-only History finding for later migration
+
+Read-only production audit found legacy-only explicit History dates. The product
+owner confirmed these real Task names must be preserved during the later,
+preview-first migration: Voids; Advanced Cosmetic and Implant Dentistry, 17th
+St Allentown; Bethlehem Smile Design LLC; Gummy Vitamins; Call Jasmine Mavani
+and get referall faxed; Chicken Legs; Confirm Referral was faxed; Get Pills;
+Ground Turkey; Otter Lego Bootleg; Popsicles; See a Friend.
+
+No migration is part of this pass. Later implementation must re-query the exact
+rows and verify them before any mutation; obvious QA/test Tasks must not be
+migrated.
+
 ### 7.9.25 Semantic no-action scope correction
 
 - The Edge semantic no-action RPC bypass is now constrained to `reconcile_rollover` only. Other canonical commands retain their existing RPC behavior; production Edge is still not deployed, and browser/live QA remains pending.
@@ -29,7 +64,7 @@ Role: active working
 
 ### 7.9.24 Canonical rollover orchestration and no-op correction
 
-- Production rejected invalid `reconcile_rollover` commands after the 7.9.22 SQL/Edge activation, including empty canonical patches and repeated canonical revision increments. The compatibility candidate planner had omitted real stale canonical In Progress workflows when `active_status_logical_date` was null or compatibility status was Missed, while compatibility output could also misclassify current-day canonical workflows.
+- Production rejected invalid `reconcile_rollover` commands during the 7.9.22 source-level SQL/Edge activation attempt, including empty canonical patches and repeated canonical revision increments. The compatibility candidate planner had omitted real stale canonical In Progress workflows when `active_status_logical_date` was null or compatibility status was Missed, while compatibility output could also misclassify current-day canonical workflows. This historical note is not deployment proof.
 - Canonical rollover eligibility now uses `workflow_state = in_progress` plus a stale `workflow_logical_date`; current-day canonical workflows are excluded, and compatibility-only rollover projections remain eligible only when no canonical workflow owns the Task.
 - Semantic `reconcile_rollover` no-ops return success before the canonical RPC, create no operation row, and preserve `canonical_revision`. Partial sweeps reconcile successful/no-op Tasks and retain only failed candidates for retry, preventing settled Tasks from receiving new revisions on timer, visibility, or pageshow reruns.
 - Automatic Did My Best remains the existing trusted 7.9.20–7.9.23 contract, including explicit stale-date History precedence, occurrence identity, recurrence/streak parity, reward-entitlement idempotence, and workflow clearing. Production SQL remains unchanged and was not applied; Edge deployment still requires ChatGPT review/approval. Browser QA remains pending, and no live data was mutated.
@@ -37,7 +72,7 @@ Role: active working
 ### 7.9.23 Canonical History active-status read correction
 
 - The production-visible regression was a read-boundary split: a sparse active-status History input could retain an older Missed boundary without the later canonical Done/Did My Best evidence that resolved it. The Task State engine itself returns `pending` (user-facing Open) when the complete canonical chronology is supplied.
-- The workspace critical read now requests the preceding scheduled occurrence as one bounded causal boundary. Canonical History remains authoritative over legacy rows, and the active-status cache revision now keys the actual merged workspace-plus-task-scoped History input so modal hydration recomputes status instead of leaving a stale Missed result. Startup correctness does not depend on opening Task History.
+- The workspace critical read correction used a preceding scheduled occurrence as a bounded causal boundary. That is transitional implementation evidence, not the locked loading contract: converged startup must load the full canonical History snapshot and the modal must not become more authoritative.
 - Added exact Log Calories mixed-history coverage, unresolved-Missed and Done/Did My Best controls, Not Due/Delayed non-success controls, canonical-over-legacy precedence, cache invalidation, status-count parity, and child/Table/List shared-map contracts. No SQL or Edge code changed; no SQL was applied, no Edge function was deployed, and no live data was mutated. Browser QA remains pending.
 
 ### 7.9.22 Rollover SQL migration parser correction
@@ -151,10 +186,13 @@ Role: active working
 
 - The active-status read path now supplies canonical current-day `workflow_logical_date` through a presentation-only compatibility projection, so canonical In Progress tasks display as In Progress without changing the canonical Task row or persistence semantics. Stale prior-day workflow remains non-current; browser QA remains pending.
 
-### 7.7.37 Canonical Task State runtime activation
+### 7.7.37 Canonical Task State runtime activation (historical source note)
 
-- Canonical Task State browser commands are now enabled behind the reviewed trusted runtime boundary.
-- Browser QA is pending; visible browser behavior and live runtime parity remain unverified.
+- Source wiring for canonical Task State browser commands was recorded as enabled
+  behind the reviewed trusted boundary. This does not establish deployed Edge,
+  installed SQL/RPC, browser parity, or completion of the 2026-08-17
+  architecture lock; runtime convergence remains pending.
+- Browser QA, live runtime parity, and legacy-path removal remain unverified.
 
 ## Current Architectural Authorities
 
@@ -170,11 +208,15 @@ Role: active working
 
 ### M3A.5 Trusted Task State Command Boundary
 
-- The trusted M3A Task State backend/RPC and `task-state-command` Edge path are deployed and have been live-validated. Runtime gate activation is complete; browser QA remains pending.
+- The trusted M3A Task State backend/RPC and `task-state-command` Edge path are
+  source-backed but not established as deployed or live-validated. Runtime
+  convergence and gate activation remain pending under the architecture lock.
 - The trusted `task-state-command` Edge Function accepts authenticated intent only. Direct authenticated submission of canonical plans or privileged persistence sections is forbidden.
 - The Edge Function derives owner identity from verified Supabase Auth, reads only that user's canonical Task State and logical-day profile, invokes the existing pure TypeScript planner, and sends its serialized plan through the backend-only invoker RPC using the modern secret-key admin client.
 - Runtime provenance, command identity, entity/owner IDs, timestamps, migration fields, and the SHA-256 accepted-payload digest are established inside the trusted boundary. History/occurrence collection max revisions are not runtime fences; canonical Task `canonical_revision` remains authoritative and schedule `boundary_sequence` protection remains active.
-- This trusted boundary is ready for M3B runtime cutover. Normal production Task mutations and the active Task UI remain behind the disabled gate.
+- This trusted boundary is an implementation target for later cutover. Normal
+  production parity, SQL/RPC installation, Edge deployment, and active-UI
+  convergence remain pending.
 
 ### 7.7.36 M3B pre-activation reward correction behind the disabled gate
 
@@ -183,7 +225,8 @@ Role: active working
 - `blocked` entitlements fail closed. Exact provenance requires the authenticated owner, the entitlement's exact `canonical_history_id`, matching owner/entity/entity kind/logical date/outcome snapshot, a successful `Done`/`Did My Best`/`Complete` outcome, and an authenticated-owner canonical Task. Missed has no entitlement and remains reward-ineligible.
 - Reward streaks count consecutive successful logged canonical occurrences, not consecutive calendar dates. Explicit non-successful facts, including Missed, break the streak; one-time Tasks are capped at one occurrence. Existing 1/2/3/4/5/6-die tiers and the existing claim/economy pipeline are unchanged.
 - Rewarded Calendar clear remains a temporary initial-activation limitation: if an explicit canonical Calendar fact is already linked to a reward entitlement, clear fails closed with a useful provenance-preservation error and never falls back to legacy History. No tombstone/void system is included here; this single correction path is not an initial activation blocker.
-- `TASK_STATE_CANONICAL_COMMANDS_ENABLED` is `true` as of 7.7.37; browser QA remains pending.
+- The source gate value is not deployment or convergence evidence; browser QA and
+  runtime parity remain pending.
 
 #### M3B backend deployment parity checklist (source-only; not executed here)
 
@@ -198,14 +241,20 @@ Role: active working
 ### 7.7.34 M3B runtime wiring behind the disabled gate
 
 - `src/lib/task-state-runtime-actions.ts` is the classification boundary for the next runtime cutover. It explicitly separates metadata-only fields (`title`, `notes`, priority/energy/presentation fields, links, tags, focus/editor metadata, and pin/sort fields) from Task State-owned fields (`status`, schedule/repeat fields, active-status projections, `completed_at`, `trashed_at`, and hierarchy parent changes).
-- Runtime coordinator/executor wiring now covers workflow, lifecycle, Done/Did My Best/Missed, permanent Complete, due-date/repeat edits, supported History/Calendar outcome corrections, rollover/reconciliation, and supported batch actions while the gate remains off. Canonical responses reconcile the local Task from `canonical_task_patch`, `compatibility_projection`, and `next_revision`; History refreshes are read-only and never recreate legacy facts.
-- Canonical History reads now use `adhdice_task_history_facts` through `history-projection.ts` for full workspace, task-scoped, streak, critical-fact, realtime, Records, and report-range refresh paths; the legacy table remains the read source while the gate is false. The adapter projects explicit facts only and never manufactures calculated Missed rows.
+- Runtime coordinator/executor wiring covers the named Task State commands as source implementation evidence, but runtime convergence remains pending. Canonical responses are intended to reconcile the local Task from `canonical_task_patch`, `compatibility_projection`, and `next_revision`; History refreshes must preserve canonical facts and must not recreate legacy truth.
+- Canonical History reads are wired through `adhdice_task_history_facts` in the source for workspace, task-scoped, streak, realtime, Records, and report-range paths. Any remaining legacy-table read is transitional migration/translation evidence and must stop deciding current state; the adapter must project explicit facts, including automatic Missed, without synthetic substitutes.
 - Remaining-writer audit classification: `CANONICAL` = coordinator-routed lifecycle/outcome/schedule/History-calendar/rollover/batch paths; `METADATA_ONLY` = title, notes, priority, energy, links, tags, focus, pin, and sort persistence; `LEGACY_ONLY_NONCANONICAL_ENTITY` = intentionally unpromoted checklist rows, the inactive `/classic` demo surface, and Settings JSON restore while the gate is disabled; `MILESTONE_ATOMIC_TRUSTED_SEAM` = the existing trusted Milestone completion/trash/restore/delete transactions whose Milestone-specific atomicity cannot be split here. Promoted Steps/Substeps use the same-table canonical Task coordinator, and Milestone Done/Did My Best/Missed outcomes use the canonical coordinator. Settings JSON restore is explicitly fenced while the gate is enabled so its legacy ID-based upsert cannot overwrite canonical status or schedule state.
 - Activation installation item: `supabase/add_canonical_reward_entitlement_bridge.sql` is authored for review but not installed. It consumes canonical entitlement identity, derives the existing dice tier from canonical successful facts, and is idempotent by entitlement/grant identity. Delay now resolves a materialized canonical occurrence and fails closed when none exists; undated bench Delay remains unsupported by the locked command contract.
-- The previously failing legacy History runtime assertion was stale: a prior-day Calendar completion advances the recurring cursor but does not rewrite the stored Missed compatibility projection. The focused test now documents that locked behavior; calculated Missed remains non-persistent.
+- The prior-day Calendar completion assertion is historical implementation
+  evidence only. Under the architecture lock, saved automatic Missed is
+  canonical History and may be recomputed only when a manual correction proves
+  the dependent obligation was not due; a calculated Missed must not substitute
+  for that canonical fact.
 - Canonical Calendar replacement upserts the existing entity/logical-date fact while preserving its canonical identity. Clearing removes explicit facts and deactivates dependent Calendar/override references only when no reward entitlement references that fact; reward-linked clear fails closed because the locked entitlement-to-history foreign key cannot be safely orphaned or clawed back in this ticket.
 - 7.7.34 activation blocker: the exact unsupported action is clearing an explicit Calendar outcome after its canonical reward entitlement exists. The smallest missing capability is a reviewed canonical void/tombstone outcome (or an equivalently reviewed entitlement-provenance retention change) that preserves the referenced fact without awarding twice; this ticket deliberately does not invent or install that capability.
-- Before 7.7.37 activation, `TASK_STATE_CANONICAL_COMMANDS_ENABLED` remained `false` and normal production behavior stayed on the legacy path pending the reviewed activation boundary.
+- Earlier gate-state notes are superseded by the architecture lock: legacy paths
+  are migration/translation evidence only and must stop deciding current state
+  after convergence.
 
 ### Task State Engine
 
@@ -216,14 +265,18 @@ Role: active working
 
 ### Workspace, Loading, and Cache Ownership
 
-- Startup keeps critical current-state facts bounded; full per-task History and other detail data remain owned by explicit cached consumers rather than broad critical startup loading. Task History modal rows stay in a task-scoped cache and do not widen shared bounded History.
+- Full canonical Task History for all Tasks is required at workspace startup. The
+  former bounded critical-vs-modal-full distinction is transitional and must be
+  collapsed; modal History is not a more authoritative state read.
 - Query changes should reuse stable workspace facts and avoid invalidating canonical entities, status authority, Archive/Trash sets, or unrelated page data.
 - Workspace performance diagnostics are development-only. Browser evidence for commit counts, inactive-page CPU, cross-tab/BFCache behavior, and Safari paint behavior remains unverified.
 - [`docs/WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) is a qualified source diagnostic, not canonical runtime proof; its browser, deployment, and performance questions remain unresolved.
 
 ### Task History and Readiness
 
-- Critical startup History remains narrow to current logical-day/live-occurrence facts; full per-task History is loaded through authenticated, readiness-aware cached consumers.
+- Startup readiness includes the full canonical Task History snapshot. A failed
+  or incomplete History load must expose error/retry and must not become an empty
+  successful snapshot or a legacy fallback.
 - History consumers must expose loading and retry states until the requested task's data is ready.
 - History readiness must not widen unrelated startup work or replace canonical current-state facts with partial detail payloads.
 - Existing task/History contradictions are not repaired by this runtime correction; they require a separate preview-first data-repair ticket after runtime QA.
