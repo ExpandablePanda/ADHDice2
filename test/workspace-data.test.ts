@@ -126,7 +126,7 @@ test("workspace streak summaries batch-load active Calendar overrides and index 
   const summaryLoader = source.slice(source.indexOf("async function loadTaskHistoryStreakSummaries"), source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"));
 
   assert.match(source, /async function loadActiveCalendarOverrides\(taskId\?: string\)/);
-  assert.match(summaryLoader, /await loadActiveCalendarOverrides\(\)/);
+  assert.match(summaryLoader, /loadActiveCalendarOverrides\(\)/);
   assert.match(summaryLoader, /calendarOverridesByTaskId: indexActiveCalendarOverrides\(activeCalendarOverrides\)/);
   assert.match(source, /\.from\("adhdice_task_calendar_overrides"\)/);
   assert.match(source, /\.eq\("is_active", true\)/);
@@ -138,7 +138,7 @@ test("task-scoped streak summary reloads fetch current active Calendar overrides
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const reload = source.slice(source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"), source.indexOf("async function loadNotes"));
 
-  assert.match(reload, /await loadActiveCalendarOverrides\(taskId\)/);
+  assert.match(reload, /loadActiveCalendarOverrides\(taskId\)/);
   assert.match(reload, /calendarOverrides: activeCalendarOverrides\.map\(taskCalendarOverrideFromCanonical\)/);
   assert.match(source, /\.eq\("entity_id", taskId\)/);
 });
@@ -221,6 +221,37 @@ test("opening Task History does not widen the shared bounded History cache", asy
   assert.doesNotMatch(modalLoader, /mergeTaskHistoryCache/);
   assert.match(modalLoader, /fetchAllPagedRows<DbTaskHistory>/);
   assert.match(modalLoader, /\.range\(from, to\)/);
+});
+
+test("modal open force-refreshes both empty-ready and partial-ready private caches", async () => {
+  const workspaceSource = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const appSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const modalLoader = workspaceSource.slice(workspaceSource.indexOf("async function loadTaskHistoryForTask"), workspaceSource.indexOf("async function loadTaskHistoryStreakSummaries"));
+  const openHandler = appSource.slice(appSource.indexOf("function openTaskHistoryForTask"), appSource.indexOf("async function closeActualTimeEntry", appSource.indexOf("function openTaskHistoryForTask")));
+
+  assert.match(modalLoader, /if \(!force && taskHistoryLoadStateByTaskIdRef\.current\[taskId\]\?\.status === "ready"\)/);
+  assert.match(openHandler, /loadTaskHistoryForTask\(taskId, \{ force: true \}\)/);
+  assert.match(modalLoader, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
+  assert.match(modalLoader, /setTaskHistoryCacheForTask\(taskId, rows\)/);
+});
+
+test("rollover History acquisition leaves modal cache and load state untouched", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const rolloverReader = source.slice(source.indexOf("async function fetchTaskHistoryForRollover"), source.indexOf("async function loadTaskHistoryForTask"));
+
+  assert.match(source, /fetchTaskHistoryForTaskIdsInBatches/);
+  assert.match(source, /TASK_HISTORY_ROLLOVER_BATCH_SIZE/);
+  assert.doesNotMatch(rolloverReader, /setTaskHistoryCacheForTask|setTaskHistoryTaskLoadState|taskHistoryTaskLoadPromisesRef/);
+  assert.doesNotMatch(rolloverReader, /taskHistoryByTaskIdRef|taskHistoryLoadStateByTaskIdRef/);
+});
+
+test("History Realtime reloads only an already-owned private cache", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const realtime = source.slice(source.indexOf('table: useCanonicalHistory ? "adhdice_task_history_facts"'), source.indexOf('table: useCanonicalHistory ? "adhdice_task_history_facts"') + 2100);
+
+  assert.match(realtime, /taskId && Object\.hasOwn\(taskHistoryByTaskIdRef\.current, taskId\)/);
+  assert.match(realtime, /An ephemeral rollover read does not make this Task a modal-cache owner/);
+  assert.match(realtime, /reloadTaskHistoryStreakSummaryForTask\(taskId\)/);
 });
 
 test("a ready modal History cache remains available when the modal reopens", async () => {

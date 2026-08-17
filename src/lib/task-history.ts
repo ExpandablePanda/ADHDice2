@@ -11,6 +11,58 @@ export type TaskHistoryLoadResult =
 
 export type TaskHistoryLoadMap = Record<string, TaskHistoryLoadResult>;
 
+export const TASK_HISTORY_ROLLOVER_BATCH_SIZE = 100;
+
+type TaskHistoryBatchFetchResult = {
+  data: DbTaskHistory[] | null;
+  error: { message?: string } | null;
+};
+
+/**
+ * Group an ephemeral rollover read into bounded server requests. This helper
+ * never owns or updates the user-visible task-scoped History cache.
+ */
+export async function fetchTaskHistoryForTaskIdsInBatches(
+  taskIds: readonly string[],
+  fetchBatch: (taskIds: string[]) => Promise<TaskHistoryBatchFetchResult>,
+  batchSize = TASK_HISTORY_ROLLOVER_BATCH_SIZE,
+): Promise<TaskHistoryLoadMap> {
+  const uniqueTaskIds = [...new Set(taskIds)].filter(Boolean);
+  if (uniqueTaskIds.length === 0) return {};
+
+  const batches: string[][] = [];
+  for (let index = 0; index < uniqueTaskIds.length; index += batchSize) {
+    batches.push(uniqueTaskIds.slice(index, index + batchSize));
+  }
+
+  const batchResults = await Promise.all(batches.map(async (batchTaskIds) => {
+    const result = await fetchBatch(batchTaskIds);
+    if (result.error) {
+      return batchTaskIds.map((taskId) => [taskId, {
+        error: result.error?.message ?? "Could not load task history.",
+        history: null,
+        status: "error",
+      } satisfies TaskHistoryLoadResult] as const);
+    }
+
+    const rowsByTaskId = new Map<string, DbTaskHistory[]>();
+    for (const row of result.data ?? []) {
+      if (!batchTaskIds.includes(row.task_id)) continue;
+      const rows = rowsByTaskId.get(row.task_id) ?? [];
+      rows.push(row);
+      rowsByTaskId.set(row.task_id, rows);
+    }
+
+    return batchTaskIds.map((taskId) => [taskId, {
+      error: null,
+      history: deduplicateTaskHistoryByLogicalDate(rowsByTaskId.get(taskId) ?? []),
+      status: "ready",
+    } satisfies TaskHistoryLoadResult] as const);
+  }));
+
+  return Object.fromEntries(batchResults.flat());
+}
+
 export function isTaskCompletedForHistory(status: TaskStatus) {
   return status === "done" || status === "did_my_best" || status === "complete";
 }

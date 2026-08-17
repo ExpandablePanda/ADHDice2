@@ -9,12 +9,21 @@ const modalSource = readFileSync(new URL("../src/components/task-app/task-view-a
 const calendarAuthoritySource = readFileSync(new URL("../src/lib/task-state-engine/calendar-authority.ts", import.meta.url), "utf8");
 const workspaceSource = readFileSync(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 
+test("rollover History reads use an isolated lifecycle instead of claiming the modal cache", () => {
+  const rollover = appSource.slice(appSource.indexOf("if (TASK_STATE_CANONICAL_COMMANDS_ENABLED)"), appSource.indexOf("useEffect(() =>", appSource.indexOf("if (TASK_STATE_CANONICAL_COMMANDS_ENABLED)")));
+  const rolloverReader = workspaceSource.slice(workspaceSource.indexOf("async function fetchTaskHistoryForRollover"), workspaceSource.indexOf("async function loadTaskHistoryForTask"));
+  assert.match(rollover, /fetchTaskHistoryForRollover\(rolloverTaskIds\)/);
+  assert.match(rolloverReader, /fetchTaskHistoryForTaskIdsInBatches/);
+  assert.match(rolloverReader, /\.in\("entity_id", batchTaskIds\)/);
+  assert.doesNotMatch(rolloverReader, /setTaskHistoryCacheForTask|setTaskHistoryTaskLoadState|taskHistoryLoadStateByTaskIdRef|taskHistoryByTaskIdRef/);
+});
+
 test("opening Task History stores the requested task ID before loading details", () => {
   const handlerStart = appSource.indexOf("function openTaskHistoryForTask");
   const handlerEnd = appSource.indexOf("\n  async function closeActualTimeEntry", handlerStart);
   const handler = appSource.slice(handlerStart, handlerEnd);
   assert.match(handler, /setTaskHistoryModalTaskId\(taskId\)/);
-  assert.match(handler, /loadTaskHistoryForTask\(taskId\)/);
+  assert.match(handler, /loadTaskHistoryForTask\(taskId, \{ force: true \}\)/);
   assert.match(handler, /tasks\.find\(\(entry\) => entry\.id === taskId\)/);
   assert.match(handler, /loadTaskCalendarOverridesForTask\(taskId\)/);
 });

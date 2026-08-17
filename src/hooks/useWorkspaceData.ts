@@ -27,6 +27,8 @@ import { taskCalendarOverrideFromCanonical } from "@/lib/task-state-canonical/en
 import { projectTasksWithCanonicalScheduleBoundaries } from "@/lib/task-state-canonical/schedule-projection";
 import {
   deduplicateTaskHistoryByLogicalDate,
+  fetchTaskHistoryForTaskIdsInBatches,
+  TASK_HISTORY_ROLLOVER_BATCH_SIZE,
   TASK_HISTORY_COLUMNS,
   type TaskHistoryLoadMap,
   type TaskHistoryLoadResult,
@@ -138,6 +140,11 @@ type PagedFetchResult<T> = {
 export type TaskHistoryTaskLoadState = {
   error: string | null;
   status: "error" | "loading" | "ready";
+};
+
+export type TaskHistoryLoadOptions = {
+  force?: boolean;
+  silent?: boolean;
 };
 
 type TaskHistoryCacheUpdate = DbTaskHistory[] | ((current: DbTaskHistory[]) => DbTaskHistory[]);
@@ -278,9 +285,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const loadActualTimeRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadFullTaskHistoryRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadNotesRef = useRef<(() => Promise<boolean>) | null>(null);
-  const loadTaskHistoryForTaskRef = useRef<((taskId: string) => Promise<boolean>) | null>(null);
+  const loadTaskHistoryForTaskRef = useRef<((taskId: string, options?: TaskHistoryLoadOptions) => Promise<boolean>) | null>(null);
   const refreshTaskHistoryStreakSummaryRef = useRef<((taskId: string, nextTaskHistory?: DbTaskHistory[], nextTask?: Task) => Promise<boolean>) | null>(null);
   const retryTaskHistoryForTaskRef = useRef<((taskId: string) => Promise<boolean>) | null>(null);
+  const fetchTaskHistoryForRolloverRef = useRef<((taskIds: string[]) => Promise<TaskHistoryLoadMap>) | null>(null);
   const tasksRef = useRef(tasks);
 
   const setTaskHistoryTaskLoadState = useCallback((taskId: string, state: TaskHistoryTaskLoadState) => {
@@ -384,6 +392,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       loadFullTaskHistoryRef.current = null;
       loadNotesRef.current = null;
       loadTaskHistoryForTaskRef.current = null;
+      fetchTaskHistoryForRolloverRef.current = null;
       refreshTaskHistoryStreakSummaryRef.current = null;
       retryTaskHistoryForTaskRef.current = null;
       if (taskResumeSyncTimeoutRef.current !== null) {
@@ -740,7 +749,42 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       return { error: null, rows: selectCriticalTaskHistoryFacts(nextTasks, mapped, logicalDayKey) };
     }
 
-    async function loadTaskHistoryForTask(taskId: string, { force = false, silent = false }: { force?: boolean; silent?: boolean } = {}) {
+    async function fetchTaskHistoryForRollover(taskIds: string[]) {
+      if (!isActive || !canApplyCoreWorkspaceResult()) {
+        return Object.fromEntries([...new Set(taskIds)].filter(Boolean).map((taskId) => [taskId, {
+          error: "Task History is not available for this workspace.",
+          history: null,
+          status: "error",
+        } satisfies TaskHistoryLoadResult])) as TaskHistoryLoadMap;
+      }
+
+      return await fetchTaskHistoryForTaskIdsInBatches(taskIds, async (batchTaskIds) => {
+        if (useCanonicalHistory) {
+          const result = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery()
+            .in("entity_id", batchTaskIds)
+            .range(from, to));
+          return {
+            data: result.data
+              ? mapCanonicalHistoryRows(result.data as CanonicalTaskHistoryFact[])
+              : null,
+            error: result.error,
+          };
+        }
+
+        return await fetchAllPagedRows<DbTaskHistory>(async (from, to) => await client
+          .from("adhdice_task_history")
+          .select(TASK_HISTORY_COLUMNS)
+          .eq("user_id", userId)
+          .in("task_id", batchTaskIds)
+          .order("entry_date", { ascending: false })
+          .order("updated_at", { ascending: false })
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to));
+      }, TASK_HISTORY_ROLLOVER_BATCH_SIZE);
+    }
+
+    async function loadTaskHistoryForTask(taskId: string, { force = false, silent = false }: TaskHistoryLoadOptions = {}) {
       if (!isActive || !canApplyCoreWorkspaceResult()) {
         return { status: "error", history: null, error: "Task History is not available for this workspace." } satisfies TaskHistoryLoadResult;
       }
@@ -1025,8 +1069,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     loadActualTimeRef.current = () => loadActualTime({ silent: true });
     loadFullTaskHistoryRef.current = () => loadTaskHistory({ silent: true, source: "secondary" });
     loadNotesRef.current = () => loadNotes({ silent: true });
-    loadTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { silent: true }).then((result) => result.status === "ready");
+    loadTaskHistoryForTaskRef.current = (taskId, options) => loadTaskHistoryForTask(taskId, { ...options, silent: true }).then((result) => result.status === "ready");
     loadTaskHistoryForTasksRef.current = loadTaskHistoryForTasks;
+    fetchTaskHistoryForRolloverRef.current = fetchTaskHistoryForRollover;
     refreshTaskHistoryStreakSummaryRef.current = reloadTaskHistoryStreakSummaryForTask;
     retryTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { force: true }).then((result) => result.status === "ready");
 
@@ -1679,8 +1724,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             ));
             return;
           }
-          if (taskId) {
+          if (taskId && Object.hasOwn(taskHistoryByTaskIdRef.current, taskId)) {
             void loadTaskHistoryForTask(taskId, { force: true, silent: true });
+            void reloadTaskHistoryStreakSummaryForTask(taskId);
+          } else if (taskId) {
+            // An ephemeral rollover read does not make this Task a modal-cache owner.
             void reloadTaskHistoryStreakSummaryForTask(taskId);
           } else {
             void loadTaskHistoryStreakSummaries();
@@ -1717,6 +1765,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       softWorkspaceRefreshRef.current = null;
       rolloverWorkspaceReconciliationRef.current = null;
       prepareTaskMutationRef.current = null;
+      fetchTaskHistoryForRolloverRef.current = null;
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
       taskChannelRemovalPromiseRef.current = null;
@@ -1775,11 +1824,15 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     [],
   );
   const loadTaskHistoryForTask = useCallback(
-    async (taskId: string) => await loadTaskHistoryForTaskRef.current?.(taskId) ?? false,
+    async (taskId: string, options?: TaskHistoryLoadOptions) => await loadTaskHistoryForTaskRef.current?.(taskId, options) ?? false,
     [],
   );
   const loadTaskHistoryForTasks = useCallback(
     async (taskIds: string[]) => await loadTaskHistoryForTasksRef.current?.(taskIds) ?? {},
+    [],
+  );
+  const fetchTaskHistoryForRollover = useCallback(
+    async (taskIds: string[]) => await fetchTaskHistoryForRolloverRef.current?.(taskIds) ?? {},
     [],
   );
   const retryTaskHistoryForTask = useCallback(
@@ -1810,6 +1863,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     loadTaskActualTimeDetails,
     loadTaskHistoryForTask,
     loadTaskHistoryForTasks,
+    fetchTaskHistoryForRollover,
     retryTaskHistoryForTask,
     loadTaskNotes,
     refreshTaskHistoryStreakSummary,

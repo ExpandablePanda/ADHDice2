@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.25`.
+- Current working app version: `7.9.26`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -18,6 +18,14 @@ Role: active working
 ### 7.9.25 Semantic no-action scope correction
 
 - The Edge semantic no-action RPC bypass is now constrained to `reconcile_rollover` only. Other canonical commands retain their existing RPC behavior; production Edge is still not deployed, and browser/live QA remains pending.
+
+### 7.9.26 Rollover History read/cache ownership correction
+
+- Read-only production inspection verified that Vera Reports and Roth Reports still retain their complete canonical History; no History repair, backfill, migration, or other data correction was required.
+- The UI regression came from internal rollover History reads sharing the user-visible task-scoped `ready` cache. Rollover now uses an isolated, ephemeral, batched canonical History read lifecycle and does not populate `taskHistoryByTaskId` or `taskHistoryLoadStateByTaskId`.
+- Opening the Task History modal revalidates complete canonical Task History with a forced task-scoped read. Existing rows are retained until a successful response replaces them; failures remain in the existing error/retry state, and Retry forces a fresh canonical request.
+- The 7.9.23 active-status authority remains intact: an actually hydrated task-scoped canonical History cache outranks sparse workspace History for status, counts, streaks, and Calendar. Internal rollover reads do not opt a Task into that modal-cache lifecycle.
+- No SQL changed or was applied, no Edge Function changed or was deployed, and no live data was mutated. Browser QA remains pending.
 
 ### 7.9.24 Canonical rollover orchestration and no-op correction
 

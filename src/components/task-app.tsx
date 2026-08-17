@@ -591,7 +591,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.25";
+const APP_VERSION = "7.9.26";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1759,6 +1759,7 @@ export function TaskApp() {
     isTaskListMembershipDataReady,
     isTaskResumeSyncPending,
     isWorkspaceLoading,
+    fetchTaskHistoryForRollover,
     loadTaskActualTimeDetails,
     loadTaskHistoryForTask,
     loadTaskHistoryForTasks,
@@ -2407,7 +2408,7 @@ export function TaskApp() {
         if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
           const rolloverTasks = inputs.tasks.filter((candidate) => candidate.status !== "archived" && candidate.status !== "trashed");
           const rolloverTaskIds = rolloverTasks.map((candidate) => candidate.id);
-          const scopedRolloverHistory = await loadTaskHistoryForTasks(rolloverTaskIds);
+          const scopedRolloverHistory = await fetchTaskHistoryForRollover(rolloverTaskIds);
           const historyLoadFailureTaskId = rolloverTaskIds.find((taskId) => {
             const result = scopedRolloverHistory[taskId];
             return !result || result.status !== "ready";
@@ -2479,7 +2480,7 @@ export function TaskApp() {
           const rolloverTaskIds = inputs.tasks
             .filter((candidate) => candidate.status !== "archived" && candidate.status !== "trashed")
             .map((candidate) => candidate.id);
-          const scopedRolloverHistory = await loadTaskHistoryForTasks(rolloverTaskIds);
+          const scopedRolloverHistory = await fetchTaskHistoryForRollover(rolloverTaskIds);
           const historyLoadFailureTaskId = rolloverTaskIds.find((taskId) => {
             const result = scopedRolloverHistory[taskId];
             return !result || result.status !== "ready";
@@ -2560,7 +2561,7 @@ export function TaskApp() {
         await reconcileRolloverWorkspace();
       },
     });
-  }, [loadTaskHistoryForTasks, prepareTaskMutation, reconcileRolloverWorkspace, session?.user?.id, supabase]);
+  }, [fetchTaskHistoryForRollover, prepareTaskMutation, reconcileRolloverWorkspace, session?.user?.id, supabase]);
 
   useEffect(() => {
     const client = supabase;
@@ -5475,7 +5476,7 @@ export function TaskApp() {
   function openSelectedTaskHistory() {
     if (selectedTaskForEditor) {
       setTaskHistoryModalTaskId(selectedTaskForEditor.id);
-      void loadTaskHistoryForTask(selectedTaskForEditor.id);
+      void loadTaskHistoryForTask(selectedTaskForEditor.id, { force: true });
       void loadTaskCalendarOverridesForTask(selectedTaskForEditor.id);
       if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED && shouldReconcileOverdueTaskMisses(selectedTaskForEditor, todayKey)) {
         void reconcileOverdueTaskMisses(selectedTaskForEditor);
@@ -5485,7 +5486,7 @@ export function TaskApp() {
 
   function openTaskHistoryForTask(taskId: string) {
     setTaskHistoryModalTaskId(taskId);
-    void loadTaskHistoryForTask(taskId);
+    void loadTaskHistoryForTask(taskId, { force: true });
     void loadTaskCalendarOverridesForTask(taskId);
     const task = tasks.find((entry) => entry.id === taskId);
     if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED && task && shouldReconcileOverdueTaskMisses(task, todayKey)) {

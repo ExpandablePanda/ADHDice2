@@ -240,7 +240,7 @@ test("engine rollover waits for loaded Tasks and History, then reads current inp
   assert.match(lifecycle, /\}, \[isTaskHistoryLoaded, runDayReset, session\?\.user\?\.id, supabase\]\);/);
   assert.match(lifecycle, /if \(!engineRolloverPlanHasMutations\(plan\)\) return \{ error: null \}/);
   assert.match(lifecycle, /plannedTaskPatches = plan\.tasks\.filter/);
-  assert.match(lifecycle, /committedTaskPatches: error \? 0 : committedTaskPatches/);
+  assert.match(lifecycle, /committedTaskPatches: error && settledTaskIds\.length === 0 \? 0 : committedTaskPatches/);
 });
 
 test("canonical rollover commands are mutation-scoped and use plan-specific replay identities", () => {
@@ -249,7 +249,7 @@ test("canonical rollover commands are mutation-scoped and use plan-specific repl
   const legacyStart = source.indexOf("const rpc", canonicalStart);
   const canonical = source.slice(canonicalStart, legacyStart);
   assert.match(canonical, /createEngineRolloverPlan\(/);
-  assert.match(canonical, /engineRolloverPlanTaskMutationCandidates\(plan\)/);
+  assert.match(canonical, /engineRolloverPlanTaskMutationCandidates\(plan, rolloverTasks\)/);
   assert.match(canonical, /for \(const candidate of mutationCandidates\)/);
   assert.match(canonical, /createTaskRolloverReplayIdentity\(/);
   assert.doesNotMatch(canonical, /for \(const task of rolloverTasks\)/);
