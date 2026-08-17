@@ -244,7 +244,10 @@ export async function executeTrustedTaskStateCommand(input: {
     return rejectedPlanResponse(plan.normalizedResult.conflictCode);
   }
 
-  if (isCanonicalTaskStateCommandSemanticNoOp({ plan, task: readResult.data.task })) {
+  if (
+    plan.command.commandType === "reconcile_rollover"
+    && isCanonicalTaskStateCommandSemanticNoOp({ plan, task: readResult.data.task })
+  ) {
     return semanticNoOpResponse({ commandId: plan.command.commandId, plan, task: readResult.data.task });
   }
 

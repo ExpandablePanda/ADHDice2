@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.24`.
+- Current working app version: `7.9.25`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,10 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.9.25 Semantic no-action scope correction
+
+- The Edge semantic no-action RPC bypass is now constrained to `reconcile_rollover` only. Other canonical commands retain their existing RPC behavior; production Edge is still not deployed, and browser/live QA remains pending.
 
 ### 7.9.24 Canonical rollover orchestration and no-op correction
 
