@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.22`.
+- Current working app version: `7.9.23`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,12 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.9.23 Canonical History active-status read correction
+
+- The production-visible regression was a read-boundary split: a sparse active-status History input could retain an older Missed boundary without the later canonical Done/Did My Best evidence that resolved it. The Task State engine itself returns `pending` (user-facing Open) when the complete canonical chronology is supplied.
+- The workspace critical read now requests the preceding scheduled occurrence as one bounded causal boundary. Canonical History remains authoritative over legacy rows, and the active-status cache revision now keys the actual merged workspace-plus-task-scoped History input so modal hydration recomputes status instead of leaving a stale Missed result. Startup correctness does not depend on opening Task History.
+- Added exact Log Calories mixed-history coverage, unresolved-Missed and Done/Did My Best controls, Not Due/Delayed non-success controls, canonical-over-legacy precedence, cache invalidation, status-count parity, and child/Table/List shared-map contracts. No SQL or Edge code changed; no SQL was applied, no Edge function was deployed, and no live data was mutated. Browser QA remains pending.
 
 ### 7.9.22 Rollover SQL migration parser correction
 

@@ -151,13 +151,19 @@ export type TaskHistoryStreakEntry = Pick<
   | "recurrence_authoritative"
 >;
 
-type TaskHistoryIdentityEntry = Pick<DbTaskHistory, "id" | "task_id" | "entry_date" | "created_at" | "updated_at">;
+type TaskHistoryIdentityEntry = Pick<DbTaskHistory, "id" | "task_id" | "entry_date" | "created_at" | "updated_at">
+  & Pick<DbTaskHistory, "canonical_fact_id">;
 
 export function getTaskHistoryLogicalIdentity(entry: Pick<DbTaskHistory, "task_id" | "entry_date">) {
   return `${entry.task_id}:${entry.entry_date}`;
 }
 
 function compareHistoryRowFreshness(left: TaskHistoryIdentityEntry, right: TaskHistoryIdentityEntry) {
+  const leftIsCanonical = Boolean(left.canonical_fact_id);
+  const rightIsCanonical = Boolean(right.canonical_fact_id);
+  if (leftIsCanonical !== rightIsCanonical) {
+    return leftIsCanonical ? 1 : -1;
+  }
   const leftTimestamp = getHistoryTimestamp(left);
   const rightTimestamp = getHistoryTimestamp(right);
   if (leftTimestamp !== rightTimestamp) {

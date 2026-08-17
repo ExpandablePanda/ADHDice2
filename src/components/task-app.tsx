@@ -591,7 +591,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.22";
+const APP_VERSION = "7.9.23";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2743,8 +2743,8 @@ export function TaskApp() {
     [tasks],
   );
   const taskHistoryRevision = useMemo(
-    () => taskStateHistoryContentRevision,
-    [taskStateHistoryContentRevision],
+    () => createProjectionDomainRevision("task-history-authoritative", taskHistoryByTaskId),
+    [taskHistoryByTaskId],
   );
   const taskHistoryStreakSummaryRevision = useMemo(
     () => createProjectionDomainRevision("task-history-streak-summary", taskHistoryStreakSummaries),

@@ -59,6 +59,8 @@ This identity boundary protects future and overdue occurrences from status-only 
 
 `read-authority.ts` exposes the centralized active-status read path. With the default-on switch, it adapts task and History inputs into engine state and projects the resulting status for presentation. The legacy `getTaskDisplayStatusWithHistory()` path remains available for compatibility.
 
+After canonical cutover, canonical History facts are the authoritative chronology for this read. Workspace loading may retain only bounded causal evidence, but it must include enough later canonical outcome evidence to resolve an older Missed boundary; legacy History is compatibility/migration evidence only where canonical evidence is unavailable. The active-status projection must invalidate when either bounded workspace History or task-scoped canonical History hydration changes. This is a read/input contract, not a new persistence or dual-write authority.
+
 The active TaskApp projection uses the newer centralized status path. This is a routing fact about the inspected production projection, not a claim that every List, child-preview, or derived hierarchy consumer already uses it.
 
 Engine-only `unscheduled` is a valid calculated state. When a task-state patch crosses the persistence boundary, it projects to supported stored `pending`; that projection does not make stored status a substitute for the engine's full state. User-facing `pending` is labeled `Open`.
