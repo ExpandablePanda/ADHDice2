@@ -168,7 +168,7 @@ export type TaskStateAction =
       occurredAt?: string;
       delayDays?: number;
       delayUntilDate?: string | null;
-      provenance?: Extract<TaskHistoryProvenance, "manual" | "import">;
+      provenance?: Extract<TaskHistoryProvenance, "manual" | "rollover" | "import">;
       replaceExisting?: boolean;
       previousOutcome?: TaskHistoryOutcome | null;
       occurrenceDueOn?: string | null;
@@ -181,7 +181,8 @@ export type TaskStateAction =
       replayKind?: Extract<TaskTimelineReplayKind, "due_date" | "recurrence">;
       manualDueOn?: string | null;
     }
-  | { type: "recompute"; fromLogicalDate: string };
+  | { type: "recompute"; fromLogicalDate: string }
+  | { type: "reconcile_rollover" };
 
 export type TaskStateEngineInput = {
   task: TaskStateSnapshot;

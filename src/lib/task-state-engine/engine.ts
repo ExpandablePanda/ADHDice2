@@ -162,7 +162,29 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const recurrenceByDate = authoritativeRowsByDate(rows.filter((row) => row.recurrenceAuthoritative !== false));
   const unscheduled = isUnscheduled(task.recurrence, task.dueOn);
   const scheduleChange = input.action?.type === "change_schedule";
-  const action = input.action?.type === "record_outcome" ? input.action : null;
+  const staleWorkflowForRollover = input.action?.type === "reconcile_rollover"
+    && task.lifecycle === "active"
+    && task.activeStatus === "in_progress"
+    && task.activeStatusLogicalDate
+    && task.activeStatusLogicalDate < today;
+  const staleInProgressForRollover = staleWorkflowForRollover
+    && !recurrenceByDate.has(task.activeStatusLogicalDate);
+  const action = input.action?.type === "record_outcome"
+    ? input.action
+    : staleInProgressForRollover
+      ? {
+          type: "record_outcome" as const,
+          outcome: "did_my_best" as const,
+          logicalDate: task.activeStatusLogicalDate,
+          occurredAt: nowIso,
+          provenance: "rollover" as const,
+          occurrenceDueOn: task.activeOccurrenceDueOn ?? null,
+          occurrenceIdentity: task.activeOccurrenceDueOn
+            ? occurrenceIdentity(task.id, task.activeOccurrenceDueOn)
+            : null,
+          historicalOverride: true,
+        }
+      : null;
   const historicalOverride = action?.historicalOverride === true;
   const actionDate = action?.logicalDate ?? today;
   const existingActionRow = action ? byDate.get(actionDate) ?? null : null;
@@ -430,11 +452,6 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     && task.activeStatusLogicalDate
     && task.activeStatusLogicalDate < today
     && !recurrenceByDate.has(task.activeStatusLogicalDate);
-  if (staleInProgress) {
-    // Workflow state is independent from terminal/container state and has no
-    // implicit outcome. Rollover only clears the stale workflow projection;
-    // an explicit user command owns any Done or Did My Best History fact.
-  }
 
   if (action?.outcome === "delayed" && !errors.length) {
     nextDue = action.delayUntilDate !== undefined
@@ -626,7 +643,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   if (finalizedActiveOccurrence) {
     patch.activeStatusLogicalDate = null;
     patch.activeOccurrenceDueOn = null;
-  } else if (staleInProgress) {
+  } else if (staleInProgress || staleWorkflowForRollover) {
     patch.activeStatusLogicalDate = null;
     patch.activeOccurrenceDueOn = null;
   }

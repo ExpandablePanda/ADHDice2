@@ -74,7 +74,10 @@ export function createEngineRolloverPlan(input: {
     // Unsupported adapter metadata is diagnostic-only. The projection below
     // guarantees it cannot cross the persistence boundary.
     if (adapted.unsupported.length > 0) unsupportedTaskIds.push(task.id);
-    const result = evaluateTaskState(adapted.engineInput);
+    const result = evaluateTaskState({
+      ...adapted.engineInput,
+      action: { type: "reconcile_rollover" },
+    });
     logicalDate ||= result.logicalDate;
     const history = result.proposedHistoryChanges.flatMap((change) => change.type === "insert" ? [{
       logicalDate: change.row.logicalDate,

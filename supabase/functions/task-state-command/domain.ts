@@ -226,7 +226,7 @@ function commandBase(intent: TaskStateCommandIntent, userId: string, readModel: 
     expectedBoundarySequence,
     logicalDay,
     idempotenceIdentity: replay.idempotenceIdentity,
-    sourceKind: "runtime" as const,
+    sourceKind: intent.type === "reconcile_rollover" ? "authorized_automation" as const : "runtime" as const,
   };
 }
 
@@ -354,6 +354,9 @@ export function buildTrustedTaskStateCommand(input: {
   const occurrence = intent.type === "delay_occurrence" && !intent.occurrence_key
     ? materializeDelayOccurrence(readModel, base, now)
     : occurrenceFor(readModel, "occurrence_key" in intent ? intent.occurrence_key : undefined);
+  const rolloverOccurrence = intent.type === "reconcile_rollover" && readModel.task.workflow_occurrence_id
+    ? readModel.occurrences.find((candidate) => candidate.id === readModel.task.workflow_occurrence_id) ?? null
+    : null;
   switch (intent.type) {
     case "set_outcome":
       return { ...base, type: "handled_outcome", outcome: intent.outcome, logicalDate: intent.logical_date, occurrenceId: occurrence?.id ?? null, occurrenceKey: intent.occurrence_key ?? occurrence?.occurrence_key ?? null, scheduledDueOn: intent.scheduled_due_on ?? occurrence?.scheduled_due_on ?? null, occurrence: occurrence ?? undefined };
@@ -376,7 +379,15 @@ export function buildTrustedTaskStateCommand(input: {
     case "restore_task": return { ...base, type: "restore" };
     case "start_in_progress": return { ...base, type: "workflow_start", startedAt: now, occurrenceId: occurrence?.id ?? null };
     case "clear_in_progress": return { ...base, type: "workflow_clear" };
-    case "reconcile_rollover": return { ...base, type: "rollover" };
+    case "reconcile_rollover":
+      return {
+        ...base,
+        type: "rollover",
+        staleLogicalDate: readModel.task.workflow_logical_date ?? null,
+        occurrenceId: rolloverOccurrence?.id ?? null,
+        occurrenceKey: rolloverOccurrence?.occurrence_key ?? null,
+        scheduledDueOn: rolloverOccurrence?.scheduled_due_on ?? null,
+      };
   }
 }
 

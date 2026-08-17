@@ -26,16 +26,22 @@ test("rollover planner observes the 6 AM boundary and creates no needless plan",
   assert.equal(engineRolloverPlanHasMutations(createEngineRolloverPlan({ ...context, history: [history("missed", "2026-07-30")], now: "2026-07-31T10:01:00.000Z", tasks: [task({ due_on: "2026-07-30", status: "missed" })] })), false);
 });
 
-test("custom timezone and stale In Progress clear workflow without Did My Best", () => {
+test("custom timezone and stale In Progress finalize exactly once as Did My Best", () => {
   const plan = createEngineRolloverPlan({ rolloverTime: "04:30", timezone: "America/Los_Angeles", history: [], now: "2026-11-01T12:31:00.000Z",
     tasks: [task({ status: "in_progress", active_status_logical_date: "2026-10-31", active_occurrence_due_on: "2026-10-31" })] });
   assert.equal(plan.logicalDate, "2026-11-01");
-  assert.deepEqual(plan.tasks[0]?.history, []);
+  assert.deepEqual(plan.tasks[0]?.history, [{
+    logicalDate: "2026-10-31",
+    occurrenceIdentity: "task:task-1:occurrence:2026-10-31",
+    outcome: "did_my_best",
+    taskId: "task-1",
+  }]);
+  assert.equal(plan.tasks[0]?.rewardEligible, true);
   assert.equal(Object.hasOwn(plan.tasks[0]?.patch ?? {}, "recurrenceCursor"), false);
   assert.equal(Object.hasOwn(plan.tasks[0]?.patch ?? {}, "satisfiedOccurrenceIdentity"), false);
 });
 
-test("stale unscheduled In Progress clears workflow and restores persisted Pending", () => {
+test("stale unscheduled In Progress finalizes as Did My Best and clears workflow", () => {
   const plan = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [task({
     active_occurrence_due_on: null,
     active_status_logical_date: "2026-07-30",
@@ -43,9 +49,123 @@ test("stale unscheduled In Progress clears workflow and restores persisted Pendi
     repeat_frequency: "none",
     status: "in_progress",
   })] });
-  assert.deepEqual(plan.tasks[0]?.history, []);
+  assert.deepEqual(plan.tasks[0]?.history, [{
+    logicalDate: "2026-07-30",
+    occurrenceIdentity: null,
+    outcome: "did_my_best",
+    taskId: "task-1",
+  }]);
   assert.equal(plan.tasks[0]?.patch.status, "pending");
   assert.equal(JSON.stringify(plan).includes('"status":"unscheduled"'), false);
+});
+
+test("the non-midnight boundary leaves same-day In Progress alone and finalizes it after 06:00", () => {
+  const inProgress = task({
+    status: "in_progress",
+    active_status_logical_date: "2026-07-30",
+    active_occurrence_due_on: "2026-07-30",
+  });
+  const before = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T09:59:00.000Z", tasks: [inProgress] });
+  const after = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T10:01:00.000Z", tasks: [inProgress] });
+
+  assert.equal(before.logicalDate, "2026-07-30");
+  assert.equal(before.tasks.length, 0);
+  assert.equal(after.logicalDate, "2026-07-31");
+  assert.equal(after.tasks[0]?.history[0]?.outcome, "did_my_best");
+  assert.equal(after.tasks[0]?.history[0]?.logicalDate, "2026-07-30");
+});
+
+test("fixed weekly rollover preserves the fixed schedule instead of forcing tomorrow", () => {
+  const plan = createEngineRolloverPlan({
+    ...context,
+    history: [],
+    now: "2026-08-03T12:00:00.000Z",
+    tasks: [task({
+      due_on: "2026-08-02",
+      repeat_frequency: "weekly",
+      repeat_days_of_week: [0],
+      status: "in_progress",
+      active_status_logical_date: "2026-08-02",
+      active_occurrence_due_on: "2026-08-02",
+    })],
+  });
+
+  assert.equal(plan.tasks[0]?.history[0]?.outcome, "did_my_best");
+  assert.equal(plan.tasks[0]?.patch.dueOn, "2026-08-09");
+});
+
+test("late catch-up finalizes only the stale workflow date", () => {
+  const plan = createEngineRolloverPlan({
+    ...context,
+    history: [],
+    now: "2026-08-03T12:00:00.000Z",
+    tasks: [task({
+      due_on: "2026-07-30",
+      status: "in_progress",
+      active_status_logical_date: "2026-07-30",
+      active_occurrence_due_on: "2026-07-30",
+    })],
+  });
+
+  assert.deepEqual(plan.tasks[0]?.history.map((row) => row.logicalDate), ["2026-07-30"]);
+  assert.equal(plan.tasks[0]?.history.length, 1);
+});
+
+test("existing explicit stale-date History wins over automatic rollover DMB", () => {
+  const plan = createEngineRolloverPlan({
+    ...context,
+    history: [history("done", "2026-07-30")],
+    now: "2026-07-31T12:00:00.000Z",
+    tasks: [task({ status: "in_progress", active_status_logical_date: "2026-07-30", active_occurrence_due_on: "2026-07-30" })],
+  });
+
+  assert.deepEqual(plan.tasks[0]?.history, []);
+  assert.equal(plan.tasks[0]?.patch.activeStatusLogicalDate, null);
+  assert.equal(plan.tasks[0]?.patch.activeOccurrenceDueOn, null);
+});
+
+test("reloaded automatic rollover does not create a second DMB or reward candidate", () => {
+  const first = createEngineRolloverPlan({
+    ...context,
+    history: [],
+    now: "2026-07-31T12:00:00.000Z",
+    tasks: [task({ status: "in_progress", active_status_logical_date: "2026-07-30", active_occurrence_due_on: "2026-07-30" })],
+  });
+  const persisted = task({
+    status: first.tasks[0]?.patch.status ?? "pending",
+    due_on: first.tasks[0]?.patch.dueOn ?? "2026-07-30",
+    active_status_logical_date: null,
+    active_occurrence_due_on: null,
+    revision: 2,
+  });
+  const second = createEngineRolloverPlan({
+    ...context,
+    history: [history("did_my_best", "2026-07-30")],
+    now: "2026-07-31T12:00:00.000Z",
+    tasks: [persisted],
+  });
+
+  assert.equal(first.tasks[0]?.rewardEligible, true);
+  assert.equal(second.tasks.length, 0);
+});
+
+test("automatic DMB resolves an unresolved Missed chain through the same timeline", () => {
+  const missed = history("missed", "2026-08-08");
+  missed.occurrence_due_on = "2026-08-08";
+  missed.occurrence_key = "task:task-1:occurrence:2026-08-08";
+  const plan = createEngineRolloverPlan({
+    ...context,
+    history: [missed],
+    now: "2026-08-10T12:00:00.000Z",
+    tasks: [task({
+      due_on: "2026-08-08",
+      status: "in_progress",
+      active_status_logical_date: "2026-08-09",
+      active_occurrence_due_on: "2026-08-08",
+    })],
+  });
+
+  assert.equal(plan.tasks[0]?.history[0]?.outcome, "did_my_best");
 });
 
 test("explicit handled History and unscheduled tasks prevent automatic Missed", () => {

@@ -121,6 +121,11 @@ export type CanonicalClearOutcomeCommand = CanonicalTaskStateCommandBase & {
 
 export type CanonicalRolloverCommand = CanonicalTaskStateCommandBase & {
   type: "rollover";
+  /** Server-derived stale workflow evidence; never accepted from browser intent. */
+  staleLogicalDate?: string | null;
+  occurrenceId?: string | null;
+  occurrenceKey?: string | null;
+  scheduledDueOn?: string | null;
 };
 
 export type CanonicalTaskStateCommand =
@@ -333,7 +338,10 @@ function commandType(command: CanonicalTaskStateCommand): CanonicalCommandType {
 }
 
 function commandPayload(command: CanonicalTaskStateCommand): CanonicalJsonObject {
-  const internalFields = new Set(["commandId", "acceptedIntent", "compatibilityProjection", "startedAt", "changedAt", "completedAt"]);
+  const internalFields = new Set([
+    "commandId", "acceptedIntent", "compatibilityProjection", "startedAt", "changedAt", "completedAt",
+    "staleLogicalDate", "occurrenceId", "scheduledDueOn",
+  ]);
   return Object.fromEntries(Object.entries(command).filter(([key]) => !internalFields.has(key)));
 }
 
@@ -366,8 +374,12 @@ function projectionFromEngine(
     status,
     dueOn: result.nextDueDate,
     completedAt: result.proposedTaskPatch.completedAt ?? task.completed_at,
-    activeStatusLogicalDate: result.proposedTaskPatch.activeStatusLogicalDate ?? task.active_status_logical_date,
-    activeOccurrenceDueOn: result.proposedTaskPatch.activeOccurrenceDueOn ?? task.active_occurrence_due_on,
+    activeStatusLogicalDate: Object.hasOwn(result.proposedTaskPatch, "activeStatusLogicalDate")
+      ? result.proposedTaskPatch.activeStatusLogicalDate ?? null
+      : task.active_status_logical_date,
+    activeOccurrenceDueOn: Object.hasOwn(result.proposedTaskPatch, "activeOccurrenceDueOn")
+      ? result.proposedTaskPatch.activeOccurrenceDueOn ?? null
+      : task.active_occurrence_due_on,
   };
 }
 
@@ -487,7 +499,9 @@ function historyFactFor(
   return {
     logical_date: logicalDate,
     outcome,
-    event_kind: outcome === "complete" ? "terminal_complete" : outcome === "delayed" ? "delay_audit" : "explicit_outcome",
+    event_kind: envelope.sourceKind === "authorized_automation"
+      ? "authorized_automation"
+      : outcome === "complete" ? "terminal_complete" : outcome === "delayed" ? "delay_audit" : "explicit_outcome",
     occurrence_id: occurrenceId,
     scheduled_due_on: scheduledDueOn,
     effective_due_on: effectiveDueOn,
@@ -497,7 +511,7 @@ function historyFactFor(
         ? command.override?.schedule_boundary_id ?? null
         : null,
     recurrence_source_fingerprint: "scheduleBoundary" in command ? command.scheduleBoundary?.id ?? null : null,
-    source: envelope.sourceKind === "runtime" ? "task_state_command" : envelope.sourceKind,
+    source: "task_state_command",
     logical_day_settings_revision: envelope.logicalDay.settingsRevision,
     timezone: envelope.logicalDay.timezone,
     day_start_time: envelope.logicalDay.dayStartTime,
@@ -615,7 +629,9 @@ export function planTaskStateCommand(
                   ? { manualDueOn: scheduleBoundaryDueOn(input.scheduleBoundary, state.engineInput?.task.dueOn ?? null) }
                   : {}),
               }
-            : input.type === "calendar_override"
+        : input.type === "rollover"
+          ? { type: "reconcile_rollover" as const }
+        : input.type === "calendar_override"
               ? { type: "recompute" as const, fromLogicalDate: input.calendarOverride.logical_date }
               : input.type === "clear_outcome"
                 ? undefined
@@ -656,7 +672,7 @@ export function planTaskStateCommand(
     }
   }
 
-  const patch = baseTaskPatch(task);
+  const patch = input.type === "rollover" ? {} : baseTaskPatch(task);
   let projection: CanonicalCompatibilityProjection;
   let historyFact: CanonicalHistoryFactPlan | null = null;
   let occurrence: CanonicalTaskOccurrence | null = null;
@@ -789,10 +805,28 @@ export function planTaskStateCommand(
       break;
     }
     case "rollover": {
-      if (engineResult?.proposedHistoryChanges.some((change) => change.type === "insert")) {
-        throw new CanonicalCommandPlanningError("ROLLOVER_HISTORY_FORBIDDEN", "Rollover planning cannot create synthetic DMB or calculated Missed History.");
-      }
       projection = requireProjection(engineResult, task);
+      const staleWorkflow = task.workflow_state === "in_progress"
+        && task.workflow_logical_date !== null
+        && task.workflow_logical_date === input.staleLogicalDate
+        && task.workflow_logical_date < command.logicalDay.logicalDate;
+      if (staleWorkflow) {
+        patch.workflow_state = "none";
+        patch.workflow_started_at = null;
+        patch.workflow_logical_date = null;
+        patch.workflow_occurrence_id = null;
+        patch.workflow_command_id = null;
+        patch.workflow_revision = (task.workflow_revision ?? 1) + 1;
+      }
+      const automaticHistory = engineResult?.proposedHistoryChanges.find((change) => (
+        change.type === "insert"
+        && change.row.outcome === "did_my_best"
+        && change.row.provenance === "rollover"
+        && change.row.logicalDate === input.staleLogicalDate
+      ));
+      if (automaticHistory?.type === "insert") {
+        historyFact = historyFactFor(input, command, automaticHistory.row.logicalDate, "did_my_best");
+      }
       break;
     }
   }

@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-15
+Last reviewed: 2026-08-17
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.19`.
+- Current working app version: `7.9.20`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -29,9 +29,16 @@ Role: active working
 
 - Batch Edit now clears selection after any actually applied batch effect, including a committed Task row whose required History write later failed. Plan accounting remains unchanged.
 
+### 7.9.20 Automatic stale In Progress rollover
+
+- Canonical rollover now derives a trusted automatic Did My Best only when an active In Progress workflow's logical date is stale and has no authoritative explicit History outcome. The existing engine record-outcome path supplies the stale logical date, actual command execution timestamp, recurrence/cursor behavior, streak resolution, and normal reward entitlement identity; late reconciliation finalizes only the one stale workflow date.
+- Existing explicit History wins. No-stale rollover is a no-op at the planner boundary. Successful rollover clears workflow_state, workflow_logical_date, workflow_occurrence_id, workflow_command_id, workflow_revision, active_status_logical_date, and active_occurrence_due_on through the existing canonical/compatibility projection.
+- Added the forward-only `supabase/patch_task_state_command_rollover_7_9_20.sql` contract patch. It allows only server-derived authorized-automation `did_my_best` for a stale workflow date, keeps ownership/revision/replay guards, rejects unrelated schedule/Calendar/Delay/terminal/reward payloads, and preserves canonical reward entitlement idempotence. SQL was not applied; the Edge Function was not deployed; live data and browser validation remain pending.
+- Focused source/test checks are being run for engine rollover, canonical planning, Edge intent/orchestration, recurrence, rewards, replay/idempotence, and SQL contracts. Full build/lint/typecheck and any baseline failures are reported separately after the final edit.
+
 ### 7.9.17 Calendar / streak / active-status reconciliation
 
-- Calendar projection presents unhandled dates as Due or Not Due, while active status presents an ordinary pending task as Open. Fixed recurrence non-occurrence dates remain Not Due, unresolved Missed chains outrank Upcoming/Not Due, Not Due and Delayed pause both streak types, and Delayed windows remain Not Due until the delayed due date. Automatic In Progress rollover remains deferred to 7.9.19. No SQL, schema, Edge Function, reward, live-data, or deployment changes were made; browser and live Supabase validation remain unrun.
+- Calendar projection presents unhandled dates as Due or Not Due, while active status presents an ordinary pending task as Open. Fixed recurrence non-occurrence dates remain Not Due, unresolved Missed chains outrank Upcoming/Not Due, Not Due and Delayed pause both streak types, and Delayed windows remain Not Due until the delayed due date. Automatic stale In Progress finalization is implemented in 7.9.20; the 7.9.17 behavior itself remains unchanged.
 
 ### 7.9.18 Canonical Delay effective-due correction
 

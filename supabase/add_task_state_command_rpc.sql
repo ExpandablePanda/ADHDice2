@@ -91,8 +91,9 @@ begin
   v_expected_entity_revision := nullif(p_command->>'expected_entity_revision', '')::bigint;
   v_expected_boundary_sequence := nullif(p_command->>'expected_boundary_sequence', '')::bigint;
 
-  if v_source_kind <> 'runtime' then
-    raise exception 'The runtime RPC accepts source_kind=runtime only (backend invocation).'
+  if v_source_kind <> 'runtime'
+     and not (v_command_type = 'reconcile_rollover' and v_source_kind = 'authorized_automation') then
+    raise exception 'The runtime RPC accepts source_kind=runtime, except for the trusted automatic rollover provenance.'
       using errcode = '42501';
   end if;
 
@@ -144,14 +145,16 @@ begin
 
   -- Runtime provenance is server-owned.  Reject a spoof before any replay
   -- operation is claimed, then overwrite the accepted values again below.
-  if coalesce(nullif(v_history->>'provenance_kind', ''), 'user') <> 'user'
+  if coalesce(nullif(v_history->>'provenance_kind', ''), case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end)
+       <> case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end
      or coalesce(nullif(v_occurrence->>'provenance_kind', ''), 'user') <> 'user'
      or coalesce(nullif(v_effective_override->>'provenance_kind', ''), 'user') <> 'user'
      or coalesce(nullif(v_calendar_override->>'provenance_kind', ''), 'manual') <> 'manual'
      or nullif(v_schedule->>'actor_kind', '') is not null and v_schedule->>'actor_kind' <> 'user'
      or nullif(v_occurrence->>'actor_kind', '') is not null and v_occurrence->>'actor_kind' <> 'user'
      or nullif(v_effective_override->>'actor_kind', '') is not null and v_effective_override->>'actor_kind' <> 'user'
-     or nullif(v_history->>'actor_kind', '') is not null and v_history->>'actor_kind' <> 'user'
+     or nullif(v_history->>'actor_kind', '') is not null
+        and v_history->>'actor_kind' <> case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end
      or nullif(v_calendar_override->>'actor_kind', '') is not null and v_calendar_override->>'actor_kind' <> 'user'
      or nullif(v_history->>'migration_operation_id', '') is not null
      or nullif(v_occurrence->>'migration_operation_id', '') is not null
@@ -315,10 +318,9 @@ begin
         using errcode = '22023';
     end if;
   elsif v_command_type = 'reconcile_rollover' then
-    if v_history <> '{}'::jsonb or v_occurrence <> '{}'::jsonb or v_schedule <> '{}'::jsonb
-       or v_effective_override <> '{}'::jsonb or v_calendar_override <> '{}'::jsonb
-       or v_payload ? 'reward_program_version' then
-      raise exception 'Rollover cannot carry History, schedule, occurrence, delay, Calendar, or reward mutations.'
+    if v_occurrence <> '{}'::jsonb or v_schedule <> '{}'::jsonb
+       or v_effective_override <> '{}'::jsonb or v_calendar_override <> '{}'::jsonb then
+      raise exception 'Rollover cannot carry schedule, occurrence, delay, or Calendar mutations.'
         using errcode = '22023';
     end if;
     if exists (
@@ -329,8 +331,8 @@ begin
       raise exception 'Rollover carries an unrelated canonical Task patch.'
         using errcode = '22023';
     end if;
-    if v_history <> '{}'::jsonb or (v_payload->>'synthetic_did_my_best')::boolean is true then
-      raise exception 'Rollover cannot persist a History fact or synthesize Did My Best.'
+    if (v_payload->>'synthetic_did_my_best')::boolean is true then
+      raise exception 'Rollover cannot carry a client synthetic Did My Best marker.'
         using errcode = '22023';
     end if;
   end if;
@@ -560,18 +562,81 @@ begin
     return v_result || jsonb_build_object('was_replayed', false);
   end if;
 
-  -- Rollover is deliberately a projection/reconciliation command.  It may
-  -- clear stale workflow state, but it cannot insert synthetic DMB or routine
-  -- calculated Missed facts.  Explicit Missed remains a set_outcome command.
-  if v_command_type = 'reconcile_rollover'
-     and v_history <> '{}'::jsonb then
-    raise exception 'Rollover cannot persist a History fact.'
-      using errcode = '22023';
-  end if;
-  if v_command_type = 'reconcile_rollover'
-     and (v_payload->>'synthetic_did_my_best')::boolean is true then
-    raise exception 'Rollover cannot synthesize Did My Best.'
-      using errcode = '22023';
+  -- Automatic rollover is a narrow trusted exception to the old no-History
+  -- rule.  The server-derived payload may finalize only the stale In Progress
+  -- workflow's own logical date as authorized-automation Did My Best.  A
+  -- no-History rollover may only clear that stale workflow or be a no-op.
+  if v_command_type = 'reconcile_rollover' then
+    if v_logical_day_context->>'logical_date' is distinct from public.adhdice_effective_logical_date(
+      clock_timestamp(), v_profile_timezone, v_profile_day_start_time
+    )::text then
+      raise exception 'Rollover logical-day context is not current.'
+        using errcode = '40001';
+    end if;
+    if v_history = '{}'::jsonb then
+      if v_payload ? 'reward_program_version' then
+        raise exception 'Rollover cannot carry reward data without its automatic Did My Best History fact.'
+          using errcode = '22023';
+      end if;
+      if v_task.workflow_state = 'in_progress' then
+        if v_task.workflow_logical_date is null
+           or v_task.workflow_logical_date >= public.adhdice_effective_logical_date(clock_timestamp(), v_profile_timezone, v_profile_day_start_time)
+           or v_task_patch->>'workflow_state' <> 'none'
+           or nullif(v_task_patch->>'workflow_logical_date', '') is not null
+           or nullif(v_task_patch->>'workflow_occurrence_id', '') is not null
+           or nullif(v_task_patch->>'workflow_command_id', '') is not null
+           or (v_task_patch->>'workflow_revision')::bigint is distinct from coalesce(v_task.workflow_revision, 1) + 1 then
+          raise exception 'Rollover may clear only a stale canonical In Progress workflow.'
+            using errcode = '22023';
+        end if;
+      elsif exists (
+        select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+        where key <> 'canonicalization_status'
+      ) then
+        raise exception 'A no-op rollover cannot carry a Task State mutation.'
+          using errcode = '22023';
+      end if;
+    else
+      if v_source_kind <> 'authorized_automation'
+         or v_history->>'outcome' <> 'did_my_best'
+         or v_history->>'event_kind' <> 'authorized_automation'
+         or v_history->>'logical_date' is null
+         or v_task.workflow_state <> 'in_progress'
+         or v_task.workflow_logical_date is null
+         or (v_history->>'logical_date')::date is distinct from v_task.workflow_logical_date
+         or v_task.workflow_logical_date >= public.adhdice_effective_logical_date(clock_timestamp(), v_profile_timezone, v_profile_day_start_time)
+         or v_payload->>'reward_program_version' <> 'task-reward-v1'
+         or v_projection->>'status' = 'in_progress'
+         or nullif(v_projection->>'active_status_logical_date', '') is not null
+         or nullif(v_projection->>'active_occurrence_due_on', '') is not null
+         or v_task_patch->>'workflow_state' <> 'none'
+         or nullif(v_task_patch->>'workflow_logical_date', '') is not null
+         or nullif(v_task_patch->>'workflow_occurrence_id', '') is not null
+         or nullif(v_task_patch->>'workflow_command_id', '') is not null
+         or (v_task_patch->>'workflow_revision')::bigint is distinct from coalesce(v_task.workflow_revision, 1) + 1 then
+        raise exception 'Automatic rollover must finalize only the stale workflow as Did My Best and clear it.'
+          using errcode = '22023';
+      end if;
+      if nullif(v_history->>'occurrence_id', '')::uuid is distinct from v_task.workflow_occurrence_id then
+        raise exception 'Automatic rollover History must use the stale workflow occurrence identity.'
+          using errcode = '22023';
+      end if;
+      if v_task.workflow_occurrence_id is null
+         and nullif(v_history->>'scheduled_due_on', '') is not null then
+        raise exception 'Automatic rollover without a workflow occurrence cannot carry a scheduled due date.'
+          using errcode = '22023';
+      end if;
+      if v_task.workflow_occurrence_id is not null and not exists (
+        select 1 from public.adhdice_task_occurrences occurrence
+         where occurrence.user_id = p_user_id
+           and occurrence.entity_id = v_entity_id
+           and occurrence.id = v_task.workflow_occurrence_id
+           and occurrence.scheduled_due_on = nullif(v_history->>'scheduled_due_on', '')::date
+      ) then
+        raise exception 'Automatic rollover History occurrence evidence is not owned by the Task.'
+          using errcode = '23503';
+      end if;
+    end if;
   end if;
 
   if v_projection->>'status' is null
@@ -795,9 +860,9 @@ begin
     v_history := jsonb_set(v_history, '{user_id}', to_jsonb(p_user_id), true);
     v_history := jsonb_set(v_history, '{entity_id}', to_jsonb(v_entity_id), true);
     v_history := jsonb_set(v_history, '{entity_kind}', to_jsonb(v_entity_kind), true);
-    v_history := jsonb_set(v_history, '{provenance_kind}', to_jsonb('user'::text), true);
-    v_history := jsonb_set(v_history, '{actor_kind}', to_jsonb('user'::text), true);
-    v_history := jsonb_set(v_history, '{actor_id}', to_jsonb(p_user_id), true);
+    v_history := jsonb_set(v_history, '{provenance_kind}', to_jsonb(case when v_source_kind = 'authorized_automation' then 'authorized_automation' else 'user' end), true);
+    v_history := jsonb_set(v_history, '{actor_kind}', to_jsonb(case when v_source_kind = 'authorized_automation' then 'authorized_automation' else 'user' end), true);
+    v_history := jsonb_set(v_history, '{actor_id}', case when v_source_kind = 'authorized_automation' then 'null'::jsonb else to_jsonb(p_user_id) end, true);
     v_history := jsonb_set(v_history, '{source}', to_jsonb('task_state_command'::text), true);
     v_history := jsonb_set(v_history, '{logical_day_settings_revision}', to_jsonb(v_profile_settings_revision), true);
     v_history := jsonb_set(v_history, '{timezone}', to_jsonb(v_profile_timezone), true);
@@ -937,7 +1002,7 @@ begin
       v_reward_event_identity,
       v_history_row.outcome,
       coalesce(v_history_row.occurrence_id::text, v_history_row.scheduled_due_on::text),
-      'handled_success',
+      case when v_source_kind = 'authorized_automation' then 'authorized_automation' else 'handled_success' end,
       'runtime_command',
       'pending'
     )

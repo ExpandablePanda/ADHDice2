@@ -5,6 +5,7 @@ import test from "node:test";
 const sql = readFileSync(new URL("../supabase/add_task_state_command_rpc.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/add_task_state_canonical_schema.sql", import.meta.url), "utf8");
 const delayMigration = readFileSync(new URL("../supabase/patch_task_state_command_delay_occurrence_7_7_47.sql", import.meta.url), "utf8");
+const rolloverMigration = readFileSync(new URL("../supabase/patch_task_state_command_rollover_7_9_20.sql", import.meta.url), "utf8");
 
 test("M3A command RPC is a backend-only invoker boundary", () => {
   assert.match(sql, /create or replace function public\.adhdice_execute_task_state_command\(\s*p_user_id uuid,\s*p_command jsonb\s*\)/i);
@@ -17,9 +18,9 @@ test("M3A command RPC is a backend-only invoker boundary", () => {
   assert.match(sql, /grant execute on function public\.adhdice_execute_task_state_command\(uuid, jsonb\) to service_role/i);
 });
 
-test("the authenticated runtime boundary rejects automation and repair provenance", () => {
-  assert.match(sql, /v_source_kind <> 'runtime'/i);
-  assert.match(sql, /runtime RPC accepts source_kind=runtime only/i);
+test("the backend runtime boundary allows automation provenance only for trusted rollover", () => {
+  assert.match(sql, /v_source_kind <> 'runtime'[\s\S]*v_command_type = 'reconcile_rollover'[\s\S]*authorized_automation/i);
+  assert.match(sql, /runtime RPC accepts source_kind=runtime, except for the trusted automatic rollover provenance/i);
   assert.doesNotMatch(sql, /v_source_kind not in \('runtime', 'authorized_automation', 'repair'\)/i);
 });
 
@@ -125,12 +126,22 @@ test("canonical and compatibility writes are one guarded projection, with no leg
   assert.match(sql, /due_on are applied only after this canonical revision check/i);
 });
 
-test("rollover cannot synthesize DMB or routine calculated Missed facts", () => {
-  assert.match(sql, /v_command_type = 'reconcile_rollover'[\s\S]*v_history <> '\{\}'::jsonb/i);
-  assert.match(sql, /Rollover cannot persist a History fact/i);
+test("rollover accepts only the trusted automatic DMB artifact set", () => {
+  const branch = sql.match(/if v_command_type = 'reconcile_rollover' then([\s\S]*?)end if;\n\n  if v_projection->>'status'/i)?.[1] ?? "";
+  assert.match(branch, /v_history = '\{\}'::jsonb/);
+  assert.match(branch, /v_history->>'outcome' <> 'did_my_best'/i);
+  assert.match(branch, /v_history->>'event_kind' <> 'authorized_automation'/i);
+  assert.match(branch, /logical_date.*v_task\.workflow_logical_date/i);
+  assert.match(branch, /workflow_occurrence_id/i);
+  assert.match(branch, /without a workflow occurrence cannot carry a scheduled due date/i);
+  assert.match(branch, /task-reward-v1/i);
+  assert.match(branch, /effective_logical_date/i);
+  assert.doesNotMatch(branch, /v_history->>'outcome' <> 'done'/i);
   assert.match(sql, /synthetic_did_my_best/i);
-  assert.match(sql, /Rollover cannot synthesize Did My Best/i);
-  assert.match(sql, /Explicit Missed remains a set_outcome command/i);
+  assert.match(rolloverMigration, /pg_get_functiondef\(p\.oid\)/i);
+  assert.match(rolloverMigration, /execute v_definition/i);
+  assert.match(rolloverMigration, /Automatic rollover must finalize only the stale workflow as Did My Best/i);
+  assert.doesNotMatch(rolloverMigration, /select\s+public\.adhdice_execute_task_state_command\b/i);
 });
 
 test("reward entitlement persistence uses the canonical identity fence", () => {

@@ -105,7 +105,9 @@ Recurrence evaluation handles logical dates, fixed and repeating schedules, acti
 
 The rollover authority plans eligible transitions from bounded current-state facts and relevant History. It returns a task patch, proposed History changes, reward eligibility, and revision context for the caller. Rollover must be idempotent and must not replay a valid future occurrence merely because a displayed status is stale.
 
-Automatic In Progress -> Did My Best rollover is locked product behavior but intentionally deferred to 7.9.18. The 7.9.17 reconciliation does not change rollover persistence, canonical SQL/RPC contracts, reward entitlement generation, Edge Functions, or live Supabase state.
+When canonical rollover finds an active In Progress workflow whose logical date has ended, it finalizes that stale occurrence exactly once as Did My Best. The History logical date is the stale workflow date; the server's command execution time remains the handled timestamp. The action uses the existing record-outcome recurrence, streak, and reward-entitlement semantics, then clears canonical and compatibility workflow fields in the same command. An authoritative explicit History fact for that date wins and is never replaced. Late catch-up finalizes only that one stale workflow date; it does not synthesize intervening Did My Best rows.
+
+Automatic rollover Did My Best uses authorized automation provenance, but its outcome and reward eligibility are identical to a manual Did My Best. The trusted Edge boundary derives the stale date and any legitimate workflow occurrence identity from canonical reads; browser intent remains only `reconcile_rollover`. Replay identities and canonical History/reward unique fences make same-command and later fresh rollover calls idempotent.
 
 The engine is the planning authority; the application and deployed RPCs remain responsible for guarded execution. The M3A Task State RPC and Edge command path are deployed and live-validated; this contract does not establish installation of the separate M3B reward-bridge SQL.
 

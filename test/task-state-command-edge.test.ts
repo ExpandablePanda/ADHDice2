@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, type TaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
+import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, type TaskStateCommandIntent, validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
 import {
   executeTrustedTaskStateCommand,
   type TrustedTaskStateCommandClient,
@@ -90,6 +90,53 @@ test("historical outcome commands do not infer phantom occurrences from a schedu
   assert.equal(command.occurrenceId, null);
   assert.equal(command.occurrenceKey, null);
   assert.equal(command.scheduledDueOn, "2026-08-08");
+});
+
+test("rollover intent remains input-only while the trusted Edge command derives automation provenance and stale workflow evidence", () => {
+  const intent: TaskStateCommandIntent = {
+    type: "reconcile_rollover",
+    task_id: "task-1",
+    replay_identity: "rollover:task-1:2026-08-10:stale",
+    expected_revision: 4,
+  };
+  assert.equal((buildTrustedTaskStateCommand({
+    intent,
+    userId: "owner-1",
+    readModel: {
+      ...canonicalReadModel,
+      task: {
+        ...canonicalReadModel.task,
+        status: "in_progress",
+        workflow_state: "in_progress",
+        workflow_logical_date: "2026-08-09",
+        workflow_occurrence_id: null,
+        workflow_command_id: "00000000-0000-4000-8000-000000000040",
+      },
+    },
+    logicalDay: { logicalDate: "2026-08-10", timezone: "America/New_York", dayStartTime: "06:00", settingsRevision: 3 },
+    now: "2026-08-10T12:00:00.000Z",
+  })).sourceKind, "authorized_automation");
+  assert.equal(validateTaskStateCommandIntent({ ...intent, outcome: "done" }), null);
+  const command = buildTrustedTaskStateCommand({
+    intent,
+    userId: "owner-1",
+    readModel: {
+      ...canonicalReadModel,
+      task: {
+        ...canonicalReadModel.task,
+        status: "in_progress",
+        workflow_state: "in_progress",
+        workflow_logical_date: "2026-08-09",
+        workflow_occurrence_id: null,
+        workflow_command_id: "00000000-0000-4000-8000-000000000040",
+      },
+    },
+    logicalDay: { logicalDate: "2026-08-10", timezone: "America/New_York", dayStartTime: "06:00", settingsRevision: 3 },
+    now: "2026-08-10T12:00:00.000Z",
+  });
+  assert.equal(command.staleLogicalDate, "2026-08-09");
+  assert.equal(command.occurrenceId, null);
+  assert.equal("outcome" in command, false);
 });
 
 const canonicalReadModel = {

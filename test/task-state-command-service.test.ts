@@ -291,6 +291,115 @@ test("handled Done uses the engine-derived projection for a recurring task", () 
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
 });
 
+function staleRolloverState(overrides: Partial<CanonicalTaskRow> = {}): CanonicalCommandPlanningState {
+  const planningState = state({
+    status: "in_progress",
+    due_on: "2026-08-09",
+    repeat_frequency: "daily",
+    workflow_state: "in_progress",
+    workflow_logical_date: "2026-08-09",
+    workflow_occurrence_id: null,
+    workflow_command_id: "00000000-0000-4000-8000-000000000040",
+    workflow_revision: 2,
+    ...overrides,
+  });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: {
+      ...planningState.engineInput!.task,
+      activeStatus: "in_progress",
+      dueOn: "2026-08-09",
+      activeStatusLogicalDate: "2026-08-09",
+      activeOccurrenceDueOn: null,
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    workflow: {
+      state: "in_progress",
+      logicalDate: "2026-08-09",
+      occurrenceId: null,
+      commandId: "00000000-0000-4000-8000-000000000040",
+      revision: 2,
+    },
+  };
+  return planningState;
+}
+
+test("trusted rollover derives one automatic DMB, preserves the stale logical date, and reuses reward parity", () => {
+  const rolloverState = staleRolloverState();
+  const rolloverCommand = trustedCommand({
+    type: "reconcile_rollover",
+    task_id: "task-1",
+    replay_identity: "rollover:task-1:2026-08-10:stale-in-progress",
+    expected_revision: 4,
+  }, rolloverState.task, boundary("rolling"));
+  const rolloverPlan = planTaskStateCommand(rolloverState, rolloverCommand);
+  const payload = serializeCanonicalTaskStateCommandForRpc(rolloverPlan);
+  const payloadBody = payload.payload as Record<string, Record<string, unknown>>;
+
+  assert.equal(rolloverCommand.sourceKind, "authorized_automation");
+  assert.equal(rolloverCommand.staleLogicalDate, "2026-08-09");
+  assert.equal(rolloverPlan.normalizedResult.historyFact?.logical_date, "2026-08-09");
+  assert.equal(rolloverPlan.normalizedResult.historyFact?.outcome, "did_my_best");
+  assert.equal(rolloverPlan.normalizedResult.historyFact?.event_kind, "authorized_automation");
+  assert.equal(rolloverPlan.normalizedResult.compatibilityProjection.dueOn, "2026-08-10");
+  assert.equal(rolloverPlan.normalizedResult.compatibilityProjection.status, "pending");
+  assert.equal(rolloverPlan.normalizedResult.compatibilityProjection.activeStatusLogicalDate, null);
+  assert.equal(rolloverPlan.normalizedResult.canonicalTaskPatch.workflow_state, "none");
+  assert.equal(rolloverPlan.normalizedResult.rewardEntitlement?.identity, "task-reward-entitlement:task-1:2026-08-09:v1");
+  assert.equal(payload.source_kind, "authorized_automation");
+  assert.equal(payloadBody.history_fact.outcome, "did_my_best");
+  assert.equal(payloadBody.history_fact.logical_date, "2026-08-09");
+  assert.equal(payloadBody.history_fact.provenance_kind, "authorized_automation");
+  assert.equal(payloadBody.history_fact.actor_kind, "authorized_automation");
+  assert.equal(payloadBody.reward_program_version, "task-reward-v1");
+
+  const manualState = state({ due_on: "2026-08-09", repeat_frequency: "daily" });
+  manualState.engineInput = {
+    ...manualState.engineInput!,
+    task: { ...manualState.engineInput!.task, dueOn: "2026-08-09", recurrence: { kind: "rolling", intervalDays: 1 } },
+  };
+  const manualPlan = planTaskStateCommand(manualState, trustedCommand({
+    type: "set_outcome",
+    task_id: "task-1",
+    replay_identity: "manual:task-1:2026-08-09:did-my-best",
+    outcome: "did_my_best",
+    logical_date: "2026-08-09",
+  }, manualState.task, boundary("rolling")));
+  assert.equal(rolloverPlan.normalizedResult.rewardEntitlement?.identity, manualPlan.normalizedResult.rewardEntitlement?.identity);
+  assert.equal(rolloverPlan.normalizedResult.rewardEntitlement?.outcome, manualPlan.normalizedResult.rewardEntitlement?.outcome);
+  assert.equal(rolloverPlan.normalizedResult.rewardEntitlement?.effectiveObligationIdentity, manualPlan.normalizedResult.rewardEntitlement?.effectiveObligationIdentity);
+});
+
+test("rollover keeps explicit stale-date History and creates no second DMB or reward", () => {
+  const planningState = staleRolloverState();
+  planningState.engineInput = { ...planningState.engineInput!, history: [doneHistory("2026-08-09")] };
+  const plan = planTaskStateCommand(planningState, trustedCommand({
+    type: "reconcile_rollover",
+    task_id: "task-1",
+    replay_identity: "rollover:task-1:2026-08-10:existing-history",
+    expected_revision: 4,
+  }, planningState.task, boundary("rolling")));
+
+  assert.equal(plan.normalizedResult.historyFact, null);
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.equal(plan.normalizedResult.canonicalTaskPatch.workflow_state, "none");
+  assert.equal(plan.normalizedResult.compatibilityProjection.activeStatusLogicalDate, null);
+});
+
+test("rollover without stale In Progress is a no-op with no History or reward", () => {
+  const planningState = state();
+  const plan = planTaskStateCommand(planningState, trustedCommand({
+    type: "reconcile_rollover",
+    task_id: "task-1",
+    replay_identity: "rollover:task-1:2026-08-10:no-op",
+    expected_revision: 4,
+  }, planningState.task, boundary("rolling")));
+
+  assert.deepEqual(plan.normalizedResult.canonicalTaskPatch, {});
+  assert.equal(plan.normalizedResult.historyFact, null);
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
+});
+
 test("stale canonical revision is rejected before a normalized write plan", () => {
   const plan = planTaskStateCommand(state({ canonical_revision: 5 }), command());
   assert.equal(plan.normalizedResult.state, "rejected");
