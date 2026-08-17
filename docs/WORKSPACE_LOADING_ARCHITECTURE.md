@@ -7,9 +7,10 @@ Role: qualified source diagnostic; converged Task loading contract
 
 `useWorkspaceData` owns authenticated workspace hydration, readiness, canonical
 History loading, cache ownership, and refresh coordination. This document
-records the required converged shape and the inspected source seams. It is not
-proof of browser behavior, deployed infrastructure, live Supabase state,
-Realtime delivery, or performance.
+records the required converged shape and the inspected source seams. The
+existing Task State deployment baseline is installed separately; the new
+full-History startup contract is not implemented or deployed. Browser behavior,
+Realtime delivery, and performance remain outside this document's evidence.
 
 ## Required startup boundary
 

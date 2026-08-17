@@ -12,8 +12,12 @@ model. It supersedes transitional rules that treated bounded History, calculated
 Missed rows, modal History, or legacy compatibility status as a separate source
 of truth.
 
-This is an architecture contract, not proof of browser behavior, live SQL/RPC
-installation, Edge deployment, production data, or complete runtime convergence.
+The existing production baseline is installed: `task-state-command` Edge is
+ACTIVE at version 23 and migration
+`20260817162634 patch_task_state_command_rollover_7_9_20` is present in
+production migration history. This document is not proof that the new
+simplified architecture, future Auto Missed SQL/RPC changes, browser behavior,
+or complete runtime convergence has been implemented or deployed.
 
 ## History authority
 

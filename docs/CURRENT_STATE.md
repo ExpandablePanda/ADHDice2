@@ -34,8 +34,26 @@ deciding current status, recurrence, Calendar truth, or streaks after convergenc
 
 Runtime convergence, SQL/RPC automatic-Missed behavior, canonical History
 canonicalization, legacy-path removal, full-startup-History loading, and browser
-validation remain pending. This architecture lock does not authorize migration,
-live data mutation, SQL application, Edge deployment, or a version change.
+validation remain pending. This architecture lock does not implement or deploy
+the simplified behavior, authorize migration/live data mutation, or change
+version surfaces.
+
+### Verified production deployment baseline
+
+For Supabase project `mnwcuinnshsncqrhvsks`, the existing Task State backend is
+installed and deployed:
+
+- `task-state-command` Edge Function is ACTIVE at version `23`.
+- Deployment/function ID: `a2c74ca6-8ddb-4100-8902-5e527fe552c4`.
+- Active SHA256: `7eb64fa20f7eedc2c000bc0c4f3ee1bed3e3de406f31e609afbc54994927e8fd`.
+- Production migration history contains
+  `20260817162634 patch_task_state_command_rollover_7_9_20`.
+
+This baseline proves installation/deployment of the existing Task State
+SQL/RPC and Edge command path only. The simplified architecture changes in this
+lock—including canonical automatic Missed behavior and full-History startup—are
+not implemented or deployed. Runtime convergence, legacy decision-path removal,
+History canonicalization, and new browser QA remain pending.
 
 ### Confirmed legacy-only History finding for later migration
 
@@ -52,7 +70,7 @@ migrated.
 
 ### 7.9.25 Semantic no-action scope correction
 
-- The Edge semantic no-action RPC bypass is now constrained to `reconcile_rollover` only. Other canonical commands retain their existing RPC behavior; production Edge is still not deployed, and browser/live QA remains pending.
+- The Edge semantic no-action RPC bypass is now constrained to `reconcile_rollover` only. Other canonical commands retain their existing RPC behavior; the existing production Edge baseline is ACTIVE at v23, while browser/live QA for the simplified architecture remains pending.
 
 ### 7.9.26 Rollover History read/cache ownership correction
 
@@ -60,27 +78,27 @@ migrated.
 - The UI regression came from internal rollover History reads sharing the user-visible task-scoped `ready` cache. Rollover now uses an isolated, ephemeral, batched canonical History read lifecycle and does not populate `taskHistoryByTaskId` or `taskHistoryLoadStateByTaskId`.
 - Opening the Task History modal revalidates complete canonical Task History with a forced task-scoped read. Existing rows are retained until a successful response replaces them; failures remain in the existing error/retry state, and Retry forces a fresh canonical request.
 - The 7.9.23 active-status authority remains intact: an actually hydrated task-scoped canonical History cache outranks sparse workspace History for status, counts, streaks, and Calendar. Internal rollover reads do not opt a Task into that modal-cache lifecycle.
-- No SQL changed or was applied, no Edge Function changed or was deployed, and no live data was mutated. Browser QA remains pending.
+- The 7.9.26 source change itself did not modify SQL or Edge code and did not mutate live data. The verified production baseline is the ACTIVE v23 `task-state-command` deployment and the installed 7.9.20 migration; browser QA remains pending.
 
 ### 7.9.24 Canonical rollover orchestration and no-op correction
 
 - Production rejected invalid `reconcile_rollover` commands during the 7.9.22 source-level SQL/Edge activation attempt, including empty canonical patches and repeated canonical revision increments. The compatibility candidate planner had omitted real stale canonical In Progress workflows when `active_status_logical_date` was null or compatibility status was Missed, while compatibility output could also misclassify current-day canonical workflows. This historical note is not deployment proof.
 - Canonical rollover eligibility now uses `workflow_state = in_progress` plus a stale `workflow_logical_date`; current-day canonical workflows are excluded, and compatibility-only rollover projections remain eligible only when no canonical workflow owns the Task.
 - Semantic `reconcile_rollover` no-ops return success before the canonical RPC, create no operation row, and preserve `canonical_revision`. Partial sweeps reconcile successful/no-op Tasks and retain only failed candidates for retry, preventing settled Tasks from receiving new revisions on timer, visibility, or pageshow reruns.
-- Automatic Did My Best remains the existing trusted 7.9.20–7.9.23 contract, including explicit stale-date History precedence, occurrence identity, recurrence/streak parity, reward-entitlement idempotence, and workflow clearing. Production SQL remains unchanged and was not applied; Edge deployment still requires ChatGPT review/approval. Browser QA remains pending, and no live data was mutated.
+- Automatic Did My Best remains the existing trusted 7.9.20–7.9.23 contract, including explicit stale-date History precedence, occurrence identity, recurrence/streak parity, reward-entitlement idempotence, and workflow clearing. The existing 7.9.20 SQL/RPC patch is installed and the task-state-command Edge baseline is ACTIVE at v23. Future SQL/RPC changes required for simplified canonical Auto Missed remain pending; browser QA remains pending, and no live data was mutated by this docs pass.
 
 ### 7.9.23 Canonical History active-status read correction
 
 - The production-visible regression was a read-boundary split: a sparse active-status History input could retain an older Missed boundary without the later canonical Done/Did My Best evidence that resolved it. The Task State engine itself returns `pending` (user-facing Open) when the complete canonical chronology is supplied.
 - The workspace critical read correction used a preceding scheduled occurrence as a bounded causal boundary. That is transitional implementation evidence, not the locked loading contract: converged startup must load the full canonical History snapshot and the modal must not become more authoritative.
-- Added exact Log Calories mixed-history coverage, unresolved-Missed and Done/Did My Best controls, Not Due/Delayed non-success controls, canonical-over-legacy precedence, cache invalidation, status-count parity, and child/Table/List shared-map contracts. No SQL or Edge code changed; no SQL was applied, no Edge function was deployed, and no live data was mutated. Browser QA remains pending.
+- Added exact Log Calories mixed-history coverage, unresolved-Missed and Done/Did My Best controls, Not Due/Delayed non-success controls, canonical-over-legacy precedence, cache invalidation, status-count parity, and child/Table/List shared-map contracts. No SQL or Edge code changed in that source correction and no live data was mutated; the existing production SQL/RPC and ACTIVE v23 Edge baseline remain installed. Browser QA remains pending.
 
 ### 7.9.22 Rollover SQL migration parser correction
 
-- The reviewed 7.9.20 rollover migration was attempted against production and failed atomically at PostgreSQL parse/compile time with `42601` (`syntax error at end of input`) while executing the generated RPC definition. The live migration history, RPC source/MD5, grants, Tasks, History, and reward data were verified unchanged after rollback.
+- The reviewed 7.9.20 rollover migration was attempted against production and failed atomically at PostgreSQL parse/compile time with `42601` (`syntax error at end of input`) while executing the generated RPC definition. At that failed attempt, the then-current migration history, RPC source/MD5, grants, Tasks, History, and reward data were verified unchanged after rollback. A later verified production migration history now contains `20260817162634 patch_task_state_command_rollover_7_9_20`.
 - The defect was the trusted provenance predicates' unparenthesized `<> CASE WHEN ... END` expressions inside PL/pgSQL `IF` conditions. PostgreSQL's PL/pgSQL condition grammar parsed the CASE as an unfinished condition and reached end-of-input. The authoritative `supabase/add_task_state_command_rpc.sql` source and the forward patch now parenthesize those CASE expressions.
 - Added an executable local PostgreSQL regression that installs the exact pre-7.9.20 RPC from repository history, applies the real forward migration, and verifies compilation, automatic-rollover guard replacement, authorized-automation provenance fencing, and service-role-only execution. SQL contract coverage remains required.
-- The corrected SQL must still be reapplied manually after ChatGPT review. Production rollover remains inactive, the Edge Function remains undeployed, and browser/live QA remains pending. No production SQL was applied by 7.9.22 and no live data was mutated.
+- At the time of the 7.9.22 correction, reapplication and deployment were still pending. The later verified baseline includes the 7.9.20 migration and ACTIVE task-state-command Edge v23; simplified Auto Missed changes and browser/live QA remain pending.
 
 ### 7.9.14 Persistent Batch Edit progress
 
@@ -100,13 +118,13 @@ migrated.
 
 - Canonical engine input now resolves a non-null workflow occurrence ID against `readModel.occurrences` and uses that occurrence's `scheduled_due_on` as `task.activeOccurrenceDueOn` while the workflow is In Progress. The trusted automatic rollover command and planned History fact therefore use the same canonical occurrence identity and due date as recurrence, streak, and reward planning.
 - A dangling non-null workflow occurrence reference fails closed with `WORKFLOW_OCCURRENCE_REFERENCE_INVALID` before the privileged RPC; compatibility `active_occurrence_due_on` remains only the fallback when no canonical workflow occurrence is present. SQL source remains unchanged and retains its existing occurrence agreement validation.
-- Production SQL/RPC installation and Edge deployment are still pending. Browser QA and live-data validation remain pending; no live Tasks, History, or reward entitlements were mutated.
+- At the time of the 7.9.21 source correction, SQL/RPC installation and Edge deployment validation were pending. The later verified baseline includes the 7.9.20 migration and ACTIVE task-state-command Edge v23; browser QA and live-data validation for the new architecture remain pending.
 
 ### 7.9.20 Automatic stale In Progress rollover
 
 - Canonical rollover now derives a trusted automatic Did My Best only when an active In Progress workflow's logical date is stale and has no authoritative explicit History outcome. The existing engine record-outcome path supplies the stale logical date, actual command execution timestamp, recurrence/cursor behavior, streak resolution, and normal reward entitlement identity; late reconciliation finalizes only the one stale workflow date.
 - Existing explicit History wins. No-stale rollover is a no-op at the planner boundary. Successful rollover clears workflow_state, workflow_logical_date, workflow_occurrence_id, workflow_command_id, workflow_revision, active_status_logical_date, and active_occurrence_due_on through the existing canonical/compatibility projection.
-- Added the forward-only `supabase/patch_task_state_command_rollover_7_9_20.sql` contract patch. It allows only server-derived authorized-automation `did_my_best` for a stale workflow date, keeps ownership/revision/replay guards, rejects unrelated schedule/Calendar/Delay/terminal/reward payloads, and preserves canonical reward entitlement idempotence. SQL was not applied; the Edge Function was not deployed; live data and browser validation remain pending.
+- Added the forward-only `supabase/patch_task_state_command_rollover_7_9_20.sql` contract patch. It allows only server-derived authorized-automation `did_my_best` for a stale workflow date, keeps ownership/revision/replay guards, rejects unrelated schedule/Calendar/Delay/terminal/reward payloads, and preserves canonical reward entitlement idempotence. The patch is present in verified production migration history and the task-state-command Edge baseline is ACTIVE at v23; simplified Auto Missed behavior, live data changes, and browser validation remain pending.
 - Focused source/test checks are being run for engine rollover, canonical planning, Edge intent/orchestration, recurrence, rewards, replay/idempotence, and SQL contracts. Full build/lint/typecheck and any baseline failures are reported separately after the final edit.
 
 ### 7.9.17 Calendar / streak / active-status reconciliation
@@ -115,13 +133,13 @@ migrated.
 
 ### 7.9.18 Canonical Delay effective-due correction
 
-- Canonical Delay now carries the selected `effective_due_on` into the existing Effective Timeline replay cursor, so the command's History fact, occurrence effective override, compatibility projection, RPC payload, and committed local Task all retain the selected next due date. Delay does not create a schedule boundary or alter recurrence configuration. Source and focused tests are updated; Edge deployment, SQL, live Supabase data, and browser validation remain separate and unrun.
+- Canonical Delay now carries the selected `effective_due_on` into the existing Effective Timeline replay cursor, so the command's History fact, occurrence effective override, compatibility projection, RPC payload, and committed local Task all retain the selected next due date. Delay does not create a schedule boundary or alter recurrence configuration. Source and focused tests are updated; those checks did not independently validate deployment, while the existing SQL/RPC and ACTIVE v23 Edge baseline are verified separately. Simplified-architecture browser validation remains pending.
 
 ### 7.9.19 Active Delay History Calendar reconstruction correction
 
 - Failed browser QA found that a canonical Delay saved the live Task due date and Delayed status correctly, but reopening History Calendar reconstructed from the old recurrence anchor. The persisted canonical `effective_due_on` stopped at the History projection boundary, so the ordinary read path could not rebase the active occurrence; a pre-cursor Delayed row was then skipped.
 - The read-side correction carries canonical `effective_due_on` through the existing History transport into Effective Timeline reconstruction. Only an authoritative Delayed fact whose effective target agrees with the currently active Delayed Task and current Task due cursor can seed the active cursor. Older or stale Delay facts do not rebase it, and the active Delay is retained even when its action date precedes the original scheduled occurrence.
-- Changed-path Effective Timeline, recurrence, non-batch Task History, canonical History projection/read-input, and targeted lint checks passed, plus `git diff --check`. The existing Task History batch-action suite still has 14 baseline failures, the raw-Node read-authority test remains blocked by its `.tsx` loader boundary, and full typecheck retains unrelated baseline errors. Manual browser QA is still required for the live Test I flow: reopen History after Delay, confirm 8/16 Delayed, 8/18–9/5 Not Due, 9/6 Due, resumed Daily recurrence, and unchanged Active Status. SQL/schema changes, Supabase deployment, live data, and browser validation remain unrun.
+- Changed-path Effective Timeline, recurrence, non-batch Task History, canonical History projection/read-input, and targeted lint checks passed, plus `git diff --check`. The existing Task History batch-action suite still has 14 baseline failures, the raw-Node read-authority test remains blocked by its `.tsx` loader boundary, and full typecheck retains unrelated baseline errors. Manual browser QA is still required for the live Test I flow: reopen History after Delay, confirm 8/16 Delayed, 8/18–9/5 Not Due, 9/6 Due, resumed Daily recurrence, and unchanged Active Status. Existing SQL/RPC and ACTIVE v23 Edge deployment are verified; simplified-architecture live data and browser validation remain pending.
 
 ### 7.9.11 Independent Step/Substep pinning
 
@@ -188,9 +206,10 @@ migrated.
 
 ### 7.7.37 Canonical Task State runtime activation (historical source note)
 
-- Source wiring for canonical Task State browser commands was recorded as enabled
-  behind the reviewed trusted boundary. This does not establish deployed Edge,
-  installed SQL/RPC, browser parity, or completion of the 2026-08-17
+- The reviewed trusted Task State boundary is deployed in production through
+  `task-state-command` Edge version 23 and the installed Task State SQL/RPC,
+  including migration `20260817162634 patch_task_state_command_rollover_7_9_20`.
+  This establishes the existing baseline, not completion of the 2026-08-17
   architecture lock; runtime convergence remains pending.
 - Browser QA, live runtime parity, and legacy-path removal remain unverified.
 
@@ -204,19 +223,24 @@ migrated.
 
 - With the canonical runtime gate enabled, normal Add Task, editor-based Task creation, and Import now send creation intent through the authenticated `task-create-canonical` Edge boundary. The Edge path derives the verified owner, validates the draft and parent entity kind, builds the canonical TypeScript creation plan, and invokes the service-role-only `adhdice_create_canonical_task` RPC.
 - The RPC atomically inserts the Task with `canonical_revision = 1`, initialized terminal/container/workflow state, and its initial schedule boundary. Creation does not write legacy History or canonical reward records. Imported outcome/lifecycle snapshots that require provenance fail closed and remain visible as import errors; pending/open metadata and parent/Step/Substep relationships are preserved.
-- The SQL and Edge implementation are source-only for this release. SQL execution, Edge deployment, live Supabase mutations, and browser QA remain unverified and unauthorized in this task.
+- The `task-create-canonical` SQL and Edge implementation were source-only for
+  that release; this historical note does not describe the existing deployed
+  `task-state-command` v23 baseline. SQL execution, live mutations, and browser
+  QA for that creation path remain separately unverified.
 
 ### M3A.5 Trusted Task State Command Boundary
 
 - The trusted M3A Task State backend/RPC and `task-state-command` Edge path are
-  source-backed but not established as deployed or live-validated. Runtime
-  convergence and gate activation remain pending under the architecture lock.
+  installed/deployed in the verified production baseline: Edge version 23,
+  function ID `a2c74ca6-8ddb-4100-8902-5e527fe552c4`, active SHA256
+  `7eb64fa20f7eedc2c000bc0c4f3ee1bed3e3de406f31e609afbc54994927e8fd`.
+  Runtime convergence and the simplified architecture remain pending.
 - The trusted `task-state-command` Edge Function accepts authenticated intent only. Direct authenticated submission of canonical plans or privileged persistence sections is forbidden.
 - The Edge Function derives owner identity from verified Supabase Auth, reads only that user's canonical Task State and logical-day profile, invokes the existing pure TypeScript planner, and sends its serialized plan through the backend-only invoker RPC using the modern secret-key admin client.
 - Runtime provenance, command identity, entity/owner IDs, timestamps, migration fields, and the SHA-256 accepted-payload digest are established inside the trusted boundary. History/occurrence collection max revisions are not runtime fences; canonical Task `canonical_revision` remains authoritative and schedule `boundary_sequence` protection remains active.
-- This trusted boundary is an implementation target for later cutover. Normal
-  production parity, SQL/RPC installation, Edge deployment, and active-UI
-  convergence remain pending.
+- This trusted boundary is the installed existing baseline. New simplified
+  Auto Missed behavior, full-History startup, legacy decision-path removal, and
+  active-UI convergence remain pending.
 
 ### 7.7.36 M3B pre-activation reward correction behind the disabled gate
 
@@ -228,15 +252,16 @@ migrated.
 - The source gate value is not deployment or convergence evidence; browser QA and
   runtime parity remain pending.
 
-#### M3B backend deployment parity checklist (source-only; not executed here)
+#### Simplified-architecture deployment follow-up (pending)
 
-- [ ] Install the reviewed `supabase/add_task_state_command_rpc.sql` source, including the canonical clear-outcome reward-provenance fence.
+- [x] Existing Task State SQL/RPC is installed; production migration history includes `20260817162634 patch_task_state_command_rollover_7_9_20`.
+- [x] Existing `task-state-command` Edge Function is ACTIVE at version 23 with the verified deployment ID and SHA256 recorded above.
+- [ ] Apply future reviewed SQL/RPC changes required for canonical automatic Missed behavior.
 - [ ] Install the reviewed `supabase/add_canonical_reward_entitlement_bridge.sql` source, including removal of the old browser-authoritative overload and installation of `adhdice_fulfill_canonical_reward_entitlement(uuid)`.
-- [ ] Deploy the exact reviewed `task-state-command` Edge bundle. Its complete local source graph is: `supabase/functions/task-state-command/index.ts`, `supabase/functions/task-state-command/auth.ts`, `supabase/functions/task-state-command/domain.ts`, `supabase/functions/task-state-command/orchestration.ts`; `src/lib/database.types.ts`, `src/lib/records/persisted-types.ts`; `src/lib/task-state-canonical/command-service.ts`, `src/lib/task-state-canonical/digest.ts`, `src/lib/task-state-canonical/engine-input.ts`, `src/lib/task-state-canonical/read-model.ts`, `src/lib/task-state-canonical/types.ts`; and `src/lib/task-state-engine/calendar.ts`, `src/lib/task-state-engine/engine.ts`, `src/lib/task-state-engine/legacy-adapter.ts`, `src/lib/task-state-engine/recurrence.ts`, `src/lib/task-state-engine/types.ts`. This is the full graph required by the packaging contract; changed canonical planner/domain/read-model/engine source must not be omitted from the bundle.
-- [ ] Verify RPC signatures and privileges: authenticated can execute the minimal fulfillment RPC and the trusted command RPC remains service-role-only; anon/public cannot execute either privileged function.
-- [ ] Verify deployed Edge version/source against the reviewed bundle (including the UUID auth boundary and `clear_outcome` intent support).
-- [ ] Run a controlled authenticated backend smoke test for one canonical success, exact fulfillment retry, blocked entitlement rejection, and non-owner/provenance mismatch rejection. Do not use browser-supplied reward payload fields.
-- [ ] Only after the SQL/RPC install, exact Edge deployment, privilege/signature checks, deployed-source proof, and controlled smoke test pass: enable the browser canonical gate, then perform browser QA.
+- [ ] Deploy and verify any future Edge bundle changes required by the simplified architecture; do not treat v23 as proof of those changes.
+- [ ] Verify RPC signatures and privileges for the future changes: authenticated can execute the minimal fulfillment RPC and the trusted command RPC remains service-role-only; anon/public cannot execute either privileged function.
+- [x] Record the current deployed Edge version/source identity; future source parity must be checked against the active v23 baseline before cutover.
+- [ ] Run the new authenticated smoke and browser QA required by the simplified architecture after its SQL/RPC and Edge changes are installed.
 
 ### 7.7.34 M3B runtime wiring behind the disabled gate
 
@@ -317,7 +342,7 @@ migrated.
 ### Persistence Boundaries
 
 - Mutations must use the shared guarded task and History paths, preserve optimistic-concurrency checks, and avoid zero-effective writes.
-- Manual SQL patches and live deployment state are not established by this documentation pass; do not assume a historical patch is deployed without separate verification.
+- The existing Task State deployment baseline is verified separately: ACTIVE `task-state-command` Edge v23 and migration `20260817162634 patch_task_state_command_rollover_7_9_20`. Future simplified-architecture SQL/RPC changes still require separate installation and verification.
 - Optional Google integration configuration exists in source, but public Pages variables, Edge deployment, and user-facing activation remain unverified.
 - Existing release history records the exact repair scopes, SQL filenames, row counts, and verification limitations in the [historical archive](archive/2026-08-retired/current-state-release-history.md).
 
@@ -333,7 +358,7 @@ migrated.
 - Task History readiness, recurrence rollover, and explicit occurrence identity.
 - Shared task mutation, reward, revision/conflict, and persistence-projection paths.
 - Shared Table/List hierarchy rendering, editor routing, row-model caching, and render boundaries.
-- Manual SQL/RPC deployment assumptions and any path that could reconcile stale state.
+- The boundary between the verified existing SQL/RPC and future simplified-architecture deployment, including any path that could reconcile stale state.
 - Browser/Safari paint behavior around scaled shells, sticky/nested scrollers, and translucent layers remains an evidence problem, not a claimed fix.
 
 ## Active Warnings and Constraints
@@ -341,7 +366,7 @@ migrated.
 - Treat the Task State Engine switch and its connected read/action/Calendar/rollover consumers as one compatibility boundary.
 - Do not persist engine-only status, cursor, or occurrence metadata, and do not replace canonical rows with partial payloads.
 - Do not use historical release notes as current authority; use the linked canonical contracts and verify freshness caveats.
-- Browser QA, live Supabase behavior, deployed RPC state, multi-tab behavior, BFCache behavior, and Safari rendering require separate authorized verification.
+- Browser QA, simplified-architecture live Supabase behavior, future RPC state, multi-tab behavior, BFCache behavior, and Safari rendering require separate authorized verification; the existing Edge v23/migration baseline is recorded above.
 
 ## Immediate Priorities
 
