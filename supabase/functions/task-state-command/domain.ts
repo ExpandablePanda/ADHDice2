@@ -2,6 +2,7 @@ import type { CanonicalTaskStateReadModel } from "../../../src/lib/task-state-ca
 import type { CanonicalEntityKind, CanonicalJsonObject, CanonicalLogicalDayContext, CanonicalTaskCalendarOverride, CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../../../src/lib/task-state-canonical/types.ts";
 import type { CanonicalTaskStateCommand } from "../../../src/lib/task-state-canonical/command-service.ts";
 import { deterministicUuid, sha256Digest } from "../../../src/lib/task-state-canonical/digest.ts";
+import { resolveCanonicalWorkflowOccurrence } from "../../../src/lib/task-state-canonical/engine-input.ts";
 import { occurrenceIdentity } from "../../../src/lib/task-state-engine/recurrence.ts";
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
@@ -354,8 +355,8 @@ export function buildTrustedTaskStateCommand(input: {
   const occurrence = intent.type === "delay_occurrence" && !intent.occurrence_key
     ? materializeDelayOccurrence(readModel, base, now)
     : occurrenceFor(readModel, "occurrence_key" in intent ? intent.occurrence_key : undefined);
-  const rolloverOccurrence = intent.type === "reconcile_rollover" && readModel.task.workflow_occurrence_id
-    ? readModel.occurrences.find((candidate) => candidate.id === readModel.task.workflow_occurrence_id) ?? null
+  const rolloverOccurrence = intent.type === "reconcile_rollover"
+    ? resolveCanonicalWorkflowOccurrence(readModel)
     : null;
   switch (intent.type) {
     case "set_outcome":

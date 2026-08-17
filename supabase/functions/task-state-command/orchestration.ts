@@ -3,7 +3,10 @@ import {
   planTaskStateCommand,
   serializeCanonicalTaskStateCommandForRpc,
 } from "../../../src/lib/task-state-canonical/command-service.ts";
-import { buildCanonicalTaskStateEngineInput } from "../../../src/lib/task-state-canonical/engine-input.ts";
+import {
+  buildCanonicalTaskStateEngineInput,
+  CanonicalWorkflowOccurrenceReferenceError,
+} from "../../../src/lib/task-state-canonical/engine-input.ts";
 import {
   loadCanonicalTaskCommandOperationReplay,
   loadCanonicalTaskState,
@@ -115,6 +118,9 @@ async function lookupReplay(
 function planningErrorResponse(error: unknown): TrustedTaskStateCommandResponse {
   if (error instanceof CanonicalCommandPlanningError) {
     return errorResponse(error.code, error.message, error.code === "STALE_REVISION" ? 409 : 422);
+  }
+  if (error instanceof CanonicalWorkflowOccurrenceReferenceError) {
+    return errorResponse(error.code, error.message, 422);
   }
   return errorResponse("canonical_state_unavailable", "Canonical Task State could not be planned.", 503);
 }

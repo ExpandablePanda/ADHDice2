@@ -10,6 +10,7 @@ import type { TaskStateEngineInput } from "../src/lib/task-state-engine/types.ts
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalTaskCommandOperation } from "../src/lib/task-state-canonical/types.ts";
 import { planTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
+import { buildCanonicalTaskStateEngineInput } from "../src/lib/task-state-canonical/engine-input.ts";
 
 const edgeSource = readFileSync(new URL("../supabase/functions/task-state-command/index.ts", import.meta.url), "utf8");
 const domainSource = readFileSync(new URL("../supabase/functions/task-state-command/domain.ts", import.meta.url), "utf8");
@@ -137,6 +138,73 @@ test("rollover intent remains input-only while the trusted Edge command derives 
   assert.equal(command.staleLogicalDate, "2026-08-09");
   assert.equal(command.occurrenceId, null);
   assert.equal("outcome" in command, false);
+});
+
+test("trusted rollover fails closed when a canonical workflow occurrence reference is broken", async () => {
+  let rpcCalls = 0;
+  let replayCalls = 0;
+  const brokenReadModel = {
+    ...canonicalReadModel,
+    task: {
+      ...canonicalReadModel.task,
+      status: "in_progress",
+      due_on: "2026-08-09",
+      workflow_state: "in_progress",
+      workflow_logical_date: "2026-08-09",
+      workflow_occurrence_id: "missing-occurrence",
+      workflow_command_id: "00000000-0000-4000-8000-000000000040",
+      workflow_revision: 2,
+    },
+    scheduleBoundaries: [{
+      id: "boundary-1",
+      entity_id: "task-1",
+      schedule_model: "rolling",
+      repeat_frequency: "daily",
+      repeat_interval: 1,
+      repeat_days_of_week: [],
+      repeat_day_of_month: null,
+      repeat_monthly_mode: "day_of_month",
+      repeat_monthly_ordinal: null,
+      repeat_monthly_weekday: null,
+      anchor_date: "2026-08-09",
+      due_time: null,
+      boundary_sequence: 1,
+    }],
+    occurrences: [],
+  } as unknown as CanonicalTaskStateReadModel;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "reconcile_rollover",
+      task_id: "task-1",
+      replay_identity: "rollover:broken-workflow-occurrence",
+      expected_revision: 4,
+    },
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: null, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    dependencies: {
+      loadReplayOperation: async () => {
+        replayCalls += 1;
+        return { data: null, error: null };
+      },
+      loadCanonicalState: async () => ({ data: brokenReadModel, error: null }),
+      buildEngineInput: buildCanonicalTaskStateEngineInput,
+    },
+  });
+
+  assert.equal(result.status, 422);
+  assert.deepEqual(result.body, {
+    error: {
+      code: "WORKFLOW_OCCURRENCE_REFERENCE_INVALID",
+      message: "Canonical workflow occurrence missing-occurrence is unavailable.",
+    },
+  });
+  assert.equal(replayCalls, 2);
+  assert.equal(rpcCalls, 0);
 });
 
 const canonicalReadModel = {

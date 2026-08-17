@@ -51,6 +51,8 @@ Logical date is derived from the user-scoped timezone and rollover context, not 
 
 Occurrence identity is explicit in History-facing calculations. A recurring occurrence is not identified only by the task's displayed status; due date, occurrence key, and related History facts distinguish the occurrence being evaluated. The engine may calculate cursor or occurrence metadata internally even when those values are not persistable task-row fields.
 
+When canonical workflow state is In Progress with a non-null `workflow_occurrence_id`, the canonical read adapter resolves that exact occurrence and hydrates `task.activeOccurrenceDueOn` from its `scheduled_due_on`. Automatic rollover, planned History, recurrence, streaks, and reward eligibility must consume that same occurrence evidence; a broken reference fails closed rather than falling back to a compatibility date or synthesized identity. Compatibility `active_occurrence_due_on` remains a fallback only when no canonical workflow occurrence is present.
+
 This identity boundary protects future and overdue occurrences from status-only replay. Any caller that creates or consumes an occurrence-specific History entry must carry the same logical-date and occurrence context through its read or action plan.
 
 ## Status Read Authority

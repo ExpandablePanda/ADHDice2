@@ -90,7 +90,7 @@ test("canonical engine input separates the boundary anchor from the current due 
   assert.equal(input.task.historicalScheduleAnchor, "2026-08-04");
 });
 
-test("canonical engine input keeps only active Calendar overrides and workflow provenance", () => {
+test("canonical engine input hydrates the active workflow occurrence from canonical storage", () => {
   const readModel = {
     task: {
       id: "task-1",
@@ -100,7 +100,7 @@ test("canonical engine input keeps only active Calendar overrides and workflow p
       container_state: "active",
       workflow_state: "in_progress",
       workflow_logical_date: "2026-08-10",
-      workflow_occurrence_id: "workflow-occurrence",
+      workflow_occurrence_id: "occurrence-A",
       workflow_command_id: "workflow-command",
       workflow_revision: 7,
       active_status_logical_date: "2026-08-10",
@@ -117,7 +117,11 @@ test("canonical engine input keeps only active Calendar overrides and workflow p
       repeat_monthly_weekday: null,
       one_time_due_on: "2026-08-10",
     }],
-    occurrences: [],
+    occurrences: [{
+      id: "occurrence-A",
+      scheduled_due_on: "2026-08-10",
+      occurrence_key: "task:task-1:occurrence:2026-08-10",
+    }],
     historyFacts: [],
     calendarOverrides: [
       { id: "inactive", logical_date: "2026-08-09", override_state: "due_open", is_active: false },
@@ -139,6 +143,7 @@ test("canonical engine input keeps only active Calendar overrides and workflow p
 
   assert.deepEqual(input.calendarOverrides?.map((override) => override.id), ["active"]);
   assert.equal(input.workflow?.logicalDate, "2026-08-10");
+  assert.equal(input.task.activeOccurrenceDueOn, "2026-08-10");
   assert.equal(timeline.days["2026-08-09"]?.state, "not_due");
   assert.equal(timeline.days["2026-08-09"]?.calendarOverrideId, "active");
   assert.equal(timeline.days["2026-08-10"]?.state, "in_progress");

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.20`.
+- Current working app version: `7.9.21`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -28,6 +28,12 @@ Role: active working
 ### 7.9.16 Batch Edit selection cleanup
 
 - Batch Edit now clears selection after any actually applied batch effect, including a committed Task row whose required History write later failed. Plan accounting remains unchanged.
+
+### 7.9.21 Canonical workflow occurrence coherence correction
+
+- Canonical engine input now resolves a non-null workflow occurrence ID against `readModel.occurrences` and uses that occurrence's `scheduled_due_on` as `task.activeOccurrenceDueOn` while the workflow is In Progress. The trusted automatic rollover command and planned History fact therefore use the same canonical occurrence identity and due date as recurrence, streak, and reward planning.
+- A dangling non-null workflow occurrence reference fails closed with `WORKFLOW_OCCURRENCE_REFERENCE_INVALID` before the privileged RPC; compatibility `active_occurrence_due_on` remains only the fallback when no canonical workflow occurrence is present. SQL source remains unchanged and retains its existing occurrence agreement validation.
+- Production SQL/RPC installation and Edge deployment are still pending. Browser QA and live-data validation remain pending; no live Tasks, History, or reward entitlements were mutated.
 
 ### 7.9.20 Automatic stale In Progress rollover
 

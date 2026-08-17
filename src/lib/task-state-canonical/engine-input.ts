@@ -1,9 +1,29 @@
 import { adaptLegacyTaskState } from "../task-state-engine/legacy-adapter.ts";
 import type { TaskCalendarOverride, TaskRecurrence, TaskStateEngineInput } from "../task-state-engine/types.ts";
-import type { CanonicalTaskCalendarOverride, CanonicalTaskScheduleBoundary } from "./types.ts";
+import type { CanonicalTaskCalendarOverride, CanonicalTaskOccurrence, CanonicalTaskScheduleBoundary } from "./types.ts";
 import type { CanonicalTaskStateReadModel } from "./read-model.ts";
 import { mapCanonicalTaskHistoryFacts } from "./history-projection.ts";
 import { latestCanonicalScheduleBoundary } from "./schedule-projection.ts";
+
+export class CanonicalWorkflowOccurrenceReferenceError extends Error {
+  readonly code = "WORKFLOW_OCCURRENCE_REFERENCE_INVALID";
+
+  constructor(occurrenceId: string) {
+    super(`Canonical workflow occurrence ${occurrenceId} is unavailable.`);
+    this.name = "CanonicalWorkflowOccurrenceReferenceError";
+  }
+}
+
+/** Resolve the server-owned workflow occurrence without deriving a fallback identity. */
+export function resolveCanonicalWorkflowOccurrence(
+  readModel: CanonicalTaskStateReadModel,
+): CanonicalTaskOccurrence | null {
+  const occurrenceId = readModel.task.workflow_occurrence_id;
+  if (!occurrenceId) return null;
+  const occurrence = readModel.occurrences.find((candidate) => candidate.id === occurrenceId);
+  if (!occurrence) throw new CanonicalWorkflowOccurrenceReferenceError(occurrenceId);
+  return occurrence;
+}
 
 export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary): TaskRecurrence {
   if (boundary.schedule_model === "unscheduled" || boundary.schedule_model === "one_time") return { kind: "none" };
@@ -104,6 +124,7 @@ export function buildCanonicalTaskStateEngineInput(
 ): TaskStateEngineInput {
   const boundary = latestCanonicalScheduleBoundary(readModel.scheduleBoundaries);
   if (!boundary) throw new Error("Canonical schedule state is unavailable.");
+  const workflowOccurrence = resolveCanonicalWorkflowOccurrence(readModel);
 
   const adapted = adaptLegacyTaskState(
     {
@@ -142,6 +163,9 @@ export function buildCanonicalTaskStateEngineInput(
       lifecycle,
       activeStatus: canonicalEngineActiveStatus(readModel),
       dueOn,
+      activeOccurrenceDueOn: readModel.task.workflow_state === "in_progress"
+        ? workflowOccurrence?.scheduled_due_on ?? adapted.engineInput.task.activeOccurrenceDueOn ?? null
+        : adapted.engineInput.task.activeOccurrenceDueOn ?? null,
       activeStatusLogicalDate: readModel.task.workflow_logical_date ?? adapted.engineInput.task.activeStatusLogicalDate,
       historicalScheduleAnchor: boundary.schedule_model === "one_time"
         ? boundary.one_time_due_on

@@ -8,10 +8,12 @@ import {
   type CanonicalTaskStateCommand,
 } from "../src/lib/task-state-canonical/command-service.ts";
 import { sha256Hex } from "../src/lib/task-state-canonical/digest.ts";
-import type { CanonicalTaskRow } from "../src/lib/task-state-canonical/read-model.ts";
+import { buildCanonicalTaskStateEngineInput } from "../src/lib/task-state-canonical/engine-input.ts";
+import type { CanonicalTaskRow, CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import type { TaskStateHistoryRow } from "../src/lib/task-state-engine/types.ts";
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
+import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
 import { buildTrustedTaskStateCommand } from "../supabase/functions/task-state-command/domain.ts";
 
 const logicalDay = {
@@ -324,6 +326,85 @@ function staleRolloverState(overrides: Partial<CanonicalTaskRow> = {}): Canonica
   return planningState;
 }
 
+function canonicalOccurrence(overrides: Partial<CanonicalTaskOccurrence> = {}): CanonicalTaskOccurrence {
+  return {
+    id: "occurrence-A",
+    user_id: "user-1",
+    entity_id: "task-1",
+    entity_kind: "parent",
+    occurrence_key: "task:task-1:occurrence:2026-08-09",
+    scheduled_due_on: "2026-08-09",
+    source_boundary_id: "boundary-rolling",
+    recurrence_source_fingerprint: "boundary-rolling",
+    origin_kind: "proven",
+    origin_confidence: "proven",
+    provenance_kind: "user",
+    actor_kind: "user",
+    actor_id: "user-1",
+    source: "task_state_command",
+    materialization_reason: "required_command_state",
+    resolution_state: "unresolved",
+    resolved_logical_date: null,
+    resolved_outcome: null,
+    resolved_history_id: null,
+    command_id: null,
+    migration_operation_id: null,
+    revision: 1,
+    created_at: "2026-08-09T12:00:00.000Z",
+    updated_at: "2026-08-09T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function canonicalRolloverReadModel(scheduleModel: "rolling" | "fixed") {
+  const occurrence = canonicalOccurrence({
+    source_boundary_id: `boundary-${scheduleModel}`,
+    recurrence_source_fingerprint: `boundary-${scheduleModel}`,
+  });
+  const scheduleBoundary = scheduleModel === "fixed"
+    ? {
+        ...boundary("fixed"),
+        id: "boundary-fixed",
+        repeat_frequency: "weekly" as const,
+        repeat_days_of_week: [0],
+        anchor_date: "2026-08-09",
+      }
+    : {
+        ...boundary("rolling"),
+        id: "boundary-rolling",
+        anchor_date: "2026-08-09",
+      };
+  const readModel = {
+    task: task({
+      status: "in_progress",
+      due_on: "2026-08-09",
+      repeat_frequency: scheduleModel === "fixed" ? "weekly" : "daily",
+      repeat_days_of_week: scheduleModel === "fixed" ? [0] : [],
+      workflow_state: "in_progress",
+      workflow_logical_date: "2026-08-09",
+      workflow_occurrence_id: occurrence.id,
+      workflow_command_id: "00000000-0000-4000-8000-000000000040",
+      workflow_revision: 2,
+    }),
+    commandOperations: [],
+    scheduleBoundaries: [scheduleBoundary],
+    occurrences: [occurrence],
+    occurrenceEffectiveOverrides: [],
+    historyFacts: [],
+    calendarOverrides: [],
+    rewardEntitlements: [],
+    rewardGrants: [],
+    rewardClaimConsumptions: [],
+    legacyHistoryEvidence: [],
+    logicalDayProfile: {
+      timezone: "America/New_York",
+      day_start_time: "06:00",
+      settings_revision: 3,
+    },
+  } as unknown as CanonicalTaskStateReadModel;
+  return { occurrence, readModel };
+}
+
 test("trusted rollover derives one automatic DMB, preserves the stale logical date, and reuses reward parity", () => {
   const rolloverState = staleRolloverState();
   const rolloverCommand = trustedCommand({
@@ -368,6 +449,92 @@ test("trusted rollover derives one automatic DMB, preserves the stale logical da
   assert.equal(rolloverPlan.normalizedResult.rewardEntitlement?.identity, manualPlan.normalizedResult.rewardEntitlement?.identity);
   assert.equal(rolloverPlan.normalizedResult.rewardEntitlement?.outcome, manualPlan.normalizedResult.rewardEntitlement?.outcome);
   assert.equal(rolloverPlan.normalizedResult.rewardEntitlement?.effectiveObligationIdentity, manualPlan.normalizedResult.rewardEntitlement?.effectiveObligationIdentity);
+});
+
+test("automatic and manual DMB remain occurrence-coherent across rolling and fixed recurrence", () => {
+  for (const scheduleModel of ["rolling", "fixed"] as const) {
+    const { occurrence, readModel } = canonicalRolloverReadModel(scheduleModel);
+    const engineInput = buildCanonicalTaskStateEngineInput(readModel, {
+      logicalDayRollover: "06:00",
+      now: "2026-08-10T12:00:00.000Z",
+      timezone: "America/New_York",
+    });
+    assert.equal(engineInput.task.activeOccurrenceDueOn, occurrence.scheduled_due_on, scheduleModel);
+
+    const automaticCommand = buildTrustedTaskStateCommand({
+      intent: {
+        type: "reconcile_rollover",
+        task_id: "task-1",
+        replay_identity: `rollover:real-occurrence:${scheduleModel}`,
+        expected_revision: 4,
+      },
+      userId: "user-1",
+      readModel,
+      logicalDay: { ...logicalDay, logicalDate: "2026-08-10", dayStartTime: "06:00" },
+      now: "2026-08-10T12:00:00.000Z",
+    });
+    const automaticPlan = planTaskStateCommand({ task: readModel.task, engineInput }, automaticCommand);
+    const automaticEngineResult = evaluateTaskState({ ...engineInput, action: { type: "reconcile_rollover" } });
+    const automaticHistory = automaticEngineResult.proposedHistoryChanges.find((change) => change.type === "insert")?.row;
+    assert.equal(automaticCommand.occurrenceId, occurrence.id, scheduleModel);
+    assert.equal(automaticCommand.scheduledDueOn, occurrence.scheduled_due_on, scheduleModel);
+    assert.equal(automaticHistory?.logicalDate, "2026-08-09", scheduleModel);
+    assert.equal(automaticHistory?.outcome, "did_my_best", scheduleModel);
+    assert.equal(automaticHistory?.occurrenceIdentity, occurrence.occurrence_key, scheduleModel);
+    assert.equal(automaticHistory?.occurrenceDueOn, occurrence.scheduled_due_on, scheduleModel);
+    assert.equal(automaticHistory?.occurredAt, "2026-08-10T12:00:00.000Z", scheduleModel);
+    assert.equal(automaticPlan.normalizedResult.historyFact?.occurrence_id, occurrence.id, scheduleModel);
+    assert.equal(automaticPlan.normalizedResult.historyFact?.scheduled_due_on, occurrence.scheduled_due_on, scheduleModel);
+
+    const manualTask = task({
+      due_on: occurrence.scheduled_due_on,
+      repeat_frequency: scheduleModel === "fixed" ? "weekly" : "daily",
+      repeat_days_of_week: scheduleModel === "fixed" ? [0] : [],
+    });
+    const manualReadModel = { ...readModel, task: manualTask } as typeof readModel;
+    const manualInput = buildCanonicalTaskStateEngineInput(manualReadModel, {
+      logicalDayRollover: "06:00",
+      now: "2026-08-10T12:00:00.000Z",
+      timezone: "America/New_York",
+    });
+    const manualCommand = buildTrustedTaskStateCommand({
+      intent: {
+        type: "set_outcome",
+        task_id: "task-1",
+        replay_identity: `manual:real-occurrence:${scheduleModel}`,
+        expected_revision: 4,
+        outcome: "did_my_best",
+        logical_date: "2026-08-09",
+        occurrence_key: occurrence.occurrence_key,
+      },
+      userId: "user-1",
+      readModel: manualReadModel,
+      logicalDay: { ...logicalDay, logicalDate: "2026-08-10", dayStartTime: "06:00" },
+      now: "2026-08-10T12:00:00.000Z",
+    });
+    const manualPlan = planTaskStateCommand({ task: manualTask, engineInput: manualInput }, manualCommand);
+    const manualEngineResult = evaluateTaskState({
+      ...manualInput,
+      action: {
+        type: "record_outcome",
+        outcome: "did_my_best",
+        logicalDate: "2026-08-09",
+        occurredAt: "2026-08-10T12:00:00.000Z",
+        occurrenceDueOn: occurrence.scheduled_due_on,
+        occurrenceIdentity: occurrence.occurrence_key,
+        historicalOverride: true,
+      },
+    });
+
+    assert.equal(automaticPlan.normalizedResult.compatibilityProjection.dueOn, manualPlan.normalizedResult.compatibilityProjection.dueOn, scheduleModel);
+    assert.equal(automaticPlan.normalizedResult.compatibilityProjection.status, manualPlan.normalizedResult.compatibilityProjection.status, scheduleModel);
+    assert.equal(automaticPlan.normalizedResult.rewardEntitlement?.identity, manualPlan.normalizedResult.rewardEntitlement?.identity, scheduleModel);
+    assert.equal(automaticPlan.normalizedResult.rewardEntitlement?.effectiveObligationIdentity, manualPlan.normalizedResult.rewardEntitlement?.effectiveObligationIdentity, scheduleModel);
+    assert.equal(automaticEngineResult.nextDueDate, scheduleModel === "fixed" ? "2026-08-16" : "2026-08-10", scheduleModel);
+    assert.equal(automaticEngineResult.activeStatus, manualEngineResult.activeStatus, scheduleModel);
+    assert.equal(automaticEngineResult.timeline.currentCompletedStreak, manualEngineResult.timeline.currentCompletedStreak, scheduleModel);
+    assert.equal(automaticEngineResult.timeline.currentMissedStreak, manualEngineResult.timeline.currentMissedStreak, scheduleModel);
+  }
 });
 
 test("rollover keeps explicit stale-date History and creates no second DMB or reward", () => {
