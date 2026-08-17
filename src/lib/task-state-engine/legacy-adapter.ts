@@ -240,6 +240,7 @@ function mapHistory(
     }
     const occurrenceKey = stringValue(row, "occurrence_key");
     const occurrenceDueOn = nullableDate(row, "occurrence_due_on", warnings);
+    const effectiveDueOn = optionalDateValue(row, "effective_due_on", warnings);
     if (!occurrenceKey && row.counted_as_due_occurrence === true && !occurrenceDueOn) {
       unsupported.push(issue(
         "occurrence_identity_unavailable",
@@ -268,6 +269,7 @@ function mapHistory(
         : `${logicalDate}T12:00:00.000Z`,
       occurrenceIdentity: occurrenceKey ?? (occurrenceDueOn ? occurrenceIdentity(taskId, occurrenceDueOn) : null),
       occurrenceDueOn,
+      ...(effectiveDueOn !== undefined ? { effectiveDueOn } : {}),
       recurrenceAuthoritative: resolveTaskHistoryRecurrenceAuthority(
         logicalDate,
         typeof row.recurrence_authoritative === "boolean" ? row.recurrence_authoritative : undefined,

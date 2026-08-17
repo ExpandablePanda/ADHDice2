@@ -46,6 +46,7 @@ test("canonical History facts project into the existing read shape with identity
     entry_date: "2026-08-10",
     occurrence_key: "task:task-1:occurrence:2026-08-10",
     occurrence_due_on: "2026-08-10",
+    effective_due_on: "2026-08-10",
     status: "done",
     event_type: "status",
     counted_as_due_occurrence: true,
@@ -132,4 +133,27 @@ test("projection does not manufacture calculated Missed rows", () => {
   ]);
   assert.deepEqual(rows.map((row) => [row.entry_date, row.status]), [["2026-08-10", "done"], ["2026-08-09", "missed"]]);
   assert.equal(rows.some((row) => row.entry_date === "2026-08-08"), false);
+});
+
+test("canonical Delay projection carries its persisted effective cursor into the read transport", () => {
+  const projected = mapCanonicalTaskHistoryFact(fact({
+    logical_date: "2026-08-16",
+    outcome: "delayed",
+    scheduled_due_on: "2026-08-18",
+    effective_due_on: "2026-09-06",
+  }));
+
+  assert.equal(projected.effective_due_on, "2026-09-06");
+  const adapted = adaptLegacyTaskState({
+    id: "task-1",
+    status: "delayed",
+    due_on: "2026-09-06",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+  }, [projected], {
+    now: "2026-08-16T12:00:00.000Z",
+    timezone: "UTC",
+    logicalDayRollover: "00:00",
+  });
+  assert.equal(adapted.engineInput.history[0]?.effectiveDueOn, "2026-09-06");
 });

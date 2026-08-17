@@ -21,6 +21,7 @@ export function mapCanonicalTaskHistoryFact(fact: CanonicalTaskHistoryFact): Tas
     entry_date: fact.logical_date,
     occurrence_key: occurrenceKey,
     occurrence_due_on: fact.scheduled_due_on,
+    effective_due_on: fact.effective_due_on,
     status: fact.outcome,
     event_type: fact.event_kind === "terminal_complete" ? "completed_permanently" : "status",
     counted_as_due_occurrence: Boolean(fact.scheduled_due_on),

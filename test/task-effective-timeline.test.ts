@@ -1541,6 +1541,77 @@ test("Delayed pauses Missed streaks and resumes Missed authority at the delayed 
   assert.equal(dueAgain.currentMissedStreak, 5);
 });
 
+test("active canonical Daily Delay rebases the historical occurrence to its persisted effective cursor", () => {
+  const delayed = history("2026-08-16", "delayed", {
+    occurrenceDueOn: "2026-08-18",
+    effectiveDueOn: "2026-09-06",
+    recurrenceAuthoritative: true,
+  });
+  const duringDelay = timeline({
+    task: {
+      activeStatus: "delayed",
+      dueOn: "2026-09-06",
+      historicalScheduleAnchor: "2026-08-18",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    history: [delayed],
+    logicalDate: "2026-08-16",
+    calendarStart: "2026-08-16",
+    calendarEnd: "2026-09-08",
+  });
+
+  assert.equal(duringDelay.days["2026-08-16"]?.state, "delayed");
+  assert.equal(duringDelay.activeStatus, "delayed");
+  for (const date of ["2026-08-18", "2026-08-19", "2026-09-05"]) {
+    assert.equal(duringDelay.days[date]?.state, "not_due", date);
+  }
+  assert.equal(duringDelay.days["2026-09-06"]?.state, "scheduled");
+  assert.equal(duringDelay.days["2026-09-06"]?.occurrenceDueOn, "2026-09-06");
+  assert.equal(duringDelay.days["2026-09-07"]?.state, "scheduled");
+  assert.equal(duringDelay.days["2026-09-07"]?.occurrenceDueOn, "2026-09-07");
+  assert.equal(duringDelay.nextDueOn, "2026-09-06");
+
+  const dueAgain = timeline({
+    task: {
+      activeStatus: "delayed",
+      dueOn: "2026-09-06",
+      historicalScheduleAnchor: "2026-08-18",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    history: [delayed],
+    logicalDate: "2026-09-06",
+    calendarStart: "2026-08-16",
+    calendarEnd: "2026-09-07",
+  });
+  assert.equal(dueAgain.days["2026-09-06"]?.state, "open");
+  assert.equal(dueAgain.days["2026-09-06"]?.obligation, "due");
+});
+
+test("an inactive canonical Delay with a stale effective target cannot rebase the current cursor", () => {
+  const oldDelay = history("2026-08-16", "delayed", {
+    occurrenceDueOn: "2026-08-18",
+    effectiveDueOn: "2026-08-25",
+    recurrenceAuthoritative: true,
+  });
+  const result = timeline({
+    task: {
+      activeStatus: "pending",
+      dueOn: "2026-09-06",
+      historicalScheduleAnchor: "2026-08-18",
+      recurrence: { kind: "rolling", intervalDays: 3 },
+    },
+    history: [oldDelay],
+    logicalDate: "2026-08-16",
+    calendarStart: "2026-08-16",
+    calendarEnd: "2026-09-06",
+  });
+
+  assert.equal(result.nextDueOn, "2026-08-18");
+  assert.equal(result.days["2026-08-18"]?.state, "scheduled");
+  assert.equal(result.days["2026-08-25"]?.state, "not_due");
+  assert.notEqual(result.nextDueOn, oldDelay.effectiveDueOn);
+});
+
 test("clean Due tasks remain internally pending while future thresholds stay active-status-only", () => {
   const due = timeline({ task: { dueOn: "2026-08-10", activeOccurrenceDueOn: "2026-08-10" }, logicalDate: "2026-08-10", calendarStart: "2026-08-10", calendarEnd: "2026-08-10" });
   assert.equal(due.days["2026-08-10"]?.state, "open");

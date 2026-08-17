@@ -126,6 +126,21 @@ function earliestDate(values: Array<string | null | undefined>) {
     .sort()[0] ?? null;
 }
 
+function currentCanonicalDelayEffectiveDueOn(
+  task: TaskStateSnapshot,
+  rows: TaskStateHistoryRow[],
+) {
+  if (task.activeStatus !== "delayed" || !task.dueOn) return null;
+  return rows
+    .filter((row) => row.outcome === "delayed")
+    .filter((row) => row.recurrenceAuthoritative !== false)
+    .filter((row) => row.effectiveDueOn === task.dueOn)
+    .sort((left, right) => left.logicalDate.localeCompare(right.logicalDate)
+      || left.occurredAt.localeCompare(right.occurredAt)
+      || left.id.localeCompare(right.id))
+    .at(-1)?.effectiveDueOn ?? null;
+}
+
 function checkpointForReplay(
   rows: TaskStateHistoryRow[],
   replay: TaskTimelineReplayRequest | undefined,
@@ -272,6 +287,7 @@ function initialOccurrenceDueOn(
   explicitRows: TaskStateHistoryRow[],
   replay: TaskTimelineReplayRequest | undefined,
   checkpoint: TaskTimelineCheckpoint | null,
+  currentDelayEffectiveDueOn: string | null,
 ) {
   if (replay && replay.effectiveDueOn !== undefined) return replay.effectiveDueOn;
   if (replay && checkpoint?.kind === "success") return checkpoint.occurrenceDueOn;
@@ -286,6 +302,7 @@ function initialOccurrenceDueOn(
         ?? changedSuccess.logicalDate;
     }
   }
+  if (currentDelayEffectiveDueOn) return currentDelayEffectiveDueOn;
   return task.historicalScheduleAnchor
     ?? task.dueOn
     ?? task.activeOccurrenceDueOn
@@ -316,7 +333,14 @@ export function buildTaskEffectiveTimeline(
   const recurrenceByDate = authoritativeRowsByDate(recurrenceRows);
   const recurrenceExplicitRows = [...recurrenceByDate.values()];
   const replayCheckpoint = checkpointForReplay(recurrenceExplicitRows, input.replay);
-  const initialDueOn = initialOccurrenceDueOn(input.task, recurrenceExplicitRows, input.replay, replayCheckpoint);
+  const currentDelayEffectiveDueOn = currentCanonicalDelayEffectiveDueOn(input.task, recurrenceExplicitRows);
+  const initialDueOn = initialOccurrenceDueOn(
+    input.task,
+    recurrenceExplicitRows,
+    input.replay,
+    replayCheckpoint,
+    currentDelayEffectiveDueOn,
+  );
   const simulationStart = earliestDate([
     input.calendarStart,
     input.logicalDate,
@@ -435,7 +459,14 @@ export function buildTaskEffectiveTimeline(
       return;
     }
     if (row.outcome === "delayed") {
-      if (input.task.dueOn && input.task.dueOn > row.logicalDate
+      // Legacy History has no persisted effective cursor. Preserve its prior
+      // compatibility fallback only when the Task itself is currently Delayed;
+      // canonical rows always carry effectiveDueOn (including null) and must
+      // satisfy the active-target agreement above instead.
+      if (input.task.activeStatus === "delayed"
+        && row.effectiveDueOn === undefined
+        && input.task.dueOn
+        && input.task.dueOn > row.logicalDate
         && (!activeDueOn || activeDueOn <= row.logicalDate)) {
         activeDueOn = input.task.dueOn;
       }

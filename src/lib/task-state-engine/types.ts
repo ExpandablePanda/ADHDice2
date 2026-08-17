@@ -73,6 +73,8 @@ export type TaskStateHistoryRow = {
   occurredAt: string;
   occurrenceIdentity?: string | null;
   occurrenceDueOn?: string | null;
+  /** Persisted canonical effective cursor for a Delayed fact, when available. */
+  effectiveDueOn?: string | null;
   /** Internal read-model boundary: false preserves History metadata without driving recurrence. */
   recurrenceAuthoritative?: boolean;
   countedAsDueOccurrence?: boolean;

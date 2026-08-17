@@ -512,6 +512,8 @@ export type TaskHistory = {
   entry_date: string;
   occurrence_key: string | null;
   occurrence_due_on: string | null;
+  /** Present only when this read row is projected from canonical History facts. */
+  effective_due_on?: string | null;
   status: TaskStatus;
   event_type: TaskHistoryEventType;
   counted_as_due_occurrence: boolean;

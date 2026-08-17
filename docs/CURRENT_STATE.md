@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.18`.
+- Current working app version: `7.9.19`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -36,6 +36,12 @@ Role: active working
 ### 7.9.18 Canonical Delay effective-due correction
 
 - Canonical Delay now carries the selected `effective_due_on` into the existing Effective Timeline replay cursor, so the command's History fact, occurrence effective override, compatibility projection, RPC payload, and committed local Task all retain the selected next due date. Delay does not create a schedule boundary or alter recurrence configuration. Source and focused tests are updated; Edge deployment, SQL, live Supabase data, and browser validation remain separate and unrun.
+
+### 7.9.19 Active Delay History Calendar reconstruction correction
+
+- Failed browser QA found that a canonical Delay saved the live Task due date and Delayed status correctly, but reopening History Calendar reconstructed from the old recurrence anchor. The persisted canonical `effective_due_on` stopped at the History projection boundary, so the ordinary read path could not rebase the active occurrence; a pre-cursor Delayed row was then skipped.
+- The read-side correction carries canonical `effective_due_on` through the existing History transport into Effective Timeline reconstruction. Only an authoritative Delayed fact whose effective target agrees with the currently active Delayed Task and current Task due cursor can seed the active cursor. Older or stale Delay facts do not rebase it, and the active Delay is retained even when its action date precedes the original scheduled occurrence.
+- Changed-path Effective Timeline, recurrence, non-batch Task History, canonical History projection/read-input, and targeted lint checks passed, plus `git diff --check`. The existing Task History batch-action suite still has 14 baseline failures, the raw-Node read-authority test remains blocked by its `.tsx` loader boundary, and full typecheck retains unrelated baseline errors. Manual browser QA is still required for the live Test I flow: reopen History after Delay, confirm 8/16 Delayed, 8/18–9/5 Not Due, 9/6 Due, resumed Daily recurrence, and unchanged Active Status. SQL/schema changes, Supabase deployment, live data, and browser validation remain unrun.
 
 ### 7.9.11 Independent Step/Substep pinning
 
