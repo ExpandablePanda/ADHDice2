@@ -591,7 +591,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.23";
+const APP_VERSION = "7.9.24";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2403,7 +2403,7 @@ export function TaskApp() {
       client,
       logicalDayKey: rolloverSettingsKey,
       userId,
-      execute: async () => {
+      execute: async ({ settledTaskIds }) => {
         if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
           const rolloverTasks = inputs.tasks.filter((candidate) => candidate.status !== "archived" && candidate.status !== "trashed");
           const rolloverTaskIds = rolloverTasks.map((candidate) => candidate.id);
@@ -2429,20 +2429,22 @@ export function TaskApp() {
             timezone: inputs.userTimeZone,
           });
           const taskById = new Map(rolloverTasks.map((task) => [task.id, task]));
-          const mutationCandidates = engineRolloverPlanTaskMutationCandidates(plan);
+          const mutationCandidates = engineRolloverPlanTaskMutationCandidates(plan, rolloverTasks);
           tasksEvaluated = plan.tasksEvaluated;
           plannedTaskPatches = mutationCandidates.length;
           remainingTaskPatchSummaries = plan.remainingPatchSummaries;
           let canonicalCommitted = 0;
           let canonicalFailures = 0;
+          const settledTaskIdsThisRun: string[] = [];
           for (const candidate of mutationCandidates) {
+            if (settledTaskIds.has(candidate.taskId)) continue;
             const task = taskById.get(candidate.taskId);
             if (!task) {
               canonicalFailures += 1;
               continue;
             }
             const canonicalRevision = (task as Partial<TaskStateRuntimeLocalTask>).canonical_revision;
-            if (!Number.isInteger(canonicalRevision) || canonicalRevision < 1) {
+            if (typeof canonicalRevision !== "number" || !Number.isInteger(canonicalRevision) || canonicalRevision < 1) {
               canonicalFailures += 1;
               continue;
             }
@@ -2456,12 +2458,18 @@ export function TaskApp() {
                 taskId: task.id,
               }),
             });
-            if (committed) canonicalCommitted += 1;
+            if (committed) {
+              canonicalCommitted += 1;
+              settledTaskIdsThisRun.push(candidate.taskId);
+            }
             else canonicalFailures += 1;
           }
           committedTaskPatches = canonicalCommitted;
           didMutate = canonicalCommitted > 0;
-          return { error: canonicalFailures > 0 ? { message: `${canonicalFailures} Task State rollover command${canonicalFailures === 1 ? "" : "s"} failed.` } : null };
+          return {
+            error: canonicalFailures > 0 ? { message: `${canonicalFailures} Task State rollover command${canonicalFailures === 1 ? "" : "s"} failed.` } : null,
+            settledTaskIds: settledTaskIdsThisRun,
+          };
         }
         const rpc = client as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{
           data: Array<{ changed_task_count?: number; deduplicated_outcome_count?: number; inserted_history_count?: number }> | null;
@@ -2518,7 +2526,7 @@ export function TaskApp() {
         didMutate = true;
         return rpc.rpc("adhdice_reconcile_task_rollover", { p_now: new Date().toISOString(), p_user_id: userId });
       },
-      onOwnedSettled: async ({ error }) => {
+      onOwnedSettled: async ({ error, settledTaskIds = [] }) => {
         if (!error && didMutate && authority === "engine" && committedHistoryRows > 0 && rewardCandidates.length > 0) {
           const queueRolloverRewards = queueRolloverRewardsRef.current;
           if (queueRolloverRewards) {
@@ -2531,9 +2539,9 @@ export function TaskApp() {
           executionMs: Math.round(performance.now() - startedAt), lastLogicalDateEvaluated: inputs.todayKey, lastRunSource: source,
           plannedHistoryRows, plannedRewards, plannedTaskPatches,
           remainingTaskPatchSummaries,
-          committedHistoryRows: error ? 0 : committedHistoryRows,
-          committedRewards: error ? 0 : committedRewards,
-          committedTaskPatches: error ? 0 : committedTaskPatches,
+          committedHistoryRows: error && settledTaskIds.length === 0 ? 0 : committedHistoryRows,
+          committedRewards: error && settledTaskIds.length === 0 ? 0 : committedRewards,
+          committedTaskPatches: error && settledTaskIds.length === 0 ? 0 : committedTaskPatches,
           tasksEvaluated,
         };
         if (!error && typeof window !== "undefined") {
@@ -2546,7 +2554,7 @@ export function TaskApp() {
             console.info("[rollover] Remaining task patch summaries", JSON.stringify(remainingTaskPatchSummaries));
           }
         }
-        if (error) { setMessage((previous) => previous ?? { tone: "warn", text: error.message }); return; }
+        if (error) setMessage((previous) => previous ?? { tone: "warn", text: error.message });
         if (!didMutate) return;
         if (diagnosticsEnabled) console.info("[rollover] Rollover completed; requesting targeted workspace reconciliation.");
         await reconcileRolloverWorkspace();

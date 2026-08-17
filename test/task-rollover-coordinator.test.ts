@@ -154,3 +154,33 @@ test("one failed single-flight request emits one owned error", async () => {
   await Promise.all([coordinator.run(options), coordinator.run(options), coordinator.run(options)]);
   assert.equal(messages, 1);
 });
+
+test("partial batch settlement preserves successful Tasks and retries only unresolved Tasks", async () => {
+  const coordinator = new TaskRolloverSingleFlightCoordinator();
+  const client = {};
+  let executions = 0;
+  const attemptedTaskIds: string[][] = [];
+  coordinator.setOwner(client, "user-a");
+
+  const run = () => coordinator.run({
+    client,
+    execute: async ({ settledTaskIds }) => {
+      executions += 1;
+      const candidates = ["task-a", "task-b", "task-c"].filter((taskId) => !settledTaskIds.has(taskId));
+      attemptedTaskIds.push(candidates);
+      return executions === 1
+        ? { error: { message: "task-b failed" }, settledTaskIds: ["task-a", "task-c"] }
+        : { error: null, settledTaskIds: ["task-b"] };
+    },
+    logicalDayKey: "2026-07-19",
+    onOwnedSettled: () => {},
+    userId: "user-a",
+  });
+
+  const first = await run();
+  assert.equal(first?.result.error?.message, "task-b failed");
+  const second = await run();
+  assert.equal(second?.result.error, null);
+  assert.deepEqual(attemptedTaskIds, [["task-a", "task-b", "task-c"], ["task-b"]]);
+  assert.equal(executions, 2);
+});

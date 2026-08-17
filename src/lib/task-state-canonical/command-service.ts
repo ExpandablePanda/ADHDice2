@@ -222,6 +222,38 @@ export type CanonicalTaskCommandPlan = {
 };
 
 /**
+ * Detects a plan whose canonical and compatibility projections, plus every
+ * side-effect section, already equal the stored state. Callers can return the
+ * current committed read model without creating an operation or revision.
+ */
+export function isCanonicalTaskStateCommandSemanticNoOp(input: {
+  plan: CanonicalTaskCommandPlan;
+  task: CanonicalTaskRow;
+}) {
+  const { normalizedResult } = input.plan;
+  const patchChangesTask = Object.entries(normalizedResult.canonicalTaskPatch).some(([field, value]) => (
+    input.task[field as keyof CanonicalTaskRow] !== value
+  ));
+  if (patchChangesTask) return false;
+
+  const projection = normalizedResult.compatibilityProjection;
+  if (projection.status !== input.task.status
+    || projection.dueOn !== input.task.due_on
+    || projection.completedAt !== input.task.completed_at
+    || projection.activeStatusLogicalDate !== input.task.active_status_logical_date
+    || projection.activeOccurrenceDueOn !== input.task.active_occurrence_due_on) {
+    return false;
+  }
+
+  return normalizedResult.historyFact === null
+    && normalizedResult.occurrence === null
+    && normalizedResult.scheduleBoundary === null
+    && normalizedResult.occurrenceEffectiveOverride === null
+    && normalizedResult.calendarOverride === null
+    && normalizedResult.rewardEntitlement === null;
+}
+
+/**
  * Converts a pure plan to the snake_case JSON contract consumed by the M3A
  * RPC.  The active application does not call this adapter until M3B.
  */
@@ -305,7 +337,7 @@ export class CanonicalCommandPlanningError extends Error {
 
 function requireCanonicalRevision(task: CanonicalTaskRow): number {
   const revision = task.canonical_revision;
-  if (!Number.isInteger(revision) || revision < 1) {
+  if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 1) {
     throw new CanonicalCommandPlanningError(
       "CANONICAL_REVISION_REQUIRED",
       "Canonical Task State requires canonical_revision; legacy revision is not a substitute.",

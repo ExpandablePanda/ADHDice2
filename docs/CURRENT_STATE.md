@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.23`.
+- Current working app version: `7.9.24`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,13 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.9.24 Canonical rollover orchestration and no-op correction
+
+- Production rejected invalid `reconcile_rollover` commands after the 7.9.22 SQL/Edge activation, including empty canonical patches and repeated canonical revision increments. The compatibility candidate planner had omitted real stale canonical In Progress workflows when `active_status_logical_date` was null or compatibility status was Missed, while compatibility output could also misclassify current-day canonical workflows.
+- Canonical rollover eligibility now uses `workflow_state = in_progress` plus a stale `workflow_logical_date`; current-day canonical workflows are excluded, and compatibility-only rollover projections remain eligible only when no canonical workflow owns the Task.
+- Semantic `reconcile_rollover` no-ops return success before the canonical RPC, create no operation row, and preserve `canonical_revision`. Partial sweeps reconcile successful/no-op Tasks and retain only failed candidates for retry, preventing settled Tasks from receiving new revisions on timer, visibility, or pageshow reruns.
+- Automatic Did My Best remains the existing trusted 7.9.20–7.9.23 contract, including explicit stale-date History precedence, occurrence identity, recurrence/streak parity, reward-entitlement idempotence, and workflow clearing. Production SQL remains unchanged and was not applied; Edge deployment still requires ChatGPT review/approval. Browser QA remains pending, and no live data was mutated.
 
 ### 7.9.23 Canonical History active-status read correction
 

@@ -3,6 +3,7 @@ import test from "node:test";
 import type { Task } from "../src/lib/database.types.ts";
 import {
   planTaskStateCommand,
+  isCanonicalTaskStateCommandSemanticNoOp,
   serializeCanonicalTaskStateCommandForRpc,
   type CanonicalCommandPlanningState,
   type CanonicalTaskStateCommand,
@@ -565,6 +566,7 @@ test("rollover without stale In Progress is a no-op with no History or reward", 
   assert.deepEqual(plan.normalizedResult.canonicalTaskPatch, {});
   assert.equal(plan.normalizedResult.historyFact, null);
   assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.equal(isCanonicalTaskStateCommandSemanticNoOp({ plan, task: planningState.task }), true);
 });
 
 test("stale canonical revision is rejected before a normalized write plan", () => {

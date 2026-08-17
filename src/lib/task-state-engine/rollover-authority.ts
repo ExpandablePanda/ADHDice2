@@ -8,6 +8,7 @@ import {
 } from "./persistence-projection.ts";
 import type { PersistableTaskStatePatch } from "./persistence-projection.ts";
 import type { TaskHistoryOutcome } from "./types.ts";
+import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
 
 export type EngineRolloverHistoryRow = {
   logicalDate: string;
@@ -111,6 +112,35 @@ export function engineRolloverPlanHasMutations(plan: EngineRolloverPlan) {
   return plan.tasks.length > 0;
 }
 
-export function engineRolloverPlanTaskMutationCandidates(plan: EngineRolloverPlan) {
-  return plan.tasks.filter((entry) => Object.keys(entry.patch).length > 0);
+export function engineRolloverPlanTaskMutationCandidates(
+  plan: EngineRolloverPlan,
+  tasks: Array<Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">>> = [],
+) {
+  const compatibilityCandidates = plan.tasks.filter((entry) => Object.keys(entry.patch).length > 0);
+  const candidateByTaskId = new Map(compatibilityCandidates.map((entry) => [entry.taskId, entry]));
+
+  // Canonical workflow state owns rollover eligibility. Compatibility status
+  // remains eligible only for Tasks without a canonical workflow, preserving
+  // the existing projection-only rollover behavior at that boundary.
+  for (const task of tasks) {
+    if (task.workflow_state !== "in_progress") continue;
+    const isStale = task.workflow_logical_date !== null
+      && task.workflow_logical_date !== undefined
+      && task.workflow_logical_date < plan.logicalDate;
+    if (!isStale) {
+      candidateByTaskId.delete(task.id);
+      continue;
+    }
+    if (!candidateByTaskId.has(task.id)) {
+      candidateByTaskId.set(task.id, {
+        expectedRevision: task.revision,
+        history: [],
+        patch: {},
+        rewardEligible: false,
+        taskId: task.id,
+      });
+    }
+  }
+
+  return [...candidateByTaskId.values()];
 }

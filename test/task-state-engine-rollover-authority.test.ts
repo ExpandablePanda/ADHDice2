@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { Task, TaskHistory } from "@/lib/database.types";
+import type { CanonicalTaskStateColumns } from "@/lib/task-state-canonical/types";
 import { createEngineRolloverPlan, engineRolloverPlanHasMutations, engineRolloverPlanTaskMutationCandidates } from "@/lib/task-state-engine/rollover-authority";
 
-function task(overrides: Partial<Task> = {}): Task {
+type CanonicalWorkflowTask = Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">>;
+
+function task(overrides: Partial<CanonicalWorkflowTask> = {}): CanonicalWorkflowTask {
   return { id: "task-1", user_id: "user-1", title: "Rollover", status: "pending", due_on: "2026-07-30", revision: 1,
     active_status_logical_date: null, active_occurrence_due_on: null, completed_at: null, repeat_frequency: "daily", repeat_interval: 1,
     repeat_days_of_week: [], repeat_day_of_month: null, repeat_monthly_mode: "day_of_month", repeat_monthly_ordinal: null,
@@ -202,6 +205,32 @@ test("canonical rollover candidates include only Tasks with persistable patches"
   assert.equal(engineRolloverPlanTaskMutationCandidates(replay).length, 0);
 });
 
+test("stale canonical workflow is a candidate despite Missed compatibility state and no active-status date", () => {
+  const canonicalTask = task({
+    status: "missed",
+    active_status_logical_date: null,
+    workflow_state: "in_progress",
+    workflow_logical_date: "2026-07-30",
+  });
+  const plan = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [canonicalTask] });
+  const candidates = engineRolloverPlanTaskMutationCandidates(plan, [canonicalTask]);
+
+  assert.deepEqual(candidates.map((candidate) => candidate.taskId), [canonicalTask.id]);
+  assert.deepEqual(candidates[0]?.patch, {});
+});
+
+test("current-day canonical In Progress workflow is excluded even when compatibility planning differs", () => {
+  const canonicalTask = task({
+    status: "missed",
+    active_status_logical_date: null,
+    workflow_state: "in_progress",
+    workflow_logical_date: "2026-07-31",
+  });
+  const plan = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [canonicalTask] });
+
+  assert.deepEqual(engineRolloverPlanTaskMutationCandidates(plan, [canonicalTask]), []);
+});
+
 test("first fixed-schedule run advances once and reloaded persistence produces an empty plan", () => {
   const original = task({
     due_on: "2026-08-02",
@@ -348,7 +377,7 @@ test("7.6.10 validates supported values before enum casts and excludes Archive/T
   assert.doesNotMatch(sql, /archived', 'trashed'.*::public\.adhdice_clean_task_status/);
 });
 
-test("rollover diagnostics distinguish planned from committed writes and clear committed counts on RPC failure", () => {
+test("rollover diagnostics distinguish planned from committed writes and preserve partial canonical settlements", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
   const start = source.indexOf("let plannedTaskPatches = 0;");
   const end = source.indexOf("await reconcileRolloverWorkspace();", start);
@@ -356,8 +385,8 @@ test("rollover diagnostics distinguish planned from committed writes and clear c
   assert.match(lifecycle, /plannedHistoryRows/);
   assert.match(lifecycle, /committedHistoryRows = committed\?\.inserted_history_count \?\? 0/);
   assert.match(lifecycle, /committedTaskPatches = committed\?\.changed_task_count \?\? 0/);
-  assert.match(lifecycle, /committedHistoryRows: error \? 0 : committedHistoryRows/);
-  assert.match(lifecycle, /committedTaskPatches: error \? 0 : committedTaskPatches/);
+  assert.match(lifecycle, /committedHistoryRows: error && settledTaskIds\.length === 0 \? 0 : committedHistoryRows/);
+  assert.match(lifecycle, /committedTaskPatches: error && settledTaskIds\.length === 0 \? 0 : committedTaskPatches/);
   assert.match(lifecycle, /deduplicatedOutcomes: error \? 0 : deduplicatedOutcomes/);
   assert.doesNotMatch(lifecycle, /historyRowsInserted: plannedHistoryRows/);
 });

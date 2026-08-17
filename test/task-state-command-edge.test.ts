@@ -418,3 +418,59 @@ test("a normal fresh command reaches the existing RPC exactly once", async () =>
   assert.deepEqual(result.body, { state: "committed", was_replayed: false });
   assert.deepEqual(harnessState.counts(), { replayCalls: 1, canonicalReads: 1, planCalls: 1, rpcCalls: 1 });
 });
+
+test("a true rollover semantic no-op returns success without invoking the canonical RPC", async () => {
+  let rpcCalls = 0;
+  const intent: TaskStateCommandIntent = {
+    type: "reconcile_rollover",
+    task_id: "task-1",
+    replay_identity: "rollover:no-op:2026-08-10",
+    expected_revision: 4,
+  };
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent,
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: null, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      buildEngineInput: (() => ({} as TaskStateEngineInput)),
+      planCommand: ({ task }) => ({
+        command: { commandId: "no-op-command" },
+        normalizedResult: {
+          commandId: "no-op-command",
+          commandType: "reconcile_rollover",
+          state: "accepted",
+          conflictCode: null,
+          expectedRevision: task.canonical_revision,
+          nextRevision: task.canonical_revision + 1,
+          canonicalTaskPatch: {},
+          compatibilityProjection: {
+            status: task.status,
+            dueOn: task.due_on,
+            completedAt: task.completed_at,
+            activeStatusLogicalDate: task.active_status_logical_date,
+            activeOccurrenceDueOn: task.active_occurrence_due_on,
+          },
+          historyFact: null,
+          occurrence: null,
+          scheduleBoundary: null,
+          occurrenceEffectiveOverride: null,
+          calendarOverride: null,
+          rewardEntitlement: null,
+          warnings: [],
+        },
+      }) as ReturnType<typeof planTaskStateCommand>,
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal((result.body as { no_action?: boolean }).no_action, true);
+  assert.equal((result.body as { next_revision?: number }).next_revision, 4);
+  assert.equal(rpcCalls, 0);
+});

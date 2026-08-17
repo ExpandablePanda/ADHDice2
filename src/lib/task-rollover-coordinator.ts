@@ -2,6 +2,8 @@ export type TaskRolloverRpcError = { message: string };
 
 export type TaskRolloverRpcResult = {
   error: TaskRolloverRpcError | null;
+  /** Tasks whose command completed or was a semantic no-op in this sweep. */
+  settledTaskIds?: string[];
 };
 
 export type TaskRolloverCoordinatorResult = {
@@ -11,7 +13,7 @@ export type TaskRolloverCoordinatorResult = {
 
 type RunTaskRolloverOptions = {
   client: object;
-  execute: () => Promise<TaskRolloverRpcResult>;
+  execute: (input: { settledTaskIds: ReadonlySet<string> }) => Promise<TaskRolloverRpcResult>;
   logicalDayKey: string;
   onOwnedSettled: (result: TaskRolloverRpcResult) => Promise<void> | void;
   userId: string;
@@ -22,6 +24,7 @@ export class TaskRolloverSingleFlightCoordinator {
   private ownerClient: object | null = null;
   private ownerUserId: string | null = null;
   private requests = new Map<string, Promise<TaskRolloverCoordinatorResult>>();
+  private settledTaskIdsByLogicalDay = new Map<string, Set<string>>();
   private tail: { generation: number; promise: Promise<void> } | null = null;
 
   setOwner(client: object | null, userId: string | null) {
@@ -30,6 +33,7 @@ export class TaskRolloverSingleFlightCoordinator {
     this.ownerUserId = userId;
     this.generation += 1;
     this.requests.clear();
+    this.settledTaskIdsByLogicalDay.clear();
     this.tail = null;
   }
 
@@ -41,12 +45,18 @@ export class TaskRolloverSingleFlightCoordinator {
     if (existing) return existing;
 
     const generation = this.generation;
+    const settledTaskIds = this.settledTaskIdsByLogicalDay.get(logicalDayKey) ?? new Set<string>();
     const previous = this.tail?.generation === generation ? this.tail.promise : Promise.resolve();
     const request = previous
-      .then(() => this.isCurrent(client, generation, userId) ? execute() : null)
+      .then(() => this.isCurrent(client, generation, userId) ? execute({ settledTaskIds }) : null)
       .then(async (result): Promise<TaskRolloverCoordinatorResult> => {
         const owned = this.isCurrent(client, generation, userId);
         if (!result) return { owned: false, result: { error: null } };
+        if (owned && result.settledTaskIds?.length) {
+          const settled = this.settledTaskIdsByLogicalDay.get(logicalDayKey) ?? new Set<string>();
+          for (const taskId of result.settledTaskIds) settled.add(taskId);
+          this.settledTaskIdsByLogicalDay.set(logicalDayKey, settled);
+        }
         if (owned) await onOwnedSettled(result);
         return { owned, result };
       });

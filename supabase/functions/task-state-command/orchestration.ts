@@ -1,5 +1,6 @@
 import {
   CanonicalCommandPlanningError,
+  isCanonicalTaskStateCommandSemanticNoOp,
   planTaskStateCommand,
   serializeCanonicalTaskStateCommandForRpc,
 } from "../../../src/lib/task-state-canonical/command-service.ts";
@@ -12,6 +13,7 @@ import {
   loadCanonicalTaskState,
   type CanonicalReadClient,
 } from "../../../src/lib/task-state-canonical/read-model.ts";
+import type { CanonicalTaskRow } from "../../../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalTaskCommandOperation } from "../../../src/lib/task-state-canonical/types.ts";
 import {
   buildTrustedTaskStateCommand,
@@ -130,6 +132,36 @@ function rejectedPlanResponse(conflictCode: string | null): TrustedTaskStateComm
   return errorResponse(code, "Canonical Task State command was rejected.", code === "STALE_REVISION" ? 409 : 422);
 }
 
+function semanticNoOpResponse(input: {
+  commandId: string;
+  task: CanonicalTaskRow;
+  plan: ReturnType<typeof planTaskStateCommand>;
+}) {
+  const { commandId, plan, task } = input;
+  if (!task) throw new Error("A semantic no-op response requires the canonical Task.");
+  return {
+    status: 200,
+    body: {
+      state: "committed",
+      task_id: task.id,
+      command_id: commandId,
+      expected_revision: task.canonical_revision,
+      next_revision: task.canonical_revision,
+      was_replayed: false,
+      conflict_code: null,
+      no_action: true,
+      canonical_task_patch: {},
+      compatibility_projection: {
+        status: plan.normalizedResult.compatibilityProjection.status,
+        due_on: plan.normalizedResult.compatibilityProjection.dueOn,
+        completed_at: plan.normalizedResult.compatibilityProjection.completedAt,
+        active_status_logical_date: plan.normalizedResult.compatibilityProjection.activeStatusLogicalDate,
+        active_occurrence_due_on: plan.normalizedResult.compatibilityProjection.activeOccurrenceDueOn,
+      },
+    },
+  } satisfies TrustedTaskStateCommandResponse;
+}
+
 export async function executeTrustedTaskStateCommand(input: {
   userId: string;
   intent: TaskStateCommandIntent;
@@ -210,6 +242,10 @@ export async function executeTrustedTaskStateCommand(input: {
     );
     if (finalReplay) return finalReplay;
     return rejectedPlanResponse(plan.normalizedResult.conflictCode);
+  }
+
+  if (isCanonicalTaskStateCommandSemanticNoOp({ plan, task: readResult.data.task })) {
+    return semanticNoOpResponse({ commandId: plan.command.commandId, plan, task: readResult.data.task });
   }
 
   const rpcResult = await input.adminClient.rpc(

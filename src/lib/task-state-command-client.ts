@@ -67,6 +67,7 @@ type TaskStateCommandResultFields = {
   next_revision: number | null;
   was_replayed: boolean | null;
   conflict_code: string | null;
+  no_action?: boolean;
   canonical_task_patch: JsonObject | null;
   compatibility_projection: JsonObject | null;
   side_effect_ids: TaskStateCommandSideEffectIds;
@@ -179,6 +180,7 @@ function resultFields(payload: JsonObject): TaskStateCommandResultFields {
     next_revision: requiredNullableInteger(payload, "next_revision"),
     was_replayed: requiredBoolean(payload, "was_replayed"),
     conflict_code: requiredNullableString(payload, "conflict_code"),
+    ...(payload.no_action === true ? { no_action: true } : {}),
     canonical_task_patch: payload.state === "committed" ? requiredObject(payload, "canonical_task_patch") : null,
     compatibility_projection: payload.state === "committed" ? requiredObject(payload, "compatibility_projection") : null,
     side_effect_ids: sideEffectIds(payload),

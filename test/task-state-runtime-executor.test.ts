@@ -160,6 +160,28 @@ test("committed response reconciles canonical and compatibility fields without o
   assert.equal(result.task.revision, currentTask.revision);
 });
 
+test("semantic no-op response preserves canonical revision and performs no local write", async () => {
+  const currentTask = task();
+  const action = archiveAction(currentTask);
+  const result = await executeTaskStateRuntimeAction(action, currentTask, {
+    invoke: async () => committedResponse({
+      no_action: true,
+      next_revision: currentTask.canonical_revision,
+      canonical_task_patch: {},
+      compatibility_projection: {
+        status: currentTask.status,
+        due_on: currentTask.due_on,
+        completed_at: currentTask.completed_at,
+        active_status_logical_date: currentTask.active_status_logical_date ?? null,
+        active_occurrence_due_on: currentTask.active_occurrence_due_on ?? null,
+      },
+    }),
+  });
+
+  assert.equal(result.success, true, result.success ? undefined : result.error.message);
+  if (result.success) assert.equal(result.task.canonical_revision, currentTask.canonical_revision);
+});
+
 test("committed canonical Delay reconciles the effective due date onto the local Task", async () => {
   const currentTask = task({ due_on: "2026-08-17" });
   const action = delayAction(currentTask);

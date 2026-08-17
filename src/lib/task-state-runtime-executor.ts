@@ -274,9 +274,14 @@ function reconcileCommittedTask(
   if (response.task_id !== task.id) throw new Error("Committed response task_id does not match the requested Task.");
   if (response.expected_revision !== action.expectedRevision) throw new Error("Committed response expected_revision does not match the classified action.");
   const nextRevision = response.next_revision;
-  if (typeof nextRevision !== "number" || !Number.isInteger(nextRevision) || nextRevision < 1 || nextRevision <= action.expectedRevision) {
+  if (response.no_action) {
+    if (nextRevision !== action.expectedRevision) {
+      throw new Error("Semantic no-op response must preserve canonical_revision.");
+    }
+  } else if (typeof nextRevision !== "number" || !Number.isInteger(nextRevision) || nextRevision < 1 || nextRevision <= action.expectedRevision) {
     throw new Error("Committed response next_revision is not a valid successor revision.");
   }
+  const committedRevision = response.no_action ? action.expectedRevision : nextRevision;
   if (!isObject(response.canonical_task_patch)) throw new Error("Committed response is missing canonical_task_patch.");
   if (!isObject(response.compatibility_projection)) throw new Error("Committed response is missing compatibility_projection.");
 
@@ -287,7 +292,7 @@ function reconcileCommittedTask(
     ...canonicalPatch,
     ...projection,
     // The canonical command response is the only source for this revision.
-    canonical_revision: nextRevision,
+    canonical_revision: committedRevision,
   };
 }
 
