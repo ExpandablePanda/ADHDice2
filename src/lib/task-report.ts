@@ -157,13 +157,13 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   in_progress: "In Progress",
   missed: "Missed",
   not_due: "Not Due",
-  pending: "Pending",
+  pending: "Open",
   trashed: "Trashed",
   upcoming: "Upcoming",
 };
 
 const STATUS_SNAPSHOT_ORDER = [
-  "Pending",
+  "Open",
   "In Progress",
   "Done",
   "Did My Best",

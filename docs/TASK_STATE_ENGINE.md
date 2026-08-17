@@ -31,9 +31,15 @@ This boundary is ready for the M3B runtime cutover. Normal production Task mutat
 
 The pure `buildTaskEffectiveTimeline` helper combines explicit History with calculated dates, emits only the bounded Calendar window, and calculates current-state facts over an internal range that is independent of that window. Explicit History wins for its logical date, retains its row and occurrence metadata, and is marked handled. Calculated Missed and Open dates describe an unresolved obligation without creating permanent History; they may recalculate after a schedule change.
 
-Task History Calendar now consumes the Effective Timeline for active and complete tasks. Calculated Missed dates appear in Calendar without becoming History rows, and current completion and missed-streak summaries use the Effective Timeline. Positive current streaks and current Missed streaks are mutually exclusive, while historical/best streaks and completion statistics remain saved-History based. Archived and trashed Calendar and streak behavior remains on the existing fallback. Status-circle convergence, No Repeat conversion, and Delayed display priority remain deferred. Persistence and rollover behavior remain unchanged.
+Task History Calendar now consumes the Effective Timeline for active and complete tasks. Calculated Missed dates appear in Calendar without becoming History rows, and current completion and missed-streak summaries use the Effective Timeline. Positive current streaks and current Missed streaks are mutually exclusive, while historical/best streaks and completion statistics remain saved-History based. Archived and trashed Calendar and streak behavior remains on the existing fallback. Persistence, rollover, rewards, and canonical command behavior remain unchanged.
 
-The Effective Timeline owns both `currentCompletedStreak` and `currentMissedStreak`. The current completion streak follows effective due-opportunity chronology rather than adjacency of saved History rows: calculated Not Due dates and future scheduled dates are neutral, while calculated Missed dates break the streak. A manual Not Due is neutral for the positive completion streak but is a boundary for the current Missed streak. A current Open/Due or In Progress day does not prematurely break an existing completion streak; current Missed and overdue Open states do not preserve it. Best Streak, Last Done, completion rate, completed-day counts, and other historical statistics remain saved-History based. Calculated Missed dates remain non-persistent.
+The Effective Timeline owns both `currentCompletedStreak` and `currentMissedStreak`. Both use the same logical chronology: Done and Did My Best increment the positive streak; Missed increments the Missed streak; Not Due and Delayed skip/pause both streaks; Due/Open and In Progress preserve an existing streak until resolved; Done, Did My Best, and Complete end a Missed streak. A Not Due gap—calculated or manual—never resets a Missed streak, and the current and longest Missed streaks use the same skip semantics. Best Streak, Last Done, completion rate, completed-day counts, and other historical statistics remain saved-History based. Calculated Missed dates remain non-persistent.
+
+## Layered Calendar, Active Status, and History contract
+
+Calendar, Active Status, and explicit History are distinct layers. History records an explicit outcome for one logical date. Calendar projects that one logical date and presents unhandled scheduling as `Due` or `Not Due`; it does not expose engine `open`, `scheduled`, or `upcoming` names. Internal `open` and `scheduled` map to Calendar `Due`; dates without a real occurrence map to Calendar `Not Due`. Existing explicit outcomes, including In Progress, Done, Did My Best, Missed, Delayed, and Complete, remain visible as History outcomes. The active-status label for an ordinary pending/open task is user-facing `Open`; persisted `pending` remains a compatibility implementation detail.
+
+Active Status is the current task-level authority, not a copy of the selected Calendar cell. Its scheduling precedence is Complete/terminal lifecycle, In Progress, Delayed, unresolved Missed, Due today with no unresolved Missed (`Open`), next Due 1–7 days (`Upcoming`), next Due 8+ days (`Not Due`), then Unscheduled. An unresolved Missed chain therefore remains Active Status `Missed` across non-due dates and future schedule thresholds. Past Calendar edits do not directly force the current task to `Not Due`.
 
 ### Effective Timeline schedule-anchor precedence
 
@@ -53,7 +59,7 @@ This identity boundary protects future and overdue occurrences from status-only 
 
 The active TaskApp projection uses the newer centralized status path. This is a routing fact about the inspected production projection, not a claim that every List, child-preview, or derived hierarchy consumer already uses it.
 
-Engine-only `unscheduled` is a valid calculated state. When a task-state patch crosses the persistence boundary, it projects to supported stored `pending`; that projection does not make stored status a substitute for the engine's full state.
+Engine-only `unscheduled` is a valid calculated state. When a task-state patch crosses the persistence boundary, it projects to supported stored `pending`; that projection does not make stored status a substitute for the engine's full state. User-facing `pending` is labeled `Open`.
 
 ## Action Authority
 
@@ -67,7 +73,11 @@ Action planning is also the compatibility boundary for recurring actions: caller
 
 Calendar state and action adapters use the same engine-derived facts and explicit History identity as the task-state path. Calendar projection is a fact projection for the requested logical date and occurrence; it should not independently reconstruct recurrence or status rules. Historical Missed inference uses the handled row's occurrence due date or occurrence identity, remains calculated and non-persistent, and does not replace the current live cursor.
 
-Calendar presentation may differ from task-row presentation, but its state decisions remain inside the shared authority boundary. Browser rendering and deployed RPC behavior are outside this document's evidence.
+Calendar presentation may differ from task-row presentation, but its state decisions remain inside the shared authority boundary. Calendar must expose `Due`/`Not Due` terminology for unhandled scheduling and must not expose `Open` or `Upcoming` as Calendar states. Browser rendering and deployed RPC behavior are outside this document's evidence.
+
+Fixed recurrence membership is evaluated independently for every date using the canonical weekly/monthly recurrence helpers. For Weekdays and other fixed patterns, a non-occurrence weekend or gap remains `Not Due` even while an earlier occurrence is unresolved. An unresolved Missed chain can survive those dates, and the next real fixed occurrence can still be Due without replacing the earlier unresolved chain.
+
+Delay is a pause, not a Calendar-wide state. The logical date where a Delay History outcome was recorded may remain explicitly `Delayed`; intervening dates in the delay window are `Not Due`. Active Status remains `Delayed` while the delayed due date is in the future. On that due date Calendar returns `Due`, and an older unresolved Missed chain restores Active Status `Missed` until the occurrence is handled.
 
 Future Calendar recurrence projection uses the shared recurrence schedule for rolling/daily, interval, weekly, and monthly recurrence. Future projected Due dates are informational Calendar facts only: they do not create additional active obligations, resolve an occurrence, or create History.
 
@@ -83,7 +93,7 @@ For an existing editable logical date, Calendar action availability evaluates ea
 
 History is an explicit input to state evaluation and an explicit output of action or rollover planning. History identity records the occurrence and status facts needed to distinguish recurring instances and preserve chronological meaning. A current effective Missed streak suppresses the positive current streak in shared summaries and rows; historical/best streak data remains saved-History based.
 
-A current Missed streak exists only when the current logical day is Missed or is Open with an overdue unresolved occurrence. Done, Did My Best, Complete, Delayed, Not Due, normal Due/Open, and No Entry reset the current Missed streak even when older historical Missed dates remain visible.
+A current Missed streak is the trailing unresolved Missed chronology at the current logical date. It may continue through Not Due, Delayed, normal Due/Open, In Progress, and non-scheduled gaps; those dates are skipped or paused rather than reset boundaries. Done and Did My Best resolve and end it, while Complete ends it permanently. An unresolved Missed chain outranks Upcoming and Not Due in Active Status.
 
 A proposed History mutation is separate from the proposed task patch. Callers must preserve guarded revisions, avoid zero-effective writes, and use the owning persistence path. This document does not claim a universal transaction or deployed-database guarantee.
 
@@ -94,6 +104,8 @@ History writes should retain explicit occurrence identity and the status/date fa
 Recurrence evaluation handles logical dates, fixed and repeating schedules, active occurrence identity, overdue or missed transitions, and the next-occurrence facts required by the current state.
 
 The rollover authority plans eligible transitions from bounded current-state facts and relevant History. It returns a task patch, proposed History changes, reward eligibility, and revision context for the caller. Rollover must be idempotent and must not replay a valid future occurrence merely because a displayed status is stale.
+
+Automatic In Progress -> Did My Best rollover is locked product behavior but intentionally deferred to 7.9.18. The 7.9.17 reconciliation does not change rollover persistence, canonical SQL/RPC contracts, reward entitlement generation, Edge Functions, or live Supabase state.
 
 The engine is the planning authority; the application and deployed RPCs remain responsible for guarded execution. The M3A Task State RPC and Edge command path are deployed and live-validated; this contract does not establish installation of the separate M3B reward-bridge SQL.
 

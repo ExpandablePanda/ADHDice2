@@ -1460,3 +1460,110 @@ test("explicit Complete stops later dates at calculated no-entry", () => {
   assert.equal(result.currentMissedStreak, 0);
   assert.equal(result.unresolvedDueOn, null);
 });
+
+test("fixed Weekdays preserve Missed continuity across non-occurrence dates", () => {
+  const weekdays: TaskStateSnapshot["recurrence"] = {
+    kind: "weekly", intervalWeeks: 1, weekdays: [1, 2, 3, 4, 5], anchorDate: "2026-08-03",
+  };
+  const missedWeek = ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"]
+    .map((date) => history(date, "missed", { occurrenceDueOn: date, occurrenceIdentity: `task:${TASK_ID}:occurrence:${date}` }));
+
+  for (const logicalDate of ["2026-08-08", "2026-08-09"] as const) {
+    const result = timeline({
+      task: { dueOn: "2026-08-03", activeOccurrenceDueOn: "2026-08-03", recurrence: weekdays },
+      history: missedWeek, logicalDate, calendarStart: "2026-08-03", calendarEnd: "2026-08-10",
+    });
+    assert.equal(result.days[logicalDate]?.state, "not_due");
+    assert.equal(result.currentMissedStreak, 5);
+    assert.ok(result.longestMissedStreak >= 5);
+    assert.equal(result.activeStatus, "missed");
+  }
+
+  const monday = timeline({
+    task: { dueOn: "2026-08-03", activeOccurrenceDueOn: "2026-08-03", recurrence: weekdays },
+    history: missedWeek, logicalDate: "2026-08-10", calendarStart: "2026-08-03", calendarEnd: "2026-08-10",
+  });
+  assert.equal(monday.days["2026-08-10"]?.state, "open");
+  assert.equal(monday.days["2026-08-10"]?.obligation, "due");
+  assert.equal(monday.currentMissedStreak, 5);
+  assert.equal(monday.activeStatus, "missed");
+
+  const nextMissed = timeline({
+    task: { dueOn: "2026-08-03", activeOccurrenceDueOn: "2026-08-03", recurrence: weekdays },
+    history: [...missedWeek, history("2026-08-10", "missed", { occurrenceDueOn: "2026-08-10", occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-10` })],
+    logicalDate: "2026-08-10", calendarStart: "2026-08-03", calendarEnd: "2026-08-10",
+  });
+  assert.equal(nextMissed.currentMissedStreak, 6);
+});
+
+test("manual and calculated Not Due gaps are skipped by both Missed streak measures", () => {
+  const calculated = computeTaskEffectiveTimelineStreaks({
+    "2026-08-03": { calendarOverrideId: null, state: "missed" },
+    "2026-08-04": { calendarOverrideId: null, state: "not_due" },
+    "2026-08-05": { calendarOverrideId: null, state: "missed" },
+    "2026-08-06": { calendarOverrideId: null, state: "missed" },
+    "2026-08-07": { calendarOverrideId: null, state: "open" },
+  }, "2026-08-07");
+  const manual = computeTaskEffectiveTimelineStreaks({
+    "2026-08-03": { calendarOverrideId: null, state: "missed" },
+    "2026-08-04": { calendarOverrideId: "manual-not-due", state: "not_due" },
+    "2026-08-05": { calendarOverrideId: null, state: "missed" },
+    "2026-08-06": { calendarOverrideId: null, state: "missed" },
+    "2026-08-07": { calendarOverrideId: null, state: "open" },
+  }, "2026-08-07");
+
+  assert.equal(calculated.currentMissedStreak, 3);
+  assert.equal(calculated.longestMissedStreak, 3);
+  assert.equal(manual.currentMissedStreak, 3);
+  assert.equal(manual.longestMissedStreak, 3);
+});
+
+test("Delayed pauses Missed streaks and resumes Missed authority at the delayed due date", () => {
+  const missed = ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05"]
+    .map((date) => history(date, "missed", { occurrenceDueOn: date, occurrenceIdentity: `task:${TASK_ID}:occurrence:${date}` }));
+  const delayed = history("2026-08-06", "delayed", { occurrenceDueOn: "2026-08-06", occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-06` });
+  const duringDelay = timeline({
+    task: { activeStatus: "delayed", dueOn: "2026-08-10", activeOccurrenceDueOn: "2026-08-10", recurrence: { kind: "rolling", intervalDays: 1 } },
+    history: [...missed, delayed], logicalDate: "2026-08-08", calendarStart: "2026-08-01", calendarEnd: "2026-08-10",
+  });
+  assert.equal(duringDelay.activeStatus, "delayed");
+  assert.equal(duringDelay.days["2026-08-07"]?.state, "not_due");
+  assert.equal(duringDelay.days["2026-08-08"]?.state, "not_due");
+  assert.equal(duringDelay.currentMissedStreak, 5);
+
+  const dueAgain = timeline({
+    task: { activeStatus: "delayed", dueOn: "2026-08-10", activeOccurrenceDueOn: "2026-08-10", recurrence: { kind: "rolling", intervalDays: 1 } },
+    history: [...missed, delayed], logicalDate: "2026-08-10", calendarStart: "2026-08-01", calendarEnd: "2026-08-10",
+  });
+  assert.equal(dueAgain.days["2026-08-10"]?.state, "open");
+  assert.equal(dueAgain.days["2026-08-10"]?.obligation, "due");
+  assert.equal(dueAgain.activeStatus, "missed");
+  assert.equal(dueAgain.currentMissedStreak, 5);
+});
+
+test("clean Due tasks remain internally pending while future thresholds stay active-status-only", () => {
+  const due = timeline({ task: { dueOn: "2026-08-10", activeOccurrenceDueOn: "2026-08-10" }, logicalDate: "2026-08-10", calendarStart: "2026-08-10", calendarEnd: "2026-08-10" });
+  assert.equal(due.days["2026-08-10"]?.state, "open");
+  assert.equal(due.activeStatus, "pending");
+
+  const upcoming = timeline({ task: { dueOn: "2026-08-13", activeOccurrenceDueOn: "2026-08-13" }, logicalDate: "2026-08-10", calendarStart: "2026-08-10", calendarEnd: "2026-08-13" });
+  const notDue = timeline({ task: { dueOn: "2026-08-19", activeOccurrenceDueOn: "2026-08-19" }, logicalDate: "2026-08-10", calendarStart: "2026-08-10", calendarEnd: "2026-08-19" });
+  assert.equal(upcoming.activeStatus, "upcoming");
+  assert.equal(notDue.activeStatus, "not_due");
+});
+
+test("success on a naturally Not Due date continues the positive streak", () => {
+  const weekdays: TaskStateSnapshot["recurrence"] = {
+    kind: "weekly", intervalWeeks: 1, weekdays: [1, 2, 3, 4, 5], anchorDate: "2026-08-03",
+  };
+  const weekdaySuccesses = ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"]
+    .map((date) => history(date, "done", { occurrenceDueOn: date, occurrenceIdentity: `task:${TASK_ID}:occurrence:${date}` }));
+  const result = timeline({
+    task: { dueOn: "2026-08-03", activeOccurrenceDueOn: "2026-08-03", recurrence: weekdays },
+    history: [...weekdaySuccesses, history("2026-08-09", "done", { occurrenceDueOn: "2026-08-09", occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-09` })],
+    logicalDate: "2026-08-09", calendarStart: "2026-08-03", calendarEnd: "2026-08-09",
+  });
+  assert.equal(result.days["2026-08-08"]?.state, "not_due");
+  assert.equal(result.days["2026-08-09"]?.state, "done");
+  assert.equal(result.currentCompletedStreak, 6);
+});

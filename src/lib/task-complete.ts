@@ -105,7 +105,7 @@ export function getTaskHistoryCalendarOverrideActions({
   selectedDate: string;
   task: Pick<Task, "status">;
   todayDateKey: string;
-}) {
+}): Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]> {
   if (isMultiSelect || selectedDate > todayDateKey || task.status === "complete" || task.status === "archived" || task.status === "trashed") {
     return [] as Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]>;
   }

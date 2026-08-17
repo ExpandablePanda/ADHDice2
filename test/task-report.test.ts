@@ -126,7 +126,7 @@ test("summary report uses the current overall-stats structure and skips detailed
   assert.match(report, /History Records Analyzed: 1/);
   assert.match(report, /History Source: Loaded workspace history fallback/);
   assert.match(report, /Active vs Trashed Loaded: 1 active, 1 trashed excluded/);
-  assert.match(report, /Current Status Snapshot: Done 1/);
+  assert.match(report, /Current Status Snapshot: Open 1/);
   assert.doesNotMatch(report, /### All Current Task History/);
   assert.doesNotMatch(report, /### Day-by-Day Breakdown/);
 });
@@ -246,7 +246,7 @@ test("report includes compact pinned, routine, and priority summaries", () => {
   assert.match(report, /Parent Tasks: Done 0; Did My Best 1; Missed 1; Handled 1/);
   assert.match(report, /Priority 5: Done 1, Missed 1/);
   assert.match(report, /Priority 4: Did My Best 1/);
-  assert.match(report, /Priority 0: Pending 1/);
+  assert.match(report, /Priority 0: Open 1/);
   assert.doesNotMatch(report, /Pinned Tasks: 0 total/);
   assert.doesNotMatch(report, /Range outcomes for Tasks currently in Routine.*Current Status/s);
 });
@@ -375,10 +375,10 @@ test("detailed report uses the shipped detailed sections and current status line
   assert.match(report, /### Day-by-Day Breakdown/);
   assert.match(report, /History Records Analyzed: 1000/);
   assert.match(report, /Path: Morning routine > Brush teeth > Floss/);
-  assert.match(report, /Current Status Snapshot: Pending 2, Done 1, Missed 28/);
-  assert.match(report, /Morning routine.*Current Status: Done/);
-  assert.match(report, /Brush teeth.*Current Status: Pending/);
-  assert.match(report, /Floss.*Current Status: Pending/);
+  assert.match(report, /Current Status Snapshot: Open 3, Missed 28/);
+  assert.match(report, /Morning routine.*Current Status: Open/);
+  assert.match(report, /Brush teeth.*Current Status: Open/);
+  assert.match(report, /Floss.*Current Status: Open/);
   assert.match(report, /Invoice filing.*Current Status: Missed/);
   assert.match(report, /Showing 25 of 27/);
   assert.match(report, /### Mon, Jun 29, 2026/);
@@ -497,8 +497,8 @@ test("report status snapshot and task status lines use the passed history source
   });
 
   assert.match(report, /History Source: Full selected date range fetch/);
-  assert.match(report, /Current Status Snapshot: Done 1/);
-  assert.match(report, /Coherent history task.*Current Status: Done/);
+  assert.match(report, /Current Status Snapshot: Open 1/);
+  assert.match(report, /Coherent history task.*Current Status: Open/);
 });
 
 test("report includes focus goals and selected-range focus sessions", () => {

@@ -6,6 +6,7 @@ import {
   shiftDateKey,
 } from "./calendar.ts";
 import {
+  isScheduledOccurrence,
   occurrenceIdentity,
   recurrenceAfterSuccess,
   scheduledOccurrences,
@@ -58,20 +59,20 @@ export function taskEffectiveTimelineDaysFromStates(
 
 function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | undefined): "success" | "missed" | "break" | "neutral" | null {
   if (!day) return null;
-  if (day.state === "not_due" && day.calendarOverrideId) return "neutral";
   const { state } = day;
   if (state === "done" || state === "did_my_best") return "success";
   if (state === "missed") return "missed";
-  if (state === "complete" || state === "delayed") return "break";
+  if (state === "complete") return "break";
   if (state === "open" || state === "in_progress" || state === "due" || state === "upcoming"
-    || state === "scheduled" || state === "not_due" || state === "no_entry") return null;
+    || state === "scheduled" || state === "not_due" || state === "no_entry" || state === "delayed") return "neutral";
   return "break";
 }
 
 /**
  * Calculate streaks from resolved Effective Timeline days, not persisted rows.
- * Calculated neutral days are skipped; manual Not Due is neutral for positive
- * streaks but remains a boundary for the current Missed streak.
+ * Non-obligation dates, including manual Not Due and Delayed, are skipped for
+ * both streak types. Only an explicit success, Missed, or terminal Complete
+ * changes the respective chronology.
  */
 export function computeTaskEffectiveTimelineStreaks(
   days: Readonly<Record<string, TaskEffectiveTimelineStreakDay>>,
@@ -80,21 +81,14 @@ export function computeTaskEffectiveTimelineStreaks(
   let cursor: string | null = logicalDate;
   let streakKind: "success" | "missed" | null = null;
   let streakLength = 0;
-  let crossedManualNotDue = false;
 
   while (cursor && Object.hasOwn(days, cursor)) {
     const finalizedKind = classifyFinalizedCalendarDay(days[cursor]);
-    if (!finalizedKind) {
+    if (!finalizedKind || finalizedKind === "neutral") {
       cursor = shiftDateKey(cursor, -1);
       continue;
     }
     if (finalizedKind === "break") break;
-    if (finalizedKind === "neutral") {
-      crossedManualNotDue = true;
-      cursor = shiftDateKey(cursor, -1);
-      continue;
-    }
-    if (finalizedKind === "missed" && crossedManualNotDue) break;
     streakKind ??= finalizedKind;
     if (streakKind !== finalizedKind) break;
     streakLength += 1;
@@ -105,7 +99,7 @@ export function computeTaskEffectiveTimelineStreaks(
   let runningMissedStreak = 0;
   for (const date of Object.keys(days).sort()) {
     const finalizedKind = classifyFinalizedCalendarDay(days[date]);
-    if (!finalizedKind) continue;
+    if (!finalizedKind || finalizedKind === "neutral") continue;
     if (finalizedKind === "missed") {
       runningMissedStreak += 1;
       longestMissedStreak = Math.max(longestMissedStreak, runningMissedStreak);
@@ -346,6 +340,10 @@ export function buildTaskEffectiveTimeline(
       ?? occurrenceDateFromIdentity(row.occurrenceIdentity);
     if (!historicalOccurrenceDueOn || historicalOccurrenceDueOn >= row.logicalDate) continue;
     for (const date of dateRange(historicalOccurrenceDueOn, shiftDateKey(row.logicalDate, -1))) {
+      if ((input.task.recurrence.kind === "weekly" || input.task.recurrence.kind === "monthly")
+        && !isScheduledOccurrence(input.task.recurrence, historicalOccurrenceDueOn, date, { includeBeforeDueOn: true })) {
+        continue;
+      }
       const existingDueOn = historicalMissedDueOnByDate.get(date);
       if (!existingDueOn || historicalOccurrenceDueOn < existingDueOn) {
         historicalMissedDueOnByDate.set(date, historicalOccurrenceDueOn);
@@ -355,6 +353,9 @@ export function buildTaskEffectiveTimeline(
 
   let activeDueOn: string | null = initialDueOn;
   let unresolvedDueOn: string | null = null;
+  let delayedUntilDate: string | null = input.task.activeStatus === "delayed" && activeDueOn && activeDueOn > input.logicalDate
+    ? activeDueOn
+    : null;
   let completed = input.task.lifecycle === "complete";
   const consumed = new Set<string>();
 
@@ -437,6 +438,7 @@ export function buildTaskEffectiveTimeline(
         && (!activeDueOn || activeDueOn <= row.logicalDate)) {
         activeDueOn = input.task.dueOn;
       }
+      if (activeDueOn && activeDueOn > row.logicalDate) delayedUntilDate = activeDueOn;
     }
   };
 
@@ -471,6 +473,12 @@ export function buildTaskEffectiveTimeline(
       if (recurrenceRow) applyExplicitRow(recurrenceRow);
     } else {
       let calculated: TaskEffectiveTimelineDay;
+      const isFixedRecurrence = input.task.recurrence.kind === "weekly" || input.task.recurrence.kind === "monthly";
+      const isFixedScheduledDate = Boolean(
+        activeDueOn
+        && isFixedRecurrence
+        && isScheduledOccurrence(input.task.recurrence as Extract<TaskStateSnapshot["recurrence"], { kind: "weekly" | "monthly" }>, activeDueOn, date),
+      );
       if (historicalMissedDueOnByDate.has(date)) {
         calculated = calculatedDay(
           input.task.id,
@@ -483,13 +491,19 @@ export function buildTaskEffectiveTimeline(
         calculated = calculatedDay(input.task.id, date, "no_entry", "none");
       } else if (date < activeDueOn) {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
+      } else if (isFixedRecurrence && !isFixedScheduledDate) {
+        calculated = calculatedDay(input.task.id, date, "not_due", "none");
       } else if (date < input.logicalDate) {
         unresolvedDueOn ??= activeDueOn;
         calculated = calculatedDay(input.task.id, date, "missed", "overdue", unresolvedDueOn);
       } else if (date === input.logicalDate) {
         if (activeDueOn < input.logicalDate) {
-          unresolvedDueOn ??= activeDueOn;
-          calculated = calculatedDay(input.task.id, date, "open", "overdue", unresolvedDueOn);
+          if (isFixedRecurrence) {
+            calculated = calculatedDay(input.task.id, date, "open", "due", date);
+          } else {
+            unresolvedDueOn ??= activeDueOn;
+            calculated = calculatedDay(input.task.id, date, "open", "overdue", unresolvedDueOn);
+          }
         } else if (activeDueOn === input.logicalDate) {
           calculated = calculatedDay(input.task.id, date, "open", "due", activeDueOn);
         } else {
@@ -532,12 +546,15 @@ export function buildTaskEffectiveTimeline(
     if (input.task.lifecycle !== "active") return input.task.activeStatus;
     if (currentDay?.state === "done" || currentDay?.state === "did_my_best" || currentDay?.state === "complete") return currentDay.state;
     if (currentDay?.state === "in_progress") return "in_progress" as const;
-    if (currentDay?.state === "missed" || currentDay?.obligation === "overdue") return "missed" as const;
-    if (currentDay?.state === "delayed") return "delayed" as const;
+    if (currentDay?.state === "delayed" || (delayedUntilDate && delayedUntilDate > input.logicalDate)) return "delayed" as const;
+    if (streaks.currentMissedStreak > 0 || currentDay?.state === "missed" || currentDay?.obligation === "overdue") return "missed" as const;
     if (currentDay?.state === "scheduled") return daysBetween(input.logicalDate, currentDay.logicalDate) <= 7 ? "upcoming" as const : "not_due" as const;
     if (currentDay?.state === "not_due" || currentDay?.state === "no_entry") {
       if (!activeDueOn && input.task.recurrence.kind === "none") return "unscheduled" as const;
-      return activeDueOn && activeDueOn > input.logicalDate && daysBetween(input.logicalDate, activeDueOn) <= 7
+      const nextScheduledDueOn = input.task.recurrence.kind === "weekly" || input.task.recurrence.kind === "monthly"
+        ? scheduledOccurrences(input.task.recurrence, activeDueOn ?? input.logicalDate, input.logicalDate, shiftDateKey(input.logicalDate, 800)).at(0) ?? null
+        : activeDueOn;
+      return nextScheduledDueOn && nextScheduledDueOn > input.logicalDate && daysBetween(input.logicalDate, nextScheduledDueOn) <= 7
         ? "upcoming" as const
         : "not_due" as const;
     }

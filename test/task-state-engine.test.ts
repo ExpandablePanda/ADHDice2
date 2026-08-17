@@ -190,7 +190,7 @@ test("a schedule change without unresolved Missed derives the new Pending or Upc
   assert.equal(today.activeStatus, "pending");
 });
 
-test("ambiguous identity-less legacy Missed History fails closed", () => {
+test("identity-less fixed-schedule Missed History still preserves the unresolved chain", () => {
   const result = evaluateTaskState(input({
     now: "2026-08-05T14:00:00.000Z",
     task: task({
@@ -201,7 +201,7 @@ test("ambiguous identity-less legacy Missed History fails closed", () => {
     history: [history("2026-08-03", "missed"), history("2026-08-04", "missed")],
     action: { type: "change_schedule" },
   }));
-  assert.equal(result.activeStatus, "pending");
+  assert.equal(result.activeStatus, "missed");
   assert.equal(result.unresolvedOccurrenceIdentity, null);
   assert.equal(result.unresolvedOccurrenceDueOn, null);
   assert.deepEqual(result.proposedHistoryChanges, []);
@@ -597,7 +597,7 @@ test("Done to Missed preserves a manual future cursor instead of rewinding it", 
 
   assert.equal(result.nextDueDate, "2026-08-10");
   assert.equal(result.proposedTaskPatch.dueOn, undefined);
-  assert.equal(result.activeStatus, "upcoming");
+  assert.equal(result.activeStatus, "missed");
 });
 
 test("fixed weekly success after the occurrence window belongs to the next occurrence", () => {

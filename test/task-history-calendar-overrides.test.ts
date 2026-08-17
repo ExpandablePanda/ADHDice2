@@ -101,12 +101,12 @@ test("Task History read stats recalculate Current and Longest Missed Streak afte
   assert.equal(before?.timeline?.currentMissedStreak, 4);
   assert.equal(before?.timeline?.longestMissedStreak, 4);
   assert.equal(after?.states["2026-08-12"], "not_due");
-  assert.equal(displayedStats.currentMissedStreak, 1);
-  assert.equal(displayedStats.longestMissedStreak, 2);
-  assert.equal(after?.states["2026-08-14"], "open");
+  assert.equal(displayedStats.currentMissedStreak, 3);
+  assert.equal(displayedStats.longestMissedStreak, 3);
+  assert.equal(after?.states["2026-08-14"], "due");
 });
 
-test("Updates regression: manual Not Due at 8/9 ends the older missed run", () => {
+test("Updates regression: manual Not Due at 8/9 pauses rather than ends the older missed run", () => {
   const task = createTask({
     created_at: "2026-08-01T12:00:00.000Z",
     due_on: "2026-07-20",
@@ -136,6 +136,6 @@ test("Updates regression: manual Not Due at 8/9 ends the older missed run", () =
   assert.equal(result?.timeline?.days["2026-08-08"]?.state, "missed");
   assert.equal(result?.timeline?.days["2026-08-09"]?.state, "not_due");
   assert.equal(result?.timeline?.days["2026-08-09"]?.calendarOverrideId, "override-09");
-  assert.equal(streaks.currentMissedStreak, 4);
-  assert.equal(streaks.longestMissedStreak, 20);
+  assert.equal(streaks.currentMissedStreak, 24);
+  assert.equal(streaks.longestMissedStreak, 24);
 });

@@ -264,16 +264,11 @@ export function formatTaskHistoryEntryLabel(entry: Pick<DbTaskHistory, "event_ty
     .join(" ");
 }
 
-export type TaskHistoryCalendarVirtualState = "delayed" | "due" | "not_due" | "upcoming";
+export type TaskHistoryCalendarVirtualState = "delayed" | "due" | "not_due";
 
 export function getTaskHistoryCalendarVirtualState({
-  dateKey,
-  delayedUntilDateKey,
   hasHistoryEntry,
   isDue,
-  nextDueDateKey,
-  projectsUndatedDelayed,
-  todayDateKey,
 }: {
   dateKey: string;
   delayedUntilDateKey?: string | null;
@@ -286,27 +281,8 @@ export function getTaskHistoryCalendarVirtualState({
   if (hasHistoryEntry) {
     return null;
   }
-  if (projectsUndatedDelayed && dateKey >= todayDateKey) {
-    return "delayed";
-  }
-  if (
-    delayedUntilDateKey
-    && delayedUntilDateKey > todayDateKey
-    && dateKey >= todayDateKey
-    && dateKey < delayedUntilDateKey
-  ) {
-    return "delayed";
-  }
   if (isDue) {
     return "due";
-  }
-  if (
-    dateKey >= todayDateKey
-    && nextDueDateKey
-    && dateKey < nextDueDateKey
-    && dateKey >= shiftDateKey(nextDueDateKey, -7)
-  ) {
-    return "upcoming";
   }
   return "not_due";
 }

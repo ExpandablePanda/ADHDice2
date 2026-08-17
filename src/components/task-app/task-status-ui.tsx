@@ -9,7 +9,7 @@ export type TaskDisplayStatus = UiTaskDisplayStatus | TaskSubtaskStatus;
 export const TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE = "md" as const;
 
 export const TASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
-  { label: "Pending", value: "pending" },
+  { label: "Open", value: "pending" },
   { label: "In Progress", value: "in_progress" },
   { label: "Delayed", value: "delayed" },
   { label: "Done", value: "done" },
@@ -99,6 +99,9 @@ export function getTaskStatusCircleHoverInvertedClassName(status: TaskDisplaySta
 }
 
 export function formatTaskStatusLabel(value: string) {
+  if (value === "pending") {
+    return "Open";
+  }
   if (value === "archived") {
     return "Archived";
   }

@@ -86,7 +86,7 @@ test("compact summaries count three trailing missed entries", () => {
   assert.equal(summaries[currentTask.id]?.missedStreak, 3);
 });
 
-test("active manual Not Due boundaries reach the compact summary and shorten the current Missed streak", () => {
+test("active manual Not Due gaps reach the compact summary without resetting the current Missed streak", () => {
   const currentTask = { ...task("updates"), due_on: "2026-08-08", status: "pending" as const };
   const rows = [
     history("missed-8", "2026-08-08", "missed", false, currentTask.id),
@@ -102,7 +102,7 @@ test("active manual Not Due boundaries reach the compact summary and shorten the
   })[currentTask.id];
 
   assert.equal(withoutOverride?.missedStreak, 6);
-  assert.equal(withOverride?.missedStreak, 4);
+  assert.equal(withOverride?.missedStreak, 5);
 });
 
 test("explicit Missed History remains authoritative over an active manual Not Due override", () => {
@@ -130,7 +130,7 @@ test("task-specific active overrides are only supplied to their matching summary
     calendarOverridesByTaskId: { [firstTask.id]: [manualNotDue("2026-08-09", firstTask.id)] },
   });
 
-  assert.equal(summaries[firstTask.id]?.missedStreak, 1);
+  assert.equal(summaries[firstTask.id]?.missedStreak, 2);
   assert.equal(summaries[secondTask.id]?.missedStreak, 3);
 });
 
@@ -214,7 +214,7 @@ test("explicit Done and Did My Best win over a calculated Missed on the same dat
   }
 });
 
-test("manual Not Due is neutral for positive streaks but a boundary for Missed streaks", () => {
+test("manual Not Due is neutral for positive and Missed streaks", () => {
   const successSuccessNotDueOpen = {
     "2026-08-12": { calendarOverrideId: null, state: "did_my_best" as const },
     "2026-08-13": { calendarOverrideId: null, state: "done" as const },
@@ -231,7 +231,7 @@ test("manual Not Due is neutral for positive streaks but a boundary for Missed s
     "2026-08-14": { calendarOverrideId: "manual-not-due", state: "not_due" as const },
     "2026-08-15": { calendarOverrideId: null, state: "open" as const },
   };
-  assert.equal(computeTaskEffectiveTimelineStreaks(missedMissedNotDueOpen, "2026-08-15").currentMissedStreak, 0);
+  assert.equal(computeTaskEffectiveTimelineStreaks(missedMissedNotDueOpen, "2026-08-15").currentMissedStreak, 2);
 });
 
 test("calculated Not Due stays neutral and explicit Missed breaks positive streak", () => {
@@ -279,7 +279,7 @@ test("Calendar states and streak input use one resolved timeline for the same ra
   assert.ok(calendarRead?.timeline);
   assert.deepEqual(
     calendarRead?.states,
-    Object.fromEntries(Object.entries(calendarRead?.timeline?.days ?? {}).map(([date, day]) => [date, day.state === "scheduled" ? "due" : day.state === "no_entry" ? "not_due" : day.state])),
+    Object.fromEntries(Object.entries(calendarRead?.timeline?.days ?? {}).map(([date, day]) => [date, day.state === "open" || day.state === "scheduled" ? "due" : day.state === "no_entry" || day.state === "upcoming" ? "not_due" : day.state])),
   );
   assert.equal(summary?.currentStreak, calendarRead?.timeline?.currentCompletedStreak);
   assert.equal(summary?.missedStreak, calendarRead?.timeline?.currentMissedStreak);
@@ -310,7 +310,7 @@ test("post-cutover modern Done and Did My Best preserve legitimate event timesta
   }
 });
 
-test("Complete and Delayed outcomes break both recorded streaks", () => {
+test("Complete ends streaks while Delayed pauses the Missed streak", () => {
   const currentTask = task();
   const successBreak = buildTaskHistoryStreakSummaryMap([currentTask], [
     history("done-1", "2026-08-01", "done", true),
@@ -326,7 +326,7 @@ test("Complete and Delayed outcomes break both recorded streaks", () => {
   assert.equal(successBreak[currentTask.id]?.currentStreak, 0);
   assert.equal(successBreak[currentTask.id]?.missedStreak, 0);
   assert.equal(missedBreak[currentTask.id]?.currentStreak, 0);
-  assert.equal(missedBreak[currentTask.id]?.missedStreak, 0);
+  assert.equal(missedBreak[currentTask.id]?.missedStreak, 2);
 });
 
 test("non-authoritative migration reconstruction History still counts toward streaks", () => {

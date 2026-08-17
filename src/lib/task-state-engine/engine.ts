@@ -476,7 +476,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   } else if (scheduleChange && (task.activeStatus === "done" || task.activeStatus === "did_my_best")) {
     activeStatus = task.activeStatus;
   } else if (currentRecurrenceOutcome === "delayed" || (delayedRow && nextDue && nextDue > today)) {
-    activeStatus = nextDue ? statusForFutureDate(today, nextDue) : "delayed";
+    activeStatus = "delayed";
   } else if (unscheduled) {
     activeStatus = "unscheduled";
   } else if (nextDue && nextDue > today) {
@@ -560,6 +560,14 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
           : {}),
   });
   const canonicalTimelineProjection = input.calendarOverrides !== undefined || input.workflow !== undefined;
+  if (!canonicalTimelineProjection
+    && replayTimeline.currentMissedStreak > 0
+    && (activeStatus === "pending" || activeStatus === "upcoming" || activeStatus === "not_due")) {
+    // A fixed-schedule non-occurrence can pause an unresolved Missed chain,
+    // but it cannot lower that chain's active-status authority to a future
+    // schedule label.
+    activeStatus = "missed";
+  }
   if (canonicalTimelineProjection) {
     activeStatus = replayTimeline.activeStatus;
     calendar = Object.fromEntries(Object.entries(replayTimeline.days).map(([date, day]) => [date, day.state]));

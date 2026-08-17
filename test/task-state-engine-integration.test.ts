@@ -77,7 +77,7 @@ test("due-date-only change derives future status without promoting ambiguous old
   ]);
 });
 
-test("moving a future task back to today uses Pending when no current active Missed exists", () => {
+test("moving a future task back to today preserves an unresolved Missed chain", () => {
   const futureTask = task({
     due_on: "2026-08-30",
     status: "not_due",
@@ -91,8 +91,8 @@ test("moving a future task back to today uses Pending when no current active Mis
     timezone: "America/New_York",
   });
 
-  assert.equal(authority?.activeStatus, "pending");
-  assert.equal(authority?.mutationPlan.taskUpdate.status, "pending");
+  assert.equal(authority?.activeStatus, "missed");
+  assert.equal(authority?.mutationPlan.taskUpdate.status, "missed");
   assert.equal(authority?.mutationPlan.historyInserts.length, 0);
 });
 
@@ -135,7 +135,7 @@ test("explicit Missed status actions still carry status intent and History", () 
 test("Calendar authority gives explicit History precedence over virtual states", () => {
   const states = resolveTaskHistoryCalendarStates({ ...context, calendarStart: "2026-07-30", history: [history("did_my_best")], task: task() });
   assert.equal(states?.["2026-07-30"], "did_my_best");
-  assert.equal(states?.["2026-07-31"], "open");
+  assert.equal(states?.["2026-07-31"], "due");
 });
 
 test("Weekdays future cursor stays bounded while Calendar actions use explicit historical override", () => {

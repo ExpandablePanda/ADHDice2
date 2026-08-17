@@ -155,7 +155,7 @@ test("Calendar read shows calculated Missed without History mutation", () => {
   for (const date of ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08", "2026-08-09"]) {
     assert.equal(result?.states[date], "missed", date);
   }
-  assert.equal(result?.states["2026-08-10"], "open");
+  assert.equal(result?.states["2026-08-10"], "due");
   assert.equal(result?.timeline?.currentMissedStreak, 9);
   assert.equal(result?.timeline?.unresolvedDueOn, "2026-08-01");
   assert.deepEqual(nextHistory, historyBefore);
@@ -169,7 +169,7 @@ test("Calendar explicit Done splits calculated Missed", () => {
     assert.equal(result?.states[date], "missed", date);
   }
   assert.equal(result?.states["2026-08-05"], "done");
-  assert.equal(result?.states["2026-08-10"], "open");
+  assert.equal(result?.states["2026-08-10"], "due");
   assert.equal(result?.timeline?.currentMissedStreak, 4);
 });
 
@@ -201,7 +201,7 @@ test("normal Calendar refresh replays Refill Water from the canonical schedule a
   assert.equal(result?.states["2026-08-07"], "done");
   assert.equal(result?.states["2026-08-08"], "done");
   assert.equal(result?.states["2026-08-13"], "done");
-  assert.equal(result?.states["2026-08-14"], "open");
+  assert.equal(result?.states["2026-08-14"], "due");
   assert.equal(result?.timeline?.nextDueOn, "2026-08-14");
   assert.equal(result?.timeline?.currentCompletedStreak, 1);
 
@@ -225,7 +225,7 @@ test("normal Calendar refresh preserves an intentional manual due-date Not Due s
   for (const date of ["2026-08-09", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15", "2026-08-16", "2026-08-17", "2026-08-18", "2026-08-19"]) {
     assert.equal(result?.states[date], "not_due", date);
   }
-  assert.equal(result?.states["2026-08-20"], "open");
+  assert.equal(result?.states["2026-08-20"], "due");
   assert.equal(result?.timeline?.nextDueOn, "2026-08-20");
 });
 
@@ -283,7 +283,7 @@ test("archived Calendar reads retain the existing engine fallback", () => {
   }).calendar;
   const expected = Object.fromEntries(Object.entries(engineCalendar).map(([date, state]) => [
     date,
-    state === "scheduled" ? "due" : state === "no_entry" ? "not_due" : state,
+    state === "open" || state === "scheduled" ? "due" : state === "no_entry" || state === "upcoming" ? "not_due" : state,
   ]));
 
   assert.equal(result?.authority, "engine_fallback");

@@ -3,7 +3,9 @@ import test from "node:test";
 
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import type { CanonicalTaskStateColumns } from "../src/lib/task-state-canonical/types.ts";
+import { formatTaskStatusLabel, TASK_STATUS_OPTIONS } from "../src/components/task-app/task-status-ui.tsx";
 import { projectTasksForActiveStatusRead, resolveActiveTaskStatuses } from "../src/lib/task-state-engine/index.ts";
+import { resolveTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
 
 type ReadTask = Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">>;
 
@@ -118,4 +120,81 @@ test("stale canonical In Progress workflow is not visible as current In Progress
   });
 
   assert.notEqual(engine.statusesByTaskId[source.id], "in_progress");
+});
+
+test("active status keeps an unresolved Weekdays Missed chain through weekend gaps", () => {
+  const weekdays = task({
+    due_on: "2026-08-07",
+    repeat_frequency: "weekly",
+    repeat_days_of_week: [1, 2, 3, 4, 5],
+    status: "missed",
+  });
+  const historyRows = ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"].map((entry_date) => ({
+    counted_as_due_occurrence: true,
+    created_at: `${entry_date}T12:00:00.000Z`,
+    entry_date,
+    event_type: "status" as const,
+    id: `history-${entry_date}`,
+    occurrence_due_on: entry_date,
+    occurrence_key: `occurrence:${entry_date}`,
+    status: "missed" as const,
+    task_id: weekdays.id,
+    updated_at: `${entry_date}T12:00:00.000Z`,
+    user_id: weekdays.user_id,
+    was_completed: false,
+  }));
+
+  for (const now of ["2026-08-08T12:00:00.000Z", "2026-08-09T12:00:00.000Z", "2026-08-10T12:00:00.000Z"]) {
+    const read = resolveActiveTaskStatuses({
+      historyByTaskId: { [weekdays.id]: historyRows },
+      logicalDayRollover: "00:00",
+      now,
+      tasks: [weekdays],
+      timezone: "UTC",
+    });
+    assert.equal(read.statusesByTaskId[weekdays.id], "missed", now);
+  }
+
+  const calendar = resolveTaskHistoryCalendarStates({
+    calendarStart: "2026-08-03",
+    calendarEnd: "2026-08-10",
+    history: historyRows,
+    logicalDayRollover: "00:00",
+    now: "2026-08-10T12:00:00.000Z",
+    task: weekdays,
+    timezone: "UTC",
+  });
+  assert.equal(calendar?.["2026-08-08"], "not_due");
+  assert.equal(calendar?.["2026-08-09"], "not_due");
+  assert.equal(calendar?.["2026-08-10"], "due");
+  assert.equal(Object.values(calendar ?? {}).includes("open" as never), false);
+  assert.equal(Object.values(calendar ?? {}).includes("upcoming" as never), false);
+});
+
+test("clean Due remains internally pending while the user-facing active label is Open", () => {
+  const source = task({ due_on: "2026-08-10", status: "pending", repeat_frequency: "none" });
+  const read = resolveActiveTaskStatuses({
+    historyByTaskId: { [source.id]: [] },
+    logicalDayRollover: "00:00",
+    now: "2026-08-10T12:00:00.000Z",
+    tasks: [source],
+    timezone: "UTC",
+  });
+  assert.equal(read.statusesByTaskId[source.id], "pending");
+  assert.equal(formatTaskStatusLabel("pending"), "Open");
+  assert.equal(TASK_STATUS_OPTIONS.find((option) => option.value === "pending")?.label, "Open");
+});
+
+test("future active-status thresholds remain Upcoming and Not Due without a Missed chain", () => {
+  const upcoming = task({ due_on: "2026-08-13", status: "pending" });
+  const notDue = task({ id: "not-due", due_on: "2026-08-19", status: "pending" });
+  const read = resolveActiveTaskStatuses({
+    historyByTaskId: { [upcoming.id]: [], [notDue.id]: [] },
+    logicalDayRollover: "00:00",
+    now: "2026-08-10T12:00:00.000Z",
+    tasks: [upcoming, notDue],
+    timezone: "UTC",
+  });
+  assert.equal(read.statusesByTaskId[upcoming.id], "upcoming");
+  assert.equal(read.statusesByTaskId[notDue.id], "not_due");
 });

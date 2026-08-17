@@ -11,17 +11,19 @@ import type { TaskEffectiveTimeline } from "./types.ts";
 
 export type TaskHistoryCalendarActionStatus = "done" | "did_my_best" | "delayed" | "missed" | "complete";
 
-export type TaskHistoryCalendarAuthorityState = "delayed" | "due" | "not_due" | "upcoming" | "open" | "in_progress" | "done" | "did_my_best" | "missed" | "complete";
+export type TaskHistoryCalendarAuthorityState = "delayed" | "due" | "not_due" | "in_progress" | "done" | "did_my_best" | "missed" | "complete";
 
 const CALENDAR_STATE_MAP = {
+  open: "due",
   scheduled: "due",
   no_entry: "not_due",
+  upcoming: "not_due",
 } as const;
 
 function mapCalendarStates(calendar: Record<string, string>) {
   return Object.fromEntries(Object.entries(calendar).map(([date, state]) => [
     date,
-    state === "scheduled" || state === "no_entry" ? CALENDAR_STATE_MAP[state] : state,
+    state === "open" || state === "scheduled" || state === "no_entry" || state === "upcoming" ? CALENDAR_STATE_MAP[state] : state,
   ])) as Record<string, TaskHistoryCalendarAuthorityState>;
 }
 
