@@ -42,6 +42,21 @@ function startAction(currentTask = task()) {
   return action;
 }
 
+function delayAction(currentTask = task()) {
+  const action = classifyTaskStateRuntimeAction({
+    task: currentTask,
+    canonicalIntent: {
+      type: "delay_occurrence",
+      logical_date: "2026-08-17",
+      occurrence_key: "occurrence-1",
+      effective_due_on: "2026-08-24",
+    },
+    replayIdentity: "delay-action-1",
+  });
+  assert.equal(action.kind, "canonical_action");
+  return action;
+}
+
 function archiveAction(currentTask = task()) {
   const action = classifyTaskStateRuntimeAction({ task: currentTask, values: { status: "archived" } });
   assert.equal(action.kind, "canonical_action");
@@ -143,6 +158,32 @@ test("committed response reconciles canonical and compatibility fields without o
   assert.equal(result.task.active_occurrence_due_on, "2026-08-10");
   assert.equal(result.task.canonical_revision, 5);
   assert.equal(result.task.revision, currentTask.revision);
+});
+
+test("committed canonical Delay reconciles the effective due date onto the local Task", async () => {
+  const currentTask = task({ due_on: "2026-08-17" });
+  const action = delayAction(currentTask);
+  const result = await executeTaskStateRuntimeAction(action, currentTask, {
+    invoke: async (intent) => {
+      assert.equal(intent.type, "delay_occurrence");
+      assert.equal(intent.effective_due_on, "2026-08-24");
+      return committedResponse({
+        compatibility_projection: {
+          status: "delayed",
+          due_on: "2026-08-24",
+          completed_at: null,
+          active_status_logical_date: null,
+          active_occurrence_due_on: null,
+        },
+        canonical_task_patch: { canonicalization_status: "canonical_runtime" },
+      });
+    },
+  });
+
+  assert.equal(result.success, true);
+  if (!result.success) return;
+  assert.equal(result.task.due_on, "2026-08-24");
+  assert.equal(result.task.status, "delayed");
 });
 
 test("valid lifecycle enum values are accepted and reconciled from the committed response", async () => {

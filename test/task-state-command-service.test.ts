@@ -870,6 +870,54 @@ test("Delay preserves origin occurrence identity and only changes effective date
   assert.equal(plan.normalizedResult.occurrenceEffectiveOverride?.effective_due_on, "2026-08-13");
 });
 
+test("canonical Delay carries the effective due cursor through replay and RPC projection", () => {
+  const delayDate = "2026-08-17";
+  const effectiveDueOn = "2026-08-24";
+  const delayLogicalDay = {
+    ...logicalDay,
+    identity: "user-1:2026-08-17:America/New_York:06:00:3",
+    logicalDate: delayDate,
+  };
+  const planningState = state({ due_on: delayDate, repeat_frequency: "daily", repeat_interval: 1 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-08-17T12:00:00.000Z",
+    task: {
+      ...planningState.engineInput!.task,
+      dueOn: delayDate,
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    calendarOverrides: [],
+    workflow: { state: "none", logicalDate: null, occurrenceId: null, commandId: null, revision: null },
+  };
+  const delayBoundary = {
+    ...boundary("rolling"),
+    id: "boundary-delay",
+    effective_from_logical_date: delayDate,
+    anchor_date: delayDate,
+  };
+  const delayCommand = trustedCommand({
+    type: "delay_occurrence",
+    task_id: planningState.task.id,
+    replay_identity: "delay:task-1:2026-08-17:2026-08-24",
+    logical_date: delayDate,
+    effective_due_on: effectiveDueOn,
+  }, planningState.task, delayBoundary, delayLogicalDay);
+
+  const plan = planTaskStateCommand(planningState, delayCommand);
+  const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, Record<string, unknown>>;
+
+  assert.equal(plan.normalizedResult.historyFact?.outcome, "delayed");
+  assert.equal(plan.normalizedResult.historyFact?.scheduled_due_on, delayDate);
+  assert.equal(plan.normalizedResult.historyFact?.effective_due_on, effectiveDueOn);
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "delayed");
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, effectiveDueOn);
+  assert.equal(plan.normalizedResult.scheduleBoundary, null);
+  assert.equal(payload.compatibility_projection.due_on, effectiveDueOn);
+  assert.equal(payload.history_fact.effective_due_on, effectiveDueOn);
+  assert.equal(payload.occurrence_effective_override.effective_due_on, effectiveDueOn);
+});
+
 test("trusted Delay serializes the materialized occurrence consistently across payload facts", () => {
   const occurrence = {
     id: "occurrence-1",

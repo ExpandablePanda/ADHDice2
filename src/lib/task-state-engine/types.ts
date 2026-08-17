@@ -148,6 +148,8 @@ export type TaskTimelineReplayRequest = {
   changedLogicalDate: string;
   kind: TaskTimelineReplayKind;
   manualDueOn?: string | null;
+  /** Effective cursor selected by a canonical Delay command. */
+  effectiveDueOn?: string | null;
 };
 
 export type TaskTimelineCheckpoint = {

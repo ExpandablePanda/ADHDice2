@@ -273,6 +273,7 @@ function initialOccurrenceDueOn(
   replay: TaskTimelineReplayRequest | undefined,
   checkpoint: TaskTimelineCheckpoint | null,
 ) {
+  if (replay && replay.effectiveDueOn !== undefined) return replay.effectiveDueOn;
   if (replay && checkpoint?.kind === "success") return checkpoint.occurrenceDueOn;
   if (replay && replay.manualDueOn !== undefined) return replay.manualDueOn;
   if (replay?.kind === "outcome") {

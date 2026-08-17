@@ -540,7 +540,15 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     ...(input.calendarOverrides ? { calendarOverrides: input.calendarOverrides } : {}),
     ...(input.workflow ? { workflow: input.workflow } : {}),
     ...(action
-      ? { replay: { changedLogicalDate: actionDate, kind: "outcome" as const } }
+      ? {
+          replay: {
+            changedLogicalDate: actionDate,
+            kind: "outcome" as const,
+            ...(action.outcome === "delayed" && action.delayUntilDate !== undefined
+              ? { effectiveDueOn: action.delayUntilDate }
+              : {}),
+          },
+        }
       : scheduleChange
         ? {
             replay: {
