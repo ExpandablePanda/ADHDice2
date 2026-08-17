@@ -1,6 +1,6 @@
 {
   "name": "adhdice-clean-prototype",
-  "version": "7.9.21",
+  "version": "7.9.22",
   "private": true,
   "scripts": {
     "dev": "node --experimental-strip-types ./scripts/dev-server.mjs",
@@ -20,6 +20,7 @@
     "test:records-chunked-reconciliation": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/records-reconciliation-timeout.test.ts",
     "test:records-rpc-contract": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/records-rpc-contract.test.ts",
     "test:records-sql-compatibility": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/records-sql-compatibility.test.ts",
+    "test:task-state-sql-compile": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/task-state-command-sql-compile.test.ts",
     "test:taskapp-wave": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/task-helper-modules.test.ts test/task-refactor-helpers.test.ts test/task-action-hooks-smoke.test.ts"
   },
   "dependencies": {

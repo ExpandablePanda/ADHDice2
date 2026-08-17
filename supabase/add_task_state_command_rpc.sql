@@ -145,8 +145,8 @@ begin
 
   -- Runtime provenance is server-owned.  Reject a spoof before any replay
   -- operation is claimed, then overwrite the accepted values again below.
-  if coalesce(nullif(v_history->>'provenance_kind', ''), case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end)
-       <> case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end
+  if coalesce(nullif(v_history->>'provenance_kind', ''), (case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end))
+       <> (case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end)
      or coalesce(nullif(v_occurrence->>'provenance_kind', ''), 'user') <> 'user'
      or coalesce(nullif(v_effective_override->>'provenance_kind', ''), 'user') <> 'user'
      or coalesce(nullif(v_calendar_override->>'provenance_kind', ''), 'manual') <> 'manual'
@@ -154,7 +154,7 @@ begin
      or nullif(v_occurrence->>'actor_kind', '') is not null and v_occurrence->>'actor_kind' <> 'user'
      or nullif(v_effective_override->>'actor_kind', '') is not null and v_effective_override->>'actor_kind' <> 'user'
      or nullif(v_history->>'actor_kind', '') is not null
-        and v_history->>'actor_kind' <> case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end
+        and v_history->>'actor_kind' <> (case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end)
      or nullif(v_calendar_override->>'actor_kind', '') is not null and v_calendar_override->>'actor_kind' <> 'user'
      or nullif(v_history->>'migration_operation_id', '') is not null
      or nullif(v_occurrence->>'migration_operation_id', '') is not null

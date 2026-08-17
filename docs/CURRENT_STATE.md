@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.21`.
+- Current working app version: `7.9.22`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,13 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.9.22 Rollover SQL migration parser correction
+
+- The reviewed 7.9.20 rollover migration was attempted against production and failed atomically at PostgreSQL parse/compile time with `42601` (`syntax error at end of input`) while executing the generated RPC definition. The live migration history, RPC source/MD5, grants, Tasks, History, and reward data were verified unchanged after rollback.
+- The defect was the trusted provenance predicates' unparenthesized `<> CASE WHEN ... END` expressions inside PL/pgSQL `IF` conditions. PostgreSQL's PL/pgSQL condition grammar parsed the CASE as an unfinished condition and reached end-of-input. The authoritative `supabase/add_task_state_command_rpc.sql` source and the forward patch now parenthesize those CASE expressions.
+- Added an executable local PostgreSQL regression that installs the exact pre-7.9.20 RPC from repository history, applies the real forward migration, and verifies compilation, automatic-rollover guard replacement, authorized-automation provenance fencing, and service-role-only execution. SQL contract coverage remains required.
+- The corrected SQL must still be reapplied manually after ChatGPT review. Production rollover remains inactive, the Edge Function remains undeployed, and browser/live QA remains pending. No production SQL was applied by 7.9.22 and no live data was mutated.
 
 ### 7.9.14 Persistent Batch Edit progress
 

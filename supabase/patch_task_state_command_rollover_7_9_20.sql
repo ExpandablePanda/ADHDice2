@@ -37,8 +37,8 @@ begin
   v_definition := replace(v_definition, v_old, v_new);
 
   v_old := $old$coalesce(nullif(v_history->>'provenance_kind', ''), 'user') <> 'user'$old$;
-  v_new := $new$coalesce(nullif(v_history->>'provenance_kind', ''), case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end)
-       <> case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end$new$;
+  v_new := $new$coalesce(nullif(v_history->>'provenance_kind', ''), (case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end))
+       <> (case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end)$new$;
   if position(v_old in v_definition) = 0 then
     raise exception 'The server-owned History provenance guard was not found.';
   end if;
@@ -46,7 +46,7 @@ begin
 
   v_old := $old$nullif(v_history->>'actor_kind', '') is not null and v_history->>'actor_kind' <> 'user'$old$;
   v_new := $new$nullif(v_history->>'actor_kind', '') is not null
-        and v_history->>'actor_kind' <> case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end$new$;
+        and v_history->>'actor_kind' <> (case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end)$new$;
   if position(v_old in v_definition) = 0 then
     raise exception 'The server-owned History actor guard was not found.';
   end if;
