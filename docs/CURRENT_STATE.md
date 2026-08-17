@@ -31,7 +31,7 @@ Role: active working
 
 ### 7.9.17 Calendar / streak / active-status reconciliation
 
-- Calendar projection presents unhandled dates as Due or Not Due, while active status presents an ordinary pending task as Open. Fixed recurrence non-occurrence dates remain Not Due, unresolved Missed chains outrank Upcoming/Not Due, Not Due and Delayed pause both streak types, and Delayed windows remain Not Due until the delayed due date. Automatic In Progress rollover remains deferred to 7.9.18. No SQL, schema, Edge Function, reward, live-data, or deployment changes were made; browser and live Supabase validation remain unrun.
+- Calendar projection presents unhandled dates as Due or Not Due, while active status presents an ordinary pending task as Open. Fixed recurrence non-occurrence dates remain Not Due, unresolved Missed chains outrank Upcoming/Not Due, Not Due and Delayed pause both streak types, and Delayed windows remain Not Due until the delayed due date. Automatic In Progress rollover remains deferred to 7.9.19. No SQL, schema, Edge Function, reward, live-data, or deployment changes were made; browser and live Supabase validation remain unrun.
 
 ### 7.9.18 Canonical Delay effective-due correction
 
