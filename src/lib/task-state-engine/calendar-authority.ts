@@ -1,7 +1,7 @@
 import type { Task, TaskHistory } from "@/lib/database.types";
 import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
 import { logicalDateForTimestamp, shiftDateKey } from "./calendar.ts";
-import { adaptLegacyTaskState } from "./legacy-adapter.ts";
+import { buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
 import { evaluateTaskActionAuthority } from "./action-authority.ts";
@@ -47,15 +47,19 @@ export function resolveTaskHistoryCalendarRead(input: {
 }): TaskHistoryCalendarReadResult | null {
   if (!(input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED)) return null;
   const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.history);
-  const adapted = adaptLegacyTaskState(input.task, normalizedHistory, input);
+  const engineInput = buildDirectTaskStateEngineInput(input.task as CanonicalProjectedTaskState, normalizedHistory, input, {
+    calendarOverrides: input.calendarOverrides,
+    ...(input.calendarStart ? { calendarStart: input.calendarStart } : {}),
+    ...(input.calendarEnd ? { calendarEnd: input.calendarEnd } : {}),
+  });
 
-  if (input.task.status !== "archived" && input.task.status !== "trashed") {
+  if (!isCanonicalArchivedOrTrashed(input.task as CanonicalProjectedTaskState)) {
     const logicalDate = logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover);
     const calendarStart = input.calendarStart ?? logicalDate;
     const calendarEnd = input.calendarEnd ?? shiftDateKey(logicalDate, 40);
     const timeline = buildTaskEffectiveTimeline({
-      task: adapted.engineInput.task,
-      history: adapted.engineInput.history,
+      task: engineInput.task,
+      history: engineInput.history,
       calendarOverrides: input.calendarOverrides,
       logicalDate,
       calendarStart,
@@ -71,9 +75,7 @@ export function resolveTaskHistoryCalendarRead(input: {
   }
 
   const result = evaluateTaskState({
-    ...adapted.engineInput,
-    ...(input.calendarStart ? { calendarStart: input.calendarStart } : {}),
-    ...(input.calendarEnd ? { calendarEnd: input.calendarEnd } : {}),
+    ...engineInput,
   });
   return {
     authority: "engine_fallback",

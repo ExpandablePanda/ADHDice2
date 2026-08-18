@@ -2,7 +2,7 @@ import type { Task, TaskHistory } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
 import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
-import { adaptLegacyTaskState } from "./legacy-adapter.ts";
+import { buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
 
 /**
@@ -19,7 +19,7 @@ export type ActiveStatusReadResult = {
   statusesByTaskId: TaskDisplayStatusByTaskId;
 };
 
-type ActiveStatusReadTask = Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">>;
+type ActiveStatusReadTask = Task & Partial<CanonicalTaskStateColumns> & { canonical_schedule_boundary?: CanonicalProjectedTaskState["canonical_schedule_boundary"] };
 
 export function resolveActiveTaskStatuses(input: {
   enabled?: boolean;
@@ -32,23 +32,16 @@ export function resolveActiveTaskStatuses(input: {
   const statusesByTaskId: TaskDisplayStatusByTaskId = {};
   for (const task of input.tasks) {
     const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.historyByTaskId[task.id] ?? []);
-    if (task.status === "archived" || task.status === "trashed") {
-      statusesByTaskId[task.id] = task.status;
+    if (isCanonicalArchivedOrTrashed(task)) {
+      statusesByTaskId[task.id] = task.container_state === "trashed" || task.status === "trashed" ? "trashed" : "archived";
       continue;
     }
-    const taskForRead = task.workflow_state === "in_progress" && task.workflow_logical_date
-      ? {
-        ...task,
-        status: "in_progress" as const,
-        active_status_logical_date: task.workflow_logical_date,
-      }
-      : task;
-    const adapted = adaptLegacyTaskState(taskForRead, normalizedHistory, {
+    const engineInput = buildDirectTaskStateEngineInput(task, normalizedHistory, {
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.logicalDayRollover,
     });
-    const evaluatedStatus = evaluateTaskState(adapted.engineInput).activeStatus;
+    const evaluatedStatus = evaluateTaskState(engineInput).activeStatus;
     statusesByTaskId[task.id] = evaluatedStatus;
   }
   return { authority: "engine", statusesByTaskId };

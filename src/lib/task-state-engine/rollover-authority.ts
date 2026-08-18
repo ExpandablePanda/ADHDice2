@@ -1,5 +1,5 @@
 import type { Task, TaskHistory } from "@/lib/database.types";
-import { adaptLegacyTaskState } from "./legacy-adapter.ts";
+import { buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
 import {
   canonicalizePersistableTaskStatePatch,
@@ -67,22 +67,24 @@ export function createEngineRolloverPlan(input: {
   const unsupportedTaskIds: string[] = [];
   let logicalDate = "";
   for (const task of input.tasks) {
-    if (task.status === "archived" || task.status === "trashed") continue;
-    const adapted = adaptLegacyTaskState(task, historyByTaskId.get(task.id) ?? [], {
+    if (isCanonicalArchivedOrTrashed(task as CanonicalProjectedTaskState)) continue;
+    const engineInput = buildDirectTaskStateEngineInput(task as CanonicalProjectedTaskState, historyByTaskId.get(task.id) ?? [], {
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.rolloverTime,
     });
-    // Unsupported adapter metadata is diagnostic-only. The projection below
-    // guarantees it cannot cross the persistence boundary.
-    if (adapted.unsupported.length > 0) unsupportedTaskIds.push(task.id);
     const result = evaluateTaskState({
-      ...adapted.engineInput,
+      ...engineInput,
       action: { type: "reconcile_rollover" },
     });
+    // Canonical workflow rollover is committed by the trusted command after
+    // candidate selection. The client planner must not turn compatibility
+    // projections into a second workflow/History mutation.
+    const canonicalWorkflow = (task as CanonicalProjectedTaskState).workflow_state === "in_progress";
     logicalDate ||= result.logicalDate;
     const history = result.proposedHistoryChanges.flatMap((change) => (
       change.type === "insert"
+      && !canonicalWorkflow
       && (change.row.outcome !== "missed" || input.allowCanonicalAutomaticMissed === true)
     ) ? [{
       logicalDate: change.row.logicalDate,
@@ -90,7 +92,7 @@ export function createEngineRolloverPlan(input: {
       outcome: change.row.outcome,
       taskId: task.id,
     }] : []);
-    const patch = projectPersistableTaskStatePatch(result.proposedTaskPatch, task);
+    const patch = canonicalWorkflow ? {} : projectPersistableTaskStatePatch(result.proposedTaskPatch, task);
     if (input.includeDiagnostics !== false && Object.keys(patch).length > 0 && remainingPatchSummaries.length < MAX_REMAINING_PATCH_SUMMARIES) {
       remainingPatchSummaries.push({
         patchKeys: Object.keys(patch) as Array<keyof PersistableTaskStatePatch>,

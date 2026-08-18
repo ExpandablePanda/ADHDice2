@@ -1,6 +1,7 @@
 export { evaluateTaskState, findUnresolvedMissedOccurrence } from "./engine.ts";
 export { logicalDateForTimestamp } from "./calendar.ts";
 export { allowedOutcomes, isScheduledOccurrence, occurrenceIdentity, scheduledOccurrences } from "./recurrence.ts";
+/** Explicit migration/import/test compatibility only; never a live authority. */
 export { adaptLegacyTaskState } from "./legacy-adapter.ts";
 export { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
 export { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, taskStateHistoryRowToInsert } from "./action-authority.ts";

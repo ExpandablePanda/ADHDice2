@@ -1,6 +1,6 @@
 import type { Task, TaskHistory, TaskHistoryInsert, TaskUpdate } from "@/lib/database.types";
 import { logicalDateForTimestamp } from "./calendar.ts";
-import { adaptLegacyTaskState } from "./legacy-adapter.ts";
+import { buildDirectTaskStateEngineInput, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
 import { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
@@ -121,24 +121,23 @@ export function evaluateTaskActionAuthority(input: {
   timezone: string;
 }) {
   if (!(input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED)) return null;
-  const adapted = adaptLegacyTaskState(input.task, input.history, input);
+  const engineInput = buildDirectTaskStateEngineInput(input.task as CanonicalProjectedTaskState, input.history, input, {
+    action: input.outcome ? {
+      type: "record_outcome",
+      outcome: input.outcome,
+      ...(input.outcomeDate ? { logicalDate: input.outcomeDate } : {}),
+      delayDays: input.delayDays,
+      delayUntilDate: input.delayUntilDate,
+      provenance: "manual",
+      ...(input.replaceExisting ? { replaceExisting: true } : {}),
+      ...(input.previousOutcome !== undefined ? { previousOutcome: input.previousOutcome } : {}),
+      ...(input.occurrenceDueOn !== undefined ? { occurrenceDueOn: input.occurrenceDueOn } : {}),
+      ...(input.occurrenceIdentity !== undefined ? { occurrenceIdentity: input.occurrenceIdentity } : {}),
+      ...(input.historicalOverride ? { historicalOverride: true } : {}),
+    } : undefined,
+  });
   const result = evaluateTaskState({
-    ...adapted.engineInput,
-    ...(input.outcome ? {
-      action: {
-        type: "record_outcome" as const,
-        outcome: input.outcome,
-        logicalDate: input.outcomeDate,
-        delayDays: input.delayDays,
-        delayUntilDate: input.delayUntilDate,
-        provenance: "manual" as const,
-        ...(input.replaceExisting ? { replaceExisting: true } : {}),
-        ...(input.previousOutcome !== undefined ? { previousOutcome: input.previousOutcome } : {}),
-        ...(input.occurrenceDueOn !== undefined ? { occurrenceDueOn: input.occurrenceDueOn } : {}),
-        ...(input.occurrenceIdentity !== undefined ? { occurrenceIdentity: input.occurrenceIdentity } : {}),
-        ...(input.historicalOverride ? { historicalOverride: true } : {}),
-      },
-    } : {}),
+    ...engineInput,
   });
   const persistableTaskPatch = projectPersistableTaskStatePatch(result.proposedTaskPatch, input.task);
   const taskUpdate: TaskUpdate = {
@@ -187,17 +186,16 @@ export function evaluateTaskScheduleAuthority(input: {
   timezone: string;
 }) {
   if (!(input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED)) return null;
-  const adapted = adaptLegacyTaskState(input.proposedTask, input.history, input);
-  const changedLogicalDate = logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover);
-  const dueDateChanged = input.proposedTask.due_on !== input.task.due_on;
-  const result = evaluateTaskState({
-    ...adapted.engineInput,
+  const engineInput = buildDirectTaskStateEngineInput(input.proposedTask as CanonicalProjectedTaskState, input.history, input, {
     action: {
       type: "change_schedule",
-      changedLogicalDate,
-      replayKind: dueDateChanged ? "due_date" : "recurrence",
-      ...(dueDateChanged ? { manualDueOn: input.proposedTask.due_on } : {}),
+      changedLogicalDate: logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover),
+      replayKind: input.proposedTask.due_on !== input.task.due_on ? "due_date" : "recurrence",
+      ...(input.proposedTask.due_on !== input.task.due_on ? { manualDueOn: input.proposedTask.due_on } : {}),
     },
+  });
+  const result = evaluateTaskState({
+    ...engineInput,
   });
   const persistableTaskPatch = projectPersistableTaskStatePatch(result.proposedTaskPatch, input.task);
   const taskUpdate: TaskUpdate = {

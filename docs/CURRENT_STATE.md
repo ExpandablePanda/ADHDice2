@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.32`.
+- Current working app version: `7.9.33`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -32,11 +32,28 @@ current-state authority. `resolveActiveTaskStatuses` is the sole current read
 authority, and the read engine now applies the locked Calendar, cursor,
 recurrence, Missed, Unscheduled, streak, and recovery-boundary semantics.
 
-Persistence-side automatic Missed materialization and the preview-first,
-literal legacy History copy are now implemented in source. SQL/Edge deployment,
-explicit migration approval/application, removal of remaining compatibility
-paths, and browser/live validation remain pending. The existing SQL/RPC and
-Edge v23 production deployment is unchanged.
+Persistence-side automatic Missed materialization, the preview-first literal
+legacy History copy, and the final live-reader cutover are implemented in
+source. SQL/Edge deployment, explicit migration approval/application, and
+browser/live validation remain pending. The existing SQL/RPC and Edge v23
+production deployment is unchanged.
+
+### 7.9.33 Final legacy Task State authority cutover
+
+- Added dynamic, execution-time preview/copy/verification SQL for every
+  remaining legacy-only History date. The copy preserves Task/date/outcome,
+  source legacy ID, and only present `occurrence_due_on` metadata; canonical
+  same-date facts win, reruns are safe, legacy rows remain archival, and no
+  Task, schedule, occurrence, override, reward, or automation data is created.
+- Active Status, Calendar, rollover, action planning, and canonical command
+  input now use one direct canonical engine-input mapper. Canonical lifecycle,
+  workflow, schedule boundaries, canonical History, occurrences, and Calendar
+  overrides are authoritative; raw compatibility status/repeat/due values do
+  not overrule them. The legacy adapter remains only as explicit migration/test
+  compatibility.
+- Added focused cutover and SQL-contract regressions. No SQL was applied, no
+  Edge Function was deployed, and no production Tasks/History were changed.
+  Browser/live validation remains pending.
 
 ### Verified production deployment baseline
 

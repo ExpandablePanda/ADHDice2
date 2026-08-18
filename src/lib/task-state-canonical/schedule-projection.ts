@@ -4,6 +4,8 @@ import type { CanonicalTaskScheduleBoundary } from "./types.ts";
 export type CanonicalProjectedTask = Task & {
   /** Read-only schedule seed; never persisted back to the legacy Task row. */
   canonical_schedule_anchor_date?: string | null;
+  /** Full boundary retained for direct Task State reads; never persisted. */
+  canonical_schedule_boundary?: CanonicalTaskScheduleBoundary | null;
 };
 
 export function latestCanonicalScheduleBoundary(boundaries: CanonicalTaskScheduleBoundary[]) {
@@ -13,6 +15,7 @@ export function latestCanonicalScheduleBoundary(boundaries: CanonicalTaskSchedul
 export function projectTaskWithCanonicalScheduleBoundary(task: Task, boundary: CanonicalTaskScheduleBoundary): CanonicalProjectedTask {
   return {
     ...task,
+    canonical_schedule_boundary: boundary,
     canonical_schedule_anchor_date: boundary.schedule_model === "one_time"
       ? boundary.one_time_due_on
       : boundary.schedule_model === "unscheduled"
