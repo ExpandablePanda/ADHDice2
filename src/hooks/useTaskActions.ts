@@ -46,7 +46,7 @@ export function useTaskActions({
     status: TaskStatus,
     occurrenceTask?: Task | null,
     options?: { historyEntry?: TaskHistoryInsert; historySnapshot?: TaskHistory[] },
-  ) => historyActions.syncTaskHistoryEntry(taskId, status, options?.historyEntry?.entry_date ?? currentDayKey, {
+  ) => historyActions.syncTaskHistoryEntry(taskId, status, occurrenceTask, {
     occurrenceTask,
     historyEntry: options?.historyEntry,
     historySnapshot: options?.historySnapshot,
@@ -65,8 +65,6 @@ export function useTaskActions({
     ...update,
     currentDayKey,
     routeTask: routingActions.routeTask,
-    syncTaskHistoryEntry,
-    syncTaskHistoryEntries,
   });
   const subtaskActions = useTaskSubtaskActions({
     ...subtask,

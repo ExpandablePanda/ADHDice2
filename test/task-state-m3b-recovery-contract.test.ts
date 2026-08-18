@@ -32,29 +32,30 @@ test("canonical clear outcome has a trusted command and removes only explicit ca
   assert.doesNotMatch(commandSql, /insert into public\.adhdice_task_history\s/);
 });
 
-test("workspace History source switches as one gate-controlled authority", () => {
-  assert.match(workspace, /const useCanonicalHistory = TASK_STATE_CANONICAL_COMMANDS_ENABLED/);
+test("workspace History source is canonical and remains projection-compatible", () => {
+  assert.doesNotMatch(workspace, /TASK_STATE_CANONICAL_COMMANDS_ENABLED/);
   assert.match(workspace, /adhdice_task_history_facts/);
   assert.match(workspace, /mapCanonicalTaskHistoryFacts/);
-  assert.match(workspace, /table: useCanonicalHistory \? "adhdice_task_history_facts" : "adhdice_task_history"/);
+  assert.doesNotMatch(workspace, /table:.*adhdice_task_history["']/);
 });
 
-test("secondary History consumers follow the same gate-controlled projection", () => {
+test("secondary History consumers use the canonical projection", () => {
   for (const source of [records, report]) {
-    assert.match(source, /TASK_STATE_CANONICAL_COMMANDS_ENABLED/);
+    assert.doesNotMatch(source, /TASK_STATE_CANONICAL_COMMANDS_ENABLED/);
     assert.match(source, /adhdice_task_history_facts/);
     assert.match(source, /mapCanonicalTaskHistoryFacts/);
   }
 });
 
 test("Milestone outcomes use canonical commands while atomic completion stays on the trusted seam", () => {
-  assert.match(taskApp, /TASK_STATE_CANONICAL_COMMANDS_ENABLED[\s\S]*status === "done"[\s\S]*status === "did_my_best"[\s\S]*status === "missed"/);
+  assert.doesNotMatch(taskApp, /TASK_STATE_CANONICAL_COMMANDS_ENABLED/);
+  assert.match(taskApp, /status === "done"[\s\S]*status === "did_my_best"[\s\S]*status === "missed"/);
   assert.match(taskApp, /const completion = await milestoneData\.completeMilestone/);
   assert.match(taskApp, /queueTaskRewards\(\[\{ previousStatus: task\.status, task: completedTask \}\]\)/);
 });
 
-test("Settings JSON restore cannot overwrite canonical Task State while the gate is enabled", () => {
-  assert.match(settings, /TASK_STATE_CANONICAL_COMMANDS_ENABLED/);
-  assert.match(settings, /JSON restore is a legacy compatibility surface/);
-  assert.match(settings, /\.upsert\(payload, \{ onConflict: "id" \}\)/);
+test("Settings JSON restore directs users to canonical Task import", () => {
+  assert.doesNotMatch(settings, /TASK_STATE_CANONICAL_COMMANDS_ENABLED/);
+  assert.match(settings, /JSON restore is retired\. Use the canonical Task import flow instead/);
+  assert.doesNotMatch(settings, /\.upsert\(payload, \{ onConflict: "id" \}\)/);
 });

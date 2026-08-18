@@ -4,7 +4,6 @@ import test from "node:test";
 
 const rewardSql = readFileSync(new URL("../supabase/add_canonical_reward_entitlement_bridge.sql", import.meta.url), "utf8");
 const rewardHook = readFileSync(new URL("../src/hooks/useTaskRewardController.ts", import.meta.url), "utf8");
-const gate = readFileSync(new URL("../src/lib/task-state-runtime-gate.ts", import.meta.url), "utf8");
 const currentState = readFileSync(new URL("../docs/CURRENT_STATE.md", import.meta.url), "utf8");
 
 function canonicalStreak(outcomes: string[], repeatFrequency: string) {
@@ -167,10 +166,10 @@ test("transient retry repeats the same entitlement", () => {
   assert.match(canonicalClient, /isFetchFailure\(fulfillment\.error\)[\s\S]*client\.rpc/);
 });
 
-test("canonical reward path does not finalize legacy recurrence", () => {
+test("canonical reward path only fulfills canonical entitlements", () => {
   const queue = rewardHook.slice(rewardHook.indexOf("async function queueTaskRewards"));
-  assert.match(queue, /if \(TASK_STATE_CANONICAL_COMMANDS_ENABLED\)[\s\S]*return;/);
-  assert.match(queue, /getRecurringFinalizationCandidates/);
+  assert.match(queue, /fulfillCanonicalRewardEntitlements/);
+  assert.doesNotMatch(queue, /getRecurringFinalizationCandidates|finalizeRecurringTasks|reconcileOverdueTaskMisses/);
 });
 
 test("canonical reward path does not recreate legacy History", () => {
@@ -183,8 +182,8 @@ test("pending-reward refresh remains after successful canonical fulfillment", ()
   assert.match(canonicalClient, /if \(allFulfilled\) await refreshPendingRewards\(\);/);
 });
 
-test("canonical gate is enabled", () => {
-  assert.match(gate, /TASK_STATE_CANONICAL_COMMANDS_ENABLED = true/);
+test("canonical reward runtime has no legacy gate", () => {
+  assert.doesNotMatch(rewardHook, /TASK_STATE_CANONICAL_COMMANDS_ENABLED/);
 });
 
 test("backend deployment parity checklist names the exact reviewed set and ordering", () => {

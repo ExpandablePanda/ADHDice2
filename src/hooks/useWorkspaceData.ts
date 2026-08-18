@@ -29,7 +29,6 @@ import {
   deduplicateTaskHistoryByLogicalDate,
   fetchTaskHistoryForTaskIdsInBatches,
   TASK_HISTORY_ROLLOVER_BATCH_SIZE,
-  TASK_HISTORY_COLUMNS,
   type TaskHistoryLoadMap,
   type TaskHistoryLoadResult,
   type TaskHistoryStreakEntry,
@@ -47,12 +46,10 @@ import { workspaceStartupRequestRegistry } from "@/lib/workspace-startup-request
 import {
   buildTaskHistoryStreakSummary,
   buildTaskHistoryStreakSummaryMap,
-  TASK_HISTORY_STREAK_SUMMARY_COLUMNS,
   updateTaskHistoryStreakSummaryMap,
   type TaskHistoryStreakSummaryMap,
 } from "@/lib/task-history-streak-summaries";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
-import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 
@@ -182,7 +179,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   mapFocusCategoryRow,
   mapFocusSessionRow,
   mapTaskFocusDayRows,
-  mapTaskHistoryRow,
   mapTaskListManualMembershipRow,
   mapTaskListRow,
   mapTaskSubtaskRow,
@@ -409,7 +405,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     const client = supabase;
     const user = currentUser;
     const userId = user.id;
-    const useCanonicalHistory = TASK_STATE_CANONICAL_COMMANDS_ENABLED;
     clearTaskHistoryTaskCache();
     setTaskHistoryStreakSummaries((current) => Object.keys(current).length === 0 ? current : {});
     fullTaskHistoryRowsRef.current = [];
@@ -680,16 +675,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         try {
           do {
             queuedTaskHistoryReloadRef.current = false;
-            const taskHistoryResult = useCanonicalHistory
-              ? await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery().range(from, to))
-              : await fetchAllPagedRows<DbTaskHistory>(async (from, to) => await client
-                .from("adhdice_task_history")
-                .select(TASK_HISTORY_COLUMNS)
-                .eq("user_id", userId)
-                .order("entry_date", { ascending: false })
-                .order("created_at", { ascending: false })
-                .order("id", { ascending: true })
-                .range(from, to));
+            const taskHistoryResult = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery().range(from, to));
 
             if (!isActive || !canApplyCoreWorkspaceResult()) {
               return false;
@@ -702,9 +688,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
               return false;
             }
 
-            const nextTaskHistory = deduplicateTaskHistoryByLogicalDate(useCanonicalHistory
-              ? mapCanonicalHistoryRows((taskHistoryResult.data ?? []) as CanonicalTaskHistoryFact[])
-              : (taskHistoryResult.data ?? []).map((row) => mapTaskHistoryRow(row as DbTaskHistory)));
+            const nextTaskHistory = deduplicateTaskHistoryByLogicalDate(mapCanonicalHistoryRows((taskHistoryResult.data ?? []) as CanonicalTaskHistoryFact[]));
             const nextByTaskId = Object.fromEntries(
               [...new Set([...tasksRef.current.map((task) => task.id), ...nextTaskHistory.map((entry) => entry.task_id)])]
                 .map((taskId) => [taskId, nextTaskHistory.filter((entry) => entry.task_id === taskId)]),
@@ -745,28 +729,15 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       return await fetchTaskHistoryForTaskIdsInBatches(taskIds, async (batchTaskIds) => {
-        if (useCanonicalHistory) {
-          const result = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery()
-            .in("entity_id", batchTaskIds)
-            .range(from, to));
-          return {
-            data: result.data
-              ? mapCanonicalHistoryRows(result.data as CanonicalTaskHistoryFact[])
-              : null,
-            error: result.error,
-          };
-        }
-
-        return await fetchAllPagedRows<DbTaskHistory>(async (from, to) => await client
-          .from("adhdice_task_history")
-          .select(TASK_HISTORY_COLUMNS)
-          .eq("user_id", userId)
-          .in("task_id", batchTaskIds)
-          .order("entry_date", { ascending: false })
-          .order("updated_at", { ascending: false })
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: true })
+        const result = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery()
+          .in("entity_id", batchTaskIds)
           .range(from, to));
+        return {
+          data: result.data
+            ? mapCanonicalHistoryRows(result.data as CanonicalTaskHistoryFact[])
+            : null,
+          error: result.error,
+        };
       }, TASK_HISTORY_ROLLOVER_BATCH_SIZE);
     }
 
@@ -795,18 +766,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       };
       const taskLoadPromise = (async () => {
         try {
-          const result = useCanonicalHistory
-            ? await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery(taskId).range(from, to))
-            : await fetchAllPagedRows<DbTaskHistory>(async (from, to) => await client
-              .from("adhdice_task_history")
-              .select(TASK_HISTORY_COLUMNS)
-              .eq("user_id", userId)
-              .eq("task_id", taskId)
-              .order("entry_date", { ascending: false })
-              .order("updated_at", { ascending: false })
-              .order("created_at", { ascending: false })
-              .order("id", { ascending: true })
-              .range(from, to));
+          const result = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery(taskId).range(from, to));
           if (!isActive || !canApplyCoreWorkspaceResult()) {
             return { status: "error", history: null, error: "Task History is not available for this workspace." } satisfies TaskHistoryLoadResult;
           }
@@ -816,9 +776,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             if (!silent) setMessage({ tone: "warn", text: error });
             return { status: "error", history: null, error } satisfies TaskHistoryLoadResult;
           }
-          const rows = deduplicateTaskHistoryByLogicalDate(useCanonicalHistory
-            ? mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[])
-            : (result.data ?? []).map((row) => mapTaskHistoryRow(row as DbTaskHistory)));
+          const rows = deduplicateTaskHistoryByLogicalDate(mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[]));
           setTaskHistoryCacheForTask(taskId, rows);
           setTaskHistoryTaskLoadState(taskId, { error: null, status: "ready" });
           return { error: null, history: [...rows], status: "ready" } satisfies TaskHistoryLoadResult;
@@ -873,20 +831,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           if (hasLoadedFullTaskHistoryRef.current) {
             compactHistory = fullTaskHistoryRowsRef.current;
           } else {
-            const result = useCanonicalHistory
-              ? await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery().range(from, to))
-              : await fetchAllPagedRows<TaskHistoryStreakEntry>(async (from, to) => await client
-                .from("adhdice_task_history")
-                .select(TASK_HISTORY_STREAK_SUMMARY_COLUMNS)
-                .eq("user_id", userId)
-                .order("entry_date", { ascending: false })
-                .order("updated_at", { ascending: false })
-                .order("created_at", { ascending: false })
-                .range(from, to));
+            const result = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery().range(from, to));
             if (result.error) return false;
-            compactHistory = useCanonicalHistory
-              ? mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[])
-              : (result.data ?? []) as TaskHistoryStreakEntry[];
+            compactHistory = mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[]);
           }
 
           if (!isActive || !canApplyCoreWorkspaceResult()) {
@@ -992,23 +939,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             ));
             return true;
           }
-          const result = useCanonicalHistory
-            ? await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery(taskId).range(from, to))
-            : await fetchAllPagedRows<TaskHistoryStreakEntry>(async (from, to) => await client
-              .from("adhdice_task_history")
-              .select(TASK_HISTORY_STREAK_SUMMARY_COLUMNS)
-              .eq("user_id", userId)
-              .eq("task_id", taskId)
-              .order("entry_date", { ascending: false })
-              .order("updated_at", { ascending: false })
-              .order("created_at", { ascending: false })
-              .order("id", { ascending: true })
-              .range(from, to));
+          const result = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery(taskId).range(from, to));
           if (result.error || !isActive || !canApplyCoreWorkspaceResult()) return false;
 
-          const streakRows: TaskHistoryStreakEntry[] = useCanonicalHistory
-            ? mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[])
-            : (result.data ?? []) as TaskHistoryStreakEntry[];
+          const streakRows: TaskHistoryStreakEntry[] = mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[]);
           const nextSummary = buildTaskHistoryStreakSummary(task, streakRows, todayKeyRef.current, summaryContext);
           setTaskHistoryStreakSummaries((current) => (
             JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
@@ -1687,7 +1621,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         {
           event: "*",
           schema: "public",
-          table: useCanonicalHistory ? "adhdice_task_history_facts" : "adhdice_task_history",
+          table: "adhdice_task_history_facts",
           filter: `user_id=eq.${userId}`,
         },
         (payload) => {

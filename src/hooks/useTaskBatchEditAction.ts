@@ -9,7 +9,6 @@ import { buildTaskPriorityUpdate } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, isOccurrenceSensitiveTaskMutation } from "@/lib/task-state-engine/action-authority";
-import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
 import {
   completeBatchEditProgress,
@@ -24,7 +23,6 @@ import {
   type TaskStateRuntimeExecutionResult,
   type TaskStateRuntimeLocalTask,
 } from "@/lib/task-state-runtime-executor";
-import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   text: string;
@@ -39,7 +37,6 @@ type UpdateTaskRowResult = {
 };
 
 type UseTaskBatchEditActionOptions = {
-  canonicalCommandsEnabled?: boolean;
   canonicalCommandExecutor?: (action: Extract<TaskStateRuntimeAction, { kind: "canonical_action" }>, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   clearListTaskSelection: () => void;
   currentDayKey: string;
@@ -68,7 +65,6 @@ type UseTaskBatchEditActionOptions = {
 };
 
 export function useTaskBatchEditAction({
-  canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   clearListTaskSelection,
   currentDayKey,
@@ -187,7 +183,7 @@ export function useTaskBatchEditAction({
         values: updateValues,
       });
       let scopedHistory = taskHistory.filter((entry) => entry.task_id === task.id);
-      if (canonicalCommandsEnabled && Object.keys(updateValues).some((field) => field !== "revision" && updateValues[field as keyof TaskUpdate] !== undefined)) {
+      if (Object.keys(updateValues).some((field) => field !== "revision" && updateValues[field as keyof TaskUpdate] !== undefined)) {
         const runtimeAction = classifyTaskStateRuntimeAction({
           replayIdentity: createTaskStateReplayIdentity(),
           task: task as TaskStateRuntimeLocalTask,
@@ -279,7 +275,7 @@ export function useTaskBatchEditAction({
             nextFocusedTaskIds.delete(task.id);
           }
           planSuccess = true;
-        } else if (canonicalCommandsEnabled && runtimeAction?.kind === "canonical_action") {
+        } else if (runtimeAction?.kind === "canonical_action") {
           const canonicalResult = await canonicalCommandExecutor(runtimeAction, task as TaskStateRuntimeLocalTask);
           if (!canonicalResult.success) {
             planErrorMessage = `Task "${task.title}": ${canonicalResult.error.message}`;
@@ -324,8 +320,6 @@ export function useTaskBatchEditAction({
               if (!dueDateOnlyEdit) {
                 completedCandidates.push({
                   engineManaged: Boolean(actionAuthority),
-                  forceRecurringFinalization: !TASK_STATE_ENGINE_INTEGRATION_ENABLED
-                    && (draft.status === "done" || draft.status === "did_my_best"),
                   previousStatus: task.status,
                   rewardEligible: actionAuthority?.rewardEligibility.eligible,
                   task: data,

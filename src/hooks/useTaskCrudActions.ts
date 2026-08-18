@@ -2,21 +2,18 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
-import type { Task, TaskInsert, TaskUpdate } from "@/lib/database.types";
+import type { Task, TaskInsert } from "@/lib/database.types";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
 import {
   insertTaskRowWithCanonicalCreation,
   type CanonicalTaskCreator,
   type DeleteTaskRowResult,
-  type TaskRowUpdateOptions,
-  type UpdateTaskRowResult,
 } from "@/lib/task-db-mutations";
 import type { ImportedTaskSubtask, ImportedTaskWarning } from "@/lib/task-input-parsing";
 import { parseImportedTaskLines } from "@/lib/task-input-parsing";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { normalizeTaskPriorityFields } from "@/lib/task-priority";
-import { isMissingTaskActualSecondsColumnError, isMissingTaskEnergyNoneEnumError } from "@/lib/task-db-compat";
 import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity } from "@/lib/task-state-runtime-actions";
 import {
   executeTaskStateRuntimeAction,
@@ -24,7 +21,6 @@ import {
   type TaskStateRuntimeLocalTask,
   type TaskStateRuntimeCanonicalAction,
 } from "@/lib/task-state-runtime-executor";
-import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   text: string;
@@ -48,11 +44,8 @@ type UseTaskCrudActionsOptions = {
   currentUserId: string;
   markPendingTaskMutations?: (taskIds: string[]) => void;
   mutateMilestoneTask?: (action: "delete" | "trash", task: Task) => Promise<{ deleted: boolean; error: string | null; handled: boolean; task: Task | null }>;
-  /** Test seam; production follows the canonical runtime gate. */
-  canonicalCommandsEnabled?: boolean;
   /** Test seam for the canonical executor; normal callers use the real executor. */
   canonicalCommandExecutor?: (action: TaskStateRuntimeCanonicalAction, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
-  /** Lets enabled-gate deletion fail closed before invoking Milestone RPCs. */
   isMilestoneTask?: (task: Task) => boolean;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTaskRouting: Dispatch<SetStateAction<Record<string, TaskRoutingBucket>>>;
@@ -62,14 +55,12 @@ type UseTaskCrudActionsOptions = {
   tasks: Task[];
   replaceTaskSubtasks?: unknown;
   deleteTaskRow: (taskId: string, expectedTask?: Task | null) => Promise<DeleteTaskRowResult>;
-  updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
 };
 
 export function useTaskCrudActions({
   client,
   canonicalTaskCreator,
   clearPendingTaskMutations,
-  canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   currentUserId,
   isMilestoneTask,
@@ -82,7 +73,6 @@ export function useTaskCrudActions({
   sortTasksForUi,
   tasks,
   deleteTaskRow,
-  updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskCrudActionsOptions) {
   const createTask = canonicalTaskCreator ?? ((payload: TaskInsert, source?: "task_creation" | "task_import") => insertTaskRowWithCanonicalCreation(client, payload, source));
 
@@ -129,10 +119,8 @@ export function useTaskCrudActions({
         user_id: currentUserId,
       });
 
-      const insertResult = await insertImportedTaskRowForMode({
-        canonicalCommandsEnabled,
+      const insertResult = await insertImportedTaskRow({
         canonicalTaskCreator: createTask,
-        client,
         payload,
       });
       if (insertResult.error) {
@@ -143,13 +131,6 @@ export function useTaskCrudActions({
       if (!insertResult.data) {
         importErrors.push({ line: parsedTask.line, message: "Task insert returned no row." });
         continue;
-      }
-
-      if (insertResult.usedActualFallback) {
-        warnings.push({
-          line: parsedTask.line,
-          message: "Actual time was skipped because this database is missing the task actual-time column.",
-        });
       }
 
       if (insertResult.usedEnergyFallback) {
@@ -165,9 +146,7 @@ export function useTaskCrudActions({
       if (parsedTask.subtasks.length > 0) {
         const childImport = await insertImportedChildTaskTree({
           children: parsedTask.subtasks,
-          canonicalCommandsEnabled,
           canonicalTaskCreator: createTask,
-          client,
           currentUserId,
           importErrors,
           parentTaskId: insertResult.data.id,
@@ -228,7 +207,7 @@ export function useTaskCrudActions({
       const expectedTask = taskSnapshots.get(taskId) ?? null;
 
       if (expectedTask && mutateMilestoneTask) {
-        if (canonicalCommandsEnabled && expectedTask.status !== "trashed" && !isMilestoneTask) {
+        if (expectedTask.status !== "trashed" && !isMilestoneTask) {
           firstErrorMessage ??= "Canonical Trash could not verify Milestone lifecycle ownership; no legacy Trash fallback was used.";
           continue;
         }
@@ -242,59 +221,31 @@ export function useTaskCrudActions({
       }
 
       if (expectedTask && expectedTask.status !== "trashed") {
-        if (canonicalCommandsEnabled) {
-          const runtimeAction = classifyTaskStateRuntimeAction({
-            replayIdentity: createTaskStateReplayIdentity(),
-            task: expectedTask as TaskStateRuntimeLocalTask,
-            values: { status: "trashed" },
-          });
-          if (runtimeAction.kind !== "canonical_action" || runtimeAction.actionType !== "trash_task") {
-            firstErrorMessage ??= runtimeAction.kind === "unsupported_state_mutation"
-              ? runtimeAction.reason
-              : "The canonical Trash action could not be classified.";
-            continue;
-          }
-
-          let canonicalResult: TaskStateRuntimeExecutionResult;
-          try {
-            canonicalResult = await canonicalCommandExecutor(runtimeAction, expectedTask as TaskStateRuntimeLocalTask);
-          } catch (error) {
-            firstErrorMessage ??= error instanceof Error ? error.message : "The canonical Trash command could not be invoked.";
-            continue;
-          }
-          if (!canonicalResult.success) {
-            firstErrorMessage ??= canonicalResult.error.message;
-            continue;
-          }
-
-          movedToTrashTasks.push(canonicalResult.task as Task);
+        const runtimeAction = classifyTaskStateRuntimeAction({
+          replayIdentity: createTaskStateReplayIdentity(),
+          task: expectedTask as TaskStateRuntimeLocalTask,
+          values: { status: "trashed" },
+        });
+        if (runtimeAction.kind !== "canonical_action" || runtimeAction.actionType !== "trash_task") {
+          firstErrorMessage ??= runtimeAction.kind === "unsupported_state_mutation"
+            ? runtimeAction.reason
+            : "The canonical Trash action could not be classified.";
           continue;
         }
 
-        const result = await updateTaskRowWithLegacyEnergyFallback(taskId, {
-          completed_at: null,
-          status: "trashed",
-          trashed_at: new Date().toISOString(),
-        }, { expectedTask });
-
-        if (result.error) {
-          firstErrorMessage ??= result.error.message;
+        let canonicalResult: TaskStateRuntimeExecutionResult;
+        try {
+          canonicalResult = await canonicalCommandExecutor(runtimeAction, expectedTask as TaskStateRuntimeLocalTask);
+        } catch (error) {
+          firstErrorMessage ??= error instanceof Error ? error.message : "The canonical Trash command could not be invoked.";
+          continue;
+        }
+        if (!canonicalResult.success) {
+          firstErrorMessage ??= canonicalResult.error.message;
           continue;
         }
 
-        if (result.conflict?.latestTask) {
-          conflictedTasks.push(result.conflict.latestTask);
-          continue;
-        }
-
-        if (result.conflict?.reason === "task_missing") {
-          missingTaskIds.push(taskId);
-          continue;
-        }
-
-        if (result.data) {
-          movedToTrashTasks.push(result.data);
-        }
+        movedToTrashTasks.push(canonicalResult.task as Task);
         continue;
       }
 
@@ -435,101 +386,37 @@ function buildImportSummaryMessage(
   return sections.join("\n\n");
 }
 
-async function insertImportedTaskRow(client: SupabaseClient, payload: TaskInsert) {
-  let nextPayload: TaskInsert = payload;
-  let usedActualFallback = false;
-  let usedEnergyFallback = false;
-
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const result = await client
-      .from("adhdice_clean_tasks")
-      .insert(nextPayload)
-      .select("*")
-      .single();
-
-    if (!result.error) {
-      return {
-        data: result.data,
-        error: null,
-        usedActualFallback,
-        usedEnergyFallback,
-      };
-    }
-
-    if (nextPayload.actual_seconds !== undefined && isMissingTaskActualSecondsColumnError(result.error.message)) {
-      const { actual_seconds: _actualSeconds, ...payloadWithoutActual } = nextPayload;
-      nextPayload = payloadWithoutActual;
-      usedActualFallback = true;
-      continue;
-    }
-
-    if (nextPayload.energy === "none" && isMissingTaskEnergyNoneEnumError(result.error.message)) {
-      nextPayload = {
-        ...nextPayload,
-        energy: "low",
-      };
-      usedEnergyFallback = true;
-      continue;
-    }
-
-    return {
-      data: null,
-      error: result.error,
-      usedActualFallback,
-      usedEnergyFallback,
-    };
-  }
-
-  return {
-    data: null,
-    error: { message: "Task import retries were exhausted." },
-    usedActualFallback,
-    usedEnergyFallback,
-  };
-}
-
 type ImportedTaskInsertResult = {
   data: Task | null;
   error: { message: string } | null;
-  usedActualFallback: boolean;
   usedEnergyFallback: boolean;
 };
 
-async function insertImportedTaskRowForMode({
-  canonicalCommandsEnabled,
+async function insertImportedTaskRow({
   canonicalTaskCreator,
-  client,
   payload,
 }: {
-  canonicalCommandsEnabled: boolean;
   canonicalTaskCreator: CanonicalTaskCreator;
-  client: SupabaseClient;
   payload: TaskInsert;
 }): Promise<ImportedTaskInsertResult> {
-  if (!canonicalCommandsEnabled) return insertImportedTaskRow(client, payload);
   const result = await canonicalTaskCreator(payload, "task_import");
   return {
     data: result.data,
     error: result.error,
-    usedActualFallback: false,
     usedEnergyFallback: result.usedEnergyFallback,
   };
 }
 
 async function insertImportedChildTaskTree({
   children,
-  canonicalCommandsEnabled,
   canonicalTaskCreator,
-  client,
   currentUserId,
   importErrors,
   parentTaskId,
   warnings,
 }: {
   children: ImportedTaskSubtask[];
-  canonicalCommandsEnabled: boolean;
   canonicalTaskCreator: CanonicalTaskCreator;
-  client: SupabaseClient;
   currentUserId: string;
   importErrors: ImportedTaskWarning[];
   parentTaskId: string;
@@ -569,10 +456,8 @@ async function insertImportedChildTaskTree({
       user_id: currentUserId,
     });
 
-    const insertResult = await insertImportedTaskRowForMode({
-      canonicalCommandsEnabled,
+    const insertResult = await insertImportedTaskRow({
       canonicalTaskCreator,
-      client,
       payload,
     });
     if (insertResult.error) {
@@ -583,13 +468,6 @@ async function insertImportedChildTaskTree({
     if (!insertResult.data) {
       importErrors.push({ line: child.line, message: "Step insert returned no row." });
       continue;
-    }
-
-    if (insertResult.usedActualFallback) {
-      warnings.push({
-        line: child.line,
-        message: "Step actual time was skipped because this database is missing the task actual-time column.",
-      });
     }
 
     if (insertResult.usedEnergyFallback) {
@@ -604,9 +482,7 @@ async function insertImportedChildTaskTree({
     if (child.children.length > 0) {
       const descendantImport = await insertImportedChildTaskTree({
         children: child.children,
-        canonicalCommandsEnabled,
         canonicalTaskCreator,
-        client,
         currentUserId,
         importErrors,
         parentTaskId: insertResult.data.id,

@@ -10,7 +10,7 @@ const calendarAuthoritySource = readFileSync(new URL("../src/lib/task-state-engi
 const workspaceSource = readFileSync(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 
 test("rollover History reads use an isolated lifecycle instead of claiming the modal cache", () => {
-  const rollover = appSource.slice(appSource.indexOf("if (TASK_STATE_CANONICAL_COMMANDS_ENABLED)"), appSource.indexOf("useEffect(() =>", appSource.indexOf("if (TASK_STATE_CANONICAL_COMMANDS_ENABLED)")));
+  const rollover = appSource.slice(appSource.indexOf("const runDayReset"), appSource.indexOf("useEffect(() =>", appSource.indexOf("const runDayReset")));
   const rolloverReader = workspaceSource.slice(workspaceSource.indexOf("async function fetchTaskHistoryForRollover"), workspaceSource.indexOf("async function loadTaskHistoryForTask"));
   assert.match(rollover, /fetchTaskHistoryForRollover\(rolloverTaskIds\)/);
   assert.match(rolloverReader, /fetchTaskHistoryForTaskIdsInBatches/);
@@ -99,9 +99,9 @@ test("full History readiness is cached per authenticated task and mutations upda
   assert.match(workspaceSource, /clearTaskHistoryTaskCache\(\)/);
   assert.match(workspaceSource, /updateTaskHistoryForTask/);
   assert.match(workspaceSource, /deduplicateTaskHistoryByLogicalDate/);
-  assert.match(workspaceSource, /fetchAllPagedRows<DbTaskHistory>/);
+  assert.match(workspaceSource, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
   assert.match(workspaceSource, /loadTaskHistoryForTask\(taskId, \{ force: true, silent: true \}\)/);
   assert.doesNotMatch(workspaceSource, /setTaskHistoryCacheForTask\(taskId, nextTaskHistory\)/);
-  assert.match(workspaceSource, /\.eq\("task_id", taskId\)/);
+  assert.match(workspaceSource, /\.eq\("entity_id", taskId\)/);
   assert.doesNotMatch(workspaceSource, /loadTaskHistory\(\{ silent: true, source: "secondary" \}\).*taskId/);
 });

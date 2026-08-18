@@ -10,8 +10,6 @@ import type {
   TaskStatus,
   TaskUpdate,
 } from "@/lib/database.types";
-import { TASK_STATE_OWNED_UPDATE_FIELDS } from "@/lib/task-state-runtime-actions";
-import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   tone: "neutral" | "good" | "warn";
@@ -195,18 +193,6 @@ export function TaskApp() {
   }
 
   async function updateTask(taskId: string, values: TaskUpdate) {
-    const currentTask = tasks.find((task) => task.id === taskId);
-    if (
-      TASK_STATE_CANONICAL_COMMANDS_ENABLED
-      && currentTask
-      && Object.keys(values).some((field) => (
-        (TASK_STATE_OWNED_UPDATE_FIELDS as readonly string[]).includes(field)
-        && values[field as keyof TaskUpdate] !== undefined
-      ))
-    ) {
-      setMessage({ tone: "warn", text: "Canonical Task State commands are not yet wired for the classic Task surface; no legacy state fallback was used." });
-      return false;
-    }
     setTasks((current) =>
       current.map((task) =>
         task.id === taskId ? { ...task, ...values, updated_at: new Date().toISOString() } : task,

@@ -6,9 +6,7 @@ import type { TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mu
 import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
-import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
-import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 import { evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
 import { classifyTaskStateRuntimeAction, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
@@ -18,7 +16,6 @@ import {
   type TaskStateRuntimeLocalTask,
   type TaskStateRuntimeCanonicalAction,
 } from "@/lib/task-state-runtime-executor";
-import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import { projectTaskWithCanonicalScheduleChanges } from "@/lib/task-state-canonical/schedule-projection";
 
 type Message = {
@@ -39,26 +36,15 @@ type UpdateTaskActionOptions = {
   rewardEligible?: boolean;
 };
 
-export type TaskHistoryFailureCompensation = (input: {
-  committedTask: Task;
-  previousTask: Task;
-  rollbackValues: TaskUpdate;
-  taskId: string;
-}) => Promise<boolean>;
-
 type UseTaskUpdateActionOptions = {
-  /** Test-only override; production defaults to the disabled migration gate. */
-  canonicalCommandsEnabled?: boolean;
   /** Test seam for the canonical executor; normal callers use the real executor. */
   canonicalCommandExecutor?: (action: TaskStateRuntimeCanonicalAction, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   clearPendingTaskMutations?: (taskIds: string[]) => void;
   currentDayKey: string;
   dayStartTime: string;
   markPendingTaskMutations?: (taskIds: string[]) => void;
-  onTaskHistoryFailure?: TaskHistoryFailureCompensation;
   onTaskHistoryMutation?: (taskId: string, taskHistory: TaskHistory[], nextTask?: Task) => void | Promise<void>;
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
-  reconcileOverdueTaskMisses: (task: Task) => Promise<boolean>;
   routeTask: (taskId: string, bucket: TaskRoutingBucket | null) => void;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -108,23 +94,18 @@ function canonicalMutationFingerprint(
 }
 
 export function useTaskUpdateAction({
-  canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   canonicalTaskMutationState,
   clearPendingTaskMutations,
   currentDayKey,
   dayStartTime = "00:00",
   markPendingTaskMutations,
-  onTaskHistoryFailure,
   onTaskHistoryMutation,
   onTasksCompleted,
-  reconcileOverdueTaskMisses,
   routeTask,
   setMessage,
   setTasks,
   sortTasksForUi,
-  syncTaskHistoryEntry,
-  syncTaskHistoryEntries,
   taskHistory = [],
   tasks,
   loadTaskHistoryForTasks,
@@ -162,7 +143,7 @@ export function useTaskUpdateAction({
       (TASK_STATE_OWNED_UPDATE_FIELDS as readonly string[]).includes(field)
       && values[field as keyof TaskUpdate] !== undefined
     ));
-    if (canonicalCommandsEnabled && (hasTaskStateOwnedValues || options?.canonicalIntent)) {
+    if (hasTaskStateOwnedValues || options?.canonicalIntent) {
       const initialCanonicalTask = getCanonicalTaskSnapshot(taskId, previousTask);
       if (!initialCanonicalTask) {
         clearPendingTaskMutations?.([taskId]);
@@ -328,32 +309,6 @@ export function useTaskUpdateAction({
     const nextValues = previousTask
       ? scheduleOnlyEdit ? normalizedValues : applyTaskActiveStatusTracking(previousTask, normalizedValues, currentDayKey)
       : normalizedValues;
-    const compensateHistoryFailure = async (committedTask: Task) => {
-      clearPendingTaskMutations?.([taskId]);
-      if (onTaskHistoryFailure && previousTask) {
-        const rollbackFields = [
-          "active_occurrence_due_on",
-          "active_status_logical_date",
-          "completed_at",
-          "due_on",
-          "status",
-          "trashed_at",
-        ] as const;
-        const rollbackValues = rollbackFields.reduce<TaskUpdate>((valuesToRestore, field) => {
-          if (Object.prototype.hasOwnProperty.call(nextValues, field)) {
-            valuesToRestore[field] = previousTask[field] as never;
-          }
-          return valuesToRestore;
-        }, {});
-        await onTaskHistoryFailure({
-          committedTask,
-          previousTask,
-          rollbackValues,
-          taskId,
-        });
-      }
-      return false;
-    };
     const {
       conflict,
       data,
@@ -394,46 +349,6 @@ export function useTaskUpdateAction({
       if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {
         routeTask(taskId, null);
       }
-      if (!scheduleOnlyEdit && !scheduleAuthority && !options?.historyEntry && shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {
-        const historyReconciled = await reconcileOverdueTaskMisses(nextData);
-        if (!historyReconciled) {
-          return await compensateHistoryFailure(nextData);
-        }
-      }
-      // Only an explicit status mutation owns a History outcome. Due-date and
-      // metadata edits must leave credited History untouched.
-      if (!scheduleOnlyEdit && (options?.historyStatus !== undefined || statusChanged || Object.hasOwn(values, "status"))) {
-        const historyStatus = (options?.historyStatus ?? values.status ?? data.status) as Task["status"];
-        const historySaved = options?.historyEntries?.length && syncTaskHistoryEntries
-          ? await syncTaskHistoryEntries(
-            taskId,
-            historyStatus,
-            options.historyEntries.map((entry) => entry.entry_date),
-            { historyEntries: options.historyEntries, historySnapshot: scopedHistory },
-          )
-          : await syncTaskHistoryEntry(
-            taskId,
-            historyStatus,
-            previousTask ?? nextData,
-            { ...(options?.historyEntry ? { historyEntry: options.historyEntry } : {}), historySnapshot: scopedHistory },
-          );
-        if (!historySaved) {
-          return await compensateHistoryFailure(nextData);
-        }
-      }
-      if (!scheduleOnlyEdit) {
-        await onTasksCompleted([{
-          // The engine action projection already rebases supported recurrence.
-          // Keep legacy finalization only for the compatibility fallback.
-          engineManaged: options?.engineManaged,
-          forceRecurringFinalization: !TASK_STATE_ENGINE_INTEGRATION_ENABLED
-            && (values.status === "done" || values.status === "did_my_best"),
-          previousStatus: previousTask?.status ?? null,
-          rewardEligible: options?.rewardEligible,
-          task: nextData,
-        }]);
-      }
-
       if (usedEnergyFallback) {
         setMessage({
           tone: "warn",

@@ -5,7 +5,6 @@ import type { Dispatch, SetStateAction } from "react";
 import { isUuid } from "@/lib/focus-utils";
 import type { LegacySubtaskPromotion, Task, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskInsert, TaskSubtaskStatus, TaskUpdate } from "@/lib/database.types";
 import type { TaskSubtaskDraft } from "@/components/task-app/task-editor-model";
-import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   text: string;
@@ -13,7 +12,6 @@ type Message = {
 };
 
 type UseTaskSubtaskActionsOptions = {
-  canonicalCommandsEnabled?: boolean;
   canonicalTaskStateUpdate?: (taskId: string, values: TaskUpdate, options?: { expectedTask?: Task | null }) => Promise<boolean>;
   client: SupabaseClient;
   currentUserId: string;
@@ -30,7 +28,6 @@ type UseTaskSubtaskActionsOptions = {
 };
 
 export function useTaskSubtaskActions({
-  canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
   canonicalTaskStateUpdate,
   client,
   currentUserId,
@@ -101,7 +98,7 @@ export function useTaskSubtaskActions({
     }
     const cleanedSubtasks = flattenRecursive(subtasks);
 
-    if (canonicalCommandsEnabled && promotedIds.size > 0) {
+    if (promotedIds.size > 0) {
       for (const draft of cleanedSubtasks) {
         if (!draft.id || !promotedIds.has(draft.id)) continue;
         const promoted = await updatePromotedTask(draft.id, { title: draft.title, status: draft.status as TaskStatus });
@@ -158,14 +155,12 @@ export function useTaskSubtaskActions({
   }
 
   async function resetTaskSubtasksToPending(taskId: string) {
-    if (canonicalCommandsEnabled) {
-      const promoted = taskSubtasks.filter((subtask) => subtask.task_id === taskId && promotedTaskByLegacyId.has(subtask.id));
-      for (const subtask of promoted) {
-        if (await updatePromotedTask(subtask.id, { status: "pending" }) !== true) return false;
-      }
-      const legacyOnly = taskSubtasks.some((subtask) => subtask.task_id === taskId && !promotedTaskByLegacyId.has(subtask.id));
-      if (!legacyOnly) return true;
+    const promoted = taskSubtasks.filter((subtask) => subtask.task_id === taskId && promotedTaskByLegacyId.has(subtask.id));
+    for (const subtask of promoted) {
+      if (await updatePromotedTask(subtask.id, { status: "pending" }) !== true) return false;
     }
+    const legacyOnly = taskSubtasks.some((subtask) => subtask.task_id === taskId && !promotedTaskByLegacyId.has(subtask.id));
+    if (!legacyOnly) return true;
     const { data, error } = await client
       .from("adhdice_task_subtasks")
       .update({ status: "pending" })
@@ -187,16 +182,14 @@ export function useTaskSubtaskActions({
   }
 
   async function updateTaskSubtaskStatus(subtaskId: string, status: TaskSubtaskStatus) {
-    if (canonicalCommandsEnabled) {
-      if (promotedTaskByLegacyId.has(subtaskId)) {
-        if (status === "upcoming" || status === "not_due") {
-          setMessage({ tone: "warn", text: "Upcoming and Not Due are derived canonical Step states and cannot be written directly." });
-          return false;
-        }
-        return (await updatePromotedTask(subtaskId, { status })) === true;
+    if (promotedTaskByLegacyId.has(subtaskId)) {
+      if (status === "upcoming" || status === "not_due") {
+        setMessage({ tone: "warn", text: "Upcoming and Not Due are derived canonical Step states and cannot be written directly." });
+        return false;
       }
-      // Unpromoted checklist rows are intentionally legacy-only entities.
+      return (await updatePromotedTask(subtaskId, { status })) === true;
     }
+    // Unpromoted checklist rows are intentionally legacy-only entities.
     const previousSubtask = taskSubtasks.find((subtask) => subtask.id === subtaskId) ?? null;
     const { data, error } = await client
       .from("adhdice_task_subtasks")
@@ -249,7 +242,7 @@ export function useTaskSubtaskActions({
       return false;
     }
 
-    if (canonicalCommandsEnabled && promotedTaskByLegacyId.has(subtaskId)) {
+    if (promotedTaskByLegacyId.has(subtaskId)) {
       return (await updatePromotedTask(subtaskId, { title: trimmedTitle })) === true;
     }
 
@@ -281,12 +274,10 @@ export function useTaskSubtaskActions({
   }
 
   async function deleteTaskSubtask(subtaskId: string) {
-    if (canonicalCommandsEnabled) {
-      if (promotedTaskByLegacyId.has(subtaskId)) {
-        return (await updatePromotedTask(subtaskId, { status: "trashed" })) === true;
-      }
-      // Unpromoted checklist rows remain an explicitly noncanonical entity.
+    if (promotedTaskByLegacyId.has(subtaskId)) {
+      return (await updatePromotedTask(subtaskId, { status: "trashed" })) === true;
     }
+    // Unpromoted checklist rows remain an explicitly noncanonical entity.
     const descendantIds = collectDescendantSubtaskIds(taskSubtasks, subtaskId);
     const idsToDelete = [subtaskId, ...descendantIds];
 

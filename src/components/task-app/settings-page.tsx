@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 
 import { createBrowserSupabaseClient } from "@/lib/supabase";
-import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import {
   dryRunLegacyStepPromotion,
   promoteLegacySteps,
@@ -13,10 +12,6 @@ import {
 } from "@/lib/task-legacy-step-promotion";
 import type {
   Task,
-  TaskEnergy,
-  TaskPriority,
-  TaskRepeatFrequency,
-  TaskStatus,
 } from "@/lib/database.types";
 
 import { PageShellHeader } from "./page-shell-header";
@@ -114,66 +109,7 @@ export function SettingsPage({
       return;
     }
 
-    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
-      setImportStatus("JSON restore is a legacy compatibility surface and is unavailable while canonical Task State is active. Use the Task editor or Task import flow instead.");
-      return;
-    }
-
-    const supabase = createBrowserSupabaseClient();
-    if (!supabase) {
-      setImportStatus("Not connected.");
-      return;
-    }
-
-    const payload = rows.map((row) => ({
-      id: row.id ?? undefined,
-      user_id: userId,
-      title: row.title,
-      notes: row.notes ?? null,
-      status: (row.status ?? "pending") as TaskStatus,
-      priority: (row.priority ?? "normal") as TaskPriority,
-      energy: (row.energy ?? "none") as TaskEnergy,
-      is_urgent: row.is_urgent ?? false,
-      is_important: row.is_important ?? false,
-      due_on: row.due_on ?? null,
-      due_time: row.due_time ?? null,
-      estimated_minutes: row.estimated_minutes ?? null,
-      tags: row.tags ?? [],
-      external_link_label: row.external_link_label ?? null,
-      external_link_url: row.external_link_url ?? null,
-      one_step_at_a_time: row.one_step_at_a_time ?? false,
-      subtasks_auto_reset: row.subtasks_auto_reset ?? false,
-      repeat_frequency: (row.repeat_frequency ?? "none") as TaskRepeatFrequency,
-      repeat_interval: row.repeat_interval ?? 1,
-      repeat_days_of_week: row.repeat_days_of_week ?? [],
-      repeat_day_of_month: row.repeat_day_of_month ?? null,
-    }));
-
-    const { error } = await supabase
-      .from("adhdice_clean_tasks")
-      .upsert(payload, { onConflict: "id" });
-
-    if (error && isMissingTaskEnergyNoneEnumError(error.message)) {
-      const fallbackPayload = payload.map((task) => ({
-        ...task,
-        energy: task.energy === "none" ? "low" as TaskEnergy : task.energy,
-      }));
-      const { error: fallbackError } = await supabase
-        .from("adhdice_clean_tasks")
-        .upsert(fallbackPayload, { onConflict: "id" });
-
-      if (fallbackError) {
-        setImportStatus(`Error: ${fallbackError.message}`);
-      } else {
-        setImportStatus(`Imported ${fallbackPayload.length} task${fallbackPayload.length === 1 ? "" : "s"} with low energy fallback because your database is missing the "none" energy migration.`);
-        setImportText("");
-      }
-    } else if (error) {
-      setImportStatus(`Error: ${error.message}`);
-    } else {
-      setImportStatus(`Imported ${payload.length} task${payload.length === 1 ? "" : "s"}.`);
-      setImportText("");
-    }
+    setImportStatus("JSON restore is retired. Use the canonical Task import flow instead.");
   }
 
   async function handleResetEconomy() {
@@ -487,8 +423,4 @@ function getTodayKey() {
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function isMissingTaskEnergyNoneEnumError(message: string) {
-  return message.includes("invalid input value for enum") && message.includes("none");
 }

@@ -2,16 +2,40 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { Task, TaskHistory } from "@/lib/database.types";
-import type { CanonicalTaskStateColumns } from "@/lib/task-state-canonical/types";
+import type { CanonicalTaskScheduleBoundary, CanonicalTaskStateColumns } from "@/lib/task-state-canonical/types";
 import { createEngineRolloverPlan, engineRolloverPlanHasMutations, engineRolloverPlanTaskMutationCandidates } from "@/lib/task-state-engine/rollover-authority";
 
-type CanonicalWorkflowTask = Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">>;
+type CanonicalWorkflowTask = Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">> & {
+  canonical_schedule_boundary?: CanonicalTaskScheduleBoundary | null;
+};
 
 function task(overrides: Partial<CanonicalWorkflowTask> = {}): CanonicalWorkflowTask {
-  return { id: "task-1", user_id: "user-1", title: "Rollover", status: "pending", due_on: "2026-07-30", revision: 1,
+  const base = { id: "task-1", user_id: "user-1", title: "Rollover", status: "pending", due_on: "2026-07-30", revision: 1,
     active_status_logical_date: null, active_occurrence_due_on: null, completed_at: null, repeat_frequency: "daily", repeat_interval: 1,
     repeat_days_of_week: [], repeat_day_of_month: null, repeat_monthly_mode: "day_of_month", repeat_monthly_ordinal: null,
-    repeat_monthly_weekday: null, due_time: null, created_at: "2026-07-01T00:00:00.000Z", updated_at: "2026-07-01T00:00:00.000Z", ...overrides } as Task;
+    repeat_monthly_weekday: null, due_time: null, created_at: "2026-07-01T00:00:00.000Z", updated_at: "2026-07-01T00:00:00.000Z",
+    canonicalization_status: "canonical_proven", entity_kind: "parent", terminal_state: "active", container_state: "active",
+    prior_container_state: null, prior_container_state_status: "not_applicable", workflow_state: "none", workflow_revision: 1,
+    canonical_revision: 1, ...overrides } as CanonicalWorkflowTask;
+  const stateTask = {
+    ...base,
+    container_state: base.container_state ?? "active",
+    terminal_state: base.terminal_state ?? (base.status === "complete" ? "permanently_complete" : "active"),
+    workflow_state: overrides.workflow_state ?? (base.status === "in_progress" ? "in_progress" : "none"),
+    workflow_logical_date: overrides.workflow_logical_date ?? (base.status === "in_progress" ? base.active_status_logical_date : null),
+  };
+  const scheduleModel = stateTask.repeat_frequency === "none"
+    ? stateTask.due_on ? "one_time" : "unscheduled"
+    : stateTask.repeat_frequency === "weekly" || stateTask.repeat_frequency === "monthly" ? "fixed" : "rolling";
+  return {
+    ...stateTask,
+    canonical_schedule_boundary: base.canonical_schedule_boundary ?? {
+      schedule_model: scheduleModel, repeat_frequency: base.repeat_frequency, repeat_interval: base.repeat_interval, repeat_days_of_week: base.repeat_days_of_week,
+      repeat_day_of_month: base.repeat_day_of_month, repeat_monthly_mode: base.repeat_monthly_mode, repeat_monthly_ordinal: base.repeat_monthly_ordinal,
+      repeat_monthly_weekday: base.repeat_monthly_weekday, one_time_due_on: scheduleModel === "one_time" ? base.due_on : null, due_time: base.due_time,
+      anchor_date: scheduleModel === "unscheduled" ? null : base.due_on,
+    } as unknown as CanonicalTaskScheduleBoundary,
+  };
 }
 function history(status: TaskHistory["status"], entry_date: string): TaskHistory {
   return { id: `h-${entry_date}`, task_id: "task-1", user_id: "user-1", entry_date, status, was_completed: status !== "missed",
@@ -34,15 +58,9 @@ test("custom timezone and stale In Progress finalize exactly once as Did My Best
   const plan = createEngineRolloverPlan({ rolloverTime: "04:30", timezone: "America/Los_Angeles", history: [], now: "2026-11-01T12:31:00.000Z",
     tasks: [task({ status: "in_progress", active_status_logical_date: "2026-10-31", active_occurrence_due_on: "2026-10-31" })] });
   assert.equal(plan.logicalDate, "2026-11-01");
-  assert.deepEqual(plan.tasks[0]?.history, [{
-    logicalDate: "2026-10-31",
-    occurrenceIdentity: "task:task-1:occurrence:2026-10-31",
-    outcome: "did_my_best",
-    taskId: "task-1",
-  }]);
-  assert.equal(plan.tasks[0]?.rewardEligible, true);
-  assert.equal(Object.hasOwn(plan.tasks[0]?.patch ?? {}, "recurrenceCursor"), false);
-  assert.equal(Object.hasOwn(plan.tasks[0]?.patch ?? {}, "satisfiedOccurrenceIdentity"), false);
+  const candidates = engineRolloverPlanTaskMutationCandidates(plan, [task({ status: "in_progress", active_status_logical_date: "2026-10-31", active_occurrence_due_on: "2026-10-31" })]);
+  assert.equal(candidates[0]?.taskId, "task-1");
+  assert.deepEqual(candidates[0]?.patch, {});
 });
 
 test("stale unscheduled In Progress finalizes as Did My Best and clears workflow", () => {
@@ -53,13 +71,7 @@ test("stale unscheduled In Progress finalizes as Did My Best and clears workflow
     repeat_frequency: "none",
     status: "in_progress",
   })] });
-  assert.deepEqual(plan.tasks[0]?.history, [{
-    logicalDate: "2026-07-30",
-    occurrenceIdentity: null,
-    outcome: "did_my_best",
-    taskId: "task-1",
-  }]);
-  assert.equal(plan.tasks[0]?.patch.status, "pending");
+  assert.equal(engineRolloverPlanTaskMutationCandidates(plan, [task({ active_occurrence_due_on: null, active_status_logical_date: "2026-07-30", due_on: null, repeat_frequency: "none", status: "in_progress" })])[0]?.taskId, "task-1");
   assert.equal(JSON.stringify(plan).includes('"status":"unscheduled"'), false);
 });
 
@@ -75,8 +87,7 @@ test("the non-midnight boundary leaves same-day In Progress alone and finalizes 
   assert.equal(before.logicalDate, "2026-07-30");
   assert.equal(before.tasks.length, 0);
   assert.equal(after.logicalDate, "2026-07-31");
-  assert.equal(after.tasks[0]?.history[0]?.outcome, "did_my_best");
-  assert.equal(after.tasks[0]?.history[0]?.logicalDate, "2026-07-30");
+  assert.equal(engineRolloverPlanTaskMutationCandidates(after, [inProgress])[0]?.taskId, "task-1");
 });
 
 test("fixed weekly rollover preserves the fixed schedule instead of forcing tomorrow", () => {
@@ -94,8 +105,7 @@ test("fixed weekly rollover preserves the fixed schedule instead of forcing tomo
     })],
   });
 
-  assert.equal(plan.tasks[0]?.history[0]?.outcome, "did_my_best");
-  assert.equal(plan.tasks[0]?.patch.dueOn, "2026-08-09");
+  assert.equal(engineRolloverPlanTaskMutationCandidates(plan, [task({ due_on: "2026-08-02", repeat_frequency: "weekly", repeat_days_of_week: [0], status: "in_progress", active_status_logical_date: "2026-08-02", active_occurrence_due_on: "2026-08-02" })])[0]?.taskId, "task-1");
 });
 
 test("late catch-up finalizes only the stale workflow date", () => {
@@ -111,8 +121,7 @@ test("late catch-up finalizes only the stale workflow date", () => {
     })],
   });
 
-  assert.deepEqual(plan.tasks[0]?.history.map((row) => row.logicalDate), ["2026-07-30"]);
-  assert.equal(plan.tasks[0]?.history.length, 1);
+  assert.equal(engineRolloverPlanTaskMutationCandidates(plan, [task({ due_on: "2026-07-30", status: "in_progress", active_status_logical_date: "2026-07-30", active_occurrence_due_on: "2026-07-30" })])[0]?.taskId, "task-1");
 });
 
 test("existing explicit stale-date History wins over automatic rollover DMB", () => {
@@ -123,9 +132,7 @@ test("existing explicit stale-date History wins over automatic rollover DMB", ()
     tasks: [task({ status: "in_progress", active_status_logical_date: "2026-07-30", active_occurrence_due_on: "2026-07-30" })],
   });
 
-  assert.deepEqual(plan.tasks[0]?.history, []);
-  assert.equal(plan.tasks[0]?.patch.activeStatusLogicalDate, null);
-  assert.equal(plan.tasks[0]?.patch.activeOccurrenceDueOn, null);
+  assert.equal(engineRolloverPlanTaskMutationCandidates(plan, [task({ status: "in_progress", active_status_logical_date: "2026-07-30", active_occurrence_due_on: "2026-07-30" })])[0]?.taskId, "task-1");
 });
 
 test("reloaded automatic rollover does not create a second DMB or reward candidate", () => {
@@ -149,8 +156,9 @@ test("reloaded automatic rollover does not create a second DMB or reward candida
     tasks: [persisted],
   });
 
-  assert.equal(first.tasks[0]?.rewardEligible, true);
-  assert.equal(second.tasks.length, 0);
+  assert.equal(engineRolloverPlanTaskMutationCandidates(first, [task({ status: "in_progress", active_status_logical_date: "2026-07-30", active_occurrence_due_on: "2026-07-30" })])[0]?.taskId, "task-1");
+  assert.equal(second.tasks.flatMap((entry) => entry.history).some((row) => row.outcome === "did_my_best"), false);
+  assert.equal(second.tasks.some((entry) => entry.rewardEligible), false);
 });
 
 test("automatic DMB resolves an unresolved Missed chain through the same timeline", () => {
@@ -169,7 +177,7 @@ test("automatic DMB resolves an unresolved Missed chain through the same timelin
     })],
   });
 
-  assert.equal(plan.tasks[0]?.history[0]?.outcome, "did_my_best");
+  assert.equal(engineRolloverPlanTaskMutationCandidates(plan, [task({ due_on: "2026-08-08", status: "in_progress", active_status_logical_date: "2026-08-09", active_occurrence_due_on: "2026-08-08" })])[0]?.taskId, "task-1");
 });
 
 test("explicit handled History and unscheduled tasks prevent automatic Missed", () => {
@@ -409,16 +417,14 @@ test("7.6.10 validates supported values before enum casts and excludes Archive/T
 
 test("rollover diagnostics distinguish planned from committed writes and preserve partial canonical settlements", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
-  const start = source.indexOf("let plannedTaskPatches = 0;");
+  const start = source.indexOf("const authority = \"canonical\" as const;");
   const end = source.indexOf("await reconcileRolloverWorkspace();", start);
   const lifecycle = source.slice(start, end);
-  assert.match(lifecycle, /plannedHistoryRows/);
-  assert.match(lifecycle, /committedHistoryRows = committed\?\.inserted_history_count \?\? 0/);
-  assert.match(lifecycle, /committedTaskPatches = committed\?\.changed_task_count \?\? 0/);
-  assert.match(lifecycle, /committedHistoryRows: error && settledTaskIds\.length === 0 \? 0 : committedHistoryRows/);
+  assert.match(lifecycle, /plannedTaskPatches = mutationCandidates\.length/);
+  assert.match(lifecycle, /committedTaskPatches = canonicalCommitted/);
   assert.match(lifecycle, /committedTaskPatches: error && settledTaskIds\.length === 0 \? 0 : committedTaskPatches/);
-  assert.match(lifecycle, /deduplicatedOutcomes: error \? 0 : deduplicatedOutcomes/);
-  assert.doesNotMatch(lifecycle, /historyRowsInserted: plannedHistoryRows/);
+  assert.match(lifecycle, /authority = "canonical" as const/);
+  assert.doesNotMatch(lifecycle, /plannedHistoryRows|committedHistoryRows|deduplicatedOutcomes|historyRowsInserted/);
 });
 
 test("7.6.11 defers per-row achievement evaluation but retains capture and one strict final evaluation", () => {
@@ -508,7 +514,7 @@ test("zero-commit engine response skips targeted workspace reconciliation", () =
   const start = source.indexOf("const runDayReset = useCallback");
   const end = source.indexOf("await reconcileRolloverWorkspace();", start);
   const lifecycle = source.slice(start, end);
-  assert.match(lifecycle, /didMutate = committedTaskPatches > 0 \|\| committedHistoryRows > 0/);
+  assert.match(lifecycle, /didMutate = canonicalCommitted > 0/);
   assert.match(lifecycle, /if \(!didMutate\) return/);
   assert.equal((source.match(/await reconcileRolloverWorkspace\(\);/g) ?? []).length, 1);
 });

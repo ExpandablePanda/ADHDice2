@@ -8,12 +8,9 @@ import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
-import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
-import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
 import { isTaskStateRuntimeLifecycleTransition, TASK_METADATA_UPDATE_FIELDS, TASK_STATE_OWNED_UPDATE_FIELDS } from "@/lib/task-state-runtime-actions";
-import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   text: string;
@@ -28,15 +25,7 @@ type SaveTaskEditorOptions = {
   taskId?: string | null;
 };
 
-type InsertTaskRowResult = {
-  data: Task | null;
-  error: { message: string } | null;
-  usedEnergyFallback: boolean;
-};
-
 type UseTaskEditorSaveActionOptions = {
-  /** Test-only override; production follows the canonical runtime gate. */
-  canonicalCommandsEnabled?: boolean;
   canonicalTaskCreator?: CanonicalTaskCreator;
   canonicalTaskStateUpdate?: (taskId: string, values: TaskUpdate) => Promise<boolean>;
   currentDayKey: string;
@@ -45,7 +34,6 @@ type UseTaskEditorSaveActionOptions = {
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   onTaskHistoryMutation?: (taskId: string, taskHistory: TaskHistory[], nextTask?: Task) => void | Promise<void>;
   replaceTaskSubtasks: (taskId: string, subtasks: TaskSubtaskDraft[]) => Promise<{ saved: boolean; usedNestedFallback: boolean }>;
-  reconcileOverdueTaskMisses: (task: Task) => Promise<boolean>;
   saveFocusSelection: (nextTaskIds: string[], validTaskIds?: Set<string> | Task[]) => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -59,23 +47,19 @@ type UseTaskEditorSaveActionOptions = {
   logicalDayNow?: Date | string;
   timezone: string;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
-  insertTaskRowWithLegacyEnergyFallback: (payload: TaskDraft & { user_id: string; sort_order: number }) => Promise<InsertTaskRowResult>;
   currentUserId: string;
 };
 
 export function useTaskEditorSaveAction({
-  canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
   canonicalTaskCreator,
   canonicalTaskStateUpdate,
   currentDayKey,
   dayStartTime = "00:00",
   focusedTaskIds,
-  insertTaskRowWithLegacyEnergyFallback,
   currentUserId,
   onTasksCompleted,
   onTaskHistoryMutation,
   replaceTaskSubtasks,
-  reconcileOverdueTaskMisses,
   saveFocusSelection,
   setMessage,
   setTasks,
@@ -110,8 +94,7 @@ export function useTaskEditorSaveAction({
         && normalizedUpdateValues.status !== previousTask.status,
       );
       if (
-        canonicalCommandsEnabled
-        && previousTask
+        previousTask
         && normalizedUpdateValues.status !== undefined
         && isTaskStateRuntimeLifecycleTransition(previousTask, normalizedUpdateValues.status)
       ) {
@@ -124,13 +107,13 @@ export function useTaskEditorSaveAction({
         const previousValue = previousTask?.[field as keyof Task];
         return nextValue !== undefined && nextValue !== previousValue;
       });
-      if (canonicalCommandsEnabled && changedStateFields.length > 0 && !scheduleChanged) {
+      if (changedStateFields.length > 0 && !scheduleChanged) {
         setMessage({ tone: "warn", text: "Canonical Task State editor actions must use the Task action coordinator; no legacy editor state fallback was used." });
         return null;
       }
       const scheduleOnlyEdit = scheduleChanged && !statusChanged;
       const scheduleIntentValues = scheduleOnlyEdit ? stripStatusFromScheduleIntent(normalizedUpdateValues) : normalizedUpdateValues;
-      if (canonicalCommandsEnabled && scheduleChanged) {
+      if (scheduleChanged) {
         const changedScheduleValues = Object.fromEntries(
           (TASK_STATE_OWNED_UPDATE_FIELDS as readonly string[])
             .filter((field) => field !== "status" && field !== "completed_at" && field !== "trashed_at" && field !== "parent_task_id")
@@ -262,13 +245,6 @@ export function useTaskEditorSaveAction({
         void onTaskHistoryMutation?.(taskId, scopedHistory, nextData);
       }
 
-      if (occurrenceSensitive && !scheduleOnlyEdit && !actionAuthority && shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {
-        const historyReconciled = await reconcileOverdueTaskMisses(nextData);
-        if (!historyReconciled) {
-          return false;
-        }
-      }
-
       // A due-date edit changes only the next scheduling cursor. It must not
       // turn the normalized open status into a History delete or replacement.
       if (!scheduleOnlyEdit && statusChanged) {
@@ -299,9 +275,6 @@ export function useTaskEditorSaveAction({
           // A future due-date edit on an already successful recurring task is a
           // manual anchor, not another completion to finalize.
           engineManaged: Boolean(actionAuthority),
-          forceRecurringFinalization: !TASK_STATE_ENGINE_INTEGRATION_ENABLED
-            && (values.status === "done" || values.status === "did_my_best")
-            && values.status !== previousTask?.status,
           previousStatus: previousTask?.status ?? null,
           rewardEligible: actionAuthority?.rewardEligibility.eligible,
           task: nextData,
@@ -331,16 +304,14 @@ export function useTaskEditorSaveAction({
       user_id: currentUserId,
       sort_order: sortOrder,
     });
-    const creationResult = canonicalCommandsEnabled
-      ? canonicalTaskCreator
-        ? await canonicalTaskCreator(payload, "task_creation")
-        : {
-            data: null,
-            error: { message: "Trusted canonical Task creation is unavailable." },
-            usedEnergyFallback: false,
-            usedActualSecondsFallback: false as const,
-          }
-      : await insertTaskRowWithLegacyEnergyFallback(payload);
+    const creationResult = canonicalTaskCreator
+      ? await canonicalTaskCreator(payload, "task_creation")
+      : {
+          data: null,
+          error: { message: "Trusted canonical Task creation is unavailable." },
+          usedEnergyFallback: false,
+          usedActualSecondsFallback: false as const,
+        };
     const { data, error, usedEnergyFallback } = creationResult;
 
     if (error) {
@@ -355,15 +326,6 @@ export function useTaskEditorSaveAction({
     if (!data?.id) {
       setMessage({ tone: "warn", text: "Task saved, but the new task id was missing." });
       return null;
-    }
-
-    if (!canonicalCommandsEnabled) {
-      const historySaved = await syncTaskHistoryEntry(data.id, data.status, data);
-      if (!historySaved) {
-        return false;
-      }
-
-      await onTasksCompleted([{ previousStatus: null, task: data }]);
     }
 
     const subtasksResult = await replaceTaskSubtasks(data.id, subtasks);

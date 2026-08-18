@@ -71,42 +71,6 @@ const HIGH_RISK_TASK_UPDATE_FIELDS: TaskUpdateField[] = [
   "status",
 ];
 
-export async function insertTaskRowWithLegacyEnergyFallback(
-  client: SupabaseClient,
-  payload: TaskInsert,
-  isMissingTaskEnergyNoneEnumError: (message: string) => boolean,
-) {
-  const initialResult = await client
-    .from("adhdice_clean_tasks")
-    .insert(payload)
-    .select("*")
-    .single();
-
-  if (
-    initialResult.error
-    && payload.energy === "none"
-    && isMissingTaskEnergyNoneEnumError(initialResult.error.message)
-  ) {
-    const retryResult = await client
-      .from("adhdice_clean_tasks")
-      .insert({ ...payload, energy: "low" })
-      .select("*")
-      .single();
-
-    return {
-      data: retryResult.data,
-      error: retryResult.error,
-      usedEnergyFallback: !retryResult.error,
-    };
-  }
-
-  return {
-    data: initialResult.data,
-    error: initialResult.error,
-    usedEnergyFallback: false,
-  };
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }

@@ -164,7 +164,6 @@ import {
 import { isSleepCategory } from "@/lib/focus-goals";
 import { createBrowserSupabaseClient, subscribeToBrowserAuth } from "@/lib/supabase";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
-import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { getLevelProgress } from "@/lib/economy-levels";
 import { buildHealthReminderTemplate, type HealthReminderTemplateKey, type HealthSleepKind } from "@/lib/health-utils";
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
@@ -186,13 +185,11 @@ import {
 } from "@/lib/task-cockpit";
 import {
   createEngineRolloverPlan,
-  engineRolloverPlanHasMutations,
   engineRolloverPlanTaskMutationCandidates,
   evaluateTaskActionAuthority,
   taskStateHistoryRowToInsert,
   projectTasksForActiveStatusRead,
   resolveActiveTaskStatuses,
-  TASK_STATE_ENGINE_INTEGRATION_ENABLED,
 } from "@/lib/task-state-engine";
 import {
   getMomentumMetric,
@@ -222,7 +219,6 @@ import {
   buildTaskUpdateConflictMessage,
   deleteTaskRow,
   insertTaskRowWithCanonicalCreation,
-  insertTaskRowWithLegacyEnergyFallback,
   updateTaskRowWithLegacyEnergyFallback,
   type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
@@ -234,16 +230,12 @@ import { computeLearnedTaskDurationStatistics } from "@/lib/task-duration-statis
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
-import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 import type { CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/types";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
-import {
-  calcNextDueDateFromDate,
-  shouldReconcileOverdueTaskMisses,
-} from "@/lib/task-repeat";
+import { calcNextDueDateFromDate } from "@/lib/task-repeat";
 import {
   buildStableCanonicalTaskIndex,
   buildTaskAppStructuralData,
@@ -589,7 +581,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.38";
+const APP_VERSION = "7.9.39";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2346,7 +2338,6 @@ export function TaskApp() {
     };
   });
   const taskStateHistory = stabilizeTaskStateHistory(taskStateHistoryContentRevision, nextTaskStateHistory);
-  const queueRolloverRewardsRef = useRef<((candidates: TaskRewardCandidate[]) => Promise<void>) | null>(null);
   const rolloverInputsRef = useRef({
     dayStartTime,
     isTaskHistoryLoaded,
@@ -2369,8 +2360,8 @@ export function TaskApp() {
     const client = supabase;
     const userId = session?.user?.id;
     if (!client || !userId) return;
-    // The engine plan is authoritative only after both independently loaded inputs exist.
-    if (TASK_STATE_ENGINE_INTEGRATION_ENABLED && (!inputs.isTasksReady || !inputs.isTaskHistoryLoaded)) return;
+    // The canonical plan is authoritative only after both independently loaded inputs exist.
+    if (!inputs.isTasksReady || !inputs.isTaskHistoryLoaded) return;
     const rolloverSettingsKey = createTaskRolloverSettingsKey({
       logicalDayKey: inputs.todayKey,
       rolloverTime: inputs.dayStartTime,
@@ -2383,40 +2374,33 @@ export function TaskApp() {
       && (window as Window & { __ADHDICE_TASK_STATE_ROLLOVER_DIAGNOSTICS_ENABLED__?: boolean })
         .__ADHDICE_TASK_STATE_ROLLOVER_DIAGNOSTICS_ENABLED__ === true;
     let didMutate = false;
-    let authority: "engine" | "legacy" = TASK_STATE_ENGINE_INTEGRATION_ENABLED ? "engine" : "legacy";
+    const authority = "canonical" as const;
     let tasksEvaluated = 0;
     let plannedTaskPatches = 0;
-    let plannedHistoryRows = 0;
-    let plannedRewards = 0;
     let committedTaskPatches = 0;
-    let committedHistoryRows = 0;
-    let committedRewards = 0;
-    let deduplicatedOutcomes = 0;
     let remainingTaskPatchSummaries: ReturnType<typeof createEngineRolloverPlan>["remainingPatchSummaries"] = [];
-    let rewardCandidates: TaskRewardCandidate[] = [];
     const startedAt = performance.now();
     await taskRolloverCoordinator.run({
       client,
       logicalDayKey: rolloverSettingsKey,
       userId,
       execute: async ({ settledTaskIds }) => {
-        if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
-          const rolloverTasks = inputs.tasks.filter((candidate) => candidate.status !== "archived" && candidate.status !== "trashed");
-          const rolloverTaskIds = rolloverTasks.map((candidate) => candidate.id);
-          const scopedRolloverHistory = await fetchTaskHistoryForRollover(rolloverTaskIds);
-          const historyLoadFailureTaskId = rolloverTaskIds.find((taskId) => {
+        const rolloverTasks = inputs.tasks.filter((candidate) => candidate.status !== "archived" && candidate.status !== "trashed");
+        const rolloverTaskIds = rolloverTasks.map((candidate) => candidate.id);
+        const scopedRolloverHistory = await fetchTaskHistoryForRollover(rolloverTaskIds);
+        const historyLoadFailureTaskId = rolloverTaskIds.find((taskId) => {
             const result = scopedRolloverHistory[taskId];
             return !result || result.status !== "ready";
-          });
-          if (historyLoadFailureTaskId) {
+        });
+        if (historyLoadFailureTaskId) {
             const historyLoadFailure = scopedRolloverHistory[historyLoadFailureTaskId];
             return { error: { message: historyLoadFailure?.status === "error" ? historyLoadFailure.error : "Could not load task history for canonical rollover." } };
-          }
-          const rolloverHistory = deduplicateTaskHistoryByLogicalDate([
+        }
+        const rolloverHistory = deduplicateTaskHistoryByLogicalDate([
             ...inputs.taskHistory,
             ...Object.values(scopedRolloverHistory).flatMap((result) => result.status === "ready" ? result.history : []),
-          ]);
-          const plan = createEngineRolloverPlan({
+        ]);
+        const plan = createEngineRolloverPlan({
             allowCanonicalAutomaticMissed: true,
             history: rolloverHistory,
             includeDiagnostics: diagnosticsEnabled,
@@ -2424,16 +2408,16 @@ export function TaskApp() {
             rolloverTime: inputs.dayStartTime,
             tasks: rolloverTasks,
             timezone: inputs.userTimeZone,
-          });
-          const taskById = new Map(rolloverTasks.map((task) => [task.id, task]));
-          const mutationCandidates = engineRolloverPlanTaskMutationCandidates(plan, rolloverTasks);
-          tasksEvaluated = plan.tasksEvaluated;
-          plannedTaskPatches = mutationCandidates.length;
-          remainingTaskPatchSummaries = plan.remainingPatchSummaries;
-          let canonicalCommitted = 0;
-          let canonicalFailures = 0;
-          const settledTaskIdsThisRun: string[] = [];
-          for (const candidate of mutationCandidates) {
+        });
+        const taskById = new Map(rolloverTasks.map((task) => [task.id, task]));
+        const mutationCandidates = engineRolloverPlanTaskMutationCandidates(plan, rolloverTasks);
+        tasksEvaluated = plan.tasksEvaluated;
+        plannedTaskPatches = mutationCandidates.length;
+        remainingTaskPatchSummaries = plan.remainingPatchSummaries;
+        let canonicalCommitted = 0;
+        let canonicalFailures = 0;
+        const settledTaskIdsThisRun: string[] = [];
+        for (const candidate of mutationCandidates) {
             if (settledTaskIds.has(candidate.taskId)) continue;
             const task = taskById.get(candidate.taskId);
             if (!task) {
@@ -2460,84 +2444,20 @@ export function TaskApp() {
               settledTaskIdsThisRun.push(candidate.taskId);
             }
             else canonicalFailures += 1;
-          }
-          committedTaskPatches = canonicalCommitted;
-          didMutate = canonicalCommitted > 0;
-          return {
+        }
+        committedTaskPatches = canonicalCommitted;
+        didMutate = canonicalCommitted > 0;
+        return {
             error: canonicalFailures > 0 ? { message: `${canonicalFailures} Task State rollover command${canonicalFailures === 1 ? "" : "s"} failed.` } : null,
             settledTaskIds: settledTaskIdsThisRun,
-          };
-        }
-        const rpc = client as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{
-          data: Array<{ changed_task_count?: number; deduplicated_outcome_count?: number; inserted_history_count?: number }> | null;
-          error: { message: string } | null;
-        }> };
-        if (TASK_STATE_ENGINE_INTEGRATION_ENABLED) {
-          const rolloverTaskIds = inputs.tasks
-            .filter((candidate) => candidate.status !== "archived" && candidate.status !== "trashed")
-            .map((candidate) => candidate.id);
-          const scopedRolloverHistory = await fetchTaskHistoryForRollover(rolloverTaskIds);
-          const historyLoadFailureTaskId = rolloverTaskIds.find((taskId) => {
-            const result = scopedRolloverHistory[taskId];
-            return !result || result.status !== "ready";
-          });
-          if (historyLoadFailureTaskId) {
-            const historyLoadFailure = scopedRolloverHistory[historyLoadFailureTaskId];
-            return { error: { message: historyLoadFailure?.status === "error" ? historyLoadFailure.error : "Could not load task history." } };
-          }
-          const rolloverHistory = deduplicateTaskHistoryByLogicalDate([
-            ...inputs.taskHistory,
-            ...Object.values(scopedRolloverHistory).flatMap((result) => result.status === "ready" ? result.history : []),
-          ]);
-          const plan = createEngineRolloverPlan({
-            history: rolloverHistory,
-            includeDiagnostics: diagnosticsEnabled,
-            now: new Date(),
-            rolloverTime: inputs.dayStartTime,
-            tasks: inputs.tasks,
-            timezone: inputs.userTimeZone,
-          });
-          tasksEvaluated = plan.tasksEvaluated;
-          plannedTaskPatches = plan.tasks.filter((task) => Object.keys(task.patch).length > 0).length;
-          remainingTaskPatchSummaries = plan.remainingPatchSummaries;
-          plannedHistoryRows = plan.tasks.reduce((total, task) => total + task.history.length, 0);
-          const taskById = new Map(inputs.tasks.map((task) => [task.id, task]));
-          rewardCandidates = plan.tasks.flatMap((entry) => {
-            const task = taskById.get(entry.taskId);
-            return entry.rewardEligible && task ? [{ previousStatus: task.status, task: { ...task, status: "did_my_best" as const } }] : [];
-          });
-          plannedRewards = rewardCandidates.length;
-          if (!engineRolloverPlanHasMutations(plan)) return { error: null };
-          const engineResult = await rpc.rpc("adhdice_apply_task_state_engine_rollover", { p_now: new Date().toISOString(), p_plan: plan.tasks, p_user_id: userId });
-          if (!engineResult.error) {
-            const committed = engineResult.data?.[0];
-            committedTaskPatches = committed?.changed_task_count ?? 0;
-            committedHistoryRows = committed?.inserted_history_count ?? 0;
-            deduplicatedOutcomes = committed?.deduplicated_outcome_count ?? 0;
-            didMutate = committedTaskPatches > 0 || committedHistoryRows > 0;
-            return engineResult;
-          }
-          if (!/adhdice_apply_task_state_engine_rollover|function .* does not exist|schema cache/i.test(engineResult.error.message)) return engineResult;
-          authority = "legacy";
-        }
-        didMutate = true;
-        return rpc.rpc("adhdice_reconcile_task_rollover", { p_now: new Date().toISOString(), p_user_id: userId });
+        };
       },
       onOwnedSettled: async ({ error, settledTaskIds = [] }) => {
-        if (!error && didMutate && authority === "engine" && committedHistoryRows > 0 && rewardCandidates.length > 0) {
-          const queueRolloverRewards = queueRolloverRewardsRef.current;
-          if (queueRolloverRewards) {
-            await queueRolloverRewards(rewardCandidates);
-            committedRewards = plannedRewards;
-          }
-        }
         const diagnostics = {
-          authority, deduplicatedOutcomes: error ? 0 : deduplicatedOutcomes, errorSummary: error?.message ?? null,
+          authority, errorSummary: error?.message ?? null,
           executionMs: Math.round(performance.now() - startedAt), lastLogicalDateEvaluated: inputs.todayKey, lastRunSource: source,
-          plannedHistoryRows, plannedRewards, plannedTaskPatches,
+          plannedTaskPatches,
           remainingTaskPatchSummaries,
-          committedHistoryRows: error && settledTaskIds.length === 0 ? 0 : committedHistoryRows,
-          committedRewards: error && settledTaskIds.length === 0 ? 0 : committedRewards,
           committedTaskPatches: error && settledTaskIds.length === 0 ? 0 : committedTaskPatches,
           tasksEvaluated,
         };
@@ -3676,24 +3596,12 @@ export function TaskApp() {
     pendingRewardDiceCount,
     pendingRewardQueue,
     queueTaskRewards,
-    reconcileOverdueTaskMisses,
   } = useTaskRewardController({
-    calcNextDueDateFromDate,
     client,
-    currentDayKey: todayKey,
     currentUserId: session?.user?.id ?? null,
-    dayStartTime,
-    logicalDayNow,
     setMessage,
     setEconomy,
-    setTaskHistory,
-    setTaskSubtasks,
-    setTasks,
-    sortTasksForUi,
-    timezone: userTimeZone,
-    updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
   });
-  queueRolloverRewardsRef.current = queueTaskRewards;
   const openPendingRewardBank = useCallback(() => {
     if (pendingRewardQueue.length === 0) {
       return;
@@ -3766,7 +3674,6 @@ export function TaskApp() {
       shouldRouteTaskToInbox,
       sortTasksForUi,
       tasks,
-      updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
     create: {
       client,
@@ -3816,16 +3723,10 @@ export function TaskApp() {
       currentUserId: currentUserIdText,
       dayStartTime,
       focusedTaskIds,
-      insertTaskRowWithLegacyEnergyFallback: (payload) => insertTaskRowWithLegacyEnergyFallback(
-        client,
-        payload,
-        isMissingTaskEnergyNoneEnumError,
-      ),
       onTasksCompleted: queueTaskRewards,
       loadTaskHistoryForTasks,
       logicalDayNow: new Date(logicalDayNow),
       onTaskHistoryMutation: reconcileTaskHistoryMutation,
-      reconcileOverdueTaskMisses,
       saveFocusSelection,
       setMessage,
       setTasks,
@@ -3836,16 +3737,10 @@ export function TaskApp() {
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
     history: {
-      calcNextDueDateFromDate,
       client,
       currentUserId: currentUserIdText,
       currentDayKey: todayKey,
-      dayStartTime,
       loadTaskHistoryForTasks,
-      isTaskCompletedForHistory,
-      isTaskHistoryStatus,
-      mapTaskHistoryRow,
-      now: new Date(logicalDayNow),
       onHistoryMutation: reconcileTaskHistoryMutation,
       onTasksCompleted: queueTaskRewards,
       setMessage,
@@ -3855,7 +3750,6 @@ export function TaskApp() {
       taskHistory,
       tasks,
       timezone: userTimeZone,
-      updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
     noteLinks: {
       client,
@@ -3892,43 +3786,11 @@ export function TaskApp() {
       canonicalTaskMutationState: canonicalTaskMutationStateRef.current,
       clearPendingTaskMutations,
       markPendingTaskMutations,
-      onTaskHistoryFailure: async ({ committedTask, rollbackValues, taskId }) => {
-        let rollbackResult: Awaited<ReturnType<typeof updateTaskRowWithLegacyEnergyFallback>> | null = null;
-        try {
-          if (Object.keys(rollbackValues).length > 0) {
-            rollbackResult = await updateTaskRowWithLegacyEnergyFallback(
-              taskId,
-              rollbackValues,
-              { expectedTask: committedTask },
-            );
-          }
-        } catch {
-          rollbackResult = null;
-        }
-
-        const rollbackTask = rollbackResult?.data ?? null;
-        if (!rollbackResult || rollbackResult.error || rollbackResult.conflict || !rollbackTask) {
-          try {
-            await softRefreshWorkspace();
-          } catch {
-            // The failure message below still makes the action failure visible.
-          }
-          setMessage({
-            tone: "warn",
-            text: "History could not be saved and the task could not be safely rolled back. The latest task and History state was reloaded.",
-          });
-          return false;
-        }
-
-        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? rollbackTask : task)));
-        return true;
-      },
       onTasksCompleted: queueTaskRewards,
       dayStartTime,
       logicalDayNow: new Date(logicalDayNow),
       loadTaskHistoryForTasks,
       onTaskHistoryMutation: reconcileTaskHistoryMutation,
-      reconcileOverdueTaskMisses,
       setMessage: setTaskUpdateMessage,
       setTasks,
       sortTasksForUi,
@@ -4618,7 +4480,7 @@ export function TaskApp() {
       return false;
     }
 
-    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
+    {
       if (!nextDueOn) {
         setMessage({ tone: "warn", text: "Canonical Delay requires a future effective date; no legacy due_on fallback was used." });
         return false;
@@ -4637,56 +4499,6 @@ export function TaskApp() {
       return true;
     }
 
-    const delayDays = nextDueOn
-      ? Math.round((Date.parse(`${nextDueOn}T00:00:00.000Z`) - Date.parse(`${todayKey}T00:00:00.000Z`)) / 86_400_000)
-      : null;
-    const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];
-    if (!historyLoad || historyLoad.status !== "ready") {
-      setMessage({ tone: "warn", text: historyLoad?.error ?? "Could not load task history. The task was not delayed." });
-      return false;
-    }
-    const scopedHistory = historyLoad.history;
-    const delayAuthority = (delayDays && delayDays > 0) || nextDueOn === null
-      ? evaluateTaskActionAuthority({
-        history: scopedHistory,
-        logicalDayRollover: dayStartTime,
-        now: new Date(logicalDayNow),
-        ...(delayDays && delayDays > 0 ? { delayDays } : { delayUntilDate: null }),
-        outcome: "delayed",
-        outcomeDate: todayKey,
-        task,
-        timezone: userTimeZone,
-      })
-      : null;
-    if (!delayAuthority || delayAuthority.validationErrors.length > 0) {
-      setMessage({ tone: "warn", text: delayAuthority?.validationErrors[0] ?? "This task cannot be delayed." });
-      return false;
-    }
-    const didDelay = await updateTask(
-      taskId,
-      {
-        due_on: nextDueOn,
-        ...delayAuthority.mutationPlan.taskUpdate,
-      },
-      {
-        expectedTask: task,
-        engineManaged: true,
-        historyStatus: "delayed",
-        historyEntry: delayAuthority.mutationPlan.historyInserts.find((entry) => entry.status === "delayed"),
-        historyEntries: delayAuthority.mutationPlan.historyInserts,
-        historySnapshot: scopedHistory,
-        rewardEligible: delayAuthority.rewardEligibility.eligible,
-      },
-    );
-    if (!didDelay) {
-      return false;
-    }
-
-    setMessage({
-      tone: "good",
-      text: nextDueOn ? `"${task.title}" was delayed until ${nextDueOn}.` : `"${task.title}" was benched without a date.`,
-    });
-    return true;
   }, [currentUserId, dayStartTime, getTaskDelayAnchorDate, loadTaskHistoryForTasks, logicalDayNow, setMessage, supabase, tasks, todayKey, updateTask, userTimeZone]);
 
   const delaySameTableTask = useCallback(async (taskId: string, days: number) => {
@@ -5417,8 +5229,7 @@ export function TaskApp() {
     }
 
     if (
-      TASK_STATE_CANONICAL_COMMANDS_ENABLED
-      && selectedTaskForEditor
+      selectedTaskForEditor
       && draft.values.status !== undefined
       && draft.values.status !== selectedTaskForEditor.status
       && isTaskStateRuntimeLifecycleTransition(selectedTaskForEditor, draft.values.status)
@@ -5471,9 +5282,6 @@ export function TaskApp() {
       setTaskHistoryModalTaskId(selectedTaskForEditor.id);
       void loadTaskHistoryForTask(selectedTaskForEditor.id, { force: true });
       void loadTaskCalendarOverridesForTask(selectedTaskForEditor.id);
-      if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED && shouldReconcileOverdueTaskMisses(selectedTaskForEditor, todayKey)) {
-        void reconcileOverdueTaskMisses(selectedTaskForEditor);
-      }
     }
   }
 
@@ -5482,9 +5290,6 @@ export function TaskApp() {
     void loadTaskHistoryForTask(taskId, { force: true });
     void loadTaskCalendarOverridesForTask(taskId);
     const task = tasks.find((entry) => entry.id === taskId);
-    if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED && task && shouldReconcileOverdueTaskMisses(task, todayKey)) {
-      void reconcileOverdueTaskMisses(task);
-    }
   }
 
   async function closeActualTimeEntry() {
@@ -5615,7 +5420,7 @@ export function TaskApp() {
       }
     }
 
-    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && !milestoneData.milestoneByTaskId.has(task.id)) {
+    if (!milestoneData.milestoneByTaskId.has(task.id)) {
       const canonicalCommitted = await updateTask(task.id, { status: "complete" }, { expectedTask: task });
       if (!canonicalCommitted) return false;
 
@@ -5636,13 +5441,6 @@ export function TaskApp() {
       clearOnTimeExecution(completeAction.onTimeOrigin);
       setMessage({ tone: "good", text: task.parent_task_id ? `"${task.title}" marked Complete and kept with its parent.` : `"${task.title}" marked Complete and moved to Archive.` });
       return true;
-    }
-
-    if (!TASK_STATE_ENGINE_INTEGRATION_ENABLED && shouldReconcileOverdueTaskMisses(task, todayKey)) {
-      const historyReconciled = await reconcileOverdueTaskMisses(task);
-      if (!historyReconciled) {
-        return false;
-      }
     }
 
     const activeMilestone = milestoneData.milestoneByTaskId.get(task.id);
@@ -5869,7 +5667,7 @@ export function TaskApp() {
 
   async function runTaskStatusMutation(task: Task, status: TaskStatus, bypassTimedCompletion = false, onTimeOrigin?: OnTimeLinkedItemOrigin) {
     const milestone = milestoneData.milestoneByTaskId.get(task.id);
-    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && (isTaskStateRuntimeLifecycleTransition(task, status) && !milestone
+    if ((isTaskStateRuntimeLifecycleTransition(task, status) && !milestone
       || status === "done"
       || status === "did_my_best"
       || status === "missed")) {
@@ -6019,8 +5817,7 @@ export function TaskApp() {
   async function applyTaskMutationWithoutHistory(taskId: string, values: TaskUpdate, options?: { expectedTask?: Task | null }) {
     markPendingTaskMutations?.([taskId]);
     const previousTask = options?.expectedTask ?? tasks.find((task) => task.id === taskId) ?? null;
-    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED
-      && Object.keys(values).some((field) => (TASK_STATE_OWNED_UPDATE_FIELDS as readonly string[]).includes(field))) {
+    if (Object.keys(values).some((field) => (TASK_STATE_OWNED_UPDATE_FIELDS as readonly string[]).includes(field))) {
       const committed = await updateTask(taskId, values, { expectedTask: previousTask });
       clearPendingTaskMutations?.([taskId]);
       return committed === true;
@@ -6071,33 +5868,6 @@ export function TaskApp() {
     return true;
   }
 
-  function optimisticallyMoveTaskToTrash(taskId: string) {
-    const nextTrashedAt = new Date().toISOString();
-    setTasks((current) => sortTasksForUi(current.map((task) => (
-      task.id === taskId
-        ? { ...task, completed_at: null, status: "trashed", trashed_at: nextTrashedAt, updated_at: nextTrashedAt }
-        : task
-    ))));
-    setTaskRouting((current) => {
-      const next = { ...current };
-      delete next[taskId];
-      return next;
-    });
-  }
-
-  function optimisticallyRestoreTaskToInbox(taskId: string) {
-    const nextUpdatedAt = new Date().toISOString();
-    setTasks((current) => sortTasksForUi(current.map((task) => (
-      task.id === taskId
-        ? { ...task, completed_at: null, status: "pending", trashed_at: null, updated_at: nextUpdatedAt }
-        : task
-    ))));
-    setTaskRouting((current) => ({
-      ...current,
-      [taskId]: "inbox",
-    }));
-  }
-
   function optimisticallyRemoveTask(taskId: string) {
     setTasks((current) => current.filter((task) => task.id !== taskId));
     setTaskRouting((current) => {
@@ -6146,9 +5916,6 @@ export function TaskApp() {
     }
 
     const milestone = milestoneData.milestoneByTaskId.get(taskId);
-    if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
-      optimisticallyMoveTaskToTrash(taskId);
-    }
     if (milestone) {
       markPendingTaskMutations([taskId]);
       const mutation = await mutateMilestoneTask("trash", task);
@@ -6187,10 +5954,6 @@ export function TaskApp() {
     }
     const previousRoutingBucket = taskRouting[taskId];
     const milestone = milestoneData.milestoneByTaskId.get(taskId);
-    if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
-      optimisticallyRestoreTaskToInbox(taskId);
-      routeTask(taskId, "inbox");
-    }
     if (milestone) {
       const operationKey = `restore:${milestone.id}`;
       const operationId = milestoneOperationIdsRef.current.get(operationKey) ?? createBrowserUuidV4();
@@ -6431,9 +6194,7 @@ export function TaskApp() {
         if (!didDelay) {
           return;
         }
-        if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
-          return;
-        }
+        return;
       }
       await syncTaskHistoryEntries(
         taskHistoryModalTaskId,

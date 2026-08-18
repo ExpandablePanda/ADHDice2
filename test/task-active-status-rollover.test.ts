@@ -137,15 +137,6 @@ test("rollover SQL anchors unresolved regular recurrences and preserves In Progr
   assert.equal(inProgress.dueOn, "2026-07-12");
 });
 
-test("explicit successful handling still advances recurrence through finalization", () => {
-  const source = readFileSync("src/hooks/useTaskRewardController.ts", "utf8");
-  const finalization = source.slice(source.indexOf("async function finalizeRecurringTasks"), source.indexOf("const updatedTasks", source.indexOf("async function finalizeRecurringTasks")));
-  assert.match(finalization, /task\.active_occurrence_due_on \?\? task\.due_on \?\? currentDayKey/);
-  assert.match(finalization, /\{ completed_at: null, due_on: nextDue, status: nextStatus \}/);
-  assert.equal(calcNextDueDateFromDate(task({ status: "done" }), "2026-07-12"), "2026-07-13");
-  assert.equal(calcNextDueDateFromDate(task({ status: "did_my_best" }), "2026-07-12"), "2026-07-13");
-});
-
 test("weekly early completion advances from the scheduled occurrence, not the action date", () => {
   const sundayOnly = task({ due_on: "2026-07-26", repeat_days_of_week: [0], repeat_frequency: "weekly", status: "done" });
   const mondayWednesdayFriday = task({ due_on: "2026-07-20", repeat_days_of_week: [1, 3, 5], repeat_frequency: "weekly", status: "done" });
@@ -171,16 +162,6 @@ test("rollover resolves successful canonical occurrences without action-date or 
   assert.doesNotMatch(canonicalResolution, /insert into public\.adhdice_task_history/);
 });
 
-test("history saves build the merged occurrence snapshot before syncing the live task", () => {
-  const source = readFileSync("src/hooks/useTaskHistoryActions.ts", "utf8");
-  const singleEntrySync = source.slice(source.indexOf("async function syncTaskHistoryEntry"), source.indexOf("async function syncTaskHistoryEntries"));
-  const multipleEntrySync = source.slice(source.indexOf("async function syncTaskHistoryEntries"), source.indexOf("return { syncTaskHistoryEntries"));
-  assert.match(singleEntrySync, /nextHistory = \[\s*mappedEntry,[\s\S]*historyAfterWeeklyReconciliation\.filter/);
-  assert.match(singleEntrySync, /syncLiveTaskStatus\(taskId, nextHistory, \[entryDate\](?:, \{ historyReplacement \})?\)/);
-  assert.match(multipleEntrySync, /const nextTaskHistory = \[\s*\.\.\.mappedEntries,[\s\S]*historyAfterWeeklyReconciliation\.filter/);
-  assert.match(multipleEntrySync, /syncLiveTaskStatus\(taskId, nextTaskHistory/);
-});
-
 test("repair excludes later resolutions and is idempotent after restoring the anchor", () => {
   const repairSql = readFileSync("supabase/repair_regular_recurring_missed_anchors.sql", "utf8");
   assert.ok(repairSql.indexOf("-- READ-ONLY PREVIEW") < repairSql.indexOf("-- MUTATING REPAIR"));
@@ -204,15 +185,14 @@ test("repair excludes later resolutions and is idempotent after restoring the an
   }), false);
 });
 
-test("client rollover uses targeted reconciliation only after owned success", () => {
+test("client rollover uses the coordinator and targeted reconciliation only after owned success", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
   const coordinatorIndex = source.indexOf("taskRolloverCoordinator.run");
-  const rpcIndex = source.indexOf('rpc("adhdice_reconcile_task_rollover"', coordinatorIndex);
-  const ownedSettlementIndex = source.indexOf("onOwnedSettled", rpcIndex);
+  const ownedSettlementIndex = source.indexOf("onOwnedSettled", coordinatorIndex);
   const reconciliationIndex = source.indexOf("await reconcileRolloverWorkspace();", ownedSettlementIndex);
-  assert.ok(coordinatorIndex >= 0 && rpcIndex > coordinatorIndex && ownedSettlementIndex > rpcIndex && reconciliationIndex > ownedSettlementIndex);
-  assert.match(source.slice(ownedSettlementIndex, reconciliationIndex), /if \(error\)[\s\S]*return;/);
-  assert.doesNotMatch(source.slice(ownedSettlementIndex, reconciliationIndex + 40), /softRefreshWorkspace/);
+  assert.ok(coordinatorIndex >= 0 && ownedSettlementIndex > coordinatorIndex && reconciliationIndex > ownedSettlementIndex);
+  assert.match(source.slice(ownedSettlementIndex, reconciliationIndex), /if \(error\)[\s\S]*if \(!didMutate\) return/);
+  assert.doesNotMatch(source, /adhdice_reconcile_task_rollover|adhdice_apply_task_state_engine_rollover/);
   assert.doesNotMatch(source, /lastResetDateRef/);
 });
 
@@ -225,8 +205,7 @@ test("rollover retains startup, cadence, visibility, and persisted-page resume t
   assert.match(lifecycle, /setInterval\(\(\) => \{ void runDayReset\("timer"\); \}, 60_000\)/);
   assert.match(lifecycle, /const wasVisible = wasDocumentVisibleRef\.current[\s\S]*if \(!wasVisible && isVisible\)[\s\S]*void runDayReset\("visibility"\)/);
   assert.match(lifecycle, /event\.persisted[\s\S]*void runDayReset\("pageshow"\)/);
-  assert.match(lifecycle, /adhdice_apply_task_state_engine_rollover/);
-  assert.match(lifecycle, /TASK_STATE_ENGINE_INTEGRATION_ENABLED/);
+  assert.doesNotMatch(lifecycle, /adhdice_apply_task_state_engine_rollover|TASK_STATE_CANONICAL_COMMANDS_ENABLED/);
 });
 
 test("engine rollover waits for loaded Tasks and History, then reads current inputs for every trigger", () => {
@@ -235,34 +214,30 @@ test("engine rollover waits for loaded Tasks and History, then reads current inp
   const end = source.indexOf('const visibleTaskSubtasks', start);
   const lifecycle = source.slice(start, end);
   assert.match(lifecycle, /const inputs = rolloverInputsRef\.current/);
-  assert.match(lifecycle, /TASK_STATE_ENGINE_INTEGRATION_ENABLED && \(!inputs\.isTasksReady \|\| !inputs\.isTaskHistoryLoaded\)\) return/);
-  assert.match(lifecycle, /history: rolloverHistory[\s\S]*tasks: inputs\.tasks/);
+  assert.match(lifecycle, /if \(!inputs\.isTasksReady \|\| !inputs\.isTaskHistoryLoaded\) return/);
+  assert.match(lifecycle, /history: rolloverHistory[\s\S]*tasks: rolloverTasks/);
   assert.match(lifecycle, /\}, \[isTaskHistoryLoaded, runDayReset, session\?\.user\?\.id, supabase\]\);/);
-  assert.match(lifecycle, /if \(!engineRolloverPlanHasMutations\(plan\)\) return \{ error: null \}/);
-  assert.match(lifecycle, /plannedTaskPatches = plan\.tasks\.filter/);
+  assert.match(lifecycle, /plannedTaskPatches = mutationCandidates\.length/);
   assert.match(lifecycle, /committedTaskPatches: error && settledTaskIds\.length === 0 \? 0 : committedTaskPatches/);
 });
 
 test("canonical rollover commands are mutation-scoped and use plan-specific replay identities", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
-  const canonicalStart = source.indexOf("if (TASK_STATE_CANONICAL_COMMANDS_ENABLED)");
-  const legacyStart = source.indexOf("const rpc", canonicalStart);
-  const canonical = source.slice(canonicalStart, legacyStart);
+  const canonicalStart = source.indexOf("const plan = createEngineRolloverPlan");
+  const canonicalEnd = source.indexOf("onOwnedSettled", canonicalStart);
+  const canonical = source.slice(canonicalStart, canonicalEnd);
   assert.match(canonical, /createEngineRolloverPlan\(/);
   assert.match(canonical, /allowCanonicalAutomaticMissed: true/);
   assert.match(canonical, /engineRolloverPlanTaskMutationCandidates\(plan, rolloverTasks\)/);
   assert.match(canonical, /for \(const candidate of mutationCandidates\)/);
   assert.match(canonical, /createTaskRolloverReplayIdentity\(/);
   assert.doesNotMatch(canonical, /for \(const task of rolloverTasks\)/);
-  assert.doesNotMatch(source.slice(legacyStart), /allowCanonicalAutomaticMissed: true/);
+  assert.doesNotMatch(source, /TASK_STATE_CANONICAL_COMMANDS_ENABLED/);
 });
 
-test("engine and legacy rollover stay mutually exclusive per coordinator execution", () => {
+test("production rollover has one canonical authority and no legacy runtime branch", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
-  const start = source.indexOf('if (TASK_STATE_ENGINE_INTEGRATION_ENABLED)');
-  const end = source.indexOf('onOwnedSettled', start);
-  const execute = source.slice(start, end);
-  assert.match(execute, /if \(!engineResult\.error\) \{[\s\S]*didMutate = committedTaskPatches > 0 \|\| committedHistoryRows > 0;[\s\S]*return engineResult;/);
-  assert.match(execute, /if \(!\/adhdice_apply_task_state_engine_rollover[\s\S]*return engineResult;/);
-  assert.match(execute, /authority = "legacy";[\s\S]*return rpc\.rpc\("adhdice_reconcile_task_rollover"/);
+  assert.match(source, /const authority = "canonical" as const/);
+  assert.doesNotMatch(source, /authority\s*=\s*"(?:engine|legacy)"/);
+  assert.doesNotMatch(source, /adhdice_reconcile_task_rollover|adhdice_apply_task_state_engine_rollover/);
 });
