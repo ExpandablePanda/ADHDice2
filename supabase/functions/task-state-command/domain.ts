@@ -380,7 +380,9 @@ export function buildTrustedTaskStateCommand(input: {
     case "restore_task": return { ...base, type: "restore" };
     case "start_in_progress": return { ...base, type: "workflow_start", startedAt: now, occurrenceId: occurrence?.id ?? null };
     case "clear_in_progress": return { ...base, type: "workflow_clear" };
-    case "reconcile_rollover":
+    case "reconcile_rollover": {
+      const boundary = [...readModel.scheduleBoundaries]
+        .sort((left, right) => right.boundary_sequence - left.boundary_sequence)[0] ?? null;
       return {
         ...base,
         type: "rollover",
@@ -388,7 +390,9 @@ export function buildTrustedTaskStateCommand(input: {
         occurrenceId: rolloverOccurrence?.id ?? null,
         occurrenceKey: rolloverOccurrence?.occurrence_key ?? null,
         scheduledDueOn: rolloverOccurrence?.scheduled_due_on ?? null,
+        scheduleBoundaryId: boundary?.id ?? null,
       };
+    }
   }
 }
 

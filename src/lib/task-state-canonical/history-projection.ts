@@ -7,8 +7,9 @@ const SUCCESSFUL_OUTCOMES = new Set(["done", "did_my_best", "complete"]);
 /**
  * Canonical facts are the persisted History authority when the command gate
  * is enabled.  This adapter intentionally projects explicit facts only;
- * calculated Missed remains an engine/read-model result and never becomes a
- * synthetic History row.
+ * calculated open-state Missed remains an engine/read-model result. Persisted
+ * automatic Missed is projected only when it already exists as a canonical
+ * authorized-automation fact.
  */
 export function mapCanonicalTaskHistoryFact(fact: CanonicalTaskHistoryFact): TaskHistory {
   const occurrenceKey = fact.scheduled_due_on

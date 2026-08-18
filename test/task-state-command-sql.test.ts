@@ -144,6 +144,25 @@ test("rollover accepts only the trusted automatic DMB artifact set", () => {
   assert.doesNotMatch(rolloverMigration, /select\s+public\.adhdice_execute_task_state_command\b/i);
 });
 
+test("trusted rollover persists idempotent Auto Missed without rewards and fences dependent cleanup", () => {
+  assert.match(sql, /automatic_history_facts/);
+  assert.match(sql, /value->>'outcome' <> 'missed'/);
+  assert.match(sql, /\(value->>'logical_date'\)::date >= public\.adhdice_effective_logical_date/);
+  assert.match(sql, /boundary\.boundary_sequence = v_current_boundary_sequence/);
+  assert.match(sql, /boundary\.schedule_model <> 'unscheduled'/);
+  assert.match(sql, /on conflict \(user_id, entity_id, logical_date\) do nothing/);
+  assert.match(sql, /Automatic Missed conflicts with an existing canonical History fact/);
+  assert.match(sql, /v_history_row\.outcome in \('done', 'did_my_best', 'complete'\)/);
+  assert.doesNotMatch(sql, /v_history_row\.outcome in \([^)]*missed/);
+
+  assert.match(sql, /automatic_history_delete_ids/);
+  assert.match(sql, /fact\.provenance_kind <> 'authorized_automation'/);
+  assert.match(sql, /fact\.actor_kind <> 'authorized_automation'/);
+  assert.match(sql, /boundary\.schedule_model = 'rolling'/);
+  assert.match(sql, /boundary\.repeat_interval > 1/);
+  assert.match(sql, /canonical_history_id = fact\.id/);
+});
+
 test("reward entitlement persistence uses the canonical identity fence", () => {
   assert.match(schema, /unique \(user_id, entity_id, logical_date, reward_program_version\)/i);
   assert.match(sql, /insert into public\.adhdice_task_reward_entitlements/i);

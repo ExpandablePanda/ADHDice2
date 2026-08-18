@@ -30,6 +30,9 @@ declare
   v_task_patch jsonb;
   v_projection jsonb;
   v_history jsonb;
+  v_automatic_history_facts jsonb;
+  v_automatic_history_delete_ids jsonb;
+  v_automatic_history jsonb;
   v_occurrence jsonb;
   v_schedule jsonb;
   v_effective_override jsonb;
@@ -45,6 +48,7 @@ declare
   v_occurrence_id uuid;
   v_prior_history_occurrence_id uuid;
   v_history_id uuid;
+  v_automatic_history_ids jsonb := '[]'::jsonb;
   v_effective_override_id uuid;
   v_calendar_override_id uuid;
   v_reward_entitlement_id uuid;
@@ -84,6 +88,8 @@ begin
   v_task_patch := coalesce(v_payload->'task_patch', '{}'::jsonb);
   v_projection := coalesce(v_payload->'compatibility_projection', '{}'::jsonb);
   v_history := coalesce(v_payload->'history_fact', '{}'::jsonb);
+  v_automatic_history_facts := coalesce(v_payload->'automatic_history_facts', '[]'::jsonb);
+  v_automatic_history_delete_ids := coalesce(v_payload->'automatic_history_delete_ids', '[]'::jsonb);
   v_occurrence := coalesce(v_payload->'occurrence', '{}'::jsonb);
   v_schedule := coalesce(v_payload->'schedule_boundary', '{}'::jsonb);
   v_effective_override := coalesce(v_payload->'occurrence_effective_override', '{}'::jsonb);
@@ -123,6 +129,8 @@ begin
      or jsonb_typeof(v_task_patch) <> 'object'
      or jsonb_typeof(v_projection) <> 'object'
      or jsonb_typeof(v_history) <> 'object'
+     or jsonb_typeof(v_automatic_history_facts) <> 'array'
+     or jsonb_typeof(v_automatic_history_delete_ids) <> 'array'
      or jsonb_typeof(v_occurrence) <> 'object'
      or jsonb_typeof(v_schedule) <> 'object'
      or jsonb_typeof(v_effective_override) <> 'object'
@@ -134,7 +142,8 @@ begin
   if exists (
     select 1 from jsonb_object_keys(v_payload) as payload_key(key)
     where key not in (
-      'task_patch', 'compatibility_projection', 'history_fact', 'occurrence',
+      'task_patch', 'compatibility_projection', 'history_fact', 'automatic_history_facts',
+      'automatic_history_delete_ids', 'occurrence',
       'schedule_boundary', 'occurrence_effective_override', 'calendar_override',
       'reward_program_version', 'occurrence_key', 'clear_logical_date', 'manual_action'
     )
@@ -171,6 +180,30 @@ begin
       using errcode = '42501';
   end if;
 
+  if exists (
+    select 1
+      from jsonb_array_elements(v_automatic_history_facts) as automatic_fact(value)
+     where jsonb_typeof(value) <> 'object'
+        or value->>'provenance_kind' <> 'authorized_automation'
+        or value->>'actor_kind' <> 'authorized_automation'
+        or nullif(value->>'actor_id', '') is not null
+        or nullif(value->>'migration_operation_id', '') is not null
+        or nullif(value->>'source_legacy_history_id', '') is not null
+        or value->>'source' <> 'task_state_command'
+  ) then
+    raise exception 'Automatic History provenance is server-owned.'
+      using errcode = '42501';
+  end if;
+
+  if v_command_type <> 'reconcile_rollover' and v_automatic_history_facts <> '[]'::jsonb then
+    raise exception 'Only trusted rollover may create automatic History facts.'
+      using errcode = '42501';
+  end if;
+  if v_command_type <> 'set_outcome' and v_automatic_history_delete_ids <> '[]'::jsonb then
+    raise exception 'Only a manual outcome correction may reconcile dependent automatic History.'
+      using errcode = '42501';
+  end if;
+
   if v_command_type = 'hierarchy_change' then
     raise exception 'This Task State command type has no trusted planner boundary.'
       using errcode = '0A000';
@@ -200,6 +233,12 @@ begin
     if v_history->>'outcome' not in ('done', 'did_my_best', 'missed')
        or v_history->>'event_kind' <> 'explicit_outcome' then
       raise exception 'Outcome command must carry one explicit outcome History fact.'
+        using errcode = '22023';
+    end if;
+    if v_automatic_history_delete_ids <> '[]'::jsonb
+       and (v_history->>'outcome' not in ('done', 'did_my_best')
+            or nullif(v_history->>'scheduled_due_on', '') is null) then
+      raise exception 'Dependent automatic History reconciliation requires a successful occurrence correction.'
         using errcode = '22023';
     end if;
     if exists (
@@ -333,6 +372,10 @@ begin
     end if;
     if (v_payload->>'synthetic_did_my_best')::boolean is true then
       raise exception 'Rollover cannot carry a client synthetic Did My Best marker.'
+        using errcode = '22023';
+    end if;
+    if v_history <> '{}'::jsonb and v_automatic_history_facts <> '[]'::jsonb then
+      raise exception 'One rollover cannot mix stale-workflow completion with automatic Missed recovery.'
         using errcode = '22023';
     end if;
   end if;
@@ -562,10 +605,10 @@ begin
     return v_result || jsonb_build_object('was_replayed', false);
   end if;
 
-  -- Automatic rollover is a narrow trusted exception to the old no-History
-  -- rule.  The server-derived payload may finalize only the stale In Progress
-  -- workflow's own logical date as authorized-automation Did My Best.  A
-  -- no-History rollover may only clear that stale workflow or be a no-op.
+  -- Automatic rollover is a narrow trusted History writer. The server-derived
+  -- payload may either finalize one stale In Progress workflow as Did My Best,
+  -- or materialize passed scheduled obligations as automatic Missed. It cannot
+  -- mix those operations or materialize the current open logical day.
   if v_command_type = 'reconcile_rollover' then
     if v_logical_day_context->>'logical_date' is distinct from public.adhdice_effective_logical_date(
       clock_timestamp(), v_profile_timezone, v_profile_day_start_time
@@ -573,7 +616,7 @@ begin
       raise exception 'Rollover logical-day context is not current.'
         using errcode = '40001';
     end if;
-    if v_history = '{}'::jsonb then
+    if v_history = '{}'::jsonb and v_automatic_history_facts = '[]'::jsonb then
       if v_payload ? 'reward_program_version' then
         raise exception 'Rollover cannot carry reward data without its automatic Did My Best History fact.'
           using errcode = '22023';
@@ -596,7 +639,7 @@ begin
         raise exception 'A no-op rollover cannot carry a Task State mutation.'
           using errcode = '22023';
       end if;
-    else
+    elsif v_history <> '{}'::jsonb then
       if v_source_kind <> 'authorized_automation'
          or v_history->>'outcome' <> 'did_my_best'
          or v_history->>'event_kind' <> 'authorized_automation'
@@ -636,6 +679,72 @@ begin
         raise exception 'Automatic rollover History occurrence evidence is not owned by the Task.'
           using errcode = '23503';
       end if;
+    else
+      if v_source_kind <> 'authorized_automation'
+         or v_payload ? 'reward_program_version'
+         or v_task.workflow_state = 'in_progress'
+         or jsonb_array_length(v_automatic_history_facts) = 0 then
+        raise exception 'Automatic Missed recovery requires a non-workflow authorized rollover without reward data.'
+          using errcode = '22023';
+      end if;
+      if exists (
+        select 1
+          from jsonb_array_elements(v_automatic_history_facts) as automatic_fact(value)
+         where value->>'outcome' <> 'missed'
+            or value->>'event_kind' <> 'authorized_automation'
+            or nullif(value->>'logical_date', '') is null
+            or (value->>'logical_date')::date >= public.adhdice_effective_logical_date(clock_timestamp(), v_profile_timezone, v_profile_day_start_time)
+            or nullif(value->>'scheduled_due_on', '') is null
+            or (value->>'scheduled_due_on')::date > (value->>'logical_date')::date
+            or nullif(value->>'occurrence_id', '') is not null
+            or nullif(value->>'effective_due_on', '') is not null
+            or nullif(value->>'schedule_boundary_id', '') is null
+            or not exists (
+              select 1
+                from public.adhdice_task_schedule_boundaries boundary
+               where boundary.user_id = p_user_id
+                 and boundary.entity_id = v_entity_id
+                 and boundary.id = (value->>'schedule_boundary_id')::uuid
+                 and boundary.boundary_sequence = v_current_boundary_sequence
+                 and boundary.schedule_model <> 'unscheduled'
+            )
+      ) then
+        raise exception 'Automatic Missed facts require past, owned, currently scheduled boundary evidence.'
+          using errcode = '23503';
+      end if;
+    end if;
+  end if;
+
+  if v_automatic_history_delete_ids <> '[]'::jsonb then
+    if exists (
+      select 1
+        from jsonb_array_elements_text(v_automatic_history_delete_ids) as requested(id)
+        left join public.adhdice_task_history_facts fact
+          on fact.user_id = p_user_id
+         and fact.entity_id = v_entity_id
+         and fact.id = requested.id::uuid
+       where fact.id is null
+          or fact.provenance_kind <> 'authorized_automation'
+          or fact.actor_kind <> 'authorized_automation'
+          or fact.outcome <> 'missed'
+          or fact.logical_date <= (v_history->>'logical_date')::date
+          or fact.scheduled_due_on is distinct from nullif(v_history->>'scheduled_due_on', '')::date
+          or exists (
+            select 1 from public.adhdice_task_reward_entitlements entitlement
+             where entitlement.user_id = fact.user_id
+               and entitlement.canonical_history_id = fact.id
+          )
+    ) or not exists (
+      select 1
+        from public.adhdice_task_schedule_boundaries boundary
+       where boundary.user_id = p_user_id
+         and boundary.entity_id = v_entity_id
+         and boundary.boundary_sequence = v_current_boundary_sequence
+         and boundary.schedule_model = 'rolling'
+         and boundary.repeat_interval > 1
+    ) then
+      raise exception 'Dependent automatic History deletion is not proven safe.'
+        using errcode = '55000';
     end if;
   end if;
 
@@ -801,6 +910,27 @@ begin
     v_effective_override_id := (v_effective_override->>'id')::uuid;
   end if;
 
+  if v_automatic_history_delete_ids <> '[]'::jsonb then
+    update public.adhdice_task_occurrences occurrence
+       set resolution_state = 'unresolved',
+           resolved_logical_date = null,
+           resolved_outcome = null,
+           resolved_history_id = null,
+           revision = occurrence.revision + 1,
+           updated_at = now()
+     where occurrence.user_id = p_user_id
+       and occurrence.entity_id = v_entity_id
+       and occurrence.resolved_history_id in (
+         select value::uuid from jsonb_array_elements_text(v_automatic_history_delete_ids)
+       );
+    delete from public.adhdice_task_history_facts fact
+     where fact.user_id = p_user_id
+       and fact.entity_id = v_entity_id
+       and fact.id in (
+         select value::uuid from jsonb_array_elements_text(v_automatic_history_delete_ids)
+       );
+  end if;
+
   if v_command_type = 'clear_outcome' then
     if exists (
       select 1
@@ -939,6 +1069,57 @@ begin
     end if;
   end if;
 
+  for v_automatic_history in
+    select value from jsonb_array_elements(v_automatic_history_facts)
+  loop
+    v_automatic_history := jsonb_set(v_automatic_history, '{id}', to_jsonb(gen_random_uuid()), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{user_id}', to_jsonb(p_user_id), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{entity_id}', to_jsonb(v_entity_id), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{entity_kind}', to_jsonb(v_entity_kind), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{provenance_kind}', to_jsonb('authorized_automation'::text), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{actor_kind}', to_jsonb('authorized_automation'::text), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{actor_id}', 'null'::jsonb, true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{source}', to_jsonb('task_state_command'::text), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{logical_day_settings_revision}', to_jsonb(v_profile_settings_revision), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{timezone}', to_jsonb(v_profile_timezone), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{day_start_time}', to_jsonb(v_profile_day_start_time), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{command_id}', to_jsonb(v_command_id), true);
+    v_automatic_history := jsonb_set(
+      v_automatic_history,
+      '{idempotence_identity}',
+      to_jsonb(v_idempotence_identity || ':history:' || (v_automatic_history->>'logical_date') || ':missed'),
+      true
+    );
+    v_automatic_history := jsonb_set(v_automatic_history, '{migration_operation_id}', 'null'::jsonb, true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{source_legacy_history_id}', 'null'::jsonb, true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{revision}', to_jsonb(1), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{created_at}', to_jsonb(now()), true);
+    v_automatic_history := jsonb_set(v_automatic_history, '{updated_at}', to_jsonb(now()), true);
+
+    insert into public.adhdice_task_history_facts
+    select (jsonb_populate_record(null::public.adhdice_task_history_facts, v_automatic_history)).*
+    on conflict (user_id, entity_id, logical_date) do nothing
+    returning * into v_history_row;
+
+    if not found then
+      select * into v_history_row
+        from public.adhdice_task_history_facts fact
+       where fact.user_id = p_user_id
+         and fact.entity_id = v_entity_id
+         and fact.logical_date = (v_automatic_history->>'logical_date')::date
+       for update;
+      if v_history_row.provenance_kind <> 'authorized_automation'
+         or v_history_row.actor_kind <> 'authorized_automation'
+         or v_history_row.outcome <> 'missed'
+         or v_history_row.scheduled_due_on is distinct from (v_automatic_history->>'scheduled_due_on')::date
+         or v_history_row.schedule_boundary_id is distinct from (v_automatic_history->>'schedule_boundary_id')::uuid then
+        raise exception 'Automatic Missed conflicts with an existing canonical History fact.'
+          using errcode = '23505';
+      end if;
+    end if;
+    v_automatic_history_ids := v_automatic_history_ids || to_jsonb(v_history_row.id);
+  end loop;
+
   if v_calendar_override <> '{}'::jsonb then
     -- Replaceable instructions retire the prior active row in this same
     -- transaction, preserving it as audit history and keeping the active
@@ -1026,6 +1207,7 @@ begin
     'next_revision', v_next_revision,
     'task_id', v_entity_id,
     'history_fact_id', v_history_id,
+    'history_fact_ids', v_automatic_history_ids,
     'schedule_boundary_id', v_schedule_id,
     'occurrence_id', v_occurrence_id,
     'effective_override_id', v_effective_override_id,

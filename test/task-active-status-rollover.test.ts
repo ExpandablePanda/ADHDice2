@@ -249,10 +249,12 @@ test("canonical rollover commands are mutation-scoped and use plan-specific repl
   const legacyStart = source.indexOf("const rpc", canonicalStart);
   const canonical = source.slice(canonicalStart, legacyStart);
   assert.match(canonical, /createEngineRolloverPlan\(/);
+  assert.match(canonical, /allowCanonicalAutomaticMissed: true/);
   assert.match(canonical, /engineRolloverPlanTaskMutationCandidates\(plan, rolloverTasks\)/);
   assert.match(canonical, /for \(const candidate of mutationCandidates\)/);
   assert.match(canonical, /createTaskRolloverReplayIdentity\(/);
   assert.doesNotMatch(canonical, /for \(const task of rolloverTasks\)/);
+  assert.doesNotMatch(source.slice(legacyStart), /allowCanonicalAutomaticMissed: true/);
 });
 
 test("engine and legacy rollover stay mutually exclusive per coordinator execution", () => {

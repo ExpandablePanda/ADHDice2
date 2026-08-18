@@ -56,6 +56,8 @@ export type TaskStateSnapshot = {
   dueOn: string | null;
   /** Stable schedule seed for read-only reconstruction; current due is derived output. */
   historicalScheduleAnchor?: string | null;
+  /** True only when the canonical boundary proves the historical schedule anchor. */
+  historicalScheduleAnchorProven?: boolean;
   activeStatusLogicalDate?: string | null;
   activeOccurrenceDueOn?: string | null;
   /** Optional persisted comparison inputs. Undefined means the source model cannot expose them. */
@@ -200,6 +202,7 @@ export type TaskStateEngineInput = {
 
 export type TaskHistoryChange =
   | { type: "insert"; row: TaskStateHistoryRow }
+  | { type: "delete"; rowId: string; logicalDate: string; reason: "dependent_automatic_missed" }
   | { type: "reject"; logicalDate: string; outcome: TaskHistoryOutcome; reason: string };
 
 /**

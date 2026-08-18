@@ -258,12 +258,13 @@ function mapHistory(
         row.was_completed,
       ));
     }
+    const canonicalProvenance = stringValue(row, "canonical_provenance_kind");
     mapped.push({
       id: id ?? `legacy-history:${taskId}:${logicalDate}:${index}`,
       taskId,
       logicalDate,
       outcome,
-      provenance: "import",
+      provenance: canonicalProvenance === "authorized_automation" ? "rollover" : "import",
       occurredAt: occurredAt && !Number.isNaN(Date.parse(occurredAt))
         ? occurredAt
         : `${logicalDate}T12:00:00.000Z`,

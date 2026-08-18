@@ -48,6 +48,7 @@ const MAX_REMAINING_PATCH_SUMMARIES = 50;
  * recurrence metadata writes.
  */
 export function createEngineRolloverPlan(input: {
+  allowCanonicalAutomaticMissed?: boolean;
   history: TaskHistory[];
   includeDiagnostics?: boolean;
   now: Date | string;
@@ -80,7 +81,10 @@ export function createEngineRolloverPlan(input: {
       action: { type: "reconcile_rollover" },
     });
     logicalDate ||= result.logicalDate;
-    const history = result.proposedHistoryChanges.flatMap((change) => change.type === "insert" ? [{
+    const history = result.proposedHistoryChanges.flatMap((change) => (
+      change.type === "insert"
+      && (change.row.outcome !== "missed" || input.allowCanonicalAutomaticMissed === true)
+    ) ? [{
       logicalDate: change.row.logicalDate,
       occurrenceIdentity: change.row.occurrenceIdentity ?? null,
       outcome: change.row.outcome,

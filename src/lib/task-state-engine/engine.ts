@@ -149,6 +149,61 @@ function nextDueAfterFinalizedOccurrence(recurrence: TaskRecurrence, occurrenceD
   );
 }
 
+function laterDate(left: string, right: string) {
+  return left > right ? left : right;
+}
+
+function automaticMissedRows(input: {
+  task: TaskStateEngineInput["task"];
+  history: readonly TaskStateHistoryRow[];
+  today: string;
+  occurredAt: string;
+}): TaskStateHistoryRow[] {
+  const { task, history, today, occurredAt } = input;
+  const scheduleStart = task.dueOn
+    ?? (task.historicalScheduleAnchorProven ? task.historicalScheduleAnchor ?? null : null);
+  if (task.lifecycle !== "active" || !scheduleStart
+    || (task.recurrence.kind === "none" && task.dueOn === null)) return [];
+
+  const latestHistoryDate = history.map((row) => row.logicalDate).sort().at(-1) ?? null;
+  const provenStart = latestHistoryDate
+    ? shiftDateKey(latestHistoryDate, 1)
+    : scheduleStart;
+  if (!provenStart) return [];
+
+  const start = laterDate(provenStart, scheduleStart);
+  const end = shiftDateKey(today, -1);
+  if (start > end) return [];
+
+  let dueDates: string[];
+  if (task.recurrence.kind === "none") {
+    dueDates = scheduleStart >= start && scheduleStart <= end ? [scheduleStart] : [];
+  } else if (task.recurrence.kind === "rolling") {
+    dueDates = dateRange(start, end);
+  } else {
+    dueDates = scheduledOccurrences(task.recurrence, scheduleStart, start, end);
+  }
+
+  const existingDates = new Set(history.map((row) => row.logicalDate));
+  return dueDates.filter((date) => !existingDates.has(date)).map((logicalDate) => {
+    const independent = task.recurrence.kind !== "rolling" || task.recurrence.intervalDays === 1;
+    const occurrenceDueOn = independent ? logicalDate : scheduleStart;
+    return {
+      id: historyIdentity(task.id, logicalDate, "missed", "rollover"),
+      taskId: task.id,
+      logicalDate,
+      outcome: "missed",
+      provenance: "rollover",
+      occurredAt,
+      occurrenceIdentity: occurrenceIdentity(task.id, occurrenceDueOn),
+      occurrenceDueOn,
+      countedAsDueOccurrence: true,
+      wasCompleted: false,
+      eventType: "status",
+    };
+  });
+}
+
 export function evaluateTaskState(input: TaskStateEngineInput) {
   const { task } = input;
   const today = logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover);
@@ -260,6 +315,45 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       rows.push(row);
       byDate.set(actionDate, row);
       recurrenceByDate.set(actionDate, row);
+      changes.push({ type: "insert", row });
+    }
+  }
+
+  if (action?.replaceExisting
+    && SUCCESS.has(action.outcome)
+    && action.provenance !== "rollover"
+    && task.recurrence.kind === "rolling"
+    && task.recurrence.intervalDays > 1) {
+    const correctedOccurrenceDueOn = action.occurrenceDueOn
+      ?? occurrenceDateFromIdentity(action.occurrenceIdentity)
+      ?? existingActionRow?.occurrenceDueOn
+      ?? occurrenceDateFromIdentity(existingActionRow?.occurrenceIdentity)
+      ?? null;
+    if (correctedOccurrenceDueOn) {
+      for (let index = rows.length - 1; index >= 0; index -= 1) {
+        const row = rows[index]!;
+        if (row.provenance !== "rollover"
+          || row.outcome !== "missed"
+          || row.logicalDate <= actionDate
+          || row.occurrenceDueOn !== correctedOccurrenceDueOn) continue;
+        rows.splice(index, 1);
+        byDate.delete(row.logicalDate);
+        recurrenceByDate.delete(row.logicalDate);
+        changes.push({
+          type: "delete",
+          rowId: row.id,
+          logicalDate: row.logicalDate,
+          reason: "dependent_automatic_missed",
+        });
+      }
+    }
+  }
+
+  if (input.action?.type === "reconcile_rollover" && !staleInProgressForRollover) {
+    for (const row of automaticMissedRows({ task, history: rows, today, occurredAt: nowIso })) {
+      rows.push(row);
+      byDate.set(row.logicalDate, row);
+      recurrenceByDate.set(row.logicalDate, row);
       changes.push({ type: "insert", row });
     }
   }

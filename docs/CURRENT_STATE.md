@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.29`.
+- Current working app version: `7.9.30`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -32,11 +32,11 @@ current-state authority. `resolveActiveTaskStatuses` is the sole current read
 authority, and the read engine now applies the locked Calendar, cursor,
 recurrence, Missed, Unscheduled, streak, and recovery-boundary semantics.
 
-The remaining work is persistence-side automatic Missed materialization,
-canonicalization of legacy-only production History, removal of compatibility
-read/write paths outside this read convergence, and browser/live/deployment
-validation. This pass does not authorize migration or live data mutation and
-does not change the existing SQL/RPC or Edge v23 deployment.
+Persistence-side automatic Missed materialization and the preview-first
+legacy-only History canonicalization are now implemented in source. SQL/Edge
+deployment, explicit migration approval/application, removal of remaining
+compatibility paths, and browser/live validation remain pending. The existing
+SQL/RPC and Edge v23 production deployment is unchanged.
 
 ### Verified production deployment baseline
 
@@ -51,9 +51,16 @@ installed and deployed:
 
 This baseline proves installation/deployment of the existing Task State
 SQL/RPC and Edge command path only. The simplified architecture changes in this
-lock—including canonical automatic Missed behavior and full-History startup—are
-not implemented or deployed. Runtime convergence, legacy decision-path removal,
-History canonicalization, and new browser QA remain pending.
+lock—including the new canonical automatic Missed persistence contract—are not
+deployed. Legacy History canonicalization is prepared but unapplied; production
+data, remaining legacy decision paths, and browser QA remain unchanged.
+
+### 7.9.30 Canonical Auto Missed and legacy migration preparation
+
+- Source now extends the existing trusted `reconcile_rollover` command to persist idempotent authorized-automation Missed facts only for passed, provable scheduled obligations. Recovery starts after the latest saved History date, or at a proven current cursor/boundary when History is empty, and never materializes the current open logical day.
+- Manual correction can reconcile only later authorized-automation Missed rows that depend on the same rolling occurrence. Independent Daily/fixed facts and manual Missed facts are preserved. Existing stale In Progress automatic Did My Best remains on the same command path, and Missed creates no reward entitlement.
+- Added exact-Task-ID, preview-first legacy History canonicalization SQL: a read-only candidate/conflict report, a rerunnable fail-closed forward migration, and read-only post-migration coverage/replacement verification. It preserves explicit legacy outcome/date and source History ID without fabricating occurrence identity or deleting legacy rows.
+- This is source implementation only. The Task State SQL/RPC and Edge source changes are **not deployed**, the legacy migration is **not applied**, and production Tasks/History remain unchanged. The next step is ChatGPT review followed by explicit SQL/Edge deployment and migration approval.
 
 ### Confirmed legacy-only History finding for later migration
 
@@ -64,9 +71,10 @@ St Allentown; Bethlehem Smile Design LLC; Gummy Vitamins; Call Jasmine Mavani
 and get referall faxed; Chicken Legs; Confirm Referral was faxed; Get Pills;
 Ground Turkey; Otter Lego Bootleg; Popsicles; See a Friend.
 
-No migration is part of this pass. Later implementation must re-query the exact
-rows and verify them before any mutation; obvious QA/test Tasks must not be
-migrated.
+The 7.9.30 source includes an exact-ID migration that re-queries these rows at
+execution time, plus preview and post-verification SQL. It has not been applied;
+obvious QA/test Tasks and duplicate-title Tasks outside the confirmed IDs remain
+out of scope.
 
 ### 7.9.25 Semantic no-action scope correction
 

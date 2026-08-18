@@ -126,6 +126,7 @@ export type CanonicalRolloverCommand = CanonicalTaskStateCommandBase & {
   occurrenceId?: string | null;
   occurrenceKey?: string | null;
   scheduledDueOn?: string | null;
+  scheduleBoundaryId?: string | null;
 };
 
 export type CanonicalTaskStateCommand =
@@ -208,6 +209,8 @@ export type CanonicalNormalizedCommandResult = {
   canonicalTaskPatch: CanonicalTaskPatch;
   compatibilityProjection: CanonicalCompatibilityProjection;
   historyFact: CanonicalHistoryFactPlan | null;
+  automaticHistoryFacts: CanonicalHistoryFactPlan[];
+  automaticHistoryDeleteIds: string[];
   occurrence: CanonicalTaskOccurrence | null;
   scheduleBoundary: CanonicalTaskScheduleBoundary | null;
   occurrenceEffectiveOverride: CanonicalTaskOccurrenceEffectiveOverride | null;
@@ -246,6 +249,8 @@ export function isCanonicalTaskStateCommandSemanticNoOp(input: {
   }
 
   return normalizedResult.historyFact === null
+    && (normalizedResult.automaticHistoryFacts ?? []).length === 0
+    && (normalizedResult.automaticHistoryDeleteIds ?? []).length === 0
     && normalizedResult.occurrence === null
     && normalizedResult.scheduleBoundary === null
     && normalizedResult.occurrenceEffectiveOverride === null
@@ -289,6 +294,19 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
       source_legacy_history_id: null,
       revision: 1,
     };
+  }
+  if ((normalizedResult.automaticHistoryFacts ?? []).length > 0) {
+    payload.automatic_history_facts = normalizedResult.automaticHistoryFacts.map((fact) => ({
+      ...fact,
+      provenance_kind: "authorized_automation",
+      actor_kind: "authorized_automation",
+      actor_id: null,
+      source_legacy_history_id: null,
+      revision: 1,
+    }));
+  }
+  if ((normalizedResult.automaticHistoryDeleteIds ?? []).length > 0) {
+    payload.automatic_history_delete_ids = normalizedResult.automaticHistoryDeleteIds;
   }
   if (normalizedResult.occurrence) payload.occurrence = normalizedResult.occurrence;
   if (normalizedResult.scheduleBoundary) payload.schedule_boundary = normalizedResult.scheduleBoundary;
@@ -372,7 +390,7 @@ function commandType(command: CanonicalTaskStateCommand): CanonicalCommandType {
 function commandPayload(command: CanonicalTaskStateCommand): CanonicalJsonObject {
   const internalFields = new Set([
     "commandId", "acceptedIntent", "compatibilityProjection", "startedAt", "changedAt", "completedAt",
-    "staleLogicalDate", "occurrenceId", "scheduledDueOn",
+    "staleLogicalDate", "occurrenceId", "scheduledDueOn", "scheduleBoundaryId",
   ]);
   return Object.fromEntries(Object.entries(command).filter(([key]) => !internalFields.has(key)));
 }
@@ -584,6 +602,8 @@ function initialResult(
     canonicalTaskPatch,
     compatibilityProjection: projection,
     historyFact: null,
+    automaticHistoryFacts: [],
+    automaticHistoryDeleteIds: [],
     occurrence: null,
     scheduleBoundary: null,
     occurrenceEffectiveOverride: null,
@@ -707,6 +727,8 @@ export function planTaskStateCommand(
   const patch = input.type === "rollover" ? {} : baseTaskPatch(task);
   let projection: CanonicalCompatibilityProjection;
   let historyFact: CanonicalHistoryFactPlan | null = null;
+  let automaticHistoryFacts: CanonicalHistoryFactPlan[] = [];
+  let automaticHistoryDeleteIds: string[] = [];
   let occurrence: CanonicalTaskOccurrence | null = null;
   let scheduleBoundary: CanonicalTaskScheduleBoundary | null = null;
   let occurrenceEffectiveOverride: CanonicalTaskOccurrenceEffectiveOverride | null = null;
@@ -721,6 +743,9 @@ export function planTaskStateCommand(
         historyFact.scheduled_due_on = input.scheduledDueOn ?? existingOutcomeRow.occurrenceDueOn ?? null;
       }
       occurrence = input.occurrence ?? null;
+      automaticHistoryDeleteIds = engineResult?.proposedHistoryChanges.flatMap((change) => (
+        change.type === "delete" ? [change.rowId] : []
+      )) ?? [];
       patch.workflow_state = "none";
       patch.workflow_started_at = null;
       patch.workflow_logical_date = null;
@@ -859,12 +884,32 @@ export function planTaskStateCommand(
       if (automaticHistory?.type === "insert") {
         historyFact = historyFactFor(input, command, automaticHistory.row.logicalDate, "did_my_best");
       }
+      automaticHistoryFacts = engineResult?.proposedHistoryChanges.flatMap((change) => {
+        if (change.type !== "insert" || change.row.outcome !== "missed" || change.row.provenance !== "rollover") return [];
+        return [{
+          logical_date: change.row.logicalDate,
+          outcome: "missed" as const,
+          event_kind: "authorized_automation" as const,
+          occurrence_id: null,
+          scheduled_due_on: change.row.occurrenceDueOn ?? null,
+          effective_due_on: null,
+          schedule_boundary_id: input.scheduleBoundaryId ?? null,
+          recurrence_source_fingerprint: input.scheduleBoundaryId ?? null,
+          source: "task_state_command",
+          logical_day_settings_revision: command.logicalDay.settingsRevision,
+          timezone: command.logicalDay.timezone,
+          day_start_time: command.logicalDay.dayStartTime,
+          idempotence_identity: `${command.idempotenceIdentity}:history:${change.row.logicalDate}:missed`,
+        }];
+      }) ?? [];
       break;
     }
   }
 
   const normalizedResult = initialResult(command, task, projection, patch);
   normalizedResult.historyFact = historyFact;
+  normalizedResult.automaticHistoryFacts = automaticHistoryFacts;
+  normalizedResult.automaticHistoryDeleteIds = automaticHistoryDeleteIds;
   normalizedResult.occurrence = occurrence;
   normalizedResult.scheduleBoundary = scheduleBoundary;
   normalizedResult.occurrenceEffectiveOverride = occurrenceEffectiveOverride;

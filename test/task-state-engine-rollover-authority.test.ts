@@ -19,13 +19,14 @@ function history(status: TaskHistory["status"], entry_date: string): TaskHistory
     created_at: `${entry_date}T12:00:00.000Z`, updated_at: `${entry_date}T12:00:00.000Z` };
 }
 const context = { rolloverTime: "06:00", timezone: "America/New_York" };
+const canonicalContext = { ...context, allowCanonicalAutomaticMissed: true };
 
-test("rollover planner observes the 6 AM boundary and creates no needless plan", () => {
-  const before = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T09:59:00.000Z", tasks: [task({ due_on: "2026-07-30" })] });
-  const after = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T10:01:00.000Z", tasks: [task({ due_on: "2026-07-30" })] });
+test("rollover planner observes the 6 AM boundary before materializing automatic Missed", () => {
+  const before = createEngineRolloverPlan({ ...canonicalContext, history: [], now: "2026-07-31T09:59:00.000Z", tasks: [task({ due_on: "2026-07-30" })] });
+  const after = createEngineRolloverPlan({ ...canonicalContext, history: [], now: "2026-07-31T10:01:00.000Z", tasks: [task({ due_on: "2026-07-30" })] });
   assert.equal(before.logicalDate, "2026-07-30");
   assert.equal(after.logicalDate, "2026-07-31");
-  assert.deepEqual(after.tasks[0]?.history, []);
+  assert.deepEqual(after.tasks[0]?.history.map((row) => [row.logicalDate, row.outcome]), [["2026-07-30", "missed"]]);
   assert.equal(engineRolloverPlanHasMutations(createEngineRolloverPlan({ ...context, history: [history("missed", "2026-07-30")], now: "2026-07-31T10:01:00.000Z", tasks: [task({ due_on: "2026-07-30", status: "missed" })] })), false);
 });
 
@@ -179,28 +180,33 @@ test("explicit handled History and unscheduled tasks prevent automatic Missed", 
   assert.equal(unscheduled.tasks.length, 0);
 });
 
-test("calculated overdue rollover persists no History and remains replay-safe", () => {
+test("overdue rollover persists canonical automatic Missed and remains replay-safe", () => {
   const original = task({ due_on: "2026-07-30", status: "pending" });
-  const first = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [original] });
+  const first = createEngineRolloverPlan({ ...canonicalContext, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [original] });
   assert.equal(first.tasks.filter((entry) => Object.keys(entry.patch).length > 0).length, 1);
-  assert.deepEqual(first.tasks.flatMap((entry) => entry.history.map((row) => row.outcome)), []);
+  assert.deepEqual(first.tasks.flatMap((entry) => entry.history.map((row) => row.outcome)), ["missed"]);
 
   const persisted = task({
     ...original,
     revision: 2,
     status: first.tasks[0]?.patch.status ?? original.status,
   });
-  const persistedHistory = [];
-  const replay = createEngineRolloverPlan({ ...context, history: persistedHistory, now: "2026-07-31T12:00:00.000Z", tasks: [persisted] });
+  const persistedHistory = [history("missed", "2026-07-30")];
+  const replay = createEngineRolloverPlan({ ...canonicalContext, history: persistedHistory, now: "2026-07-31T12:00:00.000Z", tasks: [persisted] });
   assert.equal(replay.tasks.filter((entry) => Object.keys(entry.patch).length > 0).length, 0);
   assert.equal(replay.tasks.reduce((count, entry) => count + entry.history.length, 0), 0);
   assert.equal(replay.tasks.filter((entry) => entry.rewardEligible).length, 0);
 });
 
+test("legacy rollover transport never receives automatic Missed History", () => {
+  const plan = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [task({ due_on: "2026-07-30" })] });
+  assert.deepEqual(plan.tasks.flatMap((entry) => entry.history), []);
+});
+
 test("canonical rollover candidates include only Tasks with persistable patches", () => {
-  const first = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [task({ due_on: "2026-07-30" })] });
+  const first = createEngineRolloverPlan({ ...canonicalContext, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [task({ due_on: "2026-07-30" })] });
   const persisted = task({ due_on: first.tasks[0]?.patch.dueOn ?? "2026-07-30", revision: 2, status: first.tasks[0]?.patch.status ?? "pending" });
-  const replay = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [persisted] });
+  const replay = createEngineRolloverPlan({ ...canonicalContext, history: [history("missed", "2026-07-30")], now: "2026-07-31T12:00:00.000Z", tasks: [persisted] });
   assert.equal(engineRolloverPlanTaskMutationCandidates(first).length, 1);
   assert.equal(engineRolloverPlanTaskMutationCandidates(replay).length, 0);
 });
@@ -265,7 +271,7 @@ test("reloaded fixed schedule with unkeyed legacy History produces an empty roll
   unkeyed.occurrence_due_on = null;
   unkeyed.occurrence_key = null;
   const plan = createEngineRolloverPlan({
-    ...context,
+    ...canonicalContext,
     history: [unkeyed],
     now: "2026-08-01T12:00:00.000Z",
     tasks: [task({
@@ -333,9 +339,9 @@ test("remaining rollover patch diagnostics are bounded and contain no task conte
   assert.equal(JSON.stringify(plan.remainingPatchSummaries).includes("Private"), false);
 });
 
-test("large rollover plans retain no calculated History payload", () => {
+test("large rollover plans retain one automatic Missed fact per passed current cursor", () => {
   const plan = createEngineRolloverPlan({
-    ...context,
+    ...canonicalContext,
     history: [],
     now: "2026-07-31T12:00:00.000Z",
     tasks: Array.from({ length: 900 }, (_, index) => task({
@@ -344,7 +350,7 @@ test("large rollover plans retain no calculated History payload", () => {
     })),
   });
   assert.equal(plan.tasksEvaluated, 900);
-  assert.equal(plan.tasks.reduce((count, entry) => count + entry.history.length, 0), 0);
+  assert.equal(plan.tasks.reduce((count, entry) => count + entry.history.length, 0), 205);
 });
 
 test("7.6.10 rollover RPC stages once and uses bulk conflict-safe History/task writes", () => {
