@@ -31,7 +31,7 @@ with active_legacy as (
     task.repeat_day_of_month as raw_repeat_day_of_month,
     task.repeat_monthly_mode::text as raw_repeat_monthly_mode,
     task.repeat_monthly_ordinal::text as raw_repeat_monthly_ordinal,
-    task.repeat_monthly_weekday,
+    task.repeat_monthly_weekday as raw_repeat_monthly_weekday,
     boundary.*
   from public.adhdice_clean_tasks task
   join initialized_operations operation on operation.user_id = task.user_id and operation.entity_id = task.id

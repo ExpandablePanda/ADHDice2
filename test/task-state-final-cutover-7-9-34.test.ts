@@ -105,3 +105,13 @@ test("7.9.34 initialization artifacts are dynamic, prospective, side-effect-free
   assert.match(verifier, /\(select count\(\*\) from canonical_active task[\s\S]*active_canonical_missing_boundary_violations/i);
   assert.doesNotMatch(verifier.replace(/--[^\n]*/g, ""), /\b(insert|update|delete|alter|drop|truncate)\b/i);
 });
+
+test("7.9.36 verifier disambiguates the monthly weekday source", () => {
+  const migrationBoundaries = verifier.match(/migration_boundaries as \([\s\S]*?\), schedule_translation as \(/i)?.[0] ?? "";
+  const scheduleTranslation = verifier.match(/schedule_translation as \([\s\S]*?\), metrics as \(/i)?.[0] ?? "";
+
+  assert.match(migrationBoundaries, /task\.repeat_monthly_weekday\s+as\s+raw_repeat_monthly_weekday,\s*boundary\.\*/i);
+  assert.doesNotMatch(migrationBoundaries, /task\.repeat_monthly_weekday\s*,\s*boundary\.\*/i);
+  assert.match(scheduleTranslation, /repeat_monthly_weekday\s+is\s+not\s+distinct\s+from\s+case\s+when\s+raw_repeat_monthly_mode\s*=\s*'ordinal_weekday'\s+then\s+raw_repeat_monthly_weekday\s+else\s+null\s+end/i);
+  assert.doesNotMatch(scheduleTranslation, /then\s+repeat_monthly_weekday\s+else/i);
+});
