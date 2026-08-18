@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.36`.
+- Current working app version: `7.9.37`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -53,7 +53,10 @@ Browser/live validation remains pending.
   initialization semantics in the verifier to 7.9.34 migration-created Tasks.
 - 7.9.36 corrects the verifier's monthly weekday column alias only; it does not
   change Task State or migration behavior.
-- No 7.9.34/7.9.35/7.9.36 SQL was applied, no Edge Function was deployed, and no production
+- 7.9.37 corrects the initialization migration/preview's raw monthly weekday
+  alias so normalized `candidate.*` expansion has no duplicate output column;
+  it does not change Task State or migration semantics.
+- No 7.9.34/7.9.35/7.9.36/7.9.37 SQL was applied, no Edge Function was deployed, and no production
   data was mutated. The existing 7.9.33 literal History-copy artifacts remain
   unchanged. Browser/live validation remains pending.
 

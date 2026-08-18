@@ -115,3 +115,16 @@ test("7.9.36 verifier disambiguates the monthly weekday source", () => {
   assert.match(scheduleTranslation, /repeat_monthly_weekday\s+is\s+not\s+distinct\s+from\s+case\s+when\s+raw_repeat_monthly_mode\s*=\s*'ordinal_weekday'\s+then\s+raw_repeat_monthly_weekday\s+else\s+null\s+end/i);
   assert.doesNotMatch(scheduleTranslation, /then\s+repeat_monthly_weekday\s+else/i);
 });
+
+test("7.9.37 initialization aliases the raw monthly weekday before normalized expansion", () => {
+  for (const sql of [preview, migration]) {
+    const rawCandidates = sql.match(/raw_candidates as \([\s\S]*?\), normalized as \(/i)?.[0] ?? "";
+    const normalized = sql.match(/normalized as \([\s\S]*?\n\s*from raw_candidates candidate\s*\)/i)?.[0] ?? "";
+
+    assert.match(rawCandidates, /task\.repeat_monthly_weekday\s+as\s+raw_repeat_monthly_weekday\s*,/i);
+    assert.doesNotMatch(rawCandidates, /task\.repeat_monthly_weekday\s*,/i);
+    assert.match(normalized, /candidate\.\*[\s\S]*candidate\.raw_repeat_monthly_weekday[\s\S]*as repeat_monthly_weekday/i);
+    assert.equal(normalized.match(/\bas repeat_monthly_weekday\b/gi)?.length, 1);
+    assert.doesNotMatch(normalized, /candidate\.repeat_monthly_weekday\b/i);
+  }
+});

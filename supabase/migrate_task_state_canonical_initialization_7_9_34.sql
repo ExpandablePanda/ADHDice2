@@ -26,7 +26,7 @@ with raw_candidates as (
     task.repeat_day_of_month,
     coalesce(task.repeat_monthly_mode::text, 'day_of_month') as raw_repeat_monthly_mode,
     task.repeat_monthly_ordinal::text as raw_repeat_monthly_ordinal,
-    task.repeat_monthly_weekday,
+    task.repeat_monthly_weekday as raw_repeat_monthly_weekday,
     task.revision as source_task_revision,
     profile.timezone,
     profile.day_start_time,
@@ -88,7 +88,7 @@ with raw_candidates as (
     end as repeat_day_of_month_normalized,
     case when candidate.raw_repeat_frequency = 'monthly' then candidate.raw_repeat_monthly_mode else 'day_of_month' end as repeat_monthly_mode,
     case when candidate.raw_repeat_frequency = 'monthly' and candidate.raw_repeat_monthly_mode = 'ordinal_weekday' then candidate.raw_repeat_monthly_ordinal else null end as repeat_monthly_ordinal,
-    case when candidate.raw_repeat_frequency = 'monthly' and candidate.raw_repeat_monthly_mode = 'ordinal_weekday' then candidate.repeat_monthly_weekday else null end as repeat_monthly_weekday,
+    case when candidate.raw_repeat_frequency = 'monthly' and candidate.raw_repeat_monthly_mode = 'ordinal_weekday' then candidate.raw_repeat_monthly_weekday else null end as repeat_monthly_weekday,
     case when candidate.schedule_model = 'one_time' then candidate.due_on else null end as one_time_due_on,
     case when candidate.schedule_model in ('rolling', 'fixed') then candidate.due_on else null end as anchor_date
   from raw_candidates candidate
