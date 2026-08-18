@@ -721,7 +721,7 @@ create table if not exists public.adhdice_task_history_facts (
   )),
   event_kind text not null check (event_kind in (
     'explicit_outcome', 'terminal_complete', 'delay_audit',
-    'correction', 'authorized_automation'
+    'correction', 'authorized_automation', 'migration_reconstruction'
   )),
   occurrence_id uuid,
   scheduled_due_on date,
@@ -761,8 +761,17 @@ create table if not exists public.adhdice_task_history_facts (
   constraint adhdice_task_history_facts_effective_date_check check (
     (
       outcome = 'delayed'
-      and effective_due_on is not null
-      and effective_due_on > logical_date
+      and (
+        (effective_due_on is not null and effective_due_on > logical_date)
+        or (
+          effective_due_on is null
+          and event_kind = 'migration_reconstruction'
+          and provenance_kind = 'migration_reconstruction'
+          and actor_kind = 'migration'
+          and migration_operation_id is not null
+          and source_legacy_history_id is not null
+        )
+      )
     )
     or (
       outcome <> 'delayed'

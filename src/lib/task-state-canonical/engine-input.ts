@@ -172,8 +172,7 @@ export function buildCanonicalTaskStateEngineInput(
         : boundary.schedule_model === "unscheduled"
           ? null
           : boundary.anchor_date,
-      historicalScheduleAnchorProven: boundary.anchor_confidence === "proven"
-        || boundary.anchor_confidence === "high_confidence",
+      historicalScheduleAnchorProven: boundary.anchor_confidence === "proven",
       recurrence: recurrenceFromBoundary(boundary),
     },
     calendarOverrides: activeCalendarOverrides(readModel),

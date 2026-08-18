@@ -1,5 +1,5 @@
--- SUPERSEDED - DO NOT APPLY.
--- Replaced by preview_legacy_history_copy_7_9_31.sql.
+-- ADHDice 7.9.31 read-only preview for the exact approved legacy History copy.
+-- SOURCE ONLY: this report performs no writes.
 with confirmed_task_ids(task_id) as (
   values
     ('8416da45-0dec-49a2-8821-1780af3899a1'::uuid),
@@ -19,17 +19,15 @@ with confirmed_task_ids(task_id) as (
     legacy.id as source_legacy_history_id,
     legacy.user_id,
     legacy.task_id,
-    task.title,
+    legacy.entry_date as logical_date,
+    legacy.status::text as outcome,
+    legacy.occurrence_due_on,
     task.entity_kind,
-    legacy.entry_date,
-    legacy.status::text as legacy_outcome,
     profile.timezone,
     profile.day_start_time,
     profile.settings_revision,
     fact.id as canonical_fact_id,
-    fact.outcome::text as canonical_outcome,
-    fact.provenance_kind as canonical_provenance_kind,
-    fact.source_legacy_history_id as canonical_source_legacy_history_id
+    fact.outcome::text as canonical_outcome
   from confirmed_task_ids confirmed
   join public.adhdice_clean_tasks task on task.id = confirmed.task_id
   join public.adhdice_task_history legacy
@@ -41,13 +39,20 @@ with confirmed_task_ids(task_id) as (
    and fact.logical_date = legacy.entry_date
 )
 select
-  *,
+  source_legacy_history_id,
+  user_id,
+  task_id,
+  logical_date,
+  outcome,
+  occurrence_due_on,
+  canonical_fact_id,
+  canonical_outcome,
   case
-    when canonical_fact_id is not null then 'CANONICAL_CONFLICT_PRESERVED'
-    when legacy_outcome not in ('done', 'did_my_best', 'missed', 'complete') then 'BLOCKED_UNSUPPORTED_OUTCOME'
+    when canonical_fact_id is not null then 'CANONICAL_EXISTS_WINS'
+    when outcome not in ('done', 'did_my_best', 'missed', 'delayed', 'complete') then 'BLOCKED_UNSUPPORTED_OUTCOME'
     when entity_kind not in ('parent', 'step', 'substep') then 'BLOCKED_ENTITY_KIND'
-    when timezone is null or day_start_time is null or settings_revision is null then 'BLOCKED_PROFILE_METADATA'
-    else 'CANDIDATE'
+    when timezone is null or day_start_time is null or settings_revision is null or settings_revision < 1 then 'BLOCKED_PROFILE_METADATA'
+    else 'ELIGIBLE_COPY'
   end as disposition
 from scoped
-order by task_id, entry_date, source_legacy_history_id;
+order by task_id, logical_date, source_legacy_history_id;

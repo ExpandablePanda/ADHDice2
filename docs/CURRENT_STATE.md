@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-17
+Last reviewed: 2026-08-18
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.30`.
+- Current working app version: `7.9.31`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -32,11 +32,11 @@ current-state authority. `resolveActiveTaskStatuses` is the sole current read
 authority, and the read engine now applies the locked Calendar, cursor,
 recurrence, Missed, Unscheduled, streak, and recovery-boundary semantics.
 
-Persistence-side automatic Missed materialization and the preview-first
-legacy-only History canonicalization are now implemented in source. SQL/Edge
-deployment, explicit migration approval/application, removal of remaining
-compatibility paths, and browser/live validation remain pending. The existing
-SQL/RPC and Edge v23 production deployment is unchanged.
+Persistence-side automatic Missed materialization and the preview-first,
+literal legacy History copy are now implemented in source. SQL/Edge deployment,
+explicit migration approval/application, removal of remaining compatibility
+paths, and browser/live validation remain pending. The existing SQL/RPC and
+Edge v23 production deployment is unchanged.
 
 ### Verified production deployment baseline
 
@@ -55,11 +55,41 @@ lock—including the new canonical automatic Missed persistence contract—are n
 deployed. Legacy History canonicalization is prepared but unapplied; production
 data, remaining legacy decision paths, and browser QA remain unchanged.
 
-### 7.9.30 Canonical Auto Missed and legacy migration preparation
+### 7.9.31 Final Auto Missed persistence and literal legacy History copy
+
+- Canonical rollover candidate selection now executes a trusted
+  `reconcile_rollover` command when the plan contains either a Task patch or
+  planned History inserts/deletes. Daily History-only recovery therefore
+  persists passed Auto Missed facts without reintroducing settled-task command
+  storms; a successful retry is a semantic no-op.
+- Zero-History recovery still accepts the current due/cursor, but a historical
+  schedule boundary now qualifies only when `anchor_confidence = proven`.
+  `high_confidence` alone cannot create historical Auto Missed facts.
+- The 7.9.31 exact-ID migration is a literal copy of supported legacy
+  Task/date/outcome facts. It preserves `source_legacy_history_id` and only an
+  explicitly stored `occurrence_due_on`; it creates no occurrence, schedule
+  boundary, effective Delay target, recurrence metadata, Task update, reward,
+  automation replay, or additional History inference. Existing canonical
+  Task/date facts win and the migration is fail-closed and rerunnable.
+- Canonical History now permits `effective_due_on = NULL` for Delayed only when
+  the row is a copied historical `migration_reconstruction` fact with migration
+  actor, operation, and source-legacy identity. Normal runtime/user Delay
+  remains strict and requires a later effective due date.
+- Added one forward 7.9.31 SQL patch for the currently installed 7.9.20 RPC
+  baseline, plus read-only preview, forward copy, and read-only verification
+  artifacts. The three 7.9.30 migration artifacts are marked
+  `SUPERSEDED - DO NOT APPLY`.
+- Source changes are complete. No SQL was applied to Supabase, no Edge Function
+  was deployed, no production migration was executed, and production
+  Tasks/History/rewards remain unchanged. Next step: ChatGPT review, then
+  explicit production authorization for any SQL, Edge, or migration action.
+
+### 7.9.30 Canonical Auto Missed and legacy migration preparation (superseded)
 
 - Source now extends the existing trusted `reconcile_rollover` command to persist idempotent authorized-automation Missed facts only for passed, provable scheduled obligations. Recovery starts after the latest saved History date, or at a proven current cursor/boundary when History is empty, and never materializes the current open logical day.
 - Manual correction can reconcile only later authorized-automation Missed rows that depend on the same rolling occurrence. Independent Daily/fixed facts and manual Missed facts are preserved. Existing stale In Progress automatic Did My Best remains on the same command path, and Missed creates no reward entitlement.
-- Added exact-Task-ID, preview-first legacy History canonicalization SQL: a read-only candidate/conflict report, a rerunnable fail-closed forward migration, and read-only post-migration coverage/replacement verification. It preserves explicit legacy outcome/date and source History ID without fabricating occurrence identity or deleting legacy rows.
+- The 7.9.30 migration preview, forward migration, and verifier are superseded
+  by the 7.9.31 literal-copy artifacts and must not be applied.
 - This is source implementation only. The Task State SQL/RPC and Edge source changes are **not deployed**, the legacy migration is **not applied**, and production Tasks/History remain unchanged. The next step is ChatGPT review followed by explicit SQL/Edge deployment and migration approval.
 
 ### Confirmed legacy-only History finding for later migration
@@ -71,7 +101,7 @@ St Allentown; Bethlehem Smile Design LLC; Gummy Vitamins; Call Jasmine Mavani
 and get referall faxed; Chicken Legs; Confirm Referral was faxed; Get Pills;
 Ground Turkey; Otter Lego Bootleg; Popsicles; See a Friend.
 
-The 7.9.30 source includes an exact-ID migration that re-queries these rows at
+The 7.9.31 source includes an exact-ID migration that re-queries these rows at
 execution time, plus preview and post-verification SQL. It has not been applied;
 obvious QA/test Tasks and duplicate-title Tasks outside the confirmed IDs remain
 out of scope.

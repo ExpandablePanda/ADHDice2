@@ -120,7 +120,9 @@ export function engineRolloverPlanTaskMutationCandidates(
   plan: EngineRolloverPlan,
   tasks: Array<Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">>> = [],
 ) {
-  const compatibilityCandidates = plan.tasks.filter((entry) => Object.keys(entry.patch).length > 0);
+  const compatibilityCandidates = plan.tasks.filter((entry) => (
+    Object.keys(entry.patch).length > 0 || entry.history.length > 0
+  ));
   const candidateByTaskId = new Map(compatibilityCandidates.map((entry) => [entry.taskId, entry]));
 
   // Canonical workflow state owns rollover eligibility. Compatibility status

@@ -3,6 +3,7 @@ import test from "node:test";
 import type { Task } from "../src/lib/database.types.ts";
 import { buildCanonicalTaskStateEngineInput } from "../src/lib/task-state-canonical/engine-input.ts";
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
+import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
 import { projectTaskWithCanonicalScheduleBoundary } from "../src/lib/task-state-canonical/schedule-projection.ts";
 import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
@@ -88,6 +89,43 @@ test("canonical engine input separates the boundary anchor from the current due 
 
   assert.equal(input.task.dueOn, "2026-08-14");
   assert.equal(input.task.historicalScheduleAnchor, "2026-08-04");
+});
+
+test("zero-History recovery accepts only proven historical anchors", () => {
+  const model = (anchorConfidence: "proven" | "high_confidence") => ({
+    task: {
+      id: "task-1",
+      status: "pending",
+      due_on: null,
+      terminal_state: "active",
+      container_state: "active",
+      workflow_state: "none",
+      active_status_logical_date: null,
+      active_occurrence_due_on: null,
+    },
+    scheduleBoundaries: [{
+      schedule_model: "rolling",
+      repeat_frequency: "daily",
+      repeat_interval: 1,
+      repeat_days_of_week: [],
+      repeat_day_of_month: null,
+      repeat_monthly_mode: "day_of_month",
+      repeat_monthly_ordinal: null,
+      repeat_monthly_weekday: null,
+      anchor_date: "2026-08-14",
+      anchor_confidence: anchorConfidence,
+    }],
+    occurrences: [],
+    historyFacts: [],
+  }) as unknown as CanonicalTaskStateReadModel;
+  const context = { logicalDayRollover: "00:00", now: "2026-08-17T12:00:00.000Z", timezone: "UTC" };
+  const missedDates = (confidence: "proven" | "high_confidence") => evaluateTaskState({
+    ...buildCanonicalTaskStateEngineInput(model(confidence), context),
+    action: { type: "reconcile_rollover" },
+  }).proposedHistoryChanges.flatMap((change) => change.type === "insert" && change.row.outcome === "missed" ? [change.row.logicalDate] : []);
+
+  assert.deepEqual(missedDates("proven"), ["2026-08-14", "2026-08-15", "2026-08-16"]);
+  assert.deepEqual(missedDates("high_confidence"), []);
 });
 
 test("canonical engine input hydrates the active workflow occurrence from canonical storage", () => {

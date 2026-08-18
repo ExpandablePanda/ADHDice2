@@ -1,4 +1,5 @@
--- ADHDice 7.9.30 read-only post-migration verification.
+-- SUPERSEDED - DO NOT APPLY.
+-- Replaced by verify_legacy_history_copy_7_9_31.sql.
 -- Expected after an approved execution: remaining_candidates = 0,
 -- malformed_migration_facts = 0, and unintended_migration_facts = 0.
 with confirmed_task_ids(task_id) as (

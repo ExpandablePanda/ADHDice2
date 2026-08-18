@@ -203,12 +203,36 @@ test("legacy rollover transport never receives automatic Missed History", () => 
   assert.deepEqual(plan.tasks.flatMap((entry) => entry.history), []);
 });
 
-test("canonical rollover candidates include only Tasks with persistable patches", () => {
+test("canonical rollover candidates include Task patches or planned History mutations", () => {
   const first = createEngineRolloverPlan({ ...canonicalContext, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [task({ due_on: "2026-07-30" })] });
   const persisted = task({ due_on: first.tasks[0]?.patch.dueOn ?? "2026-07-30", revision: 2, status: first.tasks[0]?.patch.status ?? "pending" });
   const replay = createEngineRolloverPlan({ ...canonicalContext, history: [history("missed", "2026-07-30")], now: "2026-07-31T12:00:00.000Z", tasks: [persisted] });
   assert.equal(engineRolloverPlanTaskMutationCandidates(first).length, 1);
   assert.equal(engineRolloverPlanTaskMutationCandidates(replay).length, 0);
+});
+
+test("History-only Auto Missed rollover remains eligible and is idempotent after persistence", () => {
+  const existing = ["2026-08-13"].map((date) => history("missed", date));
+  const current = task({ due_on: "2026-08-14", status: "missed" });
+  const first = createEngineRolloverPlan({
+    ...canonicalContext,
+    history: existing,
+    now: "2026-08-17T12:00:00.000Z",
+    tasks: [current],
+  });
+
+  assert.deepEqual(first.tasks[0]?.history.map((row) => row.logicalDate), ["2026-08-14", "2026-08-15", "2026-08-16"]);
+  assert.deepEqual(first.tasks[0]?.patch, {});
+  assert.deepEqual(engineRolloverPlanTaskMutationCandidates(first, [current]).map((candidate) => candidate.taskId), [current.id]);
+
+  const persisted = [...existing, ...first.tasks[0]!.history.map((row) => history(row.outcome, row.logicalDate))];
+  const retry = createEngineRolloverPlan({
+    ...canonicalContext,
+    history: persisted,
+    now: "2026-08-17T12:00:00.000Z",
+    tasks: [current],
+  });
+  assert.deepEqual(engineRolloverPlanTaskMutationCandidates(retry, [current]), []);
 });
 
 test("stale canonical workflow is a candidate despite Missed compatibility state and no active-status date", () => {
