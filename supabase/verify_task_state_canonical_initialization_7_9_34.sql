@@ -16,6 +16,12 @@ with active_legacy as (
   select operation.*
   from public.adhdice_task_migration_operations operation
   where operation.migration_version = 'task-state-initialization-7.9.34'
+), initialized_tasks as (
+  select task.*
+  from public.adhdice_clean_tasks task
+  join initialized_operations operation
+    on operation.user_id = task.user_id
+   and operation.entity_id = task.id
 ), migration_boundaries as (
   select
     task.repeat_frequency::text as raw_repeat_frequency,
@@ -71,7 +77,7 @@ with active_legacy as (
         select 1 from public.adhdice_task_schedule_boundaries boundary
         where boundary.user_id = task.user_id and boundary.entity_id = task.id
       )) as active_canonical_missing_boundary_violations,
-    (select count(*) from canonical_active task
+    (select count(*) from initialized_tasks task
       where task.canonicalization_status <> 'canonical_proven'
          or task.entity_kind is null
          or task.terminal_state <> 'active'

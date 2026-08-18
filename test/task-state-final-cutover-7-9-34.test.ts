@@ -73,6 +73,12 @@ test("initialized canonical schedule ignores stale raw repeat and due fields", (
 });
 
 test("7.9.34 initialization artifacts are dynamic, prospective, side-effect-free, and rerunnable", () => {
+  for (const sql of [preview, migration]) {
+    assert.doesNotMatch(sql, /\bparent_task\./i, "7.9.34 SQL must use the joined parent alias");
+    assert.match(sql, /left join public\.adhdice_clean_tasks parent\b/i);
+    assert.match(sql, /parent\.id/i);
+    assert.match(sql, /parent\.parent_task_id/i);
+  }
   assert.match(preview, /where task\.canonicalization_status = 'legacy_uninitialized'/i);
   assert.match(migration, /where task\.canonicalization_status = 'legacy_uninitialized'/i);
   assert.match(migration, /status::text not in \('complete', 'archived', 'trashed'\)/i);
@@ -94,5 +100,8 @@ test("7.9.34 initialization artifacts are dynamic, prospective, side-effect-free
     "migration_reward_violations",
     "overall_status",
   ]) assert.match(verifier, new RegExp(metric));
+  assert.match(verifier, /initialized_tasks as \([\s\S]*join initialized_operations operation[\s\S]*operation\.entity_id = task\.id/i);
+  assert.match(verifier, /\(select count\(\*\) from initialized_tasks task[\s\S]*initialized_canonical_semantics_violations/i);
+  assert.match(verifier, /\(select count\(\*\) from canonical_active task[\s\S]*active_canonical_missing_boundary_violations/i);
   assert.doesNotMatch(verifier.replace(/--[^\n]*/g, ""), /\b(insert|update|delete|alter|drop|truncate)\b/i);
 });

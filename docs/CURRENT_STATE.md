@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.34`.
+- Current working app version: `7.9.35`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -35,7 +35,7 @@ recurrence, Missed, Unscheduled, streak, and recovery-boundary semantics.
 Persistence-side automatic Missed materialization, the preview-first literal
 legacy History copy, and the final live-reader cutover are implemented in
 source. The 7.9.34 active Task initialization is prepared in source but its
-SQL remains unapplied; the 7.9.33/7.9.34 app and SQL cutovers are not deployed.
+SQL remains unapplied; the 7.9.33/7.9.34 app and 7.9.35 SQL cutovers are not deployed.
 Browser/live validation remains pending.
 
 ### 7.9.34 Final canonical Task initialization correction
@@ -49,7 +49,9 @@ Browser/live validation remains pending.
   find no candidates after successful initialization.
 - Active canonical direct reads now fail closed when their schedule boundary is
   missing, so raw status/repeat/due fields cannot silently regain authority.
-- No 7.9.34 SQL was applied, no Edge Function was deployed, and no production
+- 7.9.35 corrects the preview/migration parent alias and scopes strict
+  initialization semantics in the verifier to 7.9.34 migration-created Tasks.
+- No 7.9.34/7.9.35 SQL was applied, no Edge Function was deployed, and no production
   data was mutated. The existing 7.9.33 literal History-copy artifacts remain
   unchanged. Browser/live validation remains pending.
 
@@ -87,7 +89,7 @@ installed and deployed:
 
 This baseline proves the listed pre-7.9.33 production migrations and the
 existing Edge deployment only. It does not prove 7.9.33 or 7.9.34 SQL/app
-cutover. The 7.9.33 History copy and 7.9.34 Task initialization are prepared
+cutover. The 7.9.33 History copy and 7.9.34/7.9.35 Task initialization artifacts are prepared
 but unapplied; production data, remaining legacy decision paths, and browser QA
 remain unchanged.
 

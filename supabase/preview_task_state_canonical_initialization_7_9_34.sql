@@ -25,8 +25,8 @@ with raw_candidates as (
     profile.settings_revision,
     case
       when task.parent_task_id is null then 'parent'
-      when parent_task.id is null then null
-      when parent_task.parent_task_id is null then 'step'
+      when parent.id is null then null
+      when parent.parent_task_id is null then 'step'
       else 'substep'
     end as entity_kind,
     case
