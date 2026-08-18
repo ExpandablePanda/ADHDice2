@@ -237,6 +237,17 @@ function ordinaryStatus(sourceTask: Task, rows: TaskHistory[]) {
   }).statusesByTaskId[sourceTask.id];
 }
 
+function futureScheduleBoundary(sourceTask: Task, dueOn: string, repeatInterval = sourceTask.repeat_interval): CanonicalTaskScheduleBoundary {
+  return {
+    ...boundary(sourceTask),
+    id: `${sourceTask.id}:schedule:${dueOn}:${repeatInterval}`,
+    effective_from_logical_date: TODAY,
+    repeat_interval: repeatInterval,
+    anchor_date: dueOn,
+    idempotence_identity: `${sourceTask.id}:schedule:${dueOn}:${repeatInterval}`,
+  };
+}
+
 for (const outcome of ["done", "did_my_best"] as const) {
   test(`recurring ${outcome} today keeps Calendar fact and advances Active Status through canonical planning`, () => {
     const sourceTask = task({ id: `recurring-${outcome}`, status: outcome, repeat_interval: 3 });
@@ -254,6 +265,66 @@ for (const outcome of ["done", "did_my_best"] as const) {
     assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-20");
   });
 }
+
+for (const outcome of ["done", "did_my_best"] as const) {
+  test(`schedule change derives future Active Status while preserving recurring ${outcome} History`, () => {
+    const sourceTask = task({ id: `schedule-${outcome}`, status: outcome, due_on: TODAY, repeat_interval: 3 });
+    const model = readModel(sourceTask, [canonicalFact(sourceTask, TODAY, outcome)]);
+    const originalHistory = model.historyFacts.map((fact) => fact.outcome);
+    const plan = planTaskStateCommand(
+      { task: model.task, engineInput: canonicalInput(model) },
+      {
+        ...command(sourceTask, outcome),
+        type: "schedule_change",
+        changeKind: "due_date",
+        commandId: `00000000-0000-0000-0000-${outcome === "done" ? "000000000021" : "000000000022"}`,
+        acceptedIntent: { type: "set_due_date", task_id: sourceTask.id, due_on: "2026-08-20" },
+        scheduleBoundary: futureScheduleBoundary(sourceTask, "2026-08-20"),
+      },
+    );
+
+    assert.deepEqual(model.historyFacts.map((fact) => fact.outcome), originalHistory);
+    assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-20");
+    assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+  });
+}
+
+test("repeat change resolves Active Status from the resulting schedule after a handled outcome", () => {
+  const sourceTask = task({ id: "repeat-change-after-done", status: "done", due_on: TODAY, repeat_interval: 3 });
+  const model = readModel(sourceTask, [canonicalFact(sourceTask, TODAY, "done")]);
+  const plan = planTaskStateCommand(
+    { task: model.task, engineInput: canonicalInput(model) },
+    {
+      ...command(sourceTask, "done"),
+      type: "schedule_change",
+      changeKind: "repeat",
+      commandId: "00000000-0000-0000-0000-000000000023",
+      acceptedIntent: { type: "set_repeat", task_id: sourceTask.id, repeat_interval: 10 },
+      scheduleBoundary: futureScheduleBoundary(sourceTask, TODAY, 10),
+    },
+  );
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-27");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
+});
+
+test("an unresolved saved Missed occurrence still outranks a future schedule change", () => {
+  const sourceTask = task({ id: "missed-before-schedule", status: "missed", due_on: TODAY, active_occurrence_due_on: TODAY });
+  const model = readModel(sourceTask, [canonicalFact(sourceTask, TODAY, "missed")]);
+  const plan = planTaskStateCommand(
+    { task: model.task, engineInput: canonicalInput(model) },
+    {
+      ...command(sourceTask, "done"),
+      type: "schedule_change",
+      changeKind: "due_date",
+      commandId: "00000000-0000-0000-0000-000000000024",
+      acceptedIntent: { type: "set_due_date", task_id: sourceTask.id, due_on: "2026-08-20" },
+      scheduleBoundary: futureScheduleBoundary(sourceTask, "2026-08-20"),
+    },
+  );
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "missed");
+});
 
 test("empty canonical Calendar/workflow inputs and omitted inputs cannot change Active Status", () => {
   const sourceTask = task({ status: "done", repeat_interval: 10 });

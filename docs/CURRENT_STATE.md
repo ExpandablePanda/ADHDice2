@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.28`.
+- Current working app version: `7.9.29`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -94,6 +94,13 @@ migrated.
 - Recurring Done and Did My Best facts remain on their Calendar dates while the resolved next due date immediately drives Active Status to Upcoming or Not Due. Unresolved Missed remains higher priority than future schedule labels, including when today is an unsaved Due/Open date.
 - Read authority no longer lets stale stored Done/Missed compatibility values override an engine-derived Unscheduled result. Legitimate current workflow and permanent lifecycle states remain engine-derived.
 - Added ordinary-read/canonical-plan parity coverage for Done, Did My Best, omitted versus empty canonical inputs, stale Unscheduled statuses, and actual Every 3 Days correction replay. Vera, Roth, FedEx, and Address regression coverage remains passing.
+- Auto Missed persistence, legacy History migration, SQL/RPC changes, Edge deployment, live Supabase validation, production data work, and browser QA remain deferred. No SQL/Edge source or production data changed in this pass.
+
+### 7.9.29 Final narrow read-convergence cleanup
+
+- Removed the schedule-change compatibility exception that allowed stored Done or Did My Best to override the resulting future schedule. Active Status now remains derived from the resolved schedule, while saved Done/Did My Best remains History for its handled date.
+- Added command/planner regressions for recurring Done and Did My Best due-date changes, repeat changes after a handled outcome, and unresolved Missed precedence over a future schedule.
+- Removed standalone Effective Timeline assertions for calculated historical Missed rows and aligned the remaining coverage with saved History, unsaved past Not Due, and current Open/Due rules.
 - Auto Missed persistence, legacy History migration, SQL/RPC changes, Edge deployment, live Supabase validation, production data work, and browser QA remain deferred. No SQL/Edge source or production data changed in this pass.
 
 ### 7.9.24 Canonical rollover orchestration and no-op correction

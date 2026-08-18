@@ -607,8 +607,6 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     || ((!scheduleChange || unresolvedMissed.ambiguous) && unresolvedMissed.hasUnresolved)
   ) {
     activeStatus = "missed";
-  } else if (scheduleChange && (task.activeStatus === "done" || task.activeStatus === "did_my_best")) {
-    activeStatus = task.activeStatus;
   } else if (currentRecurrenceOutcome === "delayed" || (delayedRow && nextDue && nextDue > today)) {
     activeStatus = "delayed";
   } else if (unscheduled) {
