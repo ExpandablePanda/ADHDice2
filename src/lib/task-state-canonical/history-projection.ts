@@ -34,7 +34,11 @@ export function mapCanonicalTaskHistoryFact(fact: CanonicalTaskHistoryFact): Tas
     canonical_provenance_kind: fact.provenance_kind,
     canonical_command_id: fact.command_id,
     canonical_source: fact.source,
-    recurrence_authoritative: resolveTaskHistoryRecurrenceAuthority(fact.logical_date, true) ?? true,
+    recurrence_authoritative: fact.provenance_kind === "migration_reconstruction"
+      && fact.outcome === "delayed"
+      && fact.effective_due_on === null
+      ? false
+      : resolveTaskHistoryRecurrenceAuthority(fact.logical_date, true) ?? true,
   };
 }
 

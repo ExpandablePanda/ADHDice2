@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.31`.
+- Current working app version: `7.9.32`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -54,6 +54,20 @@ SQL/RPC and Edge command path only. The simplified architecture changes in this
 lock—including the new canonical automatic Missed persistence contract—are not
 deployed. Legacy History canonicalization is prepared but unapplied; production
 data, remaining legacy decision paths, and browser QA remain unchanged.
+
+### 7.9.32 Migration Delayed read-authority correction
+
+- Canonical History projection now marks only a `migration_reconstruction`
+  Delayed fact with `effective_due_on = NULL` as
+  `recurrence_authoritative = false`. The copied fact remains visible on its
+  historical Calendar/History date, but cannot establish current Delay state,
+  move recurrence, change the due date, or act as a Delay target.
+- Normal runtime/user Delayed History with a real `effective_due_on` remains
+  recurrence-authoritative. Auto Missed logic and migration SQL structure were
+  not changed. Focused source regressions cover historical display, unchanged
+  future scheduling, and normal runtime Delay Active Status.
+- No SQL was applied, no Edge Function was deployed, and production data was
+  not mutated. Browser/live validation remains pending.
 
 ### 7.9.31 Final Auto Missed persistence and literal legacy History copy
 

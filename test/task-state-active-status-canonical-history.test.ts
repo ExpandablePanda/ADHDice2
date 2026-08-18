@@ -8,6 +8,7 @@ import { deduplicateTaskHistoryByLogicalDate } from "../src/lib/task-history.ts"
 import { mapCanonicalTaskHistoryFacts } from "../src/lib/task-state-canonical/history-projection.ts";
 import type { CanonicalTaskHistoryFact } from "../src/lib/task-state-canonical/types.ts";
 import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
+import { resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/calendar-authority.ts";
 import { buildTaskHistoryStreakSummary } from "../src/lib/task-history-streak-summaries.ts";
 import { createProjectionDomainRevision } from "../src/lib/stable-task-projection.ts";
 import {
@@ -83,7 +84,12 @@ function history(
   };
 }
 
-function canonicalFact(entryDate: string, outcome: CanonicalTaskHistoryFact["outcome"], index: number): CanonicalTaskHistoryFact {
+function canonicalFact(
+  entryDate: string,
+  outcome: CanonicalTaskHistoryFact["outcome"],
+  index: number,
+  overrides: Partial<CanonicalTaskHistoryFact> = {},
+): CanonicalTaskHistoryFact {
   return {
     actor_id: "user-1",
     actor_kind: "user",
@@ -111,6 +117,7 @@ function canonicalFact(entryDate: string, outcome: CanonicalTaskHistoryFact["out
     updated_at: `${entryDate}T12:00:00.000Z`,
     user_id: "user-1",
     day_start_time: "06:00",
+    ...overrides,
   };
 }
 
@@ -179,6 +186,37 @@ test("Not Due and Delayed facts do not become success boundaries", () => {
   const delayed = history("2026-08-16", "delayed", { effective_due_on: "2026-08-20" });
   assert.equal(read(sourceTask, [missed, delayed]), "missed");
   assert.equal(read(task({ status: "missed", due_on: "2026-08-20" }), [missed]), "missed");
+});
+
+test("migration Delayed History remains visible without driving current recurrence", () => {
+  const sourceTask = task({ due_on: "2026-08-20", status: "pending" });
+  const migratedDelayed = mapCanonicalTaskHistoryFacts([canonicalFact("2026-07-16", "delayed", 1, {
+    occurrence_id: null,
+    scheduled_due_on: null,
+    effective_due_on: null,
+    provenance_kind: "migration_reconstruction",
+  })]);
+
+  assert.equal(migratedDelayed[0]?.recurrence_authoritative, false);
+  assert.equal(read(sourceTask, migratedDelayed), "upcoming");
+
+  const calendar = resolveTaskHistoryCalendarRead({
+    calendarEnd: "2026-08-20",
+    calendarStart: "2026-07-16",
+    history: migratedDelayed,
+    logicalDayRollover: "06:00",
+    now: "2026-08-17T12:00:00.000Z",
+    task: sourceTask,
+    timezone: "America/New_York",
+  });
+  assert.equal(calendar?.states["2026-07-16"], "delayed");
+  assert.equal(calendar?.timeline?.nextDueOn, "2026-08-20");
+
+  const runtimeDelayed = mapCanonicalTaskHistoryFacts([canonicalFact("2026-08-17", "delayed", 2, {
+    effective_due_on: "2026-08-20",
+  })]);
+  assert.equal(runtimeDelayed[0]?.recurrence_authoritative, true);
+  assert.equal(read(task({ due_on: "2026-08-17" }), runtimeDelayed), "delayed");
 });
 
 test("canonical History outranks a legacy row on the same logical date", () => {

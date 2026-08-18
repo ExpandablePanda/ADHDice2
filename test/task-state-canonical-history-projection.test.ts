@@ -68,6 +68,17 @@ test("recovered migration outcomes remain valid recurrence inputs without accomp
   assert.equal(mapCanonicalTaskHistoryFact(fact({ logical_date: "2026-08-14", provenance_kind: "migration_reconstruction", occurrence_id: "occurrence-1", command_id: null })).recurrence_authoritative, true);
 });
 
+test("migration-reconstructed Delayed facts without an effective cursor remain display-only", () => {
+  const projected = mapCanonicalTaskHistoryFact(fact({
+    outcome: "delayed",
+    provenance_kind: "migration_reconstruction",
+    effective_due_on: null,
+  }));
+
+  assert.equal(projected.status, "delayed");
+  assert.equal(projected.recurrence_authoritative, false);
+});
+
 test("pre-cutover canonical History remains recurrence-authoritative through the legacy adapter", () => {
   const projected = mapCanonicalTaskHistoryFact(fact({ provenance_kind: "user", occurrence_id: "occurrence-1" }));
   projected.recurrence_authoritative = true;
