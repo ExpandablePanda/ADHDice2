@@ -10,7 +10,7 @@ import {
 import type { CanonicalTaskHistoryFact, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
-import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
+import { resolveCompatibilityTaskStatuses as resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 
 const TODAY = "2026-08-17";
 const CONTEXT = {

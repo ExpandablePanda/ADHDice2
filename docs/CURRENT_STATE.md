@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.37`.
+- Current working app version: `7.9.38`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -15,7 +15,7 @@ Role: active working
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
 
-## 2026-08-17 Task State architecture lock
+## 2026-08-18 Task State closure
 
 The simplified Task State model is now the product authority. All saved Task
 History is canonical fact with its recorded logical date; automatic Missed and
@@ -26,17 +26,25 @@ result is consumed by every surface. Scheduled unresolved obligations may
 materialize canonical automatic Missed, while Unscheduled blank dates never do.
 All status-changing surfaces use one canonical command infrastructure.
 
-Full canonical Task History for all Tasks is now loaded into the shared startup
-snapshot. The History modal refreshes that same snapshot; it is not a separate
-current-state authority. `resolveActiveTaskStatuses` is the sole current read
-authority, and the read engine now applies the locked Calendar, cursor,
-recurrence, Missed, Unscheduled, streak, and recovery-boundary semantics.
+Full canonical Task History for all Tasks is loaded into the shared startup
+snapshot. `resolveActiveTaskStatuses` is the sole shared Active Status
+authority; Calendar uses canonical/effective-timeline authority; and Task State
+mutations route through the canonical command infrastructure. The rewrite is
+active architecture, not pending design.
 
-Persistence-side automatic Missed materialization, the preview-first literal
-legacy History copy, and the final live-reader cutover are implemented in
-source. The 7.9.34 active Task initialization is prepared in source but its
-SQL remains unapplied; the 7.9.33/7.9.34 app and 7.9.35 SQL cutovers are not deployed.
-Browser/live validation remains pending.
+The final production facts are: 0 active `legacy_uninitialized`, 0 active
+`needs_attention`, 0 active canonical Tasks missing a schedule boundary, 581
+active canonical Tasks (181 `canonical_proven`, 400 `canonical_runtime`), and
+0 remaining legacy-only History rows. Remaining legacy-only History and fake
+`legacy_uninitialized` Tasks were intentionally deleted; no old data was
+migrated or reconstructed.
+
+The 7.9.33 History migration and 7.9.34–7.9.37 canonical initialization
+artifacts are retired historical source records and must not be applied. No
+replacement migration SQL was created. Frontend, Edge, SQL, browser, live
+Supabase, and deployment parity remain unverified unless separately stated.
+
+## Historical release chronology (not current authority)
 
 ### 7.9.34 Final canonical Task initialization correction
 

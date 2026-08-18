@@ -1,6 +1,6 @@
 # Task State Engine
 
-Last reviewed: 2026-08-17
+Last reviewed: 2026-08-18
 Role: canonical behavioral contract
 
 ## Purpose and architecture lock
@@ -12,15 +12,16 @@ model. It supersedes transitional rules that treated bounded History, calculated
 Missed rows, modal History, or legacy compatibility status as a separate source
 of truth.
 
-The verified pre-7.9.33 production baseline includes migrations
+The source architecture is implemented through the existing canonical seams.
+This source contract does not claim frontend, Edge, SQL, browser, or live
+Supabase deployment parity. The verified pre-7.9.33 production baseline includes migrations
 `20260818045732 patch_task_state_auto_missed_history_copy_7_9_31` and
 `20260818045827 migrate_legacy_history_copy_7_9_31`; `task-state-command` Edge
 is ACTIVE at version 24 with `verify_jwt=true`, pinned commit
 `17f6badd751fe38261aae9cbb5828a979f32de62`, and deployment SHA
 `9c07a32e504333008d08ff79abf04b2641cbfa06dec4c546454e927a9b1d9d65`. This
-document is not proof that the new
-simplified architecture, future Auto Missed SQL/RPC changes, browser behavior,
-or complete runtime convergence has been implemented or deployed.
+document is not proof of frontend, Edge, SQL, browser behavior, or live
+production parity.
 
 ## History authority
 
@@ -147,9 +148,9 @@ Calendar truth, or current streaks after convergence. Existing explicit old
 History is preserved, not reconstructed or arbitrarily assigned to a modern
 occurrence.
 
-## Implementation impact map (pending implementation)
+## Implemented production seams
 
-### Can remain as the convergence target
+The Task State rewrite is the active architecture, not a pending design:
 
 - `src/lib/task-state-engine/engine.ts`, `recurrence.ts`,
   `effective-timeline.ts`, `calendar-authority.ts`, `action-authority.ts`,
@@ -158,36 +159,23 @@ occurrence.
   `history-projection.ts`, occurrence/schedule projection, and the trusted
   `supabase/functions/task-state-command/*` orchestration remain the canonical
   command boundary.
-- `src/lib/task-history.ts` can retain date identity, explicit-row
-  normalization, Calendar row formatting, and canonical streak helpers after
-  their inputs and calculated-gap semantics are aligned to this contract.
+- `src/lib/task-history.ts` retains date identity, explicit-row normalization,
+  Calendar row formatting, and canonical streak helpers under this contract.
 - Existing canonical History facts, occurrences, schedule boundaries,
   provenance, command-operation, revision, and reward-entitlement structures are
   sufficient for this lock. No new Task table or architecture layer is implied.
 
-### Must be simplified or rewritten
+`resolveActiveTaskStatuses` is the shared Active Status authority. Production
+readers require canonical lifecycle/state and a canonical schedule boundary;
+raw Task status, due, and recurrence fields are available only through the
+explicit compatibility-only translation path used by tests and migration
+boundaries.
 
-- `src/lib/task-state-engine/effective-timeline.ts` must distinguish saved
-  canonical History from schedule projection and automatic canonical outcomes;
-  calculated Missed cannot remain a non-persistent substitute for a real
-  automatic Missed fact.
-- `src/lib/task-history.ts` helpers that synthesize overdue or missing Missed
-  dates, including `buildMissingScheduledMissedHistoryDateKeys` and
-  `buildOverdueTaskMissedDateKeys`, must become recovery/diagnostic-only or be
-  replaced by obligation-aware canonical command planning.
-- `src/lib/task-state-engine/read-authority.ts` must return the one Active
-  Status projection from complete canonical History. Its legacy switch and
-  `getTaskDisplayStatusWithHistory` fallback cannot remain current-state
-  authorities.
-- Canonical compatibility projection may continue serving legacy columns, but
-  it must be derived output only; it cannot override canonical History,
-  recurrence, or Active Status.
+### Paths that do not make decisions
 
-### Paths that must stop making decisions
-
-- Direct List/row/child calls to `getTaskDisplayStatusWithHistory`, stored-status
-  fallbacks, and any surface-local status/count/filter calculation must consume
-  `resolveActiveTaskStatuses` and its shared projection instead.
+- Direct List/row/child calls, stored-status fallbacks, and surface-local
+  status/count/filter calculations consume `resolveActiveTaskStatuses` and its
+  shared projection.
 - `src/lib/task-state-engine/legacy-adapter.ts` and legacy History reads may
   translate data at the boundary, but may not select current status, recurrence,
   Calendar truth, or migration rows.
@@ -196,32 +184,30 @@ occurrence.
   overwrite legacy History. The canonical trusted rollover command must own
   automatic Did My Best/Missed materialization and dependent-row correction.
 
-### Loading and cache paths to collapse
+### Loading and cache ownership
 
-- `useWorkspaceData` must load the full canonical History snapshot for all Tasks
-  during workspace startup. Remove the semantic split represented by
-  `loadCriticalTaskHistoryFacts`, `selectCriticalTaskHistoryFacts`, and a
-  modal-only authoritative `loadFullTaskHistory` path.
+- `useWorkspaceData` loads the full canonical History snapshot for all Tasks
+  during workspace startup. The retired bounded helper
+  `src/lib/workspace-critical-task-facts.ts` is no longer production plumbing.
 - The task-scoped modal cache, full-workspace History cache, streak-summary
-  fallback, and rollover-only History read must converge on one canonical
-  startup snapshot plus ordinary mutation/realtime refreshes. A modal must not
-  become more authoritative merely because it loaded older rows.
+  fallback, and rollover-only History read use one canonical startup snapshot
+  plus ordinary mutation/realtime refreshes. A modal is not more authoritative
+  merely because it loaded older rows.
 
-### Tests to rewrite or add
+### Focused contract coverage
 
-- Rewrite engine, Effective Timeline, Calendar, History action, rollover, and
-  streak tests that expect calculated/non-persistent Missed or bounded-vs-full
-  History authority.
-- Add focused coverage for canonical automatic Missed, independent daily
+- Focused coverage protects canonical automatic Missed, independent daily
   obligations, rolling dependent-row recomputation, recovery’s last-History
   boundary, old rows without occurrence metadata, old rolling success anchoring,
   Unscheduled blanks, and the Monday-to-Tuesday cursor example.
-- Add projection parity tests proving every Task surface consumes one Active
-  Status map and every mutation route uses the same command result.
-- Add SQL/Edge contract tests for trusted automatic History provenance,
+- Projection parity tests prove every Task surface consumes one Active Status
+  map and every mutation route uses the same command result.
+- SQL/Edge contract tests for trusted automatic History provenance,
   occurrence ownership, replay/idempotence, and rejection of the old direct
   rollover behavior. These remain source/contract checks until deployment is
-  separately verified.
+  separately verified. The 7.9.33 History-copy and 7.9.34–7.9.37
+  initialization artifacts are retained as `RETIRED / HISTORICAL ONLY / DO NOT
+  APPLY` source records; no replacement migration SQL was created.
 
 ### Schema conclusion
 

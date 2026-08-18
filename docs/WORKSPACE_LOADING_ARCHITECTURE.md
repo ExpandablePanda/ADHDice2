@@ -1,16 +1,15 @@
 # Workspace Loading Architecture
 
-Last reviewed: 2026-08-17
+Last reviewed: 2026-08-18
 Role: qualified source diagnostic; converged Task loading contract
 
 ## Purpose and evidence boundary
 
 `useWorkspaceData` owns authenticated workspace hydration, readiness, canonical
 History loading, cache ownership, and refresh coordination. This document
-records the required converged shape and the inspected source seams. The
-existing Task State deployment baseline is installed separately; the new
-full-History startup contract is not implemented or deployed. Browser behavior,
-Realtime delivery, and performance remain outside this document's evidence.
+records the implemented converged shape and the inspected source seams. The
+source contract does not claim frontend, Edge, SQL, browser, Realtime, or live
+Supabase deployment parity.
 
 ## Required startup boundary
 
@@ -33,18 +32,16 @@ because older saved rows became available. A modal may present the already
 loaded snapshot and request an ordinary refresh after a mutation or explicit
 retry.
 
-## Source seams and required simplification
+## Implemented source seams
 
-The current source contains both the desired full loader and transitional
-bounded paths:
+The current source uses the full canonical startup snapshot:
 
 - `useWorkspaceData.loadTaskHistory` already performs a paged workspace-wide
   load and stores full rows.
-- `loadCriticalTaskHistoryFacts`,
-  `src/lib/workspace-critical-task-facts.ts`, and the
-  `selectCriticalTaskHistoryFacts` path restrict startup inputs to selected
-  dates. They must be removed or reduced to non-authoritative diagnostics once
-  full startup History is the contract.
+- The former bounded `loadCriticalTaskHistoryFacts`,
+  `src/lib/workspace-critical-task-facts.ts`, and
+  `selectCriticalTaskHistoryFacts` path have no production caller and were
+  removed. They are not an alternate History authority.
 - `loadTaskHistoryForTask` and modal task caches may remain as presentation and
   retry mechanics, but they must read/refresh the same canonical authority and
   must not outrank or replace it with a private truth.
@@ -54,9 +51,8 @@ bounded paths:
   authority.
 
 The canonical source is `adhdice_task_history_facts` after runtime
-canonicalization. Legacy `adhdice_task_history` may be read only as migration
-or translation evidence while convergence is pending; it must not be silently
-preferred for current state.
+canonicalization. Legacy `adhdice_task_history` may be read only as explicit
+migration or translation evidence; it is not a current-state authority.
 
 ## Readiness, failure, and cache ownership
 
@@ -77,8 +73,8 @@ projection.
 
 ## Non-claims
 
-This document does not claim that the current source has completed the collapse,
-that browser startup is fast, or that deployed Edge/RPC behavior matches source.
+This document does not claim that browser startup is fast or that deployed
+Edge/RPC behavior matches source.
 It does not propose a repository abstraction, durable cache layer, new table, or
 performance budget. Any such change requires a separate approved ticket.
 
@@ -88,5 +84,5 @@ performance budget. Any such change requires a separate approved ticket.
   Status, recurrence, Missed, and streak authority.
 - [`TASKAPP_ARCHITECTURE.md`](TASKAPP_ARCHITECTURE.md) — TaskApp ownership and
   projection routing.
-- [`CURRENT_STATE.md`](CURRENT_STATE.md) — lock status and pending runtime work.
+- [`CURRENT_STATE.md`](CURRENT_STATE.md) — current closure state and verification boundaries.
 - [`VERIFICATION.md`](VERIFICATION.md) — validation boundaries.

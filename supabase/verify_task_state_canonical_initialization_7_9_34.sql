@@ -1,3 +1,4 @@
+-- RETIRED / HISTORICAL ONLY / DO NOT APPLY.
 -- ADHDice 7.9.34 read-only post-initialization verifier.
 -- Every *_violations count should be zero after authorized execution.
 

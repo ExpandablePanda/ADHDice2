@@ -2,7 +2,7 @@ import type { Task, TaskHistory } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
 import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
-import { buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
+import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
 
 /**
@@ -20,15 +20,16 @@ export type ActiveStatusReadResult = {
 };
 
 type ActiveStatusReadTask = Task & Partial<CanonicalTaskStateColumns> & { canonical_schedule_boundary?: CanonicalProjectedTaskState["canonical_schedule_boundary"] };
-
-export function resolveActiveTaskStatuses(input: {
+type ActiveStatusReadInput = {
   enabled?: boolean;
   historyByTaskId: Record<string, TaskHistory[]>;
   logicalDayRollover: string;
   now: string | Date;
   tasks: ActiveStatusReadTask[];
   timezone: string;
-}): ActiveStatusReadResult {
+};
+
+function resolveTaskStatuses(input: ActiveStatusReadInput, compatibilityOnly: boolean): ActiveStatusReadResult {
   const statusesByTaskId: TaskDisplayStatusByTaskId = {};
   for (const task of input.tasks) {
     const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.historyByTaskId[task.id] ?? []);
@@ -36,7 +37,8 @@ export function resolveActiveTaskStatuses(input: {
       statusesByTaskId[task.id] = task.container_state === "trashed" || task.status === "trashed" ? "trashed" : "archived";
       continue;
     }
-    const engineInput = buildDirectTaskStateEngineInput(task, normalizedHistory, {
+    const buildInput = compatibilityOnly ? buildCompatibilityTaskStateEngineInput : buildDirectTaskStateEngineInput;
+    const engineInput = buildInput(task, normalizedHistory, {
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.logicalDayRollover,
@@ -45,6 +47,16 @@ export function resolveActiveTaskStatuses(input: {
     statusesByTaskId[task.id] = evaluatedStatus;
   }
   return { authority: "engine", statusesByTaskId };
+}
+
+/** The production shared Active Status authority. */
+export function resolveActiveTaskStatuses(input: ActiveStatusReadInput): ActiveStatusReadResult {
+  return resolveTaskStatuses(input, false);
+}
+
+/** Compatibility-only Active Status translation for legacy/test-shaped Task fixtures. */
+export function resolveCompatibilityTaskStatuses(input: ActiveStatusReadInput): ActiveStatusReadResult {
+  return resolveTaskStatuses(input, true);
 }
 
 /** Presentation-only copies; never pass these to a persistence mutation. */

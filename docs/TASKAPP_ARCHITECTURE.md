@@ -1,6 +1,6 @@
 # TaskApp Architecture
 
-Last reviewed: 2026-08-17
+Last reviewed: 2026-08-18
 Role: canonical production routing and ownership contract
 
 ## Purpose
@@ -89,28 +89,24 @@ Focus, rewards/economy, notes/links, list membership, pinning, and presentation
 metadata retain their existing owners. They consume Task State projections where
 needed and must not infer a second current status.
 
-## Implementation impact map (pending implementation)
+## Implemented routing contract
 
-- Keep `TaskApp`’s shared status-map wiring, `computeTaskAppDerivedData`, surface
-  adapters, and shared hierarchy model; ensure every consumer receives the map.
-- Simplify/remove direct `getTaskDisplayStatusWithHistory` calls, stored-status
-  fallbacks, List-local status derivation, and child-preview status calculations.
-- Collapse `useWorkspaceData` bounded/critical History inputs and modal-full
-  History authority into one full canonical startup snapshot as specified by
-  [`WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md).
-- Keep mutation façades and hooks as orchestration seams, but route all Task
-  State-bearing changes through the canonical command result. Do not add a new
-  repository, Task table, or parallel coordinator.
-- Rewrite/add parity tests covering all surfaces, counts/filters, Calendar vs
-  Active Status separation, canonical automatic Missed, Unscheduled blanks, and
-  mutation reconciliation. Browser behavior remains a separate QA boundary.
+- `TaskApp` computes and forwards the shared status map to all active surfaces,
+  including On-Time action controls.
+- `useWorkspaceData` supplies the full canonical History startup snapshot;
+  modal and rollover reads do not create a private current-state authority.
+- All Task State mutations route through the existing canonical command
+  infrastructure and trusted result reconciliation.
+- Calendar consumes canonical/effective-timeline authority; it is not a second
+  Task State system.
+- Browser behavior and deployed Edge/RPC parity remain separate verification
+  boundaries.
 
-## Known transition statements
+## Compatibility boundary
 
-The current source still contains compatibility switches and legacy adapters.
-That is implementation debt, not a second contract. Until runtime convergence
-is completed, the source may expose an authority gap; documentation must report
-it as pending rather than present compatibility behavior as locked truth.
+The source still contains explicitly named compatibility translation and the
+legacy adapter for migration/test inputs. Neither is a live production
+authority. Retired migration artifacts remain historical records only.
 
 ## Related documents
 
@@ -118,5 +114,5 @@ it as pending rather than present compatibility behavior as locked truth.
 - [`WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) —
   full startup History and cache contract.
 - [`TASKAPP_SOURCE_MAP.md`](TASKAPP_SOURCE_MAP.md) — source lookup.
-- [`CURRENT_STATE.md`](CURRENT_STATE.md) — current lock and open convergence work.
+- [`CURRENT_STATE.md`](CURRENT_STATE.md) — current closure state and verification boundaries.
 - [`UI_SYSTEM.md`](UI_SYSTEM.md) — UI reuse and interaction rules.

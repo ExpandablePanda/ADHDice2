@@ -14,6 +14,7 @@ export function buildManualDueDateTaskUpdate(
   options?: { logicalDayRollover?: string; now?: Date | string; timezone?: string },
 ): TaskUpdate {
   const authority = evaluateTaskScheduleAuthority({
+    compatibilityOnly: true,
     history: [...history],
     logicalDayRollover: options?.logicalDayRollover ?? "00:00",
     now: options?.now ?? `${currentDayKey}T12:00:00.000Z`,
@@ -33,6 +34,7 @@ export function reconcileManualDueDateChange(
   options?: { logicalDayRollover?: string; now?: Date | string; timezone?: string },
 ) {
   const authority = evaluateTaskScheduleAuthority({
+    compatibilityOnly: true,
     history: [...history],
     logicalDayRollover: options?.logicalDayRollover ?? "00:00",
     now: options?.now ?? `${currentDayKey}T12:00:00.000Z`,

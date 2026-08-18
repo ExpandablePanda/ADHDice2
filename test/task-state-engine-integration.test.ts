@@ -3,11 +3,18 @@ import test from "node:test";
 
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import { getTaskDisplayStatusWithHistory } from "../src/lib/task-cockpit.ts";
-import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, stripStatusFromScheduleIntent } from "../src/lib/task-state-engine/action-authority.ts";
-import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
+import { evaluateTaskActionAuthority as evaluateCanonicalTaskActionAuthority, evaluateTaskScheduleAuthority as evaluateCanonicalTaskScheduleAuthority, stripStatusFromScheduleIntent } from "../src/lib/task-state-engine/action-authority.ts";
+import { resolveTaskHistoryCalendarActionStatuses as resolveCanonicalTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates as resolveCanonicalTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
 import { buildManualDueDateTaskUpdate } from "../src/lib/task-state-engine/due-date-authority.ts";
-import { createEngineRolloverPlan } from "../src/lib/task-state-engine/rollover-authority.ts";
-import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
+import { createEngineRolloverPlan as createCanonicalEngineRolloverPlan } from "../src/lib/task-state-engine/rollover-authority.ts";
+import { resolveCompatibilityTaskStatuses as resolveCanonicalCompatibilityTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
+
+const evaluateTaskActionAuthority = (input: Parameters<typeof evaluateCanonicalTaskActionAuthority>[0]) => evaluateCanonicalTaskActionAuthority({ ...input, compatibilityOnly: true });
+const evaluateTaskScheduleAuthority = (input: Parameters<typeof evaluateCanonicalTaskScheduleAuthority>[0]) => evaluateCanonicalTaskScheduleAuthority({ ...input, compatibilityOnly: true });
+const resolveTaskHistoryCalendarActionStatuses = (input: Parameters<typeof resolveCanonicalTaskHistoryCalendarActionStatuses>[0]) => resolveCanonicalTaskHistoryCalendarActionStatuses({ ...input, compatibilityOnly: true });
+const resolveTaskHistoryCalendarStates = (input: Parameters<typeof resolveCanonicalTaskHistoryCalendarStates>[0]) => resolveCanonicalTaskHistoryCalendarStates({ ...input, compatibilityOnly: true });
+const createEngineRolloverPlan = (input: Parameters<typeof createCanonicalEngineRolloverPlan>[0]) => createCanonicalEngineRolloverPlan({ ...input, compatibilityOnly: true });
+const resolveActiveTaskStatuses = (input: Parameters<typeof resolveCanonicalCompatibilityTaskStatuses>[0]) => resolveCanonicalCompatibilityTaskStatuses(input);
 
 function task(overrides: Partial<Task> = {}): Task {
   return {

@@ -1,3 +1,4 @@
+-- RETIRED / HISTORICAL ONLY / DO NOT APPLY.
 -- ADHDice 7.9.34 forward-only initialization of active canonical Task State.
 -- SOURCE ONLY: do not apply without the reviewed preview and explicit
 -- production authorization.  This migration does not write History,

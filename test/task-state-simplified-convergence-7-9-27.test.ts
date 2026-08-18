@@ -4,8 +4,8 @@ import test from "node:test";
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import { getTaskRecoveryEarliestDate } from "../src/lib/task-history.ts";
 import { buildTaskHistoryStreakSummary } from "../src/lib/task-history-streak-summaries.ts";
-import { resolveTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
-import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
+import { resolveTaskHistoryCalendarStates as resolveCompatibilityCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
+import { resolveCompatibilityTaskStatuses as resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 
 const TODAY = "2026-08-17";
 
@@ -86,7 +86,8 @@ function activeStatus(sourceTask: Task, rows: TaskHistory[]) {
 }
 
 function calendar(sourceTask: Task, rows: TaskHistory[], start: string, end: string) {
-  return resolveTaskHistoryCalendarStates({
+  return resolveCompatibilityCalendarStates({
+    compatibilityOnly: true,
     calendarStart: start,
     calendarEnd: end,
     history: rows,
@@ -160,7 +161,7 @@ test("Unscheduled positive streaks never create a missed streak and blanks break
   const sourceTask = task({ id: "unscheduled-streak", due_on: null, repeat_frequency: "none" });
   const consecutive = [history(sourceTask.id, "2026-08-16", "done"), history(sourceTask.id, TODAY, "did_my_best")];
   const broken = [history(sourceTask.id, "2026-08-15", "done"), history(sourceTask.id, TODAY, "done")];
-  assert.deepEqual(buildTaskHistoryStreakSummary(sourceTask, consecutive, TODAY, { now: `${TODAY}T12:00:00.000Z`, timezone: "UTC" }), {
+  assert.deepEqual(buildTaskHistoryStreakSummary(sourceTask, consecutive, TODAY, { compatibilityOnly: true, now: `${TODAY}T12:00:00.000Z`, timezone: "UTC" }), {
     currentStreak: 2,
     lastHandledAt: null,
     lastHandledDate: null,
@@ -168,7 +169,7 @@ test("Unscheduled positive streaks never create a missed streak and blanks break
     lastDoneDate: TODAY,
     missedStreak: 0,
   });
-  assert.equal(buildTaskHistoryStreakSummary(sourceTask, broken, TODAY, { now: `${TODAY}T12:00:00.000Z`, timezone: "UTC" }).currentStreak, 1);
+  assert.equal(buildTaskHistoryStreakSummary(sourceTask, broken, TODAY, { compatibilityOnly: true, now: `${TODAY}T12:00:00.000Z`, timezone: "UTC" }).currentStreak, 1);
 });
 
 test("old rolling History does not consume an unrelated future occurrence", () => {

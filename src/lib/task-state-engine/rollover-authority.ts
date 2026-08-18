@@ -1,5 +1,5 @@
 import type { Task, TaskHistory } from "@/lib/database.types";
-import { buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
+import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
 import {
   canonicalizePersistableTaskStatePatch,
@@ -49,6 +49,7 @@ const MAX_REMAINING_PATCH_SUMMARIES = 50;
  */
 export function createEngineRolloverPlan(input: {
   allowCanonicalAutomaticMissed?: boolean;
+  compatibilityOnly?: boolean;
   history: TaskHistory[];
   includeDiagnostics?: boolean;
   now: Date | string;
@@ -68,7 +69,8 @@ export function createEngineRolloverPlan(input: {
   let logicalDate = "";
   for (const task of input.tasks) {
     if (isCanonicalArchivedOrTrashed(task as CanonicalProjectedTaskState)) continue;
-    const engineInput = buildDirectTaskStateEngineInput(task as CanonicalProjectedTaskState, historyByTaskId.get(task.id) ?? [], {
+    const buildInput = input.compatibilityOnly ? buildCompatibilityTaskStateEngineInput : buildDirectTaskStateEngineInput;
+    const engineInput = buildInput(task as CanonicalProjectedTaskState, historyByTaskId.get(task.id) ?? [], {
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.rolloverTime,

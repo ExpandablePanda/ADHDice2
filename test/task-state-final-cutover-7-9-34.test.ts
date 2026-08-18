@@ -3,8 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createTask } from "../src/lib/task-buckets.ts";
-import { buildDirectTaskStateEngineInput, CanonicalTaskStateBoundaryRequiredError } from "../src/lib/task-state-engine/direct-input.ts";
+import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, CanonicalTaskStateAuthorityRequiredError, CanonicalTaskStateBoundaryRequiredError } from "../src/lib/task-state-engine/direct-input.ts";
 import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
+import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 
 const preview = readFileSync(new URL("../supabase/preview_task_state_canonical_initialization_7_9_34.sql", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../supabase/migrate_task_state_canonical_initialization_7_9_34.sql", import.meta.url), "utf8");
@@ -51,6 +52,23 @@ test("active canonical Task State fails closed when the schedule boundary is mis
     (error: unknown) => error instanceof CanonicalTaskStateBoundaryRequiredError
       && error.code === "CANONICAL_SCHEDULE_BOUNDARY_REQUIRED",
   );
+});
+
+test("missing canonical lifecycle authority fails closed instead of translating raw Task State", () => {
+  const rawTask = createTask({ id: "raw-task", status: "missed", due_on: "2026-08-17", repeat_frequency: "daily" });
+  assert.throws(
+    () => buildDirectTaskStateEngineInput(rawTask, [], CONTEXT),
+    (error: unknown) => error instanceof CanonicalTaskStateAuthorityRequiredError
+      && error.code === "CANONICAL_TASK_STATE_AUTHORITY_REQUIRED",
+  );
+  assert.throws(
+    () => resolveActiveTaskStatuses({ historyByTaskId: { [rawTask.id]: [] }, ...CONTEXT, tasks: [rawTask], timezone: "UTC" }),
+    (error: unknown) => error instanceof CanonicalTaskStateAuthorityRequiredError,
+  );
+  const compatibilityInput = buildCompatibilityTaskStateEngineInput(rawTask, [], CONTEXT);
+  assert.equal(compatibilityInput.task.activeStatus, "missed");
+  assert.equal(compatibilityInput.task.dueOn, "2026-08-17");
+  assert.deepEqual(compatibilityInput.task.recurrence, { kind: "rolling", intervalDays: 1 });
 });
 
 test("initialized canonical lifecycle ignores stale raw In Progress status", () => {

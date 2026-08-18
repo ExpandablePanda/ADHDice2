@@ -26,6 +26,15 @@ export class CanonicalTaskStateBoundaryRequiredError extends Error {
   }
 }
 
+export class CanonicalTaskStateAuthorityRequiredError extends Error {
+  readonly code = "CANONICAL_TASK_STATE_AUTHORITY_REQUIRED";
+
+  constructor(taskId: string) {
+    super(`Active Task ${taskId} requires canonical lifecycle and schedule authority.`);
+    this.name = "CanonicalTaskStateAuthorityRequiredError";
+  }
+}
+
 type DirectTaskStateContext = {
   now: string | Date;
   timezone: string;
@@ -34,7 +43,28 @@ type DirectTaskStateContext = {
 
 const SUCCESSFUL_OUTCOMES = new Set<TaskHistoryOutcome>(["done", "did_my_best", "complete"]);
 
+const CANONICALIZATION_STATUSES = new Set(["canonical_proven", "canonical_runtime"]);
+
+function requireCanonicalTaskStateAuthority(task: CanonicalProjectedTaskState) {
+  if (
+    !CANONICALIZATION_STATUSES.has(task.canonicalization_status ?? "")
+    || task.terminal_state == null
+    || task.container_state == null
+    || task.workflow_state == null
+  ) {
+    throw new CanonicalTaskStateAuthorityRequiredError(task.id);
+  }
+}
+
 function canonicalLifecycle(task: CanonicalProjectedTaskState): TaskStateEngineInput["task"]["lifecycle"] {
+  if (task.terminal_state === "permanently_complete") return "complete";
+  if (task.container_state === "trashed") return "trashed";
+  if (task.container_state === "archived") return "archived";
+  return "active";
+}
+
+/** Compatibility-only translation for migration/test callers with raw Task fields. */
+function compatibilityLifecycle(task: CanonicalProjectedTaskState): TaskStateEngineInput["task"]["lifecycle"] {
   if (task.terminal_state === "permanently_complete") return "complete";
   if (task.container_state === "trashed") return "trashed";
   if (task.container_state === "archived") return "archived";
@@ -139,36 +169,42 @@ function historyRows(taskId: string, history: readonly TaskHistory[]): TaskState
     }));
 }
 
-export function buildDirectTaskStateEngineInput(
+function buildTaskStateEngineInput(
   task: CanonicalProjectedTaskState,
   history: readonly TaskHistory[],
   context: DirectTaskStateContext,
   options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd"> = {},
+  mode: "canonical" | "compatibility",
 ): TaskStateEngineInput {
   const boundary = task.canonical_schedule_boundary ?? null;
-  const lifecycle = canonicalLifecycle(task);
-  if (
-    boundary === null
-    && lifecycle === "active"
-    && (task.canonicalization_status === "canonical_proven" || task.canonicalization_status === "canonical_runtime")
-  ) {
+  if (mode === "canonical") requireCanonicalTaskStateAuthority(task);
+  const lifecycle = mode === "canonical" ? canonicalLifecycle(task) : compatibilityLifecycle(task);
+  if (boundary === null && lifecycle === "active" && mode === "canonical") {
     throw new CanonicalTaskStateBoundaryRequiredError(task.id);
   }
-  const activeStatus: TaskStateEngineInput["task"]["activeStatus"] = lifecycle === "complete"
-    ? "complete"
-    : lifecycle !== "active"
-      ? "pending"
-      : task.workflow_state === "in_progress"
-        ? "in_progress"
-        : task.terminal_state || task.container_state || task.workflow_state
-          ? "pending"
-          : task.status === "in_progress"
-            ? "in_progress"
-            : task.status === "complete"
-              ? "complete"
-              : ["pending", "in_progress", "missed", "upcoming", "not_due", "delayed", "done", "did_my_best"].includes(task.status)
-                ? task.status as TaskStateEngineInput["task"]["activeStatus"]
-                : "pending";
+  const activeStatus: TaskStateEngineInput["task"]["activeStatus"] = mode === "canonical"
+    ? lifecycle === "complete"
+      ? "complete"
+      : lifecycle !== "active"
+        ? "pending"
+        : task.workflow_state === "in_progress"
+          ? "in_progress"
+          : "pending"
+    : lifecycle === "complete"
+      ? "complete"
+      : lifecycle !== "active"
+        ? "pending"
+        : task.workflow_state === "in_progress"
+          ? "in_progress"
+          : task.terminal_state || task.container_state || task.workflow_state
+            ? "pending"
+            : task.status === "in_progress"
+              ? "in_progress"
+              : task.status === "complete"
+                ? "complete"
+                : ["pending", "in_progress", "missed", "upcoming", "not_due", "delayed", "done", "did_my_best"].includes(task.status)
+                  ? task.status as TaskStateEngineInput["task"]["activeStatus"]
+                  : "pending";
   const recurrence = boundary ? recurrenceFromBoundary(boundary) : recurrenceFromTask(task);
   const dueOn = boundary
     ? boundary.schedule_model === "unscheduled"
@@ -205,6 +241,29 @@ export function buildDirectTaskStateEngineInput(
     logicalDayRollover: context.logicalDayRollover,
     ...options,
   };
+}
+
+/** Production Task State input: canonical lifecycle and schedule are mandatory. */
+export function buildDirectTaskStateEngineInput(
+  task: CanonicalProjectedTaskState,
+  history: readonly TaskHistory[],
+  context: DirectTaskStateContext,
+  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd"> = {},
+): TaskStateEngineInput {
+  return buildTaskStateEngineInput(task, history, context, options, "canonical");
+}
+
+/**
+ * Compatibility-only raw Task translation for migration/test callers.
+ * Production Active Status, Calendar, rollover, and action paths must not use it.
+ */
+export function buildCompatibilityTaskStateEngineInput(
+  task: CanonicalProjectedTaskState,
+  history: readonly TaskHistory[],
+  context: DirectTaskStateContext,
+  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd"> = {},
+): TaskStateEngineInput {
+  return buildTaskStateEngineInput(task, history, context, options, "compatibility");
 }
 
 export function canonicalOccurrenceIdentity(taskId: string, dueOn: string | null) {

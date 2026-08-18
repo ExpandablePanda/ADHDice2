@@ -1,3 +1,4 @@
+-- RETIRED / HISTORICAL ONLY / DO NOT APPLY.
 -- ADHDice 7.9.33 read-only post-copy verification.
 -- Every *_violation count should be zero after authorized execution.
 with legacy_only as (

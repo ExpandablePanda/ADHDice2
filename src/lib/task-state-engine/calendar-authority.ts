@@ -1,7 +1,7 @@
 import type { Task, TaskHistory } from "@/lib/database.types";
 import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
 import { logicalDateForTimestamp, shiftDateKey } from "./calendar.ts";
-import { buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
+import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
 import { evaluateTaskActionAuthority } from "./action-authority.ts";
@@ -35,6 +35,7 @@ export type TaskHistoryCalendarReadResult = {
 
 /** Central Calendar read bridge. Explicit History always wins in the engine. */
 export function resolveTaskHistoryCalendarRead(input: {
+  compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
   calendarOverrides?: TaskCalendarOverride[];
@@ -47,7 +48,8 @@ export function resolveTaskHistoryCalendarRead(input: {
 }): TaskHistoryCalendarReadResult | null {
   if (!(input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED)) return null;
   const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.history);
-  const engineInput = buildDirectTaskStateEngineInput(input.task as CanonicalProjectedTaskState, normalizedHistory, input, {
+  const buildInput = input.compatibilityOnly ? buildCompatibilityTaskStateEngineInput : buildDirectTaskStateEngineInput;
+  const engineInput = buildInput(input.task as CanonicalProjectedTaskState, normalizedHistory, input, {
     calendarOverrides: input.calendarOverrides,
     ...(input.calendarStart ? { calendarStart: input.calendarStart } : {}),
     ...(input.calendarEnd ? { calendarEnd: input.calendarEnd } : {}),
@@ -85,6 +87,7 @@ export function resolveTaskHistoryCalendarRead(input: {
 }
 
 export function resolveTaskHistoryCalendarStates(input: {
+  compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
   calendarOverrides?: TaskCalendarOverride[];
@@ -100,6 +103,7 @@ export function resolveTaskHistoryCalendarStates(input: {
 
 /** The Calendar asks the same evaluator whether an action can be offered. */
 export function resolveTaskHistoryCalendarActionStatuses(input: {
+  compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
   logicalDate: string;

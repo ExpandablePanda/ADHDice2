@@ -1,6 +1,6 @@
 import type { Task, TaskHistory, TaskHistoryInsert, TaskUpdate } from "@/lib/database.types";
 import { logicalDateForTimestamp } from "./calendar.ts";
-import { buildDirectTaskStateEngineInput, type CanonicalProjectedTaskState } from "./direct-input.ts";
+import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
 import { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
@@ -104,6 +104,7 @@ export function taskStateHistoryRowToInsert(
 }
 
 export function evaluateTaskActionAuthority(input: {
+  compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
   logicalDayRollover: string;
@@ -121,7 +122,8 @@ export function evaluateTaskActionAuthority(input: {
   timezone: string;
 }) {
   if (!(input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED)) return null;
-  const engineInput = buildDirectTaskStateEngineInput(input.task as CanonicalProjectedTaskState, input.history, input, {
+  const buildInput = input.compatibilityOnly ? buildCompatibilityTaskStateEngineInput : buildDirectTaskStateEngineInput;
+  const engineInput = buildInput(input.task as CanonicalProjectedTaskState, input.history, input, {
     action: input.outcome ? {
       type: "record_outcome",
       outcome: input.outcome,
@@ -177,6 +179,7 @@ export function evaluateTaskActionAuthority(input: {
  * remains the only source for unresolved outcomes and occurrence identity.
  */
 export function evaluateTaskScheduleAuthority(input: {
+  compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
   logicalDayRollover: string;
@@ -186,7 +189,8 @@ export function evaluateTaskScheduleAuthority(input: {
   timezone: string;
 }) {
   if (!(input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED)) return null;
-  const engineInput = buildDirectTaskStateEngineInput(input.proposedTask as CanonicalProjectedTaskState, input.history, input, {
+  const buildInput = input.compatibilityOnly ? buildCompatibilityTaskStateEngineInput : buildDirectTaskStateEngineInput;
+  const engineInput = buildInput(input.proposedTask as CanonicalProjectedTaskState, input.history, input, {
     action: {
       type: "change_schedule",
       changedLogicalDate: logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover),

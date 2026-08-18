@@ -1,3 +1,4 @@
+-- RETIRED / HISTORICAL ONLY / DO NOT APPLY.
 -- ADHDice 7.9.33 read-only preview for the final legacy History copy.
 -- SOURCE ONLY: this report performs no writes and re-queries live rows when run.
 with legacy_only as (

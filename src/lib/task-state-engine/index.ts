@@ -19,6 +19,7 @@ export {
 export type { BuildTaskEffectiveTimelineInput, TaskEffectiveTimelineStreakDay, TaskEffectiveTimelineStreaks } from "./effective-timeline.ts";
 export {
   projectTasksForActiveStatusRead,
+  resolveCompatibilityTaskStatuses,
   resolveActiveTaskStatuses,
   TASK_STATE_ENGINE_INTEGRATION_ENABLED,
   TASK_STATE_ENGINE_ACTIVE_STATUS_READ_ENABLED,

@@ -1,3 +1,4 @@
+-- RETIRED / HISTORICAL ONLY / DO NOT APPLY.
 -- ADHDice 7.9.33 forward-only literal legacy History copy.
 -- SOURCE ONLY: do not apply without reviewed preview and explicit production authorization.
 -- The candidate set is intentionally dynamic: it re-queries every legacy-only

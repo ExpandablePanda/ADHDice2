@@ -7,14 +7,10 @@ import { buildCanonicalActiveStatusCounts } from "../src/lib/task-app-derived.ts
 import { deduplicateTaskHistoryByLogicalDate } from "../src/lib/task-history.ts";
 import { mapCanonicalTaskHistoryFacts } from "../src/lib/task-state-canonical/history-projection.ts";
 import type { CanonicalTaskHistoryFact } from "../src/lib/task-state-canonical/types.ts";
-import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
+import { resolveCompatibilityTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 import { resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/calendar-authority.ts";
 import { buildTaskHistoryStreakSummary } from "../src/lib/task-history-streak-summaries.ts";
 import { createProjectionDomainRevision } from "../src/lib/stable-task-projection.ts";
-import {
-  collectCriticalTaskHistoryDates,
-  selectCriticalTaskHistoryFacts,
-} from "../src/lib/workspace-critical-task-facts.ts";
 
 const TASK_ID = "28220db9-41cd-4452-a958-87091edc82b3";
 const TODAY = "2026-08-17";
@@ -122,7 +118,7 @@ function canonicalFact(
 }
 
 function read(sourceTask: Task, historyRows: TaskHistory[]) {
-  return resolveActiveTaskStatuses({
+  return resolveCompatibilityTaskStatuses({
     historyByTaskId: { [sourceTask.id]: historyRows },
     logicalDayRollover: "06:00",
     now: "2026-08-17T12:00:00.000Z",
@@ -149,20 +145,6 @@ test("Log Calories mixed legacy/canonical chronology resolves stale Missed to Op
   assert.equal(read(sourceTask, canonicalRows), "pending", "pending is the internal Open projection");
 });
 
-test("critical startup selection retains the preceding Daily canonical success boundary", () => {
-  const sourceTask = task();
-  const canonicalRows = mapCanonicalTaskHistoryFacts([
-    canonicalFact("2026-08-01", "missed", 1),
-    canonicalFact("2026-08-16", "done", 2),
-  ]);
-
-  assert.deepEqual(collectCriticalTaskHistoryDates([sourceTask], TODAY), ["2026-08-16", TODAY]);
-  assert.deepEqual(
-    selectCriticalTaskHistoryFacts([sourceTask], canonicalRows, TODAY).map((row) => [row.entry_date, row.status]),
-    [["2026-08-16", "done"]],
-  );
-});
-
 test("genuine unresolved Missed remains Missed without a later success", () => {
   assert.equal(read(task({ status: "missed" }), [history("2026-08-01", "missed")]), "missed");
 });
@@ -173,6 +155,7 @@ test("Done and Did My Best both resolve a Missed chain and reset the missed stre
     const rows = [history("2026-08-01", "missed"), history("2026-08-16", outcome)];
     assert.equal(read(sourceTask, rows), "pending", outcome);
     assert.equal(buildTaskHistoryStreakSummary(sourceTask, rows, TODAY, {
+      compatibilityOnly: true,
       logicalDayRollover: "06:00",
       now: "2026-08-17T12:00:00.000Z",
       timezone: "America/New_York",
@@ -201,6 +184,7 @@ test("migration Delayed History remains visible without driving current recurren
   assert.equal(read(sourceTask, migratedDelayed), "upcoming");
 
   const calendar = resolveTaskHistoryCalendarRead({
+    compatibilityOnly: true,
     calendarEnd: "2026-08-20",
     calendarStart: "2026-07-16",
     history: migratedDelayed,

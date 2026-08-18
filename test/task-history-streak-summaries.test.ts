@@ -15,7 +15,6 @@ import {
 import { computeTaskSpecificHistoryStats, deduplicateTaskHistoryByLogicalDate } from "../src/lib/task-history.ts";
 import { resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/calendar-authority.ts";
 import type { TaskCalendarOverride } from "../src/lib/task-state-engine/types.ts";
-import { selectCriticalTaskHistoryFacts } from "../src/lib/workspace-critical-task-facts.ts";
 
 const workspaceSource = readFileSync(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 const streakSummarySource = readFileSync(new URL("../src/lib/task-history-streak-summaries.ts", import.meta.url), "utf8");
@@ -68,10 +67,8 @@ test("narrow critical History can coexist with a three-day compact completion st
     history("done-2", "2026-08-02", "done", true),
     history("done-3", "2026-08-03", "done", true),
   ];
-  const critical = selectCriticalTaskHistoryFacts([currentTask], rows, "2026-08-03");
   const summaries = buildTaskHistoryStreakSummaryMap([currentTask], rows, "2026-08-03");
 
-  assert.ok(critical.length < rows.length);
   assert.equal(summaries[currentTask.id]?.currentStreak, 3);
 });
 

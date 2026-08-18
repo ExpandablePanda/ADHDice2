@@ -4,7 +4,7 @@ import test from "node:test";
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import type { CanonicalTaskStateColumns } from "../src/lib/task-state-canonical/types.ts";
 import { formatTaskStatusLabel, TASK_STATUS_OPTIONS } from "../src/components/task-app/task-status-ui.tsx";
-import { projectTasksForActiveStatusRead, resolveActiveTaskStatuses } from "../src/lib/task-state-engine/index.ts";
+import { projectTasksForActiveStatusRead, resolveCompatibilityTaskStatuses as resolveActiveTaskStatuses } from "../src/lib/task-state-engine/index.ts";
 import { resolveTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
 
 type ReadTask = Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">>;
@@ -157,6 +157,7 @@ test("active status keeps an unresolved Weekdays Missed chain through weekend ga
   }
 
   const calendar = resolveTaskHistoryCalendarStates({
+    compatibilityOnly: true,
     calendarStart: "2026-08-03",
     calendarEnd: "2026-08-10",
     history: historyRows,

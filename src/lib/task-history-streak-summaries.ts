@@ -24,6 +24,7 @@ export type TaskHistoryStreakSummary = {
 export type TaskHistoryStreakSummaryMap = Record<string, TaskHistoryStreakSummary>;
 
 export type TaskHistoryStreakSummaryContext = {
+  compatibilityOnly?: boolean;
   calendarOverrides?: TaskCalendarOverride[];
   calendarOverridesByTaskId?: Readonly<Record<string, TaskCalendarOverride[]>>;
   manualActionCalendarOverrides?: CanonicalTaskCalendarOverride[];
@@ -58,6 +59,7 @@ export function buildTaskHistoryStreakSummary(
   const normalizedHistory = deduplicateTaskHistoryByLogicalDate(history);
   const { calendarStart } = resolveCalendarRange(task, normalizedHistory, todayDateKey);
   const calendarRead = resolveTaskHistoryCalendarRead({
+    compatibilityOnly: context.compatibilityOnly,
     calendarStart,
     calendarEnd: todayDateKey,
     history: normalizedHistory as unknown as TaskHistory[],

@@ -55,6 +55,14 @@ test("Finish and Log reuses terminal completion and clears execution only after 
   assert.match(workflow, /onTimeOrigin: OnTimeLinkedItemOrigin \| null/);
 });
 
+test("On-Time action availability and Finish and Log use the shared resolved Active Status", async () => {
+  const workspace = await readFile(new URL("../src/components/task-app/on-time-planner-workspace.tsx", import.meta.url), "utf8");
+  assert.match(workspace, /const unavailable = !task \|\| !resolvedStatus \|\| resolvedStatus === "trashed"/);
+  assert.match(workspace, /<FinishAndLogControl currentStatus=\{resolvedStatus\}/);
+  assert.doesNotMatch(workspace, /const unavailable[^\n]*task\.status/);
+  assert.doesNotMatch(workspace, /FinishAndLogControl[^\n]*currentStatus=\{task\.status\}/);
+});
+
 test("selected Routine and Pinned icons fill only when selected", async () => {
   const table = await readFile(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
   const selected = "border-[#ddd2ff] bg-[#f1ecff] text-[#5b3fd6] opacity-100 dark:border-[#57458f] dark:bg-[#2a2148] dark:text-[#cabfff]";

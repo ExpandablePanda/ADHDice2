@@ -1,3 +1,5 @@
+// COMPATIBILITY-ONLY / MIGRATION-TEST TRANSLATION.
+// This adapter must never decide live Active Status, recurrence, Calendar, or streak truth.
 import type { Task, TaskHistory } from "../database.types.ts";
 import { resolveTaskHistoryRecurrenceAuthority } from "../task-history-cutover.ts";
 import { occurrenceIdentity } from "./recurrence.ts";

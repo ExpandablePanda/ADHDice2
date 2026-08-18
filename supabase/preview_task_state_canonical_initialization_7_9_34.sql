@@ -1,3 +1,4 @@
+-- RETIRED / HISTORICAL ONLY / DO NOT APPLY.
 -- ADHDice 7.9.34 read-only preview for active Task canonical initialization.
 -- SOURCE ONLY: this report performs no writes and selects dynamically from
 -- canonicalization_status = legacy_uninitialized at execution time.
