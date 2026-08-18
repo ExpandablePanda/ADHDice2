@@ -492,30 +492,6 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     .filter((row) => row.outcome === "delayed")
     .sort((a, b) => b.logicalDate.localeCompare(a.logicalDate))[0] ?? null;
   let activeStatus: TaskActiveStatus;
-  if (task.lifecycle === "archived" || task.lifecycle === "trashed") {
-    activeStatus = task.activeStatus;
-  } else if (completed) {
-    activeStatus = "complete";
-  } else if (task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRecurrenceRow) {
-    activeStatus = "in_progress";
-  } else if (currentRecurrenceOutcome === "missed" || activeMissedOccurrence || overdueAnchor) {
-    activeStatus = "missed";
-  } else if (scheduleChange && (task.activeStatus === "done" || task.activeStatus === "did_my_best")) {
-    activeStatus = task.activeStatus;
-  } else if (currentRecurrenceOutcome === "delayed" || (delayedRow && nextDue && nextDue > today)) {
-    activeStatus = "delayed";
-  } else if (unscheduled) {
-    activeStatus = "unscheduled";
-  } else if (nextDue && nextDue > today) {
-    activeStatus = statusForFutureDate(today, nextDue);
-  } else if (oneOffHandled || currentRecurrenceOutcome === "done") {
-    activeStatus = "done";
-  } else if (currentRecurrenceOutcome === "did_my_best") {
-    activeStatus = "did_my_best";
-  } else {
-    activeStatus = "pending";
-  }
-
   let calendar: Record<string, ReturnType<typeof calendarStateForOutcome>> = {};
   for (const [date, row] of byDate) calendar[date] = calendarStateForOutcome(row.outcome);
   const calendarStart = input.calendarStart ?? (task.dueOn && task.dueOn < today ? task.dueOn : today);
@@ -594,19 +570,6 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
           ? { replay: { changedLogicalDate: input.action.fromLogicalDate, kind: "recompute" as const } }
           : {}),
   });
-  const canonicalTimelineProjection = input.calendarOverrides !== undefined || input.workflow !== undefined;
-  if (!canonicalTimelineProjection
-    && replayTimeline.currentMissedStreak > 0
-    && (activeStatus === "pending" || activeStatus === "upcoming" || activeStatus === "not_due")) {
-    // A fixed-schedule non-occurrence can pause an unresolved Missed chain,
-    // but it cannot lower that chain's active-status authority to a future
-    // schedule label.
-    activeStatus = "missed";
-  }
-  if (canonicalTimelineProjection) {
-    activeStatus = replayTimeline.activeStatus;
-    calendar = Object.fromEntries(Object.entries(replayTimeline.days).map(([date, day]) => [date, day.state]));
-  }
   const hasOtherSuccessAfterReplacement = Boolean(action && rows.some((row) => (
     row.logicalDate !== actionDate && SUCCESS.has(row.outcome)
   )));
@@ -624,22 +587,40 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     || Boolean(action && (action.historicalOverride || action.replaceExisting) && !preservesManualFutureCursor);
   if (usesReplayTimeline) {
     nextDue = replayTimeline.nextDueOn;
-    if (canonicalTimelineProjection) {
-      activeStatus = replayTimeline.activeStatus;
-    } else if (scheduleChange
-      && !activeMissedOccurrence
-      && task.activeStatus !== "done"
-      && task.activeStatus !== "did_my_best") {
-      activeStatus = nextDue && nextDue > today
-        ? statusForFutureDate(today, nextDue)
-        : replayTimeline.activeStatus;
-    } else if (
-      !(task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRecurrenceRow)
-      && !activeMissedOccurrence
-      && !(task.activeStatus === "missed" && task.dueOn && task.dueOn <= today)) {
-      activeStatus = replayTimeline.activeStatus;
-    }
     calendar = Object.fromEntries(Object.entries(replayTimeline.days).map(([date, day]) => [date, day.state]));
+  }
+
+  // Active Status is calculated once from the engine's resolved recurrence,
+  // History, lifecycle, and workflow inputs. Effective Timeline owns Calendar
+  // and streak projection; its status field is not a second authority.
+  if (task.lifecycle === "archived" || task.lifecycle === "trashed") {
+    activeStatus = task.activeStatus;
+  } else if (completed) {
+    activeStatus = "complete";
+  } else if (task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRecurrenceRow) {
+    activeStatus = "in_progress";
+  } else if (
+    currentRecurrenceOutcome === "missed"
+    || activeMissedOccurrence
+    || overdueAnchor
+    || (action?.outcome === "missed" && action.replaceExisting === true)
+    || ((!scheduleChange || unresolvedMissed.ambiguous) && unresolvedMissed.hasUnresolved)
+  ) {
+    activeStatus = "missed";
+  } else if (scheduleChange && (task.activeStatus === "done" || task.activeStatus === "did_my_best")) {
+    activeStatus = task.activeStatus;
+  } else if (currentRecurrenceOutcome === "delayed" || (delayedRow && nextDue && nextDue > today)) {
+    activeStatus = "delayed";
+  } else if (unscheduled) {
+    activeStatus = "unscheduled";
+  } else if (nextDue && nextDue > today) {
+    activeStatus = statusForFutureDate(today, nextDue);
+  } else if (oneOffHandled || currentRecurrenceOutcome === "done") {
+    activeStatus = "done";
+  } else if (currentRecurrenceOutcome === "did_my_best") {
+    activeStatus = "did_my_best";
+  } else {
+    activeStatus = "pending";
   }
 
   const patch: ProposedTaskStatePatch = {};

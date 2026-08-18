@@ -63,6 +63,7 @@ test("Unscheduled only projects the ordinary open state", () => {
   const tasks = statuses.map(([id, status]) => task({
     id,
     status,
+    ...(id === "in-progress" ? { active_status_logical_date: "2026-07-30" } : {}),
     due_on: id === "pending-today" ? "2026-07-30" : id === "pending-future" ? "2026-08-02" : null,
   }));
   const engine = resolveActiveTaskStatuses({
@@ -77,10 +78,10 @@ test("Unscheduled only projects the ordinary open state", () => {
   assert.equal(engine.statusesByTaskId["pending-today"], "pending");
   assert.equal(engine.statusesByTaskId["pending-future"], "upcoming");
   assert.equal(engine.statusesByTaskId["in-progress"], "in_progress");
-  assert.equal(engine.statusesByTaskId.delayed, "delayed");
-  assert.equal(engine.statusesByTaskId.done, "done");
-  assert.equal(engine.statusesByTaskId["did-my-best"], "did_my_best");
-  assert.equal(engine.statusesByTaskId.missed, "missed");
+  assert.equal(engine.statusesByTaskId.delayed, "unscheduled");
+  assert.equal(engine.statusesByTaskId.done, "unscheduled");
+  assert.equal(engine.statusesByTaskId["did-my-best"], "unscheduled");
+  assert.equal(engine.statusesByTaskId.missed, "unscheduled");
   assert.equal(engine.statusesByTaskId.complete, "complete");
 });
 

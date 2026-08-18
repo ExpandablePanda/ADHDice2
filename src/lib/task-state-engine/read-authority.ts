@@ -49,11 +49,7 @@ export function resolveActiveTaskStatuses(input: {
       logicalDayRollover: input.logicalDayRollover,
     });
     const evaluatedStatus = evaluateTaskState(adapted.engineInput).activeStatus;
-    // Unscheduled is a display projection only for an ordinary open/pending
-    // task. Preserve higher-priority live statuses with no due date.
-    statusesByTaskId[task.id] = evaluatedStatus === "unscheduled" && task.status !== "pending"
-      ? task.status
-      : evaluatedStatus;
+    statusesByTaskId[task.id] = evaluatedStatus;
   }
   return { authority: "engine", statusesByTaskId };
 }

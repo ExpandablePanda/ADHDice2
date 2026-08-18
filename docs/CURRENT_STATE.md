@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.27`.
+- Current working app version: `7.9.28`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -87,6 +87,14 @@ migrated.
 - Calendar reads show exact saved outcomes on their recorded dates, Not Due for unsaved past dates, live Open/Due for an unsaved current obligation, and schedule projection only for future dates. Identity-less History before the live fixed or rolling cursor cannot consume that cursor; rolling replay uses the latest relevant successful point.
 - Added production-shaped regression coverage for Vera Reports, Roth Reports, FedEx child recurrence, Address Corrections, bounded/full History invariance, unresolved Missed with today Due, rolling correction, Unscheduled streaks, unrelated old History, and zero-History recovery boundaries.
 - Persistence-side automatic Missed creation, legacy-only production History canonicalization, SQL/RPC and Edge deployment parity, live Supabase validation, and browser QA remain deferred. No SQL/Edge source or production data changed in this pass.
+
+### 7.9.28 Active Status read/command convergence correction
+
+- `evaluateTaskState` now calculates Active Status once from the resolved engine inputs. Canonical `calendarOverrides` and `workflow` presence no longer selects a competing Effective Timeline status; Effective Timeline remains the Calendar/streak projection.
+- Recurring Done and Did My Best facts remain on their Calendar dates while the resolved next due date immediately drives Active Status to Upcoming or Not Due. Unresolved Missed remains higher priority than future schedule labels, including when today is an unsaved Due/Open date.
+- Read authority no longer lets stale stored Done/Missed compatibility values override an engine-derived Unscheduled result. Legitimate current workflow and permanent lifecycle states remain engine-derived.
+- Added ordinary-read/canonical-plan parity coverage for Done, Did My Best, omitted versus empty canonical inputs, stale Unscheduled statuses, and actual Every 3 Days correction replay. Vera, Roth, FedEx, and Address regression coverage remains passing.
+- Auto Missed persistence, legacy History migration, SQL/RPC changes, Edge deployment, live Supabase validation, production data work, and browser QA remain deferred. No SQL/Edge source or production data changed in this pass.
 
 ### 7.9.24 Canonical rollover orchestration and no-op correction
 
