@@ -38,7 +38,7 @@ function notDueOverride(logicalDate: string, createdAt = "2026-08-14T23:20:00.00
   };
 }
 
-test("calculated Missed dates become visible rows without timestamps", () => {
+test("supplied Missed dates become visible rows without timestamps", () => {
   const rows = buildTaskHistoryRowProjections([], {
     "2026-08-05": day("missed"),
     "2026-08-06": day("missed"),

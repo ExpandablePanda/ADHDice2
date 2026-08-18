@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.26`.
+- Current working app version: `7.9.27`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -26,17 +26,17 @@ result is consumed by every surface. Scheduled unresolved obligations may
 materialize canonical automatic Missed, while Unscheduled blank dates never do.
 All status-changing surfaces use one canonical command infrastructure.
 
-Full canonical Task History for all Tasks is required at workspace startup. The
-bounded critical-vs-modal-full History distinction is transitional and must be
-removed; opening History must not become a more authoritative state read.
-Legacy paths may remain only as migration/translation evidence and must stop
-deciding current status, recurrence, Calendar truth, or streaks after convergence.
+Full canonical Task History for all Tasks is now loaded into the shared startup
+snapshot. The History modal refreshes that same snapshot; it is not a separate
+current-state authority. `resolveActiveTaskStatuses` is the sole current read
+authority, and the read engine now applies the locked Calendar, cursor,
+recurrence, Missed, Unscheduled, streak, and recovery-boundary semantics.
 
-Runtime convergence, SQL/RPC automatic-Missed behavior, canonical History
-canonicalization, legacy-path removal, full-startup-History loading, and browser
-validation remain pending. This architecture lock does not implement or deploy
-the simplified behavior, authorize migration/live data mutation, or change
-version surfaces.
+The remaining work is persistence-side automatic Missed materialization,
+canonicalization of legacy-only production History, removal of compatibility
+read/write paths outside this read convergence, and browser/live/deployment
+validation. This pass does not authorize migration or live data mutation and
+does not change the existing SQL/RPC or Edge v23 deployment.
 
 ### Verified production deployment baseline
 
@@ -79,6 +79,14 @@ migrated.
 - Opening the Task History modal revalidates complete canonical Task History with a forced task-scoped read. Existing rows are retained until a successful response replaces them; failures remain in the existing error/retry state, and Retry forces a fresh canonical request.
 - The 7.9.23 active-status authority remains intact: an actually hydrated task-scoped canonical History cache outranks sparse workspace History for status, counts, streaks, and Calendar. Internal rollover reads do not opt a Task into that modal-cache lifecycle.
 - The 7.9.26 source change itself did not modify SQL or Edge code and did not mutate live data. The verified production baseline is the ACTIVE v23 `task-state-command` deployment and the installed 7.9.20 migration; browser QA remains pending.
+
+### 7.9.27 Simplified Task State read/runtime convergence
+
+- Startup now loads all paged canonical Task History for the authenticated workspace before Task State readiness. TaskApp, Calendar, streaks, filters, counts, smart lists, child previews, editor, Table, and List consume the shared snapshot; task-scoped History refreshes replace that same snapshot, and opening History cannot establish a private status authority.
+- Active Status now always uses the Task State Engine projection. The legacy Active Status switch is retained only as a compatibility input surface and no longer selects a current-state result.
+- Calendar reads show exact saved outcomes on their recorded dates, Not Due for unsaved past dates, live Open/Due for an unsaved current obligation, and schedule projection only for future dates. Identity-less History before the live fixed or rolling cursor cannot consume that cursor; rolling replay uses the latest relevant successful point.
+- Added production-shaped regression coverage for Vera Reports, Roth Reports, FedEx child recurrence, Address Corrections, bounded/full History invariance, unresolved Missed with today Due, rolling correction, Unscheduled streaks, unrelated old History, and zero-History recovery boundaries.
+- Persistence-side automatic Missed creation, legacy-only production History canonicalization, SQL/RPC and Edge deployment parity, live Supabase validation, and browser QA remain deferred. No SQL/Edge source or production data changed in this pass.
 
 ### 7.9.24 Canonical rollover orchestration and no-op correction
 

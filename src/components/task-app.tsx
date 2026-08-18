@@ -130,7 +130,6 @@ import type { TaskCanonicalMutationState } from "@/hooks/useTaskUpdateAction";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
 import { useWorkspaceData } from "@/hooks/useWorkspaceData";
-import { selectCriticalTaskHistoryFacts } from "@/lib/workspace-critical-task-facts";
 import { useTaskListFolderActions } from "@/hooks/useTaskListFolderActions";
 import { useResponsiveTaskGridColumns } from "@/hooks/useResponsiveTaskGridColumns";
 import { useTaskListSelection } from "@/hooks/useTaskListSelection";
@@ -282,7 +281,6 @@ import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/ta
 import { filterManualListTaskCandidates } from "@/lib/manual-list-task-search";
 import {
   buildTaskHistoryFacts,
-  buildTaskHistoryByTaskId,
   computeTaskHistoryStats,
   deduplicateTaskHistoryByLogicalDate,
   isTaskCompletedForHistory,
@@ -591,7 +589,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.26";
+const APP_VERSION = "7.9.27";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1769,7 +1767,7 @@ export function TaskApp() {
     retryTaskHistoryForTask,
     refreshTaskHistoryStreakSummary,
     softRefreshWorkspace,
-    taskHistoryByTaskId: taskHistoryModalHistoryByTaskId,
+    taskHistoryByTaskId: sharedTaskHistoryByTaskId,
     taskHistoryLoadStateByTaskId,
     taskHistoryStreakSummaries,
     updateTaskHistoryForTask,
@@ -2338,10 +2336,7 @@ export function TaskApp() {
     () => formatDateKeyInTimeZone(new Date(logicalDayNow), userTimeZone),
     [logicalDayNow, userTimeZone],
   );
-  const nextTaskStateHistory = useMemo(
-    () => selectCriticalTaskHistoryFacts(tasks, taskHistory, todayKey),
-    [taskHistory, tasks, todayKey],
-  );
+  const nextTaskStateHistory = taskHistory;
   const taskStateHistoryContentRevision = createProjectionDomainRevision("task-state-history", nextTaskStateHistory);
   const [stabilizeTaskStateHistory] = useState(() => {
     let cached = { revision: "", value: nextTaskStateHistory };
@@ -2717,10 +2712,7 @@ export function TaskApp() {
     () => buildManualMembershipMap(taskListManualMemberships, compatibilityRoutingMemberships),
     [compatibilityRoutingMemberships, taskListManualMemberships],
   );
-  const taskHistoryByTaskId = useMemo(
-    () => buildTaskHistoryByTaskId(taskStateHistory, taskHistoryModalHistoryByTaskId),
-    [taskHistoryModalHistoryByTaskId, taskStateHistory],
-  );
+  const taskHistoryByTaskId = sharedTaskHistoryByTaskId;
   const taskHistoryFactsByTaskId = useMemo(
     () => Object.fromEntries(
       tasks.map((task) => [
@@ -6424,7 +6416,7 @@ export function TaskApp() {
         entryDates,
         {
           historicalOverride: status !== "clear",
-          historySnapshot: taskHistoryModalHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+          historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
           syncLiveTask: true,
         },
       );
@@ -6449,13 +6441,13 @@ export function TaskApp() {
         {
           historicalOverride: true,
           historicalOverrideDelayUntilDate: nextDueOn,
-          historySnapshot: taskHistoryModalHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+          historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
           syncLiveTask: true,
         },
       );
     },
     task: taskHistoryModalTask,
-    taskHistory: taskHistoryModalHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+    taskHistory: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
     calendarOverrides: taskCalendarOverridesByTaskId[taskHistoryModalTaskId] ?? [],
     taskTitle: taskHistoryModalTask.title,
     taskHistoryLoadError: taskHistoryLoadStateByTaskId[taskHistoryModalTaskId]?.error ?? null,
@@ -7091,6 +7083,7 @@ export function TaskApp() {
             onCreateTask={addTask}
             onOpenTask={openTaskEditorFromId}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
+            taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
             tasks={tasksForActiveStatusRead}
             userId={currentUserId}
           />

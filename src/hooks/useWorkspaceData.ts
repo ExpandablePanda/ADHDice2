@@ -45,11 +45,6 @@ import {
 } from "@/lib/workspace-refresh-coordinator";
 import { workspaceStartupRequestRegistry } from "@/lib/workspace-startup-request";
 import {
-  chunkCriticalTaskHistoryDates,
-  collectCriticalTaskHistoryDates,
-  selectCriticalTaskHistoryFacts,
-} from "@/lib/workspace-critical-task-facts";
-import {
   buildTaskHistoryStreakSummary,
   buildTaskHistoryStreakSummaryMap,
   TASK_HISTORY_STREAK_SUMMARY_COLUMNS,
@@ -305,12 +300,21 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
   const setTaskHistoryCacheForTask = useCallback((taskId: string, rows: DbTaskHistory[]) => {
     const nextRows = deduplicateTaskHistoryByLogicalDate(rows.filter((entry) => entry.task_id === taskId));
-    taskHistoryByTaskIdRef.current = { ...taskHistoryByTaskIdRef.current, [taskId]: nextRows };
-    setTaskHistoryByTaskId((current) => (
-      JSON.stringify(current[taskId] ?? []) === JSON.stringify(nextRows)
-        ? current
-        : { ...current, [taskId]: nextRows }
-    ));
+    const nextSnapshot = deduplicateTaskHistoryByLogicalDate([
+      ...fullTaskHistoryRowsRef.current.filter((entry) => entry.task_id !== taskId),
+      ...nextRows,
+    ]);
+    const nextByTaskId = Object.fromEntries(
+      [...new Set([...tasksRef.current.map((task) => task.id), ...nextSnapshot.map((entry) => entry.task_id)])]
+        .map((candidateTaskId) => [
+          candidateTaskId,
+          nextSnapshot.filter((entry) => entry.task_id === candidateTaskId),
+        ]),
+    );
+    fullTaskHistoryRowsRef.current = nextSnapshot;
+    taskHistoryByTaskIdRef.current = nextByTaskId;
+    setTaskHistory((current) => keepCurrentIfStructurallyEqual(current, nextSnapshot));
+    setTaskHistoryByTaskId((current) => keepCurrentIfStructurallyEqual(current, nextByTaskId));
   }, []);
 
   const updateTaskHistoryForTask = useCallback((taskId: string, update: TaskHistoryCacheUpdate) => {
@@ -656,7 +660,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       source = "secondary",
     }: {
       silent?: boolean;
-      source?: "rollover" | "secondary";
+      source?: "rollover" | "secondary" | "startup";
     } = {}) {
       if (!isActive || !canApplyCoreWorkspaceResult()) {
         return false;
@@ -701,8 +705,18 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             const nextTaskHistory = deduplicateTaskHistoryByLogicalDate(useCanonicalHistory
               ? mapCanonicalHistoryRows((taskHistoryResult.data ?? []) as CanonicalTaskHistoryFact[])
               : (taskHistoryResult.data ?? []).map((row) => mapTaskHistoryRow(row as DbTaskHistory)));
+            const nextByTaskId = Object.fromEntries(
+              [...new Set([...tasksRef.current.map((task) => task.id), ...nextTaskHistory.map((entry) => entry.task_id)])]
+                .map((taskId) => [taskId, nextTaskHistory.filter((entry) => entry.task_id === taskId)]),
+            );
             fullTaskHistoryRowsRef.current = nextTaskHistory;
+            taskHistoryByTaskIdRef.current = nextByTaskId;
             setTaskHistory((current) => keepCurrentIfStructurallyEqual(current, nextTaskHistory));
+            setTaskHistoryByTaskId((current) => keepCurrentIfStructurallyEqual(current, nextByTaskId));
+            setTaskHistoryLoadStateByTaskId((current) => keepCurrentIfStructurallyEqual(
+              current,
+              Object.fromEntries(Object.keys(nextByTaskId).map((taskId) => [taskId, { error: null, status: "ready" }])),
+            ));
             hasLoadedTaskHistoryRef.current = true;
             hasLoadedFullTaskHistoryRef.current = true;
             setTaskHistoryLoadedUserId(userId);
@@ -719,34 +733,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       taskHistoryLoadPromiseRef.current = { generation: workspaceGeneration, promise: taskHistoryLoadPromise };
 
       return await taskHistoryLoadPromise;
-    }
-
-    async function loadCriticalTaskHistoryFacts(nextTasks: Task[]) {
-      const logicalDayKey = todayKeyRef.current;
-      const dates = collectCriticalTaskHistoryDates(nextTasks, logicalDayKey);
-      const chunks = chunkCriticalTaskHistoryDates(dates);
-      const results = useCanonicalHistory
-        ? await Promise.all(chunks.flatMap((datesChunk) => [
-          canonicalHistoryQuery().in("logical_date", datesChunk),
-          canonicalHistoryQuery().in("scheduled_due_on", datesChunk),
-        ]))
-        : await Promise.all(chunks.flatMap((datesChunk) => [
-          client.from("adhdice_task_history").select(TASK_HISTORY_COLUMNS).eq("user_id", userId).in("entry_date", datesChunk),
-          client.from("adhdice_task_history").select(TASK_HISTORY_COLUMNS).eq("user_id", userId).in("occurrence_due_on", datesChunk),
-        ]));
-      const error = results.find((result) => result.error)?.error;
-      if (error) return { error, rows: [] as DbTaskHistory[] };
-      let mapped: DbTaskHistory[];
-      if (useCanonicalHistory) {
-        mapped = mapCanonicalHistoryRows(results.flatMap((result) => (result.data ?? []) as CanonicalTaskHistoryFact[]));
-      } else {
-        const legacyRows: DbTaskHistory[] = [];
-        for (const result of results) {
-          for (const row of result.data ?? []) legacyRows.push(row as DbTaskHistory);
-        }
-        mapped = legacyRows.map((row) => mapTaskHistoryRow(row));
-      }
-      return { error: null, rows: selectCriticalTaskHistoryFacts(nextTasks, mapped, logicalDayKey) };
     }
 
     async function fetchTaskHistoryForRollover(taskIds: string[]) {
@@ -1194,17 +1180,14 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         (taskScheduleBoundariesResult.data ?? []) as CanonicalTaskScheduleBoundary[],
       );
       tasksRef.current = nextTasks;
-      const criticalHistoryResult = await loadCriticalTaskHistoryFacts(nextTasks);
-      if (criticalHistoryResult.error) {
-        setMessage({ tone: "warn", text: criticalHistoryResult.error.message ?? "Could not load current task state." });
+      const historyLoaded = await loadTaskHistory({ silent, source: "startup" });
+      if (!historyLoaded) {
+        setMessage((current) => current ?? { tone: "warn", text: "Could not load canonical task history." });
         setIsWorkspaceLoading(false);
         return;
       }
       startTransition(() => {
         setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
-        setTaskHistory((current) => keepCurrentIfStructurallyEqual(current, criticalHistoryResult.rows));
-        hasLoadedTaskHistoryRef.current = true;
-        setTaskHistoryLoadedUserId(userId);
         setTaskSubtasks((current) => keepCurrentIfStructurallyEqual(current, nextTaskSubtasks));
         setTaskLegacySubtaskPromotions((current) => keepCurrentIfStructurallyEqual(current, nextTaskLegacySubtaskPromotions));
         onProfileLoaded(profileResult.data ?? null, user);
@@ -1351,7 +1334,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         taskLists: nextTaskLists.length,
       });
       logWorkspaceTiming("Startup summary", loadStartedAt, {
-        criticalHistoryFacts: criticalHistoryResult.rows.length,
+        canonicalHistoryFacts: fullTaskHistoryRowsRef.current.length,
         focusHistory: shouldLoadFocusHistory ? nextFocusHistory.length : 0,
         tasks: nextTasks.length,
       });
@@ -1444,16 +1427,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
       await reloadTaskRows({ silent: true, source: "rollover" });
 
-      if (!hasLoadedFullTaskHistoryRef.current) {
-        if (isWorkspacePerformanceDiagnosticsEnabled()) {
-          console.info("[workspace] Full rollover History reconciliation skipped because only critical facts are cached.");
-        }
-      } else {
-        if (isWorkspacePerformanceDiagnosticsEnabled()) {
-          console.info("[workspace] Rollover history reconciliation requested after already-loaded history.");
-        }
-        await loadTaskHistory({ silent: true, source: "rollover" });
+      if (isWorkspacePerformanceDiagnosticsEnabled()) {
+        console.info("[workspace] Rollover history reconciliation refreshing the shared canonical snapshot.");
       }
+      await loadTaskHistory({ silent: true, source: "rollover" });
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info("[workspace] Rollover targeted task reconciliation completed.");
       }

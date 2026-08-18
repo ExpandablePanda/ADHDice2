@@ -47,7 +47,7 @@ test("Task History modal passes active Calendar overrides into the Calendar read
   assert.match(calendarAuthoritySource, /calendarOverrides: input\.calendarOverrides/);
 });
 
-test("Task Status History projects calculated Missed rows and uses neutral entry count copy", () => {
+test("Task Status History uses the supplied timeline and neutral entry count copy", () => {
   assert.match(modalSource, /buildTaskHistoryRowProjections/);
   assert.match(modalSource, /\{historyRows\.length\} entries/);
   assert.match(modalSource, /Calculated from task timeline/);
@@ -81,7 +81,7 @@ test("parent, Step, Substep, and context-menu History actions preserve their row
 });
 
 test("History modal renders only the ready task cache and exposes loading retry UI", () => {
-  assert.match(appSource, /taskHistory: taskHistoryModalHistoryByTaskId\[taskHistoryModalTaskId\] \?\? \[\]/);
+  assert.match(appSource, /taskHistory: taskHistoryByTaskId\[taskHistoryModalTaskId\] \?\? \[\]/);
   assert.match(appSource, /taskHistoryLoadStatus: taskHistoryLoadStateByTaskId\[taskHistoryModalTaskId\]\?\.status \?\? "loading"/);
   assert.match(appSource, /onRetryTaskHistoryLoad: \(\) => retryTaskHistoryForTask\(taskHistoryModalTaskId\)/);
   assert.match(modalSource, /if \(taskHistoryLoadStatus !== "ready"\)/);

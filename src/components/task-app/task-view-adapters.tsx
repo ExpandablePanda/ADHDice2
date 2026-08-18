@@ -616,7 +616,6 @@ export function TaskHistoryModal({
   const mobileCalendarViewportRef = useRef<HTMLDivElement>(null);
   const mobileScrollRef = useRef<HTMLDivElement>(null);
   const weeks: string[][] = [];
-  const dueDates = buildTaskHistoryCalendarDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, today, normalizedTaskHistory);
   const calendarRead = stateEngineContext
     ? resolveTaskHistoryCalendarRead({
       ...stateEngineContext,
@@ -627,6 +626,11 @@ export function TaskHistoryModal({
       task,
     })
     : null;
+  const dueDates = calendarRead
+    ? new Set(Object.entries(calendarRead.states)
+      .filter(([, state]) => state === "due")
+      .map(([dateKey]) => dateKey))
+    : buildTaskHistoryCalendarDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, today, normalizedTaskHistory);
   const sortedDueDates = [...dueDates].sort();
   const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
   const savedHistoryStats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);

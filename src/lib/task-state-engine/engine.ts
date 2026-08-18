@@ -290,6 +290,17 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       satisfied = null;
       continue;
     }
+    if (task.recurrence.kind === "rolling" && !row.occurrenceIdentity
+      && task.dueOn
+      && row.logicalDate < task.dueOn
+      && !isActionRow(row)) {
+      // The persisted due cursor is the first live rolling occurrence. An old
+      // identity-less success is valid History, but cannot consume that
+      // current/future occurrence by date alone.
+      recurrenceAnchor = row.logicalDate;
+      protectedFixedOccurrence = task.dueOn;
+      continue;
+    }
     if (task.recurrence.kind === "rolling" && row.occurrenceIdentity) {
       const recordedOccurrence = occurrenceDateFromIdentity(row.occurrenceIdentity) ?? row.logicalDate;
       if (task.dueOn && recordedOccurrence < task.dueOn) {
@@ -343,16 +354,15 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       protectedFixedOccurrence = nextDue;
       continue;
     }
-    const validFutureFixedCursor = isFixedRecurrence
+    const protectedFixedCursor = isFixedRecurrence
       && task.dueOn !== null
-      && task.dueOn > today
       && scheduledOccurrences(task.recurrence, task.dueOn, task.dueOn, task.dueOn).includes(task.dueOn)
       ? task.dueOn
       : null;
     if (
-      validFutureFixedCursor
+      protectedFixedCursor
       && !hasRecordedFixedOccurrence
-      && row.logicalDate < validFutureFixedCursor
+      && row.logicalDate < protectedFixedCursor
       && !isActionRow(row)
     ) {
       // Older rows may lack occurrence identity. A persisted future cursor plus
@@ -360,7 +370,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       // the protected occurrence. Display status may be stale without making
       // the cursor replayable. Overdue/equal-date edits do not satisfy this gate.
       recurrenceAnchor = row.logicalDate;
-      protectedFixedOccurrence = validFutureFixedCursor;
+      protectedFixedOccurrence = protectedFixedCursor;
       continue;
     }
     if (

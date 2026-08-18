@@ -23,7 +23,7 @@ function task(overrides: Partial<ReadTask> = {}): ReadTask {
   };
 }
 
-test("shared active-status projection supplies all read surfaces and compatibility can fall back", () => {
+test("shared active-status projection supplies all read surfaces", () => {
   const source = [task({ status: "missed" })];
   const historyByTaskId: Record<string, TaskHistory[]> = { "task-1": [] };
   const engine = resolveActiveTaskStatuses({
@@ -33,11 +33,11 @@ test("shared active-status projection supplies all read surfaces and compatibili
   for (const surface of ["Table", "List", "Home", "editor", "filters", "buckets", "overdue collections"]) {
     assert.equal(projected[0]?.status, engine.statusesByTaskId["task-1"], surface);
   }
-  const legacy = resolveActiveTaskStatuses({
+  const repeated = resolveActiveTaskStatuses({
     enabled: false, historyByTaskId, logicalDayRollover: "06:00", now: "2026-07-30T14:00:00.000Z", tasks: source, timezone: "America/New_York",
   });
-  assert.equal(legacy.authority, "legacy");
-  assert.equal(legacy.statusesByTaskId["task-1"], "missed");
+  assert.equal(repeated.authority, "engine");
+  assert.deepEqual(repeated.statusesByTaskId, engine.statusesByTaskId);
 });
 
 test("stored Pending dormant tasks remain engine-derived Unscheduled on read", () => {

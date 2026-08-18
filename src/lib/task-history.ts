@@ -963,6 +963,21 @@ export function isTaskDueOnDate(task: Task, dateKey: string) {
   return false;
 }
 
+/**
+ * Read-only recovery boundary. Automatic Missed persistence remains owned by
+ * the trusted command path; this helper only identifies the earliest date a
+ * future recovery planner may consider.
+ */
+export function getTaskRecoveryEarliestDate(
+  task: Pick<Task, "due_on">,
+  history: readonly Pick<DbTaskHistory, "entry_date">[],
+  provenScheduleAnchor?: string | null,
+) {
+  const latestSavedDate = history.map((entry) => entry.entry_date).sort().at(-1);
+  if (latestSavedDate) return shiftDateKey(latestSavedDate, 1);
+  return task.due_on ?? provenScheduleAnchor ?? null;
+}
+
 function isHistoricalRecurringDueDate(task: Task, dateKey: string) {
   const anchorDateKey = task.due_on;
   if (!anchorDateKey || task.repeat_frequency === "none") {

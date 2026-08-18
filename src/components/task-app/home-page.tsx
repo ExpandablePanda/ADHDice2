@@ -11,6 +11,7 @@ import { useHomeTodoState } from "@/hooks/useHomeTodoState";
 import { TaskStatusCircleRail, formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import { getSelectableTaskStatuses } from "@/lib/task-complete";
 import type { Task, TaskStatus } from "@/lib/database.types";
+import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskDraft } from "@/components/task-app/task-editor-model";
 import type { TaskListMembership } from "@/lib/task-lists";
 import {
@@ -30,6 +31,7 @@ export function HomePage({
   onCreateTask,
   onOpenTask,
   onSetStatus,
+  taskDisplayStatusByTaskId,
   tasks,
   userId,
 }: {
@@ -37,6 +39,7 @@ export function HomePage({
   onCreateTask: (draft: TaskDraft) => Promise<Task | null>;
   onOpenTask: (taskId: string) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
+  taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
   tasks: Task[];
   userId: string | null;
 }) {
@@ -125,6 +128,7 @@ export function HomePage({
 
   function renderTodoTask(task: Task, index: number, handle: ReactNode) {
     const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
+    const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
     return (
       <AdhdCard className="flex items-start gap-3" padding="sm">
@@ -137,17 +141,17 @@ export function HomePage({
             <div className="relative mt-0.5 shrink-0" ref={statusMenuOpen ? statusMenuRef : undefined}>
               <button
                 aria-expanded={statusMenuOpen}
-                aria-label={`Change status: ${formatTaskStatusLabel(task.status)}`}
+                aria-label={`Change status: ${formatTaskStatusLabel(displayStatus)}`}
                 className="rounded-full p-0.5"
                 onClick={() => setStatusMenuTaskId((current) => current === task.id ? null : task.id)}
                 type="button"
               >
-                {renderTaskStatusCircle(task.status, "sm")}
+                {renderTaskStatusCircle(displayStatus, "sm")}
               </button>
               {statusMenuOpen ? (
                 <div className="absolute left-0 top-full z-30 mt-2 rounded-full border border-[#e4def2] bg-white p-1 shadow-lg dark:border-white/15 dark:bg-[#201a35]">
                   <TaskStatusCircleRail
-                    currentStatus={task.status}
+                    currentStatus={displayStatus}
                     onSetStatus={(status) => {
                       onSetStatus(task, status);
                       setStatusMenuTaskId(null);

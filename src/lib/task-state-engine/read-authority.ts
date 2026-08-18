@@ -1,22 +1,19 @@
 import type { Task, TaskHistory } from "@/lib/database.types";
-import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
 import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
-import { logicalDateForTimestamp } from "./calendar.ts";
 import { adaptLegacyTaskState } from "./legacy-adapter.ts";
 import { evaluateTaskState } from "./engine.ts";
 
 /**
- * One temporary owner for production Calendar and user-action integration.
- * Keep this as the only compatibility switch until the legacy rollover path
- * can be replaced in 7.6.7.
+ * Compatibility export retained for callers that still gate Task State
+ * integration. Active Status reads themselves always use the engine below.
  */
 export const TASK_STATE_ENGINE_INTEGRATION_ENABLED = true;
 /** @deprecated Use TASK_STATE_ENGINE_INTEGRATION_ENABLED. */
 export const TASK_STATE_ENGINE_ACTIVE_STATUS_READ_ENABLED = TASK_STATE_ENGINE_INTEGRATION_ENABLED;
 
-export type ActiveStatusAuthority = "engine" | "legacy";
+export type ActiveStatusAuthority = "engine";
 export type ActiveStatusReadResult = {
   authority: ActiveStatusAuthority;
   statusesByTaskId: TaskDisplayStatusByTaskId;
@@ -32,18 +29,9 @@ export function resolveActiveTaskStatuses(input: {
   tasks: ActiveStatusReadTask[];
   timezone: string;
 }): ActiveStatusReadResult {
-  const enabled = input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED;
   const statusesByTaskId: TaskDisplayStatusByTaskId = {};
   for (const task of input.tasks) {
     const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.historyByTaskId[task.id] ?? []);
-    if (!enabled) {
-      statusesByTaskId[task.id] = getTaskDisplayStatusWithHistory(
-        task,
-        normalizedHistory,
-        logicalDayKey(input.now, input.timezone, input.logicalDayRollover),
-      );
-      continue;
-    }
     if (task.status === "archived" || task.status === "trashed") {
       statusesByTaskId[task.id] = task.status;
       continue;
@@ -67,11 +55,7 @@ export function resolveActiveTaskStatuses(input: {
       ? task.status
       : evaluatedStatus;
   }
-  return { authority: enabled ? "engine" : "legacy", statusesByTaskId };
-}
-
-function logicalDayKey(now: string | Date, timezone: string, rollover: string) {
-  return logicalDateForTimestamp(now, timezone, rollover);
+  return { authority: "engine", statusesByTaskId };
 }
 
 /** Presentation-only copies; never pass these to a persistence mutation. */

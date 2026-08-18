@@ -86,7 +86,7 @@ test("compact summaries count three trailing missed entries", () => {
   assert.equal(summaries[currentTask.id]?.missedStreak, 3);
 });
 
-test("active manual Not Due gaps reach the compact summary without resetting the current Missed streak", () => {
+test("unsaved past obligations do not become calculated Missed rows", () => {
   const currentTask = { ...task("updates"), due_on: "2026-08-08", status: "pending" as const };
   const rows = [
     history("missed-8", "2026-08-08", "missed", false, currentTask.id),
@@ -101,7 +101,7 @@ test("active manual Not Due gaps reach the compact summary without resetting the
     calendarOverridesByTaskId: { [currentTask.id]: [manualNotDue("2026-08-09", currentTask.id)] },
   })[currentTask.id];
 
-  assert.equal(withoutOverride?.missedStreak, 6);
+  assert.equal(withoutOverride?.missedStreak, 5);
   assert.equal(withOverride?.missedStreak, 5);
 });
 
@@ -131,7 +131,7 @@ test("task-specific active overrides are only supplied to their matching summary
   });
 
   assert.equal(summaries[firstTask.id]?.missedStreak, 2);
-  assert.equal(summaries[secondTask.id]?.missedStreak, 3);
+  assert.equal(summaries[secondTask.id]?.missedStreak, 2);
 });
 
 test("success streaks combine Done and Did My Best across calendar gaps", () => {
@@ -185,14 +185,14 @@ test("Appanda uses the exact resolved Calendar sequence and does not use migrati
   const summary = buildTaskHistoryStreakSummaryMap([currentTask], [done, missed], "2026-08-13")[currentTask.id];
 
   assert.equal(summary?.currentStreak, 0);
-  assert.equal(summary?.missedStreak, 5);
+  assert.equal(summary?.missedStreak, 1);
   assert.equal(summary?.lastDoneDate, "2026-08-07");
   assert.equal(summary?.lastDoneAt, null);
   assert.notEqual(summary?.lastDoneAt, done.updated_at);
   assert.deepEqual([done, missed], historyBefore);
 });
 
-test("a current Open overdue day is excluded until rollover finalizes it as Missed", () => {
+test("a current Open overdue day does not create a read-time Missed row", () => {
   const currentTask = { ...task("open-overdue"), due_on: "2026-08-08", status: "pending" as const };
   const missed = history("open-overdue-missed", "2026-08-08", "missed", false, currentTask.id);
 
@@ -200,7 +200,7 @@ test("a current Open overdue day is excluded until rollover finalizes it as Miss
   const afterRollover = buildTaskHistoryStreakSummaryMap([currentTask], [missed], "2026-08-10")[currentTask.id];
 
   assert.equal(beforeRollover?.missedStreak, 1);
-  assert.equal(afterRollover?.missedStreak, 2);
+  assert.equal(afterRollover?.missedStreak, 1);
 });
 
 test("explicit Done and Did My Best win over a calculated Missed on the same date", () => {
@@ -251,12 +251,12 @@ test("calculated Not Due stays neutral and explicit Missed breaks positive strea
   assert.equal(computeTaskEffectiveTimelineStreaks(explicitMissed, "2026-08-15").currentCompletedStreak, 0);
 });
 
-test("calculated historical Missed days count without persisted History rows", () => {
+test("historical Missed days require persisted History rows", () => {
   const currentTask = { ...task("virtual-missed"), due_on: "2026-08-08", status: "pending" as const };
   const summary = buildTaskHistoryStreakSummaryMap([currentTask], [], "2026-08-13")[currentTask.id];
 
   assert.equal(summary?.currentStreak, 0);
-  assert.equal(summary?.missedStreak, 5);
+  assert.equal(summary?.missedStreak, 0);
 });
 
 test("Calendar states and streak input use one resolved timeline for the same range", () => {
@@ -464,7 +464,7 @@ test("parent and child Table/List title paths consume compact summary fields", (
   assert.match(listSource, /taskHistoryStreakSummary: rowContext\.taskHistoryStreakSummaryByTaskId\[task\.id\]/);
 });
 
-test("normal Tasks startup uses a paged compact query and never starts full History", () => {
+test("normal Tasks startup loads full canonical History alongside compact summaries", () => {
   const coreLoader = workspaceSource.slice(
     workspaceSource.indexOf("async function loadCoreWorkspaceData"),
     workspaceSource.indexOf("const requestCoreWorkspaceRefresh"),
@@ -478,7 +478,7 @@ test("normal Tasks startup uses a paged compact query and never starts full Hist
   assert.match(workspaceSource, /manualActionCommandOperations/);
   assert.match(workspaceSource, /\.range\(from, to\)/);
   assert.match(coreLoader, /void loadTaskHistoryStreakSummaries\(nextTasks\)/);
-  assert.doesNotMatch(coreLoader, /loadTaskHistory\(\{ silent: true, source: "secondary" \}\)/);
+  assert.match(coreLoader, /loadTaskHistory\(\{ silent, source: "startup" \}\)/);
   assert.doesNotMatch(workspaceSource, /from\("adhdice_task_history"\)\.select\("\*"\)/);
   assert.match(workspaceSource, /hasLoadedFullTaskHistoryRef\.current/);
 });

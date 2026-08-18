@@ -64,7 +64,7 @@ function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | unde
   if (state === "missed") return "missed";
   if (state === "complete") return "break";
   if (state === "open" || state === "in_progress" || state === "due" || state === "upcoming"
-    || state === "scheduled" || state === "not_due" || state === "no_entry" || state === "delayed") return "neutral";
+    || state === "scheduled" || state === "not_due" || state === "delayed") return "neutral";
   return "break";
 }
 
@@ -124,6 +124,13 @@ function earliestDate(values: Array<string | null | undefined>) {
   return values
     .filter((value): value is string => Boolean(value))
     .sort()[0] ?? null;
+}
+
+function latestDate(values: Array<string | null | undefined>) {
+  return values
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null;
 }
 
 function currentCanonicalDelayEffectiveDueOn(
@@ -309,7 +316,7 @@ function initialOccurrenceDueOn(
     ?? earliestDate(explicitRows.map((row) => row.occurrenceDueOn))
     ?? earliestDate(explicitRows.map((row) => occurrenceDateFromIdentity(row.occurrenceIdentity)))
     ?? (task.recurrence.kind !== "none"
-      ? earliestDate(explicitRows
+      ? latestDate(explicitRows
         .filter((row) => SUCCESSFUL_OUTCOMES.has(row.outcome))
         .map((row) => row.logicalDate))
       : null);
@@ -358,24 +365,6 @@ export function buildTaskEffectiveTimeline(
   const simulationDates = dateRange(simulationStart, simulationEnd);
   const days: Record<string, TaskEffectiveTimelineDay> = {};
   const effectiveDays: Record<string, TaskEffectiveTimelineDay> = {};
-  const historicalMissedDueOnByDate = new Map<string, string>();
-  for (const row of recurrenceExplicitRows) {
-    if (!SUCCESSFUL_OUTCOMES.has(row.outcome)) continue;
-    const historicalOccurrenceDueOn = row.occurrenceDueOn
-      ?? occurrenceDateFromIdentity(row.occurrenceIdentity);
-    if (!historicalOccurrenceDueOn || historicalOccurrenceDueOn >= row.logicalDate) continue;
-    for (const date of dateRange(historicalOccurrenceDueOn, shiftDateKey(row.logicalDate, -1))) {
-      if ((input.task.recurrence.kind === "weekly" || input.task.recurrence.kind === "monthly")
-        && !isScheduledOccurrence(input.task.recurrence, historicalOccurrenceDueOn, date, { includeBeforeDueOn: true })) {
-        continue;
-      }
-      const existingDueOn = historicalMissedDueOnByDate.get(date);
-      if (!existingDueOn || historicalOccurrenceDueOn < existingDueOn) {
-        historicalMissedDueOnByDate.set(date, historicalOccurrenceDueOn);
-      }
-    }
-  }
-
   let activeDueOn: string | null = initialDueOn;
   let unresolvedDueOn: string | null = null;
   let delayedUntilDate: string | null = input.task.activeStatus === "delayed" && activeDueOn && activeDueOn > input.logicalDate
@@ -511,23 +500,17 @@ export function buildTaskEffectiveTimeline(
         && isFixedRecurrence
         && isScheduledOccurrence(input.task.recurrence as Extract<TaskStateSnapshot["recurrence"], { kind: "weekly" | "monthly" }>, activeDueOn, date),
       );
-      if (historicalMissedDueOnByDate.has(date)) {
-        calculated = calculatedDay(
-          input.task.id,
-          date,
-          "missed",
-          "overdue",
-          historicalMissedDueOnByDate.get(date) ?? null,
-        );
-      } else if (completed || !activeDueOn) {
+      if (completed || !activeDueOn) {
         calculated = calculatedDay(input.task.id, date, "no_entry", "none");
       } else if (date < activeDueOn) {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       } else if (isFixedRecurrence && !isFixedScheduledDate) {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       } else if (date < input.logicalDate) {
-        unresolvedDueOn ??= activeDueOn;
-        calculated = calculatedDay(input.task.id, date, "missed", "overdue", unresolvedDueOn);
+        // Unhandled past dates are not History. Automatic Missed persistence
+        // belongs to the trusted command path, so reads show Not Due until a
+        // canonical fact exists for that date.
+        calculated = calculatedDay(input.task.id, date, "not_due", "none");
       } else if (date === input.logicalDate) {
         if (activeDueOn < input.logicalDate) {
           if (isFixedRecurrence) {

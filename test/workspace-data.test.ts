@@ -55,12 +55,13 @@ test("initial boot guards lifecycle refreshes and only persisted pageshow is eli
   assert.match(source, /resumeRefreshCoordinator\.focus\(\)/);
 });
 
-test("normal startup loads critical Task History facts without starting a full History scan", async () => {
+test("normal startup loads the full canonical Task History snapshot", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const coreLoader = source.slice(source.indexOf("async function loadCoreWorkspaceData"), source.indexOf("const requestCoreWorkspaceRefresh"));
 
-  assert.match(coreLoader, /loadCriticalTaskHistoryFacts\(nextTasks\)/);
-  assert.doesNotMatch(coreLoader, /loadTaskHistory\(\{ silent: true, source: "secondary" \}\)/);
+  assert.match(coreLoader, /loadTaskHistory\(\{ silent, source: "startup" \}\)/);
+  assert.match(source, /setTaskHistoryByTaskId\(\(current\) => keepCurrentIfStructurallyEqual/);
+  assert.doesNotMatch(source, /loadCriticalTaskHistoryFacts/);
   assert.doesNotMatch(coreLoader, /loadActualTime\(|loadNotes\(/);
   assert.match(source, /loadFullTaskHistoryRef\.current = \(\) => loadTaskHistory/);
 });
@@ -83,16 +84,14 @@ test("rollover reconciliation reloads only task rows and does not request a broa
   assert.doesNotMatch(reconciliation, /requestCoreWorkspaceRefresh|loadCoreWorkspaceData|softRefreshWorkspace/);
 });
 
-test("rollover reconciliation never promotes critical startup facts into a full History load", async () => {
+test("rollover reconciliation refreshes the shared full History snapshot", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const reconciliation = source.slice(
     source.indexOf("rolloverWorkspaceReconciliationRef.current = async () =>"),
     source.indexOf("prepareTaskMutationRef.current", source.indexOf("rolloverWorkspaceReconciliationRef.current = async () =>")),
   );
 
-  assert.match(reconciliation, /if \(!hasLoadedFullTaskHistoryRef\.current\)/);
-  assert.match(reconciliation, /only critical facts are cached/);
-  assert.match(reconciliation, /Rollover history reconciliation requested after already-loaded history/);
+  assert.match(reconciliation, /refreshing the shared canonical snapshot/);
   assert.match(reconciliation, /await loadTaskHistory\(\{ silent: true, source: "rollover" \}\)/);
 });
 
@@ -212,12 +211,12 @@ test("the full-History summary branch rechecks ownership after waiting for the f
   assert.match(summaryLoader, /await fullHistoryLoad\.promise;\s*\}\s*if \(!isActive \|\| !canApplyCoreWorkspaceResult\(\)\)/);
 });
 
-test("opening Task History does not widen the shared bounded History cache", async () => {
+test("opening Task History refreshes the shared canonical History snapshot", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const modalLoader = source.slice(source.indexOf("async function loadTaskHistoryForTask"), source.indexOf("async function loadTaskHistoryStreakSummaries"));
 
   assert.match(modalLoader, /setTaskHistoryCacheForTask\(taskId, rows\)/);
-  assert.doesNotMatch(modalLoader, /setTaskHistory\s*\(/);
+  assert.match(source, /setTaskHistory\s*\(/);
   assert.doesNotMatch(modalLoader, /mergeTaskHistoryCache/);
   assert.match(modalLoader, /fetchAllPagedRows<DbTaskHistory>/);
   assert.match(modalLoader, /\.range\(from, to\)/);
@@ -245,7 +244,7 @@ test("rollover History acquisition leaves modal cache and load state untouched",
   assert.doesNotMatch(rolloverReader, /taskHistoryByTaskIdRef|taskHistoryLoadStateByTaskIdRef/);
 });
 
-test("History Realtime reloads only an already-owned private cache", async () => {
+test("History Realtime reloads the shared snapshot only for an owned task", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const realtime = source.slice(source.indexOf('table: useCanonicalHistory ? "adhdice_task_history_facts"'), source.indexOf('table: useCanonicalHistory ? "adhdice_task_history_facts"') + 2100);
 
@@ -262,14 +261,14 @@ test("a ready modal History cache remains available when the modal reopens", asy
   assert.match(source, /taskHistoryByTaskId,/);
 });
 
-test("modal retry resets loading state and preserves error handling without touching shared History", async () => {
+test("modal retry resets loading state and preserves shared History error handling", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const modalLoader = source.slice(source.indexOf("async function loadTaskHistoryForTask"), source.indexOf("async function loadTaskHistoryStreakSummaries"));
 
   assert.match(source, /retryTaskHistoryForTaskRef\.current = \(taskId\) => loadTaskHistoryForTask\(taskId, \{ force: true \}\)/);
   assert.match(modalLoader, /setTaskHistoryTaskLoadState\(taskId, \{ error: null, status: "loading" \}\)/);
   assert.match(modalLoader, /setTaskHistoryTaskLoadState\(taskId, \{ error, status: "error" \}\)/);
-  assert.doesNotMatch(modalLoader, /setTaskHistory\s*\(/);
+  assert.match(source, /setTaskHistory\s*\(/);
 });
 
 test("task-scoped History loading returns an explicit failure instead of cached or empty rows", async () => {
@@ -282,7 +281,7 @@ test("task-scoped History loading returns an explicit failure instead of cached 
   assert.doesNotMatch(modalLoader, /return Object\.fromEntries\(uniqueTaskIds\.map/);
 });
 
-test("History mutations update the isolated modal cache and summary ownership", async () => {
+test("History mutations update the shared cache and summary ownership", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 
   assert.match(source, /const updateTaskHistoryForTask = useCallback/);
@@ -300,12 +299,12 @@ test("History query pages have a stable logical row order and compact summaries 
   assert.match(summarySource, /deduplicateTaskHistoryByLogicalDate\(history\)/);
 });
 
-test("modal loading does not feed non-modal status, search, or hierarchy derivations", async () => {
+test("History loading feeds the same non-modal status, search, and hierarchy derivations", async () => {
   const appSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
-  const modalAlias = appSource.slice(appSource.indexOf("taskHistoryByTaskId: taskHistoryModalHistoryByTaskId"), appSource.indexOf("taskHistoryStreakSummaries,") + "taskHistoryStreakSummaries,".length);
+  const modalAlias = appSource.slice(appSource.indexOf("taskHistoryByTaskId: sharedTaskHistoryByTaskId"), appSource.indexOf("taskHistoryStreakSummaries,") + "taskHistoryStreakSummaries,".length);
   const statusRead = appSource.slice(appSource.indexOf("const activeStatusRead"), appSource.indexOf("const taskDisplayStatusByTaskId"));
 
-  assert.match(modalAlias, /taskHistoryByTaskId: taskHistoryModalHistoryByTaskId/);
+  assert.match(modalAlias, /taskHistoryByTaskId: sharedTaskHistoryByTaskId/);
   assert.match(statusRead, /historyByTaskId: taskHistoryByTaskId/);
   assert.doesNotMatch(statusRead, /taskHistoryModalHistoryByTaskId/);
 });
