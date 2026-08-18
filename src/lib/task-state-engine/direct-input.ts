@@ -17,6 +17,15 @@ export type CanonicalProjectedTaskState = Task
     canonical_schedule_boundary?: CanonicalTaskScheduleBoundary | null;
   };
 
+export class CanonicalTaskStateBoundaryRequiredError extends Error {
+  readonly code = "CANONICAL_SCHEDULE_BOUNDARY_REQUIRED";
+
+  constructor(taskId: string) {
+    super(`Active canonical Task ${taskId} requires a canonical schedule boundary.`);
+    this.name = "CanonicalTaskStateBoundaryRequiredError";
+  }
+}
+
 type DirectTaskStateContext = {
   now: string | Date;
   timezone: string;
@@ -138,6 +147,13 @@ export function buildDirectTaskStateEngineInput(
 ): TaskStateEngineInput {
   const boundary = task.canonical_schedule_boundary ?? null;
   const lifecycle = canonicalLifecycle(task);
+  if (
+    boundary === null
+    && lifecycle === "active"
+    && (task.canonicalization_status === "canonical_proven" || task.canonicalization_status === "canonical_runtime")
+  ) {
+    throw new CanonicalTaskStateBoundaryRequiredError(task.id);
+  }
   const activeStatus: TaskStateEngineInput["task"]["activeStatus"] = lifecycle === "complete"
     ? "complete"
     : lifecycle !== "active"

@@ -12,10 +12,13 @@ model. It supersedes transitional rules that treated bounded History, calculated
 Missed rows, modal History, or legacy compatibility status as a separate source
 of truth.
 
-The existing production baseline is installed: `task-state-command` Edge is
-ACTIVE at version 23 and migration
-`20260817162634 patch_task_state_command_rollover_7_9_20` is present in
-production migration history. This document is not proof that the new
+The verified pre-7.9.33 production baseline includes migrations
+`20260818045732 patch_task_state_auto_missed_history_copy_7_9_31` and
+`20260818045827 migrate_legacy_history_copy_7_9_31`; `task-state-command` Edge
+is ACTIVE at version 24 with `verify_jwt=true`, pinned commit
+`17f6badd751fe38261aae9cbb5828a979f32de62`, and deployment SHA
+`9c07a32e504333008d08ff79abf04b2641cbfa06dec4c546454e927a9b1d9d65`. This
+document is not proof that the new
 simplified architecture, future Auto Missed SQL/RPC changes, browser behavior,
 or complete runtime convergence has been implemented or deployed.
 

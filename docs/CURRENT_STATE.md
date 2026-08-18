@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.33`.
+- Current working app version: `7.9.34`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -34,9 +34,24 @@ recurrence, Missed, Unscheduled, streak, and recovery-boundary semantics.
 
 Persistence-side automatic Missed materialization, the preview-first literal
 legacy History copy, and the final live-reader cutover are implemented in
-source. SQL/Edge deployment, explicit migration approval/application, and
-browser/live validation remain pending. The existing SQL/RPC and Edge v23
-production deployment is unchanged.
+source. The 7.9.34 active Task initialization is prepared in source but its
+SQL remains unapplied; the 7.9.33/7.9.34 app and SQL cutovers are not deployed.
+Browser/live validation remains pending.
+
+### 7.9.34 Final canonical Task initialization correction
+
+- Added dynamic preview, forward migration, and read-only verification for
+  active `legacy_uninitialized` Tasks. Initialization preserves raw Task
+  metadata, sets canonical lifecycle/workflow state, and creates one
+  prospective schedule boundary from the current stored schedule settings.
+  It creates no History, occurrences, Calendar overrides, rewards, workflow
+  dates, or occurrence identity; malformed schedules fail closed and reruns
+  find no candidates after successful initialization.
+- Active canonical direct reads now fail closed when their schedule boundary is
+  missing, so raw status/repeat/due fields cannot silently regain authority.
+- No 7.9.34 SQL was applied, no Edge Function was deployed, and no production
+  data was mutated. The existing 7.9.33 literal History-copy artifacts remain
+  unchanged. Browser/live validation remains pending.
 
 ### 7.9.33 Final legacy Task State authority cutover
 
@@ -60,17 +75,21 @@ production deployment is unchanged.
 For Supabase project `mnwcuinnshsncqrhvsks`, the existing Task State backend is
 installed and deployed:
 
-- `task-state-command` Edge Function is ACTIVE at version `23`.
-- Deployment/function ID: `a2c74ca6-8ddb-4100-8902-5e527fe552c4`.
-- Active SHA256: `7eb64fa20f7eedc2c000bc0c4f3ee1bed3e3de406f31e609afbc54994927e8fd`.
-- Production migration history contains
-  `20260817162634 patch_task_state_command_rollover_7_9_20`.
+- Before the 7.9.33 deployment, production migration history was verified to
+  include `20260818045732 patch_task_state_auto_missed_history_copy_7_9_31`
+  and `20260818045827 migrate_legacy_history_copy_7_9_31`.
+- `task-state-command` Edge Function is ACTIVE at version `24` with
+  `verify_jwt=true`.
+- Pinned commit:
+  `17f6badd751fe38261aae9cbb5828a979f32de62`.
+- Deployment SHA:
+  `9c07a32e504333008d08ff79abf04b2641cbfa06dec4c546454e927a9b1d9d65`.
 
-This baseline proves installation/deployment of the existing Task State
-SQL/RPC and Edge command path only. The simplified architecture changes in this
-lock—including the new canonical automatic Missed persistence contract—are not
-deployed. Legacy History canonicalization is prepared but unapplied; production
-data, remaining legacy decision paths, and browser QA remain unchanged.
+This baseline proves the listed pre-7.9.33 production migrations and the
+existing Edge deployment only. It does not prove 7.9.33 or 7.9.34 SQL/app
+cutover. The 7.9.33 History copy and 7.9.34 Task initialization are prepared
+but unapplied; production data, remaining legacy decision paths, and browser QA
+remain unchanged.
 
 ### 7.9.32 Migration Delayed read-authority correction
 
