@@ -20,10 +20,21 @@ test("production runtime has no approved dead-table or retired-RPC references", 
 });
 
 test("forward cleanup is explicit, ordered, and never cascades", () => {
+  assert.match(migration, /(?:^|\n)begin;/);
+  assert.match(migration, /commit;\s*$/);
   assert.doesNotMatch(migration, /\bcascade\b/i);
   assert.match(migration, /drop function if exists public\.adhdice_award_pending_reward_dice/);
   assert.match(migration, /drop function if exists public\.adhdice_migrate_pending_reward_dice/);
   assert.match(migration, /alter table public\.adhdice_task_reward_claims drop column if exists subtask_id/);
+  const legacyClaimDelete = migration.indexOf("delete from public.adhdice_task_reward_claims where subtask_id is not null;");
+  const taskDayIndexDrop = migration.indexOf("drop index if exists public.adhdice_task_reward_claims_task_day_unique;");
+  const subtaskColumnDrop = migration.indexOf("alter table public.adhdice_task_reward_claims drop column if exists subtask_id;");
+  const taskDayIndexCreate = migration.indexOf("create unique index if not exists adhdice_task_reward_claims_task_day_unique");
+  assert.ok(legacyClaimDelete >= 0 && legacyClaimDelete < subtaskColumnDrop);
+  assert.ok(taskDayIndexDrop >= 0 && taskDayIndexDrop < subtaskColumnDrop);
+  assert.ok(subtaskColumnDrop < taskDayIndexCreate);
+  assert.match(migration, /create unique index if not exists adhdice_task_reward_claims_task_day_unique\s+on public\.adhdice_task_reward_claims \(user_id, task_id, reward_date\);/);
+  assert.doesNotMatch(migration.slice(subtaskColumnDrop + "alter table public.adhdice_task_reward_claims drop column if exists subtask_id;".length), /\bsubtask_id\b/);
   const firstTableDrop = migration.indexOf("drop table if exists");
   assert.ok(firstTableDrop > migration.indexOf("drop policy if exists"));
   for (const table of [

@@ -98,9 +98,13 @@ drop function if exists public.adhdice_migrate_pending_reward_dice(text, integer
 drop function if exists public.adhdice_migrate_focus_counters(uuid, uuid, jsonb);
 
 alter table public.adhdice_task_reward_claims drop constraint if exists adhdice_task_reward_claims_subtask_id_fkey;
+delete from public.adhdice_task_reward_claims where subtask_id is not null;
+drop index if exists public.adhdice_task_reward_claims_task_day_unique;
 drop index if exists public.adhdice_task_reward_claims_subtask_day_unique;
 drop index if exists public.adhdice_task_reward_claims_subtask_idx;
 alter table public.adhdice_task_reward_claims drop column if exists subtask_id;
+create unique index if not exists adhdice_task_reward_claims_task_day_unique
+  on public.adhdice_task_reward_claims (user_id, task_id, reward_date);
 
 drop policy if exists "Users can create their own legacy subtask promotions" on public.adhdice_legacy_subtask_promotions;
 drop policy if exists "Users can read their own legacy subtask promotions" on public.adhdice_legacy_subtask_promotions;
