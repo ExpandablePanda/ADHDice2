@@ -108,9 +108,6 @@ drop trigger if exists adhdice_legacy_subtask_promotions_set_updated_at on publi
 alter table public.adhdice_legacy_subtask_promotions drop constraint if exists adhdice_legacy_subtask_promotions_legacy_subtask_id_fkey;
 alter table public.adhdice_legacy_subtask_promotions drop constraint if exists adhdice_legacy_subtask_promotions_task_id_fkey;
 alter table public.adhdice_legacy_subtask_promotions drop constraint if exists adhdice_legacy_subtask_promotions_user_id_fkey;
-drop index if exists public.adhdice_legacy_subtask_promotions_task_id_key;
-drop index if exists public.adhdice_legacy_subtask_promotions_user_idx;
-drop index if exists public.adhdice_legacy_subtask_promotions_pkey;
 
 drop policy if exists "Users can create their own task subtasks" on public.adhdice_task_subtasks;
 drop policy if exists "Users can delete their own task subtasks" on public.adhdice_task_subtasks;
@@ -120,32 +117,18 @@ drop trigger if exists adhdice_task_subtasks_set_updated_at on public.adhdice_ta
 alter table public.adhdice_task_subtasks drop constraint if exists adhdice_task_subtasks_parent_subtask_id_fkey;
 alter table public.adhdice_task_subtasks drop constraint if exists adhdice_task_subtasks_task_id_fkey;
 alter table public.adhdice_task_subtasks drop constraint if exists adhdice_task_subtasks_user_id_fkey;
-drop index if exists public.adhdice_task_subtasks_parent_idx;
-drop index if exists public.adhdice_task_subtasks_task_sort_idx;
-drop index if exists public.adhdice_task_subtasks_pkey;
 
 drop policy if exists "Users can read their own Focus counter migrations" on public.adhdice_focus_counter_migrations;
 alter table public.adhdice_focus_counter_migrations drop constraint if exists adhdice_focus_counter_migrations_user_id_fkey;
-drop index if exists public.adhdice_focus_counter_migrations_batch_unique;
-drop index if exists public.adhdice_focus_counter_migrati_user_id_device_installation_i_key;
-drop index if exists public.adhdice_focus_counter_migrations_pkey;
 
 drop policy if exists "Users can read their own achievement unlocks" on public.adhdice_achievement_unlocks;
 drop policy if exists "Users can append their own achievement unlocks" on public.adhdice_achievement_unlocks;
 alter table public.adhdice_achievement_unlocks drop constraint if exists adhdice_achievement_unlocks_user_id_fkey;
-drop index if exists public.adhdice_achievement_unlocks_user_earned_idx;
-drop index if exists public.adhdice_achievement_unlocks_user_id_achievement_id_key;
-drop index if exists public.adhdice_achievement_unlocks_pkey;
 
 drop policy if exists "Authenticated users read roll master prizes" on public.adhdice_roll_master_prizes;
-drop index if exists public.adhdice_roll_master_prizes_sort_idx;
-drop index if exists public.adhdice_roll_master_prizes_pkey;
 
 drop policy if exists "Users manage own roll board assignments" on public.adhdice_roll_board_assignments;
 alter table public.adhdice_roll_board_assignments drop constraint if exists adhdice_roll_board_assignments_user_id_fkey;
-drop index if exists public.adhdice_roll_board_assignments_user_id_cell_number_key;
-drop index if exists public.adhdice_roll_board_assignments_user_idx;
-drop index if exists public.adhdice_roll_board_assignments_pkey;
 
 drop table if exists public.adhdice_legacy_subtask_promotions;
 drop table if exists public.adhdice_task_subtasks;
