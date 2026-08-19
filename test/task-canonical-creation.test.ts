@@ -9,7 +9,11 @@ import {
   buildCanonicalTaskCreationPlan,
   CanonicalTaskCreationValidationError,
 } from "../src/lib/task-state-canonical/task-creation.ts";
-import type { CanonicalTaskRow } from "../src/lib/task-state-canonical/read-model.ts";
+import {
+  insertTaskRowWithCanonicalCreation,
+  type CanonicalTaskCreationRow,
+} from "../src/lib/task-db-mutations.ts";
+import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import { planTaskStateCommand, type CanonicalTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
 
 const ownerId = "00000000-0000-4000-8000-000000000001";
@@ -56,7 +60,53 @@ function draft(overrides: Partial<TaskInsert> = {}): Omit<TaskInsert, "user_id">
   };
 }
 
-function canonicalTask(overrides: Partial<CanonicalTaskRow> = {}): CanonicalTaskRow {
+function canonicalBoundary(overrides: Partial<CanonicalTaskScheduleBoundary> = {}): CanonicalTaskScheduleBoundary {
+  return {
+    id: "00000000-0000-4000-8000-000000000010",
+    user_id: ownerId,
+    entity_id: parentId,
+    entity_kind: "parent",
+    effective_from_logical_date: "2026-08-11",
+    boundary_sequence: 1,
+    boundary_type: "initial",
+    schedule_model: "unscheduled",
+    repeat_frequency: "none",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    one_time_due_on: null,
+    due_time: null,
+    anchor_date: null,
+    anchor_kind: "unknown",
+    anchor_confidence: "unavailable",
+    historical_scope_known: false,
+    prospective_only: true,
+    prior_boundary_id: null,
+    affected_occurrence_id: null,
+    logical_day_settings_revision: profile.settings_revision,
+    timezone: profile.timezone,
+    day_start_time: profile.day_start_time,
+    actor_kind: "user",
+    actor_id: ownerId,
+    source: "task_creation",
+    command_id: null,
+    idempotence_identity: `task-create:${parentId}`,
+    migration_operation_id: null,
+    migration_version: null,
+    classifier_version: null,
+    schema_contract_version: "task-state-schema-v1",
+    source_task_revision: 1,
+    revision: 1,
+    created_at: now,
+    updated_at: now,
+    ...overrides,
+  };
+}
+
+function canonicalTask(overrides: Partial<CanonicalTaskCreationRow> = {}): CanonicalTaskCreationRow {
   return {
     id: parentId,
     user_id: ownerId,
@@ -116,6 +166,8 @@ function canonicalTask(overrides: Partial<CanonicalTaskRow> = {}): CanonicalTask
     projection_source_canonical_revision: 1,
     projection_source_fingerprint: "canonical-task-create-v1:test",
     projection_version: "task-state-create-v1",
+    canonical_schedule_anchor_date: null,
+    canonical_schedule_boundary: canonicalBoundary(),
     ...overrides,
   };
 }
@@ -205,6 +257,120 @@ test("normal addTask uses trusted canonical creation and fails closed without le
   assert.equal(fallbackCalls, 0);
 });
 
+test("canonical creation returns the persisted boundary and local state without reload", async () => {
+  const cases: Array<{
+    label: string;
+    source: "task_creation" | "task_import";
+    entityKind: "parent" | "step" | "substep";
+    boundary: CanonicalTaskScheduleBoundary;
+  }> = [
+    {
+      label: "unscheduled parent",
+      source: "task_creation",
+      entityKind: "parent",
+      boundary: canonicalBoundary(),
+    },
+    {
+      label: "one-time due parent",
+      source: "task_creation",
+      entityKind: "parent",
+      boundary: canonicalBoundary({
+        schedule_model: "one_time",
+        one_time_due_on: "2026-08-20",
+        due_time: "09:30:00",
+        anchor_kind: "user_selected",
+        anchor_confidence: "proven",
+      }),
+    },
+    {
+      label: "recurring parent",
+      source: "task_creation",
+      entityKind: "parent",
+      boundary: canonicalBoundary({
+        schedule_model: "rolling",
+        repeat_frequency: "daily",
+        anchor_date: "2026-08-20",
+        anchor_kind: "user_selected",
+        anchor_confidence: "proven",
+      }),
+    },
+    {
+      label: "Step import",
+      source: "task_import",
+      entityKind: "step",
+      boundary: canonicalBoundary({
+        entity_id: "00000000-0000-4000-8000-000000000011",
+        entity_kind: "step",
+        source: "task_import",
+      }),
+    },
+    {
+      label: "Substep import",
+      source: "task_import",
+      entityKind: "substep",
+      boundary: canonicalBoundary({
+        entity_id: "00000000-0000-4000-8000-000000000012",
+        entity_kind: "substep",
+        source: "task_import",
+      }),
+    },
+  ];
+
+  for (const testCase of cases) {
+    const responseTask = canonicalTask({
+      id: testCase.boundary.entity_id,
+      entity_kind: testCase.entityKind,
+      user_id: ownerId,
+      parent_task_id: testCase.entityKind === "parent"
+        ? null
+        : testCase.entityKind === "step"
+          ? parentId
+          : "00000000-0000-4000-8000-000000000011",
+    });
+    const client = {
+      functions: {
+        invoke: async () => ({
+          data: {
+            task: { ...responseTask, canonical_schedule_boundary: testCase.boundary },
+            used_energy_fallback: false,
+          },
+          error: null,
+        }),
+      },
+    } as never;
+    const result = await insertTaskRowWithCanonicalCreation(client, draft({ parent_task_id: testCase.entityKind === "parent" ? null : parentId }), testCase.source);
+    assert.equal(result.error, null, testCase.label);
+    assert.deepEqual(result.data?.canonical_schedule_boundary, testCase.boundary, testCase.label);
+    assert.equal(result.data?.canonical_schedule_boundary.entity_id, responseTask.id, testCase.label);
+  }
+
+  let localTasks: Task[] = [];
+  const localStateClient = {
+    functions: {
+      invoke: async () => ({
+        data: {
+          task: { ...canonicalTask(), canonical_schedule_boundary: cases[0]!.boundary },
+          used_energy_fallback: false,
+        },
+        error: null,
+      }),
+    },
+  } as never;
+  const action = useTaskCreateAction({
+    canonicalCommandsEnabled: true,
+    client: localStateClient,
+    currentUserId: ownerId,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: (next) => { localTasks = typeof next === "function" ? next(localTasks) : next; },
+    shouldRouteTaskToInbox: () => false,
+    sortTasksForUi: (value) => value,
+  });
+  const created = await action.addTask({ title: "Hydrated immediately" });
+  assert.equal(created?.canonical_schedule_boundary.id, cases[0]!.boundary.id);
+  assert.equal(localTasks[0]?.canonical_schedule_boundary?.id, cases[0]!.boundary.id);
+});
+
 test("canonical editor creation does not synthesize History or rewards", async () => {
   let historyCalls = 0;
   let rewardCalls = 0;
@@ -250,13 +416,20 @@ test("Import routes parents, Steps, and Substeps through canonical creation and 
     const entityKind = payload.parent_task_id === null || payload.parent_task_id === undefined
       ? "parent"
       : createdRows.find((row) => row.id === payload.parent_task_id)?.parent_task_id === null ? "step" : "substep";
+    const rowId = `00000000-0000-4000-8000-${String(nextId++).padStart(12, "0")}`;
     const row = canonicalTask({
-      id: `00000000-0000-4000-8000-${String(nextId++).padStart(12, "0")}`,
+      id: rowId,
       title: payload.title,
       parent_task_id: payload.parent_task_id ?? null,
       due_on: payload.due_on ?? null,
       repeat_frequency: payload.repeat_frequency ?? "none",
       entity_kind: entityKind,
+      canonical_schedule_boundary: canonicalBoundary({
+        id: `${rowId.slice(0, -2)}99`,
+        entity_id: rowId,
+        entity_kind: entityKind,
+        source: source ?? "task_import",
+      }),
     });
     createdRows.push({ id: row.id, parent_task_id: row.parent_task_id });
     return { data: row, error: null, usedEnergyFallback: false, usedActualSecondsFallback: false as const };
@@ -290,6 +463,7 @@ test("Import routes parents, Steps, and Substeps through canonical creation and 
   assert.equal(calls[2]?.payload.parent_task_id, tasks[1]?.id);
   assert.equal(tasks.length, 3);
   assert.deepEqual(tasks.map((task) => task.entity_kind), ["parent", "step", "substep"]);
+  assert.equal(tasks.every((task) => task.canonical_schedule_boundary?.entity_id === task.id), true);
   assert.equal(tasks.every((task) => task.canonicalization_status !== "legacy_uninitialized" && task.canonical_revision === 1), true);
 });
 
@@ -335,6 +509,8 @@ test("trusted creation source and RPC contracts are service-role-only and do not
   assert.match(sql, /current_user <> 'service_role'/i);
   assert.match(sql, /insert into public\.adhdice_clean_tasks/i);
   assert.match(sql, /insert into public\.adhdice_task_schedule_boundaries/i);
+  assert.match(sql, /'canonical_schedule_boundary',\s*to_jsonb\(v_boundary\)/i);
+  assert.doesNotMatch(sql, /'schedule_boundary_id'/i);
   assert.match(sql, /canonicalization_status/i);
   assert.match(sql, /canonical_revision/i);
   assert.match(sql, /terminal_state/i);
@@ -347,6 +523,7 @@ test("trusted creation source and RPC contracts are service-role-only and do not
   assert.match(edge, /withSupabase\(\{ auth: "user" \},/);
   assert.match(edge, /userIdFromContext\(context\)/);
   assert.match(edge, /\.rpc\("adhdice_create_canonical_task"/);
+  assert.match(edge, /canonical_schedule_boundary/);
   assert.doesNotMatch(edge, /\.from\("adhdice_clean_tasks"\)[\s\S]*\.insert\(/);
   assert.doesNotMatch(edge, /body\.user_id|body\.task\.user_id/);
 });

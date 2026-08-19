@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskUpdate } from "@/lib/database.types";
 import type { CanonicalTaskRow } from "@/lib/task-state-canonical/read-model";
+import { projectTaskWithCanonicalScheduleBoundary } from "@/lib/task-state-canonical/schedule-projection";
+import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
 
 type TaskUpdateField = Exclude<keyof TaskUpdate, "revision">;
 
@@ -43,10 +45,15 @@ export type DeleteTaskRowResult = {
 export type CanonicalTaskCreationSource = "task_creation" | "task_import";
 
 export type CanonicalTaskCreationResult = {
-  data: CanonicalTaskRow | null;
+  data: CanonicalTaskCreationRow | null;
   error: { message: string } | null;
   usedEnergyFallback: boolean;
   usedActualSecondsFallback: false;
+};
+
+export type CanonicalTaskCreationRow = CanonicalTaskRow & {
+  canonical_schedule_anchor_date: string | null;
+  canonical_schedule_boundary: CanonicalTaskScheduleBoundary;
 };
 
 export type CanonicalTaskCreator = (
@@ -81,7 +88,37 @@ function creationErrorMessage(error: unknown, fallback: string) {
     : fallback;
 }
 
-function canonicalTaskFromResponse(value: unknown): CanonicalTaskRow | null {
+function canonicalScheduleBoundaryFromResponse(value: unknown, task: CanonicalTaskRow): CanonicalTaskScheduleBoundary | null {
+  if (!isRecord(value)
+    || typeof value.id !== "string"
+    || typeof value.user_id !== "string"
+    || value.user_id !== task.user_id
+    || value.entity_id !== task.id
+    || !["parent", "step", "substep"].includes(String(value.entity_kind))
+    || value.boundary_sequence !== 1
+    || value.boundary_type !== "initial"
+    || !["unscheduled", "one_time", "rolling", "fixed"].includes(String(value.schedule_model))
+    || !["none", "daily", "weekly", "monthly", "custom", "daily_until_complete"].includes(String(value.repeat_frequency))
+    || !Number.isInteger(value.repeat_interval)
+    || !Array.isArray(value.repeat_days_of_week)
+    || typeof value.effective_from_logical_date !== "string"
+    || typeof value.logical_day_settings_revision !== "number"
+    || typeof value.timezone !== "string"
+    || typeof value.day_start_time !== "string"
+    || value.actor_kind !== "user"
+    || value.actor_id !== task.user_id
+    || !["task_creation", "task_import"].includes(String(value.source))
+    || value.schema_contract_version !== "task-state-schema-v1"
+    || value.source_task_revision !== 1
+    || value.revision !== 1
+    || typeof value.created_at !== "string"
+    || typeof value.updated_at !== "string") {
+    return null;
+  }
+  return value as unknown as CanonicalTaskScheduleBoundary;
+}
+
+function canonicalTaskFromResponse(value: unknown): CanonicalTaskCreationRow | null {
   if (!isRecord(value) || !isRecord(value.task)) return null;
   const task = value.task;
   if (
@@ -102,7 +139,11 @@ function canonicalTaskFromResponse(value: unknown): CanonicalTaskRow | null {
   ) {
     return null;
   }
-  return task as unknown as CanonicalTaskRow;
+  const taskRow = task as unknown as CanonicalTaskRow;
+  const boundary = canonicalScheduleBoundaryFromResponse(task.canonical_schedule_boundary, taskRow);
+  if (!boundary) return null;
+  if (boundary.entity_kind !== taskRow.entity_kind) return null;
+  return projectTaskWithCanonicalScheduleBoundary(taskRow, boundary) as CanonicalTaskCreationRow;
 }
 
 /**

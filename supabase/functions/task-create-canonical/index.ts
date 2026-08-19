@@ -4,7 +4,7 @@ import {
   buildCanonicalTaskCreationPlan,
   type CanonicalTaskCreationPlan,
 } from "../../../src/lib/task-state-canonical/task-creation.ts";
-import type { CanonicalEntityKind } from "../../../src/lib/task-state-canonical/types.ts";
+import type { CanonicalEntityKind, CanonicalTaskScheduleBoundary } from "../../../src/lib/task-state-canonical/types.ts";
 import { userIdFromContext } from "../task-state-command/auth.ts";
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -69,6 +69,35 @@ function isMissingEnergyEnumError(message: string) {
     && message.toLowerCase().includes("none");
 }
 
+function canonicalScheduleBoundaryFromRpc(value: unknown, userId: string, taskId: string): CanonicalTaskScheduleBoundary | null {
+  if (!isRecord(value)
+    || typeof value.id !== "string"
+    || value.user_id !== userId
+    || value.entity_id !== taskId
+    || !["parent", "step", "substep"].includes(String(value.entity_kind))
+    || value.boundary_sequence !== 1
+    || value.boundary_type !== "initial"
+    || !["unscheduled", "one_time", "rolling", "fixed"].includes(String(value.schedule_model))
+    || !["none", "daily", "weekly", "monthly", "custom", "daily_until_complete"].includes(String(value.repeat_frequency))
+    || !Number.isInteger(value.repeat_interval)
+    || !Array.isArray(value.repeat_days_of_week)
+    || typeof value.effective_from_logical_date !== "string"
+    || typeof value.logical_day_settings_revision !== "number"
+    || typeof value.timezone !== "string"
+    || typeof value.day_start_time !== "string"
+    || value.actor_kind !== "user"
+    || value.actor_id !== userId
+    || !["task_creation", "task_import"].includes(String(value.source))
+    || value.schema_contract_version !== "task-state-schema-v1"
+    || value.source_task_revision !== 1
+    || value.revision !== 1
+    || typeof value.created_at !== "string"
+    || typeof value.updated_at !== "string") {
+    return null;
+  }
+  return value as unknown as CanonicalTaskScheduleBoundary;
+}
+
 function canonicalTaskFromRpc(value: unknown, userId: string) {
   if (!isRecord(value) || !isRecord(value.task)) return null;
   const task = value.task;
@@ -88,7 +117,13 @@ function canonicalTaskFromRpc(value: unknown, userId: string) {
     || typeof task.canonical_created_at !== "string"
     || typeof task.canonical_updated_at !== "string"
   ) return null;
-  return task;
+  const canonicalScheduleBoundary = canonicalScheduleBoundaryFromRpc(value.canonical_schedule_boundary, userId, task.id);
+  if (!canonicalScheduleBoundary) return null;
+  if (canonicalScheduleBoundary.entity_kind !== task.entity_kind) return null;
+  return {
+    ...task,
+    canonical_schedule_boundary: canonicalScheduleBoundary,
+  };
 }
 
 async function readOwnerProfile(adminClient: TrustedCreationAdminClient, userId: string) {

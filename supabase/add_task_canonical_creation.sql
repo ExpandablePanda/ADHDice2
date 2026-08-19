@@ -22,7 +22,7 @@ declare
   v_canonical jsonb;
   v_schedule jsonb;
   v_parent_task public.adhdice_clean_tasks%rowtype;
-  v_boundary_id uuid;
+  v_boundary public.adhdice_task_schedule_boundaries%rowtype;
   v_now timestamptz := clock_timestamp();
   v_entity_kind text;
   v_terminal_state text;
@@ -295,11 +295,11 @@ begin
     v_settings_revision, v_timezone, v_day_start_time, 'user', p_user_id, v_source, null,
     'task-create:' || v_task.id::text, null, null, null, 'task-state-schema-v1', 1, 1, v_now, v_now
   )
-  returning id into v_boundary_id;
+  returning * into v_boundary;
 
   return jsonb_build_object(
     'task', to_jsonb(v_task),
-    'schedule_boundary_id', v_boundary_id
+    'canonical_schedule_boundary', to_jsonb(v_boundary)
   );
 end;
 $function$;
