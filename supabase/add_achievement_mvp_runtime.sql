@@ -968,6 +968,21 @@ begin
       from public.adhdice_task_history_facts fact
       where fact.user_id=v_user_id and fact.created_at>=v_profile.activated_at
         and fact.logical_date>=public.adhdice_achievement_logical_date(v_profile.activated_at,v_profile.timezone,v_profile.logical_day_start)
+        and (
+          fact.outcome in ('done','complete','did_my_best')
+          or exists (
+            select 1
+            from public.adhdice_achievement_occurrences occurrence
+            where occurrence.user_id=fact.user_id
+              and occurrence.source_kind='task_history'
+              and (
+                occurrence.source_id=fact.id::text
+                or (fact.source_legacy_history_id is not null and occurrence.source_id=fact.source_legacy_history_id::text)
+                or occurrence.source_snapshot->>'history_fact_id'=fact.id::text
+                or (occurrence.entity_id=fact.entity_id and occurrence.logical_date=fact.logical_date)
+              )
+          )
+        )
       union all
       select session.created_at,'focus_session',session.id
       from public.adhdice_focus_sessions session

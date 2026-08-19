@@ -1,4 +1,4 @@
--- ADHDice Achievement canonical History cleanup for 7.9.47.
+-- ADHDice Achievement canonical History cleanup for 7.9.48.
 -- Replaces Task Achievement's legacy History source with adhdice_task_history_facts.
 -- Apply after the canonical Task History schema and Achievement runtime definitions.
 -- No production execution is implied by this source file.
@@ -509,6 +509,21 @@ begin
       from public.adhdice_task_history_facts fact
       where fact.user_id=v_user_id and fact.created_at>=v_profile.activated_at
         and fact.logical_date>=public.adhdice_achievement_logical_date(v_profile.activated_at,v_profile.timezone,v_profile.logical_day_start)
+        and (
+          fact.outcome in ('done','complete','did_my_best')
+          or exists (
+            select 1
+            from public.adhdice_achievement_occurrences occurrence
+            where occurrence.user_id=fact.user_id
+              and occurrence.source_kind='task_history'
+              and (
+                occurrence.source_id=fact.id::text
+                or (fact.source_legacy_history_id is not null and occurrence.source_id=fact.source_legacy_history_id::text)
+                or occurrence.source_snapshot->>'history_fact_id'=fact.id::text
+                or (occurrence.entity_id=fact.entity_id and occurrence.logical_date=fact.logical_date)
+              )
+          )
+        )
       union all
       select session.created_at,'focus_session',session.id
       from public.adhdice_focus_sessions session
@@ -574,6 +589,21 @@ begin
     join public.adhdice_achievement_profiles profile on profile.user_id = fact.user_id
     where fact.created_at >= profile.activated_at
       and fact.logical_date >= public.adhdice_achievement_logical_date(profile.activated_at, profile.timezone, profile.logical_day_start)
+      and (
+        fact.outcome in ('done', 'complete', 'did_my_best')
+        or exists (
+          select 1
+          from public.adhdice_achievement_occurrences occurrence
+          where occurrence.user_id = fact.user_id
+            and occurrence.source_kind = 'task_history'
+            and (
+              occurrence.source_id = fact.id::text
+              or (fact.source_legacy_history_id is not null and occurrence.source_id = fact.source_legacy_history_id::text)
+              or occurrence.source_snapshot->>'history_fact_id' = fact.id::text
+              or (occurrence.entity_id = fact.entity_id and occurrence.logical_date = fact.logical_date)
+            )
+        )
+      )
     order by fact.created_at, fact.id
   loop
     v_occurrence_id := public.adhdice_capture_task_achievement_occurrence(v_record.id);
