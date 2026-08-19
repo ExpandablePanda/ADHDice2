@@ -16,13 +16,11 @@ import {
 } from "@/components/ui/task-table-primitives";
 import { TaskGridViewComponent } from "./task-grid-view";
 import {
-  buildTaskHistoryCalendarDueDateSet,
   computeTaskSpecificHistoryStats,
   buildTaskHistoryRowProjections,
   deduplicateTaskHistoryByLogicalDate,
   formatTaskHistoryEntryLabel,
   getTaskHistoryLastDone,
-  getTaskHistoryCalendarVirtualState,
   type TaskHistoryStats,
 } from "@/lib/task-history";
 import {
@@ -626,13 +624,9 @@ export function TaskHistoryModal({
       task,
     })
     : null;
-  const dueDates = calendarRead
-    ? new Set(Object.entries(calendarRead.states)
-      .filter(([, state]) => state === "due")
-      .map(([dateKey]) => dateKey))
-    : buildTaskHistoryCalendarDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, today, normalizedTaskHistory);
-  const sortedDueDates = [...dueDates].sort();
-  const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
+  const dueDates = new Set(Object.entries(calendarRead?.states ?? {})
+    .filter(([, state]) => state === "due")
+    .map(([dateKey]) => dateKey));
   const savedHistoryStats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);
   const resolvedTimelineDays = calendarRead?.timeline?.days
     ?? (calendarRead ? taskEffectiveTimelineDaysFromStates(calendarRead.states) : null);
@@ -659,28 +653,23 @@ export function TaskHistoryModal({
   const selectedEntries = selectedDates.map((dateKey) => historyByDate.get(dateKey) ?? null);
   const selectedIsFuture = selectedDate > today;
   const selectedTimelineDay = calendarRead?.timeline?.days[selectedDate] ?? null;
+  const selectedCalendarState = calendarRead?.states[selectedDate] ?? null;
   const selectedIsDue = selectedTimelineDay
     ? selectedTimelineDay.obligation === "due" || selectedTimelineDay.obligation === "overdue"
-    : dueDates.has(selectedDate);
-  const selectedVirtualState = calendarRead?.states[selectedDate] ?? (!calendarRead ? getTaskHistoryCalendarVirtualState({
-    dateKey: selectedDate,
-    delayedUntilDateKey: task.status === "delayed" ? task.due_on : null,
-    hasHistoryEntry: selectedEntry !== null,
-    isDue: selectedIsDue,
-    nextDueDateKey: getNextDueDateKey(selectedDate),
-    projectsUndatedDelayed: task.status === "delayed" && task.due_on === null,
-    todayDateKey: today,
-  }) : null);
-  const engineCalendarActionStatuses = stateEngineContext
+    : selectedCalendarState === "due";
+  const selectedVirtualState = selectedCalendarState;
+  const engineCalendarActionStatuses = stateEngineContext && calendarRead
     ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, historicalOverride: true, logicalDate: selectedDate, task })
     : null;
-  const calendarActionStatuses = getTaskHistoryCalendarVisibleActionStatuses({
-    engineStatuses: engineCalendarActionStatuses,
-    historicalOverride: true,
-    isMultiSelect,
-    task,
-  });
-  const calendarOverrideActions = onSetCalendarOverride
+  const calendarActionStatuses = calendarRead
+    ? getTaskHistoryCalendarVisibleActionStatuses({
+      engineStatuses: engineCalendarActionStatuses,
+      historicalOverride: true,
+      isMultiSelect,
+      task,
+    })
+    : [];
+  const calendarOverrideActions = calendarRead && onSetCalendarOverride
     ? getTaskHistoryCalendarOverrideActions({ isMultiSelect, selectedDate, task, todayDateKey: today })
     : [];
   const canDelaySelectedDate = !isMultiSelect
@@ -710,15 +699,7 @@ export function TaskHistoryModal({
   function cellTone(dateKey: string) {
     const entry = historyByDate.get(dateKey);
     if (!entry) {
-      const virtualState = calendarRead?.states[dateKey] ?? (!calendarRead ? getTaskHistoryCalendarVirtualState({
-        dateKey,
-        delayedUntilDateKey: task.status === "delayed" ? task.due_on : null,
-        hasHistoryEntry: false,
-        isDue: dueDates.has(dateKey),
-        nextDueDateKey: getNextDueDateKey(dateKey),
-        projectsUndatedDelayed: task.status === "delayed" && task.due_on === null,
-        todayDateKey: today,
-      }) : null);
+      const virtualState = calendarRead?.states[dateKey] ?? null;
       if (virtualState === "delayed") {
         return "border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]";
       }
@@ -913,6 +894,16 @@ export function TaskHistoryModal({
   const calendarButton = (dateKey: string) => (
     <button aria-pressed={selectedDateSet.has(dateKey)} className={`flex h-9 w-9 items-center justify-center rounded-[0.85rem] border text-[10px] font-black tabular-nums transition ${cellTone(dateKey)} ${selectedDateSet.has(dateKey) ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""} ${isMultiSelect && dateKey > today ? "cursor-not-allowed opacity-45" : ""}`} data-history-date={dateKey} key={dateKey} onClick={() => selectDate(dateKey)} title={dateKey} type="button">{dateKey.slice(-2)}</button>
   );
+  const calendarUnavailableSection = (
+    <section aria-live="polite" className="rounded-[1.5rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-5 py-6 text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
+      Calendar is unavailable until canonical Task State is ready.
+    </section>
+  );
+  function renderCalendarSection() {
+    return (
+      <section className="rounded-[1.5rem] border border-[#ece8f8] bg-[#fcfbff] p-4 dark:border-white/10 dark:bg-white/[0.03]"><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a day to inspect or update it."}</p>{calendarControls}<div className="mt-3">{calendarLegend}</div><div className="adhdice-scrollbar mt-4 h-[7.5rem] overflow-y-auto overscroll-contain touch-pan-y" ref={mobileCalendarViewportRef}><div className="grid grid-cols-7 gap-1.5">{days.map(calendarButton)}</div></div></section>
+    );
+  }
   const calendarControls = <div className="mt-2 flex flex-wrap gap-2"><TaskTableChipButton onClick={toggleMultiSelect} toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}</TaskTableChipButton>{isMultiSelect && selectedDates.length > 1 ? <TaskTableChipButton onClick={() => setSelectedDates([selectedDate])}>Keep Current Only</TaskTableChipButton> : null}</div>;
   const calendarLegend = <div className="flex flex-wrap items-center gap-2 text-xs">{renderOfficialStatusChip("done", "Done")}{renderOfficialStatusChip("complete", "Marked Complete")}{renderOfficialStatusChip("delayed", "Delayed")}{renderOfficialStatusChip("did_my_best", "Did My Best")}{renderOfficialStatusChip("missed", "Missed")}<span className="text-[#d96b1c] dark:text-[#ffb47c]">Due</span><span className="text-[#3388c9] dark:text-[#8ed0f6]">Not Due</span></div>;
   const selectedDetailsSection = (
@@ -1048,11 +1039,11 @@ export function TaskHistoryModal({
       <div className="sticky top-0 z-20 lg:hidden"><div className="mx-4 mt-3 flex w-fit items-center gap-1 rounded-full border border-[#ece8f8] bg-white/88 p-1 shadow-[0_12px_28px_rgba(81,61,168,0.06)] dark:border-white/10 dark:bg-white/[0.04]">{(["calendar", "history", "stats"] as const).map((section) => <TaskTableChipButton aria-pressed={mobileSection === section} key={section} onClick={() => setMobileSection(section)} toneClassName={mobileSection === section ? "border-[#6f57f6] bg-[#6f57f6] text-white dark:border-[#c9bbff] dark:bg-[#c9bbff] dark:text-[#1a1431]" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{section[0].toUpperCase() + section.slice(1)}</TaskTableChipButton>)}</div></div>
       <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:mt-6 sm:px-0 sm:py-0" ref={mobileScrollRef}>
         <div className="space-y-5 lg:hidden">
-          {mobileSection === "calendar" ? <><section className="rounded-[1.5rem] border border-[#ece8f8] bg-[#fcfbff] p-4 dark:border-white/10 dark:bg-white/[0.03]"><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a day to inspect or update it."}</p>{calendarControls}<div className="mt-3">{calendarLegend}</div><div className="adhdice-scrollbar mt-4 h-[7.5rem] overflow-y-auto overscroll-contain touch-pan-y" ref={mobileCalendarViewportRef}><div className="grid grid-cols-7 gap-1.5">{days.map(calendarButton)}</div></div></section>{selectedDetailsSection}</> : null}
+          {mobileSection === "calendar" ? calendarRead ? <>{renderCalendarSection()}{selectedDetailsSection}</> : calendarUnavailableSection : null}
           {mobileSection === "history" ? historySection : null}
           {mobileSection === "stats" ? statsSection : null}
         </div>
-        <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6 lg:grid"><div className="space-y-6"><section className="rounded-[2rem] border border-[#ece8f8] bg-[#fcfbff] p-5 dark:border-white/10 dark:bg-white/[0.03]"><div className="mb-4 flex items-start justify-between gap-3"><div><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a square to inspect or update that date."}</p>{calendarControls}</div><div className="max-w-sm">{calendarLegend}</div></div><div className="adhdice-scrollbar -mx-2 overflow-x-auto px-2 pb-2" ref={desktopCalendarViewportRef}><div className="inline-flex w-max gap-1.5 pr-2">{weeks.map((week, weekIndex) => <div className="flex flex-col gap-1.5" key={weekIndex}>{week.map(calendarButton)}</div>)}</div></div></section>{historySection}</div><div className="space-y-6">{selectedDetailsSection}{statsSection}</div></div>
+        <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6 lg:grid">{calendarRead ? <><div className="space-y-6"><section className="rounded-[2rem] border border-[#ece8f8] bg-[#fcfbff] p-5 dark:border-white/10 dark:bg-white/[0.03]"><div className="mb-4 flex items-start justify-between gap-3"><div><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a square to inspect or update that date."}</p>{calendarControls}</div><div className="max-w-sm">{calendarLegend}</div></div><div className="adhdice-scrollbar -mx-2 overflow-x-auto px-2 pb-2" ref={desktopCalendarViewportRef}><div className="inline-flex w-max gap-1.5 pr-2">{weeks.map((week, weekIndex) => <div className="flex flex-col gap-1.5" key={weekIndex}>{week.map(calendarButton)}</div>)}</div></div></section>{historySection}</div><div className="space-y-6">{selectedDetailsSection}{statsSection}</div></> : <div className="space-y-6">{calendarUnavailableSection}{historySection}{statsSection}</div>}</div>
       </div>
     </ModalShell>
   );

@@ -322,29 +322,6 @@ export function formatTaskHistoryEntryLabel(entry: Pick<DbTaskHistory, "event_ty
     .join(" ");
 }
 
-export type TaskHistoryCalendarVirtualState = "delayed" | "due" | "not_due";
-
-export function getTaskHistoryCalendarVirtualState({
-  hasHistoryEntry,
-  isDue,
-}: {
-  dateKey: string;
-  delayedUntilDateKey?: string | null;
-  hasHistoryEntry: boolean;
-  isDue: boolean;
-  nextDueDateKey: string | null;
-  projectsUndatedDelayed?: boolean;
-  todayDateKey: string;
-}): TaskHistoryCalendarVirtualState | null {
-  if (hasHistoryEntry) {
-    return null;
-  }
-  if (isDue) {
-    return "due";
-  }
-  return "not_due";
-}
-
 function createHistoryWindowFlags(initialValue = false): Record<TaskHistoryWindowPreset, boolean> {
   return {
     "1": initialValue,
@@ -1068,32 +1045,6 @@ function isUnresolvedTaskStatus(status: TaskStatus) {
     || status === "missed"
     || status === "upcoming"
     || status === "not_due";
-}
-
-export function buildTaskHistoryCalendarDueDateSet(
-  task: Task,
-  startDateKey: string,
-  endDateKey: string,
-  todayDateKey: string,
-  history: DbTaskHistory[] = [],
-) {
-  const dueDates = buildTaskDueDateSet(task, startDateKey, endDateKey, history);
-  if (
-    task.repeat_frequency !== "none"
-    || !task.due_on
-    || task.due_on > todayDateKey
-    || !isUnresolvedTaskStatus(task.status)
-  ) {
-    return dueDates;
-  }
-
-  let cursor = compareDateKeys(task.due_on, startDateKey) > 0 ? task.due_on : startDateKey;
-  const lastOpportunityDate = compareDateKeys(todayDateKey, endDateKey) < 0 ? todayDateKey : endDateKey;
-  while (compareDateKeys(cursor, lastOpportunityDate) <= 0) {
-    dueDates.add(cursor);
-    cursor = shiftDateKey(cursor, 1);
-  }
-  return dueDates;
 }
 
 export function buildOverdueTaskMissedDateKeys(task: Task, currentDayKey: string) {

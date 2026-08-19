@@ -55,11 +55,15 @@ test("later History mutations do not retrigger date-strip focus", () => {
   );
 });
 
-test("History Calendar warning is bound to the shared due-date set", () => {
+test("History Calendar is canonical-only and fails closed without a canonical read", () => {
   const dueDateSelection = taskHistoryModalSource.indexOf("const selectedIsDue =");
   const warningCopy = taskHistoryModalSource.indexOf("This date is outside the inferred due schedule");
 
   assert.ok(dueDateSelection >= 0);
   assert.ok(warningCopy > dueDateSelection);
-  assert.match(taskHistoryModalSource, /buildTaskHistoryCalendarDueDateSet\(task, days\[0\]/);
+  assert.match(taskHistoryModalSource, /const calendarRead = stateEngineContext\s*\?\s*resolveTaskHistoryCalendarRead/);
+  assert.doesNotMatch(taskHistoryModalSource, /buildTaskHistoryCalendarDueDateSet|getTaskHistoryCalendarVirtualState/);
+  assert.match(taskHistoryModalSource, /Calendar is unavailable until canonical Task State is ready/);
+  assert.match(taskHistoryModalSource, /mobileSection === "calendar" \? calendarRead \?/);
+  assert.match(taskHistoryModalSource, /calendarRead\?\.states\[dateKey\]/);
 });
