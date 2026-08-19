@@ -5,15 +5,24 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.43`.
+- Current working app version: `7.9.44`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
-  - `public/app-version.json`
+- `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+## 2026-08-18 Achievement canonical History cleanup
+
+Task Achievement evidence now targets `adhdice_task_history_facts` exclusively.
+The 7.9.44 source patch migrates existing occurrence source IDs by canonical
+fact ID, reconciles the unique Task/logical-date evidence without regenerating
+existing logical dedupe identities, refreshes Step sets, and preserves earned
+awards/notifications. The patch and consolidated SQL are authored only; live
+SQL, deployment, and browser parity remain unverified.
 
 ## 2026-08-18 Milestone canonicalization
 

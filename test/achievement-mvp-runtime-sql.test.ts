@@ -93,20 +93,23 @@ test("Step-set refresh uses current membership and qualifying Step occurrences w
   assert.match(refreshFunction, /on conflict \(user_id, dedupe_key\) do update set is_currently_qualifying = true/);
 });
 
-test("Task History and completed Focus sessions capture through database triggers", () => {
-  assert.match(migration, /after insert or update of status, was_completed, occurrence_key, occurrence_due_on[\s\S]*on public\.adhdice_task_history/);
+test("canonical Task History facts and completed Focus sessions capture through database triggers", () => {
+  assert.match(migration, /after insert or update of entity_id, entity_kind, logical_date, outcome, event_kind,[\s\S]*on public\.adhdice_task_history_facts/);
   assert.match(migration, /after insert or update of duration_seconds, session_date, title_snapshot, ended_at[\s\S]*on public\.adhdice_focus_sessions/);
   assert.doesNotMatch(migration, /adhdice_task_subtasks/);
-  assert.match(migration, /after delete on public\.adhdice_task_history/);
+  assert.match(migration, /drop trigger if exists adhdice_capture_task_achievement_runtime on public\.adhdice_task_history;/);
+  assert.match(migration, /drop trigger if exists adhdice_deactivate_deleted_task_achievement_runtime on public\.adhdice_task_history;/);
+  assert.match(migration, /after delete on public\.adhdice_task_history_facts/);
   assert.match(migration, /after delete on public\.adhdice_focus_sessions/);
-  assert.match(migration, /not exists \(select 1 from public\.adhdice_clean_tasks where id=old\.task_id/);
+  assert.match(migration, /not exists \(select 1 from public\.adhdice_clean_tasks where id=old\.entity_id/);
+  assert.match(schema, /after insert or update of status, was_completed, occurrence_key, occurrence_due_on\s+on public\.adhdice_task_history[\s\S]*adhdice_link_task_duration_evidence/);
 });
 
 test("activation uses source creation and stored logical-date gates", () => {
   assert.match(migration, /new\.source_created_at < v_profile\.activated_at/);
   assert.match(migration, /v_history\.created_at < v_profile\.activated_at/);
   assert.match(migration, /v_session\.created_at < v_profile\.activated_at/);
-  assert.match(migration, /v_history\.entry_date < public\.adhdice_achievement_logical_date/);
+  assert.match(migration, /v_history\.logical_date < public\.adhdice_achievement_logical_date/);
   assert.match(migration, /v_session\.session_date < public\.adhdice_achievement_logical_date/);
 });
 
@@ -118,20 +121,21 @@ test("evaluation is locked, monotonic, and notification-idempotent", () => {
   assert.doesNotMatch(migration, /delete from public\.adhdice_achievement_(tier_awards|collection_awards)/);
 });
 
-test("Task History SQL identity formula matches the canonical TypeScript logical contract", () => {
+test("canonical History SQL identity formula preserves the Task Achievement namespace", () => {
   assert.equal(
     buildTaskAchievementLogicalDedupeKey({ entityKind: "parent_task", entryDate: "2026-07-17", occurrenceKey: "occurrence:2026-07-17", repeatFrequency: "daily", taskId: "task-a" }),
     "occurrence:v1:task_history:parent_task:task-a:occurrence%3A2026-07-17",
   );
-  assert.match(taskCaptureFunction, /v_entity_kind := case when v_task\.parent_task_id is null then 'parent_task' else 'step' end/);
-  assert.match(taskCaptureFunction, /when nullif\(btrim\(v_history\.occurrence_key\), ''\) is not null then v_history\.occurrence_key/);
-  assert.match(taskCaptureFunction, /when v_task\.repeat_frequency = 'none' then 'lifetime:' \|\| v_history\.task_id::text/);
-  assert.match(taskCaptureFunction, /else 'logical-date:' \|\| v_history\.entry_date::text/);
-  assert.match(taskCaptureFunction, /v_dedupe_key := 'occurrence:v1:task_history:' \|\| v_entity_kind \|\| ':' \|\| v_history\.task_id::text \|\| ':' \|\| v_logical_occurrence_part/);
-  assert.match(taskCaptureFunction, /where user_id = v_history\.user_id and dedupe_key = v_dedupe_key/);
-  assert.match(taskCaptureFunction, /on conflict \(user_id, dedupe_key\) do update set/);
+  assert.match(taskCaptureFunction, /v_history public\.adhdice_task_history_facts%rowtype/);
+  assert.match(taskCaptureFunction, /v_history\.outcome in \('done', 'complete', 'did_my_best'\)/);
+  assert.match(taskCaptureFunction, /v_canonical_occurrence_key/);
+  assert.match(taskCaptureFunction, /when v_history\.event_kind = 'terminal_complete' then 'lifetime:' \|\| v_history\.entity_id::text/);
+  assert.match(taskCaptureFunction, /else 'logical-date:' \|\| v_history\.logical_date::text/);
+  assert.match(taskCaptureFunction, /v_dedupe_key := 'occurrence:v1:task_history:' \|\| v_entity_kind \|\| ':' \|\| v_history\.entity_id::text \|\| ':' \|\| v_logical_occurrence_part/);
+  assert.match(taskCaptureFunction, /source_id = v_history\.id::text/);
+  assert.match(taskCaptureFunction, /source_kind = 'task_history'/);
+  assert.doesNotMatch(taskCaptureFunction, /adhdice_task_history(?!_facts)/);
   assert.doesNotMatch(taskCaptureFunction, /v_dedupe_key := 'occurrence:v1:task_history:' \|\| v_source_key/);
-  assert.doesNotMatch(taskCaptureFunction, /on conflict \(user_id, source_kind, source_id\) do update/);
 });
 
 test("recalculation is cursor-based, bounded, retryable, and uses the same capture functions", () => {
@@ -139,6 +143,8 @@ test("recalculation is cursor-based, bounded, retryable, and uses the same captu
   assert.match(migration, /limit p_batch_size\+1/);
   assert.match(migration, /adhdice_capture_task_achievement_occurrence\(v_record\.source_id\)/);
   assert.match(migration, /adhdice_capture_focus_achievement_occurrence\(v_record\.source_id\)/);
+  assert.match(migration, /from public\.adhdice_task_history_facts fact/);
+  assert.doesNotMatch(migration.slice(migration.indexOf("create or replace function public.adhdice_recalculate_achievements")), /from public\.adhdice_task_history history/);
   assert.match(migration, /'has_more',v_has_more,'next_cursor',v_next_cursor/);
 });
 

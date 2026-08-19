@@ -1,0 +1,107 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const runtime = readFileSync("supabase/add_achievement_mvp_runtime.sql", "utf8");
+const patch = readFileSync("supabase/patch_achievement_canonical_history_7_9_44.sql", "utf8");
+const schema = readFileSync("supabase/schema.sql", "utf8");
+
+function extractFunction(sql: string, name: string) {
+  const start = sql.indexOf(`create or replace function public.${name}`);
+  assert.ok(start >= 0, `missing ${name}`);
+  const end = sql.indexOf("$function$;", start) + "$function$;".length;
+  return sql.slice(start, end);
+}
+
+const capture = extractFunction(runtime, "adhdice_capture_task_achievement_occurrence");
+const trigger = extractFunction(runtime, "adhdice_capture_and_evaluate_achievement_source");
+const deactivate = extractFunction(runtime, "adhdice_deactivate_deleted_achievement_source");
+const recalculate = extractFunction(runtime, "adhdice_recalculate_achievements");
+
+test("Task Achievement capture uses canonical facts and canonical fact IDs", () => {
+  assert.match(capture, /v_history public\.adhdice_task_history_facts%rowtype/);
+  assert.match(capture, /from public\.adhdice_task_history_facts where id = p_history_fact_id/);
+  assert.match(capture, /set source_id = v_history\.id::text/);
+  assert.match(capture, /source_kind = 'task_history'/);
+  assert.doesNotMatch(capture, /adhdice_task_history(?!_facts)/);
+});
+
+test("canonical outcome qualification is closed over the three successful outcomes", () => {
+  assert.match(capture, /v_qualified := v_history\.outcome in \('done', 'complete', 'did_my_best'\)/);
+  assert.match(capture, /is_currently_qualifying = v_qualified/);
+  assert.match(runtime, /outcome_snapshot in \('done', 'complete', 'did_my_best', 'missed', 'delayed'\)/);
+});
+
+test("existing occurrences reconcile by legacy identity, canonical Task/date, or logical identity", () => {
+  assert.match(capture, /source_legacy_history_id/);
+  assert.match(capture, /occurrence\.entity_id = v_history\.entity_id and occurrence\.logical_date = v_history\.logical_date/);
+  assert.match(capture, /if v_match_count > 1 then[\s\S]*Ambiguous Achievement mapping/);
+  assert.match(capture, /if v_existing\.id is not null then[\s\S]*set source_id = v_history\.id::text/);
+  assert.match(capture, /if v_match_count = 0 then[\s\S]*occurrence\.dedupe_key = v_dedupe_key/);
+});
+
+test("canonical occurrence evidence wins over mutable Task recurrence", () => {
+  assert.match(capture, /from public\.adhdice_task_occurrences occurrence/);
+  assert.match(capture, /when nullif\(btrim\(v_canonical_occurrence_key\), ''\) is not null/);
+  assert.match(capture, /when v_history\.event_kind = 'terminal_complete' then 'lifetime:'/);
+  assert.match(capture, /else 'logical-date:' \|\| v_history\.logical_date::text/);
+  assert.doesNotMatch(capture, /v_task\.repeat_frequency/);
+});
+
+test("contradictory canonical outcomes and missing live facts cannot remain current", () => {
+  assert.match(capture, /outcome_snapshot = v_history\.outcome,[\s\S]*is_currently_qualifying = v_qualified/);
+  assert.match(recalculate, /not exists \([\s\S]*from public\.adhdice_task_history_facts fact[\s\S]*fact\.logical_date=occurrence\.logical_date/);
+  assert.doesNotMatch(recalculate, /from public\.adhdice_task_history history/);
+});
+
+test("deleted Task achievement history is preserved while canonical source evidence can migrate", () => {
+  assert.match(capture, /Deleted Tasks retain their Achievement-owned history and awards/);
+  assert.match(capture, /'deleted_task_preserved', true/);
+  assert.match(deactivate, /not exists \(select 1 from public\.adhdice_clean_tasks where id=old\.entity_id/);
+  assert.match(deactivate, /return old/);
+});
+
+test("canonical INSERT/UPDATE and DELETE triggers drive capture, evaluation, and Step-set refresh", () => {
+  assert.match(trigger, /tg_table_name='adhdice_task_history_facts'/);
+  assert.match(trigger, /adhdice_capture_task_achievement_occurrence\(new\.id\)/);
+  assert.match(trigger, /adhdice_refresh_achievement_step_set/);
+  assert.match(runtime, /on public\.adhdice_task_history_facts for each row\s+execute function public\.adhdice_capture_and_evaluate_achievement_source/);
+  assert.match(runtime, /after delete on public\.adhdice_task_history_facts for each row/);
+  assert.match(deactivate, /adhdice_evaluate_achievements/);
+});
+
+test("Focus capture remains on Focus sessions and old History duration integration remains", () => {
+  const focusCapture = extractFunction(runtime, "adhdice_capture_focus_achievement_occurrence");
+  assert.match(focusCapture, /public\.adhdice_focus_sessions/);
+  assert.match(runtime, /on public\.adhdice_focus_sessions for each row/);
+  assert.match(schema, /adhdice_link_task_duration_evidence/);
+  assert.match(schema, /on public\.adhdice_task_history/);
+});
+
+test("recalculation is canonical-only, resumable, Step-set-aware, and award-preserving", () => {
+  assert.match(recalculate, /from public\.adhdice_task_history_facts fact/);
+  assert.match(recalculate, /limit p_batch_size\+1/);
+  assert.match(recalculate, /adhdice_refresh_achievement_step_set/);
+  assert.match(recalculate, /adhdice_rebuild_achievement_progress/);
+  assert.doesNotMatch(recalculate, /delete from public\.adhdice_achievement_(tier_awards|collection_awards|notifications)/);
+});
+
+test("7.9.44 reconciliation derives missed evidence and is idempotent without hardcoded live counts", () => {
+  assert.match(patch, /for v_record in[\s\S]*from public\.adhdice_task_history_facts fact/);
+  assert.match(patch, /adhdice_capture_task_achievement_occurrence\(v_record\.id\)/);
+  assert.match(patch, /achievement-canonical-history-7\.9\.44/);
+  assert.doesNotMatch(patch, /\b214\b|\b572\b|\b517\b|\b70\b/);
+  assert.match(runtime, /on conflict \(user_id, track_id, tier\) do nothing/);
+  assert.match(runtime, /on conflict \(user_id, collection_id, mastery_version\) do nothing/);
+});
+
+test("old Achievement triggers are explicitly removed without dropping the legacy table", () => {
+  assert.match(patch, /drop trigger if exists adhdice_capture_task_achievement_runtime on public\.adhdice_task_history/);
+  assert.match(patch, /drop trigger if exists adhdice_deactivate_deleted_task_achievement_runtime on public\.adhdice_task_history/);
+  assert.doesNotMatch(patch, /drop table public\.adhdice_task_history/);
+  assert.doesNotMatch(patch, /drop trigger if exists adhddice_link_task_duration_evidence/);
+});
+
+test("runtime and consolidated schema stay aligned", () => {
+  assert.equal(schema.includes(runtime.trim()), true);
+});

@@ -24,23 +24,29 @@ export function buildTaskSourceOccurrenceKey(input: {
 export function buildTaskLogicalOccurrencePart(input: {
   entryDate: string;
   occurrenceKey?: string | null;
+  canonicalOneTime?: boolean;
   repeatFrequency?: string | null;
   taskId: string;
 }) {
   if (input.occurrenceKey?.trim()) return input.occurrenceKey;
+  if (input.canonicalOneTime) return `lifetime:${input.taskId}`;
   if (input.repeatFrequency === "none") return `lifetime:${input.taskId}`;
   return `logical-date:${input.entryDate}`;
 }
 
 /**
  * Canonical Achievement occurrence identities are deliberately split:
- * - source identity: source_kind + source_id, where Task History source_id is the exact history row UUID.
+ * - source identity: source_kind + source_id, where Task History source_id is the canonical History fact UUID from adhdice_task_history_facts.
  * - logical identity: dedupe_key below, which counts one parent Task or Step occurrence once.
  *
  * Fallback order for Task/Step logical occurrence identity:
- * 1. persisted occurrence_key, including recurring occurrence keys and one-off lifetime keys;
- * 2. lifetime:<task-id> for non-recurring rows missing occurrence_key;
- * 3. logical-date:<entry-date> only when no stronger identity exists.
+ * 1. canonical persisted occurrence_key, including recurring occurrence keys and one-off lifetime keys;
+ * 2. lifetime:<task-id> only when canonical evidence establishes a genuine one-time occurrence;
+ * 3. logical-date:<entry-date> only when no stronger canonical identity exists.
+ *
+ * repeatFrequency remains an input compatibility fallback for older callers. Canonical
+ * capture must pass canonicalOneTime/occurrenceKey and never infer historical identity
+ * from the Task's mutable current recurrence settings.
  */
 export function buildTaskAchievementLogicalDedupeKey(input: {
   entityKind: AchievementTaskEntityKind;

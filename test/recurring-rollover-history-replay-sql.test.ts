@@ -82,6 +82,6 @@ test("active-status, one-off, Daily Until Complete, ledger, and Achievement trig
   assert.match(dailyUntilCompleteBranch, /select max\(entry_date\)/);
   assert.match(dailyUntilCompleteBranch, /on conflict \(user_id, task_id, entry_date\) do update/);
   assert.ok(canonical.indexOf("insert into public.adhdice_task_rollover_ledger") > regularEnd - 1);
-  assert.match(achievementRuntime, /after insert or update of status, was_completed, occurrence_key, occurrence_due_on[\s\S]*on public\.adhdice_task_history for each row/);
+  assert.match(achievementRuntime, /after insert or update of entity_id, entity_kind, logical_date, outcome, event_kind,[\s\S]*on public\.adhdice_task_history_facts for each row/);
   assert.doesNotMatch(forward, /create trigger|drop trigger|adhdice_evaluate_achievements\s*\(/i);
 });

@@ -23,7 +23,7 @@ begin
   v_is_deferred := coalesce(v_deferred_user_id = v_user_id::text, false);
   v_operation_id := md5(tg_table_name || ':' || new.id::text || ':' || to_jsonb(new)::text)::uuid;
   begin
-    if tg_table_name='adhdice_task_history' then
+    if tg_table_name='adhdice_task_history_facts' then
       v_occurrence_id := public.adhdice_capture_task_achievement_occurrence(new.id);
       if v_occurrence_id is not null then
         select root_parent_id into v_root_id from public.adhdice_achievement_occurrences where id=v_occurrence_id;

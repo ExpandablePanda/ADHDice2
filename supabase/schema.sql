@@ -2721,7 +2721,7 @@ create table if not exists public.adhdice_achievement_profiles (
 create table if not exists public.adhdice_achievement_occurrences (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.adhdice_achievement_profiles(user_id) on delete cascade,
-  source_kind text not null check (source_kind in ('task_history', 'focus_session', 'focus_runtime')),
+  source_kind text not null check (source_kind in ('task_history', 'focus_session', 'step_set')),
   source_id text not null check (char_length(trim(source_id)) > 0),
   source_occurrence_key text not null check (char_length(trim(source_occurrence_key)) > 0),
   dedupe_key text not null check (char_length(trim(dedupe_key)) > 0),
@@ -2735,11 +2735,11 @@ create table if not exists public.adhdice_achievement_occurrences (
   month_end_date date not null,
   timezone text not null check (char_length(trim(timezone)) > 0),
   logical_day_start time without time zone not null,
-  entity_kind text not null check (entity_kind in ('parent_task', 'step', 'focus_session', 'focus_runtime')),
+  entity_kind text not null check (entity_kind in ('parent_task', 'step', 'focus_session', 'parent_step_set')),
   entity_id uuid,
   root_parent_id uuid,
   title_snapshot text,
-  outcome_snapshot text check (outcome_snapshot is null or outcome_snapshot in ('done', 'complete', 'did_my_best')),
+  outcome_snapshot text check (outcome_snapshot is null or outcome_snapshot in ('done', 'complete', 'did_my_best', 'missed', 'delayed')),
   active_duration_seconds bigint check (active_duration_seconds is null or active_duration_seconds > 0),
   evaluator_version text not null check (char_length(trim(evaluator_version)) > 0),
   catalog_version text not null check (char_length(trim(catalog_version)) > 0),
@@ -4005,6 +4005,14 @@ alter table public.adhdice_achievement_occurrences
   add constraint adhdice_achievement_occurrences_entity_kind_check
     check (entity_kind in ('parent_task', 'step', 'focus_session', 'parent_step_set'));
 
+alter table public.adhdice_achievement_occurrences
+  drop constraint if exists adhdice_achievement_occurrences_outcome_snapshot_check,
+  add constraint adhdice_achievement_occurrences_outcome_snapshot_check
+    check (outcome_snapshot is null or outcome_snapshot in ('done', 'complete', 'did_my_best', 'missed', 'delayed')),
+  drop constraint if exists adhdice_achievement_occurrences_snapshot_check,
+  add constraint adhdice_achievement_occurrences_snapshot_check
+    check (outcome_snapshot is not null or active_duration_seconds is not null or not is_currently_qualifying);
+
 create unique index if not exists adhdice_achievement_occurrences_source_record_unique
   on public.adhdice_achievement_occurrences (user_id, source_kind, source_id);
 create index if not exists adhdice_achievement_occurrences_active_kind_idx
@@ -4077,107 +4085,192 @@ as $function$
   select id from ancestors order by depth desc limit 1
 $function$;
 
-create or replace function public.adhdice_capture_task_achievement_occurrence(p_history_id uuid)
+create or replace function public.adhdice_capture_task_achievement_occurrence(p_history_fact_id uuid)
 returns uuid
 language plpgsql security definer
 set search_path = ''
 as $function$
 declare
-  v_history public.adhdice_task_history%rowtype;
+  v_history public.adhdice_task_history_facts%rowtype;
   v_task public.adhdice_clean_tasks%rowtype;
   v_profile public.adhdice_achievement_profiles%rowtype;
+  v_existing public.adhdice_achievement_occurrences%rowtype;
   v_occurrence_id uuid;
+  v_match_count integer := 0;
+  v_canonical_occurrence_key text;
   v_source_key text;
   v_dedupe_key text;
   v_entity_kind text;
   v_logical_occurrence_part text;
   v_root_id uuid;
   v_qualified boolean;
+  v_snapshot jsonb;
 begin
-  select * into v_history from public.adhdice_task_history where id = p_history_id;
+  select * into v_history from public.adhdice_task_history_facts where id = p_history_fact_id;
   if not found then return null; end if;
   select * into v_profile from public.adhdice_achievement_profiles where user_id = v_history.user_id;
   if not found then return null; end if;
-  select * into v_task from public.adhdice_clean_tasks where id = v_history.task_id and user_id = v_history.user_id;
-  if not found then return null; end if;
-  v_entity_kind := case when v_task.parent_task_id is null then 'parent_task' else 'step' end;
-  -- Keep source-row identity separate from logical Achievement identity.
-  -- source_id is the exact adhdice_task_history.id; dedupe_key is one countable
-  -- Task/Step occurrence. Fallback order matches src/lib/achievements-mvp/identity.ts:
-  -- occurrence_key -> lifetime:<task-id> for one-offs -> logical-date:<entry-date>.
+
+  -- Match legacy-captured rows before changing source identity. The canonical
+  -- fact ID is the new physical source identity; a legacy source ID or the
+  -- unique canonical Task/date pair is only migration evidence.
+  select count(*) into v_match_count
+  from public.adhdice_achievement_occurrences occurrence
+  where occurrence.user_id = v_history.user_id
+    and occurrence.source_kind = 'task_history'
+    and (
+      occurrence.source_id = v_history.id::text
+      or (v_history.source_legacy_history_id is not null
+        and occurrence.source_id = v_history.source_legacy_history_id::text)
+      or (occurrence.source_snapshot->>'history_fact_id') = v_history.id::text
+      or (occurrence.entity_id = v_history.entity_id and occurrence.logical_date = v_history.logical_date)
+    );
+  if v_match_count > 1 then
+    raise exception 'Ambiguous Achievement mapping for canonical History fact %.', v_history.id;
+  end if;
+  if v_match_count = 1 then
+    select * into v_existing
+    from public.adhdice_achievement_occurrences occurrence
+    where occurrence.user_id = v_history.user_id
+      and occurrence.source_kind = 'task_history'
+      and (
+        occurrence.source_id = v_history.id::text
+        or (v_history.source_legacy_history_id is not null
+          and occurrence.source_id = v_history.source_legacy_history_id::text)
+        or (occurrence.source_snapshot->>'history_fact_id') = v_history.id::text
+        or (occurrence.entity_id = v_history.entity_id and occurrence.logical_date = v_history.logical_date)
+      );
+  end if;
+
+  if v_history.occurrence_id is not null then
+    select occurrence.occurrence_key into v_canonical_occurrence_key
+    from public.adhdice_task_occurrences occurrence
+    where occurrence.user_id = v_history.user_id
+      and occurrence.id = v_history.occurrence_id
+      and occurrence.entity_id = v_history.entity_id;
+    if not found then
+      raise exception 'Canonical occurrence % for History fact % could not be resolved.', v_history.occurrence_id, v_history.id;
+    end if;
+  end if;
+
+  v_entity_kind := case when v_history.entity_kind = 'parent' then 'parent_task' else 'step' end;
+  -- Canonical occurrence evidence wins. A terminal completion is the only
+  -- canonical fact that establishes a lifetime one-time identity without an
+  -- occurrence row; otherwise logical-date is the fail-closed fallback.
   v_logical_occurrence_part := case
-    when nullif(btrim(v_history.occurrence_key), '') is not null then v_history.occurrence_key
-    when v_task.repeat_frequency = 'none' then 'lifetime:' || v_history.task_id::text
-    else 'logical-date:' || v_history.entry_date::text
+    when nullif(btrim(v_canonical_occurrence_key), '') is not null then v_canonical_occurrence_key
+    when v_history.event_kind = 'terminal_complete' then 'lifetime:' || v_history.entity_id::text
+    else 'logical-date:' || v_history.logical_date::text
   end;
-  v_source_key := 'task:' || v_history.task_id::text || ':' || v_logical_occurrence_part;
-  v_dedupe_key := 'occurrence:v1:task_history:' || v_entity_kind || ':' || v_history.task_id::text || ':' || v_logical_occurrence_part;
-  v_qualified := v_history.status::text in ('done', 'complete', 'did_my_best');
+  v_source_key := 'task:' || v_history.entity_id::text || ':' || v_logical_occurrence_part;
+  v_dedupe_key := 'occurrence:v1:task_history:' || v_entity_kind || ':' || v_history.entity_id::text || ':' || v_logical_occurrence_part;
+  v_qualified := v_history.outcome in ('done', 'complete', 'did_my_best');
   perform pg_advisory_xact_lock(hashtextextended(v_history.user_id::text || ':achievement-source:' || v_history.id::text, 0));
   perform pg_advisory_xact_lock(hashtextextended(v_history.user_id::text || ':achievement-occurrence:' || v_dedupe_key, 0));
 
-  if v_history.created_at < v_profile.activated_at
-    or v_history.entry_date < public.adhdice_achievement_logical_date(v_profile.activated_at, v_profile.timezone, v_profile.logical_day_start) then
-    update public.adhdice_achievement_occurrences
-      set is_currently_qualifying = false
-      where user_id = v_history.user_id and source_kind = 'task_history' and source_id = v_history.id::text;
+  if v_match_count = 0 then
+    select count(*) into v_match_count
+    from public.adhdice_achievement_occurrences occurrence
+    where occurrence.user_id = v_history.user_id
+      and occurrence.source_kind = 'task_history'
+      and occurrence.dedupe_key = v_dedupe_key;
+    if v_match_count > 1 then
+      raise exception 'Ambiguous Achievement logical mapping for canonical History fact %.', v_history.id;
+    end if;
+    if v_match_count = 1 then
+      select * into v_existing
+      from public.adhdice_achievement_occurrences occurrence
+      where occurrence.user_id = v_history.user_id
+        and occurrence.source_kind = 'task_history'
+        and occurrence.dedupe_key = v_dedupe_key;
+    end if;
+  end if;
+
+  select * into v_task
+  from public.adhdice_clean_tasks
+  where id = v_history.entity_id and user_id = v_history.user_id;
+  if not found then
+    -- Deleted Tasks retain their Achievement-owned history and awards. If a
+    -- canonical fact still identifies an existing occurrence, only migrate
+    -- physical source evidence; never require the deleted Task to reappear.
+    if v_existing.id is not null then
+      update public.adhdice_achievement_occurrences
+      set source_id = v_history.id::text,
+          outcome_snapshot = v_history.outcome,
+          source_snapshot = jsonb_build_object(
+            'history_fact_id', v_history.id, 'task_id', v_history.entity_id,
+            'entity_id', v_history.entity_id, 'entity_kind', v_history.entity_kind,
+            'logical_date', v_history.logical_date, 'outcome', v_history.outcome,
+            'event_kind', v_history.event_kind, 'occurrence_id', v_history.occurrence_id,
+            'occurrence_key', v_canonical_occurrence_key,
+            'scheduled_due_on', v_history.scheduled_due_on, 'effective_due_on', v_history.effective_due_on,
+            'schedule_boundary_id', v_history.schedule_boundary_id,
+            'recurrence_source_fingerprint', v_history.recurrence_source_fingerprint,
+            'provenance_kind', v_history.provenance_kind, 'actor_kind', v_history.actor_kind,
+            'actor_id', v_history.actor_id, 'source', v_history.source,
+            'created_at', v_history.created_at, 'updated_at', v_history.updated_at,
+            'deleted_task_preserved', true
+          )
+      where id = v_existing.id
+      returning id into v_occurrence_id;
+      return v_occurrence_id;
+    end if;
     return null;
   end if;
 
-  if not v_qualified then
+  v_root_id := public.adhdice_achievement_root_parent(v_history.entity_id, v_history.user_id);
+  v_snapshot := jsonb_build_object(
+    'history_fact_id', v_history.id, 'task_id', v_history.entity_id,
+    'entity_id', v_history.entity_id, 'entity_kind', v_history.entity_kind,
+    'logical_date', v_history.logical_date, 'outcome', v_history.outcome,
+    'event_kind', v_history.event_kind, 'occurrence_id', v_history.occurrence_id,
+    'occurrence_key', v_canonical_occurrence_key,
+    'scheduled_due_on', v_history.scheduled_due_on, 'effective_due_on', v_history.effective_due_on,
+    'schedule_boundary_id', v_history.schedule_boundary_id,
+    'recurrence_source_fingerprint', v_history.recurrence_source_fingerprint,
+    'provenance_kind', v_history.provenance_kind, 'actor_kind', v_history.actor_kind,
+    'actor_id', v_history.actor_id, 'source', v_history.source,
+    'created_at', v_history.created_at, 'updated_at', v_history.updated_at,
+    'parent_task_id', v_task.parent_task_id, 'root_parent_id', v_root_id,
+    'logical_dedupe_key', coalesce(v_existing.dedupe_key, v_dedupe_key)
+  );
+
+  if v_history.created_at < v_profile.activated_at
+    or v_history.logical_date < public.adhdice_achievement_logical_date(v_profile.activated_at, v_profile.timezone, v_profile.logical_day_start) then
+    if v_existing.id is null then return null; end if;
     update public.adhdice_achievement_occurrences
-      set is_currently_qualifying = false,
-          source_snapshot = source_snapshot || jsonb_build_object('last_corrected_status', v_history.status::text, 'last_corrected_at', v_history.updated_at)
-      where user_id = v_history.user_id and source_kind = 'task_history' and source_id = v_history.id::text
-      returning id into v_occurrence_id;
+    set source_id = v_history.id::text, outcome_snapshot = v_history.outcome,
+        is_currently_qualifying = false, source_snapshot = v_snapshot
+    where id = v_existing.id
+    returning id into v_occurrence_id;
     return v_occurrence_id;
   end if;
 
-  v_root_id := public.adhdice_achievement_root_parent(v_history.task_id, v_history.user_id);
-  update public.adhdice_achievement_occurrences
-    set source_occurrence_key = v_source_key,
-        first_qualified_at = least(public.adhdice_achievement_occurrences.first_qualified_at, v_history.updated_at),
-        title_snapshot = v_task.title,
-        outcome_snapshot = v_history.status::text,
-        is_currently_qualifying = true,
-        source_created_at = least(coalesce(public.adhdice_achievement_occurrences.source_created_at, v_history.created_at), v_history.created_at),
-        source_snapshot = jsonb_build_object('history_id', public.adhdice_achievement_occurrences.source_id, 'task_id', v_task.id, 'occurrence_key', v_history.occurrence_key,
-          'occurrence_due_on', v_history.occurrence_due_on, 'entry_date', v_history.entry_date,
-          'parent_task_id', v_task.parent_task_id, 'root_parent_id', v_root_id,
-          'latest_history_id', v_history.id, 'logical_dedupe_key', v_dedupe_key),
-        evaluator_version = 'achievements-evaluator-v1',
-        catalog_version = v_profile.catalog_version
-    where user_id = v_history.user_id and dedupe_key = v_dedupe_key
-    returning id into v_occurrence_id;
-  if v_occurrence_id is not null then return v_occurrence_id; end if;
-
-  update public.adhdice_achievement_occurrences
-    set source_occurrence_key = v_source_key,
-        dedupe_key = v_dedupe_key,
+  if v_existing.id is not null then
+    update public.adhdice_achievement_occurrences occurrence
+    set source_id = v_history.id::text,
         source_created_at = v_history.created_at,
-        first_qualified_at = least(public.adhdice_achievement_occurrences.first_qualified_at, v_history.updated_at),
-        logical_date = v_history.entry_date,
-        week_key = v_history.entry_date - extract(isodow from v_history.entry_date)::integer + 1,
-        week_start_date = v_history.entry_date - extract(isodow from v_history.entry_date)::integer + 1,
-        week_end_date = v_history.entry_date - extract(isodow from v_history.entry_date)::integer + 7,
-        month_key = to_char(v_history.entry_date, 'YYYY-MM'),
-        month_start_date = date_trunc('month', v_history.entry_date)::date,
-        month_end_date = (date_trunc('month', v_history.entry_date) + interval '1 month - 1 day')::date,
-        entity_kind = v_entity_kind,
-        entity_id = v_task.id,
+        first_qualified_at = case when v_qualified
+          then least(occurrence.first_qualified_at, v_history.updated_at)
+          else occurrence.first_qualified_at end,
+        logical_date = v_history.logical_date,
+        week_key = v_history.logical_date - extract(isodow from v_history.logical_date)::integer + 1,
+        week_start_date = v_history.logical_date - extract(isodow from v_history.logical_date)::integer + 1,
+        week_end_date = v_history.logical_date - extract(isodow from v_history.logical_date)::integer + 7,
+        month_key = to_char(v_history.logical_date, 'YYYY-MM'),
+        month_start_date = date_trunc('month', v_history.logical_date)::date,
+        month_end_date = (date_trunc('month', v_history.logical_date) + interval '1 month - 1 day')::date,
+        entity_kind = v_entity_kind, entity_id = v_task.id,
         root_parent_id = case when v_task.parent_task_id is null then v_task.id else v_root_id end,
-        title_snapshot = v_task.title,
-        outcome_snapshot = v_history.status::text,
-        is_currently_qualifying = true,
-        source_snapshot = jsonb_build_object('history_id', v_history.id, 'task_id', v_task.id, 'occurrence_key', v_history.occurrence_key,
-          'occurrence_due_on', v_history.occurrence_due_on, 'entry_date', v_history.entry_date,
-          'parent_task_id', v_task.parent_task_id, 'root_parent_id', v_root_id,
-          'logical_dedupe_key', v_dedupe_key),
-        evaluator_version = 'achievements-evaluator-v1',
-        catalog_version = v_profile.catalog_version
-    where user_id = v_history.user_id and source_kind = 'task_history' and source_id = v_history.id::text
-    returning id into v_occurrence_id;
-  if v_occurrence_id is not null then return v_occurrence_id; end if;
+        title_snapshot = v_task.title, outcome_snapshot = v_history.outcome,
+        is_currently_qualifying = v_qualified, source_snapshot = v_snapshot,
+        evaluator_version = 'achievements-evaluator-v1', catalog_version = v_profile.catalog_version
+    where occurrence.id = v_existing.id
+    returning occurrence.id into v_occurrence_id;
+    return v_occurrence_id;
+  end if;
+
+  if not v_qualified then return null; end if;
 
   insert into public.adhdice_achievement_occurrences (
     user_id, source_kind, source_id, source_occurrence_key, dedupe_key,
@@ -4187,31 +4280,18 @@ begin
     evaluator_version, catalog_version, is_currently_qualifying, source_snapshot
   ) values (
     v_history.user_id, 'task_history', v_history.id::text, v_source_key, v_dedupe_key,
-    v_history.created_at, v_history.updated_at, v_history.entry_date,
-    v_history.entry_date - extract(isodow from v_history.entry_date)::integer + 1,
-    v_history.entry_date - extract(isodow from v_history.entry_date)::integer + 1,
-    v_history.entry_date - extract(isodow from v_history.entry_date)::integer + 7,
-    to_char(v_history.entry_date, 'YYYY-MM'), date_trunc('month', v_history.entry_date)::date,
-    (date_trunc('month', v_history.entry_date) + interval '1 month - 1 day')::date,
+    v_history.created_at, v_history.updated_at, v_history.logical_date,
+    v_history.logical_date - extract(isodow from v_history.logical_date)::integer + 1,
+    v_history.logical_date - extract(isodow from v_history.logical_date)::integer + 1,
+    v_history.logical_date - extract(isodow from v_history.logical_date)::integer + 7,
+    to_char(v_history.logical_date, 'YYYY-MM'), date_trunc('month', v_history.logical_date)::date,
+    (date_trunc('month', v_history.logical_date) + interval '1 month - 1 day')::date,
     v_profile.timezone, v_profile.logical_day_start,
     v_entity_kind,
     v_task.id, case when v_task.parent_task_id is null then v_task.id else v_root_id end,
-    v_task.title, v_history.status::text, 'achievements-evaluator-v1', v_profile.catalog_version, true,
-    jsonb_build_object('history_id', v_history.id, 'task_id', v_task.id, 'occurrence_key', v_history.occurrence_key,
-      'occurrence_due_on', v_history.occurrence_due_on, 'entry_date', v_history.entry_date,
-      'parent_task_id', v_task.parent_task_id, 'root_parent_id', v_root_id,
-      'logical_dedupe_key', v_dedupe_key)
+    v_task.title, v_history.outcome, 'achievements-evaluator-v1', v_profile.catalog_version, true,
+    v_snapshot
   )
-  on conflict (user_id, dedupe_key) do update set
-    source_occurrence_key = excluded.source_occurrence_key,
-    first_qualified_at = least(public.adhdice_achievement_occurrences.first_qualified_at, excluded.first_qualified_at),
-    title_snapshot = excluded.title_snapshot,
-    outcome_snapshot = excluded.outcome_snapshot,
-    is_currently_qualifying = true,
-    source_created_at = least(coalesce(public.adhdice_achievement_occurrences.source_created_at, excluded.source_created_at), excluded.source_created_at),
-    source_snapshot = excluded.source_snapshot || jsonb_build_object('canonical_history_id', public.adhdice_achievement_occurrences.source_id, 'latest_history_id', excluded.source_id),
-    evaluator_version = excluded.evaluator_version,
-    catalog_version = excluded.catalog_version
   returning id into v_occurrence_id;
   return v_occurrence_id;
 end;
@@ -4611,7 +4691,7 @@ begin
   v_is_deferred := coalesce(v_deferred_user_id = v_user_id::text, false);
   v_operation_id := md5(tg_table_name || ':' || new.id::text || ':' || to_jsonb(new)::text)::uuid;
   begin
-    if tg_table_name='adhdice_task_history' then
+    if tg_table_name='adhdice_task_history_facts' then
       v_occurrence_id := public.adhdice_capture_task_achievement_occurrence(new.id);
       if v_occurrence_id is not null then
         select root_parent_id into v_root_id from public.adhdice_achievement_occurrences where id=v_occurrence_id;
@@ -4636,8 +4716,10 @@ $function$;
 
 drop trigger if exists adhdice_capture_task_achievement_runtime on public.adhdice_task_history;
 create trigger adhdice_capture_task_achievement_runtime
-  after insert or update of status, was_completed, occurrence_key, occurrence_due_on
-  on public.adhdice_task_history for each row
+  after insert or update of entity_id, entity_kind, logical_date, outcome, event_kind,
+    occurrence_id, scheduled_due_on, effective_due_on, schedule_boundary_id,
+    provenance_kind, actor_kind, actor_id, source, source_legacy_history_id
+  on public.adhdice_task_history_facts for each row
   execute function public.adhdice_capture_and_evaluate_achievement_source();
 
 drop trigger if exists adhdice_capture_focus_achievement_runtime on public.adhdice_focus_sessions;
@@ -4654,18 +4736,46 @@ as $function$
 declare
   v_operation_id uuid := md5(tg_table_name || ':delete:' || old.id::text || ':' || to_jsonb(old)::text)::uuid;
   v_occurrence public.adhdice_achievement_occurrences%rowtype;
+  v_match_count integer := 0;
 begin
   begin
-    if tg_table_name = 'adhdice_task_history'
-      and not exists (select 1 from public.adhdice_clean_tasks where id=old.task_id and user_id=old.user_id) then
+    if tg_table_name = 'adhdice_task_history_facts'
+      and not exists (select 1 from public.adhdice_clean_tasks where id=old.entity_id and user_id=old.user_id) then
       return old;
     end if;
-    select * into v_occurrence from public.adhdice_achievement_occurrences
-      where user_id=old.user_id
-        and source_kind=case when tg_table_name='adhdice_task_history' then 'task_history' else 'focus_session' end
-        and source_id=old.id::text;
-    if found then
-      update public.adhdice_achievement_occurrences set is_currently_qualifying=false where id=v_occurrence.id;
+    if tg_table_name = 'adhdice_task_history_facts' then
+      select count(*) into v_match_count
+      from public.adhdice_achievement_occurrences occurrence
+      where occurrence.user_id = old.user_id
+        and occurrence.source_kind = 'task_history'
+        and (
+          occurrence.source_id = old.id::text
+          or occurrence.source_snapshot->>'history_fact_id' = old.id::text
+          or (occurrence.entity_id = old.entity_id and occurrence.logical_date = old.logical_date)
+        );
+      if v_match_count > 1 then
+        raise exception 'Ambiguous Achievement mapping for deleted canonical History fact %.', old.id;
+      end if;
+      if v_match_count = 1 then
+        select * into v_occurrence
+        from public.adhdice_achievement_occurrences occurrence
+        where occurrence.user_id = old.user_id
+          and occurrence.source_kind = 'task_history'
+          and (
+            occurrence.source_id = old.id::text
+            or occurrence.source_snapshot->>'history_fact_id' = old.id::text
+            or (occurrence.entity_id = old.entity_id and occurrence.logical_date = old.logical_date)
+          );
+      end if;
+    else
+      select * into v_occurrence from public.adhdice_achievement_occurrences
+        where user_id=old.user_id and source_kind='focus_session' and source_id=old.id::text;
+    end if;
+    if v_occurrence.id is not null then
+      update public.adhdice_achievement_occurrences
+      set is_currently_qualifying=false,
+          source_snapshot = source_snapshot || jsonb_build_object('source_deleted_at', clock_timestamp())
+      where id=v_occurrence.id;
       if v_occurrence.root_parent_id is not null then
         perform public.adhdice_refresh_achievement_step_set(old.user_id,v_occurrence.root_parent_id);
       end if;
@@ -4680,7 +4790,7 @@ $function$;
 
 drop trigger if exists adhdice_deactivate_deleted_task_achievement_runtime on public.adhdice_task_history;
 create trigger adhdice_deactivate_deleted_task_achievement_runtime
-  after delete on public.adhdice_task_history for each row
+  after delete on public.adhdice_task_history_facts for each row
   execute function public.adhdice_deactivate_deleted_achievement_source();
 drop trigger if exists adhdice_deactivate_deleted_focus_achievement_runtime on public.adhdice_focus_sessions;
 create trigger adhdice_deactivate_deleted_focus_achievement_runtime
@@ -4728,13 +4838,20 @@ begin
   update public.adhdice_achievement_occurrences occurrence set is_currently_qualifying=false
     where occurrence.user_id=v_user_id and occurrence.source_kind='task_history'
       and exists (select 1 from public.adhdice_clean_tasks task where task.id=occurrence.entity_id and task.user_id=v_user_id)
-      and not exists (select 1 from public.adhdice_task_history history where history.id=occurrence.source_id::uuid and history.user_id=v_user_id);
+      and not exists (
+        select 1
+        from public.adhdice_task_history_facts fact
+        join public.adhdice_achievement_profiles profile on profile.user_id=fact.user_id
+        where fact.user_id=v_user_id and fact.entity_id=occurrence.entity_id and fact.logical_date=occurrence.logical_date
+          and fact.created_at>=profile.activated_at
+          and fact.logical_date>=public.adhdice_achievement_logical_date(profile.activated_at,profile.timezone,profile.logical_day_start)
+      );
   for v_record in
     with sources as (
-      select history.created_at,'task_history'::text source_kind,history.id source_id
-      from public.adhdice_task_history history
-      where history.user_id=v_user_id and history.created_at>=v_profile.activated_at
-        and history.entry_date>=public.adhdice_achievement_logical_date(v_profile.activated_at,v_profile.timezone,v_profile.logical_day_start)
+      select fact.created_at,'task_history'::text source_kind,fact.id source_id
+      from public.adhdice_task_history_facts fact
+      where fact.user_id=v_user_id and fact.created_at>=v_profile.activated_at
+        and fact.logical_date>=public.adhdice_achievement_logical_date(v_profile.activated_at,v_profile.timezone,v_profile.logical_day_start)
       union all
       select session.created_at,'focus_session',session.id
       from public.adhdice_focus_sessions session

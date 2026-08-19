@@ -53,8 +53,8 @@ test("deferred rows retain capture and Step-set work while full evaluation runs 
   const stepSetIndex = triggerFunction.indexOf("adhdice_refresh_achievement_step_set");
   const deferIndex = triggerFunction.indexOf("if not v_is_deferred then");
   assert.ok(captureIndex >= 0 && stepSetIndex > captureIndex && deferIndex > stepSetIndex);
-  assert.match(captureFunction, /v_qualified := v_history\.status::text in \('done', 'complete', 'did_my_best'\)/);
-  assert.match(captureFunction, /if not v_qualified then[\s\S]*set is_currently_qualifying = false[\s\S]*return v_occurrence_id/);
+  assert.match(captureFunction, /v_qualified := v_history\.outcome in \('done', 'complete', 'did_my_best'\)/);
+  assert.match(captureFunction, /is_currently_qualifying = v_qualified/);
   assert.deepEqual(simulateRolloverBatch(2_452), { captures: 2_452, evaluations: 1 });
   assert.equal([...rollover.matchAll(/public\.adhdice_evaluate_achievements\(/g)].length, 1);
   assert.equal(triggerFunction.includes("public.adhdice_evaluate_achievements"), true);

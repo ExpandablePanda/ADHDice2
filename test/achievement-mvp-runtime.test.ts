@@ -92,6 +92,7 @@ test("Task, Focus, aggregate, streak, and recurring identities are deterministic
   assert.equal(buildTaskSourceOccurrenceKey({ ...recurring, occurrenceKey: null }), "task:task-1:logical-date:2026-07-17");
   assert.equal(buildTaskLogicalOccurrencePart({ ...recurring, repeatFrequency: "daily" }), "occurrence:2026-07-20");
   assert.equal(buildTaskLogicalOccurrencePart({ entryDate: "2026-07-17", occurrenceKey: null, repeatFrequency: "none", taskId: "task-1" }), "lifetime:task-1");
+  assert.equal(buildTaskLogicalOccurrencePart({ entryDate: "2026-07-17", occurrenceKey: null, canonicalOneTime: true, repeatFrequency: "daily", taskId: "task-1" }), "lifetime:task-1");
   assert.equal(buildTaskLogicalOccurrencePart({ entryDate: "2026-07-17", occurrenceKey: null, repeatFrequency: "daily", taskId: "task-1" }), "logical-date:2026-07-17");
   assert.equal(
     buildTaskAchievementLogicalDedupeKey({ entityKind: "parent_task", ...recurring, repeatFrequency: "daily" }),
