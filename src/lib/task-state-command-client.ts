@@ -25,13 +25,14 @@ type TaskStateCommandErrorKind =
  */
 export type TaskStateCommandIntent =
   | { type: "set_outcome"; task_id: string; replay_identity: string; expected_revision?: number; outcome: "done" | "did_my_best" | "missed"; logical_date?: string; occurrence_key?: string; scheduled_due_on?: string }
-  | { type: "complete_task"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; occurrence_key?: string; scheduled_due_on?: string }
+  | { type: "complete_task"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; occurrence_key?: string; scheduled_due_on?: string; milestone_id?: string; expected_milestone_revision?: number; milestone_operation_id?: string }
   | { type: "delay_occurrence"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; occurrence_key?: string; effective_due_on: string }
   | { type: "set_due_date"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: TaskStateScheduleChangeIntent; manual_action?: "unscheduled_status" }
   | { type: "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: TaskStateScheduleChangeIntent }
   | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open"; reason?: string | null }
   | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
-  | { type: "archive_task" | "trash_task" | "restore_task" | "clear_in_progress" | "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
+  | { type: "archive_task" | "clear_in_progress" | "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
+  | { type: "trash_task" | "restore_task"; task_id: string; replay_identity: string; expected_revision?: number; milestone_id?: string; expected_milestone_revision?: number; milestone_operation_id?: string }
   | { type: "start_in_progress"; task_id: string; replay_identity: string; expected_revision?: number; occurrence_key?: string };
 
 export type TaskStateScheduleChangeIntent = {
@@ -71,6 +72,9 @@ type TaskStateCommandResultFields = {
   canonical_task_patch: JsonObject | null;
   compatibility_projection: JsonObject | null;
   side_effect_ids: TaskStateCommandSideEffectIds;
+  task_row?: JsonObject;
+  milestone_row?: JsonObject;
+  created_transition?: boolean;
 };
 
 export type TaskStateCommandSuccess = TaskStateCommandResultFields & {
@@ -184,6 +188,9 @@ function resultFields(payload: JsonObject): TaskStateCommandResultFields {
     canonical_task_patch: payload.state === "committed" ? requiredObject(payload, "canonical_task_patch") : null,
     compatibility_projection: payload.state === "committed" ? requiredObject(payload, "compatibility_projection") : null,
     side_effect_ids: sideEffectIds(payload),
+    ...(hasOwn(payload, "task_row") ? { task_row: requiredObject(payload, "task_row") } : {}),
+    ...(hasOwn(payload, "milestone_row") ? { milestone_row: requiredObject(payload, "milestone_row") } : {}),
+    ...(hasOwn(payload, "created_transition") ? { created_transition: requiredBoolean(payload, "created_transition") } : {}),
   };
 }
 

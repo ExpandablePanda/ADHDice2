@@ -2673,29 +2673,9 @@ export type Database = {
         };
         Returns: Milestone;
       };
-      adhdice_complete_milestone: {
-        Args: { p_task_id: string; p_milestone_id: string; p_expected_task_revision: number; p_expected_milestone_revision: number; p_operation_id: string };
-        Returns: MilestoneTaskMutationResult[];
-      };
-      adhdice_reverse_milestone_completion: {
-        Args: { p_task_id: string; p_milestone_id: string; p_expected_task_revision: number; p_expected_milestone_revision: number; p_operation_id: string };
-        Returns: MilestoneTaskMutationResult[];
-      };
       adhdice_abandon_milestone: {
         Args: { p_milestone_id: string; p_expected_milestone_revision: number; p_operation_id: string; p_reason?: string | null };
         Returns: MilestoneOnlyMutationResult[];
-      };
-      adhdice_trash_milestone_task: {
-        Args: { p_task_id: string; p_milestone_id: string; p_expected_task_revision: number; p_expected_milestone_revision: number; p_operation_id: string };
-        Returns: MilestoneTaskMutationResult[];
-      };
-      adhdice_restore_milestone_task: {
-        Args: { p_task_id: string; p_milestone_id: string; p_expected_task_revision: number; p_expected_milestone_revision: number; p_operation_id: string };
-        Returns: MilestoneTaskMutationResult[];
-      };
-      adhdice_delete_milestone_task_permanently: {
-        Args: { p_task_id: string; p_milestone_id: string; p_expected_task_revision: number; p_expected_milestone_revision: number; p_operation_id: string };
-        Returns: MilestoneTaskMutationResult[];
       };
       adhdice_mutate_focus_counter: {
         Args: {

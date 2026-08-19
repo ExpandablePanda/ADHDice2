@@ -43,7 +43,7 @@ type UseTaskCrudActionsOptions = {
   clearPendingTaskMutations?: (taskIds: string[]) => void;
   currentUserId: string;
   markPendingTaskMutations?: (taskIds: string[]) => void;
-  mutateMilestoneTask?: (action: "delete" | "trash", task: Task) => Promise<{ deleted: boolean; error: string | null; handled: boolean; task: Task | null }>;
+  runMilestoneTaskTrash?: (task: Task) => Promise<{ error: string | null; handled: boolean; task: Task | null }>;
   /** Test seam for the canonical executor; normal callers use the real executor. */
   canonicalCommandExecutor?: (action: TaskStateRuntimeCanonicalAction, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   isMilestoneTask?: (task: Task) => boolean;
@@ -63,15 +63,15 @@ export function useTaskCrudActions({
   clearPendingTaskMutations,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   currentUserId,
-  isMilestoneTask,
   markPendingTaskMutations,
-  mutateMilestoneTask,
+  runMilestoneTaskTrash,
   setMessage,
   setTaskRouting,
   setTasks,
   shouldRouteTaskToInbox,
   sortTasksForUi,
   tasks,
+  isMilestoneTask,
   deleteTaskRow,
 }: UseTaskCrudActionsOptions) {
   const createTask = canonicalTaskCreator ?? ((payload: TaskInsert, source?: "task_creation" | "task_import") => insertTaskRowWithCanonicalCreation(client, payload, source));
@@ -206,21 +206,16 @@ export function useTaskCrudActions({
     for (const taskId of taskIds) {
       const expectedTask = taskSnapshots.get(taskId) ?? null;
 
-      if (expectedTask && mutateMilestoneTask) {
-        if (expectedTask.status !== "trashed" && !isMilestoneTask) {
-          firstErrorMessage ??= "Canonical Trash could not verify Milestone lifecycle ownership; no legacy Trash fallback was used.";
-          continue;
-        }
-        const milestoneResult = await mutateMilestoneTask(expectedTask.status === "trashed" ? "delete" : "trash", expectedTask);
-        if (milestoneResult.handled) {
-          if (milestoneResult.error) firstErrorMessage ??= milestoneResult.error;
-          else if (milestoneResult.deleted) deletedTaskIds.push(taskId);
-          else if (milestoneResult.task) movedToTrashTasks.push(milestoneResult.task);
-          continue;
-        }
-      }
-
       if (expectedTask && expectedTask.status !== "trashed") {
+        if (isMilestoneTask?.(expectedTask) && runMilestoneTaskTrash) {
+          const milestoneResult = await runMilestoneTaskTrash(expectedTask);
+          if (milestoneResult.handled) {
+            if (milestoneResult.error) firstErrorMessage ??= milestoneResult.error;
+            else if (milestoneResult.task) movedToTrashTasks.push(milestoneResult.task);
+            continue;
+          }
+        }
+
         const runtimeAction = classifyTaskStateRuntimeAction({
           replayIdentity: createTaskStateReplayIdentity(),
           task: expectedTask as TaskStateRuntimeLocalTask,

@@ -581,7 +581,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.41";
+const APP_VERSION = "7.9.42";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3667,7 +3667,7 @@ export function TaskApp() {
       deleteTaskRow: (taskId, expectedTask) => deleteTaskRow(client, taskId, { expectedTask }),
       isMilestoneTask: (task) => milestoneData.milestoneByTaskId.has(task.id),
       markPendingTaskMutations,
-      mutateMilestoneTask,
+      runMilestoneTaskTrash,
       setMessage,
       setTaskRouting,
       setTasks,
@@ -5877,21 +5877,18 @@ export function TaskApp() {
     });
   }
 
-  async function mutateMilestoneTask(action: "delete" | "trash", task: Task) {
+  async function runMilestoneTaskTrash(task: Task) {
     const milestone = milestoneData.milestoneByTaskId.get(task.id);
-    if (!milestone) return { deleted: false, error: null, handled: false, task: null };
-    const operationKey = `${action}:${milestone.id}`;
+    if (!milestone) return { error: null, handled: false, task: null };
+    const operationKey = `trash:${milestone.id}`;
     const operationId = milestoneOperationIdsRef.current.get(operationKey) ?? createBrowserUuidV4();
     milestoneOperationIdsRef.current.set(operationKey, operationId);
-    const args = buildMilestoneLifecycleArgs(task, milestone, operationId);
-    const mutation = action === "delete"
-      ? await milestoneData.deleteMilestoneTaskPermanently(args)
-      : await milestoneData.trashMilestoneTask(args);
+    const mutation = await milestoneData.trashMilestoneTask(buildMilestoneLifecycleArgs(task, milestone, operationId));
     if (mutation.error || !mutation.result) {
-      return { deleted: false, error: formatMilestoneRpcError(mutation.error ?? "No Milestone task result was returned."), handled: true, task: null };
+      return { error: formatMilestoneRpcError(mutation.error ?? "No Milestone task result was returned."), handled: true, task: null };
     }
     milestoneOperationIdsRef.current.delete(operationKey);
-    return { deleted: action === "delete", error: null, handled: true, task: mutation.result.task_row };
+    return { error: null, handled: true, task: mutation.result.task_row };
   }
 
   async function openSingleTaskDeleteModal(taskId: string) {
@@ -5918,7 +5915,7 @@ export function TaskApp() {
     const milestone = milestoneData.milestoneByTaskId.get(taskId);
     if (milestone) {
       markPendingTaskMutations([taskId]);
-      const mutation = await mutateMilestoneTask("trash", task);
+      const mutation = await runMilestoneTaskTrash(task);
       clearPendingTaskMutations([taskId]);
       if (mutation.error || !mutation.task) {
         restoreTaskSnapshot(task, previousRoutingBucket);
@@ -6021,18 +6018,10 @@ export function TaskApp() {
       setMessage({ tone: "warn", text: "The attached task is no longer available." });
       return;
     }
-    markPendingTaskMutations([task.id]);
     const mutation = await milestoneData.reverseMilestoneCompletion(buildMilestoneLifecycleArgs(task, milestone, operationId));
-    clearPendingTaskMutations([task.id]);
     setIsMilestoneLifecyclePending(false);
-    if (mutation.error || !mutation.result?.task_row) {
-      setMessage({ tone: "warn", text: formatMilestoneRpcError(mutation.error ?? "No restored task row was returned.") });
-      return;
-    }
     milestoneOperationIdsRef.current.delete(operationKey);
-    setTasks((current) => sortTasksForUi(mergeAuthoritativeMilestoneTask(current, mutation.result!.task_row)));
-    setPendingMilestoneLifecycle(null);
-    setMessage({ tone: "good", text: "Milestone completion undone. Trophy and aura revoked; locked dates preserved." });
+    setMessage({ tone: "warn", text: formatMilestoneRpcError(mutation.error) });
   }
 
   function closeBatchDeleteModal() {

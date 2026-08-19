@@ -61,19 +61,13 @@ function canonicalFailure(message: string): TaskStateRuntimeExecutionResult {
 
 function useBuildCrud({
   canonicalCommandExecutor,
-  canonicalCommandsEnabled = true,
   deleteTaskRow = async () => ({ conflict: null, data: null, error: null }),
-  isMilestoneTask,
-  mutateMilestoneTask,
   setMessage,
   tasks,
   updateTaskRowWithLegacyEnergyFallback,
 }: {
   canonicalCommandExecutor?: Parameters<typeof useTaskCrudActions>[0]["canonicalCommandExecutor"];
-  canonicalCommandsEnabled?: boolean;
   deleteTaskRow?: Parameters<typeof useTaskCrudActions>[0]["deleteTaskRow"];
-  isMilestoneTask?: (task: Task) => boolean;
-  mutateMilestoneTask?: Parameters<typeof useTaskCrudActions>[0]["mutateMilestoneTask"];
   setMessage?: (message: { tone: "neutral" | "good" | "warn"; text: string }) => void;
   tasks: TaskStateRuntimeLocalTask[];
   updateTaskRowWithLegacyEnergyFallback?: Parameters<typeof useTaskCrudActions>[0]["updateTaskRowWithLegacyEnergyFallback"];
@@ -82,12 +76,9 @@ function useBuildCrud({
   const messages: Array<{ tone: "neutral" | "good" | "warn"; text: string }> = [];
   const crud = useTaskCrudActions({
     canonicalCommandExecutor,
-    canonicalCommandsEnabled,
     client: {} as never,
     currentUserId: "user-1",
     deleteTaskRow,
-    isMilestoneTask,
-    mutateMilestoneTask,
     setMessage: (message) => {
       const next = typeof message === "function" ? message(messages.at(-1) ?? null) : message;
       if (next) messages.push(next);
@@ -218,26 +209,13 @@ test("already-trashed deleteTasks remains on the existing permanent-delete path"
   assert.equal(harness.localTasks.length, 0);
 });
 
-test("Milestone first-stage Trash stays on the trusted Milestone lifecycle seam under the enabled gate", async () => {
-  const milestoneTask = task("milestone");
-  let milestoneCalls = 0;
-  let legacyWrites = 0;
+test("Milestone Tasks use the same canonical first-stage Trash path", async () => {
+  const milestoneTask = task("milestone", { entity_kind: "parent" });
   const harness = useBuildCrud({
-    isMilestoneTask: () => true,
-    mutateMilestoneTask: async () => {
-      milestoneCalls += 1;
-      return { deleted: false, error: null, handled: true, task: null };
-    },
     tasks: [milestoneTask],
-    canonicalCommandExecutor: async () => canonicalFailure("must not run"),
-    updateTaskRowWithLegacyEnergyFallback: async () => {
-      legacyWrites += 1;
-      return { conflict: null, data: null, error: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
-    },
+    canonicalCommandExecutor: async (_action, taskForAction) => canonicalSuccess({ ...taskForAction, canonical_revision: 5, status: "trashed", container_state: "trashed" }),
   });
 
-  assert.equal(await harness.crud.deleteTasks([milestoneTask.id]), false);
-  assert.equal(milestoneCalls, 1);
-  assert.equal(legacyWrites, 0);
-  assert.equal(harness.localTasks[0]?.status, "pending");
+  assert.equal(await harness.crud.deleteTasks([milestoneTask.id]), true);
+  assert.equal(harness.localTasks[0]?.status, "trashed");
 });

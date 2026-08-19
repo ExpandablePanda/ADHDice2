@@ -104,7 +104,6 @@ create table if not exists public.adhdice_milestones (
       and completed_at is not null
       and completion_timing is not null
       and completion_date_key is not null
-      and pre_completion_task_snapshot is not null
       and trophy_awarded_at is not null
       and trophy_revoked_at is null
       and aura_kind is not null
@@ -301,6 +300,9 @@ begin
   if v_task.user_id <> v_user_id then raise exception 'Task ownership mismatch'; end if;
   if p_expected_task_revision is null or v_task.revision <> p_expected_task_revision then
     raise exception 'Task revision conflict';
+  end if;
+  if v_task.entity_kind is distinct from 'parent' then
+    raise exception 'Milestone Tasks must remain canonical parent entities';
   end if;
   if v_task.parent_task_id is not null then raise exception 'Steps and Substeps must be detached before Milestone promotion'; end if;
   if v_task.repeat_frequency::text not in ('none', 'daily_until_complete') then raise exception 'Indefinitely recurring tasks are not eligible for Milestones'; end if;

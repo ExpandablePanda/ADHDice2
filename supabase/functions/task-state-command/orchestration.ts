@@ -42,6 +42,12 @@ type OrchestrationDependencies = {
   buildCommand: typeof buildTrustedTaskStateCommand;
   planCommand: typeof planTaskStateCommand;
   serializePlan: typeof serializeCanonicalTaskStateCommandForRpc;
+  invokeCommand: (input: {
+    adminClient: TrustedTaskStateCommandClient;
+    userId: string;
+    serializedPlan: Record<string, unknown>;
+    intent: TaskStateCommandIntent;
+  }) => Promise<{ data: unknown; error: { code?: string | null; message?: string } | null }>;
 };
 
 const defaultDependencies: OrchestrationDependencies = {
@@ -51,6 +57,26 @@ const defaultDependencies: OrchestrationDependencies = {
   buildCommand: buildTrustedTaskStateCommand,
   planCommand: planTaskStateCommand,
   serializePlan: serializeCanonicalTaskStateCommandForRpc,
+  invokeCommand: async ({ adminClient, userId, serializedPlan, intent }) => {
+    const milestoneIntent = intent as TaskStateCommandIntent & {
+      milestone_id?: string;
+      expected_milestone_revision?: number;
+      milestone_operation_id?: string;
+    };
+    if (milestoneIntent.milestone_id && milestoneIntent.expected_milestone_revision !== undefined && milestoneIntent.milestone_operation_id) {
+      return adminClient.rpc("adhdice_execute_milestone_task_state_command", {
+        p_user_id: userId,
+        p_command: serializedPlan,
+        p_milestone_id: milestoneIntent.milestone_id,
+        p_expected_milestone_revision: milestoneIntent.expected_milestone_revision,
+        p_operation_id: milestoneIntent.milestone_operation_id,
+      });
+    }
+    return adminClient.rpc("adhdice_execute_task_state_command", {
+      p_user_id: userId,
+      p_command: serializedPlan,
+    });
+  },
 };
 
 function errorResponse(code: string, message: string, status = 409): TrustedTaskStateCommandResponse {
@@ -251,13 +277,12 @@ export async function executeTrustedTaskStateCommand(input: {
     return semanticNoOpResponse({ commandId: plan.command.commandId, plan, task: readResult.data.task });
   }
 
-  const rpcResult = await input.adminClient.rpc(
-    "adhdice_execute_task_state_command",
-    {
-      p_user_id: input.userId,
-      p_command: dependencies.serializePlan(plan),
-    },
-  );
+  const rpcResult = await dependencies.invokeCommand({
+    adminClient: input.adminClient,
+    userId: input.userId,
+    serializedPlan: dependencies.serializePlan(plan),
+    intent: input.intent,
+  });
   if (rpcResult.error) {
     const status = rpcResult.error.code === "40001" ? 409 : rpcResult.error.code === "42501" ? 403 : 422;
     return errorResponse("command_rejected", "Canonical Task State command was rejected.", status);

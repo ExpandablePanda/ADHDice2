@@ -18,6 +18,13 @@ import type {
 
 export type MilestoneLockArgs = Database["public"]["Functions"]["adhdice_lock_milestone"]["Args"];
 export type MilestoneCorrectionArgs = Database["public"]["Functions"]["adhdice_correct_milestone_setup"]["Args"];
+export type MilestoneTaskLifecycleArgs = {
+  p_task_id: string;
+  p_milestone_id: string;
+  p_expected_task_revision: number;
+  p_expected_milestone_revision: number;
+  p_operation_id: string;
+};
 
 export type MilestoneEstimatedDurationDraft =
   | { kind: "duration"; unit: Extract<MilestoneEstimatedDuration, { kind: "duration" }>["unit"]; value: number | null }

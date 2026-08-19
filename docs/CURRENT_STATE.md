@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.41`.
+- Current working app version: `7.9.42`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,19 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+## 2026-08-18 Milestone canonicalization
+
+Milestones now remain metadata attached to canonical top-level parent Tasks.
+Complete, Trash, and Restore use the trusted `task-state-command` boundary and
+an atomic backend-only orchestration that invokes the existing canonical Task
+State executor before committing Milestone awards, reminders, and events.
+Permanent deletion uses the normal Task deletion path, preserving nullable
+historical Milestone rows. The old Milestone Task-mutating RPCs and legacy
+History writes were removed from production wiring. Reverse completion remains
+explicitly unavailable because canonical Task State has no reopen command; no
+snapshot restoration is performed. The 7.9.42 SQL patch is authored only and
+has not been applied or deployed.
 
 ## 2026-08-18 Task State closure
 
@@ -394,7 +407,7 @@ out of scope.
 - `src/lib/task-state-runtime-actions.ts` is the classification boundary for the next runtime cutover. It explicitly separates metadata-only fields (`title`, `notes`, priority/energy/presentation fields, links, tags, focus/editor metadata, and pin/sort fields) from Task State-owned fields (`status`, schedule/repeat fields, active-status projections, `completed_at`, `trashed_at`, and hierarchy parent changes).
 - Runtime coordinator/executor wiring covers the named Task State commands as source implementation evidence, but runtime convergence remains pending. Canonical responses are intended to reconcile the local Task from `canonical_task_patch`, `compatibility_projection`, and `next_revision`; History refreshes must preserve canonical facts and must not recreate legacy truth.
 - Canonical History reads are wired through `adhdice_task_history_facts` in the source for workspace, task-scoped, streak, realtime, Records, and report-range paths. Any remaining legacy-table read is transitional migration/translation evidence and must stop deciding current state; the adapter must project explicit facts, including automatic Missed, without synthetic substitutes.
-- Remaining-writer audit classification: `CANONICAL` = coordinator-routed lifecycle/outcome/schedule/History-calendar/rollover/batch paths; `METADATA_ONLY` = title, notes, priority, energy, links, tags, focus, pin, and sort persistence; `LEGACY_ONLY_NONCANONICAL_ENTITY` = intentionally unpromoted checklist rows, the inactive `/classic` demo surface, and Settings JSON restore while the gate is disabled; `MILESTONE_ATOMIC_TRUSTED_SEAM` = the existing trusted Milestone completion/trash/restore/delete transactions whose Milestone-specific atomicity cannot be split here. Promoted Steps/Substeps use the same-table canonical Task coordinator, and Milestone Done/Did My Best/Missed outcomes use the canonical coordinator. Settings JSON restore is explicitly fenced while the gate is enabled so its legacy ID-based upsert cannot overwrite canonical status or schedule state.
+- Remaining-writer audit classification: `CANONICAL` = coordinator-routed lifecycle/outcome/schedule/History-calendar/rollover/batch paths; `METADATA_ONLY` = title, notes, priority, energy, links, tags, focus, pin, and sort persistence; `LEGACY_ONLY_NONCANONICAL_ENTITY` = intentionally unpromoted checklist rows, the inactive `/classic` demo surface, and Settings JSON restore while the gate is disabled; `MILESTONE_ATOMIC_TRUSTED_SEAM` = the trusted Milestone metadata orchestration that invokes canonical Task State for completion/trash/restore. Promoted Steps/Substeps use the same-table canonical Task coordinator, and Milestone Done/Did My Best/Missed outcomes use the canonical coordinator. Settings JSON restore is explicitly fenced while the gate is enabled so its legacy ID-based upsert cannot overwrite canonical status or schedule state.
 - Activation installation item: `supabase/add_canonical_reward_entitlement_bridge.sql` is authored for review but not installed. It consumes canonical entitlement identity, derives the existing dice tier from canonical successful facts, and is idempotent by entitlement/grant identity. Delay now resolves a materialized canonical occurrence and fails closed when none exists; undated bench Delay remains unsupported by the locked command contract.
 - The prior-day Calendar completion assertion is historical implementation
   evidence only. Under the architecture lock, saved automatic Missed is

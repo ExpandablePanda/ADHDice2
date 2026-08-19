@@ -1551,7 +1551,6 @@ create table if not exists public.adhdice_milestones (
       and completed_at is not null
       and completion_timing is not null
       and completion_date_key is not null
-      and pre_completion_task_snapshot is not null
       and trophy_awarded_at is not null
       and trophy_revoked_at is null
       and aura_kind is not null

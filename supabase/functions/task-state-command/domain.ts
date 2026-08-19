@@ -43,7 +43,8 @@ export type TaskStateCommandIntent =
   | { type: "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: ScheduleChangeIntent }
   | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open"; reason?: string | null }
   | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
-  | { type: "archive_task" | "trash_task" | "restore_task" | "clear_in_progress" | "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
+  | { type: "archive_task" | "clear_in_progress" | "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
+  | { type: "trash_task" | "restore_task"; task_id: string; replay_identity: string; expected_revision?: number; milestone_id?: string; expected_milestone_revision?: number; milestone_operation_id?: string }
   | { type: "start_in_progress"; task_id: string; replay_identity: string; expected_revision?: number; occurrence_key?: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -128,7 +129,7 @@ export function validateTaskStateCommandIntent(value: unknown): TaskStateCommand
     ["outcome", "logical_date", "occurrence_key", "scheduled_due_on"].forEach((key) => allowed.add(key));
     if (!(value.outcome === "done" || value.outcome === "did_my_best" || value.outcome === "missed")) return null;
   } else if (type === "complete_task") {
-    ["logical_date", "occurrence_key", "scheduled_due_on"].forEach((key) => allowed.add(key));
+    ["logical_date", "occurrence_key", "scheduled_due_on", "milestone_id", "expected_milestone_revision", "milestone_operation_id"].forEach((key) => allowed.add(key));
   } else if (type === "delay_occurrence") {
     ["logical_date", "occurrence_key", "effective_due_on"].forEach((key) => allowed.add(key));
     if (value.occurrence_key !== undefined && !isString(value.occurrence_key, 1, 256)) return null;
@@ -147,10 +148,21 @@ export function validateTaskStateCommandIntent(value: unknown): TaskStateCommand
   } else if (type === "clear_outcome") {
     ["logical_date", "occurrence_key", "scheduled_due_on"].forEach((key) => allowed.add(key));
     if (!isDate(value.logical_date)) return null;
+  } else if (type === "trash_task" || type === "restore_task") {
+    ["milestone_id", "expected_milestone_revision", "milestone_operation_id"].forEach((key) => allowed.add(key));
   } else if (type === "start_in_progress") {
     allowed.add("occurrence_key");
   }
   if (!exactOrSubsetKeys(value, allowed)) return null;
+  const milestoneFields = [value.milestone_id, value.expected_milestone_revision, value.milestone_operation_id];
+  if (milestoneFields.some((field) => field !== undefined)
+    && (typeof value.milestone_id !== "string"
+      || value.milestone_id.length === 0
+      || !Number.isInteger(value.expected_milestone_revision)
+      || value.expected_milestone_revision < 0
+      || typeof value.milestone_operation_id !== "string"
+      || value.milestone_operation_id.length === 0)) return null;
+  if (milestoneFields.some((field) => field !== undefined) && !["complete_task", "trash_task", "restore_task"].includes(type)) return null;
   for (const key of ["logical_date", "scheduled_due_on"]) {
     if (value[key] !== undefined && !isDate(value[key])) return null;
   }

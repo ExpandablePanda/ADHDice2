@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { Database, Milestone, MilestoneOnlyMutationResult, MilestoneTaskMutationResult } from "@/lib/database.types";
+import type { Database, Milestone, MilestoneOnlyMutationResult, MilestoneTaskMutationResult, Task } from "@/lib/database.types";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import {
   buildMilestoneLookups,
@@ -10,7 +10,9 @@ import {
   mergeMilestoneRows,
   type MilestoneCorrectionArgs,
   type MilestoneLockArgs,
+  type MilestoneTaskLifecycleArgs,
 } from "@/lib/milestones/milestone-ticket2";
+import { invokeTaskStateCommand, type TaskStateCommandResponse } from "@/lib/task-state-command-client";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (message: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
@@ -135,34 +137,24 @@ export function useMilestoneData(client: SupabaseClient, userId: string | null, 
     return { error: null, result };
   }, [upsertMilestone]);
 
-  const completeMilestone = useCallback(async (args: Database["public"]["Functions"]["adhdice_complete_milestone"]["Args"]) => {
+  const completeMilestone = useCallback(async (args: MilestoneTaskLifecycleArgs) => {
     if (!client || !userId) return { error: "Authentication required", result: null };
-    const { data, error } = await client.rpc("adhdice_complete_milestone", args);
-    return applyTaskMutationResult(data?.[0], error?.message);
+    return invokeMilestoneTaskStateCommand(client, args.p_task_id, args.p_milestone_id, args.p_expected_milestone_revision, args.p_operation_id, "complete_task", applyTaskMutationResult);
   }, [applyTaskMutationResult, client, userId]);
 
-  const reverseMilestoneCompletion = useCallback(async (args: Database["public"]["Functions"]["adhdice_reverse_milestone_completion"]["Args"]) => {
+  const reverseMilestoneCompletion = useCallback(async (args: MilestoneTaskLifecycleArgs) => {
+    void args;
+    return { error: "Canonical Task State does not currently support reopening a permanently Complete Task; no Milestone reverse transition was applied.", result: null };
+  }, []);
+
+  const trashMilestoneTask = useCallback(async (args: MilestoneTaskLifecycleArgs) => {
     if (!client || !userId) return { error: "Authentication required", result: null };
-    const { data, error } = await client.rpc("adhdice_reverse_milestone_completion", args);
-    return applyTaskMutationResult(data?.[0], error?.message);
+    return invokeMilestoneTaskStateCommand(client, args.p_task_id, args.p_milestone_id, args.p_expected_milestone_revision, args.p_operation_id, "trash_task", applyTaskMutationResult);
   }, [applyTaskMutationResult, client, userId]);
 
-  const trashMilestoneTask = useCallback(async (args: Database["public"]["Functions"]["adhdice_trash_milestone_task"]["Args"]) => {
+  const restoreMilestoneTask = useCallback(async (args: MilestoneTaskLifecycleArgs) => {
     if (!client || !userId) return { error: "Authentication required", result: null };
-    const { data, error } = await client.rpc("adhdice_trash_milestone_task", args);
-    return applyTaskMutationResult(data?.[0], error?.message);
-  }, [applyTaskMutationResult, client, userId]);
-
-  const restoreMilestoneTask = useCallback(async (args: Database["public"]["Functions"]["adhdice_restore_milestone_task"]["Args"]) => {
-    if (!client || !userId) return { error: "Authentication required", result: null };
-    const { data, error } = await client.rpc("adhdice_restore_milestone_task", args);
-    return applyTaskMutationResult(data?.[0], error?.message);
-  }, [applyTaskMutationResult, client, userId]);
-
-  const deleteMilestoneTaskPermanently = useCallback(async (args: Database["public"]["Functions"]["adhdice_delete_milestone_task_permanently"]["Args"]) => {
-    if (!client || !userId) return { error: "Authentication required", result: null };
-    const { data, error } = await client.rpc("adhdice_delete_milestone_task_permanently", args);
-    return applyTaskMutationResult(data?.[0], error?.message);
+    return invokeMilestoneTaskStateCommand(client, args.p_task_id, args.p_milestone_id, args.p_expected_milestone_revision, args.p_operation_id, "restore_task", applyTaskMutationResult);
   }, [applyTaskMutationResult, client, userId]);
 
   const abandonMilestone = useCallback(async (args: Database["public"]["Functions"]["adhdice_abandon_milestone"]["Args"]) => {
@@ -180,7 +172,6 @@ export function useMilestoneData(client: SupabaseClient, userId: string | null, 
     abandonMilestone,
     completeMilestone,
     correctMilestone,
-    deleteMilestoneTaskPermanently,
     lockMilestone,
     isLoading,
     loadError,
@@ -191,4 +182,33 @@ export function useMilestoneData(client: SupabaseClient, userId: string | null, 
     trashMilestoneTask,
     upsertMilestone,
   };
+}
+
+function responseMilestoneTaskResult(response: TaskStateCommandResponse): MilestoneTaskMutationResult | undefined {
+  if (!response.success || !response.task_row || !response.milestone_row) return undefined;
+  return {
+    created_transition: response.created_transition ?? false,
+    milestone_row: response.milestone_row as unknown as Milestone,
+    task_row: response.task_row as unknown as Task,
+  };
+}
+
+async function invokeMilestoneTaskStateCommand(
+  client: NonNullable<SupabaseClient>,
+  taskId: string,
+  milestoneId: string,
+  expectedMilestoneRevision: number,
+  operationId: string,
+  type: "complete_task" | "trash_task" | "restore_task",
+  apply: (result: MilestoneTaskMutationResult | undefined, errorMessage?: string) => { error: string | null; result: MilestoneTaskMutationResult | null },
+) {
+  const response = await invokeTaskStateCommand({
+    type,
+    task_id: taskId,
+    replay_identity: `milestone:${operationId}`,
+    milestone_id: milestoneId,
+    expected_milestone_revision: expectedMilestoneRevision,
+    milestone_operation_id: operationId,
+  }, { client });
+  return apply(responseMilestoneTaskResult(response), response.error?.message);
 }
