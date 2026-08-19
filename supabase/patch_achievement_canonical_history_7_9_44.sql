@@ -1,4 +1,4 @@
--- ADHDice Achievement canonical History cleanup for 7.9.45.
+-- ADHDice Achievement canonical History cleanup for 7.9.46.
 -- Replaces Task Achievement's legacy History source with adhdice_task_history_facts.
 -- Apply after the canonical Task History schema and Achievement runtime definitions.
 -- No production execution is implied by this source file.
@@ -140,8 +140,33 @@ begin
   v_source_key := 'task:' || v_history.entity_id::text || ':' || v_logical_occurrence_part;
   v_dedupe_key := 'occurrence:v1:task_history:' || v_entity_kind || ':' || v_history.entity_id::text || ':' || v_logical_occurrence_part;
   v_qualified := v_history.outcome in ('done', 'complete', 'did_my_best');
+
   perform pg_advisory_xact_lock(hashtextextended(v_history.user_id::text || ':achievement-source:' || v_history.id::text, 0));
   perform pg_advisory_xact_lock(hashtextextended(v_history.user_id::text || ':achievement-occurrence:' || v_dedupe_key, 0));
+
+  -- Tier E is a logical-identity bridge for an existing lifetime occurrence
+  -- whose physical/source evidence predates this canonical History fact. It is
+  -- deliberately unavailable when Tier D found stale same-Task/date siblings:
+  -- true Tier D ambiguity must create the canonical fallback occurrence rather
+  -- than selecting one sibling by a similar logical identity.
+  if v_match_tier = 0 and v_match_count = 0 and not v_fallback_ambiguous then
+    select count(*) into v_match_count
+    from public.adhdice_achievement_occurrences occurrence
+    where occurrence.user_id = v_history.user_id
+      and occurrence.source_kind = 'task_history'
+      and occurrence.dedupe_key = v_dedupe_key;
+    if v_match_count > 1 then
+      raise exception 'Ambiguous Achievement tier E mapping for canonical History fact %.', v_history.id;
+    end if;
+    if v_match_count = 1 then
+      v_match_tier := 5;
+      select * into v_existing
+      from public.adhdice_achievement_occurrences occurrence
+      where occurrence.user_id = v_history.user_id
+        and occurrence.source_kind = 'task_history'
+        and occurrence.dedupe_key = v_dedupe_key;
+    end if;
+  end if;
 
   select * into v_task
   from public.adhdice_clean_tasks
@@ -564,7 +589,7 @@ begin
   loop
     perform public.adhdice_evaluate_achievements(
       v_record.user_id,
-      md5('achievement-canonical-history-7.9.45:' || v_record.user_id::text)::uuid,
+      md5('achievement-canonical-history-7.9.46:' || v_record.user_id::text)::uuid,
       'recalculation'
     );
   end loop;

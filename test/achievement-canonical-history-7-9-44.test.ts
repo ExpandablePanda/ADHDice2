@@ -14,6 +14,7 @@ function extractFunction(sql: string, name: string) {
 }
 
 const capture = extractFunction(runtime, "adhdice_capture_task_achievement_occurrence");
+const patchCapture = extractFunction(patch, "adhdice_capture_task_achievement_occurrence");
 const trigger = extractFunction(runtime, "adhdice_capture_and_evaluate_achievement_source");
 const deactivate = extractFunction(runtime, "adhdice_deactivate_deleted_achievement_source");
 const recalculate = extractFunction(runtime, "adhdice_recalculate_achievements");
@@ -46,6 +47,41 @@ test("existing occurrences use ordered A/B/C source precedence before Task/date 
   assert.doesNotMatch(capture, /Ambiguous Achievement logical mapping/);
 });
 
+test("Tier E only resolves an exact canonical logical identity after zero-row Tier D", () => {
+  const dedupeIndex = capture.indexOf("v_dedupe_key :=");
+  const tierEIndex = capture.indexOf("-- Tier E is a logical-identity bridge");
+  const insertIndex = capture.indexOf("insert into public.adhdice_achievement_occurrences");
+  assert.ok(dedupeIndex >= 0 && tierEIndex > dedupeIndex && tierEIndex < insertIndex);
+  assert.match(capture, /if v_match_tier = 0 and v_match_count = 0 and not v_fallback_ambiguous then/);
+  assert.match(capture, /occurrence\.dedupe_key = v_dedupe_key/);
+  assert.match(capture, /Ambiguous Achievement tier E mapping/);
+  assert.match(capture, /v_match_tier := 5/);
+  assert.match(capture, /if v_existing\.id is not null then[\s\S]*set source_id = v_history\.id::text/);
+});
+
+test("repeated terminal completions reuse one lifetime occurrence without overriding Tier D ambiguity", () => {
+  const tierDIndex = capture.indexOf("v_fallback_ambiguous := v_match_count > 1;");
+  const tierEIndex = capture.indexOf("-- Tier E is a logical-identity bridge");
+  assert.ok(tierDIndex >= 0 && tierEIndex > tierDIndex);
+  assert.match(capture, /when v_history\.event_kind = 'terminal_complete' then 'lifetime:' \|\| v_history\.entity_id::text/);
+  assert.match(capture, /v_dedupe_key := 'occurrence:v1:task_history:' \|\| v_entity_kind/);
+  assert.match(capture, /if v_match_tier = 0 and v_match_count = 0 and not v_fallback_ambiguous then/);
+  assert.match(capture, /where occurrence\.id = v_existing\.id[\s\S]*returning occurrence\.id into v_occurrence_id/);
+  assert.doesNotMatch(capture.slice(tierEIndex, insertIndex(capture)), /delete from public\.adhdice_achievement_occurrences/);
+});
+
+test("Tier E preserves the existing row identity and dedupe key across SQL definitions", () => {
+  const existingUpdateStart = capture.indexOf("if v_existing.id is not null then\n    update public.adhdice_achievement_occurrences occurrence");
+  const existingUpdate = capture.slice(existingUpdateStart, insertIndex(capture));
+  assert.equal(patchCapture, capture);
+  assert.match(existingUpdate, /where occurrence\.id = v_existing\.id/);
+  assert.doesNotMatch(existingUpdate, /dedupe_key\s*=/);
+});
+
+function insertIndex(sql: string) {
+  return sql.indexOf("insert into public.adhdice_achievement_occurrences");
+}
+
 test("strong matches win over same-date siblings and dequalify stale evidence without deletion", () => {
   const firstCleanup = capture.indexOf("'superseded_by_history_fact_id'");
   assert.ok(firstCleanup > 0);
@@ -71,7 +107,7 @@ test("canonical source identity, dedupe identity, awards, and reruns remain prot
   assert.match(capture, /logical_dedupe_key', coalesce\(v_existing\.dedupe_key, v_dedupe_key\)/);
   assert.match(runtime, /on conflict \(user_id, source_kind, source_id\)/);
   assert.doesNotMatch(patch, /delete from public\.adhdice_achievement_(tier_awards|collection_awards|notifications)/);
-  assert.match(patch, /achievement-canonical-history-7\.9\.45/);
+  assert.match(patch, /achievement-canonical-history-7\.9\.46/);
 });
 
 test("canonical occurrence evidence wins over mutable Task recurrence", () => {
@@ -120,10 +156,10 @@ test("recalculation is canonical-only, resumable, Step-set-aware, and award-pres
   assert.doesNotMatch(recalculate, /delete from public\.adhdice_achievement_(tier_awards|collection_awards|notifications)/);
 });
 
-test("7.9.45 reconciliation derives missed evidence and is idempotent without hardcoded live counts", () => {
+test("7.9.46 reconciliation derives missed evidence and is idempotent without hardcoded live counts", () => {
   assert.match(patch, /for v_record in[\s\S]*from public\.adhdice_task_history_facts fact/);
   assert.match(patch, /adhdice_capture_task_achievement_occurrence\(v_record\.id\)/);
-  assert.match(patch, /achievement-canonical-history-7\.9\.45/);
+  assert.match(patch, /achievement-canonical-history-7\.9\.46/);
   assert.doesNotMatch(patch, /\b214\b|\b572\b|\b517\b|\b70\b/);
   assert.match(runtime, /on conflict \(user_id, track_id, tier\) do nothing/);
   assert.match(runtime, /on conflict \(user_id, collection_id, mastery_version\) do nothing/);

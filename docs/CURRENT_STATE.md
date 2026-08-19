@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.45`.
+- Current working app version: `7.9.46`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -18,12 +18,13 @@ Role: active working
 ## 2026-08-18 Achievement canonical History cleanup
 
 Task Achievement evidence now targets `adhdice_task_history_facts` exclusively.
-The 7.9.45 source patch resolves existing occurrences by ordered canonical
-source evidence before Task/logical-date fallback, dequalifies stale same-day
-siblings without deleting rows or touching permanent awards/notifications, and
-creates a canonical logical-date occurrence for true fallback ambiguity. The
-patch and consolidated SQL are authored only; live SQL, deployment, and
-browser parity remain unverified.
+The 7.9.46 source patch adds canonical logical-identity Tier E reconciliation
+after ordered source evidence and zero-row Task/date fallback. It preserves one
+completed nonrecurring lifetime Achievement occurrence across repeated
+canonical terminal facts, while true Tier D ambiguity still creates the
+canonical fallback and dequalifies stale siblings without deleting rows or
+touching permanent awards/notifications. The patch and consolidated SQL are
+authored only; live SQL, deployment, and browser parity remain unverified.
 
 ## 2026-08-18 Milestone canonicalization
 
