@@ -572,7 +572,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.55";
+const APP_VERSION = "7.9.56";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3929,6 +3929,12 @@ export function TaskApp() {
     openNewTaskEditor();
   }, [openNewTaskEditor]);
 
+  const openExistingTaskEditor = useCallback((task: Task) => {
+    setSuppressDetachedListNoticeTaskId(null);
+    setSharedTaskEditorOverlayTaskId(task.id);
+    setTaskEditorFocusRequest(null);
+  }, []);
+
   const openInlineNewListTaskComposer = useCallback(async () => {
     const createdTask = await addTask(buildNewTaskDraft("New Task"));
 
@@ -3946,15 +3952,8 @@ export function TaskApp() {
       routeTask(createdTask.id, taskUiState.selectedBucket);
     }
 
-    setSuppressDetachedListNoticeTaskId(createdTask.id);
-    setRequestedListOverlayTaskId(createdTask.id);
-  }, [addTask, routeTask, taskUiState.selectedBucket]);
-
-  const openExistingTaskEditor = useCallback((task: Task) => {
-    setSuppressDetachedListNoticeTaskId(null);
-    setSharedTaskEditorOverlayTaskId(task.id);
-    setTaskEditorFocusRequest(null);
-  }, []);
+    openExistingTaskEditor(createdTask);
+  }, [addTask, openExistingTaskEditor, routeTask, taskUiState.selectedBucket]);
 
   const duplicateTaskInPlace = useCallback(async (task: Task) => {
     const duplicateValues: TaskDraft = {

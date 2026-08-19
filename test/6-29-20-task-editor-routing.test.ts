@@ -46,6 +46,15 @@ test("Home and Table request the shared overlay without changing the active page
   }
 });
 
+test("inline New Task routes the created parent to the shared full editor", async () => {
+  const app = await source("../src/components/task-app.tsx");
+  const composer = app.slice(app.indexOf("const openInlineNewListTaskComposer"), app.indexOf("const duplicateTaskInPlace"));
+  assert.match(composer, /routeTask\(createdTask\.id, taskUiState\.selectedBucket\)/);
+  assert.match(composer, /openExistingTaskEditor\(createdTask\)/);
+  assert.doesNotMatch(composer, /setRequestedListOverlayTaskId\(createdTask\.id\)/);
+  assert.match(composer, /\}, \[addTask, openExistingTaskEditor, routeTask, taskUiState\.selectedBucket\]\);/);
+});
+
 test("normal and explicit field opens keep task identity separate from monotonic focus identity", async () => {
   const app = await source("../src/components/task-app.tsx");
   const opener = app.slice(app.indexOf("function openSharedTaskEditor"), app.indexOf("function goToActiveTimerTask"));
