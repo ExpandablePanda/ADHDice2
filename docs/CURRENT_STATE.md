@@ -40,9 +40,8 @@ The reviewed backend seam order for any future activation remains:
 - `src/lib/task-state-engine/engine.ts`
 
 Install the reviewed SQL. Deploy the exact reviewed Edge bundle. Verify RPC
-signatures. Verify deployed Edge version. Run controlled authenticated backend
-smoke test, then enable the browser canonical gate. None of those live steps is
-claimed here.
+signatures. Verify deployed Edge version. Run controlled authenticated backend smoke test,
+then enable the browser canonical gate. None of those live steps is claimed here.
 
 ## 2026-08-19 Dead architecture purge
 
