@@ -1,4 +1,4 @@
--- ADHDice Achievement canonical History cleanup for 7.9.46.
+-- ADHDice Achievement canonical History cleanup for 7.9.47.
 -- Replaces Task Achievement's legacy History source with adhdice_task_history_facts.
 -- Apply after the canonical Task History schema and Achievement runtime definitions.
 -- No production execution is implied by this source file.
@@ -12,7 +12,9 @@ alter table public.adhdice_achievement_occurrences
   add constraint adhdice_achievement_occurrences_snapshot_check
     check (outcome_snapshot is not null or active_duration_seconds is not null or not is_currently_qualifying);
 
-create or replace function public.adhdice_capture_task_achievement_occurrence(p_history_fact_id uuid)
+-- The legacy p_history_id name is intentional: PostgreSQL CREATE OR REPLACE
+-- cannot rename an input parameter. It identifies adhdice_task_history_facts.id.
+create or replace function public.adhdice_capture_task_achievement_occurrence(p_history_id uuid)
 returns uuid
 language plpgsql security definer
 set search_path = ''
@@ -35,7 +37,7 @@ declare
   v_qualified boolean;
   v_snapshot jsonb;
 begin
-  select * into v_history from public.adhdice_task_history_facts where id = p_history_fact_id;
+  select * into v_history from public.adhdice_task_history_facts where id = p_history_id;
   if not found then return null; end if;
   select * into v_profile from public.adhdice_achievement_profiles where user_id = v_history.user_id;
   if not found then return null; end if;

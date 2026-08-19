@@ -5,6 +5,7 @@ import test from "node:test";
 const runtime = readFileSync("supabase/add_achievement_mvp_runtime.sql", "utf8");
 const patch = readFileSync("supabase/patch_achievement_canonical_history_7_9_44.sql", "utf8");
 const schema = readFileSync("supabase/schema.sql", "utf8");
+const renamedParameter = ["p_history", "fact_id"].join("_");
 
 function extractFunction(sql: string, name: string) {
   const start = sql.indexOf(`create or replace function public.${name}`);
@@ -19,9 +20,17 @@ const trigger = extractFunction(runtime, "adhdice_capture_and_evaluate_achieveme
 const deactivate = extractFunction(runtime, "adhdice_deactivate_deleted_achievement_source");
 const recalculate = extractFunction(runtime, "adhdice_recalculate_achievements");
 
-test("Task Achievement capture uses canonical facts and canonical fact IDs", () => {
+test("Task Achievement capture preserves the PostgreSQL-compatible parameter name", () => {
+  assert.match(capture, /create or replace function public\.adhdice_capture_task_achievement_occurrence\(p_history_id uuid\)/);
+  assert.match(patchCapture, /create or replace function public\.adhdice_capture_task_achievement_occurrence\(p_history_id uuid\)/);
+  assert.match(runtime, /legacy p_history_id name is intentional[\s\S]*cannot rename an input parameter/);
+  assert.match(patch, /legacy p_history_id name is intentional[\s\S]*cannot rename an input parameter/);
   assert.match(capture, /v_history public\.adhdice_task_history_facts%rowtype/);
-  assert.match(capture, /from public\.adhdice_task_history_facts where id = p_history_fact_id/);
+  assert.match(capture, /from public\.adhdice_task_history_facts where id = p_history_id/);
+  assert.match(patchCapture, /from public\.adhdice_task_history_facts where id = p_history_id/);
+  assert.match(schema, /create or replace function public\.adhdice_capture_task_achievement_occurrence\(p_history_id uuid\)/);
+  assert.doesNotMatch(capture, new RegExp(renamedParameter));
+  assert.doesNotMatch(patchCapture, new RegExp(renamedParameter));
   assert.match(capture, /set source_id = v_history\.id::text/);
   assert.match(capture, /source_kind = 'task_history'/);
   assert.doesNotMatch(capture, /adhdice_task_history(?!_facts)/);

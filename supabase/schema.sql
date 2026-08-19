@@ -4085,7 +4085,9 @@ as $function$
   select id from ancestors order by depth desc limit 1
 $function$;
 
-create or replace function public.adhdice_capture_task_achievement_occurrence(p_history_fact_id uuid)
+-- The legacy p_history_id name is intentional: PostgreSQL CREATE OR REPLACE
+-- cannot rename an input parameter. It identifies adhdice_task_history_facts.id.
+create or replace function public.adhdice_capture_task_achievement_occurrence(p_history_id uuid)
 returns uuid
 language plpgsql security definer
 set search_path = ''
@@ -4108,7 +4110,7 @@ declare
   v_qualified boolean;
   v_snapshot jsonb;
 begin
-  select * into v_history from public.adhdice_task_history_facts where id = p_history_fact_id;
+  select * into v_history from public.adhdice_task_history_facts where id = p_history_id;
   if not found then return null; end if;
   select * into v_profile from public.adhdice_achievement_profiles where user_id = v_history.user_id;
   if not found then return null; end if;

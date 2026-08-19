@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.46`.
+- Current working app version: `7.9.47`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -18,7 +18,10 @@ Role: active working
 ## 2026-08-18 Achievement canonical History cleanup
 
 Task Achievement evidence now targets `adhdice_task_history_facts` exclusively.
-The 7.9.46 source patch adds canonical logical-identity Tier E reconciliation
+The 7.9.47 source patch preserves the legacy `p_history_id` SQL parameter name
+because PostgreSQL `CREATE OR REPLACE FUNCTION` cannot rename input parameters;
+the parameter identifies `adhdice_task_history_facts.id`. It retains the 7.9.46
+canonical logical-identity Tier E reconciliation
 after ordered source evidence and zero-row Task/date fallback. It preserves one
 completed nonrecurring lifetime Achievement occurrence across repeated
 canonical terminal facts, while true Tier D ambiguity still creates the
