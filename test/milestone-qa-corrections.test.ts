@@ -109,6 +109,12 @@ test("full inspector bounds sticky columns before the full-width extension", () 
   assert.match(tableSource, /useMobileFullOverlay\s*\? "grid min-w-0 gap-3"/);
 });
 
+test("desktop full inspector uses wider responsive bounds and viewport-safe scrolling", () => {
+  assert.match(tableSource, /const fullDesktopEditorNode = \(\s*<div className="min-w-0 w-full max-w-\[80rem\] min-h-\[70vh\] max-h-\[calc\(100dvh-2rem\)\] overflow-y-auto overscroll-contain"/);
+  assert.match(tableSource, /overlayMode === "full" \? "left-1\/2 max-w-\[80rem\] -translate-x-1\/2"/);
+  assert.match(tableSource, /className="w-full max-w-\[60rem\]"/);
+});
+
 test("row renderers expose a compact accessible Milestone trophy indicator", () => {
   for (const source of [tableSource, listSource]) {
     assert.match(source, /aria-label="Milestone"/);
