@@ -51,7 +51,7 @@ test("Milestone outcomes use canonical commands while atomic completion stays on
   assert.doesNotMatch(taskApp, /TASK_STATE_CANONICAL_COMMANDS_ENABLED/);
   assert.match(taskApp, /status === "done"[\s\S]*status === "did_my_best"[\s\S]*status === "missed"/);
   assert.match(taskApp, /const completion = await milestoneData\.completeMilestone/);
-  assert.match(taskApp, /queueTaskRewards\(\[\{ previousStatus: task\.status, task: completedTask \}\]\)/);
+  assert.match(taskApp, /queueTaskRewards\(\[\{[\s\S]*canonicalRewardEntitlementId: completion\.result\.canonicalRewardEntitlementId,[\s\S]*previousStatus: task\.status,[\s\S]*task: completedTask/);
 });
 
 test("Settings JSON restore directs users to canonical Task import", () => {

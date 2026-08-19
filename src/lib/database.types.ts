@@ -620,6 +620,8 @@ export type MilestoneInsert = Omit<
 export type MilestoneUpdate = Partial<Omit<Milestone, "id" | "user_id" | "created_at">>;
 
 export type MilestoneTaskMutationResult = {
+  canonicalHistoryFactId?: string | null;
+  canonicalRewardEntitlementId?: string | null;
   task_row: Task | null;
   milestone_row: Milestone;
   created_transition: boolean;

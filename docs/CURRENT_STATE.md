@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.42`.
+- Current working app version: `7.9.43`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -17,16 +17,18 @@ Role: active working
 
 ## 2026-08-18 Milestone canonicalization
 
-Milestones now remain metadata attached to canonical top-level parent Tasks.
+Milestones remain metadata attached to canonical top-level parent Tasks.
 Complete, Trash, and Restore use the trusted `task-state-command` boundary and
 an atomic backend-only orchestration that invokes the existing canonical Task
 State executor before committing Milestone awards, reminders, and events.
-Permanent deletion uses the normal Task deletion path, preserving nullable
-historical Milestone rows. The old Milestone Task-mutating RPCs and legacy
-History writes were removed from production wiring. Reverse completion remains
-explicitly unavailable because canonical Task State has no reopen command; no
-snapshot restoration is performed. The 7.9.42 SQL patch is authored only and
-has not been applied or deployed.
+Milestone Complete now preserves returned canonical History/reward side-effect
+IDs, refreshes/reconciles canonical History, and fulfills only the returned
+canonical reward entitlement. Permanent deletion uses the normal Task deletion
+path, preserving nullable historical Milestone rows. The old Milestone
+Task-mutating RPCs and legacy History writes were removed from production
+wiring. Reverse completion remains explicitly unavailable because canonical
+Task State has no reopen command; no snapshot restoration is performed. The
+7.9.42 SQL patch is authored only and has not been applied or deployed.
 
 ## 2026-08-18 Task State closure
 

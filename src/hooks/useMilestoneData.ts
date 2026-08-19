@@ -184,9 +184,11 @@ export function useMilestoneData(client: SupabaseClient, userId: string | null, 
   };
 }
 
-function responseMilestoneTaskResult(response: TaskStateCommandResponse): MilestoneTaskMutationResult | undefined {
+export function responseMilestoneTaskResult(response: TaskStateCommandResponse): MilestoneTaskMutationResult | undefined {
   if (!response.success || !response.task_row || !response.milestone_row) return undefined;
   return {
+    canonicalHistoryFactId: response.side_effect_ids.history_fact_id,
+    canonicalRewardEntitlementId: response.side_effect_ids.reward_entitlement_id,
     created_transition: response.created_transition ?? false,
     milestone_row: response.milestone_row as unknown as Milestone,
     task_row: response.task_row as unknown as Task,

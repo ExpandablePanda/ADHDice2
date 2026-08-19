@@ -581,7 +581,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.42";
+const APP_VERSION = "7.9.43";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -5470,9 +5470,23 @@ export function TaskApp() {
         const linkedNotesSaved = await syncTaskNoteLinks(task.id, linkedNoteIds);
         if (!linkedNotesSaved) return fail("The Milestone completed, but its linked notes could not be saved.");
       }
+      if (completion.result.canonicalHistoryFactId) {
+        const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];
+        if (!historyLoad || historyLoad.status !== "ready") {
+          setMessage({ tone: "warn", text: historyLoad?.error ?? "Milestone committed, but History could not be refreshed." });
+        } else {
+          await reconcileTaskHistoryMutation(task.id, historyLoad.history, completedTask);
+        }
+      }
       routeTask(task.id, null);
       if (focusedTaskIds.includes(task.id)) void saveFocusSelection(focusedTaskIds.filter((id) => id !== task.id));
-      await queueTaskRewards([{ previousStatus: task.status, task: completedTask }]);
+      if (completion.result.canonicalRewardEntitlementId) {
+        await queueTaskRewards([{
+          canonicalRewardEntitlementId: completion.result.canonicalRewardEntitlementId,
+          previousStatus: task.status,
+          task: completedTask,
+        }]);
+      }
       if (completeAction.source === "editor") closeTaskEditorWithReset();
       if (selectedListTaskIds.includes(task.id)) clearListTaskSelection();
       setPendingCompleteAction(null);
