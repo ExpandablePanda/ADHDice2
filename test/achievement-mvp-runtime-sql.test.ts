@@ -8,9 +8,10 @@ const migration = readFileSync(new URL("../supabase/add_achievement_mvp_runtime.
 const digestFixMigration = readFileSync(new URL("../supabase/fix_achievement_digest_schema_6_29_46.sql", import.meta.url), "utf8");
 const stepSetFixMigration = readFileSync(new URL("../supabase/fix_achievement_step_set_requalification_6_29_48.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+const taskCaptureStart = migration.indexOf("create or replace function public.adhdice_capture_task_achievement_occurrence");
 const taskCaptureFunction = migration.slice(
-  migration.indexOf("create or replace function public.adhdice_capture_task_achievement_occurrence"),
-  migration.indexOf("create or replace function public.adhdice_capture_focus_achievement_occurrence"),
+  taskCaptureStart,
+  migration.indexOf("$function$;", taskCaptureStart) + "$function$;".length,
 );
 const extractStepSetRefreshFunction = (sql: string) => {
   const start = sql.indexOf("create or replace function public.adhdice_refresh_achievement_step_set");

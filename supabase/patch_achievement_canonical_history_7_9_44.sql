@@ -1,4 +1,4 @@
--- ADHDice Achievement canonical History cleanup for 7.9.44.
+-- ADHDice Achievement canonical History cleanup for 7.9.45.
 -- Replaces Task Achievement's legacy History source with adhdice_task_history_facts.
 -- Apply after the canonical Task History schema and Achievement runtime definitions.
 -- No production execution is implied by this source file.
@@ -24,6 +24,8 @@ declare
   v_existing public.adhdice_achievement_occurrences%rowtype;
   v_occurrence_id uuid;
   v_match_count integer := 0;
+  v_match_tier integer := 0;
+  v_fallback_ambiguous boolean := false;
   v_canonical_occurrence_key text;
   v_source_key text;
   v_dedupe_key text;
@@ -38,35 +40,81 @@ begin
   select * into v_profile from public.adhdice_achievement_profiles where user_id = v_history.user_id;
   if not found then return null; end if;
 
-  -- Match legacy-captured rows before changing source identity. The canonical
-  -- fact ID is the new physical source identity; a legacy source ID or the
-  -- unique canonical Task/date pair is only migration evidence.
+  -- Resolve one evidence tier at a time. A strong source match wins even when
+  -- stale Task/date siblings also exist; only ambiguity within that tier is
+  -- an error.
   select count(*) into v_match_count
   from public.adhdice_achievement_occurrences occurrence
   where occurrence.user_id = v_history.user_id
     and occurrence.source_kind = 'task_history'
-    and (
-      occurrence.source_id = v_history.id::text
-      or (v_history.source_legacy_history_id is not null
-        and occurrence.source_id = v_history.source_legacy_history_id::text)
-      or (occurrence.source_snapshot->>'history_fact_id') = v_history.id::text
-      or (occurrence.entity_id = v_history.entity_id and occurrence.logical_date = v_history.logical_date)
-    );
+    and occurrence.source_id = v_history.id::text;
   if v_match_count > 1 then
-    raise exception 'Ambiguous Achievement mapping for canonical History fact %.', v_history.id;
+    raise exception 'Ambiguous Achievement tier A mapping for canonical History fact %.', v_history.id;
   end if;
   if v_match_count = 1 then
+    v_match_tier := 1;
     select * into v_existing
     from public.adhdice_achievement_occurrences occurrence
     where occurrence.user_id = v_history.user_id
       and occurrence.source_kind = 'task_history'
-      and (
-        occurrence.source_id = v_history.id::text
-        or (v_history.source_legacy_history_id is not null
-          and occurrence.source_id = v_history.source_legacy_history_id::text)
-        or (occurrence.source_snapshot->>'history_fact_id') = v_history.id::text
-        or (occurrence.entity_id = v_history.entity_id and occurrence.logical_date = v_history.logical_date)
-      );
+      and occurrence.source_id = v_history.id::text;
+  end if;
+
+  if v_match_tier = 0 and v_history.source_legacy_history_id is not null then
+    select count(*) into v_match_count
+    from public.adhdice_achievement_occurrences occurrence
+    where occurrence.user_id = v_history.user_id
+      and occurrence.source_kind = 'task_history'
+      and occurrence.source_id = v_history.source_legacy_history_id::text;
+    if v_match_count > 1 then
+      raise exception 'Ambiguous Achievement tier B mapping for canonical History fact %.', v_history.id;
+    end if;
+    if v_match_count = 1 then
+      v_match_tier := 2;
+      select * into v_existing
+      from public.adhdice_achievement_occurrences occurrence
+      where occurrence.user_id = v_history.user_id
+        and occurrence.source_kind = 'task_history'
+        and occurrence.source_id = v_history.source_legacy_history_id::text;
+    end if;
+  end if;
+
+  if v_match_tier = 0 then
+    select count(*) into v_match_count
+    from public.adhdice_achievement_occurrences occurrence
+    where occurrence.user_id = v_history.user_id
+      and occurrence.source_kind = 'task_history'
+      and occurrence.source_snapshot->>'history_fact_id' = v_history.id::text;
+    if v_match_count > 1 then
+      raise exception 'Ambiguous Achievement tier C mapping for canonical History fact %.', v_history.id;
+    end if;
+    if v_match_count = 1 then
+      v_match_tier := 3;
+      select * into v_existing
+      from public.adhdice_achievement_occurrences occurrence
+      where occurrence.user_id = v_history.user_id
+        and occurrence.source_kind = 'task_history'
+        and occurrence.source_snapshot->>'history_fact_id' = v_history.id::text;
+    end if;
+  end if;
+
+  if v_match_tier = 0 then
+    select count(*) into v_match_count
+    from public.adhdice_achievement_occurrences occurrence
+    where occurrence.user_id = v_history.user_id
+      and occurrence.source_kind = 'task_history'
+      and occurrence.entity_id = v_history.entity_id
+      and occurrence.logical_date = v_history.logical_date;
+    v_match_tier := case when v_match_count > 0 then 4 else 0 end;
+    v_fallback_ambiguous := v_match_count > 1;
+    if v_match_count = 1 then
+      select * into v_existing
+      from public.adhdice_achievement_occurrences occurrence
+      where occurrence.user_id = v_history.user_id
+        and occurrence.source_kind = 'task_history'
+        and occurrence.entity_id = v_history.entity_id
+        and occurrence.logical_date = v_history.logical_date;
+    end if;
   end if;
 
   if v_history.occurrence_id is not null then
@@ -94,24 +142,6 @@ begin
   v_qualified := v_history.outcome in ('done', 'complete', 'did_my_best');
   perform pg_advisory_xact_lock(hashtextextended(v_history.user_id::text || ':achievement-source:' || v_history.id::text, 0));
   perform pg_advisory_xact_lock(hashtextextended(v_history.user_id::text || ':achievement-occurrence:' || v_dedupe_key, 0));
-
-  if v_match_count = 0 then
-    select count(*) into v_match_count
-    from public.adhdice_achievement_occurrences occurrence
-    where occurrence.user_id = v_history.user_id
-      and occurrence.source_kind = 'task_history'
-      and occurrence.dedupe_key = v_dedupe_key;
-    if v_match_count > 1 then
-      raise exception 'Ambiguous Achievement logical mapping for canonical History fact %.', v_history.id;
-    end if;
-    if v_match_count = 1 then
-      select * into v_existing
-      from public.adhdice_achievement_occurrences occurrence
-      where occurrence.user_id = v_history.user_id
-        and occurrence.source_kind = 'task_history'
-        and occurrence.dedupe_key = v_dedupe_key;
-    end if;
-  end if;
 
   select * into v_task
   from public.adhdice_clean_tasks
@@ -170,6 +200,18 @@ begin
         is_currently_qualifying = false, source_snapshot = v_snapshot
     where id = v_existing.id
     returning id into v_occurrence_id;
+    update public.adhdice_achievement_occurrences sibling
+    set is_currently_qualifying = false,
+        source_snapshot = sibling.source_snapshot || jsonb_build_object(
+          'superseded_by_history_fact_id', v_history.id,
+          'canonical_reconciled_at', clock_timestamp(),
+          'stale_same_day_evidence', true
+        )
+    where sibling.user_id = v_history.user_id
+      and sibling.source_kind = 'task_history'
+      and sibling.entity_id = v_history.entity_id
+      and sibling.logical_date = v_history.logical_date
+      and sibling.id <> v_occurrence_id;
     return v_occurrence_id;
   end if;
 
@@ -194,10 +236,35 @@ begin
         evaluator_version = 'achievements-evaluator-v1', catalog_version = v_profile.catalog_version
     where occurrence.id = v_existing.id
     returning occurrence.id into v_occurrence_id;
+    update public.adhdice_achievement_occurrences sibling
+    set is_currently_qualifying = false,
+        source_snapshot = sibling.source_snapshot || jsonb_build_object(
+          'superseded_by_history_fact_id', v_history.id,
+          'canonical_reconciled_at', clock_timestamp(),
+          'stale_same_day_evidence', true
+        )
+    where sibling.user_id = v_history.user_id
+      and sibling.source_kind = 'task_history'
+      and sibling.entity_id = v_history.entity_id
+      and sibling.logical_date = v_history.logical_date
+      and sibling.id <> v_occurrence_id;
     return v_occurrence_id;
   end if;
 
-  if not v_qualified then return null; end if;
+  if not v_qualified and not v_fallback_ambiguous then
+    update public.adhdice_achievement_occurrences sibling
+    set is_currently_qualifying = false,
+        source_snapshot = sibling.source_snapshot || jsonb_build_object(
+          'superseded_by_history_fact_id', v_history.id,
+          'canonical_reconciled_at', clock_timestamp(),
+          'stale_same_day_evidence', true
+        )
+    where sibling.user_id = v_history.user_id
+      and sibling.source_kind = 'task_history'
+      and sibling.entity_id = v_history.entity_id
+      and sibling.logical_date = v_history.logical_date;
+    return null;
+  end if;
 
   insert into public.adhdice_achievement_occurrences (
     user_id, source_kind, source_id, source_occurrence_key, dedupe_key,
@@ -216,10 +283,22 @@ begin
     v_profile.timezone, v_profile.logical_day_start,
     v_entity_kind,
     v_task.id, case when v_task.parent_task_id is null then v_task.id else v_root_id end,
-    v_task.title, v_history.outcome, 'achievements-evaluator-v1', v_profile.catalog_version, true,
+    v_task.title, v_history.outcome, 'achievements-evaluator-v1', v_profile.catalog_version, v_qualified,
     v_snapshot
   )
   returning id into v_occurrence_id;
+  update public.adhdice_achievement_occurrences sibling
+  set is_currently_qualifying = false,
+      source_snapshot = sibling.source_snapshot || jsonb_build_object(
+        'superseded_by_history_fact_id', v_history.id,
+        'canonical_reconciled_at', clock_timestamp(),
+        'stale_same_day_evidence', true
+      )
+  where sibling.user_id = v_history.user_id
+    and sibling.source_kind = 'task_history'
+    and sibling.entity_id = v_history.entity_id
+    and sibling.logical_date = v_history.logical_date
+    and sibling.id <> v_occurrence_id;
   return v_occurrence_id;
 end;
 $function$;
@@ -485,7 +564,7 @@ begin
   loop
     perform public.adhdice_evaluate_achievements(
       v_record.user_id,
-      md5('achievement-canonical-history-7.9.44:' || v_record.user_id::text)::uuid,
+      md5('achievement-canonical-history-7.9.45:' || v_record.user_id::text)::uuid,
       'recalculation'
     );
   end loop;
