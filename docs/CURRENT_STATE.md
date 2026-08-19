@@ -26,6 +26,24 @@ Focus counters/events, canonical Achievement tables, and
 `adhdice_task_migration_operations` remain current. The forward SQL migration is
 authored only; live SQL, deployment, and browser parity remain unverified.
 
+The reviewed backend seam order for any future activation remains:
+
+- `supabase/add_task_state_command_rpc.sql`
+- `supabase/add_canonical_reward_entitlement_bridge.sql`
+- `supabase/functions/task-state-command/index.ts`
+- `supabase/functions/task-state-command/auth.ts`
+- `supabase/functions/task-state-command/domain.ts`
+- `supabase/functions/task-state-command/orchestration.ts`
+- `src/lib/task-state-canonical/command-service.ts`
+- `src/lib/task-state-canonical/engine-input.ts`
+- `src/lib/task-state-canonical/read-model.ts`
+- `src/lib/task-state-engine/engine.ts`
+
+Install the reviewed SQL. Deploy the exact reviewed Edge bundle. Verify RPC
+signatures and deployed Edge version. Run a controlled authenticated backend
+smoke test, then enable the browser canonical gate. None of those live steps is
+claimed here.
+
 ## 2026-08-19 Dead architecture purge
 
 The 7.9.49 source now retires the obsolete `adhdice_task_history` and
