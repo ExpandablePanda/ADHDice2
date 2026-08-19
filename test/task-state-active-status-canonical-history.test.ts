@@ -99,7 +99,6 @@ function canonicalFact(
     idempotence_identity: `command-${index}:history`,
     logical_date: entryDate,
     logical_day_settings_revision: 1,
-    migration_operation_id: null,
     occurrence_id: `occurrence-${entryDate}`,
     outcome,
     provenance_kind: "user",

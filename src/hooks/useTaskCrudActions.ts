@@ -53,7 +53,6 @@ type UseTaskCrudActionsOptions = {
   shouldRouteTaskToInbox: (task: Task) => boolean;
   sortTasksForUi: (tasks: Task[]) => Task[];
   tasks: Task[];
-  replaceTaskSubtasks?: unknown;
   deleteTaskRow: (taskId: string, expectedTask?: Task | null) => Promise<DeleteTaskRowResult>;
 };
 

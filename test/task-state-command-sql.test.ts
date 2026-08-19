@@ -32,7 +32,7 @@ test("runtime payload structure is command-specific and rejects provenance spoof
   assert.match(sql, /start_in_progress requires a compatible workflow patch/i);
   assert.match(sql, /clear_in_progress requires a compatible workflow patch/i);
   assert.match(sql, /Runtime Task State provenance is server-owned/i);
-  assert.match(sql, /migration_operation_id.*null/i);
+  assert.doesNotMatch(sql, /migration_operation_id|migration_version|classifier_version/i);
   assert.match(sql, /actor_kind.*user/i);
   assert.match(sql, /accepted_payload_digest.*sha256-/i);
 });

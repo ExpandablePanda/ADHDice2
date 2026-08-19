@@ -165,11 +165,6 @@ begin
      or nullif(v_history->>'actor_kind', '') is not null
         and v_history->>'actor_kind' <> (case when v_command_type = 'reconcile_rollover' then 'authorized_automation' else 'user' end)
      or nullif(v_calendar_override->>'actor_kind', '') is not null and v_calendar_override->>'actor_kind' <> 'user'
-     or nullif(v_history->>'migration_operation_id', '') is not null
-     or nullif(v_occurrence->>'migration_operation_id', '') is not null
-     or nullif(v_effective_override->>'migration_operation_id', '') is not null
-     or nullif(v_calendar_override->>'migration_operation_id', '') is not null
-     or nullif(v_schedule->>'migration_operation_id', '') is not null
      or nullif(v_history->>'source_legacy_history_id', '') is not null
      or nullif(v_schedule->>'source', '') is not null and v_schedule->>'source' <> 'task_state_command'
      or nullif(v_occurrence->>'source', '') is not null and v_occurrence->>'source' <> 'task_state_command'
@@ -187,7 +182,6 @@ begin
         or value->>'provenance_kind' <> 'authorized_automation'
         or value->>'actor_kind' <> 'authorized_automation'
         or nullif(value->>'actor_id', '') is not null
-        or nullif(value->>'migration_operation_id', '') is not null
         or nullif(value->>'source_legacy_history_id', '') is not null
         or value->>'source' <> 'task_state_command'
   ) then
@@ -828,9 +822,6 @@ begin
     v_schedule := jsonb_set(v_schedule, '{source}', to_jsonb('task_state_command'::text), true);
     v_schedule := jsonb_set(v_schedule, '{command_id}', to_jsonb(v_command_id), true);
     v_schedule := jsonb_set(v_schedule, '{idempotence_identity}', to_jsonb(v_idempotence_identity), true);
-    v_schedule := jsonb_set(v_schedule, '{migration_operation_id}', 'null'::jsonb, true);
-    v_schedule := jsonb_set(v_schedule, '{migration_version}', 'null'::jsonb, true);
-    v_schedule := jsonb_set(v_schedule, '{classifier_version}', 'null'::jsonb, true);
     v_schedule := jsonb_set(v_schedule, '{logical_day_settings_revision}', to_jsonb(v_profile_settings_revision), true);
     v_schedule := jsonb_set(v_schedule, '{timezone}', to_jsonb(v_profile_timezone), true);
     v_schedule := jsonb_set(v_schedule, '{day_start_time}', to_jsonb(v_profile_day_start_time), true);
@@ -856,7 +847,6 @@ begin
     v_occurrence := jsonb_set(v_occurrence, '{actor_id}', to_jsonb(p_user_id), true);
     v_occurrence := jsonb_set(v_occurrence, '{source}', to_jsonb('task_state_command'::text), true);
     v_occurrence := jsonb_set(v_occurrence, '{command_id}', to_jsonb(v_command_id), true);
-    v_occurrence := jsonb_set(v_occurrence, '{migration_operation_id}', 'null'::jsonb, true);
     v_occurrence := jsonb_set(v_occurrence, '{revision}', to_jsonb(1), true);
     v_occurrence := jsonb_set(v_occurrence, '{created_at}', to_jsonb(now()), true);
     v_occurrence := jsonb_set(v_occurrence, '{updated_at}', to_jsonb(now()), true);
@@ -900,7 +890,6 @@ begin
     v_effective_override := jsonb_set(v_effective_override, '{source}', to_jsonb('task_state_command'::text), true);
     v_effective_override := jsonb_set(v_effective_override, '{command_id}', to_jsonb(v_command_id), true);
     v_effective_override := jsonb_set(v_effective_override, '{idempotence_identity}', to_jsonb(v_idempotence_identity), true);
-    v_effective_override := jsonb_set(v_effective_override, '{migration_operation_id}', 'null'::jsonb, true);
     v_effective_override := jsonb_set(v_effective_override, '{accepted_payload_digest}', to_jsonb(v_accepted_payload_digest), true);
     v_effective_override := jsonb_set(v_effective_override, '{revision}', to_jsonb(1), true);
     v_effective_override := jsonb_set(v_effective_override, '{created_at}', to_jsonb(now()), true);
@@ -999,7 +988,6 @@ begin
     v_history := jsonb_set(v_history, '{day_start_time}', to_jsonb(v_profile_day_start_time), true);
     v_history := jsonb_set(v_history, '{command_id}', to_jsonb(v_command_id), true);
     v_history := jsonb_set(v_history, '{idempotence_identity}', to_jsonb(v_idempotence_identity || ':history:' || (v_history->>'logical_date') || ':' || (v_history->>'outcome')), true);
-    v_history := jsonb_set(v_history, '{migration_operation_id}', 'null'::jsonb, true);
     v_history := jsonb_set(v_history, '{source_legacy_history_id}', 'null'::jsonb, true);
     v_history := jsonb_set(v_history, '{revision}', to_jsonb(1), true);
     v_history := jsonb_set(v_history, '{created_at}', to_jsonb(now()), true);
@@ -1029,7 +1017,6 @@ begin
           day_start_time = excluded.day_start_time,
           command_id = excluded.command_id,
           idempotence_identity = excluded.idempotence_identity,
-          migration_operation_id = excluded.migration_operation_id,
           source_legacy_history_id = excluded.source_legacy_history_id,
           revision = public.adhdice_task_history_facts.revision + 1,
           updated_at = now()
@@ -1090,7 +1077,6 @@ begin
       to_jsonb(v_idempotence_identity || ':history:' || (v_automatic_history->>'logical_date') || ':missed'),
       true
     );
-    v_automatic_history := jsonb_set(v_automatic_history, '{migration_operation_id}', 'null'::jsonb, true);
     v_automatic_history := jsonb_set(v_automatic_history, '{source_legacy_history_id}', 'null'::jsonb, true);
     v_automatic_history := jsonb_set(v_automatic_history, '{revision}', to_jsonb(1), true);
     v_automatic_history := jsonb_set(v_automatic_history, '{created_at}', to_jsonb(now()), true);
@@ -1144,7 +1130,6 @@ begin
     v_calendar_override := jsonb_set(v_calendar_override, '{source}', to_jsonb('task_state_command'::text), true);
     v_calendar_override := jsonb_set(v_calendar_override, '{command_id}', to_jsonb(v_command_id), true);
     v_calendar_override := jsonb_set(v_calendar_override, '{idempotence_identity}', to_jsonb(v_idempotence_identity), true);
-    v_calendar_override := jsonb_set(v_calendar_override, '{migration_operation_id}', 'null'::jsonb, true);
     v_calendar_override := jsonb_set(v_calendar_override, '{revision}', to_jsonb(1), true);
     v_calendar_override := jsonb_set(v_calendar_override, '{created_at}', to_jsonb(now()), true);
     v_calendar_override := jsonb_set(v_calendar_override, '{updated_at}', to_jsonb(now()), true);

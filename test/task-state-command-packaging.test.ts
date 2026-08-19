@@ -62,7 +62,6 @@ test("task-state-command uses no broad alias and has a narrow resolvable local g
     "supabase/functions/task-state-command/domain.ts",
     "src/lib/database.types.ts",
     "src/lib/records/persisted-types.ts",
-    "src/lib/task-history-cutover.ts",
     "src/lib/task-state-canonical/command-service.ts",
     "src/lib/task-state-canonical/digest.ts",
     "src/lib/task-state-canonical/engine-input.ts",
@@ -71,9 +70,9 @@ test("task-state-command uses no broad alias and has a narrow resolvable local g
     "src/lib/task-state-canonical/schedule-projection.ts",
     "src/lib/task-state-canonical/types.ts",
     "src/lib/task-state-engine/calendar.ts",
+    "src/lib/task-state-engine/direct-input.ts",
     "src/lib/task-state-engine/effective-timeline.ts",
     "src/lib/task-state-engine/engine.ts",
-    "src/lib/task-state-engine/legacy-adapter.ts",
     "src/lib/task-state-engine/recurrence.ts",
     "src/lib/task-state-engine/types.ts",
   ]);

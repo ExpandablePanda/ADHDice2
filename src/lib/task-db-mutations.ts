@@ -42,6 +42,11 @@ export type DeleteTaskRowResult = {
   conflict: TaskRowUpdateConflict | null;
 };
 
+export type PermanentTaskDeletionResult = {
+  deletedTaskIds: string[];
+  error: { message: string } | null;
+};
+
 export type CanonicalTaskCreationSource = "task_creation" | "task_import";
 
 export type CanonicalTaskCreationResult = {
@@ -330,6 +335,27 @@ export async function updateTaskRowWithLegacyEnergyFallback(
   };
 }
 
+export async function markTaskRowsPermanentlyDeleted(
+  client: SupabaseClient,
+  taskIds: readonly string[],
+): Promise<PermanentTaskDeletionResult> {
+  const uniqueTaskIds = Array.from(new Set(taskIds));
+  if (uniqueTaskIds.length === 0) {
+    return { deletedTaskIds: [], error: null };
+  }
+
+  const result = await client.rpc("adhdice_mark_tasks_permanently_deleted", {
+    p_task_ids: uniqueTaskIds,
+  });
+
+  return {
+    deletedTaskIds: Array.isArray(result.data)
+      ? result.data.filter((taskId): taskId is string => typeof taskId === "string")
+      : [],
+    error: result.error,
+  };
+}
+
 export async function deleteTaskRow(
   client: SupabaseClient,
   taskId: string,
@@ -338,10 +364,57 @@ export async function deleteTaskRow(
   const expectedTask = options?.expectedTask ?? null;
   const expectedRevision = typeof expectedTask?.revision === "number" ? expectedTask.revision : undefined;
 
+  if (expectedTask?.status === "trashed") {
+    const permanentDeletion = await markTaskRowsPermanentlyDeleted(client, [taskId]);
+    if (permanentDeletion.error) {
+      return {
+        data: null,
+        error: permanentDeletion.error,
+        conflict: null,
+      };
+    }
+
+    if (permanentDeletion.deletedTaskIds.includes(taskId)) {
+      return {
+        data: expectedTask,
+        error: null,
+        conflict: null,
+      };
+    }
+
+    const latestTaskResult = await fetchLatestTaskRow(client, taskId);
+    if (latestTaskResult.error) {
+      return {
+        data: null,
+        error: latestTaskResult.error,
+        conflict: null,
+      };
+    }
+
+    return {
+      data: null,
+      error: null,
+      conflict: latestTaskResult.data
+        ? {
+            attemptedReapply: false,
+            conflictingFields: [],
+            latestTask: latestTaskResult.data,
+            reason: "stale_revision_race",
+          }
+        : {
+            attemptedReapply: false,
+            conflictingFields: [],
+            latestTask: null,
+            reason: "task_missing",
+          },
+    };
+  }
+
   let query = client
     .from("adhdice_clean_tasks")
     .delete()
-    .eq("id", taskId);
+    .eq("id", taskId)
+    .is("permanently_deleted_at", null);
 
   if (expectedRevision !== undefined) {
     query = query.eq("revision", expectedRevision);
@@ -476,7 +549,8 @@ async function runTaskUpdateAttempt(
     let query = client
       .from("adhdice_clean_tasks")
       .update(nextValues)
-      .eq("id", taskId);
+      .eq("id", taskId)
+      .is("permanently_deleted_at", null);
 
     if (expectedRevision !== undefined) {
       query = query.eq("revision", expectedRevision);
@@ -532,6 +606,7 @@ async function fetchLatestTaskRow(client: SupabaseClient, taskId: string) {
     .from("adhdice_clean_tasks")
     .select("*")
     .eq("id", taskId)
+    .is("permanently_deleted_at", null)
     .maybeSingle();
 }
 

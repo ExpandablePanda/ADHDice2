@@ -24,7 +24,7 @@ function boundary(taskId: string, scheduleModel: CanonicalTaskScheduleBoundary["
     anchor_confidence: "proven", historical_scope_known: true, prospective_only: false, prior_boundary_id: null,
     affected_occurrence_id: null, logical_day_settings_revision: 1, timezone: "UTC", day_start_time: "00:00",
     actor_kind: "user", actor_id: "user-1", source: "test", command_id: null, idempotence_identity: `${taskId}:boundary`,
-    migration_operation_id: null, migration_version: null, classifier_version: null, schema_contract_version: "task-state-schema-v1",
+    schema_contract_version: "task-state-schema-v1",
     source_task_revision: 1, revision: 1, created_at: "2026-08-01T12:00:00.000Z", updated_at: "2026-08-01T12:00:00.000Z",
   };
 }

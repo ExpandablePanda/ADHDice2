@@ -166,9 +166,6 @@ export type CanonicalTaskScheduleBoundary = {
   source: string;
   command_id: string | null;
   idempotence_identity: string;
-  migration_operation_id: string | null;
-  migration_version: string | null;
-  classifier_version: string | null;
   schema_contract_version: "task-state-schema-v1";
   source_task_revision: number | null;
   revision: number;
@@ -207,7 +204,6 @@ export type CanonicalTaskOccurrence = {
   resolved_outcome: "done" | "did_my_best" | "missed" | "delayed" | "complete" | null;
   resolved_history_id: string | null;
   command_id: string | null;
-  migration_operation_id: string | null;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -233,7 +229,6 @@ export type CanonicalTaskOccurrenceEffectiveOverride = {
   source: string;
   command_id: string | null;
   idempotence_identity: string;
-  migration_operation_id: string | null;
   accepted_payload_digest: string;
   revision: number;
   created_at: string;
@@ -270,7 +265,6 @@ export type CanonicalTaskHistoryFact = {
   day_start_time: string;
   command_id: string | null;
   idempotence_identity: string;
-  migration_operation_id: string | null;
   source_legacy_history_id: string | null;
   revision: number;
   created_at: string;
@@ -295,7 +289,6 @@ export type CanonicalTaskCalendarOverride = {
   source: string;
   command_id: string | null;
   idempotence_identity: string;
-  migration_operation_id: string | null;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -315,9 +308,8 @@ export type CanonicalTaskRewardEntitlement = {
   outcome_snapshot: "done" | "did_my_best" | "complete";
   effective_obligation_identity: string | null;
   eligibility_kind: "handled_success" | "authorized_automation";
-  entitlement_source_kind: "runtime_command" | "migration_bootstrap";
+  entitlement_source_kind: "runtime_command";
   state: CanonicalRewardEntitlementState;
-  migration_operation_id: string | null;
   created_at: string;
   updated_at: string;
   fulfilled_at: string | null;

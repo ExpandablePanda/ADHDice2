@@ -7,6 +7,7 @@ const app = readFileSync("src/components/task-app.tsx", "utf8");
 const create = readFileSync("src/hooks/useTaskCreateAction.ts", "utf8");
 const crud = readFileSync("src/hooks/useTaskCrudActions.ts", "utf8");
 const subtasks = readFileSync("src/hooks/useTaskSubtaskActions.ts", "utf8");
+const editorSave = readFileSync("src/hooks/useTaskEditorSaveAction.ts", "utf8");
 const cleanupMigration = readFileSync("supabase/patch_task_state_cleanup_2_7_9_41.sql", "utf8");
 
 const retiredRolloverRpcNames = [
@@ -39,7 +40,10 @@ test("child rows use canonical same-table Task State", () => {
 
 test("production Task State cleanup removes the runtime gate module and legacy rollover callers", () => {
   assert.equal(existsSync("src/lib/task-state-runtime-gate.ts"), false);
+  assert.equal(existsSync("src/lib/task-state-engine/legacy-adapter.ts"), false);
+  assert.equal(existsSync("src/lib/task-state-engine/due-date-authority.ts"), false);
   assert.doesNotMatch(app, /TASK_STATE_CANONICAL_COMMANDS_ENABLED|adhdice_reconcile_task_rollover|adhdice_apply_task_state_engine_rollover/);
+  assert.doesNotMatch(editorSave, /usedNestedFallback|nested-subtask support|subtask parent migration/);
 });
 
 test("7.9.41 migration drops each obsolete rollover function by its live signature", () => {

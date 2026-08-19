@@ -129,7 +129,7 @@ export async function callRecordsRpc(client: Pick<RecordsClient, "rpc">, name: R
 export async function loadRecordsTasks(client: RecordsClient, userId: string) {
   const rows: Task[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await client.from("adhdice_clean_tasks").select("*").eq("user_id", userId).order("created_at", { ascending: true }).range(from, from + PAGE_SIZE - 1);
+    const { data, error } = await client.from("adhdice_clean_tasks").select("*").eq("user_id", userId).is("permanently_deleted_at", null).order("created_at", { ascending: true }).range(from, from + PAGE_SIZE - 1);
     if (error) throw error;
     rows.push(...((data ?? []) as Task[]));
     if ((data?.length ?? 0) < PAGE_SIZE) return rows;

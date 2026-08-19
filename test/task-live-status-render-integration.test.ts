@@ -326,7 +326,7 @@ test("schedule-only callbacks pass the returned task for immediate Effective Tim
       if (nextTask) editorCall = { history, task: nextTask, taskId };
     },
     onTasksCompleted: async () => {},
-    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    replaceTaskSubtasks: async () => ({ saved: true }),
     reconcileOverdueTaskMisses: async () => true,
     saveFocusSelection: async () => {},
     setMessage: () => {},

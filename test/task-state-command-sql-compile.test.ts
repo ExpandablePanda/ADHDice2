@@ -112,6 +112,7 @@ test("7.9.31 forward patch and literal History-copy artifacts compile from the i
   const scratch = mkdtempSync(join(tmpdir(), "adhdice-sql-compile-7-9-31-"));
   const database = `adhdice_compile_7931_${process.pid}_${Date.now()}`;
   const baselineSchema = join(scratch, "baseline-canonical-schema.sql");
+  const baselineMigrationSupport = join(scratch, "baseline-migration-support.sql");
   const baselineRpc = join(scratch, "baseline-command-rpc.sql");
   const fixtureSetup = join(scratch, "fixture-setup.sql");
   const copyFixture = join(scratch, "copy-fixture.sql");
@@ -130,9 +131,10 @@ create function auth.uid() returns uuid language sql stable as $$ select null::u
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", fixtureSetup]);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/schema.sql")]);
     writeFileSync(baselineSchema, run("git", ["show", "HEAD^:supabase/add_task_state_canonical_schema.sql"]));
+    writeFileSync(baselineMigrationSupport, run("git", ["show", "HEAD^:supabase/add_task_state_migration_support.sql"]));
     writeFileSync(baselineRpc, `${run("git", ["show", "HEAD^:supabase/add_task_state_command_rpc.sql"])}\nrevoke all on function public.adhdice_execute_task_state_command(uuid, jsonb) from public, anon, authenticated;\ngrant execute on function public.adhdice_execute_task_state_command(uuid, jsonb) to service_role;\n`);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", baselineSchema,
-      "-f", join(repositoryRoot, "supabase/add_task_state_migration_support.sql"), "-f", baselineRpc]);
+      "-f", baselineMigrationSupport, "-f", baselineRpc]);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_state_auto_missed_history_copy_7_9_31.sql")]);
     writeFileSync(copyFixture, `insert into auth.users(id) values ('00000000-0000-4000-8000-000000000001');
 insert into public.adhdice_user_profiles(user_id) values ('00000000-0000-4000-8000-000000000001');

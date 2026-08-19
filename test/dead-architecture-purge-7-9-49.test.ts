@@ -47,9 +47,6 @@ test("7.9.49 purge is explicit, non-cascading, and preserves provenance", () => 
   ]) {
     assert.match(migration, new RegExp(`drop (?:function|trigger) if exists[^;]*${fn}`));
   }
-  assert.doesNotMatch(migration, /drop table if exists public\.adhdice_task_migration_operations/);
-  assert.doesNotMatch(migration, /adhdice_task_migration_operations/);
-  assert.match(read("supabase/add_task_state_migration_support.sql"), /create table if not exists public\.adhdice_task_migration_operations/);
 });
 
 test("current production paths cannot reintroduce retired runtime architecture", () => {

@@ -17,8 +17,7 @@ const FORBIDDEN_KEYS = new Set([
   "user_id", "entity_id", "entity_kind", "command_id", "source_kind", "accepted_payload_digest",
   "task_patch", "canonical_task_patch", "compatibility_projection", "history_fact", "schedule_boundary",
   "occurrence", "occurrence_effective_override", "calendar_override", "reward_entitlement",
-  "provenance_kind", "actor_kind", "actor_id", "source", "migration_operation_id", "migration_version",
-  "classifier_version", "created_at", "updated_at", "revision", "source_legacy_history_id",
+  "provenance_kind", "actor_kind", "actor_id", "source", "created_at", "updated_at", "revision", "source_legacy_history_id",
 ]);
 
 export type ScheduleChangeIntent = {
@@ -212,7 +211,6 @@ function materializeDelayOccurrence(readModel: CanonicalTaskStateReadModel, base
     resolved_outcome: null,
     resolved_history_id: null,
     command_id: base.commandId,
-    migration_operation_id: null,
     revision: 1,
     created_at: now,
     updated_at: now,
@@ -289,9 +287,6 @@ function serverScheduleBoundary(
     source: "task_state_command",
     command_id: base.commandId,
     idempotence_identity: base.idempotenceIdentity,
-    migration_operation_id: null,
-    migration_version: null,
-    classifier_version: null,
     source_task_revision: readModel.task.revision,
     revision: 1,
     created_at: now,
@@ -317,7 +312,6 @@ function serverCalendarOverride(intent: Extract<TaskStateCommandIntent, { type: 
     source: "task_state_command",
     command_id: base.commandId,
     idempotence_identity: base.idempotenceIdentity,
-    migration_operation_id: null,
     revision: 1,
     created_at: now,
   };
@@ -347,7 +341,6 @@ function serverDelayOverride(intent: Extract<TaskStateCommandIntent, { type: "de
     source: "task_state_command",
     command_id: base.commandId,
     idempotence_identity: base.idempotenceIdentity,
-    migration_operation_id: null,
     accepted_payload_digest: "server-computed",
     revision: 1,
     created_at: now,

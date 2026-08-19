@@ -216,6 +216,7 @@ import {
   buildTaskUpdateConflictMessage,
   deleteTaskRow,
   insertTaskRowWithCanonicalCreation,
+  markTaskRowsPermanentlyDeleted,
   updateTaskRowWithLegacyEnergyFallback,
   type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
@@ -571,7 +572,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.52";
+const APP_VERSION = "7.9.55";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2698,6 +2699,7 @@ export function TaskApp() {
         .from("adhdice_clean_tasks")
         .select("*")
         .eq("id", taskId)
+        .is("permanently_deleted_at", null)
         .maybeSingle();
 
       if (!latestTaskResult.error) {
@@ -4957,6 +4959,57 @@ export function TaskApp() {
     setIsBatchDeleteModalOpen(true);
   }
 
+  async function emptyTrash() {
+    if (taskUiState.selectedBucket !== "trash") {
+      return;
+    }
+
+    const trashTasks = tasks.filter((task) => task.status === "trashed" && task.permanently_deleted_at == null);
+    if (trashTasks.length === 0) {
+      return;
+    }
+
+    const taskLabel = trashTasks.length === 1 ? "task" : "tasks";
+    if (!window.confirm(`Permanently delete ${trashTasks.length} ${taskLabel} from Trash? This cannot be undone.`)) {
+      return;
+    }
+
+    const taskIds = trashTasks.map((task) => task.id);
+    markPendingTaskMutations(taskIds);
+    try {
+      const result = await markTaskRowsPermanentlyDeleted(client, taskIds);
+      if (result.error) {
+        setMessage({ tone: "warn", text: result.error.message });
+        return;
+      }
+
+      const deletedTaskIds = new Set(result.deletedTaskIds);
+      if (deletedTaskIds.size > 0) {
+        setTasks((current) => current.filter((task) => !deletedTaskIds.has(task.id)));
+        setTaskRouting((current) => {
+          const next = { ...current };
+          for (const taskId of deletedTaskIds) delete next[taskId];
+          return next;
+        });
+        clearListTaskSelection();
+      }
+
+      const skippedCount = taskIds.length - deletedTaskIds.size;
+      if (deletedTaskIds.size === 0) {
+        setMessage({ tone: "warn", text: "No Trash tasks were deleted because they changed before the action completed." });
+      } else if (skippedCount > 0) {
+        setMessage({
+          tone: "warn",
+          text: `Deleted ${deletedTaskIds.size} task${deletedTaskIds.size === 1 ? "" : "s"} permanently. ${skippedCount} task${skippedCount === 1 ? " was" : "s were"} left alone because it changed before deletion.`,
+        });
+      } else {
+        setMessage({ tone: "good", text: `Deleted ${deletedTaskIds.size} task${deletedTaskIds.size === 1 ? "" : "s"} permanently.` });
+      }
+    } finally {
+      clearPendingTaskMutations(taskIds);
+    }
+  }
+
   function restoreTaskSnapshot(task: Task, routingBucket: TaskRoutingBucket | undefined) {
     setTasks((current) => {
       const alreadyPresent = current.some((entry) => entry.id === task.id);
@@ -6034,6 +6087,7 @@ export function TaskApp() {
     onNavigateFolder: setCurrentFolderId,
     onOpenArchive: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "archive" })),
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
+    onEmptyTrash: () => { void emptyTrash(); },
     onSelectBucket: setSelectedBucket,
     onSelectDirectoryEntry: (entry: typeof allTaskListDirectoryEntries[number]) => {
       if (entry.kind === "folder") {

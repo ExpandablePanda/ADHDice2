@@ -163,6 +163,7 @@ export function createTask(params: Partial<Task> & Pick<Task, "id" | "title" | "
     subtasks_auto_reset: false,
     completed_at: null,
     trashed_at: null,
+    permanently_deleted_at: null,
     updated_at: params.created_at,
     actual_seconds: 0,
     ...params,

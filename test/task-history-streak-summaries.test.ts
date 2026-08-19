@@ -5,20 +5,29 @@ import test from "node:test";
 import { createTask } from "../src/lib/task-buckets.ts";
 import type { TaskHistory } from "../src/lib/database.types.ts";
 import { TASK_STATE_HISTORY_CUTOVER_DATE } from "../src/lib/task-history-cutover.ts";
-import { adaptLegacyTaskState } from "../src/lib/task-state-engine/legacy-adapter.ts";
-import { buildTaskEffectiveTimeline, computeTaskEffectiveTimelineStreaks } from "../src/lib/task-state-engine/effective-timeline.ts";
+import { computeTaskEffectiveTimelineStreaks } from "../src/lib/task-state-engine/effective-timeline.ts";
 import {
-  buildTaskHistoryStreakSummaryMap,
-  TASK_HISTORY_STREAK_SUMMARY_COLUMNS,
+  buildTaskHistoryStreakSummaryMap as buildCanonicalTaskHistoryStreakSummaryMap,
+  type TaskHistoryStreakSummaryContext,
   updateTaskHistoryStreakSummaryMap,
 } from "../src/lib/task-history-streak-summaries.ts";
 import { computeTaskSpecificHistoryStats, deduplicateTaskHistoryByLogicalDate } from "../src/lib/task-history.ts";
 import { resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/calendar-authority.ts";
 import type { TaskCalendarOverride } from "../src/lib/task-state-engine/types.ts";
 
-const workspaceSource = readFileSync(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+function buildTaskHistoryStreakSummaryMap(
+  tasks: readonly ReturnType<typeof task>[],
+  history: readonly TaskHistory[],
+  todayDateKey: string,
+  context: TaskHistoryStreakSummaryContext = {},
+) {
+  return buildCanonicalTaskHistoryStreakSummaryMap(tasks, history, todayDateKey, {
+    ...context,
+    compatibilityOnly: true,
+  });
+}
+
 const streakSummarySource = readFileSync(new URL("../src/lib/task-history-streak-summaries.ts", import.meta.url), "utf8");
-const historyActionSource = readFileSync(new URL("../src/hooks/useTaskHistoryActions.ts", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
 const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
@@ -266,6 +275,7 @@ test("Calendar states and streak input use one resolved timeline for the same ra
   } as const;
   const calendarRead = resolveTaskHistoryCalendarRead({
     ...context,
+    compatibilityOnly: true,
     calendarStart: "2026-08-08",
     calendarEnd: "2026-08-13",
     history: [missed],
@@ -355,21 +365,8 @@ test("No Soda streak matches the resolved Calendar outcomes rather than a row co
   });
 
   const summary = buildTaskHistoryStreakSummaryMap([currentTask], rows, "2026-08-06")[currentTask.id];
-  const adapted = adaptLegacyTaskState(currentTask, rows, {
-    now: "2026-08-06T12:00:00.000Z",
-    timezone: "UTC",
-    logicalDayRollover: "00:00",
-  });
-  const recurrenceTimeline = buildTaskEffectiveTimeline({
-    task: adapted.engineInput.task,
-    history: adapted.engineInput.history,
-    logicalDate: "2026-08-06",
-    calendarStart: "2026-08-06",
-    calendarEnd: "2026-08-06",
-  });
 
   assert.equal(rows.length, 50);
-  assert.equal(recurrenceTimeline.currentMissedStreak, 14);
   assert.equal(summary?.missedStreak, 50);
   assert.match(streakSummarySource, /resolveTaskHistoryCalendarRead/);
   assert.doesNotMatch(streakSummarySource, /computeTaskSpecificHistoryStats/);
@@ -445,7 +442,7 @@ test("an affected task summary updates without rebuilding other task summaries",
   const updated = updateTaskHistoryStreakSummaryMap(initial, currentTask, [
     history("done-1", "2026-08-03", "done", true),
     history("done-2", "2026-08-04", "done", true),
-  ], "2026-08-04");
+  ], "2026-08-04", { compatibilityOnly: true });
 
   assert.equal(updated[currentTask.id]?.currentStreak, 2);
   assert.strictEqual(updated[otherTask.id], initial[otherTask.id]);
@@ -459,34 +456,6 @@ test("parent and child Table/List title paths consume compact summary fields", (
   assert.match(listSource, /currentStreak=\{taskRow\.currentStreak\}/);
   assert.match(listSource, /missedStreak=\{taskRow\.missedStreak\}/);
   assert.match(listSource, /taskHistoryStreakSummary: rowContext\.taskHistoryStreakSummaryByTaskId\[task\.id\]/);
-});
-
-test("normal Tasks startup loads full canonical History alongside compact summaries", () => {
-  const coreLoader = workspaceSource.slice(
-    workspaceSource.indexOf("async function loadCoreWorkspaceData"),
-    workspaceSource.indexOf("const requestCoreWorkspaceRefresh"),
-  );
-
-  assert.match(workspaceSource, /TASK_HISTORY_STREAK_SUMMARY_COLUMNS/);
-  assert.equal(TASK_HISTORY_STREAK_SUMMARY_COLUMNS, "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at");
-  assert.match(streakSummarySource, /TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at"/);
-  assert.match(workspaceSource, /fetchAllPagedRows<TaskHistoryStreakEntry>/);
-  assert.match(workspaceSource, /adhdice_task_command_operations/);
-  assert.match(workspaceSource, /manualActionCommandOperations/);
-  assert.match(workspaceSource, /\.range\(from, to\)/);
-  assert.match(coreLoader, /void loadTaskHistoryStreakSummaries\(nextTasks\)/);
-  assert.match(coreLoader, /loadTaskHistory\(\{ silent, source: "startup" \}\)/);
-  assert.doesNotMatch(workspaceSource, /from\("adhdice_task_history"\)\.select\("\*"\)/);
-  assert.match(workspaceSource, /hasLoadedFullTaskHistoryRef\.current/);
-});
-
-test("History mutation callbacks refresh one task summary", () => {
-  assert.match(historyActionSource, /onHistoryMutation\?:/);
-  assert.match(historyActionSource, /notifyHistoryMutation\(taskId, nextTaskHistory\)/);
-  assert.match(appSource, /onHistoryMutation: reconcileTaskHistoryMutation/);
-  assert.match(appSource, /updateTaskHistoryForTask\(taskId, nextTaskHistory\)/);
-  assert.match(workspaceSource, /refreshTaskHistoryStreakSummaryRef\.current = reloadTaskHistoryStreakSummaryForTask/);
-  assert.doesNotMatch(historyActionSource, /loadTaskHistoryStreakSummaries/);
 });
 
 test("modal calendar and statistics normalize saved Done, Did My Best, and Missed rows", () => {

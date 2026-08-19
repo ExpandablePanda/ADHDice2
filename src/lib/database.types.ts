@@ -342,6 +342,7 @@ export type Task = {
   sort_order: number;
   completed_at: string | null;
   trashed_at: string | null;
+  permanently_deleted_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -2344,6 +2345,10 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_mark_tasks_permanently_deleted: {
+        Args: { p_task_ids: string[] };
+        Returns: string[];
+      };
       adhdice_begin_records_reconciliation: {
         Args: { p_payload: unknown };
         Returns: unknown;

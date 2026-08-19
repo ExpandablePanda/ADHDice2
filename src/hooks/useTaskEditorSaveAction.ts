@@ -33,7 +33,7 @@ type UseTaskEditorSaveActionOptions = {
   focusedTaskIds: string[];
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   onTaskHistoryMutation?: (taskId: string, taskHistory: TaskHistory[], nextTask?: Task) => void | Promise<void>;
-  replaceTaskSubtasks: (taskId: string, subtasks: TaskSubtaskDraft[]) => Promise<{ saved: boolean; usedNestedFallback: boolean }>;
+  replaceTaskSubtasks: (taskId: string, subtasks: TaskSubtaskDraft[]) => Promise<{ saved: boolean }>;
   saveFocusSelection: (nextTaskIds: string[], validTaskIds?: Set<string> | Task[]) => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -285,12 +285,10 @@ export function useTaskEditorSaveAction({
         ? Array.from(new Set([...focusedTaskIds, taskId]))
         : focusedTaskIds.filter((id) => id !== taskId);
       await saveFocusSelection(nextFocusIds);
-      const usedAnyFallback = usedEnergyFallback || usedActualSecondsFallback || subtasksResult.usedNestedFallback;
+      const usedAnyFallback = usedEnergyFallback || usedActualSecondsFallback;
       setMessage({
         tone: usedAnyFallback ? "warn" : "good",
-        text: subtasksResult.usedNestedFallback
-          ? "Your database is missing nested-subtask support, so subtasks were saved as a flat list. Run the subtask parent migration to enable nesting."
-          : usedActualSecondsFallback
+        text: usedActualSecondsFallback
             ? "Manual time was saved, but your database is missing the task actual-time column. Run the actual-seconds migration to persist Actual Time on tasks."
             : usedEnergyFallback
               ? "Your database is missing the newer \"none\" energy level, so this task was saved with low energy instead. Run `supabase/add_task_energy_none.sql` to enable \"none\"."
@@ -345,12 +343,10 @@ export function useTaskEditorSaveAction({
       );
     }
 
-    const usedAnyFallback = usedEnergyFallback || subtasksResult.usedNestedFallback;
+    const usedAnyFallback = usedEnergyFallback;
     setMessage({
       tone: usedAnyFallback ? "warn" : "good",
-      text: subtasksResult.usedNestedFallback
-        ? "Your database is missing nested-subtask support, so subtasks were saved as a flat list. Run the subtask parent migration to enable nesting."
-        : usedEnergyFallback
+      text: usedEnergyFallback
           ? "Your database is missing the newer \"none\" energy level, so this task was saved with low energy instead. Run `supabase/add_task_energy_none.sql` to enable \"none\"."
           : "Task saved.",
     });

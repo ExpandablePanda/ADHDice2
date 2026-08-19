@@ -93,17 +93,17 @@ export function useTaskSubtaskActions({
     }
 
     if (!await saveDrafts(drafts, taskId)) {
-      return { saved: false, usedNestedFallback: false };
+      return { saved: false };
     }
 
     for (const child of existingChildren) {
       if (!retainedIds.has(child.id)) {
         if (!await updateCanonicalTask(child.id, { status: "trashed" })) {
-          return { saved: false, usedNestedFallback: false };
+          return { saved: false };
         }
       }
     }
-    return { saved: true, usedNestedFallback: false };
+    return { saved: true };
   }
 
   async function resetTaskSubtasksToPending(taskId: string) {

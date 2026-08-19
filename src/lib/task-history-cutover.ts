@@ -4,10 +4,6 @@ export function isPreCutoverTaskStateHistoryDate(logicalDate: string | null | un
   return typeof logicalDate === "string" && logicalDate < TASK_STATE_HISTORY_CUTOVER_DATE;
 }
 
-export function isPostCutoverTaskStateHistoryDate(logicalDate: string | null | undefined) {
-  return typeof logicalDate === "string" && logicalDate >= TASK_STATE_HISTORY_CUTOVER_DATE;
-}
-
 export function isHistoricalMigrationReconstructionEntry(entry: {
   canonical_provenance_kind?: string | null;
   entry_date?: string | null;
@@ -21,14 +17,4 @@ export function shouldExposeHistoryEventTimestamp(entry: {
   entry_date?: string | null;
 }) {
   return !isHistoricalMigrationReconstructionEntry(entry);
-}
-
-export function resolveTaskHistoryRecurrenceAuthority(
-  logicalDate: string | null | undefined,
-  requestedAuthority: boolean | null | undefined,
-) {
-  // The cutover remains provenance/timestamp context only. Recovered explicit
-  // outcomes are valid timeline inputs; checkpoint replay prevents ancient
-  // facts from rewriting newer state.
-  return requestedAuthority === null ? undefined : requestedAuthority;
 }

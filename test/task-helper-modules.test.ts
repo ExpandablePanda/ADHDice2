@@ -4,11 +4,6 @@ import { readFile } from "node:fs/promises";
 import type { TaskHistory } from "../src/lib/database.types.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import { buildChildTaskCreationDraft } from "../src/lib/task-child-creation.ts";
-import {
-  buildLegacyStepPromotionDryRun,
-  buildPromotedStepTaskInsert,
-  filterPromotedLegacySubtasks,
-} from "../src/lib/task-legacy-step-promotion.ts";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "../src/lib/task-filter-state.ts";
 import {
   formatDueTimeLabel,
@@ -253,31 +248,6 @@ test("normal task UI keeps Steps unified without migration-source labels", async
   }
 });
 
-function createLegacySubtask(overrides: Partial<{
-  created_at: string;
-  id: string;
-  parent_subtask_id: string | null;
-  sort_order: number;
-  status: "pending" | "in_progress" | "done" | "missed" | "did_my_best" | "upcoming" | "not_due";
-  task_id: string;
-  title: string;
-  updated_at: string;
-  user_id: string;
-}>) {
-  const createdAt = overrides.created_at ?? "2026-06-18T09:00:00.000Z";
-  return {
-    created_at: createdAt,
-    id: overrides.id ?? "legacy-step",
-    parent_subtask_id: overrides.parent_subtask_id ?? null,
-    sort_order: overrides.sort_order ?? 0,
-    status: overrides.status ?? "pending",
-    task_id: overrides.task_id ?? "task-parent",
-    title: overrides.title ?? "Legacy step",
-    updated_at: overrides.updated_at ?? createdAt,
-    user_id: overrides.user_id ?? "test-user",
-  };
-}
-
 test("filter state helpers detect active filters and preserve key UI state on reset", () => {
   const activeState = {
     ...DEFAULT_TASK_UI_STATE,
@@ -348,159 +318,6 @@ test("task selectors build expected filtered collections and list memberships", 
   assert.equal(collections.filteredLowEnergyTasks.length, 1);
   assert.equal(collections.inboxTasks.length, 1);
   assert.equal(collections.quickWinTasks.length, 1);
-});
-
-test("legacy step promotion dry run reports eligible nested rows and safe skips", () => {
-  const parentTask = createTask({
-    created_at: "2026-06-18T09:00:00.000Z",
-    id: "task-parent",
-    sort_order: 1,
-    status: "pending",
-    title: "Parent",
-  });
-  const archivedTask = createTask({
-    created_at: "2026-06-18T10:00:00.000Z",
-    id: "task-archived",
-    sort_order: 2,
-    status: "archived",
-    title: "Archived",
-  });
-  const mappedTask = createTask({
-    created_at: "2026-06-18T11:00:00.000Z",
-    id: "task-mapped-step",
-    parent_task_id: parentTask.id,
-    sort_order: 3,
-    status: "done",
-    title: "Mapped step",
-  });
-
-  const dryRun = buildLegacyStepPromotionDryRun({
-    currentUserId: "test-user",
-    mappings: [{
-      created_at: "2026-06-18T12:00:00.000Z",
-      legacy_subtask_id: "legacy-mapped",
-      task_id: mappedTask.id,
-      updated_at: "2026-06-18T12:00:00.000Z",
-      user_id: "test-user",
-    }],
-    subtasks: [
-      createLegacySubtask({ id: "legacy-root", task_id: parentTask.id, title: "Root step" }),
-      createLegacySubtask({ id: "legacy-child", parent_subtask_id: "legacy-root", sort_order: 1, task_id: parentTask.id, title: "Nested step" }),
-      createLegacySubtask({ id: "legacy-mapped", sort_order: 2, task_id: parentTask.id, title: "Already mapped" }),
-      createLegacySubtask({ id: "legacy-archived", task_id: archivedTask.id, title: "Archived parent step" }),
-      createLegacySubtask({ id: "legacy-missing-parent", task_id: "task-missing", title: "Missing parent step" }),
-    ],
-    tasks: [parentTask, archivedTask, mappedTask],
-  });
-
-  assert.equal(dryRun.summary.totalLegacySubtasks, 5);
-  assert.equal(dryRun.summary.alreadyMapped, 1);
-  assert.equal(dryRun.summary.eligibleForPromotion, 2);
-  assert.equal(dryRun.summary.skippedBecauseParentTaskArchivedOrTrashed, 1);
-  assert.equal(dryRun.summary.skippedBecauseParentTaskMissing, 1);
-  assert.deepEqual(
-    dryRun.proposedRows.map((row) => [row.legacySubtaskId, row.taskId, row.parentTaskId, row.depth]),
-    [
-      ["legacy-root", "legacy-root", parentTask.id, 1],
-      ["legacy-child", "legacy-child", "legacy-root", 2],
-    ],
-  );
-  assert.deepEqual(dryRun.alreadyMappedRows, [{
-    legacySubtaskId: "legacy-mapped",
-    taskId: mappedTask.id,
-    title: "Already mapped",
-  }]);
-});
-
-test("legacy step promotion dry run blocks stable task id collisions", () => {
-  const parentTask = createTask({
-    created_at: "2026-06-18T09:00:00.000Z",
-    id: "task-parent",
-    sort_order: 1,
-    status: "pending",
-    title: "Parent",
-  });
-  const collidingTask = createTask({
-    created_at: "2026-06-18T10:00:00.000Z",
-    id: "legacy-root",
-    sort_order: 2,
-    status: "pending",
-    title: "Existing task with legacy id",
-  });
-
-  const dryRun = buildLegacyStepPromotionDryRun({
-    currentUserId: "test-user",
-    mappings: [],
-    subtasks: [
-      createLegacySubtask({ id: "legacy-root", task_id: parentTask.id, title: "Root step" }),
-    ],
-    tasks: [parentTask, collidingTask],
-  });
-
-  assert.equal(dryRun.summary.eligibleForPromotion, 0);
-  assert.equal(dryRun.summary.duplicateOrAmbiguous, 1);
-  assert.deepEqual(dryRun.skippedRows, [{
-    legacySubtaskId: "legacy-root",
-    reason: "stable_task_id_collision",
-    title: "Root step",
-  }]);
-});
-
-test("promotion mappings suppress promoted legacy checklist rows while preserving unmapped rows", () => {
-  const subtasks = [
-    createLegacySubtask({ id: "legacy-promoted", task_id: "task-parent", title: "Promoted legacy row" }),
-    createLegacySubtask({ id: "legacy-unmapped", sort_order: 1, task_id: "task-parent", title: "Unmapped legacy row" }),
-  ];
-
-  const filtered = filterPromotedLegacySubtasks(subtasks, [{
-    created_at: "2026-06-18T12:00:00.000Z",
-    legacy_subtask_id: "legacy-promoted",
-    task_id: "legacy-promoted",
-    updated_at: "2026-06-18T12:00:00.000Z",
-    user_id: "test-user",
-  }]);
-
-  assert.deepEqual(filtered.map((subtask) => subtask.id), ["legacy-unmapped"]);
-});
-
-test("promotion mapping suppression keeps unmapped children visible when a legacy parent is promoted", () => {
-  const subtasks = [
-    createLegacySubtask({ id: "legacy-parent", task_id: "task-parent", title: "Promoted parent" }),
-    createLegacySubtask({ id: "legacy-child", parent_subtask_id: "legacy-parent", sort_order: 1, task_id: "task-parent", title: "Unmapped child" }),
-  ];
-
-  const filtered = filterPromotedLegacySubtasks(subtasks, [{
-    created_at: "2026-06-18T12:00:00.000Z",
-    legacy_subtask_id: "legacy-parent",
-    task_id: "legacy-parent",
-    updated_at: "2026-06-18T12:00:00.000Z",
-    user_id: "test-user",
-  }]);
-
-  assert.deepEqual(filtered.map((subtask) => [subtask.id, subtask.parent_subtask_id]), [
-    ["legacy-child", null],
-  ]);
-});
-
-test("promoted step task insert maps status, parent, and sort without completion side effects", () => {
-  const payload = buildPromotedStepTaskInsert({
-    depth: 1,
-    legacySubtaskId: "legacy-done",
-    parentTaskId: "task-parent",
-    proposedStatus: "done",
-    sortOrder: 7,
-    sourceStatus: "done",
-    taskId: "legacy-done",
-    title: "Completed legacy step",
-  }, "test-user");
-
-  assert.equal(payload.id, "legacy-done");
-  assert.equal(payload.parent_task_id, "task-parent");
-  assert.equal(payload.status, "done");
-  assert.equal(payload.completed_at, null);
-  assert.equal(payload.sort_order, 7);
-  assert.equal(payload.title, "Completed legacy step");
-  assert.equal(payload.user_id, "test-user");
 });
 
 test("momentum helpers cycle view, update day buckets, and compute metrics", () => {
@@ -2549,6 +2366,9 @@ function createTaskUpdateTestClient(initialTask: ReturnType<typeof createTask>) 
 
               return this;
             },
+            is() {
+              return this;
+            },
             select() {
               return {
                 maybeSingle: async () => {
@@ -2581,6 +2401,9 @@ function createTaskUpdateTestClient(initialTask: ReturnType<typeof createTask>) 
               }
 
               return {
+                is() {
+                  return this;
+                },
                 maybeSingle: async () => ({
                   data: currentTask && pendingId === currentTask.id ? { ...currentTask } : null,
                   error: null,
@@ -2603,6 +2426,9 @@ function createTaskUpdateTestClient(initialTask: ReturnType<typeof createTask>) 
                 pendingRevision = value;
               }
 
+              return this;
+            },
+            is() {
               return this;
             },
             select() {

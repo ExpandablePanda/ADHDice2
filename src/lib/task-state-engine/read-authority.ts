@@ -10,8 +10,6 @@ import { evaluateTaskState } from "./engine.ts";
  * integration. Active Status reads themselves always use the engine below.
  */
 export const TASK_STATE_ENGINE_INTEGRATION_ENABLED = true;
-/** @deprecated Use TASK_STATE_ENGINE_INTEGRATION_ENABLED. */
-export const TASK_STATE_ENGINE_ACTIVE_STATUS_READ_ENABLED = TASK_STATE_ENGINE_INTEGRATION_ENABLED;
 
 export type ActiveStatusAuthority = "engine";
 export type ActiveStatusReadResult = {

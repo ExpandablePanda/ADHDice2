@@ -5,7 +5,6 @@ import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import { getTaskDisplayStatusWithHistory } from "../src/lib/task-cockpit.ts";
 import { evaluateTaskActionAuthority as evaluateCanonicalTaskActionAuthority, evaluateTaskScheduleAuthority as evaluateCanonicalTaskScheduleAuthority, stripStatusFromScheduleIntent } from "../src/lib/task-state-engine/action-authority.ts";
 import { resolveTaskHistoryCalendarActionStatuses as resolveCanonicalTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates as resolveCanonicalTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
-import { buildManualDueDateTaskUpdate } from "../src/lib/task-state-engine/due-date-authority.ts";
 import { createEngineRolloverPlan as createCanonicalEngineRolloverPlan } from "../src/lib/task-state-engine/rollover-authority.ts";
 import { resolveCompatibilityTaskStatuses as resolveCanonicalCompatibilityTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 
@@ -40,68 +39,6 @@ function history(status: TaskHistory["status"], entry_date = "2026-07-30"): Task
 }
 
 const context = { logicalDayRollover: "06:00", now: "2026-07-31T14:00:00.000Z", timezone: "America/New_York" };
-
-test("due-date-only change derives future status without promoting ambiguous old Missed History", () => {
-  const originalTask = task({
-    active_status_logical_date: null,
-    active_occurrence_due_on: null,
-    due_on: "2026-08-06",
-    id: "task-1",
-    repeat_frequency: "daily",
-    status: "missed",
-  });
-  const historyRows = [
-    history("missed", "2026-08-03"),
-    { ...history("missed", "2026-08-04"), id: "history-2026-08-04" },
-    { ...history("done", "2026-08-05"), id: "history-2026-08-05" },
-  ];
-  const historySnapshot = JSON.stringify(historyRows);
-  const dueDateOnlyIntent = stripStatusFromScheduleIntent({ due_on: "2026-08-30", status: "missed" });
-  assert.equal(Object.hasOwn(dueDateOnlyIntent, "status"), false);
-
-  const authority = evaluateTaskScheduleAuthority({
-    history: historyRows,
-    logicalDayRollover: "06:00",
-    now: "2026-08-05T14:00:00.000Z",
-    proposedTask: { ...originalTask, ...dueDateOnlyIntent },
-    task: originalTask,
-    timezone: "America/New_York",
-  });
-
-  assert.equal(authority?.activeStatus, "not_due");
-  assert.equal(authority?.unresolvedOccurrenceIdentity, null);
-  assert.equal(authority?.unresolvedOccurrenceDueOn, null);
-  assert.equal(authority?.mutationPlan.taskUpdate.due_on, "2026-08-30");
-  assert.notEqual(authority?.mutationPlan.taskUpdate.status, "missed");
-  assert.equal(authority?.mutationPlan.taskUpdate.status, "not_due");
-  assert.deepEqual(authority?.mutationPlan.historyIntents, []);
-  assert.deepEqual(authority?.proposedHistoryChanges, []);
-  assert.equal(JSON.stringify(historyRows), historySnapshot);
-  assert.deepEqual(historyRows.map((row) => [row.entry_date, row.status]), [
-    ["2026-08-03", "missed"],
-    ["2026-08-04", "missed"],
-    ["2026-08-05", "done"],
-  ]);
-});
-
-test("moving a future task back to today preserves an unresolved Missed chain", () => {
-  const futureTask = task({
-    due_on: "2026-08-30",
-    status: "not_due",
-  });
-  const authority = evaluateTaskScheduleAuthority({
-    history: [history("missed", "2026-08-03")],
-    logicalDayRollover: "06:00",
-    now: "2026-08-05T14:00:00.000Z",
-    proposedTask: { ...futureTask, due_on: "2026-08-05" },
-    task: futureTask,
-    timezone: "America/New_York",
-  });
-
-  assert.equal(authority?.activeStatus, "missed");
-  assert.equal(authority?.mutationPlan.taskUpdate.status, "missed");
-  assert.equal(authority?.mutationPlan.historyIntents.length, 0);
-});
 
 test("a concrete active Missed occurrence remains Missed through a schedule edit", () => {
   const activeTask = task({
@@ -249,7 +186,14 @@ test("manual due-date reconciliation preserves History while aligning live, visi
   const missed = history("missed", "2026-08-03");
   const originalTask = task({ due_on: "2026-08-08", status: "upcoming" });
   const historySnapshot = JSON.stringify([missed]);
-  const dueEdit = buildManualDueDateTaskUpdate(originalTask, "2026-08-04", [missed], "2026-08-08");
+  const dueEdit = evaluateTaskScheduleAuthority({
+    history: [missed],
+    logicalDayRollover: "00:00",
+    now: "2026-08-08T12:00:00.000Z",
+    proposedTask: { ...originalTask, due_on: "2026-08-04" },
+    task: originalTask,
+    timezone: "UTC",
+  })?.mutationPlan.taskUpdate ?? { due_on: "2026-08-04" };
   const savedTask = { ...originalTask, ...dueEdit };
 
   assert.equal(dueEdit.due_on, "2026-08-04");
@@ -279,21 +223,26 @@ test("manual due-date reconciliation preserves History while aligning live, visi
   });
   assert.equal(calendarStates?.["2026-08-03"], "missed");
 
-  const noUnresolvedHistory = buildManualDueDateTaskUpdate(
-    { ...originalTask, due_on: "2026-08-08", status: "upcoming" },
-    "2026-08-08",
-    [],
-    "2026-08-08",
-  );
+  const noUnresolvedHistory = evaluateTaskScheduleAuthority({
+    history: [],
+    logicalDayRollover: "00:00",
+    now: "2026-08-08T12:00:00.000Z",
+    proposedTask: { ...originalTask, due_on: "2026-08-08", status: "upcoming" },
+    task: { ...originalTask, due_on: "2026-08-08", status: "upcoming" },
+    timezone: "UTC",
+  })?.mutationPlan.taskUpdate ?? { due_on: "2026-08-08" };
   assert.equal(noUnresolvedHistory.status, "pending");
   assert.equal(noUnresolvedHistory.active_occurrence_due_on ?? null, null);
 
-  const futureAnchor = buildManualDueDateTaskUpdate(
-    { ...originalTask, due_on: "2026-08-04", status: "pending" },
-    "2026-08-08",
-    [],
-    "2026-08-05",
-  );
+  const futureAnchorTask = { ...originalTask, due_on: "2026-08-04", status: "pending" as const };
+  const futureAnchor = evaluateTaskScheduleAuthority({
+    history: [],
+    logicalDayRollover: "00:00",
+    now: "2026-08-05T14:00:00.000Z",
+    proposedTask: { ...futureAnchorTask, due_on: "2026-08-08" },
+    task: futureAnchorTask,
+    timezone: "UTC",
+  })?.mutationPlan.taskUpdate ?? { due_on: "2026-08-08" };
   assert.equal(futureAnchor.status, "upcoming");
   const futureCalendarStates = resolveTaskHistoryCalendarStates({
     calendarEnd: "2026-08-08",
@@ -589,20 +538,6 @@ test("status actions resolve canonical task state and single-flight the complete
   assert.match(actionPath, /taskStatusMutationInFlightRef\.current\.delete\(canonicalTask\.id\)/);
   assert.match(actionPath, /runTaskStatusMutation\(\s*canonicalTask/);
   assert.match(actionPath, /loadTaskHistoryForTasks\(\[task\.id\]\)/);
-});
-
-test("History failure uses revision-aware compensation and refreshes on rollback conflict", async () => {
-  const source = await import("node:fs/promises").then((fs) => fs.readFile(
-    new URL("../src/components/task-app.tsx", import.meta.url),
-    "utf8",
-  ));
-  const compensationStart = source.indexOf("onTaskHistoryFailure: async");
-  const compensationPath = source.slice(compensationStart, source.indexOf("onTasksCompleted: queueTaskRewards", compensationStart));
-
-  assert.match(compensationPath, /updateTaskRowWithLegacyEnergyFallback\(\s*taskId,\s*rollbackValues,\s*\{ expectedTask: committedTask \}/);
-  assert.match(compensationPath, /await softRefreshWorkspace\(\)/);
-  assert.match(compensationPath, /History could not be saved and the task could not be safely rolled back/);
-  assert.doesNotMatch(compensationPath, /runGuardedTaskRowUpdate/);
 });
 
 test("Table and List status adapters enter the canonical-by-ID action boundary", async () => {

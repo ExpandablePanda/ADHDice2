@@ -1351,6 +1351,7 @@ export function TaskOperationsHeader({
   onOpenCompletedMilestones,
   onOpenMomentumDetails,
   onOpenTrash,
+  onEmptyTrash,
   onMoveStructure,
   onNavigateFolder,
   openFolderRails = [],
@@ -1408,6 +1409,7 @@ export function TaskOperationsHeader({
   onOpenCompletedMilestones?: () => void;
   onOpenMomentumDetails: () => void;
   onOpenTrash: () => void;
+  onEmptyTrash: () => void;
   onMoveStructure?: (
     sourceEntityId: string,
     sourceEntityType: "folder" | "list",
@@ -1538,6 +1540,16 @@ export function TaskOperationsHeader({
                   <span className="opacity-70">{trashCount}</span>
                 </span>
               </TaskChipButton>
+              {selectedBucket === "trash" && trashCount > 0 ? (
+                <AdhdChip
+                  contentClassName="gap-2"
+                  icon={<Trash2 aria-hidden="true" className="h-3.5 w-3.5" />}
+                  onClick={onEmptyTrash}
+                  tone="danger"
+                >
+                  Empty Trash
+                </AdhdChip>
+              ) : null}
               <TaskViewsMenu onViewChange={onViewChange} view={view} />
               {view === "table" ? (
                 <TaskChipButton onClick={onToggleRail}>

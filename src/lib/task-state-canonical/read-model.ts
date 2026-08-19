@@ -33,6 +33,7 @@ type CanonicalReadResult<T> = {
 type CanonicalReadQuery<T> = {
   select(columns: string): CanonicalReadQuery<T>;
   eq(column: string, value: string): CanonicalReadQuery<T>;
+  is(column: string, value: null): CanonicalReadQuery<T>;
   order(column: string, options: { ascending: boolean }): CanonicalReadQuery<T>;
   maybeSingle(): Promise<CanonicalReadResult<T | null>>;
   then<TResult1 = CanonicalReadResult<T[]>, TResult2 = never>(
@@ -100,6 +101,7 @@ export async function loadCanonicalTaskState(
     .select("*")
     .eq("user_id", input.userId)
     .eq("id", input.taskId)
+    .is("permanently_deleted_at", null)
     .maybeSingle();
 
   if (taskResult.error) return { data: null, error: readError(taskResult.error) };

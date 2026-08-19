@@ -387,7 +387,7 @@ test("canonical editor creation does not synthesize History or rewards", async (
     focusedTaskIds: [],
     insertTaskRowWithLegacyEnergyFallback: async () => { throw new Error("legacy editor insert must not run"); },
     onTasksCompleted: async () => { rewardCalls += 1; },
-    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    replaceTaskSubtasks: async () => ({ saved: true }),
     reconcileOverdueTaskMisses: async () => true,
     saveFocusSelection: async () => {},
     setMessage: () => {},

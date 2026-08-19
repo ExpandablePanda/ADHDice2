@@ -475,6 +475,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         .from("adhdice_clean_tasks")
         .select("*")
         .eq("user_id", userId)
+        .is("permanently_deleted_at", null)
         .order("status", { ascending: true })
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: false });

@@ -104,7 +104,7 @@ test("action hooks expose expected callable actions", async () => {
     currentUserId: "u1",
     insertTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedEnergyFallback: false }),
     onTasksCompleted: async () => {},
-    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    replaceTaskSubtasks: async () => ({ saved: true }),
     reconcileOverdueTaskMisses: async () => true,
     saveFocusSelection: async () => {},
     setMessage: () => {},
@@ -696,7 +696,7 @@ test("due-date edits recalculate open status in update, editor, and batch flows"
     onTasksCompleted: async (candidates) => {
       editorForceRecurringFinalization = candidates[0]?.forceRecurringFinalization ?? null;
     },
-    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    replaceTaskSubtasks: async () => ({ saved: true }),
     reconcileOverdueTaskMisses: async () => true,
     saveFocusSelection: async () => {},
     setMessage: () => {},
@@ -984,7 +984,7 @@ test("manual due-date edits preserve unresolved History and skip reconciliation,
     focusedTaskIds: [],
     insertTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedEnergyFallback: false }),
     onTasksCompleted: async () => { rewardCallbacks += 1; },
-    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    replaceTaskSubtasks: async () => ({ saved: true }),
     reconcileOverdueTaskMisses: async () => {
       overdueReconciliations += 1;
       return true;
@@ -1411,7 +1411,7 @@ test("full editor metadata-only title and priority edits skip History loading", 
       return failedTaskHistoryLoad(task.id)();
     },
     onTasksCompleted: async () => {},
-    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    replaceTaskSubtasks: async () => ({ saved: true }),
     reconcileOverdueTaskMisses: async () => true,
     saveFocusSelection: async () => {},
     setMessage: () => {},
@@ -1444,7 +1444,7 @@ test("full editor save rejects Task State validation before task or History writ
     insertTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedEnergyFallback: false }),
     loadTaskHistoryForTasks: readyTaskHistoryLoad(task.id),
     onTasksCompleted: async () => { rewardCalls += 1; },
-    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    replaceTaskSubtasks: async () => ({ saved: true }),
     reconcileOverdueTaskMisses: async () => true,
     saveFocusSelection: async () => {},
     setMessage: () => {},

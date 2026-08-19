@@ -170,7 +170,6 @@ function boundary(sourceTask: Task, scheduleModel: CanonicalTaskScheduleBoundary
     source: "test",
     command_id: null,
     idempotence_identity: "boundary-7-9-28",
-    migration_operation_id: null,
     migration_version: null,
     classifier_version: null,
     schema_contract_version: "task-state-schema-v1",

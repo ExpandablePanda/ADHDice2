@@ -75,7 +75,6 @@ function override(logicalDate: string): CanonicalTaskCalendarOverride {
     idempotence_identity: `override-identity-${logicalDate}`,
     is_active: true,
     logical_date: logicalDate,
-    migration_operation_id: null,
     override_state: "not_due",
     provenance_kind: "manual",
     reason: null,

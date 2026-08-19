@@ -25,7 +25,6 @@ function occurrence(overrides: Partial<CanonicalTaskOccurrence> = {}): Canonical
     resolved_outcome: null,
     resolved_history_id: null,
     command_id: null,
-    migration_operation_id: null,
     revision: 1,
     created_at: "2026-08-10T12:00:00.000Z",
     updated_at: "2026-08-10T12:00:00.000Z",

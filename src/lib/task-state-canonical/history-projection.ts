@@ -1,5 +1,4 @@
 import type { TaskHistory } from "../database.types.ts";
-import { resolveTaskHistoryRecurrenceAuthority } from "../task-history-cutover.ts";
 import type { CanonicalTaskHistoryFact } from "./types.ts";
 
 const SUCCESSFUL_OUTCOMES = new Set(["done", "did_my_best", "complete"]);
@@ -38,7 +37,7 @@ export function mapCanonicalTaskHistoryFact(fact: CanonicalTaskHistoryFact): Tas
       && fact.outcome === "delayed"
       && fact.effective_due_on === null
       ? false
-      : resolveTaskHistoryRecurrenceAuthority(fact.logical_date, true) ?? true,
+      : true,
   };
 }
 

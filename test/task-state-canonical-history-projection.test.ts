@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mapCanonicalTaskHistoryFact, mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
 import type { CanonicalTaskHistoryFact } from "@/lib/task-state-canonical/types";
-import { adaptLegacyTaskState } from "@/lib/task-state-engine/legacy-adapter";
-import { evaluateTaskState } from "@/lib/task-state-engine/engine";
 
 function fact(overrides: Partial<CanonicalTaskHistoryFact> = {}): CanonicalTaskHistoryFact {
   return {
@@ -28,7 +26,6 @@ function fact(overrides: Partial<CanonicalTaskHistoryFact> = {}): CanonicalTaskH
     day_start_time: "06:00",
     command_id: "command-1",
     idempotence_identity: "command-1:history",
-    migration_operation_id: null,
     source_legacy_history_id: null,
     revision: 1,
     created_at: "2026-08-10T12:00:00.000Z",
@@ -79,64 +76,6 @@ test("migration-reconstructed Delayed facts without an effective cursor remain d
   assert.equal(projected.recurrence_authoritative, false);
 });
 
-test("pre-cutover canonical History remains recurrence-authoritative through the legacy adapter", () => {
-  const projected = mapCanonicalTaskHistoryFact(fact({ provenance_kind: "user", occurrence_id: "occurrence-1" }));
-  projected.recurrence_authoritative = true;
-  const adapted = adaptLegacyTaskState({
-    id: "task-1",
-    status: "pending",
-    due_on: "2026-08-10",
-    repeat_frequency: "daily",
-    repeat_interval: 1,
-  }, [projected], {
-    now: "2026-08-14T12:00:00.000Z",
-    timezone: "UTC",
-    logicalDayRollover: "00:00",
-  });
-
-  assert.equal(adapted.engineInput.history[0]?.recurrenceAuthoritative, true);
-});
-
-test("post-cutover canonical History remains modern Task State input", () => {
-  const projected = mapCanonicalTaskHistoryFact(fact({
-    logical_date: "2026-08-14",
-    scheduled_due_on: "2026-08-14",
-    effective_due_on: "2026-08-14",
-    provenance_kind: "user",
-    occurrence_id: "occurrence-1",
-  }));
-  const adapted = adaptLegacyTaskState({
-    id: "task-1",
-    status: "pending",
-    due_on: "2026-08-14",
-    repeat_frequency: "daily",
-    repeat_interval: 1,
-  }, [projected], {
-    now: "2026-08-14T12:00:00.000Z",
-    timezone: "UTC",
-    logicalDayRollover: "00:00",
-  });
-
-  assert.equal(adapted.engineInput.history[0]?.recurrenceAuthoritative, true);
-  assert.equal(evaluateTaskState(adapted.engineInput).nextDueDate, "2026-08-15");
-});
-
-test("canonical recurrence-authority metadata survives the legacy engine adapter", () => {
-  const projected = mapCanonicalTaskHistoryFact(fact({ provenance_kind: "migration_reconstruction", occurrence_id: null, command_id: null, scheduled_due_on: "2026-08-10" }));
-  const adapted = adaptLegacyTaskState({
-    id: "task-1",
-    status: "pending",
-    due_on: "2026-08-10",
-    repeat_frequency: "daily",
-    repeat_interval: 1,
-  }, [projected], {
-    now: "2026-08-12T12:00:00.000Z",
-    timezone: "UTC",
-    logicalDayRollover: "00:00",
-  });
-  assert.equal(adapted.engineInput.history[0]?.recurrenceAuthoritative, true);
-});
-
 test("projection does not manufacture calculated Missed rows", () => {
   const rows = mapCanonicalTaskHistoryFacts([
     fact({ outcome: "done" }),
@@ -155,16 +94,4 @@ test("canonical Delay projection carries its persisted effective cursor into the
   }));
 
   assert.equal(projected.effective_due_on, "2026-09-06");
-  const adapted = adaptLegacyTaskState({
-    id: "task-1",
-    status: "delayed",
-    due_on: "2026-09-06",
-    repeat_frequency: "daily",
-    repeat_interval: 1,
-  }, [projected], {
-    now: "2026-08-16T12:00:00.000Z",
-    timezone: "UTC",
-    logicalDayRollover: "00:00",
-  });
-  assert.equal(adapted.engineInput.history[0]?.effectiveDueOn, "2026-09-06");
 });

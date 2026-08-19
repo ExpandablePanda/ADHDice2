@@ -38,7 +38,7 @@ test("Edge intent validation owns the privileged-field rejection list", () => {
   assert.match(domainSource, /FORBIDDEN_KEYS/);
   assert.match(domainSource, /task_patch/);
   assert.match(domainSource, /accepted_payload_digest/);
-  assert.match(domainSource, /migration_operation_id/);
+  assert.doesNotMatch(domainSource, /migration_operation_id|migration_version|classifier_version/);
   assert.match(domainSource, /source_kind/);
 });
 
