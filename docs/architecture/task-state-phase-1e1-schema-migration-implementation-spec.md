@@ -31,12 +31,12 @@ supabase/schema.sql currently defines:
 
 - public.adhdice_clean_tasks with UUID id, user_id, self-referential parent_task_id, integer revision, created_at, updated_at, the overloaded status enum, repeat fields, due_on, scheduled_on, active_status_logical_date, active_occurrence_due_on, completed_at, and trashed_at.
 - public.adhdice_task_history with UUID id, task_id, user_id, entry_date, optional occurrence_key and occurrence_due_on, enum status, event_type, counted_as_due_occurrence, was_completed, timestamps, and unique (user_id, task_id, entry_date).
-- public.adhdice_task_subtasks and public.adhdice_legacy_subtask_promotions for legacy child storage and promotion evidence.
+- canonical same-table child storage through `adhdice_clean_tasks.parent_task_id`.
 - public.adhdice_user_profiles, extended by patches with timezone, text day_start_time, economy fields, and settings fields.
 - public.adhdice_task_events, public.adhdice_point_ledger, public.adhdice_task_reward_rolls, public.adhdice_task_reward_claims, public.adhdice_pending_reward_dice, public.adhdice_pending_reward_dice_operations, and public.adhdice_pending_reward_dice_items for current economy/reward paths.
 - Achievement persistence keyed to current adhdice_task_history rows, including adhdice_capture_task_achievement_occurrence(uuid) and the task-history achievement trigger.
 
-Current base enums include adhdice_clean_task_status, adhdice_clean_task_repeat_frequency, adhdice_clean_task_repeat_monthly_mode, adhdice_clean_task_repeat_monthly_ordinal, and adhdice_clean_task_subtask_status. New canonical axes use text plus explicit CHECK constraints rather than adding another PostgreSQL enum family. Existing enums remain for compatibility projections and legacy rows.
+Current base enums include adhdice_clean_task_status, adhdice_clean_task_repeat_frequency, adhdice_clean_task_repeat_monthly_mode, and adhdice_clean_task_repeat_monthly_ordinal. New canonical axes use text plus explicit CHECK constraints rather than adding another PostgreSQL enum family.
 
 Current ownership policies use auth.uid() = user_id; the target policies must use TO authenticated plus (select auth.uid()) ownership predicates and both USING and WITH CHECK on updates. Existing revision behavior is adhdice_clean_tasks_bump_revision() before updates, with adhdice_clean_set_updated_at() triggers for timestamps.
 
@@ -48,12 +48,12 @@ The relevant current names include:
 
 - adhdice_reconcile_task_rollover(uuid, timestamptz) and its helper functions;
 - adhdice_apply_task_state_engine_rollover(uuid, jsonb, timestamptz);
-- adhdice_award_pending_reward_dice(...), adhdice_claim_pending_reward_dice(uuid), and adhdice_migrate_pending_reward_dice(...);
+- adhdice_claim_pending_reward_dice(uuid);
 - adhdice_execute_roll(...);
 - adhdice_capture_task_achievement_occurrence(uuid) and achievement runtime triggers; and
 - adhdice_clean_tasks_bump_revision() plus History occurrence/duration triggers.
 
-The current named index convention includes adhdice_clean_tasks_user_status_sort_idx, adhdice_clean_tasks_user_due_idx, adhdice_clean_tasks_parent_task_idx, adhdice_task_history_user_date_idx, adhdice_task_actual_time_entries_user_task_date_idx, adhdice_task_subtasks_task_sort_idx, and adhdice_legacy_subtask_promotions_user_idx. The base Task and History primary/foreign keys are mostly inline unnamed constraints; the current History uniqueness is an inline unique (user_id, task_id, entry_date). New canonical objects therefore use explicit names in the future SQL artifact and retain the adhdice_ prefix.
+The current named index convention includes the canonical Task, History, schedule, and reward indexes. The base Task and History primary/foreign keys are mostly inline unnamed constraints; the current History uniqueness is an inline unique (user_id, task_id, entry_date). New canonical objects therefore use explicit names in the future SQL artifact and retain the adhdice_ prefix.
 
 These remain legacy/compatibility evidence until the retirement gates in §33 pass. No checked-in function is assumed deployed.
 
@@ -751,11 +751,11 @@ Valid In Progress requires current status/active evidence, a valid current logic
 
 ### 15.8 Hierarchy
 
-Use same-table parent_task_id and owner-safe recursive traversal. Null parent at depth zero is parent; depth one is step; depth two or greater is substep. Cross-user parent, missing parent, cycle, duplicate promotion, and ambiguous title-based equivalence are needs-attention. A valid promotion row maps one legacy Subtask to one existing Task and never creates a duplicate.
+Use same-table parent_task_id and owner-safe recursive traversal. Null parent at depth zero is parent; depth one is step; depth two or greater is substep. Cross-user parent, missing parent, cycle, and ambiguous title-based equivalence are needs-attention. No promotion mapping or separate-child compatibility path remains supported.
 
 ### 15.9 Rewards
 
-Map a claim as consumed only with owner-safe Task/entity/date, a stable reward roll/effect, and unique promotion mapping where subtask_id is present. Pending dice is pending effect evidence only. A success History with no economy proof creates no historical entitlement. An ambiguous claim blocks a new grant for that entity/date. Reversal never reopens uniqueness and never claws back consumed economy.
+Map a claim as consumed only with owner-safe canonical entity/date identity and a stable reward roll/effect. Pending dice is pending effect evidence only. A success History with no canonical entitlement/grant proof creates no historical entitlement. An ambiguous claim blocks a new grant for that entity/date. Reversal never reopens uniqueness and never claws back consumed economy.
 
 ## 16. Backfill and prospective normalization
 

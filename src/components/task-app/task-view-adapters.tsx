@@ -46,8 +46,6 @@ import type {
   Task,
   TaskHistory as DbTaskHistory,
   TaskStatus,
-  TaskSubtask as DbTaskSubtask,
-  TaskSubtaskStatus,
 } from "@/lib/database.types";
 
 type Message = {
@@ -387,7 +385,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
   onAddTask: (draft: { focusToday: boolean; values: TaskDraft }) => Promise<void>;
   onEditTask: (task: Task) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
-  onSetSubtaskStatus: (subtaskId: string, status: TaskSubtaskStatus) => void;
+  onSetSubtaskStatus: (subtaskId: string, status: TaskStatus) => void;
   onAddWidget: (widgetType: TWidgetType) => void;
   onImportTasks: (lines: string[]) => Promise<ImportTasksResult | void>;
   onMoveWidget: (widgetId: string, direction: "up" | "down") => void;
@@ -400,7 +398,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
   onToggleEditMode: () => void;
   overdueCount: number;
   selectedWidgetId: string | null;
-  subtasksByTaskId: Record<string, DbTaskSubtask[]>;
+  subtasksByTaskId: Record<string, Task[]>;
   taskHistoryStats: TaskHistoryStats;
   tasksByWidget: {
     activeQueue: Task[];

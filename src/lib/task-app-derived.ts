@@ -7,7 +7,6 @@ import type {
   Task,
   TaskHistory,
   TaskStatus,
-  TaskSubtask as DbTaskSubtask,
 } from "@/lib/database.types";
 import { computeTaskSpecificHistoryStats, getTaskFocusFilterFacts, getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
 import type { TaskHistoryStreakSummary, TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
@@ -597,7 +596,7 @@ export function buildStableCanonicalTaskIndex({
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
   taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
   taskListEvaluationContext: TaskListEvaluationContext;
-  taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
+  taskSubtasksByTaskId: Record<string, Task[]>;
   tasks: Task[];
   todayDateKey: string;
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
@@ -935,7 +934,7 @@ export function buildCanonicalTaskEntityProjection(input: {
   normalizedSearchQuery: string;
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
   taskListEvaluationContext: TaskListEvaluationContext;
-  taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
+  taskSubtasksByTaskId: Record<string, Task[]>;
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   taskUiState: TaskDerivedFilterState;
   tasks: Task[];
@@ -1073,7 +1072,7 @@ type ComputeTaskAppDerivedDataInput = {
   taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
   todayDateKey: string;
   taskListEvaluationContext: TaskListEvaluationContext;
-  taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
+  taskSubtasksByTaskId: Record<string, Task[]>;
   taskUiState: TaskDerivedFilterState;
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   tasks: Task[];

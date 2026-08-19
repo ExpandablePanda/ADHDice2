@@ -4,17 +4,12 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EconomyState } from "@/hooks/useEconomy";
 import {
-  parsePendingTaskRewards,
-  PENDING_TASK_REWARDS_STORAGE_KEY,
   type PendingTaskReward,
   type TaskRewardCandidate,
 } from "@/lib/task-rewards";
 import {
-  buildLegacyMigrationOperationId,
-  getLegacyPendingRewardBalance,
   parseAuthoritativeClaimSession,
   parsePendingRewardItems,
-  PENDING_REWARD_DICE_DEVICE_ID_KEY,
   shouldApplyPendingRewardDiceSnapshot,
   type PendingRewardDiceAccountSnapshot,
   type PendingRewardDiceMutationRow,
@@ -25,18 +20,6 @@ type Message = {
   text: string;
   tone: "neutral" | "good" | "warn";
 };
-
-function getPendingRewardStorageKey(userId: string) {
-  return `${PENDING_TASK_REWARDS_STORAGE_KEY}:${userId}`;
-}
-
-function readPendingRewardQueue(userId: string) {
-  try {
-    return parsePendingTaskRewards(window.localStorage.getItem(getPendingRewardStorageKey(userId)));
-  } catch {
-    return [] as PendingTaskReward[];
-  }
-}
 
 type UseTaskRewardControllerOptions = {
   client: SupabaseClient;
@@ -56,16 +39,6 @@ export function useTaskRewardController({
   const accountSnapshotRef = useRef<PendingRewardDiceAccountSnapshot | null>(null);
   const fetchGenerationRef = useRef(0);
   const claimOperationIdRef = useRef<string | null>(null);
-  const [areRewardTablesUnavailable, setAreRewardTablesUnavailable] = useState(false);
-
-  function showRewardMigrationMessage() {
-    setAreRewardTablesUnavailable(true);
-    setMessage({
-      tone: "warn",
-      text: "Task rewards need the new database tables first. Run `supabase/add_task_reward_roll_tables.sql`, then try the reward roll again.",
-    });
-  }
-
   function isFetchFailure(error: unknown) {
     const message = error instanceof Error
       ? error.message
@@ -131,40 +104,7 @@ export function useTaskRewardController({
     if (!client || !currentUserId || typeof window === "undefined") return;
 
     let cancelled = false;
-    const migrateAndHydrate = async () => {
-      const legacyRewards = readPendingRewardQueue(currentUserId);
-      let deviceId = window.localStorage.getItem(PENDING_REWARD_DICE_DEVICE_ID_KEY);
-      if (!deviceId) {
-        try {
-          deviceId = createBrowserUuidV4();
-        } catch (error) {
-          setMessage({
-            tone: "warn",
-            text: error instanceof Error ? error.message : "Could not create a secure pending-reward migration ID.",
-          });
-          return;
-        }
-        window.localStorage.setItem(PENDING_REWARD_DICE_DEVICE_ID_KEY, deviceId);
-      }
-      const migration = await client.rpc("adhdice_migrate_pending_reward_dice", {
-        p_legacy_rewards: legacyRewards,
-        p_operation_id: buildLegacyMigrationOperationId(deviceId),
-        p_reported_legacy_balance: getLegacyPendingRewardBalance(legacyRewards),
-      });
-      if (cancelled) return;
-      if (migration.error) {
-        if (!isFetchFailure(migration.error)) {
-          setMessage({ tone: "warn", text: "Pending reward dice need the 6.29.7 Supabase migration before they can synchronize." });
-        }
-        return;
-      }
-      const mutationRow = migration.data?.[0] as PendingRewardDiceMutationRow | undefined;
-      if (mutationRow) applyMutationRow(mutationRow);
-      window.localStorage.removeItem(getPendingRewardStorageKey(currentUserId));
-      window.localStorage.setItem(`${getPendingRewardStorageKey(currentUserId)}:migrated`, "true");
-      await refreshPendingRewards();
-    };
-    void migrateAndHydrate();
+    void refreshPendingRewards();
 
     const channel = client
       .channel(`pending-reward-dice:${currentUserId}`)
@@ -200,7 +140,7 @@ export function useTaskRewardController({
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       void client.removeChannel(channel);
     };
-  }, [applyAuthoritativeSnapshot, applyMutationRow, client, currentUserId, refreshPendingRewards, setMessage]);
+  }, [applyAuthoritativeSnapshot, client, currentUserId, refreshPendingRewards, setMessage]);
 
   async function fulfillCanonicalRewardEntitlements(candidates: TaskRewardCandidate[]) {
     if (!client || !currentUserId || candidates.length === 0) return;
@@ -236,10 +176,6 @@ export function useTaskRewardController({
     try {
       const operationId = claimOperationIdRef.current ?? createBrowserUuidV4();
       claimOperationIdRef.current = operationId;
-      if (areRewardTablesUnavailable) {
-        showRewardMigrationMessage();
-        return null;
-      }
       const claim = await client.rpc("adhdice_claim_pending_reward_dice", {
         p_operation_id: operationId,
       });

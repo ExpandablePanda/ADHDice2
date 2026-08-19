@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.49`.
+- Current working app version: `7.9.50`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,17 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+## 2026-08-19 Dead tables and legacy plumbing retirement
+
+The 7.9.50 source retires the approved dead tables, separate Subtask and
+promotion runtime, completed pending-reward and Focus migration bootstraps,
+the obsolete direct reward path, and the reward-claim `subtask_id` relationship.
+Canonical parent/Step/Substep rows remain in `adhdice_clean_tasks`.
+Canonical reward entitlement fulfillment, pending dice, reward rolls/claims,
+Focus counters/events, canonical Achievement tables, and
+`adhdice_task_migration_operations` remain current. The forward SQL migration is
+authored only; live SQL, deployment, and browser parity remain unverified.
 
 ## 2026-08-19 Dead architecture purge
 

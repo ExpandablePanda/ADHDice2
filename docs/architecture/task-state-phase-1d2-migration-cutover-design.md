@@ -46,7 +46,7 @@ The checked-in source audit for this design covered the following seams. These o
 |---|---|---|
 | Task storage | supabase/schema.sql; add_task_revision_concurrency.sql; add_delayed_task_status.sql; add_profile_settings_sync.sql | adhdice_clean_tasks.id and user_id are the strongest identity facts. status, due_on, scheduled_on, active_status_logical_date, active_occurrence_due_on, completed_at, trashed_at, and mutable Repeat columns have mixed authority and must be classified separately. |
 | Task revision | The revision trigger increments revision for any changed Task row; task-db-mutations.ts uses guarded expected revisions and can perform a safe reapply for non-conflicting fields. | Existing revision is useful concurrency evidence, but it is row-wide rather than a semantic revision for History, schedule boundaries, occurrences, lifecycle, or rewards. It must seed conservative initial proof, not become historical event chronology. |
-| Task hierarchy | adhdice_clean_tasks.parent_task_id is same-table hierarchy; adhdice_task_subtasks is a separate child table; adhdice_legacy_subtask_promotions maps legacy_subtask_id to a unique promoted Task id. | Same-table Task IDs remain canonical where valid. Separate legacy children require mapping proof and must not be double-created. Cycles, missing parents, owner mismatches, and ID collisions remain evidence/needs-attention. |
+| Task hierarchy | `adhdice_clean_tasks.parent_task_id` is the same-table hierarchy. | Same-table Task IDs remain canonical. Cycles, missing parents, owner mismatches, and ID collisions remain evidence/needs-attention. |
 | History row shape | adhdice_task_history has one unique row per user_id, task_id, entry_date, with status, event_type, occurrence_key, occurrence_due_on, counted_as_due_occurrence, was_completed, and timestamps. | The current row is a useful fact container but not a complete provenance ledger. Replacement history is not recoverable from the final row alone. |
 | History triggers | schema.sql has updated_at maintenance, occurrence capture for some Done/Did My Best rows, duration-evidence linking, and achievement capture/evaluation triggers. | Trigger-filled occurrence metadata is not proof that the user supplied that identity. Backfill must preserve the row and classify the metadata provenance. Achievement consumers must not be allowed to turn mixed legacy rows into new Task truth. |
 | Direct History writers | useTaskHistoryActions.ts directly deletes/upserts History and may call resolveLiveTaskStatusFromHistory; TaskApp status and Calendar flows pass engine plans when available but retain caller-owned persistence. | Explicit History needs one command/repository authority. Existing row/date uniqueness can be preserved as a compatibility constraint while canonical fact identity and provenance are added. |
@@ -152,39 +152,12 @@ For each adhdice_clean_tasks row:
 | Self-parent | INVALID / ORPHANED | Existing schema rejects it, but the classifier still reports any imported/legacy occurrence. |
 | Complete/archived/trashed parent with active child | CANONICAL_PROVEN entity IDs plus needs-attention hierarchy state | Do not erase or implicitly change the child. Lifecycle reconciliation is separate. |
 
-## 6. Legacy separate Subtask migration
+## 6. Separate Subtask migration — retired
 
-The target is one Task Entity model. The current adhdice_task_subtasks table and adhdice_legacy_subtask_promotions are migration inputs and compatibility evidence, not a second permanent status authority.
-
-### 6.1 Mapping classes
-
-| Legacy condition | Class and confidence | Canonical action |
-|---|---|---|
-| Promotion row exists; legacy_subtask_id and mapped task_id exist; both have the same user; mapped Task parent/title/order relationship is consistent | CANONICAL_PROVEN or HIGH CANONICAL_RECONSTRUCTABLE | Map the legacy child to the existing Task Entity. Do not create another child. |
-| Promotion row exists but mapped Task is missing | INVALID / ORPHANED | Preserve mapping and legacy row; do not recreate a Task with an unknown identity. |
-| Promotion row has cross-user IDs | INVALID / ORPHANED | Reject mapping; retain evidence for security repair. |
-| Unpromoted active legacy subtask; no same-table Task with the legacy UUID; parent Task and any legacy parent chain are valid | CANONICAL_RECONSTRUCTABLE, HIGH | Create one Task Entity using the legacy subtask UUID as entity ID when the target implementation supports that stable-ID preservation; map the legacy row. |
-| Unpromoted legacy subtask whose UUID already exists as a same-table Task | CONTRADICTORY / stable ID collision | Do not double-create or merge by title. Require mapping/repair evidence. |
-| Nested legacy subtask with a proven promotable parent | CANONICAL_RECONSTRUCTABLE, HIGH | Map parent first, then use the parent entity as canonical parent. Preserve depth/order. |
-| Nested legacy subtask with missing parent or cycle | INVALID / ORPHANED or AMBIGUOUS | Preserve row; do not flatten or reparent silently. |
-| Duplicate promotion evidence: one legacy subtask maps to multiple Tasks, or multiple legacy subtasks map to one Task without a documented one-to-one relationship | CONTRADICTORY | Keep all mappings as evidence; no reward/History merge until resolved. |
-| Legacy row has a same-table equivalent with no mapping but unique owner, title, parent, and creation/order evidence | MEDIUM at best | Do not silently map; produce a repair candidate. Similarity is not identity. |
-
-The existing promotion helper’s dry-run skip reasons—cycle, missing parent, mapped Task missing, stable ID collision, owner mismatch, and archived/trashed parent—are reusable classification concepts. A later migration tool should preserve its dry-run-first posture and extend it with History/reward mapping evidence.
-
-### 6.2 Retirement evidence
-
-adhdice_task_subtasks may stop being an active status authority only after:
-
-- every active legacy row is mapped, explicitly preserved as an unmapped needs-attention row, or proven irrelevant under retention policy;
-- all promoted rows are one-to-one and owner-safe;
-- all History and reward references can resolve to one canonical entity or remain compatibility evidence;
-- active readers no longer use legacy status as canonical state;
-- child reset ownership is implemented in the canonical hierarchy/recurrence path or explicitly removed from recurrence semantics;
-- reward claim mapping has no unreviewed duplicate parent/child identity; and
-- retention/audit policy permits the legacy table to become read-only.
-
-Do not delete legacy rows before that evidence exists.
+The 7.9.50 cutover does not map, retain, or read the obsolete separate-child
+architecture. Parent, Step, and Substep identity comes only from
+`adhdice_clean_tasks.parent_task_id`; the approved forward cleanup removes the
+old tables, promotion mappings, types, policies, and runtime adapters.
 
 ## 7. Schedule-model classification
 
@@ -633,7 +606,7 @@ Old columns are not deleted during initial migration.
 | completed_at | Before terminal cutover | Compatibility terminal projection only | After lifecycle authority cutover | After reports/readers migrate | Later cleanup |
 | trashed_at | Before Trash container cutover | Compatibility timestamp/projection | After canonical container reader cutover | After restore/readers migrate | Later cleanup |
 
-The same policy applies to adhdice_task_subtasks, automatic Missed evidence, the old rollover ledger, old reward claims/effects, and promotion mappings: retain, classify, make read-only, then remove only after an explicit retention and audit gate.
+The same policy applies to automatic Missed evidence and old migration ledgers: retain only current canonical evidence, then remove completed compatibility infrastructure after an explicit retention and audit gate.
 
 ## 28. Dual-read strategy
 
@@ -1213,11 +1186,11 @@ Retire after all active children have canonical Task Entity mappings or explicit
 
 | Legacy source | Initial migration | After read cutover | Later cleanup |
 |---|---|---|---|
-| adhdice_task_subtasks | Preserve and map/classify | Read-only evidence; no active status authority | Retain through hierarchy/reward audit and retention window. |
+| retired child storage | Removed after canonical hierarchy and reward audit | No active reader or writer | No compatibility retention in the current product path. |
 | legacy automatic Missed rows | Preserve raw rows and classification | Compatibility evidence only | Remove only under explicit audit/retention policy; never use deletion as semantic correction. |
 | adhdice_task_rollover_ledger | Preserve migration-era coordination evidence | Read-only/retirement-pending | Retain until all legacy rollover callers are gone and rollback window closes. |
 | old reward claim/roll/pending structures | Preserve and link consumed/pending/ambiguous effects | Read-only compatibility/effect adapter | Retain through economy audit and claim recovery window. |
-| adhdice_legacy_subtask_promotions | Preserve one-to-one mappings and anomalies | Read-only mapping evidence | Retain until legacy rows and all reward/history references are retired. |
+| retired promotion mappings | Removed with the legacy child path | No active reader or writer | No compatibility retention in the current product path. |
 | compatibility migration maps/evidence | Active audit source | Read-only audit source | Retain according to operational/audit policy; no automatic deletion. |
 
 No destructive deletion, cascade, or retention duration is selected here.
@@ -1440,12 +1413,11 @@ Each scenario records current evidence, classification, canonical backfill, reta
 
 37. Current same-table Step — Evidence: valid Task row and same-user parent. Class: CANONICAL_RECONSTRUCTABLE/HIGH. Backfill: same entity ID, entity_kind=step, parent mapping. Retain: parent_task_id. Confidence: HIGH. Runtime: independent state/reward. Cutover: child read/command gate. Repair: none.
 38. Nested Substep — Evidence: valid same-table chain depth greater than one. Class: CANONICAL_RECONSTRUCTABLE/HIGH. Backfill: preserve chain/entity IDs. Retain: all parent IDs. Confidence: HIGH. Runtime: independent entity, hierarchy-aware UI. Cutover: hierarchy gate. Repair: none.
-39. Already promoted legacy Subtask — Evidence: mapping row, existing Task, same owner. Class: CANONICAL_PROVEN/HIGH. Backfill: map legacy ID to existing Task; no new child. Retain: legacy row/mapping. Confidence: HIGH. Runtime: one reward/history identity. Cutover: legacy child filtered as evidence. Repair: mapping inconsistency only.
-40. Unpromoted legacy Subtask — Evidence: legacy row, valid parent, no same-ID Task. Class: CANONICAL_RECONSTRUCTABLE/HIGH when stable ID preservation is allowed. Backfill: create/map one Task Entity using legacy UUID. Retain: legacy row. Confidence: HIGH. Runtime: canonical child. Cutover: legacy status read retired after mapping. Repair: none unless collision.
-41. Ambiguous legacy Subtask equivalent — Evidence: similar title/parent but different Task ID and no mapping. Class: AMBIGUOUS. Backfill: no merge/double-create. Retain: both rows. Confidence: LOW. Runtime: keep separate evidence, block merge-sensitive reward/history. Cutover: needs attention. Repair: map explicitly.
-42. Duplicate promotion evidence — Evidence: multiple mappings/one-to-many child identity. Class: CONTRADICTORY. Backfill: preserve mappings; no canonical merge. Retain: all mapping rows. Confidence: LOW. Runtime: reward blocked for affected identity. Cutover: partial. Repair: resolve mapping.
-43. Clean reward claim — Evidence: owner-safe claim, linked roll, matching entity/date, unique key. Class: PROVEN_CONSUMED_ENTITLEMENT. Backfill: consumed legacy_program entitlement. Retain: claim/roll/ledger. Confidence: PROVEN/HIGH. Runtime: no duplicate grant. Cutover: reward path eligible elsewhere. Repair: none.
-44. Legacy Subtask reward claim — Evidence: claim subtask_id and proven promotion map. Class: PROVEN_CONSUMED_ENTITLEMENT for mapped entity. Backfill: one mapped child entitlement. Retain: old subtask ID and claim. Confidence: HIGH. Runtime: parent not credited. Cutover: child reward gate. Repair: map if promotion evidence later conflicts.
+39. Canonical child reward claim — Evidence: owner-safe canonical entity/date claim and linked reward roll. Class: PROVEN_CONSUMED_ENTITLEMENT. Backfill: none. Retain: current claim/roll/ledger. Confidence: PROVEN/HIGH. Runtime: no duplicate grant. Cutover: canonical reward path.
+40. Deleted source Task with pending dice — Evidence: owned pending item and canonical claim reference whose source entity no longer exists. Class: PROVEN_PENDING_EFFECT. Backfill: none. Retain: pending item and operation evidence. Confidence: PROVEN. Runtime: claim settlement continues without a Task lookup requirement.
+41. Canonical parent, Step, or Substep reward — Evidence: actual `adhdice_clean_tasks.id` in the entitlement claim reference. Class: CANONICAL_PROVEN. Backfill: none. Retain: entitlement/grant/pending rows. Confidence: PROVEN. Runtime: entity identity is never translated through a compatibility table.
+42. Ambiguous reward claim — Evidence: canonical entitlement/effect identity cannot be resolved uniquely. Class: AMBIGUOUS. Backfill: no new grant. Retain: current effect evidence. Confidence: LOW. Runtime: fail closed for the affected entitlement.
+43. History success with no reward claim — Evidence: explicit Done/DMB/Complete but no canonical entitlement/grant. Class: canonical History, no entitlement proof. Backfill: no entitlement/grant. Retain: History. Confidence: PROVEN History, unknown economy. Runtime: future explicit edit can earn if unused. Cutover: no retroactive award.
 45. Ambiguous reward claim — Evidence: claim/effect identity cannot map uniquely. Class: AMBIGUOUS. Backfill: no canonical consumed/unconsumed choice; preserve effect evidence. Retain: claim/roll/pending records. Confidence: LOW. Runtime: no new grant for affected scope. Cutover: narrow reward block. Repair: resolve entitlement.
 46. History success with no reward claim — Evidence: explicit Done/DMB/Complete but no legacy economy proof. Class: canonical History, no historical entitlement proof. Backfill: no entitlement/grant. Retain: History. Confidence: PROVEN History, unknown economy. Runtime: future explicit edit can earn if unused. Cutover: no retroactive award. Repair: not required unless policy changes.
 47. Consumed reward then History reversed — Evidence: consumed claim/effect, later Missed/cleared History. Class: PROVEN_CONSUMED_ENTITLEMENT plus explicit History correction. Backfill: entitlement remains consumed; preserve History sequence/evidence. Retain: all economy rows. Confidence: PROVEN economy. Runtime: no clawback or second grant on re-success. Cutover: reversal fixture. Repair: none.
@@ -1463,7 +1435,7 @@ Each scenario records current evidence, classification, canonical backfill, reta
 56. New user after canonical storage deployment — Evidence: no legacy Task/History/subtask/reward rows. Class: canonical-only clean state. Backfill: none; create canonical facts directly. Retain: no compatibility evidence. Confidence: PROVEN. Runtime: canonical path, projections only for old readers. Cutover: not blocked by legacy migration. Repair: none.
 57. Canonical projection mismatch — Evidence: canonical state says Not Due/Complete but status/due projection differs. Class: PROJECTION_ONLY / SAFE_PROJECTION_DIFFERENCE if canonical facts are sound. Backfill: guarded projection repair only. Retain: old value and repair provenance. Confidence: HIGH canonical, LOW projection. Runtime: canonical wins. Cutover: mismatch cannot block if classified and repairable. Repair: projection repair.
 58. Orphan History — Evidence: History task_id missing or owner mismatch. Class: INVALID / ORPHANED. Backfill: no canonical History; preserve raw evidence. Retain: orphan report/source row. Confidence: PROVEN invalid. Runtime: exclude from Task state; do not delete. Cutover: account can proceed for other entities. Repair: owner/entity restoration only.
-59. Cross-user reference — Evidence: Task parent, History, reward, or promotion row points to another owner. Class: INVALID / ORPHANED. Backfill: reject relationship and preserve security evidence. Retain: raw IDs. Confidence: PROVEN invalid. Runtime: fail closed. Cutover: affected relation blocked. Repair: security/data repair.
+59. Cross-user reference — Evidence: Task parent, History, or reward relation points to another owner. Class: INVALID / ORPHANED. Backfill: reject relationship and preserve security evidence. Retain: raw IDs. Confidence: PROVEN invalid. Runtime: fail closed. Cutover: affected relation blocked. Repair: security/data repair.
 60. User with partial needs-attention Tasks — Evidence: some Tasks complete/shadow-verified, others ambiguous. Class: hybrid per-user state. Backfill: finish proven Tasks; mark ambiguous Tasks needs_attention. Retain: all evidence. Confidence: per fact. Runtime: account remains usable; narrow blocks apply. Cutover: user can be partially command-cutover. Repair: only affected categories.
 
 ## 59. Migration-readiness checklist

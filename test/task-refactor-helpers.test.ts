@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { createTask } from "../src/lib/task-buckets.ts";
 import {
-  isMissingParentSubtaskColumnError,
   isMissingTaskActualSecondsColumnError,
   isMissingTaskEnergyNoneEnumError,
   isMissingTaskListManualMembershipsTableError,
@@ -33,7 +32,6 @@ import { mapTaskListManualMembershipRow } from "../src/lib/task-list-mappers.ts"
 import { getNextPendingSubtask } from "../src/lib/task-subtasks.ts";
 
 test("db compat helpers match expected schema fallback errors", () => {
-  assert.equal(isMissingParentSubtaskColumnError("parent_subtask_id adhdice_task_subtasks schema cache"), true);
   assert.equal(isMissingTaskListsTableError("adhdice_task_lists schema cache"), true);
   assert.equal(isMissingTaskListManualMembershipsTableError("adhdice_task_list_manual_memberships schema cache"), true);
   assert.equal(isMissingTaskEnergyNoneEnumError("adhdice_clean_task_energy invalid input value for enum \"none\""), true);

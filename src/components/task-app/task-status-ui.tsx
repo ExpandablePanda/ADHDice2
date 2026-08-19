@@ -1,10 +1,10 @@
 import { ArrowRight, BookOpen, CalendarClock, CalendarDays, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
 import type { MouseEvent } from "react";
 
-import type { TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
+import type { TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatus as UiTaskDisplayStatus } from "@/lib/task-display-status";
 
-export type TaskDisplayStatus = UiTaskDisplayStatus | TaskSubtaskStatus;
+export type TaskDisplayStatus = UiTaskDisplayStatus;
 
 export const TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE = "md" as const;
 
@@ -26,8 +26,8 @@ export const TASK_DISPLAY_STATUS_OPTIONS: Array<{ label: string; value: UiTaskDi
   ...TASK_STATUS_OPTIONS,
 ];
 
-export const TASK_SUBTASK_STATUS_OPTIONS: Array<{ label: string; value: TaskSubtaskStatus }> = TASK_STATUS_OPTIONS.filter(
-  (option): option is { label: string; value: TaskSubtaskStatus } => option.value !== "delayed" && option.value !== "complete" && option.value !== "archived",
+export const TASK_SUBTASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = TASK_STATUS_OPTIONS.filter(
+  (option) => option.value !== "delayed" && option.value !== "complete" && option.value !== "archived",
 );
 
 export const TASK_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {

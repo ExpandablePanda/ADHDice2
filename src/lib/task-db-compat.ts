@@ -1,9 +1,3 @@
-export function isMissingParentSubtaskColumnError(message: string) {
-  return message.includes("parent_subtask_id")
-    && message.includes("adhdice_task_subtasks")
-    && message.includes("schema cache");
-}
-
 export function isMissingTaskListsTableError(message: string) {
   return message.includes("adhdice_task_lists")
     && message.includes("schema cache");
@@ -33,12 +27,6 @@ export function isMissingTaskRewardRollsTableError(message: string) {
 
 export function isMissingTaskRewardClaimsTableError(message: string) {
   return message.includes("adhdice_task_reward_claims")
-    && message.includes("schema cache");
-}
-
-export function isMissingTaskRewardClaimSubtaskColumnError(message: string) {
-  return message.includes("subtask_id")
-    && message.includes("adhdice_task_reward_claims")
     && message.includes("schema cache");
 }
 

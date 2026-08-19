@@ -4,7 +4,7 @@ import type {
   AgentPlanSubtaskItem,
   AgentPlanTaskItem,
 } from "@/components/ui/agent-plan";
-import type { Task, TaskHistory as DbTaskHistory, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
 import type { TaskBucketContext } from "@/lib/task-buckets";
 import { getTaskBucket, isTaskOpen } from "@/lib/task-buckets";
 import { formatTaskDueLabel, getListPriorityLabel, getTaskDisplayStatus, isOverdue } from "@/lib/task-cockpit";
@@ -35,11 +35,11 @@ function formatEstimatedMinutesLabel(minutes: number) {
   return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
 }
 
-function isClosedSubtaskStatus(status: TaskSubtaskStatus) {
+function isClosedSubtaskStatus(status: TaskStatus) {
   return status === "done" || status === "did_my_best";
 }
 
-export function toAgentPlanStatus(status: TaskStatus | TaskSubtaskStatus): AgentPlanStatus {
+export function toAgentPlanStatus(status: TaskStatus): AgentPlanStatus {
   if (status === "in_progress" || status === "done" || status === "missed" || status === "did_my_best" || status === "upcoming" || status === "not_due" || status === "archived" || status === "trashed") {
     return status;
   }
@@ -47,9 +47,9 @@ export function toAgentPlanStatus(status: TaskStatus | TaskSubtaskStatus): Agent
   return "pending";
 }
 
-export function buildAgentPlanSubtaskItems(subtasks: DbTaskSubtask[], parentId: string | null = null): AgentPlanSubtaskItem[] {
+export function buildAgentPlanSubtaskItems(subtasks: Task[], parentId: string | null = null): AgentPlanSubtaskItem[] {
   return subtasks
-    .filter((subtask) => (subtask.parent_subtask_id ?? null) === parentId)
+    .filter((subtask) => (subtask.parent_task_id ?? null) === parentId)
     .sort((a, b) => a.sort_order - b.sort_order)
     .map((subtask) => ({
       children: buildAgentPlanSubtaskItems(subtasks, subtask.id),
@@ -128,7 +128,7 @@ function buildAgentPlanMetadata(
 
 function buildAgentPlanMetaPills(
   task: Task,
-  subtasks: DbTaskSubtask[],
+  subtasks: Task[],
   context: {
     focusedTaskIdSet: Set<string>;
   },
@@ -162,7 +162,7 @@ function buildAgentPlanMetaPills(
 
 function buildAgentPlanRowChips(
   task: Task,
-  subtasks: DbTaskSubtask[],
+  subtasks: Task[],
   context: {
     focusedTaskIdSet: Set<string>;
   },
@@ -230,7 +230,7 @@ export function buildAgentPlanTaskItem(
     linkedNotes: TaskEditorLinkedNote[];
     listDefinitions: TaskListDefinition[];
     listMemberships: Array<{ id: string; isManual: boolean }>;
-    subtasks: DbTaskSubtask[];
+    subtasks: Task[];
     taskHistory?: DbTaskHistory[];
     todayDateKey?: string;
   },

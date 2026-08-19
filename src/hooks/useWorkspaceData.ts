@@ -7,7 +7,6 @@ import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import type {
   FocusCategory as DbFocusCategory,
   FocusSession as DbFocusSession,
-  LegacySubtaskPromotion as DbLegacySubtaskPromotion,
   Task,
   TaskFocusDay as DbTaskFocusDay,
   TaskGridLayout as DbTaskGridLayout,
@@ -17,7 +16,6 @@ import type {
   TaskListFolder,
   TaskListRailItem,
   TaskListManualMembership as DbTaskListManualMembership,
-  TaskSubtask as DbTaskSubtask,
 } from "@/lib/database.types";
 import { loadProfileMedia, setActiveProfileUserId, WORKSPACE_PROFILE_COLUMNS, type WorkspaceProfileRow } from "@/lib/profile-store";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
@@ -74,7 +72,6 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   mapTaskHistoryRow: (row: DbTaskHistory) => DbTaskHistory;
   mapTaskListManualMembershipRow: (row: DbTaskListManualMembership) => TaskListManualMembership;
   mapTaskListRow: (row: DbTaskList) => TaskListDefinition | null;
-  mapTaskSubtaskRow: (row: DbTaskSubtask) => DbTaskSubtask;
   mergeStoredFocusCategories: (categories: FocusCategory[]) => FocusCategory[];
   mergeStoredFocusHistory: (history: HistoricalFocusSession[]) => HistoricalFocusSession[];
   migrateLocalFocusState: (client: ResolvedSupabaseClient, user: User) => Promise<boolean>;
@@ -101,8 +98,6 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   setTaskListFolders: Dispatch<SetStateAction<TaskListFolder[]>>;
   setTaskListRailItems: Dispatch<SetStateAction<TaskListRailItem[]>>;
   setTaskLists: Dispatch<SetStateAction<TaskListDefinition[]>>;
-  setTaskLegacySubtaskPromotions: Dispatch<SetStateAction<DbLegacySubtaskPromotion[]>>;
-  setTaskSubtasks: Dispatch<SetStateAction<DbTaskSubtask[]>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   suppressCategoryReload: MutableRefObject<boolean>;
   supabase: SupabaseClient;
@@ -179,7 +174,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   mapTaskFocusDayRows,
   mapTaskListManualMembershipRow,
   mapTaskListRow,
-  mapTaskSubtaskRow,
   mergeStoredFocusCategories,
   mergeStoredFocusHistory,
   migrateLocalFocusState,
@@ -206,8 +200,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   setTaskListFolders,
   setTaskListRailItems,
   setTaskLists,
-  setTaskLegacySubtaskPromotions,
-  setTaskSubtasks,
   setTasks,
   suppressCategoryReload,
   supabase,
@@ -993,17 +985,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const criticalCoreStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
       const taskRequest = createTaskRowsRequest();
       const taskScheduleBoundariesRequest = createTaskScheduleBoundariesRequest();
-      const taskSubtasksRequest = client
-        .from("adhdice_task_subtasks")
-        .select("*")
-        .eq("user_id", userId)
-        .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: true });
-      const taskLegacySubtaskPromotionsRequest = client
-        .from("adhdice_legacy_subtask_promotions")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: true });
       const profileRequest = client
         .from("adhdice_user_profiles")
         .select(WORKSPACE_PROFILE_COLUMNS)
@@ -1012,8 +993,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const criticalCoreRequest = Promise.all([
         taskRequest,
         taskScheduleBoundariesRequest,
-        taskSubtasksRequest,
-        taskLegacySubtaskPromotionsRequest,
         profileRequest,
       ]);
       // Focus History is owned by the page-gated Focus hook, never core startup.
@@ -1058,7 +1037,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           .then((data) => ({ data, error: null }))
           .catch((error: { message?: string }) => ({ data: null, error })),
       ]);
-      const [taskResult, taskScheduleBoundariesResult, taskSubtasksResult, taskLegacySubtaskPromotionsResult, profileResult] = await criticalCoreRequest;
+      const [taskResult, taskScheduleBoundariesResult, profileResult] = await criticalCoreRequest;
 
       if (!canApplyCoreWorkspaceResult()) {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -1070,8 +1049,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const criticalErrors = [
         taskResult.error,
         taskScheduleBoundariesResult.error,
-        taskSubtasksResult.error,
-        taskLegacySubtaskPromotionsResult.error,
         profileResult.error,
       ].filter(Boolean);
 
@@ -1081,14 +1058,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         return;
       }
       logWorkspaceTiming("Critical workspace core ready", criticalCoreStartedAt, {
-        promotions: taskLegacySubtaskPromotionsResult.data?.length ?? 0,
         silent,
-        subtasks: taskSubtasksResult.data?.length ?? 0,
         tasks: taskResult.data?.length ?? 0,
       });
 
-      const nextTaskSubtasks = (taskSubtasksResult.data ?? []).map(mapTaskSubtaskRow);
-      const nextTaskLegacySubtaskPromotions = taskLegacySubtaskPromotionsResult.data ?? [];
       const nextTasks = projectTasksWithCanonicalScheduleBoundaries(
         taskResult.data ?? [],
         (taskScheduleBoundariesResult.data ?? []) as CanonicalTaskScheduleBoundary[],
@@ -1102,8 +1075,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
       startTransition(() => {
         setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
-        setTaskSubtasks((current) => keepCurrentIfStructurallyEqual(current, nextTaskSubtasks));
-        setTaskLegacySubtaskPromotions((current) => keepCurrentIfStructurallyEqual(current, nextTaskLegacySubtaskPromotions));
         onProfileLoaded(profileResult.data ?? null, user);
         if (profileResult.data) {
           const nextEconomy = {
@@ -1450,18 +1421,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         {
           event: "*",
           schema: "public",
-          table: "adhdice_task_subtasks",
-          filter: `user_id=eq.${userId}`,
-        },
-        () => {
-          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
           table: "adhdice_task_list_folders",
           filter: `user_id=eq.${userId}`,
         },
@@ -1487,18 +1446,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           event: "*",
           schema: "public",
           table: "adhdice_task_list_rail_items",
-          filter: `user_id=eq.${userId}`,
-        },
-        () => {
-          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "adhdice_legacy_subtask_promotions",
           filter: `user_id=eq.${userId}`,
         },
         () => {
@@ -1677,7 +1624,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     setTaskListContainers,
     setTaskListFolders,
     setTaskListRailItems,
-    setTaskLegacySubtaskPromotions,
     taskGridStarterLayout,
   ]);
 

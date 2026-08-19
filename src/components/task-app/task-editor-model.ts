@@ -6,8 +6,6 @@ import type {
   TaskRepeatMonthlyMode,
   TaskRepeatMonthlyOrdinal,
   TaskStatus,
-  TaskSubtask as DbTaskSubtask,
-  TaskSubtaskStatus,
 } from "@/lib/database.types";
 import { buildTaskPriorityUpdate, formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 
@@ -77,7 +75,7 @@ export type TaskEditorDraft = {
 export type TaskSubtaskDraft = {
   id: string;
   title: string;
-  status: TaskSubtaskStatus;
+  status: TaskStatus;
   children: TaskSubtaskDraft[];
 };
 
@@ -98,10 +96,10 @@ export function formatEstimatedMinutesLabel(value: string) {
   return `${remainingMinutes}m`;
 }
 
-export function createTaskEditorDraft(task: Task | null, focusToday: boolean, subtasks: DbTaskSubtask[]): TaskEditorDraft {
+export function createTaskEditorDraft(task: Task | null, focusToday: boolean, subtasks: Task[]): TaskEditorDraft {
   function buildTree(parentId: string | null): TaskSubtaskDraft[] {
     return subtasks
-      .filter((subtask) => (subtask.parent_subtask_id ?? null) === parentId)
+      .filter((subtask) => (subtask.parent_task_id ?? null) === parentId)
       .sort((a, b) => a.sort_order - b.sort_order)
       .map((subtask) => ({
         children: buildTree(subtask.id),
@@ -116,7 +114,7 @@ export function createTaskEditorDraft(task: Task | null, focusToday: boolean, su
     notes: task?.notes ?? "",
     linkedNoteIds: [],
     status: task?.status ?? "pending",
-    priorityLevel: formatTaskPriorityLevel(task ? getTaskPriorityLevel(task) : 0),
+    priorityLevel: formatTaskPriorityLevel(task ? getTaskPriorityLevel(task) : 0) as TaskPriorityLevelOption,
     energy: task?.energy ?? "none",
     focusToday,
     dueOn: task?.due_on ?? "",
@@ -134,7 +132,7 @@ export function createTaskEditorDraft(task: Task | null, focusToday: boolean, su
     repeatMonthlyMode: task?.repeat_monthly_mode ?? "day_of_month",
     repeatMonthlyOrdinal: task?.repeat_monthly_ordinal ?? null,
     repeatMonthlyWeekday: task?.repeat_monthly_weekday ?? null,
-    subtasks: buildTree(null),
+    subtasks: buildTree(task?.id ?? null),
   };
 }
 
@@ -165,7 +163,7 @@ export function serializeTaskEditorDraft(draft: TaskEditorDraft) {
   });
 }
 
-function serializeTaskSubtaskDrafts(subtasks: TaskSubtaskDraft[]): Array<{ children: ReturnType<typeof serializeTaskSubtaskDrafts>; status: TaskSubtaskStatus; title: string }> {
+function serializeTaskSubtaskDrafts(subtasks: TaskSubtaskDraft[]): Array<{ children: ReturnType<typeof serializeTaskSubtaskDrafts>; status: TaskStatus; title: string }> {
   return subtasks.map((subtask) => ({
     children: serializeTaskSubtaskDrafts(subtask.children),
     status: subtask.status,

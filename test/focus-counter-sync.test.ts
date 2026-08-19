@@ -3,12 +3,9 @@ import test from "node:test";
 import {
   applyAuthoritativeFocusCounterEvent,
   applyAuthoritativeFocusCounterRow,
-  buildLegacyFocusCounterSnapshot,
-  getFocusCounterBackupStorageKey,
   isCurrentFocusCounterSnapshotRequest,
   reconcileFocusCounterHistorySnapshot,
   reconcileFocusCounterSnapshot,
-  shouldNotifyFocusCounterMigrationDivergence,
   type FocusCounterEventRow,
   type FocusCounterRow,
 } from "@/lib/focus-counter-sync";
@@ -107,26 +104,4 @@ test("duplicate event delivery is idempotent", () => {
   const once = applyAuthoritativeFocusCounterEvent([], event());
   const twice = applyAuthoritativeFocusCounterEvent(once, event());
   assert.deepEqual(twice, once);
-});
-
-test("legacy snapshot preserves values, negative values, history, and array order", () => {
-  const legacyCounters = reconcileFocusCounterSnapshot([
-    counter({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", value: -3, sort_order: 0 }),
-    counter({ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", title: "Same title", sort_order: 1 }),
-  ]);
-  const legacyHistory = reconcileFocusCounterHistorySnapshot([event({ counter_id: legacyCounters[0]!.id })]);
-  const snapshot = buildLegacyFocusCounterSnapshot(legacyCounters, legacyHistory);
-  assert.deepEqual(snapshot.counters.map((item) => [item.legacyId, item.value]), [[legacyCounters[0]!.id, -3], [legacyCounters[1]!.id, 4]]);
-  assert.equal(snapshot.history[0]!.legacyCounterId, legacyCounters[0]!.id);
-});
-
-test("divergent-device backups are versioned by user and migration batch", () => {
-  assert.notEqual(getFocusCounterBackupStorageKey(userId, "batch-a"), getFocusCounterBackupStorageKey(userId, "batch-b"));
-  assert.match(getFocusCounterBackupStorageKey(userId, "batch-a"), new RegExp(userId));
-});
-
-test("fresh divergent migrations notify once while replayed results hydrate silently", () => {
-  assert.equal(shouldNotifyFocusCounterMigrationDivergence({ local_differed: true, was_replayed: false }), true);
-  assert.equal(shouldNotifyFocusCounterMigrationDivergence({ local_differed: true, was_replayed: true }), false);
-  assert.equal(shouldNotifyFocusCounterMigrationDivergence({ local_differed: false, was_replayed: false }), false);
 });

@@ -5,7 +5,7 @@ import { useState } from "react";
 import { renderTaskStatusCircle } from "./task-status-ui";
 import { formatDueLabel } from "@/lib/task-cockpit";
 import { getSelectableTaskStatuses } from "@/lib/task-complete";
-import type { Task, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
+import type { Task, TaskStatus } from "@/lib/database.types";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { formatRepeatSummary } from "@/lib/task-formatting";
 import { getDisplayRowsFromSpan, getSpanFromDisplayRows, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
@@ -40,7 +40,7 @@ function TaskMetaChip({ children, tone }: { children: React.ReactNode; tone: "bl
   return <span className={`inline-flex shrink-0 whitespace-nowrap rounded-xl px-3 py-1.5 text-sm font-semibold ${className}`}>{children}</span>;
 }
 
-function TaskSupplementalMeta({ nextSubtask, task }: { nextSubtask: DbTaskSubtask | null; task: Task }) {
+function TaskSupplementalMeta({ nextSubtask, task }: { nextSubtask: Task | null; task: Task }) {
   const repeatSummary = formatRepeatSummary(task);
   const visibleTags = task.tags.slice(0, 3);
 
@@ -207,8 +207,8 @@ export function UrgentTasksPanelComponent({
   focusedTaskIds: string[];
   onEditTask: (task: Task) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
-  onSetSubtaskStatus: (subtaskId: string, status: TaskSubtaskStatus) => void;
-  subtasksByTaskId: Record<string, DbTaskSubtask[]>;
+  onSetSubtaskStatus: (subtaskId: string, status: TaskStatus) => void;
+  subtasksByTaskId: Record<string, Task[]>;
   tasks: Task[];
 }) {
   const DEFAULT_VISIBLE_COUNT = 4;

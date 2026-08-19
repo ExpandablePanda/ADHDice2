@@ -2,14 +2,13 @@ import type { PrototypeTaskRow, PrototypeTaskSubtask } from "@/components/ui/tas
 import type {
   Task,
   TaskHistory,
-  TaskSubtask,
 } from "@/lib/database.types";
 import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import { formatTaskPriorityLevel, getTaskPriorityLevel } from "@/lib/task-priority";
+import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { createProjectionDomainRevision } from "@/lib/stable-task-projection";
 import { getTaskTrashTimestamp } from "@/lib/task-trash";
 
@@ -22,7 +21,7 @@ export type TaskTableRowContext = {
   linkedNotes: TaskEditorLinkedNote[];
   listDefinitions: TaskListDefinition[];
   listMemberships: Array<{ id: string; isManual: boolean }>;
-  subtasks: TaskSubtask[];
+  subtasks: Task[];
   taskHistory: TaskHistory[];
   taskHistoryStreakSummary?: TaskHistoryStreakSummary;
   todayDateKey: string;
@@ -59,9 +58,9 @@ export function createStableTaskRowModelCache() {
   };
 }
 
-function buildTaskTableSubtasks(subtasks: TaskSubtask[], parentId: string | null = null): PrototypeTaskSubtask[] {
+function buildTaskTableSubtasks(subtasks: Task[], parentId: string | null = null): PrototypeTaskSubtask[] {
   return subtasks
-    .filter((subtask) => (subtask.parent_subtask_id ?? null) === parentId)
+    .filter((subtask) => (subtask.parent_task_id ?? null) === parentId)
     .sort((left, right) => left.sort_order - right.sort_order)
     .map((subtask) => ({
       children: buildTaskTableSubtasks(subtasks, subtask.id),
@@ -95,7 +94,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
       timestamp: context.taskHistoryStreakSummary.lastHandledAt ?? null,
     }
     : getTaskHistoryLastHandled(context.taskHistory, context.todayDateKey);
-  const priorities: PrototypeTaskRow["priorities"] = [formatTaskPriorityLevel(getTaskPriorityLevel(task))];
+  const priorities: PrototypeTaskRow["priorities"] = [formatTaskPriorityLevel(getTaskPriorityLevel(task)) as TaskPriorityLevelOption];
 
   const listLabels = context.listDefinitions.flatMap((listDefinition) =>
     context.listMemberships.some((membership) => membership.id === listDefinition.id)

@@ -11,8 +11,7 @@ test("counter schema, durable events, audit data, and required indexes are decla
   assert.match(sql, /deleted_at timestamptz/);
   assert.match(sql, /create table if not exists public\.adhdice_focus_counter_events/);
   assert.match(sql, /unique \(user_id, operation_id\)/);
-  assert.match(sql, /create table if not exists public\.adhdice_focus_counter_migrations/);
-  assert.match(sql, /unique \(user_id, device_installation_id, migration_batch_id\)/);
+  assert.doesNotMatch(sql, /adhdice_focus_counter_migrations/);
 });
 
 test("mutations are authenticated, user-scoped, locked, revisioned, and replay-safe", () => {
@@ -44,15 +43,9 @@ test("delete is a soft Realtime-compatible update and never removes events", () 
   assert.doesNotMatch(sql, /references public\.adhdice_focus_counters\(id\) on delete cascade/);
 });
 
-test("first migration preserves order while later devices never merge by title or sum", () => {
-  assert.match(sql, /v_ordinality - 1/);
-  assert.match(sql, /v_legacy_id_map/);
-  assert.match(sql, /if v_counter_count = 0 then/);
-  const laterDeviceBranch = sql.slice(sql.indexOf("else\n    select coalesce(jsonb_agg"), sql.indexOf("select jsonb_build_object(\n    'ok'"));
-  assert.doesNotMatch(laterDeviceBranch, /insert into public\.adhdice_focus_counters/);
-  assert.doesNotMatch(laterDeviceBranch, /title\s*=/);
-  assert.doesNotMatch(laterDeviceBranch, /value\s*\+/);
-  assert.match(laterDeviceBranch, /v_local_differed/);
+test("Focus counter runtime has no migration bootstrap", () => {
+  assert.doesNotMatch(sql, /adhdice_migrate_focus_counters/);
+  assert.doesNotMatch(sql, /legacy_id_map|p_submitted_snapshot/);
 });
 
 test("RLS exposes own rows read-only and mutation RPCs cannot accept user IDs", () => {
@@ -70,7 +63,7 @@ test("schema, policies, publications, grants, and RPC definitions are rerunnable
   assert.match(sql, /create (unique )?index if not exists/g);
   assert.match(sql, /drop policy if exists/g);
   assert.match(sql, /create or replace function public\.adhdice_mutate_focus_counter/);
-  assert.match(sql, /create or replace function public\.adhdice_migrate_focus_counters/);
+  assert.doesNotMatch(sql, /create or replace function public\.adhdice_migrate_focus_counters/);
   assert.match(sql, /pg_publication_tables/g);
   assert.match(sql, /notify pgrst, 'reload schema'/);
   assert.match(sql, /commit;\s*$/);

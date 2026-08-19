@@ -1,9 +1,5 @@
 import type { FocusCounter, FocusCounterHistoryEntry } from "@/lib/types";
 
-export const FOCUS_COUNTER_DEVICE_ID_STORAGE_KEY = "adhdice_focus_counter_device_id";
-export const FOCUS_COUNTER_MIGRATION_BATCH_STORAGE_KEY_PREFIX = "adhdice_focus_counter_migration_batch";
-export const FOCUS_COUNTER_BACKUP_STORAGE_KEY_PREFIX = "adhdice_focus_counter_legacy_backup";
-
 export type FocusCounterRow = {
   id: string;
   user_id: string;
@@ -43,22 +39,6 @@ export type FocusCounterMutationResult = {
   counter?: FocusCounterRow | null;
   event?: FocusCounterEventRow | null;
 };
-
-export type FocusCounterMigrationResult = {
-  ok: boolean;
-  status: "migrated" | "server_adopted";
-  local_differed: boolean;
-  counters: FocusCounterRow[];
-  events: FocusCounterEventRow[];
-  legacy_id_map?: Record<string, string>;
-  was_replayed?: boolean;
-};
-
-export function shouldNotifyFocusCounterMigrationDivergence(
-  result: Pick<FocusCounterMigrationResult, "local_differed" | "was_replayed">,
-) {
-  return result.local_differed && !result.was_replayed;
-}
 
 export function mapFocusCounterRow(row: FocusCounterRow): FocusCounter {
   return {
@@ -123,38 +103,4 @@ export function applyAuthoritativeFocusCounterEvent(history: FocusCounterHistory
 
 export function isCurrentFocusCounterSnapshotRequest(requestGeneration: number, currentGeneration: number) {
   return requestGeneration === currentGeneration;
-}
-
-export function buildLegacyFocusCounterSnapshot(counters: FocusCounter[], history: FocusCounterHistoryEntry[]) {
-  return {
-    counters: counters.map((counter) => ({
-      legacyId: counter.id,
-      title: counter.title,
-      color: counter.color,
-      icon: counter.icon,
-      value: Math.trunc(counter.value),
-      step: Math.max(1, Math.trunc(counter.step)),
-      goal: Math.max(1, Math.trunc(counter.goal)),
-      createdAt: counter.createdAt,
-      updatedAt: counter.updatedAt,
-    })),
-    history: history.map((entry) => ({
-      legacyId: entry.id,
-      legacyCounterId: entry.counterId,
-      counterTitleSnapshot: entry.counterTitleSnapshot,
-      delta: Math.trunc(entry.delta),
-      previousValue: entry.previousValue ?? entry.nextValue - entry.delta,
-      nextValue: Math.trunc(entry.nextValue),
-      stepSnapshot: Math.max(1, Math.trunc(entry.stepSnapshot)),
-      createdAt: entry.createdAt,
-    })),
-  };
-}
-
-export function getFocusCounterMigrationBatchStorageKey(userId: string, deviceId: string) {
-  return `${FOCUS_COUNTER_MIGRATION_BATCH_STORAGE_KEY_PREFIX}:${userId}:${deviceId}`;
-}
-
-export function getFocusCounterBackupStorageKey(userId: string, migrationBatchId: string) {
-  return `${FOCUS_COUNTER_BACKUP_STORAGE_KEY_PREFIX}:${userId}:${migrationBatchId}`;
 }

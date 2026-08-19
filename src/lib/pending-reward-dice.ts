@@ -1,14 +1,11 @@
 import {
   buildTaskRewardBankSessionFromResolutions,
-  getPendingRewardDiceCount,
   getPendingTaskRewardKey,
   parsePendingTaskRewards,
   type PendingTaskReward,
   type TaskRewardBankSession,
   type TaskRewardResolution,
 } from "@/lib/task-rewards";
-
-export const PENDING_REWARD_DICE_DEVICE_ID_KEY = "adhdice:pending-reward-dice-device-id";
 
 export type PendingRewardDiceAccountSnapshot = {
   pendingDice: number;
@@ -26,10 +23,6 @@ export type PendingRewardDiceMutationRow = {
 
 export function buildPendingRewardAwardOperationId(reward: PendingTaskReward) {
   return `task-reward:${getPendingTaskRewardKey(reward)}`;
-}
-
-export function buildLegacyMigrationOperationId(deviceId: string) {
-  return `pending-reward-legacy:${deviceId}`;
 }
 
 export function shouldApplyPendingRewardDiceSnapshot(
@@ -71,12 +64,4 @@ export function parseAuthoritativeClaimSession(payload: unknown): TaskRewardBank
   return parsed.length === resolutions.length && parsed.length > 0
     ? buildTaskRewardBankSessionFromResolutions(parsed)
     : null;
-}
-
-export function getLegacyPendingRewardBalance(rewards: PendingTaskReward[]) {
-  return getPendingRewardDiceCount(rewards);
-}
-
-export function resolveLegacyPendingRewardBalance(currentServerBalance: number, reportedLegacyBalance: number) {
-  return Math.max(Math.max(0, currentServerBalance), Math.max(0, reportedLegacyBalance));
 }

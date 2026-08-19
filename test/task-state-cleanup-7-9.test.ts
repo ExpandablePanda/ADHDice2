@@ -31,10 +31,9 @@ test("canonical Task creation and import have no direct Task-table fallback", ()
   assert.doesNotMatch(crud, /from\(["']adhdice_clean_tasks["']\)|\.insert\(/);
 });
 
-test("explicitly legacy-only checklist rows keep their direct subtask table path", () => {
-  assert.match(subtasks, /adhdice_task_subtasks/);
-  assert.match(subtasks, /const legacyOnly =/);
-  assert.match(subtasks, /promotedTaskByLegacyId/);
+test("child rows use canonical same-table Task State", () => {
+  assert.doesNotMatch(subtasks, /adhdice_task_subtasks|adhdice_legacy_subtask_promotions/);
+  assert.match(subtasks, /buildChildTaskCreationDraft/);
   assert.match(subtasks, /canonicalTaskStateUpdate/);
 });
 

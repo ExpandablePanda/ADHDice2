@@ -8,7 +8,7 @@ import { ModalShell } from "../modal-shell";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { isTaskFinishedStatusValue } from "@/lib/task-buckets";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
-import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
+import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
 import { getSelectableTaskStatuses, getSelectableTaskStatusesForRepeatFrequency } from "@/lib/task-complete";
 import { buildTaskPriorityUpdate, formatTaskPriorityMenuLabel, getSelectedTaskPriorityToneClass, getTaskPriorityToneClass, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 
@@ -97,7 +97,7 @@ function SubtaskRow({ depth, onAddChild, onRemove, onUpdate, subtask }: {
 }) {
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   const indent = depth * 20;
-  const subtaskStatusOptions: Array<{ label: string; status: TaskSubtaskStatus }> = [
+  const subtaskStatusOptions: Array<{ label: string; status: TaskStatus }> = [
     { label: "Pending", status: "pending" },
     { label: "In Progress", status: "in_progress" },
     { label: "Done", status: "done" },
@@ -107,7 +107,7 @@ function SubtaskRow({ depth, onAddChild, onRemove, onUpdate, subtask }: {
     { label: "Not Due", status: "not_due" },
   ];
 
-  function renderSubtaskStatusIcon(status: TaskSubtaskStatus) {
+  function renderSubtaskStatusIcon(status: TaskStatus) {
     return renderTaskStatusCircle(status, "sm");
   }
 
@@ -272,7 +272,7 @@ export function TaskEditorModal({
   onOpenHistory?: () => void;
   onSave: (draft: { values: TaskDraft; focusToday: boolean; linkedNoteIds: string[]; subtasks: TaskSubtaskDraft[] }) => Promise<void>;
   statusResetSignal?: { status: TaskStatus; taskId: string; token: number } | null;
-  subtasks: DbTaskSubtask[];
+  subtasks: Task[];
   task: Task | null;
   todayDateKey?: string;
 }) {
@@ -1158,7 +1158,7 @@ function EmptyTaskState({
   );
 }
 
-function isClosedSubtaskStatus(status: TaskSubtaskStatus) {
+function isClosedSubtaskStatus(status: TaskStatus) {
   return status === "done" || status === "did_my_best";
 }
 

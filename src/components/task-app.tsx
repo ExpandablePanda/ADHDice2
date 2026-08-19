@@ -207,7 +207,6 @@ import { formatDateKeyInTimeZone, getBrowserTimeZone, getLogicalDayKey, saveLogi
 import { runStorageMigrations } from "@/lib/storage-migrations";
 import { buildProfileSnapshot, DEFAULT_PROFILE, markProfileMediaCachedForSession, saveProfile, setActiveProfileUserId, type UserProfile, useProfileStore } from "@/lib/profile-store";
 import {
-  isMissingParentSubtaskColumnError,
   isMissingTaskActualSecondsColumnError,
   isMissingTaskEnergyNoneEnumError,
   isMissingTaskListManualMembershipsTableError,
@@ -263,7 +262,6 @@ import {
   COMPLETE_BLOCKED_MESSAGE,
   getTaskCompleteConfirmationDescription,
 } from "@/lib/task-complete";
-import { filterPromotedLegacySubtasks } from "@/lib/task-legacy-step-promotion";
 import { buildMilestoneLifecycleArgs, canDetachAndPromoteTaskToMilestone, canPromoteTaskToMilestone, formatMilestoneRpcError, getMilestoneEligibility, mergeAuthoritativeMilestoneTask, shouldReverseCompletedMilestoneForStatusChange } from "@/lib/milestones";
 import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
 import { filterManualListTaskCandidates } from "@/lib/manual-list-task-search";
@@ -276,7 +274,7 @@ import {
   mapTaskHistoryRow,
   type TaskHistoryStats,
 } from "@/lib/task-history";
-import { groupTaskSubtasksByTaskId, mapTaskSubtaskRow } from "@/lib/task-subtasks";
+import { groupTaskSubtasksByTaskId } from "@/lib/task-subtasks";
 import {
   buildManualMembershipMap,
   getBuiltInTaskLists,
@@ -325,7 +323,6 @@ import {
 
 import type {
   FocusCategory as DbFocusCategory,
-  LegacySubtaskPromotion as DbLegacySubtaskPromotion,
   Milestone,
   Note,
   Task,
@@ -335,8 +332,6 @@ import type {
   TaskInsert,
   TaskRepeatFrequency,
   TaskStatus,
-  TaskSubtask as DbTaskSubtask,
-  TaskSubtaskStatus,
   TaskUpdate,
   TaskHistory as DbTaskHistory,
   TaskListContainer as DbTaskListContainer,
@@ -447,7 +442,7 @@ function doesTaskHighlightTagMatch(values: readonly string[] | null | undefined,
 }
 
 function collectMatchingSourceSubtaskIds(
-  subtasks: DbTaskSubtask[],
+  subtasks: Task[],
   normalizedQuery: string,
   matches: string[],
 ) {
@@ -467,7 +462,7 @@ function buildTaskHighlightMatchState({
   childTaskPreviewByParentTaskId: ChildTaskPreviewLookup;
   query: string;
   selectedBucketTasks: Task[];
-  taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
+  taskSubtasksByTaskId: Record<string, Task[]>;
 }) {
   if (query.length === 0) {
     return {
@@ -576,7 +571,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.49";
+const APP_VERSION = "7.9.50";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1350,10 +1345,8 @@ export function TaskApp() {
   const [taskListManualMemberships, setTaskListManualMemberships] = useState<TaskListManualMembership[]>([]);
   const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
   const [taskCalendarOverridesByTaskId, setTaskCalendarOverridesByTaskId] = useState<Record<string, TaskCalendarOverride[]>>({});
-  const [taskSubtasks, setTaskSubtasks] = useState<DbTaskSubtask[]>([]);
-  const [taskLegacySubtaskPromotions, setTaskLegacySubtaskPromotions] = useState<DbLegacySubtaskPromotion[]>([]);
+  const taskSubtasks = tasks;
   const [availableTaskNotes, setAvailableTaskNotes] = useState<TaskEditorLinkedNote[]>([]);
-  const [supportsNestedSubtasks, setSupportsNestedSubtasks] = useState(true);
   const [isGridEditMode, setIsGridEditMode] = useState(false);
 
   useEffect(() => {
@@ -1760,7 +1753,6 @@ export function TaskApp() {
     mapTaskHistoryRow,
     mapTaskListManualMembershipRow,
     mapTaskListRow,
-    mapTaskSubtaskRow,
     mergeStoredFocusCategories,
     mergeStoredFocusHistory,
     migrateLocalFocusState,
@@ -1818,8 +1810,6 @@ export function TaskApp() {
     setTaskListFolders,
     setTaskListRailItems,
     setTaskLists,
-    setTaskLegacySubtaskPromotions,
-    setTaskSubtasks,
     setTasks,
     suppressCategoryReload,
     supabase,
@@ -1950,8 +1940,6 @@ export function TaskApp() {
         setFocusHistory([]);
         setTaskHistory([]);
         setTaskCalendarOverridesByTaskId({});
-        setTaskSubtasks([]);
-        setTaskLegacySubtaskPromotions([]);
         setAvailableTaskNotes([]);
         setIsGridEditMode(false);
         setSelectedGridWidgetId(null);
@@ -2485,12 +2473,8 @@ export function TaskApp() {
       window.clearInterval(intervalId);
     };
   }, [isTaskHistoryLoaded, runDayReset, session?.user?.id, supabase]);
-  const visibleTaskSubtasks = useMemo(
-    () => filterPromotedLegacySubtasks(taskSubtasks, taskLegacySubtaskPromotions),
-    [taskLegacySubtaskPromotions, taskSubtasks],
-  );
-  const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(visibleTaskSubtasks), [visibleTaskSubtasks]);
-  const rawTaskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(taskSubtasks), [taskSubtasks]);
+  const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(tasks), [tasks]);
+  const rawTaskSubtasksByTaskId = taskSubtasksByTaskId;
   const hasStepsByTaskId = useMemo(
     () => {
       const sameTableChildrenByParentId = buildTaskHierarchyAdapter(tasks).childrenByParentId;
@@ -3724,18 +3708,12 @@ export function TaskApp() {
       taskListManualMemberships,
     },
     subtask: {
+      canonicalTaskCreator: (payload, source) => insertTaskRowWithCanonicalCreation(client, payload, source),
       client,
       currentUserId: currentUserIdText,
-      isMissingParentSubtaskColumnError,
-      mapTaskSubtaskRow,
-      onSubtaskCompletedReward: queueTaskRewards,
       setMessage,
-      setSupportsNestedSubtasks,
-      setTaskSubtasks,
-      supportsNestedSubtasks,
+      setTasks,
       tasks,
-      taskLegacySubtaskPromotions,
-      taskSubtasks,
     },
     update: {
       canonicalTaskMutationState: canonicalTaskMutationStateRef.current,

@@ -73,14 +73,6 @@ export type TaskEnergy = "none" | "low" | "medium" | "high";
 export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
 export type TaskRepeatMonthlyMode = "day_of_month" | "ordinal_weekday";
 export type TaskRepeatMonthlyOrdinal = "first" | "second" | "third" | "fourth" | "last";
-export type TaskSubtaskStatus =
-  | "pending"
-  | "in_progress"
-  | "done"
-  | "missed"
-  | "did_my_best"
-  | "upcoming"
-  | "not_due";
 export type FocusType = string;
 export type FocusSubtype = string;
 export type TaskFocusDay = {
@@ -463,48 +455,6 @@ export type ActiveTaskTimerUpdate = Partial<
   Pick<ActiveTaskTimer, "title_snapshot" | "start_time" | "accumulated_seconds" | "started_actual_seconds" | "is_running" | "occurrence_key" | "occurrence_due_on">
 >;
 
-export type TaskSubtask = {
-  id: string;
-  task_id: string;
-  user_id: string;
-  title: string;
-  status: TaskSubtaskStatus;
-  sort_order: number;
-  parent_subtask_id: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type TaskSubtaskInsert = {
-  id?: string;
-  task_id: string;
-  user_id: string;
-  title: string;
-  status?: TaskSubtaskStatus;
-  sort_order?: number;
-  parent_subtask_id?: string | null;
-};
-
-export type TaskSubtaskUpdate = Partial<
-  Pick<TaskSubtask, "title" | "status" | "sort_order">
->;
-
-export type LegacySubtaskPromotion = {
-  legacy_subtask_id: string;
-  task_id: string;
-  user_id: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type LegacySubtaskPromotionInsert = {
-  legacy_subtask_id: string;
-  task_id: string;
-  user_id: string;
-};
-
-export type LegacySubtaskPromotionUpdate = Record<string, never>;
-
 export type TaskHistory = {
   id: string;
   task_id: string;
@@ -828,7 +778,6 @@ export type TaskRewardClaim = {
   id: string;
   user_id: string;
   task_id: string;
-  subtask_id: string | null;
   reward_roll_id: string;
   reward_date: string;
   awarded_token: boolean;
@@ -839,7 +788,6 @@ export type TaskRewardClaimInsert = {
   id?: string;
   user_id: string;
   task_id: string;
-  subtask_id?: string | null;
   reward_roll_id: string;
   reward_date: string;
   awarded_token?: boolean;
@@ -983,19 +931,6 @@ export type FocusCounterEventRow = {
   payload: Record<string, unknown> | null;
   client_created_at: string | null;
   created_at: string;
-};
-
-export type FocusCounterMigrationRow = {
-  id: string;
-  user_id: string;
-  device_installation_id: string;
-  migration_batch_id: string;
-  submitted_snapshot: Record<string, unknown>;
-  status: "processing" | "migrated" | "server_adopted";
-  local_differed: boolean;
-  result_payload: Record<string, unknown> | null;
-  created_at: string;
-  updated_at: string;
 };
 
 export type FocusSession = {
@@ -1169,50 +1104,6 @@ export type RollRewardPoolPrizeInsert = {
 
 export type RollRewardPoolPrizeUpdate = Partial<
   Pick<RollRewardPoolPrize, "name" | "sort_order" | "tier">
->;
-
-export type RollMasterPrize = {
-  id: string;
-  name: string;
-  sort_order: number;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-};
-
-export type RollMasterPrizeInsert = {
-  id?: string;
-  name: string;
-  sort_order?: number;
-  is_active?: boolean;
-};
-
-export type RollMasterPrizeUpdate = Partial<
-  Pick<RollMasterPrize, "name" | "sort_order" | "is_active">
->;
-
-export type RollBoardAssignmentTier = "small" | "big" | "master";
-
-export type RollBoardAssignment = {
-  id: string;
-  user_id: string;
-  cell_number: number;
-  prize_tier: RollBoardAssignmentTier;
-  prize_id: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type RollBoardAssignmentInsert = {
-  id?: string;
-  user_id: string;
-  cell_number: number;
-  prize_tier: RollBoardAssignmentTier;
-  prize_id: string;
-};
-
-export type RollBoardAssignmentUpdate = Partial<
-  Pick<RollBoardAssignment, "prize_tier" | "prize_id">
 >;
 
 export type RollDailyBoardAssignmentTier = "small" | "big" | "master";
@@ -1830,37 +1721,6 @@ export type HealthAchievementAwardInsert = {
 
 export type HealthAchievementAwardUpdate = Record<string, never>;
 
-export type AchievementUnlock = {
-  id: string;
-  user_id: string;
-  achievement_id: string;
-  achievement_kind: "face" | "charged_die";
-  set_code: string;
-  face_level: number | null;
-  title: string;
-  description: string;
-  encouragement: string;
-  reward_xp: number;
-  earned_at: string;
-  created_at: string;
-};
-
-export type AchievementUnlockInsert = {
-  id?: string;
-  user_id: string;
-  achievement_id: string;
-  achievement_kind: "face" | "charged_die";
-  set_code: string;
-  face_level?: number | null;
-  title: string;
-  description: string;
-  encouragement: string;
-  reward_xp?: number;
-  earned_at?: string;
-};
-
-export type AchievementUnlockUpdate = Record<string, never>;
-
 export type AchievementProfile = {
   user_id: string;
   activation_operation_id: string;
@@ -2053,18 +1913,6 @@ export type Database = {
         Row: Task & CanonicalTaskStateColumns;
         Insert: TaskInsert;
         Update: TaskUpdate;
-        Relationships: [];
-      };
-      adhdice_task_subtasks: {
-        Row: TaskSubtask;
-        Insert: TaskSubtaskInsert;
-        Update: TaskSubtaskUpdate;
-        Relationships: [];
-      };
-      adhdice_legacy_subtask_promotions: {
-        Row: LegacySubtaskPromotion;
-        Insert: LegacySubtaskPromotionInsert;
-        Update: LegacySubtaskPromotionUpdate;
         Relationships: [];
       };
       adhdice_task_command_operations: {
@@ -2271,12 +2119,6 @@ export type Database = {
         Update: Partial<FocusCounterEventRow>;
         Relationships: [];
       };
-      adhdice_focus_counter_migrations: {
-        Row: FocusCounterMigrationRow;
-        Insert: Omit<FocusCounterMigrationRow, "created_at" | "id" | "updated_at"> & Partial<Pick<FocusCounterMigrationRow, "created_at" | "id" | "updated_at">>;
-        Update: Partial<FocusCounterMigrationRow>;
-        Relationships: [];
-      };
       adhdice_focus_daily_goal_adjustments: {
         Row: FocusDailyGoalAdjustment;
         Insert: FocusDailyGoalAdjustmentInsert;
@@ -2421,12 +2263,6 @@ export type Database = {
         Update: HealthAchievementAwardUpdate;
         Relationships: [];
       };
-      adhdice_achievement_unlocks: {
-        Row: AchievementUnlock;
-        Insert: AchievementUnlockInsert;
-        Update: AchievementUnlockUpdate;
-        Relationships: [];
-      };
       adhdice_achievement_profiles: {
         Row: AchievementProfile;
         Insert: AchievementProfileInsert;
@@ -2491,18 +2327,6 @@ export type Database = {
         Row: RollDailyBoard;
         Insert: RollDailyBoardInsert;
         Update: RollDailyBoardUpdate;
-        Relationships: [];
-      };
-      adhdice_roll_board_assignments: {
-        Row: RollBoardAssignment;
-        Insert: RollBoardAssignmentInsert;
-        Update: RollBoardAssignmentUpdate;
-        Relationships: [];
-      };
-      adhdice_roll_master_prizes: {
-        Row: RollMasterPrize;
-        Insert: RollMasterPrizeInsert;
-        Update: RollMasterPrizeUpdate;
         Relationships: [];
       };
       adhdice_roll_reward_pool_prizes: {
@@ -2608,14 +2432,6 @@ export type Database = {
         };
         Returns: unknown;
       };
-      adhdice_migrate_focus_counters: {
-        Args: {
-          p_device_installation_id: string;
-          p_migration_batch_id: string;
-          p_submitted_snapshot: unknown;
-        };
-        Returns: unknown;
-      };
       adhdice_transition_focus_runtime: {
         Args: {
           p_operation_id: string;
@@ -2659,37 +2475,6 @@ export type Database = {
           p_legacy_is_running?: boolean;
         };
         Returns: unknown;
-      };
-      adhdice_award_pending_reward_dice: {
-        Args: {
-          p_operation_id: string;
-          p_task_id: string;
-          p_subtask_id: string | null;
-          p_reward_date: string;
-          p_streak_length: number;
-          p_reward_payload: unknown;
-        };
-        Returns: Array<{
-          pending_dice: number;
-          revision: number;
-          updated_at: string;
-          result_payload: unknown;
-          was_replayed: boolean;
-        }>;
-      };
-      adhdice_migrate_pending_reward_dice: {
-        Args: {
-          p_operation_id: string;
-          p_reported_legacy_balance: number;
-          p_legacy_rewards?: unknown;
-        };
-        Returns: Array<{
-          pending_dice: number;
-          revision: number;
-          updated_at: string;
-          result_payload: unknown;
-          was_replayed: boolean;
-        }>;
       };
       adhdice_claim_pending_reward_dice: {
         Args: { p_operation_id: string };
@@ -2737,7 +2522,6 @@ export type Database = {
       adhdice_clean_task_status: TaskStatus;
       adhdice_clean_task_priority: TaskPriority;
       adhdice_clean_task_energy: TaskEnergy;
-      adhdice_clean_task_subtask_status: TaskSubtaskStatus;
       adhdice_clean_task_repeat_frequency: TaskRepeatFrequency;
       adhdice_clean_task_repeat_monthly_mode: TaskRepeatMonthlyMode;
       adhdice_clean_task_repeat_monthly_ordinal: TaskRepeatMonthlyOrdinal;

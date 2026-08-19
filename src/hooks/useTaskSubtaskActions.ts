@@ -2,9 +2,11 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
-import { isUuid } from "@/lib/focus-utils";
-import type { LegacySubtaskPromotion, Task, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskInsert, TaskSubtaskStatus, TaskUpdate } from "@/lib/database.types";
+import type { Task, TaskInsert, TaskStatus, TaskUpdate } from "@/lib/database.types";
 import type { TaskSubtaskDraft } from "@/components/task-app/task-editor-model";
+import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
+import { insertTaskRowWithCanonicalCreation, type CanonicalTaskCreator } from "@/lib/task-db-mutations";
+import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 
 type Message = {
   text: string;
@@ -12,400 +14,160 @@ type Message = {
 };
 
 type UseTaskSubtaskActionsOptions = {
+  canonicalTaskCreator?: CanonicalTaskCreator;
   canonicalTaskStateUpdate?: (taskId: string, values: TaskUpdate, options?: { expectedTask?: Task | null }) => Promise<boolean>;
   client: SupabaseClient;
   currentUserId: string;
-  isMissingParentSubtaskColumnError: (message: string) => boolean;
-  mapTaskSubtaskRow: (row: DbTaskSubtask) => DbTaskSubtask;
-  onSubtaskCompletedReward?: (candidates: Array<{ claimRef: { subtaskId: string; taskId: string; title: string }; previousStatus: TaskStatus | null; task: Task }>) => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
-  setSupportsNestedSubtasks: Dispatch<SetStateAction<boolean>>;
-  setTaskSubtasks: Dispatch<SetStateAction<DbTaskSubtask[]>>;
-  supportsNestedSubtasks: boolean;
+  setTasks: Dispatch<SetStateAction<Task[]>>;
   tasks: Task[];
-  taskSubtasks: DbTaskSubtask[];
-  taskLegacySubtaskPromotions?: LegacySubtaskPromotion[];
 };
 
 export function useTaskSubtaskActions({
+  canonicalTaskCreator,
   canonicalTaskStateUpdate,
   client,
   currentUserId,
-  isMissingParentSubtaskColumnError,
-  mapTaskSubtaskRow,
-  onSubtaskCompletedReward,
   setMessage,
-  setSupportsNestedSubtasks,
-  setTaskSubtasks,
-  supportsNestedSubtasks,
+  setTasks,
   tasks,
-  taskSubtasks,
-  taskLegacySubtaskPromotions = [],
 }: UseTaskSubtaskActionsOptions) {
-  const promotedTaskByLegacyId = new Map(taskLegacySubtaskPromotions.map((promotion) => [promotion.legacy_subtask_id, promotion.task_id]));
+  const createTask = canonicalTaskCreator
+    ?? ((payload: TaskInsert, source?: "task_creation" | "task_import") => insertTaskRowWithCanonicalCreation(client, payload, source));
 
-  async function updatePromotedTask(legacySubtaskId: string, values: TaskUpdate) {
-    const taskId = promotedTaskByLegacyId.get(legacySubtaskId);
-    if (!taskId || !canonicalTaskStateUpdate) return null;
+  async function updateCanonicalTask(taskId: string, values: TaskUpdate) {
+    if (!canonicalTaskStateUpdate) {
+      setMessage({ tone: "warn", text: "Canonical Task State is unavailable; no child-task fallback was used." });
+      return false;
+    }
     const task = tasks.find((candidate) => candidate.id === taskId) ?? null;
     if (!task) {
-      setMessage({ tone: "warn", text: "The promoted Step no longer exists; no legacy child-state fallback was used." });
+      setMessage({ tone: "warn", text: "That child Task no longer exists." });
       return false;
     }
     return canonicalTaskStateUpdate(taskId, values, { expectedTask: task });
   }
-  function isRewardSubtaskStatus(status: TaskSubtaskStatus) {
-    return status === "done" || status === "did_my_best";
-  }
 
-  async function replaceTaskSubtasks(taskId: string, subtasks: TaskSubtaskDraft[]) {
-    const promotedIds = new Set<string>(taskLegacySubtaskPromotions
-      .filter((promotion) => taskSubtasks.some((subtask) => subtask.id === promotion.legacy_subtask_id && subtask.task_id === taskId))
-      .map((promotion) => promotion.legacy_subtask_id)
-      .filter((id): id is string => typeof id === "string"));
-    let deleteQuery = client
-      .from("adhdice_task_subtasks")
-      .delete()
-      .eq("task_id", taskId)
-      .eq("user_id", currentUserId);
-    if (promotedIds.size > 0) deleteQuery = deleteQuery.not("id", "in", `(${[...promotedIds].join(",")})`);
-    const { error: deleteError } = await deleteQuery;
+  async function replaceTaskSubtasks(taskId: string, drafts: TaskSubtaskDraft[]) {
+    const existingChildren = buildTaskHierarchyAdapter(tasks).getChildren(taskId);
+    const retainedIds = new Set<string>();
+    let sortOrder = 0;
 
-    if (deleteError) {
-      setMessage({ tone: "warn", text: deleteError.message });
-      return { saved: false, usedNestedFallback: false };
-    }
-
-    const counter = { n: 0 };
-    function flattenRecursive(items: TaskSubtaskDraft[], parentId: string | null = null): TaskSubtaskInsert[] {
-      const result: TaskSubtaskInsert[] = [];
+    async function saveDrafts(items: TaskSubtaskDraft[], parentTaskId: string): Promise<boolean> {
       for (const item of items) {
-        const trimmed = item.title.trim();
-        if (!trimmed) continue;
-        const id = isUuid(item.id) ? item.id : crypto.randomUUID();
-        result.push({
-          id,
-          parent_subtask_id: parentId,
-          sort_order: counter.n++,
+        const title = item.title.trim();
+        if (!title) continue;
+        const existing = tasks.find((task) => task.id === item.id) ?? null;
+        if (existing) {
+          retainedIds.add(existing.id);
+          if (await updateCanonicalTask(existing.id, {
+            parent_task_id: parentTaskId,
+            sort_order: sortOrder++,
+            status: item.status,
+            title,
+          }) !== true) return false;
+          if (!await saveDrafts(item.children, existing.id)) return false;
+          continue;
+        }
+
+        const childDraft = buildChildTaskCreationDraft({ parentTaskId, title });
+        if (!childDraft.ok) {
+          setMessage({ tone: "warn", text: "A child Task could not be created because its parent link was invalid." });
+          return false;
+        }
+        const result = await createTask({
+          ...childDraft.draft,
+          sort_order: sortOrder++,
           status: item.status,
-          task_id: taskId,
-          title: trimmed,
           user_id: currentUserId,
-        });
-        result.push(...flattenRecursive(item.children, id));
+        }, "task_creation");
+        if (result.error || !result.data) {
+          setMessage({ tone: "warn", text: result.error?.message ?? "Child Task creation returned no row." });
+          return false;
+        }
+        retainedIds.add(result.data.id);
+        setTasks((current) => [...current, result.data as Task]);
+        if (!await saveDrafts(item.children, result.data.id)) return false;
       }
-      return result;
-    }
-    const cleanedSubtasks = flattenRecursive(subtasks);
-
-    if (promotedIds.size > 0) {
-      for (const draft of cleanedSubtasks) {
-        if (!draft.id || !promotedIds.has(draft.id)) continue;
-        const promoted = await updatePromotedTask(draft.id, { title: draft.title, status: draft.status as TaskStatus });
-        if (promoted !== true) return { saved: false, usedNestedFallback: false };
-      }
+      return true;
     }
 
-    if (cleanedSubtasks.length === 0) {
-      setTaskSubtasks((current) => current.filter((subtask) => subtask.task_id !== taskId));
-      return { saved: true, usedNestedFallback: false };
-    }
-
-    const { data, error } = await client
-      .from("adhdice_task_subtasks")
-      .insert(cleanedSubtasks)
-      .select("*");
-
-    if (error && isMissingParentSubtaskColumnError(error.message)) {
-      setSupportsNestedSubtasks(false);
-      const fallbackPayload = cleanedSubtasks.map((subtask) => ({
-        ...subtask,
-        parent_subtask_id: undefined,
-      }));
-      const { data: fallbackData, error: fallbackError } = await client
-        .from("adhdice_task_subtasks")
-        .insert(fallbackPayload)
-        .select("*");
-
-      if (fallbackError) {
-        setMessage({ tone: "warn", text: fallbackError.message });
-        return { saved: false, usedNestedFallback: false };
-      }
-
-      const mappedFallbackSubtasks = (fallbackData ?? []).map(mapTaskSubtaskRow);
-      setTaskSubtasks((current) => [
-        ...current.filter((subtask) => subtask.task_id !== taskId),
-        ...mappedFallbackSubtasks,
-      ]);
-      return { saved: true, usedNestedFallback: true };
-    }
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
+    if (!await saveDrafts(drafts, taskId)) {
       return { saved: false, usedNestedFallback: false };
     }
 
-    setSupportsNestedSubtasks(true);
-    const mappedSubtasks = (data ?? []).map(mapTaskSubtaskRow);
-    setTaskSubtasks((current) => [
-      ...current.filter((subtask) => subtask.task_id !== taskId),
-      ...mappedSubtasks,
-    ]);
+    for (const child of existingChildren) {
+      if (!retainedIds.has(child.id)) {
+        if (!await updateCanonicalTask(child.id, { status: "trashed" })) {
+          return { saved: false, usedNestedFallback: false };
+        }
+      }
+    }
     return { saved: true, usedNestedFallback: false };
   }
 
   async function resetTaskSubtasksToPending(taskId: string) {
-    const promoted = taskSubtasks.filter((subtask) => subtask.task_id === taskId && promotedTaskByLegacyId.has(subtask.id));
-    for (const subtask of promoted) {
-      if (await updatePromotedTask(subtask.id, { status: "pending" }) !== true) return false;
+    const descendants = buildTaskHierarchyAdapter(tasks).getDescendants(taskId);
+    for (const child of descendants) {
+      if (!await updateCanonicalTask(child.id, { status: "pending" })) return false;
     }
-    const legacyOnly = taskSubtasks.some((subtask) => subtask.task_id === taskId && !promotedTaskByLegacyId.has(subtask.id));
-    if (!legacyOnly) return true;
-    const { data, error } = await client
-      .from("adhdice_task_subtasks")
-      .update({ status: "pending" })
-      .eq("task_id", taskId)
-      .eq("user_id", currentUserId)
-      .select("*");
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return false;
-    }
-
-    const mappedSubtasks = (data ?? []).map(mapTaskSubtaskRow);
-    setTaskSubtasks((current) => [
-      ...current.filter((subtask) => subtask.task_id !== taskId),
-      ...mappedSubtasks,
-    ]);
     return true;
   }
 
-  async function updateTaskSubtaskStatus(subtaskId: string, status: TaskSubtaskStatus) {
-    if (promotedTaskByLegacyId.has(subtaskId)) {
-      if (status === "upcoming" || status === "not_due") {
-        setMessage({ tone: "warn", text: "Upcoming and Not Due are derived canonical Step states and cannot be written directly." });
-        return false;
-      }
-      return (await updatePromotedTask(subtaskId, { status })) === true;
+  async function updateTaskSubtaskStatus(subtaskId: string, status: TaskStatus) {
+    const previousTask = tasks.find((task) => task.id === subtaskId) ?? null;
+    if (!previousTask) {
+      setMessage({ tone: "warn", text: "That child Task no longer exists." });
+      return false;
     }
-    // Unpromoted checklist rows are intentionally legacy-only entities.
-    const previousSubtask = taskSubtasks.find((subtask) => subtask.id === subtaskId) ?? null;
-    const { data, error } = await client
-      .from("adhdice_task_subtasks")
-      .update({ status })
-      .eq("id", subtaskId)
-      .eq("user_id", currentUserId)
-      .select("*")
-      .single();
-
-    if (error) {
-      const isMissingSubtaskStatusEnumValue = error.message.includes("adhdice_clean_task_subtask_status")
-        && error.message.includes("invalid input value for enum");
-      setMessage({
-        tone: "warn",
-        text: isMissingSubtaskStatusEnumValue
-          ? "Your local database is missing the newer subtask statuses. Run the subtask status migration, then reload."
-          : error.message,
-      });
-      return;
+    if (status === "upcoming" || status === "not_due") {
+      setMessage({ tone: "warn", text: "Upcoming and Not Due are derived canonical child states and cannot be written directly." });
+      return false;
     }
-
-    if (!data) return;
-    const mappedSubtask = mapTaskSubtaskRow(data);
-    setTaskSubtasks((current) => current.map((subtask) => subtask.id === mappedSubtask.id ? mappedSubtask : subtask));
-
-    if (
-      onSubtaskCompletedReward
-      && previousSubtask
-      && isRewardSubtaskStatus(mappedSubtask.status)
-      && !isRewardSubtaskStatus(previousSubtask.status)
-    ) {
-      const parentTask = tasks.find((task) => task.id === mappedSubtask.task_id);
-      if (parentTask) {
-        await onSubtaskCompletedReward([{
-          claimRef: {
-            subtaskId: mappedSubtask.id,
-            taskId: parentTask.id,
-            title: mappedSubtask.title,
-          },
-          previousStatus: null,
-          task: parentTask,
-        }]);
-      }
-    }
+    const saved = await updateCanonicalTask(subtaskId, { status });
+    if (!saved) return false;
+    return true;
   }
 
   async function renameTaskSubtask(subtaskId: string, title: string) {
     const trimmedTitle = title.trim();
-    if (!trimmedTitle) {
-      return false;
-    }
-
-    if (promotedTaskByLegacyId.has(subtaskId)) {
-      return (await updatePromotedTask(subtaskId, { title: trimmedTitle })) === true;
-    }
-
-    const { data, error } = await client
-      .from("adhdice_task_subtasks")
-      .update({ title: trimmedTitle })
-      .eq("id", subtaskId)
-      .eq("user_id", currentUserId)
-      .select("*")
-      .single();
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return false;
-    }
-
-    if (!data) {
-      return false;
-    }
-
-    const mappedSubtask = mapTaskSubtaskRow(data);
-    setTaskSubtasks((current) => current.map((subtask) => subtask.id === mappedSubtask.id ? mappedSubtask : subtask));
-    return true;
-  }
-
-  function collectDescendantSubtaskIds(subtasks: DbTaskSubtask[], parentId: string): string[] {
-    const directChildren = subtasks.filter((subtask) => (subtask.parent_subtask_id ?? null) === parentId);
-    return directChildren.flatMap((subtask) => [subtask.id, ...collectDescendantSubtaskIds(subtasks, subtask.id)]);
+    return trimmedTitle ? updateCanonicalTask(subtaskId, { title: trimmedTitle }) : false;
   }
 
   async function deleteTaskSubtask(subtaskId: string) {
-    if (promotedTaskByLegacyId.has(subtaskId)) {
-      return (await updatePromotedTask(subtaskId, { status: "trashed" })) === true;
+    const descendants = buildTaskHierarchyAdapter(tasks).getDescendants(subtaskId);
+    for (const child of [tasks.find((task) => task.id === subtaskId), ...descendants]) {
+      if (child && !await updateCanonicalTask(child.id, { status: "trashed" })) return false;
     }
-    // Unpromoted checklist rows remain an explicitly noncanonical entity.
-    const descendantIds = collectDescendantSubtaskIds(taskSubtasks, subtaskId);
-    const idsToDelete = [subtaskId, ...descendantIds];
-
-    const { error } = await client
-      .from("adhdice_task_subtasks")
-      .delete()
-      .in("id", idsToDelete)
-      .eq("user_id", currentUserId);
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return false;
-    }
-
-    const deletedIdSet = new Set(idsToDelete);
-    setTaskSubtasks((current) => current.filter((subtask) => !deletedIdSet.has(subtask.id)));
     return true;
   }
 
   async function addTaskSubtask(taskId: string) {
-    // This API adds a legacy checklist row. Same-table canonical Steps are
-    // created through the Task creation coordinator, so the two models never
-    // silently compete for the same logical child.
-    const nextSortOrder = taskSubtasks
-      .filter((subtask) => subtask.task_id === taskId)
-      .reduce((max, subtask) => Math.max(max, subtask.sort_order), -1) + 1;
-
-    const basePayload = {
-      id: crypto.randomUUID(),
-      sort_order: nextSortOrder,
-      status: "pending" as const,
-      task_id: taskId,
-      title: "New step",
-      user_id: currentUserId,
-    };
-
-    const primaryPayload: TaskSubtaskInsert = supportsNestedSubtasks
-      ? { ...basePayload, parent_subtask_id: null }
-      : basePayload;
-
-    let insertResult = await client
-      .from("adhdice_task_subtasks")
-      .insert(primaryPayload)
-      .select("*")
-      .single();
-
-    if (insertResult.error && isMissingParentSubtaskColumnError(insertResult.error.message)) {
-      setSupportsNestedSubtasks(false);
-      insertResult = await client
-        .from("adhdice_task_subtasks")
-        .insert(basePayload)
-        .select("*")
-        .single();
-    }
-
-    if (insertResult.error) {
-      setMessage({ tone: "warn", text: insertResult.error.message });
-      return null;
-    }
-
-    if (!insertResult.data) {
-      return null;
-    }
-
-    const mappedSubtask = mapTaskSubtaskRow(insertResult.data);
-    setTaskSubtasks((current) => [...current, mappedSubtask]);
-    return mappedSubtask.id;
+    return addCanonicalChild(taskId, "New step");
   }
 
   async function addChildTaskSubtask(parentSubtaskId: string) {
-    // See addTaskSubtask: an unpromoted nested checklist remains explicitly
-    // legacy-only and cannot conflict with a promoted canonical Step.
-    const parentSubtask = taskSubtasks.find((subtask) => subtask.id === parentSubtaskId) ?? null;
-    if (!parentSubtask) {
-      setMessage({ tone: "warn", text: "Could not find that parent step." });
+    return addCanonicalChild(parentSubtaskId, "New child step");
+  }
+
+  async function addCanonicalChild(parentTaskId: string, title: string) {
+    const result = buildChildTaskCreationDraft({ parentTaskId, title });
+    if (!result.ok) {
+      setMessage({ tone: "warn", text: "Could not find a valid parent Task." });
       return null;
     }
-
-    if (!supportsNestedSubtasks) {
-      setMessage({
-        tone: "warn",
-        text: "Your database is missing nested-subtask support. Run the subtask parent migration to add child steps.",
-      });
-      return null;
-    }
-
-    const nextSortOrder = taskSubtasks
-      .filter((subtask) => subtask.task_id === parentSubtask.task_id)
-      .reduce((max, subtask) => Math.max(max, subtask.sort_order), -1) + 1;
-
-    const payload: TaskSubtaskInsert = {
-      id: crypto.randomUUID(),
-      parent_subtask_id: parentSubtaskId,
+    const nextSortOrder = buildTaskHierarchyAdapter(tasks).getChildren(parentTaskId).length;
+    const created = await createTask({
+      ...result.draft,
       sort_order: nextSortOrder,
-      status: "pending",
-      task_id: parentSubtask.task_id,
-      title: "New child step",
       user_id: currentUserId,
-    };
-
-    const { data, error } = await client
-      .from("adhdice_task_subtasks")
-      .insert(payload)
-      .select("*")
-      .single();
-
-    if (error && isMissingParentSubtaskColumnError(error.message)) {
-      setSupportsNestedSubtasks(false);
-      setMessage({
-        tone: "warn",
-        text: "Your database is missing nested-subtask support. Run the subtask parent migration to add child steps.",
-      });
+    }, "task_creation");
+    if (created.error || !created.data) {
+      setMessage({ tone: "warn", text: created.error?.message ?? "Child Task creation returned no row." });
       return null;
     }
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return null;
-    }
-
-    if (!data) {
-      return null;
-    }
-
-    setSupportsNestedSubtasks(true);
-    const mappedSubtask = mapTaskSubtaskRow(data);
-    setTaskSubtasks((current) => [...current, mappedSubtask]);
-    return mappedSubtask.id;
+    setTasks((current) => [...current, created.data as Task]);
+    return created.data.id;
   }
 
   return {

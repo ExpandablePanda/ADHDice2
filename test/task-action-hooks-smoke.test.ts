@@ -165,13 +165,10 @@ test("action hooks expose expected callable actions", async () => {
   const subtasks = useTaskSubtaskActions({
     client: {} as never,
     currentUserId: "u1",
-    isMissingParentSubtaskColumnError: () => false,
-    mapTaskSubtaskRow: (row) => row,
+    canonicalTaskStateUpdate: async () => true,
     setMessage: () => {},
-    setSupportsNestedSubtasks: () => {},
-    setTaskSubtasks: () => {},
-    supportsNestedSubtasks: true,
-    taskSubtasks: [],
+    setTasks: () => {},
+    tasks: [],
   });
   assert.equal(typeof subtasks.replaceTaskSubtasks, "function");
   assert.equal(typeof subtasks.addTaskSubtask, "function");
@@ -293,13 +290,10 @@ test("action hooks expose expected callable actions", async () => {
     subtask: {
       client: {} as never,
       currentUserId: "u1",
-      isMissingParentSubtaskColumnError: () => false,
-      mapTaskSubtaskRow: (row) => row,
+      canonicalTaskStateUpdate: async () => true,
       setMessage: () => {},
-      setSupportsNestedSubtasks: () => {},
-      setTaskSubtasks: () => {},
-      supportsNestedSubtasks: true,
-      taskSubtasks: [],
+      setTasks: () => {},
+      tasks: [],
     },
     update: {
       onTasksCompleted: async () => {},
@@ -352,7 +346,7 @@ test("import task merge replaces existing rows by task id", () => {
   assert.equal(merged.find((task) => task.id === "task-other")?.title, "Other task");
 });
 
-test("subtask completion keeps reward claims scoped to the subtask", async () => {
+test("canonical child completion writes the child Task state directly", async () => {
   const parentTask = createTask({
     created_at: "2026-06-11T08:00:00.000Z",
     due_on: "2026-06-11",
@@ -363,74 +357,46 @@ test("subtask completion keeps reward claims scoped to the subtask", async () =>
     subtasks_auto_reset: true,
     title: "Parent task",
   });
-  const previousSubtask = {
-    id: "subtask-1",
-    parent_subtask_id: null,
+  const childTask = createTask({
+    created_at: "2026-06-11T08:01:00.000Z",
+    due_on: "2026-06-11",
+    id: "task-child",
+    parent_task_id: parentTask.id,
+    repeat_frequency: "daily",
     sort_order: 0,
-    status: "pending" as const,
-    task_id: parentTask.id,
+    status: "pending",
     title: "Child step",
-    user_id: "u1",
-  };
-
-  let rewardCandidates: Array<{
-    claimRef: { subtaskId: string; taskId: string; title: string };
-    previousStatus: "pending" | "in_progress" | "done" | "missed" | "did_my_best" | "upcoming" | "not_due" | "archived" | "trashed" | null;
-    task: typeof parentTask;
-  }> = [];
-
-  const client = {
-    from() {
-      return {
-        update() {
-          return {
-            eq() {
-              return {
-                eq() {
-                  return {
-                    select() {
-                      return {
-                        single: async () => ({
-                          data: { ...previousSubtask, status: "done" as const },
-                          error: null,
-                        }),
-                      };
-                    },
-                  };
-                },
-              };
-            },
-          };
-        },
-      };
-    },
-  };
+  });
+  let updateInput: { taskId: string; values: unknown } | null = null;
 
   const subtasks = useTaskSubtaskActions({
-    client: client as never,
+    client: {} as never,
     currentUserId: "u1",
-    isMissingParentSubtaskColumnError: () => false,
-    mapTaskSubtaskRow: (row) => row,
-    onSubtaskCompletedReward: async (candidates) => {
-      rewardCandidates = candidates;
+    canonicalTaskStateUpdate: async (taskId, values) => {
+      updateInput = { taskId, values };
+      return true;
     },
     setMessage: () => {},
-    setSupportsNestedSubtasks: () => {},
-    setTaskSubtasks: () => {},
-    supportsNestedSubtasks: true,
+    setTasks: () => {},
     tasks: [parentTask],
-    taskSubtasks: [previousSubtask],
   });
 
-  await subtasks.updateTaskSubtaskStatus(previousSubtask.id, "done");
-
-  assert.equal(rewardCandidates.length, 1);
-  assert.deepEqual(rewardCandidates[0]?.claimRef, {
-    subtaskId: previousSubtask.id,
-    taskId: parentTask.id,
-    title: previousSubtask.title,
+  const canonicalSubtasks = useTaskSubtaskActions({
+    client: {} as never,
+    currentUserId: "u1",
+    canonicalTaskStateUpdate: async (taskId, values) => {
+      updateInput = { taskId, values };
+      return true;
+    },
+    setMessage: () => {},
+    setTasks: () => {},
+    tasks: [parentTask, childTask],
   });
-  assert.equal(rewardCandidates[0]?.task.id, parentTask.id);
+
+  await canonicalSubtasks.updateTaskSubtaskStatus(childTask.id, "done");
+
+  assert.deepEqual(updateInput, { taskId: childTask.id, values: { status: "done" } });
+  assert.equal(typeof subtasks.updateTaskSubtaskStatus, "function");
 });
 
 test("updateTask forwards an explicit expected snapshot to guarded writes", async () => {

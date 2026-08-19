@@ -31,7 +31,7 @@ import {
   Trophy,
   X,
 } from "lucide-react";
-import type { TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
+import type { TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
@@ -821,7 +821,7 @@ function InlineSubtaskEditor({
   onCommitTitle?: (subtaskId: string) => void;
   onDelete?: (subtaskId: string) => void;
   onDraftChange: (subtaskId: string, value: string) => void;
-  onSetStatus?: (subtaskId: string, nextStatus: TaskSubtaskStatus) => void;
+  onSetStatus?: (subtaskId: string, nextStatus: TaskStatus) => void;
   subtasks: PrototypeTaskSubtask[];
 }) {
   const [openStatusPickerSubtaskId, setOpenStatusPickerSubtaskId] = useState<string | null>(null);
@@ -885,9 +885,9 @@ function InlineSubtaskEditor({
               </div>
             </div>
             {openStatusPickerSubtaskId === subtask.id ? (
-              <TaskStatusCircleRail<TaskSubtaskStatus>
+              <TaskStatusCircleRail<TaskStatus>
                 className="mt-2 pl-8"
-                currentStatus={subtask.status as TaskSubtaskStatus}
+                currentStatus={subtask.status as TaskStatus}
                 onSetStatus={(status) => {
                   onSetStatus?.(subtask.id, status);
                   setOpenStatusPickerSubtaskId(null);
@@ -1145,7 +1145,7 @@ type TaskManagementTableV2Props = {
   onTaskSubtaskAddChild?: (subtaskId: string) => string | null | Promise<string | null>;
   onTaskSubtaskDelete?: (subtaskId: string) => void;
   onTaskSubtaskRename?: (subtaskId: string, title: string) => void;
-  onTaskSubtaskStatusChange?: (subtaskId: string, status: TaskSubtaskStatus) => void;
+  onTaskSubtaskStatusChange?: (subtaskId: string, status: TaskStatus) => void;
   onTaskSubtasksAutoResetChange?: (taskId: string, subtasksAutoReset: boolean) => void;
   onTaskTagsChange?: (taskId: string, tags: string[]) => void;
   onTaskTitleChange?: (taskId: string, title: string) => void;

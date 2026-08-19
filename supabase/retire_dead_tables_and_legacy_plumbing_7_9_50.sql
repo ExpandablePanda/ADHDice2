@@ -1,59 +1,8 @@
--- Durable, server-authoritative pending task-reward dice.
+-- 7.9.50: retire approved dead tables and completed migration plumbing.
+-- Review and apply this migration explicitly. It is intentionally not run here.
+begin;
 
-create table if not exists public.adhdice_pending_reward_dice (
-  user_id uuid primary key references auth.users(id) on delete cascade,
-  pending_dice integer not null default 0 check (pending_dice >= 0),
-  revision bigint not null default 0 check (revision >= 0),
-  updated_at timestamptz not null default now()
-);
-
-create table if not exists public.adhdice_pending_reward_dice_operations (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  operation_id text not null,
-  operation_type text not null check (operation_type in ('award', 'claim')),
-  request_payload jsonb not null default '{}'::jsonb,
-  result_payload jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  unique (user_id, operation_id)
-);
-
-create table if not exists public.adhdice_pending_reward_dice_items (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  source_operation_id text not null,
-  source_item_index integer not null default 0 check (source_item_index >= 0),
-  dice_count integer not null check (dice_count > 0),
-  reward_payload jsonb not null,
-  claimed_operation_id text,
-  created_at timestamptz not null default now(),
-  unique (user_id, source_operation_id, source_item_index)
-);
-
-create index if not exists adhdice_pending_reward_dice_operations_user_created_idx
-  on public.adhdice_pending_reward_dice_operations (user_id, created_at desc);
-create index if not exists adhdice_pending_reward_dice_items_user_pending_idx
-  on public.adhdice_pending_reward_dice_items (user_id, created_at)
-  where claimed_operation_id is null;
-
-alter table public.adhdice_pending_reward_dice enable row level security;
-alter table public.adhdice_pending_reward_dice_operations enable row level security;
-alter table public.adhdice_pending_reward_dice_items enable row level security;
-
-drop policy if exists "Users can read own pending reward dice" on public.adhdice_pending_reward_dice;
-create policy "Users can read own pending reward dice" on public.adhdice_pending_reward_dice for select using (auth.uid() = user_id);
-drop policy if exists "Users can read own pending reward dice operations" on public.adhdice_pending_reward_dice_operations;
-create policy "Users can read own pending reward dice operations" on public.adhdice_pending_reward_dice_operations for select using (auth.uid() = user_id);
-drop policy if exists "Users can read own pending reward dice items" on public.adhdice_pending_reward_dice_items;
-create policy "Users can read own pending reward dice items" on public.adhdice_pending_reward_dice_items for select using (auth.uid() = user_id);
-
-revoke all on public.adhdice_pending_reward_dice from anon, authenticated;
-revoke all on public.adhdice_pending_reward_dice_operations from anon, authenticated;
-revoke all on public.adhdice_pending_reward_dice_items from anon, authenticated;
-grant select on public.adhdice_pending_reward_dice to authenticated;
-grant select on public.adhdice_pending_reward_dice_operations to authenticated;
-grant select on public.adhdice_pending_reward_dice_items to authenticated;
-
+-- Replace the current claim function before removing its obsolete dependency.
 create or replace function public.adhdice_claim_pending_reward_dice(p_operation_id uuid)
 returns table (pending_dice integer, revision bigint, updated_at timestamptz, result_payload jsonb, was_replayed boolean)
 language plpgsql security definer set search_path = ''
@@ -87,7 +36,6 @@ declare
 begin
   if v_user_id is null then raise exception using errcode = '42501', message = 'Authentication is required.'; end if;
   if p_operation_id is null then raise exception using errcode = '22023', message = 'A claim operation ID is required.'; end if;
-
   insert into public.adhdice_pending_reward_dice (user_id) values (v_user_id) on conflict (user_id) do nothing;
   select account.* into v_account from public.adhdice_pending_reward_dice account where account.user_id = v_user_id for update;
   select operation.* into v_existing from public.adhdice_pending_reward_dice_operations operation where operation.user_id = v_user_id and operation.operation_id = p_operation_id::text;
@@ -96,14 +44,10 @@ begin
     return query select (v_existing.result_payload ->> 'pendingDice')::integer, (v_existing.result_payload ->> 'revision')::bigint, (v_existing.result_payload ->> 'updatedAt')::timestamptz, v_existing.result_payload, true;
     return;
   end if;
-
   if v_account.pending_dice <= 0 then raise exception using errcode = 'P0001', message = 'There are no pending reward dice to claim.'; end if;
-  if coalesce((select sum(item.dice_count) from public.adhdice_pending_reward_dice_items item where item.user_id = v_user_id and item.claimed_operation_id is null), 0) <> v_account.pending_dice then
-    raise exception using errcode = 'P0001', message = 'Pending reward inventory is inconsistent; no dice were consumed.';
-  end if;
+  if coalesce((select sum(item.dice_count) from public.adhdice_pending_reward_dice_items item where item.user_id = v_user_id and item.claimed_operation_id is null), 0) <> v_account.pending_dice then raise exception using errcode = 'P0001', message = 'Pending reward inventory is inconsistent; no dice were consumed.'; end if;
   select profile.* into v_profile from public.adhdice_user_profiles profile where profile.user_id = v_user_id for update;
   if not found then raise exception using errcode = 'P0001', message = 'User profile is unavailable.'; end if;
-
   for v_item in select item.* from public.adhdice_pending_reward_dice_items item where item.user_id = v_user_id and item.claimed_operation_id is null order by item.created_at, item.id loop
     v_reward := v_item.reward_payload || jsonb_build_object('diceCount', v_item.dice_count);
     v_base_rolls := '[]'::jsonb;
@@ -119,22 +63,17 @@ begin
     v_task_count := greatest(coalesce(jsonb_array_length(v_reward -> 'tasks'), 0), 1);
     v_awarded_tokens := case when v_reward ->> 'kind' = 'legacy_fallback' then 0 else v_task_count end;
     v_reason := case when v_reward ->> 'mode' = 'batch' then 'Batch reward roll for ' || v_task_count || ' tasks' else 'Task reward roll: ' || coalesce(v_reward #>> '{claimRefs,0,title}', v_reward #>> '{tasks,0,title}', 'Completed task') end;
-
     insert into public.adhdice_task_reward_rolls (user_id, reward_date, mode, streak_tier_label, streak_length, eligible_task_count, base_rolls, base_points, multiplier_roll, final_points, awarded_xp, awarded_tokens)
-    values (v_user_id, coalesce((v_reward ->> 'rewardDate')::date, current_date), case when v_reward ->> 'mode' = 'batch' then 'batch' else 'single' end, v_reward #>> '{tier,label}', greatest(coalesce((v_reward ->> 'streakLength')::integer, 0), 0), v_task_count, v_base_rolls, v_base_points, v_multiplier, v_final_points, v_awarded_xp, v_awarded_tokens)
-    returning id into v_roll_id;
-
+    values (v_user_id, coalesce((v_reward ->> 'rewardDate')::date, current_date), case when v_reward ->> 'mode' = 'batch' then 'batch' else 'single' end, v_reward #>> '{tier,label}', greatest(coalesce((v_reward ->> 'streakLength')::integer, 0), 0), v_task_count, v_base_rolls, v_base_points, v_multiplier, v_final_points, v_awarded_xp, v_awarded_tokens) returning id into v_roll_id;
     if v_reward ->> 'kind' is distinct from 'legacy_fallback' then
       for v_claim in select value from jsonb_array_elements(v_reward -> 'claimRefs') loop
-        -- A deleted source Task is allowed: the roll, inventory consumption, and
-        -- economy mutation remain authoritative; only the optional claim index row is skipped.
+        -- Deleting the source Task must not invalidate earned pending dice.
         if exists (select 1 from public.adhdice_clean_tasks task where task.id = (v_claim ->> 'taskId')::uuid and task.user_id = v_user_id) then
           insert into public.adhdice_task_reward_claims (user_id, task_id, reward_roll_id, reward_date, awarded_token)
           values (v_user_id, (v_claim ->> 'taskId')::uuid, v_roll_id, coalesce((v_reward ->> 'rewardDate')::date, current_date), true);
         end if;
       end loop;
     end if;
-
     v_total_points := v_total_points + v_final_points;
     v_total_xp := v_total_xp + v_awarded_xp;
     v_total_tokens := v_total_tokens + v_awarded_tokens;
@@ -142,7 +81,6 @@ begin
     update public.adhdice_pending_reward_dice_items item set claimed_operation_id = p_operation_id::text where item.id = v_item.id;
     v_resolutions := v_resolutions || jsonb_build_array(v_reward || jsonb_build_object('awardedTokens', v_awarded_tokens, 'basePoints', v_base_points, 'baseRolls', v_base_rolls, 'finalPoints', v_final_points, 'multiplierRoll', v_multiplier, 'xp', v_awarded_xp));
   end loop;
-
   while v_profile.xp + v_total_xp >= v_threshold loop
     v_new_level := v_new_level + 1;
     v_threshold := 100 + ((v_new_level - 1) * 200);
@@ -155,15 +93,68 @@ begin
 end;
 $$;
 
+drop function if exists public.adhdice_award_pending_reward_dice(text, uuid, uuid, date, integer, jsonb);
+drop function if exists public.adhdice_migrate_pending_reward_dice(text, integer, jsonb);
+drop function if exists public.adhdice_migrate_focus_counters(uuid, uuid, jsonb);
+
+alter table public.adhdice_task_reward_claims drop constraint if exists adhdice_task_reward_claims_subtask_id_fkey;
+drop index if exists public.adhdice_task_reward_claims_subtask_day_unique;
+drop index if exists public.adhdice_task_reward_claims_subtask_idx;
+alter table public.adhdice_task_reward_claims drop column if exists subtask_id;
+
+drop policy if exists "Users can create their own legacy subtask promotions" on public.adhdice_legacy_subtask_promotions;
+drop policy if exists "Users can read their own legacy subtask promotions" on public.adhdice_legacy_subtask_promotions;
+drop trigger if exists adhdice_legacy_subtask_promotions_set_updated_at on public.adhdice_legacy_subtask_promotions;
+alter table public.adhdice_legacy_subtask_promotions drop constraint if exists adhdice_legacy_subtask_promotions_legacy_subtask_id_fkey;
+alter table public.adhdice_legacy_subtask_promotions drop constraint if exists adhdice_legacy_subtask_promotions_task_id_fkey;
+alter table public.adhdice_legacy_subtask_promotions drop constraint if exists adhdice_legacy_subtask_promotions_user_id_fkey;
+drop index if exists public.adhdice_legacy_subtask_promotions_task_id_key;
+drop index if exists public.adhdice_legacy_subtask_promotions_user_idx;
+drop index if exists public.adhdice_legacy_subtask_promotions_pkey;
+
+drop policy if exists "Users can create their own task subtasks" on public.adhdice_task_subtasks;
+drop policy if exists "Users can delete their own task subtasks" on public.adhdice_task_subtasks;
+drop policy if exists "Users can read their own task subtasks" on public.adhdice_task_subtasks;
+drop policy if exists "Users can update their own task subtasks" on public.adhdice_task_subtasks;
+drop trigger if exists adhdice_task_subtasks_set_updated_at on public.adhdice_task_subtasks;
+alter table public.adhdice_task_subtasks drop constraint if exists adhdice_task_subtasks_parent_subtask_id_fkey;
+alter table public.adhdice_task_subtasks drop constraint if exists adhdice_task_subtasks_task_id_fkey;
+alter table public.adhdice_task_subtasks drop constraint if exists adhdice_task_subtasks_user_id_fkey;
+drop index if exists public.adhdice_task_subtasks_parent_idx;
+drop index if exists public.adhdice_task_subtasks_task_sort_idx;
+drop index if exists public.adhdice_task_subtasks_pkey;
+
+drop policy if exists "Users can read their own Focus counter migrations" on public.adhdice_focus_counter_migrations;
+alter table public.adhdice_focus_counter_migrations drop constraint if exists adhdice_focus_counter_migrations_user_id_fkey;
+drop index if exists public.adhdice_focus_counter_migrations_batch_unique;
+drop index if exists public.adhdice_focus_counter_migrati_user_id_device_installation_i_key;
+drop index if exists public.adhdice_focus_counter_migrations_pkey;
+
+drop policy if exists "Users can read their own achievement unlocks" on public.adhdice_achievement_unlocks;
+drop policy if exists "Users can append their own achievement unlocks" on public.adhdice_achievement_unlocks;
+alter table public.adhdice_achievement_unlocks drop constraint if exists adhdice_achievement_unlocks_user_id_fkey;
+drop index if exists public.adhdice_achievement_unlocks_user_earned_idx;
+drop index if exists public.adhdice_achievement_unlocks_user_id_achievement_id_key;
+drop index if exists public.adhdice_achievement_unlocks_pkey;
+
+drop policy if exists "Authenticated users read roll master prizes" on public.adhdice_roll_master_prizes;
+drop index if exists public.adhdice_roll_master_prizes_sort_idx;
+drop index if exists public.adhdice_roll_master_prizes_pkey;
+
+drop policy if exists "Users manage own roll board assignments" on public.adhdice_roll_board_assignments;
+alter table public.adhdice_roll_board_assignments drop constraint if exists adhdice_roll_board_assignments_user_id_fkey;
+drop index if exists public.adhdice_roll_board_assignments_user_id_cell_number_key;
+drop index if exists public.adhdice_roll_board_assignments_user_idx;
+drop index if exists public.adhdice_roll_board_assignments_pkey;
+
+drop table if exists public.adhdice_legacy_subtask_promotions;
+drop table if exists public.adhdice_task_subtasks;
+drop table if exists public.adhdice_focus_counter_migrations;
+drop table if exists public.adhdice_achievement_unlocks;
+drop table if exists public.adhdice_roll_board_assignments;
+drop table if exists public.adhdice_roll_master_prizes;
+
 revoke all on function public.adhdice_claim_pending_reward_dice(uuid) from public, anon;
 grant execute on function public.adhdice_claim_pending_reward_dice(uuid) to authenticated;
-
-do $$
-begin
-  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'adhdice_pending_reward_dice') then
-    alter publication supabase_realtime add table public.adhdice_pending_reward_dice;
-  end if;
-end;
-$$;
-
 notify pgrst, 'reload schema';
+commit;

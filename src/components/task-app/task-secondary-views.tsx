@@ -11,7 +11,7 @@ import { buildTaskPriorityUpdate, formatTaskPriorityLevel, getTaskPriorityLevel,
 import { getNextPendingSubtask } from "@/lib/task-subtasks";
 import { isTaskUrgent } from "@/lib/task-buckets";
 import { formatDueLabel } from "@/lib/task-cockpit";
-import type { Task, TaskEnergy, TaskStatus, TaskSubtask as DbTaskSubtask } from "@/lib/database.types";
+import type { Task, TaskEnergy, TaskStatus } from "@/lib/database.types";
 
 type SelectProps<T extends string> = {
   label: string;
@@ -57,7 +57,7 @@ function TaskMetaChip({ children, tone }: { children: ReactNode; tone: "blue" | 
   );
 }
 
-function TaskSupplementalMeta({ nextSubtask, task }: { nextSubtask: DbTaskSubtask | null; task: Task }) {
+function TaskSupplementalMeta({ nextSubtask, task }: { nextSubtask: Task | null; task: Task }) {
   const visibleTags = task.tags.slice(0, 3);
   const repeatSummary = formatRepeatSummary(task);
 
@@ -198,7 +198,7 @@ export function SupportPanelComponent({ doneCount, lowEnergyTasks, message, onIm
   );
 }
 
-export function TaskLaneComponent({ count, defaultExpanded = false, onEditTask, subtasksByTaskId, title, tasks, tone }: { count: number; defaultExpanded?: boolean; onEditTask: (task: Task) => void; subtasksByTaskId: Record<string, DbTaskSubtask[]>; title: string; tasks: Task[]; tone: "purple" | "soft"; }) {
+export function TaskLaneComponent({ count, defaultExpanded = false, onEditTask, subtasksByTaskId, title, tasks, tone }: { count: number; defaultExpanded?: boolean; onEditTask: (task: Task) => void; subtasksByTaskId: Record<string, Task[]>; title: string; tasks: Task[]; tone: "purple" | "soft"; }) {
   const DEFAULT_VISIBLE_COUNT = 3;
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const visibleTasks = isExpanded ? tasks : tasks.slice(0, DEFAULT_VISIBLE_COUNT);
@@ -236,7 +236,7 @@ export function TaskLaneComponent({ count, defaultExpanded = false, onEditTask, 
   );
 }
 
-export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { focusedTaskIds: string[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, DbTaskSubtask[]>; tasks: Task[]; }) {
+export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { focusedTaskIds: string[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
   return (
     <section className="mt-7">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -278,7 +278,7 @@ export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStat
   );
 }
 
-export function TaskMatrixViewComponent({ onEditTask, onSetStatus, subtasksByTaskId, tasks }: { onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, DbTaskSubtask[]>; tasks: Task[]; }) {
+export function TaskMatrixViewComponent({ onEditTask, onSetStatus, subtasksByTaskId, tasks }: { onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
   const cells = [
     { key: "urgent-high", title: "Urgent + Higher Energy", tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy !== "low") },
     { key: "urgent-low", title: "Urgent + Low Energy", tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy === "low") },

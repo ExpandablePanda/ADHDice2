@@ -5,7 +5,7 @@ Role: active product decisions
 
 ## Purpose
 
-This document records current product decisions for same-table task hierarchy, Steps, Substeps, and the remaining legacy-subtask bridge. It preserves unresolved product choices without duplicating Task State Engine, TaskApp, or subsystem QA contracts.
+This document records current product decisions for the canonical same-table task hierarchy, Steps, and Substeps. It preserves unresolved product choices without duplicating Task State Engine, TaskApp, or subsystem QA contracts.
 
 ## Shipped Hierarchy Model
 
@@ -17,7 +17,7 @@ This document records current product decisions for same-table task hierarchy, S
 - Current child metadata follows the normal task fields already supported by the parent task surfaces; the hierarchy renderer does not create a reduced child-only task model.
 - Same-table descendants can be opened, renamed, edited, and given deeper children through the shared task paths.
 - Invalid rows such as orphans, cycles, and self-parenting remain diagnosable and must not be trusted as valid nested descendants.
-- Legacy `adhdice_task_subtasks` rows remain a separate transition source; they are not silently treated as same-table task rows.
+- Separate legacy subtask storage and promotion mappings are retired. Canonical Steps/Substeps come only from `adhdice_clean_tasks.parent_task_id`.
 
 ## Parent, Step, and Substep Rules
 
@@ -49,16 +49,6 @@ Current reorder behavior is same-parent only and persistence is drop-scoped thro
 Hierarchy rendering does not auto-complete parents when descendants complete, and it does not silently complete descendants when a parent changes status. Permanent completion and recurrence removal follow the active Daily Until Complete and Task State Engine rules.
 
 Whether parent archive/trash should cascade, hide descendants while preserving rows, or allow independent archive state remains an unresolved product decision. The current hierarchy document does not authorize destructive cascade writes or infer restore behavior.
-
-## Legacy Migration Boundary
-
-Legacy Step migration remains a separate guarded operator flow. The dry run must be reviewed before promotion; promotion is not automatic on boot, hydration, preview, or overlay open.
-
-The promotion mapping keeps the legacy row identity auditable. Mapped legacy rows are suppressed from duplicate rendering while unmapped legacy rows remain readable during transition. Legacy mutation hooks stay legacy-only until a specific migration rule retires them.
-
-Promotion and broader migration retirement must define source-row handling, sibling order, nesting, ownership, completion, and reward continuity before launch. This document does not authorize live conversion or claim deployment state.
-
-The legacy bridge is therefore compatibility support, not a second current hierarchy authority. Same-table task rows use task persistence and task History boundaries; legacy subtask rows remain on their own guarded path until an approved migration decision changes that boundary.
 
 ## Confirmed Unresolved Decisions
 

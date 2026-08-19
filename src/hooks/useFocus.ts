@@ -27,18 +27,12 @@ import {
   type FocusRuntimeRow,
 } from "@/lib/focus-runtime";
 import {
-  FOCUS_COUNTER_DEVICE_ID_STORAGE_KEY,
   applyAuthoritativeFocusCounterEvent,
   applyAuthoritativeFocusCounterRow,
-  buildLegacyFocusCounterSnapshot,
-  getFocusCounterBackupStorageKey,
-  getFocusCounterMigrationBatchStorageKey,
   isCurrentFocusCounterSnapshotRequest,
   reconcileFocusCounterHistorySnapshot,
   reconcileFocusCounterSnapshot,
-  shouldNotifyFocusCounterMigrationDivergence,
   type FocusCounterEventRow,
-  type FocusCounterMigrationResult,
   type FocusCounterMutationResult,
   type FocusCounterRow,
 } from "@/lib/focus-counter-sync";
@@ -158,24 +152,6 @@ function saveFocusCounters(userId: string | null | undefined, counters: FocusCou
 function saveFocusCounterHistory(userId: string | null | undefined, history: FocusCounterHistoryEntry[]) {
   if (typeof window === "undefined" || !userId) return;
   window.localStorage.setItem(getFocusCounterHistoryStorageKey(userId), JSON.stringify(history));
-}
-
-function readFocusCounters(userId: string | null | undefined) {
-  if (!userId) {
-    return [];
-  }
-  return parseStoredJson<FocusCounter[]>(getFocusCountersStorageKey(userId), []).map((counter, index) => ({
-    ...counter,
-    sortOrder: Number.isFinite(counter.sortOrder) ? counter.sortOrder : index,
-    revision: Number.isFinite(counter.revision) ? counter.revision : 0,
-  }));
-}
-
-function readFocusCounterHistory(userId: string | null | undefined) {
-  if (!userId) {
-    return [];
-  }
-  return parseStoredJson<FocusCounterHistoryEntry[]>(getFocusCounterHistoryStorageKey(userId), []);
 }
 
 export function mapFocusCategoryRow(row: DbFocusCategory): FocusCategory {
@@ -621,49 +597,6 @@ export function useFocus(
     if (!client || !userId) return;
     const currentClient = client;
     let cancelled = false;
-    const legacyCounters = readFocusCounters(userId);
-    const legacyHistory = readFocusCounterHistory(userId);
-
-    const migrateThenHydrate = async () => {
-      let deviceId = window.localStorage.getItem(FOCUS_COUNTER_DEVICE_ID_STORAGE_KEY);
-      if (!deviceId) {
-        deviceId = createBrowserUuidV4();
-        window.localStorage.setItem(FOCUS_COUNTER_DEVICE_ID_STORAGE_KEY, deviceId);
-      }
-      const batchKey = getFocusCounterMigrationBatchStorageKey(userId, deviceId);
-      let migrationBatchId = window.localStorage.getItem(batchKey);
-      if (!migrationBatchId) {
-        migrationBatchId = createBrowserUuidV4();
-        window.localStorage.setItem(batchKey, migrationBatchId);
-      }
-      const submittedSnapshot = buildLegacyFocusCounterSnapshot(legacyCounters, legacyHistory);
-      const { data, error } = await client.rpc("adhdice_migrate_focus_counters", {
-        p_device_installation_id: deviceId,
-        p_migration_batch_id: migrationBatchId,
-        p_submitted_snapshot: submittedSnapshot,
-      });
-      if (cancelled) return;
-      if (error) {
-        if (!/does not exist|schema cache/i.test(error.message)) {
-          setMessage({ tone: "warn", text: `Focus counter migration failed: ${error.message}` });
-        }
-        return;
-      }
-      const result = data as FocusCounterMigrationResult;
-      if (shouldNotifyFocusCounterMigrationDivergence(result)) {
-        window.localStorage.setItem(
-          getFocusCounterBackupStorageKey(userId, migrationBatchId),
-          JSON.stringify({ backedUpAt: new Date().toISOString(), snapshot: submittedSnapshot }),
-        );
-        setMessage({ tone: "warn", text: "This device’s local Focus counters differed from the synced counters. A local backup was saved and the server version was adopted." });
-      }
-      replaceFocusCounterState(
-        userId,
-        reconcileFocusCounterSnapshot(result.counters ?? []),
-        reconcileFocusCounterHistorySnapshot(result.events ?? []),
-      );
-      await hydrateFocusCounters();
-    };
     async function subscribeToCounterChannel() {
       const previousChannel = counterChannelRef.current;
       counterChannelRef.current = null;
@@ -676,7 +609,7 @@ export function useFocus(
 
       if (cancelled) return;
 
-      void migrateThenHydrate();
+      void hydrateFocusCounters();
 
       const channel = currentClient
         .channel(`focus-counters:${userId}`)

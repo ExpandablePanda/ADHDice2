@@ -140,11 +140,6 @@ Current History is physically one-row-per-date, but it does not distinguish expl
 | Table / field | Current meaning | Actual writers | Actual readers | Classification | Trust | Target disposition |
 |---|---|---|---|---|---|---|
 | `adhdice_clean_tasks.parent_task_id` | Same-table child relationship used by current Task hierarchy | Task child creation, editor, movement, imports | Hierarchy, Paths, milestones, achievements, rewards | A/F | MEDIUM | RENAME / CLARIFY |
-| `adhdice_task_subtasks` row | Older separate Step/Subtask storage with its own status and nesting | `useTaskSubtaskActions`, legacy promotion | Subtask UI, reward claim compatibility, legacy promotion | D/F | MEDIUM | LEGACY ONLY |
-| `adhdice_task_subtasks.status` | Separate child status authority | Subtask actions and recurring reset | Child UI and reward candidates | F/D | LOW | RETIRE AFTER MIGRATION |
-| `adhdice_task_subtasks.parent_subtask_id` | Legacy child nesting | Subtask actions | Legacy hierarchy and promotion | D | MEDIUM | LEGACY ONLY |
-| `adhdice_legacy_subtask_promotions` | Mapping from old subtask to promoted same-table Task | Legacy promotion | Migration/compatibility readers | E/D | HIGH as mapping evidence | KEEP |
-| `adhdice_task_subtasks.sort_order`, title, timestamps | Legacy child metadata | Subtask actions | Legacy child UI/promotion | D | MEDIUM | LEGACY ONLY |
 
 The target uses one canonical Task Entity identity for Parent, Step, and Substep reward/history semantics. Existing separate subtasks are migration input, not a second long-term state authority.
 
@@ -169,9 +164,9 @@ The target uses one canonical Task Entity identity for Parent, Step, and Substep
 | `adhdice_user_profiles` | `level`, `xp`, `points`, `tokens`, `free_roll_bank` | Mutable economy balances | Pending reward claim RPC, roll RPCs, Health/Focus reward RPCs, compatibility economy hook | HUD/economy surfaces | C/E | HIGH for balance, not Task entitlement | KEEP |
 | `adhdice_task_events` | `event_type`, Task reference | Older task economy/event audit (`completed`, `missed`, `streak_bonus`) | Compatibility economy paths | Economy/report readers | D | LOW | LEGACY ONLY |
 | `adhdice_point_ledger` | `delta`, `source`, `ref_id` | Append-only economy balance audit | Roll/reward/Focus/Health RPCs and helpers | Economy/audit readers | E | HIGH for economy, not Task truth | KEEP |
-| `adhdice_task_reward_claims` | task/subtask/date unique keys | Current date claim/entitlement approximation | Pending reward claim RPC and `useEconomy.commitTaskReward()` | `useTaskRewardController.loadEligibleCandidates`, economy hook | E/F/D | MEDIUM | ADD CANONICAL REPLACEMENT |
-| `adhdice_task_reward_claims` | `reward_roll_id`, `awarded_token` | Link to a later reward roll and token marker | Pending claim RPC/economy hook | Reward/economy | E/D | MEDIUM | PROJECTION ONLY |
-| `adhdice_task_reward_rolls` | reward date, streak, roll breakdown | Bank/roll record, not canonical success event | Pending reward claim RPC/economy hook | Reward history | E | HIGH for existing roll evidence | KEEP |
+| `adhdice_task_reward_claims` | task/date unique keys | Current claim projection for canonical entity IDs | Pending reward claim RPC | Reward history/economy readers | E/F/D | HIGH for current claim flow | KEEP |
+| `adhdice_task_reward_claims` | `reward_roll_id`, `awarded_token` | Link to a later reward roll and token marker | Pending claim RPC | Reward/economy | E/D | MEDIUM | PROJECTION ONLY |
+| `adhdice_task_reward_rolls` | reward date, streak, roll breakdown | Bank/roll record for claimed canonical rewards | Pending reward claim RPC | Reward history | E | HIGH for existing roll evidence | KEEP |
 | `adhdice_pending_reward_dice` | `pending_dice`, `revision` | Aggregate pending bank balance | Award/claim RPCs | HUD/reward controller | E/C | HIGH for balance | KEEP |
 | `adhdice_pending_reward_dice_operations` | `operation_id`, request/result payload | Idempotent pending-dice award/claim operation | Award/claim RPCs | Reward controller and RPC replay | E | HIGH for operation replay | RENAME / CLARIFY |
 | `adhdice_pending_reward_dice_items` | source operation/index, dice count, claimed operation | Stable pending queue item in current economy flow | Award/claim RPCs | Reward queue/claim RPCs | E | HIGH for downstream item evidence | KEEP |
@@ -180,7 +175,7 @@ The target uses one canonical Task Entity identity for Parent, Step, and Substep
 | `adhdice_achievement_evaluation_runs` | `(user_id, operation_id)`, status/version | Idempotent downstream evaluation run | Achievement RPCs | Achievement retry/evaluation | E | HIGH | KEEP |
 | achievement awards/notifications | Award and delivery state | Downstream permanent award/effect records | Achievement RPCs | Achievement UI | E/D | HIGH for achievement effect | KEEP |
 
-Current reward claims approximate “has this Task/date been rewarded,” but they do not durably bind the entitlement to a canonical successful event, program version, stable entity identity, or a retryable grant before banking.
+Current reward claims are the durable claim projection for canonical entity/date references. Canonical entitlement and grant rows remain the source for newly banked Task rewards.
 
 ## 3. Target persistence principles
 

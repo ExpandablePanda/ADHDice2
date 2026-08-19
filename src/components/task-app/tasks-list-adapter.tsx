@@ -18,7 +18,7 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 import { getSelectableTaskDisplayStatuses } from "@/lib/task-complete";
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
@@ -334,7 +334,7 @@ type TasksTableSourceProps = {
   onAddChildTaskSubtask?: (subtaskId: string) => string | null | Promise<string | null>;
   onDeleteTaskSubtask?: (subtaskId: string) => void;
   onRenameTaskSubtask?: (subtaskId: string, title: string) => void;
-  onSetTaskSubtaskStatus?: (subtaskId: string, status: TaskSubtaskStatus) => void;
+  onSetTaskSubtaskStatus?: (subtaskId: string, status: TaskStatus) => void;
   onSetTaskSubtasksAutoReset?: (taskId: string, subtasksAutoReset: boolean) => void;
   onSetTags?: (taskId: string, tags: string[]) => void;
   onSetTitle?: (taskId: string, title: string) => void;
@@ -359,7 +359,7 @@ type TasksTableSourceProps = {
     listDefinitions: TaskListDefinition[];
     listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
     manualMembershipsByTaskId: Record<string, TaskListId[]>;
-    subtasksByTaskId: Record<string, TaskSubtask[]>;
+    subtasksByTaskId: Record<string, Task[]>;
     taskDisplayStatusByTaskId: Record<string, TaskDisplayStatus>;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
     taskHistoryStreakSummaryByTaskId: Record<string, TaskHistoryStreakSummary>;
