@@ -111,6 +111,7 @@ test("full inspector bounds sticky columns before the full-width extension", () 
 
 test("desktop full inspector uses wider responsive bounds and viewport-safe scrolling", () => {
   assert.match(tableSource, /const fullDesktopEditorNode = \(\s*<div className="min-w-0 w-full max-w-\[80rem\] max-h-\[calc\(100dvh-2rem\)\] overflow-y-auto overscroll-contain"/);
+  assert.match(tableSource, /fullDesktopEditorNode = \(\s*<div[\s\S]*<div className="p-4">\s*\{fullDesktopEditorContent\}/);
   assert.match(tableSource, /overlayMode === "full" \? "left-1\/2 max-w-\[80rem\] -translate-x-1\/2"/);
   assert.match(tableSource, /: "grid min-w-0 min-h-\[70vh\] gap-3 lg:grid-cols-\[minmax\(0,1\.05fr\)_minmax\(0,0\.95fr\)\]"/);
   assert.doesNotMatch(tableSource, /fullMetadataCardClass[\s\S]*lg:self-start/);
