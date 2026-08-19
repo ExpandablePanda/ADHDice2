@@ -9430,13 +9430,13 @@ export function TaskManagementTableV2({
                 ) : null;
                 const fullEditorGridClass = useMobileFullOverlay
                   ? "grid min-w-0 gap-3"
-                  : "grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]";
+                  : "grid min-w-0 min-h-[70vh] gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]";
                 const fullEditorCardClass = useMobileFullOverlay
                   ? "min-w-0 w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
                   : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]";
                 const fullMetadataCardClass = useMobileFullOverlay
                   ? "min-w-0 w-full max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
-                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4 lg:self-start";
+                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4";
                 const titleInputClass = `${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] ${useMobileFullOverlay ? "text-[17px]" : "text-[18px]"}`;
                 const metadataTabRowClass = useMobileFullOverlay
                   ? "mt-3 flex min-w-0 flex-wrap gap-x-3 gap-y-2 text-[13px] leading-5"
@@ -9589,7 +9589,7 @@ export function TaskManagementTableV2({
                 );
 
                 const fullDesktopEditorNode = (
-                  <div className="min-w-0 w-full max-w-[80rem] min-h-[70vh] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
+                  <div className="min-w-0 w-full max-w-[80rem] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
                     {fullDesktopEditorContent}
                   </div>
                 );
