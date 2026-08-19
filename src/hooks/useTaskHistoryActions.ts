@@ -2,7 +2,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
-import type { Task, TaskHistory as DbTaskHistory, TaskHistoryInsert, TaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistory as DbTaskHistory, TaskHistoryActionInput, TaskStatus } from "@/lib/database.types";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
 import { classifyTaskStateRuntimeAction, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
@@ -77,7 +77,7 @@ export function useTaskHistoryActions({
     options?: {
       historicalOverride?: boolean;
       historicalOverrideDelayUntilDate?: string | null;
-      historyEntries?: TaskHistoryInsert[];
+      historyEntries?: TaskHistoryActionInput[];
       historySnapshot?: DbTaskHistory[];
       syncLiveTask?: boolean;
     },
@@ -190,7 +190,7 @@ export function useTaskHistoryActions({
     taskId: string,
     status: TaskStatus,
     _occurrenceTask?: Task | null,
-    options?: { historyEntry?: TaskHistoryInsert; historySnapshot?: DbTaskHistory[] },
+    options?: { historyEntry?: TaskHistoryActionInput; historySnapshot?: DbTaskHistory[] },
   ) {
     const entryDate = options?.historyEntry?.entry_date ?? currentDayKey;
     return syncTaskHistoryEntries(taskId, status, [entryDate], {

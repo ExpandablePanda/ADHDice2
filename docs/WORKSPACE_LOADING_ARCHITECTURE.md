@@ -50,24 +50,24 @@ The current source uses the full canonical startup snapshot:
   explicitly consistent replacement. They must not create a second partial
   authority.
 
-The canonical source is `adhdice_task_history_facts` after runtime
-canonicalization. Legacy `adhdice_task_history` may be read only as explicit
-migration or translation evidence; it is not a current-state authority.
+The canonical source is `adhdice_task_history_facts`. The retired
+`adhdice_task_history` and duration-evidence tables are not current runtime
+read or write paths.
 
 ## Readiness, failure, and cache ownership
 
 Workspace readiness is not satisfied until the canonical History snapshot is
 ready or the workspace exposes a real error/retry state. A query failure must
 not be coerced to `[]`, because that can make canonical-only actions disappear
-and can cause a legacy fallback to decide current status.
+and can cause a missing canonical state to decide current status.
 
 The shared cache must be user- and workspace-generation scoped. A stale request
 cannot apply to a newer user or workspace generation. Realtime and successful
 mutations may replace or reconcile the canonical snapshot, preserving explicit
 History rows and invalidating the one Active Status projection.
 
-Other domains remain consumer-scoped: Focus History, notes, actual-time detail,
-and page-specific data need not become unconditional startup loads. This rule
+Other domains remain consumer-scoped: Focus History, notes, timer detail, and
+page-specific data need not become unconditional startup loads. This rule
 is specific to Task History because it is a direct input to the converged Task
 projection.
 

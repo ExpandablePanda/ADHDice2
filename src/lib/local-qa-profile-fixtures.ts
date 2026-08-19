@@ -2,8 +2,7 @@ import type {
   FocusCategoryInsert,
   FocusSessionInsert,
   NoteInsert,
-  TaskActualTimeEntryInsert,
-  TaskHistoryInsert,
+  TaskHistoryActionInput,
   TaskInsert,
   TaskListInsert,
   TaskListManualMembershipInsert,
@@ -65,14 +64,13 @@ function timestampFor(date: Date, hour = 12) {
 }
 
 type LocalQaFixtures = {
-  actualTimeEntries: TaskActualTimeEntryInsert[];
   focusCategories: FocusCategoryInsert[];
   focusSessions: FocusSessionInsert[];
   listMemberships: TaskListManualMembershipInsert[];
   lists: TaskListInsert[];
   notes: NoteInsert[];
   profile: UserProfileInsert;
-  taskHistory: TaskHistoryInsert[];
+  taskHistory: TaskHistoryActionInput[];
   tasks: TaskInsert[];
 };
 
@@ -130,16 +128,11 @@ export function buildLocalQaProfileFixtures(userId: string, now = new Date()): L
     { id: "75000000-0000-4000-8000-000000000003", user_id: userId, list_id: IDS.lists.home, task_id: IDS.tasks.errands },
   ];
 
-  const taskHistory: TaskHistoryInsert[] = [
+  const taskHistory: TaskHistoryActionInput[] = [
     { id: "76000000-0000-4000-8000-000000000001", task_id: IDS.tasks.morning, user_id: userId, entry_date: threeDaysAgo, status: "done", was_completed: true },
     { id: "76000000-0000-4000-8000-000000000002", task_id: IDS.tasks.morning, user_id: userId, entry_date: twoDaysAgo, status: "done", was_completed: true },
     { id: "76000000-0000-4000-8000-000000000003", task_id: IDS.tasks.morning, user_id: userId, entry_date: yesterday, status: "done", was_completed: true },
     { id: "76000000-0000-4000-8000-000000000004", task_id: IDS.tasks.releaseSort, user_id: userId, entry_date: today, status: "done", was_completed: true },
-  ];
-
-  const actualTimeEntries: TaskActualTimeEntryInsert[] = [
-    { id: "77000000-0000-4000-8000-000000000001", task_id: IDS.tasks.morning, user_id: userId, entry_date: yesterday, title_snapshot: "Plan a calm morning launch", duration_seconds: 1680, source: "manual" },
-    { id: "77000000-0000-4000-8000-000000000002", task_id: IDS.tasks.releaseSort, user_id: userId, entry_date: today, title_snapshot: "Verify List sorting controls", duration_seconds: 1320, source: "task_timer" },
   ];
 
   const focusCategories: FocusCategoryInsert[] = [
@@ -176,7 +169,6 @@ export function buildLocalQaProfileFixtures(userId: string, now = new Date()): L
   ];
 
   return {
-    actualTimeEntries,
     focusCategories,
     focusSessions,
     listMemberships,

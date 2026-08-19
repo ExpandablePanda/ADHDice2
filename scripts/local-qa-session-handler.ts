@@ -39,8 +39,6 @@ async function seedLocalQaProfile(client: SupabaseClient<Database>, userId: stri
   requireSeedSuccess("lists", await client.from("adhdice_task_lists").upsert(fixtures.lists, { onConflict: "user_id,id" }));
   requireSeedSuccess("tasks", await client.from("adhdice_clean_tasks").upsert(fixtures.tasks, { defaultToNull: false, onConflict: "id" }));
   requireSeedSuccess("list memberships", await client.from("adhdice_task_list_manual_memberships").upsert(fixtures.listMemberships, { onConflict: "id" }));
-  requireSeedSuccess("task history", await client.from("adhdice_task_history").upsert(fixtures.taskHistory, { onConflict: "id" }));
-  requireSeedSuccess("actual time", await client.from("adhdice_task_actual_time_entries").upsert(fixtures.actualTimeEntries, { onConflict: "id" }));
   requireSeedSuccess("focus categories", await client.from("adhdice_focus_categories").upsert(fixtures.focusCategories, { onConflict: "id" }));
   requireSeedSuccess("focus sessions", await client.from("adhdice_focus_sessions").upsert(fixtures.focusSessions, { onConflict: "id" }));
   requireSeedSuccess("notes", await client.from("adhdice_notes").upsert(fixtures.notes, { onConflict: "id" }));

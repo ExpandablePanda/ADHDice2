@@ -10,7 +10,7 @@ import { useTaskRoutingActions } from "@/hooks/useTaskRoutingActions";
 import { useTaskSubtaskActions } from "@/hooks/useTaskSubtaskActions";
 import { useTaskUpdateAction } from "@/hooks/useTaskUpdateAction";
 import { useTaskListActions } from "@/hooks/useTaskListActions";
-import type { Task, TaskHistory, TaskHistoryInsert, TaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistory, TaskHistoryActionInput, TaskStatus } from "@/lib/database.types";
 
 type UseTaskActionsOptions = {
   crud: Omit<Parameters<typeof useTaskCrudActions>[0], "replaceTaskSubtasks">;
@@ -45,7 +45,7 @@ export function useTaskActions({
     taskId: string,
     status: TaskStatus,
     occurrenceTask?: Task | null,
-    options?: { historyEntry?: TaskHistoryInsert; historySnapshot?: TaskHistory[] },
+    options?: { historyEntry?: TaskHistoryActionInput; historySnapshot?: TaskHistory[] },
   ) => historyActions.syncTaskHistoryEntry(taskId, status, occurrenceTask, {
     occurrenceTask,
     historyEntry: options?.historyEntry,
@@ -55,7 +55,7 @@ export function useTaskActions({
     taskId: string,
     status: TaskStatus,
     entryDates: string[],
-    options?: { historyEntries?: TaskHistoryInsert[]; historySnapshot?: TaskHistory[] },
+    options?: { historyEntries?: TaskHistoryActionInput[]; historySnapshot?: TaskHistory[] },
   ) => historyActions.syncTaskHistoryEntries(taskId, status, entryDates, {
     historyEntries: options?.historyEntries,
     historySnapshot: options?.historySnapshot,

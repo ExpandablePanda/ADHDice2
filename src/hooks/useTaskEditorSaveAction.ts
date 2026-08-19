@@ -1,7 +1,7 @@
 "use client";
 
 import type { Dispatch, SetStateAction } from "react";
-import type { Task, TaskHistory, TaskHistoryInsert, TaskUpdate } from "@/lib/database.types";
+import type { Task, TaskHistory, TaskHistoryActionInput, TaskUpdate } from "@/lib/database.types";
 import type { TaskDraft, TaskSubtaskDraft } from "@/components/task-app/task-editor-model";
 import type { CanonicalTaskCreator, TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
@@ -38,8 +38,8 @@ type UseTaskEditorSaveActionOptions = {
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
-  syncTaskHistoryEntry: (taskId: string, status: Task["status"], occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryInsert; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
-  syncTaskHistoryEntries?: (taskId: string, status: Task["status"], entryDates: string[], options?: { historyEntries?: TaskHistoryInsert[]; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
+  syncTaskHistoryEntry: (taskId: string, status: Task["status"], occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryActionInput; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
+  syncTaskHistoryEntries?: (taskId: string, status: Task["status"], entryDates: string[], options?: { historyEntries?: TaskHistoryActionInput[]; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
   syncTaskNoteLinks: (taskId: string, linkedNoteIds: string[]) => Promise<boolean>;
   taskHistory?: TaskHistory[];
   tasks: Task[];
@@ -248,7 +248,7 @@ export function useTaskEditorSaveAction({
       // A due-date edit changes only the next scheduling cursor. It must not
       // turn the normalized open status into a History delete or replacement.
       if (!scheduleOnlyEdit && statusChanged) {
-        const historyEntries = actionAuthority?.mutationPlan.historyInserts;
+        const historyEntries = actionAuthority?.mutationPlan.historyIntents;
         const historySaved = historyEntries?.length && syncTaskHistoryEntries
           ? await syncTaskHistoryEntries(taskId, data.status, historyEntries.map((entry) => entry.entry_date), { historyEntries, historySnapshot: scopedHistory })
           : await syncTaskHistoryEntry(taskId, data.status, previousTask ?? nextData, {

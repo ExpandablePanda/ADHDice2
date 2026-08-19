@@ -31,7 +31,7 @@ import {
   Trophy,
   X,
 } from "lucide-react";
-import type { TaskActualTimeEntry, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
+import type { TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
@@ -413,7 +413,6 @@ type TaskRowContextMenuProps = {
   onOpenDetails?: (sourceElement?: HTMLElement | null) => void;
   onOpenHistory?: () => void;
   onOpenQuickEdit?: (mode: TaskRowContextMenuQuickEditMode, sourceElement?: HTMLElement | null) => void;
-  onOpenTimeLog?: () => void;
   onRemoveFromCurrentList?: () => void;
   removeFromCurrentListLabel?: string;
   onPromoteToMilestone?: () => void;
@@ -446,7 +445,6 @@ export function TaskRowContextMenu({
   onOpenDetails,
   onOpenHistory,
   onOpenQuickEdit,
-  onOpenTimeLog,
   onRemoveFromCurrentList,
   removeFromCurrentListLabel,
   onPromoteToMilestone,
@@ -574,15 +572,6 @@ export function TaskRowContextMenu({
             >
               <span>Open history</span>
               <CalendarDays className="h-3.5 w-3.5" />
-            </TaskTableChipButton>
-          ) : null}
-          {onOpenTimeLog ? (
-            <TaskTableChipButton
-              className="w-full justify-between gap-2"
-              onClick={() => onOpenTimeLog()}
-            >
-              <span>Open time log</span>
-              <Clock3 className="h-3.5 w-3.5" />
             </TaskTableChipButton>
           ) : null}
           {onDelayTask ? (
@@ -1114,7 +1103,6 @@ type TaskManagementTableV2Props = {
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenFocusTimer?: (taskId: string) => void;
   onOpenNote?: (noteId: string) => void;
-  onOpenTaskActualTime?: (taskId: string, options?: { durationSeconds?: number; title?: string }) => void;
   onOpenTaskEditor?: (taskId: string) => void;
   onOpenTaskInNewTab?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
@@ -1135,15 +1123,12 @@ type TaskManagementTableV2Props = {
   onDismissDetachedTask?: (taskId: string) => void;
   onPreviousTaskTimer?: () => void;
   onNextTaskTimer?: () => void;
-  onDeleteTaskActualTimeEntry?: (entryId: string) => void;
   onPauseTaskTimer?: (taskId: string) => void;
   onResumeTaskTimer?: (taskId: string) => void;
   onStartTaskTimer?: (timer: RunningTaskTimer) => void;
   onStopTaskTimer?: (taskId: string) => void;
   onDiscardTaskTimer?: (taskId: string) => void;
   onTaskActualSecondsChange?: (taskId: string, seconds: number) => void;
-  taskActualTimeEntriesByTaskId?: Record<string, TaskActualTimeEntry[]>;
-  learnedTaskDurationStatisticsByTaskId?: Record<string, { averageSeconds: number | null; completedSampleCount: number; latestSeconds: number | null; typicalSeconds: number | null }>;
   onTaskDueChange?: (taskId: string, schedule: { dueOn: string; dueTime: string }, options?: { manualAction?: "unscheduled_status" }) => void;
   onTaskEnergyChange?: (taskId: string, energy: TaskEnergy) => void;
   onTaskEstimatedMinutesChange?: (taskId: string, minutes: number | null) => void;
@@ -2381,7 +2366,6 @@ export function TaskManagementTableV2({
   onRestoreTask,
   onOpenTaskHistory,
   onOpenNote,
-  onOpenTaskActualTime,
   onOpenTaskEditor,
   onOpenTaskInNewTab,
   onOpenChildTask,
@@ -2402,15 +2386,12 @@ export function TaskManagementTableV2({
   onDismissDetachedTask,
   onPreviousTaskTimer,
   onNextTaskTimer,
-  onDeleteTaskActualTimeEntry,
   onPauseTaskTimer,
   onResumeTaskTimer,
   onStartTaskTimer,
   onStopTaskTimer,
   onDiscardTaskTimer,
   onTaskActualSecondsChange,
-  taskActualTimeEntriesByTaskId,
-  learnedTaskDurationStatisticsByTaskId,
   onTaskDueChange,
   onTaskEnergyChange,
   onTaskEstimatedMinutesChange,
@@ -2679,10 +2660,6 @@ export function TaskManagementTableV2({
       return null;
     },
     [childTaskPreviewByParentTaskId, retainedMetadataTargetTask, retainedSelectedTask, rowContextMenu, tasks],
-  );
-  const selectedTaskActualTimeEntries = useMemo(
-    () => (selectedTask ? taskActualTimeEntriesByTaskId?.[selectedTask.id] ?? [] : []),
-    [selectedTask, taskActualTimeEntriesByTaskId],
   );
   const visibleHeaderColumns = useMemo(() => {
     const nextVisible = !visibleColumns || visibleColumns.length === 0
@@ -4638,18 +4615,12 @@ export function TaskManagementTableV2({
     if (onStopTaskTimer) {
       onStopTaskTimer(taskId);
     } else {
-      const nextSeconds = getDisplayedActualSeconds(task);
-      const elapsedSeconds = Math.max(0, nextSeconds - task.actualSeconds);
       setLocalRunningTimers((current) => {
         const next = current.filter((entry) => entry.taskId !== taskId);
         setLocalActiveTimerIndex((previous) => Math.max(0, Math.min(previous, next.length - 1)));
         return next;
       });
       setLocalTimerNow(Date.now());
-      onOpenTaskActualTime?.(taskId, {
-        durationSeconds: elapsedSeconds,
-        title: task.title,
-      });
     }
     closeInspector();
   }
@@ -5672,13 +5643,6 @@ export function TaskManagementTableV2({
               Start focus timer
             </span>
           </button>
-          <button
-            className={inlineAccordionButtonClass()}
-            onClick={() => openActualTimeEntryForTask(task.id)}
-            type="button"
-          >
-            <span className={inlineAccordionChipContentClass(INACTIVE_CHIP_CLASS)}>Log actual time</span>
-          </button>
         </>
       );
     }
@@ -6046,11 +6010,6 @@ export function TaskManagementTableV2({
 
   function openFocusTimerForTask(taskId: string) {
     startTaskTimer(taskId);
-  }
-
-  function openActualTimeEntryForTask(taskId: string) {
-    closeInspector();
-    onOpenTaskActualTime?.(taskId);
   }
 
   function openRowContextMenu(taskId: string, clientX: number, clientY: number) {
@@ -8830,10 +8789,6 @@ export function TaskManagementTableV2({
                 onOpenTaskHistory(rowContextMenuTask.id);
               } : undefined}
               onOpenQuickEdit={(mode, sourceElement) => openTaskOverlayFromContextMenu(rowContextMenuTask.id, mode as OverlayMode, sourceElement)}
-              onOpenTimeLog={onOpenTaskActualTime ? () => {
-                setRowContextMenu(null);
-                openActualTimeEntryForTask(rowContextMenuTask.id);
-              } : undefined}
               onRemoveFromCurrentList={canRemoveFromCurrentList?.(rowContextMenuTask.id) && onRemoveFromCurrentList ? () => {
                 onRemoveFromCurrentList(rowContextMenuTask.id);
                 setRowContextMenu(null);
@@ -8966,8 +8921,6 @@ export function TaskManagementTableV2({
                 const metadataEstimatedMinutesDraft = estimatedMinutesDrafts[metadataTask.id] ?? (metadataTask.estimatedMinutes ? String(metadataTask.estimatedMinutes) : "");
                 const metadataTagDraft = tagDrafts[metadataTask.id] ?? "";
                 const metadataListDraft = listDrafts[metadataTask.id] ?? "";
-                const metadataTaskActualTimeEntries = taskActualTimeEntriesByTaskId?.[metadataTask.id] ?? [];
-                const learnedDuration = learnedTaskDurationStatisticsByTaskId?.[metadataTask.id];
                 const normalizedMetadataTagDraft = normalizeTaskTagValue(metadataTagDraft);
                 const selectedMetadataTagSet = new Set(metadataTask.tags.map((tag) => normalizeTaskTagValue(tag)));
                 const dedupedMergedTagOptions = dedupeTaskTagLabels(mergedTagOptions);
@@ -9010,7 +8963,7 @@ export function TaskManagementTableV2({
                     case "estimated":
                       return metadataTask.estimatedMinutes !== null;
                     case "actual":
-                      return getDisplayedActualSeconds(metadataTask) > 0 || metadataTaskActualTimeEntries.length > 0;
+                      return getDisplayedActualSeconds(metadataTask) > 0;
                     case "priority":
                       return metadataTask.priorities.length > 0;
                     case "repeat":
@@ -9168,9 +9121,6 @@ export function TaskManagementTableV2({
                     <>
                       <div className="mb-3 text-sm text-[#7d7597] dark:text-white/55">
                         {metadataTask.estimatedMinutes ? `Manual estimate: ${metadataTask.estimatedMinutes}m` : "Manual estimate: none"}
-                        {learnedDuration?.completedSampleCount
-                          ? <div className="mt-1">{learnedDuration.typicalSeconds ? `Typical actual: ${formatActual(learnedDuration.typicalSeconds)} · ` : "Typical available after 3 completed samples · "}Average actual: {formatActual(learnedDuration.averageSeconds ?? 0)} · Latest actual: {formatActual(learnedDuration.latestSeconds ?? 0)} · Based on {learnedDuration.completedSampleCount} completed occurrence{learnedDuration.completedSampleCount === 1 ? "" : "s"}</div>
-                          : <div className="mt-1">No completed time samples yet</div>}
                       </div>
                       {renderInlineTextChoices(
                         ESTIMATED_TIME_PRESETS.map((minutes) => ({ label: minutes === 60 ? "1h" : `${minutes}m`, value: String(minutes) })),
@@ -9206,7 +9156,6 @@ export function TaskManagementTableV2({
                         ) : (
                           <TaskTableChipButton className="gap-2" onClick={() => openFocusTimerForTask(metadataTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"><CirclePlay className="h-3.5 w-3.5" />Start focus timer</TaskTableChipButton>
                         )}
-                        <TaskTableChipButton className="gap-2" onClick={() => openActualTimeEntryForTask(metadataTask.id)} toneClassName={INACTIVE_CHIP_CLASS}><Clock3 className="h-3.5 w-3.5" />Manual time entry</TaskTableChipButton>
                         <TaskTableChipButton className="gap-2" onClick={() => { onTaskActualSecondsChange?.(metadataTask.id, 0); patchTask(metadataTask.id, (task) => ({ ...task, actualSeconds: 0 })); }} toneClassName="border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"><TimerReset className="h-3.5 w-3.5" />Clear actual time</TaskTableChipButton>
                       </div>
                     </>
@@ -9827,38 +9776,6 @@ export function TaskManagementTableV2({
                         Save date + time
                       </button>
                     </div>
-                    {selectedTaskActualTimeEntries.length > 0 ? (
-                      <div className="mt-3 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-2.5 dark:border-white/10 dark:bg-white/[0.04]">
-                        <div className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">Saved entries</div>
-                        <div className="space-y-2">
-                          {selectedTaskActualTimeEntries.slice(0, 6).map((entry, entryIndex) => (
-                            <div className="rounded-[0.95rem] border border-[#ece7f8] bg-white/88 px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]" key={`${entry.id || "actual-entry"}-${entryIndex}`}>
-                              <div className="flex items-center justify-between gap-3 text-sm">
-                                <div className="min-w-0">
-                                  <div className="font-medium text-[#3a335c] dark:text-white/80">{formatActual(entry.duration_seconds)}</div>
-                                  <div className="truncate text-[11px] text-[#8d87a7] dark:text-white/40">{entry.title_snapshot}</div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[#8d87a7] dark:text-white/40">{formatEntryTimestamp(entry.created_at)}</span>
-                                  {onDeleteTaskActualTimeEntry ? (
-                                    <button
-                                      className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] transition hover:bg-[#ffe7eb] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
-                                      onClick={() => onDeleteTaskActualTimeEntry(entry.id)}
-                                      type="button"
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
-                                  ) : null}
-                                </div>
-                              </div>
-                              {entry.notes ? (
-                                <p className="mt-1 text-xs leading-5 text-[#7d7597] dark:text-white/55">{entry.notes}</p>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
                   </section>
                   ) : null}
                   {showEstimatedSection ? (
@@ -10107,14 +10024,6 @@ export function TaskManagementTableV2({
                           Start focus timer
                         </button>
                       )}
-                      <button
-                        className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} gap-2`}
-                        onClick={() => openActualTimeEntryForTask(selectedTask.id)}
-                        type="button"
-                      >
-                        <Clock3 className="h-3.5 w-3.5" />
-                        Manual time entry
-                      </button>
                       <button
                         className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf] gap-2`}
                         onClick={() => {

@@ -36,7 +36,6 @@ test("tray uses the shared actual-time handoff and the dedicated delete-only dis
     readFile(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/components/task-app/task-active-timers-tray.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(appSource, /source: "task_timer"/);
   assert.match(hookSource, /async function discardTaskTimer/);
   assert.match(hookSource, /discardTaskTimer,/);
   assert.match(tableSource, /if \(onDiscardTaskTimer\) \{\s*onDiscardTaskTimer\(taskId\);/);
@@ -52,14 +51,14 @@ test("tray uses the shared actual-time handoff and the dedicated delete-only dis
   assert.match(goToTaskSource, /if \(openSharedTaskEditor[\s\S]*setIsActiveTimersTrayOpen\(false\)/);
   assert.match(sharedOpenerSource, /text: "Task unavailable\."/);
   assert.match(sharedOpenerSource, /if \(!task \|\| task\.status === "trashed" \|\| task\.status === "archived" \|\| occurrenceIsClearlyStale\) \{[\s\S]*return false;/);
-  assert.match(sharedOpenerSource, /if \(!options\?\.preserveActivePage\) \{\s*setActivePage\("Tasks"\);\s*\}/);
+  assert.doesNotMatch(sharedOpenerSource, /setActivePage/);
   assert.match(sharedOpenerSource, /setSharedTaskEditorOverlayTaskId\(taskId\)/);
   assert.doesNotMatch(goToTaskSource, /tasksSurface|view:|setRequestedListOverlayTaskId|highlight|scroll|pause|resume|stop|discard|evidence/i);
   assert.match(traySource, /onClick=\{\(\) => onGoToTask\(timer\.taskId\)\}/);
   assert.doesNotMatch(tableSource, /setLocalTimerNow\(Date\.now\(\)\);\s*}, 1000\)/);
 });
 
-test("terminal task actions stage active timers through one shared evidence flow", async () => {
+test("terminal task actions record active timer seconds before the canonical action", async () => {
   const [appSource, hookSource] = await Promise.all([
     readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/hooks/useTaskTimers.ts", import.meta.url), "utf8"),
@@ -67,16 +66,11 @@ test("terminal task actions stage active timers through one shared evidence flow
   const updateStatusSource = appSource.slice(appSource.indexOf("async function updateTaskStatus"), appSource.indexOf("async function toggleTaskPinned"));
   const completeSource = appSource.slice(appSource.indexOf("async function confirmPendingTaskComplete"), appSource.indexOf("function buildTaskStatusUpdate"));
   assert.match(updateStatusSource, /status === "done" \|\| status === "did_my_best"/);
-  assert.doesNotMatch(updateStatusSource, /status === "missed"/);
   assert.match(updateStatusSource, /stageTimedTaskCompletion/);
   assert.match(completeSource, /stageTimedTaskCompletion\(task, \{ kind: "complete" \}, completeAction\.onTimeOrigin\)/);
   assert.match(appSource, /const stoppedTimer = await persistStoppedTaskTimer\(task\.id\)/);
-  assert.match(appSource, /setTaskActualTimeEntryTaskId\(task\.id\)/);
-  assert.match(appSource, /phase: "evidence_saved_awaiting_completion"/);
-  assert.match(appSource, /confirmPendingTaskComplete\(true, task, intent\.completePayload\)/);
-  assert.match(appSource, /updateTaskStatus\(task, intent\.terminalAction, true, intent\.onTimeOrigin \?\? undefined\)/);
-  assert.match(appSource, /await persistRestoredTaskTimer\(timedIntent\.stoppedTimer\)/);
-  assert.match(hookSource, /async function restoreStoppedTaskTimer/);
-  assert.match(hookSource, /is_running: false/);
-  assert.match(hookSource, /start_time: null/);
+  assert.match(appSource, /async function recordStoppedTaskTimer/);
+  assert.match(appSource, /actual_seconds: nextActualSeconds/);
+  assert.doesNotMatch(appSource, /adhdice_task_actual_time_entries|TaskActualTimeEntry|evidence_saved_awaiting_completion/);
+  assert.doesNotMatch(hookSource, /restoreStoppedTaskTimer/);
 });

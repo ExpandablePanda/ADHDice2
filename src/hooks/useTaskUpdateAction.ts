@@ -1,7 +1,7 @@
 "use client";
 
 import type { Dispatch, SetStateAction } from "react";
-import type { Task, TaskHistory, TaskHistoryInsert, TaskUpdate } from "@/lib/database.types";
+import type { Task, TaskHistory, TaskHistoryActionInput, TaskUpdate } from "@/lib/database.types";
 import type { TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
@@ -29,8 +29,8 @@ type UpdateTaskActionOptions = {
   replayIdentity?: string;
   engineManaged?: boolean;
   expectedTask?: Task | null;
-  historyEntry?: TaskHistoryInsert;
-  historyEntries?: TaskHistoryInsert[];
+  historyEntry?: TaskHistoryActionInput;
+  historyEntries?: TaskHistoryActionInput[];
   historyStatus?: Task["status"];
   historySnapshot?: TaskHistory[];
   rewardEligible?: boolean;
@@ -49,8 +49,8 @@ type UseTaskUpdateActionOptions = {
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
-  syncTaskHistoryEntry: (taskId: string, status: Task["status"], occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryInsert; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
-  syncTaskHistoryEntries?: (taskId: string, status: Task["status"], entryDates: string[], options?: { historyEntries?: TaskHistoryInsert[]; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
+  syncTaskHistoryEntry: (taskId: string, status: Task["status"], occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryActionInput; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
+  syncTaskHistoryEntries?: (taskId: string, status: Task["status"], entryDates: string[], options?: { historyEntries?: TaskHistoryActionInput[]; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
   taskHistory?: TaskHistory[];
   tasks: Task[];
   loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<TaskHistoryLoadMap>;

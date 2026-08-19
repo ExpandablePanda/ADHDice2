@@ -136,7 +136,6 @@ type AgentPlanProps = {
   onDeleteSubtask: (subtaskId: string) => Promise<boolean>;
   onDeleteSelectedTasks: () => void;
   onEditTask: (taskId: string) => void;
-  onOpenTaskActualTime: (taskId: string) => void;
   onOpenBatchEdit: () => void;
   onReorderColumns: (columnId: AgentPlanColumnId, targetColumnId: AgentPlanColumnId) => void;
   onRenameSubtask: (subtaskId: string, title: string) => void;
@@ -937,7 +936,6 @@ export default function AgentPlan({
   onDeleteSubtask,
   onDeleteSelectedTasks,
   onEditTask,
-  onOpenTaskActualTime,
   onOpenBatchEdit,
   onReorderColumns,
   onRenameSubtask,
@@ -2326,21 +2324,9 @@ export default function AgentPlan({
                               const actualLabel = formatDurationSeconds(task.actualSeconds) ?? "Log time";
                               return (
                                 <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
-                                  <button
-                                    aria-label={`Log actual time for ${task.title}`}
-                                    className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition ${FOCUS_RING_CLASS} ${task.actualSeconds > 0
-                                      ? "bg-[#6f57f6] text-white hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
-                                      : "bg-[#f3efff] text-[#6f57f6] hover:bg-[#e8e0ff] hover:text-[#5a45d1] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2d2254] dark:hover:text-white"}`}
-                                    data-column-measure
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      onOpenTaskActualTime(task.id);
-                                    }}
-                                    title={actualLabel}
-                                    type="button"
-                                  >
-                                    <Clock className="h-4 w-4" />
-                                  </button>
+                                  <span className="inline-flex min-h-8 items-center px-2 text-xs font-semibold tabular-nums text-[#5f587d] dark:text-white/70" data-column-measure title={actualLabel}>
+                                    {actualLabel}
+                                  </span>
                                 </td>
                               );
                             }

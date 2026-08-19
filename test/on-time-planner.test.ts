@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildOnTimeHierarchy, calculateOnTimeSchedule, calculateOnTimeSequentialFinishes, classifyOnTimeRowState, createElapsedAwareOnTimeExecutionSnapshot, createOnTimeExecutionSnapshot, formatOnTimeArrivalDetail, formatOnTimeCountdown, formatOnTimeOperationalCountdown, formatUnsignedOperationalDuration, getOnTimeDropIndex, getOnTimeElapsedSecondsByItemId, getOnTimeExecutionTiming, isLinkedItemOccurrenceCurrent, isOnTimeTaskEligible, moveOnTimeItem, reorderOnTimeItems } from "../src/lib/on-time-planner.ts";
 import type { OnTimePlanItem } from "../src/lib/on-time-plan-state.ts";
-import type { Task, TaskActualTimeEntry } from "../src/lib/database.types.ts";
+import type { Task } from "../src/lib/database.types.ts";
 import type { TaskHistory } from "../src/lib/database.types.ts";
 import { getTaskDisplayStatusWithHistory } from "../src/lib/task-cockpit.ts";
 import type { RunningTaskTimer } from "../src/components/ui/task-management-table-v2.tsx";
@@ -145,14 +145,13 @@ test("arrival detail and operational countdown preserve exact schedule classific
   assert.equal(formatOnTimeOperationalCountdown({ ...calculation, projectionTrusted: false }, Date.parse("2026-07-12T10:00:00Z")), null);
 });
 
-test("timer deduction counts exact task-timer evidence and active delta without its saved baseline", () => {
+test("timer deduction counts only the active task-timer delta", () => {
   const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-12", occurrenceDueOn: "2026-07-12", plannedSeconds: 1000, durationSource: "manual", execution: null };
-  const entry = (source: TaskActualTimeEntry["source"], duration: number, occurrenceKey = linked.occurrenceKey): TaskActualTimeEntry => ({ id: `${source}-${duration}`, task_id: "task-a", user_id: "user", entry_date: "2026-07-12", title_snapshot: "Parent", duration_seconds: duration, notes: null, occurrence_key: occurrenceKey, occurrence_due_on: "2026-07-12", source, estimate_eligible: true, exclusion_reason: null, completion_history_id: null, completion_completed_at: null, created_at: "2026-07-12T00:00:00Z" });
   const timer: RunningTaskTimer = { baseSeconds: 500, startedActualSeconds: 400, startedAt: 1_000, pausedAt: null, taskId: "task-a", title: "Parent", occurrenceKey: linked.occurrenceKey, occurrenceDueOn: linked.occurrenceDueOn };
-  const elapsed = getOnTimeElapsedSecondsByItemId({ entries: [entry("task_timer", 300), entry("manual", 200), entry("import", 200), entry("task_timer", 900, "occurrence:other")], items: [linked], now: 11_000, timers: [timer] });
-  assert.equal(elapsed.linked, 410);
-  assert.equal(calculateOnTimeSchedule({ ...base, items: [linked], elapsedSecondsByItemId: elapsed }).remainingPreparationSeconds, 590);
-  assert.equal(getOnTimeElapsedSecondsByItemId({ entries: [entry("task_timer", 1200)], items: [linked], now: 11_000, timers: [] }).linked, 1200);
+  const elapsed = getOnTimeElapsedSecondsByItemId({ items: [linked], now: 11_000, timers: [timer] });
+  assert.equal(elapsed.linked, 110);
+  assert.equal(calculateOnTimeSchedule({ ...base, items: [linked], elapsedSecondsByItemId: elapsed }).remainingPreparationSeconds, 890);
+  assert.equal(getOnTimeElapsedSecondsByItemId({ items: [linked], now: 11_000, timers: [] }).linked, 0);
 });
 
 test("temporary completion and move fallback update remaining time and preserve boundaries", () => {

@@ -9,8 +9,6 @@ import type { RunningTaskTimer } from "@/components/ui/task-management-table-v2"
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (msg: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
 
-export type StoppedTaskTimer = RunningTaskTimer & { elapsedSeconds: number };
-
 export function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
   const endTime = timer.pausedAt ?? now;
   return timer.baseSeconds + Math.max(0, Math.floor((endTime - timer.startedAt) / 1000));
@@ -294,40 +292,6 @@ export function useTaskTimers(
     };
   }
 
-  async function restoreStoppedTaskTimer(timer: StoppedTaskTimer) {
-    if (!client || !userId) {
-      return false;
-    }
-
-    const { data, error } = await client
-      .from("adhdice_task_active_timers")
-      .upsert({
-        user_id: userId,
-        task_id: timer.taskId,
-        title_snapshot: timer.title,
-        start_time: null,
-        accumulated_seconds: timer.baseSeconds,
-        started_actual_seconds: timer.startedActualSeconds,
-        is_running: false,
-        occurrence_key: timer.occurrenceKey ?? null,
-        occurrence_due_on: timer.occurrenceDueOn ?? null,
-      }, { onConflict: "user_id,task_id" })
-      .select("*")
-      .single();
-
-    if (error) {
-      setMessage({ tone: "warn", text: `The timer could not be restored after cancellation: ${formatTaskTimerPersistenceError(error.message)}` });
-      return false;
-    }
-    if (data) {
-      setRunningTaskTimers((current) => [
-        ...current.filter((entry) => entry.taskId !== timer.taskId),
-        mapTaskTimerRow(data),
-      ]);
-    }
-    return true;
-  }
-
   async function discardTaskTimer(taskId: string) {
     if (!client || !userId) {
       return false;
@@ -359,7 +323,6 @@ export function useTaskTimers(
     pauseTaskTimer,
     resumeTaskTimer,
     stopTaskTimer,
-    restoreStoppedTaskTimer,
     discardTaskTimer,
   };
 }

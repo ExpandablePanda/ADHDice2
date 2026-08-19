@@ -25,7 +25,7 @@ test("Edge boundary verifies the user, reads canonical state without legacy auth
   assert.doesNotMatch(edgeSource, /context\.userClaims\?\.sub/);
   assert.match(edgeSource, /if \(!userId\) return json\(\{ error: \{ code: "authentication_failure"/);
   assert.match(edgeSource, /context\.supabaseAdmin/);
-  assert.match(orchestrationSource, /includeLegacyHistoryEvidence: false/);
+  assert.doesNotMatch(orchestrationSource, /includeLegacyHistoryEvidence|adhdice_task_history\b/);
   assert.match(orchestrationSource, /adhdice_execute_task_state_command/);
   assert.match(orchestrationSource, /buildTrustedTaskStateCommandReplayDescriptor/);
   assert.match(orchestrationSource, /initialReplay[\s\S]*loadCanonicalState/);

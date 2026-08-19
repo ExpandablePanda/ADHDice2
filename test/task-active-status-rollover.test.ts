@@ -37,20 +37,6 @@ function simulateRegularRecurringRollover({
     : { dueOn: originalDueOn, historyStatuses: writtenMissedDates.map(() => "missed"), status: "missed" };
 }
 
-function repairCandidateQualifies(candidate: {
-  currentDueOn: string;
-  currentStatus: Task["status"];
-  hasLaterResolution: boolean;
-  latestMissedDate: string;
-  proposedDueOn: string;
-}) {
-  const nextDueOn = calcNextDueDateFromDate(task(), candidate.latestMissedDate);
-  return ["pending", "missed", "upcoming", "not_due"].includes(candidate.currentStatus)
-    && !candidate.hasLaterResolution
-    && candidate.proposedDueOn < candidate.currentDueOn
-    && candidate.currentDueOn === nextDueOn;
-}
-
 test("entering In Progress captures the logical day and scheduled occurrence", () => {
   const values = applyTaskActiveStatusTracking(task(), { status: "in_progress" }, "2026-07-11");
   assert.deepEqual(values, {
@@ -108,35 +94,6 @@ test("regular interval recurrences stay Missed whether their calculated next dat
   }
 });
 
-test("rollover SQL anchors unresolved regular recurrences and preserves In Progress advancement", () => {
-  const sql = readFileSync("supabase/patch_daily_until_complete_rollover_rpc.sql", "utf8");
-  assert.match(sql, /due_on is not null and due_on <= v_rollover_date/);
-  assert.match(sql, /active_status_logical_date is not null\s+and active_status_logical_date <= v_rollover_date/);
-  assert.match(sql, /v_task\.active_status_logical_date,\s+'did_my_best'/);
-  assert.match(sql, /v_task\.active_occurrence_due_on\s+\);/);
-  assert.doesNotMatch(sql, /or \(\s*status = 'in_progress'\s*and active_status_logical_date is null/);
-  assert.match(sql, /where id = v_task\.id\s+and user_id = p_user_id/);
-
-  const regularBranch = sql.slice(sql.lastIndexOf("if v_task.status not in ('pending'"), sql.lastIndexOf("get diagnostics v_row_count = row_count;"));
-  const inProgressBranch = regularBranch.slice(regularBranch.indexOf("if v_task.status = 'in_progress' then"), regularBranch.indexOf("else", regularBranch.indexOf("if v_task.status = 'in_progress' then")));
-  const missedBranch = regularBranch.slice(regularBranch.indexOf("else", regularBranch.indexOf("if v_task.status = 'in_progress' then")));
-  assert.match(regularBranch, /on conflict \(user_id, task_id, entry_date\) do nothing/);
-  assert.match(regularBranch, /get diagnostics v_row_count = row_count;\s+v_inserted_history_count := v_inserted_history_count \+ v_row_count/);
-  assert.doesNotMatch(regularBranch, /on conflict \(user_id, task_id, entry_date\) do update/);
-  assert.match(inProgressBranch, /v_next_status := public\.adhdice_resolve_recurring_due_status/);
-  assert.match(inProgressBranch, /due_on = v_due_on/);
-  assert.match(missedBranch, /status = 'missed'/);
-  assert.doesNotMatch(missedBranch, /due_on = v_due_on/);
-
-  const inProgress = simulateRegularRecurringRollover({
-    originalDueOn: "2026-07-11",
-    status: "in_progress",
-    writtenMissedDates: ["2026-07-11"],
-  });
-  assert.deepEqual(inProgress.historyStatuses, ["did_my_best"]);
-  assert.equal(inProgress.dueOn, "2026-07-12");
-});
-
 test("weekly early completion advances from the scheduled occurrence, not the action date", () => {
   const sundayOnly = task({ due_on: "2026-07-26", repeat_days_of_week: [0], repeat_frequency: "weekly", status: "done" });
   const mondayWednesdayFriday = task({ due_on: "2026-07-20", repeat_days_of_week: [1, 3, 5], repeat_frequency: "weekly", status: "done" });
@@ -144,45 +101,6 @@ test("weekly early completion advances from the scheduled occurrence, not the ac
   assert.equal(calcNextDueDateFromDate(sundayOnly, sundayOnly.due_on!), "2026-08-02");
   assert.equal(calcNextDueDateFromDate(mondayWednesdayFriday, mondayWednesdayFriday.due_on!), "2026-07-22");
   assert.equal(calcNextDueDateFromDate(mondayWednesdayFriday, "2026-07-22"), "2026-07-24");
-});
-
-test("rollover resolves successful canonical occurrences without action-date or duplicate-Missed logic", () => {
-  const sql = readFileSync("supabase/patch_daily_until_complete_rollover_rpc.sql", "utf8");
-  const canonicalResolution = sql.slice(
-    sql.indexOf("-- A success may be recorded before its scheduled weekly occurrence."),
-    sql.indexOf("if v_task.status not in ('pending'", sql.indexOf("-- A success may be recorded before its scheduled weekly occurrence.")),
-  );
-
-  assert.match(canonicalResolution, /history\.status in \('done', 'did_my_best'\)/);
-  assert.match(canonicalResolution, /history\.occurrence_key = 'occurrence:' \|\| v_task\.due_on::text/);
-  assert.match(canonicalResolution, /history\.occurrence_due_on = v_task\.due_on/);
-  assert.doesNotMatch(canonicalResolution, /history\.entry_date/);
-  assert.match(canonicalResolution, /v_task\.due_on\s+\);/);
-  assert.match(canonicalResolution, /due_on = v_due_on/);
-  assert.doesNotMatch(canonicalResolution, /insert into public\.adhdice_task_history/);
-});
-
-test("repair excludes later resolutions and is idempotent after restoring the anchor", () => {
-  const repairSql = readFileSync("supabase/repair_regular_recurring_missed_anchors.sql", "utf8");
-  assert.ok(repairSql.indexOf("-- READ-ONLY PREVIEW") < repairSql.indexOf("-- MUTATING REPAIR"));
-  assert.match(repairSql, /later_resolution\.status <> 'missed'/);
-  assert.match(repairSql, /task\.repeat_frequency not in \('none', 'daily_until_complete'\)/);
-  assert.match(repairSql, /status = 'missed',\s+due_on = qualified\.proposed_due_on/);
-
-  const candidate = {
-    currentDueOn: "2026-07-13",
-    currentStatus: "upcoming" as const,
-    hasLaterResolution: false,
-    latestMissedDate: "2026-07-12",
-    proposedDueOn: "2026-07-10",
-  };
-  assert.equal(repairCandidateQualifies({ ...candidate, hasLaterResolution: true }), false);
-  assert.equal(repairCandidateQualifies(candidate), true);
-  assert.equal(repairCandidateQualifies({
-    ...candidate,
-    currentDueOn: candidate.proposedDueOn,
-    currentStatus: "missed",
-  }), false);
 });
 
 test("client rollover uses the coordinator and targeted reconciliation only after owned success", () => {

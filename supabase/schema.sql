@@ -243,22 +243,6 @@ create table public.adhdice_task_list_manual_memberships (
   unique (user_id, task_id, list_id)
 );
 
-create table public.adhdice_task_history (
-  id uuid primary key default gen_random_uuid(),
-  task_id uuid not null references public.adhdice_clean_tasks(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  entry_date date not null,
-  occurrence_key text,
-  occurrence_due_on date,
-  status public.adhdice_clean_task_status not null,
-  event_type text not null default 'status' check (event_type in ('status', 'completed_permanently')),
-  counted_as_due_occurrence boolean not null default false,
-  was_completed boolean not null default false,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (user_id, task_id, entry_date)
-);
-
 create table public.adhdice_record_current (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -318,24 +302,6 @@ create table public.adhdice_record_events (
   unique (user_id, rules_version, event_identity),
   check ((scope_kind = 'global' and scope_id is null) or (scope_kind = 'task' and nullif(btrim(scope_id), '') is not null)),
   check ((period_start is null and period_end is null) or (period_start is not null and period_end is not null and period_end >= period_start))
-);
-
-create table public.adhdice_task_actual_time_entries (
-  id uuid primary key default gen_random_uuid(),
-  task_id uuid not null references public.adhdice_clean_tasks(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  entry_date date not null,
-  title_snapshot text not null check (char_length(trim(title_snapshot)) > 0),
-  duration_seconds integer not null check (duration_seconds > 0),
-  notes text,
-  occurrence_key text,
-  occurrence_due_on date,
-  source text not null default 'legacy' check (source in ('task_timer', 'manual', 'import', 'legacy')),
-  estimate_eligible boolean not null default false,
-  exclusion_reason text,
-  completion_history_id uuid references public.adhdice_task_history(id) on delete set null,
-  completion_completed_at timestamptz,
-  created_at timestamptz not null default now()
 );
 
 create table public.adhdice_task_subtasks (
@@ -609,8 +575,6 @@ create index adhdice_task_list_rail_items_container_order_idx
   on public.adhdice_task_list_rail_items (user_id, container_folder_id, sort_order, item_key);
 create index adhdice_task_list_manual_memberships_user_task_idx
   on public.adhdice_task_list_manual_memberships (user_id, task_id, list_id);
-create index adhdice_task_history_user_date_idx
-  on public.adhdice_task_history (user_id, entry_date desc, created_at desc);
 create unique index adhdice_record_current_owner_scope_uidx
   on public.adhdice_record_current (user_id, rules_version, metric_key, scope_kind, coalesce(scope_id, ''));
 create index adhdice_record_current_owner_idx
@@ -622,11 +586,6 @@ create index adhdice_record_events_owner_scope_idx
 create index adhdice_record_events_owner_valid_identity_idx
   on public.adhdice_record_events (user_id, rules_version, event_identity)
   where validity_state = 'valid';
-create index adhdice_task_actual_time_entries_user_task_date_idx
-  on public.adhdice_task_actual_time_entries (user_id, task_id, entry_date desc, created_at desc);
-create index adhdice_task_actual_time_entries_learning_idx
-  on public.adhdice_task_actual_time_entries (user_id, task_id, occurrence_key)
-  where estimate_eligible and exclusion_reason is null and completion_history_id is not null;
 create index adhdice_task_subtasks_task_sort_idx
   on public.adhdice_task_subtasks (task_id, sort_order, created_at asc);
 create index adhdice_legacy_subtask_promotions_user_idx
@@ -668,10 +627,8 @@ alter table public.adhdice_task_list_rail_items enable row level security;
 alter table public.adhdice_task_list_rail_items force row level security;
 alter table public.adhdice_task_list_containers enable row level security;
 alter table public.adhdice_task_list_manual_memberships enable row level security;
-alter table public.adhdice_task_history enable row level security;
 alter table public.adhdice_record_current enable row level security;
 alter table public.adhdice_record_events enable row level security;
-alter table public.adhdice_task_actual_time_entries enable row level security;
 alter table public.adhdice_task_subtasks enable row level security;
 alter table public.adhdice_legacy_subtask_promotions enable row level security;
 alter table public.adhdice_task_grid_layouts enable row level security;
@@ -926,11 +883,6 @@ create policy "Users can delete their own task list memberships"
   for delete
   using (auth.uid() = user_id);
 
-create policy "Users can read their own task history"
-  on public.adhdice_task_history
-  for select
-  using (auth.uid() = user_id);
-
 create policy "Users can read their own current records"
   on public.adhdice_record_current for select using (auth.uid() = user_id);
 
@@ -941,43 +893,6 @@ revoke all on table public.adhdice_record_current from anon, authenticated;
 revoke all on table public.adhdice_record_events from anon, authenticated;
 grant select on table public.adhdice_record_current to authenticated;
 grant select on table public.adhdice_record_events to authenticated;
-
-create policy "Users can create their own task history"
-  on public.adhdice_task_history
-  for insert
-  with check (auth.uid() = user_id);
-
-create policy "Users can update their own task history"
-  on public.adhdice_task_history
-  for update
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
-create policy "Users can delete their own task history"
-  on public.adhdice_task_history
-  for delete
-  using (auth.uid() = user_id);
-
-create policy "Users can read their own task actual time entries"
-  on public.adhdice_task_actual_time_entries
-  for select
-  using (auth.uid() = user_id);
-
-create policy "Users can create their own task actual time entries"
-  on public.adhdice_task_actual_time_entries
-  for insert
-  with check (auth.uid() = user_id);
-
-create policy "Users can update their own task actual time entries"
-  on public.adhdice_task_actual_time_entries
-  for update
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
-create policy "Users can delete their own task actual time entries"
-  on public.adhdice_task_actual_time_entries
-  for delete
-  using (auth.uid() = user_id);
 
 create policy "Users can read their own task subtasks"
   on public.adhdice_task_subtasks
@@ -1177,100 +1092,6 @@ begin
 end;
 $$;
 
-create or replace function public.adhdice_capture_task_history_occurrence()
-returns trigger
-language plpgsql
-as $$
-declare
-  target_task public.adhdice_clean_tasks%rowtype;
-begin
-  if new.status in ('done', 'did_my_best')
-    and new.was_completed
-    and new.occurrence_key is null then
-    select * into target_task
-      from public.adhdice_clean_tasks
-      where id = new.task_id and user_id = new.user_id;
-
-    if found then
-      if target_task.repeat_frequency = 'none' then
-        new.occurrence_key = 'lifetime:' || new.task_id::text;
-        new.occurrence_due_on = null;
-      else
-        new.occurrence_due_on = coalesce(target_task.active_occurrence_due_on, new.entry_date);
-        if new.occurrence_due_on is not null then
-          new.occurrence_key = 'occurrence:' || new.occurrence_due_on::text;
-        end if;
-      end if;
-    end if;
-  end if;
-  return new;
-end;
-$$;
-
-create or replace function public.adhdice_link_task_duration_evidence()
-returns trigger
-language plpgsql
-as $$
-begin
-  if new.status in ('done', 'did_my_best') and new.was_completed then
-    update public.adhdice_task_actual_time_entries as evidence
-      set completion_history_id = new.id,
-          completion_completed_at = new.updated_at
-      where evidence.user_id = new.user_id
-        and evidence.task_id = new.task_id
-        and evidence.source in ('task_timer', 'manual')
-        and evidence.estimate_eligible
-        and evidence.exclusion_reason is null
-        and evidence.completion_history_id is null
-        and (
-          (new.occurrence_key is not null and evidence.occurrence_key = new.occurrence_key)
-          or (
-            new.occurrence_key is null
-            and evidence.occurrence_key in ('occurrence:' || new.entry_date::text, 'lifetime:' || new.task_id::text)
-          )
-        );
-  end if;
-  return new;
-end;
-$$;
-
-create or replace function public.adhdice_link_inserted_task_duration_evidence()
-returns trigger
-language plpgsql
-as $$
-declare
-  matching_completion public.adhdice_task_history%rowtype;
-begin
-  if new.source in ('task_timer', 'manual')
-    and new.estimate_eligible
-    and new.exclusion_reason is null
-    and new.completion_history_id is null
-    and new.occurrence_key is not null then
-    select * into matching_completion
-      from public.adhdice_task_history as history
-      where history.user_id = new.user_id
-        and history.task_id = new.task_id
-        and history.status in ('done', 'did_my_best')
-        and history.was_completed
-        and (
-          history.occurrence_key = new.occurrence_key
-          or (
-            history.occurrence_key is null
-            and new.occurrence_key in ('occurrence:' || history.entry_date::text, 'lifetime:' || history.task_id::text)
-          )
-        )
-      order by history.updated_at desc
-      limit 1;
-
-    if found then
-      new.completion_history_id = matching_completion.id;
-      new.completion_completed_at = matching_completion.updated_at;
-    end if;
-  end if;
-  return new;
-end;
-$$;
-
 create trigger adhdice_clean_tasks_bump_revision
   before update on public.adhdice_clean_tasks
   for each row
@@ -1325,23 +1146,6 @@ create trigger adhdice_task_list_containers_set_updated_at
   before update on public.adhdice_task_list_containers
   for each row
   execute function public.adhdice_clean_set_updated_at();
-
-create trigger adhdice_task_history_set_updated_at
-  before update on public.adhdice_task_history
-  for each row
-  execute function public.adhdice_clean_set_updated_at();
-
-create trigger adhdice_capture_task_history_occurrence
-  before insert or update of status, was_completed, occurrence_key, occurrence_due_on on public.adhdice_task_history
-  for each row execute function public.adhdice_capture_task_history_occurrence();
-
-create trigger adhdice_link_task_duration_evidence
-  after insert or update of status, was_completed, occurrence_key, occurrence_due_on on public.adhdice_task_history
-  for each row execute function public.adhdice_link_task_duration_evidence();
-
-create trigger adhdice_link_inserted_task_duration_evidence
-  before insert on public.adhdice_task_actual_time_entries
-  for each row execute function public.adhdice_link_inserted_task_duration_evidence();
 
 create trigger adhdice_task_subtasks_set_updated_at
   before update on public.adhdice_task_subtasks
@@ -1426,8 +1230,6 @@ alter publication supabase_realtime add table public.adhdice_task_list_folders;
 alter publication supabase_realtime add table public.adhdice_task_list_containers;
 alter publication supabase_realtime add table public.adhdice_task_list_rail_items;
 alter publication supabase_realtime add table public.adhdice_task_list_manual_memberships;
-alter publication supabase_realtime add table public.adhdice_task_history;
-alter publication supabase_realtime add table public.adhdice_task_actual_time_entries;
 alter publication supabase_realtime add table public.adhdice_task_subtasks;
 alter publication supabase_realtime add table public.adhdice_task_grid_layouts;
 alter publication supabase_realtime add table public.adhdice_on_time_plans;
@@ -4820,7 +4622,6 @@ begin
 end;
 $function$;
 
-drop trigger if exists adhdice_capture_task_achievement_runtime on public.adhdice_task_history;
 create trigger adhdice_capture_task_achievement_runtime
   after insert or update of entity_id, entity_kind, logical_date, outcome, event_kind,
     occurrence_id, scheduled_due_on, effective_due_on, schedule_boundary_id,
@@ -4894,7 +4695,6 @@ begin
 end;
 $function$;
 
-drop trigger if exists adhdice_deactivate_deleted_task_achievement_runtime on public.adhdice_task_history;
 create trigger adhdice_deactivate_deleted_task_achievement_runtime
   after delete on public.adhdice_task_history_facts for each row
   execute function public.adhdice_deactivate_deleted_achievement_source();

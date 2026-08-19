@@ -1,4 +1,4 @@
-import type { Task, TaskHistory } from "../database.types.ts";
+import type { Task } from "../database.types.ts";
 import type {
   CanonicalTaskCalendarOverride,
   CanonicalTaskCommandOperation,
@@ -44,7 +44,6 @@ type CanonicalReadQuery<T> = {
 type CanonicalReadTableRows = {
   adhdice_clean_tasks: CanonicalTaskRow;
   adhdice_user_profiles: CanonicalLogicalDayProfile;
-  adhdice_task_history: TaskHistory;
   adhdice_task_command_operations: CanonicalTaskCommandOperation;
   adhdice_task_schedule_boundaries: CanonicalTaskScheduleBoundary;
   adhdice_task_occurrences: CanonicalTaskOccurrence;
@@ -76,8 +75,6 @@ export type CanonicalTaskStateReadModel = {
   rewardEntitlements: CanonicalTaskRewardEntitlement[];
   rewardGrants: CanonicalTaskRewardGrant[];
   rewardClaimConsumptions: CanonicalTaskRewardClaimConsumption[];
-  /** Raw legacy History is retained as migration evidence, never canonical input. */
-  legacyHistoryEvidence: TaskHistory[];
   logicalDayProfile: {
     timezone: string;
     day_start_time: string;
@@ -96,7 +93,7 @@ function readError(error: { message: string; code?: string } | null): CanonicalR
 
 export async function loadCanonicalTaskState(
   client: CanonicalReadClient,
-  input: { userId: string; taskId: string; includeLegacyHistoryEvidence?: boolean },
+  input: { userId: string; taskId: string },
 ): Promise<CanonicalTaskStateReadResult> {
   const taskResult = await client
     .from("adhdice_clean_tasks")
@@ -108,12 +105,8 @@ export async function loadCanonicalTaskState(
   if (taskResult.error) return { data: null, error: readError(taskResult.error) };
   if (!taskResult.data) return { data: null, error: { message: "Canonical Task was not found for this owner." } };
 
-  const legacyHistoryEvidenceQuery = input.includeLegacyHistoryEvidence
-    ? client.from("adhdice_task_history").select("*").eq("user_id", input.userId).eq("task_id", input.taskId)
-      .order("entry_date", { ascending: false })
-    : Promise.resolve({ data: [] as TaskHistory[], error: null });
   const [profile, commandOperations, scheduleBoundaries, occurrences, occurrenceEffectiveOverrides, historyFacts, calendarOverrides,
-    rewardEntitlements, rewardGrants, rewardClaimConsumptions, legacyHistoryEvidence] = await Promise.all([
+    rewardEntitlements, rewardGrants, rewardClaimConsumptions] = await Promise.all([
     client.from("adhdice_user_profiles").select("timezone,day_start_time,settings_revision").eq("user_id", input.userId).maybeSingle(),
     client.from("adhdice_task_command_operations").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
       .order("created_at", { ascending: false }),
@@ -131,7 +124,6 @@ export async function loadCanonicalTaskState(
       .order("logical_date", { ascending: false }),
     client.from("adhdice_task_reward_grants").select("*").eq("user_id", input.userId),
     client.from("adhdice_task_reward_claim_consumptions").select("*").eq("user_id", input.userId),
-    legacyHistoryEvidenceQuery,
   ]);
 
   const results = [
@@ -145,7 +137,6 @@ export async function loadCanonicalTaskState(
     rewardEntitlements,
     rewardGrants,
     rewardClaimConsumptions,
-    legacyHistoryEvidence,
   ];
   const failed = results.find((result) => result.error);
   if (failed?.error) return { data: null, error: readError(failed.error) };
@@ -170,7 +161,6 @@ export async function loadCanonicalTaskState(
       rewardEntitlements: rewardEntitlements.data ?? [],
       rewardGrants: grantRows,
       rewardClaimConsumptions: (rewardClaimConsumptions.data ?? []).filter((row) => grantIds.has(row.grant_id)),
-      legacyHistoryEvidence: legacyHistoryEvidence.data ?? [],
       logicalDayProfile: profile.data,
     },
     error: null,

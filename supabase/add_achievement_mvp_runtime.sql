@@ -830,7 +830,6 @@ begin
 end;
 $function$;
 
-drop trigger if exists adhdice_capture_task_achievement_runtime on public.adhdice_task_history;
 create trigger adhdice_capture_task_achievement_runtime
   after insert or update of entity_id, entity_kind, logical_date, outcome, event_kind,
     occurrence_id, scheduled_due_on, effective_due_on, schedule_boundary_id,
@@ -904,7 +903,6 @@ begin
 end;
 $function$;
 
-drop trigger if exists adhdice_deactivate_deleted_task_achievement_runtime on public.adhdice_task_history;
 create trigger adhdice_deactivate_deleted_task_achievement_runtime
   after delete on public.adhdice_task_history_facts for each row
   execute function public.adhdice_deactivate_deleted_achievement_source();

@@ -397,15 +397,6 @@ test("7.6.10 rollover RPC stages once and uses bulk conflict-safe History/task w
   assert.doesNotMatch(sql, /for v_history in select/);
 });
 
-test("7.6.10 conflict detection is indexed, set-based, and preserves replay deduplication", () => {
-  const sql = readFileSync("supabase/patch_task_state_engine_rollover_7_6_10.sql", "utf8");
-  const schema = readFileSync("supabase/schema.sql", "utf8");
-  assert.match(sql, /existing\.user_id = p_user_id[\s\S]*existing\.task_id = proposed\.task_id[\s\S]*existing\.entry_date = proposed\.logical_date/);
-  assert.match(sql, /existing\.status is distinct from proposed\.outcome::public\.adhdice_clean_task_status/);
-  assert.match(sql, /select count\(\*\) - v_inserted into v_deduplicated/);
-  assert.match(schema, /unique \(user_id, task_id, entry_date\)/);
-});
-
 test("7.6.10 validates supported values before enum casts and excludes Archive/Trash writes", () => {
   const sql = readFileSync("supabase/patch_task_state_engine_rollover_7_6_10.sql", "utf8");
   assert.match(sql, /\(patch->>'status'\) not in \('unscheduled', 'pending', 'in_progress', 'done', 'missed', 'did_my_best', 'upcoming', 'not_due', 'delayed', 'complete'\)/);

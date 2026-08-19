@@ -77,7 +77,6 @@ function computeDerivedForHierarchyDiagnostics(
   overrides: Partial<{
     deferredSearchQuery: string;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
-    taskActualTimeEntryTaskId: string | null;
     taskEditorTaskId: string | null;
   }> = {},
 ) {
@@ -93,7 +92,6 @@ function computeDerivedForHierarchyDiagnostics(
     focusedTaskIds: [],
     listColumnPickerOrder: [],
     listVisibleColumns: [],
-    taskActualTimeEntryTaskId: overrides.taskActualTimeEntryTaskId ?? null,
     taskEditorTaskId: overrides.taskEditorTaskId ?? null,
     taskGridLayout: [],
     taskGridWidgetTypes: [],
@@ -132,7 +130,6 @@ function computeDerivedForQueueCount(tasks: ReturnType<typeof createTask>[], foc
     focusedTaskIds,
     listColumnPickerOrder: [],
     listVisibleColumns: [],
-    taskActualTimeEntryTaskId: null,
     taskEditorTaskId: null,
     taskGridLayout: [],
     taskGridWidgetTypes: [],
@@ -1741,13 +1738,11 @@ test("task editor and actual-time lookup still find primary-hidden child tasks f
   });
 
   const derived = computeDerivedForHierarchyDiagnostics([parent, child], {
-    taskActualTimeEntryTaskId: "child",
     taskEditorTaskId: "child",
   });
 
   assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), ["parent"]);
   assert.equal(derived.selectedTaskForEditor?.id, "child");
-  assert.equal(derived.taskForActualTimeEntry?.id, "child");
 });
 
 test("archive and trash primary arrays hide valid child tasks while keeping invalid rows findable", () => {

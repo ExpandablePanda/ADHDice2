@@ -1066,7 +1066,6 @@ type ComputeTaskAppDerivedDataInput = {
   listVisibleColumns: string[];
   milestoneSearchTokensByTaskId?: ReadonlyMap<string, readonly string[]>;
   milestoneTaskIds?: ReadonlySet<string>;
-  taskActualTimeEntryTaskId: string | null;
   taskEditorTaskId: string | null;
   taskGridLayout: TaskGridItem[];
   taskGridWidgetTypes: string[];
@@ -1095,7 +1094,6 @@ export function computeTaskAppDerivedData({
   listVisibleColumns,
   milestoneSearchTokensByTaskId,
   milestoneTaskIds,
-  taskActualTimeEntryTaskId,
   taskEditorTaskId,
   taskGridLayout,
   taskGridWidgetTypes,
@@ -1179,7 +1177,6 @@ export function computeTaskAppDerivedData({
       statusMatchedChildTaskIds: new Set<string>(),
       statusMatchedStepParentTaskIds: new Set<string>(),
       tableStatusCounts: canonicalEntityProjection.statusFacetCounts,
-      taskForActualTimeEntry: null,
       taskHierarchyDiagnostics: emptyStructuralData.taskHierarchyDiagnostics,
       taskLinkedNotesByTaskId: {},
       taskListMembershipsByTaskId: {},
@@ -1543,9 +1540,6 @@ export function computeTaskAppDerivedData({
   const selectedTaskForEditor = taskEditorTaskId
     ? tasks.find((task) => task.id === taskEditorTaskId) ?? null
     : null;
-  const taskForActualTimeEntry = taskActualTimeEntryTaskId
-    ? tasks.find((task) => task.id === taskActualTimeEntryTaskId) ?? null
-    : null;
   const listColumnPickerColumns = [
     ...listVisibleColumns,
     ...listColumnPickerOrder.filter((columnId) => !listVisibleColumns.includes(columnId)),
@@ -1649,7 +1643,6 @@ export function computeTaskAppDerivedData({
     archiveFilteredTasksSorted,
     trashFilteredTasksSorted,
     selectedTaskForEditor,
-    taskForActualTimeEntry,
     taskHierarchyDiagnostics,
     taskPrimaryVisibility,
     taskLinkedNotesByTaskId,

@@ -1,4 +1,4 @@
-import type { Task, TaskHistory, TaskHistoryInsert, TaskUpdate } from "@/lib/database.types";
+import type { Task, TaskHistory, TaskHistoryActionInput, TaskUpdate } from "@/lib/database.types";
 import { logicalDateForTimestamp } from "./calendar.ts";
 import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
@@ -56,8 +56,8 @@ export function stripStatusFromScheduleIntent(values: TaskUpdate) {
 export function isOccurrenceSensitiveTaskMutation(input: {
   engineManaged?: boolean;
   forceOccurrenceSensitive?: boolean;
-  historyEntries?: TaskHistoryInsert[];
-  historyEntry?: TaskHistoryInsert;
+  historyEntries?: TaskHistoryActionInput[];
+  historyEntry?: TaskHistoryActionInput;
   historyStatus?: Task["status"];
   task?: Task | null;
   values: TaskUpdate;
@@ -82,10 +82,10 @@ function storedStatusForActiveStatus(status: ReturnType<typeof evaluateTaskState
   return status === "unscheduled" ? "pending" : status;
 }
 
-export function taskStateHistoryRowToInsert(
+export function taskStateHistoryRowToCanonicalIntent(
   row: TaskStateHistoryRow,
   userId: string,
-): TaskHistoryInsert {
+): TaskHistoryActionInput {
   const occurrenceDueOn = row.occurrenceDueOn
     ?? row.occurrenceIdentity?.match(/(\d{4}-\d{2}-\d{2})$/)?.[1]
     ?? null;
@@ -163,8 +163,8 @@ export function evaluateTaskActionAuthority(input: {
     ...result,
     mutationPlan: {
       history: result.proposedHistoryChanges.flatMap((change) => change.type === "insert" ? [change.row] : []),
-      historyInserts: result.proposedHistoryChanges.flatMap((change) => (
-        change.type === "insert" ? [taskStateHistoryRowToInsert(change.row, input.task.user_id)] : []
+      historyIntents: result.proposedHistoryChanges.flatMap((change) => (
+        change.type === "insert" ? [taskStateHistoryRowToCanonicalIntent(change.row, input.task.user_id)] : []
       )),
       historyOutcome,
       taskUpdate,
@@ -216,7 +216,7 @@ export function evaluateTaskScheduleAuthority(input: {
     ...result,
     mutationPlan: {
       history: [] as TaskStateHistoryRow[],
-      historyInserts: [] as TaskHistoryInsert[],
+      historyIntents: [] as TaskHistoryActionInput[],
       taskUpdate,
       rewardEligibility: { ...result.rewardEligibility, eligible: false, reason: "no_outcome" as const },
       unresolvedOccurrenceDueOn: result.unresolvedOccurrenceDueOn,

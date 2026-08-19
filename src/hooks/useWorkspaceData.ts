@@ -9,7 +9,6 @@ import type {
   FocusSession as DbFocusSession,
   LegacySubtaskPromotion as DbLegacySubtaskPromotion,
   Task,
-  TaskActualTimeEntry as DbTaskActualTimeEntry,
   TaskFocusDay as DbTaskFocusDay,
   TaskGridLayout as DbTaskGridLayout,
   TaskHistory as DbTaskHistory,
@@ -95,7 +94,6 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   setIsGridEditMode: Dispatch<SetStateAction<boolean>>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setSelectedGridWidgetId: Dispatch<SetStateAction<string | null>>;
-  setTaskActualTimeEntries: Dispatch<SetStateAction<DbTaskActualTimeEntry[]>>;
   setTaskGridLayout: Dispatch<SetStateAction<TTaskGridItem[]>>;
   setTaskHistory: Dispatch<SetStateAction<DbTaskHistory[]>>;
   setTaskListManualMemberships: Dispatch<SetStateAction<TaskListManualMembership[]>>;
@@ -201,7 +199,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   setIsGridEditMode,
   setMessage,
   setSelectedGridWidgetId,
-  setTaskActualTimeEntries,
   setTaskGridLayout,
   setTaskHistory,
   setTaskListManualMemberships,
@@ -231,7 +228,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const [isTaskResumeSyncPending, setIsTaskResumeSyncPending] = useState(false);
   const [taskListMembershipDataReadyUserId, setTaskListMembershipDataReadyUserId] = useState<string | null>(null);
   const hasLoadedNotesRef = useRef(false);
-  const hasLoadedActualTimeRef = useRef(false);
   const hasLoadedFullTaskHistoryRef = useRef(false);
   const hasLoadedTaskHistoryRef = useRef(false);
   const fullTaskHistoryRowsRef = useRef<DbTaskHistory[]>([]);
@@ -273,7 +269,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const softWorkspaceRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const rolloverWorkspaceReconciliationRef = useRef<(() => Promise<void>) | null>(null);
   const prepareTaskMutationRef = useRef<(() => Promise<boolean>) | null>(null);
-  const loadActualTimeRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadFullTaskHistoryRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadNotesRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadTaskHistoryForTaskRef = useRef<((taskId: string, options?: TaskHistoryLoadOptions) => Promise<boolean>) | null>(null);
@@ -359,7 +354,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       startupRequestUserIdRef.current = null;
       liveWorkspaceUserIdRef.current = null;
       hasLoadedNotesRef.current = false;
-      hasLoadedActualTimeRef.current = false;
       hasLoadedFullTaskHistoryRef.current = false;
       hasLoadedTaskHistoryRef.current = false;
       fullTaskHistoryRowsRef.current = [];
@@ -388,7 +382,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       softWorkspaceRefreshRef.current = null;
       rolloverWorkspaceReconciliationRef.current = null;
       prepareTaskMutationRef.current = null;
-      loadActualTimeRef.current = null;
       loadFullTaskHistoryRef.current = null;
       loadNotesRef.current = null;
       loadTaskHistoryForTaskRef.current = null;
@@ -974,19 +967,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       return true;
     }
 
-    async function loadActualTime({ silent = false }: { silent?: boolean } = {}) {
-      if (hasLoadedActualTimeRef.current) return true;
-      const result = await client.from("adhdice_task_actual_time_entries").select("*").eq("user_id", userId)
-        .order("entry_date", { ascending: false }).order("created_at", { ascending: false });
-      if (result.error) {
-        if (!silent) setMessage({ tone: "warn", text: result.error.message ?? "Could not load actual-time details." });
-        return false;
-      }
-      setTaskActualTimeEntries((current) => keepCurrentIfStructurallyEqual(current, result.data ?? []));
-      hasLoadedActualTimeRef.current = true;
-      return true;
-    }
-    loadActualTimeRef.current = () => loadActualTime({ silent: true });
     loadFullTaskHistoryRef.current = () => loadTaskHistory({ silent: true, source: "secondary" });
     loadNotesRef.current = () => loadNotes({ silent: true });
     loadTaskHistoryForTaskRef.current = (taskId, options) => loadTaskHistoryForTask(taskId, { ...options, silent: true }).then((result) => result.status === "ready");
@@ -1329,12 +1309,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         if (includeSecondaryIfLoaded) {
           if (hasLoadedFullTaskHistoryRef.current) await loadTaskHistory({ silent: true, source: "secondary" });
           if (hasLoadedNotesRef.current) await loadNotes({ silent: true });
-          if (hasLoadedActualTimeRef.current) await loadActualTime({ silent: true });
         }
       } finally {
         logWorkspaceTiming("Soft workspace refresh complete", refreshStartedAt, {
           includeSecondaryIfLoaded,
-          secondaryLoaded: hasLoadedFullTaskHistoryRef.current || hasLoadedNotesRef.current || hasLoadedActualTimeRef.current,
+          secondaryLoaded: hasLoadedFullTaskHistoryRef.current || hasLoadedNotesRef.current,
           source,
         });
         taskResumeSyncInFlightRef.current = false;
@@ -1607,20 +1586,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         {
           event: "*",
           schema: "public",
-          table: "adhdice_task_actual_time_entries",
-          filter: `user_id=eq.${userId}`,
-        },
-        () => {
-          if (!hasLoadedActualTimeRef.current) return;
-          hasLoadedActualTimeRef.current = false;
-          void loadActualTime({ silent: true });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
           table: "adhdice_task_history_facts",
           filter: `user_id=eq.${userId}`,
         },
@@ -1693,7 +1658,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
   useEffect(() => {
     if (!currentUser) {
-      setTaskActualTimeEntries([]);
       setTaskHistory([]);
       setTaskListContainers([]);
       setTaskListFolders([]);
@@ -1708,7 +1672,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     setAvailableTaskNotes,
     setIsGridEditMode,
     setSelectedGridWidgetId,
-    setTaskActualTimeEntries,
     setTaskGridLayout,
     setTaskHistory,
     setTaskListContainers,
@@ -1730,10 +1693,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     return await prepareTaskMutationRef.current?.() ?? false;
   }, []);
 
-  const loadTaskActualTimeDetails = useCallback(
-    async () => await loadActualTimeRef.current?.() ?? false,
-    [],
-  );
   const loadTaskHistoryForTask = useCallback(
     async (taskId: string, options?: TaskHistoryLoadOptions) => await loadTaskHistoryForTaskRef.current?.(taskId, options) ?? false,
     [],
@@ -1771,7 +1730,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     prepareTaskMutation,
     reconcileRolloverWorkspace,
     softRefreshWorkspace,
-    loadTaskActualTimeDetails,
     loadTaskHistoryForTask,
     loadTaskHistoryForTasks,
     fetchTaskHistoryForRollover,

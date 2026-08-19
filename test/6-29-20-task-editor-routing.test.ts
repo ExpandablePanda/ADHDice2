@@ -6,8 +6,7 @@ const source = (path: string) => readFile(new URL(path, import.meta.url), "utf8"
 
 test("shared task editor validates targets without changing the active page", async () => {
   const app = await source("../src/components/task-app.tsx");
-  assert.match(app, /import \{ buildTaskOccurrenceIdentity \} from "@\/lib\/task-duration-evidence"/);
-  assert.doesNotMatch(app, /import \{ buildTaskOccurrenceIdentity[^\n]*from "@\/lib\/on-time-planner"/);
+  assert.match(app, /import \{ buildTaskOccurrenceIdentity, occurrenceIdentityMatches \} from "@\/lib\/on-time-planner"/);
   const opener = app.slice(app.indexOf("function openSharedTaskEditor"), app.indexOf("function goToActiveTimerTask"));
   assert.match(opener, /tasks\.find\(\(entry\) => entry\.id === taskId\)/);
   assert.match(opener, /task\.status === "trashed" \|\| task\.status === "archived"/);

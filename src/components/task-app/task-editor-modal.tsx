@@ -4,12 +4,10 @@ import type { User } from "@supabase/supabase-js";
 import { CalendarDays, Clock, Footprints, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { ManualEntryModal } from "../focus-modals";
 import { ModalShell } from "../modal-shell";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { isTaskFinishedStatusValue } from "@/lib/task-buckets";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
-import type { FocusCategory, FocusLabelOptions } from "@/lib/types";
 import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import { getSelectableTaskStatuses, getSelectableTaskStatusesForRepeatFrequency } from "@/lib/task-complete";
 import { buildTaskPriorityUpdate, formatTaskPriorityMenuLabel, getSelectedTaskPriorityToneClass, getTaskPriorityToneClass, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
@@ -253,13 +251,10 @@ export function TaskEditorModal({
   allTags,
   client,
   currentUser,
-  focusCategories,
   focusedToday,
-  focusLabelOptions,
   mode,
   initialDraftOverride,
   onClose,
-  onLogActualTime,
   onOpenHistory,
   onSave,
   statusResetSignal,
@@ -270,13 +265,10 @@ export function TaskEditorModal({
   allTags: string[];
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   currentUser: User;
-  focusCategories: FocusCategory[];
   focusedToday: string[];
-  focusLabelOptions: FocusLabelOptions;
   mode: TaskEditorMode;
   initialDraftOverride?: Partial<TaskEditorDraft> | null;
   onClose: () => void;
-  onLogActualTime: (entry: { title: string; notes: string; date: string; durationSeconds: number }) => Promise<boolean>;
   onOpenHistory?: () => void;
   onSave: (draft: { values: TaskDraft; focusToday: boolean; linkedNoteIds: string[]; subtasks: TaskSubtaskDraft[] }) => Promise<void>;
   statusResetSignal?: { status: TaskStatus; taskId: string; token: number } | null;
@@ -292,7 +284,6 @@ export function TaskEditorModal({
   const [subtaskMultiAdd, setSubtaskMultiAdd] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isEstimatedTimeMenuOpen, setIsEstimatedTimeMenuOpen] = useState(false);
-  const [showActualTimeModal, setShowActualTimeModal] = useState(false);
   const [editorScrollIndicator, setEditorScrollIndicator] = useState<VerticalScrollIndicator>({
     active: false,
     height: 0,
@@ -397,7 +388,7 @@ export function TaskEditorModal({
       resizeObserver.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [availableNotes.length, draft, isEstimatedTimeMenuOpen, showActualTimeModal, subtaskMultiAdd, task]);
+  }, [availableNotes.length, draft, isEstimatedTimeMenuOpen, subtaskMultiAdd, task]);
 
   useEffect(() => {
     let cancelled = false;
@@ -503,7 +494,6 @@ export function TaskEditorModal({
     draft.repeatMonthlyOrdinal,
     draft.repeatMonthlyWeekday,
   );
-  const handleManualFocusEntryProxy = onLogActualTime;
 
   return (
     <ModalShell className={`relative w-full max-w-[42rem] max-h-[92vh] overflow-hidden rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`} label="Task editor" mobileFocused={isEditing} onClose={onClose}>
@@ -1047,22 +1037,6 @@ export function TaskEditorModal({
             </button>
           </div>
         </EditorCollapsibleSection>
-
-        {showActualTimeModal ? (
-          <ManualEntryModal
-            categories={focusCategories}
-            initialTitle={draft.title.trim() || undefined}
-            labelOptions={focusLabelOptions}
-            onClose={() => setShowActualTimeModal(false)}
-            onSave={async (data) => {
-              const success = await handleManualFocusEntryProxy(data);
-              if (success) {
-                setShowActualTimeModal(false);
-              }
-              return success;
-            }}
-          />
-        ) : null}
 
         {/* Due date / time / notes / tags / link */}
         <div className="hidden grid gap-4 sm:grid-cols-2">

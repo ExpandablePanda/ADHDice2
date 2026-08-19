@@ -1,4 +1,4 @@
-import type { Task, TaskHistoryInsert, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistoryActionInput, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import { getTaskDescendants } from "@/lib/task-hierarchy";
 
@@ -157,7 +157,7 @@ export function buildCompleteHistoryPayload(
   task: Pick<Task, "due_on" | "id" | "repeat_frequency">,
   currentDayKey: string,
   userId: string,
-): TaskHistoryInsert {
+): TaskHistoryActionInput {
   const countedAsDueOccurrence = doesCompleteCountAsDueOccurrence(task, currentDayKey);
   return {
     counted_as_due_occurrence: countedAsDueOccurrence,

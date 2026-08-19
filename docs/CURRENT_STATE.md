@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-18
+Last reviewed: 2026-08-19
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.48`.
+- Current working app version: `7.9.49`.
 - Current release group: `7.9.x` Task State and workspace corrections.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,17 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+## 2026-08-19 Dead architecture purge
+
+The 7.9.49 source now retires the obsolete `adhdice_task_history` and
+`adhdice_task_actual_time_entries` paths, migration/backfill support tables and
+functions, learned-duration code, and proven-dead blob/prize-board tables.
+Canonical History remains `adhdice_task_history_facts`; active Task Timer
+seconds remain on the current timer/task paths. `adhdice_task_migration_operations`
+and its canonical provenance references remain intentionally intact. The purge
+SQL is authored only; live SQL, deployment, and browser parity remain
+unverified.
 
 ## 2026-08-18 Achievement canonical History cleanup
 
@@ -424,7 +435,7 @@ out of scope.
 
 - `src/lib/task-state-runtime-actions.ts` is the classification boundary for the next runtime cutover. It explicitly separates metadata-only fields (`title`, `notes`, priority/energy/presentation fields, links, tags, focus/editor metadata, and pin/sort fields) from Task State-owned fields (`status`, schedule/repeat fields, active-status projections, `completed_at`, `trashed_at`, and hierarchy parent changes).
 - Runtime coordinator/executor wiring covers the named Task State commands as source implementation evidence, but runtime convergence remains pending. Canonical responses are intended to reconcile the local Task from `canonical_task_patch`, `compatibility_projection`, and `next_revision`; History refreshes must preserve canonical facts and must not recreate legacy truth.
-- Canonical History reads are wired through `adhdice_task_history_facts` in the source for workspace, task-scoped, streak, realtime, Records, and report-range paths. Any remaining legacy-table read is transitional migration/translation evidence and must stop deciding current state; the adapter must project explicit facts, including automatic Missed, without synthetic substitutes.
+- Canonical History reads are wired through `adhdice_task_history_facts` in the source for workspace, task-scoped, streak, realtime, Records, and report-range paths. The retired legacy table is no longer a runtime read or translation path; the adapter projects explicit facts, including automatic Missed, without synthetic substitutes.
 - Remaining-writer audit classification: `CANONICAL` = coordinator-routed lifecycle/outcome/schedule/History-calendar/rollover/batch paths; `METADATA_ONLY` = title, notes, priority, energy, links, tags, focus, pin, and sort persistence; `LEGACY_ONLY_NONCANONICAL_ENTITY` = intentionally unpromoted checklist rows, the inactive `/classic` demo surface, and Settings JSON restore while the gate is disabled; `MILESTONE_ATOMIC_TRUSTED_SEAM` = the trusted Milestone metadata orchestration that invokes canonical Task State for completion/trash/restore. Promoted Steps/Substeps use the same-table canonical Task coordinator, and Milestone Done/Did My Best/Missed outcomes use the canonical coordinator. Settings JSON restore is explicitly fenced while the gate is enabled so its legacy ID-based upsert cannot overwrite canonical status or schedule state.
 - Activation installation item: `supabase/add_canonical_reward_entitlement_bridge.sql` is authored for review but not installed. It consumes canonical entitlement identity, derives the existing dice tier from canonical successful facts, and is idempotent by entitlement/grant identity. Delay now resolves a materialized canonical occurrence and fails closed when none exists; undated bench Delay remains unsupported by the locked command contract.
 - The prior-day Calendar completion assertion is historical implementation

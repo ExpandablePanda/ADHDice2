@@ -151,9 +151,7 @@ import {
   type BatchEditProgress,
 } from "@/lib/task-batch-edit-progress";
 import { clearMatchingOnTimeExecution, reconcileOnTimeManualDurationsFromTasks, type OnTimeLinkedItemOrigin } from "@/lib/on-time-plan-state";
-import { occurrenceIdentityMatches } from "@/lib/on-time-planner";
-import { buildTaskOccurrenceIdentity } from "@/lib/task-duration-evidence";
-import { isTimedCompletionEvidenceSaved, type TimedCompletionWorkflow } from "@/lib/task-timed-completion";
+import { buildTaskOccurrenceIdentity, occurrenceIdentityMatches } from "@/lib/on-time-planner";
 import { useBrainstormState } from "@/hooks/useBrainstormState";
 import {
   getDisplayFocusCategories,
@@ -187,7 +185,7 @@ import {
   createEngineRolloverPlan,
   engineRolloverPlanTaskMutationCandidates,
   evaluateTaskActionAuthority,
-  taskStateHistoryRowToInsert,
+  taskStateHistoryRowToCanonicalIntent,
   projectTasksForActiveStatusRead,
   resolveActiveTaskStatuses,
 } from "@/lib/task-state-engine";
@@ -223,10 +221,8 @@ import {
   type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
 import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/lib/task-focus-days";
-import { buildFocusLabelOptions, getDefaultFocusCategories } from "@/lib/task-focus-labels";
+import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
-import { buildTaskDurationEvidence, type TaskDurationEvidence } from "@/lib/task-duration-evidence";
-import { computeLearnedTaskDurationStatistics } from "@/lib/task-duration-statistics";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
@@ -337,7 +333,6 @@ import type {
   TaskFocusDay as DbTaskFocusDay,
   TaskGridLayout as DbTaskGridLayout,
   TaskInsert,
-  TaskActualTimeEntry,
   TaskRepeatFrequency,
   TaskStatus,
   TaskSubtask as DbTaskSubtask,
@@ -581,7 +576,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.48";
+const APP_VERSION = "7.9.49";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1355,7 +1350,6 @@ export function TaskApp() {
   const [taskListManualMemberships, setTaskListManualMemberships] = useState<TaskListManualMembership[]>([]);
   const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
   const [taskCalendarOverridesByTaskId, setTaskCalendarOverridesByTaskId] = useState<Record<string, TaskCalendarOverride[]>>({});
-  const [taskActualTimeEntries, setTaskActualTimeEntries] = useState<TaskActualTimeEntry[]>([]);
   const [taskSubtasks, setTaskSubtasks] = useState<DbTaskSubtask[]>([]);
   const [taskLegacySubtaskPromotions, setTaskLegacySubtaskPromotions] = useState<DbLegacySubtaskPromotion[]>([]);
   const [availableTaskNotes, setAvailableTaskNotes] = useState<TaskEditorLinkedNote[]>([]);
@@ -1510,12 +1504,7 @@ export function TaskApp() {
   const [isBatchEditModalOpen, setIsBatchEditModalOpen] = useState(false);
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
   const [pendingCompleteAction, setPendingCompleteAction] = useState<PendingCompleteAction | null>(null);
-  const [pendingTimedCompletion, setPendingTimedCompletion] = useState<TimedCompletionWorkflow<PendingCompleteAction> | null>(null);
-  const pendingTimedCompletionRef = useRef<TimedCompletionWorkflow<PendingCompleteAction> | null>(null);
-  const pendingOnTimeTimerSaveOriginRef = useRef<OnTimeLinkedItemOrigin | null>(null);
-  const timedCompletionFailureRef = useRef<string | null>(null);
   const setTaskUpdateMessage = useCallback<typeof setMessage>((value) => {
-    if (typeof value !== "function" && value?.tone === "warn") timedCompletionFailureRef.current = value.text;
     setMessage(value);
   }, []);
   const [taskEditorStatusResetSignal, setTaskEditorStatusResetSignal] = useState<{
@@ -1524,8 +1513,6 @@ export function TaskApp() {
     token: number;
   } | null>(null);
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
-  const [taskActualTimeEntryTaskId, setTaskActualTimeEntryTaskId] = useState<string | null>(null);
-  const [taskActualTimeEntryPrefill, setTaskActualTimeEntryPrefill] = useState<{ durationSeconds: number; occurrenceDueOn?: string | null; occurrenceKey?: string | null; source?: TaskDurationEvidence["source"]; title: string } | null>(null);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
   const [milestoneSetupTaskId, setMilestoneSetupTaskId] = useState<string | null>(null);
@@ -1549,7 +1536,6 @@ export function TaskApp() {
     pauseTaskTimer: persistPausedTaskTimer,
     resumeTaskTimer: persistResumedTaskTimer,
     stopTaskTimer: persistStoppedTaskTimer,
-    restoreStoppedTaskTimer: persistRestoredTaskTimer,
     discardTaskTimer: persistDiscardedTaskTimer,
   } = useTaskTimers(supabase, session?.user?.id ?? null, setMessage);
   const milestoneData = useMilestoneData(supabase, session?.user?.id ?? null, setMessage);
@@ -1750,7 +1736,6 @@ export function TaskApp() {
     isTaskResumeSyncPending,
     isWorkspaceLoading,
     fetchTaskHistoryForRollover,
-    loadTaskActualTimeDetails,
     loadTaskHistoryForTask,
     loadTaskHistoryForTasks,
     loadTaskNotes,
@@ -1826,7 +1811,6 @@ export function TaskApp() {
     setIsGridEditMode,
     setMessage,
     setSelectedGridWidgetId,
-    setTaskActualTimeEntries,
     setTaskGridLayout,
     setTaskHistory,
     setTaskListManualMemberships,
@@ -1857,10 +1841,6 @@ export function TaskApp() {
   useEffect(() => {
     if (isTaskEditorOpen) void loadTaskNotes();
   }, [isTaskEditorOpen, loadTaskNotes]);
-
-  useEffect(() => {
-    if (taskActualTimeEntryTaskId) void loadTaskActualTimeDetails();
-  }, [loadTaskActualTimeDetails, taskActualTimeEntryTaskId]);
 
   const isRefreshBusy = refreshStatus === "updating" || isSoftWorkspaceRefreshing;
 
@@ -3048,7 +3028,6 @@ export function TaskApp() {
           focusedTaskIds,
           milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
           milestoneTaskIds: milestoneData.milestoneTaskIds,
-          taskActualTimeEntryTaskId: null,
           taskAppStructuralData,
           taskEditorTaskId: null,
           taskGridLayout,
@@ -3066,7 +3045,6 @@ export function TaskApp() {
             focusedTaskIds,
             milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
             milestoneTaskIds: milestoneData.milestoneTaskIds,
-            taskActualTimeEntryTaskId,
             taskEditorTaskId,
             taskGridLayout,
             taskUiStateForDerivedData,
@@ -3086,7 +3064,6 @@ export function TaskApp() {
       listVisibleColumns: taskUiState.visibleColumnsByView.table,
       milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
       milestoneTaskIds: milestoneData.milestoneTaskIds,
-      taskActualTimeEntryTaskId: null,
       taskEditorTaskId: null,
       taskGridLayout,
       taskGridWidgetTypes: Object.keys(TASK_GRID_WIDGET_LABELS) as TaskGridWidgetType[],
@@ -3157,10 +3134,6 @@ export function TaskApp() {
   const selectedTaskForEditor = useMemo(
     () => taskEditorTaskId ? tasksForActiveStatusRead.find((task) => task.id === taskEditorTaskId) ?? null : null,
     [taskEditorTaskId, tasksForActiveStatusRead],
-  );
-  const taskForActualTimeEntry = useMemo(
-    () => taskActualTimeEntryTaskId ? tasksForActiveStatusRead.find((task) => task.id === taskActualTimeEntryTaskId) ?? null : null,
-    [taskActualTimeEntryTaskId, tasksForActiveStatusRead],
   );
   const sharedTaskEditorRows = useMemo(
     () => sharedTaskEditorOverlayTaskId
@@ -3295,24 +3268,6 @@ export function TaskApp() {
   const allTaskListDirectoryEntries = useMemo(
     () => buildCanonicalTaskListRailDirectory(canonicalTaskListRailTree),
     [canonicalTaskListRailTree],
-  );
-  const taskFocusLabelOptions = useMemo(
-    () => buildFocusLabelOptions(focusCategories, focusHistory),
-    [focusCategories, focusHistory],
-  );
-  const taskActualTimeEntriesByTaskId = useMemo(
-    () => taskActualTimeEntries.reduce<Record<string, TaskActualTimeEntry[]>>((accumulator, entry) => {
-      if (!accumulator[entry.task_id]) {
-        accumulator[entry.task_id] = [];
-      }
-      accumulator[entry.task_id].push(entry);
-      return accumulator;
-    }, {}),
-    [taskActualTimeEntries],
-  );
-  const learnedTaskDurationStatisticsByTaskId = useMemo(
-    () => Object.fromEntries(Object.entries(taskActualTimeEntriesByTaskId).map(([taskId, entries]) => [taskId, computeLearnedTaskDurationStatistics(entries)])),
-    [taskActualTimeEntriesByTaskId],
   );
   const hasFocusedToday = focusedTaskIds.length > 0;
   const momentumMetric = getMomentumMetric({
@@ -4629,11 +4584,11 @@ export function TaskApp() {
 
   async function startHudTaskTimer(timer: RunningTaskTimer) {
     const task = tasks.find((candidate) => candidate.id === timer.taskId);
-    const evidence = task ? buildTaskDurationEvidence(task, "task_timer") : null;
+    const occurrence = task ? buildTaskOccurrenceIdentity(task) : null;
     const existingIndex = runningTaskTimers.findIndex((entry) => entry.taskId === timer.taskId);
     if (existingIndex >= 0) {
       const existing = runningTaskTimers[existingIndex];
-      if (!existing || !evidence || !occurrenceIdentityMatches(existing, evidence)) {
+      if (!existing || !occurrence || !occurrenceIdentityMatches(existing, occurrence)) {
         setMessage({ tone: "warn", text: "A task timer from another occurrence is already active. Stop or save it before starting this deadline." });
         return false;
       }
@@ -4643,8 +4598,8 @@ export function TaskApp() {
     setActiveTaskTimerIndex(runningTaskTimers.length);
     const started = await persistTaskTimer({
       ...timer,
-      occurrenceDueOn: evidence?.occurrenceDueOn ?? null,
-      occurrenceKey: evidence?.occurrenceKey ?? null,
+      occurrenceDueOn: occurrence?.occurrenceDueOn ?? null,
+      occurrenceKey: occurrence?.occurrenceKey ?? null,
       pausedAt: null,
       startedActualSeconds: timer.startedActualSeconds ?? timer.baseSeconds,
     });
@@ -4667,85 +4622,38 @@ export function TaskApp() {
     onTimePlan.updatePlanFromCurrent((current) => clearMatchingOnTimeExecution(current, origin));
   }
 
+  async function recordStoppedTaskTimer(stoppedTimer: Awaited<ReturnType<typeof persistStoppedTaskTimer>>) {
+    if (!stoppedTimer) return false;
+    const task = tasks.find((candidate) => candidate.id === stoppedTimer.taskId);
+    if (!task) {
+      setMessage({ tone: "warn", text: "The stopped task timer could not find its task." });
+      return false;
+    }
+    const nextActualSeconds = (task.actual_seconds ?? 0) + Math.max(0, stoppedTimer.elapsedSeconds);
+    setTasks((current) => sortTasksForUi(current.map((currentTask) => currentTask.id === task.id ? { ...currentTask, actual_seconds: nextActualSeconds } : currentTask)));
+    return await updateTask(task.id, { actual_seconds: nextActualSeconds });
+  }
+
   function stopHudTaskTimer(taskId: string, onTimeOrigin?: OnTimeLinkedItemOrigin) {
     void (async () => {
       const stoppedTimer = await persistStoppedTaskTimer(taskId);
-      if (!stoppedTimer) {
-        return;
-      }
-      pendingOnTimeTimerSaveOriginRef.current = onTimeOrigin ?? null;
-      setTaskActualTimeEntryTaskId(taskId);
-      setTaskActualTimeEntryPrefill({
-        durationSeconds: Math.max(0, stoppedTimer.elapsedSeconds),
-        occurrenceDueOn: stoppedTimer.occurrenceDueOn,
-        occurrenceKey: stoppedTimer.occurrenceKey,
-        source: "task_timer",
-        title: stoppedTimer.title,
-      });
+      if (await recordStoppedTaskTimer(stoppedTimer)) clearOnTimeExecution(onTimeOrigin);
     })();
-  }
-
-  function setTimedCompletionIntent(intent: TimedCompletionWorkflow<PendingCompleteAction> | null) {
-    pendingTimedCompletionRef.current = intent;
-    setPendingTimedCompletion(intent);
   }
 
   async function stageTimedTaskCompletion(
     task: Task,
-    action: { kind: "complete" } | { kind: "status"; status: "done" | "did_my_best" },
+    _action: { kind: "complete" } | { kind: "status"; status: "done" | "did_my_best" },
     onTimeOrigin?: OnTimeLinkedItemOrigin,
   ): Promise<"none" | "staged" | "failed"> {
-    if (pendingTimedCompletionRef.current) {
-      return "failed";
-    }
     const activeTimer = runningTaskTimers.find((timer) => timer.taskId === task.id);
     if (!activeTimer) {
       return "none";
     }
-    const terminalAction = action.kind === "status" ? action.status : "complete";
-    const completePayload = action.kind === "complete" ? pendingCompleteAction : null;
-    setTimedCompletionIntent({
-      completePayload,
-      completionError: null,
-      evidenceId: null,
-      latestTask: null,
-      occurrenceDueOn: activeTimer.occurrenceDueOn ?? null,
-      occurrenceKey: activeTimer.occurrenceKey ?? null,
-      onTimeOrigin: onTimeOrigin ?? null,
-      phase: "stopping_timer",
-      stoppedTimer: null,
-      taskId: task.id,
-      terminalAction,
-    });
-    if (action.kind === "complete") setPendingCompleteAction(null);
     const stoppedTimer = await persistStoppedTaskTimer(task.id);
-    if (!stoppedTimer) {
-      setTimedCompletionIntent(null);
-      if (completePayload) setPendingCompleteAction(completePayload);
-      return "failed";
-    }
-    setTimedCompletionIntent({
-      completePayload,
-      completionError: null,
-      evidenceId: null,
-      latestTask: null,
-      occurrenceDueOn: stoppedTimer.occurrenceDueOn ?? null,
-      occurrenceKey: stoppedTimer.occurrenceKey ?? null,
-      onTimeOrigin: onTimeOrigin ?? null,
-      phase: "awaiting_evidence",
-      stoppedTimer,
-      taskId: task.id,
-      terminalAction,
-    });
-    setTaskActualTimeEntryPrefill({
-      durationSeconds: Math.max(0, stoppedTimer.elapsedSeconds),
-      occurrenceDueOn: stoppedTimer.occurrenceDueOn,
-      occurrenceKey: stoppedTimer.occurrenceKey,
-      source: "task_timer",
-      title: stoppedTimer.title,
-    });
-    setTaskActualTimeEntryTaskId(task.id);
-    return "staged";
+    if (!await recordStoppedTaskTimer(stoppedTimer)) return "failed";
+    clearOnTimeExecution(onTimeOrigin);
+    return "none";
   }
 
   function requestTaskTimerDiscard(taskId: string) {
@@ -4973,223 +4881,6 @@ export function TaskApp() {
     />
   );
 
-  async function logActualTimeForTask(
-    task: Task,
-    entry: { date: string; durationSeconds: number; notes: string; title: string },
-    evidence?: TaskDurationEvidence,
-    onEvidenceSaved?: (entryId: string) => void,
-  ) {
-    if (!currentUser || !supabase) {
-      return false;
-    }
-
-    const success = await handleManualFocusEntry({
-      categoryId: null,
-      date: entry.date,
-      durationSeconds: entry.durationSeconds,
-      focusType: "Work",
-      notes: entry.notes,
-      title: entry.title,
-    });
-
-    if (!success) {
-      return false;
-    }
-
-    const trustedEvidence = evidence ?? buildTaskDurationEvidence(task, "manual");
-    const { data: insertedEntry, error: actualTimeEntryError } = await supabase
-      .from("adhdice_task_actual_time_entries")
-      .insert({
-        task_id: task.id,
-        user_id: currentUser.id,
-        entry_date: entry.date,
-        title_snapshot: entry.title,
-        duration_seconds: entry.durationSeconds,
-        notes: entry.notes || null,
-        occurrence_due_on: trustedEvidence.occurrenceDueOn,
-        occurrence_key: trustedEvidence.occurrenceKey,
-        source: trustedEvidence.source,
-        estimate_eligible: trustedEvidence.estimateEligible,
-        exclusion_reason: null,
-      })
-      .select("*")
-      .single();
-
-    if (actualTimeEntryError) {
-      setMessage({ tone: "warn", text: actualTimeEntryError.message });
-      return false;
-    }
-
-    if (insertedEntry) {
-      setTaskActualTimeEntries((current) => [insertedEntry, ...current]);
-      onEvidenceSaved?.(insertedEntry.id);
-    }
-
-    const nextActualSeconds = (task.actual_seconds ?? 0) + entry.durationSeconds;
-    setTasks((current) => sortTasksForUi(current.map((currentTask) => (
-      currentTask.id === task.id
-        ? { ...currentTask, actual_seconds: nextActualSeconds }
-        : currentTask
-    ))));
-    await updateTask(task.id, {
-      actual_seconds: nextActualSeconds,
-    });
-
-    return true;
-  }
-
-  async function handleActualTimeEntrySave(entry: { date: string; durationSeconds: number; notes: string; title: string }) {
-    if (!taskForActualTimeEntry) {
-      return false;
-    }
-
-    const timedIntent = pendingTimedCompletionRef.current;
-    if (timedIntent && timedIntent.phase !== "awaiting_evidence") return false;
-    if (timedIntent) setTimedCompletionIntent({ ...timedIntent, phase: "saving_evidence" });
-    let evidenceId: string | null = null;
-    const success = await logActualTimeForTask(taskForActualTimeEntry, entry, taskActualTimeEntryPrefill?.occurrenceKey
-        ? {
-            estimateEligible: true,
-            occurrenceDueOn: taskActualTimeEntryPrefill.occurrenceDueOn ?? null,
-            occurrenceKey: taskActualTimeEntryPrefill.occurrenceKey,
-            source: taskActualTimeEntryPrefill.source ?? "manual",
-          }
-        : undefined, (insertedId) => { evidenceId = insertedId; });
-    if (!success) {
-      if (timedIntent) setTimedCompletionIntent({ ...timedIntent, phase: "awaiting_evidence" });
-      return false;
-    }
-    if (timedIntent) {
-      const { data: latestTask, error: latestTaskError } = await client
-        .from("adhdice_clean_tasks")
-        .select("*")
-        .eq("user_id", currentUserIdText)
-        .eq("id", timedIntent.taskId)
-        .single();
-      if (latestTaskError || !latestTask || !evidenceId) {
-        const failure = latestTaskError?.message ?? "Actual-time evidence saved, but the latest task row could not be loaded for completion.";
-        const fallbackTask = tasks.find((task) => task.id === timedIntent.taskId) ?? taskForActualTimeEntry;
-        setTimedCompletionIntent({ ...timedIntent, completionError: failure, evidenceId: evidenceId ?? "saved", latestTask: fallbackTask, phase: "failed_completion" });
-        return false;
-      }
-      setTasks((current) => sortTasksForUi(current.map((task) => task.id === latestTask.id ? latestTask : task)));
-      const savedIntent: TimedCompletionWorkflow<PendingCompleteAction> = { ...timedIntent, completionError: null, evidenceId, latestTask, phase: "evidence_saved_awaiting_completion" };
-      setTimedCompletionIntent(savedIntent);
-      const finalized = await finalizePendingTimedCompletion(savedIntent);
-      if (!finalized) {
-        return false;
-      }
-      setTimedCompletionIntent({ ...savedIntent, phase: "complete" });
-      setTimedCompletionIntent(null);
-    } else if (pendingOnTimeTimerSaveOriginRef.current) {
-      clearOnTimeExecution(pendingOnTimeTimerSaveOriginRef.current);
-      pendingOnTimeTimerSaveOriginRef.current = null;
-    }
-    setTaskActualTimeEntryTaskId(null);
-    setTaskActualTimeEntryPrefill(null);
-    return true;
-  }
-
-  async function finalizePendingTimedCompletion(intent: TimedCompletionWorkflow<PendingCompleteAction>) {
-    if (!isTimedCompletionEvidenceSaved(intent) || !intent.evidenceId || !intent.stoppedTimer) return false;
-    timedCompletionFailureRef.current = null;
-    let task = intent.latestTask;
-    if (!task) {
-      const { data, error } = await client.from("adhdice_clean_tasks").select("*").eq("user_id", currentUserIdText).eq("id", intent.taskId).single();
-      if (error) timedCompletionFailureRef.current = error.message;
-      task = data ?? null;
-    }
-    if (!task) {
-      const failure = timedCompletionFailureRef.current ?? "The task could not be found, so completion was not finalized.";
-      setMessage({ tone: "warn", text: failure });
-      setTimedCompletionIntent({ ...intent, completionError: failure, phase: "failed_completion" });
-      return false;
-    }
-    const completingIntent: TimedCompletionWorkflow<PendingCompleteAction> = { ...intent, completionError: null, latestTask: task, phase: "completing_task" };
-    setTimedCompletionIntent(completingIntent);
-    const finalized = intent.terminalAction === "complete"
-      ? await confirmPendingTaskComplete(true, task, intent.completePayload)
-      : await updateTaskStatus(task, intent.terminalAction, true, intent.onTimeOrigin ?? undefined);
-    if (finalized) return true;
-    const failure = timedCompletionFailureRef.current ?? "Task completion failed after actual-time evidence was saved.";
-    setTimedCompletionIntent({ ...completingIntent, completionError: failure, phase: "failed_completion" });
-    return false;
-  }
-
-  async function retryPendingTimedCompletion() {
-    const intent = pendingTimedCompletionRef.current;
-    if (!intent || intent.phase !== "failed_completion") return false;
-    const finalized = await finalizePendingTimedCompletion(intent);
-    if (!finalized) return false;
-    setTimedCompletionIntent(null);
-    setTaskActualTimeEntryTaskId(null);
-    setTaskActualTimeEntryPrefill(null);
-    return true;
-  }
-
-  async function clearActualTimeForTask(task: Task) {
-    setTasks((current) => sortTasksForUi(current.map((currentTask) => (
-      currentTask.id === task.id
-        ? { ...currentTask, actual_seconds: 0 }
-        : currentTask
-    ))));
-    await updateTask(task.id, {
-      actual_seconds: 0,
-    });
-    setMessage({ tone: "good", text: "Task actual time cleared." });
-    return true;
-  }
-
-  async function handleActualTimeEntryClear() {
-    if (!taskForActualTimeEntry) {
-      return false;
-    }
-
-    const success = await clearActualTimeForTask(taskForActualTimeEntry);
-    if (success) {
-      closeActualTimeEntry();
-    }
-    return success;
-  }
-
-  async function deleteTaskActualTimeEntry(entryId: string) {
-    if (!supabase || !currentUser) {
-      return false;
-    }
-
-    const entry = taskActualTimeEntries.find((currentEntry) => currentEntry.id === entryId);
-    if (!entry) {
-      return false;
-    }
-
-    const task = tasks.find((currentTask) => currentTask.id === entry.task_id);
-    if (!task) {
-      return false;
-    }
-
-    const { error } = await supabase
-      .from("adhdice_task_actual_time_entries")
-      .delete()
-      .eq("id", entryId)
-      .eq("user_id", currentUser.id);
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return false;
-    }
-
-    setTaskActualTimeEntries((current) => current.filter((currentEntry) => currentEntry.id !== entryId));
-    const nextActualSeconds = Math.max(0, (task.actual_seconds ?? 0) - entry.duration_seconds);
-    setTasks((current) => sortTasksForUi(current.map((currentTask) => (
-      currentTask.id === task.id
-        ? { ...currentTask, actual_seconds: nextActualSeconds }
-        : currentTask
-    ))));
-    await updateTask(task.id, { actual_seconds: nextActualSeconds });
-    setMessage({ tone: "good", text: "Saved actual-time entry deleted." });
-    return true;
-  }
-
   function handleFocusPlannerFinish() {
     void saveFocusSelection(focusDraftIds);
     setShowFocusPlanner(false);
@@ -5201,14 +4892,6 @@ export function TaskApp() {
           ? "Focus list updated."
           : "Focus list set for today.",
     });
-  }
-
-  async function handleTaskEditorActualTimeLog(entry: { date: string; durationSeconds: number; notes: string; title: string }) {
-    if (!selectedTaskForEditor) {
-      return false;
-    }
-
-    return await logActualTimeForTask(selectedTaskForEditor, entry);
   }
 
   async function handleTaskEditorSave(draft: {
@@ -5292,30 +4975,6 @@ export function TaskApp() {
     const task = tasks.find((entry) => entry.id === taskId);
   }
 
-  async function closeActualTimeEntry() {
-    const timedIntent = pendingTimedCompletionRef.current;
-    if (timedIntent) {
-      if (isTimedCompletionEvidenceSaved(timedIntent)) {
-        return;
-      }
-      if (!timedIntent.stoppedTimer) return;
-      const restored = await persistRestoredTaskTimer(timedIntent.stoppedTimer);
-      if (!restored) {
-        return;
-      }
-      if (timedIntent.terminalAction === "complete") {
-        const pendingTask = tasks.find((task) => task.id === timedIntent.taskId);
-        if (timedIntent.completePayload?.source === "editor" && pendingTask) {
-          setTaskEditorStatusResetSignal((current) => ({ status: pendingTask.status, taskId: pendingTask.id, token: (current?.token ?? 0) + 1 }));
-        }
-      }
-      setTimedCompletionIntent(null);
-    }
-    pendingOnTimeTimerSaveOriginRef.current = null;
-    setTaskActualTimeEntryTaskId(null);
-    setTaskActualTimeEntryPrefill(null);
-  }
-
   function openBatchDeleteModal() {
     setIsBatchDeleteModalOpen(true);
   }
@@ -5393,7 +5052,6 @@ export function TaskApp() {
   async function confirmPendingTaskComplete(bypassTimedCompletion = false, authoritativeTask?: Task, actionOverride?: PendingCompleteAction | null) {
     const completeAction = actionOverride ?? pendingCompleteAction;
     const fail = (text: string) => {
-      timedCompletionFailureRef.current = text;
       setMessage({ tone: "warn", text });
       return false;
     };
@@ -5538,8 +5196,8 @@ export function TaskApp() {
 
     const linkedNoteIds = completeAction.linkedNoteIds ?? [];
     const subtasks = completeAction.subtasks ?? [];
-    const historyEntries = completeAuthority?.mutationPlan.historyInserts.length
-      ? completeAuthority.mutationPlan.historyInserts
+    const historyEntries = completeAuthority?.mutationPlan.historyIntents.length
+      ? completeAuthority.mutationPlan.historyIntents
       : [buildCompleteHistoryPayload({
         due_on: completeUpdateValues.due_on ?? task.due_on,
         id: task.id,
@@ -5745,7 +5403,7 @@ export function TaskApp() {
         setTaskHistory((current) => {
           const next = new Map(current.map((entry) => [`${entry.task_id}:${entry.entry_date}`, entry] as const));
           for (const row of optimisticActionHistoryRows) {
-            const historyInsert = taskStateHistoryRowToInsert(row, currentUserIdText);
+            const historyInsert = taskStateHistoryRowToCanonicalIntent(row, currentUserIdText);
             next.set(`${row.taskId}:${row.logicalDate}`, {
               ...historyInsert,
               created_at: row.occurredAt,
@@ -5764,7 +5422,7 @@ export function TaskApp() {
         updateTaskHistoryForTask(task.id, (current) => {
           const next = new Map(current.map((entry) => [`${entry.task_id}:${entry.entry_date}`, entry] as const));
           for (const row of optimisticActionHistoryRows) {
-            const historyInsert = taskStateHistoryRowToInsert(row, currentUserIdText);
+            const historyInsert = taskStateHistoryRowToCanonicalIntent(row, currentUserIdText);
             next.set(`${row.taskId}:${row.logicalDate}`, {
               ...historyInsert,
               created_at: row.occurredAt,
@@ -5791,8 +5449,8 @@ export function TaskApp() {
           ...(action ? {
             engineManaged: true,
             historyStatus: actionHistoryStatus,
-            historyEntry: action.mutationPlan.historyInserts.find((entry) => entry.status === status),
-            historyEntries: action.mutationPlan.historyInserts,
+            historyEntry: action.mutationPlan.historyIntents.find((entry) => entry.status === status),
+            historyEntries: action.mutationPlan.historyIntents,
             historySnapshot: scopedHistory,
             rewardEligible: action.rewardEligibility.eligible,
           } : {}),
@@ -6070,25 +5728,6 @@ export function TaskApp() {
     setTaskHistoryModalTaskId(null);
   }
 
-  const actualTimeEntryFlow = taskForActualTimeEntry ? {
-    categories: focusCategories,
-    initialDurationSeconds: taskActualTimeEntryPrefill?.durationSeconds,
-    initialTitle: taskActualTimeEntryPrefill?.title || taskForActualTimeEntry.title,
-    onClear: handleActualTimeEntryClear,
-    labelOptions: taskFocusLabelOptions,
-    completionError: pendingTimedCompletion?.completionError ?? null,
-    mode: pendingTimedCompletion?.phase === "failed_completion"
-      ? "failed_completion" as const
-      : pendingTimedCompletion?.phase === "evidence_saved_awaiting_completion" || pendingTimedCompletion?.phase === "completing_task"
-        ? "completing" as const
-        : pendingTimedCompletion?.phase === "saving_evidence"
-          ? "saving_evidence" as const
-          : "entry" as const,
-    onClose: closeActualTimeEntry,
-    onRetryCompletion: retryPendingTimedCompletion,
-    onSave: handleActualTimeEntrySave,
-  } : null;
-
   const batchDeleteFlow = isBatchDeleteModalOpen ? {
     count: selectedListTaskIds.length,
     onClose: closeBatchDeleteModal,
@@ -6129,13 +5768,10 @@ export function TaskApp() {
     allTags: allTaskTags,
     client,
     currentUser,
-    focusCategories,
     focusedToday: focusedTaskIds,
-    focusLabelOptions: taskFocusLabelOptions,
     mode: taskEditorMode,
     initialDraftOverride: taskEditorInitialDraft,
     onClose: closeTaskEditorWithReset,
-    onLogActualTime: handleTaskEditorActualTimeLog,
     onOpenHistory: selectedTaskForEditor ? openSelectedTaskHistory : undefined,
     onSave: handleTaskEditorSave,
     statusResetSignal: taskEditorStatusResetSignal,
@@ -6481,7 +6117,6 @@ export function TaskApp() {
   const taskWorkspaceFlowLayer = (
     <>
       <TaskEditFlows
-        actualTimeEntryFlow={actualTimeEntryFlow}
         batchDeleteFlow={batchDeleteFlow}
         batchEditFlow={batchEditFlow}
         completeFlow={(() => {
@@ -6582,7 +6217,6 @@ export function TaskApp() {
           milestonePromotionTaskIds={milestonePromotionTaskIds}
           onCreateChildTask={createChildTaskFromPreview}
           onCreateTaskList={async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null })}
-          onDeleteTaskActualTimeEntry={(entryId) => { void deleteTaskActualTimeEntry(entryId); }}
           onDetachAndPromoteTaskToMilestone={requestDetachAndPromoteMilestone}
           onDiscardTaskTimer={requestTaskTimerDiscard}
           onDuplicateTask={(taskId) => {
@@ -6598,15 +6232,6 @@ export function TaskApp() {
             closeSharedTaskEditorOverlay();
             setNotePageOpenNoteId(noteId);
             setActivePage("Notes");
-          }}
-          onOpenTaskActualTime={(taskId, options) => {
-            setTaskActualTimeEntryPrefill(options?.durationSeconds && options.durationSeconds > 0
-              ? {
-                  durationSeconds: options.durationSeconds,
-                  title: options.title ?? tasks.find((entry) => entry.id === taskId)?.title ?? "",
-                }
-              : null);
-            setTaskActualTimeEntryTaskId(taskId);
           }}
           onOpenTaskHistory={openTaskHistoryForTask}
           onPauseTaskTimer={pauseHudTaskTimer}
@@ -6655,7 +6280,6 @@ export function TaskApp() {
           runningTaskTimers={runningTaskTimers}
           selectedTaskIds={[]}
           showHeader={false}
-          taskActualTimeEntriesByTaskId={taskActualTimeEntriesByTaskId}
         />
       ) : null}
       {isAccountOpen ? (
@@ -6915,9 +6539,7 @@ export function TaskApp() {
             onCloseTab={closeTaskWorkspaceTab}
             onTimeWorkspacePanel={(
               <OnTimePlannerWorkspace
-                actualTimeEntries={taskActualTimeEntries}
                 error={onTimePlan.error}
-                learnedStatisticsByTaskId={learnedTaskDurationStatisticsByTaskId}
                 onOpenTask={openTaskInSharedTasksEditorFromOnTime}
                 onSetTaskStatus={(task, status, origin) => { void updateTaskStatus(task, status, false, origin); }}
                 onPauseTimer={pauseHudTaskTimer}
@@ -7031,7 +6653,6 @@ export function TaskApp() {
                   onCreateChildTask: createChildTaskFromPreview,
                   onClearSelection: clearListTaskSelection,
                   onNextTaskTimer: () => cycleHudTaskTimer("next"),
-                  onDeleteTaskActualTimeEntry: (entryId) => { void deleteTaskActualTimeEntry(entryId); },
                   onOpenBatchDelete: openBatchDeleteModal,
                   onOpenBatchEdit: openBatchEditModal,
                   onOpenDeleteTask: (taskId) => { void openSingleTaskDeleteModal(taskId); },
@@ -7044,15 +6665,6 @@ export function TaskApp() {
                   onStartTaskTimer: startHudTaskTimer,
                   onStopTaskTimer: stopHudTaskTimer,
                   onDiscardTaskTimer: requestTaskTimerDiscard,
-                  onOpenTaskActualTime: (taskId, options) => {
-                    setTaskActualTimeEntryPrefill(options?.durationSeconds && options.durationSeconds > 0
-                      ? {
-                          durationSeconds: options.durationSeconds,
-                          title: options.title ?? tasks.find((entry) => entry.id === taskId)?.title ?? "",
-                        }
-                      : null);
-                    setTaskActualTimeEntryTaskId(taskId);
-                  },
                   onOpenNote: (noteId) => {
                     setNotePageOpenNoteId(noteId);
                     setActivePage("Notes");
@@ -7063,8 +6675,6 @@ export function TaskApp() {
                   onSetEnergy: (taskId, energy) => { void updateTask(taskId, { energy }); },
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
                   onSetActualSeconds: (taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); },
-                  taskActualTimeEntriesByTaskId,
-                  learnedTaskDurationStatisticsByTaskId,
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: openSharedTaskEditor,
                   onOpenTaskInNewTab: openTaskInNewWorkspaceTab,
@@ -7203,7 +6813,6 @@ export function TaskApp() {
                   onCreateChildTask: createChildTaskFromPreview,
                   onClearSelection: clearListTaskSelection,
                   onNextTaskTimer: () => cycleHudTaskTimer("next"),
-                  onDeleteTaskActualTimeEntry: (entryId) => { void deleteTaskActualTimeEntry(entryId); },
                   onOpenBatchDelete: openBatchDeleteModal,
                   onOpenBatchEdit: openBatchEditModal,
                   onOpenDeleteTask: (taskId) => { void openSingleTaskDeleteModal(taskId); },
@@ -7216,15 +6825,6 @@ export function TaskApp() {
                   onStartTaskTimer: startHudTaskTimer,
                   onStopTaskTimer: stopHudTaskTimer,
                   onDiscardTaskTimer: requestTaskTimerDiscard,
-                  onOpenTaskActualTime: (taskId, options) => {
-                    setTaskActualTimeEntryPrefill(options?.durationSeconds && options.durationSeconds > 0
-                      ? {
-                          durationSeconds: options.durationSeconds,
-                          title: options.title ?? tasks.find((entry) => entry.id === taskId)?.title ?? "",
-                        }
-                      : null);
-                    setTaskActualTimeEntryTaskId(taskId);
-                  },
                   onOpenNote: (noteId) => {
                     setNotePageOpenNoteId(noteId);
                     setActivePage("Notes");
@@ -7235,8 +6835,6 @@ export function TaskApp() {
                   onSetEnergy: (taskId, energy) => { void updateTask(taskId, { energy }); },
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
                   onSetActualSeconds: (taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); },
-                  taskActualTimeEntriesByTaskId,
-                  learnedTaskDurationStatisticsByTaskId,
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: (taskId) => setRequestedListOverlayTaskId(taskId),
                   onOpenTaskInNewTab: openTaskInNewWorkspaceTab,

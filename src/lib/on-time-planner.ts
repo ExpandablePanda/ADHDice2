@@ -1,8 +1,21 @@
 import type { OnTimeExecutionSnapshot, OnTimePlanItem } from "@/lib/on-time-plan-state";
 import type { RunningTaskTimer } from "@/components/ui/task-management-table-v2";
-import type { Task, TaskActualTimeEntry } from "@/lib/database.types";
-import { buildTaskOccurrenceIdentity } from "@/lib/task-duration-evidence";
+import type { Task } from "@/lib/database.types";
 import { reorderListItems } from "@/lib/list-reorder";
+
+export function buildTaskOccurrenceIdentity(
+  task: Pick<Task, "active_occurrence_due_on" | "due_on" | "id" | "repeat_frequency">,
+) {
+  const occurrenceDueOn = task.repeat_frequency === "none"
+    ? null
+    : task.active_occurrence_due_on ?? task.due_on ?? null;
+  return {
+    occurrenceDueOn,
+    occurrenceKey: task.repeat_frequency === "none"
+      ? `lifetime:${task.id}`
+      : occurrenceDueOn ? `occurrence:${occurrenceDueOn}` : null,
+  };
+}
 
 export type OnTimeScheduleState = "ahead" | "on_schedule" | "tight" | "behind" | "leave_now" | "incomplete";
 
@@ -212,12 +225,10 @@ export function isLinkedItemOccurrenceCurrent(item: Extract<OnTimePlanItem, { ki
 }
 
 export function getOnTimeElapsedSecondsByItemId({
-  entries,
   items,
   now,
   timers,
 }: {
-  entries: TaskActualTimeEntry[];
   items: OnTimePlanItem[];
   now: number;
   timers: RunningTaskTimer[];
@@ -225,18 +236,12 @@ export function getOnTimeElapsedSecondsByItemId({
   const result: Record<string, number> = {};
   for (const item of items) {
     if (item.kind !== "task" || !item.occurrenceKey) continue;
-    const saved = entries.reduce((total, entry) => total + (
-      entry.task_id === item.taskId
-      && entry.source === "task_timer"
-      && occurrenceIdentityMatches(item, { occurrenceKey: entry.occurrence_key, occurrenceDueOn: entry.occurrence_due_on })
-        ? Math.max(0, entry.duration_seconds) : 0
-    ), 0);
     const active = timers.reduce((total, timer) => {
       if (timer.taskId !== item.taskId || !occurrenceIdentityMatches(item, timer)) return total;
       const displayed = timer.baseSeconds + Math.max(0, Math.floor(((timer.pausedAt ?? now) - timer.startedAt) / 1000));
       return total + Math.max(displayed - timer.startedActualSeconds, 0);
     }, 0);
-    result[item.id] = saved + active;
+    result[item.id] = active;
   }
   return result;
 }

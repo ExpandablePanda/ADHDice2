@@ -2,7 +2,7 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import type { BatchTaskEditDraft } from "@/components/task-app/task-batch-edit-modal";
-import type { Task, TaskHistory, TaskHistoryInsert, TaskStatus, TaskUpdate } from "@/lib/database.types";
+import type { Task, TaskHistory, TaskHistoryActionInput, TaskStatus, TaskUpdate } from "@/lib/database.types";
 import type { TaskRowUpdateOptions } from "@/lib/task-db-mutations";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import { buildTaskPriorityUpdate } from "@/lib/task-priority";
@@ -54,8 +54,8 @@ type UseTaskBatchEditActionOptions = {
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
-  syncTaskHistoryEntry: (taskId: string, status: TaskStatus, occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryInsert; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
-  syncTaskHistoryEntries?: (taskId: string, status: TaskStatus, entryDates: string[], options?: { historyEntries?: TaskHistoryInsert[]; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
+  syncTaskHistoryEntry: (taskId: string, status: TaskStatus, occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryActionInput; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
+  syncTaskHistoryEntries?: (taskId: string, status: TaskStatus, entryDates: string[], options?: { historyEntries?: TaskHistoryActionInput[]; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
   taskHistory?: TaskHistory[];
   tasks: Task[];
   loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<TaskHistoryLoadMap>;
@@ -305,7 +305,7 @@ export function useTaskBatchEditAction({
             }
 
             if (!dueDateOnlyEdit && draft.status !== "unchanged") {
-              const historyEntries = actionAuthority?.mutationPlan.historyInserts;
+              const historyEntries = actionAuthority?.mutationPlan.historyIntents;
               const historySaved = historyEntries?.length && syncTaskHistoryEntries
                 ? await syncTaskHistoryEntries(task.id, data.status, historyEntries.map((entry) => entry.entry_date), { historyEntries, historySnapshot: scopedHistory })
                 : await syncTaskHistoryEntry(task.id, data.status, task, historyEntries?.[0]

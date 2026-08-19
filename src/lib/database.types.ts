@@ -532,7 +532,7 @@ export type TaskHistory = {
 
 export type TaskHistoryEventType = "status" | "completed_permanently";
 
-export type TaskHistoryInsert = {
+export type TaskHistoryActionInput = {
   id?: string;
   task_id: string;
   user_id: string;
@@ -544,10 +544,6 @@ export type TaskHistoryInsert = {
   counted_as_due_occurrence?: boolean;
   was_completed?: boolean;
 };
-
-export type TaskHistoryUpdate = Partial<
-  Pick<TaskHistory, "status" | "event_type" | "counted_as_due_occurrence" | "was_completed" | "occurrence_key" | "occurrence_due_on">
->;
 
 export type MilestoneStatus = "active" | "completed" | "abandoned";
 export type MilestoneTier = "bronze" | "silver" | "gold" | "platinum";
@@ -703,45 +699,6 @@ export type MilestoneReminderInsert = Omit<
 
 export type MilestoneReminderUpdate = Partial<
   Pick<MilestoneReminder, "status" | "delivered_at" | "dismissed_at" | "canceled_at">
->;
-
-export type TaskActualTimeEntry = {
-  id: string;
-  task_id: string;
-  user_id: string;
-  entry_date: string;
-  title_snapshot: string;
-  duration_seconds: number;
-  notes: string | null;
-  occurrence_key: string | null;
-  occurrence_due_on: string | null;
-  source: "task_timer" | "manual" | "import" | "legacy";
-  estimate_eligible: boolean;
-  exclusion_reason: string | null;
-  completion_history_id: string | null;
-  completion_completed_at: string | null;
-  created_at: string;
-};
-
-export type TaskActualTimeEntryInsert = {
-  id?: string;
-  task_id: string;
-  user_id: string;
-  entry_date: string;
-  title_snapshot: string;
-  duration_seconds: number;
-  notes?: string | null;
-  occurrence_key?: string | null;
-  occurrence_due_on?: string | null;
-  source?: TaskActualTimeEntry["source"];
-  estimate_eligible?: boolean;
-  exclusion_reason?: string | null;
-  completion_history_id?: string | null;
-  completion_completed_at?: string | null;
-};
-
-export type TaskActualTimeEntryUpdate = Partial<
-  Pick<TaskActualTimeEntry, "entry_date" | "title_snapshot" | "duration_seconds" | "notes" | "estimate_eligible" | "exclusion_reason" | "completion_history_id" | "completion_completed_at">
 >;
 
 export type UserProfile = {
@@ -1133,26 +1090,6 @@ export type FocusRuntimeOperation = {
   result_payload: unknown;
   created_at: string;
 };
-
-export type PrizeCell = {
-  id: string;
-  user_id: string;
-  cell_number: number;
-  label: string;
-  is_claimed: boolean;
-  created_at: string;
-  updated_at: string;
-};
-
-export type PrizeCellInsert = {
-  id?: string;
-  user_id: string;
-  cell_number: number;
-  label?: string;
-  is_claimed?: boolean;
-};
-
-export type PrizeCellUpdate = Partial<Pick<PrizeCell, "label" | "is_claimed">>;
 
 export type RollHistoryEntry = {
   id: string;
@@ -2130,12 +2067,6 @@ export type Database = {
         Update: LegacySubtaskPromotionUpdate;
         Relationships: [];
       };
-      adhdice_task_history: {
-        Row: TaskHistory;
-        Insert: TaskHistoryInsert;
-        Update: TaskHistoryUpdate;
-        Relationships: [];
-      };
       adhdice_task_command_operations: {
         Row: CanonicalTaskCommandOperation;
         Insert: Partial<CanonicalTaskCommandOperation>;
@@ -2242,12 +2173,6 @@ export type Database = {
         Row: MilestoneReminder;
         Insert: MilestoneReminderInsert;
         Update: MilestoneReminderUpdate;
-        Relationships: [];
-      };
-      adhdice_task_actual_time_entries: {
-        Row: TaskActualTimeEntry;
-        Insert: TaskActualTimeEntryInsert;
-        Update: TaskActualTimeEntryUpdate;
         Relationships: [];
       };
       adhdice_task_focus_days: {
@@ -2548,12 +2473,6 @@ export type Database = {
         Row: AchievementNotification;
         Insert: AchievementNotificationInsert;
         Update: AchievementNotificationUpdate;
-        Relationships: [];
-      };
-      adhdice_prize_board: {
-        Row: PrizeCell;
-        Insert: PrizeCellInsert;
-        Update: PrizeCellUpdate;
         Relationships: [];
       };
       adhdice_roll_history: {

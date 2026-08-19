@@ -1,18 +1,12 @@
 "use client";
 
 import type { ComponentProps } from "react";
-import { ManualEntryModal } from "../focus-modals";
 import { ModalShell } from "../modal-shell";
 import { FocusPlannerModalAdapter as FocusPlannerModal, MomentumTaskModal, TaskHistoryModal } from "./task-view-adapters";
 import { TaskBatchEditModal } from "./task-batch-edit-modal";
 import { TaskEditorModal } from "./task-editor-modal";
 
 type TaskEditFlowsProps = {
-  actualTimeEntryFlow: ({
-    initialDurationSeconds?: number;
-    initialTitle: string;
-    onClose: () => void;
-  } & ComponentProps<typeof ManualEntryModal>) | null;
   batchDeleteFlow: {
     count: number;
     onClose: () => void;
@@ -37,7 +31,6 @@ type TaskEditFlowsProps = {
 };
 
 export function TaskEditFlows({
-  actualTimeEntryFlow,
   batchDeleteFlow,
   batchEditFlow,
   completeFlow,
@@ -50,14 +43,6 @@ export function TaskEditFlows({
     <>
       {focusPlannerFlow ? <FocusPlannerModal {...focusPlannerFlow} /> : null}
       {taskEditorFlow ? <TaskEditorModal {...taskEditorFlow} /> : null}
-      {actualTimeEntryFlow ? (
-        <ManualEntryModal
-          {...actualTimeEntryFlow}
-          initialDurationSeconds={actualTimeEntryFlow.initialDurationSeconds}
-          initialTitle={actualTimeEntryFlow.initialTitle}
-          onClose={actualTimeEntryFlow.onClose}
-        />
-      ) : null}
       {batchEditFlow ? <TaskBatchEditModal {...batchEditFlow} /> : null}
       {batchDeleteFlow ? (
         <ModalShell className="w-full max-w-lg rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Delete selected tasks" onClose={batchDeleteFlow.onClose}>

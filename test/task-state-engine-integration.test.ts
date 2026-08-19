@@ -74,7 +74,7 @@ test("due-date-only change derives future status without promoting ambiguous old
   assert.equal(authority?.mutationPlan.taskUpdate.due_on, "2026-08-30");
   assert.notEqual(authority?.mutationPlan.taskUpdate.status, "missed");
   assert.equal(authority?.mutationPlan.taskUpdate.status, "not_due");
-  assert.deepEqual(authority?.mutationPlan.historyInserts, []);
+  assert.deepEqual(authority?.mutationPlan.historyIntents, []);
   assert.deepEqual(authority?.proposedHistoryChanges, []);
   assert.equal(JSON.stringify(historyRows), historySnapshot);
   assert.deepEqual(historyRows.map((row) => [row.entry_date, row.status]), [
@@ -100,7 +100,7 @@ test("moving a future task back to today preserves an unresolved Missed chain", 
 
   assert.equal(authority?.activeStatus, "missed");
   assert.equal(authority?.mutationPlan.taskUpdate.status, "missed");
-  assert.equal(authority?.mutationPlan.historyInserts.length, 0);
+  assert.equal(authority?.mutationPlan.historyIntents.length, 0);
 });
 
 test("a concrete active Missed occurrence remains Missed through a schedule edit", () => {
@@ -121,7 +121,7 @@ test("a concrete active Missed occurrence remains Missed through a schedule edit
 
   assert.equal(authority?.activeStatus, "missed");
   assert.equal(authority?.mutationPlan.taskUpdate.status, "missed");
-  assert.equal(authority?.mutationPlan.historyInserts.length, 0);
+  assert.equal(authority?.mutationPlan.historyIntents.length, 0);
 });
 
 test("explicit Missed status actions still carry status intent and History", () => {
@@ -136,7 +136,7 @@ test("explicit Missed status actions still carry status intent and History", () 
   });
 
   assert.equal(action?.mutationPlan.taskUpdate.status, "missed");
-  assert.deepEqual(action?.mutationPlan.historyInserts.map((row) => [row.entry_date, row.status]), [["2026-08-05", "missed"]]);
+  assert.deepEqual(action?.mutationPlan.historyIntents.map((row) => [row.entry_date, row.status]), [["2026-08-05", "missed"]]);
 });
 
 test("Calendar authority gives explicit History precedence over virtual states", () => {

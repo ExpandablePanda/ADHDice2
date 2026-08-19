@@ -4,7 +4,7 @@ export { allowedOutcomes, isScheduledOccurrence, occurrenceIdentity, scheduledOc
 /** Explicit migration/import/test compatibility only; never a live authority. */
 export { adaptLegacyTaskState } from "./legacy-adapter.ts";
 export { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
-export { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, taskStateHistoryRowToInsert } from "./action-authority.ts";
+export { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, taskStateHistoryRowToCanonicalIntent } from "./action-authority.ts";
 export { createEngineRolloverPlan, engineRolloverPlanHasMutations, engineRolloverPlanTaskMutationCandidates } from "./rollover-authority.ts";
 export type { EngineRolloverPlan, EngineRolloverTaskPlan } from "./rollover-authority.ts";
 export { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead, resolveTaskHistoryCalendarStates } from "./calendar-authority.ts";

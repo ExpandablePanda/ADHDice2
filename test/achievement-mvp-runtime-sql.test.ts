@@ -98,12 +98,11 @@ test("canonical Task History facts and completed Focus sessions capture through 
   assert.match(migration, /after insert or update of entity_id, entity_kind, logical_date, outcome, event_kind,[\s\S]*on public\.adhdice_task_history_facts/);
   assert.match(migration, /after insert or update of duration_seconds, session_date, title_snapshot, ended_at[\s\S]*on public\.adhdice_focus_sessions/);
   assert.doesNotMatch(migration, /adhdice_task_subtasks/);
-  assert.match(migration, /drop trigger if exists adhdice_capture_task_achievement_runtime on public\.adhdice_task_history;/);
-  assert.match(migration, /drop trigger if exists adhdice_deactivate_deleted_task_achievement_runtime on public\.adhdice_task_history;/);
   assert.match(migration, /after delete on public\.adhdice_task_history_facts/);
   assert.match(migration, /after delete on public\.adhdice_focus_sessions/);
   assert.match(migration, /not exists \(select 1 from public\.adhdice_clean_tasks where id=old\.entity_id/);
-  assert.match(schema, /after insert or update of status, was_completed, occurrence_key, occurrence_due_on\s+on public\.adhdice_task_history[\s\S]*adhdice_link_task_duration_evidence/);
+  assert.match(schema, /after insert or update of entity_id, entity_kind, logical_date, outcome, event_kind,[\s\S]*on public\.adhdice_task_history_facts/);
+  assert.doesNotMatch(schema, /on public\.adhdice_task_history\b/);
 });
 
 test("activation uses source creation and stored logical-date gates", () => {

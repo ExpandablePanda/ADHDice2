@@ -4,6 +4,7 @@ import test from "node:test";
 
 const runtime = readFileSync("supabase/add_achievement_mvp_runtime.sql", "utf8");
 const patch = readFileSync("supabase/patch_achievement_canonical_history_7_9_44.sql", "utf8");
+const purge = readFileSync("supabase/purge_dead_architecture_7_9_49.sql", "utf8");
 const schema = readFileSync("supabase/schema.sql", "utf8");
 const renamedParameter = ["p_history", "fact_id"].join("_");
 
@@ -162,12 +163,12 @@ test("canonical INSERT/UPDATE and DELETE triggers drive capture, evaluation, and
   assert.match(deactivate, /adhdice_evaluate_achievements/);
 });
 
-test("Focus capture remains on Focus sessions and old History duration integration remains", () => {
+test("Focus capture remains on Focus sessions while old History duration integration is retired", () => {
   const focusCapture = extractFunction(runtime, "adhdice_capture_focus_achievement_occurrence");
   assert.match(focusCapture, /public\.adhdice_focus_sessions/);
   assert.match(runtime, /on public\.adhdice_focus_sessions for each row/);
-  assert.match(schema, /adhdice_link_task_duration_evidence/);
-  assert.match(schema, /on public\.adhdice_task_history/);
+  assert.doesNotMatch(schema, /adhdice_link_task_duration_evidence/);
+  assert.doesNotMatch(schema, /on public\.adhdice_task_history\b/);
 });
 
 test("recalculation is canonical-only, resumable, Step-set-aware, and award-preserving", () => {
@@ -201,11 +202,11 @@ test("7.9.48 reconciliation derives missed evidence and is idempotent without ha
   assert.match(runtime, /on conflict \(user_id, collection_id, mastery_version\) do nothing/);
 });
 
-test("old Achievement triggers are explicitly removed without dropping the legacy table", () => {
-  assert.match(patch, /drop trigger if exists adhdice_capture_task_achievement_runtime on public\.adhdice_task_history/);
-  assert.match(patch, /drop trigger if exists adhdice_deactivate_deleted_task_achievement_runtime on public\.adhdice_task_history/);
-  assert.doesNotMatch(patch, /drop table public\.adhdice_task_history/);
-  assert.doesNotMatch(patch, /drop trigger if exists adhddice_link_task_duration_evidence/);
+test("old Achievement triggers and tables are explicitly retired by the purge", () => {
+  assert.match(purge, /drop trigger if exists adhdice_capture_task_achievement_runtime on public\.adhdice_task_history/);
+  assert.match(purge, /drop trigger if exists adhdice_deactivate_deleted_task_achievement_runtime on public\.adhdice_task_history/);
+  assert.match(purge, /drop table if exists public\.adhdice_task_history;/);
+  assert.match(purge, /drop function if exists public\.adhdice_link_task_duration_evidence/);
 });
 
 test("runtime and consolidated schema stay aligned", () => {

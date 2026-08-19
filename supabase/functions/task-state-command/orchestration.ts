@@ -212,7 +212,6 @@ export async function executeTrustedTaskStateCommand(input: {
   const readResult = await dependencies.loadCanonicalState(input.adminClient, {
     userId: input.userId,
     taskId: input.intent.task_id,
-    includeLegacyHistoryEvidence: false,
   });
   if (readResult.error || !readResult.data) {
     return errorResponse("canonical_state_unavailable", "Canonical Task State is unavailable.", 503);

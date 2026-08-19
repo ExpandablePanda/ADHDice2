@@ -18,7 +18,7 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { Task, TaskActualTimeEntry, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import { getSelectableTaskDisplayStatuses } from "@/lib/task-complete";
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
@@ -289,7 +289,6 @@ type TasksTableSourceProps = {
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenFocusTimer?: (taskId: string) => void;
   onOpenNote?: (noteId: string) => void;
-  onOpenTaskActualTime?: (taskId: string, options?: { durationSeconds?: number; title?: string }) => void;
   onOpenBatchDelete?: () => void;
   onOpenBatchEdit?: () => void;
   onOpenDeleteTask?: (taskId: string) => void;
@@ -314,7 +313,6 @@ type TasksTableSourceProps = {
   onNextTaskTimer?: () => void;
   onPreviousTaskTimer?: () => void;
   onClearSelection?: () => void;
-  onDeleteTaskActualTimeEntry?: (entryId: string) => void;
   onSetActualSeconds?: (taskId: string, seconds: number) => void;
   onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }, options?: { manualAction?: "unscheduled_status" }) => void;
   onSetEnergy?: (taskId: string, energy: PrototypeTaskRow["energy"]) => void;
@@ -350,8 +348,6 @@ type TasksTableSourceProps = {
   onToggleTaskList?: (taskId: string, listId: string) => void;
   selectedTaskIds?: string[];
   requestedOpenTaskId?: string | null;
-  taskActualTimeEntriesByTaskId?: Record<string, TaskActualTimeEntry[]>;
-  learnedTaskDurationStatisticsByTaskId?: Record<string, { averageSeconds: number | null; completedSampleCount: number; latestSeconds: number | null; typicalSeconds: number | null }>;
   runningTaskTimers?: RunningTaskTimer[];
   activeTaskTimerIndex?: number;
   requestedOpenTask?: Task | null;
@@ -628,7 +624,6 @@ export function TasksTableAdapter({
           onOpenTaskHistory={tableProps.onOpenTaskHistory}
           onOpenFocusTimer={tableProps.onOpenFocusTimer}
           onOpenNote={tableProps.onOpenNote}
-          onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
           onOpenTaskEditor={tableProps.onOpenTaskEditor}
           onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
           onOpenChildTask={tableProps.onOpenChildTask}
@@ -644,15 +639,12 @@ export function TasksTableAdapter({
           onDismissDetachedTask={tableProps.onDismissDetachedTask}
           onNextTaskTimer={tableProps.onNextTaskTimer}
           onPreviousTaskTimer={tableProps.onPreviousTaskTimer}
-          onDeleteTaskActualTimeEntry={tableProps.onDeleteTaskActualTimeEntry}
           onPauseTaskTimer={tableProps.onPauseTaskTimer}
           onResumeTaskTimer={tableProps.onResumeTaskTimer}
           onStartTaskTimer={tableProps.onStartTaskTimer}
           onStopTaskTimer={tableProps.onStopTaskTimer}
           onDiscardTaskTimer={tableProps.onDiscardTaskTimer}
           onTaskActualSecondsChange={tableProps.onSetActualSeconds}
-          taskActualTimeEntriesByTaskId={tableProps.taskActualTimeEntriesByTaskId}
-          learnedTaskDurationStatisticsByTaskId={tableProps.learnedTaskDurationStatisticsByTaskId}
           onTaskDueChange={tableProps.onSetDue}
           onTaskEnergyChange={tableProps.onSetEnergy}
           onTaskEstimatedMinutesChange={tableProps.onSetEstimatedMinutes}
@@ -942,7 +934,6 @@ function StepsCardPreview({
   onOpenQuickPanel,
   onRenameStep,
   onReorderStep,
-  onOpenActualTime,
   onDelayTaskUntil,
   onSetActualSeconds,
   onSetDue,
@@ -993,7 +984,6 @@ function StepsCardPreview({
   onOpenQuickPanel: (taskId: string, mode: ListQuickPanelMode) => void;
   onRenameStep?: (taskId: string, title: string) => void;
   onReorderStep?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
-  onOpenActualTime?: (taskId: string) => void;
   onDelayTaskUntil?: (taskId: string, dueOn: string | null) => Promise<boolean> | boolean;
   onSetActualSeconds?: (taskId: string, seconds: number) => void;
   onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }, options?: { manualAction?: "unscheduled_status" }) => void;
@@ -1782,7 +1772,6 @@ function StepsCardPreview({
                 {activePanelMode === "actual" ? (
                   <ActualQuickPanel
                     onClose={closeQuickPanel}
-                    onOpenManual={onOpenActualTime ? () => onOpenActualTime(item.id) : undefined}
                     onSave={(seconds) => onSetActualSeconds?.(item.id, seconds)}
                     seconds={item.actualSeconds}
                   />
@@ -2963,7 +2952,6 @@ function TasksSimpleList({
               onClearSelection={tableProps.onClearSelection}
               onCreateChildTask={tableProps.onCreateChildTask}
               onCreateTaskList={tableProps.onCreateTaskList}
-              onDeleteTaskActualTimeEntry={tableProps.onDeleteTaskActualTimeEntry}
               onDismissDetachedTask={tableProps.onDismissDetachedTask}
               onDuplicateTask={tableProps.onDuplicateTask}
               onFollowDetachedTask={tableProps.onFollowDetachedTask}
@@ -2973,7 +2961,6 @@ function TasksSimpleList({
               onOpenDeleteTask={tableProps.onOpenDeleteTask}
               onOpenFocusTimer={tableProps.onOpenFocusTimer}
               onOpenNote={tableProps.onOpenNote}
-              onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
               onOpenTaskEditor={tableProps.onOpenTaskEditor}
               onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
               onOpenTaskHistory={tableProps.onOpenTaskHistory}
@@ -3037,7 +3024,6 @@ function TasksSimpleList({
               runningTaskTimers={tableProps.runningTaskTimers}
               selectedTaskIds={tableProps.selectedTaskIds}
               suppressDetachedNoticeTaskId={tableProps.suppressDetachedNoticeTaskId}
-              taskActualTimeEntriesByTaskId={tableProps.taskActualTimeEntriesByTaskId}
               expandAllColumnsToken={panelProps.expandAllColumnsToken}
               shrinkAllColumnsToken={panelProps.shrinkAllColumnsToken}
               statusChangeScrollAnchorTaskIds={tableProps.statusChangeScrollAnchorTaskIds}
@@ -3498,7 +3484,6 @@ function TasksSimpleList({
               <ActualQuickPanel
                 onPauseTimer={() => tableProps.onPauseTaskTimer?.(task.id)}
                 onClose={closeQuickPanel}
-                onOpenManual={tableProps.onOpenTaskActualTime ? () => tableProps.onOpenTaskActualTime?.(task.id) : undefined}
                 onResumeTimer={() => tableProps.onResumeTaskTimer?.(task.id)}
                 onSave={(seconds) => tableProps.onSetActualSeconds?.(task.id, seconds)}
                 seconds={task.actual_seconds}
@@ -3554,7 +3539,6 @@ function TasksSimpleList({
                 onCreateChildTask={tableProps.onCreateChildTask}
                 onDeleteStep={tableProps.onOpenDeleteTask}
                 onOpenHistory={tableProps.onOpenTaskHistory}
-                onOpenActualTime={tableProps.onOpenTaskActualTime}
                 onDelayTaskUntil={tableProps.onDelayTaskUntil}
                 onOpenStep={(taskId) => {
                   setRowContextMenu(null);
@@ -3682,10 +3666,6 @@ function TasksSimpleList({
                 }
                 tableProps.onOpenTaskEditor?.(rowContextMenuTask.id);
               }}
-              onOpenTimeLog={tableProps.onOpenTaskActualTime ? () => {
-                tableProps.onOpenTaskActualTime?.(rowContextMenuTask.id);
-                setRowContextMenu(null);
-              } : undefined}
               onRemoveFromCurrentList={canRemoveFromCurrentList(rowContextMenuTask.id) && tableProps.onToggleTaskList ? () => {
                 const currentListId = tableProps.currentListId ?? selectedBucket;
                 if (currentListId) {
