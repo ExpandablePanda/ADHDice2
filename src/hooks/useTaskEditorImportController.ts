@@ -20,7 +20,7 @@ type UseTaskEditorImportControllerInput = {
   taskUiView: TaskUiState["view"];
   tasks: Task[];
   todayDateKey: string;
-  updateTask: (taskId: string, updates: Partial<Task>) => Promise<void>;
+  updateTask: (taskId: string, updates: Partial<Task>, options?: { manualAction?: "unscheduled_status" }) => Promise<unknown>;
 };
 
 export function useTaskEditorImportController({
@@ -67,7 +67,11 @@ export function useTaskEditorImportController({
       : preset === "today"
         ? todayDateKey
         : shiftDateKey(todayDateKey, preset === "tomorrow" ? 1 : 7);
-    void updateTask(taskId, { due_on: nextDueOn });
+    void updateTask(
+      taskId,
+      { due_on: nextDueOn },
+      nextDueOn === null ? { manualAction: "unscheduled_status" } : undefined,
+    );
   }
 
   function setTaskEnergy(taskId: string, energy: TaskEnergy) {

@@ -6301,7 +6301,8 @@ export function TaskApp() {
           onStopTaskTimer={stopHudTaskTimer}
           onTaskActualSecondsChange={(taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); }}
           onTaskDueChange={(taskId, schedule, options) => {
-            void updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, options?.manualAction ? { manualAction: options.manualAction } : undefined);
+            const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
+            void updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, manualAction ? { manualAction } : undefined);
           }}
           onTaskEnergyChange={(taskId, energy) => { void updateTask(taskId, { energy }); }}
           onTaskEstimatedMinutesChange={(taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); }}
@@ -6724,7 +6725,8 @@ export function TaskApp() {
                     setActivePage("Notes");
                   },
                   onSetDue: (taskId, schedule, options) => {
-                    void updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, options?.manualAction ? { manualAction: options.manualAction } : undefined);
+                    const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
+                    void updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, manualAction ? { manualAction } : undefined);
                   },
                   onSetEnergy: (taskId, energy) => { void updateTask(taskId, { energy }); },
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
@@ -6884,7 +6886,8 @@ export function TaskApp() {
                     setActivePage("Notes");
                   },
                   onSetDue: (taskId, schedule, options) => {
-                    void updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, options?.manualAction ? { manualAction: options.manualAction } : undefined);
+                    const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
+                    void updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, manualAction ? { manualAction } : undefined);
                   },
                   onSetEnergy: (taskId, energy) => { void updateTask(taskId, { energy }); },
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },

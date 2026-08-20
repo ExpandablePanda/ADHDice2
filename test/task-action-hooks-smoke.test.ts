@@ -872,6 +872,7 @@ test("failed due-date persistence leaves the local Task and History reconciliati
   });
   let setTasksCalls = 0;
   let reconciliationCalls = 0;
+  const messages: Array<{ tone: string; text: string }> = [];
   const action = useTaskUpdateAction({
     currentDayKey: "2026-08-05",
     dayStartTime: "06:00",
@@ -884,7 +885,9 @@ test("failed due-date persistence leaves the local Task and History reconciliati
     onTasksCompleted: async () => {},
     reconcileOverdueTaskMisses: async () => true,
     routeTask: () => {},
-    setMessage: () => {},
+    setMessage: (message) => {
+      if (typeof message !== "function" && message) messages.push(message);
+    },
     setTasks: () => {
       setTasksCalls += 1;
     },
@@ -906,6 +909,72 @@ test("failed due-date persistence leaves the local Task and History reconciliati
   assert.equal(reconciliationCalls, 0);
   assert.equal(task.status, "missed");
   assert.equal(task.due_on, "2026-08-05");
+  assert.equal(messages.at(-1)?.tone, "warn");
+  assert.match(messages.at(-1)?.text ?? "", /^Task wasn't updated:/);
+});
+
+test("ordinary Task mutation exceptions show a visible edit failure", async () => {
+  const task = createTask({ id: "task-mutation-exception", status: "pending", title: "Mutation" });
+  const messages: Array<{ tone: string; text: string }> = [];
+  const action = useTaskUpdateAction({
+    currentDayKey: "2026-08-05",
+    onTasksCompleted: async () => {},
+    routeTask: () => {},
+    setMessage: (message) => {
+      if (typeof message !== "function" && message) messages.push(message);
+    },
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: [task],
+    updateTaskRowWithLegacyEnergyFallback: async () => {
+      throw new Error("Supabase mutation failed.");
+    },
+  });
+
+  assert.equal(await action.updateTask(task.id, { title: "Changed" }), false);
+  assert.equal(messages.at(-1)?.tone, "warn");
+  assert.equal(messages.at(-1)?.text, "Task wasn't updated: Supabase mutation failed.");
+});
+
+test("full Task Edit routes a recurring No Date change as an unscheduled intent", async () => {
+  const task = createTask({
+    due_on: "2026-08-19",
+    id: "task-editor-unscheduled",
+    repeat_frequency: "daily",
+    status: "pending",
+    title: "Recurring edit",
+  });
+  let receivedOptions: { manualAction?: "unscheduled_status" } | undefined;
+  const editor = useTaskEditorSaveAction({
+    canonicalTaskStateUpdate: async (_taskId, _values, options) => {
+      receivedOptions = options;
+      return true;
+    },
+    currentDayKey: "2026-08-19",
+    currentUserId: "u1",
+    focusedTaskIds: [],
+    onTasksCompleted: async () => {},
+    replaceTaskSubtasks: async () => ({ saved: true }),
+    saveFocusSelection: async () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    syncTaskNoteLinks: async () => true,
+    tasks: [task],
+    updateTaskRowWithLegacyEnergyFallback: async () => ({
+      conflict: null,
+      data: null,
+      error: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
+  });
+
+  await editor.saveTaskEditor({ ...task, due_on: null, due_time: null, repeat_frequency: "daily" }, { taskId: task.id });
+  assert.deepEqual(receivedOptions, { manualAction: "unscheduled_status" });
 });
 
 test("manual due-date edits preserve unresolved History and skip reconciliation, rewards, and recurrence callbacks", async () => {

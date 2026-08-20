@@ -85,9 +85,31 @@ function canonicalScheduleModel(task: TaskRuntimeTask, values: TaskUpdate): Task
   return null;
 }
 
-function canonicalScheduleIntent(task: TaskRuntimeTask, values: TaskUpdate): TaskStateScheduleChangeIntent | null {
-  const scheduleModel = canonicalScheduleModel(task, values);
+function canonicalScheduleIntent(
+  task: TaskRuntimeTask,
+  values: TaskUpdate,
+  manualAction?: "unscheduled_status",
+): TaskStateScheduleChangeIntent | null {
+  const explicitlyUnscheduled = manualAction === "unscheduled_status"
+    && Object.hasOwn(values, "due_on")
+    && values.due_on === null;
+  const scheduleModel = explicitlyUnscheduled ? "unscheduled" : canonicalScheduleModel(task, values);
   if (!scheduleModel) return null;
+  if (explicitlyUnscheduled) {
+    return {
+      schedule_model: "unscheduled",
+      repeat_frequency: "none",
+      repeat_interval: 1,
+      repeat_days_of_week: [],
+      repeat_day_of_month: null,
+      repeat_monthly_mode: "day_of_month",
+      repeat_monthly_ordinal: null,
+      repeat_monthly_weekday: null,
+      one_time_due_on: null,
+      anchor_date: null,
+      due_time: null,
+    };
+  }
   const repeatFrequency = values.repeat_frequency ?? task.repeat_frequency ?? "none";
   const dueOn = Object.hasOwn(values, "due_on") ? values.due_on : task.due_on;
   const schedule: TaskStateScheduleChangeIntent = {
@@ -358,6 +380,8 @@ export function classifyTaskStateRuntimeAction(
   const statusFieldChanged = stateFields.includes("status");
   const scheduleDueFields = stateFields.filter((field): field is typeof SCHEDULE_DUE_FIELDS[number] => SCHEDULE_DUE_FIELDS.includes(field as typeof SCHEDULE_DUE_FIELDS[number]));
   const scheduleRepeatFields = stateFields.filter((field): field is typeof SCHEDULE_REPEAT_FIELDS[number] => SCHEDULE_REPEAT_FIELDS.includes(field as typeof SCHEDULE_REPEAT_FIELDS[number]));
+  const unscheduledScheduleRequested = input.manualAction === "unscheduled_status"
+    || (Object.hasOwn(values, "due_on") && values.due_on === null && !Object.hasOwn(values, "repeat_frequency"));
 
   if (statusFieldChanged) {
     const targetStatus = values.status;
@@ -391,6 +415,22 @@ export function classifyTaskStateRuntimeAction(
     );
   }
 
+  if (unscheduledScheduleRequested && scheduleDueFields.length > 0) {
+    const schedule = canonicalScheduleIntent(input.task, values, "unscheduled_status");
+    return schedule
+      ? canonicalAction(
+        input.task,
+        "set_due_date",
+        fields,
+        replayIdentity,
+        { type: "set_due_date", schedule, manual_action: "unscheduled_status" },
+        Object.fromEntries(
+          [...scheduleDueFields, ...scheduleRepeatFields].map((field) => [field, values[field]]),
+        ) as TaskStateScheduleChanges,
+      )
+      : unsupported(fields, stateFields, metadataFields, "The unscheduled Task State change does not contain enough canonical schedule information.");
+  }
+
   if (scheduleDueFields.length > 0 && scheduleRepeatFields.length > 0) {
     return unsupported(fields, stateFields, metadataFields, "Due-date and repeat/cadence changes in one TaskUpdate require an explicit canonical schedule intent.");
   }
@@ -398,13 +438,13 @@ export function classifyTaskStateRuntimeAction(
     if (scheduleDueFields.includes("scheduled_on")) {
       return unsupported(fields, stateFields, metadataFields, "The legacy scheduled_on field has no canonical schedule representation; no legacy schedule fallback is allowed.");
     }
-    const schedule = canonicalScheduleIntent(input.task, values);
+    const schedule = canonicalScheduleIntent(input.task, values, input.manualAction);
     return schedule
       ? canonicalAction(input.task, "set_due_date", fields, replayIdentity, { type: "set_due_date", schedule, ...(input.manualAction ? { manual_action: input.manualAction } : {}) }, Object.fromEntries(scheduleDueFields.map((field) => [field, values[field]])) as TaskStateScheduleChanges)
       : unsupported(fields, stateFields, metadataFields, "The due-date change does not contain enough canonical schedule information.");
   }
   if (scheduleRepeatFields.length > 0) {
-    const schedule = canonicalScheduleIntent(input.task, values);
+    const schedule = canonicalScheduleIntent(input.task, values, input.manualAction);
     return schedule
       ? canonicalAction(input.task, "set_repeat", fields, replayIdentity, { type: "set_repeat", schedule }, Object.fromEntries(scheduleRepeatFields.map((field) => [field, values[field]])) as TaskStateScheduleChanges)
       : unsupported(fields, stateFields, metadataFields, "The repeat/cadence change does not contain enough canonical schedule information.");

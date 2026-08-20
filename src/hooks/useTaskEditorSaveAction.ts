@@ -17,6 +17,16 @@ type Message = {
   tone: "neutral" | "good" | "warn";
 };
 
+function taskEditFailureMessage(reason: string) {
+  const detail = reason.trim() || "The persistence request failed.";
+  return `Task wasn't updated: ${detail}`;
+}
+
+function taskCommitReconciliationFailureMessage(reason?: string) {
+  const detail = reason?.trim();
+  return `Task was saved, but ADHDice couldn't refresh the updated Task state. Refresh before editing it again.${detail ? ` ${detail}` : ""}`;
+}
+
 type SaveTaskEditorOptions = {
   focusToday?: boolean;
   linkedNoteIds?: string[];
@@ -27,7 +37,7 @@ type SaveTaskEditorOptions = {
 
 type UseTaskEditorSaveActionOptions = {
   canonicalTaskCreator?: CanonicalTaskCreator;
-  canonicalTaskStateUpdate?: (taskId: string, values: TaskUpdate) => Promise<boolean>;
+  canonicalTaskStateUpdate?: (taskId: string, values: TaskUpdate, options?: { manualAction?: "unscheduled_status" }) => Promise<boolean>;
   currentDayKey: string;
   dayStartTime: string;
   focusedTaskIds: string[];
@@ -98,7 +108,7 @@ export function useTaskEditorSaveAction({
         && normalizedUpdateValues.status !== undefined
         && isTaskStateRuntimeLifecycleTransition(previousTask, normalizedUpdateValues.status)
       ) {
-        setMessage({ tone: "warn", text: "Canonical lifecycle commands must be routed through the Task action coordinator; no legacy editor lifecycle fallback was used." });
+        setMessage({ tone: "warn", text: taskEditFailureMessage("Canonical lifecycle commands must be routed through the Task action coordinator; no legacy editor lifecycle fallback was used.") });
         return null;
       }
       const scheduleChanged = Boolean(previousTask && hasTaskScheduleChange(previousTask, normalizedUpdateValues));
@@ -108,7 +118,7 @@ export function useTaskEditorSaveAction({
         return nextValue !== undefined && nextValue !== previousValue;
       });
       if (changedStateFields.length > 0 && !scheduleChanged) {
-        setMessage({ tone: "warn", text: "Canonical Task State editor actions must use the Task action coordinator; no legacy editor state fallback was used." });
+        setMessage({ tone: "warn", text: taskEditFailureMessage("Canonical Task State editor actions must use the Task action coordinator; no legacy editor state fallback was used.") });
         return null;
       }
       const scheduleOnlyEdit = scheduleChanged && !statusChanged;
@@ -131,10 +141,14 @@ export function useTaskEditorSaveAction({
         })) as TaskUpdate;
         const hasNonScheduleStateChange = changedStateFields.some((field) => !Object.hasOwn(changedScheduleValues, field));
         if (hasNonScheduleStateChange || statusChanged || !canonicalTaskStateUpdate || Object.keys(changedScheduleValues).length === 0) {
-          setMessage({ tone: "warn", text: "Canonical schedule commands cannot be combined with this editor change; no legacy schedule fallback was used." });
+          setMessage({ tone: "warn", text: taskEditFailureMessage("Canonical schedule commands cannot be combined with this editor change; no legacy schedule fallback was used.") });
           return null;
         }
-        const canonicalSaved = await canonicalTaskStateUpdate(taskId, changedScheduleValues);
+        const canonicalSaved = await canonicalTaskStateUpdate(
+          taskId,
+          changedScheduleValues,
+          changedScheduleValues.due_on === null ? { manualAction: "unscheduled_status" } : undefined,
+        );
         if (!canonicalSaved) {
           return null;
         }
@@ -144,7 +158,7 @@ export function useTaskEditorSaveAction({
           if (metadataResult.error || metadataResult.conflict || !metadataResult.data) {
             setMessage({
               tone: "warn",
-              text: `Schedule committed, but metadata could not be synchronized. ${metadataResult.error?.message ?? (metadataResult.conflict ? buildTaskUpdateConflictMessage(metadataResult.conflict) : "No updated metadata row was returned.")}`,
+              text: taskCommitReconciliationFailureMessage(metadataResult.error?.message ?? (metadataResult.conflict ? buildTaskUpdateConflictMessage(metadataResult.conflict) : "No updated metadata row was returned.")),
             });
             return null;
           }
@@ -170,7 +184,7 @@ export function useTaskEditorSaveAction({
       if (occurrenceSensitive && loadTaskHistoryForTasks) {
         const historyLoad = (await loadTaskHistoryForTasks([taskId]))[taskId];
         if (!historyLoad || historyLoad.status !== "ready") {
-          setMessage({ tone: "warn", text: historyLoad?.error ?? "Could not load task history. The task was not saved." });
+          setMessage({ tone: "warn", text: taskEditFailureMessage(historyLoad?.error ?? "Could not load task history.") });
           return null;
         }
         scopedHistory = historyLoad.history;
@@ -200,7 +214,7 @@ export function useTaskEditorSaveAction({
         : null;
       const validationError = actionAuthority?.validationErrors[0] ?? scheduleAuthority?.validationErrors[0];
       if (validationError) {
-        setMessage({ tone: "warn", text: validationError });
+        setMessage({ tone: "warn", text: taskEditFailureMessage(validationError) });
         return null;
       }
       const authorityUpdate = actionAuthority?.mutationPlan.taskUpdate ?? scheduleAuthority?.mutationPlan.taskUpdate;
@@ -210,16 +224,23 @@ export function useTaskEditorSaveAction({
       const updateValues = previousTask
         ? (scheduleOnlyEdit || actionAuthority) ? dueNormalizedValues : applyTaskActiveStatusTracking(previousTask, dueNormalizedValues, currentDayKey)
         : dueNormalizedValues;
+      let result: UpdateTaskRowResult;
+      try {
+        result = await updateTaskRowWithLegacyEnergyFallback(taskId, updateValues, { expectedTask: previousTask });
+      } catch (error) {
+        setMessage({ tone: "warn", text: taskEditFailureMessage(error instanceof Error ? error.message : "The task persistence request failed.") });
+        return null;
+      }
       const {
         conflict,
         data,
         error,
         usedEnergyFallback,
         usedActualSecondsFallback,
-      } = await updateTaskRowWithLegacyEnergyFallback(taskId, updateValues, { expectedTask: previousTask });
+      } = result;
 
       if (error) {
-        setMessage({ tone: "warn", text: error.message });
+        setMessage({ tone: "warn", text: taskEditFailureMessage(error.message) });
         return null;
       }
 
@@ -227,12 +248,12 @@ export function useTaskEditorSaveAction({
         if (conflict.latestTask) {
           setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? conflict.latestTask ?? task : task)));
         }
-        setMessage({ tone: "warn", text: buildTaskUpdateConflictMessage(conflict) });
+        setMessage({ tone: "warn", text: taskEditFailureMessage(buildTaskUpdateConflictMessage(conflict)) });
         return null;
       }
 
       if (!data) {
-        setMessage({ tone: "warn", text: "Task saved, but Supabase did not return the updated task row." });
+        setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage("Supabase did not return the updated Task row.") });
         return null;
       }
 
@@ -242,7 +263,12 @@ export function useTaskEditorSaveAction({
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
       if (scheduleOnlyEdit) {
-        void onTaskHistoryMutation?.(taskId, scopedHistory, nextData);
+        try {
+          await onTaskHistoryMutation?.(taskId, scopedHistory, nextData);
+        } catch (error) {
+          setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(error instanceof Error ? error.message : "The updated Task could not be reconciled locally.") });
+          return null;
+        }
       }
 
       // A due-date edit changes only the next scheduling cursor. It must not
@@ -256,17 +282,20 @@ export function useTaskEditorSaveAction({
             historySnapshot: scopedHistory,
           });
         if (!historySaved) {
+          setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage("Task History could not be synchronized.") });
           return false;
         }
       }
 
       const subtasksResult = await replaceTaskSubtasks(taskId, subtasks);
       if (!subtasksResult.saved) {
+        setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage("The updated Task steps could not be synchronized.") });
         return false;
       }
 
       const linkedNotesSaved = await syncTaskNoteLinks(taskId, linkedNoteIds);
       if (!linkedNotesSaved) {
+        setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage("The updated Task note links could not be synchronized.") });
         return false;
       }
 

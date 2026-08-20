@@ -27,6 +27,16 @@ type Message = {
   tone: "neutral" | "good" | "warn";
 };
 
+function taskEditFailureMessage(reason: string) {
+  const detail = reason.trim() || "The persistence request failed.";
+  return `Task wasn't updated: ${detail}`;
+}
+
+function taskCommitReconciliationFailureMessage(reason?: string) {
+  const detail = reason?.trim();
+  return `Task was saved, but ADHDice couldn't refresh the updated Task state. Refresh before editing it again.${detail ? ` ${detail}` : ""}`;
+}
+
 type UpdateTaskActionOptions = {
   canonicalIntent?: TaskStateRuntimeCanonicalIntent;
   manualAction?: "unscheduled_status";
@@ -153,7 +163,7 @@ export function useTaskUpdateAction({
       const initialCanonicalTask = getCanonicalTaskSnapshot(taskId, previousTask);
       if (!initialCanonicalTask) {
         clearPendingTaskMutations?.([taskId]);
-        setMessage({ tone: "warn", text: "The canonical Task State action could not find the current Task; no legacy fallback was used." });
+        setMessage({ tone: "warn", text: taskEditFailureMessage("The canonical Task State action could not find the current Task; no legacy fallback was used.") });
         return false;
       }
       const initialRuntimeAction = classifyTaskStateRuntimeAction({
@@ -168,9 +178,9 @@ export function useTaskUpdateAction({
         if (initialRuntimeAction.kind === "metadata_only" && initialRuntimeAction.changedFields.length === 0) {
           return true;
         }
-        setMessage({ tone: "warn", text: initialRuntimeAction.kind === "unsupported_state_mutation"
+        setMessage({ tone: "warn", text: taskEditFailureMessage(initialRuntimeAction.kind === "unsupported_state_mutation"
           ? initialRuntimeAction.reason
-          : "The canonical Task State action could not be classified." });
+          : "The canonical Task State action could not be classified.") });
         return false;
       }
 
@@ -184,7 +194,7 @@ export function useTaskUpdateAction({
         const currentCanonicalTask = getCanonicalTaskSnapshot(taskId, previousTask);
         if (!currentCanonicalTask) {
           clearPendingTaskMutations?.([taskId]);
-          setMessage({ tone: "warn", text: "The canonical Task State action could not find the current Task; no legacy fallback was used." });
+          setMessage({ tone: "warn", text: taskEditFailureMessage("The canonical Task State action could not find the current Task; no legacy fallback was used.") });
           return false;
         }
         const runtimeAction = classifyTaskStateRuntimeAction({
@@ -199,9 +209,9 @@ export function useTaskUpdateAction({
           if (runtimeAction.kind === "metadata_only" && runtimeAction.changedFields.length === 0) {
             return true;
           }
-          setMessage({ tone: "warn", text: runtimeAction.kind === "unsupported_state_mutation"
+          setMessage({ tone: "warn", text: taskEditFailureMessage(runtimeAction.kind === "unsupported_state_mutation"
             ? runtimeAction.reason
-            : "The canonical Task State action could not be classified." });
+            : "The canonical Task State action could not be classified.") });
           return false;
         }
 
@@ -210,12 +220,12 @@ export function useTaskUpdateAction({
           canonicalResult = await canonicalCommandExecutor(runtimeAction, currentCanonicalTask);
         } catch (error) {
           clearPendingTaskMutations?.([taskId]);
-          setMessage({ tone: "warn", text: error instanceof Error ? error.message : "The canonical Task State command could not be invoked." });
+          setMessage({ tone: "warn", text: taskEditFailureMessage(error instanceof Error ? error.message : "The canonical Task State command could not be invoked.") });
           return false;
         }
         clearPendingTaskMutations?.([taskId]);
         if (!canonicalResult.success) {
-          setMessage({ tone: "warn", text: canonicalResult.error.message });
+          setMessage({ tone: "warn", text: taskEditFailureMessage(canonicalResult.error.message) });
           return false;
         }
 
@@ -240,7 +250,7 @@ export function useTaskUpdateAction({
         } catch (error) {
           setMessage({
             tone: "warn",
-            text: error instanceof Error ? error.message : "The committed canonical schedule boundary could not be reconciled.",
+            text: taskCommitReconciliationFailureMessage(error instanceof Error ? error.message : "The committed canonical schedule boundary could not be reconciled."),
           });
           return false;
         }
@@ -261,17 +271,27 @@ export function useTaskUpdateAction({
         // side effect before the browser read cache is refreshed. Refresh only
         // the read state; never recreate a legacy History fact here.
         if (canonicalResult.response.side_effect_ids.history_fact_id && loadTaskHistoryForTasks) {
-          const refresh = await loadTaskHistoryForTasks([taskId]);
-          const refreshed = refresh[taskId];
-          if (!refreshed || refreshed.status !== "ready") {
-            setMessage({ tone: "warn", text: refreshed?.error ?? "Task State committed, but History could not be refreshed." });
-          } else {
+          try {
+            const refresh = await loadTaskHistoryForTasks([taskId]);
+            const refreshed = refresh[taskId];
+            if (!refreshed || refreshed.status !== "ready") {
+              setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(refreshed?.error ?? "Task History could not be refreshed.") });
+              return false;
+            }
             await onTaskHistoryMutation?.(taskId, refreshed.history, canonicalResult.task as Task);
+          } catch (error) {
+            setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(error instanceof Error ? error.message : "Task History could not be reconciled.") });
+            return false;
           }
         } else {
           // Lifecycle, workflow, Calendar, and explicit schedule-origin commands
           // are manual handling even when they do not create a History fact.
-          await onTaskHistoryMutation?.(taskId, taskHistory?.filter((entry) => entry.task_id === taskId) ?? [], canonicalResult.task as Task);
+          try {
+            await onTaskHistoryMutation?.(taskId, taskHistory?.filter((entry) => entry.task_id === taskId) ?? [], canonicalResult.task as Task);
+          } catch (error) {
+            setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(error instanceof Error ? error.message : "The updated Task could not be reconciled locally.") });
+            return false;
+          }
         }
         const canonicalRewardEntitlementId = canonicalResult.response.side_effect_ids.reward_entitlement_id;
         if (canonicalRewardEntitlementId && ["complete_task", "set_outcome"].includes(runtimeAction.actionType)) {
@@ -311,7 +331,7 @@ export function useTaskUpdateAction({
       const historyLoad = (await loadTaskHistoryForTasks([taskId]))[taskId];
       if (!historyLoad || historyLoad.status !== "ready") {
         clearPendingTaskMutations?.([taskId]);
-        setMessage({ tone: "warn", text: historyLoad?.error ?? "Could not load task history. The task was not saved." });
+        setMessage({ tone: "warn", text: taskEditFailureMessage(historyLoad?.error ?? "Could not load task history.") });
         return false;
       }
       scopedHistory = historyLoad.history;
@@ -328,7 +348,7 @@ export function useTaskUpdateAction({
       : null;
     if (scheduleAuthority?.validationErrors.length) {
       clearPendingTaskMutations?.([taskId]);
-      setMessage({ tone: "warn", text: scheduleAuthority.validationErrors[0] ?? "This task schedule is not valid." });
+      setMessage({ tone: "warn", text: taskEditFailureMessage(scheduleAuthority.validationErrors[0] ?? "This task schedule is not valid.") });
       return false;
     }
     const normalizedValues = scheduleAuthority
@@ -337,19 +357,27 @@ export function useTaskUpdateAction({
     const nextValues = previousTask
       ? scheduleOnlyEdit ? normalizedValues : applyTaskActiveStatusTracking(previousTask, normalizedValues, currentDayKey)
       : normalizedValues;
+    let result: UpdateTaskRowResult;
+    try {
+      result = await updateTaskRowWithLegacyEnergyFallback(taskId, nextValues, {
+        expectedTask: previousTask,
+      });
+    } catch (error) {
+      clearPendingTaskMutations?.([taskId]);
+      setMessage({ tone: "warn", text: taskEditFailureMessage(error instanceof Error ? error.message : "The task persistence request failed.") });
+      return false;
+    }
     const {
       conflict,
       data,
       error,
       usedEnergyFallback,
       usedActualSecondsFallback,
-    } = await updateTaskRowWithLegacyEnergyFallback(taskId, nextValues, {
-      expectedTask: previousTask,
-    });
+    } = result;
 
     if (error) {
       clearPendingTaskMutations?.([taskId]);
-      setMessage({ tone: "warn", text: error.message });
+      setMessage({ tone: "warn", text: taskEditFailureMessage(error.message) });
       return false;
     }
 
@@ -364,7 +392,7 @@ export function useTaskUpdateAction({
           routeTask(taskId, null);
         }
       }
-      setMessage({ tone: "warn", text: buildTaskUpdateConflictMessage(conflict) });
+      setMessage({ tone: "warn", text: taskEditFailureMessage(buildTaskUpdateConflictMessage(conflict)) });
       return false;
     }
 

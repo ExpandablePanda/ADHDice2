@@ -4365,17 +4365,27 @@ export function TaskManagementTableV2({
 
   function setTaskDue(taskId: string, dueOn: string, dueTime: string) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
+    const isUnscheduled = dueOn.length === 0;
     queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTaskIds, (task) => ({
       ...task,
       dueOn,
       dueTime,
+      ...(isUnscheduled ? {
+        repeat: "none" as const,
+        repeatInterval: 1,
+        repeatDaysOfWeek: [],
+        repeatDayOfMonth: null,
+        repeatMonthlyMode: "day_of_month" as const,
+        repeatMonthlyOrdinal: null,
+        repeatMonthlyWeekday: null,
+      } : {}),
       lists: dueOn === offsetDate(0)
         ? Array.from(new Set(task.lists.filter((list) => list !== "Inbox").concat("Today")))
         : task.lists.filter((list) => list !== "Today"),
     }));
     for (const targetTaskId of targetTaskIds) {
-      onTaskDueChange?.(targetTaskId, { dueOn, dueTime });
+      onTaskDueChange?.(targetTaskId, { dueOn, dueTime }, isUnscheduled ? { manualAction: "unscheduled_status" } : undefined);
     }
   }
 

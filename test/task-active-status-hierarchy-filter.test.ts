@@ -116,7 +116,7 @@ test("Table status ordering and Unscheduled action use the display-only schedule
   assert.match(tableSource, /const STATUS_SORT_ORDER[\s\S]*?"unscheduled",\s*"pending"/);
   const displayAction = tableSource.match(/function setTaskDisplayStatus[\s\S]*?\n  }/);
   assert.ok(displayAction);
-  assert.match(displayAction[0], /status === "unscheduled"[\s\S]*?onTaskDueChange\?\.\(taskId, \{ dueOn: "", dueTime: "" \}\)/);
+  assert.match(displayAction[0], /status === "unscheduled"[\s\S]*?onTaskDueChange\?\.\(taskId, \{ dueOn: "", dueTime: "" \}, \{ manualAction: "unscheduled_status" \}\)/);
   assert.doesNotMatch(displayAction[0], /onTaskStatusChange/);
 });
 

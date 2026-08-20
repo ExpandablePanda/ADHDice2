@@ -130,22 +130,34 @@ test("canonical creation projection survives metadata and exact committed schedu
     prior_boundary_id: dueBoundary.id,
     source: "set_repeat",
   });
+  const unscheduledBoundary = boundary({
+    id: "boundary-unscheduled",
+    boundary_sequence: 4,
+    boundary_type: "due_date_change",
+    prior_boundary_id: repeatBoundary.id,
+    source: "set_due_date",
+  });
   const localTasks = [canonicalTask(initialBoundary)];
   const committedBoundaries = new Map([
     [dueBoundary.id, dueBoundary],
     [repeatBoundary.id, repeatBoundary],
+    [unscheduledBoundary.id, unscheduledBoundary],
   ]);
   const messages: Array<{ tone: string; text: string }> = [];
 
   const update = useTaskUpdateAction({
     canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => {
-      const nextBoundary = action.actionType === "set_due_date" ? dueBoundary : repeatBoundary;
+      const nextBoundary = action.actionType === "set_due_date"
+        ? action.intent?.type === "set_due_date" && action.intent.schedule.schedule_model === "unscheduled"
+          ? unscheduledBoundary
+          : dueBoundary
+        : repeatBoundary;
       return {
         success: true,
         task: {
           ...currentTask,
           ...(action.actionType === "set_due_date"
-            ? { due_on: "2026-08-19" }
+            ? { due_on: nextBoundary.schedule_model === "unscheduled" ? null : "2026-08-19" }
             : { repeat_frequency: "weekly", repeat_days_of_week: [1, 3] }),
           canonical_revision: currentTask.canonical_revision + 1,
         },
@@ -201,6 +213,16 @@ test("canonical creation projection survives metadata and exact committed schedu
   assert.equal(await update.updateTask(taskId, { repeat_frequency: "weekly", repeat_days_of_week: [1, 3] }), true);
   assert.equal(localTasks[0]?.canonical_schedule_boundary?.id, repeatBoundary.id);
   assert.deepEqual(localTasks[0]?.canonical_schedule_boundary?.repeat_days_of_week, [1, 3]);
+
+  assert.equal(await update.updateTask(taskId, { due_on: null, due_time: null }, { manualAction: "unscheduled_status" }), true);
+  assert.equal(localTasks[0]?.canonical_schedule_boundary?.id, unscheduledBoundary.id);
+  assert.equal(localTasks[0]?.canonical_schedule_boundary?.schedule_model, "unscheduled");
+  assert.equal(localTasks[0]?.canonical_schedule_boundary?.repeat_frequency, "none");
+  assert.equal(localTasks[0]?.canonical_schedule_boundary?.one_time_due_on, null);
+  assert.equal(localTasks[0]?.canonical_schedule_boundary?.anchor_date, null);
+  assert.equal(localTasks[0]?.canonical_schedule_boundary?.due_time, null);
+  assert.equal(localTasks[0]?.due_on, null);
+  assert.equal(localTasks[0]?.repeat_frequency, "none");
   assert.equal(messages.length, 0);
 });
 
@@ -222,4 +244,68 @@ test("canonical boundary loader constrains the authenticated user, Task, and exa
   assert.equal(result.error, null);
   assert.equal(result.data?.id, expected.id);
   assert.deepEqual(calls, [["user_id", userId], ["entity_id", taskId], ["id", expected.id]]);
+});
+
+test("canonical command rejection is visible as a Task edit failure", async () => {
+  const initialBoundary = boundary();
+  const localTasks = [canonicalTask(initialBoundary)];
+  const messages: Array<{ tone: string; text: string }> = [];
+  const update = useTaskUpdateAction({
+    canonicalCommandExecutor: async (): Promise<TaskStateRuntimeExecutionResult> => ({
+      success: false,
+      task: null,
+      response: null,
+      error: { kind: "command_rejected", message: "The Task is stale.", code: "STALE_REVISION", status: 409 },
+    }),
+    currentDayKey: "2026-08-19",
+    onTasksCompleted: async () => {},
+    routeTask: () => {},
+    setMessage: (message) => {
+      const next = typeof message === "function" ? message(messages.at(-1) ?? null) : message;
+      if (next) messages.push(next);
+    },
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: localTasks,
+    updateTaskRowWithLegacyEnergyFallback: async () => {
+      throw new Error("Legacy fallback must not run.");
+    },
+  });
+
+  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }), false);
+  assert.equal(messages.at(-1)?.tone, "warn");
+  assert.match(messages.at(-1)?.text ?? "", /^Task wasn't updated:/);
+});
+
+test("committed Task edits report post-commit boundary reconciliation failures distinctly", async () => {
+  const initialBoundary = boundary();
+  const localTasks = [canonicalTask(initialBoundary)];
+  const messages: Array<{ tone: string; text: string }> = [];
+  const update = useTaskUpdateAction({
+    canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => ({
+      success: true,
+      task: { ...currentTask, due_on: "2026-08-19", canonical_revision: currentTask.canonical_revision + 1 },
+      response: commandResponse("boundary-missing", action.expectedRevision),
+    }),
+    currentDayKey: "2026-08-19",
+    loadCanonicalScheduleBoundary: async () => null,
+    onTasksCompleted: async () => {},
+    routeTask: () => {},
+    setMessage: (message) => {
+      const next = typeof message === "function" ? message(messages.at(-1) ?? null) : message;
+      if (next) messages.push(next);
+    },
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: localTasks,
+    updateTaskRowWithLegacyEnergyFallback: async () => {
+      throw new Error("Legacy fallback must not run.");
+    },
+  });
+
+  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }), false);
+  assert.equal(messages.at(-1)?.tone, "warn");
+  assert.match(messages.at(-1)?.text ?? "", /^Task was saved, but ADHDice couldn't refresh the updated Task state\. Refresh before editing it again\./);
 });

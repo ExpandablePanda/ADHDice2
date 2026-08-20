@@ -68,6 +68,37 @@ test("due-date and repeat changes are canonical schedule descriptors", () => {
   assert.equal(repeat.actionType, "set_repeat");
 });
 
+test("No Date emits one complete unscheduled schedule intent", () => {
+  const result = classify(
+    { due_on: null, due_time: null },
+    { due_on: "2026-08-19", repeat_frequency: "daily", repeat_interval: 1 },
+    "unschedule-action",
+  );
+
+  assert.equal(result.kind, "canonical_action");
+  assert.equal(result.actionType, "set_due_date");
+  assert.deepEqual(result.intent, {
+    type: "set_due_date",
+    task_id: "task-1",
+    replay_identity: "unschedule-action",
+    expected_revision: 4,
+    manual_action: "unscheduled_status",
+    schedule: {
+      schedule_model: "unscheduled",
+      repeat_frequency: "none",
+      repeat_interval: 1,
+      repeat_days_of_week: [],
+      repeat_day_of_month: null,
+      repeat_monthly_mode: "day_of_month",
+      repeat_monthly_ordinal: null,
+      repeat_monthly_weekday: null,
+      one_time_due_on: null,
+      anchor_date: null,
+      due_time: null,
+    },
+  });
+});
+
 test("explicit Delay, Calendar override, and rollover intents retain canonical ownership", () => {
   const delay = classifyTaskStateRuntimeAction({
     task: task(),
