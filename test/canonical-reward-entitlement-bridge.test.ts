@@ -5,7 +5,7 @@ import test from "node:test";
 const rewardSql = readFileSync(new URL("../supabase/add_canonical_reward_entitlement_bridge.sql", import.meta.url), "utf8");
 const commandSql = readFileSync(new URL("../supabase/add_task_state_command_rpc.sql", import.meta.url), "utf8");
 const canonicalSchema = readFileSync(new URL("../supabase/add_task_state_canonical_schema.sql", import.meta.url), "utf8");
-const permanenceMigration = readFileSync(new URL("../supabase/patch_task_reward_entitlement_permanence_7_10_3.sql", import.meta.url), "utf8");
+const permanenceMigration = readFileSync(new URL("../supabase/patch_task_reward_entitlement_permanence_7_10_4.sql", import.meta.url), "utf8");
 const rewardHook = readFileSync(new URL("../src/hooks/useTaskRewardController.ts", import.meta.url), "utf8");
 const currentState = readFileSync(new URL("../docs/CURRENT_STATE.md", import.meta.url), "utf8");
 
