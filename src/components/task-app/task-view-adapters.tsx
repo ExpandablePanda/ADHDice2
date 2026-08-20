@@ -31,8 +31,8 @@ import {
 } from "./task-secondary-views";
 import { UrgentTasksPanelComponent } from "./task-grid-widgets";
 import type { TaskDraft } from "./task-editor-model";
-import { shiftDateKey } from "@/lib/task-grid-layout";
 import {
+  buildTaskHistoryCalendarDateKeys,
   getComfortableTaskHistoryScrollOffset,
   getTaskHistoryInitialFocusDateKey,
 } from "@/lib/task-history-calendar-focus";
@@ -594,10 +594,7 @@ export function TaskHistoryModal({
   calendarOverrides?: TaskCalendarOverride[];
 }) {
   const today = todayDateKey;
-  const pastDayCount = 140;
-  const futureDayCount = 42;
-  const totalDays = pastDayCount + futureDayCount;
-  const days = Array.from({ length: totalDays }, (_, index) => shiftDateKey(today, index - (pastDayCount - 1)));
+  const days = buildTaskHistoryCalendarDateKeys(today);
   const normalizedTaskHistory = deduplicateTaskHistoryByLogicalDate(taskHistory);
   const historyByDate = new Map(normalizedTaskHistory.map((historyEntry) => [historyEntry.entry_date, historyEntry]));
   const [initialFocusDate] = useState(() => getTaskHistoryInitialFocusDateKey({ initialDateKey, todayDateKey }));
@@ -690,7 +687,7 @@ export function TaskHistoryModal({
     ? ["clear", ...calendarActionStatuses as CalendarActionStatus[]]
     : calendarActionStatuses as CalendarActionStatus[];
 
-  for (let weekIndex = 0; weekIndex < Math.ceil(totalDays / 7); weekIndex += 1) {
+  for (let weekIndex = 0; weekIndex < days.length / 7; weekIndex += 1) {
     weeks.push(days.slice(weekIndex * 7, weekIndex * 7 + 7));
   }
 
