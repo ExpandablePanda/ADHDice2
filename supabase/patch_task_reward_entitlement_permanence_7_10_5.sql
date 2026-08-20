@@ -1,4 +1,4 @@
--- 7.10.4: make canonical Task rewards permanent while History remains editable.
+-- 7.10.5: make canonical Task rewards permanent while History remains editable.
 -- Reviewed migration only. Do not apply to live Supabase as part of this ticket. This migration embeds the canonical Task State and reward fulfillment function definitions below.
 
 begin;
@@ -16,7 +16,7 @@ begin
      group by user_id, entity_id, logical_date
     having count(*) > 1
   ) then
-    raise exception '7.10.4 cannot replace reward identity: duplicate Task/logical-day entitlements exist.'
+    raise exception '7.10.5 cannot replace reward identity: duplicate Task/logical-day entitlements exist.'
       using errcode = '23505';
   end if;
 end;
@@ -51,7 +51,7 @@ begin
          and grant_row.entitlement_id = v_entitlement.id
          and grant_row.grant_kind = 'banked_roll';
       if v_grant_count <> 1 or v_grant_units is null or v_grant_units <= 0 then
-        raise exception '7.10.4 cannot backfill fulfilled entitlement % from one positive canonical grant.', v_entitlement.id
+        raise exception '7.10.5 cannot backfill fulfilled entitlement % from one positive canonical grant.', v_entitlement.id
           using errcode = '23514';
       end if;
       update public.adhdice_task_reward_entitlements
@@ -62,11 +62,11 @@ begin
     end if;
 
     if v_entitlement.state <> 'pending' then
-      raise exception '7.10.4 cannot backfill unsupported entitlement state % for %.', v_entitlement.state, v_entitlement.id
+      raise exception '7.10.5 cannot backfill unsupported entitlement state % for %.', v_entitlement.state, v_entitlement.id
         using errcode = '23514';
     end if;
     if v_entitlement.canonical_history_id is null then
-      raise exception '7.10.4 cannot backfill pending entitlement % without its original History fact.', v_entitlement.id
+      raise exception '7.10.5 cannot backfill pending entitlement % without its original History fact.', v_entitlement.id
         using errcode = '23514';
     end if;
 
@@ -77,9 +77,9 @@ begin
     if not found
        or v_fact.entity_id is distinct from v_entitlement.entity_id
        or v_fact.logical_date is distinct from v_entitlement.logical_date
-       or v_fact.outcome is distinct from v_entitlement.outcome_snapshot
+       or v_entitlement.outcome_snapshot not in ('done', 'did_my_best', 'complete')
        or v_fact.outcome not in ('done', 'did_my_best', 'complete') then
-      raise exception '7.10.4 cannot backfill pending entitlement % from matching successful History.', v_entitlement.id
+      raise exception '7.10.5 cannot backfill pending entitlement % from matching successful History.', v_entitlement.id
         using errcode = '23514';
     end if;
 
@@ -88,7 +88,7 @@ begin
      where task.user_id = v_entitlement.user_id
        and task.id = v_entitlement.entity_id;
     if not found then
-      raise exception '7.10.4 cannot backfill entitlement % without its owned Task.', v_entitlement.id
+      raise exception '7.10.5 cannot backfill entitlement % without its owned Task.', v_entitlement.id
         using errcode = '23514';
     end if;
 
@@ -109,7 +109,7 @@ begin
       end loop;
     end if;
     if v_streak < 1 then
-      raise exception '7.10.4 cannot backfill pending entitlement % with a positive reward calculation.', v_entitlement.id
+      raise exception '7.10.5 cannot backfill pending entitlement % with a positive reward calculation.', v_entitlement.id
         using errcode = '23514';
     end if;
     v_reward_units := case
@@ -131,7 +131,7 @@ begin
       from public.adhdice_task_reward_entitlements
      where reward_units_snapshot is null or reward_units_snapshot <= 0
   ) then
-    raise exception '7.10.4 cannot enforce reward snapshots: an entitlement remains without a positive value.'
+    raise exception '7.10.5 cannot enforce reward snapshots: an entitlement remains without a positive value.'
       using errcode = '23514';
   end if;
 end;
@@ -183,7 +183,7 @@ alter table public.adhdice_task_reward_entitlements
 
 
 -- The following definitions are embedded verbatim from the canonical source files.
--- Keep them synchronized through the 7.10.4 SQL parity test.
+-- Keep them synchronized through the 7.10.5 SQL parity test.
 
 create or replace function public.adhdice_execute_task_state_command(
   p_user_id uuid,

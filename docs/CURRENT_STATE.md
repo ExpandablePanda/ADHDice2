@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.10.4`.
+- Current working app version: `7.10.5`.
 - Current release group: `7.10.x` QA polish corrections for Health, Focus, and History Calendar.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -34,19 +34,21 @@ were required; browser and live Supabase parity remain unverified.
 
 - Historical patch descriptions are intentionally excluded from this active document.
 
-## 2026-08-19 7.10.3 permanent Task-day rewards
+## 2026-08-19 7.10.5 permanent Task-day rewards
 
 Canonical reward entitlements now snapshot a positive reward amount when first
 earned and are unique by `(user_id, entity_id, logical_date)` regardless of
 reward-program version. History replacement or clearing may set the provenance
 History reference to null without removing or changing the entitlement. The
-authoritative 7.10.4 migration combines the fail-closed existing-data backfill
+authoritative 7.10.5 migration combines the fail-closed existing-data backfill
 with the updated Task State command and fulfillment RPC definitions in one
-transaction. SQL has not been applied, Edge functions have not been deployed,
-and browser/live parity remain unverified.
+transaction. Pending entitlement backfill accepts a later successful History
+label edit without changing the original outcome snapshot. SQL has not been
+applied, Edge functions have not been deployed, and browser/live parity remain
+unverified.
 
-The earlier 7.10.3 draft migration was superseded before any live application;
-only `patch_task_reward_entitlement_permanence_7_10_4.sql` is deployable for
+The earlier 7.10.3 and 7.10.4 artifacts were superseded before any live
+application; only `patch_task_reward_entitlement_permanence_7_10_5.sql` is deployable for
 this release.
 
 ## 2026-08-19 Dead tables and legacy plumbing retirement
