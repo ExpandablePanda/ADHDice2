@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Image from "next/image";
+import { Capacitor } from "@capacitor/core";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import {
   AlertCircle,
@@ -65,7 +66,7 @@ import {
   Zap,
 } from "lucide-react";
 import dynamicIconImports from "lucide-react/dynamicIconImports";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import {
   BottomDockAdapter as BottomDock,
@@ -107,7 +108,7 @@ import {
   type TaskEditorMode,
   type TaskSubtaskDraft,
 } from "./task-app/task-editor-model";
-import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
+import { CalmModeButton, DarkModeToggleButton, ThemeToggle } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
 import { ModalShell } from "./modal-shell";
@@ -567,7 +568,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.10.19";
+const APP_VERSION = "7.10.20";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1124,8 +1125,29 @@ function findFinishedCountdownSession(activeSessions: Record<string, ActiveFocus
   )) ?? null;
 }
 
+function useNativeIosPlatform() {
+  return useSyncExternalStore(
+    subscribeToPlatformChanges,
+    getNativeIosPlatformSnapshot,
+    getWebPlatformSnapshot,
+  );
+}
+
+function subscribeToPlatformChanges() {
+  return () => {};
+}
+
+function getNativeIosPlatformSnapshot() {
+  return typeof window !== "undefined" && Capacitor.getPlatform() === "ios";
+}
+
+function getWebPlatformSnapshot() {
+  return false;
+}
+
 export function TaskApp() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
+  const isNativeIosPlatform = useNativeIosPlatform();
   const profileSettingsHydratedRef = useRef(false);
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthResolved, setIsAuthResolved] = useState(false);
@@ -6606,6 +6628,7 @@ export function TaskApp() {
                       onLowStimChange={setLowStim}
                       currentStreak={taskHistoryStats.currentStreak}
                       notificationInboxItems={notificationInboxItems}
+                      isNativeIosPlatform={isNativeIosPlatform}
                       focusAlarmEnabled={focusAlarmEnabled}
                       focusAlarmIntervalMinutes={focusAlarmIntervalMinutes}
                       focusAlarmRemainingMs={focusAlarmRemainingMs}
@@ -8058,6 +8081,75 @@ function TopHeader({
   );
 }
 
+function WebsiteHudHeader({
+  currentStreak,
+  economy,
+  lowStim,
+  notificationInboxItems,
+  onLowStimChange,
+  onOpenAccount,
+  onThemeChange,
+  profile,
+  theme,
+}: {
+  currentStreak: number;
+  economy: { level: number; xp: number; points: number; tokens: number };
+  lowStim: boolean;
+  notificationInboxItems: HudNotificationItem[];
+  onLowStimChange: (value: boolean) => void;
+  onOpenAccount: () => void;
+  onThemeChange: (theme: ThemeMode) => void;
+  profile: UserProfile;
+  theme: ThemeMode;
+}) {
+  const accountButton = (
+    <button
+      aria-label="Open account"
+      className="relative rounded-full transition-transform hover:scale-[1.02]"
+      onClick={onOpenAccount}
+      type="button"
+    >
+      <ProfileAvatarImage avatarSrc={profile.avatarSrc} website />
+      {notificationInboxItems.length > 0 ? (
+        <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-[#f05566] text-[10px] font-semibold text-white">
+          {notificationInboxItems.length}
+        </span>
+      ) : null}
+    </button>
+  );
+
+  return (
+    <header className="flex flex-col gap-3 border-b border-[#ece8f8] pb-5 dark:border-white/10 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex items-center justify-between gap-4 lg:justify-start">
+        <div className="flex items-center gap-1">
+          <BrandMark profile={profile} website />
+          <span className="rounded-full bg-[#f1ecff] px-2.5 py-1 text-xs font-semibold text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]">
+            v{HUD_VERSION}
+          </span>
+        </div>
+        <div className="lg:hidden">{accountButton}</div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <ThemeToggle lowStim={lowStim} onLowStimChange={onLowStimChange} onThemeChange={onThemeChange} theme={theme} />
+        <ProgressStat
+          label={`Lvl ${economy.level}`}
+          value={`${economy.xp} / ${economy.level * 100} XP`}
+          percent={(economy.xp / (economy.level * 100)) * 100}
+        />
+        <MiniStat label="Points" value={String(economy.points)} />
+        <MiniStat label="Tokens" value={String(economy.tokens)} />
+        {currentStreak > 0 ? (
+          <div className="flex items-center gap-1.5 rounded-full bg-[#fff3e0] px-3 py-2 text-sm font-semibold text-[#d97706] dark:bg-[#3d2a00] dark:text-[#fbbf24]">
+            🔥 {currentStreak}d
+          </div>
+        ) : null}
+        <div className="hidden lg:block">{accountButton}</div>
+      </div>
+    </header>
+  );
+}
+
 function CommandCenterHeader({
   activeHudTaskTimer,
   activeSessions,
@@ -8089,6 +8181,7 @@ function CommandCenterHeader({
   onLowStimChange,
   currentStreak,
   notificationInboxItems,
+  isNativeIosPlatform,
   focusAlarmEnabled,
   focusAlarmIntervalMinutes,
   focusAlarmRemainingMs,
@@ -8136,6 +8229,7 @@ function CommandCenterHeader({
   onLowStimChange: (v: boolean) => void;
   currentStreak: number;
   notificationInboxItems: HudNotificationItem[];
+  isNativeIosPlatform: boolean;
   focusAlarmEnabled: boolean;
   focusAlarmIntervalMinutes: number;
   focusAlarmRemainingMs: number | null;
@@ -8166,6 +8260,22 @@ function CommandCenterHeader({
   const collapsedHudTaskTimer = activeHudTaskTimer ?? runningTaskTimers[0] ?? null;
   const activeHudPageTitle = hudUiState.hudPages.find((page) => page.id === currentHudPageId)?.title ?? "HUD";
   const [isNotificationInboxOpen, setIsNotificationInboxOpen] = useState(false);
+
+  if (!isNativeIosPlatform) {
+    return (
+      <WebsiteHudHeader
+        currentStreak={currentStreak}
+        economy={economy}
+        lowStim={lowStim}
+        notificationInboxItems={notificationInboxItems}
+        onLowStimChange={onLowStimChange}
+        onOpenAccount={onOpenAccount}
+        onThemeChange={onThemeChange}
+        profile={profile}
+        theme={theme}
+      />
+    );
+  }
 
   function setHudCollapsed(isCollapsed: boolean) {
     setHudUiState((current) => ({
@@ -8542,26 +8652,30 @@ function CommandCenterHeader({
   );
 }
 
-function ProfileAvatarImage({ avatarSrc }: { avatarSrc: string }) {
+function ProfileAvatarImage({ avatarSrc, website = false }: { avatarSrc: string; website?: boolean }) {
   return (
     <Image
       alt="Profile avatar"
-      className="h-11 w-11 rounded-full bg-[var(--hud-surface)] object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"
-      height={44}
+      className={website
+        ? "h-14 w-14 rounded-full object-cover ring-4 ring-white/70 shadow-[0_10px_30px_rgba(81,61,168,0.12)]"
+        : "h-11 w-11 rounded-full bg-[var(--hud-surface)] object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"}
+      height={website ? 56 : 44}
       key={avatarSrc}
       priority
       src={avatarSrc}
       unoptimized={avatarSrc.startsWith("data:")}
-      width={44}
+      width={website ? 56 : 44}
     />
   );
 }
 
 function BrandMark({
   compact = false,
+  website = false,
   profile,
 }: {
   compact?: boolean;
+  website?: boolean;
   profile: UserProfile;
 }) {
   const [errored, setErrored] = useState(false);
@@ -8570,13 +8684,13 @@ function BrandMark({
   return (
     <Image
       alt="ADHDice logo"
-      className="max-w-none object-contain object-left pl-[3px]"
-      height={compact ? 36 : 50}
+      className={website ? "h-20 w-auto object-contain object-left" : "max-w-none object-contain object-left pl-[3px]"}
+      height={website ? 80 : compact ? 36 : 50}
       onError={() => setErrored(true)}
       priority
       src={withBasePath(logoSrc)}
       unoptimized={logoSrc.startsWith("data:")}
-      width={compact ? 122 : 170}
+      width={website ? 272 : compact ? 122 : 170}
     />
   );
 }
