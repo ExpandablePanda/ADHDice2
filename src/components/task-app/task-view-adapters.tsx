@@ -879,29 +879,6 @@ export function TaskHistoryModal({
     return () => window.cancelAnimationFrame(frame);
   }, [initialFocusDate, task.id, taskHistoryLoadStatus]);
 
-  if (taskHistoryLoadStatus !== "ready") {
-    const isLoadError = taskHistoryLoadStatus === "error";
-    return (
-      <ModalShell className="w-full max-w-xl rounded-[2.4rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Task history" onClose={onClose}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Task History</p>
-            <h2 className="mt-2 truncate text-2xl font-black text-[#1f2746] dark:text-white">{taskTitle}</h2>
-          </div>
-          <button aria-label="Close task history" className="shrink-0 p-2 text-2xl leading-none text-[#8e97af] dark:text-white/55" onClick={onClose} type="button">×</button>
-        </div>
-        <div aria-live="polite" aria-busy={!isLoadError} className="mt-6 rounded-[1.5rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-5 py-6 text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
-          {isLoadError ? (
-            <>
-              <p>{taskHistoryLoadError ?? "Could not load task history."}</p>
-              {onRetryTaskHistoryLoad ? <button className="mt-4 rounded-full border border-[#ddd2ff] bg-[#f1ecff] px-4 py-2 text-sm font-semibold text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" onClick={() => { void onRetryTaskHistoryLoad(); }} type="button">Retry History</button> : null}
-            </>
-          ) : "Loading full task history…"}
-        </div>
-      </ModalShell>
-    );
-  }
-
   const calendarButton = (dateKey: string) => (
     <button aria-pressed={selectedDateSet.has(dateKey)} className={`flex h-9 w-9 items-center justify-center rounded-[0.85rem] border text-[10px] font-black tabular-nums transition ${cellTone(dateKey)} ${selectedDateSet.has(dateKey) ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""} ${isMultiSelect && dateKey > today ? "cursor-not-allowed opacity-45" : ""}`} data-history-date={dateKey} key={dateKey} onClick={() => selectDate(dateKey)} title={dateKey} type="button">{dateKey.slice(-2)}</button>
   );
@@ -1040,6 +1017,16 @@ export function TaskHistoryModal({
             </div>
     </section>
   );
+  const isHistoryLoading = taskHistoryLoadStatus === "loading";
+  const isHistoryLoadError = taskHistoryLoadStatus === "error";
+  const historyLoadErrorPanel = isHistoryLoadError ? (
+    <div className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center bg-white/80 p-6 backdrop-blur-sm dark:bg-[#171328]/85">
+      <div aria-live="polite" className="w-full max-w-lg rounded-[1.5rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-5 py-6 text-sm text-[#7b84a0] shadow-[0_18px_48px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#171328] dark:text-white/55" role="alert">
+        <p>{taskHistoryLoadError ?? "Could not load task history."}</p>
+        {onRetryTaskHistoryLoad ? <button className="mt-4 rounded-full border border-[#ddd2ff] bg-[#f1ecff] px-4 py-2 text-sm font-semibold text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" onClick={() => { void onRetryTaskHistoryLoad(); }} type="button">Retry History</button> : null}
+      </div>
+    </div>
+  ) : null;
 
   return (
     <ModalShell className="flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden rounded-none border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] sm:h-auto sm:max-h-[calc(100vh-2rem)] sm:rounded-[2.4rem] sm:p-6 dark:border-white/10 dark:bg-[#171328]" label="Task history" onClose={onClose}>
@@ -1056,6 +1043,15 @@ export function TaskHistoryModal({
         </div>
         <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6 lg:grid">{calendarRead ? <><div className="space-y-6"><section className="rounded-[2rem] border border-[#ece8f8] bg-[#fcfbff] p-5 dark:border-white/10 dark:bg-white/[0.03]"><div className="mb-4 flex items-start justify-between gap-3"><div><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a square to inspect or update that date."}</p>{calendarControls}</div><div className="max-w-sm">{calendarLegend}</div></div><div className="adhdice-scrollbar -mx-2 overflow-x-auto px-2 pb-2" ref={desktopCalendarViewportRef}><div className="inline-flex w-max gap-1.5 pr-2">{weeks.map((week, weekIndex) => <div className="flex flex-col gap-1.5" key={weekIndex}>{week.map(calendarButton)}</div>)}</div></div></section>{historySection}</div><div className="space-y-6">{selectedDetailsSection}{statsSection}</div></> : <div className="space-y-6">{calendarUnavailableSection}{historySection}{statsSection}</div>}</div>
       </div>
+      {historyLoadErrorPanel}
+      {(isHistoryLoading || isSaving) ? (
+        <div aria-busy="true" aria-live="polite" className="pointer-events-auto absolute inset-0 z-40 flex items-center justify-center bg-white/65 p-6 backdrop-blur-[2px] dark:bg-[#171328]/70" role="status">
+          <div className="flex items-center gap-3 rounded-full border border-[#ddd6f9] bg-white/92 px-5 py-3 text-sm font-semibold text-[#6f57f6] shadow-[0_18px_48px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#22193f]/95 dark:text-[#cabfff]">
+            <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-[#cfc3ff] border-t-[#6f57f6] dark:border-[#594d80] dark:border-t-[#cabfff]" />
+            <span>{isSaving ? "Saving History…" : "Loading History…"}</span>
+          </div>
+        </div>
+      ) : null}
     </ModalShell>
   );
 }

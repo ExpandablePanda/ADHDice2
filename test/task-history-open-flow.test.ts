@@ -6,6 +6,10 @@ const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
 const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
 const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
+const taskHistoryModalSource = modalSource.slice(
+  modalSource.indexOf("export function TaskHistoryModal"),
+  modalSource.indexOf("\nexport function BottomDockAdapter"),
+);
 const calendarAuthoritySource = readFileSync(new URL("../src/lib/task-state-engine/calendar-authority.ts", import.meta.url), "utf8");
 const workspaceSource = readFileSync(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 
@@ -117,15 +121,22 @@ test("parent, Step, Substep, and context-menu History actions preserve their row
   assert.match(listSource, /tableProps\.onOpenTaskHistory\?\.\(rowContextMenuTask\.id\)/);
 });
 
-test("History modal renders only the ready task cache and exposes loading retry UI", () => {
+test("History modal keeps one full-size shell and overlays loading, saving, and errors", () => {
   assert.match(appSource, /taskHistory: taskHistoryByTaskId\[taskHistoryModalTaskId\] \?\? \[\]/);
   assert.match(appSource, /taskHistoryLoadStatus: taskHistoryLoadStateByTaskId\[taskHistoryModalTaskId\]\?\.status \?\? "loading"/);
   assert.match(appSource, /onRetryTaskHistoryLoad: \(\) => retryTaskHistoryForTask\(taskHistoryModalTaskId\)/);
-  assert.match(modalSource, /if \(taskHistoryLoadStatus !== "ready"\)/);
-  assert.match(modalSource, /Loading full task history/);
-  assert.match(modalSource, /Retry History/);
-  const readinessBoundary = modalSource.slice(modalSource.lastIndexOf("if (taskHistoryLoadStatus !== \"ready\")"), modalSource.indexOf("const calendarButton"));
-  assert.doesNotMatch(readinessBoundary, /data-history-date/);
+  assert.equal((taskHistoryModalSource.match(/<ModalShell/g) ?? []).length, 1);
+  assert.match(taskHistoryModalSource, /className="flex h-\[100dvh\] w-full max-w-6xl/);
+  assert.doesNotMatch(taskHistoryModalSource, /max-w-xl/);
+  assert.doesNotMatch(taskHistoryModalSource, /if \(taskHistoryLoadStatus !== "ready"\) \{\s*const isLoadError/);
+  assert.match(taskHistoryModalSource, /const isHistoryLoading = taskHistoryLoadStatus === "loading"/);
+  assert.match(taskHistoryModalSource, /\(isHistoryLoading \|\| isSaving\)/);
+  assert.match(taskHistoryModalSource, /pointer-events-auto absolute inset-0 z-40/);
+  assert.match(taskHistoryModalSource, /aria-busy="true"/);
+  assert.match(taskHistoryModalSource, /isSaving \? "Saving History…" : "Loading History…"/);
+  assert.match(taskHistoryModalSource, /const historyLoadErrorPanel = isHistoryLoadError/);
+  assert.match(taskHistoryModalSource, /Retry History/);
+  assert.match(taskHistoryModalSource, /for \(const dateKey of targetDates\)/);
 });
 
 test("full History readiness is cached per authenticated task and mutations update the loaded cache", () => {

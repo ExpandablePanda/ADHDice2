@@ -13,7 +13,7 @@ const taskHistoryModalSource = modalSource.slice(modalSource.indexOf("export fun
 const taskCompleteSource = readFileSync(new URL("../src/lib/task-complete.ts", import.meta.url), "utf8");
 const focusEffectSource = taskHistoryModalSource.slice(
   taskHistoryModalSource.indexOf("  useEffect(() => {"),
-  taskHistoryModalSource.indexOf("\n\n  if (taskHistoryLoadStatus !== \"ready\")"),
+  taskHistoryModalSource.indexOf("\n\n  const calendarButton"),
 );
 
 test("task history focus prefers an explicitly selected date and otherwise uses today", () => {
