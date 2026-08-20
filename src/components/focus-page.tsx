@@ -23,7 +23,6 @@ import {
   getAllocationSummary,
   getEligibleSurplusTargets,
   getWeekdayKey,
-  getOverWeeklyDailyTargetReallocationPool,
   getSurplusOverrideTargets,
   isSleepCategory,
   normalizeCarryoverMode,
@@ -94,7 +93,6 @@ const FOCUS_COUNTER_ICON_OPTIONS = [
   { name: "DollarSign", label: "Money" },
 ] as const;
 
-const OVER_WEEKLY_REALLOCATION_DISMISSED_KEY = "adhdice.focusGoals.overWeeklyReallocationDismissed.v1";
 const FOCUS_TOOLBAR_CHIP_TONE_CLASS = "border-[#e4deef] bg-[var(--surface-elevated)] text-[#68738c] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/60";
 const FOCUS_SANDBOX_TAB_ORDER_STORAGE_KEY = "adhdice.focusSandboxTabOrder.v1";
 const DEFAULT_FOCUS_SANDBOX_TAB_ORDER = [0, 1] as const;
@@ -113,24 +111,6 @@ function readFocusSandboxTabOrder(): number[] {
 function writeFocusSandboxTabOrder(order: number[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(FOCUS_SANDBOX_TAB_ORDER_STORAGE_KEY, JSON.stringify(order));
-}
-
-function readOverWeeklyReallocationDismissedKeys() {
-  if (typeof window === "undefined") return {};
-  try {
-    return JSON.parse(window.localStorage.getItem(OVER_WEEKLY_REALLOCATION_DISMISSED_KEY) ?? "{}") as Record<string, true>;
-  } catch {
-    return {};
-  }
-}
-
-function writeOverWeeklyReallocationDismissedKeys(keys: Record<string, true>) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(OVER_WEEKLY_REALLOCATION_DISMISSED_KEY, JSON.stringify(keys));
-}
-
-function overWeeklyReallocationPromptKey(dateKey: string, categoryId: string) {
-  return `${dateKey}:${categoryId}`;
 }
 
 function FocusTimerPicker({
@@ -295,7 +275,6 @@ export function FocusPage({
   adjustments,
   pendingDailyGoalSurplus,
   onDismissDailyGoalSurplus,
-  onRequestDailyGoalSurplus,
   onSaveDailyGoalAdjustment,
 }: {
   categories: FocusCategory[];
@@ -321,7 +300,6 @@ export function FocusPage({
   adjustments: FocusDailyGoalAdjustment[];
   pendingDailyGoalSurplus: PendingFocusDailySurplus | null;
   onDismissDailyGoalSurplus: () => void;
-  onRequestDailyGoalSurplus: (pending: PendingFocusDailySurplus) => void;
   onSaveDailyGoalAdjustment: (input: { adjustmentDate: string; sourceCategoryId: string; targetCategoryId: string; sourceSessionId?: string | null; reductionSeconds: number; reason?: string }) => Promise<boolean>;
 }) {
   const [countdownPickerOpenRequest, setCountdownPickerOpenRequest] = useState(0);
@@ -348,7 +326,6 @@ export function FocusPage({
   const [counterStep, setCounterStep] = useState("1");
   const [counterGoal, setCounterGoal] = useState("10");
   const [counterValue, setCounterValue] = useState("0");
-  const [dismissedOverWeeklyReallocationKeys, setDismissedOverWeeklyReallocationKeys] = useState<Record<string, true>>(() => readOverWeeklyReallocationDismissedKeys());
   const userCategories = categories.filter((category) => !isSystemCountdownCategoryId(category.id));
   const displayCategories = getDisplayFocusCategories(categories, activeSessions);
   const countersById = new Map(counters.map((counter) => [counter.id, counter]));
@@ -451,39 +428,9 @@ export function FocusPage({
     clearFocusSandboxSwipe(event);
   };
 
-  const markOverWeeklyReallocationHandled = (pending: PendingFocusDailySurplus | null) => {
-    if (pending?.reason !== OVER_WEEKLY_DAILY_TARGET_REALLOCATION_REASON) return;
-    const promptKey = overWeeklyReallocationPromptKey(pending.adjustmentDate, pending.sourceCategoryId);
-    setDismissedOverWeeklyReallocationKeys((current) => {
-      if (current[promptKey]) return current;
-      const next = { ...current, [promptKey]: true as const };
-      writeOverWeeklyReallocationDismissedKeys(next);
-      return next;
-    });
-  };
-
   const dismissDailyGoalSurplus = () => {
-    markOverWeeklyReallocationHandled(pendingDailyGoalSurplus);
     onDismissDailyGoalSurplus();
   };
-
-  useEffect(() => {
-    if (pendingDailyGoalSurplus || userCategories.length === 0) return;
-    const plan = buildFocusGoalPlan({ adjustments, categories: userCategories, history });
-    const source = plan.summaries.find((summary) => {
-      const promptKey = overWeeklyReallocationPromptKey(plan.todayDate, summary.category.id);
-      return !dismissedOverWeeklyReallocationKeys[promptKey] && getOverWeeklyDailyTargetReallocationPool(summary) > 0;
-    });
-    if (!source) return;
-    onRequestDailyGoalSurplus({
-      adjustmentDate: plan.todayDate,
-      reason: OVER_WEEKLY_DAILY_TARGET_REALLOCATION_REASON,
-      sourceCategoryId: source.category.id,
-      sourceCategoryTitle: source.category.title,
-      sourceSessionId: null,
-      surplusSeconds: getOverWeeklyDailyTargetReallocationPool(source),
-    });
-  }, [adjustments, dismissedOverWeeklyReallocationKeys, history, onRequestDailyGoalSurplus, pendingDailyGoalSurplus, userCategories]);
 
   const openCreateCounter = () => {
     setEditingCounterId(null);

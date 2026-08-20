@@ -1465,9 +1465,9 @@ export function HealthPage({
       ) : null}
 
       {activeTab === "Food" ? (
-        <div aria-labelledby="health-tab-food" className="mt-6 grid gap-5 xl:grid-cols-[1.08fr_0.92fr]" id={getHealthTabPanelId("Food")} role="tabpanel">
-          <div className="grid content-start gap-5">
-          <HealthPanel icon={<Salad />} subtitle="Meal logging">
+        <div aria-labelledby="health-tab-food" className="mt-6 grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]" id={getHealthTabPanelId("Food")} role="tabpanel">
+          <div className="grid min-w-0 content-start gap-5">
+          <HealthPanel className="min-w-0" icon={<Salad />} subtitle="Meal logging">
             <HealthCollapsiblePanel
               className="mb-5"
               defaultOpen={false}
@@ -1478,11 +1478,11 @@ export function HealthPage({
               title="Search foods and barcodes"
               variant="subpanel"
             >
-              <div className="grid gap-3 lg:grid-cols-[1.25fr_auto]">
+              <div className="grid min-w-0 gap-3 lg:grid-cols-2">
                 <Field label="Search foods">
-                  <div className="flex gap-2">
+                  <div className="flex min-w-0 flex-wrap gap-2">
                     <input
-                      className="health-input"
+                      className="health-input min-w-0 flex-1"
                       onChange={(event) => setFoodSearchQuery(event.target.value)}
                       placeholder="Greek yogurt, protein bar, soup"
                       value={foodSearchQuery}
@@ -1499,9 +1499,9 @@ export function HealthPage({
                   </div>
                 </Field>
                 <Field label="Typed barcode">
-                  <div className="flex gap-2">
+                  <div className="flex min-w-0 flex-wrap gap-2">
                     <input
-                      className="health-input"
+                      className="health-input min-w-0 flex-1"
                       inputMode="numeric"
                       onChange={(event) => setBarcodeLookup(event.target.value)}
                       placeholder="012345678905"
@@ -1569,7 +1569,7 @@ export function HealthPage({
                   <SectionMiniTitle title="Lookup results" />
                   {foodLookupResults.map((result) => (
                     <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/90 px-4 py-3 dark:border-white/10 dark:bg-white/[0.05]" key={`${result.provider}-${result.providerItemId}`}>
-                      <div className="flex items-start gap-3">
+                      <div className="flex min-w-0 items-start gap-3">
                         <div className="min-w-0 flex-1">
                           <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{result.foodName}</p>
                           <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">
@@ -1593,7 +1593,7 @@ export function HealthPage({
               ) : null}
             </HealthCollapsiblePanel>
 
-            <div className="grid gap-3 lg:grid-cols-[0.65fr_1.35fr_0.7fr_0.55fr_auto]">
+            <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(5rem,0.65fr)_minmax(0,1.35fr)_minmax(7rem,0.7fr)_minmax(4rem,0.55fr)_auto]">
               <Field label="Meal">
                 <HealthDropdown
                   ariaLabel="Meal"
@@ -1815,7 +1815,7 @@ export function HealthPage({
                         <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(entry)}</p>
                         <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">{formatHealthMealSummary(entry)}</p>
                       </div>
-                      <div className="flex shrink-0 flex-nowrap gap-2">
+                      <div className="flex shrink-0 flex-wrap justify-end gap-2">
                         <button
                           className="ui-pill-button-light inline-flex shrink-0 items-center gap-1.5"
                           onClick={() => startEditingMeal(entry)}
@@ -1953,9 +1953,10 @@ export function HealthPage({
           </HealthPanel>
           </div>
 
-          <div className="grid content-start gap-5">
+          <div className="grid min-w-0 content-start gap-5">
           <HealthPanel
             headerActions={<FoodHistoryDateChip date={foodHistoryDate} onChange={setFoodHistoryDate} today={today} />}
+            className="min-w-0"
             icon={<Target />}
             subtitle="Daily totals"
           >
@@ -1968,7 +1969,7 @@ export function HealthPage({
             <HealthCalorieLineChart series={dailyCalorieSeries} />
           </HealthPanel>
 
-          <HealthPanel icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
+          <HealthPanel className="min-w-0" icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
               <div className="adhdice-scrollbar max-h-[26rem] space-y-5 overflow-y-auto pr-1">
                 <section className="space-y-3" aria-labelledby="health-favorites-heading">
                   <SectionMiniTitle title="Favorites" />
@@ -1977,8 +1978,8 @@ export function HealthPage({
                     <EmptyCopy text="Save a meal as a favorite and it will show up here for one-tap reuse." />
                   ) : (
                     favoriteFoods.map((item) => (
-                      <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
-                        <div className="flex items-start gap-3">
+                      <div className="min-w-0 rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
+                        <div className="flex min-w-0 flex-wrap items-start gap-3">
                           <button
                             aria-controls={`favorite-history-${item.id}`}
                             aria-expanded={expandedFavoriteId === item.id}
@@ -1992,7 +1993,7 @@ export function HealthPage({
                               <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 shrink-0 transition-transform ${expandedFavoriteId === item.id ? "rotate-180" : ""}`} />
                             </p>
                           </button>
-                          <div className="flex shrink-0 flex-nowrap gap-2">
+                          <div className="flex min-w-0 max-w-full flex-wrap justify-end gap-2">
                             <button className="ui-pill-button-strong-light shrink-0" onClick={() => { void handleFavoriteReuse(item); }} type="button">
                               Add Today
                             </button>
@@ -2018,8 +2019,8 @@ export function HealthPage({
                     <EmptyCopy text="Once you log a few meals, your recent foods will show up here for quick draft-filling." />
                   ) : (
                     recentFoods.map((item) => (
-                      <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
-                        <div className="flex items-start gap-3">
+                      <div className="min-w-0 rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
+                        <div className="flex min-w-0 flex-wrap items-start gap-3">
                           <div className="min-w-0 flex-1">
                             <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(item)}</p>
                             <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">
@@ -2062,7 +2063,7 @@ export function HealthPage({
           </HealthPanel>
           </div>
 
-          <div className="order-4 xl:col-span-2 xl:order-none">
+          <div className="order-4 min-w-0 xl:col-span-2 xl:order-none">
           <HealthLibraryPanel
             deleteFood={deleteFavoriteFood}
             deleteRecipe={deleteRecipe}

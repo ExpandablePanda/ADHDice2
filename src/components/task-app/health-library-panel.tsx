@@ -372,6 +372,7 @@ export function HealthLibraryPanel({
 
   return (
     <HealthCollapsiblePanel
+      className="min-w-0"
       subtitle="Create reusable foods, combine ingredients into recipes, or bundle foods and recipes into one-tap meals."
       title="Custom nutrition library"
     >
@@ -472,8 +473,8 @@ export function HealthLibraryPanel({
               ) : null}
             </HealthCollapsiblePanel>
           ) : null}
-          <div className="grid items-start gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-          <div className="grid gap-4">
+          <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <div className="grid min-w-0 gap-4">
             <HealthCollapsiblePanel subtitle="Filter saved custom foods in this library." title="Search custom foods" variant="subpanel">
               <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
                 <HealthAutocomplete
@@ -572,10 +573,10 @@ export function HealthLibraryPanel({
               </div>
             </HealthCollapsiblePanel>
           </div>
-          <div className="adhdice-scrollbar max-h-[36rem] overflow-y-auto pr-1">
+          <div className="adhdice-scrollbar min-w-0 max-h-[36rem] overflow-y-auto pr-1">
             <LibraryCards empty={foodSearchQuery.trim() ? "No custom foods match this search." : "No custom foods yet."} items={filteredFoods.map((food) => (
               <AdhdCard key={food.id}>
-                <div className="flex items-start gap-3">
+                <div className="flex min-w-0 items-start gap-3">
                   <div className="min-w-0 flex-1">
                     <LibraryCardHeader
                       detail={`${food.food_category || "Uncategorized"} / ${food.serving_label || "1 serving"} / ${food.calories} kcal`}
@@ -583,7 +584,7 @@ export function HealthLibraryPanel({
                     />
                     <NutritionLine calories={food.calories} carbs={food.carbs_g ?? 0} fat={food.fat_g ?? 0} protein={food.protein_g ?? 0} />
                   </div>
-                  <div className="flex shrink-0 flex-nowrap gap-2">
+                  <div className="flex min-w-0 max-w-full flex-wrap justify-end gap-2">
                     <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setFoodDraft(foodToDraft(food))}>Edit</AdhdChip>
                     <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void deleteFood(food.id); }} tone="danger">Remove</AdhdChip>
                   </div>
@@ -791,9 +792,9 @@ function SourcePicker({ empty, items, title }: { empty: string; items: Array<{ i
 
 function IngredientRow({ name, onQuantity, onRemove, quantity }: { name: string; onQuantity: (quantity: number) => void; onRemove: () => void; quantity: number }) {
   return (
-    <div className="flex items-start gap-3 rounded-[1rem] border border-[#efe9ff] bg-white/80 px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]">
+    <div className="flex min-w-0 items-start gap-3 rounded-[1rem] border border-[#efe9ff] bg-white/80 px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]">
       <span className="min-w-0 flex-1 break-words text-sm font-medium text-[#595378] dark:text-white/68">{name}</span>
-      <div className="flex shrink-0 flex-nowrap items-center gap-2">
+      <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
         <label className="flex items-center gap-2 text-xs text-[#7d7598] dark:text-white/55">
           Servings
           <input className="health-input w-20" inputMode="decimal" min="0.01" onChange={(event) => onQuantity(parsePositive(event.target.value))} type="number" value={quantity} />
