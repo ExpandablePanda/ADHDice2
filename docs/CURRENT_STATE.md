@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.10.20`.
+- Current working app version: `7.10.21`.
 - Current release group: `7.10.x` QA polish corrections for Health, Focus, and History Calendar.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
