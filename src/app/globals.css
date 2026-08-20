@@ -296,9 +296,61 @@ body {
   letter-spacing: 0;
 }
 
+.adhdice-root-safe-area {
+  padding-top: calc(2rem + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px));
+}
+
+.adhdice-hud-safe-area {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.adhdice-horizontal-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+.adhdice-modal-viewport {
+  align-items: flex-start;
+  box-sizing: border-box;
+  height: 100dvh;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: max(1rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px)) max(1rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
+  -webkit-overflow-scrolling: touch;
+}
+
+.adhdice-modal-dialog {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+@media (min-width: 640px) {
+  .adhdice-modal-viewport {
+    align-items: center;
+  }
+}
+
+@media (max-width: 639px) {
+  .adhdice-modal-dialog {
+    max-width: 100%;
+  }
+}
+
 button,
 input,
 textarea,
 select {
   font: inherit;
+}
+
+/* iOS Safari zooms the page when a focused editable control is smaller than 16px. */
+@media (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="color"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
 }

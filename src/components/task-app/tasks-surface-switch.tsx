@@ -15,8 +15,8 @@ export function TasksSurfaceSwitch({
   value: TasksSurface;
 }) {
   return (
-    <div className="mt-1 flex justify-center">
-      <div className={TASKS_SURFACE_GROUP_CLASS}>
+    <div className="adhdice-scrollbar adhdice-horizontal-scroll mt-1 flex w-full min-w-0 max-w-full justify-start overflow-x-auto px-1 sm:w-auto sm:justify-center sm:overflow-x-visible sm:px-0">
+      <div className={`${TASKS_SURFACE_GROUP_CLASS} w-max min-w-max shrink-0`}>
         <AdhdChip
           aria-pressed={value === "tasks"}
           onClick={() => onChange("tasks")}

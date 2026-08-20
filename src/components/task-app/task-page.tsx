@@ -38,7 +38,7 @@ export function TaskPage({
 }: TaskPageProps) {
   return (
     <>
-      <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+      <div className="mt-4 flex min-w-0 max-w-full flex-wrap items-center justify-center gap-2">
         {surfaceSwitch}
         {tabs}
       </div>

@@ -7,12 +7,14 @@ export function ModalShell({
   onClose,
   label,
   mobileFocused = false,
+  autoFocus = true,
 }: {
   children: React.ReactNode;
   className?: string;
   onClose?: () => void;
   label?: string;
   mobileFocused?: boolean;
+  autoFocus?: boolean;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const latestOnCloseRef = useRef(onClose);
@@ -26,11 +28,12 @@ export function ModalShell({
     if (!el) return;
 
     // Focus the first focusable element only on first mount so rerenders do not steal focus.
+    if (!autoFocus) return;
     const focusable = el.querySelectorAll<HTMLElement>(
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
     );
     (focusable[0] ?? el).focus();
-  }, []);
+  }, [autoFocus]);
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -66,7 +69,7 @@ export function ModalShell({
   }
 
   return createPortal(
-    <div className={`fixed inset-0 z-[140] flex justify-center ${mobileFocused ? "items-start overflow-y-auto px-4 pb-4 pt-4 sm:items-center sm:overflow-hidden sm:p-4" : "items-center p-4"}`}>
+    <div className="adhdice-modal-viewport fixed inset-0 z-[140] flex justify-center">
       {onClose && (
         <div
           aria-hidden="true"
@@ -77,7 +80,7 @@ export function ModalShell({
       <div
         aria-label={label}
         aria-modal="true"
-        className={`relative ${className ?? ""}`}
+        className={`adhdice-modal-dialog relative ${className ?? ""}`}
         ref={dialogRef}
         role="dialog"
         tabIndex={-1}

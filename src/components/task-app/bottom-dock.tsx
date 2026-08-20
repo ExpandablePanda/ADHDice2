@@ -223,7 +223,7 @@ export function BottomDockComponent<TPage extends string>({
 
   const isVertical = renderedDockPlacement !== "bottom";
   const dockPositionClass = renderedDockPlacement === "bottom"
-    ? "fixed inset-x-0 z-10 px-4"
+    ? "fixed inset-x-0 z-10 min-w-0 px-4"
     : renderedDockPlacement === "left"
       ? "fixed left-4 top-4 bottom-4 z-10 flex items-center"
       : "fixed right-4 top-4 bottom-4 z-10 flex items-center";
@@ -231,7 +231,7 @@ export function BottomDockComponent<TPage extends string>({
     ? { bottom: "calc(1.25rem + env(safe-area-inset-bottom))" }
     : undefined;
   const dockShapeClass = renderedDockPlacement === "bottom"
-    ? "adhdice-scrollbar mx-auto flex w-fit max-w-full items-center gap-[3px] rounded-[1.75rem] px-[3px] py-1 overflow-x-auto sm:overflow-x-visible touch-pan-x"
+    ? "adhdice-scrollbar adhdice-horizontal-scroll mx-auto flex min-w-0 w-fit max-w-full items-center gap-[3px] rounded-[1.75rem] px-[3px] py-1 overflow-x-auto sm:overflow-x-visible touch-pan-x"
     : "adhdice-scrollbar flex max-h-full w-[5rem] flex-col items-center gap-1 overflow-y-auto rounded-[2rem] px-2 py-3";
   const collapsingStyle = isDockCollapsing
     ? renderedDockPlacement === "bottom"

@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "node --experimental-strip-types ./scripts/dev-server.mjs",
     "build": "next build",
+    "build:ios": "CAPACITOR_BUILD=1 npm run build && npx cap sync ios",
+    "ios:device": "npm run build:ios && npx cap run ios --target 00008150-000948880AEA401C --scheme ADHDice --no-sync",
     "start": "next start",
     "lint": "eslint",
     "audit:text-buttons": "node ./scripts/audit-text-buttons.mjs",
@@ -21,6 +23,8 @@
     "test:taskapp-wave": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/task-helper-modules.test.ts test/task-refactor-helpers.test.ts test/task-action-hooks-smoke.test.ts"
   },
   "dependencies": {
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/ios": "^8.5.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
     "@supabase/supabase-js": "^2.105.1",
@@ -32,6 +36,7 @@
     "three": "^0.184.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

@@ -413,7 +413,7 @@ test("Focus Bars action circles use the approved small icon-button size with pro
 test("Add Focus Timer matches the Manual Entry chip shell and fixed chip typography", () => {
   assert.match(focusPageSource, /w-\[min\(12rem,calc\(100vw-2rem\)\)\]/);
   assert.match(focusPageSource, /ui-pill-button-strong-light flex items-center gap-1\.5 transition hover:-translate-y-0\.5/);
-  assert.match(focusPageSource, /className="min-w-0 flex-1 border-0 bg-transparent p-0 text-\[13px\] font-medium leading-none[^"]*focus:text-\[13px\]"/);
+  assert.match(focusPageSource, /className="min-w-0 flex-1 border-0 bg-transparent p-0 text-base font-medium leading-none[^"]*focus:text-base[^"]*sm:text-\[13px\][^"]*sm:focus:text-\[13px\]"/);
   assert.doesNotMatch(focusPageSource, /TASK_TABLE_INPUT_CLASS/);
   assert.match(focusPageSource, /placeholder="Add focus timer\.\.\."[\s\S]*?role="combobox"/);
 });

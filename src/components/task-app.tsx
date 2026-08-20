@@ -6557,7 +6557,7 @@ export function TaskApp() {
           pendingRewards={activeRewardBankSession}
         />
       ) : null}
-      <div className="sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]">
+      <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]">
         <div className="w-full">
           {shouldShowInitialHudLoadingShell ? (
             <HudLoadingShell />
@@ -7368,7 +7368,7 @@ function CountdownFinishedAlertOverlay({
 
 function ConfigSplash() {
   return (
-    <main className={`min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
+    <main className={`adhdice-root-safe-area min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
       <section className="mx-auto flex min-h-[80vh] max-w-3xl items-center justify-center">
         <div className={`w-full rounded-[2rem] border p-8 text-center border-[#ece8f8] bg-white shadow-[0_24px_70px_rgba(81,61,168,0.1)] dark:border-white/10 dark:bg-white/6`}>
           <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8e88a9] dark:text-white/40`}>
@@ -7392,7 +7392,7 @@ function LoadingSplash({
   status: string;
 }) {
   return (
-    <main className={`min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
+    <main className={`adhdice-root-safe-area min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
       <section className="mx-auto flex min-h-[80vh] max-w-3xl items-center justify-center">
         <div className={`w-full rounded-[2rem] border p-8 text-center border-[#ece8f8] bg-white shadow-[0_24px_70px_rgba(81,61,168,0.1)] dark:border-white/10 dark:bg-white/6`}>
           <div className={`mx-auto h-14 w-14 animate-pulse rounded-full bg-[#ede8ff] dark:bg-[#22193f]`} />
@@ -7471,7 +7471,7 @@ function AuthSplash({
   }, [hasHydratedMode, mode]);
 
   return (
-    <main className={`min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
+    <main className={`adhdice-root-safe-area min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
       <section className="mx-auto grid min-h-[80vh] max-w-5xl items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="text-center lg:text-left">
           <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8e88a9] dark:text-white/40`}>
