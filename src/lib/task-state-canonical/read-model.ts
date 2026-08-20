@@ -65,6 +65,27 @@ export type CanonicalReadClient = {
   from<T extends keyof CanonicalReadTableRows>(table: T): CanonicalReadQuery<CanonicalReadTableRows[T]>;
 };
 
+export async function loadCanonicalTaskScheduleBoundary(
+  client: CanonicalReadClient,
+  input: { userId: string; taskId: string; boundaryId: string },
+): Promise<{ data: CanonicalTaskScheduleBoundary | null; error: CanonicalReadError | null }> {
+  const result = await client
+    .from("adhdice_task_schedule_boundaries")
+    .select("*")
+    .eq("user_id", input.userId)
+    .eq("entity_id", input.taskId)
+    .eq("id", input.boundaryId)
+    .maybeSingle();
+
+  if (result.error) return { data: null, error: readError(result.error) };
+  const boundary = result.data;
+  if (!boundary) return { data: null, error: { message: "The committed canonical schedule boundary was not found." } };
+  if (boundary.id !== input.boundaryId || boundary.user_id !== input.userId || boundary.entity_id !== input.taskId) {
+    return { data: null, error: { message: "The committed canonical schedule boundary does not belong to this Task and user." } };
+  }
+  return { data: boundary, error: null };
+}
+
 export type CanonicalTaskStateReadModel = {
   task: CanonicalTaskRow;
   commandOperations: CanonicalTaskCommandOperation[];

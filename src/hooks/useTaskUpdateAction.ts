@@ -16,7 +16,11 @@ import {
   type TaskStateRuntimeLocalTask,
   type TaskStateRuntimeCanonicalAction,
 } from "@/lib/task-state-runtime-executor";
-import { projectTaskWithCanonicalScheduleChanges } from "@/lib/task-state-canonical/schedule-projection";
+import {
+  mergeTaskWithCanonicalScheduleProjection,
+  projectTaskWithCanonicalScheduleBoundary,
+} from "@/lib/task-state-canonical/schedule-projection";
+import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
 
 type Message = {
   text: string;
@@ -54,6 +58,7 @@ type UseTaskUpdateActionOptions = {
   taskHistory?: TaskHistory[];
   tasks: Task[];
   loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<TaskHistoryLoadMap>;
+  loadCanonicalScheduleBoundary?: (taskId: string, boundaryId: string) => Promise<CanonicalTaskScheduleBoundary | null>;
   logicalDayNow?: Date | string;
   timezone: string;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
@@ -109,6 +114,7 @@ export function useTaskUpdateAction({
   taskHistory = [],
   tasks,
   loadTaskHistoryForTasks,
+  loadCanonicalScheduleBoundary,
   logicalDayNow = `${currentDayKey}T12:00:00.000Z`,
   timezone = "UTC",
   updateTaskRowWithLegacyEnergyFallback,
@@ -213,9 +219,31 @@ export function useTaskUpdateAction({
           return false;
         }
 
-        const reconciledCanonicalTask = runtimeAction.scheduleChanges
-          ? projectTaskWithCanonicalScheduleChanges(canonicalResult.task as Task, runtimeAction.scheduleChanges)
-          : canonicalResult.task as Task;
+        let reconciledCanonicalTask: TaskStateRuntimeLocalTask;
+        try {
+          const scheduleBoundaryId = canonicalResult.response.side_effect_ids.schedule_boundary_id;
+          if (scheduleBoundaryId) {
+            if (!loadCanonicalScheduleBoundary) {
+              throw new Error("The committed canonical schedule boundary could not be loaded.");
+            }
+            const boundary = await loadCanonicalScheduleBoundary(taskId, scheduleBoundaryId);
+            if (!boundary
+              || boundary.id !== scheduleBoundaryId
+              || boundary.entity_id !== taskId
+              || boundary.user_id !== currentCanonicalTask.user_id) {
+              throw new Error("The committed canonical schedule boundary could not be validated for this Task.");
+            }
+            reconciledCanonicalTask = projectTaskWithCanonicalScheduleBoundary(canonicalResult.task as Task, boundary) as TaskStateRuntimeLocalTask;
+          } else {
+            reconciledCanonicalTask = canonicalResult.task;
+          }
+        } catch (error) {
+          setMessage({
+            tone: "warn",
+            text: error instanceof Error ? error.message : "The committed canonical schedule boundary could not be reconciled.",
+          });
+          return false;
+        }
         mutationState.taskSnapshots.set(taskId, reconciledCanonicalTask);
         setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? reconciledCanonicalTask : task)));
         if (runtimeAction.actionType === "archive_task" || runtimeAction.actionType === "trash_task") {
@@ -328,7 +356,10 @@ export function useTaskUpdateAction({
     if (conflict) {
       clearPendingTaskMutations?.([taskId]);
       if (conflict.latestTask) {
-        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? conflict.latestTask ?? task : task)));
+        const latestTask = previousTask
+          ? mergeTaskWithCanonicalScheduleProjection(previousTask, conflict.latestTask)
+          : conflict.latestTask;
+        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? latestTask : task)));
         if (conflict.latestTask.status === "done" || conflict.latestTask.status === "did_my_best" || conflict.latestTask.status === "complete" || conflict.latestTask.status === "archived" || conflict.latestTask.status === "trashed") {
           routeTask(taskId, null);
         }
@@ -338,9 +369,12 @@ export function useTaskUpdateAction({
     }
 
     if (data) {
-      const nextData = usedActualSecondsFallback && typeof values.actual_seconds === "number"
+      const rawNextData = usedActualSecondsFallback && typeof values.actual_seconds === "number"
         ? { ...data, actual_seconds: values.actual_seconds }
         : data;
+      const nextData = previousTask
+        ? mergeTaskWithCanonicalScheduleProjection(previousTask, rawNextData)
+        : rawNextData;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
       if (scheduleOnlyEdit) {

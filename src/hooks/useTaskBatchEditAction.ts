@@ -23,6 +23,11 @@ import {
   type TaskStateRuntimeExecutionResult,
   type TaskStateRuntimeLocalTask,
 } from "@/lib/task-state-runtime-executor";
+import {
+  mergeTaskWithCanonicalScheduleProjection,
+  projectTaskWithCanonicalScheduleBoundary,
+} from "@/lib/task-state-canonical/schedule-projection";
+import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
 
 type Message = {
   text: string;
@@ -59,6 +64,7 @@ type UseTaskBatchEditActionOptions = {
   taskHistory?: TaskHistory[];
   tasks: Task[];
   loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<TaskHistoryLoadMap>;
+  loadCanonicalScheduleBoundary?: (taskId: string, boundaryId: string) => Promise<CanonicalTaskScheduleBoundary | null>;
   logicalDayNow?: Date | string;
   timezone: string;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
@@ -87,6 +93,7 @@ export function useTaskBatchEditAction({
   taskHistory = [],
   tasks,
   loadTaskHistoryForTasks,
+  loadCanonicalScheduleBoundary,
   logicalDayNow = `${currentDayKey}T12:00:00.000Z`,
   timezone = "UTC",
   updateTaskRowWithLegacyEnergyFallback,
@@ -280,7 +287,24 @@ export function useTaskBatchEditAction({
           if (!canonicalResult.success) {
             planErrorMessage = `Task "${task.title}": ${canonicalResult.error.message}`;
           } else {
-            nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? canonicalResult.task : currentTask);
+            const scheduleBoundaryId = canonicalResult.response.side_effect_ids.schedule_boundary_id;
+            if (scheduleBoundaryId) {
+              if (!loadCanonicalScheduleBoundary) {
+                throw new Error("The committed canonical schedule boundary could not be loaded.");
+              }
+              const boundary = await loadCanonicalScheduleBoundary(task.id, scheduleBoundaryId);
+              if (!boundary
+                || boundary.id !== scheduleBoundaryId
+                || boundary.entity_id !== task.id
+                || boundary.user_id !== task.user_id) {
+                throw new Error("The committed canonical schedule boundary could not be validated for this Task.");
+              }
+              nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id
+                ? projectTaskWithCanonicalScheduleBoundary(canonicalResult.task as Task, boundary)
+                : currentTask);
+            } else {
+              nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? canonicalResult.task : currentTask);
+            }
             hasAuthoritativeTaskRowsToReconcile = true;
             if (["archive_task", "trash_task", "complete_task", "set_outcome"].includes(runtimeAction.actionType)) routeTask(task.id, null);
             planSuccess = true;
@@ -294,21 +318,22 @@ export function useTaskBatchEditAction({
           } else if (!data) {
             planErrorMessage = `Task "${task.title}" updated, but no task row came back from Supabase.`;
           } else {
-            nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? data : currentTask);
+            const nextData = mergeTaskWithCanonicalScheduleProjection(task, data);
+            nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? nextData : currentTask);
             hasAuthoritativeTaskRowsToReconcile = true;
             if (dueDateOnlyEdit) {
-              void onTaskHistoryMutation?.(task.id, scopedHistory, data);
+              void onTaskHistoryMutation?.(task.id, scopedHistory, nextData);
             }
 
-            if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {
+            if (nextData.status === "done" || nextData.status === "did_my_best" || nextData.status === "complete" || nextData.status === "archived" || nextData.status === "trashed") {
               routeTask(task.id, null);
             }
 
             if (!dueDateOnlyEdit && draft.status !== "unchanged") {
               const historyEntries = actionAuthority?.mutationPlan.historyIntents;
               const historySaved = historyEntries?.length && syncTaskHistoryEntries
-                ? await syncTaskHistoryEntries(task.id, data.status, historyEntries.map((entry) => entry.entry_date), { historyEntries, historySnapshot: scopedHistory })
-                : await syncTaskHistoryEntry(task.id, data.status, task, historyEntries?.[0]
+                ? await syncTaskHistoryEntries(task.id, nextData.status, historyEntries.map((entry) => entry.entry_date), { historyEntries, historySnapshot: scopedHistory })
+                : await syncTaskHistoryEntry(task.id, nextData.status, task, historyEntries?.[0]
                   ? { historyEntry: historyEntries[0], historySnapshot: scopedHistory }
                   : { historySnapshot: scopedHistory });
               if (!historySaved) {
@@ -322,7 +347,7 @@ export function useTaskBatchEditAction({
                   engineManaged: Boolean(actionAuthority),
                   previousStatus: task.status,
                   rewardEligible: actionAuthority?.rewardEligibility.eligible,
-                  task: data,
+                  task: nextData,
                 });
               }
 

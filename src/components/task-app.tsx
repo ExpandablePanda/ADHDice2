@@ -229,6 +229,7 @@ import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity, isTaskSt
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 import type { CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/types";
+import { loadCanonicalTaskScheduleBoundary, type CanonicalReadClient } from "@/lib/task-state-canonical/read-model";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
 import { calcNextDueDateFromDate } from "@/lib/task-repeat";
@@ -572,7 +573,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.9.61";
+const APP_VERSION = "7.9.62";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3629,6 +3630,17 @@ export function TaskApp() {
       dayStartTime,
       focusedTaskIds,
       loadTaskHistoryForTasks,
+      loadCanonicalScheduleBoundary: async (taskId, boundaryId) => {
+        const result = await loadCanonicalTaskScheduleBoundary(client as unknown as CanonicalReadClient, {
+          boundaryId,
+          taskId,
+          userId: currentUserIdText,
+        });
+        if (result.error || !result.data) {
+          throw new Error(result.error?.message ?? "The committed canonical schedule boundary could not be loaded.");
+        }
+        return result.data;
+      },
       logicalDayNow: new Date(logicalDayNow),
       onTaskHistoryMutation: reconcileTaskHistoryMutation,
       onTasksCompleted: queueTaskRewards,
@@ -3725,6 +3737,17 @@ export function TaskApp() {
       dayStartTime,
       logicalDayNow: new Date(logicalDayNow),
       loadTaskHistoryForTasks,
+      loadCanonicalScheduleBoundary: async (taskId, boundaryId) => {
+        const result = await loadCanonicalTaskScheduleBoundary(client as unknown as CanonicalReadClient, {
+          boundaryId,
+          taskId,
+          userId: currentUserIdText,
+        });
+        if (result.error || !result.data) {
+          throw new Error(result.error?.message ?? "The committed canonical schedule boundary could not be loaded.");
+        }
+        return result.data;
+      },
       onTaskHistoryMutation: reconcileTaskHistoryMutation,
       setMessage: setTaskUpdateMessage,
       setTasks,
