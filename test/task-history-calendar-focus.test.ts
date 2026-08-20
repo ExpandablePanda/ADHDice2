@@ -102,6 +102,8 @@ test("History Calendar applies multi-select Not Due sequentially and excludes fu
   assert.match(taskHistoryModalSource, /await onSetCalendarOverride\(dateKey, overrideState\)/);
   assert.match(taskHistoryModalSource, /overrideState !== "not_due"/);
   assert.match(taskCompleteSource, /configuredStatuses\.filter\(\(status\) => status !== "complete" && status !== "delayed"\)/);
+  assert.match(taskHistoryModalSource, /const isSavingRef = useRef\(false\)/);
+  assert.match(taskHistoryModalSource, /if \(completed === false\) break/);
 });
 
 test("TaskHistoryModal renders the aligned date array and keeps week chunking physical", () => {

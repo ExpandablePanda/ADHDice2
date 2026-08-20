@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.10.1`.
+- Current working app version: `7.10.2`.
 - Current release group: `7.10.x` QA polish corrections for Health, Focus, and History Calendar.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,6 +23,14 @@ Focus Type and primary Focus Subtype filters across Daily, Weekly, and Monthly
 views. Task History Calendar multi-select now exposes only the canonical Not
 Due override and applies selected eligible dates sequentially. No SQL or Edge
 changes were required; browser and live Supabase parity remain unverified.
+
+## 2026-08-19 7.10.2 History Calendar replacement
+
+Task History Calendar now replaces same-date handled outcomes before applying
+Not Due, clears active Not Due overrides before outcome edits, processes
+multi-select Not Due sequentially, and surfaces clear/override/reconciliation
+failures through the existing Task edit notification. No SQL or Edge changes
+were required; browser and live Supabase parity remain unverified.
 
 - Historical patch descriptions are intentionally excluded from this active document.
 

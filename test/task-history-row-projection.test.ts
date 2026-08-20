@@ -100,3 +100,16 @@ test("calculated Not Due remains rowless and explicit History wins over a manual
   assert.equal(rows[2]?.entry?.status, "done");
   assert.equal(rows.filter((row) => row.logicalDate === "2026-08-10").length, 1);
 });
+
+test("replacement results expose exactly one effective row for Not Due and each handled outcome", () => {
+  const logicalDate = "2026-08-10";
+  const override = notDueOverride(logicalDate);
+
+  const notDueRows = buildTaskHistoryRowProjections([], {}, new Set(), [override]);
+  assert.deepEqual(notDueRows.map((row) => [row.logicalDate, row.status]), [[logicalDate, "not_due"]]);
+
+  for (const status of ["done", "did_my_best", "missed"] as const) {
+    const outcomeRows = buildTaskHistoryRowProjections([history(logicalDate, status)]);
+    assert.deepEqual(outcomeRows.map((row) => [row.logicalDate, row.status]), [[logicalDate, status]]);
+  }
+});

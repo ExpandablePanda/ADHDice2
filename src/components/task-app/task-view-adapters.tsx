@@ -580,9 +580,9 @@ export function TaskHistoryModal({
 }: {
   onClose: () => void;
   onRetryTaskHistoryLoad?: () => Promise<boolean> | void;
-  onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<void>;
+  onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<boolean | void>;
   onSetDelayedStatus?: (entryDate: string, nextDueOn: string) => Promise<void>;
-  onSetCalendarOverride?: (logicalDate: string, overrideState: "not_due" | "due_open") => Promise<void>;
+  onSetCalendarOverride?: (logicalDate: string, overrideState: "not_due" | "due_open") => Promise<boolean | void>;
   task: Task;
   taskHistory: DbTaskHistory[];
   taskHistoryLoadError?: string | null;
@@ -604,6 +604,7 @@ export function TaskHistoryModal({
   const [mobileSection, setMobileSection] = useState<"calendar" | "history" | "stats">("calendar");
   const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const isSavingRef = useRef(false);
   const [showDelayEditor, setShowDelayEditor] = useState(false);
   const desktopCalendarViewportRef = useRef<HTMLDivElement>(null);
   const mobileCalendarViewportRef = useRef<HTMLDivElement>(null);
@@ -751,44 +752,51 @@ export function TaskHistoryModal({
 
   async function handleSetStatus(status: "clear" | "complete" | "did_my_best" | "done" | "missed") {
     const editableDates = selectedDates.filter((dateKey) => dateKey <= today);
-    if (editableDates.length === 0 || (status === "complete" && editableDates.length > 1)) {
+    if (isSavingRef.current || editableDates.length === 0 || (status === "complete" && editableDates.length > 1)) {
       return;
     }
+    isSavingRef.current = true;
     setIsSaving(true);
     try {
       await onSetStatuses(editableDates, status);
     } finally {
+      isSavingRef.current = false;
       setIsSaving(false);
     }
   }
 
   async function handleSaveDelayedStatus(nextDueOn: string) {
-    if (!onSetDelayedStatus) {
+    if (isSavingRef.current || !onSetDelayedStatus) {
       return;
     }
+    isSavingRef.current = true;
     setIsSaving(true);
     try {
       await onSetDelayedStatus(selectedDate, nextDueOn);
       setShowDelayEditor(false);
     } finally {
+      isSavingRef.current = false;
       setIsSaving(false);
     }
   }
 
   async function handleSetCalendarOverride(overrideState: "not_due" | "due_open") {
-    if (!onSetCalendarOverride) return;
+    if (isSavingRef.current || !onSetCalendarOverride) return;
     const targetDates = isMultiSelect
       ? selectedDates.filter((dateKey) => dateKey <= today)
       : selectedIsFuture
         ? []
         : [selectedDate];
     if (targetDates.length === 0 || (isMultiSelect && overrideState !== "not_due")) return;
+    isSavingRef.current = true;
     setIsSaving(true);
     try {
       for (const dateKey of targetDates) {
-        await onSetCalendarOverride(dateKey, overrideState);
+        const completed = await onSetCalendarOverride(dateKey, overrideState);
+        if (completed === false) break;
       }
     } finally {
+      isSavingRef.current = false;
       setIsSaving(false);
     }
   }

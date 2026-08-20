@@ -79,6 +79,19 @@ test("Calendar override commands replace the active row without deleting audit h
   assert.match(schema, /create unique index if not exists adhdice_task_calendar_overrides_active_key[\s\S]*where is_active/i);
 });
 
+test("clear_outcome retires the same-date Calendar override before removing the canonical outcome", () => {
+  const clearStart = sql.lastIndexOf("if v_command_type = 'clear_outcome' then");
+  const clearEnd = sql.indexOf("elsif v_history <> '{}'::jsonb then", clearStart);
+  const clearBranch = sql.slice(clearStart, clearEnd);
+  const overrideClearIndex = clearBranch.indexOf("update public.adhdice_task_calendar_overrides calendar_override_row");
+  const historyDeleteIndex = clearBranch.indexOf("delete from public.adhdice_task_history_facts");
+
+  assert.ok(overrideClearIndex >= 0 && overrideClearIndex < historyDeleteIndex);
+  assert.match(clearBranch, /calendar_override_row\.is_active/);
+  assert.match(clearBranch, /calendar_override_row\.logical_date = \(v_payload->>'clear_logical_date'\)::date/);
+  assert.match(clearBranch, /is_active = false/);
+});
+
 test("7.7.47 migration changes only the stale Delay occurrence predicate and preserves service-role grants", () => {
   assert.match(delayMigration, /pg_get_functiondef\(p\.oid\)/i);
   assert.match(delayMigration, /or v_occurrence <> '\{\}'::jsonb/);

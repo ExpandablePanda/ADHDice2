@@ -580,6 +580,42 @@ test("Missed to Done advances from the replaced occurrence and Done to Missed re
   assert.equal(restored.proposedTaskPatch.activeStatusLogicalDate, undefined);
 });
 
+test("every handled History transition replaces the one effective logical-date outcome", () => {
+  const logicalDate = "2026-08-03";
+  const outcomes: TaskHistoryOutcome[] = ["missed", "did_my_best", "done"];
+
+  for (const previousOutcome of outcomes) {
+    for (const outcome of outcomes) {
+      if (previousOutcome === outcome) continue;
+      const previous = history(logicalDate, previousOutcome, {
+        occurrenceIdentity: `task:task-1:occurrence:${logicalDate}`,
+        occurrenceDueOn: logicalDate,
+      });
+      const result = evaluateTaskState(input({
+        task: task({ activeStatus: previousOutcome === "missed" ? "missed" : "pending", dueOn: logicalDate }),
+        history: [previous],
+        action: {
+          type: "record_outcome",
+          historicalOverride: true,
+          logicalDate,
+          occurrenceDueOn: logicalDate,
+          outcome,
+          previousOutcome,
+          replaceExisting: true,
+        },
+      }));
+      const inserted = result.proposedHistoryChanges.filter((change) => change.type === "insert");
+
+      assert.deepEqual(result.validationErrors, [], `${previousOutcome} -> ${outcome}`);
+      assert.equal(inserted.length, 1, `${previousOutcome} -> ${outcome}`);
+      const replacementRow = inserted[0]?.type === "insert" ? inserted[0].row : null;
+      assert.equal(replacementRow?.outcome ?? null, outcome);
+      const effectiveHistory = [replacementRow].filter((row): row is TaskStateHistoryRow => Boolean(row));
+      assert.deepEqual(effectiveHistory.map((row) => row.outcome), [outcome], `${previousOutcome} -> ${outcome}`);
+    }
+  }
+});
+
 test("Done to Missed preserves a manual future cursor instead of rewinding it", () => {
   const result = evaluateTaskState(input({
     now: "2026-08-04T14:00:00Z",

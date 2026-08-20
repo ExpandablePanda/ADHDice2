@@ -41,6 +41,28 @@ test("Task History Calendar overrides use the canonical calendar_override intent
   assert.doesNotMatch(flow, /calendar-override:/);
 });
 
+test("Task History Not Due replaces handled outcomes through clear then override and verifies reconciliation", () => {
+  const notDueStart = appSource.indexOf("async function setTaskHistoryNotDue");
+  const notDueEnd = appSource.indexOf("\n\n  const taskHistoryFlow", notDueStart);
+  const notDue = appSource.slice(notDueStart, notDueEnd);
+  assert.match(notDue, /clearTaskHistoryCalendarDate\(taskId, logicalDate, "Not Due", \{ clearReplaceableOutcome: true \}\)/);
+  assert.ok(notDue.indexOf("clearTaskHistoryCalendarDate") < notDue.indexOf('type: "calendar_override"'));
+  assert.match(notDue, /loadTaskHistoryForTasks\(\[taskId\]\)/g);
+  assert.match(notDue, /activeNotDue/);
+  assert.match(notDue, /conflictingEntry/);
+  assert.match(notDue, /Task was saved, but the requested History change to Not Due/);
+});
+
+test("Task History outcome edits clear an active Calendar override before reusing handled-outcome replacement", () => {
+  const flowStart = appSource.indexOf("const taskHistoryFlow");
+  const flowEnd = appSource.indexOf("\n  function togglePinnedFilter", flowStart);
+  const flow = appSource.slice(flowStart, flowEnd);
+  assert.ok(flow.indexOf("clearTaskHistoryCalendarDate(taskHistoryModalTaskId, entryDate") < flow.indexOf("syncTaskHistoryEntries("));
+  assert.match(flow, /status !== "clear"/);
+  assert.match(flow, /historySnapshot: clearedHistory/);
+  assert.match(flow, /for \(const entryDate of entryDates\)/);
+});
+
 test("Task History modal passes active Calendar overrides into the Calendar read bridge", () => {
   assert.match(appSource, /calendarOverrides: taskCalendarOverridesByTaskId\[taskHistoryModalTaskId\] \?\? \[\]/);
   assert.match(modalSource, /calendarOverrides,/);

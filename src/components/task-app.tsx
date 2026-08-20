@@ -94,6 +94,7 @@ import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
 import { TaskActiveTimersTray } from "./task-app/task-active-timers-tray";
 import { ScratchPaperWidget, type ScratchPaperData } from "./task-app/scratch-paper";
+import { formatTaskStatusLabel } from "./task-app/task-status-ui";
 import {
   applyTaskEditorDraftOverrides,
   buildNewTaskDraft,
@@ -573,7 +574,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.10.1";
+const APP_VERSION = "7.10.2";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2722,7 +2723,7 @@ export function TaskApp() {
   }, [client, prepareTaskMutation]);
   const currentUserIdText = session?.user?.id ?? "";
   const loadTaskCalendarOverridesForTask = useCallback(async (taskId: string) => {
-    if (!currentUserIdText) return false;
+    if (!currentUserIdText) return null;
     const result = await client
       .from("adhdice_task_calendar_overrides")
       .select("*")
@@ -2732,7 +2733,7 @@ export function TaskApp() {
       .order("logical_date", { ascending: false });
     if (result.error) {
       setMessage({ tone: "warn", text: result.error.message ?? "Could not refresh the task Calendar overrides." });
-      return false;
+      return null;
     }
     const activeOverrides = (result.data ?? []).map((row) => {
       const override = row as CanonicalTaskCalendarOverride;
@@ -2747,7 +2748,7 @@ export function TaskApp() {
       } satisfies TaskCalendarOverride;
     });
     setTaskCalendarOverridesByTaskId((current) => ({ ...current, [taskId]: activeOverrides }));
-    return true;
+    return activeOverrides;
   }, [client, currentUserIdText, setMessage]);
   const {
     handleAddGridWidget,
@@ -5836,10 +5837,113 @@ export function TaskApp() {
   const taskHistoryModalTask = taskHistoryModalTaskId
     ? tasks.find((task) => task.id === taskHistoryModalTaskId) ?? null
     : null;
+  const replaceableTaskHistoryOutcomes = new Set<TaskStatus>(["done", "did_my_best", "missed"]);
+  async function clearTaskHistoryCalendarDate(
+    taskId: string,
+    logicalDate: string,
+    replacementLabel: string,
+    options?: { clearReplaceableOutcome?: boolean },
+  ) {
+    const historySnapshot = taskHistoryByTaskId[taskId] ?? [];
+    const existingEntry = historySnapshot.find((entry) => entry.entry_date === logicalDate) ?? null;
+    const activeOverride = (taskCalendarOverridesByTaskId[taskId] ?? []).some((override) => override.logicalDate === logicalDate);
+    const hasReplaceableOutcome = Boolean(
+      options?.clearReplaceableOutcome
+      && existingEntry
+      && replaceableTaskHistoryOutcomes.has(existingEntry.status),
+    );
+    if (!activeOverride && !hasReplaceableOutcome) {
+      return historySnapshot;
+    }
+
+    const currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
+      ?? tasks.find((candidate) => candidate.id === taskId)
+      ?? null;
+    if (!currentTask) {
+      setMessage({ tone: "warn", text: `Task wasn't updated: Could not replace the existing History status with ${replacementLabel}.` });
+      return null;
+    }
+    const cleared = await updateTask(taskId, {}, {
+      canonicalIntent: {
+        type: "clear_outcome",
+        logical_date: logicalDate,
+        ...(existingEntry?.occurrence_key ? { occurrence_key: existingEntry.occurrence_key } : {}),
+        ...(existingEntry?.occurrence_due_on ? { scheduled_due_on: existingEntry.occurrence_due_on } : {}),
+      },
+      expectedTask: currentTask,
+      replayIdentity: createTaskStateReplayIdentity(),
+    });
+    if (!cleared) {
+      setMessage({ tone: "warn", text: `Task wasn't updated: Could not replace the existing History status with ${replacementLabel}.` });
+      return null;
+    }
+
+    const refreshedHistory = (await loadTaskHistoryForTasks([taskId]))[taskId];
+    const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId);
+    if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
+      setMessage({ tone: "warn", text: `Task was saved, but History could not be reconciled while replacing the existing status with ${replacementLabel}.` });
+      return null;
+    }
+    await reconcileTaskHistoryMutation(taskId, refreshedHistory.history);
+    if (refreshedOverrides.some((override) => override.logicalDate === logicalDate)) {
+      setMessage({ tone: "warn", text: `Task was saved, but the existing Calendar status could not be cleared while replacing it with ${replacementLabel}.` });
+      return null;
+    }
+    return refreshedHistory.history;
+  }
+
+  async function setTaskHistoryNotDue(taskId: string, logicalDate: string): Promise<boolean> {
+    const historySnapshot = taskHistoryByTaskId[taskId] ?? [];
+    const existingEntry = historySnapshot.find((entry) => entry.entry_date === logicalDate) ?? null;
+    if (existingEntry && replaceableTaskHistoryOutcomes.has(existingEntry.status)) {
+      const clearedHistory = await clearTaskHistoryCalendarDate(taskId, logicalDate, "Not Due", { clearReplaceableOutcome: true });
+      if (!clearedHistory) return false;
+    }
+
+    const currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
+      ?? tasks.find((candidate) => candidate.id === taskId)
+      ?? null;
+    if (!currentTask) {
+      setMessage({ tone: "warn", text: "Task wasn't updated: Could not replace the existing History status with Not Due." });
+      return false;
+    }
+    const committed = await updateTask(taskId, {}, {
+      canonicalIntent: {
+        type: "calendar_override",
+        logical_date: logicalDate,
+        override_state: "not_due",
+      },
+      expectedTask: currentTask,
+      replayIdentity: createTaskStateReplayIdentity(),
+    });
+    if (!committed) {
+      setMessage({ tone: "warn", text: "Task was saved, but the requested History change to Not Due did not finish correctly." });
+      return false;
+    }
+
+    const refreshedHistory = (await loadTaskHistoryForTasks([taskId]))[taskId];
+    const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId);
+    if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
+      setMessage({ tone: "warn", text: "Task was saved, but the requested History change to Not Due could not be reconciled." });
+      return false;
+    }
+    await reconcileTaskHistoryMutation(taskId, refreshedHistory.history);
+    const conflictingEntry = refreshedHistory.history.find((entry) => entry.entry_date === logicalDate && replaceableTaskHistoryOutcomes.has(entry.status));
+    const activeNotDue = refreshedOverrides.some((override) => override.logicalDate === logicalDate && override.overrideState === "not_due");
+    if (conflictingEntry || !activeNotDue) {
+      setMessage({ tone: "warn", text: "Task was saved, but the requested History change to Not Due could not be reconciled." });
+      return false;
+    }
+    return true;
+  }
+
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
-    onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "due_open") => {
-      if (!taskHistoryModalTaskId) return;
+    onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "due_open"): Promise<boolean> => {
+      if (!taskHistoryModalTaskId) return false;
+      if (overrideState === "not_due") {
+        return setTaskHistoryNotDue(taskHistoryModalTaskId, logicalDate);
+      }
       const currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskHistoryModalTaskId) ?? taskHistoryModalTask;
       const committed = await updateTask(taskHistoryModalTaskId, {}, {
         canonicalIntent: {
@@ -5856,19 +5960,40 @@ export function TaskApp() {
           await refreshTaskHistoryStreakSummary(taskHistoryModalTaskId);
         }
       }
+      return committed;
     },
-    onSetStatuses: async (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => {
+    onSetStatuses: async (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed"): Promise<boolean> => {
       if (!taskHistoryModalTaskId) {
-        return;
+        return false;
       }
       if (status === "complete") {
-        if (entryDates.length !== 1) return;
-        await updateTaskStatus(taskHistoryModalTask, "complete");
-        return;
+        if (entryDates.length !== 1) return false;
+        return (await updateTaskStatus(taskHistoryModalTask, "complete")) === true;
       }
-      await syncTaskHistoryEntries(
+      if (status !== "clear") {
+        for (const entryDate of entryDates) {
+          const clearedHistory = await clearTaskHistoryCalendarDate(taskHistoryModalTaskId, entryDate, formatTaskStatusLabel(status));
+          if (!clearedHistory) return false;
+          const saved = await syncTaskHistoryEntries(
+            taskHistoryModalTaskId,
+            status,
+            [entryDate],
+            {
+              historicalOverride: true,
+              historySnapshot: clearedHistory,
+              syncLiveTask: true,
+            },
+          );
+          if (!saved) {
+            setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${formatTaskStatusLabel(status)} did not finish correctly.` });
+            return false;
+          }
+        }
+        return true;
+      }
+      return await syncTaskHistoryEntries(
         taskHistoryModalTaskId,
-        status === "clear" ? "pending" : status,
+        "pending",
         entryDates,
         {
           historicalOverride: status !== "clear",
