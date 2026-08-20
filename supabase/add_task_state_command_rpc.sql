@@ -61,6 +61,9 @@ declare
   v_result jsonb;
   v_reward_program_version text;
   v_reward_event_identity text;
+  v_reward_streak integer := 0;
+  v_reward_units_snapshot integer;
+  v_reward_streak_fact record;
   v_operation_is_new boolean := false;
 begin
   -- Only the trusted Edge Function's secret-key backend role may invoke this
@@ -921,16 +924,6 @@ begin
   end if;
 
   if v_command_type = 'clear_outcome' then
-    if exists (
-      select 1
-        from public.adhdice_task_reward_entitlements entitlement
-       where entitlement.user_id = p_user_id
-         and entitlement.entity_id = v_entity_id
-         and entitlement.logical_date = (v_payload->>'clear_logical_date')::date
-    ) then
-      raise exception 'A canonical reward entitlement references this outcome; clearing it would invalidate reward provenance.'
-        using errcode = '55000';
-    end if;
     update public.adhdice_task_occurrences occurrence
        set resolution_state = 'unresolved',
            resolved_logical_date = null,
@@ -1138,9 +1131,38 @@ begin
     v_calendar_override_id := (v_calendar_override->>'id')::uuid;
   end if;
 
-  -- The entitlement is canonical and unique per entity/logical date/program.
+  -- The entitlement is canonical and unique per Task/logical date. Calculate
+  -- its immutable reward snapshot from the same successful History streak
+  -- rules used by fulfillment before the entitlement is first inserted.
   -- Legacy reward claims are deliberately not consulted or written here.
   if v_history_id is not null and v_history_row.outcome in ('done', 'did_my_best', 'complete') then
+    if v_task.repeat_frequency = 'none' then
+      v_reward_streak := 1;
+    else
+      for v_reward_streak_fact in
+        select fact.outcome
+          from public.adhdice_task_history_facts fact
+         where fact.user_id = p_user_id
+           and fact.entity_id = v_entity_id
+           and fact.logical_date <= v_history_row.logical_date
+         order by fact.logical_date desc, fact.updated_at desc, fact.id desc
+      loop
+        exit when v_reward_streak_fact.outcome not in ('done', 'did_my_best', 'complete');
+        v_reward_streak := v_reward_streak + 1;
+      end loop;
+    end if;
+    if v_reward_streak < 1 then
+      raise exception 'A successful canonical History fact must produce a positive reward snapshot.'
+        using errcode = '22023';
+    end if;
+    v_reward_units_snapshot := case
+      when v_reward_streak <= 1 then 1
+      when v_reward_streak = 2 then 2
+      when v_reward_streak <= 6 then 3
+      when v_reward_streak <= 13 then 4
+      when v_reward_streak <= 29 then 5
+      else 6
+    end;
     v_reward_program_version := coalesce(nullif(v_payload->>'reward_program_version', ''), 'task-reward-v1');
     v_reward_event_identity := 'task-reward-entitlement:' || v_entity_id::text || ':' || v_history_row.logical_date::text || ':' || v_reward_program_version;
     insert into public.adhdice_task_reward_entitlements (
@@ -1150,6 +1172,7 @@ begin
       logical_date,
       reward_program_version,
       canonical_history_id,
+      reward_units_snapshot,
       canonical_command_id,
       canonical_event_identity,
       outcome_snapshot,
@@ -1164,6 +1187,7 @@ begin
       v_history_row.logical_date,
       v_reward_program_version,
       v_history_id,
+      v_reward_units_snapshot,
       v_command_id,
       v_reward_event_identity,
       v_history_row.outcome,
@@ -1172,15 +1196,14 @@ begin
       'runtime_command',
       'pending'
     )
-    on conflict (user_id, entity_id, logical_date, reward_program_version) do nothing
+    on conflict (user_id, entity_id, logical_date) do nothing
     returning id into v_reward_entitlement_id;
     if v_reward_entitlement_id is null then
       select id into v_reward_entitlement_id
         from public.adhdice_task_reward_entitlements
        where user_id = p_user_id
          and entity_id = v_entity_id
-         and logical_date = v_history_row.logical_date
-         and reward_program_version = v_reward_program_version;
+         and logical_date = v_history_row.logical_date;
     end if;
   end if;
 

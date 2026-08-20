@@ -845,7 +845,10 @@ create table if not exists public.adhdice_task_reward_entitlements (
   logical_date date not null,
   reward_program_version text not null
     check (char_length(trim(reward_program_version)) > 0),
-  canonical_history_id uuid not null,
+  -- The originating History fact is audit provenance only. It may be cleared
+  -- or replaced without changing the earned reward entitlement.
+  canonical_history_id uuid,
+  reward_units_snapshot integer not null,
   canonical_command_id uuid,
   canonical_event_identity text not null
     check (char_length(trim(canonical_event_identity)) > 0),
@@ -868,7 +871,9 @@ create table if not exists public.adhdice_task_reward_entitlements (
   fulfilled_at timestamptz,
   constraint adhdice_task_reward_entitlements_id_key unique (user_id, id),
   constraint adhdice_task_reward_entitlements_identity_key
-    unique (user_id, entity_id, logical_date, reward_program_version),
+    unique (user_id, entity_id, logical_date),
+  constraint adhdice_task_reward_entitlements_reward_units_snapshot_check
+    check (reward_units_snapshot > 0),
   constraint adhdice_task_reward_entitlements_source_check check (
     (
       entitlement_source_kind = 'runtime_command'
@@ -1120,7 +1125,7 @@ begin
       add constraint adhdice_task_reward_entitlements_history_fkey
       foreign key (user_id, canonical_history_id)
       references public.adhdice_task_history_facts (user_id, id)
-      on delete restrict;
+      on delete set null (canonical_history_id);
   end if;
   if not exists (select 1 from pg_constraint where conname = 'adhdice_task_reward_entitlements_command_fkey') then
     alter table public.adhdice_task_reward_entitlements

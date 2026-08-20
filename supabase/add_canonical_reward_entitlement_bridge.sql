@@ -24,15 +24,11 @@ declare
   v_user_id uuid := auth.uid();
   v_entitlement public.adhdice_task_reward_entitlements%rowtype;
   v_task public.adhdice_clean_tasks%rowtype;
-  v_fact public.adhdice_task_history_facts%rowtype;
   v_grant public.adhdice_task_reward_grants%rowtype;
   v_account public.adhdice_pending_reward_dice%rowtype;
   v_existing public.adhdice_pending_reward_dice_operations%rowtype;
-  v_streak_fact record;
-  v_streak integer := 0;
   v_dice_count integer;
   v_operation_id text := 'canonical-entitlement:' || p_entitlement_id::text;
-  v_tier jsonb;
   v_payload jsonb;
   v_result jsonb;
 begin
@@ -87,24 +83,13 @@ begin
     raise exception using errcode = '22023', message = 'The canonical reward entitlement is not valid for fulfillment.';
   end if;
 
-  -- Exact provenance is required. The entitlement's referenced fact, not any
-  -- other successful fact for the Task, is the eligibility authority.
-  select fact.* into v_fact
-  from public.adhdice_task_history_facts fact
-  where fact.user_id = v_user_id
-    and fact.id = v_entitlement.canonical_history_id
-  for update;
-  if not found then
-    raise exception using errcode = '55000', message = 'The canonical reward entitlement references no owned canonical History fact.';
+  -- Fulfillment trusts only the immutable entitlement snapshot. History may
+  -- have been replaced or cleared since the reward was earned.
+  if v_entitlement.outcome_snapshot not in ('done', 'did_my_best', 'complete') then
+    raise exception using errcode = '22023', message = 'Only successful original outcomes can fulfill a reward entitlement.';
   end if;
-  if v_fact.entity_id is distinct from v_entitlement.entity_id
-    or v_fact.entity_kind is distinct from v_entitlement.entity_kind
-    or v_fact.logical_date is distinct from v_entitlement.logical_date
-    or v_fact.outcome is distinct from v_entitlement.outcome_snapshot then
-    raise exception using errcode = '55000', message = 'The canonical reward entitlement provenance does not match its exact History fact.';
-  end if;
-  if v_fact.outcome not in ('done', 'did_my_best', 'complete') then
-    raise exception using errcode = '22023', message = 'Only successful canonical outcomes can fulfill a reward entitlement.';
+  if v_entitlement.reward_units_snapshot is null or v_entitlement.reward_units_snapshot <= 0 then
+    raise exception using errcode = '22023', message = 'The canonical reward entitlement has no valid positive reward snapshot.';
   end if;
 
   select task.* into v_task
@@ -116,46 +101,7 @@ begin
     raise exception using errcode = '42501', message = 'The canonical reward Task is not owned by the authenticated user.';
   end if;
 
-  -- Streaks count successful logged occurrences, in canonical History order.
-  -- Calendar-date adjacency is deliberately not required: scheduled weekly
-  -- and monthly occurrences may be separated by ordinary calendar days.
-  -- Any explicit non-successful fact, including Missed, breaks the streak.
-  -- A one-time Task is limited to one successful occurrence by definition.
-  if v_task.repeat_frequency = 'none' then
-    v_streak := 1;
-  else
-    for v_streak_fact in
-      select fact.outcome
-      from public.adhdice_task_history_facts fact
-      where fact.user_id = v_user_id
-        and fact.entity_id = v_entitlement.entity_id
-        and fact.logical_date <= v_entitlement.logical_date
-      order by fact.logical_date desc, fact.updated_at desc, fact.id desc
-    loop
-      exit when v_streak_fact.outcome not in ('done', 'did_my_best', 'complete');
-      v_streak := v_streak + 1;
-    end loop;
-  end if;
-  if v_streak < 1 then
-    raise exception using errcode = '22023', message = 'The canonical entitlement has no successful canonical History streak.';
-  end if;
-
-  v_dice_count := case
-    when v_streak <= 1 then 1
-    when v_streak = 2 then 2
-    when v_streak <= 6 then 3
-    when v_streak <= 13 then 4
-    when v_streak <= 29 then 5
-    else 6
-  end;
-  v_tier := case
-    when v_streak <= 1 then jsonb_build_object('id', 'on_time', 'label', 'On-Time', 'minStreak', 0, 'maxStreak', 1, 'diceCount', 1)
-    when v_streak = 2 then jsonb_build_object('id', 'two_day', 'label', '2 Day Streak', 'minStreak', 2, 'maxStreak', 2, 'diceCount', 2)
-    when v_streak <= 6 then jsonb_build_object('id', 'three_to_six_day', 'label', '3-6 Day Streak', 'minStreak', 3, 'maxStreak', 6, 'diceCount', 3)
-    when v_streak <= 13 then jsonb_build_object('id', 'seven_day', 'label', '7 Day Streak', 'minStreak', 7, 'maxStreak', 13, 'diceCount', 4)
-    when v_streak <= 29 then jsonb_build_object('id', 'fourteen_day', 'label', '14 Day Streak', 'minStreak', 14, 'maxStreak', 29, 'diceCount', 5)
-    else jsonb_build_object('id', 'thirty_plus_day', 'label', '30+ Day Streak', 'minStreak', 30, 'maxStreak', null, 'diceCount', 6)
-  end;
+  v_dice_count := v_entitlement.reward_units_snapshot;
 
   -- The pending-reward payload is entirely server-built and contains exactly
   -- one entitlement, one claim reference, and one Task. The claim RPC can
@@ -171,12 +117,11 @@ begin
     'diceCount', v_dice_count,
     'mode', 'single',
     'rewardDate', v_entitlement.logical_date,
-    'streakLength', v_streak,
     'tasks', jsonb_build_array(jsonb_build_object(
       'id', v_task.id,
       'title', v_task.title
     )),
-    'tier', v_tier
+    'tier', null
   );
 
   insert into public.adhdice_pending_reward_dice (user_id)

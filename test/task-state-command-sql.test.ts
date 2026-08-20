@@ -191,9 +191,10 @@ test("7.9.31 forward patch targets the installed RPC and migration-only Delay al
 });
 
 test("reward entitlement persistence uses the canonical identity fence", () => {
-  assert.match(schema, /unique \(user_id, entity_id, logical_date, reward_program_version\)/i);
+  assert.match(schema, /unique \(user_id, entity_id, logical_date\)/i);
   assert.match(sql, /insert into public\.adhdice_task_reward_entitlements/i);
-  assert.match(sql, /on conflict \(user_id, entity_id, logical_date, reward_program_version\) do nothing/i);
+  assert.match(sql, /on conflict \(user_id, entity_id, logical_date\) do nothing/i);
+  assert.match(sql, /reward_units_snapshot/);
   assert.match(sql, /task-reward-entitlement:' \|\| v_entity_id::text/i);
   assert.match(sql, /legacy reward claims are deliberately not consulted or written/i);
 });

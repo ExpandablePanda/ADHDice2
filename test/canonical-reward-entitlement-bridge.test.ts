@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const rewardSql = readFileSync(new URL("../supabase/add_canonical_reward_entitlement_bridge.sql", import.meta.url), "utf8");
+const commandSql = readFileSync(new URL("../supabase/add_task_state_command_rpc.sql", import.meta.url), "utf8");
+const canonicalSchema = readFileSync(new URL("../supabase/add_task_state_canonical_schema.sql", import.meta.url), "utf8");
+const permanenceMigration = readFileSync(new URL("../supabase/patch_task_reward_entitlement_permanence_7_10_3.sql", import.meta.url), "utf8");
 const rewardHook = readFileSync(new URL("../src/hooks/useTaskRewardController.ts", import.meta.url), "utf8");
 const currentState = readFileSync(new URL("../docs/CURRENT_STATE.md", import.meta.url), "utf8");
 
@@ -17,9 +20,9 @@ function canonicalStreak(outcomes: string[], repeatFrequency: string) {
 }
 
 function assertServerStreakLoop() {
-  assert.match(rewardSql, /for v_streak_fact in[\s\S]*select fact\.outcome[\s\S]*order by fact\.logical_date desc/);
-  assert.match(rewardSql, /exit when v_streak_fact\.outcome not in \('done', 'did_my_best', 'complete'\)/);
-  assert.doesNotMatch(rewardSql, /v_streak_fact\.logical_date\s*=\s*v_cursor\s*-\s*1/);
+  assert.match(commandSql, /for v_reward_streak_fact in[\s\S]*select fact\.outcome[\s\S]*order by fact\.logical_date desc/);
+  assert.match(commandSql, /exit when v_reward_streak_fact\.outcome not in \('done', 'did_my_best', 'complete'\)/);
+  assert.doesNotMatch(commandSql, /v_reward_streak_fact\.logical_date\s*=\s*v_cursor\s*-\s*1/);
 }
 
 test("daily three-success streak is three logged occurrences", () => {
@@ -29,27 +32,27 @@ test("daily three-success streak is three logged occurrences", () => {
 
 test("weekly three-success streak is three scheduled occurrences", () => {
   assert.equal(canonicalStreak(["done", "did_my_best", "complete"], "weekly"), 3);
-  assert.match(rewardSql, /scheduled weekly[\s\S]*monthly occurrences/);
+  assert.match(commandSql, /successful History streak[\s\S]*logical_date desc/);
 });
 
 test("monthly three-success streak is three scheduled occurrences", () => {
   assert.equal(canonicalStreak(["complete", "done", "did_my_best"], "monthly"), 3);
-  assert.match(rewardSql, /scheduled weekly[\s\S]*monthly occurrences/);
+  assert.match(commandSql, /successful History streak[\s\S]*logical_date desc/);
 });
 
 test("recurring successful dates do not need calendar adjacency", () => {
   assert.equal(canonicalStreak(["done", "done", "done"], "weekly"), 3);
-  assert.match(rewardSql, /Calendar-date adjacency is deliberately not required/);
+  assert.match(commandSql, /same successful History streak/);
 });
 
 test("explicit Missed breaks the successful streak", () => {
   assert.equal(canonicalStreak(["done", "done", "missed", "done"], "daily"), 1);
-  assert.match(rewardSql, /including Missed, breaks the streak/);
+  assert.match(commandSql, /outcome not in \('done', 'did_my_best', 'complete'\)/);
 });
 
 test("one-time Tasks cannot build a recurring streak", () => {
   assert.equal(canonicalStreak(["done", "done", "done"], "none"), 1);
-  assert.match(rewardSql, /if v_task\.repeat_frequency = 'none' then\s+v_streak := 1/);
+  assert.match(commandSql, /if v_task\.repeat_frequency = 'none' then\s+v_reward_streak := 1/);
 });
 
 test("all existing reward tiers remain server-derived", () => {
@@ -57,7 +60,7 @@ test("all existing reward tiers remain server-derived", () => {
     const expected = streak <= 1 ? 1 : streak === 2 ? 2 : streak <= 6 ? 3 : streak <= 13 ? 4 : streak <= 29 ? 5 : 6;
     assert.equal(expected, dice);
   }
-  assert.match(rewardSql, /when v_streak <= 1 then 1[\s\S]*when v_streak = 2 then 2[\s\S]*when v_streak <= 6 then 3[\s\S]*when v_streak <= 13 then 4[\s\S]*when v_streak <= 29 then 5[\s\S]*else 6/);
+  assert.match(commandSql, /when v_reward_streak <= 1 then 1[\s\S]*when v_reward_streak = 2 then 2[\s\S]*when v_reward_streak <= 6 then 3[\s\S]*when v_reward_streak <= 13 then 4[\s\S]*when v_reward_streak <= 29 then 5[\s\S]*else 6/);
 });
 
 test("fulfillment RPC accepts only the entitlement ID", () => {
@@ -91,19 +94,22 @@ test("blocked entitlement fails closed", () => {
   assert.match(rewardSql, /if v_entitlement\.state = 'blocked' then[\s\S]*blocked and cannot be fulfilled/);
 });
 
-test("exact canonical_history_id is required", () => {
-  assert.match(rewardSql, /fact\.id = v_entitlement\.canonical_history_id/);
-  assert.match(rewardSql, /references no owned canonical History fact/);
+test("History provenance is optional after an entitlement is earned", () => {
+  assert.match(canonicalSchema, /canonical_history_id uuid,\s+reward_units_snapshot integer not null/);
+  assert.match(canonicalSchema, /on delete set null \(canonical_history_id\)/i);
+  assert.doesNotMatch(rewardSql, /v_entitlement\.canonical_history_id/);
 });
 
-test("History entity, date, and outcome provenance must match", () => {
-  assert.match(rewardSql, /v_fact\.entity_id is distinct from v_entitlement\.entity_id/);
-  assert.match(rewardSql, /v_fact\.logical_date is distinct from v_entitlement\.logical_date/);
-  assert.match(rewardSql, /v_fact\.outcome is distinct from v_entitlement\.outcome_snapshot/);
+test("fulfillment validates immutable outcome and positive reward snapshot", () => {
+  assert.match(rewardSql, /v_entitlement\.outcome_snapshot not in \('done', 'did_my_best', 'complete'\)/);
+  assert.match(rewardSql, /v_entitlement\.reward_units_snapshot is null or v_entitlement\.reward_units_snapshot <= 0/);
+  assert.match(rewardSql, /v_dice_count := v_entitlement\.reward_units_snapshot/);
+  assert.doesNotMatch(rewardSql, /from public\.adhdice_task_history_facts/);
+  assert.doesNotMatch(rewardSql, /v_streak/);
 });
 
-test("only successful canonical outcomes can fulfill", () => {
-  assert.match(rewardSql, /v_fact\.outcome not in \('done', 'did_my_best', 'complete'\)/);
+test("only successful original outcomes can fulfill", () => {
+  assert.match(rewardSql, /v_entitlement\.outcome_snapshot not in \('done', 'did_my_best', 'complete'\)/);
   assert.doesNotMatch(rewardSql, /adhdice_task_history[^_f]/);
 });
 
@@ -116,7 +122,6 @@ test("browser cannot provide arbitrary Task arrays, claim references, dice, or s
   assert.match(rewardSql, /'claimRefs', jsonb_build_array/);
   assert.match(rewardSql, /'tasks', jsonb_build_array/);
   assert.match(rewardSql, /'diceCount', v_dice_count/);
-  assert.match(rewardSql, /'streakLength', v_streak/);
 });
 
 test("server-generated pending payload contains one Task and one claim ref", () => {
@@ -124,6 +129,7 @@ test("server-generated pending payload contains one Task and one claim ref", () 
   assert.match(rewardSql, /'claimRefs', jsonb_build_array\(jsonb_build_object/);
   assert.match(rewardSql, /'tasks', jsonb_build_array\(jsonb_build_object/);
   assert.match(rewardSql, /'rewardDate', v_entitlement\.logical_date/);
+  assert.doesNotMatch(rewardSql, /streakLength/);
   assert.match(rewardSql, /'canonicalEntitlementId', p_entitlement_id/);
 });
 
@@ -180,6 +186,90 @@ test("canonical reward path does not recreate legacy History", () => {
 test("pending-reward refresh remains after successful canonical fulfillment", () => {
   const canonicalClient = rewardHook.slice(rewardHook.indexOf("async function fulfillCanonicalRewardEntitlements"), rewardHook.indexOf("async function queueTaskRewards"));
   assert.match(canonicalClient, /if \(allFulfilled\) await refreshPendingRewards\(\);/);
+});
+
+test("first eligible success snapshots one reward per Task/logical day", () => {
+  assert.match(commandSql, /v_history_row\.outcome in \('done', 'did_my_best', 'complete'\)/);
+  assert.match(commandSql, /reward_units_snapshot/);
+  assert.match(commandSql, /on conflict \(user_id, entity_id, logical_date\) do nothing/);
+  assert.match(commandSql, /where user_id = p_user_id[\s\S]*and entity_id = v_entity_id[\s\S]*and logical_date = v_history_row\.logical_date/);
+  assert.doesNotMatch(commandSql, /on conflict \(user_id, entity_id, logical_date, reward_program_version\)/);
+});
+
+test("Done to Did My Best reuses the original entitlement snapshot", () => {
+  const rewardBlock = commandSql.slice(commandSql.indexOf("-- The entitlement is canonical"), commandSql.indexOf("v_result := jsonb_build_object", commandSql.indexOf("-- The entitlement is canonical")));
+  assert.match(rewardBlock, /on conflict \(user_id, entity_id, logical_date\) do nothing/);
+  assert.doesNotMatch(rewardBlock, /on conflict \(user_id, entity_id, logical_date\) do update/);
+  assert.match(rewardBlock, /select id into v_reward_entitlement_id[\s\S]*and logical_date = v_history_row\.logical_date/);
+});
+
+test("Done to Missed preserves the entitlement through clear-and-replace", () => {
+  assert.match(commandSql, /delete from public\.adhdice_task_history_facts/);
+  assert.match(canonicalSchema, /on delete set null \(canonical_history_id\)/i);
+  assert.doesNotMatch(commandSql, /invalidate reward provenance/);
+});
+
+test("Done to Not Due does not delete the earned entitlement", () => {
+  const clearStart = commandSql.lastIndexOf("if v_command_type = 'clear_outcome' then");
+  const clearEnd = commandSql.indexOf("elsif v_history <> '{}'::jsonb then", clearStart);
+  assert.doesNotMatch(commandSql.slice(clearStart, clearEnd), /delete from public\.adhdice_task_reward_entitlements/);
+});
+
+test("Done to Missed to Done keeps exactly one Task/day reward", () => {
+  assert.match(commandSql, /on conflict \(user_id, entity_id, logical_date\) do nothing/);
+  assert.match(canonicalSchema, /unique \(user_id, entity_id, logical_date\)/);
+});
+
+test("Did My Best to Done cannot create a second reward", () => {
+  assert.match(commandSql, /v_history_row\.outcome in \('done', 'did_my_best', 'complete'\)/);
+  assert.match(commandSql, /on conflict \(user_id, entity_id, logical_date\) do nothing/);
+});
+
+test("Missed to Done remains eligible when no prior entitlement exists", () => {
+  assert.match(commandSql, /if v_history_id is not null and v_history_row\.outcome in \('done', 'did_my_best', 'complete'\) then/);
+  assert.match(commandSql, /insert into public\.adhdice_task_reward_entitlements/);
+});
+
+test("a pending entitlement remains fulfillable after its History fact is cleared", () => {
+  assert.doesNotMatch(rewardSql, /select fact\.\* into v_fact/);
+  assert.doesNotMatch(rewardSql, /references no owned canonical History fact/);
+  assert.match(rewardSql, /if v_entitlement\.state <> 'pending' then/);
+});
+
+test("fulfilled entitlements update only fulfillment state after History replacement", () => {
+  const fulfillmentUpdate = rewardSql.slice(rewardSql.indexOf("update public.adhdice_task_reward_entitlements entitlement"));
+  assert.match(fulfillmentUpdate, /set state = 'fulfilled'[\s\S]*fulfilled_at[\s\S]*updated_at/);
+  assert.doesNotMatch(fulfillmentUpdate, /outcome_snapshot\s*=|reward_units_snapshot\s*=/);
+});
+
+test("reward program version changes cannot create a second Task/day entitlement", () => {
+  assert.match(canonicalSchema, /unique \(user_id, entity_id, logical_date\)/);
+  assert.doesNotMatch(canonicalSchema, /unique \(user_id, entity_id, logical_date, reward_program_version\)/);
+  assert.match(permanenceMigration, /duplicate Task\/logical-day entitlements exist/);
+});
+
+test("clear_outcome no longer blocks History replacement", () => {
+  const clearStart = commandSql.lastIndexOf("if v_command_type = 'clear_outcome' then");
+  const clearEnd = commandSql.indexOf("elsif v_history <> '{}'::jsonb then", clearStart);
+  const clearBranch = commandSql.slice(clearStart, clearEnd);
+  assert.ok(clearStart >= 0 && clearEnd > clearStart);
+  assert.doesNotMatch(clearBranch, /reward_entitlements|invalidate reward provenance/);
+  assert.match(clearBranch, /delete from public\.adhdice_task_history_facts/);
+});
+
+test("migration backfills fulfilled grants and pending rewards fail closed", () => {
+  assert.match(permanenceMigration, /grant_row\.entitlement_id = v_entitlement\.id/);
+  assert.match(permanenceMigration, /v_grant_count <> 1 or v_grant_units is null or v_grant_units <= 0/);
+  assert.match(permanenceMigration, /pending entitlement % without its original History fact/);
+  assert.match(permanenceMigration, /where reward_units_snapshot is null or reward_units_snapshot <= 0/);
+  assert.match(permanenceMigration, /alter column canonical_history_id drop not null/);
+});
+
+test("reward fulfillment remains replay-safe and never reverses a grant", () => {
+  assert.match(rewardSql, /canonical-entitlement:' \|\| p_entitlement_id::text/);
+  assert.match(rewardSql, /if found then[\s\S]*return query select[\s\S]*true/);
+  assert.match(rewardSql, /insert into public\.adhdice_task_reward_grants/);
+  assert.doesNotMatch(rewardSql, /delete from public\.adhdice_task_reward_grants|units = -/i);
 });
 
 test("canonical reward runtime has no legacy gate", () => {

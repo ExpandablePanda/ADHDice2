@@ -302,13 +302,14 @@ export type CanonicalTaskRewardEntitlement = {
   entity_kind: CanonicalEntityKind;
   logical_date: string;
   reward_program_version: string;
-  canonical_history_id: string;
+  canonical_history_id: string | null;
+  reward_units_snapshot: number;
   canonical_command_id: string | null;
   canonical_event_identity: string;
   outcome_snapshot: "done" | "did_my_best" | "complete";
   effective_obligation_identity: string | null;
   eligibility_kind: "handled_success" | "authorized_automation";
-  entitlement_source_kind: "runtime_command";
+  entitlement_source_kind: "runtime_command" | "migration_bootstrap";
   state: CanonicalRewardEntitlementState;
   created_at: string;
   updated_at: string;
