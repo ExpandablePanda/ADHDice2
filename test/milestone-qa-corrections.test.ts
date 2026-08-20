@@ -110,12 +110,20 @@ test("full inspector bounds sticky columns before the full-width extension", () 
 });
 
 test("desktop full inspector uses wider responsive bounds and viewport-safe scrolling", () => {
-  assert.match(tableSource, /const fullDesktopEditorNode = \(\s*<div className="min-w-0 w-full max-w-\[80rem\] min-h-\[calc\(100dvh-4rem\)\] max-h-\[calc\(100dvh-2rem\)\] overflow-y-auto overscroll-contain rounded-\[2rem\] bg-white\/35 shadow-\[0_0_120px_48px_rgba\(81,61,168,0\.12\)\]/);
+  assert.match(tableSource, /const fullDesktopEditorNode = \(\s*<div className="min-w-0 w-full max-w-\[80rem\] min-h-\[calc\(100dvh-4rem\)\] max-h-\[calc\(100dvh-2rem\)\] overflow-y-auto overscroll-contain rounded-\[2rem\] bg-transparent"/);
   assert.match(tableSource, /fullDesktopEditorNode = \(\s*<div[\s\S]*<div className="p-4">\s*\{fullDesktopEditorContent\}/);
   assert.match(tableSource, /overlayMode === "full" \? "left-1\/2 max-w-\[80rem\] -translate-x-1\/2"/);
   assert.match(tableSource, /: "grid min-w-0 min-h-\[70vh\] gap-3 lg:grid-cols-\[minmax\(0,1\.05fr\)_minmax\(0,0\.95fr\)\]"/);
   assert.doesNotMatch(tableSource, /fullMetadataCardClass[\s\S]*lg:self-start/);
   assert.match(tableSource, /className="w-full max-w-\[60rem\]"/);
+});
+
+test("desktop full inspector uses a continuous glossy overlay without card shadows", () => {
+  assert.match(tableSource, /bg-\[linear-gradient\(135deg,rgba\(255,255,255,0\.9\),rgba\(245,240,255,0\.76\)_48%,rgba\(255,255,255,0\.9\)\)\] backdrop-blur-\[18px\]/);
+  const desktopEditorCardClasses = tableSource.match(/const fullEditorCardClass = ([\s\S]*?)const fullMetadataCardClass/)?.[1] ?? "";
+  const desktopMetadataCardClasses = tableSource.match(/const fullMetadataCardClass = ([\s\S]*?)const titleInputClass/)?.[1] ?? "";
+  assert.doesNotMatch(desktopEditorCardClasses, /: "min-w-0 max-w-full[^"\n]*shadow-/);
+  assert.doesNotMatch(desktopMetadataCardClasses, /: "min-w-0 max-w-full[^"\n]*shadow-/);
 });
 
 test("row renderers expose a compact accessible Milestone trophy indicator", () => {

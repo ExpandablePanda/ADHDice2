@@ -8862,6 +8862,8 @@ export function TaskManagementTableV2({
               animate={{ opacity: 1 }}
               className={overlayMode === "full" && isCompactViewport
                 ? "fixed inset-0 z-[150] flex flex-col bg-[#f7f3ff]/82 backdrop-blur-[10px] dark:bg-[#100b1d]/84"
+                : overlayMode === "full"
+                  ? "absolute inset-0 z-20 flex flex-col rounded-[2rem] bg-[linear-gradient(135deg,rgba(255,255,255,0.9),rgba(245,240,255,0.76)_48%,rgba(255,255,255,0.9))] backdrop-blur-[18px] dark:bg-[linear-gradient(135deg,rgba(20,15,38,0.94),rgba(31,23,55,0.9)_48%,rgba(20,15,38,0.94))]"
                 : "absolute inset-0 z-20 flex flex-col rounded-[2rem] bg-white/78 backdrop-blur-sm dark:bg-[#140f26]/92"}
               onClick={() => closeInspector()}
               exit={{ opacity: 0 }}
@@ -9433,10 +9435,10 @@ export function TaskManagementTableV2({
                   : "grid min-w-0 min-h-[70vh] gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]";
                 const fullEditorCardClass = useMobileFullOverlay
                   ? "min-w-0 w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
-                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]";
+                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530]";
                 const fullMetadataCardClass = useMobileFullOverlay
                   ? "min-w-0 w-full max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
-                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4";
+                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4";
                 const titleInputClass = `${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] ${useMobileFullOverlay ? "text-[17px]" : "text-[18px]"}`;
                 const metadataTabRowClass = useMobileFullOverlay
                   ? "mt-3 flex min-w-0 flex-wrap gap-x-3 gap-y-2 text-[13px] leading-5"
@@ -9589,7 +9591,7 @@ export function TaskManagementTableV2({
                 );
 
                 const fullDesktopEditorNode = (
-                  <div className="min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-white/35 shadow-[0_0_120px_48px_rgba(81,61,168,0.12)] dark:bg-[#171328]/35" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
+                  <div className="min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
                     <div className="p-4">
                       {fullDesktopEditorContent}
                     </div>
