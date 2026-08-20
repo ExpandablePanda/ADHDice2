@@ -39,6 +39,7 @@ function taskCommitReconciliationFailureMessage(reason?: string) {
 
 type UpdateTaskActionOptions = {
   canonicalIntent?: TaskStateRuntimeCanonicalIntent;
+  onCanonicalTaskCommitted?: (task: TaskStateRuntimeLocalTask) => void;
   manualAction?: "unscheduled_status";
   replayIdentity?: string;
   engineManaged?: boolean;
@@ -255,6 +256,7 @@ export function useTaskUpdateAction({
           return false;
         }
         mutationState.taskSnapshots.set(taskId, reconciledCanonicalTask);
+        options?.onCanonicalTaskCommitted?.(reconciledCanonicalTask);
         setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? reconciledCanonicalTask : task)));
         if (runtimeAction.actionType === "archive_task" || runtimeAction.actionType === "trash_task") {
           routeTask(taskId, null);

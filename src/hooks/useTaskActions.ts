@@ -3,7 +3,7 @@
 import { useTaskCrudActions } from "@/hooks/useTaskCrudActions";
 import { useTaskCreateAction } from "@/hooks/useTaskCreateAction";
 import { useTaskEditorSaveAction } from "@/hooks/useTaskEditorSaveAction";
-import { useTaskHistoryActions } from "@/hooks/useTaskHistoryActions";
+import { useTaskHistoryActions, type TaskHistorySyncOptions } from "@/hooks/useTaskHistoryActions";
 import { useTaskBatchEditAction } from "@/hooks/useTaskBatchEditAction";
 import { useTaskNoteLinkActions } from "@/hooks/useTaskNoteLinkActions";
 import { useTaskRoutingActions } from "@/hooks/useTaskRoutingActions";
@@ -55,10 +55,9 @@ export function useTaskActions({
     taskId: string,
     status: TaskStatus,
     entryDates: string[],
-    options?: { historyEntries?: TaskHistoryActionInput[]; historySnapshot?: TaskHistory[] },
+    options?: TaskHistorySyncOptions,
   ) => historyActions.syncTaskHistoryEntries(taskId, status, entryDates, {
-    historyEntries: options?.historyEntries,
-    historySnapshot: options?.historySnapshot,
+    ...options,
   });
   const noteLinkActions = useTaskNoteLinkActions(noteLinks);
   const updateAction = useTaskUpdateAction({

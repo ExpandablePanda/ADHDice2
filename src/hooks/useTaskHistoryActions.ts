@@ -17,6 +17,16 @@ type Message = {
   tone: "neutral" | "good" | "warn";
 };
 
+export type TaskHistorySyncOptions = {
+  historicalOverride?: boolean;
+  historicalOverrideDelayUntilDate?: string | null;
+  historyEntries?: TaskHistoryActionInput[];
+  historySnapshot?: DbTaskHistory[];
+  onTaskCommitted?: (task: TaskStateRuntimeLocalTask) => void;
+  currentTask?: TaskStateRuntimeLocalTask | null;
+  syncLiveTask?: boolean;
+};
+
 type UseTaskHistoryActionsOptions = {
   canonicalCommandExecutor?: (action: Extract<ReturnType<typeof classifyTaskStateRuntimeAction>, { kind: "canonical_action" }>, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   client: SupabaseClient;
@@ -74,18 +84,14 @@ export function useTaskHistoryActions({
     taskId: string,
     status: TaskStatus,
     entryDates: string[],
-    options?: {
-      historicalOverride?: boolean;
-      historicalOverrideDelayUntilDate?: string | null;
-      historyEntries?: TaskHistoryActionInput[];
-      historySnapshot?: DbTaskHistory[];
-      syncLiveTask?: boolean;
-    },
+    options?: TaskHistorySyncOptions,
   ) {
     const uniqueEntryDates = Array.from(new Set(entryDates)).sort();
     if (uniqueEntryDates.length === 0) return true;
 
-    const canonicalTask = tasks.find((candidate) => candidate.id === taskId) ?? null;
+    const canonicalTask = options?.currentTask
+      ?? tasks.find((candidate) => candidate.id === taskId) as TaskStateRuntimeLocalTask | undefined
+      ?? null;
     if (!canonicalTask) {
       setMessage({ tone: "warn", text: "The canonical Calendar action could not find the current Task." });
       return false;
@@ -170,6 +176,7 @@ export function useTaskHistoryActions({
         }]);
       }
       currentTask = canonicalResult.task;
+      options?.onTaskCommitted?.(currentTask);
     }
 
     setTasks((current) => sortTasksForUi(current.map((candidate) => candidate.id === taskId ? currentTask : candidate)));

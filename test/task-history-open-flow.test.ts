@@ -63,6 +63,21 @@ test("Task History outcome edits clear an active Calendar override before reusin
   assert.match(flow, /for \(const entryDate of entryDates\)/);
 });
 
+test("Task History replacement carries the committed canonical Task across clear and replacement", () => {
+  const clearStart = appSource.indexOf("async function clearTaskHistoryCalendarDate");
+  const clearEnd = appSource.indexOf("\n\n  async function setTaskHistoryNotDue", clearStart);
+  const clear = appSource.slice(clearStart, clearEnd);
+  const flowStart = appSource.indexOf("const taskHistoryFlow");
+  const flowEnd = appSource.indexOf("\n  function togglePinnedFilter", flowStart);
+  const flow = appSource.slice(flowStart, flowEnd);
+
+  assert.match(clear, /onCanonicalTaskCommitted: \(nextTask\) => \{\s*committedTask = nextTask;/);
+  assert.match(clear, /return \{ history: refreshedHistory\.history, task: committedTask \};/);
+  assert.match(flow, /clearReplaceableOutcome: true, currentTask/);
+  assert.match(flow, /historySnapshot: clearedHistory\.history/);
+  assert.match(flow, /currentTask,\s*onTaskCommitted: \(nextTask\) => \{\s*currentTask = nextTask;/);
+});
+
 test("Task History modal passes active Calendar overrides into the Calendar read bridge", () => {
   assert.match(appSource, /calendarOverrides: taskCalendarOverridesByTaskId\[taskHistoryModalTaskId\] \?\? \[\]/);
   assert.match(modalSource, /calendarOverrides,/);
