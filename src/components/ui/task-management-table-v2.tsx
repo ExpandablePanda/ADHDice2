@@ -9589,7 +9589,7 @@ export function TaskManagementTableV2({
                 );
 
                 const fullDesktopEditorNode = (
-                  <div className="min-w-0 w-full max-w-[80rem] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
+                  <div className="min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-white/35 shadow-[0_0_120px_48px_rgba(81,61,168,0.12)] dark:bg-[#171328]/35" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
                     <div className="p-4">
                       {fullDesktopEditorContent}
                     </div>
