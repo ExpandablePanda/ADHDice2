@@ -10,6 +10,7 @@ import { shiftDateKey } from "../src/lib/task-grid-layout.ts";
 
 const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
 const taskHistoryModalSource = modalSource.slice(modalSource.indexOf("export function TaskHistoryModal"));
+const taskCompleteSource = readFileSync(new URL("../src/lib/task-complete.ts", import.meta.url), "utf8");
 const focusEffectSource = taskHistoryModalSource.slice(
   taskHistoryModalSource.indexOf("  useEffect(() => {"),
   taskHistoryModalSource.indexOf("\n\n  if (taskHistoryLoadStatus !== \"ready\")"),
@@ -92,6 +93,15 @@ test("History Calendar is canonical-only and fails closed without a canonical re
   assert.match(taskHistoryModalSource, /Calendar is unavailable until canonical Task State is ready/);
   assert.match(taskHistoryModalSource, /mobileSection === "calendar" \? calendarRead \?/);
   assert.match(taskHistoryModalSource, /calendarRead\?\.states\[dateKey\]/);
+});
+
+test("History Calendar applies multi-select Not Due sequentially and excludes future dates", () => {
+  assert.match(taskHistoryModalSource, /selectedDates, task, todayDateKey: today/);
+  assert.match(taskHistoryModalSource, /selectedDates\.filter\(\(dateKey\) => dateKey <= today\)/);
+  assert.match(taskHistoryModalSource, /for \(const dateKey of targetDates\)/);
+  assert.match(taskHistoryModalSource, /await onSetCalendarOverride\(dateKey, overrideState\)/);
+  assert.match(taskHistoryModalSource, /overrideState !== "not_due"/);
+  assert.match(taskCompleteSource, /configuredStatuses\.filter\(\(status\) => status !== "complete" && status !== "delayed"\)/);
 });
 
 test("TaskHistoryModal renders the aligned date array and keeps week chunking physical", () => {

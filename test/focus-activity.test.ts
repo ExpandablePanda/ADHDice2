@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { attachDailyOverallGoalSeconds } from "../src/lib/focus-activity.ts";
 import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "../src/lib/focus-activity-scroll.ts";
+import { ALL_FOCUS_ACTIVITY_FILTER, filterFocusActivityHistory, getFocusActivitySubtypeOptions, getFocusActivityTypeOptions } from "../src/lib/focus-activity-filters.ts";
 
 const source = readFileSync(new URL("../src/components/focus-history.tsx", import.meta.url), "utf8");
 const sharedChart = readFileSync(new URL("../src/components/activity-line-chart-card.tsx", import.meta.url), "utf8");
@@ -28,6 +29,22 @@ const categoryBuilder = sourceBetween(
   "function buildActivityCategoryBars(",
   "function buildDailyLineBuckets(",
 );
+
+const activityHistory = [
+  { id: "work-paid", date: "2026-08-19", durationSeconds: 3600, focusType: "Productive", focusSubtype: "Paid Work" },
+  { id: "work-study", date: "2026-08-19", durationSeconds: 1800, focusType: "Productive", focusSubtype: "Study" },
+  { id: "personal", date: "2026-08-19", durationSeconds: 900, focusType: "Personal", focusSubtype: "Errands" },
+] as const;
+
+test("Activity Summary filters sessions and subtype choices by Focus Type", () => {
+  assert.deepEqual(getFocusActivityTypeOptions([...activityHistory] as never[]), ["Personal", "Productive"]);
+  assert.deepEqual(getFocusActivitySubtypeOptions([...activityHistory] as never[], "Productive"), ["Paid Work", "Study"]);
+  assert.deepEqual(getFocusActivitySubtypeOptions([...activityHistory] as never[], ALL_FOCUS_ACTIVITY_FILTER), ["Errands", "Paid Work", "Study"]);
+  assert.deepEqual(filterFocusActivityHistory([...activityHistory] as never[], "Productive", "Paid Work").map((session) => session.id), ["work-paid"]);
+  assert.deepEqual(filterFocusActivityHistory([...activityHistory] as never[], "Productive", ALL_FOCUS_ACTIVITY_FILTER).map((session) => session.id), ["work-paid", "work-study"]);
+  assert.match(source, /current === ALL_FOCUS_ACTIVITY_FILTER[\s\S]*ALL_FOCUS_ACTIVITY_FILTER/);
+  assert.match(source, /buildFocusHistoryDerived\(categories, filteredActivityHistory/);
+});
 
 test("Daily Overall keeps every session bar, including eight and more than eight", () => {
   for (const sessionCount of [8, 11]) {

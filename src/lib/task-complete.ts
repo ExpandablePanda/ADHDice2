@@ -98,15 +98,24 @@ export function getTaskHistoryCalendarVisibleActionStatuses({
 export function getTaskHistoryCalendarOverrideActions({
   isMultiSelect,
   selectedDate,
+  selectedDates,
   task,
   todayDateKey,
 }: {
   isMultiSelect: boolean;
   selectedDate: string;
+  selectedDates?: readonly string[];
   task: Pick<Task, "status">;
   todayDateKey: string;
 }): Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]> {
-  if (isMultiSelect || selectedDate > todayDateKey || task.status === "complete" || task.status === "archived" || task.status === "trashed") {
+  if (task.status === "complete" || task.status === "archived" || task.status === "trashed") {
+    return [] as Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]>;
+  }
+  if (isMultiSelect) {
+    const editableDates = (selectedDates ?? [selectedDate]).filter((dateKey) => dateKey <= todayDateKey);
+    return editableDates.length > 0 ? ["not_due"] : [];
+  }
+  if (selectedDate > todayDateKey) {
     return [] as Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]>;
   }
   if (selectedDate < todayDateKey) return ["not_due"];

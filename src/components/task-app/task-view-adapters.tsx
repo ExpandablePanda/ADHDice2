@@ -665,7 +665,7 @@ export function TaskHistoryModal({
     })
     : [];
   const calendarOverrideActions = calendarRead && onSetCalendarOverride
-    ? getTaskHistoryCalendarOverrideActions({ isMultiSelect, selectedDate, task, todayDateKey: today })
+    ? getTaskHistoryCalendarOverrideActions({ isMultiSelect, selectedDate, selectedDates, task, todayDateKey: today })
     : [];
   const canDelaySelectedDate = !isMultiSelect
     && !selectedIsFuture
@@ -776,10 +776,18 @@ export function TaskHistoryModal({
   }
 
   async function handleSetCalendarOverride(overrideState: "not_due" | "due_open") {
-    if (!onSetCalendarOverride || isMultiSelect || selectedIsFuture) return;
+    if (!onSetCalendarOverride) return;
+    const targetDates = isMultiSelect
+      ? selectedDates.filter((dateKey) => dateKey <= today)
+      : selectedIsFuture
+        ? []
+        : [selectedDate];
+    if (targetDates.length === 0 || (isMultiSelect && overrideState !== "not_due")) return;
     setIsSaving(true);
     try {
-      await onSetCalendarOverride(selectedDate, overrideState);
+      for (const dateKey of targetDates) {
+        await onSetCalendarOverride(dateKey, overrideState);
+      }
     } finally {
       setIsSaving(false);
     }

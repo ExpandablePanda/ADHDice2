@@ -19,6 +19,11 @@ export type HealthNutritionTotals = {
   fat: number;
 };
 
+export type HealthMealPickerSuggestion =
+  | { item: HealthFoodLibraryItem; kind: "food"; label: string; value: string }
+  | { item: HealthRecipe; kind: "recipe"; label: string; value: string }
+  | { item: HealthSavedMeal; kind: "saved_meal"; label: string; value: string };
+
 type HealthFoodIdentityInput = {
   barcode?: string | null;
   brand_name?: string | null;
@@ -298,6 +303,37 @@ export function getHealthFoodDisplaySuggestions(
     suggestions.push(suggestion);
   }
   return suggestions;
+}
+
+export function buildHealthMealPickerSuggestions({
+  foods,
+  recipes,
+  savedMeals,
+}: {
+  foods: HealthFoodLibraryItem[];
+  recipes: HealthRecipe[];
+  savedMeals: HealthSavedMeal[];
+}): HealthMealPickerSuggestion[] {
+  return [
+    ...foods.map((item) => ({
+      item,
+      kind: "food" as const,
+      label: formatHealthFoodDisplayName(item),
+      value: `food:${item.id}`,
+    })),
+    ...recipes.map((item) => ({
+      item,
+      kind: "recipe" as const,
+      label: `${item.name} · Recipe`,
+      value: `recipe:${item.id}`,
+    })),
+    ...savedMeals.map((item) => ({
+      item,
+      kind: "saved_meal" as const,
+      label: `${item.name} · Saved Meal`,
+      value: `saved-meal:${item.id}`,
+    })),
+  ];
 }
 
 export type HealthFoodAutocompleteField = "food_name" | "brand_name" | "food_category" | "serving_unit";

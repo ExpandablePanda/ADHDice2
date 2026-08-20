@@ -78,7 +78,7 @@ test("Daily Until Complete exposes Done when shared engine authority allows it",
   }), ["done", "did_my_best", "delayed", "missed", "complete"]);
 });
 
-test("History Calendar multi-select exposes batch occurrence actions independent of one selected date", () => {
+test("History Calendar multi-select exposes Not Due while retaining occurrence restrictions", () => {
   assert.deepEqual(getTaskHistoryCalendarVisibleActionStatuses({
     engineStatuses: [],
     isMultiSelect: true,
@@ -102,6 +102,14 @@ test("History Calendar exposes Not Due for past dates but Due only for today", (
   assert.deepEqual(getTaskHistoryCalendarOverrideActions({
     isMultiSelect: true,
     selectedDate: "2026-08-10",
+    selectedDates: ["2026-08-09", "2026-08-10", "2026-08-11"],
+    task: { status: "pending" },
+    todayDateKey: "2026-08-10",
+  }), ["not_due"]);
+  assert.deepEqual(getTaskHistoryCalendarOverrideActions({
+    isMultiSelect: true,
+    selectedDate: "2026-08-11",
+    selectedDates: ["2026-08-11"],
     task: { status: "pending" },
     todayDateKey: "2026-08-10",
   }), []);

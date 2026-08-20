@@ -5,14 +5,25 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.9.61`.
-- Current release group: `7.9.x` Task State and workspace corrections.
+- Current working app version: `7.10.1`.
+- Current release group: `7.10.x` QA polish corrections for Health, Focus, and History Calendar.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-19 7.10.1 QA polish
+
+Health Food Logging now searches and applies custom Foods, Recipes, and Saved
+Meals through the existing meal snapshot path; Health dropdown keyboard
+navigation keeps the highlighted option visible. Activity Summary supports
+Focus Type and primary Focus Subtype filters across Daily, Weekly, and Monthly
+views. Task History Calendar multi-select now exposes only the canonical Not
+Due override and applies selected eligible dates sequentially. No SQL or Edge
+changes were required; browser and live Supabase parity remain unverified.
+
 - Historical patch descriptions are intentionally excluded from this active document.
 
 ## 2026-08-19 Dead tables and legacy plumbing retirement

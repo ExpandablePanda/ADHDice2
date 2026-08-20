@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 import {
   buildRecipeIngredient,
+  buildHealthMealPickerSuggestions,
   buildSavedMealFoodItem,
   buildSavedMealRecipeItem,
   composeHealthFoodServingDefinition,
@@ -74,6 +75,49 @@ test("recipe totals and per-serving nutrition use ingredient quantities", () => 
     carbs: 12,
     fat: 4,
   });
+});
+
+test("Food Logging picker exposes custom Foods, Recipes, and Saved Meals by name", () => {
+  const recipe = {
+    created_at: "2026-07-27T12:00:00.000Z",
+    id: "recipe-1",
+    ingredients: [buildRecipeIngredient(food, 2)],
+    name: "Test recipe",
+    notes: "",
+    servings: 2,
+    updated_at: "2026-07-27T12:00:00.000Z",
+    user_id: "user-1",
+  };
+  const savedMeal = {
+    created_at: "2026-07-27T12:00:00.000Z",
+    default_meal_slot: "lunch" as const,
+    id: "saved-meal-1",
+    items: [buildSavedMealFoodItem(food, 1)],
+    name: "Test saved meal",
+    updated_at: "2026-07-27T12:00:00.000Z",
+    user_id: "user-1",
+  };
+
+  const suggestions = buildHealthMealPickerSuggestions({
+    foods: [food],
+    recipes: [recipe],
+    savedMeals: [savedMeal],
+  });
+
+  assert.deepEqual(suggestions.map((suggestion) => suggestion.kind), ["food", "recipe", "saved_meal"]);
+  assert.deepEqual(suggestions.map((suggestion) => suggestion.label), ["Test food", "Test recipe · Recipe", "Test saved meal · Saved Meal"]);
+  assert.deepEqual(getRecipeNutritionPerServing(recipe), { calories: 200, protein: 12, carbs: 24, fat: 8 });
+  assert.deepEqual(getSavedMealNutrition(savedMeal), { calories: 200, protein: 12, carbs: 24, fat: 8 });
+
+  const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
+  const dropdown = readFileSync(new URL("../src/components/task-app/health-dropdown.tsx", import.meta.url), "utf8");
+  assert.match(source, /onSelect=\{\(suggestion\) =>/);
+  assert.match(source, /applyMealFoodPickerSuggestion\(selected\)/);
+  assert.match(source, /provider: "recipe"/);
+  assert.match(source, /provider: "saved_meal"/);
+  assert.match(dropdown, /onSelect\?\.\(suggestion\)/);
+  assert.match(dropdown, /event\.key === "Enter"[\s\S]*chooseSuggestion\(highlightedIndex\)/);
+  assert.match(dropdown, /scrollIntoView\(\{ block: "nearest" \}\)/);
 });
 
 test("custom food serving fields compose a backward-compatible label", () => {

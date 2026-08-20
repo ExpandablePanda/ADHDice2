@@ -82,14 +82,17 @@ import {
 } from "@/lib/health-nutrition";
 import {
   composeHealthFoodServingDefinition,
+  buildHealthMealPickerSuggestions,
   buildHealthDailyCalorieSeries,
   buildHealthFoodLogHistoryIndex,
   formatHealthFoodDisplayName,
   formatHealthFoodQuantityUnit,
-  getHealthFoodDisplaySuggestions,
   getHealthFoodIdentityKey,
+  getRecipeNutritionPerServing,
+  getSavedMealNutrition,
   sortHealthFoodsForMealPicker,
   type HealthFoodLogHistory,
+  type HealthMealPickerSuggestion,
 } from "@/lib/health-library";
 import {
   TASK_TABLE_CHIP_BASE_CLASS,
@@ -600,8 +603,8 @@ export function HealthPage({
     [favorites, mealEntries],
   );
   const mealFoodSuggestions = useMemo(
-    () => getHealthFoodDisplaySuggestions(orderedCustomFoods),
-    [orderedCustomFoods],
+    () => buildHealthMealPickerSuggestions({ foods: orderedCustomFoods, recipes, savedMeals }),
+    [orderedCustomFoods, recipes, savedMeals],
   );
   const matchingCustomFoods = useMemo(() => {
     const query = customFoodSearchQuery.trim().toLowerCase();
@@ -1191,6 +1194,7 @@ export function HealthPage({
     servingUnit?: string | null;
     servingMeasureValue?: number | null;
     servingMeasureUnit?: HealthServingMeasureUnit | null;
+    mealSlot?: HealthMealEntry["meal_slot"];
   }) {
     setIsQuickEntryOpen(false);
     setSaveQuickEntryToLibrary(false);
@@ -1211,6 +1215,7 @@ export function HealthPage({
       providerItemId: result.providerItemId ?? null,
       sourceFoodId: result.sourceFoodId ?? null,
       foodCategory: result.foodCategory ?? null,
+      mealSlot: result.mealSlot ?? current.mealSlot,
       servingQuantity,
       servingUnit,
       servingMeasureValue: positiveFiniteNumber(result.servingMeasureValue),
@@ -1219,6 +1224,66 @@ export function HealthPage({
       measurement: "serving",
       servingLabel: result.servingLabel ?? "",
     }));
+  }
+
+  function applyMealFoodPickerSuggestion(suggestion: HealthMealPickerSuggestion) {
+    if (suggestion.kind === "food") {
+      const item = suggestion.item;
+      applyLookupResult({
+        attribution: item.attribution,
+        barcode: item.barcode,
+        brandName: item.brand_name,
+        foodCategory: item.food_category ?? item.category,
+        calories: item.calories,
+        carbs: item.carbs_g,
+        fat: item.fat_g,
+        foodName: item.food_name,
+        protein: item.protein_g,
+        provider: item.provider,
+        providerItemId: item.provider_item_id ?? item.id,
+        servingLabel: item.serving_label,
+        sourceFoodId: item.id,
+        servingQuantity: item.serving_quantity,
+        servingUnit: item.serving_unit,
+        servingMeasureValue: item.serving_measure_value,
+        servingMeasureUnit: item.serving_measure_unit,
+      });
+      return;
+    }
+
+    if (suggestion.kind === "recipe") {
+      const nutrition = getRecipeNutritionPerServing(suggestion.item);
+      applyLookupResult({
+        brandName: null,
+        calories: nutrition.calories,
+        carbs: nutrition.carbs,
+        fat: nutrition.fat,
+        foodName: suggestion.item.name,
+        protein: nutrition.protein,
+        provider: "recipe",
+        providerItemId: suggestion.item.id,
+        servingLabel: suggestion.item.servings === 1 ? "1 serving" : `1 of ${suggestion.item.servings} servings`,
+        servingQuantity: 1,
+        servingUnit: "serving",
+      });
+      return;
+    }
+
+    const nutrition = getSavedMealNutrition(suggestion.item);
+    applyLookupResult({
+      brandName: null,
+      calories: nutrition.calories,
+      carbs: nutrition.carbs,
+      fat: nutrition.fat,
+      foodName: suggestion.item.name,
+      mealSlot: suggestion.item.default_meal_slot,
+      protein: nutrition.protein,
+      provider: "saved_meal",
+      providerItemId: suggestion.item.id,
+      servingLabel: "1 saved meal",
+      servingQuantity: 1,
+      servingUnit: "serving",
+    });
   }
 
   function updateImportParseStatus(progress: AppleHealthImportParseProgress) {
@@ -1541,6 +1606,12 @@ export function HealthPage({
                 <HealthAutocomplete
                   ariaLabel="Search custom foods"
                   onChange={setCustomFoodSearchQuery}
+                  onSelect={(suggestion) => {
+                    const selected = mealFoodSuggestions.find((candidate) => candidate.value === suggestion.value);
+                    if (selected) {
+                      applyMealFoodPickerSuggestion(selected);
+                    }
+                  }}
                   placeholder="Search custom foods"
                   suggestions={mealFoodSuggestions}
                   value={customFoodSearchQuery}

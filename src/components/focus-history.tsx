@@ -8,6 +8,7 @@ import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
 import { attachDailyOverallGoalSeconds } from "@/lib/focus-activity";
+import { ALL_FOCUS_ACTIVITY_FILTER, filterFocusActivityHistory, getFocusActivitySubtypeOptions, getFocusActivityTypeOptions } from "@/lib/focus-activity-filters";
 import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "@/lib/focus-activity-scroll";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { type FocusCategory, type HistoricalFocusSession, type FocusLabelOptions, type FocusSubtype, type FocusType } from "@/lib/types";
@@ -1093,6 +1094,8 @@ export function DailyHistoryGallery({
 }) {
   const [activityScope, setActivityScope] = useState<TimeScope>("daily");
   const [activityDate, setActivityDate] = useState(todayLocalISO());
+  const [activityFocusType, setActivityFocusType] = useState(ALL_FOCUS_ACTIVITY_FILTER);
+  const [activityFocusSubtype, setActivityFocusSubtype] = useState(ALL_FOCUS_ACTIVITY_FILTER);
   const [insightsScope, setInsightsScope] = useState<TimeScope>("daily");
   const [insightsDate, setInsightsDate] = useState(todayLocalISO());
   const [searchQuery, setSearchQuery] = useState("");
@@ -1104,10 +1107,25 @@ export function DailyHistoryGallery({
   const activityPreviousRange = useMemo(() => getPreviousScopeRange(activityScope, activityDate), [activityDate, activityScope]);
   const insightsRange = useMemo(() => getScopeRange(insightsScope, insightsDate), [insightsDate, insightsScope]);
   const insightsPreviousRange = useMemo(() => getPreviousScopeRange(insightsScope, insightsDate), [insightsDate, insightsScope]);
+  const activityFocusTypeOptions = useMemo(() => getFocusActivityTypeOptions(history), [history]);
+  const selectedActivityFocusType = activityFocusTypeOptions.includes(activityFocusType)
+    ? activityFocusType
+    : ALL_FOCUS_ACTIVITY_FILTER;
+  const activityFocusSubtypeOptions = useMemo(
+    () => getFocusActivitySubtypeOptions(history, selectedActivityFocusType),
+    [history, selectedActivityFocusType],
+  );
+  const selectedActivityFocusSubtype = activityFocusSubtypeOptions.includes(activityFocusSubtype)
+    ? activityFocusSubtype
+    : ALL_FOCUS_ACTIVITY_FILTER;
+  const filteredActivityHistory = useMemo(
+    () => filterFocusActivityHistory(history, selectedActivityFocusType, selectedActivityFocusSubtype),
+    [history, selectedActivityFocusSubtype, selectedActivityFocusType],
+  );
 
   const activityDerived = useMemo(() => (
-    buildFocusHistoryDerived(categories, history, activityScope, activityDate, activityRange, activityPreviousRange)
-  ), [activityDate, activityPreviousRange, activityRange, activityScope, categories, history]);
+    buildFocusHistoryDerived(categories, filteredActivityHistory, activityScope, activityDate, activityRange, activityPreviousRange)
+  ), [activityDate, activityPreviousRange, activityRange, activityScope, categories, filteredActivityHistory]);
 
   const insightsDerived = useMemo(() => (
     buildFocusHistoryDerived(categories, history, insightsScope, insightsDate, insightsRange, insightsPreviousRange)
@@ -1220,6 +1238,15 @@ export function DailyHistoryGallery({
     setActivityDate((current) => shiftScopeDate(activityScope, current, direction));
   };
 
+  const changeActivityFocusType = (nextFocusType: string) => {
+    setActivityFocusType(nextFocusType);
+    setActivityFocusSubtype((current) => (
+      current === ALL_FOCUS_ACTIVITY_FILTER || getFocusActivitySubtypeOptions(history, nextFocusType).includes(current)
+        ? current
+        : ALL_FOCUS_ACTIVITY_FILTER
+    ));
+  };
+
   const shiftInsightsPeriod = (direction: number) => {
     setInsightsDate((current) => shiftScopeDate(insightsScope, current, direction));
   };
@@ -1235,14 +1262,20 @@ export function DailyHistoryGallery({
             categories={categories}
             currentDate={activityDate}
             deletingId={deletingId}
+            focusSubtypeOptions={activityFocusSubtypeOptions}
+            focusTypeOptions={activityFocusTypeOptions}
             historyEntries={activityDerived.sessionsByDate}
             onDateChange={setActivityDate}
             onDeleteEntry={deleteEntry}
             onEditGoals={onEditGoals}
             onEditHistoryEntry={openEdit}
+            onFocusSubtypeChange={setActivityFocusSubtype}
+            onFocusTypeChange={changeActivityFocusType}
             onShiftPeriod={shiftActivityPeriod}
             onScopeChange={setActivityScope}
             overallBars={activityDerived.activityOverallBars}
+            selectedFocusSubtype={selectedActivityFocusSubtype}
+            selectedFocusType={selectedActivityFocusType}
             scope={activityScope}
             totalLabel={formatCompactDuration(activityDerived.totalScopedSeconds)}
             trend={activityDerived.activityTrend}
@@ -1699,14 +1732,20 @@ function FocusActivitySummaryCard({
   categories,
   currentDate,
   deletingId,
+  focusSubtypeOptions,
+  focusTypeOptions,
   historyEntries,
   onDateChange,
   onDeleteEntry,
   onEditGoals,
   onEditHistoryEntry,
+  onFocusSubtypeChange,
+  onFocusTypeChange,
   onScopeChange,
   onShiftPeriod,
   overallBars,
+  selectedFocusSubtype,
+  selectedFocusType,
   scope,
   totalLabel,
   trend,
@@ -1716,14 +1755,20 @@ function FocusActivitySummaryCard({
   categories: FocusCategory[];
   currentDate: string;
   deletingId: string | null;
+  focusSubtypeOptions: string[];
+  focusTypeOptions: string[];
   historyEntries: HistoricalFocusSession[];
   onDateChange: (date: string) => void;
   onDeleteEntry: (entryId: string) => void;
   onEditGoals: () => void;
   onEditHistoryEntry: (entry: HistoricalFocusSession) => void;
+  onFocusSubtypeChange: (value: string) => void;
+  onFocusTypeChange: (value: string) => void;
   onScopeChange: (scope: TimeScope) => void;
   onShiftPeriod: (direction: number) => void;
   overallBars: DistributionBar[];
+  selectedFocusSubtype: string;
+  selectedFocusType: string;
   scope: TimeScope;
   totalLabel: string;
   trend: ActivityTrendSummary | null;
@@ -1984,6 +2029,30 @@ function FocusActivitySummaryCard({
                 Edit Goals
               </TaskTableChipButton>
             </div>
+          </div>
+          <div aria-label="Focus activity filters" className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-[var(--text-muted)]">Focus Type</span>
+            {[ALL_FOCUS_ACTIVITY_FILTER, ...focusTypeOptions].map((value) => (
+              <TaskTableChipButton
+                aria-pressed={selectedFocusType === value}
+                key={`focus-type-${value}`}
+                onClick={() => onFocusTypeChange(value)}
+                toneClassName={selectedFocusType === value ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : FOCUS_ACTIVITY_OUTLINE_CHIP_CLASS}
+              >
+                {value === ALL_FOCUS_ACTIVITY_FILTER ? "All" : value}
+              </TaskTableChipButton>
+            ))}
+            <span className="ml-1 text-xs font-semibold text-[var(--text-muted)]">Focus Subtype</span>
+            {[ALL_FOCUS_ACTIVITY_FILTER, ...focusSubtypeOptions].map((value) => (
+              <TaskTableChipButton
+                aria-pressed={selectedFocusSubtype === value}
+                key={`focus-subtype-${value}`}
+                onClick={() => onFocusSubtypeChange(value)}
+                toneClassName={selectedFocusSubtype === value ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : FOCUS_ACTIVITY_OUTLINE_CHIP_CLASS}
+              >
+                {value === ALL_FOCUS_ACTIVITY_FILTER ? "All" : value}
+              </TaskTableChipButton>
+            ))}
           </div>
         </div>
       </div>
