@@ -229,7 +229,7 @@ export function HomePage({
   }, [isSearchOpen]);
 
   return (
-    <section className="mx-auto w-full max-w-4xl px-4 pb-32">
+    <section className="mx-auto w-full max-w-4xl px-4 pb-32 pt-6">
       <AdhdPanel
         header={(
           <div className="flex flex-wrap items-start justify-between gap-3">

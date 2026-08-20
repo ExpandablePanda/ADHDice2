@@ -565,16 +565,9 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-function formatHudDateTime(nowMs: number) {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date(nowMs));
-}
-
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.10.7";
+const APP_VERSION = "7.10.19";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -6605,7 +6598,6 @@ export function TaskApp() {
                       profile={profile}
                       runningTaskTimers={runningTaskTimers}
                       setHudUiState={setHudUiState}
-                      hudNow={hudNow}
                       taskTimerNow={hudNow}
                       theme={theme}
                       todayTaskCount={filteredTodayTasks.length}
@@ -7185,7 +7177,6 @@ export function TaskApp() {
             onDeleteHistoryEntry={handleDeleteFocusHistoryEntry}
             onDeleteCategory={handleDeleteFocusCategory}
             onDismissDailyGoalSurplus={() => setPendingDailyGoalSurplus(null)}
-            onRequestDailyGoalSurplus={setPendingDailyGoalSurplus}
             onSaveDailyGoalAdjustment={handleSaveDailyGoalAdjustment}
             onUpdateCategories={handleSaveCategories}
             pendingDailyGoalSurplus={pendingDailyGoalSurplus}
@@ -7410,9 +7401,9 @@ function HudLoadingShell() {
     <div className="w-full border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,244,255,0.96))] px-0 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
       <header aria-label="Loading HUD" className="flex flex-col gap-2 px-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center justify-between gap-3 lg:w-[13rem] lg:shrink-0 lg:justify-start">
-          <div className="flex items-center gap-1">
+          <div className="flex flex-col items-start gap-0">
             <BrandMark profile={DEFAULT_PROFILE} />
-            <span className="rounded-full bg-[#f1ecff] px-2 py-0.5 text-[11px] font-semibold text-[#7f6af7]">
+            <span className="rounded-full bg-[#f1ecff] px-1 py-0.5 text-[11px] font-semibold leading-none text-[#7f6af7]">
               {HUD_VERSION}
             </span>
           </div>
@@ -8090,7 +8081,6 @@ function CommandCenterHeader({
   profile,
   runningTaskTimers,
   setHudUiState,
-  hudNow,
   taskTimerNow,
   theme,
   todayTaskCount,
@@ -8138,7 +8128,6 @@ function CommandCenterHeader({
   profile: UserProfile;
   runningTaskTimers: RunningTaskTimer[];
   setHudUiState: Dispatch<SetStateAction<import("@/lib/task-hud-layout").HudUiState>>;
-  hudNow: number;
   taskTimerNow: number;
   theme: ThemeMode;
   todayTaskCount: number;
@@ -8176,7 +8165,6 @@ function CommandCenterHeader({
   const collapsedHudFocusTimer = resolveCollapsedHudFocusTimer(focusCategories, activeSessions, taskTimerNow);
   const collapsedHudTaskTimer = activeHudTaskTimer ?? runningTaskTimers[0] ?? null;
   const activeHudPageTitle = hudUiState.hudPages.find((page) => page.id === currentHudPageId)?.title ?? "HUD";
-  const hudDateTime = formatHudDateTime(hudNow);
   const [isNotificationInboxOpen, setIsNotificationInboxOpen] = useState(false);
 
   function setHudCollapsed(isCollapsed: boolean) {
@@ -8396,19 +8384,19 @@ function CommandCenterHeader({
 
   if (isHudCollapsed) {
     return (
-      <header className="px-3">
-        <div className="adhdice-scrollbar w-full overflow-x-auto overflow-y-hidden touch-pan-x">
-          <div className="mx-auto flex w-max items-center gap-2 rounded-[1.15rem] bg-[var(--hud-surface)] px-2 py-1">
+      <header className="pl-2 pr-0">
+        <div className="adhdice-scrollbar flex w-full justify-start overflow-x-auto overflow-y-hidden touch-pan-x">
+          <div className="grid w-max shrink-0 grid-flow-col grid-rows-[min-content_min-content] items-center gap-x-2 gap-y-0 rounded-[1.15rem] bg-[var(--hud-surface)] px-0 py-1">
             <button
               aria-label="Expand HUD"
-              className="shrink-0 flex min-h-11 items-center gap-2 rounded-full bg-[var(--hud-surface)] px-2.5 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
+              className="row-span-2 flex min-h-11 shrink-0 flex-col items-center justify-center gap-0 rounded-full bg-[var(--hud-surface)] px-0 py-0 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
               onClick={() => setHudCollapsed(!isHudCollapsed)}
               type="button"
             >
               <span className="pointer-events-none flex items-center">
                 <BrandMark compact profile={profile} />
               </span>
-              <span className="pointer-events-none rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]">
+              <span className="pointer-events-none rounded-full bg-[var(--hud-surface)] px-1 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]">
                 {HUD_VERSION}
               </span>
             </button>
@@ -8441,12 +8429,12 @@ function CommandCenterHeader({
             ) : null}
             {currentHudPageId !== "overview" ? (
               <span className="hidden shrink-0 sm:inline">
-                <span className={`${TASK_TABLE_CHIP_BASE_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`}>
+                <span className={`${TASK_TABLE_CHIP_BASE_CLASS} -translate-y-0.5 border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`}>
                   {activeHudPageTitle}
                 </span>
               </span>
             ) : null}
-            <span className={`${TASK_TABLE_CHIP_BASE_CLASS} shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>
+              <span className={`${TASK_TABLE_CHIP_BASE_CLASS} -translate-y-0.5 shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>
               Points {economy.points}
             </span>
             {pendingRewardDiceCount > 0 ? (
@@ -8462,7 +8450,7 @@ function CommandCenterHeader({
             ) : null}
             <TaskTableChipButton
               aria-label="Refresh workspace"
-              className="shrink-0 gap-1.5 text-[#5f56a6] dark:text-white/72"
+              className="-translate-y-0.5 shrink-0 gap-1.5 text-[#5f56a6] dark:text-white/72"
               disabled={isWorkspaceRefreshing}
               onClick={onRefreshWorkspace}
               toneClassName="border-[#e4deef] bg-[#f8f5ff] dark:border-white/10 dark:bg-white/[0.05]"
@@ -8480,17 +8468,16 @@ function CommandCenterHeader({
             </TaskTableChipButton>
             <TaskTableChipButton
               aria-label="Expand HUD"
-              className="shrink-0 gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
+              className="-translate-y-0.5 shrink-0 gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
               onClick={() => setHudCollapsed(false)}
               toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
             >
               <ChevronUp className="h-3.5 w-3.5" />
               Open
             </TaskTableChipButton>
-            <div className="shrink-0">{accountButton}</div>
+            <div className="row-span-2 shrink-0">{accountButton}</div>
           </div>
         </div>
-        <span className="mt-1 block text-left text-[11px] font-medium leading-none tabular-nums text-[#817a9d] dark:text-white/55">{hudDateTime}</span>
       </header>
     );
   }
@@ -8501,14 +8488,14 @@ function CommandCenterHeader({
         <div className="flex items-center justify-between gap-3 lg:mr-[5px] lg:shrink-0 lg:justify-start">
           <button
             aria-label="Collapse HUD"
-            className="flex min-h-12 items-center gap-1 rounded-full bg-[var(--hud-surface)] px-2 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
+            className="flex min-h-12 flex-col items-center justify-center gap-0 rounded-full bg-[var(--hud-surface)] px-2 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
             onClick={() => setHudCollapsed(true)}
             type="button"
           >
             <span className="pointer-events-none flex items-center">
               <BrandMark profile={profile} />
             </span>
-            <span className="pointer-events-none rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[11px] font-semibold text-[#7f6af7] dark:text-[#c5b8ff]">
+            <span className="pointer-events-none rounded-full bg-[var(--hud-surface)] px-1 py-0.5 text-[11px] font-semibold leading-none text-[#7f6af7] dark:text-[#c5b8ff]">
               {HUD_VERSION}
             </span>
           </button>
@@ -8551,7 +8538,6 @@ function CommandCenterHeader({
           <div className="hidden lg:block">{accountButton}</div>
         </div>
       </div>
-      <span className="mt-1 block text-left text-[11px] font-medium leading-none tabular-nums text-[#817a9d] dark:text-white/55">{hudDateTime}</span>
     </header>
   );
 }
