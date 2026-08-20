@@ -108,7 +108,7 @@ import {
   type TaskEditorMode,
   type TaskSubtaskDraft,
 } from "./task-app/task-editor-model";
-import { CalmModeButton, DarkModeToggleButton, ThemeToggle } from "./task-app/theme-toggle";
+import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
 import { ModalShell } from "./modal-shell";
@@ -566,9 +566,16 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function formatHudDateTime(nowMs: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(nowMs));
+}
+
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.10.20";
+const APP_VERSION = "7.10.21";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -6575,7 +6582,7 @@ export function TaskApp() {
       <div className="sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]">
         <div className="w-full">
           {shouldShowInitialHudLoadingShell ? (
-            <HudLoadingShell />
+            <HudLoadingShell isNativeIosPlatform={isNativeIosPlatform} />
           ) : (
             <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
               <HudRuntimeClock active>
@@ -6620,6 +6627,7 @@ export function TaskApp() {
                       profile={profile}
                       runningTaskTimers={runningTaskTimers}
                       setHudUiState={setHudUiState}
+                      hudNow={hudNow}
                       taskTimerNow={hudNow}
                       theme={theme}
                       todayTaskCount={filteredTodayTasks.length}
@@ -7419,14 +7427,17 @@ function LoadingSplash({
   );
 }
 
-function HudLoadingShell() {
+function HudLoadingShell({ isNativeIosPlatform }: { isNativeIosPlatform: boolean }) {
   return (
     <div className="w-full border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,244,255,0.96))] px-0 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
       <header aria-label="Loading HUD" className="flex flex-col gap-2 px-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center justify-between gap-3 lg:w-[13rem] lg:shrink-0 lg:justify-start">
-          <div className="flex flex-col items-start gap-0">
+          <div className={isNativeIosPlatform ? "flex flex-col items-start gap-0" : "flex items-center gap-1"}>
             <BrandMark profile={DEFAULT_PROFILE} />
-            <span className="rounded-full bg-[#f1ecff] px-1 py-0.5 text-[11px] font-semibold leading-none text-[#7f6af7]">
+            <span className={isNativeIosPlatform
+              ? "rounded-full bg-[#f1ecff] px-1 py-0.5 text-[11px] font-semibold leading-none text-[#7f6af7]"
+              : "rounded-full bg-[#f1ecff] px-2 py-0.5 text-[11px] font-semibold text-[#7f6af7]"}
+            >
               {HUD_VERSION}
             </span>
           </div>
@@ -8081,75 +8092,6 @@ function TopHeader({
   );
 }
 
-function WebsiteHudHeader({
-  currentStreak,
-  economy,
-  lowStim,
-  notificationInboxItems,
-  onLowStimChange,
-  onOpenAccount,
-  onThemeChange,
-  profile,
-  theme,
-}: {
-  currentStreak: number;
-  economy: { level: number; xp: number; points: number; tokens: number };
-  lowStim: boolean;
-  notificationInboxItems: HudNotificationItem[];
-  onLowStimChange: (value: boolean) => void;
-  onOpenAccount: () => void;
-  onThemeChange: (theme: ThemeMode) => void;
-  profile: UserProfile;
-  theme: ThemeMode;
-}) {
-  const accountButton = (
-    <button
-      aria-label="Open account"
-      className="relative rounded-full transition-transform hover:scale-[1.02]"
-      onClick={onOpenAccount}
-      type="button"
-    >
-      <ProfileAvatarImage avatarSrc={profile.avatarSrc} website />
-      {notificationInboxItems.length > 0 ? (
-        <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-[#f05566] text-[10px] font-semibold text-white">
-          {notificationInboxItems.length}
-        </span>
-      ) : null}
-    </button>
-  );
-
-  return (
-    <header className="flex flex-col gap-3 border-b border-[#ece8f8] pb-5 dark:border-white/10 lg:flex-row lg:items-center lg:justify-between">
-      <div className="flex items-center justify-between gap-4 lg:justify-start">
-        <div className="flex items-center gap-1">
-          <BrandMark profile={profile} website />
-          <span className="rounded-full bg-[#f1ecff] px-2.5 py-1 text-xs font-semibold text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]">
-            v{HUD_VERSION}
-          </span>
-        </div>
-        <div className="lg:hidden">{accountButton}</div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <ThemeToggle lowStim={lowStim} onLowStimChange={onLowStimChange} onThemeChange={onThemeChange} theme={theme} />
-        <ProgressStat
-          label={`Lvl ${economy.level}`}
-          value={`${economy.xp} / ${economy.level * 100} XP`}
-          percent={(economy.xp / (economy.level * 100)) * 100}
-        />
-        <MiniStat label="Points" value={String(economy.points)} />
-        <MiniStat label="Tokens" value={String(economy.tokens)} />
-        {currentStreak > 0 ? (
-          <div className="flex items-center gap-1.5 rounded-full bg-[#fff3e0] px-3 py-2 text-sm font-semibold text-[#d97706] dark:bg-[#3d2a00] dark:text-[#fbbf24]">
-            🔥 {currentStreak}d
-          </div>
-        ) : null}
-        <div className="hidden lg:block">{accountButton}</div>
-      </div>
-    </header>
-  );
-}
-
 function CommandCenterHeader({
   activeHudTaskTimer,
   activeSessions,
@@ -8173,6 +8115,7 @@ function CommandCenterHeader({
   profile,
   runningTaskTimers,
   setHudUiState,
+  hudNow,
   taskTimerNow,
   theme,
   todayTaskCount,
@@ -8221,6 +8164,7 @@ function CommandCenterHeader({
   profile: UserProfile;
   runningTaskTimers: RunningTaskTimer[];
   setHudUiState: Dispatch<SetStateAction<import("@/lib/task-hud-layout").HudUiState>>;
+  hudNow: number;
   taskTimerNow: number;
   theme: ThemeMode;
   todayTaskCount: number;
@@ -8259,23 +8203,8 @@ function CommandCenterHeader({
   const collapsedHudFocusTimer = resolveCollapsedHudFocusTimer(focusCategories, activeSessions, taskTimerNow);
   const collapsedHudTaskTimer = activeHudTaskTimer ?? runningTaskTimers[0] ?? null;
   const activeHudPageTitle = hudUiState.hudPages.find((page) => page.id === currentHudPageId)?.title ?? "HUD";
+  const hudDateTime = isNativeIosPlatform ? null : formatHudDateTime(hudNow);
   const [isNotificationInboxOpen, setIsNotificationInboxOpen] = useState(false);
-
-  if (!isNativeIosPlatform) {
-    return (
-      <WebsiteHudHeader
-        currentStreak={currentStreak}
-        economy={economy}
-        lowStim={lowStim}
-        notificationInboxItems={notificationInboxItems}
-        onLowStimChange={onLowStimChange}
-        onOpenAccount={onOpenAccount}
-        onThemeChange={onThemeChange}
-        profile={profile}
-        theme={theme}
-      />
-    );
-  }
 
   function setHudCollapsed(isCollapsed: boolean) {
     setHudUiState((current) => ({
@@ -8494,19 +8423,30 @@ function CommandCenterHeader({
 
   if (isHudCollapsed) {
     return (
-      <header className="pl-2 pr-0">
-        <div className="adhdice-scrollbar flex w-full justify-start overflow-x-auto overflow-y-hidden touch-pan-x">
-          <div className="grid w-max shrink-0 grid-flow-col grid-rows-[min-content_min-content] items-center gap-x-2 gap-y-0 rounded-[1.15rem] bg-[var(--hud-surface)] px-0 py-1">
+      <header className={isNativeIosPlatform ? "pl-2 pr-0" : "px-3"}>
+        <div className={isNativeIosPlatform
+          ? "adhdice-scrollbar flex w-full justify-start overflow-x-auto overflow-y-hidden touch-pan-x"
+          : "adhdice-scrollbar w-full overflow-x-auto overflow-y-hidden touch-pan-x"}
+        >
+          <div className={isNativeIosPlatform
+            ? "grid w-max shrink-0 grid-flow-col grid-rows-[min-content_min-content] items-center gap-x-2 gap-y-0 rounded-[1.15rem] bg-[var(--hud-surface)] px-0 py-1"
+            : "mx-auto flex w-max items-center gap-2 rounded-[1.15rem] bg-[var(--hud-surface)] px-2 py-1"}
+          >
             <button
               aria-label="Expand HUD"
-              className="row-span-2 flex min-h-11 shrink-0 flex-col items-center justify-center gap-0 rounded-full bg-[var(--hud-surface)] px-0 py-0 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
+              className={isNativeIosPlatform
+                ? "row-span-2 flex min-h-11 shrink-0 flex-col items-center justify-center gap-0 rounded-full bg-[var(--hud-surface)] px-0 py-0 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
+                : "shrink-0 flex min-h-11 items-center gap-2 rounded-full bg-[var(--hud-surface)] px-2.5 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"}
               onClick={() => setHudCollapsed(!isHudCollapsed)}
               type="button"
             >
               <span className="pointer-events-none flex items-center">
                 <BrandMark compact profile={profile} />
               </span>
-              <span className="pointer-events-none rounded-full bg-[var(--hud-surface)] px-1 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]">
+              <span className={isNativeIosPlatform
+                ? "pointer-events-none rounded-full bg-[var(--hud-surface)] px-1 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]"
+                : "pointer-events-none rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]"}
+              >
                 {HUD_VERSION}
               </span>
             </button>
@@ -8539,12 +8479,12 @@ function CommandCenterHeader({
             ) : null}
             {currentHudPageId !== "overview" ? (
               <span className="hidden shrink-0 sm:inline">
-                <span className={`${TASK_TABLE_CHIP_BASE_CLASS} -translate-y-0.5 border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`}>
+                <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`}>
                   {activeHudPageTitle}
                 </span>
               </span>
             ) : null}
-              <span className={`${TASK_TABLE_CHIP_BASE_CLASS} -translate-y-0.5 shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>
+            <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>
               Points {economy.points}
             </span>
             {pendingRewardDiceCount > 0 ? (
@@ -8560,7 +8500,7 @@ function CommandCenterHeader({
             ) : null}
             <TaskTableChipButton
               aria-label="Refresh workspace"
-              className="-translate-y-0.5 shrink-0 gap-1.5 text-[#5f56a6] dark:text-white/72"
+              className={`${isNativeIosPlatform ? "-translate-y-0.5 " : ""}shrink-0 gap-1.5 text-[#5f56a6] dark:text-white/72`}
               disabled={isWorkspaceRefreshing}
               onClick={onRefreshWorkspace}
               toneClassName="border-[#e4deef] bg-[#f8f5ff] dark:border-white/10 dark:bg-white/[0.05]"
@@ -8578,16 +8518,17 @@ function CommandCenterHeader({
             </TaskTableChipButton>
             <TaskTableChipButton
               aria-label="Expand HUD"
-              className="-translate-y-0.5 shrink-0 gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
+              className={`${isNativeIosPlatform ? "-translate-y-0.5 " : ""}shrink-0 gap-1.5 text-[#6f57f6] dark:text-[#cabfff]`}
               onClick={() => setHudCollapsed(false)}
               toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
             >
               <ChevronUp className="h-3.5 w-3.5" />
               Open
             </TaskTableChipButton>
-            <div className="row-span-2 shrink-0">{accountButton}</div>
+            <div className={isNativeIosPlatform ? "row-span-2 shrink-0" : "shrink-0"}>{accountButton}</div>
           </div>
         </div>
+        {hudDateTime ? <span className="mt-1 block text-left text-[11px] font-medium leading-none tabular-nums text-[#817a9d] dark:text-white/55">{hudDateTime}</span> : null}
       </header>
     );
   }
@@ -8598,14 +8539,19 @@ function CommandCenterHeader({
         <div className="flex items-center justify-between gap-3 lg:mr-[5px] lg:shrink-0 lg:justify-start">
           <button
             aria-label="Collapse HUD"
-            className="flex min-h-12 flex-col items-center justify-center gap-0 rounded-full bg-[var(--hud-surface)] px-2 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
+            className={isNativeIosPlatform
+              ? "flex min-h-12 flex-col items-center justify-center gap-0 rounded-full bg-[var(--hud-surface)] px-2 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
+              : "flex min-h-12 items-center gap-1 rounded-full bg-[var(--hud-surface)] px-2 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"}
             onClick={() => setHudCollapsed(true)}
             type="button"
           >
             <span className="pointer-events-none flex items-center">
               <BrandMark profile={profile} />
             </span>
-            <span className="pointer-events-none rounded-full bg-[var(--hud-surface)] px-1 py-0.5 text-[11px] font-semibold leading-none text-[#7f6af7] dark:text-[#c5b8ff]">
+            <span className={isNativeIosPlatform
+              ? "pointer-events-none rounded-full bg-[var(--hud-surface)] px-1 py-0.5 text-[11px] font-semibold leading-none text-[#7f6af7] dark:text-[#c5b8ff]"
+              : "pointer-events-none rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[11px] font-semibold text-[#7f6af7] dark:text-[#c5b8ff]"}
+            >
               {HUD_VERSION}
             </span>
           </button>
@@ -8648,34 +8594,31 @@ function CommandCenterHeader({
           <div className="hidden lg:block">{accountButton}</div>
         </div>
       </div>
+      {hudDateTime ? <span className="mt-1 block text-left text-[11px] font-medium leading-none tabular-nums text-[#817a9d] dark:text-white/55">{hudDateTime}</span> : null}
     </header>
   );
 }
 
-function ProfileAvatarImage({ avatarSrc, website = false }: { avatarSrc: string; website?: boolean }) {
+function ProfileAvatarImage({ avatarSrc }: { avatarSrc: string }) {
   return (
     <Image
       alt="Profile avatar"
-      className={website
-        ? "h-14 w-14 rounded-full object-cover ring-4 ring-white/70 shadow-[0_10px_30px_rgba(81,61,168,0.12)]"
-        : "h-11 w-11 rounded-full bg-[var(--hud-surface)] object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"}
-      height={website ? 56 : 44}
+      className="h-11 w-11 rounded-full bg-[var(--hud-surface)] object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"
+      height={44}
       key={avatarSrc}
       priority
       src={avatarSrc}
       unoptimized={avatarSrc.startsWith("data:")}
-      width={website ? 56 : 44}
+      width={44}
     />
   );
 }
 
 function BrandMark({
   compact = false,
-  website = false,
   profile,
 }: {
   compact?: boolean;
-  website?: boolean;
   profile: UserProfile;
 }) {
   const [errored, setErrored] = useState(false);
@@ -8684,13 +8627,13 @@ function BrandMark({
   return (
     <Image
       alt="ADHDice logo"
-      className={website ? "h-20 w-auto object-contain object-left" : "max-w-none object-contain object-left pl-[3px]"}
-      height={website ? 80 : compact ? 36 : 50}
+      className="max-w-none object-contain object-left pl-[3px]"
+      height={compact ? 36 : 50}
       onError={() => setErrored(true)}
       priority
       src={withBasePath(logoSrc)}
       unoptimized={logoSrc.startsWith("data:")}
-      width={website ? 272 : compact ? 122 : 170}
+      width={compact ? 122 : 170}
     />
   );
 }
