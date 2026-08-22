@@ -26,7 +26,7 @@ test("native iOS keeps the current CommandCenterHeader presentation", () => {
   assert.match(commandCenterSource, /onPauseTaskTimer/);
   assert.match(commandCenterSource, /onStopTaskTimer/);
   assert.match(commandCenterSource, /notificationInboxItems/);
-  assert.match(appSource, /<HudLoadingShell isNativeIosPlatform=\{isNativeIosPlatform\} \/>/);
+  assert.doesNotMatch(appSource, /HudLoadingShell/);
 });
 
 test("the obsolete WebsiteHudHeader is no longer a render path", () => {
