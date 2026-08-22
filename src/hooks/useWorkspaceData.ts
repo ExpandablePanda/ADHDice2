@@ -122,6 +122,19 @@ type PagedFetchResult<T> = {
   error: { message?: string } | null;
 };
 
+export async function loadCanonicalTaskSnapshot<TaskRow, BoundaryRow>(
+  loadTaskRows: () => PromiseLike<PagedFetchResult<TaskRow>>,
+  loadScheduleBoundaries: () => PromiseLike<PagedFetchResult<BoundaryRow>>,
+) {
+  const taskResult = await loadTaskRows();
+  if (taskResult.error) {
+    return { taskResult, boundaryResult: null };
+  }
+
+  const boundaryResult = await loadScheduleBoundaries();
+  return { taskResult, boundaryResult };
+}
+
 export type TaskHistoryTaskLoadState = {
   error: string | null;
   status: "error" | "loading" | "ready";
@@ -505,18 +518,18 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         try {
         do {
           queuedTaskReloadRef.current = false;
-          const [taskResult, boundaryResult] = await Promise.all([
-            createTaskRowsRequest(),
-            createTaskScheduleBoundariesRequest(),
-          ]);
+          const { taskResult, boundaryResult } = await loadCanonicalTaskSnapshot(
+            () => createTaskRowsRequest(),
+            () => createTaskScheduleBoundariesRequest(),
+          );
 
           if (!isActive) {
             return;
           }
 
-          if (taskResult.error || boundaryResult.error) {
+          if (taskResult.error || boundaryResult?.error) {
             if (!silent) {
-              setMessage({ tone: "warn", text: taskResult.error?.message ?? boundaryResult.error?.message ?? "Could not refresh your tasks." });
+              setMessage({ tone: "warn", text: taskResult.error?.message ?? boundaryResult?.error?.message ?? "Could not refresh your tasks." });
             }
             return;
           }
@@ -524,7 +537,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           startTransition(() => {
             const nextTasks = projectTasksWithCanonicalScheduleBoundaries(
               taskResult.data ?? [],
-              (boundaryResult.data ?? []) as CanonicalTaskScheduleBoundary[],
+              (boundaryResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
             );
             setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
           });
@@ -984,16 +997,17 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const loadStartedAt = performance.now();
       const criticalCoreStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
-      const taskRequest = createTaskRowsRequest();
-      const taskScheduleBoundariesRequest = createTaskScheduleBoundariesRequest();
       const profileRequest = client
         .from("adhdice_user_profiles")
         .select(WORKSPACE_PROFILE_COLUMNS)
         .eq("user_id", userId)
         .maybeSingle();
+      const canonicalTaskSnapshotRequest = loadCanonicalTaskSnapshot(
+        () => createTaskRowsRequest(),
+        () => createTaskScheduleBoundariesRequest(),
+      );
       const criticalCoreRequest = Promise.all([
-        taskRequest,
-        taskScheduleBoundariesRequest,
+        canonicalTaskSnapshotRequest,
         profileRequest,
       ]);
       // Focus History is owned by the page-gated Focus hook, never core startup.
@@ -1038,7 +1052,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           .then((data) => ({ data, error: null }))
           .catch((error: { message?: string }) => ({ data: null, error })),
       ]);
-      const [taskResult, taskScheduleBoundariesResult, profileResult] = await criticalCoreRequest;
+      const [{ taskResult, boundaryResult: taskScheduleBoundariesResult }, profileResult] = await criticalCoreRequest;
 
       if (!canApplyCoreWorkspaceResult()) {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -1049,7 +1063,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const criticalErrors = [
         taskResult.error,
-        taskScheduleBoundariesResult.error,
+        taskScheduleBoundariesResult?.error,
         profileResult.error,
       ].filter(Boolean);
 
@@ -1065,7 +1079,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const nextTasks = projectTasksWithCanonicalScheduleBoundaries(
         taskResult.data ?? [],
-        (taskScheduleBoundariesResult.data ?? []) as CanonicalTaskScheduleBoundary[],
+        (taskScheduleBoundariesResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
       );
       tasksRef.current = nextTasks;
       const historyLoaded = await loadTaskHistory({ silent, source: "startup" });
