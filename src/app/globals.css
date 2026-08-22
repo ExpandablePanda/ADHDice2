@@ -96,7 +96,7 @@
 
 @keyframes workspace-loading-ring {
   0% {
-    stroke-dashoffset: 237;
+    stroke-dashoffset: 289.03;
   }
 
   78% {
@@ -105,7 +105,7 @@
 
   78.01%,
   100% {
-    stroke-dashoffset: 237;
+    stroke-dashoffset: 289.03;
   }
 }
 

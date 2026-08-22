@@ -6,7 +6,7 @@ import { withBasePath } from "@/lib/utils";
 
 const LOADING_RING_RADIUS = 46;
 const LOADING_RING_CIRCUMFERENCE = 289.03;
-const LOADING_RING_START_OFFSET = 237;
+const LOADING_RING_START_OFFSET = LOADING_RING_CIRCUMFERENCE;
 
 export function WorkspaceLoadingScreen({ theme = "light" }: { theme?: "light" | "dark" }) {
   return (
