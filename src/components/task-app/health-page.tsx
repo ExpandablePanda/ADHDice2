@@ -799,7 +799,7 @@ export function HealthPage({
 
   if (!profile) {
     return (
-      <section className="px-3 pb-32 sm:px-4">
+      <section className="-mx-[15px] px-3 pb-32 sm:mx-0 sm:px-4">
         <PageShellHeader subtitle="Health, Diet, Fitness" title="Health" />
         <div className="rounded-[2rem] border border-[#ece8f8] bg-white/90 p-6 text-sm text-[#6e7892] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/65">
           {isLoading ? "Loading Health..." : "Health becomes available after sign-in."}
@@ -1360,7 +1360,7 @@ export function HealthPage({
   }
 
   return (
-    <section className="px-3 pb-32 sm:px-4">
+    <section className="-mx-[15px] px-3 pb-32 sm:mx-0 sm:px-4">
       <PageShellHeader subtitle="Health, Diet, Fitness" title="Health" />
 
       <div aria-label="Health sections" className="mt-5 flex flex-wrap gap-2" role="tablist">
