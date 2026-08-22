@@ -981,7 +981,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       taskListDataGeneration.current = taskListLoadGeneration;
       if (!silent) {
         setIsWorkspaceLoading(true);
-        setWorkspaceLoadingProgress(0);
       }
 
       const loadStartedAt = performance.now();

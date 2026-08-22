@@ -95,7 +95,7 @@
 }
 
 .workspace-loading-ring-progress {
-  transition: stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: stroke-dashoffset 2.4s linear;
 }
 
 @media (prefers-reduced-motion: reduce) {

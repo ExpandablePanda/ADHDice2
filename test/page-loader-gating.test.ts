@@ -46,7 +46,7 @@ test("one canonical full-screen loader gates auth restoration and initial app bo
   assert.match(loadingScreen, /motion-reduce:transition-none/);
   assert.match(loadingScreen, /data-theme=\{theme\}/);
   assert.doesNotMatch(loadingScreen, /LOADING_RING_STYLE|workspace-loading-ring-start-offset|@keyframes workspace-loading-ring|style=\{/);
-  assert.match(globalStyles, /\.workspace-loading-ring-progress \{[\s\S]*?transition: stroke-dashoffset 1\.2s/);
+  assert.match(globalStyles, /\.workspace-loading-ring-progress \{[\s\S]*?transition: stroke-dashoffset 2\.4s linear/);
   assert.match(globalStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-loading-ring-progress \{[\s\S]*?transition: none;/);
   assert.doesNotMatch(globalStyles, /workspace-loading-ring-start-offset|stroke-dashoffset: var\(/);
   assert.match(source, /if \(!isAuthResolved\) \{[\s\S]*?return <WorkspaceLoadingScreen progress=\{isHudAppearanceReady \? workspaceLoadingProgress : 0\} theme=\{theme\} \/>;/);
@@ -55,6 +55,7 @@ test("one canonical full-screen loader gates auth restoration and initial app bo
   assert.match(workspaceData, /setWorkspaceLoadingProgress\(0\.35\)/);
   assert.match(workspaceData, /setWorkspaceLoadingProgress\(0\.7\)/);
   assert.match(workspaceData, /setWorkspaceLoadingProgress\(1\)/);
+  assert.doesNotMatch(workspaceData, /setWorkspaceLoadingProgress\(0\)/);
   assert.doesNotMatch(source, /HudLoadingShell|Syncing your workspace\.\.\.|Loading your workspace\.\.\./);
   assert.doesNotMatch(source, /shouldShowInitialHudLoadingShell/);
 });
