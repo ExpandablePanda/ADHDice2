@@ -576,7 +576,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.14";
+const APP_VERSION = "7.11.15";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3425,6 +3425,12 @@ export function TaskApp() {
   const [taskHighlightScrollToken, setTaskHighlightScrollToken] = useState<number | null>(null);
   const [taskHighlightShouldFocusResult, setTaskHighlightShouldFocusResult] = useState(false);
   const taskHighlightScrollSequenceRef = useRef(0);
+  const [taskRevealRequest, setTaskRevealRequest] = useState<{ taskId: string; token: number } | null>(null);
+  const taskRevealSequenceRef = useRef(0);
+  const requestTaskReveal = useCallback((taskId: string) => {
+    taskRevealSequenceRef.current += 1;
+    setTaskRevealRequest({ taskId, token: taskRevealSequenceRef.current });
+  }, []);
   const pendingTaskHighlightCommittedSearchRef = useRef<string | null>(null);
   const pendingTaskHighlightSubmitSearchRef = useRef<string | null>(null);
   const queueTaskHighlightScrollIntent = useCallback((shouldFocusResult = false) => {
@@ -3468,6 +3474,27 @@ export function TaskApp() {
     };
   }, [taskHighlightScrollToken]);
   useEffect(() => {
+    if (!taskRevealRequest) {
+      return;
+    }
+
+    let remainingFrames = 4;
+    let frameId = 0;
+    const clearRequest = () => {
+      if (remainingFrames > 0) {
+        remainingFrames -= 1;
+        frameId = window.requestAnimationFrame(clearRequest);
+        return;
+      }
+      setTaskRevealRequest((current) => current?.token === taskRevealRequest.token ? null : current);
+    };
+    frameId = window.requestAnimationFrame(clearRequest);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [taskRevealRequest]);
+  useEffect(() => {
     if (pendingTaskHighlightCommittedSearchRef.current !== taskUiState.search) {
       return;
     }
@@ -3484,9 +3511,11 @@ export function TaskApp() {
     pendingTaskHighlightSubmitSearchRef.current = null;
     advanceTaskHighlightMatch();
   }, [advanceTaskHighlightMatch, taskUiState.search]);
-  const activeHighlightedTaskId = effectiveSearchQuery.length > 0
+  const activeHighlightedTaskId = taskRevealRequest?.taskId ?? (effectiveSearchQuery.length > 0
     ? (activeTaskHighlightMatchIds[taskHighlightActiveMatchIndex] ?? activeTaskHighlightMatchIds[0] ?? null)
-    : null;
+    : null);
+  const activeTaskRevealScrollToken = taskRevealRequest?.token ?? taskHighlightScrollToken;
+  const activeTaskRevealShouldFocus = taskRevealRequest ? false : taskHighlightShouldFocusResult;
   const highlightedSearchMatchedStepParentTaskIds = Array.from(
     new Set([...searchMatchedStepParentTaskIds, ...taskHighlightMatches.matchedStepParentTaskIds]),
   );
@@ -3633,6 +3662,7 @@ export function TaskApp() {
       deleteTaskRow: (taskId, expectedTask) => deleteTaskRow(client, taskId, { expectedTask }),
       isMilestoneTask: (task) => milestoneData.milestoneByTaskId.has(task.id),
       markPendingTaskMutations,
+      onTaskRevealRequested: requestTaskReveal,
       runMilestoneTaskTrash,
       setMessage,
       setTaskRouting,
@@ -3644,6 +3674,7 @@ export function TaskApp() {
     create: {
       client,
       currentUserId: currentUserIdText,
+      onTaskRevealRequested: requestTaskReveal,
       setMessage,
       setTasks,
       shouldRouteTaskToInbox,
@@ -6853,8 +6884,8 @@ export function TaskApp() {
                   onStatusColumnFiltersChange: (statusFilters) => setTaskUiState((prev) => ({ ...prev, statusFilters })),
                   childTaskCreationBlockedTaskIds,
                   highlightedActiveTaskId: activeHighlightedTaskId,
-                  highlightedRevealShouldFocus: taskHighlightShouldFocusResult,
-                  highlightedScrollToken: taskHighlightScrollToken,
+                  highlightedRevealShouldFocus: activeTaskRevealShouldFocus,
+                  highlightedScrollToken: activeTaskRevealScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
                   onVisibleSearchMatchIdsChange: handleTableVisibleSearchMatchIdsChange,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
@@ -7016,8 +7047,8 @@ export function TaskApp() {
                   onStatusColumnFiltersChange: (statusFilters) => setTaskUiState((prev) => ({ ...prev, statusFilters })),
                   childTaskCreationBlockedTaskIds,
                   highlightedActiveTaskId: activeHighlightedTaskId,
-                  highlightedRevealShouldFocus: taskHighlightShouldFocusResult,
-                  highlightedScrollToken: taskHighlightScrollToken,
+                  highlightedRevealShouldFocus: activeTaskRevealShouldFocus,
+                  highlightedScrollToken: activeTaskRevealScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
                   searchMatchedChildTaskIds,

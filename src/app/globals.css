@@ -110,13 +110,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workspace-loading-ring-animation,
-  .workspace-loading-logo {
+  .workspace-loading-ring-animation {
     display: none;
   }
 
   .workspace-loading-logo {
     animation: none;
+    opacity: 1;
   }
 }
 
