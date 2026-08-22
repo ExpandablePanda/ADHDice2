@@ -30,6 +30,8 @@ test("7.10.23 mobile responsive contracts stay on the active production seams", 
   assert.match(globals, /outline: none !important/);
   assert.match(globals, /box-shadow: none !important/);
   assert.match(healthDropdown, /max-sm:!text-\[16px\]/);
+  assert.match(health, /<div className=\{`\$\{HEALTH_COMPACT_CONTROL_CLASS\} flex min-w-0 max-w-full items-center`\}>\s*<input\s+className="block min-w-0 w-full max-w-full box-border border-0 bg-transparent p-0[\s\S]*max-sm:!text-\[16px\]/);
+  assert.equal((health.match(/<HealthMealDateTimeInput/g) ?? []).length, 6);
 
   assert.match(health, /<section className="-mx-\[15px\] px-3 pb-32 sm:mx-0 sm:px-4">/);
   assert.match(health, /px-3 pb-4 pt-3 sm:px-5 sm:pb-5 sm:pt-4/);
@@ -37,10 +39,15 @@ test("7.10.23 mobile responsive contracts stay on the active production seams", 
   assert.doesNotMatch(chart, /className=\{`block \$\{isEmbedded \? "w-full/);
   assert.match(chart, /overflow-x-auto/);
 
-  assert.match(home, /flex shrink-0 flex-col items-center gap-1 sm:order-1 sm:flex-row/);
-  assert.match(home, /flex h-8 w-8 shrink-0 items-center justify-center[\s\S]*sm:order-2/);
-  assert.match(home, /<span className="mt-0.5 shrink-0 sm:order-1">\{handle\}<\/span>/);
-  assert.match(home, /order-3 flex w-full basis-full flex-wrap justify-end gap-1\.5 sm:ml-auto sm:w-auto sm:basis-auto sm:shrink-0 sm:self-center/);
-  assert.match(home, /<div className="flex items-start gap-1">/);
+  assert.match(home, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto_auto_auto\] items-center/);
+  assert.match(home, /<span className="shrink-0">\{handle\}<\/span>[\s\S]*flex h-7 w-7 shrink-0/);
+  assert.match(home, /renderTaskStatusCircle\(displayStatus, "sm", \{ className: "!h-7 !w-7" \}\)/);
+  assert.doesNotMatch(home, /flex shrink-0 flex-col items-center/);
+  assert.doesNotMatch(home, /basis-full/);
+  assert.match(home, /min-w-0 max-w-full text-left/);
+  assert.match(home, /aria-label=\{`Move \$\{task\.title \|\| "Untitled task"\} to Top`\}/);
+  assert.match(home, /title="Move task to Bottom"/);
+  assert.match(home, /aria-label=\{`Remove \$\{task\.title \|\| "Untitled task"\} from Home To-do`\}/);
+  assert.match(home, /<Minus aria-hidden="true" \/>/);
   assert.match(home, /break-words text-sm font-semibold leading-5/);
 });
