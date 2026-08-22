@@ -28,6 +28,8 @@ import {
 const HOME_TODO_VISIBLE_LIMIT = 10;
 const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-[#26324f] dark:text-white";
 const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2";
+const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7";
+const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-[12.25px] max-sm:!w-[12.25px]";
 
 export function HomePage({
   listMembershipsByTaskId,
@@ -178,6 +180,8 @@ export function HomePage({
           {index !== 0 ? (
             <AdhdIconButton
               aria-label={`Move ${task.title || "Untitled task"} to Top`}
+              className={HOME_TODO_ACTION_CLASS}
+              iconClassName={HOME_TODO_ACTION_ICON_CLASS}
               onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"))}
               size="sm"
               title="Move task to Top"
@@ -188,6 +192,8 @@ export function HomePage({
           {index !== todoTasks.length - 1 ? (
             <AdhdIconButton
               aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
+              className={HOME_TODO_ACTION_CLASS}
+              iconClassName={HOME_TODO_ACTION_ICON_CLASS}
               onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"))}
               size="sm"
               title="Move task to Bottom"
@@ -197,6 +203,8 @@ export function HomePage({
           ) : null}
           <AdhdIconButton
             aria-label={`Remove ${task.title || "Untitled task"} from Home To-do`}
+            className={HOME_TODO_ACTION_CLASS}
+            iconClassName={HOME_TODO_ACTION_ICON_CLASS}
             onClick={() => updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id))}
             size="sm"
             title="Remove from Home To-do"

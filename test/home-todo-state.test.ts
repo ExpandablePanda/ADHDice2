@@ -173,6 +173,7 @@ test("shared drag reorder moves Home task ids without mutating the source", () =
 
 test("Home todo renders the recovered ten-item, wrapped-title, status, and picker behavior", () => {
   const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const sharedIconButton = readFileSync(new URL("../src/components/ui-system/adhd-icon-button.tsx", import.meta.url), "utf8");
   assert.match(source, /const HOME_TODO_VISIBLE_LIMIT = 10/);
   assert.match(source, /todoTasks\.slice\(0, HOME_TODO_VISIBLE_LIMIT\)/);
   assert.match(source, /Do later \(\{doLaterTasks\.length\}\)/);
@@ -209,6 +210,12 @@ test("Home todo renders the recovered ten-item, wrapped-title, status, and picke
   assert.match(source, /from Home To-do/);
   assert.match(source, /<Minus aria-hidden="true" \/>/);
   assert.equal((source.match(/size="sm"/g) ?? []).length, 3);
+  assert.match(source, /const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7"/);
+  assert.match(source, /const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-\[12\.25px\] max-sm:!w-\[12\.25px\]"/);
+  assert.equal((source.match(/className=\{HOME_TODO_ACTION_CLASS\}/g) ?? []).length, 3);
+  assert.equal((source.match(/iconClassName=\{HOME_TODO_ACTION_ICON_CLASS\}/g) ?? []).length, 3);
+  assert.match(sharedIconButton, /sm: "h-8 w-8"/);
+  assert.match(sharedIconButton, /sm: "h-3\.5 w-3\.5"/);
   assert.match(source, /tone="danger"/);
   assert.doesNotMatch(source, /variant="rowToolbar"/);
   assert.match(source, /-mx-\[15px\] w-auto max-w-4xl px-3 pb-32 pt-6 sm:mx-auto sm:px-4/);

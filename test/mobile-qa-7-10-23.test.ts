@@ -12,6 +12,7 @@ test("7.10.23 mobile responsive contracts stay on the active production seams", 
   const health = source("src/components/task-app/health-page.tsx");
   const chart = source("src/components/activity-line-chart-card.tsx");
   const home = source("src/components/task-app/home-page.tsx");
+  const sharedIconButton = source("src/components/ui-system/adhd-icon-button.tsx");
   const healthDropdown = source("src/components/task-app/health-dropdown.tsx");
   const globals = source("src/app/globals.css");
 
@@ -58,6 +59,12 @@ test("7.10.23 mobile responsive contracts stay on the active production seams", 
   assert.match(home, /aria-label=\{`Remove \$\{task\.title \|\| "Untitled task"\} from Home To-do`\}/);
   assert.match(home, /<Minus aria-hidden="true" \/>/);
   assert.equal((home.match(/size="sm"/g) ?? []).length, 3);
+  assert.match(home, /const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7"/);
+  assert.match(home, /const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-\[12\.25px\] max-sm:!w-\[12\.25px\]"/);
+  assert.equal((home.match(/className=\{HOME_TODO_ACTION_CLASS\}/g) ?? []).length, 3);
+  assert.equal((home.match(/iconClassName=\{HOME_TODO_ACTION_ICON_CLASS\}/g) ?? []).length, 3);
+  assert.match(sharedIconButton, /sm: "h-8 w-8"/);
+  assert.match(sharedIconButton, /sm: "h-3\.5 w-3\.5"/);
   assert.match(home, /tone="danger"/);
   assert.doesNotMatch(home, /variant="rowToolbar"/);
   assert.match(home, /-mx-\[15px\] w-auto max-w-4xl px-3 pb-32 pt-6 sm:mx-auto sm:px-4/);
