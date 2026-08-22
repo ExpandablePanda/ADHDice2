@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ChevronDown, ListTodo, Minus, Plus, Search } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ListTodo, Minus, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
@@ -132,20 +132,20 @@ export function HomePage({
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
     return (
-      <AdhdCard className="grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto_auto_auto] items-center gap-x-1.5" padding="sm">
-        <span className="shrink-0">{handle}</span>
+      <AdhdCard className="grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto_auto_auto] items-center gap-x-0.5" padding="sm">
+        <span className="-ml-1 shrink-0">{handle}</span>
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-black bg-white text-xs font-semibold text-black dark:border-black dark:bg-white dark:text-black">
           {index + 1}
         </span>
-        <div className="relative flex h-9 w-9 shrink-0 items-center justify-center" ref={statusMenuOpen ? statusMenuRef : undefined}>
+        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center" ref={statusMenuOpen ? statusMenuRef : undefined}>
           <button
             aria-expanded={statusMenuOpen}
             aria-label={`Change status: ${formatTaskStatusLabel(displayStatus)}`}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full"
             onClick={() => setStatusMenuTaskId((current) => current === task.id ? null : task.id)}
             type="button"
           >
-            {renderTaskStatusCircle(displayStatus, "sm", { className: "!h-7 !w-7" })}
+            {renderTaskStatusCircle(displayStatus, "sm", { className: "!h-7 !w-7", glyphClassName: "!h-4 !w-4 !text-sm" })}
           </button>
           {statusMenuOpen ? (
             <div className="absolute left-0 top-full z-30 mt-2 rounded-full border border-[#e4def2] bg-white p-1 shadow-lg dark:border-white/15 dark:bg-[#201a35]">
@@ -172,33 +172,32 @@ export function HomePage({
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
           ) : null}
         </div>
-        <AdhdIconButton
-          aria-label={`Move ${task.title || "Untitled task"} to Top`}
-          disabled={index === 0}
-          onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"))}
-          size="md"
-          title="Move task to Top"
-          variant="rowToolbar"
-        >
-          <ArrowUp aria-hidden="true" />
-        </AdhdIconButton>
-        <AdhdIconButton
-          aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
-          disabled={index === todoTasks.length - 1}
-          onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"))}
-          size="md"
-          title="Move task to Bottom"
-          variant="rowToolbar"
-        >
-          <ArrowDown aria-hidden="true" />
-        </AdhdIconButton>
+        {index !== 0 ? (
+          <AdhdIconButton
+            aria-label={`Move ${task.title || "Untitled task"} to Top`}
+            onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"))}
+            size="sm"
+            title="Move task to Top"
+          >
+            <ArrowUpToLine aria-hidden="true" />
+          </AdhdIconButton>
+        ) : null}
+        {index !== todoTasks.length - 1 ? (
+          <AdhdIconButton
+            aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
+            onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"))}
+            size="sm"
+            title="Move task to Bottom"
+          >
+            <ArrowDownToLine aria-hidden="true" />
+          </AdhdIconButton>
+        ) : null}
         <AdhdIconButton
           aria-label={`Remove ${task.title || "Untitled task"} from Home To-do`}
           onClick={() => updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id))}
-          size="md"
+          size="sm"
           title="Remove from Home To-do"
           tone="danger"
-          variant="rowToolbar"
         >
           <Minus aria-hidden="true" />
         </AdhdIconButton>
@@ -232,17 +231,14 @@ export function HomePage({
   }, [isSearchOpen]);
 
   return (
-    <section className="mx-auto w-full max-w-4xl px-4 pb-32 pt-6">
+    <section className="-mx-[15px] w-auto max-w-4xl px-3 pb-32 pt-6 sm:mx-auto sm:px-4">
       <AdhdPanel
         header={(
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex items-start gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="flex items-start gap-2">
               <ListTodo aria-hidden="true" className="mt-0.5 h-5 w-5 text-[#6f57f6]" />
               <div>
                 <h1 className="text-xl font-black text-[#27304c] dark:text-white">To-do list</h1>
-                <p className="mt-1 text-sm text-[#7d7598] dark:text-white/55">
-                  Search your Tasks and arrange the order you want to work through.
-                </p>
               </div>
             </div>
             <span className="text-xs text-[#8a82a3] dark:text-white/40">
@@ -251,7 +247,7 @@ export function HomePage({
           </div>
         )}
       >
-        <div className="relative mt-4" ref={searchRef}>
+        <div className="relative mt-2" ref={searchRef}>
           <div className="flex flex-wrap items-end justify-between gap-2">
             <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Search tasks</span>
             <AdhdChip

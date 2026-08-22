@@ -2696,9 +2696,9 @@ function HealthMealDateTimeInput({
   value: string;
 }) {
   return (
-    <div className={`${HEALTH_COMPACT_CONTROL_CLASS} flex min-w-0 max-w-full items-center`}>
+    <div className={`${HEALTH_COMPACT_CONTROL_CLASS} flex min-w-0 max-w-full items-center max-sm:!h-[32px] max-sm:!min-h-[32px]`}>
       <input
-        className="block min-w-0 w-full max-w-full box-border border-0 bg-transparent p-0 text-[13px] leading-none text-[#2f294a] outline-none dark:text-white max-sm:!text-[16px]"
+        className="block min-w-0 w-full max-w-full box-border border-0 bg-transparent p-0 text-[13px] leading-normal text-[#2f294a] outline-none dark:text-white max-sm:!text-[16px] max-sm:!leading-normal"
         max={max}
         onChange={(event) => onChange(event.target.value)}
         type={type}

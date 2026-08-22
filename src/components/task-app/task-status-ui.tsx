@@ -119,40 +119,42 @@ export function formatTaskStatusLabel(value: string) {
 export function renderTaskStatusGlyph(
   status: TaskDisplayStatus,
   size: "sm" | "md" = "md",
+  options: { className?: string } = {},
 ) {
   const iconSize = size === "sm" ? "h-3 w-3" : "h-3.25 w-3.25";
+  const glyphClassName = options.className ?? "";
 
   if (status === "pending") {
-    return <Ellipsis className={iconSize} />;
+    return <Ellipsis className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
   if (status === "in_progress") {
-    return <ArrowRight className={iconSize} />;
+    return <ArrowRight className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
   if (status === "done") {
-    return <span className={`${size === "sm" ? "text-[11px]" : "text-xs"} font-bold leading-none`}>✓</span>;
+    return <span className={`${size === "sm" ? "text-[11px]" : "text-xs"} font-bold leading-none ${glyphClassName}`.trim()}>✓</span>;
   }
 
   if (status === "missed") {
-    return <X className={`${iconSize} translate-y-[0.5px]`} strokeWidth={2.6} />;
+    return <X className={`${iconSize} translate-y-[0.5px] ${glyphClassName}`.trim()} strokeWidth={2.6} />;
   }
 
   if (status === "did_my_best") {
-    return <Star className={iconSize} />;
+    return <Star className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
   if (status === "complete") {
-    return <span className={`${size === "sm" ? "text-[11px]" : "text-xs"} font-bold leading-none`}>✓</span>;
+    return <span className={`${size === "sm" ? "text-[11px]" : "text-xs"} font-bold leading-none ${glyphClassName}`.trim()}>✓</span>;
   }
 
   if (status === "upcoming") {
-    return <Clock className={iconSize} />;
+    return <Clock className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
   if (status === "not_due") {
     return (
-      <span className={`flex items-center gap-[2px] ${size === "sm" ? "scale-90" : ""}`} aria-hidden="true">
+      <span className={`flex items-center gap-[2px] ${size === "sm" ? "scale-90" : ""} ${glyphClassName}`.trim()} aria-hidden="true">
         <span className={`block rounded-full bg-current ${size === "sm" ? "h-2.5 w-[2px]" : "h-3 w-[2px]"}`} />
         <span className={`block rounded-full bg-current ${size === "sm" ? "h-2.5 w-[2px]" : "h-3 w-[2px]"}`} />
       </span>
@@ -160,24 +162,24 @@ export function renderTaskStatusGlyph(
   }
 
   if (status === "delayed") {
-    return <CalendarClock className={iconSize} />;
+    return <CalendarClock className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
   if (status === "unscheduled") {
-    return <CalendarDays className={iconSize} />;
+    return <CalendarDays className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
   if (status === "trashed") {
-    return <Trash2 className={iconSize} />;
+    return <Trash2 className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
-  return <BookOpen className={iconSize} />;
+  return <BookOpen className={`${iconSize} ${glyphClassName}`.trim()} />;
 }
 
 export function renderTaskStatusCircle(
   status: TaskDisplayStatus,
   size: "sm" | "md" = "md",
-  options: { className?: string; inverted?: boolean } = {},
+  options: { className?: string; glyphClassName?: string; inverted?: boolean } = {},
 ) {
   const sizeClasses = size === "sm" ? "h-5 w-5" : "h-5.5 w-5.5";
   const statusLabel = formatTaskStatusLabel(status);
@@ -195,7 +197,7 @@ export function renderTaskStatusCircle(
         options.className ?? "",
       ].join(" ").trim()}
     >
-      {renderTaskStatusGlyph(status, size)}
+      {renderTaskStatusGlyph(status, size, { className: options.glyphClassName })}
     </span>
   );
 }
