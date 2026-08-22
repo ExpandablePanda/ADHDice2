@@ -964,6 +964,7 @@ function StepsCardPreview({
   onSetStatus,
   onSetTags,
   onToggleFocusToday,
+  onTogglePinned,
   onToggleTaskList,
   onToggleExpanded,
   onToggleAllExpanded,
@@ -1020,6 +1021,7 @@ function StepsCardPreview({
   ) => void;
   onSetTags?: (taskId: string, tags: string[]) => void;
   onToggleFocusToday?: (taskId: string) => void;
+  onTogglePinned?: (taskId: string) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
   onToggleExpanded?: () => void;
   onToggleAllExpanded?: () => void;
@@ -1453,13 +1455,13 @@ function StepsCardPreview({
                                 <Footprints className="h-3.5 w-3.5" />
                               </button>
                             ) : null}
-                            {tableProps.onTogglePinned ? (
+                            {onTogglePinned ? (
                               <AdhdIconButton
                                 aria-label={`${item.pinnedAt ? "Unpin" : "Pin"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
                                 aria-pressed={Boolean(item.pinnedAt)}
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  tableProps.onTogglePinned?.(item.id);
+                                  onTogglePinned(item.id);
                                 }}
                                 selected={Boolean(item.pinnedAt)}
                                 size="sm"
@@ -1539,13 +1541,13 @@ function StepsCardPreview({
                             <Footprints className="h-3.5 w-3.5" />
                           </button>
                         ) : null}
-                        {tableProps.onTogglePinned ? (
+                        {onTogglePinned ? (
                           <AdhdIconButton
                             aria-label={`${item.pinnedAt ? "Unpin" : "Pin"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
                             aria-pressed={Boolean(item.pinnedAt)}
                             onClick={(event) => {
                               event.stopPropagation();
-                              tableProps.onTogglePinned?.(item.id);
+                              onTogglePinned(item.id);
                             }}
                             selected={Boolean(item.pinnedAt)}
                             size="sm"
@@ -3601,6 +3603,7 @@ function TasksSimpleList({
                 onSetStatus={tableProps.onSetStatus}
                 onSetTags={tableProps.onSetTags}
                 onToggleFocusToday={onToggleFocusToday}
+                onTogglePinned={tableProps.onTogglePinned}
                 onToggleTaskList={tableProps.onToggleTaskList}
                 onToggleExpanded={() => {
                   if (searchMatchedStepParentTaskIdSet.has(task.id)) {
