@@ -135,11 +135,11 @@ export function HomePage({
     const statusMenuOpen = statusMenuTaskId === task.id;
     return (
       <AdhdCard className="grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0" padding="sm">
-        <span className="max-sm:-ml-2 sm:-ml-1 shrink-0">{handle}</span>
-        <span className="ml-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-black bg-white text-xs font-semibold text-black dark:border-black dark:bg-white dark:text-black">
+        <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">{handle}</span>
+        <span className="ml-1 shrink-0 text-sm font-medium leading-5 text-[#26324f] dark:text-white">
           {index + 1}
         </span>
-        <div className="relative ml-1 flex h-8 w-8 shrink-0 items-center justify-center" ref={statusMenuOpen ? statusMenuRef : undefined}>
+        <div className="relative ml-2 flex h-8 w-8 shrink-0 items-center justify-center" ref={statusMenuOpen ? statusMenuRef : undefined}>
           <button
             aria-expanded={statusMenuOpen}
             aria-label={`Change status: ${formatTaskStatusLabel(displayStatus)}`}
@@ -164,7 +164,7 @@ export function HomePage({
             </div>
           ) : null}
         </div>
-        <div className="ml-0.5 min-w-0">
+        <div className="ml-2 min-w-0">
           <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
             <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>
               {task.title || "Untitled task"}
