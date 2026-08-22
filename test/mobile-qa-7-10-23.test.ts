@@ -40,8 +40,8 @@ test("7.10.23 mobile responsive contracts stay on the active production seams", 
   assert.doesNotMatch(chart, /className=\{`block \$\{isEmbedded \? "w-full/);
   assert.match(chart, /overflow-x-auto/);
 
-  assert.match(home, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto_auto_auto\] items-center gap-x-0\.5/);
-  assert.match(home, /<span className="-ml-1 shrink-0">\{handle\}<\/span>[\s\S]*flex h-7 w-7 shrink-0/);
+  assert.match(home, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto\] items-center gap-x-0/);
+  assert.match(home, /<span className="max-sm:-ml-2 sm:-ml-1 shrink-0">\{handle\}<\/span>[\s\S]*flex h-7 w-7 shrink-0/);
   assert.match(home, /renderTaskStatusCircle\(displayStatus, "sm", \{ className: "!h-7 !w-7", glyphClassName: "!h-4 !w-4 !text-sm" \}\)/);
   assert.doesNotMatch(home, /flex shrink-0 flex-col items-center/);
   assert.doesNotMatch(home, /basis-full/);
@@ -61,5 +61,10 @@ test("7.10.23 mobile responsive contracts stay on the active production seams", 
   assert.match(home, /-mx-\[15px\] w-auto max-w-4xl px-3 pb-32 pt-6 sm:mx-auto sm:px-4/);
   assert.doesNotMatch(home, /Search your Tasks and arrange the order you want to work through\./);
   assert.match(home, /<div className="relative mt-2" ref=\{searchRef\}>/);
-  assert.match(home, /break-words text-sm font-semibold leading-5/);
+  assert.match(home, /const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-\[#26324f\] dark:text-white"/);
+  assert.equal((home.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 3);
+  assert.match(home, /const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2"/);
+  assert.match(home, /<div className="flex shrink-0 items-center gap-1">/);
+  assert.doesNotMatch(home, /font-semibold leading-5/);
+  assert.doesNotMatch(home, /text-\[#443d60\]/);
 });
