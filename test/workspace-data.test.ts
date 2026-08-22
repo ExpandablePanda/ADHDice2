@@ -53,8 +53,9 @@ test("canonical Task snapshots fetch boundaries after Tasks and project before p
       events.push("tasks:finish");
       return { data: [task], error: null };
     },
-    async () => {
+    async (taskIds) => {
       assert.deepEqual(events, ["tasks:start", "tasks:finish"]);
+      assert.deepEqual(taskIds, [task.id]);
       events.push("boundaries:start");
       await Promise.resolve();
       events.push("boundaries:finish");
@@ -69,6 +70,91 @@ test("canonical Task snapshots fetch boundaries after Tasks and project before p
 
   assert.deepEqual(events, ["tasks:start", "tasks:finish", "boundaries:start", "boundaries:finish"]);
   assert.equal(publishedTasks[0]?.canonical_schedule_boundary?.entity_id, task.id);
+});
+
+test("canonical boundary reads exclude historical and deleted Task IDs", async () => {
+  const currentTask = { id: "current-task" } as Task;
+  const requestedTaskIds: string[][] = [];
+
+  const snapshot = await loadCanonicalTaskSnapshot(
+    async () => ({ data: [currentTask], error: null }),
+    async (taskIds) => {
+      requestedTaskIds.push(taskIds);
+      return { data: [{ entity_id: currentTask.id, boundary_sequence: 1 } as CanonicalTaskScheduleBoundary], error: null };
+    },
+  );
+
+  assert.deepEqual(requestedTaskIds, [[currentTask.id]]);
+  assert.equal(snapshot.boundaryResult?.data?.[0]?.entity_id, currentTask.id);
+});
+
+test("scoped canonical boundary pagination is safe when unrelated history exceeds the API row cap", async () => {
+  const task = { id: "current-task" } as Task;
+  const unrelatedBoundaries = Array.from({ length: 1001 }, (_, index) => ({
+    entity_id: `historical-task-${index}`,
+    boundary_sequence: 1,
+  } as CanonicalTaskScheduleBoundary));
+  const relevantBoundary = { entity_id: task.id, boundary_sequence: 1 } as CanonicalTaskScheduleBoundary;
+  const accountBoundaries = [...unrelatedBoundaries, relevantBoundary];
+  const ranges: Array<[number, number]> = [];
+
+  const snapshot = await loadCanonicalTaskSnapshot(
+    async () => ({ data: [task], error: null }),
+    async (taskIds) => {
+      const scopedRows = accountBoundaries.filter((boundary) => taskIds.includes(boundary.entity_id));
+      return fetchAllPagedRows(async (from, to) => {
+        ranges.push([from, to]);
+        return { data: scopedRows.slice(from, to + 1), error: null };
+      });
+    },
+  );
+
+  const projectedTasks = projectTasksWithCanonicalScheduleBoundaries(
+    snapshot.taskResult.data ?? [],
+    snapshot.boundaryResult?.data ?? [],
+  );
+  assert.equal(unrelatedBoundaries.length, 1001);
+  assert.deepEqual(ranges, [[0, 999]]);
+  assert.equal(projectedTasks[0]?.canonical_schedule_boundary?.entity_id, task.id);
+});
+
+test("empty canonical Task snapshots skip boundary fetching", async () => {
+  let boundaryFetches = 0;
+  const snapshot = await loadCanonicalTaskSnapshot(
+    async () => ({ data: [], error: null }),
+    async () => {
+      boundaryFetches += 1;
+      return { data: [], error: null };
+    },
+  );
+
+  assert.equal(boundaryFetches, 0);
+  assert.deepEqual(snapshot.boundaryResult?.data, []);
+  assert.equal(snapshot.boundaryResult?.error, null);
+});
+
+test("incomplete active canonical Task snapshots are rejected before publication", async () => {
+  const task = {
+    id: "missing-boundary-task",
+    canonicalization_status: "canonical_runtime",
+    terminal_state: "active",
+    container_state: "active",
+  } as Task;
+
+  const snapshot = await loadCanonicalTaskSnapshot(
+    async () => ({ data: [task], error: null }),
+    async () => ({ data: [], error: null }),
+  );
+
+  assert.equal(snapshot.boundaryResult?.data, null);
+  assert.equal(snapshot.boundaryResult?.error?.code, "CANONICAL_TASK_SNAPSHOT_INCOMPLETE");
+  assert.match(snapshot.boundaryResult?.error?.message ?? "", /missing-boundary-task/);
+  assert.deepEqual(
+    snapshot.boundaryResult?.error
+      ? []
+      : projectTasksWithCanonicalScheduleBoundaries(snapshot.taskResult.data ?? [], snapshot.boundaryResult?.data ?? []),
+    [],
+  );
 });
 
 test("workspace ownership effect does not depend on active page navigation", async () => {
@@ -105,8 +191,11 @@ test("Task refresh paths use the same causal canonical snapshot loader", async (
   const coreLoader = source.slice(source.indexOf("async function loadCoreWorkspaceData"), source.indexOf("const requestCoreWorkspaceRefresh"));
 
   assert.match(source, /export async function loadCanonicalTaskSnapshot/);
-  assert.match(reload, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*createTaskScheduleBoundariesRequest\(\)/);
-  assert.match(coreLoader, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*createTaskScheduleBoundariesRequest\(\)/);
+  assert.match(reload, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadTaskScheduleBoundaries\(taskIds\)/);
+  assert.match(coreLoader, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadTaskScheduleBoundaries\(taskIds\)/);
+  assert.match(source, /\.in\("entity_id", taskIds\)/);
+  assert.match(source, /\.order\("boundary_sequence", \{ ascending: false \}\)[\s\S]*\.order\("id", \{ ascending: true \}\)/);
+  assert.match(source, /fetchAllPagedRows<CanonicalTaskScheduleBoundary>/);
   assert.doesNotMatch(reload, /Promise\.all\(\[\s*createTaskRowsRequest\(\)/);
   assert.doesNotMatch(coreLoader, /Promise\.all\(\[[\s\S]*createTaskRowsRequest\(\)[\s\S]*createTaskScheduleBoundariesRequest\(\)/);
 });
