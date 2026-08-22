@@ -14,13 +14,13 @@ export function WorkspaceLoadingScreen() {
       <section className="flex w-full max-w-2xl flex-col items-center justify-center text-center">
         <Image
           alt="ADHDice logo"
-          className="h-auto w-[min(22rem,82vw)] object-contain"
+          className="h-auto w-[min(22rem,82vw)] animate-pulse object-contain motion-reduce:animate-none"
           height={82}
           priority
           src={withBasePath("/logo.png")}
           width={280}
         />
-        <h1 className="mt-8 text-xl font-black tracking-[-0.02em] text-[#17203a] sm:text-2xl dark:text-white">
+        <h1 className="mt-8 animate-pulse text-xl font-black tracking-[-0.02em] text-[#17203a] motion-reduce:animate-none sm:text-2xl dark:text-white">
           Loading...
         </h1>
       </section>
