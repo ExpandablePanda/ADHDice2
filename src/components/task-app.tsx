@@ -223,6 +223,7 @@ import {
   updateTaskRowWithLegacyEnergyFallback,
   type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
+import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
 import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/lib/task-focus-days";
 import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
@@ -576,7 +577,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.15";
+const APP_VERSION = "7.11.16";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3883,7 +3884,12 @@ export function TaskApp() {
     }
 
     if (persistedTasksById.size > 0) {
-      setTasks((current) => sortTasksForUi(current.map((task) => persistedTasksById.get(task.id) ?? task)));
+      setTasks((current) => sortTasksForUi(current.map((task) => {
+        const persistedTask = persistedTasksById.get(task.id);
+        return persistedTask
+          ? mergeTaskWithCanonicalScheduleProjection(task, persistedTask)
+          : task;
+      })));
     }
 
     if (!needsRefresh) {
