@@ -3901,6 +3901,13 @@ export function TaskManagementTableV2({
     const revealTaskId = highlightedRevealTaskId ?? highlightedActiveTaskId;
     const selector = `[data-task-table-row="${revealTaskId}"], [data-same-table-step-row="${revealTaskId}"]`;
     const shouldFocusRevealTarget = shouldFocusTaskTableRevealTarget(highlightedRevealShouldFocus);
+    const revealTaskIndex = effectiveDisplayedTasks.findIndex((task) => task.id === revealTaskId);
+    if (revealTaskIndex >= renderedTaskCount) {
+      const frameId = window.requestAnimationFrame(() => {
+        setRenderedTaskCount((current) => Math.max(current, revealTaskIndex + 1));
+      });
+      return () => window.cancelAnimationFrame(frameId);
+    }
     let secondFrameId = 0;
     const revealTarget = () => {
       const target = shellElement.querySelector<HTMLElement>(selector);
@@ -3928,7 +3935,7 @@ export function TaskManagementTableV2({
       window.cancelAnimationFrame(firstFrameId);
       window.cancelAnimationFrame(secondFrameId);
     };
-  }, [highlightedActiveTaskId, highlightedRevealShouldFocus, highlightedRevealTaskId, highlightedScrollToken]);
+  }, [effectiveDisplayedTasks, highlightedActiveTaskId, highlightedRevealShouldFocus, highlightedRevealTaskId, highlightedScrollToken, renderedTaskCount]);
 
   const getHighlightedRowClassName = (taskId: string) => {
     if (highlightedRevealTaskId === taskId) {

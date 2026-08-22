@@ -56,7 +56,8 @@ test("one canonical full-screen loader gates auth restoration and initial app bo
   assert.doesNotMatch(globalStyles, /workspace-loading-ring-rotator|workspace-loading-ring-rotation|transform: rotate\(0deg\)|transform: rotate\(360deg\)/);
   assert.match(globalStyles, /@keyframes workspace-loading-logo-fade[\s\S]*?opacity: 0\.68;[\s\S]*?opacity: 1;/);
   assert.match(globalStyles, /\.workspace-loading-logo \{[\s\S]*?animation: workspace-loading-logo-fade 2s ease-in-out infinite;/);
-  assert.match(globalStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-loading-ring-animation,[\s\S]*?\.workspace-loading-logo \{[\s\S]*?display: none;[\s\S]*?\.workspace-loading-logo \{[\s\S]*?animation: none;/);
+  assert.match(globalStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-loading-ring-animation \{[\s\S]*?display: none;[\s\S]*?\.workspace-loading-logo \{[\s\S]*?animation: none;[\s\S]*?opacity: 1;/);
+  assert.doesNotMatch(globalStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-loading-logo \{\s*display: none;/);
   assert.doesNotMatch(globalStyles, /workspace-loading-ring-start-offset|stroke-dashoffset/);
   assert.match(source, /if \(!isAuthResolved\) \{[\s\S]*?return <WorkspaceLoadingScreen isNativeIosPlatform=\{isNativeIosPlatform\} theme=\{theme\} \/>;/);
   assert.match(source, /if \(shouldBlockAuthenticatedAppBody\) \{[\s\S]*?return <WorkspaceLoadingScreen isNativeIosPlatform=\{isNativeIosPlatform\} theme=\{theme\} \/>;/);

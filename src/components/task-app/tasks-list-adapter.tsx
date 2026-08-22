@@ -484,6 +484,24 @@ export function TasksTableAdapter({
     () => tableProps.tasks.slice(0, rowWindowCount),
     [rowWindowCount, tableProps.tasks],
   );
+  useEffect(() => {
+    if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
+      return;
+    }
+
+    const targetIndex = tableProps.tasks.findIndex((task) => task.id === tableProps.highlightedActiveTaskId);
+    if (targetIndex < rowWindowCount) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      setRowWindow((current) => ({
+        count: Math.max(current.revision === committedResultRevision ? current.count : rowWindowCount, targetIndex + 1),
+        revision: committedResultRevision,
+      }));
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [committedResultRevision, rowWindowCount, tableProps.highlightedActiveTaskId, tableProps.highlightedScrollToken, tableProps.tasks]);
   function buildStatusScrollAnchorTaskIds(taskId: string) {
     const visibleTaskIds = tableProps.tasks.map((task) => task.id);
     const taskIndex = visibleTaskIds.indexOf(taskId);
@@ -2549,6 +2567,24 @@ function TasksSimpleList({
     : ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN;
   const windowedTasks = useMemo(() => tasks.slice(0, rowWindowCount), [rowWindowCount, tasks]);
   useEffect(() => {
+    if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
+      return;
+    }
+
+    const targetIndex = tasks.findIndex((task) => task.id === tableProps.highlightedActiveTaskId);
+    if (targetIndex < rowWindowCount) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      setRowWindow((current) => ({
+        count: Math.max(current.revision === committedResultRevision ? current.count : rowWindowCount, targetIndex + 1),
+        revision: committedResultRevision,
+      }));
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [committedResultRevision, rowWindowCount, tableProps.highlightedActiveTaskId, tableProps.highlightedScrollToken, tasks]);
+  useEffect(() => {
     const sentinel = loadMoreListRowsRef.current;
     if (!sentinel || windowedTasks.length >= tasks.length || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver((entries) => {
@@ -2831,7 +2867,9 @@ function TasksSimpleList({
     let secondFrameId = 0;
     const revealTarget = () => {
       const target = shellElement.querySelector<HTMLElement>(selector);
-      target?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      if (target) {
+        revealTargetInScrollableContainer(target, listShellRef.current);
+      }
     };
 
     const firstFrameId = window.requestAnimationFrame(() => {
@@ -2843,7 +2881,7 @@ function TasksSimpleList({
       window.cancelAnimationFrame(firstFrameId);
       window.cancelAnimationFrame(secondFrameId);
     };
-  }, [tableProps.highlightedActiveTaskId, tableProps.highlightedScrollToken]);
+  }, [rowWindowCount, tableProps.highlightedActiveTaskId, tableProps.highlightedScrollToken]);
 
   function openRowContextMenu(taskId: string, clientX: number, clientY: number) {
     const nextMenu = buildTaskRowContextMenuState(listShellRef.current, taskId, clientX, clientY);
