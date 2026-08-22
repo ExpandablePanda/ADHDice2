@@ -131,13 +131,15 @@ export function HomePage({
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
     return (
-      <AdhdCard className="flex min-w-0 flex-wrap items-start gap-3" padding="sm">
-        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-black bg-white text-sm font-semibold text-black dark:border-black dark:bg-white dark:text-black">
-          {index + 1}
-        </span>
-        <span className="mt-0.5 shrink-0">{handle}</span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start gap-2">
+      <AdhdCard className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1.5 sm:flex-nowrap sm:items-center" padding="sm">
+        <div className="flex shrink-0 flex-col items-center gap-1 sm:order-1 sm:flex-row">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-black bg-white text-sm font-semibold text-black sm:order-2 dark:border-black dark:bg-white dark:text-black">
+            {index + 1}
+          </span>
+          <span className="mt-0.5 shrink-0 sm:order-1">{handle}</span>
+        </div>
+        <div className="order-2 min-w-0 flex-1 sm:order-2">
+          <div className="flex items-start gap-1">
             <div className="relative mt-0.5 shrink-0" ref={statusMenuOpen ? statusMenuRef : undefined}>
               <button
                 aria-expanded={statusMenuOpen}
@@ -163,7 +165,7 @@ export function HomePage({
                 </div>
               ) : null}
             </div>
-            <button className="block min-w-0 w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
+            <button className="block min-w-0 flex-1 text-left" onClick={() => onOpenTask(task.id)} type="button">
               <p className="break-words text-sm font-semibold leading-5 text-[#26324f] dark:text-white">
                 {task.title || "Untitled task"}
               </p>
@@ -173,7 +175,7 @@ export function HomePage({
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
           ) : null}
         </div>
-        <div className="flex w-full basis-full flex-wrap justify-start gap-1.5 sm:w-auto sm:basis-auto sm:shrink-0 sm:justify-end">
+        <div className="order-3 flex w-full basis-full flex-wrap justify-end gap-1.5 sm:ml-auto sm:w-auto sm:basis-auto sm:shrink-0 sm:self-center">
           <AdhdChip
             contentClassName="gap-1.5"
             disabled={index === 0}

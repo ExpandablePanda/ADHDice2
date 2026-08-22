@@ -22,22 +22,25 @@ test("7.10.23 mobile responsive contracts stay on the active production seams", 
   assert.match(paths, /persistNodePosition\(node\.id, nextPosition\)/);
   assert.doesNotMatch(paths, /NODE_LONG_PRESS|beginNodeLongPress/);
 
-  assert.match(onTime, /on-time-datetime-input/);
-  assert.match(globals, /\.on-time-datetime-input::-webkit-date-and-time-value/);
-  assert.match(globals, /box-sizing: border-box/);
+  assert.match(onTime, /<div className=\{`\$\{TASK_TABLE_INPUT_CLASS\} flex min-w-0 max-w-full items-center`\}><input className=\{`\$\{TASK_TABLE_CONTROL_FONT_CLASS\} \$\{TASK_TABLE_TEXT_CLASS\} block min-w-0 w-full max-w-full box-border border-0 bg-transparent p-0/);
+  assert.doesNotMatch(onTime, /on-time-datetime-input/);
+  assert.doesNotMatch(globals, /on-time-datetime-input|activity-chart-svg-embedded/);
 
   assert.match(globals, /input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\):not\(\[type="range"\]\):focus/);
   assert.match(globals, /outline: none !important/);
   assert.match(globals, /box-shadow: none !important/);
   assert.match(healthDropdown, /max-sm:!text-\[16px\]/);
 
-  assert.match(health, /<section className="px-3 pb-32 sm:px-4">/);
+  assert.match(health, /<section className="-mx-\[15px\] px-3 pb-32 sm:mx-0 sm:px-4">/);
   assert.match(health, /px-3 pb-4 pt-3 sm:px-5 sm:pb-5 sm:pt-4/);
-  assert.match(chart, /activity-chart-svg-embedded/);
-  assert.match(globals, /width: 640px/);
+  assert.match(chart, /isEmbedded \? "w-\[640px\] min-w-\[640px\] sm:w-full sm:min-w-0"/);
+  assert.doesNotMatch(chart, /className=\{`block \$\{isEmbedded \? "w-full/);
   assert.match(chart, /overflow-x-auto/);
 
-  assert.match(home, /flex min-w-0 flex-wrap items-start gap-3/);
-  assert.match(home, /w-full basis-full flex-wrap justify-start/);
+  assert.match(home, /flex shrink-0 flex-col items-center gap-1 sm:order-1 sm:flex-row/);
+  assert.match(home, /flex h-8 w-8 shrink-0 items-center justify-center[\s\S]*sm:order-2/);
+  assert.match(home, /<span className="mt-0.5 shrink-0 sm:order-1">\{handle\}<\/span>/);
+  assert.match(home, /order-3 flex w-full basis-full flex-wrap justify-end gap-1\.5 sm:ml-auto sm:w-auto sm:basis-auto sm:shrink-0 sm:self-center/);
+  assert.match(home, /<div className="flex items-start gap-1">/);
   assert.match(home, /break-words text-sm font-semibold leading-5/);
 });
