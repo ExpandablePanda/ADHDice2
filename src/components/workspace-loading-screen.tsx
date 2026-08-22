@@ -1,16 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import type { CSSProperties } from "react";
 
 import { withBasePath } from "@/lib/utils";
 
 const LOADING_RING_RADIUS = 46;
-const LOADING_RING_CIRCUMFERENCE = 2 * Math.PI * LOADING_RING_RADIUS;
-const LOADING_RING_START_OFFSET = LOADING_RING_CIRCUMFERENCE * 0.82;
-const LOADING_RING_STYLE = {
-  "--workspace-loading-ring-start-offset": `${LOADING_RING_START_OFFSET}`,
-} as CSSProperties;
+const LOADING_RING_CIRCUMFERENCE = 289.03;
+const LOADING_RING_START_OFFSET = 237;
 
 export function WorkspaceLoadingScreen({ theme = "light" }: { theme?: "light" | "dark" }) {
   return (
@@ -33,11 +29,10 @@ export function WorkspaceLoadingScreen({ theme = "light" }: { theme?: "light" | 
               fill="transparent"
               r={LOADING_RING_RADIUS}
               stroke="currentColor"
-              strokeDasharray={LOADING_RING_CIRCUMFERENCE}
+              strokeDasharray={`${LOADING_RING_CIRCUMFERENCE} ${LOADING_RING_CIRCUMFERENCE}`}
               strokeDashoffset={LOADING_RING_START_OFFSET}
               strokeLinecap="round"
               strokeWidth="7"
-              style={LOADING_RING_STYLE}
             />
           </svg>
           <Image

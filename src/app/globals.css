@@ -95,13 +95,17 @@
 }
 
 @keyframes workspace-loading-ring {
-  0%,
-  100% {
-    stroke-dashoffset: var(--workspace-loading-ring-start-offset);
+  0% {
+    stroke-dashoffset: 237;
   }
 
   78% {
     stroke-dashoffset: 0;
+  }
+
+  78.01%,
+  100% {
+    stroke-dashoffset: 237;
   }
 }
 

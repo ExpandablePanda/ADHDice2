@@ -29,17 +29,23 @@ test("Focus History and full Task History are loaded only for explicit consumers
 test("one canonical full-screen loader gates auth restoration and initial app boot", async () => {
   const source = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const loadingScreen = await readFile(new URL("../src/components/workspace-loading-screen.tsx", import.meta.url), "utf8");
+  const globalStyles = await readFile(new URL("../src/app/globals.css", import.meta.url), "utf8");
 
   assert.doesNotMatch(loadingScreen, /Loading\.\.\./);
   assert.doesNotMatch(loadingScreen, /animate-pulse/);
   assert.doesNotMatch(loadingScreen, /<h1[\s>]/);
-  assert.match(loadingScreen, /strokeDasharray=\{LOADING_RING_CIRCUMFERENCE\}/);
+  assert.match(loadingScreen, /strokeDasharray=\{`\$\{LOADING_RING_CIRCUMFERENCE\} \$\{LOADING_RING_CIRCUMFERENCE\}`\}/);
+  assert.match(loadingScreen, /const LOADING_RING_CIRCUMFERENCE = 289\.03;/);
+  assert.match(loadingScreen, /const LOADING_RING_START_OFFSET = 237;/);
   assert.match(loadingScreen, /strokeLinecap="round"/);
   assert.match(loadingScreen, /strokeWidth="7"/);
   assert.match(loadingScreen, /-rotate-90/);
   assert.match(loadingScreen, /workspace-loading-ring-progress/);
   assert.match(loadingScreen, /motion-reduce:animate-none/);
   assert.match(loadingScreen, /data-theme=\{theme\}/);
+  assert.doesNotMatch(loadingScreen, /LOADING_RING_STYLE|workspace-loading-ring-start-offset|style=\{/);
+  assert.match(globalStyles, /@keyframes workspace-loading-ring[\s\S]*?stroke-dashoffset: 237;[\s\S]*?stroke-dashoffset: 0;[\s\S]*?78\.01%,[\s\S]*?stroke-dashoffset: 237;/);
+  assert.doesNotMatch(globalStyles, /workspace-loading-ring-start-offset|stroke-dashoffset: var\(/);
   assert.match(source, /if \(!isAuthResolved\) \{[\s\S]*?return <WorkspaceLoadingScreen theme=\{theme\} \/>;/);
   assert.match(source, /if \(shouldBlockAuthenticatedAppBody\) \{[\s\S]*?return <WorkspaceLoadingScreen theme=\{theme\} \/>;/);
   assert.doesNotMatch(source, /HudLoadingShell|Syncing your workspace\.\.\.|Loading your workspace\.\.\./);
