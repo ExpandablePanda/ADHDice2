@@ -94,21 +94,6 @@
   transition-duration: 0.01ms !important;
 }
 
-.workspace-loading-ring-rotator {
-  transform-origin: center;
-  animation: workspace-loading-ring-rotation 2s linear infinite;
-}
-
-@keyframes workspace-loading-ring-rotation {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .workspace-loading-logo {
   animation: workspace-loading-logo-fade 2s ease-in-out infinite;
 }
@@ -125,7 +110,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workspace-loading-ring-rotator,
+  .workspace-loading-ring-animation,
+  .workspace-loading-logo {
+    display: none;
+  }
+
   .workspace-loading-logo {
     animation: none;
   }
