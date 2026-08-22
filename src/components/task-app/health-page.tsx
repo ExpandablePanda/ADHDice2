@@ -799,7 +799,7 @@ export function HealthPage({
 
   if (!profile) {
     return (
-      <section className="px-4 pb-32">
+      <section className="px-3 pb-32 sm:px-4">
         <PageShellHeader subtitle="Health, Diet, Fitness" title="Health" />
         <div className="rounded-[2rem] border border-[#ece8f8] bg-white/90 p-6 text-sm text-[#6e7892] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/65">
           {isLoading ? "Loading Health..." : "Health becomes available after sign-in."}
@@ -1360,7 +1360,7 @@ export function HealthPage({
   }
 
   return (
-    <section className="px-4 pb-32">
+    <section className="px-3 pb-32 sm:px-4">
       <PageShellHeader subtitle="Health, Diet, Fitness" title="Health" />
 
       <div aria-label="Health sections" className="mt-5 flex flex-wrap gap-2" role="tablist">
@@ -2475,7 +2475,7 @@ function HealthPanel({
       "rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]",
       className,
     ].filter(Boolean).join(" ")}>
-      <div className="flex items-center gap-2 px-5 py-5">
+      <div className="flex items-center gap-2 px-3 py-4 sm:px-5 sm:py-5">
         {collapseAfterHeaderActions ? (
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
@@ -2504,7 +2504,7 @@ function HealthPanel({
         )}
         {collapseAfterHeaderActions ? collapseButton : headerActions}
       </div>
-      {isOpen ? <div className="px-5 pb-5 pt-4">{children}</div> : null}
+      {isOpen ? <div className="px-3 pb-4 pt-3 sm:px-5 sm:pb-5 sm:pt-4">{children}</div> : null}
     </div>
   );
 }

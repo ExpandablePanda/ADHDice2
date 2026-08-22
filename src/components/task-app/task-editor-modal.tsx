@@ -593,7 +593,7 @@ export function TaskEditorModal({
         }}
       >
         {/* Title */}
-        <label className="block rounded-[1.35rem] border border-[#e5def8] bg-[#fbfaff] px-4 py-4 shadow-[0_14px_34px_rgba(81,61,168,0.07)] focus-within:border-[#9d8cff] focus-within:bg-white focus-within:shadow-[0_18px_44px_rgba(111,87,246,0.14)] dark:border-white/10 dark:bg-white/[0.04] dark:focus-within:border-[#cabfff]/50 dark:focus-within:bg-white/[0.07]">
+        <label className="block rounded-[1.35rem] border border-[#e5def8] bg-[#fbfaff] px-4 py-4 shadow-[0_14px_34px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/[0.04]">
           <input
             className="ui-display-font w-full bg-transparent text-[15px] font-black uppercase tracking-[0.18em] text-[#7a63f7] leading-none outline-none placeholder:text-[#b5a9ef] dark:text-[#c9bbff] dark:placeholder:text-white/25"
             onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))}

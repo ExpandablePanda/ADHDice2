@@ -131,7 +131,7 @@ export function HomePage({
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
     return (
-      <AdhdCard className="flex items-start gap-3" padding="sm">
+      <AdhdCard className="flex min-w-0 flex-wrap items-start gap-3" padding="sm">
         <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-black bg-white text-sm font-semibold text-black dark:border-black dark:bg-white dark:text-black">
           {index + 1}
         </span>
@@ -163,7 +163,7 @@ export function HomePage({
                 </div>
               ) : null}
             </div>
-            <button className="min-w-0 text-left" onClick={() => onOpenTask(task.id)} type="button">
+            <button className="block min-w-0 w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
               <p className="break-words text-sm font-semibold leading-5 text-[#26324f] dark:text-white">
                 {task.title || "Untitled task"}
               </p>
@@ -173,7 +173,7 @@ export function HomePage({
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
           ) : null}
         </div>
-        <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+        <div className="flex w-full basis-full flex-wrap justify-start gap-1.5 sm:w-auto sm:basis-auto sm:shrink-0 sm:justify-end">
           <AdhdChip
             contentClassName="gap-1.5"
             disabled={index === 0}

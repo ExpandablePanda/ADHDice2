@@ -177,6 +177,9 @@ test("Home todo renders the recovered ten-item, wrapped-title, status, and picke
   assert.match(source, /todoTasks\.slice\(0, HOME_TODO_VISIBLE_LIMIT\)/);
   assert.match(source, /Do later \(\{doLaterTasks\.length\}\)/);
   assert.match(source, /break-words text-sm font-semibold leading-5/);
+  assert.match(source, /flex min-w-0 flex-wrap items-start gap-3/);
+  assert.match(source, /w-full basis-full flex-wrap justify-start/);
+  assert.match(source, /sm:w-auto sm:basis-auto/);
   assert.match(source, /<TaskStatusCircleRail/);
   assert.match(source, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
   assert.match(source, /onSubmit=\{handleCreateTask\}/);

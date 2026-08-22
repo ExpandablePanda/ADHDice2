@@ -353,7 +353,7 @@ export function FocusGoalsPanel({
               </div>
             </div>
             <div aria-label="Focus goal category" className="adhdice-scrollbar flex max-w-full items-center gap-2 overflow-x-auto pb-1" role="group">
-              <label className={`${TASK_TABLE_CHIP_BASE_CLASS} gap-1.5 ${FOCUS_GOAL_OUTLINE_CHIP_CLASS} focus-within:border-[#c9bcff] focus-within:ring-2 focus-within:ring-[#8d79f6]/25`}>
+              <label className={`${TASK_TABLE_CHIP_BASE_CLASS} gap-1.5 ${FOCUS_GOAL_OUTLINE_CHIP_CLASS}`}>
                 <Search aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
                 <input
                   aria-label="Search focus goal categories"

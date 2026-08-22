@@ -143,6 +143,41 @@
     color: var(--text-muted);
   }
 
+  .on-time-datetime-input {
+    box-sizing: border-box;
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .on-time-datetime-input::-webkit-date-and-time-value,
+  .on-time-datetime-input::-webkit-datetime-edit,
+  .on-time-datetime-input::-webkit-datetime-edit-fields-wrapper {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .activity-chart-svg-embedded {
+    max-width: 100%;
+  }
+
+  .health-input:focus,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+  textarea:focus {
+    outline: none !important;
+    box-shadow: none !important;
+    border-color: var(--border-soft) !important;
+    -webkit-focus-ring-color: transparent;
+  }
+
+  @media (max-width: 639px) {
+    .activity-chart-svg-embedded {
+      width: 640px;
+      min-width: 640px;
+      max-width: none;
+    }
+  }
+
   .ui-pill-button-light {
     border-radius: var(--radius-pill);
     background: var(--surface-muted);

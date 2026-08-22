@@ -155,7 +155,7 @@ export function ActivityLineChartCard({
               </ul>
               <svg
                 aria-label={ariaLabel}
-                className={`block ${isEmbedded ? "w-full min-w-0" : "min-w-[42rem]"}`}
+                className={`block ${isEmbedded ? "w-full min-w-0 activity-chart-svg-embedded" : "min-w-[42rem]"}`}
                 onPointerLeave={() => setHoveredPointKey(null)}
                 onPointerMove={(event) => { setNearestPointFromPointer(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect()); }}
                 onPointerUp={(event) => {
