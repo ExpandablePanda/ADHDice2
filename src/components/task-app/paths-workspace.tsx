@@ -1563,11 +1563,11 @@ export function PathsWorkspace({
 
   return (
     <section className="mt-4">
-      <div className="mx-auto max-w-[1480px] space-y-3">
+      <div className="mx-auto w-full min-w-0 max-w-[1480px] space-y-3">
         <div className="rounded-[1.35rem] border border-[#ece8f8] bg-white/92 shadow-[0_18px_48px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/[0.04]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#f0ecfa] px-4 py-3 dark:border-white/10">
-            <div className="flex min-w-[260px] flex-1 flex-wrap items-center gap-2">
-              <div className="max-w-[320px]">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <div className="w-full min-w-0 max-w-[320px]">
                 <DropdownField
                   compactTrigger
                   onSelect={(value) => {
@@ -1618,8 +1618,8 @@ export function PathsWorkspace({
             </div>
           </div>
 
-          <div className="grid h-[720px] min-h-0 gap-0 lg:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="relative min-w-0">
+          <div className="grid min-w-0 max-w-full gap-0 lg:h-[720px] lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="relative min-w-0 max-w-full">
               {selectedRecord ? (
                 <>
                   <div className="absolute right-4 top-4 z-50 flex items-center gap-1 rounded-full border border-[#e5ddf8] bg-white/95 p-1 shadow-[0_12px_30px_rgba(81,61,168,0.12)] backdrop-blur dark:border-white/12 dark:bg-[#1b1530]/95">
@@ -1647,7 +1647,7 @@ export function PathsWorkspace({
                       <Plus />
                     </AdhdIconButton>
                   </div>
-                  <div className="adhdice-scrollbar relative h-full overflow-auto bg-[#fdfcff] dark:bg-[#100d1b]" ref={canvasViewportRef}>
+                  <div className="adhdice-scrollbar relative h-[min(60vh,720px)] min-h-[360px] max-w-full overflow-auto bg-[#fdfcff] dark:bg-[#100d1b] lg:h-full" ref={canvasViewportRef}>
                   <div
                     className="relative min-h-[720px] min-w-[1180px] cursor-crosshair overflow-visible"
                     onClick={(event) => {
@@ -2148,7 +2148,7 @@ export function PathsWorkspace({
                   </div>
                 </>
               ) : (
-                <div className="flex h-[720px] items-center justify-center bg-[#fdfcff] p-6 dark:bg-[#100d1b]">
+                <div className="flex h-[min(60vh,720px)] min-h-[360px] items-center justify-center bg-[#fdfcff] p-6 dark:bg-[#100d1b] lg:h-[720px]">
                   <div className="rounded-[1rem] border border-dashed border-[#d8d1ea] bg-white/88 p-6 text-sm text-[#6c6685] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/60">
                     Create or select a Path to open the canvas.
                   </div>
@@ -2156,7 +2156,7 @@ export function PathsWorkspace({
               )}
             </div>
 
-            <aside className="adhdice-scrollbar min-h-0 overflow-y-auto border-l border-[#f0ecfa] bg-white p-4 dark:border-white/10 dark:bg-[#171328]">
+            <aside className="adhdice-scrollbar min-w-0 max-w-full min-h-0 overflow-y-auto border-t border-[#f0ecfa] bg-white p-4 dark:border-white/10 dark:bg-[#171328] lg:h-full lg:border-l lg:border-t-0">
               {selectedRecord ? (
                 <div className="space-y-4 pb-[calc(100vh-10rem)]">
                   <InspectorSection
@@ -2173,7 +2173,7 @@ export function PathsWorkspace({
                       }}
                       value={selectedRecord.path.title}
                     />
-                    <div className="grid grid-cols-[1fr_auto] gap-2">
+                    <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                       <DropdownField
                         onSelect={(value) => { void updateSelectedPath({ pathType: value as PathType }); }}
                         options={PATH_TYPES.map((pathType) => ({ label: PATH_TYPE_LABELS[pathType], value: pathType }))}
@@ -2227,7 +2227,7 @@ export function PathsWorkspace({
                     <TaskTableChipButton onClick={beginEndpointPlacement} toneClassName={isEndpointPlacementMode ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}>
                       {selectedEndpointPosition ? "Move Endpoint on map" : "Place Endpoint on map"}
                     </TaskTableChipButton>
-                    <div className="grid grid-cols-[1fr_120px] gap-2">
+                    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,120px)] gap-2">
                       <input
                         className={TASK_TABLE_INPUT_CLASS}
                         onBlur={(event) => { void updateSelectedPath({ endpointLabel: event.target.value }); }}

@@ -5,7 +5,8 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 
-export const HEALTH_COMPACT_INPUT_CLASS = "health-input !h-[26px] !min-h-[26px] !rounded-full !px-2 !py-1 !text-[13px] !leading-none";
+export const HEALTH_COMPACT_CONTROL_CLASS = "health-input !h-[26px] !min-h-[26px] !rounded-full !px-2 !py-1 !text-[13px] !leading-none";
+export const HEALTH_COMPACT_INPUT_CLASS = `${HEALTH_COMPACT_CONTROL_CLASS} max-sm:!text-[16px]`;
 
 export type HealthDropdownOption = {
   label: string;
@@ -213,7 +214,7 @@ export function HealthDropdown({
         aria-haspopup="listbox"
         aria-label={ariaLabel}
         aria-activedescendant={isOpen ? `${listboxId}-option-${highlightedIndex}` : undefined}
-        className={`${HEALTH_COMPACT_INPUT_CLASS} flex items-center justify-between gap-2 text-left ${className ?? ""}`}
+        className={`${HEALTH_COMPACT_CONTROL_CLASS} flex items-center justify-between gap-2 text-left ${className ?? ""}`}
         disabled={disabled}
         id={id}
         onClick={() => {
