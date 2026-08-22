@@ -278,6 +278,60 @@ test("canonical command rejection is visible as a Task edit failure", async () =
   assert.match(messages.at(-1)?.text ?? "", /^Task wasn't updated:/);
 });
 
+test("non-schedule canonical commands without a new boundary preserve the current projection", async () => {
+  const initialBoundary = boundary();
+  const localTasks = [canonicalTask(initialBoundary)];
+  const update = useTaskUpdateAction({
+    canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => ({
+      success: true,
+      task: { ...currentTask, status: "done", canonical_schedule_boundary: undefined, canonical_schedule_anchor_date: undefined },
+      response: { ...commandResponse("unused", action.expectedRevision), side_effect_ids: {} },
+    }),
+    currentDayKey: "2026-08-19",
+    onTasksCompleted: async () => {},
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: (updater) => localTasks.splice(0, localTasks.length, ...(typeof updater === "function" ? updater(localTasks) : updater)),
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: localTasks,
+    updateTaskRowWithLegacyEnergyFallback: async () => { throw new Error("Legacy fallback must not run."); },
+  });
+
+  assert.equal(await update.updateTask(taskId, { status: "done" }), true);
+  assert.equal(localTasks[0]?.status, "done");
+  assert.equal(localTasks[0]?.canonical_schedule_boundary?.id, initialBoundary.id);
+});
+
+test("schedule-changing canonical commands without a boundary fail closed", async () => {
+  const initialBoundary = boundary();
+  const localTasks = [canonicalTask(initialBoundary)];
+  const messages: Array<{ tone: string; text: string }> = [];
+  const update = useTaskUpdateAction({
+    canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => ({
+      success: true,
+      task: { ...currentTask, due_on: "2026-08-19", canonical_schedule_boundary: undefined, canonical_schedule_anchor_date: undefined },
+      response: { ...commandResponse("unused", action.expectedRevision), side_effect_ids: {} },
+    }),
+    currentDayKey: "2026-08-19",
+    onTasksCompleted: async () => {},
+    routeTask: () => {},
+    setMessage: (message) => {
+      const next = typeof message === "function" ? message(messages.at(-1) ?? null) : message;
+      if (next) messages.push(next);
+    },
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: localTasks,
+    updateTaskRowWithLegacyEnergyFallback: async () => { throw new Error("Legacy fallback must not run."); },
+  });
+
+  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }), false);
+  assert.match(messages.at(-1)?.text ?? "", /did not return a schedule boundary/);
+  assert.equal(localTasks[0]?.canonical_schedule_boundary?.id, initialBoundary.id);
+});
+
 test("committed Task edits report post-commit boundary reconciliation failures distinctly", async () => {
   const initialBoundary = boundary();
   const localTasks = [canonicalTask(initialBoundary)];

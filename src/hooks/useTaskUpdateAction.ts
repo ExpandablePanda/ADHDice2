@@ -246,7 +246,10 @@ export function useTaskUpdateAction({
             }
             reconciledCanonicalTask = projectTaskWithCanonicalScheduleBoundary(canonicalResult.task as Task, boundary) as TaskStateRuntimeLocalTask;
           } else {
-            reconciledCanonicalTask = canonicalResult.task;
+            if (runtimeAction.actionType === "set_due_date" || runtimeAction.actionType === "set_repeat") {
+              throw new Error("The committed canonical schedule change did not return a schedule boundary.");
+            }
+            reconciledCanonicalTask = mergeTaskWithCanonicalScheduleProjection(currentCanonicalTask, canonicalResult.task);
           }
         } catch (error) {
           setMessage({
@@ -280,7 +283,7 @@ export function useTaskUpdateAction({
               setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(refreshed?.error ?? "Task History could not be refreshed.") });
               return false;
             }
-            await onTaskHistoryMutation?.(taskId, refreshed.history, canonicalResult.task as Task);
+            await onTaskHistoryMutation?.(taskId, refreshed.history, reconciledCanonicalTask);
           } catch (error) {
             setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(error instanceof Error ? error.message : "Task History could not be reconciled.") });
             return false;
@@ -289,7 +292,7 @@ export function useTaskUpdateAction({
           // Lifecycle, workflow, Calendar, and explicit schedule-origin commands
           // are manual handling even when they do not create a History fact.
           try {
-            await onTaskHistoryMutation?.(taskId, taskHistory?.filter((entry) => entry.task_id === taskId) ?? [], canonicalResult.task as Task);
+            await onTaskHistoryMutation?.(taskId, taskHistory?.filter((entry) => entry.task_id === taskId) ?? [], reconciledCanonicalTask);
           } catch (error) {
             setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(error instanceof Error ? error.message : "The updated Task could not be reconciled locally.") });
             return false;
@@ -300,7 +303,7 @@ export function useTaskUpdateAction({
           await onTasksCompleted([{
             canonicalRewardEntitlementId,
             previousStatus: currentCanonicalTask.status,
-            task: canonicalResult.task as Task,
+            task: reconciledCanonicalTask,
           }]);
         }
         return true;
