@@ -305,20 +305,21 @@ test("Focus Bars adjustment trigger uses the approved compact chip height", () =
   assert.match(focusBarsSource, /<FocusTimerQuickAdjustmentControls compact/);
 });
 
-test("Clocks opens the complete larger adjustment group directly in the centered clock-face region", () => {
+test("Clocks opens a direction-first adjustment group inside the centered clock-face region", () => {
   assert.match(focusClocksSource, /aria-label=\{isCountdown \? `Choose \$\{category\.title\} countdown duration` : `Adjust \$\{category\.title\} timer`\}[\s\S]*?setShowAdjustMenu\(\(prev\) => !prev\)/);
   assert.match(focusClocksSource, /className="absolute inset-4[^"]*items-center justify-center[^"]*rounded-full/);
-  assert.match(focusClocksSource, /data-focus-clock-adjustment-region="centered-clock-face"[\s\S]*?<FocusTimerQuickAdjustmentControls clockFace onAdjust=/);
-  assert.match(focusClocksSource, /\{clockFace \|\| isOpen \? \([\s\S]*?aria-label="Adjust session time options"/);
-  assert.match(focusClocksSource, /compact \? "h-5 min-w-5 px-1 py-0 text-\[10px\]" : undefined/);
-  assert.match(focusClocksSource, /compact \? FOCUS_BAR_ADJUSTMENT_INPUT_CLASS : TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS/);
-  assert.match(focusClocksSource, /compact \? "gap-0\.5" : "gap-2"/);
+  assert.match(focusClocksSource, /data-focus-clock-adjustment-region="centered-clock-face"[\s\S]*?<FocusTimerQuickAdjustmentControls[\s\S]*?clockFace[\s\S]*?onAdjust=/);
+  assert.match(focusClocksSource, /const \[hasSelectedDirection, setHasSelectedDirection\] = useState\(false\)/);
+  assert.match(focusClocksSource, /clockFaceDirectionButton[\s\S]*?h-14 w-14[\s\S]*?text-3xl/);
+  assert.match(focusClocksSource, /\{hasSelectedDirection \? \([\s\S]*?aria-label=\{adjustmentDirection === 1 \? "Add time amounts" : "Remove time amounts"\}/);
+  assert.match(focusClocksSource, /\{adjustmentDirection === 1 \? "\+" : "−"\}\{minutes\}/);
+  assert.match(focusClocksSource, /className=\{compact \? FOCUS_BAR_ADJUSTMENT_INPUT_CLASS : TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS\}/);
   assert.equal([...focusClocksSource.matchAll(/<FocusTimerQuickAdjustmentControls/g)].length, 1);
 });
 
 test("Clocks omits the intermediate launcher and gear Adjust time opens the same adjustment state", () => {
   assert.match(focusClocksSource, /\{!clockFace \? \([\s\S]*?aria-label="Adjust session time"[\s\S]*?>\+ \/ −<\/TaskTableChipButton>/);
-  assert.match(focusClocksSource, /<FocusTimerQuickAdjustmentControls clockFace/);
+  assert.match(focusClocksSource, /<FocusTimerQuickAdjustmentControls[\s\S]*?clockFace/);
   assert.match(focusClocksSource, /aria-label="Adjust session time"[\s\S]*?setShowSettingsMenu\(false\);[\s\S]*?setShowAdjustMenu\(true\);[\s\S]*?\+ \/ − Adjust time/);
   assert.doesNotMatch(focusClocksSource, /<FocusTimerQuickAdjustmentControls[^>]*>[\s\S]*?<FocusTimerQuickAdjustmentControls/);
 });
@@ -338,15 +339,24 @@ test("Focus Bars uses approved semantic icon controls with explicit accessible l
 
 test("Clocks and Bars share direction-first adjustment controls without legacy signed groups", () => {
   assert.match(focusClocksSource, /export const FOCUS_TIMER_QUICK_ADJUSTMENT_MINUTES = \[5, 10\] as const/);
-  assert.match(focusClocksSource, /<FocusTimerQuickAdjustmentControls clockFace onAdjust=\{\(deltaSeconds\) => onAdjust\(category\.id, deltaSeconds\)\}/);
+  assert.match(focusClocksSource, /<FocusTimerQuickAdjustmentControls[\s\S]*?clockFace[\s\S]*?setShowAdjustMenu\(false\)[\s\S]*?return succeeded/);
   assert.match(focusClocksSource, /setAdjustmentDirection\(1\)/);
   assert.match(focusClocksSource, /aria-pressed=\{adjustmentDirection === direction\}/);
   assert.match(focusBarsSource, /FocusTimerQuickAdjustmentControls/);
   assert.match(focusBarsSource, /onAdjust\(row\.categoryId, deltaSeconds\)/);
   assert.match(focusClocksSource, /getFocusTimerAdjustmentDeltaSeconds\(adjustmentDirection, minutes\)/);
   assert.match(focusClocksSource, /return direction \* minutes \* 60/);
+  assert.match(focusClocksSource, /\{adjustmentDirection === 1 \? "\+" : "−"\}\{minutes\}/);
   assert.match(focusClocksSource, />\s*\{minutes\}m\s*</);
   assert.doesNotMatch(focusClocksSource, /Remove custom minutes|Add custom minutes|− Apply|\+ Apply/);
+});
+
+test("clock-face adjustment direction controls remain mutually exclusive and countdowns keep their picker path", () => {
+  assert.match(focusClocksSource, /aria-pressed=\{hasSelectedDirection && adjustmentDirection === direction\}/);
+  assert.match(focusClocksSource, /setAdjustmentDirection\(direction\);[\s\S]*?setHasSelectedDirection\(true\)/);
+  assert.match(focusClocksSource, /if \(isCountdown\) \{[\s\S]*?openCountdownDurationPicker\(\);[\s\S]*?return;/);
+  assert.match(focusClocksSource, /COUNTDOWN_DURATION_PRESETS\.map/);
+  assert.match(focusClocksSource, /onSubmit=\{\(event\) => \{[\s\S]*?startCountdownWithMinutes\(countdownMinutes\)/);
 });
 
 test("custom minute adjustments validate whole positive values and retain directional submission", () => {
@@ -373,7 +383,7 @@ test("custom adjustment uses digit entry without native spinners and renders a s
 test("Focus Bars keep graph content fixed while adjustment controls expand below", () => {
   assert.match(focusBarsSource, /flex min-w-full items-start/);
   assert.match(focusBarsSource, /flex h-\[21rem\][\s\S]*?overflow-hidden[\s\S]*?<\/div>\s*<div className="mt-2 flex min-h-16/);
-  assert.match(focusClocksSource, /compact \? "basis-full gap-0\.5 pt-1" : "gap-2"/);
+  assert.match(focusClocksSource, /className="flex basis-full flex-col items-center gap-0\.5 pt-1"/);
 });
 
 test("Focus tabs copy the approved centered task-tab grouped-chip formatting without arrows", () => {
@@ -399,7 +409,7 @@ test("Focus tabs copy Tasks native drag reorder with persisted visual navigation
 
 test("Focus Bars expanded adjustment controls use the approved micro treatment", () => {
   assert.match(focusClocksSource, /FOCUS_BAR_ADJUSTMENT_INPUT_CLASS = "[^"]*h-5 w-10[^"]*px-1 text-center text-\[10px\]/);
-  assert.match(focusClocksSource, /compact \? "h-5 px-1 py-0 text-\[10px\]" : undefined/);
+  assert.match(focusClocksSource, /className="h-5 px-1 py-0 text-\[10px\]"/);
   assert.match(focusClocksSource, /compact \? "text-\[9px\]" : "text-\[13px\]"/);
 });
 

@@ -24,24 +24,33 @@ export function WorkspaceLoadingScreen({
     >
       <section className="flex w-full max-w-2xl flex-col items-center justify-center text-center">
         <div className="relative flex aspect-square w-[min(28rem,92vw)] items-center justify-center">
-          <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full -rotate-90" focusable="false" viewBox="0 0 100 100">
+          <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" focusable="false" viewBox="0 0 100 100">
             <circle className="text-[#f0ecfc] dark:text-white/[0.03]" cx="50" cy="50" fill="transparent" r={LOADING_RING_RADIUS} stroke="currentColor" strokeWidth="7" />
+            <g transform="rotate(-90 50 50)">
+              <g className="workspace-loading-ring-motion">
+                <animateTransform
+                  attributeName="transform"
+                  className="workspace-loading-ring-animation"
+                  dur="2s"
+                  from="0 50 50"
+                  repeatCount="indefinite"
+                  to="360 50 50"
+                  type="rotate"
+                />
+                <circle
+                  className="text-[#6f57f6] dark:text-[#9b87ff]"
+                  cx="50"
+                  cy="50"
+                  fill="transparent"
+                  r={LOADING_RING_RADIUS}
+                  stroke="currentColor"
+                  strokeDasharray="52 237.03"
+                  strokeLinecap="round"
+                  strokeWidth="7"
+                />
+              </g>
+            </g>
           </svg>
-          <div aria-hidden="true" className="workspace-loading-ring-rotator pointer-events-none absolute inset-0 motion-reduce:animate-none">
-            <svg className="h-full w-full -rotate-90" focusable="false" viewBox="0 0 100 100">
-              <circle
-                className="text-[#6f57f6] dark:text-[#9b87ff]"
-                cx="50"
-                cy="50"
-                fill="transparent"
-                r={LOADING_RING_RADIUS}
-                stroke="currentColor"
-                strokeDasharray="52 237.03"
-                strokeLinecap="round"
-                strokeWidth="7"
-              />
-            </svg>
-          </div>
           <Image
             alt="ADHDice logo"
             className={isNativeIosPlatform
