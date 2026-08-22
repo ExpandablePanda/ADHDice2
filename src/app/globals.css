@@ -94,6 +94,27 @@
   transition-duration: 0.01ms !important;
 }
 
+@keyframes workspace-loading-ring {
+  0%,
+  100% {
+    stroke-dashoffset: var(--workspace-loading-ring-start-offset);
+  }
+
+  78% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.workspace-loading-ring-progress {
+  animation: workspace-loading-ring 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-loading-ring-progress {
+    animation: none;
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

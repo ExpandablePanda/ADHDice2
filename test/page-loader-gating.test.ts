@@ -30,11 +30,18 @@ test("one canonical full-screen loader gates auth restoration and initial app bo
   const source = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const loadingScreen = await readFile(new URL("../src/components/workspace-loading-screen.tsx", import.meta.url), "utf8");
 
-  assert.match(loadingScreen, /Loading\.\.\./);
-  assert.equal((loadingScreen.match(/animate-pulse/g) ?? []).length, 2);
-  assert.equal((loadingScreen.match(/motion-reduce:animate-none/g) ?? []).length, 2);
-  assert.match(source, /if \(!isAuthResolved\) \{[\s\S]*?return <WorkspaceLoadingScreen \/>;/);
-  assert.match(source, /if \(shouldBlockAuthenticatedAppBody\) \{[\s\S]*?return <WorkspaceLoadingScreen \/>;/);
+  assert.doesNotMatch(loadingScreen, /Loading\.\.\./);
+  assert.doesNotMatch(loadingScreen, /animate-pulse/);
+  assert.doesNotMatch(loadingScreen, /<h1[\s>]/);
+  assert.match(loadingScreen, /strokeDasharray=\{LOADING_RING_CIRCUMFERENCE\}/);
+  assert.match(loadingScreen, /strokeLinecap="round"/);
+  assert.match(loadingScreen, /strokeWidth="7"/);
+  assert.match(loadingScreen, /-rotate-90/);
+  assert.match(loadingScreen, /workspace-loading-ring-progress/);
+  assert.match(loadingScreen, /motion-reduce:animate-none/);
+  assert.match(loadingScreen, /data-theme=\{theme\}/);
+  assert.match(source, /if \(!isAuthResolved\) \{[\s\S]*?return <WorkspaceLoadingScreen theme=\{theme\} \/>;/);
+  assert.match(source, /if \(shouldBlockAuthenticatedAppBody\) \{[\s\S]*?return <WorkspaceLoadingScreen theme=\{theme\} \/>;/);
   assert.doesNotMatch(source, /HudLoadingShell|Syncing your workspace\.\.\.|Loading your workspace\.\.\./);
   assert.doesNotMatch(source, /shouldShowInitialHudLoadingShell/);
 });

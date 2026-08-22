@@ -576,7 +576,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.2";
+const APP_VERSION = "7.11.3";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -4495,7 +4495,7 @@ export function TaskApp() {
   }
 
   if (!isAuthResolved) {
-    return <WorkspaceLoadingScreen />;
+    return <WorkspaceLoadingScreen theme={theme} />;
   }
 
   if (!session?.user) {
@@ -4579,7 +4579,7 @@ export function TaskApp() {
   }
 
   if (shouldBlockAuthenticatedAppBody) {
-    return <WorkspaceLoadingScreen />;
+    return <WorkspaceLoadingScreen theme={theme} />;
   }
 
   const currentUser = session.user;
