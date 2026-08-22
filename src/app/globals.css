@@ -95,12 +95,38 @@
 }
 
 .workspace-loading-ring-progress {
-  transition: stroke-dashoffset 2.4s linear;
+  animation: workspace-loading-ring 2s linear infinite;
+}
+
+@keyframes workspace-loading-ring {
+  from {
+    stroke-dashoffset: 0;
+  }
+
+  to {
+    stroke-dashoffset: -289.03;
+  }
+}
+
+.workspace-loading-logo {
+  animation: workspace-loading-logo-fade 2s ease-in-out infinite;
+}
+
+@keyframes workspace-loading-logo-fade {
+  0%,
+  100% {
+    opacity: 0.68;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workspace-loading-ring-progress {
-    transition: none;
+  .workspace-loading-ring-progress,
+  .workspace-loading-logo {
+    animation: none;
   }
 }
 

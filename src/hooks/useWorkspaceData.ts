@@ -212,8 +212,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   timezone,
 }: UseWorkspaceDataOptions<TTaskGridItem>) {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
-  const [workspaceLoadingProgress, setWorkspaceLoadingProgress] = useState(0);
-  const workspaceLoadingProgressUserIdRef = useRef<string | null>(null);
   const [taskHistoryLoadedUserId, setTaskHistoryLoadedUserId] = useState<string | null>(null);
   const [taskHistoryByTaskId, setTaskHistoryByTaskId] = useState<Record<string, DbTaskHistory[]>>({});
   const [taskHistoryLoadStateByTaskId, setTaskHistoryLoadStateByTaskId] = useState<Record<string, TaskHistoryTaskLoadState>>({});
@@ -343,10 +341,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     workspaceGenerationRef.current = workspaceGeneration;
 
     if (!supabase || !currentUser) {
-      if (workspaceLoadingProgressUserIdRef.current !== null) {
-        workspaceLoadingProgressUserIdRef.current = null;
-        setWorkspaceLoadingProgress(0);
-      }
       setActiveProfileUserId(null);
       workspaceStartupRequestRegistry.invalidate(startupRequestUserIdRef.current);
       startupRequestUserIdRef.current = null;
@@ -396,10 +390,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     const client = supabase;
     const user = currentUser;
     const userId = user.id;
-    if (workspaceLoadingProgressUserIdRef.current !== userId) {
-      workspaceLoadingProgressUserIdRef.current = userId;
-      setWorkspaceLoadingProgress(0);
-    }
     clearTaskHistoryTaskCache();
     setTaskHistoryStreakSummaries((current) => Object.keys(current).length === 0 ? current : {});
     fullTaskHistoryRowsRef.current = [];
@@ -1072,7 +1062,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         silent,
         tasks: taskResult.data?.length ?? 0,
       });
-      if (!silent) setWorkspaceLoadingProgress(0.35);
 
       const nextTasks = projectTasksWithCanonicalScheduleBoundaries(
         taskResult.data ?? [],
@@ -1085,7 +1074,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         setIsWorkspaceLoading(false);
         return;
       }
-      if (!silent) setWorkspaceLoadingProgress(0.7);
       startTransition(() => {
         setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
         onProfileLoaded(profileResult.data ?? null, user);
@@ -1098,7 +1086,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           };
           setEconomy((current) => keepCurrentIfStructurallyEqual(current, nextEconomy));
         }
-        if (!silent) setWorkspaceLoadingProgress(1);
         setIsWorkspaceLoading(false);
       });
       if (isWorkspacePerformanceDiagnosticsEnabled() && source === "initial") {
@@ -1686,7 +1673,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     isTaskListMembershipDataReady: !currentUser || taskListMembershipDataReadyUserId === currentUser.id,
     isTaskResumeSyncPending,
     isWorkspaceLoading,
-    workspaceLoadingProgress,
     workspaceGenerationRef,
     prepareTaskMutation,
     reconcileRolloverWorkspace,

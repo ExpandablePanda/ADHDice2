@@ -5,11 +5,8 @@ import Image from "next/image";
 import { withBasePath } from "@/lib/utils";
 
 const LOADING_RING_RADIUS = 46;
-const LOADING_RING_CIRCUMFERENCE = 289.03;
 
-export function WorkspaceLoadingScreen({ progress = 0, theme = "light" }: { progress?: number; theme?: "light" | "dark" }) {
-  const normalizedProgress = Math.min(1, Math.max(0, progress));
-
+export function WorkspaceLoadingScreen({ theme = "light" }: { theme?: "light" | "dark" }) {
   return (
     <main
       aria-label="ADHDice workspace loading"
@@ -24,21 +21,21 @@ export function WorkspaceLoadingScreen({ progress = 0, theme = "light" }: { prog
           <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full -rotate-90" focusable="false" viewBox="0 0 100 100">
             <circle className="text-[#f0ecfc] dark:text-white/[0.03]" cx="50" cy="50" fill="transparent" r={LOADING_RING_RADIUS} stroke="currentColor" strokeWidth="7" />
             <circle
-              className="workspace-loading-ring-progress text-[#6f57f6] motion-reduce:transition-none dark:text-[#9b87ff]"
+              className="workspace-loading-ring-progress text-[#6f57f6] motion-reduce:animate-none dark:text-[#9b87ff]"
               cx="50"
               cy="50"
               fill="transparent"
               r={LOADING_RING_RADIUS}
               stroke="currentColor"
-              strokeDasharray={`${LOADING_RING_CIRCUMFERENCE} ${LOADING_RING_CIRCUMFERENCE}`}
-              strokeDashoffset={LOADING_RING_CIRCUMFERENCE * (1 - normalizedProgress)}
+              strokeDasharray="52 237.03"
+              strokeDashoffset="0"
               strokeLinecap="round"
               strokeWidth="7"
             />
           </svg>
           <Image
             alt="ADHDice logo"
-            className="relative z-10 h-auto w-[min(22rem,82vw)] object-contain"
+            className="workspace-loading-logo relative z-10 h-auto w-[min(22rem,82vw)] object-contain"
             height={82}
             priority
             src={withBasePath("/logo.png")}
