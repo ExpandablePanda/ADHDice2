@@ -20,19 +20,22 @@ export function WorkspaceLoadingScreen({ theme = "light" }: { theme?: "light" | 
         <div className="relative flex aspect-square w-[min(28rem,92vw)] items-center justify-center">
           <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full -rotate-90" focusable="false" viewBox="0 0 100 100">
             <circle className="text-[#f0ecfc] dark:text-white/[0.03]" cx="50" cy="50" fill="transparent" r={LOADING_RING_RADIUS} stroke="currentColor" strokeWidth="7" />
-            <circle
-              className="workspace-loading-ring-progress text-[#6f57f6] motion-reduce:animate-none dark:text-[#9b87ff]"
-              cx="50"
-              cy="50"
-              fill="transparent"
-              r={LOADING_RING_RADIUS}
-              stroke="currentColor"
-              strokeDasharray="52 237.03"
-              strokeDashoffset="0"
-              strokeLinecap="round"
-              strokeWidth="7"
-            />
           </svg>
+          <div aria-hidden="true" className="workspace-loading-ring-rotator pointer-events-none absolute inset-0 motion-reduce:animate-none">
+            <svg className="h-full w-full -rotate-90" focusable="false" viewBox="0 0 100 100">
+              <circle
+                className="text-[#6f57f6] dark:text-[#9b87ff]"
+                cx="50"
+                cy="50"
+                fill="transparent"
+                r={LOADING_RING_RADIUS}
+                stroke="currentColor"
+                strokeDasharray="52 237.03"
+                strokeLinecap="round"
+                strokeWidth="7"
+              />
+            </svg>
+          </div>
           <Image
             alt="ADHDice logo"
             className="workspace-loading-logo relative z-10 h-auto w-[min(22rem,82vw)] object-contain"
