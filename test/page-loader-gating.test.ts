@@ -42,6 +42,9 @@ test("one canonical full-screen loader gates auth restoration and initial app bo
   assert.match(loadingScreen, /workspace-loading-ring-rotator/);
   assert.match(loadingScreen, /motion-reduce:animate-none/);
   assert.match(loadingScreen, /workspace-loading-logo/);
+  assert.match(loadingScreen, /isNativeIosPlatform = false/);
+  assert.match(loadingScreen, /w-\[72%\] max-w-\[18rem\] -translate-x-1\/2 -translate-y-1\/2/);
+  assert.match(loadingScreen, /w-\[min\(22rem,82vw\)\] object-contain/);
   assert.match(loadingScreen, /data-theme=\{theme\}/);
   assert.doesNotMatch(loadingScreen, /strokeDashoffset|LOADING_RING_STYLE|workspace-loading-ring-start-offset|style=\{/);
   assert.doesNotMatch(globalStyles, /stroke-dashoffset|strokeDasharray|strokeDashoffset/);
@@ -51,8 +54,8 @@ test("one canonical full-screen loader gates auth restoration and initial app bo
   assert.match(globalStyles, /\.workspace-loading-logo \{[\s\S]*?animation: workspace-loading-logo-fade 2s ease-in-out infinite;/);
   assert.match(globalStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.workspace-loading-ring-rotator,[\s\S]*?\.workspace-loading-logo \{[\s\S]*?animation: none;/);
   assert.doesNotMatch(globalStyles, /workspace-loading-ring-start-offset|stroke-dashoffset/);
-  assert.match(source, /if \(!isAuthResolved\) \{[\s\S]*?return <WorkspaceLoadingScreen theme=\{theme\} \/>;/);
-  assert.match(source, /if \(shouldBlockAuthenticatedAppBody\) \{[\s\S]*?return <WorkspaceLoadingScreen theme=\{theme\} \/>;/);
+  assert.match(source, /if \(!isAuthResolved\) \{[\s\S]*?return <WorkspaceLoadingScreen isNativeIosPlatform=\{isNativeIosPlatform\} theme=\{theme\} \/>;/);
+  assert.match(source, /if \(shouldBlockAuthenticatedAppBody\) \{[\s\S]*?return <WorkspaceLoadingScreen isNativeIosPlatform=\{isNativeIosPlatform\} theme=\{theme\} \/>;/);
   assert.doesNotMatch(source, /workspaceLoadingProgress/);
   assert.doesNotMatch(workspaceData, /workspaceLoadingProgress/);
   assert.doesNotMatch(source, /HudLoadingShell|Syncing your workspace\.\.\.|Loading your workspace\.\.\./);

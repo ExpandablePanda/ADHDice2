@@ -6,7 +6,13 @@ import { withBasePath } from "@/lib/utils";
 
 const LOADING_RING_RADIUS = 46;
 
-export function WorkspaceLoadingScreen({ theme = "light" }: { theme?: "light" | "dark" }) {
+export function WorkspaceLoadingScreen({
+  isNativeIosPlatform = false,
+  theme = "light",
+}: {
+  isNativeIosPlatform?: boolean;
+  theme?: "light" | "dark";
+}) {
   return (
     <main
       aria-label="ADHDice workspace loading"
@@ -38,7 +44,9 @@ export function WorkspaceLoadingScreen({ theme = "light" }: { theme?: "light" | 
           </div>
           <Image
             alt="ADHDice logo"
-            className="workspace-loading-logo relative z-10 h-auto w-[min(22rem,82vw)] object-contain"
+            className={isNativeIosPlatform
+              ? "workspace-loading-logo absolute left-1/2 top-1/2 z-10 h-auto w-[72%] max-w-[18rem] -translate-x-1/2 -translate-y-1/2 object-contain"
+              : "workspace-loading-logo relative z-10 h-auto w-[min(22rem,82vw)] object-contain"}
             height={82}
             priority
             src={withBasePath("/logo.png")}
