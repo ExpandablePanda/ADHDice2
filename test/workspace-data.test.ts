@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 
-import { fetchAllPagedRows } from "../src/hooks/useWorkspaceData.ts";
+import type { Task } from "../src/lib/database.types.ts";
+import { projectTasksWithCanonicalScheduleBoundaries } from "../src/lib/task-state-canonical/schedule-projection.ts";
+import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
+import { fetchAllPagedRows, loadCanonicalTaskSnapshot } from "../src/hooks/useWorkspaceData.ts";
 
 test("fetchAllPagedRows accumulates full pages until the first short page", async () => {
   const pageSize = 1000;
@@ -38,6 +41,36 @@ test("fetchAllPagedRows stops on fetch errors without returning partial rows", a
   assert.equal(result.error?.message, "Supabase said no");
 });
 
+test("canonical Task snapshots fetch boundaries after Tasks and project before publication", async () => {
+  const events: string[] = [];
+  const task = { id: "imported-task" } as Task;
+  const boundary = { entity_id: task.id, boundary_sequence: 1 } as CanonicalTaskScheduleBoundary;
+
+  const snapshot = await loadCanonicalTaskSnapshot(
+    async () => {
+      events.push("tasks:start");
+      await Promise.resolve();
+      events.push("tasks:finish");
+      return { data: [task], error: null };
+    },
+    async () => {
+      assert.deepEqual(events, ["tasks:start", "tasks:finish"]);
+      events.push("boundaries:start");
+      await Promise.resolve();
+      events.push("boundaries:finish");
+      return { data: [boundary], error: null };
+    },
+  );
+
+  const publishedTasks = projectTasksWithCanonicalScheduleBoundaries(
+    snapshot.taskResult.data ?? [],
+    snapshot.boundaryResult?.data ?? [],
+  );
+
+  assert.deepEqual(events, ["tasks:start", "tasks:finish", "boundaries:start", "boundaries:finish"]);
+  assert.equal(publishedTasks[0]?.canonical_schedule_boundary?.entity_id, task.id);
+});
+
 test("workspace ownership effect does not depend on active page navigation", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 
@@ -64,6 +97,18 @@ test("normal startup loads the full canonical Task History snapshot", async () =
   assert.doesNotMatch(source, /loadCriticalTaskHistoryFacts/);
   assert.doesNotMatch(coreLoader, /loadActualTime\(|loadNotes\(/);
   assert.match(source, /loadFullTaskHistoryRef\.current = \(\) => loadTaskHistory/);
+});
+
+test("Task refresh paths use the same causal canonical snapshot loader", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const reload = source.slice(source.indexOf("async function reloadTaskRows"), source.indexOf("function shouldReconnectTaskChannel"));
+  const coreLoader = source.slice(source.indexOf("async function loadCoreWorkspaceData"), source.indexOf("const requestCoreWorkspaceRefresh"));
+
+  assert.match(source, /export async function loadCanonicalTaskSnapshot/);
+  assert.match(reload, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*createTaskScheduleBoundariesRequest\(\)/);
+  assert.match(coreLoader, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*createTaskScheduleBoundariesRequest\(\)/);
+  assert.doesNotMatch(reload, /Promise\.all\(\[\s*createTaskRowsRequest\(\)/);
+  assert.doesNotMatch(coreLoader, /Promise\.all\(\[[\s\S]*createTaskRowsRequest\(\)[\s\S]*createTaskScheduleBoundariesRequest\(\)/);
 });
 
 test("empty critical hydration returns before complete Task derivation stages", async () => {
