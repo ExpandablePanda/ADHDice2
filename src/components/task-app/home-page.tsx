@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ListTodo, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ListTodo, Minus, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
+import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import { SortableList } from "@/components/ui/sortable-list";
 import { useHomeTodoState } from "@/hooks/useHomeTodoState";
@@ -131,76 +132,76 @@ export function HomePage({
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
     return (
-      <AdhdCard className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1.5 sm:flex-nowrap sm:items-center" padding="sm">
-        <div className="flex shrink-0 flex-col items-center gap-1 sm:order-1 sm:flex-row">
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-black bg-white text-sm font-semibold text-black sm:order-2 dark:border-black dark:bg-white dark:text-black">
-            {index + 1}
-          </span>
-          <span className="mt-0.5 shrink-0 sm:order-1">{handle}</span>
-        </div>
-        <div className="order-2 min-w-0 flex-1 sm:order-2">
-          <div className="flex items-start gap-1">
-            <div className="relative mt-0.5 shrink-0" ref={statusMenuOpen ? statusMenuRef : undefined}>
-              <button
-                aria-expanded={statusMenuOpen}
-                aria-label={`Change status: ${formatTaskStatusLabel(displayStatus)}`}
-                className="rounded-full p-0.5"
-                onClick={() => setStatusMenuTaskId((current) => current === task.id ? null : task.id)}
-                type="button"
-              >
-                {renderTaskStatusCircle(displayStatus, "sm")}
-              </button>
-              {statusMenuOpen ? (
-                <div className="absolute left-0 top-full z-30 mt-2 rounded-full border border-[#e4def2] bg-white p-1 shadow-lg dark:border-white/15 dark:bg-[#201a35]">
-                  <TaskStatusCircleRail
-                    currentStatus={displayStatus}
-                    onSetStatus={(status) => {
-                      onSetStatus(task, status);
-                      setStatusMenuTaskId(null);
-                    }}
-                    options={getSelectableTaskStatuses(task).map((status) => ({ label: formatTaskStatusLabel(status), value: status }))}
-                    statusLabelPrefix="Set task status to"
-                    wrap={false}
-                  />
-                </div>
-              ) : null}
+      <AdhdCard className="grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto_auto_auto] items-center gap-x-1.5" padding="sm">
+        <span className="shrink-0">{handle}</span>
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-black bg-white text-xs font-semibold text-black dark:border-black dark:bg-white dark:text-black">
+          {index + 1}
+        </span>
+        <div className="relative flex h-9 w-9 shrink-0 items-center justify-center" ref={statusMenuOpen ? statusMenuRef : undefined}>
+          <button
+            aria-expanded={statusMenuOpen}
+            aria-label={`Change status: ${formatTaskStatusLabel(displayStatus)}`}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full"
+            onClick={() => setStatusMenuTaskId((current) => current === task.id ? null : task.id)}
+            type="button"
+          >
+            {renderTaskStatusCircle(displayStatus, "sm", { className: "!h-7 !w-7" })}
+          </button>
+          {statusMenuOpen ? (
+            <div className="absolute left-0 top-full z-30 mt-2 rounded-full border border-[#e4def2] bg-white p-1 shadow-lg dark:border-white/15 dark:bg-[#201a35]">
+              <TaskStatusCircleRail
+                currentStatus={displayStatus}
+                onSetStatus={(status) => {
+                  onSetStatus(task, status);
+                  setStatusMenuTaskId(null);
+                }}
+                options={getSelectableTaskStatuses(task).map((status) => ({ label: formatTaskStatusLabel(status), value: status }))}
+                statusLabelPrefix="Set task status to"
+                wrap={false}
+              />
             </div>
-            <button className="block min-w-0 flex-1 text-left" onClick={() => onOpenTask(task.id)} type="button">
-              <p className="break-words text-sm font-semibold leading-5 text-[#26324f] dark:text-white">
-                {task.title || "Untitled task"}
-              </p>
-            </button>
-          </div>
+          ) : null}
+        </div>
+        <div className="min-w-0">
+          <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
+            <p className="break-words text-sm font-semibold leading-5 text-[#26324f] dark:text-white">
+              {task.title || "Untitled task"}
+            </p>
+          </button>
           {hierarchy.length ? (
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
           ) : null}
         </div>
-        <div className="order-3 flex w-full basis-full flex-wrap justify-end gap-1.5 sm:ml-auto sm:w-auto sm:basis-auto sm:shrink-0 sm:self-center">
-          <AdhdChip
-            contentClassName="gap-1.5"
-            disabled={index === 0}
-            icon={<ArrowUpToLine aria-hidden="true" className="h-3 w-3" />}
-            onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"))}
-          >
-            Top
-          </AdhdChip>
-          <AdhdChip
-            contentClassName="gap-1.5"
-            disabled={index === todoTasks.length - 1}
-            icon={<ArrowDownToLine aria-hidden="true" className="h-3 w-3" />}
-            onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"))}
-          >
-            Bottom
-          </AdhdChip>
-          <AdhdChip
-            contentClassName="gap-1.5"
-            icon={<Trash2 aria-hidden="true" className="h-3 w-3" />}
-            onClick={() => updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id))}
-            tone="danger"
-          >
-            Remove
-          </AdhdChip>
-        </div>
+        <AdhdIconButton
+          aria-label={`Move ${task.title || "Untitled task"} to Top`}
+          disabled={index === 0}
+          onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"))}
+          size="md"
+          title="Move task to Top"
+          variant="rowToolbar"
+        >
+          <ArrowUp aria-hidden="true" />
+        </AdhdIconButton>
+        <AdhdIconButton
+          aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
+          disabled={index === todoTasks.length - 1}
+          onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"))}
+          size="md"
+          title="Move task to Bottom"
+          variant="rowToolbar"
+        >
+          <ArrowDown aria-hidden="true" />
+        </AdhdIconButton>
+        <AdhdIconButton
+          aria-label={`Remove ${task.title || "Untitled task"} from Home To-do`}
+          onClick={() => updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id))}
+          size="md"
+          title="Remove from Home To-do"
+          tone="danger"
+          variant="rowToolbar"
+        >
+          <Minus aria-hidden="true" />
+        </AdhdIconButton>
       </AdhdCard>
     );
   }

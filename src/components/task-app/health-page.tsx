@@ -102,7 +102,7 @@ import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { HealthLibraryPanel } from "./health-library-panel";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
-import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
+import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_CONTROL_CLASS, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { HealthCalorieLineChart } from "./health-calorie-line-chart";
 import { HealthSleepLineChart } from "./health-sleep-line-chart";
 import { HealthWaterPanel } from "./health-water-panel";
@@ -1699,18 +1699,16 @@ export function HealthPage({
             ) : null}
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <Field label="Date">
-                <input
-                  className={HEALTH_COMPACT_INPUT_CLASS}
+                <HealthMealDateTimeInput
                   max={today}
-                  onChange={(event) => setMealDraft((current) => ({ ...current, date: event.target.value }))}
+                  onChange={(value) => setMealDraft((current) => ({ ...current, date: value }))}
                   type="date"
                   value={mealDraft.date}
                 />
               </Field>
               <Field label="Time">
-                <input
-                  className={HEALTH_COMPACT_INPUT_CLASS}
-                  onChange={(event) => setMealDraft((current) => ({ ...current, time: event.target.value }))}
+                <HealthMealDateTimeInput
+                  onChange={(value) => setMealDraft((current) => ({ ...current, time: value }))}
                   type="time"
                   value={mealDraft.time}
                 />
@@ -1857,10 +1855,10 @@ export function HealthPage({
                             />
                           </Field>
                           <Field label="Date">
-                            <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setMealEditDraft((current) => ({ ...current, date: event.target.value }))} type="date" value={mealEditDraft.date} />
+                            <HealthMealDateTimeInput onChange={(value) => setMealEditDraft((current) => ({ ...current, date: value }))} type="date" value={mealEditDraft.date} />
                           </Field>
                           <Field label="Time">
-                            <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setMealEditDraft((current) => ({ ...current, time: event.target.value }))} type="time" value={mealEditDraft.time} />
+                            <HealthMealDateTimeInput onChange={(value) => setMealEditDraft((current) => ({ ...current, time: value }))} type="time" value={mealEditDraft.time} />
                           </Field>
                           <Field label="Meal">
                             <HealthDropdown
@@ -1898,10 +1896,10 @@ export function HealthPage({
                             <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, quantity: event.target.value }))} value={mealEditDraft.quantity} />
                           </Field>
                           <Field label="Date">
-                            <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setMealEditDraft((current) => ({ ...current, date: event.target.value }))} type="date" value={mealEditDraft.date} />
+                            <HealthMealDateTimeInput onChange={(value) => setMealEditDraft((current) => ({ ...current, date: value }))} type="date" value={mealEditDraft.date} />
                           </Field>
                           <Field label="Time">
-                            <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setMealEditDraft((current) => ({ ...current, time: event.target.value }))} type="time" value={mealEditDraft.time} />
+                            <HealthMealDateTimeInput onChange={(value) => setMealEditDraft((current) => ({ ...current, time: value }))} type="time" value={mealEditDraft.time} />
                           </Field>
                           <Field label="Meal">
                             <HealthDropdown
@@ -2683,6 +2681,30 @@ function Field({
       <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</span>
       {children}
     </label>
+  );
+}
+
+function HealthMealDateTimeInput({
+  max,
+  onChange,
+  type,
+  value,
+}: {
+  max?: string;
+  onChange: (value: string) => void;
+  type: "date" | "time";
+  value: string;
+}) {
+  return (
+    <div className={`${HEALTH_COMPACT_CONTROL_CLASS} flex min-w-0 max-w-full items-center`}>
+      <input
+        className="block min-w-0 w-full max-w-full box-border border-0 bg-transparent p-0 text-[13px] leading-none text-[#2f294a] outline-none dark:text-white max-sm:!text-[16px]"
+        max={max}
+        onChange={(event) => onChange(event.target.value)}
+        type={type}
+        value={value}
+      />
+    </div>
   );
 }
 
