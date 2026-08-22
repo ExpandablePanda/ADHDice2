@@ -20,8 +20,8 @@ export function WorkspaceLoadingScreen() {
           src={withBasePath("/logo.png")}
           width={280}
         />
-        <h1 className="mt-8 text-2xl font-black tracking-[-0.02em] text-[#17203a] sm:text-4xl dark:text-white">
-          Building Workspace One Step at a Time
+        <h1 className="mt-8 text-xl font-black tracking-[-0.02em] text-[#17203a] sm:text-2xl dark:text-white">
+          Loading...
         </h1>
       </section>
     </main>

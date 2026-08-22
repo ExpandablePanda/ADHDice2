@@ -30,7 +30,7 @@ test("one canonical full-screen loader gates auth restoration and initial app bo
   const source = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const loadingScreen = await readFile(new URL("../src/components/workspace-loading-screen.tsx", import.meta.url), "utf8");
 
-  assert.match(loadingScreen, /Building Workspace One Step at a Time/);
+  assert.match(loadingScreen, /Loading\.\.\./);
   assert.match(source, /if \(!isAuthResolved\) \{[\s\S]*?return <WorkspaceLoadingScreen \/>;/);
   assert.match(source, /if \(shouldBlockAuthenticatedAppBody\) \{[\s\S]*?return <WorkspaceLoadingScreen \/>;/);
   assert.doesNotMatch(source, /HudLoadingShell|Syncing your workspace\.\.\.|Loading your workspace\.\.\./);
