@@ -90,7 +90,6 @@ test("PATHS map picker and connected Task Chips keep canonical interaction bound
   assert.match(workspaceSource, /onSetTaskStatus\?\.\(task\.id, status\)/);
   assert.match(workspaceSource, /void addTaskNodeAt\(taskId, canvasTaskPicker\.nodePosition\)/);
   assert.match(workspaceSource, /data-path-node-drag-surface/);
-  assert.match(workspaceSource, /closest\("\[data-path-node-control\]"\)/);
   assert.match(workspaceSource, /closest\("\[data-path-node-drag-surface\]"\)/);
   assert.match(workspaceSource, /setPointerCapture\(event\.pointerId\)/);
   assert.match(workspaceSource, /persistNodePosition\(node\.id, nextPosition\)/);
@@ -107,8 +106,9 @@ test("PATHS map picker and connected Task Chips keep canonical interaction bound
   assert.match(workspaceSource, /compactTrigger/);
   assert.match(workspaceSource, /onAddPathsNode=\{\(\) => \{/);
   assert.match(workspaceSource, /void addNodeAt\(position\)/);
-  assert.match(workspaceSource, /NODE_LONG_PRESS_DURATION_MS = 550/);
-  assert.match(workspaceSource, /onPointerDownCapture/);
+  assert.match(workspaceSource, /data-path-node-drag-surface/);
+  assert.match(workspaceSource, /touch-none/);
+  assert.doesNotMatch(workspaceSource, /NODE_LONG_PRESS|beginNodeLongPress|onPointerDownCapture/);
   assert.match(workspaceSource, /data-paths-node-menu/);
   assert.match(workspaceSource, /placeholder="Rename PATHS Node"/);
   assert.match(workspaceSource, />\s*Connect\s*<\/AdhdChip>/);

@@ -71,8 +71,6 @@ const TASK_NODE_HIERARCHY_GAP = 8;
 const CANVAS_ZOOM_MIN = 0.5;
 const CANVAS_ZOOM_MAX = 1.5;
 const CANVAS_ZOOM_STEP = 0.1;
-const NODE_LONG_PRESS_DURATION_MS = 550;
-const NODE_LONG_PRESS_MOVE_TOLERANCE = 8;
 const CANVAS_NODE_PADDING = 24;
 const LINKED_TASK_MENU_PANEL_CLASS = "adhdice-scrollbar max-h-64 overflow-y-auto";
 const LINKED_TASK_LIST_PANEL_CLASS = `${LINKED_TASK_MENU_PANEL_CLASS} flex flex-col gap-2`;
@@ -469,7 +467,7 @@ function PathTaskNodeCard({
   if (view.kind === "missing") {
     return (
       <div className="inline-flex items-center gap-1.5">
-        <span className="cursor-grab text-[#8d86a4] active:cursor-grabbing" data-path-node-drag-surface>
+        <span className="relative -m-2 flex h-8 w-8 shrink-0 touch-none items-center justify-center cursor-grab text-[#8d86a4] active:cursor-grabbing" data-path-node-drag-surface>
           <GripVertical className="h-4 w-4" />
         </span>
         <AdhdChip icon={<CircleAlert className="h-3.5 w-3.5" />} onClick={onUnlink} tone="danger">
@@ -484,7 +482,7 @@ function PathTaskNodeCard({
   return (
     <div className="relative">
       <div className="inline-flex items-center gap-1.5">
-        <span className="cursor-grab text-[#8d86a4] active:cursor-grabbing" data-path-node-drag-surface>
+        <span className="relative -m-2 flex h-8 w-8 shrink-0 touch-none items-center justify-center cursor-grab text-[#8d86a4] active:cursor-grabbing" data-path-node-drag-surface>
           <GripVertical className="h-4 w-4" />
         </span>
         <PathTaskHierarchyChip onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={view.task} />
@@ -890,14 +888,6 @@ export function PathsWorkspace({
     startX: number;
     startY: number;
   } | null>(null);
-  const nodeLongPressRef = useRef<{
-    nodeId: string;
-    pointerId: number;
-    startClientX: number;
-    startClientY: number;
-    timer: ReturnType<typeof setTimeout>;
-  } | null>(null);
-  const nodeClickSuppressionRef = useRef<{ nodeId: string; until: number } | null>(null);
 
   const todayKey = getLocalPathDateKey();
   const allLinkedTasks = useMemo(
@@ -974,15 +964,6 @@ export function PathsWorkspace({
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [canvasContextMenu, canvasTaskPicker, nodeActionMenu]);
-
-  useEffect(() => {
-    return () => {
-      const current = nodeLongPressRef.current;
-      if (current) {
-        clearTimeout(current.timer);
-      }
-    };
-  }, []);
 
   const selectedRecord = pathRecords.find((record) => record.path.id === selectedPathId) ?? null;
   const selectedRecordRef = useRef<PathRecord | null>(null);
@@ -1517,50 +1498,6 @@ export function PathsWorkspace({
     });
   }
 
-  function beginNodeLongPress(node: PathNode, pointerId: number, clientX: number, clientY: number) {
-    const current = nodeLongPressRef.current;
-    if (current) {
-      clearTimeout(current.timer);
-    }
-    const timer = setTimeout(() => {
-      nodeLongPressRef.current = null;
-      dragRef.current = null;
-      nodeClickSuppressionRef.current = { nodeId: node.id, until: Date.now() + 1_000 };
-      openNodeActionMenu(node, clientX, clientY);
-    }, NODE_LONG_PRESS_DURATION_MS);
-    nodeLongPressRef.current = {
-      nodeId: node.id,
-      pointerId,
-      startClientX: clientX,
-      startClientY: clientY,
-      timer,
-    };
-  }
-
-  function updateNodeLongPress(pointerId: number, clientX: number, clientY: number) {
-    const current = nodeLongPressRef.current;
-    if (!current || current.pointerId !== pointerId) {
-      return;
-    }
-    if (
-      Math.abs(clientX - current.startClientX) <= NODE_LONG_PRESS_MOVE_TOLERANCE
-      && Math.abs(clientY - current.startClientY) <= NODE_LONG_PRESS_MOVE_TOLERANCE
-    ) {
-      return;
-    }
-    clearTimeout(current.timer);
-    nodeLongPressRef.current = null;
-  }
-
-  function endNodeLongPress(pointerId: number) {
-    const current = nodeLongPressRef.current;
-    if (!current || current.pointerId !== pointerId) {
-      return;
-    }
-    clearTimeout(current.timer);
-    nodeLongPressRef.current = null;
-  }
-
   return (
     <section className="mt-4">
       <div className="mx-auto w-full min-w-0 max-w-[1480px] space-y-3">
@@ -1837,19 +1774,6 @@ export function PathsWorkspace({
                         <div
                           className={`absolute select-none transition ${isTaskNode ? "border-transparent bg-transparent shadow-none" : "rounded-[1rem] border bg-white/95 p-3 shadow-[0_18px_42px_rgba(81,61,168,0.10)] dark:bg-[#1b152d]/95"} ${isSelected && !isTaskNode ? "border-[#7f67ff] ring-4 ring-[#ddd4ff]" : !isTaskNode ? "border-[#ece8f8]" : ""} ${isComplete ? "opacity-75" : ""} ${isConnectSource && !isTaskNode ? "outline outline-2 outline-offset-2 outline-[#6f57f6]" : ""}`}
                           key={node.id}
-                          onClickCapture={(event) => {
-                            const suppression = nodeClickSuppressionRef.current;
-                            if (!suppression || suppression.nodeId !== node.id) {
-                              return;
-                            }
-                            if (Date.now() > suppression.until) {
-                              nodeClickSuppressionRef.current = null;
-                              return;
-                            }
-                            nodeClickSuppressionRef.current = null;
-                            event.preventDefault();
-                            event.stopPropagation();
-                          }}
                           onContextMenu={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
@@ -1866,20 +1790,8 @@ export function PathsWorkspace({
                             }
                             setSelectedNodeId(node.id);
                           }}
-                          onPointerCancelCapture={(event) => endNodeLongPress(event.pointerId)}
-                          onPointerDownCapture={(event) => {
-                            if (event.button !== 0) {
-                              return;
-                            }
-                            beginNodeLongPress(node, event.pointerId, event.clientX, event.clientY);
-                          }}
-                          onPointerMoveCapture={(event) => updateNodeLongPress(event.pointerId, event.clientX, event.clientY)}
-                          onPointerUpCapture={(event) => endNodeLongPress(event.pointerId)}
                           onPointerDown={(event) => {
-                            if ((event.target as HTMLElement).closest("[data-path-node-control]")) {
-                              return;
-                            }
-                            if (isTaskNode && !(event.target as HTMLElement).closest("[data-path-node-drag-surface]")) {
+                            if (event.button !== 0 || !(event.target as HTMLElement).closest("[data-path-node-drag-surface]")) {
                               return;
                             }
                             setSelectedNodeId(node.id);
@@ -1939,6 +1851,9 @@ export function PathsWorkspace({
                           ) : (
                           <>
                             <div className="flex items-start gap-2">
+                            <span className="relative -m-2 flex h-8 w-8 shrink-0 touch-none items-center justify-center cursor-grab text-[#8d86a4] active:cursor-grabbing" data-path-node-drag-surface>
+                              <GripVertical className="h-4 w-4" />
+                            </span>
                             <button
                               aria-label={isComplete ? "Mark PATHS Node incomplete" : "Mark PATHS Node complete"}
                               className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${isComplete ? "border-[#6f57f6] bg-[#6f57f6] text-white" : "border-[#ddd2ff] bg-[#f7f3ff] text-[#6f57f6]"} dark:border-white/15 dark:bg-white/8`}
