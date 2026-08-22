@@ -26,6 +26,8 @@ import {
 } from "@/lib/home-todo-state";
 
 const HOME_TODO_VISIBLE_LIMIT = 10;
+const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-[#26324f] dark:text-white";
+const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2";
 
 export function HomePage({
   listMembershipsByTaskId,
@@ -132,12 +134,12 @@ export function HomePage({
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
     return (
-      <AdhdCard className="grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto_auto_auto] items-center gap-x-0.5" padding="sm">
-        <span className="-ml-1 shrink-0">{handle}</span>
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-black bg-white text-xs font-semibold text-black dark:border-black dark:bg-white dark:text-black">
+      <AdhdCard className="grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0" padding="sm">
+        <span className="max-sm:-ml-2 sm:-ml-1 shrink-0">{handle}</span>
+        <span className="ml-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-black bg-white text-xs font-semibold text-black dark:border-black dark:bg-white dark:text-black">
           {index + 1}
         </span>
-        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center" ref={statusMenuOpen ? statusMenuRef : undefined}>
+        <div className="relative ml-1 flex h-8 w-8 shrink-0 items-center justify-center" ref={statusMenuOpen ? statusMenuRef : undefined}>
           <button
             aria-expanded={statusMenuOpen}
             aria-label={`Change status: ${formatTaskStatusLabel(displayStatus)}`}
@@ -162,9 +164,9 @@ export function HomePage({
             </div>
           ) : null}
         </div>
-        <div className="min-w-0">
+        <div className="ml-0.5 min-w-0">
           <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
-            <p className="break-words text-sm font-semibold leading-5 text-[#26324f] dark:text-white">
+            <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>
               {task.title || "Untitled task"}
             </p>
           </button>
@@ -172,35 +174,37 @@ export function HomePage({
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
           ) : null}
         </div>
-        {index !== 0 ? (
+        <div className="flex shrink-0 items-center gap-1">
+          {index !== 0 ? (
+            <AdhdIconButton
+              aria-label={`Move ${task.title || "Untitled task"} to Top`}
+              onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"))}
+              size="sm"
+              title="Move task to Top"
+            >
+              <ArrowUpToLine aria-hidden="true" />
+            </AdhdIconButton>
+          ) : null}
+          {index !== todoTasks.length - 1 ? (
+            <AdhdIconButton
+              aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
+              onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"))}
+              size="sm"
+              title="Move task to Bottom"
+            >
+              <ArrowDownToLine aria-hidden="true" />
+            </AdhdIconButton>
+          ) : null}
           <AdhdIconButton
-            aria-label={`Move ${task.title || "Untitled task"} to Top`}
-            onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"))}
+            aria-label={`Remove ${task.title || "Untitled task"} from Home To-do`}
+            onClick={() => updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id))}
             size="sm"
-            title="Move task to Top"
+            title="Remove from Home To-do"
+            tone="danger"
           >
-            <ArrowUpToLine aria-hidden="true" />
+            <Minus aria-hidden="true" />
           </AdhdIconButton>
-        ) : null}
-        {index !== todoTasks.length - 1 ? (
-          <AdhdIconButton
-            aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
-            onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"))}
-            size="sm"
-            title="Move task to Bottom"
-          >
-            <ArrowDownToLine aria-hidden="true" />
-          </AdhdIconButton>
-        ) : null}
-        <AdhdIconButton
-          aria-label={`Remove ${task.title || "Untitled task"} from Home To-do`}
-          onClick={() => updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id))}
-          size="sm"
-          title="Remove from Home To-do"
-          tone="danger"
-        >
-          <Minus aria-hidden="true" />
-        </AdhdIconButton>
+        </div>
       </AdhdCard>
     );
   }
@@ -315,7 +319,7 @@ export function HomePage({
                   type="button"
                 >
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-[#443d60] dark:text-white/80">
+                    <span className={`block truncate ${HOME_TODO_TITLE_CLASS}`}>
                       {task.title || "Untitled task"}
                     </span>
                     {hierarchy.length ? (
@@ -336,6 +340,7 @@ export function HomePage({
         {todoTasks.length ? (
           <>
           <SortableList
+            className={HOME_TODO_LIST_CLASS}
             getId={(task) => task.id}
             getLabel={(task) => task.title || "Untitled task"}
             items={nowTasks}
@@ -355,6 +360,7 @@ export function HomePage({
               </AdhdChip>
               {isDoLaterOpen ? (
                 <SortableList
+                  className={HOME_TODO_LIST_CLASS}
                   getId={(task) => task.id}
                   getLabel={(task) => task.title || "Untitled task"}
                   items={doLaterTasks}

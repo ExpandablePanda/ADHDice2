@@ -176,8 +176,15 @@ test("Home todo renders the recovered ten-item, wrapped-title, status, and picke
   assert.match(source, /const HOME_TODO_VISIBLE_LIMIT = 10/);
   assert.match(source, /todoTasks\.slice\(0, HOME_TODO_VISIBLE_LIMIT\)/);
   assert.match(source, /Do later \(\{doLaterTasks\.length\}\)/);
-  assert.match(source, /break-words text-sm font-semibold leading-5/);
-  assert.match(source, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto_auto_auto\] items-center gap-x-0\.5/);
+  assert.match(source, /const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-\[#26324f\] dark:text-white"/);
+  assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 3);
+  assert.match(source, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto\] items-center gap-x-0/);
+  assert.match(source, /const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2"/);
+  assert.match(source, /max-sm:-ml-2 sm:-ml-1 shrink-0/);
+  assert.match(source, /ml-0\.5 flex h-7 w-7 shrink-0/);
+  assert.match(source, /relative ml-1 flex h-8 w-8 shrink-0/);
+  assert.match(source, /ml-0\.5 min-w-0/);
+  assert.match(source, /<div className="flex shrink-0 items-center gap-1">/);
   assert.match(source, /renderTaskStatusCircle\(displayStatus, "sm", \{ className: "!h-7 !w-7", glyphClassName: "!h-4 !w-4 !text-sm" \}\)/);
   assert.doesNotMatch(source, /flex shrink-0 flex-col items-center/);
   assert.doesNotMatch(source, /basis-full/);
@@ -205,6 +212,8 @@ test("Home todo renders the recovered ten-item, wrapped-title, status, and picke
   assert.match(source, /Cancel/);
   assert.match(source, /setIsSearchOpen\(true\)/);
   assert.doesNotMatch(source, /setQuery\(""\)/);
+  assert.doesNotMatch(source, /font-semibold leading-5/);
+  assert.doesNotMatch(source, /text-\[#443d60\]/);
 });
 
 test("TaskApp passes Home creation through the shared canonical addTask seam", () => {
