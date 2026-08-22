@@ -94,28 +94,13 @@
   transition-duration: 0.01ms !important;
 }
 
-@keyframes workspace-loading-ring {
-  0% {
-    stroke-dashoffset: 289.03;
-  }
-
-  78% {
-    stroke-dashoffset: 0;
-  }
-
-  78.01%,
-  100% {
-    stroke-dashoffset: 289.03;
-  }
-}
-
 .workspace-loading-ring-progress {
-  animation: workspace-loading-ring 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  transition: stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .workspace-loading-ring-progress {
-    animation: none;
+    transition: none;
   }
 }
 

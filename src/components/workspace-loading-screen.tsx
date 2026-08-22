@@ -6,9 +6,10 @@ import { withBasePath } from "@/lib/utils";
 
 const LOADING_RING_RADIUS = 46;
 const LOADING_RING_CIRCUMFERENCE = 289.03;
-const LOADING_RING_START_OFFSET = LOADING_RING_CIRCUMFERENCE;
 
-export function WorkspaceLoadingScreen({ theme = "light" }: { theme?: "light" | "dark" }) {
+export function WorkspaceLoadingScreen({ progress = 0, theme = "light" }: { progress?: number; theme?: "light" | "dark" }) {
+  const normalizedProgress = Math.min(1, Math.max(0, progress));
+
   return (
     <main
       aria-label="ADHDice workspace loading"
@@ -23,14 +24,14 @@ export function WorkspaceLoadingScreen({ theme = "light" }: { theme?: "light" | 
           <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full -rotate-90" focusable="false" viewBox="0 0 100 100">
             <circle className="text-[#f0ecfc] dark:text-white/[0.03]" cx="50" cy="50" fill="transparent" r={LOADING_RING_RADIUS} stroke="currentColor" strokeWidth="7" />
             <circle
-              className="workspace-loading-ring-progress text-[#6f57f6] motion-reduce:animate-none dark:text-[#9b87ff]"
+              className="workspace-loading-ring-progress text-[#6f57f6] motion-reduce:transition-none dark:text-[#9b87ff]"
               cx="50"
               cy="50"
               fill="transparent"
               r={LOADING_RING_RADIUS}
               stroke="currentColor"
               strokeDasharray={`${LOADING_RING_CIRCUMFERENCE} ${LOADING_RING_CIRCUMFERENCE}`}
-              strokeDashoffset={LOADING_RING_START_OFFSET}
+              strokeDashoffset={LOADING_RING_CIRCUMFERENCE * (1 - normalizedProgress)}
               strokeLinecap="round"
               strokeWidth="7"
             />

@@ -212,6 +212,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   timezone,
 }: UseWorkspaceDataOptions<TTaskGridItem>) {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
+  const [workspaceLoadingProgress, setWorkspaceLoadingProgress] = useState(0);
   const [taskHistoryLoadedUserId, setTaskHistoryLoadedUserId] = useState<string | null>(null);
   const [taskHistoryByTaskId, setTaskHistoryByTaskId] = useState<Record<string, DbTaskHistory[]>>({});
   const [taskHistoryLoadStateByTaskId, setTaskHistoryLoadStateByTaskId] = useState<Record<string, TaskHistoryTaskLoadState>>({});
@@ -980,6 +981,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       taskListDataGeneration.current = taskListLoadGeneration;
       if (!silent) {
         setIsWorkspaceLoading(true);
+        setWorkspaceLoadingProgress(0);
       }
 
       const loadStartedAt = performance.now();
@@ -1062,6 +1064,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         silent,
         tasks: taskResult.data?.length ?? 0,
       });
+      if (!silent) setWorkspaceLoadingProgress(0.35);
 
       const nextTasks = projectTasksWithCanonicalScheduleBoundaries(
         taskResult.data ?? [],
@@ -1074,6 +1077,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         setIsWorkspaceLoading(false);
         return;
       }
+      if (!silent) setWorkspaceLoadingProgress(0.7);
       startTransition(() => {
         setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
         onProfileLoaded(profileResult.data ?? null, user);
@@ -1086,6 +1090,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           };
           setEconomy((current) => keepCurrentIfStructurallyEqual(current, nextEconomy));
         }
+        if (!silent) setWorkspaceLoadingProgress(1);
         setIsWorkspaceLoading(false);
       });
       if (isWorkspacePerformanceDiagnosticsEnabled() && source === "initial") {
@@ -1673,6 +1678,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     isTaskListMembershipDataReady: !currentUser || taskListMembershipDataReadyUserId === currentUser.id,
     isTaskResumeSyncPending,
     isWorkspaceLoading,
+    workspaceLoadingProgress,
     workspaceGenerationRef,
     prepareTaskMutation,
     reconcileRolloverWorkspace,
