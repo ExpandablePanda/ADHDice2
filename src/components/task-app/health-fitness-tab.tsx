@@ -573,6 +573,10 @@ type FitnessOptionDragState = {
   pointerId: number;
 };
 
+type FitnessOptionRowGeometry = {
+  midpoint: number;
+};
+
 function FitnessOptionReorderList({
   disabled = false,
   label,
@@ -586,11 +590,22 @@ function FitnessOptionReorderList({
   const optionsRef = useRef<string[]>([...options]);
   const previewRef = useRef<string[] | null>(null);
   const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const rowGeometryRef = useRef<Array<FitnessOptionRowGeometry | null>>([]);
+  const pendingPointerYRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
   const visibleOptions = previewOptions ?? options;
 
   useEffect(() => {
     optionsRef.current = [...options];
   }, [options]);
+
+  function cancelScheduledPointerMove() {
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    pendingPointerYRef.current = null;
+  }
 
   function clearDragState(pointerId?: number) {
     const drag = dragRef.current;
@@ -598,10 +613,12 @@ function FitnessOptionReorderList({
       return;
     }
 
+    cancelScheduledPointerMove();
     dragRef.current = null;
     setDraggingIndex(null);
     const nextOptions = previewRef.current;
     previewRef.current = null;
+    rowGeometryRef.current = [];
     setPreviewOptions(null);
     if (drag.handle.hasPointerCapture(drag.pointerId)) {
       drag.handle.releasePointerCapture(drag.pointerId);
@@ -614,18 +631,27 @@ function FitnessOptionReorderList({
 
   function getTargetIndex(clientY: number, currentIndex: number) {
     let targetIndex = currentIndex;
-    for (let index = 0; index < visibleOptions.length; index += 1) {
-      const row = rowRefs.current[index];
-      if (!row) {
+    for (let index = 0; index < rowGeometryRef.current.length; index += 1) {
+      const geometry = rowGeometryRef.current[index];
+      if (!geometry) {
         continue;
       }
-      const bounds = row.getBoundingClientRect();
-      if (clientY < bounds.top + bounds.height / 2) {
+      if (clientY < geometry.midpoint) {
         return index;
       }
       targetIndex = index;
     }
     return targetIndex;
+  }
+
+  function cacheRowGeometry() {
+    rowGeometryRef.current = rowRefs.current.slice(0, optionsRef.current.length).map((row) => {
+      if (!row) {
+        return null;
+      }
+      const bounds = row.getBoundingClientRect();
+      return { midpoint: bounds.top + bounds.height / 2 };
+    });
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLButtonElement>, index: number) {
@@ -636,6 +662,7 @@ function FitnessOptionReorderList({
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     const startingOptions = [...optionsRef.current];
+    cacheRowGeometry();
     dragRef.current = {
       currentIndex: index,
       fromIndex: index,
@@ -647,15 +674,13 @@ function FitnessOptionReorderList({
     setDraggingIndex(index);
   }
 
-  function handlePointerMove(event: React.PointerEvent<HTMLButtonElement>) {
+  function processPointerMove(clientY: number) {
     const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
+    if (!drag) {
       return;
     }
-    event.preventDefault();
-    event.stopPropagation();
     const currentOptions = previewRef.current ?? optionsRef.current;
-    const targetIndex = getTargetIndex(event.clientY, drag.currentIndex);
+    const targetIndex = getTargetIndex(clientY, drag.currentIndex);
     if (targetIndex === drag.currentIndex) {
       return;
     }
@@ -666,15 +691,43 @@ function FitnessOptionReorderList({
     setDraggingIndex(targetIndex);
   }
 
+  function handlePointerMove(event: React.PointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    pendingPointerYRef.current = event.clientY;
+    if (animationFrameRef.current !== null) {
+      return;
+    }
+    animationFrameRef.current = requestAnimationFrame(() => {
+      animationFrameRef.current = null;
+      const pointerY = pendingPointerYRef.current;
+      pendingPointerYRef.current = null;
+      if (pointerY !== null) {
+        processPointerMove(pointerY);
+      }
+    });
+  }
+
   function handlePointerEnd(event: React.PointerEvent<HTMLButtonElement>) {
     event.preventDefault();
     event.stopPropagation();
+    if (event.type === "pointerup" && pendingPointerYRef.current !== null) {
+      const pointerY = pendingPointerYRef.current;
+      cancelScheduledPointerMove();
+      processPointerMove(pointerY);
+    }
     clearDragState(event.pointerId);
   }
 
   useEffect(() => () => {
+    cancelScheduledPointerMove();
     dragRef.current = null;
     previewRef.current = null;
+    rowGeometryRef.current = [];
   }, []);
 
   return (
