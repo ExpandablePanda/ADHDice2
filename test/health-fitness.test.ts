@@ -244,8 +244,8 @@ test("Fitness option dragging caches row geometry and gates pointer movement to 
   const moveStart = reorderSection.indexOf("function handlePointerMove");
   const moveSection = reorderSection.slice(moveStart, reorderSection.indexOf("function handlePointerEnd", moveStart));
   assert.match(reorderSection, /rowGeometryRef = useRef<Array<FitnessOptionRowGeometry \| null>>\(\[\]\)/);
-  assert.match(reorderSection, /function cacheRowGeometry\(\)/);
-  assert.match(reorderSection, /cacheRowGeometry\(\);[\s\S]*?dragRef\.current = \{/);
+  assert.match(reorderSection, /function cacheRowGeometry\(optionCount: number\)/);
+  assert.match(reorderSection, /cacheRowGeometry\(startingOptions\.length\);[\s\S]*?dragRef\.current = \{/);
   assert.match(reorderSection, /const bounds = row\.getBoundingClientRect\(\)/);
   assert.doesNotMatch(moveSection, /getBoundingClientRect/);
   assert.match(moveSection, /pendingPointerYRef\.current = event\.clientY/);
@@ -269,8 +269,39 @@ test("Fitness option dragging saves only on completed reorder and never touches 
   assert.doesNotMatch(fitnessSource.slice(moveStart, moveEnd), /onSave\(/);
   const reorderStart = fitnessSource.indexOf("function FitnessOptionReorderList");
   const reorderSection = fitnessSource.slice(reorderStart, fitnessSource.indexOf("function WorkoutHistoryRow", reorderStart));
-  assert.match(reorderSection, /void onSave\(nextOptions\)/);
+  assert.match(reorderSection, /void persistCommittedPreview\(committedOptions\)/);
+  assert.match(reorderSection, /saved = await onSave\(committedOptions\)/);
   assert.doesNotMatch(reorderSection, /addWorkout|updateWorkout|deleteWorkout|adhdice_health_workouts/);
+});
+
+test("Fitness option drop keeps the committed preview until canonical props catch up", () => {
+  const reorderStart = fitnessSource.indexOf("function FitnessOptionReorderList");
+  const reorderSection = fitnessSource.slice(reorderStart, fitnessSource.indexOf("function WorkoutHistoryRow", reorderStart));
+  const clearStart = reorderSection.indexOf("function clearDragState");
+  const clearEnd = reorderSection.indexOf("function getTargetIndex", clearStart);
+  const clearSection = reorderSection.slice(clearStart, clearEnd);
+  const committedSection = clearSection.slice(clearSection.indexOf("const committedOptions = [...nextOptions]"));
+  assert.match(reorderSection, /const committedPreviewRef = useRef<string\[\] \| null>\(null\)/);
+  assert.match(clearSection, /const committedOptions = \[\.\.\.nextOptions\];[\s\S]*committedPreviewRef\.current = committedOptions;[\s\S]*previewRef\.current = committedOptions;[\s\S]*void persistCommittedPreview\(committedOptions\)/);
+  assert.doesNotMatch(committedSection, /setPreviewOptions\(null\)/);
+  assert.match(reorderSection, /areFitnessOptionOrdersEqual\(options, committedOptions\)[\s\S]*setPreviewOptions\(null\)/);
+});
+
+test("Fitness option save failure rolls back the temporary committed preview", () => {
+  const reorderStart = fitnessSource.indexOf("function FitnessOptionReorderList");
+  const reorderSection = fitnessSource.slice(reorderStart, fitnessSource.indexOf("function WorkoutHistoryRow", reorderStart));
+  assert.match(reorderSection, /async function persistCommittedPreview\(committedOptions: string\[\]\)/);
+  assert.match(reorderSection, /saved = await onSave\(committedOptions\)/);
+  assert.match(reorderSection, /if \(!saved\) \{[\s\S]*clearCommittedPreview\(committedOptions\)/);
+  assert.match(reorderSection, /previewRef\.current === committedOptions/);
+});
+
+test("Fitness option second drags begin from the currently visible committed order", () => {
+  const reorderStart = fitnessSource.indexOf("function FitnessOptionReorderList");
+  const reorderSection = fitnessSource.slice(reorderStart, fitnessSource.indexOf("function WorkoutHistoryRow", reorderStart));
+  assert.match(fitnessSource, /startingOptions: string\[\]/);
+  assert.match(reorderSection, /const startingOptions = \[\.\.\.\(previewRef\.current \?\? optionsRef\.current\)\]/);
+  assert.match(reorderSection, /areFitnessOptionOrdersEqual\(nextOptions, drag\.startingOptions\)/);
 });
 
 test("Fitness Settings keeps vertical scrolling while suppressing its visible system scrollbar", () => {
@@ -439,11 +470,11 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.11.37 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.11.37");
-  assert.equal(packageLock.version, "7.11.37");
-  assert.equal(packageLock.packages[""].version, "7.11.37");
-  assert.match(appVersionSource, /"version":\s*"7\.11\.37"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.37"/);
+test("all 7.11.38 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.11.38");
+  assert.equal(packageLock.version, "7.11.38");
+  assert.equal(packageLock.packages[""].version, "7.11.38");
+  assert.match(appVersionSource, /"version":\s*"7\.11\.38"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.38"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
 });
