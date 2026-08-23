@@ -460,17 +460,19 @@ test("Import routes parents, Steps, and Substeps through canonical creation and 
     "Parent *due-2026-08-20 *repeat-daily",
     "- Step *due-2026-08-21",
     "-- Substep",
+    "--- Deep substep",
     "Second Parent",
   ]);
   assert.deepEqual(result, { errorCount: 0, importedCount: 2, warningCount: 0 });
-  assert.equal(calls.length, 4);
-  assert.deepEqual(calls.map((call) => call.source), ["task_import", "task_import", "task_import", "task_import"]);
+  assert.equal(calls.length, 5);
+  assert.deepEqual(calls.map((call) => call.source), ["task_import", "task_import", "task_import", "task_import", "task_import"]);
   assert.equal(calls[0]?.payload.due_on, "2026-08-20");
   assert.equal(calls[0]?.payload.repeat_frequency, "daily");
   assert.equal(calls[1]?.payload.parent_task_id, tasks[0]?.id);
   assert.equal(calls[2]?.payload.parent_task_id, tasks[1]?.id);
-  assert.equal(tasks.length, 4);
-  assert.deepEqual(tasks.map((task) => task.entity_kind), ["parent", "step", "substep", "parent"]);
+  assert.equal(calls[3]?.payload.parent_task_id, tasks[2]?.id);
+  assert.equal(tasks.length, 5);
+  assert.deepEqual(tasks.map((task) => task.entity_kind), ["parent", "step", "substep", "substep", "parent"]);
   assert.equal(tasks.every((task) => task.canonical_schedule_boundary?.entity_id === task.id), true);
   assert.equal(tasks.every((task) => task.canonicalization_status !== "legacy_uninitialized" && task.canonical_revision === 1), true);
   assert.deepEqual(revealCalls, [tasks[0]?.id]);
