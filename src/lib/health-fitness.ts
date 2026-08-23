@@ -2,18 +2,11 @@
 
 import type { HealthMetricEntry, HealthWorkout, HealthWorkoutInsert } from "@/lib/database.types";
 import { buildHealthMealLoggedAt, sumMetricValueForDate, todayHealthDate } from "@/lib/health-utils";
+import {
+  HEALTH_WORKOUT_OPTION_MAX_LENGTH,
+} from "@/lib/health-workout-options";
 
-export const HEALTH_WORKOUT_TYPES = [
-  "Walking",
-  "Running",
-  "Strength Training",
-  "Cycling",
-  "Cardio",
-  "Stretching",
-  "Sports",
-  "Standing",
-  "Other",
-] as const;
+export { HEALTH_WORKOUT_OPTION_MAX_LENGTH, HEALTH_WORKOUT_TYPES } from "@/lib/health-workout-options";
 
 export const HEALTH_WORKOUT_TITLE_MAX_LENGTH = 120;
 
@@ -21,6 +14,8 @@ export type HealthWorkoutTitleOptionResult = {
   error: string | null;
   value: string[] | null;
 };
+
+export type HealthWorkoutTypeOptionResult = HealthWorkoutTitleOptionResult;
 
 export type HealthWorkoutFormInput = {
   activeCalories: string;
@@ -68,6 +63,66 @@ export function addHealthWorkoutTitleOption(
     return { error: "That saved workout title already exists.", value: null };
   }
   return { error: null, value: [...options, title] };
+}
+
+export function addHealthWorkoutTypeOption(
+  options: readonly string[],
+  rawType: string,
+): HealthWorkoutTypeOptionResult {
+  const type = rawType.trim();
+  if (!type) {
+    return { error: "Enter a workout type.", value: null };
+  }
+  if (type.length > HEALTH_WORKOUT_OPTION_MAX_LENGTH) {
+    return {
+      error: `Workout types must be ${HEALTH_WORKOUT_OPTION_MAX_LENGTH} characters or fewer.`,
+      value: null,
+    };
+  }
+  if (options.some((option) => option.trim().toLocaleLowerCase() === type.toLocaleLowerCase())) {
+    return { error: "That workout type already exists.", value: null };
+  }
+  return { error: null, value: [...options, type] };
+}
+
+function renameHealthWorkoutOption(
+  options: readonly string[],
+  currentValue: string,
+  rawValue: string,
+  label: "workout type" | "saved workout title",
+): HealthWorkoutTypeOptionResult {
+  const nextValue = rawValue.trim();
+  if (!nextValue) {
+    return { error: `Enter a ${label}.`, value: null };
+  }
+  if (nextValue.length > HEALTH_WORKOUT_OPTION_MAX_LENGTH) {
+    return {
+      error: `${label === "workout type" ? "Workout types" : "Saved workout titles"} must be ${HEALTH_WORKOUT_OPTION_MAX_LENGTH} characters or fewer.`,
+      value: null,
+    };
+  }
+  if (options.some((option) => option !== currentValue && option.trim().toLocaleLowerCase() === nextValue.toLocaleLowerCase())) {
+    return { error: `That ${label} already exists.`, value: null };
+  }
+  return {
+    error: null,
+    value: options.map((option) => option === currentValue ? nextValue : option),
+  };
+}
+
+export function renameHealthWorkoutTypeOption(options: readonly string[], currentValue: string, rawValue: string) {
+  return renameHealthWorkoutOption(options, currentValue, rawValue, "workout type");
+}
+
+export function renameHealthWorkoutTitleOption(options: readonly string[], currentValue: string, rawValue: string) {
+  return renameHealthWorkoutOption(options, currentValue, rawValue, "saved workout title");
+}
+
+export function removeHealthWorkoutTypeOption(options: readonly string[], typeToRemove: string): HealthWorkoutTypeOptionResult {
+  if (options.length <= 1) {
+    return { error: "Keep at least one workout type.", value: null };
+  }
+  return { error: null, value: options.filter((type) => type !== typeToRemove) };
 }
 
 export function removeHealthWorkoutTitleOption(options: readonly string[], titleToRemove: string) {

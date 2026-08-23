@@ -4,12 +4,16 @@ import { test } from "node:test";
 
 import type { HealthMetricEntry, HealthWorkout } from "@/lib/database.types";
 import {
+  addHealthWorkoutTypeOption,
   addHealthWorkoutTitleOption,
   buildHealthWorkoutFormPayload,
   getHealthDailyMovementMetrics,
   getHealthWeeklyWorkoutSummary,
   HEALTH_WORKOUT_TYPES,
+  removeHealthWorkoutTypeOption,
   removeHealthWorkoutTitleOption,
+  renameHealthWorkoutTypeOption,
+  renameHealthWorkoutTitleOption,
   sortHealthWorkouts,
 } from "@/lib/health-fitness";
 import { HEALTH_TABS, normalizeHealthProfile } from "@/lib/health-utils";
@@ -20,8 +24,13 @@ const hookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta
 const pageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../supabase/add_health_fitness_foundation_7_11_33.sql", import.meta.url), "utf8");
 const titleOptionsMigrationSource = readFileSync(new URL("../supabase/add_health_workout_title_options_7_11_34.sql", import.meta.url), "utf8");
+const typeOptionsMigrationSource = readFileSync(new URL("../supabase/add_health_workout_type_options_7_11_35.sql", import.meta.url), "utf8");
 const healthTablesSource = readFileSync(new URL("../supabase/add_health_tables.sql", import.meta.url), "utf8");
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+const packageLock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8")) as { version: string; packages: { "": { version: string } } };
+const appVersionSource = readFileSync(new URL("../public/app-version.json", import.meta.url), "utf8");
+const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
 function workout(overrides: Partial<HealthWorkout> = {}): HealthWorkout {
   return {
@@ -59,6 +68,26 @@ test("Standing is a workout category without changing the existing types", () =>
     "Standing",
     "Other",
   ]);
+});
+
+test("existing Health profiles safely receive the default workout type list", () => {
+  const profile = normalizeHealthProfile({ user_id: "user-1" }, "user-1");
+  assert.deepEqual(profile.workout_type_options, [...HEALTH_WORKOUT_TYPES]);
+  assert.match(healthTablesSource, /workout_type_options text\[\] not null default array\['Walking'.*'Standing'.*'Other'\]/);
+  assert.match(schemaSource, /workout_type_options text\[\] not null default array\['Walking'.*'Standing'.*'Other'\]/);
+  assert.match(typeOptionsMigrationSource, /add column if not exists workout_type_options text\[\]/);
+  assert.match(typeOptionsMigrationSource, /where workout_type_options is null or cardinality\(workout_type_options\) = 0/);
+  assert.match(typeOptionsMigrationSource, /alter column workout_type_options set not null/);
+});
+
+test("workout type options trim, reject empty and duplicates, rename, remove, and protect the final option", () => {
+  const added = addHealthWorkoutTypeOption(["Walking"], "  Hiking  ");
+  assert.deepEqual(added.value, ["Walking", "Hiking"]);
+  assert.equal(addHealthWorkoutTypeOption(["Walking"], "   ").error, "Enter a workout type.");
+  assert.equal(addHealthWorkoutTypeOption(["Walking"], " walking ").error, "That workout type already exists.");
+  assert.deepEqual(renameHealthWorkoutTypeOption(["Walking", "Hiking"], "Hiking", "  Trail Run ").value, ["Walking", "Trail Run"]);
+  assert.deepEqual(removeHealthWorkoutTypeOption(["Walking", "Trail Run"], "Trail Run").value, ["Walking"]);
+  assert.equal(removeHealthWorkoutTypeOption(["Walking"], "Walking").error, "Keep at least one workout type.");
 });
 
 test("old saved Health tab values still normalize through the current tab list", () => {
@@ -119,6 +148,16 @@ test("removing a saved title does not mutate workout rows", () => {
   assert.doesNotMatch(removeSection, /deleteWorkout|updateWorkout/);
 });
 
+test("saved title add, rename, and remove stay separate from workout history", () => {
+  const rows = [workout({ title: "Upper Body" })];
+  assert.deepEqual(renameHealthWorkoutTitleOption(["Upper Body"], "Upper Body", "  Push Day  ").value, ["Push Day"]);
+  assert.deepEqual(removeHealthWorkoutTitleOption(["Upper Body"], "Upper Body"), []);
+  assert.deepEqual(rows, [workout({ title: "Upper Body" })]);
+  assert.match(fitnessSource, /Fitness Settings/);
+  assert.match(fitnessSource, /Workout Titles/);
+  assert.match(fitnessSource, /handleRenameSavedTitle/);
+});
+
 test("existing Health profiles safely receive an empty saved-title list", () => {
   const profile = normalizeHealthProfile({ user_id: "user-1" }, "user-1");
   assert.deepEqual(profile.workout_title_options, []);
@@ -134,10 +173,28 @@ test("saved titles use the Health profile persistence authority and autocomplete
   assert.match(pageSource, /<HealthFitnessTab[\s\S]*profile=\{activeProfile\}[\s\S]*saveProfile=\{saveProfile\}/);
   assert.match(fitnessSource, /saveProfile: \(updates: HealthProfileUpdate\) => Promise<boolean>/);
   assert.match(fitnessSource, /saveProfile\(\{ workout_title_options: result\.value \}\)/);
+  assert.match(fitnessSource, /saveProfile\(\{ workout_type_options: nextOptions \}\)/);
   assert.match(fitnessSource, /<HealthAutocomplete[\s\S]*onChange=\{\(value\) => setDraft\(\(current\) => \(\{ \.\.\.current, title: value \}\)\)\}[\s\S]*suggestions=\{savedWorkoutTitles\}/);
   assert.match(dropdownSource, /onChange\(suggestion\.label\);[\s\S]*onSelect\?\.\(suggestion\)/);
   assert.match(hookSource, /normalizeHealthProfile\(profileResult\.data, userId\)/);
   assert.match(hookSource, /\.from\("adhdice_health_profiles"\)[\s\S]*\.upsert\([\s\S]*\.\.\.updates/);
+});
+
+test("manual workout entry reads profile workout type options", () => {
+  assert.match(fitnessSource, /const workoutTypes = useMemo\([\s\S]*?profile\.workout_type_options\?\.length/);
+  assert.match(fitnessSource, /options=\{workoutTypeOptions\}/);
+  assert.doesNotMatch(fitnessSource, /const WORKOUT_TYPE_OPTIONS/);
+});
+
+test("Fitness Settings opens and closes through its site-styled control", () => {
+  assert.match(fitnessSource, /aria-expanded=\{isSettingsOpen\}/);
+  assert.match(fitnessSource, /setIsSettingsOpen\(\(current\) => !current\)/);
+  assert.match(fitnessSource, /document\.addEventListener\("pointerdown", handleOutsidePointerDown\)/);
+  assert.match(fitnessSource, /event\.key === "Escape"/);
+  const settingsIndex = fitnessSource.indexOf("{isSettingsOpen ? (");
+  const settingsSection = fitnessSource.slice(settingsIndex);
+  assert.match(settingsSection, /Workout Types/);
+  assert.match(settingsSection, /Workout Titles/);
 });
 
 test("explicit Log Workout intent queues one smooth reveal after opening the form", () => {
@@ -260,6 +317,15 @@ test("workout CRUD remains isolated from daily metric rows and local persistence
   assert.match(hookSource, /workoutsResult\.error[\s\S]*?setStorageMode\("remote"\)/);
 });
 
+test("workout type and title option changes do not call workout CRUD", () => {
+  for (const functionName of ["handleAddWorkoutType", "handleRenameWorkoutType", "handleRemoveWorkoutType", "handleRenameSavedTitle", "handleRemoveSavedTitle"]) {
+    const start = fitnessSource.indexOf(`async function ${functionName}`);
+    const end = fitnessSource.indexOf("\n  async function", start + 1);
+    const section = fitnessSource.slice(start, end === -1 ? fitnessSource.length : end);
+    assert.doesNotMatch(section, /addWorkout|updateWorkout|deleteWorkout/);
+  }
+});
+
 test("existing Health areas remain wired while Fitness is isolated behind its component boundary", () => {
   assert.match(pageSource, /import \{ HealthFitnessTab \} from "\.\/health-fitness-tab"/);
   assert.match(pageSource, /<HealthFitnessTab[\s\S]*metricEntries=\{metricEntries\}[\s\S]*workouts=\{workouts\}/);
@@ -278,4 +344,13 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.match(migrationSource, /grant select, insert, update, delete on table public\.adhdice_health_workouts to authenticated/);
   assert.match(migrationSource, /using \(\(select auth\.uid\(\)\) = user_id\)/);
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
+});
+
+test("all 7.11.35 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.11.35");
+  assert.equal(packageLock.version, "7.11.35");
+  assert.equal(packageLock.packages[""].version, "7.11.35");
+  assert.match(appVersionSource, /"version":\s*"7\.11\.35"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.35"/);
+  assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
 });

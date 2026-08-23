@@ -1255,6 +1255,7 @@ export type HealthProfile = {
   movement_goal_minutes: number | null;
   sleep_goal_minutes: number | null;
   target_weight_kg: number | null;
+  workout_type_options: string[];
   workout_title_options: string[];
   created_at: string;
   updated_at: string;
@@ -1272,6 +1273,7 @@ export type HealthProfileInsert = {
   movement_goal_minutes?: number | null;
   sleep_goal_minutes?: number | null;
   target_weight_kg?: number | null;
+  workout_type_options?: string[];
   workout_title_options?: string[];
 };
 
@@ -1288,6 +1290,7 @@ export type HealthProfileUpdate = Partial<
     | "movement_goal_minutes"
     | "sleep_goal_minutes"
     | "target_weight_kg"
+    | "workout_type_options"
     | "workout_title_options"
   >
 >;
