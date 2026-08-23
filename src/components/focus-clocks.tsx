@@ -76,8 +76,8 @@ export function FocusTimerQuickAdjustmentControls({
     : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] hover:bg-[#ffecef] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]";
 
   const adjustmentCircleBaseClassName = "flex h-14 w-14 items-center justify-center rounded-full border-2 transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40";
-  const adjustmentCircleClassName = `${adjustmentCircleBaseClassName} text-3xl font-semibold leading-none`;
-  const adjustmentCircleInputClassName = `${adjustmentCircleBaseClassName} px-2 text-center text-base font-semibold leading-none outline-none`;
+  const adjustmentCircleClassName = `${adjustmentCircleBaseClassName} text-[2.5rem] font-semibold leading-none`;
+  const adjustmentCircleInputClassName = `${adjustmentCircleBaseClassName} px-2 text-center text-base font-semibold leading-none outline-none placeholder:text-[10px] placeholder:font-medium`;
 
   const adjustmentCircleTone = (direction: 1 | -1) => direction === 1
     ? "border-[#bcebd8] bg-[#eef9f4] text-[#13845f] shadow-[0_8px_20px_rgba(19,132,95,0.15)] hover:bg-[#e4f6ed] focus-visible:ring-[#8edbbc] dark:border-[#315f51] dark:bg-[#19352e] dark:text-[#7de4b8] dark:hover:bg-[#234438]"
@@ -99,6 +99,7 @@ export function FocusTimerQuickAdjustmentControls({
             if (event.key === "Enter") event.preventDefault();
           }}
           pattern="[0-9]*"
+          placeholder={clockFace ? "min" : undefined}
           type="text"
           value={customMinutes}
         />
