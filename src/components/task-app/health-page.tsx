@@ -498,6 +498,7 @@ export function HealthPage({
       protein_goal_grams: profile.protein_goal_grams,
       sleep_goal_minutes: profile.sleep_goal_minutes,
       target_weight_kg: profile.target_weight_kg,
+      workout_title_options: profile.workout_title_options,
     });
     setTargetWeightDraft(
       profile.target_weight_kg === null
@@ -1406,6 +1407,7 @@ export function HealthPage({
           deleteWorkout={deleteWorkout}
           metricEntries={metricEntries}
           profile={activeProfile}
+          saveProfile={saveProfile}
           updateWorkout={updateWorkout}
           workouts={workouts}
         />
