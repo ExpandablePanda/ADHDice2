@@ -4,7 +4,6 @@ import { isSystemCountdownCategoryId } from "@/lib/focus-utils";
 import { CategoryIcon } from "./task-app";
 import { formatDuration } from "@/lib/utils";
 import { TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS, TaskTableChipButton } from "./ui/task-table-primitives";
-import { Check } from "lucide-react";
 export { formatDuration } from "@/lib/utils";
 
 const COUNTDOWN_DURATION_PRESETS = [5, 10, 20, 30, 60] as const;
@@ -26,6 +25,10 @@ export function FocusTimerPauseIcon({ className = "" }: { className?: string }) 
 
 export function FocusTimerFinishIcon({ className = "" }: { className?: string }) {
   return <svg aria-hidden="true" className={className} fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
+
+export function FocusTimerCheckIcon({ className = "" }: { className?: string }) {
+  return <svg aria-hidden="true" className={className} fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
 
 export function FocusTimerResetIcon({ className = "" }: { className?: string }) {
@@ -76,8 +79,14 @@ export function FocusTimerQuickAdjustmentControls({
     : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] hover:bg-[#ffecef] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]";
 
   const adjustmentCircleBaseClassName = "flex h-14 w-14 items-center justify-center rounded-full border-2 transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40";
-  const adjustmentCircleClassName = `${adjustmentCircleBaseClassName} text-[2.5rem] font-semibold leading-none`;
+  const adjustmentCircleClassName = `${adjustmentCircleBaseClassName} leading-none`;
   const adjustmentCircleInputClassName = `${adjustmentCircleBaseClassName} px-2 text-center text-base font-semibold leading-none outline-none placeholder:text-[10px] placeholder:font-medium`;
+  const adjustmentGlyphStyle = {
+    fontFamily: "inherit",
+    fontSize: "20px",
+    fontWeight: 500,
+    lineHeight: 1,
+  } as const;
 
   const adjustmentCircleTone = (direction: 1 | -1) => direction === 1
     ? "border-[#bcebd8] bg-[#eef9f4] text-[#13845f] shadow-[0_8px_20px_rgba(19,132,95,0.15)] hover:bg-[#e4f6ed] focus-visible:ring-[#8edbbc] dark:border-[#315f51] dark:bg-[#19352e] dark:text-[#7de4b8] dark:hover:bg-[#234438]"
@@ -128,6 +137,7 @@ export function FocusTimerQuickAdjustmentControls({
       disabled={isAdjustmentPending}
       key={direction}
       onClick={() => selectDirection(direction)}
+      style={adjustmentGlyphStyle}
       type="button"
     >
       <span aria-hidden="true">{direction === 1 ? "+" : "−"}</span>
@@ -158,6 +168,7 @@ export function FocusTimerQuickAdjustmentControls({
                     disabled={isAdjustmentPending}
                     key={minutes}
                     onClick={() => void submitAdjustment(getFocusTimerAdjustmentDeltaSeconds(adjustmentDirection, minutes))}
+                    style={adjustmentGlyphStyle}
                     type="button"
                   >
                     {minutes}
@@ -173,7 +184,7 @@ export function FocusTimerQuickAdjustmentControls({
                   onClick={applyCustomAdjustment}
                   type="button"
                 >
-                  <Check aria-hidden="true" className="h-6 w-6" />
+                  <FocusTimerCheckIcon className="h-6 w-6" />
                 </button>
               </div>
             </>
@@ -585,7 +596,7 @@ export function FocusClock({
                   }}
                   type="button"
                 >
-                  <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  <FocusTimerCheckIcon className="h-5 w-5" />
                 </button>
               )}
               <button
