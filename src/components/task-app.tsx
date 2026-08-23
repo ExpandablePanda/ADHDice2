@@ -1260,6 +1260,7 @@ export function TaskApp() {
     deleteRecipe: deleteHealthRecipe,
     deleteSavedMeal: deleteHealthSavedMeal,
     deleteWaterEntry: deleteHealthWaterEntry,
+    deleteWorkout: deleteHealthWorkout,
     deleteWeightEntry,
     favorites: healthFavorites,
     importAudits: healthImportAudits,
@@ -1279,11 +1280,14 @@ export function TaskApp() {
     addMealEntry: addHealthMealEntry,
     addWaterEntry: addHealthWaterEntry,
     addWeightEntry: addHealthWeightEntry,
+    addWorkout: addHealthWorkout,
     updateMealEntry: updateHealthMealEntry,
     updateWaterEntry: updateHealthWaterEntry,
+    updateWorkout: updateHealthWorkout,
     storageMode: healthStorageMode,
     weightEntries: healthWeightEntries,
     waterEntries: healthWaterEntries,
+    workouts: healthWorkouts,
   } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health");
   const currentUserId = session?.user?.id ?? null;
   const scratchNotes = useScratchNotes(supabase, currentUserId);
@@ -7252,6 +7256,7 @@ export function TaskApp() {
             deleteRecipe={deleteHealthRecipe}
             deleteSavedMeal={deleteHealthSavedMeal}
             deleteWaterEntry={deleteHealthWaterEntry}
+            deleteWorkout={deleteHealthWorkout}
             deleteWeightEntry={deleteWeightEntry}
             favorites={healthFavorites}
             focusCategories={focusCategories}
@@ -7280,11 +7285,14 @@ export function TaskApp() {
             addMealEntry={addHealthMealEntry}
             addWaterEntry={addHealthWaterEntry}
             addWeightEntry={addHealthWeightEntry}
+            addWorkout={addHealthWorkout}
             storageMode={healthStorageMode}
             updateMealEntry={updateHealthMealEntry}
             updateWaterEntry={updateHealthWaterEntry}
+            updateWorkout={updateHealthWorkout}
             weightEntries={healthWeightEntries}
             waterEntries={healthWaterEntries}
+            workouts={healthWorkouts}
           />
         ) : activePage === "Roll" ? (
           <RollPage

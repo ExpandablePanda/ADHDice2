@@ -23,6 +23,9 @@ import type {
   HealthServingWeightUnit,
   HealthWaterEntry,
   HealthWaterUnit,
+  HealthWorkout,
+  HealthWorkoutInsert,
+  HealthWorkoutUpdate,
   HealthWeightEntry,
 } from "@/lib/database.types";
 import type { WeightGoalForecast } from "@/lib/health-utils";
@@ -106,6 +109,7 @@ import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_CONTROL_CLASS, HEALT
 import { HealthCalorieLineChart } from "./health-calorie-line-chart";
 import { HealthSleepLineChart } from "./health-sleep-line-chart";
 import { HealthWaterPanel } from "./health-water-panel";
+import { HealthFitnessTab } from "./health-fitness-tab";
 import { PageShellHeader } from "./page-shell-header";
 
 type HealthPageProps = {
@@ -116,6 +120,7 @@ type HealthPageProps = {
   deleteRecipe: (recipeId: string) => Promise<boolean>;
   deleteSavedMeal: (mealId: string) => Promise<boolean>;
   deleteWaterEntry: (entryId: string) => Promise<boolean>;
+  deleteWorkout: (workoutId: string) => Promise<boolean>;
   deleteWeightEntry: (entryId: string) => Promise<boolean>;
   favorites: HealthFoodLibraryItem[];
   importAudits: HealthImportAudit[];
@@ -197,6 +202,7 @@ type HealthPageProps = {
     entry_date: string;
     unit: HealthWaterUnit;
   }) => Promise<boolean>;
+  addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<boolean>;
   updateWaterEntry: (entryId: string, input: {
     amount: number;
     amount_ml: number;
@@ -205,10 +211,12 @@ type HealthPageProps = {
     unit: HealthWaterUnit;
   }) => Promise<boolean>;
   updateMealEntry: (entryId: string, input: HealthMealEntryUpdate) => Promise<boolean>;
+  updateWorkout: (workoutId: string, input: HealthWorkoutUpdate) => Promise<boolean>;
   storageMode: "local" | "remote";
   onOpenReminderTemplate: (templateKey: HealthReminderTemplateKey) => void;
   weightEntries: HealthWeightEntry[];
   waterEntries: HealthWaterEntry[];
+  workouts: HealthWorkout[];
 };
 
 type MealDraft = {
@@ -371,6 +379,7 @@ export function HealthPage({
   deleteRecipe,
   deleteSavedMeal,
   deleteWaterEntry,
+  deleteWorkout,
   deleteWeightEntry,
   favorites,
   importAudits,
@@ -392,7 +401,9 @@ export function HealthPage({
   addMealEntry,
   addWeightEntry,
   addWaterEntry,
+  addWorkout,
   updateWaterEntry,
+  updateWorkout,
   updateMealEntry,
   sleepCategory,
   sleepActiveSession,
@@ -402,6 +413,7 @@ export function HealthPage({
   onUpdateSleepSession,
   weightEntries,
   waterEntries,
+  workouts,
 }: HealthPageProps) {
   const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
@@ -1386,6 +1398,17 @@ export function HealthPage({
 
       {activeTab === "Today" ? (
         <div aria-labelledby="health-tab-today" className="mt-6" id={getHealthTabPanelId("Today")} role="tabpanel" />
+      ) : null}
+
+      {activeTab === "Fitness" ? (
+        <HealthFitnessTab
+          addWorkout={addWorkout}
+          deleteWorkout={deleteWorkout}
+          metricEntries={metricEntries}
+          profile={activeProfile}
+          updateWorkout={updateWorkout}
+          workouts={workouts}
+        />
       ) : null}
 
       {activeTab === "Journal" ? (

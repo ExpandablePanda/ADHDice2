@@ -13,14 +13,14 @@ import { isSleepCategory } from "@/lib/focus-goals";
 import { formatHealthFoodQuantityUnit } from "@/lib/health-library";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 
-export type HealthTab = "Today" | "Food" | "Water" | "Journal" | "Weight" | "Sleep" | "Insights" | "Awards";
+export type HealthTab = "Today" | "Food" | "Water" | "Fitness" | "Journal" | "Weight" | "Sleep" | "Insights" | "Awards";
 export type HealthMealSlot = HealthMealEntry["meal_slot"];
 export type WeightUnit = HealthProfile["preferred_weight_unit"];
 export type HealthAchievementCode = HealthAchievementAward["achievement_code"];
 export type HealthReminderTemplateKey = "daily_check_in" | "meal_log" | "weigh_in" | "movement_intention";
 export type HealthSleepKind = "CPAP Sleep" | "CPAP Nap" | "Sleep" | "Nap";
 
-export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Journal", "Weight", "Sleep", "Insights", "Awards"];
+export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards"];
 export const HEALTH_MEAL_SLOTS: HealthMealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
 export const HEALTH_SLEEP_KINDS: readonly HealthSleepKind[] = ["CPAP Sleep", "CPAP Nap", "Sleep", "Nap"];
 export const HEALTH_MOOD_OPTIONS = [1, 2, 3, 4, 5] as const;
