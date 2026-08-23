@@ -181,7 +181,7 @@ export function FocusGoalsPanel({
   history,
   onOpenDailyGoalSurplus,
   onSetFocusReallocationMode,
-  pendingDailyGoalSurplus,
+  manualDailySurplusOpportunity,
 }: {
   activeSessions: Record<string, ActiveFocusSession>;
   adjustments: FocusDailyGoalAdjustment[];
@@ -190,7 +190,7 @@ export function FocusGoalsPanel({
   history: HistoricalFocusSession[];
   onOpenDailyGoalSurplus: () => void;
   onSetFocusReallocationMode: (mode: FocusReallocationMode) => void;
-  pendingDailyGoalSurplus: PendingFocusDailySurplus | null;
+  manualDailySurplusOpportunity: PendingFocusDailySurplus | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [scope, setScope] = useState<FocusGoalScope>("daily");
@@ -376,7 +376,7 @@ export function FocusGoalsPanel({
                     </AdhdChip>
                   ))}
                 </div>
-                {shouldShowManualDailySurplusAction(focusReallocationMode, pendingDailyGoalSurplus) ? (
+                {shouldShowManualDailySurplusAction(focusReallocationMode, manualDailySurplusOpportunity) ? (
                   <AdhdChip onClick={onOpenDailyGoalSurplus} tone="purple">
                     Reallocate
                   </AdhdChip>
