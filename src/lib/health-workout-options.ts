@@ -1,0 +1,28 @@
+export const HEALTH_WORKOUT_TYPES = [
+  "Walking",
+  "Running",
+  "Strength Training",
+  "Cycling",
+  "Cardio",
+  "Stretching",
+  "Sports",
+  "Standing",
+  "Other",
+] as const;
+
+export const HEALTH_WORKOUT_OPTION_MAX_LENGTH = 120;
+
+export function normalizeHealthWorkoutOptionValues(options: readonly string[] | null | undefined) {
+  const normalized: string[] = [];
+  for (const option of options ?? []) {
+    const trimmed = option.trim();
+    if (!trimmed || trimmed.length > HEALTH_WORKOUT_OPTION_MAX_LENGTH) {
+      continue;
+    }
+    if (normalized.some((existing) => existing.toLocaleLowerCase() === trimmed.toLocaleLowerCase())) {
+      continue;
+    }
+    normalized.push(trimmed);
+  }
+  return normalized;
+}

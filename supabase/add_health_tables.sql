@@ -10,6 +10,7 @@ create table if not exists public.adhdice_health_profiles (
   movement_goal_minutes integer check (movement_goal_minutes is null or movement_goal_minutes >= 0),
   sleep_goal_minutes integer check (sleep_goal_minutes is null or sleep_goal_minutes >= 0),
   target_weight_kg numeric(7,2) check (target_weight_kg is null or target_weight_kg > 0),
+  workout_type_options text[] not null default array['Walking', 'Running', 'Strength Training', 'Cycling', 'Cardio', 'Stretching', 'Sports', 'Standing', 'Other']::text[],
   workout_title_options text[] not null default '{}',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
