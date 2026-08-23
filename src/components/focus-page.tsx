@@ -18,7 +18,11 @@ import {
   DEFAULT_PRIMARY_SUBTYPES,
   DEFAULT_SECONDARY_SUBTYPES,
 } from "@/lib/types";
-import { shouldPresentDailySurplusModal } from "@/lib/focus-reallocation";
+import {
+  deriveManualDailySurplusOpportunity,
+  shouldPresentDailySurplusModal,
+  shouldPresentManualDailySurplusModal,
+} from "@/lib/focus-reallocation";
 import {
   buildFocusGoalPlan,
   formatPriorityLabel,
@@ -341,7 +345,19 @@ export function FocusPage({
     setManualReallocationState({ mode: focusReallocationMode, open: false });
     onDismissDailyGoalSurplus();
   };
-  const userCategories = categories.filter((category) => !isSystemCountdownCategoryId(category.id));
+  const userCategories = useMemo(
+    () => categories.filter((category) => !isSystemCountdownCategoryId(category.id)),
+    [categories],
+  );
+  const derivedManualDailySurplus = useMemo(() => deriveManualDailySurplusOpportunity({
+    adjustments,
+    categories: userCategories,
+    history,
+  }), [adjustments, history, userCategories]);
+  const manualDailySurplusOpportunity = pendingDailyGoalSurplus ?? derivedManualDailySurplus;
+  const modalDailySurplus = focusReallocationMode === "manual"
+    ? manualDailySurplusOpportunity
+    : pendingDailyGoalSurplus;
   const displayCategories = getDisplayFocusCategories(categories, activeSessions);
   const countersById = new Map(counters.map((counter) => [counter.id, counter]));
   const counterIconChoices = useMemo(() => {
@@ -711,7 +727,7 @@ export function FocusPage({
         history={history}
         onOpenDailyGoalSurplus={openDailyGoalSurplus}
         onSetFocusReallocationMode={onSetFocusReallocationMode}
-        pendingDailyGoalSurplus={pendingDailyGoalSurplus}
+        manualDailySurplusOpportunity={manualDailySurplusOpportunity}
       />
 
       <FocusCounterHistoryCard
@@ -880,14 +896,16 @@ export function FocusPage({
         />
       ) : null}
 
-      {shouldPresentDailySurplusModal(focusReallocationMode, pendingDailyGoalSurplus, manualReallocationOpen) && pendingDailyGoalSurplus ? (
+      {(shouldPresentDailySurplusModal(focusReallocationMode, pendingDailyGoalSurplus, manualReallocationOpen)
+        || shouldPresentManualDailySurplusModal(focusReallocationMode, manualDailySurplusOpportunity, manualReallocationOpen))
+        && modalDailySurplus ? (
         <DailySurplusReallocationModal
           adjustments={adjustments}
           categories={userCategories}
           history={history}
           onClose={dismissDailyGoalSurplus}
           onSave={onSaveDailyGoalAdjustment}
-          pending={pendingDailyGoalSurplus}
+          pending={modalDailySurplus}
         />
       ) : null}
     </>
