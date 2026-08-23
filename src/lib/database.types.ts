@@ -1651,6 +1651,44 @@ export type HealthMetricEntryUpdate = Partial<
   Pick<HealthMetricEntry, "metric_value" | "source" | "source_fingerprint">
 >;
 
+export type HealthWorkout = {
+  id: string;
+  user_id: string;
+  workout_date: string;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_seconds: number;
+  title: string;
+  workout_type: string;
+  active_calories: number | null;
+  notes: string;
+  source: string;
+  source_external_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthWorkoutInsert = {
+  id?: string;
+  user_id: string;
+  workout_date: string;
+  started_at?: string | null;
+  ended_at?: string | null;
+  duration_seconds: number;
+  title: string;
+  workout_type: string;
+  active_calories?: number | null;
+  notes?: string;
+  source?: string;
+  source_external_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthWorkoutUpdate = Partial<
+  Pick<HealthWorkout, "workout_date" | "started_at" | "ended_at" | "duration_seconds" | "title" | "workout_type" | "active_calories" | "notes">
+>;
+
 export type HealthImportAudit = {
   id: string;
   user_id: string;
@@ -2250,6 +2288,12 @@ export type Database = {
         Row: HealthMetricEntry;
         Insert: HealthMetricEntryInsert;
         Update: HealthMetricEntryUpdate;
+        Relationships: [];
+      };
+      adhdice_health_workouts: {
+        Row: HealthWorkout;
+        Insert: HealthWorkoutInsert;
+        Update: HealthWorkoutUpdate;
         Relationships: [];
       };
       adhdice_health_import_audits: {
