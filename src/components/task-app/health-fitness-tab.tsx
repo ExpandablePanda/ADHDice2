@@ -571,11 +571,16 @@ type FitnessOptionDragState = {
   fromIndex: number;
   handle: HTMLButtonElement;
   pointerId: number;
+  startingOptions: string[];
 };
 
 type FitnessOptionRowGeometry = {
   midpoint: number;
 };
+
+function areFitnessOptionOrdersEqual(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((option, index) => option === right[index]);
+}
 
 function FitnessOptionReorderList({
   disabled = false,
@@ -589,6 +594,7 @@ function FitnessOptionReorderList({
   const dragRef = useRef<FitnessOptionDragState | null>(null);
   const optionsRef = useRef<string[]>([...options]);
   const previewRef = useRef<string[] | null>(null);
+  const committedPreviewRef = useRef<string[] | null>(null);
   const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
   const rowGeometryRef = useRef<Array<FitnessOptionRowGeometry | null>>([]);
   const pendingPointerYRef = useRef<number | null>(null);
@@ -597,7 +603,36 @@ function FitnessOptionReorderList({
 
   useEffect(() => {
     optionsRef.current = [...options];
+    const committedOptions = committedPreviewRef.current;
+    if (committedOptions && !dragRef.current && areFitnessOptionOrdersEqual(options, committedOptions)) {
+      committedPreviewRef.current = null;
+      previewRef.current = null;
+      setPreviewOptions(null);
+    }
   }, [options]);
+
+  function clearCommittedPreview(committedOptions: string[]) {
+    if (committedPreviewRef.current !== committedOptions) {
+      return;
+    }
+    committedPreviewRef.current = null;
+    if (previewRef.current === committedOptions) {
+      previewRef.current = null;
+      setPreviewOptions(null);
+    }
+  }
+
+  async function persistCommittedPreview(committedOptions: string[]) {
+    let saved = false;
+    try {
+      saved = await onSave(committedOptions);
+    } catch {
+      saved = false;
+    }
+    if (!saved) {
+      clearCommittedPreview(committedOptions);
+    }
+  }
 
   function cancelScheduledPointerMove() {
     if (animationFrameRef.current !== null) {
@@ -617,16 +652,24 @@ function FitnessOptionReorderList({
     dragRef.current = null;
     setDraggingIndex(null);
     const nextOptions = previewRef.current;
-    previewRef.current = null;
     rowGeometryRef.current = [];
-    setPreviewOptions(null);
     if (drag.handle.hasPointerCapture(drag.pointerId)) {
       drag.handle.releasePointerCapture(drag.pointerId);
     }
-    if (!nextOptions || nextOptions.length !== optionsRef.current.length || nextOptions.every((option, index) => option === optionsRef.current[index])) {
+    if (!nextOptions || areFitnessOptionOrdersEqual(nextOptions, drag.startingOptions)) {
+      const committedOptions = committedPreviewRef.current;
+      if (!committedOptions) {
+        previewRef.current = null;
+        setPreviewOptions(null);
+      } else if (areFitnessOptionOrdersEqual(optionsRef.current, committedOptions)) {
+        clearCommittedPreview(committedOptions);
+      }
       return;
     }
-    void onSave(nextOptions);
+    const committedOptions = [...nextOptions];
+    committedPreviewRef.current = committedOptions;
+    previewRef.current = committedOptions;
+    void persistCommittedPreview(committedOptions);
   }
 
   function getTargetIndex(clientY: number, currentIndex: number) {
@@ -644,8 +687,8 @@ function FitnessOptionReorderList({
     return targetIndex;
   }
 
-  function cacheRowGeometry() {
-    rowGeometryRef.current = rowRefs.current.slice(0, optionsRef.current.length).map((row) => {
+  function cacheRowGeometry(optionCount: number) {
+    rowGeometryRef.current = rowRefs.current.slice(0, optionCount).map((row) => {
       if (!row) {
         return null;
       }
@@ -661,13 +704,14 @@ function FitnessOptionReorderList({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    const startingOptions = [...optionsRef.current];
-    cacheRowGeometry();
+    const startingOptions = [...(previewRef.current ?? optionsRef.current)];
+    cacheRowGeometry(startingOptions.length);
     dragRef.current = {
       currentIndex: index,
       fromIndex: index,
       handle: event.currentTarget,
       pointerId: event.pointerId,
+      startingOptions,
     };
     previewRef.current = startingOptions;
     setPreviewOptions(startingOptions);
@@ -727,6 +771,7 @@ function FitnessOptionReorderList({
     cancelScheduledPointerMove();
     dragRef.current = null;
     previewRef.current = null;
+    committedPreviewRef.current = null;
     rowGeometryRef.current = [];
   }, []);
 
