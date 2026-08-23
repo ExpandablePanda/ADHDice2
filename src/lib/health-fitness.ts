@@ -6,7 +6,7 @@ import {
   HEALTH_WORKOUT_OPTION_MAX_LENGTH,
 } from "@/lib/health-workout-options";
 
-export { HEALTH_WORKOUT_OPTION_MAX_LENGTH, HEALTH_WORKOUT_TYPES } from "@/lib/health-workout-options";
+export { HEALTH_WORKOUT_OPTION_MAX_LENGTH, HEALTH_WORKOUT_TYPES, moveFitnessOption } from "@/lib/health-workout-options";
 
 export const HEALTH_WORKOUT_TITLE_MAX_LENGTH = 120;
 

@@ -10,6 +10,7 @@ import {
   getHealthDailyMovementMetrics,
   getHealthWeeklyWorkoutSummary,
   HEALTH_WORKOUT_TYPES,
+  moveFitnessOption,
   removeHealthWorkoutTypeOption,
   removeHealthWorkoutTitleOption,
   renameHealthWorkoutTypeOption,
@@ -88,6 +89,27 @@ test("workout type options trim, reject empty and duplicates, rename, remove, an
   assert.deepEqual(renameHealthWorkoutTypeOption(["Walking", "Hiking"], "Hiking", "  Trail Run ").value, ["Walking", "Trail Run"]);
   assert.deepEqual(removeHealthWorkoutTypeOption(["Walking", "Trail Run"], "Trail Run").value, ["Walking"]);
   assert.equal(removeHealthWorkoutTypeOption(["Walking"], "Walking").error, "Keep at least one workout type.");
+});
+
+test("Fitness option reorder moves first-to-last and last-to-first without mutation", () => {
+  const options = ["Walking", "Running", "Standing"];
+  assert.deepEqual(moveFitnessOption(options, 0, 2), ["Running", "Standing", "Walking"]);
+  assert.deepEqual(moveFitnessOption(options, 2, 0), ["Standing", "Walking", "Running"]);
+  assert.deepEqual(options, ["Walking", "Running", "Standing"]);
+});
+
+test("Fitness option reorder is a no-op for same-position and invalid indexes", () => {
+  const options = ["Walking", "Running", "Standing"];
+  assert.deepEqual(moveFitnessOption(options, 1, 1), options);
+  assert.deepEqual(moveFitnessOption(options, -1, 1), options);
+  assert.deepEqual(moveFitnessOption(options, 0, 3), options);
+  assert.deepEqual(moveFitnessOption(options, 0.5, 1), options);
+});
+
+test("Workout title reorder moves first-to-last and last-to-first", () => {
+  const titles = ["Morning Walk", "Trail Hiking", "Evening Run"];
+  assert.deepEqual(moveFitnessOption(titles, 0, 2), ["Trail Hiking", "Evening Run", "Morning Walk"]);
+  assert.deepEqual(moveFitnessOption(titles, 2, 0), ["Evening Run", "Morning Walk", "Trail Hiking"]);
 });
 
 test("old saved Health tab values still normalize through the current tab list", () => {
@@ -184,6 +206,50 @@ test("manual workout entry reads profile workout type options", () => {
   assert.match(fitnessSource, /const workoutTypes = useMemo\([\s\S]*?profile\.workout_type_options\?\.length/);
   assert.match(fitnessSource, /options=\{workoutTypeOptions\}/);
   assert.doesNotMatch(fitnessSource, /const WORKOUT_TYPE_OPTIONS/);
+});
+
+test("Fitness Settings reorders both profile arrays through the existing save authority", () => {
+  assert.match(fitnessSource, /<FitnessOptionReorderList[\s\S]*onSave=\{\(nextOptions\) => saveWorkoutTypeOptions\(nextOptions, "Workout types could not be saved\."\)\}[\s\S]*options=\{workoutTypes\}/);
+  assert.match(fitnessSource, /label="saved workout title"[\s\S]*onSave=\{\(nextOptions\) => saveProfile\(\{ workout_title_options: nextOptions \}\)\}/);
+  assert.match(fitnessSource, /saveProfile\(\{ workout_type_options: nextOptions \}\)/);
+  assert.match(fitnessSource, /moveFitnessOption\(currentOptions, drag\.currentIndex, targetIndex\)/);
+  assert.doesNotMatch(fitnessSource, /sort\(.*workout_type_options|sort\(.*workout_title_options/);
+});
+
+test("Workout dropdown and title autocomplete preserve the persisted profile order", () => {
+  assert.match(fitnessSource, /profile\.workout_type_options\?\.length \? profile\.workout_type_options/);
+  assert.match(fitnessSource, /options=\{workoutTypeOptions\}/);
+  assert.match(fitnessSource, /suggestions=\{savedWorkoutTitles\}/);
+  assert.doesNotMatch(fitnessSource, /workoutTypes\.slice\(\)\.sort|savedWorkoutTitles\.slice\(\)\.sort/);
+});
+
+test("Fitness option drag state cleans up pointer completion and keeps actions separate", () => {
+  assert.match(fitnessSource, /onPointerUp=\{handlePointerEnd\}/);
+  assert.match(fitnessSource, /onPointerCancel=\{handlePointerEnd\}/);
+  assert.match(fitnessSource, /onLostPointerCapture=\{handlePointerEnd\}/);
+  assert.match(fitnessSource, /dragRef\.current = null/);
+  assert.match(fitnessSource, /previewRef\.current = null/);
+  assert.match(fitnessSource, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(fitnessSource, /releasePointerCapture\(drag\.pointerId\)/);
+  assert.match(fitnessSource, /aria-label=\{`Reorder \$\{label\} \$\{option\}`\}/);
+  assert.match(fitnessSource, /aria-label=\{`Rename workout type \$\{type\}`\}/);
+  assert.match(fitnessSource, /aria-label=\{`Remove saved workout title \$\{title\}`\}/);
+});
+
+test("Fitness option dragging saves only on completed reorder and never touches workout rows", () => {
+  const moveStart = fitnessSource.indexOf("function handlePointerMove");
+  const moveEnd = fitnessSource.indexOf("function handlePointerEnd", moveStart);
+  assert.doesNotMatch(fitnessSource.slice(moveStart, moveEnd), /onSave\(/);
+  const reorderStart = fitnessSource.indexOf("function FitnessOptionReorderList");
+  const reorderSection = fitnessSource.slice(reorderStart, fitnessSource.indexOf("function WorkoutHistoryRow", reorderStart));
+  assert.match(reorderSection, /void onSave\(nextOptions\)/);
+  assert.doesNotMatch(reorderSection, /addWorkout|updateWorkout|deleteWorkout|adhdice_health_workouts/);
+});
+
+test("Fitness Settings keeps vertical scrolling while suppressing its visible system scrollbar", () => {
+  assert.match(fitnessSource, /className="adhdice-scrollbar absolute right-0[\s\S]*overflow-y-auto/);
+  assert.match(fitnessSource, /data-fitness-option-list=\{label\}/);
+  assert.doesNotMatch(fitnessSource, /overflow-y-hidden/);
 });
 
 test("Fitness Settings opens and closes through its site-styled control", () => {
@@ -346,11 +412,11 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.11.35 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.11.35");
-  assert.equal(packageLock.version, "7.11.35");
-  assert.equal(packageLock.packages[""].version, "7.11.35");
-  assert.match(appVersionSource, /"version":\s*"7\.11\.35"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.35"/);
+test("all 7.11.36 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.11.36");
+  assert.equal(packageLock.version, "7.11.36");
+  assert.equal(packageLock.packages[""].version, "7.11.36");
+  assert.match(appVersionSource, /"version":\s*"7\.11\.36"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.36"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
 });
