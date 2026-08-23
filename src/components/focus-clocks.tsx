@@ -4,6 +4,7 @@ import { isSystemCountdownCategoryId } from "@/lib/focus-utils";
 import { CategoryIcon } from "./task-app";
 import { formatDuration } from "@/lib/utils";
 import { TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS, TaskTableChipButton } from "./ui/task-table-primitives";
+import { Check } from "lucide-react";
 export { formatDuration } from "@/lib/utils";
 
 const COUNTDOWN_DURATION_PRESETS = [5, 10, 20, 30, 60] as const;
@@ -70,13 +71,26 @@ export function FocusTimerQuickAdjustmentControls({
     }
   };
 
+  const adjustmentTone = adjustmentDirection === 1
+    ? FOCUS_TIMER_SUCCESS_CHIP_TONE
+    : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] hover:bg-[#ffecef] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]";
+
+  const adjustmentCircleBaseClassName = "flex h-14 w-14 items-center justify-center rounded-full border-2 transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40";
+  const adjustmentCircleClassName = `${adjustmentCircleBaseClassName} text-3xl font-semibold leading-none`;
+  const adjustmentCircleInputClassName = `${adjustmentCircleBaseClassName} px-2 text-center text-base font-semibold leading-none outline-none`;
+
+  const adjustmentCircleTone = (direction: 1 | -1) => direction === 1
+    ? "border-[#bcebd8] bg-[#eef9f4] text-[#13845f] shadow-[0_8px_20px_rgba(19,132,95,0.15)] hover:bg-[#e4f6ed] focus-visible:ring-[#8edbbc] dark:border-[#315f51] dark:bg-[#19352e] dark:text-[#7de4b8] dark:hover:bg-[#234438]"
+    : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] shadow-[0_8px_20px_rgba(200,77,104,0.14)] hover:bg-[#ffecef] focus-visible:ring-[#ef9aad] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc] dark:hover:bg-[#452332]";
+
   const customInput = (
     <>
-      <label className="sr-only" htmlFor={customInputId}>Custom adjustment minutes</label>
-      <span className="flex items-center gap-1">
+      <label className="sr-only" htmlFor={customInputId}>Custom minutes</label>
+      <span className={clockFace ? "flex items-center" : "flex items-center gap-1"}>
         <input
           aria-describedby={customHelpId}
-          className={compact ? FOCUS_BAR_ADJUSTMENT_INPUT_CLASS : TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS}
+          aria-label="Custom minutes"
+          className={clockFace ? `${adjustmentCircleInputClassName} ${adjustmentCircleTone(adjustmentDirection)}` : compact ? FOCUS_BAR_ADJUSTMENT_INPUT_CLASS : TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS}
           disabled={isAdjustmentPending}
           id={customInputId}
           inputMode="numeric"
@@ -88,25 +102,21 @@ export function FocusTimerQuickAdjustmentControls({
           type="text"
           value={customMinutes}
         />
-        <span aria-hidden="true" className={`${compact ? "text-[9px]" : "text-[13px]"} font-semibold text-[var(--text-muted)]`}>min</span>
+        {!clockFace ? (
+          <span aria-hidden="true" className={`${compact ? "text-[9px]" : "text-[13px]"} font-semibold text-[var(--text-muted)]`}>min</span>
+        ) : null}
       </span>
       <span className="sr-only" id={customHelpId}>Enter a positive whole number of minutes, then apply the selected direction.</span>
     </>
   );
 
-  const adjustmentTone = adjustmentDirection === 1
-    ? FOCUS_TIMER_SUCCESS_CHIP_TONE
-    : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] hover:bg-[#ffecef] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]";
-
-  const adjustmentCircleClassName = "flex h-14 w-14 items-center justify-center rounded-full border-2 text-3xl font-semibold leading-none transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40";
-
-  const adjustmentCircleTone = (direction: 1 | -1) => direction === 1
-    ? "border-[#bcebd8] bg-[#eef9f4] text-[#13845f] shadow-[0_8px_20px_rgba(19,132,95,0.15)] hover:bg-[#e4f6ed] focus-visible:ring-[#8edbbc] dark:border-[#315f51] dark:bg-[#19352e] dark:text-[#7de4b8] dark:hover:bg-[#234438]"
-    : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] shadow-[0_8px_20px_rgba(200,77,104,0.14)] hover:bg-[#ffecef] focus-visible:ring-[#ef9aad] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc] dark:hover:bg-[#452332]";
-
   const selectDirection = (direction: 1 | -1) => {
     setAdjustmentDirection(direction);
     if (clockFace) setHasSelectedDirection(true);
+  };
+
+  const applyCustomAdjustment = () => {
+    if (customMinuteValue !== null) void submitAdjustment(getFocusTimerAdjustmentDeltaSeconds(adjustmentDirection, customMinuteValue), true);
   };
 
   const clockFaceDirectionButton = (direction: 1 | -1) => (
@@ -155,9 +165,15 @@ export function FocusTimerQuickAdjustmentControls({
               </div>
               <div className="flex flex-wrap items-center justify-center gap-2">
                 {customInput}
-                <TaskTableChipButton aria-label="Apply custom minutes" disabled={customMinuteValue === null || isAdjustmentPending} onClick={() => {
-                  if (customMinuteValue !== null) void submitAdjustment(getFocusTimerAdjustmentDeltaSeconds(adjustmentDirection, customMinuteValue), true);
-                }} toneClassName={adjustmentTone}>Apply</TaskTableChipButton>
+                <button
+                  aria-label="Apply custom minutes"
+                  className={`${adjustmentCircleClassName} ${adjustmentCircleTone(1)}`}
+                  disabled={customMinuteValue === null || isAdjustmentPending}
+                  onClick={applyCustomAdjustment}
+                  type="button"
+                >
+                  <Check aria-hidden="true" className="h-6 w-6" />
+                </button>
               </div>
             </>
           )}
@@ -195,9 +211,7 @@ export function FocusTimerQuickAdjustmentControls({
           </div>
           <div className="flex flex-wrap items-center justify-center gap-0.5">
             {customInput}
-            <TaskTableChipButton aria-label="Apply custom minutes" className="h-5 px-1 py-0 text-[10px]" disabled={customMinuteValue === null || isAdjustmentPending} onClick={() => {
-              if (customMinuteValue !== null) void submitAdjustment(getFocusTimerAdjustmentDeltaSeconds(adjustmentDirection, customMinuteValue), true);
-            }} toneClassName={adjustmentTone}>Apply</TaskTableChipButton>
+            <TaskTableChipButton aria-label="Apply custom minutes" className="h-5 px-1 py-0 text-[10px]" disabled={customMinuteValue === null || isAdjustmentPending} onClick={applyCustomAdjustment} toneClassName={adjustmentTone}>Apply</TaskTableChipButton>
           </div>
         </div>
       ) : null}
