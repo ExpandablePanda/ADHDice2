@@ -320,7 +320,11 @@ test("Clocks opens a direction-first adjustment group inside the centered clock-
   assert.match(focusClocksSource, /const \[hasSelectedDirection, setHasSelectedDirection\] = useState\(false\)/);
   assert.match(focusClocksSource, /clockFaceDirectionButton[\s\S]*?adjustmentCircleClassName/);
   assert.match(focusClocksSource, /const adjustmentCircleBaseClassName = "flex h-14 w-14[^"]*rounded-full/);
-  assert.match(focusClocksSource, /const adjustmentCircleClassName = `\$\{adjustmentCircleBaseClassName\} text-\[2\.5rem\]/);
+  assert.match(focusClocksSource, /const adjustmentGlyphStyle = \{[\s\S]*?fontFamily: "inherit",[\s\S]*?fontSize: "20px",[\s\S]*?fontWeight: 500,[\s\S]*?lineHeight: 1,[\s\S]*?\} as const/);
+  assert.match(focusClocksSource, /const clockFaceDirectionButton[\s\S]*?style=\{adjustmentGlyphStyle\}/);
+  assert.match(clockFaceStageSource, /FOCUS_TIMER_QUICK_ADJUSTMENT_MINUTES\.map\(\(minutes\) => \([\s\S]*?style=\{adjustmentGlyphStyle\}/);
+  assert.doesNotMatch(clockFaceStageSource, /aria-label="Apply custom minutes"[\s\S]*?style=\{adjustmentGlyphStyle\}/);
+  assert.doesNotMatch(customInputSource, /style=\{adjustmentGlyphStyle\}/);
   assert.match(focusClocksSource, /\{!hasSelectedDirection \? \([\s\S]*?\) : \([\s\S]*?aria-label=\{adjustmentDirection === 1 \? "Add time amounts" : "Remove time amounts"\}/);
   assert.match(focusClocksSource, /className=\{`\$\{adjustmentCircleClassName\} \$\{adjustmentCircleTone\(adjustmentDirection\)\}`\}[\s\S]*?\{minutes\}[\s\S]*?<\/button>/);
   assert.match(focusClocksSource, /className=\{clockFace \?[\s\S]*?adjustmentCircleInputClassName[\s\S]*?FOCUS_BAR_ADJUSTMENT_INPUT_CLASS[\s\S]*?TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS\}/);
@@ -405,7 +409,9 @@ test("clock-face custom input is circular, accessible, and direction-colored wit
 test("clock-face custom Apply is a green circular Check control", () => {
   assert.match(clockFaceStageSource, /aria-label="Apply custom minutes"/);
   assert.match(clockFaceStageSource, /adjustmentCircleClassName[\s\S]*?adjustmentCircleTone\(1\)/);
-  assert.match(clockFaceStageSource, /<Check aria-hidden="true" className="h-6 w-6" \/>/);
+  assert.match(clockFaceStageSource, /<FocusTimerCheckIcon className="h-6 w-6" \/>/);
+  assert.match(focusClocksSource, /export function FocusTimerCheckIcon[\s\S]*?strokeWidth="3"[\s\S]*?M5 13l4 4L19 7/);
+  assert.match(focusClocksSource, /aria-label=\{`Submit \$\{category\.title\} timer`\}[\s\S]*?<FocusTimerCheckIcon className="h-5 w-5" \/>/);
   assert.doesNotMatch(clockFaceStageSource, />Apply<\/TaskTableChipButton>/);
   assert.match(clockFaceStageSource, /disabled=\{customMinuteValue === null \|\| isAdjustmentPending\}/);
 });
@@ -420,7 +426,8 @@ test("clock-face amount circles use plain labels, shared sizing, and directional
   assert.match(clockFaceStageSource, /\{minutes\}/);
   assert.doesNotMatch(clockFaceStageSource, /\{adjustmentDirection === 1 \? "\+" : "−"\}\{minutes\}/);
   assert.doesNotMatch(clockFaceStageSource, /\{minutes\}m/);
-  assert.match(focusClocksSource, /const adjustmentCircleClassName = `\$\{adjustmentCircleBaseClassName\} text-\[2\.5rem\]/);
+  assert.match(focusClocksSource, /const adjustmentCircleBaseClassName = "flex h-14 w-14[^"]*rounded-full/);
+  assert.match(focusClocksSource, /const adjustmentGlyphStyle = \{[\s\S]*?fontFamily: "inherit",[\s\S]*?fontSize: "20px",[\s\S]*?fontWeight: 500,[\s\S]*?lineHeight: 1/);
   assert.match(focusClocksSource, /const adjustmentCircleTone = \(direction: 1 \| -1\) => direction === 1[\s\S]*?bcebd8[\s\S]*?f0dbe1/);
 });
 
