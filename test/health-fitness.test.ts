@@ -15,6 +15,7 @@ import {
 import { HEALTH_TABS, normalizeHealthProfile } from "@/lib/health-utils";
 
 const fitnessSource = readFileSync(new URL("../src/components/task-app/health-fitness-tab.tsx", import.meta.url), "utf8");
+const dropdownSource = readFileSync(new URL("../src/components/task-app/health-dropdown.tsx", import.meta.url), "utf8");
 const hookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const pageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../supabase/add_health_fitness_foundation_7_11_33.sql", import.meta.url), "utf8");
@@ -101,6 +102,11 @@ test("saved workout title options trim, reject empty values, and reject case-ins
   assert.equal(addHealthWorkoutTitleOption(["Upper Body"], " upper body ").error, "That saved workout title already exists.");
 });
 
+test("saved workout title options apply the compact length guard", () => {
+  assert.equal(addHealthWorkoutTitleOption([], "x".repeat(121)).value, null);
+  assert.match(addHealthWorkoutTitleOption([], "x".repeat(121)).error ?? "", /120 characters or fewer/);
+});
+
 test("removing a saved title does not mutate workout rows", () => {
   const rows = [workout({ id: "existing-workout", title: "Upper Body" })];
   const nextTitles = removeHealthWorkoutTitleOption(["Upper Body", "Evening Walk"], "Upper Body");
@@ -129,19 +135,30 @@ test("saved titles use the Health profile persistence authority and autocomplete
   assert.match(fitnessSource, /saveProfile: \(updates: HealthProfileUpdate\) => Promise<boolean>/);
   assert.match(fitnessSource, /saveProfile\(\{ workout_title_options: result\.value \}\)/);
   assert.match(fitnessSource, /<HealthAutocomplete[\s\S]*onChange=\{\(value\) => setDraft\(\(current\) => \(\{ \.\.\.current, title: value \}\)\)\}[\s\S]*suggestions=\{savedWorkoutTitles\}/);
+  assert.match(dropdownSource, /onChange\(suggestion\.label\);[\s\S]*onSelect\?\.\(suggestion\)/);
   assert.match(hookSource, /normalizeHealthProfile\(profileResult\.data, userId\)/);
   assert.match(hookSource, /\.from\("adhdice_health_profiles"\)[\s\S]*\.upsert\([\s\S]*\.\.\.updates/);
 });
 
-test("explicit create and edit intent reveals the workout form once without render-triggered scrolling", () => {
+test("explicit Log Workout intent queues one smooth reveal after opening the form", () => {
   assert.match(fitnessSource, /function queueFormReveal\(\)/);
   assert.match(fitnessSource, /pendingRevealRef\.current = true/);
   assert.match(fitnessSource, /workoutFormRef\.current\?\.scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
   assert.match(fitnessSource, /pendingRevealRef\.current = false;[\s\S]*?workoutFormRef\.current/);
   assert.match(fitnessSource, /openCreateForm\(\)[\s\S]*?queueFormReveal\(\)/);
-  assert.match(fitnessSource, /openEditForm\(workout: HealthWorkout\)[\s\S]*?queueFormReveal\(\)/);
+  assert.match(fitnessSource, /onClick=\{isFormOpen \? resetForm : openCreateForm\}/);
   assert.match(fitnessSource, /open=\{isFormOpen \|\| isHistoryPanelOpen\}/);
+});
+
+test("ordinary Fitness rerenders do not repeat the explicit reveal, and Cancel clears it", () => {
+  assert.match(fitnessSource, /if \(!isFormOpen \|\| !pendingRevealRef\.current\)/);
+  assert.match(fitnessSource, /\}, \[isFormOpen, revealRequest\]\);/);
   assert.match(fitnessSource, /function resetForm\(\)[\s\S]*?pendingRevealRef\.current = false/);
+});
+
+test("edit intent also reveals the workout form when the history section is closed", () => {
+  assert.match(fitnessSource, /function openEditForm\(workout: HealthWorkout\)[\s\S]*?setIsFormOpen\(true\);[\s\S]*?queueFormReveal\(\)/);
+  assert.match(fitnessSource, /function queueFormReveal\(\)[\s\S]*?setIsHistoryPanelOpen\(true\)/);
 });
 
 test("workout dates cannot be in the future", () => {
