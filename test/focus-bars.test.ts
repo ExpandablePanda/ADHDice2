@@ -320,7 +320,7 @@ test("Clocks opens a direction-first adjustment group inside the centered clock-
   assert.match(focusClocksSource, /const \[hasSelectedDirection, setHasSelectedDirection\] = useState\(false\)/);
   assert.match(focusClocksSource, /clockFaceDirectionButton[\s\S]*?adjustmentCircleClassName/);
   assert.match(focusClocksSource, /const adjustmentCircleBaseClassName = "flex h-14 w-14[^"]*rounded-full/);
-  assert.match(focusClocksSource, /const adjustmentCircleClassName = `\$\{adjustmentCircleBaseClassName\} text-3xl/);
+  assert.match(focusClocksSource, /const adjustmentCircleClassName = `\$\{adjustmentCircleBaseClassName\} text-\[2\.5rem\]/);
   assert.match(focusClocksSource, /\{!hasSelectedDirection \? \([\s\S]*?\) : \([\s\S]*?aria-label=\{adjustmentDirection === 1 \? "Add time amounts" : "Remove time amounts"\}/);
   assert.match(focusClocksSource, /className=\{`\$\{adjustmentCircleClassName\} \$\{adjustmentCircleTone\(adjustmentDirection\)\}`\}[\s\S]*?\{minutes\}[\s\S]*?<\/button>/);
   assert.match(focusClocksSource, /className=\{clockFace \?[\s\S]*?adjustmentCircleInputClassName[\s\S]*?FOCUS_BAR_ADJUSTMENT_INPUT_CLASS[\s\S]*?TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS\}/);
@@ -385,7 +385,7 @@ test("custom adjustment preserves numeric entry and keeps the compact Focus Bar 
   assert.match(focusClocksSource, /pattern="\[0-9\]\*"/);
   assert.match(focusClocksSource, /type="text"/);
   assert.doesNotMatch(focusClocksSource, /type="number"/);
-  assert.doesNotMatch(focusClocksSource, /placeholder="min"/);
+  assert.match(focusClocksSource, /placeholder=\{clockFace \? "min" : undefined\}/);
   assert.match(focusClocksSource, /className=\{clockFace \?[\s\S]*?adjustmentCircleInputClassName[\s\S]*?FOCUS_BAR_ADJUSTMENT_INPUT_CLASS[\s\S]*?TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS\}/);
   assert.match(customInputSource, /!clockFace \?[\s\S]*?>min<\/span>/);
   assert.match(focusBarsSource, /<FocusTimerQuickAdjustmentControls compact/);
@@ -395,6 +395,7 @@ test("clock-face custom input is circular, accessible, and direction-colored wit
   assert.match(customInputSource, /aria-label="Custom minutes"/);
   assert.match(customInputSource, /adjustmentCircleInputClassName/);
   assert.match(focusClocksSource, /const adjustmentCircleInputClassName =[\s\S]*?text-center/);
+  assert.match(focusClocksSource, /placeholder:text-\[10px\]/);
   assert.match(focusClocksSource, /adjustmentCircleBaseClassName = "flex h-14 w-14[^"]*rounded-full/);
   assert.match(customInputSource, /adjustmentCircleTone\(adjustmentDirection\)/);
   assert.match(focusClocksSource, /adjustmentCircleTone = \(direction: 1 \| -1\) => direction === 1[\s\S]*?bcebd8[\s\S]*?f0dbe1/);
@@ -419,7 +420,7 @@ test("clock-face amount circles use plain labels, shared sizing, and directional
   assert.match(clockFaceStageSource, /\{minutes\}/);
   assert.doesNotMatch(clockFaceStageSource, /\{adjustmentDirection === 1 \? "\+" : "−"\}\{minutes\}/);
   assert.doesNotMatch(clockFaceStageSource, /\{minutes\}m/);
-  assert.match(focusClocksSource, /const adjustmentCircleClassName = `\$\{adjustmentCircleBaseClassName\} text-3xl/);
+  assert.match(focusClocksSource, /const adjustmentCircleClassName = `\$\{adjustmentCircleBaseClassName\} text-\[2\.5rem\]/);
   assert.match(focusClocksSource, /const adjustmentCircleTone = \(direction: 1 \| -1\) => direction === 1[\s\S]*?bcebd8[\s\S]*?f0dbe1/);
 });
 
