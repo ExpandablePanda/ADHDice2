@@ -1,5 +1,6 @@
 export type FocusType = string;
 export type FocusSubtype = string;
+export type FocusReallocationMode = "manual" | "automatic";
 export type FocusTargetDistributionMode = "auto" | "manual";
 export type FocusWeeklySurplusCarryoverMode = "off" | "cap25" | "cap50" | "full";
 export type FocusWeekdayTargetSeconds = Partial<Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", number>>;
