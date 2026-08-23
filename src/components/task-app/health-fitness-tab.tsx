@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Check, Flame, Pencil, Plus, Settings2, Timer, Trash2, X } from "lucide-react";
+import { Activity, Check, Flame, GripVertical, Pencil, Plus, Settings2, Timer, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -27,6 +27,7 @@ import {
   removeHealthWorkoutTypeOption,
   removeHealthWorkoutTitleOption,
   sortHealthWorkouts,
+  moveFitnessOption,
   type HealthWorkoutFormInput,
 } from "@/lib/health-fitness";
 import {
@@ -323,7 +324,7 @@ export function HealthFitnessTab({
           {isSettingsOpen ? (
             <div
               aria-label="Fitness Settings"
-              className="absolute right-0 top-[calc(100%+0.55rem)] z-40 grid max-h-[min(70vh,34rem)] w-[min(36rem,calc(100vw-2rem))] gap-4 overflow-y-auto rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-4 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95"
+              className="adhdice-scrollbar absolute right-0 top-[calc(100%+0.55rem)] z-40 grid max-h-[min(70vh,34rem)] w-[min(36rem,calc(100vw-2rem))] gap-4 overflow-y-auto rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-4 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95"
             >
               <div>
                 <h2 className="text-sm font-bold text-[#26324f] dark:text-white">Fitness Settings</h2>
@@ -354,9 +355,13 @@ export function HealthFitnessTab({
                   <AdhdChip disabled={isSavingTitleOptions} tone="purple" type="submit">Add</AdhdChip>
                 </form>
                 {workoutTypeError ? <p className="text-xs text-[#d65775] dark:text-[#ffb0c1]" role="alert">{workoutTypeError}</p> : null}
-                <div className="grid gap-1.5">
-                  {workoutTypes.map((type) => editingWorkoutType === type ? (
-                    <form className="flex flex-wrap items-center gap-2" key={type} onSubmit={(event) => { event.preventDefault(); void handleRenameWorkoutType(type); }}>
+                <FitnessOptionReorderList
+                  disabled={isSavingTitleOptions}
+                  label="workout type"
+                  onSave={(nextOptions) => saveWorkoutTypeOptions(nextOptions, "Workout types could not be saved.")}
+                  options={workoutTypes}
+                  renderOption={(type) => editingWorkoutType === type ? (
+                    <form className="flex min-w-0 flex-1 flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); void handleRenameWorkoutType(type); }}>
                       <input
                         aria-label={`Rename workout type ${type}`}
                         className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-[12rem] flex-1`}
@@ -373,15 +378,15 @@ export function HealthFitnessTab({
                       <AdhdIconButton aria-label="Cancel workout type rename" disabled={isSavingTitleOptions} onClick={() => setEditingWorkoutType(null)} size="sm" tone="default" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
                     </form>
                   ) : (
-                    <div className="flex items-center justify-between gap-2" key={type}>
-                      <AdhdChip className="pointer-events-none" tone="purple" type="button">{type}</AdhdChip>
+                    <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                      <AdhdChip className="pointer-events-none min-w-0 truncate" tone="purple" type="button">{type}</AdhdChip>
                       <div className="flex items-center gap-1">
                         <AdhdIconButton aria-label={`Rename workout type ${type}`} disabled={isSavingTitleOptions} onClick={() => { setEditingWorkoutType(type); setEditingWorkoutTypeDraft(type); }} size="sm" tone="default" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
                         <AdhdIconButton aria-label={`Remove workout type ${type}`} disabled={isSavingTitleOptions || workoutTypes.length <= 1} onClick={() => { void handleRemoveWorkoutType(type); }} size="sm" tone="danger" variant="rowToolbar"><Trash2 aria-hidden="true" /></AdhdIconButton>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  )}
+                />
               </section>
 
               <section className="grid gap-2 border-t border-[#eeeaf8] pt-4 dark:border-white/10" aria-labelledby="fitness-settings-titles">
@@ -407,9 +412,13 @@ export function HealthFitnessTab({
                 </form>
                 {savedTitleError ? <p className="text-xs text-[#d65775] dark:text-[#ffb0c1]" role="alert">{savedTitleError}</p> : null}
                 {savedWorkoutTitles.length > 0 ? (
-                  <div className="grid gap-1.5">
-                    {savedWorkoutTitles.map((title) => editingSavedTitle === title ? (
-                      <form className="flex flex-wrap items-center gap-2" key={title} onSubmit={(event) => { event.preventDefault(); void handleRenameSavedTitle(title); }}>
+                  <FitnessOptionReorderList
+                    disabled={isSavingTitleOptions}
+                    label="saved workout title"
+                    onSave={(nextOptions) => saveProfile({ workout_title_options: nextOptions })}
+                    options={savedWorkoutTitles}
+                    renderOption={(title) => editingSavedTitle === title ? (
+                      <form className="flex min-w-0 flex-1 flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); void handleRenameSavedTitle(title); }}>
                         <input
                           aria-label={`Rename saved workout title ${title}`}
                           className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-[12rem] flex-1`}
@@ -426,15 +435,15 @@ export function HealthFitnessTab({
                         <AdhdIconButton aria-label="Cancel saved workout title rename" disabled={isSavingTitleOptions} onClick={() => setEditingSavedTitle(null)} size="sm" tone="default" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
                       </form>
                     ) : (
-                      <div className="flex items-center justify-between gap-2" key={title}>
-                        <AdhdChip className="pointer-events-none" tone="purple" type="button">{title}</AdhdChip>
+                      <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                        <AdhdChip className="pointer-events-none min-w-0 truncate" tone="purple" type="button">{title}</AdhdChip>
                         <div className="flex items-center gap-1">
                           <AdhdIconButton aria-label={`Rename saved workout title ${title}`} disabled={isSavingTitleOptions} onClick={() => { setEditingSavedTitle(title); setEditingSavedTitleDraft(title); }} size="sm" tone="default" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
                           <AdhdIconButton aria-label={`Remove saved workout title ${title}`} disabled={isSavingTitleOptions} onClick={() => { void handleRemoveSavedTitle(title); }} size="sm" tone="danger" variant="rowToolbar"><Trash2 aria-hidden="true" /></AdhdIconButton>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    )}
+                  />
                 ) : (
                   <p className="text-xs text-[#8d87a7] dark:text-white/40">No saved titles yet.</p>
                 )}
@@ -545,6 +554,157 @@ export function HealthFitnessTab({
           </div>
         )}
       </HealthCollapsiblePanel>
+    </div>
+  );
+}
+
+type FitnessOptionReorderListProps = {
+  disabled?: boolean;
+  label: string;
+  onSave: (options: string[]) => Promise<boolean>;
+  options: readonly string[];
+  renderOption: (option: string, index: number) => ReactNode;
+};
+
+type FitnessOptionDragState = {
+  currentIndex: number;
+  fromIndex: number;
+  handle: HTMLButtonElement;
+  pointerId: number;
+};
+
+function FitnessOptionReorderList({
+  disabled = false,
+  label,
+  onSave,
+  options,
+  renderOption,
+}: FitnessOptionReorderListProps) {
+  const [previewOptions, setPreviewOptions] = useState<string[] | null>(null);
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  const dragRef = useRef<FitnessOptionDragState | null>(null);
+  const optionsRef = useRef<string[]>([...options]);
+  const previewRef = useRef<string[] | null>(null);
+  const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const visibleOptions = previewOptions ?? options;
+
+  useEffect(() => {
+    optionsRef.current = [...options];
+  }, [options]);
+
+  function clearDragState(pointerId?: number) {
+    const drag = dragRef.current;
+    if (!drag || (pointerId !== undefined && drag.pointerId !== pointerId)) {
+      return;
+    }
+
+    dragRef.current = null;
+    setDraggingIndex(null);
+    const nextOptions = previewRef.current;
+    previewRef.current = null;
+    setPreviewOptions(null);
+    if (drag.handle.hasPointerCapture(drag.pointerId)) {
+      drag.handle.releasePointerCapture(drag.pointerId);
+    }
+    if (!nextOptions || nextOptions.length !== optionsRef.current.length || nextOptions.every((option, index) => option === optionsRef.current[index])) {
+      return;
+    }
+    void onSave(nextOptions);
+  }
+
+  function getTargetIndex(clientY: number, currentIndex: number) {
+    let targetIndex = currentIndex;
+    for (let index = 0; index < visibleOptions.length; index += 1) {
+      const row = rowRefs.current[index];
+      if (!row) {
+        continue;
+      }
+      const bounds = row.getBoundingClientRect();
+      if (clientY < bounds.top + bounds.height / 2) {
+        return index;
+      }
+      targetIndex = index;
+    }
+    return targetIndex;
+  }
+
+  function handlePointerDown(event: React.PointerEvent<HTMLButtonElement>, index: number) {
+    if (disabled || (event.pointerType === "mouse" && event.button !== 0)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const startingOptions = [...optionsRef.current];
+    dragRef.current = {
+      currentIndex: index,
+      fromIndex: index,
+      handle: event.currentTarget,
+      pointerId: event.pointerId,
+    };
+    previewRef.current = startingOptions;
+    setPreviewOptions(startingOptions);
+    setDraggingIndex(index);
+  }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const currentOptions = previewRef.current ?? optionsRef.current;
+    const targetIndex = getTargetIndex(event.clientY, drag.currentIndex);
+    if (targetIndex === drag.currentIndex) {
+      return;
+    }
+    const nextOptions = moveFitnessOption(currentOptions, drag.currentIndex, targetIndex);
+    drag.currentIndex = targetIndex;
+    previewRef.current = nextOptions;
+    setPreviewOptions(nextOptions);
+    setDraggingIndex(targetIndex);
+  }
+
+  function handlePointerEnd(event: React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    clearDragState(event.pointerId);
+  }
+
+  useEffect(() => () => {
+    dragRef.current = null;
+    previewRef.current = null;
+  }, []);
+
+  return (
+    <div className="grid gap-1.5" data-fitness-option-list={label}>
+      {visibleOptions.map((option, index) => (
+        <div
+          className={`flex min-w-0 items-center gap-1.5 rounded-[0.9rem] ${draggingIndex === index ? "bg-[#f7f3ff] dark:bg-white/[0.06]" : ""}`}
+          key={option}
+          ref={(element) => {
+            rowRefs.current[index] = element;
+          }}
+        >
+          <button
+            aria-grabbed={draggingIndex === index}
+            aria-label={`Reorder ${label} ${option}`}
+            className="touch-none inline-flex h-7 w-7 shrink-0 cursor-grab items-center justify-center rounded-full text-[#8d87a7] hover:bg-[#f1ecff] hover:text-[#6f57f6] active:cursor-grabbing dark:text-white/45 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
+            disabled={disabled}
+            draggable={false}
+            onLostPointerCapture={handlePointerEnd}
+            onPointerCancel={handlePointerEnd}
+            onPointerDown={(event) => handlePointerDown(event, index)}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerEnd}
+            type="button"
+          >
+            <GripVertical aria-hidden="true" className="h-4 w-4" />
+          </button>
+          {renderOption(option, index)}
+        </div>
+      ))}
     </div>
   );
 }
