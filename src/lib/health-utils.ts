@@ -216,6 +216,7 @@ export const DEFAULT_HEALTH_PROFILE: Omit<HealthProfile, "created_at" | "updated
   protein_goal_grams: 140,
   sleep_goal_minutes: 480,
   target_weight_kg: null,
+  workout_title_options: [],
   user_id: "",
   fat_goal_grams: 75,
 };
@@ -227,6 +228,19 @@ export function buildDefaultHealthProfile(userId: string): HealthProfile {
     created_at: now,
     updated_at: now,
     user_id: userId,
+  };
+}
+
+export function normalizeHealthProfile(profile: Partial<HealthProfile> | null | undefined, userId: string): HealthProfile {
+  const fallback = buildDefaultHealthProfile(userId);
+  const workoutTitleOptions = Array.isArray(profile?.workout_title_options)
+    ? profile.workout_title_options.filter((title): title is string => typeof title === "string")
+    : [];
+  return {
+    ...fallback,
+    ...profile,
+    user_id: userId,
+    workout_title_options: workoutTitleOptions,
   };
 }
 

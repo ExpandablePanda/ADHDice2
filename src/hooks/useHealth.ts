@@ -37,6 +37,7 @@ import type { AppleHealthImportPreview } from "@/lib/health-apple-import";
 import {
   buildDefaultHealthProfile,
   getEligibleHealthAchievements,
+  normalizeHealthProfile,
   type HealthAchievementCode,
 } from "@/lib/health-utils";
 import {
@@ -131,7 +132,10 @@ function readLocalHealthState(userId: string) {
     importAudits: readStoredJson(storageKey(userId, "imports"), emptyState.importAudits),
     mealEntries: readStoredJson(storageKey(userId, "meals"), emptyState.mealEntries),
     metricEntries: readStoredJson(storageKey(userId, "metrics"), emptyState.metricEntries),
-    profile: readStoredJson(storageKey(userId, "profile"), emptyState.profile),
+    profile: normalizeHealthProfile(
+      readStoredJson<Partial<HealthProfile> | null>(storageKey(userId, "profile"), null),
+      userId,
+    ),
     recipes: readStoredJson(storageKey(userId, "recipes"), emptyState.recipes),
     savedMeals: readStoredJson(storageKey(userId, "saved-meals"), emptyState.savedMeals),
     waterEntries: readStoredJson(storageKey(userId, "water"), emptyState.waterEntries),
@@ -478,7 +482,7 @@ export function useHealth(
         importAudits: importAuditsResult.data ?? [],
         mealEntries: mealEntriesResult.data ?? [],
         metricEntries: metricEntriesResult.data ?? [],
-        profile: profileResult.data ?? buildDefaultHealthProfile(userId),
+        profile: normalizeHealthProfile(profileResult.data, userId),
         recipes: recipesResult.data ?? [],
         savedMeals: savedMealsResult.data ?? [],
         waterEntries: waterEntriesResult.data ?? [],

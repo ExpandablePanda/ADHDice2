@@ -11,8 +11,16 @@ export const HEALTH_WORKOUT_TYPES = [
   "Cardio",
   "Stretching",
   "Sports",
+  "Standing",
   "Other",
 ] as const;
+
+export const HEALTH_WORKOUT_TITLE_MAX_LENGTH = 120;
+
+export type HealthWorkoutTitleOptionResult = {
+  error: string | null;
+  value: string[] | null;
+};
 
 export type HealthWorkoutFormInput = {
   activeCalories: string;
@@ -41,6 +49,30 @@ export type HealthWorkoutWeeklySummary = {
   workoutMinutes: number;
   workouts: number;
 };
+
+export function addHealthWorkoutTitleOption(
+  options: readonly string[],
+  rawTitle: string,
+): HealthWorkoutTitleOptionResult {
+  const title = rawTitle.trim();
+  if (!title) {
+    return { error: "Enter a saved workout title.", value: null };
+  }
+  if (title.length > HEALTH_WORKOUT_TITLE_MAX_LENGTH) {
+    return {
+      error: `Saved workout titles must be ${HEALTH_WORKOUT_TITLE_MAX_LENGTH} characters or fewer.`,
+      value: null,
+    };
+  }
+  if (options.some((option) => option.trim().toLocaleLowerCase() === title.toLocaleLowerCase())) {
+    return { error: "That saved workout title already exists.", value: null };
+  }
+  return { error: null, value: [...options, title] };
+}
+
+export function removeHealthWorkoutTitleOption(options: readonly string[], titleToRemove: string) {
+  return options.filter((title) => title !== titleToRemove);
+}
 
 export function isValidHealthDateKey(dateKey: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
