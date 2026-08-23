@@ -1792,17 +1792,26 @@ function formatInvalidChildLinkCount(count: number) {
   return count === 1 ? "1 invalid step link" : `${count} invalid step links`;
 }
 
+export function getFullEditorChildSectionLabels(depth: number) {
+  return depth === 0
+    ? { action: "Add Step", heading: "Steps" }
+    : { action: "Add Substep", heading: "Substeps" };
+}
+
 function SameTableStepCreationControl({
+  childLabel = "Step",
   creationBlocked,
   iconOnly = false,
   onCreateChildTask,
   parentTaskId,
 }: {
+  childLabel?: "Step" | "Substep";
   creationBlocked?: boolean;
   iconOnly?: boolean;
   onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
   parentTaskId: string;
 }) {
+  const childLabelLower = childLabel.toLowerCase();
   const [isCreating, setIsCreating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -1819,11 +1828,11 @@ function SameTableStepCreationControl({
   async function handleCreateChildTask() {
     const nextTitle = titleDraft.trim();
     if (!nextTitle) {
-      setCreationError("Enter a step title.");
+      setCreationError(`Enter a ${childLabelLower} title.`);
       return;
     }
     if (!onCreateChildTask || creationBlocked) {
-      setCreationError("Step creation is blocked for this task.");
+      setCreationError(`${childLabel} creation is blocked for this task.`);
       return;
     }
 
@@ -1853,7 +1862,7 @@ function SameTableStepCreationControl({
 
   if (showCreationBlockedMessage) {
     return (
-      <p className="text-xs text-[#9a7a24] dark:text-[#f3d38a]">Step creation is blocked until the hierarchy issue is fixed.</p>
+      <p className="text-xs text-[#9a7a24] dark:text-[#f3d38a]">{`${childLabel} creation is blocked until the hierarchy issue is fixed.`}</p>
     );
   }
 
@@ -1861,7 +1870,7 @@ function SameTableStepCreationControl({
     if (iconOnly) {
       return (
         <button
-          aria-label="Add Step"
+          aria-label={`Add ${childLabel}`}
           className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
           data-step-row-add={parentTaskId}
           onClick={() => {
@@ -1877,7 +1886,7 @@ function SameTableStepCreationControl({
 
     return (
       <button
-        aria-label="Add Step"
+        aria-label={`Add ${childLabel}`}
         className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
         onClick={() => {
           setCreationError(null);
@@ -1893,7 +1902,7 @@ function SameTableStepCreationControl({
   return (
     <div className="w-full">
       {showCreationBlockedMessage ? (
-        <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">Step creation is blocked until the hierarchy issue is fixed.</p>
+        <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">{`${childLabel} creation is blocked until the hierarchy issue is fixed.`}</p>
       ) : null}
       <form
         className="rounded-[0.85rem] border border-[#e5dcfb] bg-white p-2 dark:border-white/10 dark:bg-[#1b1530]/80"
@@ -1903,7 +1912,7 @@ function SameTableStepCreationControl({
         }}
       >
         <label className="block">
-          <span className="sr-only">Step title</span>
+          <span className="sr-only">{`${childLabel} title`}</span>
           <input
             className={`${OVERLAY_INPUT_CLASS} h-10 rounded-[0.8rem] text-sm`}
             disabled={isSubmitting}
@@ -1919,7 +1928,7 @@ function SameTableStepCreationControl({
                 cancelCreateChildTask();
               }
             }}
-            placeholder="Step title"
+            placeholder={`${childLabel} title`}
             ref={inputRef}
             value={titleDraft}
           />
@@ -1932,7 +1941,7 @@ function SameTableStepCreationControl({
             type="submit"
             toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
           >
-            {isSubmitting ? "Adding..." : "Add"}
+            {isSubmitting ? "Adding..." : `Add ${childLabel}`}
           </TaskTableChipButton>
         </div>
       </form>
@@ -2627,8 +2636,9 @@ export function TaskManagementTableV2({
     for (const [groupParentTaskId, group] of Object.entries(childTaskPreviewByParentTaskId)) {
       for (const item of group.items) {
         const parentTaskId = item.parentTaskId ?? groupParentTaskId;
+        const existing = parentInfo.get(item.id);
         parentInfo.set(item.id, {
-          depth: item.depth,
+          depth: Math.max(existing?.depth ?? 0, item.depth),
           parentTaskId,
           parentTitle: taskTitleById.get(parentTaskId) ?? "Parent task",
         });
@@ -9361,11 +9371,13 @@ export function TaskManagementTableV2({
                 const hasSameTableStepRows = Boolean(childTaskPreviewGroup && (childTaskPreviewGroup.items.length > 0 || childTaskPreviewGroup.summary.hasInvalidDescendants));
                 const sameTableStepRowsNode = overlayMode === "full" ? renderEditorChildTaskRows(selectedTask.id, childTaskPreviewGroup) : null;
                 const hasUnifiedStepRows = hasSameTableStepRows || selectedTaskVisibleSubtasks.length > 0;
-                const showNestedStepsEditor = overlayMode === "full" && !selectedTaskParentInfo;
+                const selectedTaskHierarchyDepth = selectedTaskParentInfo?.depth ?? 0;
+                const fullEditorChildSectionLabels = getFullEditorChildSectionLabels(selectedTaskHierarchyDepth);
+                const showNestedStepsEditor = overlayMode === "full";
                 const stepsEditorNode = showNestedStepsEditor ? (
                   <div className="mt-3 rounded-[1rem] border border-[#ede7f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Steps</p>
+                      <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">{fullEditorChildSectionLabels.heading}</p>
                       <div className="flex flex-wrap items-center gap-2">
                         <TaskTableChipButton
                           onClick={() => setTaskSubtasksAutoReset(selectedTask.id, !selectedTask.subtasksAutoReset)}
@@ -9374,6 +9386,7 @@ export function TaskManagementTableV2({
                           {selectedTask.subtasksAutoReset ? "Reset step status on new due date" : "Keep step status on new due date"}
                         </TaskTableChipButton>
                         <SameTableStepCreationControl
+                          childLabel={fullEditorChildSectionLabels.action === "Add Step" ? "Step" : "Substep"}
                           creationBlocked={childTaskCreationBlockedTaskIds.includes(selectedTask.id)}
                           iconOnly
                           onCreateChildTask={onCreateChildTask}
