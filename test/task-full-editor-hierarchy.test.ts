@@ -22,6 +22,9 @@ const editorSaveSource = readFileSync("src/hooks/useTaskEditorSaveAction.ts", "u
 const fullEditorStart = tableSource.indexOf("const childTaskPreviewGroup = overlayMode === \"full\"");
 const fullEditorEnd = tableSource.indexOf("const shouldShowDetachedTaskNotice", fullEditorStart);
 const fullEditorSource = tableSource.slice(fullEditorStart, fullEditorEnd);
+const editorChildRowsStart = tableSource.indexOf("const renderEditorChildTaskRows");
+const editorChildRowsEnd = tableSource.indexOf("const getStepMiniCellActionMode", editorChildRowsStart);
+const editorChildRowsSource = tableSource.slice(editorChildRowsStart, editorChildRowsEnd);
 
 assert.ok(fullEditorStart >= 0, "full editor child section should be discoverable");
 assert.ok(fullEditorEnd > fullEditorStart, "full editor child section boundary should be discoverable");
@@ -36,6 +39,29 @@ test("depth-1 Step full editor uses Substeps and Add Substep", () => {
 
 test("depth-2 Substep full editor keeps the Substeps label", () => {
   assert.deepEqual(getFullEditorChildSectionLabels(2), { action: "Add Substep", heading: "Substeps" });
+});
+
+test("every full-editor descendant row exposes Add Substep", () => {
+  for (const depth of [1, 2, 5]) {
+    assert.deepEqual(getFullEditorChildSectionLabels(depth), { action: "Add Substep", heading: "Substeps" });
+  }
+  assert.match(editorChildRowsSource, /data-same-table-step-add=\{item\.id\}/);
+  assert.match(editorChildRowsSource, /aria-label=\{`Add substep to \$\{item\.title \|\| "Untitled step"\}`\}/);
+  assert.match(editorChildRowsSource, /beginTableStepDraft\(item\.id, "Substep"\)/);
+});
+
+test("row child creation uses the clicked row ID and renders its form beneath that row", () => {
+  assert.match(tableSource, /onCreateChildTask\(parentTaskId, nextTitle\)/);
+  assert.match(editorChildRowsSource, /data-full-editor-child-draft-row=\{item\.id\}/);
+  assert.ok(editorChildRowsSource.indexOf("data-same-table-step-row={item.id}") < editorChildRowsSource.indexOf("data-full-editor-child-draft-row={item.id}"));
+  assert.match(editorChildRowsSource, /placeholder="Substep title\.\.\."/);
+  assert.match(editorChildRowsSource, /Add Substep\s*<\/TaskTableChipButton>/);
+});
+
+test("blocked hierarchy rows cannot open row child creation", () => {
+  assert.match(editorChildRowsSource, /onCreateChildTask && !childTaskCreationBlockedTaskIds\.includes\(item\.id\)/);
+  assert.match(tableSource, /if \(!onCreateChildTask \|\| childTaskCreationBlockedTaskIds\.includes\(parentTaskId\)\)/);
+  assert.match(editorChildRowsSource, /Substep creation is blocked until the hierarchy issue is fixed\./);
 });
 
 test("deep descendants keep child creation enabled without a depth cutoff", () => {
@@ -53,6 +79,12 @@ test("full editor child creation preserves the selected Task as the canonical pa
   const result = buildChildTaskCreationDraft({ parentTaskId: "depth-20-substep", title: "Another substep" });
   assert.equal(result.ok, true);
   assert.equal(result.draft?.parent_task_id, "depth-20-substep");
+});
+
+test("section-level parent creation remains Add Step while row creation is Add Substep", () => {
+  assert.match(fullEditorSource, /childLabel=\{fullEditorChildSectionLabels\.action === "Add Step" \? "Step" : "Substep"\}/);
+  assert.match(fullEditorSource, /parentTaskId=\{selectedTask\.id\}/);
+  assert.match(editorChildRowsSource, /beginTableStepDraft\(item\.id, "Substep"\)/);
 });
 
 test("recursive child display and editor save remain wired", () => {
