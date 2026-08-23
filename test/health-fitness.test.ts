@@ -227,13 +227,40 @@ test("Fitness option drag state cleans up pointer completion and keeps actions s
   assert.match(fitnessSource, /onPointerUp=\{handlePointerEnd\}/);
   assert.match(fitnessSource, /onPointerCancel=\{handlePointerEnd\}/);
   assert.match(fitnessSource, /onLostPointerCapture=\{handlePointerEnd\}/);
-  assert.match(fitnessSource, /dragRef\.current = null/);
-  assert.match(fitnessSource, /previewRef\.current = null/);
   assert.match(fitnessSource, /setPointerCapture\(event\.pointerId\)/);
   assert.match(fitnessSource, /releasePointerCapture\(drag\.pointerId\)/);
+  assert.match(fitnessSource, /cancelAnimationFrame\(animationFrameRef\.current\)/);
+  assert.match(fitnessSource, /useEffect\(\(\) => \(\) => \{[\s\S]*?cancelScheduledPointerMove\(\)/);
+  assert.match(fitnessSource, /dragRef\.current = null/);
+  assert.match(fitnessSource, /previewRef\.current = null/);
   assert.match(fitnessSource, /aria-label=\{`Reorder \$\{label\} \$\{option\}`\}/);
   assert.match(fitnessSource, /aria-label=\{`Rename workout type \$\{type\}`\}/);
   assert.match(fitnessSource, /aria-label=\{`Remove saved workout title \$\{title\}`\}/);
+});
+
+test("Fitness option dragging caches row geometry and gates pointer movement to one frame", () => {
+  const reorderStart = fitnessSource.indexOf("function FitnessOptionReorderList");
+  const reorderSection = fitnessSource.slice(reorderStart, fitnessSource.indexOf("function WorkoutHistoryRow", reorderStart));
+  const moveStart = reorderSection.indexOf("function handlePointerMove");
+  const moveSection = reorderSection.slice(moveStart, reorderSection.indexOf("function handlePointerEnd", moveStart));
+  assert.match(reorderSection, /rowGeometryRef = useRef<Array<FitnessOptionRowGeometry \| null>>\(\[\]\)/);
+  assert.match(reorderSection, /function cacheRowGeometry\(\)/);
+  assert.match(reorderSection, /cacheRowGeometry\(\);[\s\S]*?dragRef\.current = \{/);
+  assert.match(reorderSection, /const bounds = row\.getBoundingClientRect\(\)/);
+  assert.doesNotMatch(moveSection, /getBoundingClientRect/);
+  assert.match(moveSection, /pendingPointerYRef\.current = event\.clientY/);
+  assert.match(moveSection, /requestAnimationFrame\(\(\) => \{/);
+  assert.match(moveSection, /if \(animationFrameRef\.current !== null\) \{\s+return;/);
+  assert.match(reorderSection, /cancelScheduledPointerMove\(\);[\s\S]*?processPointerMove\(pointerY\)/);
+});
+
+test("Fitness option dragging avoids preview state churn within the same target row", () => {
+  const reorderStart = fitnessSource.indexOf("function FitnessOptionReorderList");
+  const reorderSection = fitnessSource.slice(reorderStart, fitnessSource.indexOf("function WorkoutHistoryRow", reorderStart));
+  const processStart = reorderSection.indexOf("function processPointerMove");
+  const processSection = reorderSection.slice(processStart, reorderSection.indexOf("function handlePointerMove", processStart));
+  assert.match(processSection, /if \(targetIndex === drag\.currentIndex\) \{\s+return;[\s\S]*?setPreviewOptions\(nextOptions\);[\s\S]*?setDraggingIndex\(targetIndex\);/);
+  assert.doesNotMatch(processSection.slice(0, processSection.indexOf("if (targetIndex === drag.currentIndex)")), /setPreviewOptions|setDraggingIndex/);
 });
 
 test("Fitness option dragging saves only on completed reorder and never touches workout rows", () => {
@@ -412,11 +439,11 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.11.36 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.11.36");
-  assert.equal(packageLock.version, "7.11.36");
-  assert.equal(packageLock.packages[""].version, "7.11.36");
-  assert.match(appVersionSource, /"version":\s*"7\.11\.36"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.36"/);
+test("all 7.11.37 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.11.37");
+  assert.equal(packageLock.version, "7.11.37");
+  assert.equal(packageLock.packages[""].version, "7.11.37");
+  assert.match(appVersionSource, /"version":\s*"7\.11\.37"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.37"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
 });
