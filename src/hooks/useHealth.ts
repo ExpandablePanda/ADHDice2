@@ -47,6 +47,7 @@ import {
   setHealthFoodFavoriteStatus,
 } from "@/lib/health-library";
 import {
+  reconcileHealthWorkouts,
   sortHealthWorkouts,
   validateHealthWorkoutEditableInput,
 } from "@/lib/health-fitness";
@@ -475,6 +476,32 @@ export function useHealth(
         });
       }
 
+      const remoteWorkouts = sortHealthWorkouts(workoutsResult.data ?? []);
+      const latestLocalWorkouts = healthSnapshotRef.current?.workouts ?? localState.workouts;
+      const workoutRecovery = workoutsResult.error
+        ? { mergedWorkouts: latestLocalWorkouts, unreconciledLocalWorkouts: [] }
+        : reconcileHealthWorkouts(latestLocalWorkouts, remoteWorkouts);
+
+      if (!workoutsResult.error && workoutRecovery.unreconciledLocalWorkouts.length > 0) {
+        const { error: recoveryError } = await client
+          .from("adhdice_health_workouts")
+          .upsert(
+            workoutRecovery.unreconciledLocalWorkouts.map((workout) => ({ ...workout, user_id: userId })),
+            { ignoreDuplicates: true, onConflict: "id" },
+          );
+        if (recoveryError) {
+          workoutRemoteEnabledRef.current = false;
+          setMessage({
+            tone: "warn",
+            text: "Fitness workout recovery could not finish. The local workout is still visible and will be retried.",
+          });
+        }
+      }
+
+      if (!isActive) {
+        return;
+      }
+
       const remoteSnapshot = buildHealthSnapshot({
         awards: awardsResult.data ?? [],
         checkIns: checkInsResult.data ?? [],
@@ -486,9 +513,7 @@ export function useHealth(
         recipes: recipesResult.data ?? [],
         savedMeals: savedMealsResult.data ?? [],
         waterEntries: waterEntriesResult.data ?? [],
-        workouts: workoutsResult.error
-          ? localState.workouts
-          : sortHealthWorkouts(workoutsResult.data ?? []),
+        workouts: workoutRecovery.mergedWorkouts,
         weightEntries: weightEntriesResult.data ?? [],
       });
       const currentSnapshot = healthSnapshotRef.current;

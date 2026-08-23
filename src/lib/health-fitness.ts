@@ -243,6 +243,20 @@ export function sortHealthWorkouts(workouts: HealthWorkout[]) {
   });
 }
 
+export function reconcileHealthWorkouts(localWorkouts: HealthWorkout[], remoteWorkouts: HealthWorkout[]) {
+  const remoteIds = new Set(remoteWorkouts.map((workout) => workout.id));
+  const unreconciledLocalWorkouts = localWorkouts.filter((workout) => !remoteIds.has(workout.id));
+  const mergedWorkouts = sortHealthWorkouts([
+    ...remoteWorkouts,
+    ...unreconciledLocalWorkouts,
+  ]);
+
+  return {
+    mergedWorkouts,
+    unreconciledLocalWorkouts,
+  };
+}
+
 export function getHealthWeekBounds(asOfDate = todayHealthDate()) {
   const date = new Date(`${asOfDate}T12:00:00`);
   const mondayOffset = (date.getDay() + 6) % 7;

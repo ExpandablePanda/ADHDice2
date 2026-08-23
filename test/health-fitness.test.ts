@@ -11,6 +11,7 @@ import {
   getHealthWeeklyWorkoutSummary,
   HEALTH_WORKOUT_TYPES,
   moveFitnessOption,
+  reconcileHealthWorkouts,
   removeHealthWorkoutTypeOption,
   removeHealthWorkoutTitleOption,
   renameHealthWorkoutTypeOption,
@@ -404,6 +405,63 @@ test("workout history sorts newest date and start time first", () => {
   assert.deepEqual(ordered.map((entry) => entry.id), ["late", "early", "yesterday"]);
 });
 
+test("fallback workout remains visible before remote recovery", () => {
+  const fallbackWorkout = workout({ id: "fallback-workout", title: "Fallback Walk" });
+  const recovery = reconcileHealthWorkouts([fallbackWorkout], []);
+  assert.deepEqual(recovery.unreconciledLocalWorkouts, [fallbackWorkout]);
+  assert.deepEqual(recovery.mergedWorkouts, [fallbackWorkout]);
+  assert.match(hookSource, /id: normalizedInput\.id \?\? createLocalId\("health-workout"\)/);
+});
+
+test("remote recovery promotes local-only workouts using their existing identity and data", () => {
+  const fallbackWorkout = workout({ id: "fallback-workout", title: "Fallback Walk", notes: "Keep this" });
+  const recovery = reconcileHealthWorkouts([fallbackWorkout], []);
+  assert.deepEqual(recovery.unreconciledLocalWorkouts[0], fallbackWorkout);
+  assert.match(hookSource, /\.from\("adhdice_health_workouts"\)[\s\S]*?\.upsert\([\s\S]*?workoutRecovery\.unreconciledLocalWorkouts/);
+  assert.match(hookSource, /ignoreDuplicates: true, onConflict: "id"/);
+});
+
+test("remote and local workouts merge without loss", () => {
+  const remoteWorkout = workout({ id: "remote-workout", title: "Remote" });
+  const fallbackWorkout = workout({ id: "fallback-workout", title: "Local" });
+  const recovery = reconcileHealthWorkouts([remoteWorkout, fallbackWorkout], [remoteWorkout]);
+  assert.deepEqual(new Set(recovery.mergedWorkouts.map((entry) => entry.id)), new Set(["remote-workout", "fallback-workout"]));
+});
+
+test("repeated recovery is idempotent and successful hydration keeps the promoted workout", () => {
+  const fallbackWorkout = workout({ id: "fallback-workout" });
+  const firstRecovery = reconcileHealthWorkouts([fallbackWorkout], []);
+  const secondRecovery = reconcileHealthWorkouts(firstRecovery.mergedWorkouts, firstRecovery.mergedWorkouts);
+  assert.deepEqual(secondRecovery.unreconciledLocalWorkouts, []);
+  assert.equal(new Set(secondRecovery.mergedWorkouts.map((entry) => entry.id)).size, 1);
+  assert.deepEqual(secondRecovery.mergedWorkouts, [fallbackWorkout]);
+});
+
+test("a remote row with the same identity wins without being overwritten", () => {
+  const remoteWorkout = workout({ id: "same-id", title: "Canonical Remote" });
+  const staleLocalWorkout = workout({ id: "same-id", title: "Stale Local" });
+  const recovery = reconcileHealthWorkouts([staleLocalWorkout], [remoteWorkout]);
+  assert.deepEqual(recovery.unreconciledLocalWorkouts, []);
+  assert.equal(recovery.mergedWorkouts[0]?.title, "Canonical Remote");
+});
+
+test("similar legitimate workouts remain distinct because recovery deduplicates by id only", () => {
+  const firstWorkout = workout({ id: "similar-one", title: "Walk", duration_seconds: 1800 });
+  const secondWorkout = workout({ id: "similar-two", title: "Walk", duration_seconds: 1800 });
+  const recovery = reconcileHealthWorkouts([firstWorkout, secondWorkout], []);
+  assert.equal(recovery.mergedWorkouts.length, 2);
+  assert.deepEqual(recovery.mergedWorkouts.map((entry) => entry.id).sort(), ["similar-one", "similar-two"]);
+});
+
+test("failed recovery keeps local rows visible and enables a later hydration retry", () => {
+  const recoveryStart = hookSource.indexOf("const workoutRecovery =");
+  const recoveryEnd = hookSource.indexOf("const remoteSnapshot =", recoveryStart);
+  const recoverySection = hookSource.slice(recoveryStart, recoveryEnd);
+  assert.match(hookSource.slice(recoveryStart), /workoutRecovery\.mergedWorkouts/);
+  assert.match(recoverySection, /if \(recoveryError\) \{[\s\S]*?workoutRemoteEnabledRef\.current = false[\s\S]*?local workout is still visible[\s\S]*?retried/);
+  assert.match(hookSource, /workoutRemoteEnabledRef\.current = !workoutsResult\.error[\s\S]*?reconcileHealthWorkouts/);
+});
+
 test("weekly workout totals count sessions, seconds-derived minutes, and non-null calories", () => {
   const summary = getHealthWeeklyWorkoutSummary([
     workout({ active_calories: 250, duration_seconds: 2700, id: "one", workout_date: "2026-08-18" }),
@@ -441,6 +499,15 @@ test("workout CRUD remains isolated from daily metric rows and local persistence
   assert.match(hookSource, /workoutsResult\.error[\s\S]*?setStorageMode\("remote"\)/);
 });
 
+test("imported workout behavior remains read-only and outside recovery CRUD", () => {
+  const importStart = hookSource.indexOf("async function importAppleHealthData");
+  const importSection = hookSource.slice(importStart);
+  assert.match(hookSource, /existingWorkout\.source !== "manual"/);
+  assert.match(hookSource, /Imported workouts cannot be edited yet/);
+  assert.match(hookSource, /Imported workouts cannot be deleted yet/);
+  assert.doesNotMatch(importSection, /reconcileHealthWorkouts|adhdice_health_workouts/);
+});
+
 test("workout type and title option changes do not call workout CRUD", () => {
   for (const functionName of ["handleAddWorkoutType", "handleRenameWorkoutType", "handleRemoveWorkoutType", "handleRenameSavedTitle", "handleRemoveSavedTitle"]) {
     const start = fitnessSource.indexOf(`async function ${functionName}`);
@@ -470,11 +537,11 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.11.38 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.11.38");
-  assert.equal(packageLock.version, "7.11.38");
-  assert.equal(packageLock.packages[""].version, "7.11.38");
-  assert.match(appVersionSource, /"version":\s*"7\.11\.38"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.38"/);
+test("all 7.11.39 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.11.39");
+  assert.equal(packageLock.version, "7.11.39");
+  assert.equal(packageLock.packages[""].version, "7.11.39");
+  assert.match(appVersionSource, /"version":\s*"7\.11\.39"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.39"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
 });
