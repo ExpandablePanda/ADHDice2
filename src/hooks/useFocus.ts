@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
-import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype, FocusDailyGoalAdjustment, PendingFocusDailySurplus } from "@/lib/types";
+import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype, FocusDailyGoalAdjustment, FocusReallocationMode, PendingFocusDailySurplus } from "@/lib/types";
 import type { FocusCategory as DbFocusCategory, FocusDailyGoalAdjustment as DbFocusDailyGoalAdjustment, FocusSession as DbFocusSession } from "@/lib/database.types";
 import { buildFocusGoalPlan, getMondayWeekRange, getPromptedDailySurplusSeconds, normalizeCarryoverMode, normalizeDistributionMode, normalizePriorityLevel } from "@/lib/focus-goals";
 import {
@@ -36,6 +36,7 @@ import {
   type FocusCounterMutationResult,
   type FocusCounterRow,
 } from "@/lib/focus-counter-sync";
+import { normalizeFocusReallocationMode, readFocusReallocationMode, writeFocusReallocationMode } from "@/lib/focus-reallocation";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (msg: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
@@ -279,7 +280,11 @@ export function useFocus(
   const [activeSessions, setActiveSessions] = useState<Record<string, ActiveFocusSession>>({});
   const [focusHistory, setFocusHistory] = useState<HistoricalFocusSession[]>([]);
   const [focusDailyGoalAdjustments, setFocusDailyGoalAdjustments] = useState<FocusDailyGoalAdjustment[]>([]);
-  const [pendingDailyGoalSurplus, setPendingDailyGoalSurplus] = useState<PendingFocusDailySurplus | null>(null);
+  const [pendingDailyGoalSurplusState, setPendingDailyGoalSurplusState] = useState<{ pending: PendingFocusDailySurplus | null; ownerUserId: string | null }>({ pending: null, ownerUserId: null });
+  const [focusReallocationModeState, setFocusReallocationModeState] = useState<{ mode: FocusReallocationMode; ownerUserId: string | null }>(() => ({
+    mode: readFocusReallocationMode(userId),
+    ownerUserId: userId,
+  }));
   const [focusCounterState, setFocusCounterState] = useState<FocusCounterState>({ counters: [], history: [], ownerUserId: null });
   const suppressCategoryReload = useRef(false);
   const activeSessionsRef = useRef(activeSessions);
@@ -298,6 +303,12 @@ export function useFocus(
   const counterChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
   const focusCounters = focusCounterState.ownerUserId === userId ? focusCounterState.counters : [];
   const focusCounterHistory = focusCounterState.ownerUserId === userId ? focusCounterState.history : [];
+  const pendingDailyGoalSurplus = pendingDailyGoalSurplusState.ownerUserId === userId
+    ? pendingDailyGoalSurplusState.pending
+    : null;
+  const focusReallocationMode = focusReallocationModeState.ownerUserId === userId
+    ? focusReallocationModeState.mode
+    : readFocusReallocationMode(userId);
 
   useEffect(() => {
     activeSessionsRef.current = activeSessions;
@@ -316,6 +327,16 @@ export function useFocus(
   useEffect(() => {
     runtimeRequestGenerationRef.current += 1;
     runtimeClosedRevisionsRef.current.clear();
+  }, [userId]);
+
+  const setFocusReallocationMode = useCallback((mode: FocusReallocationMode) => {
+    const normalizedMode = normalizeFocusReallocationMode(mode);
+    setFocusReallocationModeState({ mode: normalizedMode, ownerUserId: userId });
+    writeFocusReallocationMode(userId, normalizedMode);
+  }, [userId]);
+
+  const setPendingDailyGoalSurplus = useCallback((pending: PendingFocusDailySurplus | null) => {
+    setPendingDailyGoalSurplusState({ pending, ownerUserId: pending ? userId : null });
   }, [userId]);
 
   useEffect(() => {
@@ -345,7 +366,7 @@ export function useFocus(
         }
         setFocusDailyGoalAdjustments((data ?? []).map(mapFocusDailyGoalAdjustmentRow));
       });
-  }, [client, historyActive, setMessage, userId]);
+  }, [client, historyActive, setMessage, setPendingDailyGoalSurplus, userId]);
 
   useEffect(() => {
     if (!client || !userId || !historyActive || loadedFocusHistoryUserIdRef.current === userId) return;
@@ -1304,6 +1325,8 @@ export function useFocus(
     focusDailyGoalAdjustments,
     pendingDailyGoalSurplus,
     setPendingDailyGoalSurplus,
+    focusReallocationMode,
+    setFocusReallocationMode,
     setFocusHistory,
     suppressCategoryReload,
     handleToggleTimer,

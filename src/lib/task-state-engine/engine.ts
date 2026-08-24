@@ -74,6 +74,12 @@ function occurrenceDateFromIdentity(identity: string | null | undefined) {
   return date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
 }
 
+function isIndependentDailyRecurrence(recurrence: TaskRecurrence) {
+  return recurrence.kind === "rolling"
+    && recurrence.intervalDays === 1
+    && recurrence.untilComplete !== true;
+}
+
 type UnresolvedMissedOccurrence = {
   ambiguous: boolean;
   dueOn: string | null;
@@ -93,6 +99,7 @@ export function findUnresolvedMissedOccurrence(
   history: readonly TaskStateHistoryRow[],
 ): UnresolvedMissedOccurrence {
   const rows = history.filter((row) => row.taskId === task.id && row.recurrenceAuthoritative !== false);
+  const independentDaily = isIndependentDailyRecurrence(task.recurrence);
   const resolvedKeys = new Set(
     rows
       .filter((row) => row.outcome !== "missed")
@@ -104,6 +111,11 @@ export function findUnresolvedMissedOccurrence(
   const laterNonMissedDates = new Set(
     rows
       .filter((row) => row.outcome !== "missed")
+      .map((row) => row.logicalDate),
+  );
+  const laterSuccessfulDates = new Set(
+    rows
+      .filter((row) => SUCCESS.has(row.outcome))
       .map((row) => row.logicalDate),
   );
   const candidates = rows
@@ -126,6 +138,10 @@ export function findUnresolvedMissedOccurrence(
       && identity !== null
       && !resolvedKeys.has(identity)
       && !resolvedKeys.has(dueOn)
+      // Independent Daily obligations have separate occurrence identities.
+      // A later successful day stops an older Missed fact from owning the
+      // current Active Status, while the original row remains in History.
+      && (!independentDaily || ![...laterSuccessfulDates].some((date) => date > row.logicalDate))
       && (!inferred || ![...laterNonMissedDates].some((date) => date > row.logicalDate))
     ));
   const distinct = [...new Map(candidates.map((candidate) => [candidate.identity, candidate])).values()];
@@ -248,9 +264,18 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     && task.activeStatusLogicalDate === actionDate
     ? task.activeOccurrenceDueOn ?? null
     : null;
+  const independentDailySuccessIdentity = action
+    && isIndependentDailyRecurrence(task.recurrence)
+    && actionDate === today
+    && SUCCESS.has(action.outcome)
+    ? occurrenceIdentity(task.id, actionDate)
+    : null;
   const unresolvedMissedBeforeAction = findUnresolvedMissedOccurrence(task, rows);
   const actionOccurrenceIdentity = action?.occurrenceIdentity
     ?? (action?.occurrenceDueOn ? occurrenceIdentity(task.id, action.occurrenceDueOn) : null)
+    // Each independent Daily success belongs to its action day. Do not reuse
+    // an older unresolved Missed identity when the historical chain is mixed.
+    ?? independentDailySuccessIdentity
     ?? existingRecurrenceActionRow?.occurrenceIdentity
     ?? (activeActionOccurrenceDueOn ? occurrenceIdentity(task.id, activeActionOccurrenceDueOn) : null)
     ?? unresolvedMissedBeforeAction.identity

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
-import type { ActiveFocusSession, FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
+import type { ActiveFocusSession, FocusCategory, FocusDailyGoalAdjustment, FocusReallocationMode, HistoricalFocusSession, PendingFocusDailySurplus } from "@/lib/types";
 import {
   buildFocusGoalMonthPlan,
   buildFocusGoalPlan,
@@ -15,6 +15,8 @@ import {
   TASK_TABLE_CHIP_BASE_CLASS,
   TaskTableChipButton,
 } from "./ui/task-table-primitives";
+import { AdhdChip } from "./ui-system";
+import { shouldShowManualDailySurplusAction } from "@/lib/focus-reallocation";
 
 type FocusGoalScope = "daily" | "weekly" | "monthly";
 
@@ -175,12 +177,20 @@ export function FocusGoalsPanel({
   activeSessions,
   adjustments,
   categories,
+  focusReallocationMode,
   history,
+  onOpenDailyGoalSurplus,
+  onSetFocusReallocationMode,
+  manualDailySurplusOpportunity,
 }: {
   activeSessions: Record<string, ActiveFocusSession>;
   adjustments: FocusDailyGoalAdjustment[];
   categories: FocusCategory[];
+  focusReallocationMode: FocusReallocationMode;
   history: HistoricalFocusSession[];
+  onOpenDailyGoalSurplus: () => void;
+  onSetFocusReallocationMode: (mode: FocusReallocationMode) => void;
+  manualDailySurplusOpportunity: PendingFocusDailySurplus | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [scope, setScope] = useState<FocusGoalScope>("daily");
@@ -338,18 +348,39 @@ export function FocusGoalsPanel({
                 <h2 className="mt-2 text-2xl font-black tracking-tight text-[var(--text-primary)]">Goal Progress</h2>
                 <p className="mt-1 text-sm text-[var(--text-secondary)]">{rangeLabel} • {scope} targets</p>
               </div>
-              <div aria-label="Focus goal range" className="inline-flex items-center self-start" role="group">
-                {(["daily", "weekly", "monthly"] as const).map((value, index, items) => (
-                  <TaskTableChipButton
-                    aria-pressed={scope === value}
-                    className={getConnectedGoalChipClass(index, items.length)}
-                    key={value}
-                    onClick={() => setScope(value)}
-                    toneClassName={scope === value ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : FOCUS_GOAL_OUTLINE_CHIP_CLASS}
-                  >
-                    {value[0].toUpperCase() + value.slice(1)}
-                  </TaskTableChipButton>
-                ))}
+              <div className="flex flex-wrap items-center gap-2 self-start">
+                <div aria-label="Focus goal range" className="inline-flex items-center" role="group">
+                  {(["daily", "weekly", "monthly"] as const).map((value, index, items) => (
+                    <TaskTableChipButton
+                      aria-pressed={scope === value}
+                      className={getConnectedGoalChipClass(index, items.length)}
+                      key={value}
+                      onClick={() => setScope(value)}
+                      toneClassName={scope === value ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : FOCUS_GOAL_OUTLINE_CHIP_CLASS}
+                    >
+                      {value[0].toUpperCase() + value.slice(1)}
+                    </TaskTableChipButton>
+                  ))}
+                </div>
+                <div aria-label="Focus reallocation mode" className="inline-flex items-center" role="group">
+                  <span className="mr-1 text-xs font-semibold text-[var(--text-muted)]">Reallocation</span>
+                  {(["manual", "automatic"] as const).map((mode, index, modes) => (
+                    <AdhdChip
+                      aria-pressed={focusReallocationMode === mode}
+                      className={getConnectedGoalChipClass(index, modes.length)}
+                      key={mode}
+                      onClick={() => onSetFocusReallocationMode(mode)}
+                      selected={focusReallocationMode === mode}
+                    >
+                      {mode[0].toUpperCase() + mode.slice(1)}
+                    </AdhdChip>
+                  ))}
+                </div>
+                {shouldShowManualDailySurplusAction(focusReallocationMode, manualDailySurplusOpportunity) ? (
+                  <AdhdChip onClick={onOpenDailyGoalSurplus} tone="purple">
+                    Reallocate
+                  </AdhdChip>
+                ) : null}
               </div>
             </div>
             <div aria-label="Focus goal category" className="adhdice-scrollbar flex max-w-full items-center gap-2 overflow-x-auto pb-1" role="group">

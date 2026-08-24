@@ -351,6 +351,8 @@ create table public.adhdice_health_profiles (
   movement_goal_minutes integer check (movement_goal_minutes is null or movement_goal_minutes >= 0),
   sleep_goal_minutes integer check (sleep_goal_minutes is null or sleep_goal_minutes >= 0),
   target_weight_kg numeric(7,2) check (target_weight_kg is null or target_weight_kg > 0),
+  workout_type_options text[] not null default array['Walking', 'Running', 'Strength Training', 'Cycling', 'Cardio', 'Stretching', 'Sports', 'Standing', 'Other']::text[],
+  workout_title_options text[] not null default '{}',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -491,6 +493,23 @@ create table public.adhdice_health_metric_entries (
   unique (user_id, source_fingerprint)
 );
 
+create table public.adhdice_health_workouts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  workout_date date not null,
+  started_at timestamptz,
+  ended_at timestamptz,
+  duration_seconds integer not null check (duration_seconds > 0),
+  title text not null check (char_length(trim(title)) > 0),
+  workout_type text not null check (char_length(trim(workout_type)) > 0),
+  active_calories numeric check (active_calories is null or active_calories >= 0),
+  notes text not null default '',
+  source text not null default 'manual',
+  source_external_id text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table public.adhdice_health_import_audits (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -584,6 +603,11 @@ create index adhdice_health_weight_entries_user_date_idx
   on public.adhdice_health_weight_entries (user_id, entry_date desc, logged_at desc);
 create index adhdice_health_metric_entries_user_date_idx
   on public.adhdice_health_metric_entries (user_id, metric_date desc, metric_type);
+create index adhdice_health_workouts_user_date_idx
+  on public.adhdice_health_workouts (user_id, workout_date desc, started_at desc, created_at desc);
+create unique index adhdice_health_workouts_user_source_external_id_idx
+  on public.adhdice_health_workouts (user_id, source, source_external_id)
+  where source_external_id is not null;
 create index adhdice_health_import_audits_user_started_idx
   on public.adhdice_health_import_audits (user_id, started_at desc);
 create index adhdice_health_achievement_awards_user_earned_idx
@@ -618,6 +642,7 @@ alter table public.adhdice_health_water_entries enable row level security;
 alter table public.adhdice_health_meal_entries enable row level security;
 alter table public.adhdice_health_weight_entries enable row level security;
 alter table public.adhdice_health_metric_entries enable row level security;
+alter table public.adhdice_health_workouts enable row level security;
 alter table public.adhdice_health_import_audits enable row level security;
 alter table public.adhdice_health_achievement_awards enable row level security;
 
@@ -985,6 +1010,12 @@ create policy "Users can manage their own health metric entries"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+create policy "Users can manage their own health workouts"
+  on public.adhdice_health_workouts
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
 create policy "Users can manage their own health import audits"
   on public.adhdice_health_import_audits
   for all
@@ -1131,6 +1162,11 @@ create trigger adhdice_health_weight_entries_set_updated_at
 
 create trigger adhdice_health_metric_entries_set_updated_at
   before update on public.adhdice_health_metric_entries
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_workouts_set_updated_at
+  before update on public.adhdice_health_workouts
   for each row
   execute function public.adhdice_clean_set_updated_at();
 

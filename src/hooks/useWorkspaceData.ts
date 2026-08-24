@@ -119,8 +119,69 @@ function keepCurrentIfStructurallyEqual<T>(current: T, next: T) {
 
 type PagedFetchResult<T> = {
   data: T[] | null;
-  error: { message?: string } | null;
+  error: { code?: string; message?: string } | null;
 };
+
+type CanonicalTaskSnapshotRow = {
+  id: string;
+  canonicalization_status?: string | null;
+  terminal_state?: string | null;
+  container_state?: string | null;
+};
+
+type CanonicalTaskSnapshotBoundaryRow = {
+  entity_id: string;
+};
+
+function isActiveCanonicalTaskSnapshotRow(task: CanonicalTaskSnapshotRow) {
+  return (
+    (task.canonicalization_status === "canonical_proven" || task.canonicalization_status === "canonical_runtime")
+    && task.terminal_state === "active"
+    && task.container_state === "active"
+  );
+}
+
+export async function loadCanonicalTaskSnapshot<
+  TaskRow extends CanonicalTaskSnapshotRow,
+  BoundaryRow extends CanonicalTaskSnapshotBoundaryRow,
+>(
+  loadTaskRows: () => PromiseLike<PagedFetchResult<TaskRow>>,
+  loadScheduleBoundaries: (taskIds: string[]) => PromiseLike<PagedFetchResult<BoundaryRow>>,
+) {
+  const taskResult = await loadTaskRows();
+  if (taskResult.error) {
+    return { taskResult, boundaryResult: null };
+  }
+
+  const taskRows = taskResult.data ?? [];
+  const taskIds = taskRows.map((task) => task.id);
+  const boundaryResult = taskIds.length === 0
+    ? { data: [] as BoundaryRow[], error: null }
+    : await loadScheduleBoundaries(taskIds);
+  if (boundaryResult.error) {
+    return { taskResult, boundaryResult };
+  }
+
+  const boundaryTaskIds = new Set((boundaryResult.data ?? []).map((boundary) => boundary.entity_id));
+  const missingBoundaryTaskIds = taskRows
+    .filter(isActiveCanonicalTaskSnapshotRow)
+    .filter((task) => !boundaryTaskIds.has(task.id))
+    .map((task) => task.id);
+  if (missingBoundaryTaskIds.length > 0) {
+    return {
+      taskResult,
+      boundaryResult: {
+        data: null,
+        error: {
+          code: "CANONICAL_TASK_SNAPSHOT_INCOMPLETE",
+          message: `Incomplete canonical Task snapshot; missing schedule boundaries for active Tasks: ${missingBoundaryTaskIds.join(", ")}`,
+        },
+      },
+    };
+  }
+
+  return { taskResult, boundaryResult };
+}
 
 export type TaskHistoryTaskLoadState = {
   error: string | null;
@@ -481,12 +542,20 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         .order("created_at", { ascending: false });
     }
 
-    function createTaskScheduleBoundariesRequest() {
+    function createTaskScheduleBoundariesRequest(taskIds: string[]) {
       return client
         .from("adhdice_task_schedule_boundaries")
         .select("*")
         .eq("user_id", userId)
-        .order("boundary_sequence", { ascending: false });
+        .in("entity_id", taskIds)
+        .order("boundary_sequence", { ascending: false })
+        .order("id", { ascending: true });
+    }
+
+    function loadTaskScheduleBoundaries(taskIds: string[]) {
+      return fetchAllPagedRows<CanonicalTaskScheduleBoundary>(
+        async (from, to) => await createTaskScheduleBoundariesRequest(taskIds).range(from, to),
+      );
     }
 
     async function reloadTaskRows({ silent = false, source = "realtime" }: { silent?: boolean; source?: string } = {}) {
@@ -505,18 +574,19 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         try {
         do {
           queuedTaskReloadRef.current = false;
-          const [taskResult, boundaryResult] = await Promise.all([
-            createTaskRowsRequest(),
-            createTaskScheduleBoundariesRequest(),
-          ]);
+          const { taskResult, boundaryResult } = await loadCanonicalTaskSnapshot(
+            () => createTaskRowsRequest(),
+            (taskIds) => loadTaskScheduleBoundaries(taskIds),
+          );
 
           if (!isActive) {
             return;
           }
 
-          if (taskResult.error || boundaryResult.error) {
-            if (!silent) {
-              setMessage({ tone: "warn", text: taskResult.error?.message ?? boundaryResult.error?.message ?? "Could not refresh your tasks." });
+          if (taskResult.error || boundaryResult?.error) {
+            const snapshotError = taskResult.error ?? boundaryResult?.error;
+            if (!silent || snapshotError?.code === "CANONICAL_TASK_SNAPSHOT_INCOMPLETE") {
+              setMessage({ tone: "warn", text: snapshotError?.message ?? "Could not refresh your tasks." });
             }
             return;
           }
@@ -524,7 +594,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           startTransition(() => {
             const nextTasks = projectTasksWithCanonicalScheduleBoundaries(
               taskResult.data ?? [],
-              (boundaryResult.data ?? []) as CanonicalTaskScheduleBoundary[],
+              (boundaryResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
             );
             setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
           });
@@ -984,16 +1054,17 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const loadStartedAt = performance.now();
       const criticalCoreStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
-      const taskRequest = createTaskRowsRequest();
-      const taskScheduleBoundariesRequest = createTaskScheduleBoundariesRequest();
       const profileRequest = client
         .from("adhdice_user_profiles")
         .select(WORKSPACE_PROFILE_COLUMNS)
         .eq("user_id", userId)
         .maybeSingle();
+      const canonicalTaskSnapshotRequest = loadCanonicalTaskSnapshot(
+        () => createTaskRowsRequest(),
+        (taskIds) => loadTaskScheduleBoundaries(taskIds),
+      );
       const criticalCoreRequest = Promise.all([
-        taskRequest,
-        taskScheduleBoundariesRequest,
+        canonicalTaskSnapshotRequest,
         profileRequest,
       ]);
       // Focus History is owned by the page-gated Focus hook, never core startup.
@@ -1038,7 +1109,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           .then((data) => ({ data, error: null }))
           .catch((error: { message?: string }) => ({ data: null, error })),
       ]);
-      const [taskResult, taskScheduleBoundariesResult, profileResult] = await criticalCoreRequest;
+      const [{ taskResult, boundaryResult: taskScheduleBoundariesResult }, profileResult] = await criticalCoreRequest;
 
       if (!canApplyCoreWorkspaceResult()) {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -1049,7 +1120,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const criticalErrors = [
         taskResult.error,
-        taskScheduleBoundariesResult.error,
+        taskScheduleBoundariesResult?.error,
         profileResult.error,
       ].filter(Boolean);
 
@@ -1065,7 +1136,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const nextTasks = projectTasksWithCanonicalScheduleBoundaries(
         taskResult.data ?? [],
-        (taskScheduleBoundariesResult.data ?? []) as CanonicalTaskScheduleBoundary[],
+        (taskScheduleBoundariesResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
       );
       tasksRef.current = nextTasks;
       const historyLoaded = await loadTaskHistory({ silent, source: "startup" });

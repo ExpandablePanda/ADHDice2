@@ -27,6 +27,10 @@ export function FocusTimerFinishIcon({ className = "" }: { className?: string })
   return <svg aria-hidden="true" className={className} fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
 
+export function FocusTimerCheckIcon({ className = "" }: { className?: string }) {
+  return <svg aria-hidden="true" className={className} fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
+
 export function FocusTimerResetIcon({ className = "" }: { className?: string }) {
   return <svg aria-hidden="true" className={className} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M3 4v6h6M21 20v-6h-6" strokeLinecap="round" strokeLinejoin="round" /><path d="M20 9a8 8 0 00-13.66-3.66L3 10M4 15a8 8 0 0013.66 3.66L21 14" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
@@ -42,6 +46,7 @@ export function FocusTimerQuickAdjustmentControls({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [adjustmentDirection, setAdjustmentDirection] = useState<1 | -1>(1);
+  const [hasSelectedDirection, setHasSelectedDirection] = useState(false);
   const [customMinutes, setCustomMinutes] = useState("");
   const [isAdjustmentPending, setIsAdjustmentPending] = useState(false);
   const adjustmentPendingRef = useRef(false);
@@ -55,7 +60,13 @@ export function FocusTimerQuickAdjustmentControls({
     setIsAdjustmentPending(true);
     try {
       const succeeded = await onAdjust(deltaSeconds);
-      if (succeeded && clearCustomMinutes) setCustomMinutes("");
+      if (succeeded) {
+        if (clockFace) {
+          setAdjustmentDirection(1);
+          setHasSelectedDirection(false);
+        }
+        if (clearCustomMinutes || clockFace) setCustomMinutes("");
+      }
       return succeeded;
     } finally {
       adjustmentPendingRef.current = false;
@@ -63,13 +74,32 @@ export function FocusTimerQuickAdjustmentControls({
     }
   };
 
+  const adjustmentTone = adjustmentDirection === 1
+    ? FOCUS_TIMER_SUCCESS_CHIP_TONE
+    : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] hover:bg-[#ffecef] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]";
+
+  const adjustmentCircleBaseClassName = "flex h-14 w-14 items-center justify-center rounded-full border-2 transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40";
+  const adjustmentCircleClassName = `${adjustmentCircleBaseClassName} leading-none`;
+  const adjustmentCircleInputClassName = `${adjustmentCircleBaseClassName} px-2 text-center text-base font-semibold leading-none outline-none placeholder:text-[10px] placeholder:font-medium`;
+  const adjustmentGlyphStyle = {
+    fontFamily: "inherit",
+    fontSize: "20px",
+    fontWeight: 500,
+    lineHeight: 1,
+  } as const;
+
+  const adjustmentCircleTone = (direction: 1 | -1) => direction === 1
+    ? "border-[#bcebd8] bg-[#eef9f4] text-[#13845f] shadow-[0_8px_20px_rgba(19,132,95,0.15)] hover:bg-[#e4f6ed] focus-visible:ring-[#8edbbc] dark:border-[#315f51] dark:bg-[#19352e] dark:text-[#7de4b8] dark:hover:bg-[#234438]"
+    : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] shadow-[0_8px_20px_rgba(200,77,104,0.14)] hover:bg-[#ffecef] focus-visible:ring-[#ef9aad] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc] dark:hover:bg-[#452332]";
+
   const customInput = (
     <>
-      <label className="sr-only" htmlFor={customInputId}>Custom adjustment minutes</label>
-      <span className="flex items-center gap-1">
+      <label className="sr-only" htmlFor={customInputId}>Custom minutes</label>
+      <span className={clockFace ? "flex items-center" : "flex items-center gap-1"}>
         <input
           aria-describedby={customHelpId}
-          className={compact ? FOCUS_BAR_ADJUSTMENT_INPUT_CLASS : TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS}
+          aria-label="Custom minutes"
+          className={clockFace ? `${adjustmentCircleInputClassName} ${adjustmentCircleTone(adjustmentDirection)}` : compact ? FOCUS_BAR_ADJUSTMENT_INPUT_CLASS : TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS}
           disabled={isAdjustmentPending}
           id={customInputId}
           inputMode="numeric"
@@ -78,13 +108,40 @@ export function FocusTimerQuickAdjustmentControls({
             if (event.key === "Enter") event.preventDefault();
           }}
           pattern="[0-9]*"
+          placeholder={clockFace ? "min" : undefined}
           type="text"
           value={customMinutes}
         />
-        <span aria-hidden="true" className={`${compact ? "text-[9px]" : "text-[13px]"} font-semibold text-[var(--text-muted)]`}>min</span>
+        {!clockFace ? (
+          <span aria-hidden="true" className={`${compact ? "text-[9px]" : "text-[13px]"} font-semibold text-[var(--text-muted)]`}>min</span>
+        ) : null}
       </span>
       <span className="sr-only" id={customHelpId}>Enter a positive whole number of minutes, then apply the selected direction.</span>
     </>
+  );
+
+  const selectDirection = (direction: 1 | -1) => {
+    setAdjustmentDirection(direction);
+    if (clockFace) setHasSelectedDirection(true);
+  };
+
+  const applyCustomAdjustment = () => {
+    if (customMinuteValue !== null) void submitAdjustment(getFocusTimerAdjustmentDeltaSeconds(adjustmentDirection, customMinuteValue), true);
+  };
+
+  const clockFaceDirectionButton = (direction: 1 | -1) => (
+    <button
+      aria-label={direction === 1 ? "Add time" : "Remove time"}
+      aria-pressed={hasSelectedDirection && adjustmentDirection === direction}
+      className={`${adjustmentCircleClassName} ${adjustmentCircleTone(direction)} ${hasSelectedDirection && adjustmentDirection === direction ? "scale-105 ring-2 ring-offset-2" : ""}`}
+      disabled={isAdjustmentPending}
+      key={direction}
+      onClick={() => selectDirection(direction)}
+      style={adjustmentGlyphStyle}
+      type="button"
+    >
+      <span aria-hidden="true">{direction === 1 ? "+" : "−"}</span>
+    </button>
   );
 
   return (
@@ -95,44 +152,80 @@ export function FocusTimerQuickAdjustmentControls({
           setIsOpen((current) => !current);
         }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] hover:bg-[#e9e1ff] dark:border-white/15 dark:bg-white/8 dark:text-[#cabfff] dark:hover:bg-white/12">+ / −</TaskTableChipButton>
       ) : null}
-      {clockFace || isOpen ? (
-          <div className={`flex flex-col items-center ${compact ? "basis-full gap-0.5 pt-1" : "gap-2"}`} role="group" aria-label="Adjust session time options">
-            <div className={`flex items-center ${compact ? "gap-0.5" : "gap-2"}`} role="group" aria-label="Adjustment direction">
-              {([1, -1] as const).map((direction) => (
-                <TaskTableChipButton
-                  aria-label={direction === 1 ? "Add time" : "Remove time"}
-                  aria-pressed={adjustmentDirection === direction}
-                  className={compact ? "h-5 min-w-5 px-1 py-0 text-[10px]" : undefined}
-                  disabled={isAdjustmentPending}
-                  key={direction}
-                  onClick={() => setAdjustmentDirection(direction)}
-                  toneClassName={adjustmentDirection === direction ? (direction === 1 ? FOCUS_TIMER_SUCCESS_CHIP_TONE : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]") : "border-[var(--border-soft)] bg-[var(--surface-muted)] text-[var(--text-muted)]"}
+      {clockFace ? (
+        <div className="flex flex-col items-center gap-3" role="group" aria-label="Adjust session time options">
+          {!hasSelectedDirection ? (
+            <div className="flex items-center gap-4" role="group" aria-label="Adjustment direction">
+              {([1, -1] as const).map(clockFaceDirectionButton)}
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center justify-center gap-2" role="group" aria-label={adjustmentDirection === 1 ? "Add time amounts" : "Remove time amounts"}>
+                {FOCUS_TIMER_QUICK_ADJUSTMENT_MINUTES.map((minutes) => (
+                  <button
+                    aria-label={`${adjustmentDirection === 1 ? "Add" : "Remove"} ${minutes} minutes`}
+                    className={`${adjustmentCircleClassName} ${adjustmentCircleTone(adjustmentDirection)}`}
+                    disabled={isAdjustmentPending}
+                    key={minutes}
+                    onClick={() => void submitAdjustment(getFocusTimerAdjustmentDeltaSeconds(adjustmentDirection, minutes))}
+                    style={adjustmentGlyphStyle}
+                    type="button"
+                  >
+                    {minutes}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                {customInput}
+                <button
+                  aria-label="Apply custom minutes"
+                  className={`${adjustmentCircleClassName} ${adjustmentCircleTone(1)}`}
+                  disabled={customMinuteValue === null || isAdjustmentPending}
+                  onClick={applyCustomAdjustment}
+                  type="button"
                 >
-                  {direction === 1 ? "+" : "−"}
-                </TaskTableChipButton>
-              ))}
-            </div>
-            <div className={`flex flex-wrap items-center justify-center ${compact ? "gap-0.5" : "gap-2"}`}>
-              {FOCUS_TIMER_QUICK_ADJUSTMENT_MINUTES.map((minutes) => (
-                <TaskTableChipButton
-                  aria-label={`${adjustmentDirection === 1 ? "Add" : "Remove"} ${minutes} minutes`}
-                  className={compact ? "h-5 px-1 py-0 text-[10px]" : undefined}
-                  disabled={isAdjustmentPending}
-                  key={minutes}
-                  onClick={() => void submitAdjustment(getFocusTimerAdjustmentDeltaSeconds(adjustmentDirection, minutes))}
-                  toneClassName={adjustmentDirection === 1 ? FOCUS_TIMER_SUCCESS_CHIP_TONE : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] hover:bg-[#ffecef] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]"}
-                >
-                  {minutes}m
-                </TaskTableChipButton>
-              ))}
-            </div>
-            <div className={`flex flex-wrap items-center justify-center ${compact ? "gap-0.5" : "gap-2"}`}>
-              {customInput}
-              <TaskTableChipButton aria-label="Apply custom minutes" className={compact ? "h-5 px-1 py-0 text-[10px]" : undefined} disabled={customMinuteValue === null || isAdjustmentPending} onClick={() => {
-                if (customMinuteValue !== null) void submitAdjustment(getFocusTimerAdjustmentDeltaSeconds(adjustmentDirection, customMinuteValue), true);
-              }} toneClassName={adjustmentDirection === 1 ? FOCUS_TIMER_SUCCESS_CHIP_TONE : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] hover:bg-[#ffecef] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]"}>Apply</TaskTableChipButton>
-            </div>
+                  <FocusTimerCheckIcon className="h-6 w-6" />
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      ) : isOpen ? (
+        <div className="flex basis-full flex-col items-center gap-0.5 pt-1" role="group" aria-label="Adjust session time options">
+          <div className="flex items-center gap-0.5" role="group" aria-label="Adjustment direction">
+            {([1, -1] as const).map((direction) => (
+              <TaskTableChipButton
+                aria-label={direction === 1 ? "Add time" : "Remove time"}
+                aria-pressed={adjustmentDirection === direction}
+                className="h-5 min-w-5 px-1 py-0 text-[10px]"
+                disabled={isAdjustmentPending}
+                key={direction}
+                onClick={() => selectDirection(direction)}
+                toneClassName={adjustmentDirection === direction ? (direction === 1 ? FOCUS_TIMER_SUCCESS_CHIP_TONE : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]") : "border-[var(--border-soft)] bg-[var(--surface-muted)] text-[var(--text-muted)]"}
+              >
+                {direction === 1 ? "+" : "−"}
+              </TaskTableChipButton>
+            ))}
           </div>
+          <div className="flex flex-wrap items-center justify-center gap-0.5">
+            {FOCUS_TIMER_QUICK_ADJUSTMENT_MINUTES.map((minutes) => (
+              <TaskTableChipButton
+                aria-label={`${adjustmentDirection === 1 ? "Add" : "Remove"} ${minutes} minutes`}
+                className="h-5 px-1 py-0 text-[10px]"
+                disabled={isAdjustmentPending}
+                key={minutes}
+                onClick={() => void submitAdjustment(getFocusTimerAdjustmentDeltaSeconds(adjustmentDirection, minutes))}
+                toneClassName={adjustmentTone}
+              >
+                {minutes}m
+              </TaskTableChipButton>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-0.5">
+            {customInput}
+            <TaskTableChipButton aria-label="Apply custom minutes" className="h-5 px-1 py-0 text-[10px]" disabled={customMinuteValue === null || isAdjustmentPending} onClick={applyCustomAdjustment} toneClassName={adjustmentTone}>Apply</TaskTableChipButton>
+          </div>
+        </div>
       ) : null}
     </>
   );
@@ -401,7 +494,14 @@ export function FocusClock({
               </>
             ) : (
               <div className="flex flex-col items-center justify-center" data-focus-clock-adjustment-region="centered-clock-face">
-                <FocusTimerQuickAdjustmentControls clockFace onAdjust={(deltaSeconds) => onAdjust(category.id, deltaSeconds)} />
+                <FocusTimerQuickAdjustmentControls
+                  clockFace
+                  onAdjust={async (deltaSeconds) => {
+                    const succeeded = await onAdjust(category.id, deltaSeconds);
+                    if (succeeded) setShowAdjustMenu(false);
+                    return succeeded;
+                  }}
+                />
               </div>
             )}
           </div>
@@ -462,16 +562,16 @@ export function FocusClock({
           {showSettingsMenu ? (
             <div className="absolute bottom-16 left-1/2 z-40 flex w-[17rem] -translate-x-[64%] flex-wrap items-center justify-center gap-2 rounded-[1.5rem] border border-[#e8e1f7] bg-white/95 p-3 shadow-[0_18px_42px_rgba(70,50,145,0.18)] backdrop-blur dark:border-white/10 dark:bg-[#1b1630]/95 dark:shadow-[0_18px_42px_rgba(0,0,0,0.38)]">
               {!isCountdown ? (
-                <TaskTableChipButton
-                  aria-label="Adjust session time"
-                  onClick={() => {
-                    setShowSettingsMenu(false);
-                    setShowAdjustMenu(true);
-                  }}
-                  toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] hover:bg-[#e9e1ff] dark:border-white/15 dark:bg-white/8 dark:text-[#cabfff] dark:hover:bg-white/12"
-                >
-                  + / − Adjust time
-                </TaskTableChipButton>
+                <div className="flex basis-full justify-center" data-focus-clock-adjustment-region="gear-menu">
+                  <FocusTimerQuickAdjustmentControls
+                    clockFace
+                    onAdjust={async (deltaSeconds) => {
+                      const succeeded = await onAdjust(category.id, deltaSeconds);
+                      if (succeeded) setShowSettingsMenu(false);
+                      return succeeded;
+                    }}
+                  />
+                </div>
               ) : null}
               {isSystemCountdown ? (
                 <button
@@ -496,7 +596,7 @@ export function FocusClock({
                   }}
                   type="button"
                 >
-                  <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  <FocusTimerCheckIcon className="h-5 w-5" />
                 </button>
               )}
               <button

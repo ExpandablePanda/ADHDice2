@@ -209,16 +209,18 @@ test("canonical creation plan initializes runtime state without action facts or 
 
 test("normal addTask uses trusted canonical creation and fails closed without legacy fallback", async () => {
   const calls: Array<{ payload: TaskInsert; source?: string }> = [];
-  let tasks: Task[] = [];
+  const revealCalls: string[] = [];
+  let tasks: Task[] = [canonicalTask({ id: "00000000-0000-4000-8000-000000000003", title: "Existing Task", sort_order: 1 })];
   const creator = async (payload: TaskInsert, source?: "task_creation" | "task_import") => {
     calls.push({ payload, source });
-    return { data: canonicalTask({ title: payload.title }), error: null, usedEnergyFallback: false, usedActualSecondsFallback: false as const };
+    return { data: canonicalTask({ title: payload.title, sort_order: 2 }), error: null, usedEnergyFallback: false, usedActualSecondsFallback: false as const };
   };
   const action = useTaskCreateAction({
     canonicalCommandsEnabled: true,
     canonicalTaskCreator: creator,
     client: noDirectTaskInsertClient(),
     currentUserId: ownerId,
+    onTaskRevealRequested: (taskId) => revealCalls.push(taskId),
     routeTask: () => {},
     setMessage: () => {},
     setTasks: (next) => { tasks = typeof next === "function" ? next(tasks) : next; },
@@ -234,7 +236,8 @@ test("normal addTask uses trusted canonical creation and fails closed without le
   assert.equal(created?.workflow_state, "none");
   assert.equal(calls[0]?.source, "task_creation");
   assert.equal("user_id" in (calls[0]?.payload ?? {}), true);
-  assert.equal(tasks.length, 1);
+  assert.deepEqual(tasks.map((task) => task.title), ["Existing Task", "Trusted Task"]);
+  assert.deepEqual(revealCalls, [created?.id]);
 
   let fallbackCalls = 0;
   const failedAction = useTaskCreateAction({
@@ -247,6 +250,7 @@ test("normal addTask uses trusted canonical creation and fails closed without le
       },
     } as never,
     currentUserId: ownerId,
+    onTaskRevealRequested: (taskId) => revealCalls.push(taskId),
     routeTask: () => {},
     setMessage: () => {},
     setTasks: () => {},
@@ -254,6 +258,7 @@ test("normal addTask uses trusted canonical creation and fails closed without le
     sortTasksForUi: (value) => value,
   });
   assert.equal(await failedAction.addTask({ title: "Must fail" }), null);
+  assert.deepEqual(revealCalls, [created?.id]);
   assert.equal(fallbackCalls, 0);
 });
 
@@ -409,6 +414,7 @@ test("canonical editor creation does not synthesize History or rewards", async (
 test("Import routes parents, Steps, and Substeps through canonical creation and preserves metadata", async () => {
   const calls: Array<{ payload: TaskInsert; source?: string }> = [];
   const createdRows: Array<{ id: string; parent_task_id: string | null }> = [];
+  const revealCalls: string[] = [];
   let nextId = 10;
   let tasks: Task[] = [];
   const creator = async (payload: TaskInsert, source?: "task_creation" | "task_import") => {
@@ -439,6 +445,7 @@ test("Import routes parents, Steps, and Substeps through canonical creation and 
     canonicalTaskCreator: creator,
     client: noDirectTaskInsertClient(),
     currentUserId: ownerId,
+    onTaskRevealRequested: (taskId) => revealCalls.push(taskId),
     deleteTaskRow: async () => ({ data: null, error: null, conflict: null }),
     setMessage: () => {},
     setTaskRouting: () => {},
@@ -453,22 +460,29 @@ test("Import routes parents, Steps, and Substeps through canonical creation and 
     "Parent *due-2026-08-20 *repeat-daily",
     "- Step *due-2026-08-21",
     "-- Substep",
+    "--- Deep substep",
+    "Second Parent",
   ]);
-  assert.deepEqual(result, { errorCount: 0, importedCount: 1, warningCount: 0 });
-  assert.equal(calls.length, 3);
-  assert.deepEqual(calls.map((call) => call.source), ["task_import", "task_import", "task_import"]);
+  assert.deepEqual(result, { errorCount: 0, importedCount: 2, warningCount: 0 });
+  assert.equal(calls.length, 5);
+  assert.deepEqual(calls.map((call) => call.source), ["task_import", "task_import", "task_import", "task_import", "task_import"]);
   assert.equal(calls[0]?.payload.due_on, "2026-08-20");
   assert.equal(calls[0]?.payload.repeat_frequency, "daily");
   assert.equal(calls[1]?.payload.parent_task_id, tasks[0]?.id);
   assert.equal(calls[2]?.payload.parent_task_id, tasks[1]?.id);
-  assert.equal(tasks.length, 3);
-  assert.deepEqual(tasks.map((task) => task.entity_kind), ["parent", "step", "substep"]);
+  assert.equal(calls[3]?.payload.parent_task_id, tasks[2]?.id);
+  assert.equal(tasks.length, 5);
+  assert.deepEqual(tasks.map((task) => task.entity_kind), ["parent", "step", "substep", "substep", "parent"]);
   assert.equal(tasks.every((task) => task.canonical_schedule_boundary?.entity_id === task.id), true);
   assert.equal(tasks.every((task) => task.canonicalization_status !== "legacy_uninitialized" && task.canonical_revision === 1), true);
+  assert.deepEqual(revealCalls, [tasks[0]?.id]);
+  assert.notEqual(revealCalls[0], tasks[1]?.id);
+  assert.notEqual(revealCalls[0], tasks[2]?.id);
 });
 
 test("unsafe imported snapshot status fails closed instead of guessing provenance", async () => {
   let planError: unknown = null;
+  const revealCalls: string[] = [];
   try {
     buildCanonicalTaskCreationPlan({ draft: draft({ status: "done" }), entityKind: "parent", now, profile, source: "task_import" });
   } catch (error) {
@@ -488,6 +502,7 @@ test("unsafe imported snapshot status fails closed instead of guessing provenanc
       },
     } as never,
     currentUserId: ownerId,
+    onTaskRevealRequested: (taskId) => revealCalls.push(taskId),
     deleteTaskRow: async () => ({ data: null, error: null, conflict: null }),
     setMessage: () => {},
     setTaskRouting: () => {},
@@ -500,6 +515,7 @@ test("unsafe imported snapshot status fails closed instead of guessing provenanc
   const result = await action.importTasks(["Done *status-done"]);
   assert.equal(result.importedCount, 0);
   assert.equal(result.errorCount, 1);
+  assert.deepEqual(revealCalls, []);
   assert.equal(directInsertCalls, 0);
 });
 

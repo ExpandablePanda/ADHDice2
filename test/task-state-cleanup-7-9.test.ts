@@ -8,6 +8,8 @@ const create = readFileSync("src/hooks/useTaskCreateAction.ts", "utf8");
 const crud = readFileSync("src/hooks/useTaskCrudActions.ts", "utf8");
 const subtasks = readFileSync("src/hooks/useTaskSubtaskActions.ts", "utf8");
 const editorSave = readFileSync("src/hooks/useTaskEditorSaveAction.ts", "utf8");
+const table = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
+const list = readFileSync("src/components/task-app/tasks-list-adapter.tsx", "utf8");
 const cleanupMigration = readFileSync("supabase/patch_task_state_cleanup_2_7_9_41.sql", "utf8");
 
 const retiredRolloverRpcNames = [
@@ -35,7 +37,20 @@ test("canonical Task creation and import have no direct Task-table fallback", ()
 test("child rows use canonical same-table Task State", () => {
   assert.doesNotMatch(subtasks, /adhdice_task_subtasks|adhdice_legacy_subtask_promotions/);
   assert.match(subtasks, /buildChildTaskCreationDraft/);
+  assert.match(subtasks, /insertTaskRowWithCanonicalCreation/);
+  assert.match(subtasks, /addTaskSubtask/);
+  assert.match(subtasks, /addChildTaskSubtask/);
   assert.match(subtasks, /canonicalTaskStateUpdate/);
+  assert.doesNotMatch(subtasks, /from\(["']adhdice_clean_tasks["']\)|\.insert\(/);
+});
+
+test("all same-table Step creation surfaces converge on the canonical child handler", () => {
+  assert.match(app, /createChildTaskFromPreview[\s\S]*?addTask\(result\.draft\)/);
+  assert.match(table, /SameTableStepCreationControl/);
+  assert.match(table, /onCreateChildTask\(parentTaskId, nextTitle\)/);
+  assert.match(list, /onCreateChildTask\?\.\(parentTaskId, title\)/);
+  assert.match(editorSave, /replaceTaskSubtasks\(taskId, subtasks\)/);
+  assert.match(editorSave, /replaceTaskSubtasks\(data\.id, subtasks\)/);
 });
 
 test("production Task State cleanup removes the runtime gate module and legacy rollover callers", () => {

@@ -5,7 +5,7 @@ import { buildCanonicalTaskStateEngineInput } from "../src/lib/task-state-canoni
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
-import { projectTaskWithCanonicalScheduleBoundary } from "../src/lib/task-state-canonical/schedule-projection.ts";
+import { mergeTaskWithCanonicalScheduleProjection, projectTaskWithCanonicalScheduleBoundary } from "../src/lib/task-state-canonical/schedule-projection.ts";
 import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 
 test("latest canonical schedule boundary drives the visible repeat projection", () => {
@@ -52,6 +52,37 @@ test("canonical projection preserves the schedule anchor for read-only timeline 
 
   assert.equal(projected.due_on, "2026-08-14");
   assert.equal(projected.canonical_schedule_anchor_date, "2026-08-04");
+});
+
+test("metadata and sort-order Task rows merge into projected Tasks without dropping authority", () => {
+  const boundary = { id: "boundary-1", schedule_model: "unscheduled" } as unknown as CanonicalTaskScheduleBoundary;
+  const projected = { id: "task-1", title: "Before", sort_order: 1, canonical_schedule_boundary: boundary, canonical_schedule_anchor_date: null } as unknown as Task;
+  const persisted = { id: "task-1", title: "After", sort_order: 0 } as unknown as Task;
+
+  const merged = mergeTaskWithCanonicalScheduleProjection(projected, persisted);
+
+  assert.equal(merged.title, "After");
+  assert.equal(merged.sort_order, 0);
+  assert.equal(merged.canonical_schedule_boundary?.id, boundary.id);
+});
+
+test("multiple sibling and conflict/latest rows retain each current canonical projection", () => {
+  const boundaries = ["step-a", "step-b", "step-c"].map((id) => ({ id: `boundary-${id}`, schedule_model: "unscheduled" } as unknown as CanonicalTaskScheduleBoundary));
+  const projected = boundaries.map((boundary, index) => ({
+    id: boundary.entity_id ?? `step-${String.fromCharCode(97 + index)}`,
+    sort_order: index,
+    canonical_schedule_boundary: boundary,
+    canonical_schedule_anchor_date: null,
+  } as unknown as Task));
+  const persisted = projected.map((task) => ({ ...task, sort_order: task.sort_order + 1 } as Task));
+
+  const reconciled = persisted.map((row) => {
+    const current = projected.find((task) => task.id === row.id)!;
+    return mergeTaskWithCanonicalScheduleProjection(current, row);
+  });
+
+  assert.deepEqual(reconciled.map((task) => task.sort_order), [1, 2, 3]);
+  assert.deepEqual(reconciled.map((task) => task.canonical_schedule_boundary?.id), boundaries.map((boundary) => boundary.id));
 });
 
 test("canonical engine input separates the boundary anchor from the current due output", () => {

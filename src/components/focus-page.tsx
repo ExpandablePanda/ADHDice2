@@ -10,6 +10,7 @@ import {
   type HistoricalFocusSession,
   type PendingFocusDailySurplus,
   type FocusLabelOptions,
+  type FocusReallocationMode,
   type FocusType,
   type FocusSubtype,
   DEFAULT_FOCUS_CATEGORY_TITLES,
@@ -17,6 +18,11 @@ import {
   DEFAULT_PRIMARY_SUBTYPES,
   DEFAULT_SECONDARY_SUBTYPES,
 } from "@/lib/types";
+import {
+  deriveManualDailySurplusOpportunity,
+  shouldPresentDailySurplusModal,
+  shouldPresentManualDailySurplusModal,
+} from "@/lib/focus-reallocation";
 import {
   buildFocusGoalPlan,
   formatPriorityLabel,
@@ -273,9 +279,11 @@ export function FocusPage({
   onUpdateCategories,
   onDeleteCategory,
   adjustments,
+  focusReallocationMode,
   pendingDailyGoalSurplus,
   onDismissDailyGoalSurplus,
   onSaveDailyGoalAdjustment,
+  onSetFocusReallocationMode,
 }: {
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
@@ -298,9 +306,11 @@ export function FocusPage({
   onUpdateCategories: (categories: FocusCategory[]) => Promise<boolean>;
   onDeleteCategory: (category: FocusCategory) => Promise<boolean>;
   adjustments: FocusDailyGoalAdjustment[];
+  focusReallocationMode: FocusReallocationMode;
   pendingDailyGoalSurplus: PendingFocusDailySurplus | null;
   onDismissDailyGoalSurplus: () => void;
   onSaveDailyGoalAdjustment: (input: { adjustmentDate: string; sourceCategoryId: string; targetCategoryId: string; sourceSessionId?: string | null; reductionSeconds: number; reason?: string }) => Promise<boolean>;
+  onSetFocusReallocationMode: (mode: FocusReallocationMode) => void;
 }) {
   const [countdownPickerOpenRequest, setCountdownPickerOpenRequest] = useState(0);
   const [focusSandboxPage, setFocusSandboxPage] = useState(0);
@@ -320,13 +330,34 @@ export function FocusPage({
   const [finishingCatId, setFinishingCatId] = useState<string | null>(null);
   const [finishingDurationSeconds, setFinishingDurationSeconds] = useState(0);
   const [showGoalsEditor, setShowGoalsEditor] = useState(false);
+  const [manualReallocationState, setManualReallocationState] = useState<{ mode: FocusReallocationMode | null; open: boolean }>({ mode: null, open: false });
   const [counterTitle, setCounterTitle] = useState("");
   const [counterColor, setCounterColor] = useState("#6f57f6");
   const [counterIcon, setCounterIcon] = useState("Hash");
   const [counterStep, setCounterStep] = useState("1");
   const [counterGoal, setCounterGoal] = useState("10");
   const [counterValue, setCounterValue] = useState("0");
-  const userCategories = categories.filter((category) => !isSystemCountdownCategoryId(category.id));
+  const manualReallocationOpen = manualReallocationState.mode === focusReallocationMode && manualReallocationState.open;
+  const openDailyGoalSurplus = () => {
+    setManualReallocationState({ mode: focusReallocationMode, open: true });
+  };
+  const dismissDailyGoalSurplus = () => {
+    setManualReallocationState({ mode: focusReallocationMode, open: false });
+    onDismissDailyGoalSurplus();
+  };
+  const userCategories = useMemo(
+    () => categories.filter((category) => !isSystemCountdownCategoryId(category.id)),
+    [categories],
+  );
+  const derivedManualDailySurplus = useMemo(() => deriveManualDailySurplusOpportunity({
+    adjustments,
+    categories: userCategories,
+    history,
+  }), [adjustments, history, userCategories]);
+  const manualDailySurplusOpportunity = pendingDailyGoalSurplus ?? derivedManualDailySurplus;
+  const modalDailySurplus = focusReallocationMode === "manual"
+    ? manualDailySurplusOpportunity
+    : pendingDailyGoalSurplus;
   const displayCategories = getDisplayFocusCategories(categories, activeSessions);
   const countersById = new Map(counters.map((counter) => [counter.id, counter]));
   const counterIconChoices = useMemo(() => {
@@ -426,10 +457,6 @@ export function FocusPage({
       }
     }
     clearFocusSandboxSwipe(event);
-  };
-
-  const dismissDailyGoalSurplus = () => {
-    onDismissDailyGoalSurplus();
   };
 
   const openCreateCounter = () => {
@@ -696,7 +723,11 @@ export function FocusPage({
         activeSessions={activeSessions}
         adjustments={adjustments}
         categories={userCategories}
+        focusReallocationMode={focusReallocationMode}
         history={history}
+        onOpenDailyGoalSurplus={openDailyGoalSurplus}
+        onSetFocusReallocationMode={onSetFocusReallocationMode}
+        manualDailySurplusOpportunity={manualDailySurplusOpportunity}
       />
 
       <FocusCounterHistoryCard
@@ -865,14 +896,16 @@ export function FocusPage({
         />
       ) : null}
 
-      {pendingDailyGoalSurplus ? (
+      {(shouldPresentDailySurplusModal(focusReallocationMode, pendingDailyGoalSurplus, manualReallocationOpen)
+        || shouldPresentManualDailySurplusModal(focusReallocationMode, manualDailySurplusOpportunity, manualReallocationOpen))
+        && modalDailySurplus ? (
         <DailySurplusReallocationModal
           adjustments={adjustments}
           categories={userCategories}
           history={history}
           onClose={dismissDailyGoalSurplus}
           onSave={onSaveDailyGoalAdjustment}
-          pending={pendingDailyGoalSurplus}
+          pending={modalDailySurplus}
         />
       ) : null}
     </>

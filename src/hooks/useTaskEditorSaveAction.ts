@@ -11,6 +11,7 @@ import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
 import { isTaskStateRuntimeLifecycleTransition, TASK_METADATA_UPDATE_FIELDS, TASK_STATE_OWNED_UPDATE_FIELDS } from "@/lib/task-state-runtime-actions";
+import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
 
 type Message = {
   text: string;
@@ -162,8 +163,12 @@ export function useTaskEditorSaveAction({
             });
             return null;
           }
-          metadataTask = metadataResult.data;
-          setTasks((current) => sortTasksForUi(current.map((candidate) => candidate.id === taskId ? { ...candidate, ...metadataResult.data } : candidate)));
+          setTasks((current) => sortTasksForUi(current.map((candidate) => {
+            if (candidate.id !== taskId) return candidate;
+            const mergedMetadataTask = mergeTaskWithCanonicalScheduleProjection(candidate, metadataResult.data!);
+            metadataTask = mergedMetadataTask;
+            return mergedMetadataTask;
+          })));
         }
         const subtasksResult = await replaceTaskSubtasks(taskId, subtasks);
         if (!subtasksResult.saved) return null;
@@ -246,7 +251,10 @@ export function useTaskEditorSaveAction({
 
       if (conflict) {
         if (conflict.latestTask) {
-          setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? conflict.latestTask ?? task : task)));
+          const latestTask = previousTask
+            ? mergeTaskWithCanonicalScheduleProjection(previousTask, conflict.latestTask)
+            : conflict.latestTask;
+          setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? latestTask : task)));
         }
         setMessage({ tone: "warn", text: taskEditFailureMessage(buildTaskUpdateConflictMessage(conflict)) });
         return null;
@@ -257,9 +265,12 @@ export function useTaskEditorSaveAction({
         return null;
       }
 
-      const nextData = usedActualSecondsFallback && typeof updateValues.actual_seconds === "number"
+      const rawNextData = usedActualSecondsFallback && typeof updateValues.actual_seconds === "number"
         ? { ...data, actual_seconds: updateValues.actual_seconds }
         : data;
+      const nextData = previousTask
+        ? mergeTaskWithCanonicalScheduleProjection(previousTask, rawNextData)
+        : rawNextData;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
       if (scheduleOnlyEdit) {

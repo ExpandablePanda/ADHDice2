@@ -19,6 +19,7 @@ type UseTaskCreateActionOptions = {
   canonicalTaskCreator?: CanonicalTaskCreator;
   client: SupabaseClient;
   currentUserId: string;
+  onTaskRevealRequested?: (taskId: string) => void;
   routeTask: (taskId: string, bucket: TaskRoutingBucket | null) => void;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -30,6 +31,7 @@ export function useTaskCreateAction({
   canonicalTaskCreator,
   client,
   currentUserId,
+  onTaskRevealRequested,
   routeTask,
   setMessage,
   setTasks,
@@ -54,6 +56,9 @@ export function useTaskCreateAction({
       setTasks((current) => sortTasksForUi([...current, data]));
       if (shouldRouteTaskToInbox(data)) {
         routeTask(data.id, "inbox");
+      }
+      if (!data.parent_task_id) {
+        onTaskRevealRequested?.(data.id);
       }
     }
 

@@ -11,16 +11,17 @@ import type {
 } from "@/lib/database.types";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { formatHealthFoodQuantityUnit } from "@/lib/health-library";
+import { HEALTH_WORKOUT_TYPES, normalizeHealthWorkoutOptionValues } from "@/lib/health-workout-options";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 
-export type HealthTab = "Today" | "Food" | "Water" | "Journal" | "Weight" | "Sleep" | "Insights" | "Awards";
+export type HealthTab = "Today" | "Food" | "Water" | "Fitness" | "Journal" | "Weight" | "Sleep" | "Insights" | "Awards";
 export type HealthMealSlot = HealthMealEntry["meal_slot"];
 export type WeightUnit = HealthProfile["preferred_weight_unit"];
 export type HealthAchievementCode = HealthAchievementAward["achievement_code"];
 export type HealthReminderTemplateKey = "daily_check_in" | "meal_log" | "weigh_in" | "movement_intention";
 export type HealthSleepKind = "CPAP Sleep" | "CPAP Nap" | "Sleep" | "Nap";
 
-export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Journal", "Weight", "Sleep", "Insights", "Awards"];
+export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards"];
 export const HEALTH_MEAL_SLOTS: HealthMealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
 export const HEALTH_SLEEP_KINDS: readonly HealthSleepKind[] = ["CPAP Sleep", "CPAP Nap", "Sleep", "Nap"];
 export const HEALTH_MOOD_OPTIONS = [1, 2, 3, 4, 5] as const;
@@ -216,6 +217,8 @@ export const DEFAULT_HEALTH_PROFILE: Omit<HealthProfile, "created_at" | "updated
   protein_goal_grams: 140,
   sleep_goal_minutes: 480,
   target_weight_kg: null,
+  workout_type_options: [...HEALTH_WORKOUT_TYPES],
+  workout_title_options: [],
   user_id: "",
   fat_goal_grams: 75,
 };
@@ -227,6 +230,21 @@ export function buildDefaultHealthProfile(userId: string): HealthProfile {
     created_at: now,
     updated_at: now,
     user_id: userId,
+  };
+}
+
+export function normalizeHealthProfile(profile: Partial<HealthProfile> | null | undefined, userId: string): HealthProfile {
+  const fallback = buildDefaultHealthProfile(userId);
+  const workoutTitleOptions = Array.isArray(profile?.workout_title_options)
+    ? profile.workout_title_options.filter((title): title is string => typeof title === "string")
+    : [];
+  const workoutTypeOptions = normalizeHealthWorkoutOptionValues(profile?.workout_type_options);
+  return {
+    ...fallback,
+    ...profile,
+    user_id: userId,
+    workout_type_options: workoutTypeOptions.length > 0 ? workoutTypeOptions : [...HEALTH_WORKOUT_TYPES],
+    workout_title_options: workoutTitleOptions,
   };
 }
 

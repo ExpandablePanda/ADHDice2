@@ -23,6 +23,14 @@ const focusBarsSource = readFileSync(new URL("../src/components/focus-bars.tsx",
 const focusBarsHelperSource = readFileSync(new URL("../src/lib/focus-bars.ts", import.meta.url), "utf8");
 const focusPageSource = readFileSync(new URL("../src/components/focus-page.tsx", import.meta.url), "utf8");
 const focusClocksSource = readFileSync(new URL("../src/components/focus-clocks.tsx", import.meta.url), "utf8");
+const clockFaceStageSource = focusClocksSource.slice(
+  focusClocksSource.indexOf("{!hasSelectedDirection ?"),
+  focusClocksSource.indexOf(") : isOpen ?"),
+);
+const customInputSource = focusClocksSource.slice(
+  focusClocksSource.indexOf("const customInput ="),
+  focusClocksSource.indexOf("const selectDirection"),
+);
 
 function category(id: string, weeklyGoalSeconds: number | null = null): FocusCategory {
   return {
@@ -305,22 +313,29 @@ test("Focus Bars adjustment trigger uses the approved compact chip height", () =
   assert.match(focusBarsSource, /<FocusTimerQuickAdjustmentControls compact/);
 });
 
-test("Clocks opens the complete larger adjustment group directly in the centered clock-face region", () => {
+test("Clocks opens a direction-first adjustment group inside the centered clock-face region", () => {
   assert.match(focusClocksSource, /aria-label=\{isCountdown \? `Choose \$\{category\.title\} countdown duration` : `Adjust \$\{category\.title\} timer`\}[\s\S]*?setShowAdjustMenu\(\(prev\) => !prev\)/);
   assert.match(focusClocksSource, /className="absolute inset-4[^"]*items-center justify-center[^"]*rounded-full/);
-  assert.match(focusClocksSource, /data-focus-clock-adjustment-region="centered-clock-face"[\s\S]*?<FocusTimerQuickAdjustmentControls clockFace onAdjust=/);
-  assert.match(focusClocksSource, /\{clockFace \|\| isOpen \? \([\s\S]*?aria-label="Adjust session time options"/);
-  assert.match(focusClocksSource, /compact \? "h-5 min-w-5 px-1 py-0 text-\[10px\]" : undefined/);
-  assert.match(focusClocksSource, /compact \? FOCUS_BAR_ADJUSTMENT_INPUT_CLASS : TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS/);
-  assert.match(focusClocksSource, /compact \? "gap-0\.5" : "gap-2"/);
-  assert.equal([...focusClocksSource.matchAll(/<FocusTimerQuickAdjustmentControls/g)].length, 1);
+  assert.match(focusClocksSource, /data-focus-clock-adjustment-region="centered-clock-face"[\s\S]*?<FocusTimerQuickAdjustmentControls[\s\S]*?clockFace[\s\S]*?onAdjust=/);
+  assert.match(focusClocksSource, /const \[hasSelectedDirection, setHasSelectedDirection\] = useState\(false\)/);
+  assert.match(focusClocksSource, /clockFaceDirectionButton[\s\S]*?adjustmentCircleClassName/);
+  assert.match(focusClocksSource, /const adjustmentCircleBaseClassName = "flex h-14 w-14[^"]*rounded-full/);
+  assert.match(focusClocksSource, /const adjustmentGlyphStyle = \{[\s\S]*?fontFamily: "inherit",[\s\S]*?fontSize: "20px",[\s\S]*?fontWeight: 500,[\s\S]*?lineHeight: 1,[\s\S]*?\} as const/);
+  assert.match(focusClocksSource, /const clockFaceDirectionButton[\s\S]*?style=\{adjustmentGlyphStyle\}/);
+  assert.match(clockFaceStageSource, /FOCUS_TIMER_QUICK_ADJUSTMENT_MINUTES\.map\(\(minutes\) => \([\s\S]*?style=\{adjustmentGlyphStyle\}/);
+  assert.doesNotMatch(clockFaceStageSource, /aria-label="Apply custom minutes"[\s\S]*?style=\{adjustmentGlyphStyle\}/);
+  assert.doesNotMatch(customInputSource, /style=\{adjustmentGlyphStyle\}/);
+  assert.match(focusClocksSource, /\{!hasSelectedDirection \? \([\s\S]*?\) : \([\s\S]*?aria-label=\{adjustmentDirection === 1 \? "Add time amounts" : "Remove time amounts"\}/);
+  assert.match(focusClocksSource, /className=\{`\$\{adjustmentCircleClassName\} \$\{adjustmentCircleTone\(adjustmentDirection\)\}`\}[\s\S]*?\{minutes\}[\s\S]*?<\/button>/);
+  assert.match(focusClocksSource, /className=\{clockFace \?[\s\S]*?adjustmentCircleInputClassName[\s\S]*?FOCUS_BAR_ADJUSTMENT_INPUT_CLASS[\s\S]*?TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS\}/);
+  assert.equal([...focusClocksSource.matchAll(/<FocusTimerQuickAdjustmentControls/g)].length, 2);
 });
 
-test("Clocks omits the intermediate launcher and gear Adjust time opens the same adjustment state", () => {
-  assert.match(focusClocksSource, /\{!clockFace \? \([\s\S]*?aria-label="Adjust session time"[\s\S]*?>\+ \/ −<\/TaskTableChipButton>/);
-  assert.match(focusClocksSource, /<FocusTimerQuickAdjustmentControls clockFace/);
-  assert.match(focusClocksSource, /aria-label="Adjust session time"[\s\S]*?setShowSettingsMenu\(false\);[\s\S]*?setShowAdjustMenu\(true\);[\s\S]*?\+ \/ − Adjust time/);
-  assert.doesNotMatch(focusClocksSource, /<FocusTimerQuickAdjustmentControls[^>]*>[\s\S]*?<FocusTimerQuickAdjustmentControls/);
+test("gear menu mounts the staged circles directly and removes the Adjust Time chip", () => {
+  assert.match(focusClocksSource, /data-focus-clock-adjustment-region="gear-menu"[\s\S]*?<FocusTimerQuickAdjustmentControls[\s\S]*?clockFace/);
+  assert.doesNotMatch(focusClocksSource, /data-focus-clock-adjustment-region="gear-menu"[\s\S]*?Adjust time/);
+  assert.doesNotMatch(focusClocksSource, /\+ \/ − Adjust time/);
+  assert.match(focusClocksSource, /data-focus-clock-adjustment-region="gear-menu"[\s\S]*?if \(succeeded\) setShowSettingsMenu\(false\)/);
 });
 
 test("Focus Bars uses approved semantic icon controls with explicit accessible labels", () => {
@@ -338,7 +353,7 @@ test("Focus Bars uses approved semantic icon controls with explicit accessible l
 
 test("Clocks and Bars share direction-first adjustment controls without legacy signed groups", () => {
   assert.match(focusClocksSource, /export const FOCUS_TIMER_QUICK_ADJUSTMENT_MINUTES = \[5, 10\] as const/);
-  assert.match(focusClocksSource, /<FocusTimerQuickAdjustmentControls clockFace onAdjust=\{\(deltaSeconds\) => onAdjust\(category\.id, deltaSeconds\)\}/);
+  assert.match(focusClocksSource, /<FocusTimerQuickAdjustmentControls[\s\S]*?clockFace[\s\S]*?setShowAdjustMenu\(false\)[\s\S]*?return succeeded/);
   assert.match(focusClocksSource, /setAdjustmentDirection\(1\)/);
   assert.match(focusClocksSource, /aria-pressed=\{adjustmentDirection === direction\}/);
   assert.match(focusBarsSource, /FocusTimerQuickAdjustmentControls/);
@@ -349,31 +364,84 @@ test("Clocks and Bars share direction-first adjustment controls without legacy s
   assert.doesNotMatch(focusClocksSource, /Remove custom minutes|Add custom minutes|− Apply|\+ Apply/);
 });
 
+test("clock-face adjustment direction controls remain mutually exclusive and countdowns keep their picker path", () => {
+  assert.match(focusClocksSource, /aria-pressed=\{hasSelectedDirection && adjustmentDirection === direction\}/);
+  assert.match(focusClocksSource, /setAdjustmentDirection\(direction\);[\s\S]*?setHasSelectedDirection\(true\)/);
+  assert.match(focusClocksSource, /if \(isCountdown\) \{[\s\S]*?openCountdownDurationPicker\(\);[\s\S]*?return;/);
+  assert.match(focusClocksSource, /COUNTDOWN_DURATION_PRESETS\.map/);
+  assert.match(focusClocksSource, /onSubmit=\{\(event\) => \{[\s\S]*?startCountdownWithMinutes\(countdownMinutes\)/);
+});
+
 test("custom minute adjustments validate whole positive values and retain directional submission", () => {
   const positiveWholeMinutes = /^[1-9]\d*$/;
   for (const invalidValue of ["", "0", "-7", "7.5", "seven"]) assert.equal(positiveWholeMinutes.test(invalidValue), false);
   assert.equal(positiveWholeMinutes.test("7"), true);
   assert.match(focusClocksSource, /function parseFocusTimerCustomAdjustmentMinutes[\s\S]*?\^\[1-9\]\\d\*\$/);
   assert.match(focusClocksSource, /getFocusTimerAdjustmentDeltaSeconds\(adjustmentDirection, customMinuteValue\), true/);
-  assert.match(focusClocksSource, /if \(succeeded && clearCustomMinutes\) setCustomMinutes\(""\)/);
+  assert.match(focusClocksSource, /if \(clearCustomMinutes \|\| clockFace\) setCustomMinutes\(""\)/);
   assert.match(focusClocksSource, /disabled=\{customMinuteValue === null \|\| isAdjustmentPending\}/);
   assert.match(focusClocksSource, /if \(adjustmentPendingRef\.current\) return/);
   assert.match(focusClocksSource, /if \(event\.key === "Enter"\) event\.preventDefault\(\)/);
 });
 
-test("custom adjustment uses digit entry without native spinners and renders a separate minute suffix", () => {
+test("custom adjustment preserves numeric entry and keeps the compact Focus Bar presentation", () => {
   assert.match(focusClocksSource, /inputMode="numeric"/);
   assert.match(focusClocksSource, /pattern="\[0-9\]\*"/);
   assert.match(focusClocksSource, /type="text"/);
   assert.doesNotMatch(focusClocksSource, /type="number"/);
-  assert.doesNotMatch(focusClocksSource, /placeholder="min"/);
-  assert.match(focusClocksSource, /<span aria-hidden="true"[^>]*>min<\/span>/);
+  assert.match(focusClocksSource, /placeholder=\{clockFace \? "min" : undefined\}/);
+  assert.match(focusClocksSource, /className=\{clockFace \?[\s\S]*?adjustmentCircleInputClassName[\s\S]*?FOCUS_BAR_ADJUSTMENT_INPUT_CLASS[\s\S]*?TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS\}/);
+  assert.match(customInputSource, /!clockFace \?[\s\S]*?>min<\/span>/);
+  assert.match(focusBarsSource, /<FocusTimerQuickAdjustmentControls compact/);
+});
+
+test("clock-face custom input is circular, accessible, and direction-colored without a visible minute suffix", () => {
+  assert.match(customInputSource, /aria-label="Custom minutes"/);
+  assert.match(customInputSource, /adjustmentCircleInputClassName/);
+  assert.match(focusClocksSource, /const adjustmentCircleInputClassName =[\s\S]*?text-center/);
+  assert.match(focusClocksSource, /placeholder:text-\[10px\]/);
+  assert.match(focusClocksSource, /adjustmentCircleBaseClassName = "flex h-14 w-14[^"]*rounded-full/);
+  assert.match(customInputSource, /adjustmentCircleTone\(adjustmentDirection\)/);
+  assert.match(focusClocksSource, /adjustmentCircleTone = \(direction: 1 \| -1\) => direction === 1[\s\S]*?bcebd8[\s\S]*?f0dbe1/);
+  assert.doesNotMatch(clockFaceStageSource, />min<\/span>/);
+});
+
+test("clock-face custom Apply is a green circular Check control", () => {
+  assert.match(clockFaceStageSource, /aria-label="Apply custom minutes"/);
+  assert.match(clockFaceStageSource, /adjustmentCircleClassName[\s\S]*?adjustmentCircleTone\(1\)/);
+  assert.match(clockFaceStageSource, /<FocusTimerCheckIcon className="h-6 w-6" \/>/);
+  assert.match(focusClocksSource, /export function FocusTimerCheckIcon[\s\S]*?strokeWidth="3"[\s\S]*?M5 13l4 4L19 7/);
+  assert.match(focusClocksSource, /aria-label=\{`Submit \$\{category\.title\} timer`\}[\s\S]*?<FocusTimerCheckIcon className="h-5 w-5" \/>/);
+  assert.doesNotMatch(clockFaceStageSource, />Apply<\/TaskTableChipButton>/);
+  assert.match(clockFaceStageSource, /disabled=\{customMinuteValue === null \|\| isAdjustmentPending\}/);
+});
+
+test("clock-face direction and amount maps return keyed elements", () => {
+  assert.match(focusClocksSource, /const clockFaceDirectionButton[\s\S]*?key=\{direction\}/);
+  assert.match(focusClocksSource, /FOCUS_TIMER_QUICK_ADJUSTMENT_MINUTES\.map\(\(minutes\) => \([\s\S]*?key=\{minutes\}/);
+  assert.match(focusClocksSource, /\(\[1, -1\] as const\)\.map\(\(direction\) => \([\s\S]*?key=\{direction\}/);
+});
+
+test("clock-face amount circles use plain labels, shared sizing, and directional tones", () => {
+  assert.match(clockFaceStageSource, /\{minutes\}/);
+  assert.doesNotMatch(clockFaceStageSource, /\{adjustmentDirection === 1 \? "\+" : "−"\}\{minutes\}/);
+  assert.doesNotMatch(clockFaceStageSource, /\{minutes\}m/);
+  assert.match(focusClocksSource, /const adjustmentCircleBaseClassName = "flex h-14 w-14[^"]*rounded-full/);
+  assert.match(focusClocksSource, /const adjustmentGlyphStyle = \{[\s\S]*?fontFamily: "inherit",[\s\S]*?fontSize: "20px",[\s\S]*?fontWeight: 500,[\s\S]*?lineHeight: 1/);
+  assert.match(focusClocksSource, /const adjustmentCircleTone = \(direction: 1 \| -1\) => direction === 1[\s\S]*?bcebd8[\s\S]*?f0dbe1/);
+});
+
+test("successful clock-face adjustments reset while failed adjustments retain the selected stage", () => {
+  assert.match(focusClocksSource, /if \(succeeded\) \{[\s\S]*?setAdjustmentDirection\(1\);[\s\S]*?setHasSelectedDirection\(false\);/);
+  assert.match(focusClocksSource, /const succeeded = await onAdjust\(deltaSeconds\);[\s\S]*?if \(succeeded\)/);
+  assert.doesNotMatch(focusClocksSource, /if \(!succeeded\)[\s\S]*?setHasSelectedDirection\(false\)/);
+  assert.match(focusClocksSource, /if \(adjustmentPendingRef\.current\) return/);
 });
 
 test("Focus Bars keep graph content fixed while adjustment controls expand below", () => {
   assert.match(focusBarsSource, /flex min-w-full items-start/);
   assert.match(focusBarsSource, /flex h-\[21rem\][\s\S]*?overflow-hidden[\s\S]*?<\/div>\s*<div className="mt-2 flex min-h-16/);
-  assert.match(focusClocksSource, /compact \? "basis-full gap-0\.5 pt-1" : "gap-2"/);
+  assert.match(focusClocksSource, /className="flex basis-full flex-col items-center gap-0\.5 pt-1"/);
 });
 
 test("Focus tabs copy the approved centered task-tab grouped-chip formatting without arrows", () => {
@@ -399,7 +467,7 @@ test("Focus tabs copy Tasks native drag reorder with persisted visual navigation
 
 test("Focus Bars expanded adjustment controls use the approved micro treatment", () => {
   assert.match(focusClocksSource, /FOCUS_BAR_ADJUSTMENT_INPUT_CLASS = "[^"]*h-5 w-10[^"]*px-1 text-center text-\[10px\]/);
-  assert.match(focusClocksSource, /compact \? "h-5 px-1 py-0 text-\[10px\]" : undefined/);
+  assert.match(focusClocksSource, /className="h-5 px-1 py-0 text-\[10px\]"/);
   assert.match(focusClocksSource, /compact \? "text-\[9px\]" : "text-\[13px\]"/);
 });
 

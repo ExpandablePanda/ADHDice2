@@ -221,9 +221,74 @@ test("Done and Did My Best consume the unresolved Missed occurrence exactly once
     }));
     const inserted = result.proposedHistoryChanges.find((change) => change.type === "insert");
     assert.equal(result.unresolvedOccurrenceIdentity, null);
-    assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceIdentity : null, missed.occurrenceIdentity);
+    assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceIdentity : null, "task:task-1:occurrence:2026-08-04");
     assert.equal(result.proposedHistoryChanges.filter((change) => change.type === "insert").length, 1);
   }
+});
+
+test("independent Daily keeps older Missed History but derives Upcoming after a later success", () => {
+  for (const outcome of ["done", "did_my_best"] as const) {
+    const missedRows = [
+      history("2026-08-20", "missed", {
+        occurrenceIdentity: "task:task-1:occurrence:2026-08-20",
+        occurrenceDueOn: "2026-08-20",
+      }),
+      history("2026-08-21", "missed", {
+        occurrenceIdentity: "task:task-1:occurrence:2026-08-21",
+        occurrenceDueOn: "2026-08-21",
+      }),
+    ];
+    const result = evaluateTaskState(input({
+      now: "2026-08-23T14:00:00.000Z",
+      task: task({ activeStatus: "missed", dueOn: "2026-08-24" }),
+      history: [
+        ...missedRows,
+        history("2026-08-23", outcome, {
+          occurrenceIdentity: "task:task-1:occurrence:2026-08-23",
+          occurrenceDueOn: "2026-08-23",
+        }),
+      ],
+    }));
+
+    assert.equal(result.activeStatus, "upcoming", outcome);
+    assert.equal(result.nextDueDate, "2026-08-24", outcome);
+    assert.equal(result.unresolvedOccurrenceIdentity, null, outcome);
+    assert.equal(result.proposedHistoryChanges.length, 0, outcome);
+  }
+});
+
+test("independent Daily success gets its own action-day identity when old Missed rows are ambiguous", () => {
+  for (const outcome of ["done", "did_my_best"] as const) {
+    const result = evaluateTaskState(input({
+      now: "2026-08-23T14:00:00.000Z",
+      task: task({ activeStatus: "missed", dueOn: "2026-08-23" }),
+      history: [
+        history("2026-08-20", "missed", { occurrenceIdentity: "task:task-1:occurrence:2026-08-20", occurrenceDueOn: "2026-08-20" }),
+        history("2026-08-21", "missed", { occurrenceIdentity: "task:task-1:occurrence:2026-08-21", occurrenceDueOn: "2026-08-21" }),
+      ],
+      action: { type: "record_outcome", logicalDate: "2026-08-23", outcome },
+    }));
+    const inserted = result.proposedHistoryChanges.find((change) => change.type === "insert");
+
+    assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceIdentity : null, "task:task-1:occurrence:2026-08-23", outcome);
+    assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceDueOn : null, "2026-08-23", outcome);
+    assert.equal(result.nextDueDate, "2026-08-24", outcome);
+    assert.equal(result.activeStatus, "upcoming", outcome);
+  }
+});
+
+test("Daily Until Complete keeps its existing unresolved Missed semantics", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-08-23T14:00:00.000Z",
+    task: task({ activeStatus: "missed", dueOn: "2026-08-24", recurrence: { kind: "rolling", intervalDays: 1, untilComplete: true } }),
+    history: [
+      history("2026-08-20", "missed", { occurrenceIdentity: "task:task-1:occurrence:2026-08-20", occurrenceDueOn: "2026-08-20" }),
+      history("2026-08-21", "missed", { occurrenceIdentity: "task:task-1:occurrence:2026-08-21", occurrenceDueOn: "2026-08-21" }),
+      history("2026-08-23", "done", { occurrenceIdentity: "task:task-1:occurrence:2026-08-23", occurrenceDueOn: "2026-08-23" }),
+    ],
+  }));
+
+  assert.equal(result.activeStatus, "missed");
 });
 
 test("Delayed resolves the occurrence through one coherent engine plan", () => {

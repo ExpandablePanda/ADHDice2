@@ -902,6 +902,34 @@ test("trusted historical replacement derives replaceExisting and previous outcom
   assert.equal(plan.command.payload.occurrenceKey, null);
 });
 
+test("canonical Daily success projection derives its own date after ambiguous old Missed rows", () => {
+  for (const outcome of ["done", "did_my_best"] as const) {
+    const planningState = state({ due_on: "2026-08-24", repeat_frequency: "daily", status: "missed" });
+    planningState.engineInput = {
+      ...planningState.engineInput!,
+      now: "2026-08-23T12:00:00.000Z",
+      task: { ...planningState.engineInput!.task, activeStatus: "missed", dueOn: "2026-08-24", recurrence: { kind: "rolling", intervalDays: 1 } },
+      history: [
+        missedHistory("2026-08-20"),
+        missedHistory("2026-08-21"),
+      ],
+    };
+    const plan = planTaskStateCommand(planningState, command({
+      logicalDay: { ...logicalDay, logicalDate: "2026-08-23" },
+      logicalDate: "2026-08-23",
+      outcome,
+      occurrenceKey: null,
+      scheduledDueOn: null,
+    }));
+
+    assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming", outcome);
+    assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-24", outcome);
+    assert.equal(plan.normalizedResult.historyFact?.scheduled_due_on, "2026-08-23", outcome);
+    assert.equal(plan.command.payload.occurrenceKey, null, outcome);
+    assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, [], outcome);
+  }
+});
+
 test("historical rolling edit replays through a later canonical success", () => {
   const historicalLogicalDay = {
     ...logicalDay,

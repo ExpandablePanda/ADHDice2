@@ -94,6 +94,32 @@
   transition-duration: 0.01ms !important;
 }
 
+.workspace-loading-logo {
+  animation: workspace-loading-logo-fade 2s ease-in-out infinite;
+}
+
+@keyframes workspace-loading-logo-fade {
+  0%,
+  100% {
+    opacity: 0.68;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-loading-ring-animation {
+    display: none;
+  }
+
+  .workspace-loading-logo {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

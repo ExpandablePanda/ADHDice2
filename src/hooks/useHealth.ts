@@ -27,6 +27,9 @@ import type {
   HealthWaterEntry,
   HealthWaterEntryInsert,
   HealthWaterEntryUpdate,
+  HealthWorkout,
+  HealthWorkoutInsert,
+  HealthWorkoutUpdate,
   HealthWeightEntry,
   HealthWeightEntryInsert,
 } from "@/lib/database.types";
@@ -34,6 +37,7 @@ import type { AppleHealthImportPreview } from "@/lib/health-apple-import";
 import {
   buildDefaultHealthProfile,
   getEligibleHealthAchievements,
+  normalizeHealthProfile,
   type HealthAchievementCode,
 } from "@/lib/health-utils";
 import {
@@ -42,6 +46,11 @@ import {
   normalizeHealthFoodLibraryItem,
   setHealthFoodFavoriteStatus,
 } from "@/lib/health-library";
+import {
+  reconcileHealthWorkouts,
+  sortHealthWorkouts,
+  validateHealthWorkoutEditableInput,
+} from "@/lib/health-fitness";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -64,6 +73,7 @@ type HealthStateSnapshot = {
   recipes: HealthRecipe[];
   savedMeals: HealthSavedMeal[];
   waterEntries: HealthWaterEntry[];
+  workouts: HealthWorkout[];
   weightEntries: HealthWeightEntry[];
 };
 
@@ -79,6 +89,7 @@ function buildEmptyState(userId: string): HealthStateSnapshot {
     recipes: [],
     savedMeals: [],
     waterEntries: [],
+    workouts: [],
     weightEntries: [],
   };
 }
@@ -122,10 +133,14 @@ function readLocalHealthState(userId: string) {
     importAudits: readStoredJson(storageKey(userId, "imports"), emptyState.importAudits),
     mealEntries: readStoredJson(storageKey(userId, "meals"), emptyState.mealEntries),
     metricEntries: readStoredJson(storageKey(userId, "metrics"), emptyState.metricEntries),
-    profile: readStoredJson(storageKey(userId, "profile"), emptyState.profile),
+    profile: normalizeHealthProfile(
+      readStoredJson<Partial<HealthProfile> | null>(storageKey(userId, "profile"), null),
+      userId,
+    ),
     recipes: readStoredJson(storageKey(userId, "recipes"), emptyState.recipes),
     savedMeals: readStoredJson(storageKey(userId, "saved-meals"), emptyState.savedMeals),
     waterEntries: readStoredJson(storageKey(userId, "water"), emptyState.waterEntries),
+    workouts: sortHealthWorkouts(readStoredJson(storageKey(userId, "workouts"), emptyState.workouts)),
     weightEntries: readStoredJson(storageKey(userId, "weights"), emptyState.weightEntries),
   } satisfies HealthStateSnapshot;
 }
@@ -147,6 +162,7 @@ function persistLocalHealthState(state: HealthStateSnapshot) {
     metricEntries,
     importAudits,
     awards,
+    workouts,
   } = state;
   window.localStorage.setItem(storageKey(profile.user_id, "profile"), JSON.stringify(profile));
   window.localStorage.setItem(storageKey(profile.user_id, "checkins"), JSON.stringify(checkIns));
@@ -159,34 +175,7 @@ function persistLocalHealthState(state: HealthStateSnapshot) {
   window.localStorage.setItem(storageKey(profile.user_id, "metrics"), JSON.stringify(metricEntries));
   window.localStorage.setItem(storageKey(profile.user_id, "imports"), JSON.stringify(importAudits));
   window.localStorage.setItem(storageKey(profile.user_id, "awards"), JSON.stringify(awards));
-}
-
-function buildHealthSnapshot({
-  awards,
-  checkIns,
-  favorites,
-  importAudits,
-  mealEntries,
-  metricEntries,
-  profile,
-  recipes,
-  savedMeals,
-  waterEntries,
-  weightEntries,
-}: HealthStateSnapshot) {
-  return {
-    awards,
-    checkIns,
-    favorites,
-    importAudits,
-    mealEntries,
-    metricEntries,
-    profile,
-    recipes,
-    savedMeals,
-    waterEntries,
-    weightEntries,
-  } satisfies HealthStateSnapshot;
+  window.localStorage.setItem(storageKey(profile.user_id, "workouts"), JSON.stringify(workouts));
 }
 
 function createLocalId(prefix: string) {
@@ -212,12 +201,23 @@ export function useHealth(
   const [recipes, setRecipes] = useState<HealthRecipe[]>([]);
   const [savedMeals, setSavedMeals] = useState<HealthSavedMeal[]>([]);
   const [waterEntries, setWaterEntries] = useState<HealthWaterEntry[]>([]);
+  const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [importAudits, setImportAudits] = useState<HealthImportAudit[]>([]);
   const [awards, setAwards] = useState<HealthAchievementAward[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [storageMode, setStorageMode] = useState<"local" | "remote">("local");
   const healthSnapshotRef = useRef<HealthStateSnapshot | null>(null);
   const healthFoodMutationRevisionRef = useRef(0);
+  const workoutRemoteEnabledRef = useRef(true);
+
+  function buildHealthSnapshot(
+    snapshot: Omit<HealthStateSnapshot, "workouts"> & { workouts?: HealthWorkout[] },
+  ) {
+    return {
+      ...snapshot,
+      workouts: snapshot.workouts ?? healthSnapshotRef.current?.workouts ?? [],
+    } satisfies HealthStateSnapshot;
+  }
 
   function applySnapshot(snapshot: HealthStateSnapshot) {
     healthSnapshotRef.current = snapshot;
@@ -230,6 +230,7 @@ export function useHealth(
     setRecipes(snapshot.recipes);
     setSavedMeals(snapshot.savedMeals);
     setWaterEntries(snapshot.waterEntries);
+    setWorkouts(sortHealthWorkouts(snapshot.workouts));
     setImportAudits(snapshot.importAudits);
     setAwards(snapshot.awards);
     persistLocalHealthState(snapshot);
@@ -381,9 +382,11 @@ export function useHealth(
       setRecipes([]);
       setSavedMeals([]);
       setWaterEntries([]);
+      setWorkouts([]);
       setImportAudits([]);
       setAwards([]);
       setStorageMode("local");
+      workoutRemoteEnabledRef.current = true;
       return;
     }
 
@@ -412,6 +415,7 @@ export function useHealth(
         waterEntriesResult,
         weightEntriesResult,
         metricEntriesResult,
+        workoutsResult,
         importAuditsResult,
         awardsResult,
       ] = await Promise.all([
@@ -424,6 +428,7 @@ export function useHealth(
         client.from("adhdice_health_water_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
         client.from("adhdice_health_weight_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
         client.from("adhdice_health_metric_entries").select("*").eq("user_id", userId).order("metric_date", { ascending: false }),
+        client.from("adhdice_health_workouts").select("*").eq("user_id", userId).order("workout_date", { ascending: false }).order("started_at", { ascending: false }),
         client.from("adhdice_health_import_audits").select("*").eq("user_id", userId).order("started_at", { ascending: false }),
         client.from("adhdice_health_achievement_awards").select("*").eq("user_id", userId).order("earned_at", { ascending: false }),
       ]);
@@ -461,6 +466,42 @@ export function useHealth(
         return;
       }
 
+      workoutRemoteEnabledRef.current = !workoutsResult.error;
+      if (workoutsResult.error && !isMissingHealthPersistence(workoutsResult.error.message)) {
+        setMessage({ tone: "warn", text: workoutsResult.error.message });
+      } else if (workoutsResult.error) {
+        setMessage({
+          text: "Fitness workouts are running in local mode until the 7.11.33 Fitness migration is applied. Existing Health data remains connected.",
+          tone: "neutral",
+        });
+      }
+
+      const remoteWorkouts = sortHealthWorkouts(workoutsResult.data ?? []);
+      const latestLocalWorkouts = healthSnapshotRef.current?.workouts ?? localState.workouts;
+      const workoutRecovery = workoutsResult.error
+        ? { mergedWorkouts: latestLocalWorkouts, unreconciledLocalWorkouts: [] }
+        : reconcileHealthWorkouts(latestLocalWorkouts, remoteWorkouts);
+
+      if (!workoutsResult.error && workoutRecovery.unreconciledLocalWorkouts.length > 0) {
+        const { error: recoveryError } = await client
+          .from("adhdice_health_workouts")
+          .upsert(
+            workoutRecovery.unreconciledLocalWorkouts.map((workout) => ({ ...workout, user_id: userId })),
+            { ignoreDuplicates: true, onConflict: "id" },
+          );
+        if (recoveryError) {
+          workoutRemoteEnabledRef.current = false;
+          setMessage({
+            tone: "warn",
+            text: "Fitness workout recovery could not finish. The local workout is still visible and will be retried.",
+          });
+        }
+      }
+
+      if (!isActive) {
+        return;
+      }
+
       const remoteSnapshot = buildHealthSnapshot({
         awards: awardsResult.data ?? [],
         checkIns: checkInsResult.data ?? [],
@@ -468,10 +509,11 @@ export function useHealth(
         importAudits: importAuditsResult.data ?? [],
         mealEntries: mealEntriesResult.data ?? [],
         metricEntries: metricEntriesResult.data ?? [],
-        profile: profileResult.data ?? buildDefaultHealthProfile(userId),
+        profile: normalizeHealthProfile(profileResult.data, userId),
         recipes: recipesResult.data ?? [],
         savedMeals: savedMealsResult.data ?? [],
         waterEntries: waterEntriesResult.data ?? [],
+        workouts: workoutRecovery.mergedWorkouts,
         weightEntries: weightEntriesResult.data ?? [],
       });
       const currentSnapshot = healthSnapshotRef.current;
@@ -1244,6 +1286,187 @@ export function useHealth(
     return true;
   }
 
+  async function addWorkout(input: Omit<HealthWorkoutInsert, "user_id">) {
+    if (!userId || !profile) {
+      return false;
+    }
+
+    const now = new Date().toISOString();
+    const normalizedInput: Omit<HealthWorkoutInsert, "user_id"> = {
+      ...input,
+      notes: input.notes?.trim() ?? "",
+      title: input.title.trim() || input.workout_type.trim(),
+      workout_type: input.workout_type.trim(),
+    };
+    const localRow: HealthWorkout = {
+      active_calories: normalizedInput.active_calories ?? null,
+      created_at: normalizedInput.created_at ?? now,
+      duration_seconds: normalizedInput.duration_seconds,
+      ended_at: normalizedInput.ended_at ?? null,
+      id: normalizedInput.id ?? createLocalId("health-workout"),
+      notes: normalizedInput.notes ?? "",
+      source: normalizedInput.source ?? "manual",
+      source_external_id: normalizedInput.source_external_id ?? null,
+      started_at: normalizedInput.started_at ?? null,
+      title: normalizedInput.title,
+      updated_at: now,
+      user_id: userId,
+      workout_date: normalizedInput.workout_date,
+      workout_type: normalizedInput.workout_type,
+    };
+    const validationError = validateHealthWorkoutEditableInput(localRow);
+    if (validationError) {
+      setMessage({ tone: "warn", text: validationError });
+      return false;
+    }
+
+    let nextRow = localRow;
+    if (client && storageMode === "remote" && workoutRemoteEnabledRef.current) {
+      const { data, error } = await client
+        .from("adhdice_health_workouts")
+        .insert({ ...normalizedInput, user_id: userId })
+        .select("*")
+        .single();
+      if (error) {
+        if (isMissingHealthPersistence(error.message)) {
+          workoutRemoteEnabledRef.current = false;
+          setMessage({ tone: "neutral", text: "Fitness workouts are now being saved locally until the 7.11.33 Fitness migration is applied." });
+        } else {
+          setMessage({ tone: "warn", text: error.message });
+          return false;
+        }
+      } else {
+        nextRow = data ?? localRow;
+      }
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries,
+      workouts: sortHealthWorkouts([nextRow, ...workouts.filter((entry) => entry.id !== nextRow.id)]),
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Workout saved." });
+    return true;
+  }
+
+  async function updateWorkout(workoutId: string, input: HealthWorkoutUpdate) {
+    if (!profile) {
+      return false;
+    }
+    const existingWorkout = workouts.find((workout) => workout.id === workoutId);
+    if (!existingWorkout) {
+      setMessage({ tone: "warn", text: "Workout was not found." });
+      return false;
+    }
+    if (existingWorkout.source !== "manual") {
+      setMessage({ tone: "warn", text: "Imported workouts cannot be edited yet." });
+      return false;
+    }
+
+    const nextWorkout: HealthWorkout = {
+      ...existingWorkout,
+      ...input,
+      updated_at: new Date().toISOString(),
+    };
+    const validationError = validateHealthWorkoutEditableInput(nextWorkout);
+    if (validationError) {
+      setMessage({ tone: "warn", text: validationError });
+      return false;
+    }
+
+    let persistedWorkout = nextWorkout;
+    if (client && storageMode === "remote" && workoutRemoteEnabledRef.current) {
+      const { data, error } = await client
+        .from("adhdice_health_workouts")
+        .update(input)
+        .eq("id", workoutId)
+        .select("*")
+        .single();
+      if (error) {
+        if (isMissingHealthPersistence(error.message)) {
+          workoutRemoteEnabledRef.current = false;
+          setMessage({ tone: "neutral", text: "Fitness workouts are now being saved locally until the 7.11.33 Fitness migration is applied." });
+        } else {
+          setMessage({ tone: "warn", text: error.message });
+          return false;
+        }
+      } else {
+        persistedWorkout = data ?? nextWorkout;
+      }
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries,
+      workouts: sortHealthWorkouts(workouts.map((workout) => workout.id === workoutId ? persistedWorkout : workout)),
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Workout updated." });
+    return true;
+  }
+
+  async function deleteWorkout(workoutId: string) {
+    if (!profile) {
+      return false;
+    }
+    const existingWorkout = workouts.find((workout) => workout.id === workoutId);
+    if (!existingWorkout) {
+      setMessage({ tone: "warn", text: "Workout was not found." });
+      return false;
+    }
+    if (existingWorkout.source !== "manual") {
+      setMessage({ tone: "warn", text: "Imported workouts cannot be deleted yet." });
+      return false;
+    }
+
+    if (client && storageMode === "remote" && workoutRemoteEnabledRef.current) {
+      const { error } = await client.from("adhdice_health_workouts").delete().eq("id", workoutId);
+      if (error) {
+        if (isMissingHealthPersistence(error.message)) {
+          workoutRemoteEnabledRef.current = false;
+          setMessage({ tone: "neutral", text: "Fitness workouts are now being saved locally until the 7.11.33 Fitness migration is applied." });
+        } else {
+          setMessage({ tone: "warn", text: error.message });
+          return false;
+        }
+      }
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries,
+      workouts: workouts.filter((workout) => workout.id !== workoutId),
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Workout deleted." });
+    return true;
+  }
+
   async function importAppleHealthData(
     preview: AppleHealthImportPreview,
     options?: { onProgress?: (progress: HealthImportSaveProgress) => void },
@@ -1495,6 +1718,10 @@ export function useHealth(
     updateMealEntry,
     storageMode,
     waterEntries,
+    workouts,
+    addWorkout,
+    updateWorkout,
+    deleteWorkout,
     weightEntries,
   };
 }

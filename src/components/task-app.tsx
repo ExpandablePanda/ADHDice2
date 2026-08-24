@@ -113,6 +113,7 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
+import { WorkspaceLoadingScreen } from "./workspace-loading-screen";
 import {
   ScrollUpButton,
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
@@ -222,6 +223,7 @@ import {
   updateTaskRowWithLegacyEnergyFallback,
   type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
+import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
 import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/lib/task-focus-days";
 import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
@@ -575,7 +577,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.10.29";
+const APP_VERSION = "7.11.42";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1242,6 +1244,8 @@ export function TaskApp() {
     focusDailyGoalAdjustments,
     pendingDailyGoalSurplus,
     setPendingDailyGoalSurplus,
+    focusReallocationMode,
+    setFocusReallocationMode,
     suppressCategoryReload,
     handleToggleTimer, handleSetCountdownTarget, handleFinishTimer, handleAdjustTimer, handleResetTimer, handleDeleteTimer,
     handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory, handleSaveDailyGoalAdjustment,
@@ -1256,6 +1260,7 @@ export function TaskApp() {
     deleteRecipe: deleteHealthRecipe,
     deleteSavedMeal: deleteHealthSavedMeal,
     deleteWaterEntry: deleteHealthWaterEntry,
+    deleteWorkout: deleteHealthWorkout,
     deleteWeightEntry,
     favorites: healthFavorites,
     importAudits: healthImportAudits,
@@ -1275,11 +1280,14 @@ export function TaskApp() {
     addMealEntry: addHealthMealEntry,
     addWaterEntry: addHealthWaterEntry,
     addWeightEntry: addHealthWeightEntry,
+    addWorkout: addHealthWorkout,
     updateMealEntry: updateHealthMealEntry,
     updateWaterEntry: updateHealthWaterEntry,
+    updateWorkout: updateHealthWorkout,
     storageMode: healthStorageMode,
     weightEntries: healthWeightEntries,
     waterEntries: healthWaterEntries,
+    workouts: healthWorkouts,
   } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health");
   const currentUserId = session?.user?.id ?? null;
   const scratchNotes = useScratchNotes(supabase, currentUserId);
@@ -3424,6 +3432,12 @@ export function TaskApp() {
   const [taskHighlightScrollToken, setTaskHighlightScrollToken] = useState<number | null>(null);
   const [taskHighlightShouldFocusResult, setTaskHighlightShouldFocusResult] = useState(false);
   const taskHighlightScrollSequenceRef = useRef(0);
+  const [taskRevealRequest, setTaskRevealRequest] = useState<{ taskId: string; token: number } | null>(null);
+  const taskRevealSequenceRef = useRef(0);
+  const requestTaskReveal = useCallback((taskId: string) => {
+    taskRevealSequenceRef.current += 1;
+    setTaskRevealRequest({ taskId, token: taskRevealSequenceRef.current });
+  }, []);
   const pendingTaskHighlightCommittedSearchRef = useRef<string | null>(null);
   const pendingTaskHighlightSubmitSearchRef = useRef<string | null>(null);
   const queueTaskHighlightScrollIntent = useCallback((shouldFocusResult = false) => {
@@ -3467,6 +3481,27 @@ export function TaskApp() {
     };
   }, [taskHighlightScrollToken]);
   useEffect(() => {
+    if (!taskRevealRequest) {
+      return;
+    }
+
+    let remainingFrames = 4;
+    let frameId = 0;
+    const clearRequest = () => {
+      if (remainingFrames > 0) {
+        remainingFrames -= 1;
+        frameId = window.requestAnimationFrame(clearRequest);
+        return;
+      }
+      setTaskRevealRequest((current) => current?.token === taskRevealRequest.token ? null : current);
+    };
+    frameId = window.requestAnimationFrame(clearRequest);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [taskRevealRequest]);
+  useEffect(() => {
     if (pendingTaskHighlightCommittedSearchRef.current !== taskUiState.search) {
       return;
     }
@@ -3483,9 +3518,11 @@ export function TaskApp() {
     pendingTaskHighlightSubmitSearchRef.current = null;
     advanceTaskHighlightMatch();
   }, [advanceTaskHighlightMatch, taskUiState.search]);
-  const activeHighlightedTaskId = effectiveSearchQuery.length > 0
+  const activeHighlightedTaskId = taskRevealRequest?.taskId ?? (effectiveSearchQuery.length > 0
     ? (activeTaskHighlightMatchIds[taskHighlightActiveMatchIndex] ?? activeTaskHighlightMatchIds[0] ?? null)
-    : null;
+    : null);
+  const activeTaskRevealScrollToken = taskRevealRequest?.token ?? taskHighlightScrollToken;
+  const activeTaskRevealShouldFocus = taskRevealRequest ? false : taskHighlightShouldFocusResult;
   const highlightedSearchMatchedStepParentTaskIds = Array.from(
     new Set([...searchMatchedStepParentTaskIds, ...taskHighlightMatches.matchedStepParentTaskIds]),
   );
@@ -3632,6 +3669,7 @@ export function TaskApp() {
       deleteTaskRow: (taskId, expectedTask) => deleteTaskRow(client, taskId, { expectedTask }),
       isMilestoneTask: (task) => milestoneData.milestoneByTaskId.has(task.id),
       markPendingTaskMutations,
+      onTaskRevealRequested: requestTaskReveal,
       runMilestoneTaskTrash,
       setMessage,
       setTaskRouting,
@@ -3643,6 +3681,7 @@ export function TaskApp() {
     create: {
       client,
       currentUserId: currentUserIdText,
+      onTaskRevealRequested: requestTaskReveal,
       setMessage,
       setTasks,
       shouldRouteTaskToInbox,
@@ -3851,7 +3890,12 @@ export function TaskApp() {
     }
 
     if (persistedTasksById.size > 0) {
-      setTasks((current) => sortTasksForUi(current.map((task) => persistedTasksById.get(task.id) ?? task)));
+      setTasks((current) => sortTasksForUi(current.map((task) => {
+        const persistedTask = persistedTasksById.get(task.id);
+        return persistedTask
+          ? mergeTaskWithCanonicalScheduleProjection(task, persistedTask)
+          : task;
+      })));
     }
 
     if (!needsRefresh) {
@@ -4266,7 +4310,6 @@ export function TaskApp() {
   const shouldDeferPageRender = isRestoringPersistedUiState;
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
-  const shouldShowInitialHudLoadingShell = shouldBlockAuthenticatedAppBody;
   const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
   const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string) => {
     const result = buildChildTaskCreationDraft({
@@ -4495,7 +4538,7 @@ export function TaskApp() {
   }
 
   if (!isAuthResolved) {
-    return <LoadingSplash status="Restoring your workspace..." />;
+    return <WorkspaceLoadingScreen theme={theme} />;
   }
 
   if (!session?.user) {
@@ -4576,6 +4619,10 @@ export function TaskApp() {
         }}
       />
     );
+  }
+
+  if (shouldBlockAuthenticatedAppBody) {
+    return <WorkspaceLoadingScreen theme={theme} />;
   }
 
   const currentUser = session.user;
@@ -6424,7 +6471,7 @@ export function TaskApp() {
 
   return (
     <main
-      data-theme={shouldBlockAuthenticatedAppBody ? undefined : theme}
+      data-theme={theme}
       data-lowstim={lowStim ? "" : undefined}
       className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
     >
@@ -6581,10 +6628,7 @@ export function TaskApp() {
       ) : null}
       <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]">
         <div className="w-full">
-          {shouldShowInitialHudLoadingShell ? (
-            <HudLoadingShell isNativeIosPlatform={isNativeIosPlatform} />
-          ) : (
-            <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
+          <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
               <HudRuntimeClock active>
                 {(hudNow) => {
                   const focusAlarmRemainingMs = focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - hudNow) : null;
@@ -6667,18 +6711,11 @@ export function TaskApp() {
                   );
                 }}
               </HudRuntimeClock>
-            </div>
-          )}
+          </div>
         </div>
       </div>
       <div className="mx-auto w-full" style={shellZoomStyle}>
         <section className="w-full pb-28">
-
-        {isWorkspaceLoading ? (
-          <div className={`mt-5 rounded-[1.5rem] border px-5 py-4 text-sm font-semibold border-[#ece8f8] bg-white text-[#5f6983] dark:border-white/10 dark:bg-white/6 dark:text-white/70`}>
-            Syncing your workspace...
-          </div>
-        ) : null}
 
         {batchEditProgress ? <BatchEditProgressBanner onDismiss={() => setBatchEditProgress(null)} progress={batchEditProgress} /> : message ? <StatusBanner message={message} /> : null}
 
@@ -6686,11 +6723,7 @@ export function TaskApp() {
           key={shouldDeferPageRender ? "restoring-page" : activePage}
           fallback={<div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">This workspace could not load. Switch pages and try again.</div>}
         >
-        {shouldBlockAuthenticatedAppBody ? (
-          <div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1]">
-            Loading your workspace...
-          </div>
-        ) : shouldDeferPageRender ? (
+        {shouldDeferPageRender ? (
           <div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">
             Restoring your last page...
           </div>
@@ -6701,7 +6734,9 @@ export function TaskApp() {
             onOpenTask={openTaskEditorFromId}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
-            tasks={tasksForActiveStatusRead}
+            calendarNowMs={logicalDayNow}
+            calendarTimeZone={userTimeZone}
+            tasks={tasks}
             userId={currentUserId}
           />
         ) : activePage === "Achievements" ? (
@@ -6863,8 +6898,8 @@ export function TaskApp() {
                   onStatusColumnFiltersChange: (statusFilters) => setTaskUiState((prev) => ({ ...prev, statusFilters })),
                   childTaskCreationBlockedTaskIds,
                   highlightedActiveTaskId: activeHighlightedTaskId,
-                  highlightedRevealShouldFocus: taskHighlightShouldFocusResult,
-                  highlightedScrollToken: taskHighlightScrollToken,
+                  highlightedRevealShouldFocus: activeTaskRevealShouldFocus,
+                  highlightedScrollToken: activeTaskRevealScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
                   onVisibleSearchMatchIdsChange: handleTableVisibleSearchMatchIdsChange,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
@@ -7026,8 +7061,8 @@ export function TaskApp() {
                   onStatusColumnFiltersChange: (statusFilters) => setTaskUiState((prev) => ({ ...prev, statusFilters })),
                   childTaskCreationBlockedTaskIds,
                   highlightedActiveTaskId: activeHighlightedTaskId,
-                  highlightedRevealShouldFocus: taskHighlightShouldFocusResult,
-                  highlightedScrollToken: taskHighlightScrollToken,
+                  highlightedRevealShouldFocus: activeTaskRevealShouldFocus,
+                  highlightedScrollToken: activeTaskRevealScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
                   searchMatchedChildTaskIds,
@@ -7211,6 +7246,8 @@ export function TaskApp() {
             onSaveDailyGoalAdjustment={handleSaveDailyGoalAdjustment}
             onUpdateCategories={handleSaveCategories}
             pendingDailyGoalSurplus={pendingDailyGoalSurplus}
+            focusReallocationMode={focusReallocationMode}
+            onSetFocusReallocationMode={setFocusReallocationMode}
           />
         ) : activePage === "Health" ? (
           <TaskHealthPage
@@ -7221,6 +7258,7 @@ export function TaskApp() {
             deleteRecipe={deleteHealthRecipe}
             deleteSavedMeal={deleteHealthSavedMeal}
             deleteWaterEntry={deleteHealthWaterEntry}
+            deleteWorkout={deleteHealthWorkout}
             deleteWeightEntry={deleteWeightEntry}
             favorites={healthFavorites}
             focusCategories={focusCategories}
@@ -7249,11 +7287,14 @@ export function TaskApp() {
             addMealEntry={addHealthMealEntry}
             addWaterEntry={addHealthWaterEntry}
             addWeightEntry={addHealthWeightEntry}
+            addWorkout={addHealthWorkout}
             storageMode={healthStorageMode}
             updateMealEntry={updateHealthMealEntry}
             updateWaterEntry={updateHealthWaterEntry}
+            updateWorkout={updateHealthWorkout}
             weightEntries={healthWeightEntries}
             waterEntries={healthWaterEntries}
+            workouts={healthWorkouts}
           />
         ) : activePage === "Roll" ? (
           <RollPage
@@ -7405,57 +7446,6 @@ function ConfigSplash() {
         </div>
       </section>
     </main>
-  );
-}
-
-function LoadingSplash({
-  status,
-}: {
-  status: string;
-}) {
-  return (
-    <main className={`adhdice-root-safe-area min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
-      <section className="mx-auto flex min-h-[80vh] max-w-3xl items-center justify-center">
-        <div className={`w-full rounded-[2rem] border p-8 text-center border-[#ece8f8] bg-white shadow-[0_24px_70px_rgba(81,61,168,0.1)] dark:border-white/10 dark:bg-white/6`}>
-          <div className={`mx-auto h-14 w-14 animate-pulse rounded-full bg-[#ede8ff] dark:bg-[#22193f]`} />
-          <h1 className={`mt-5 text-3xl font-black text-[#17203a] dark:text-white`}>
-            {status}
-          </h1>
-        </div>
-      </section>
-    </main>
-  );
-}
-
-function HudLoadingShell({ isNativeIosPlatform }: { isNativeIosPlatform: boolean }) {
-  return (
-    <div className="w-full border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,244,255,0.96))] px-0 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
-      <header aria-label="Loading HUD" className="flex flex-col gap-2 px-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center justify-between gap-3 lg:w-[13rem] lg:shrink-0 lg:justify-start">
-          <div className={isNativeIosPlatform ? "flex flex-col items-start gap-0" : "flex items-center gap-1"}>
-            <BrandMark profile={DEFAULT_PROFILE} />
-            <span className={isNativeIosPlatform
-              ? "rounded-full bg-[#f1ecff] px-1 py-0.5 text-[11px] font-semibold leading-none text-[#7f6af7]"
-              : "rounded-full bg-[#f1ecff] px-2 py-0.5 text-[11px] font-semibold text-[#7f6af7]"}
-            >
-              {HUD_VERSION}
-            </span>
-          </div>
-          <div className="h-11 w-11 rounded-full bg-[#f3efff]" />
-        </div>
-        <div className="grid min-h-[56px] flex-1 grid-cols-2 gap-2 rounded-[1.25rem] border border-[#e8e1fb] bg-white/92 px-2 py-2 shadow-[0_10px_30px_rgba(81,61,168,0.06)] sm:grid-cols-4 lg:min-h-[64px]">
-          <div className="rounded-[1rem] bg-[#faf8ff]" />
-          <div className="rounded-[1rem] bg-[#f7f4ff]" />
-          <div className="rounded-[1rem] bg-[#faf8ff]" />
-          <div className="rounded-[1rem] bg-[#f7f4ff]" />
-        </div>
-        <div className="flex items-center justify-end gap-2 lg:shrink-0">
-          <div className="rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7]">
-            Loading workspace
-          </div>
-        </div>
-      </header>
-    </div>
   );
 }
 

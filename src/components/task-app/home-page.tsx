@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ListTodo, Minus, Plus, Search } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ListTodo, Minus, Plus, Search, Settings2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
@@ -17,15 +17,16 @@ import type { TaskDraft } from "@/components/task-app/task-editor-model";
 import type { TaskListMembership } from "@/lib/task-lists";
 import {
   buildHomeTodoHierarchy,
+  buildHomeTodoDaySections,
   createHomeTodoTask,
   getHomeTodoSearchText,
   isHomeTodoTaskEligible,
+  mergeHomeTodoVisibleTaskIds,
   moveHomeTodoTaskIdToEdge,
   reconcileHomeTodoTaskIds,
   sortHomeTodoSearchResults,
 } from "@/lib/home-todo-state";
 
-const HOME_TODO_VISIBLE_LIMIT = 10;
 const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-[#26324f] dark:text-white";
 const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2";
 const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7";
@@ -37,6 +38,8 @@ export function HomePage({
   onOpenTask,
   onSetStatus,
   taskDisplayStatusByTaskId,
+  calendarNowMs,
+  calendarTimeZone,
   tasks,
   userId,
 }: {
@@ -45,20 +48,24 @@ export function HomePage({
   onOpenTask: (taskId: string) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
+  calendarNowMs: number;
+  calendarTimeZone: string;
   tasks: Task[];
   userId: string | null;
 }) {
-  const { state, syncStatus, updateTaskIds } = useHomeTodoState(userId);
+  const { state, syncStatus, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
   const searchRef = useRef<HTMLDivElement | null>(null);
   const newTaskInputRef = useRef<HTMLInputElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
+  const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const reconciledTaskIds = useMemo(
     () => reconcileHomeTodoTaskIds(state.taskIds, tasks),
@@ -82,8 +89,13 @@ export function HomePage({
       .filter((item) => item.searchable.includes(needle)));
   }, [listMembershipsByTaskId, query, reconciledTaskIds, taskById, tasks]);
 
-  const nowTasks = todoTasks.slice(0, HOME_TODO_VISIBLE_LIMIT);
-  const doLaterTasks = todoTasks.slice(HOME_TODO_VISIBLE_LIMIT);
+  const { sections: daySections } = useMemo(
+    () => buildHomeTodoDaySections(todoTasks, state.tasksPerDay, new Date(calendarNowMs), calendarTimeZone),
+    [calendarNowMs, calendarTimeZone, state.tasksPerDay, todoTasks],
+  );
+  const sevenDayCapacity = state.tasksPerDay * daySections.length;
+  const doLaterTasks = todoTasks.slice(sevenDayCapacity);
+  const visibleTasks = isDoLaterOpen ? todoTasks : todoTasks.slice(0, sevenDayCapacity);
 
   useEffect(() => {
     if (isCreateOpen) newTaskInputRef.current?.focus();
@@ -131,6 +143,50 @@ export function HomePage({
     };
   }, [statusMenuTaskId]);
 
+  useEffect(() => {
+    if (!isSettingsOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!settingsMenuRef.current?.contains(event.target as Node)) setIsSettingsOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsSettingsOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isSettingsOpen]);
+
+  function renderDaySectionHeader(section: typeof daySections[number]) {
+    return (
+      <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 first:mt-3 first:border-t-0 first:pt-0 dark:border-white/10" key={`home-day-${section.dayIndex}`}>
+        <div>
+          <h2 className="text-sm font-bold text-[#4d466d] dark:text-white/85">{section.label}</h2>
+          <p className="mt-0.5 text-xs text-[#9a92b1] dark:text-white/42">
+            {section.taskIds.length ? `${section.taskIds.length} task${section.taskIds.length === 1 ? "" : "s"}` : "Empty"}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  function renderLaterSectionHeader() {
+    return (
+      <section className="mt-5 border-t border-[#ece8f8] pt-4 dark:border-white/10">
+        <AdhdChip
+          aria-expanded={isDoLaterOpen}
+          contentClassName="gap-1.5"
+          icon={<ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isDoLaterOpen ? "rotate-180" : ""}`} />}
+          onClick={() => setIsDoLaterOpen((current) => !current)}
+        >
+          Later ({doLaterTasks.length})
+        </AdhdChip>
+      </section>
+    );
+  }
+
   function renderTodoTask(task: Task, index: number, handle: ReactNode) {
     const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
@@ -177,7 +233,7 @@ export function HomePage({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          {index !== 0 ? (
+          {state.taskIds.indexOf(task.id) !== 0 ? (
             <AdhdIconButton
               aria-label={`Move ${task.title || "Untitled task"} to Top`}
               className={HOME_TODO_ACTION_CLASS}
@@ -189,7 +245,7 @@ export function HomePage({
               <ArrowUpToLine aria-hidden="true" />
             </AdhdIconButton>
           ) : null}
-          {index !== todoTasks.length - 1 ? (
+          {state.taskIds.indexOf(task.id) !== state.taskIds.length - 1 ? (
             <AdhdIconButton
               aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
               className={HOME_TODO_ACTION_CLASS}
@@ -218,15 +274,6 @@ export function HomePage({
   }
 
   useEffect(() => {
-    if (
-      reconciledTaskIds.length !== state.taskIds.length
-      || reconciledTaskIds.some((taskId, index) => taskId !== state.taskIds[index])
-    ) {
-      updateTaskIds(() => reconciledTaskIds);
-    }
-  }, [reconciledTaskIds, state.taskIds, updateTaskIds]);
-
-  useEffect(() => {
     if (!isSearchOpen) return;
     function closeSearch(event: PointerEvent) {
       if (!searchRef.current?.contains(event.target as Node)) setIsSearchOpen(false);
@@ -253,9 +300,46 @@ export function HomePage({
                 <h1 className="text-xl font-black text-[#27304c] dark:text-white">To-do list</h1>
               </div>
             </div>
-            <span className="text-xs text-[#8a82a3] dark:text-white/40">
-              {syncStatus === "saving" ? "Saving…" : syncStatus === "loading" ? "Loading…" : syncStatus === "synced" ? "Synced" : "Saved locally"}
-            </span>
+            <div className="relative flex items-center gap-2" ref={settingsMenuRef}>
+              <AdhdIconButton
+                aria-expanded={isSettingsOpen}
+                aria-haspopup="dialog"
+                aria-label="To-do list settings"
+                onClick={() => setIsSettingsOpen((current) => !current)}
+                selected={isSettingsOpen}
+                size="sm"
+                tone="ghost"
+              >
+                <Settings2 aria-hidden="true" />
+              </AdhdIconButton>
+              {isSettingsOpen ? (
+                <div
+                  aria-label="To-do list settings"
+                  className="absolute right-0 top-[calc(100%+0.55rem)] z-40 grid w-[min(18rem,calc(100vw-2rem))] gap-3 rounded-[1.1rem] border border-[#ede6ff] bg-white/95 p-3 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95"
+                  role="dialog"
+                >
+                  <div>
+                    <h2 className="text-sm font-bold text-[#26324f] dark:text-white">To-do list settings</h2>
+                    <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">Tasks per day</p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="Tasks per day">
+                    {[10, 11, 12, 13, 14, 15].map((tasksPerDay) => (
+                      <AdhdChip
+                        key={tasksPerDay}
+                        onClick={() => updateTasksPerDay(tasksPerDay)}
+                        selected={state.tasksPerDay === tasksPerDay}
+                        type="button"
+                      >
+                        {tasksPerDay}
+                      </AdhdChip>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <span className="text-xs text-[#8a82a3] dark:text-white/40">
+                {syncStatus === "saving" ? "Saving…" : syncStatus === "loading" ? "Loading…" : syncStatus === "synced" ? "Synced" : "Saved locally"}
+              </span>
+            </div>
           </div>
         )}
       >
@@ -345,46 +429,40 @@ export function HomePage({
           ) : null}
         </div>
 
-        {todoTasks.length ? (
-          <>
           <SortableList
             className={HOME_TODO_LIST_CLASS}
             getId={(task) => task.id}
             getLabel={(task) => task.title || "Untitled task"}
-            items={nowTasks}
-            onReorder={(nextTasks) => updateTaskIds(() => [...nextTasks, ...doLaterTasks].map((task) => task.id))}
+            items={visibleTasks}
+            onReorder={(nextTasks) => updateTaskIds((taskIds) => mergeHomeTodoVisibleTaskIds(
+              taskIds,
+              visibleTasks.map((task) => task.id),
+              nextTasks.map((task) => task.id),
+            ))}
+            renderAfterItems={(
+              <>
+                {daySections
+                  .filter((section) => section.startIndex >= visibleTasks.length)
+                  .map(renderDaySectionHeader)}
+                {!isDoLaterOpen && doLaterTasks.length ? renderLaterSectionHeader() : null}
+              </>
+            )}
+            renderBeforeItem={(_, index) => (
+              <>
+                {daySections.find((section) => section.startIndex === index)?.taskIds.length
+                  ? renderDaySectionHeader(daySections.find((section) => section.startIndex === index)!)
+                  : null}
+                {isDoLaterOpen && index === sevenDayCapacity && doLaterTasks.length ? renderLaterSectionHeader() : null}
+              </>
+            )}
           >
             {(task, index, handle) => renderTodoTask(task, index, handle)}
           </SortableList>
-          {doLaterTasks.length ? (
-            <section className="mt-5 border-t border-[#ece8f8] pt-4 dark:border-white/10">
-              <AdhdChip
-                aria-expanded={isDoLaterOpen}
-                contentClassName="gap-1.5"
-                icon={<ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isDoLaterOpen ? "rotate-180" : ""}`} />}
-                onClick={() => setIsDoLaterOpen((current) => !current)}
-              >
-                Do later ({doLaterTasks.length})
-              </AdhdChip>
-              {isDoLaterOpen ? (
-                <SortableList
-                  className={HOME_TODO_LIST_CLASS}
-                  getId={(task) => task.id}
-                  getLabel={(task) => task.title || "Untitled task"}
-                  items={doLaterTasks}
-                  onReorder={(nextTasks) => updateTaskIds(() => [...nowTasks, ...nextTasks].map((task) => task.id))}
-                >
-                  {(task, index, handle) => renderTodoTask(task, index + HOME_TODO_VISIBLE_LIMIT, handle)}
-                </SortableList>
-              ) : null}
-            </section>
+          {!todoTasks.length ? (
+            <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
+              Search above to add the first task to your ordered list.
+            </p>
           ) : null}
-          </>
-        ) : (
-          <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-8 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
-            Search above to add the first task to your ordered list.
-          </p>
-        )}
       </AdhdPanel>
     </section>
   );

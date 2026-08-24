@@ -43,6 +43,7 @@ type UseTaskCrudActionsOptions = {
   clearPendingTaskMutations?: (taskIds: string[]) => void;
   currentUserId: string;
   markPendingTaskMutations?: (taskIds: string[]) => void;
+  onTaskRevealRequested?: (taskId: string) => void;
   runMilestoneTaskTrash?: (task: Task) => Promise<{ error: string | null; handled: boolean; task: Task | null }>;
   /** Test seam for the canonical executor; normal callers use the real executor. */
   canonicalCommandExecutor?: (action: TaskStateRuntimeCanonicalAction, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
@@ -63,6 +64,7 @@ export function useTaskCrudActions({
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   currentUserId,
   markPendingTaskMutations,
+  onTaskRevealRequested,
   runMilestoneTaskTrash,
   setMessage,
   setTaskRouting,
@@ -166,6 +168,9 @@ export function useTaskCrudActions({
         }
         return next;
       });
+      if (importedRootTasks.length > 0) {
+        onTaskRevealRequested?.(importedRootTasks[0].id);
+      }
     }
 
     const result = {

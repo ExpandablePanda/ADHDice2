@@ -303,7 +303,12 @@ export function useTaskBatchEditAction({
                 ? projectTaskWithCanonicalScheduleBoundary(canonicalResult.task as Task, boundary)
                 : currentTask);
             } else {
-              nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? canonicalResult.task : currentTask);
+              if (runtimeAction.actionType === "set_due_date" || runtimeAction.actionType === "set_repeat") {
+                throw new Error("The committed canonical schedule change did not return a schedule boundary.");
+              }
+              nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id
+                ? mergeTaskWithCanonicalScheduleProjection(task, canonicalResult.task)
+                : currentTask);
             }
             hasAuthoritativeTaskRowsToReconcile = true;
             if (["archive_task", "trash_task", "complete_task", "set_outcome"].includes(runtimeAction.actionType)) routeTask(task.id, null);
