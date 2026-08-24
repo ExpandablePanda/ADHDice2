@@ -213,6 +213,38 @@ export function reconcileHomeTodoTaskIds(taskIds: readonly string[], tasks: read
   });
 }
 
+/**
+ * Applies a reordered visible subset to the durable flat order without
+ * removing IDs that are temporarily unavailable to the current Task read.
+ */
+export function mergeHomeTodoVisibleTaskIds(
+  taskIds: readonly string[],
+  visibleTaskIds: readonly string[],
+  reorderedVisibleTaskIds: readonly string[],
+) {
+  const visibleIdSet = new Set(visibleTaskIds);
+  const nextVisibleTaskIds: string[] = [];
+  const seen = new Set<string>();
+  for (const taskId of reorderedVisibleTaskIds) {
+    if (!visibleIdSet.has(taskId) || seen.has(taskId) || !taskIds.includes(taskId)) continue;
+    seen.add(taskId);
+    nextVisibleTaskIds.push(taskId);
+  }
+  for (const taskId of taskIds) {
+    if (visibleIdSet.has(taskId) && !seen.has(taskId)) {
+      seen.add(taskId);
+      nextVisibleTaskIds.push(taskId);
+    }
+  }
+
+  let nextVisibleIndex = 0;
+  return taskIds.map((taskId) => (
+    visibleIdSet.has(taskId)
+      ? nextVisibleTaskIds[nextVisibleIndex++]!
+      : taskId
+  ));
+}
+
 export function moveHomeTodoTaskId(taskIds: readonly string[], taskId: string, direction: -1 | 1) {
   const from = taskIds.indexOf(taskId);
   const to = from + direction;

@@ -11,6 +11,7 @@ import {
   formatHomeTodoDateLabel,
   getHomeTodoSearchText,
   isHomeTodoTaskEligible,
+  mergeHomeTodoVisibleTaskIds,
   moveHomeTodoTaskId,
   moveHomeTodoTaskIdToEdge,
   normalizeHomeTodoTasksPerDay,
@@ -239,6 +240,39 @@ test("Home todo reconciliation prunes duplicates, missing rows, and unavailable 
   assert.deepEqual(reconcileHomeTodoTaskIds(["b", "missing", "a", "b", "done"], tasks), ["b", "a"]);
 });
 
+test("Home todo reconciliation is presentation-only and preserves durable membership", () => {
+  const persistedTaskIds = ["a", "b", "c", "d"];
+  assert.deepEqual(reconcileHomeTodoTaskIds(persistedTaskIds, [task("a"), task("d")]), ["a", "d"]);
+  assert.deepEqual(persistedTaskIds, ["a", "b", "c", "d"]);
+});
+
+test("Home todo temporarily missing IDs reappear in their original positions", () => {
+  const persistedTaskIds = ["a", "b", "c", "d"];
+  assert.deepEqual(reconcileHomeTodoTaskIds(persistedTaskIds, [task("a"), task("d")]), ["a", "d"]);
+  assert.deepEqual(reconcileHomeTodoTaskIds(persistedTaskIds, [task("a"), task("b"), task("c"), task("d")]), ["a", "b", "c", "d"]);
+});
+
+test("Home todo empty or partial runtime reads do not erase durable membership", () => {
+  const persistedTaskIds = ["a", "b", "c", "d"];
+  assert.deepEqual(reconcileHomeTodoTaskIds(persistedTaskIds, []), []);
+  assert.deepEqual(reconcileHomeTodoTaskIds(persistedTaskIds, [task("a")]), ["a"]);
+  assert.deepEqual(persistedTaskIds, ["a", "b", "c", "d"]);
+});
+
+test("Home todo visible reorder preserves unresolved IDs", () => {
+  assert.deepEqual(
+    mergeHomeTodoVisibleTaskIds(["a", "b", "c", "d"], ["a", "d"], ["d", "a"]),
+    ["d", "b", "c", "a"],
+  );
+});
+
+test("Home todo repeated visible reorders preserve unresolved IDs", () => {
+  const visibleTaskIds = ["a", "d"];
+  const once = mergeHomeTodoVisibleTaskIds(["a", "b", "c", "d"], visibleTaskIds, ["d", "a"]);
+  assert.deepEqual(mergeHomeTodoVisibleTaskIds(once, visibleTaskIds, ["a", "d"]), ["a", "b", "c", "d"]);
+  assert.deepEqual(mergeHomeTodoVisibleTaskIds(once, visibleTaskIds, ["d", "a"]), ["d", "b", "c", "a"]);
+});
+
 test("Home todo arrow reordering preserves contiguous array order", () => {
   assert.deepEqual(moveHomeTodoTaskId(["a", "b", "c"], "b", -1), ["b", "a", "c"]);
   assert.deepEqual(moveHomeTodoTaskId(["a", "b", "c"], "b", 1), ["a", "c", "b"]);
@@ -249,6 +283,18 @@ test("Home todo direct edge reordering preserves the remaining order", () => {
   assert.deepEqual(moveHomeTodoTaskIdToEdge(["a", "b", "c", "d"], "c", "top"), ["c", "a", "b", "d"]);
   assert.deepEqual(moveHomeTodoTaskIdToEdge(["a", "b", "c", "d"], "b", "bottom"), ["a", "c", "d", "b"]);
   assert.deepEqual(moveHomeTodoTaskIdToEdge(["a", "b"], "missing", "top"), ["a", "b"]);
+});
+
+test("Home todo edge actions preserve unresolved IDs and explicit removal deletes exactly one ID", () => {
+  assert.deepEqual(moveHomeTodoTaskIdToEdge(["a", "b", "c", "d"], "d", "top"), ["d", "a", "b", "c"]);
+  assert.deepEqual(moveHomeTodoTaskIdToEdge(["a", "b", "c", "d"], "a", "bottom"), ["b", "c", "d", "a"]);
+  assert.deepEqual(["a", "b", "c", "d"].filter((taskId) => taskId !== "c"), ["a", "b", "d"]);
+});
+
+test("Home todo changing tasksPerDay does not change durable taskIds", () => {
+  const state = normalizeHomeTodoState({ taskIds: ["a", "b", "c", "d"], tasksPerDay: 10 });
+  const changed = normalizeHomeTodoState({ ...state, tasksPerDay: 15 });
+  assert.deepEqual(changed.taskIds, state.taskIds);
 });
 
 test("Home todo search includes Pinned and Routine membership labels", () => {
@@ -285,6 +331,10 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /buildHomeTodoDaySections\(todoTasks, state\.tasksPerDay, new Date\(calendarNowMs\), calendarTimeZone\)/);
   assert.match(source, /const sevenDayCapacity = state\.tasksPerDay \* daySections\.length/);
   assert.match(source, /items=\{visibleTasks\}/);
+  assert.match(source, /mergeHomeTodoVisibleTaskIds\(\s*taskIds,\s*visibleTasks\.map\(\(task\) => task\.id\),\s*nextTasks\.map\(\(task\) => task\.id\),\s*\)/);
+  assert.doesNotMatch(source, /updateTaskIds\(\(\) => reconciledTaskIds\)/);
+  assert.match(source, /state\.taskIds\.indexOf\(task\.id\) !== 0/);
+  assert.match(source, /state\.taskIds\.indexOf\(task\.id\) !== state\.taskIds\.length - 1/);
   assert.match(source, /Later \(\{doLaterTasks\.length\}\)/);
   assert.match(source, /Settings2/);
   assert.match(source, /updateTasksPerDay\(tasksPerDay\)/);
@@ -297,6 +347,8 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(hookSource, /state: outgoing/);
   assert.match(hookSource, /tasksPerDay: nextTasksPerDay/);
   assert.match(hookSource, /cacheKey\(ownerId\)/);
+  assert.match(hookSource, /persistCache\(next, userId\)/);
+  assert.match(hookSource, /state: outgoing,\s*user_id: userId/);
   assert.match(logicalDaySource, /export function getCalendarDayKey/);
   assert.match(logicalDaySource, /export function getLogicalDayKey/);
   assert.match(taskAppSource, /calendarNowMs=\{logicalDayNow\}/);
@@ -327,8 +379,8 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /<ArrowDownToLine aria-hidden="true" \/>/);
   assert.doesNotMatch(source, /<ArrowUp aria-hidden/);
   assert.doesNotMatch(source, /<ArrowDown aria-hidden/);
-  assert.match(source, /\{index !== 0 \? \(/);
-  assert.match(source, /\{index !== todoTasks\.length - 1 \? \(/);
+  assert.match(source, /\{state\.taskIds\.indexOf\(task\.id\) !== 0 \? \(/);
+  assert.match(source, /\{state\.taskIds\.indexOf\(task\.id\) !== state\.taskIds\.length - 1 \? \(/);
   assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)/);
   assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)/);
   assert.match(source, /from Home To-do/);
@@ -363,6 +415,11 @@ test("TaskApp passes Home creation through the shared canonical addTask seam", (
   const source = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   assert.match(source, /<TaskHomePage[\s\S]*onCreateTask=\{addTask\}/);
   assert.match(source, /addTask\(buildNewTaskDraft\("New Task"\)\)/);
+  const homeStart = source.indexOf("<TaskHomePage");
+  const homeSource = source.slice(homeStart, source.indexOf("/>", homeStart) + 2);
+  assert.match(homeSource, /tasks=\{tasks\}/);
+  assert.match(homeSource, /taskDisplayStatusByTaskId=\{taskDisplayStatusByTaskId\}/);
+  assert.doesNotMatch(homeSource, /tasks=\{tasksForActiveStatusRead\}/);
 });
 
 test("Home todo migration and schema provide owner-scoped realtime state", () => {

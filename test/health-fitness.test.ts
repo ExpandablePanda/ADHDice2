@@ -33,6 +33,7 @@ const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.me
 const packageLock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8")) as { version: string; packages: { "": { version: string } } };
 const appVersionSource = readFileSync(new URL("../public/app-version.json", import.meta.url), "utf8");
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+const currentStateSource = readFileSync(new URL("../docs/CURRENT_STATE.md", import.meta.url), "utf8");
 
 function workout(overrides: Partial<HealthWorkout> = {}): HealthWorkout {
   return {
@@ -537,11 +538,12 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.11.41 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.11.41");
-  assert.equal(packageLock.version, "7.11.41");
-  assert.equal(packageLock.packages[""].version, "7.11.41");
-  assert.match(appVersionSource, /"version":\s*"7\.11\.41"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.41"/);
+test("all 7.11.42 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.11.42");
+  assert.equal(packageLock.version, "7.11.42");
+  assert.equal(packageLock.packages[""].version, "7.11.42");
+  assert.match(appVersionSource, /"version":\s*"7\.11\.42"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.42"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
+  assert.match(currentStateSource, /Current working app version: `7\.11\.42`/);
 });

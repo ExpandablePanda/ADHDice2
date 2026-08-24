@@ -1,12 +1,12 @@
 # Current State
 
-Last reviewed: 2026-08-19
+Last reviewed: 2026-08-23
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.10.29`.
-- Current release group: `7.10.x` QA polish corrections for Health, Focus, and History Calendar.
+- Current working app version: `7.11.42`.
+- Current release group: `7.11.x` Home To-Do membership data-loss safeguard.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
