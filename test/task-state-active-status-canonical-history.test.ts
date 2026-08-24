@@ -117,10 +117,14 @@ function canonicalFact(
 }
 
 function read(sourceTask: Task, historyRows: TaskHistory[]) {
+  return readAt(sourceTask, historyRows, "2026-08-17T12:00:00.000Z");
+}
+
+function readAt(sourceTask: Task, historyRows: TaskHistory[], now: string) {
   return resolveCompatibilityTaskStatuses({
     historyByTaskId: { [sourceTask.id]: historyRows },
     logicalDayRollover: "06:00",
-    now: "2026-08-17T12:00:00.000Z",
+    now,
     tasks: [sourceTask],
     timezone: "America/New_York",
   }).statusesByTaskId[sourceTask.id];
@@ -159,6 +163,24 @@ test("Done and Did My Best both resolve a Missed chain and reset the missed stre
       now: "2026-08-17T12:00:00.000Z",
       timezone: "America/New_York",
     }).missedStreak, 0, outcome);
+  }
+});
+
+test("independent Daily canonical history keeps older Missed rows while read authority returns Upcoming", () => {
+  for (const outcome of ["done", "did_my_best"] as const) {
+    const sourceTask = task({ due_on: "2026-08-24", status: "missed" });
+    const rows = [
+      history("2026-08-20", "missed"),
+      history("2026-08-21", "missed"),
+      history("2026-08-23", outcome),
+    ];
+
+    assert.equal(readAt(sourceTask, rows, "2026-08-23T12:00:00.000Z"), "upcoming", outcome);
+    assert.deepEqual(rows.map((row) => [row.entry_date, row.status]), [
+      ["2026-08-20", "missed"],
+      ["2026-08-21", "missed"],
+      ["2026-08-23", outcome],
+    ], outcome);
   }
 });
 
