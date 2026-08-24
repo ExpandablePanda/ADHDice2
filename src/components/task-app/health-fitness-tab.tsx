@@ -6,11 +6,18 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import type {
+  HealthFitnessPlan,
+  HealthFitnessPlanInsert,
+  HealthFitnessPlanItem,
+  HealthFitnessPlanItemInsert,
+  HealthFitnessPlanItemUpdate,
+  HealthFitnessPlanUpdate,
   HealthMetricEntry,
   HealthProfile,
   HealthProfileUpdate,
   HealthWorkout,
   HealthWorkoutInsert,
+  HealthWorkoutPlanItemLink,
   HealthWorkoutUpdate,
 } from "@/lib/database.types";
 import {
@@ -30,6 +37,7 @@ import {
   moveFitnessOption,
   type HealthWorkoutFormInput,
 } from "@/lib/health-fitness";
+import { getHealthWorkoutPlanItemIds } from "@/lib/health-fitness-plans";
 import {
   clampPercent,
   formatHealthDateLabel,
@@ -39,37 +47,62 @@ import {
 } from "@/lib/health-utils";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
+import { FitnessPlanAssociationPicker, HealthFitnessPlansPanel } from "./health-fitness-plans-panel";
 
 type HealthFitnessTabProps = {
-  addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<boolean>;
+  addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<HealthWorkout | null>;
+  archivePlan: (planId: string) => Promise<boolean>;
+  archivePlanItem: (itemId: string) => Promise<boolean>;
+  createPlan: (input: Omit<HealthFitnessPlanInsert, "user_id">) => Promise<HealthFitnessPlan | null>;
+  createPlanItem: (input: Omit<HealthFitnessPlanItemInsert, "user_id">) => Promise<HealthFitnessPlanItem | null>;
   deleteWorkout: (workoutId: string) => Promise<boolean>;
   metricEntries: HealthMetricEntry[];
+  fitnessPlanError: string | null;
+  fitnessPlansLoading: boolean;
+  planItems: HealthFitnessPlanItem[];
+  plans: HealthFitnessPlan[];
   profile: HealthProfile;
   saveProfile: (updates: HealthProfileUpdate) => Promise<boolean>;
+  saveWorkoutPlanItemLinks: (workoutId: string, planItemIds: readonly string[]) => Promise<boolean>;
+  updatePlan: (planId: string, input: HealthFitnessPlanUpdate) => Promise<boolean>;
+  updatePlanItem: (itemId: string, input: HealthFitnessPlanItemUpdate) => Promise<boolean>;
   updateWorkout: (workoutId: string, input: HealthWorkoutUpdate) => Promise<boolean>;
+  workoutPlanItemLinks: HealthWorkoutPlanItemLink[];
   workouts: HealthWorkout[];
 };
 
-function createDefaultWorkoutDraft(workoutTypes: readonly string[] = HEALTH_WORKOUT_TYPES): HealthWorkoutFormInput {
+function createDefaultWorkoutDraft(workoutTypes: readonly string[] = HEALTH_WORKOUT_TYPES, plannedItem?: HealthFitnessPlanItem): HealthWorkoutFormInput {
   const { date } = getCurrentHealthDateTimeInputs();
   return {
     activeCalories: "",
     date,
-    durationMinutes: "",
-    notes: "",
+    durationMinutes: plannedItem?.expected_duration_seconds === null || plannedItem?.expected_duration_seconds === undefined ? "" : String(plannedItem.expected_duration_seconds / 60),
+    notes: plannedItem?.notes ?? "",
     startTime: "",
-    title: "",
-    workoutType: workoutTypes[0] ?? HEALTH_WORKOUT_TYPES[0],
+    title: plannedItem?.title ?? "",
+    workoutType: plannedItem?.workout_type ?? workoutTypes[0] ?? HEALTH_WORKOUT_TYPES[0],
   };
 }
 
 export function HealthFitnessTab({
   addWorkout,
+  archivePlan,
+  archivePlanItem,
+  createPlan,
+  createPlanItem,
   deleteWorkout,
+  fitnessPlanError,
+  fitnessPlansLoading,
   metricEntries,
+  planItems,
+  plans,
   profile,
   saveProfile,
+  saveWorkoutPlanItemLinks,
+  updatePlan,
+  updatePlanItem,
   updateWorkout,
+  workoutPlanItemLinks,
   workouts,
 }: HealthFitnessTabProps) {
   const today = todayHealthDate();
@@ -79,6 +112,7 @@ export function HealthFitnessTab({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [selectedPlanItemIds, setSelectedPlanItemIds] = useState<string[]>([]);
   const [revealRequest, setRevealRequest] = useState(0);
   const [workoutTypeDraft, setWorkoutTypeDraft] = useState("");
   const [workoutTypeError, setWorkoutTypeError] = useState<string | null>(null);
@@ -142,6 +176,7 @@ export function HealthFitnessTab({
     setDraft(createDefaultWorkoutDraft());
     setEditingWorkoutId(null);
     setFormError(null);
+    setSelectedPlanItemIds([]);
     setIsFormOpen(false);
     pendingRevealRef.current = false;
   }
@@ -153,9 +188,18 @@ export function HealthFitnessTab({
   }
 
   function openCreateForm() {
-    setDraft(createDefaultWorkoutDraft(workoutTypes));
+    openWorkoutForm();
+  }
+
+  function openPlannedItemForm(plannedItem: HealthFitnessPlanItem) {
+    openWorkoutForm(plannedItem);
+  }
+
+  function openWorkoutForm(plannedItem?: HealthFitnessPlanItem) {
+    setDraft(createDefaultWorkoutDraft(workoutTypes, plannedItem));
     setEditingWorkoutId(null);
     setFormError(null);
+    setSelectedPlanItemIds(plannedItem ? [plannedItem.id] : []);
     setIsFormOpen(true);
     queueFormReveal();
   }
@@ -175,6 +219,7 @@ export function HealthFitnessTab({
     });
     setEditingWorkoutId(workout.id);
     setFormError(null);
+    setSelectedPlanItemIds(getHealthWorkoutPlanItemIds(workout.id, workoutPlanItemLinks));
     setIsFormOpen(true);
     queueFormReveal();
   }
@@ -282,8 +327,8 @@ export function HealthFitnessTab({
       return;
     }
 
-    const saved = editingWorkoutId
-      ? await updateWorkout(editingWorkoutId, {
+    if (editingWorkoutId) {
+      const saved = await updateWorkout(editingWorkoutId, {
         active_calories: result.value.active_calories ?? null,
         duration_seconds: result.value.duration_seconds,
         ended_at: result.value.ended_at ?? null,
@@ -292,11 +337,29 @@ export function HealthFitnessTab({
         title: result.value.title,
         workout_date: result.value.workout_date,
         workout_type: result.value.workout_type,
-      })
-      : await addWorkout(result.value);
-    if (saved) {
+      });
+      if (!saved) {
+        return;
+      }
+      const hasExistingOrSelectedLinks = workoutPlanItemLinks.some((link) => link.workout_id === editingWorkoutId) || selectedPlanItemIds.length > 0;
+      if (hasExistingOrSelectedLinks && !(await saveWorkoutPlanItemLinks(editingWorkoutId, selectedPlanItemIds))) {
+        setFormError("Workout updated, but its Fitness Plan associations could not be saved. Try again.");
+        return;
+      }
       resetForm();
+      return;
     }
+
+    const savedWorkout = await addWorkout(result.value);
+    if (!savedWorkout) {
+      return;
+    }
+    if (selectedPlanItemIds.length > 0 && !(await saveWorkoutPlanItemLinks(savedWorkout.id, selectedPlanItemIds))) {
+      setEditingWorkoutId(savedWorkout.id);
+      setFormError("Workout saved, but its Fitness Plan associations could not be saved. Try again.");
+      return;
+    }
+    resetForm();
   }
 
   return (
@@ -494,6 +557,23 @@ export function HealthFitnessTab({
         </HealthCollapsiblePanel>
       </div>
 
+      <HealthFitnessPlansPanel
+        archivePlan={archivePlan}
+        archivePlanItem={archivePlanItem}
+        createPlan={createPlan}
+        createPlanItem={createPlanItem}
+        createPlanTypes={workoutTypes}
+        error={fitnessPlanError}
+        isLoading={fitnessPlansLoading}
+        onLogPlannedItem={openPlannedItemForm}
+        planItems={planItems}
+        plans={plans}
+        updatePlan={updatePlan}
+        updatePlanItem={updatePlanItem}
+        workoutPlanItemLinks={workoutPlanItemLinks}
+        workouts={workouts}
+      />
+
       <HealthCollapsiblePanel
         header={<Flame aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
         onOpenChange={setIsHistoryPanelOpen}
@@ -536,6 +616,12 @@ export function HealthFitnessTab({
             <FitnessField label="Notes (optional)">
               <textarea aria-label="Workout notes" className="health-input min-h-20 w-full resize-y rounded-[1rem] px-3 py-2 text-[13px] max-sm:text-[16px]" onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} value={draft.notes} />
             </FitnessField>
+            <FitnessPlanAssociationPicker
+              onToggle={(planItemId) => setSelectedPlanItemIds((current) => current.includes(planItemId) ? current.filter((id) => id !== planItemId) : [...current, planItemId])}
+              planItems={planItems}
+              plans={plans}
+              selectedPlanItemIds={selectedPlanItemIds}
+            />
             {formError ? <p className="text-sm text-[#d65775] dark:text-[#ffb0c1]" role="alert">{formError}</p> : null}
             <div className="flex flex-wrap gap-2">
               <AdhdChip tone="purple" type="submit">{editingWorkoutId ? "Save Changes" : "Save Workout"}</AdhdChip>

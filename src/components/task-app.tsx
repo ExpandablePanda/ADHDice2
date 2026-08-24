@@ -127,6 +127,7 @@ import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievementNotifications, useAchievementProgress } from "@/hooks/useAchievementProgress";
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { useHealth } from "@/hooks/useHealth";
+import { useFitnessPlans } from "@/hooks/useFitnessPlans";
 import { useScratchNotes } from "@/hooks/useScratchNotes";
 import { useTaskActions } from "@/hooks/useTaskActions";
 import type { TaskCanonicalMutationState } from "@/hooks/useTaskUpdateAction";
@@ -577,7 +578,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.43";
+const APP_VERSION = "7.11.45";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1289,6 +1290,20 @@ export function TaskApp() {
     waterEntries: healthWaterEntries,
     workouts: healthWorkouts,
   } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health");
+  const {
+    archivePlan: archiveFitnessPlan,
+    archivePlanItem: archiveFitnessPlanItem,
+    createPlan: createFitnessPlan,
+    createPlanItem: createFitnessPlanItem,
+    error: fitnessPlanError,
+    isLoading: fitnessPlansLoading,
+    planItems: fitnessPlanItems,
+    plans: fitnessPlans,
+    saveWorkoutPlanItemLinks,
+    updatePlan: updateFitnessPlan,
+    updatePlanItem: updateFitnessPlanItem,
+    workoutPlanItemLinks,
+  } = useFitnessPlans(supabase, session?.user?.id ?? null, setMessage, activePage === "Health");
   const currentUserId = session?.user?.id ?? null;
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const sleepCategory = useMemo(
@@ -7252,7 +7267,11 @@ export function TaskApp() {
         ) : activePage === "Health" ? (
           <TaskHealthPage
             awards={healthAwards}
+            archivePlan={archiveFitnessPlan}
+            archivePlanItem={archiveFitnessPlanItem}
             checkIns={healthCheckIns}
+            createPlan={createFitnessPlan}
+            createPlanItem={createFitnessPlanItem}
             deleteFavoriteFood={deleteFavoriteFood}
             deleteMealEntry={deleteMealEntry}
             deleteRecipe={deleteHealthRecipe}
@@ -7261,6 +7280,10 @@ export function TaskApp() {
             deleteWorkout={deleteHealthWorkout}
             deleteWeightEntry={deleteWeightEntry}
             favorites={healthFavorites}
+            fitnessPlanError={fitnessPlanError}
+            fitnessPlansLoading={fitnessPlansLoading}
+            planItems={fitnessPlanItems}
+            plans={fitnessPlans}
             focusCategories={focusCategories}
             focusHistory={focusHistory}
             importAudits={healthImportAudits}
@@ -7284,6 +7307,7 @@ export function TaskApp() {
             savedMeals={healthSavedMeals}
             saveSavedMeal={saveHealthSavedMeal}
             saveProfile={saveHealthProfile}
+            saveWorkoutPlanItemLinks={saveWorkoutPlanItemLinks}
             addMealEntry={addHealthMealEntry}
             addWaterEntry={addHealthWaterEntry}
             addWeightEntry={addHealthWeightEntry}
@@ -7292,9 +7316,12 @@ export function TaskApp() {
             updateMealEntry={updateHealthMealEntry}
             updateWaterEntry={updateHealthWaterEntry}
             updateWorkout={updateHealthWorkout}
+            updatePlan={updateFitnessPlan}
+            updatePlanItem={updateFitnessPlanItem}
             weightEntries={healthWeightEntries}
             waterEntries={healthWaterEntries}
             workouts={healthWorkouts}
+            workoutPlanItemLinks={workoutPlanItemLinks}
           />
         ) : activePage === "Roll" ? (
           <RollPage

@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-23
+Last reviewed: 2026-08-24
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.43`.
+- Current working app version: `7.11.45`.
 - Current release group: `7.11.x` Home To-Do membership data-loss safeguard.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-24 7.11.45 Fitness Plan item workflow
+
+The Fitness Plan editor keeps its existing Add Planned Item behavior in the bottom action group beside Save Plan and Cancel, so additional planned items can be appended after editing the last item without returning to the section header. Fitness Plan persistence, associations, completion semantics, week behavior, and the authored-only 7.11.44 migration are unchanged. Browser QA, live SQL, builds, and device deployment remain unverified.
+
+## 2026-08-24 7.11.44 Multiple Fitness Plans
+
+Fitness now has durable multiple-plan structures (`adhdice_health_fitness_plans`, planned items, and explicit workout links) alongside the canonical `adhdice_health_workouts` ledger. Health > Fitness supports active-plan creation/edit/archive, Monday–Sunday current-week completion, first-week start-date semantics, and optional multi-select associations from the existing workout form. Workouts remain the authority for actual activity; plan loading/recovery is isolated from Health workout recovery. Focused Fitness Plan and Health regression tests are the implementation verification boundary; browser QA, live SQL, builds, and device deployment remain unverified. The migration is authored only and must be applied manually before the database-backed plan UI can persist data.
 
 ## 2026-08-19 7.10.1 QA polish
 
