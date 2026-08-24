@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.44`.
+- Current working app version: `7.11.45`.
 - Current release group: `7.11.x` Home To-Do membership data-loss safeguard.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,10 @@ Role: active working
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-24 7.11.45 Fitness Plan item workflow
+
+The Fitness Plan editor keeps its existing Add Planned Item behavior in the bottom action group beside Save Plan and Cancel, so additional planned items can be appended after editing the last item without returning to the section header. Fitness Plan persistence, associations, completion semantics, week behavior, and the authored-only 7.11.44 migration are unchanged. Browser QA, live SQL, builds, and device deployment remain unverified.
 
 ## 2026-08-24 7.11.44 Multiple Fitness Plans
 
