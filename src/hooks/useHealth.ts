@@ -1288,7 +1288,7 @@ export function useHealth(
 
   async function addWorkout(input: Omit<HealthWorkoutInsert, "user_id">) {
     if (!userId || !profile) {
-      return false;
+      return null;
     }
 
     const now = new Date().toISOString();
@@ -1317,7 +1317,7 @@ export function useHealth(
     const validationError = validateHealthWorkoutEditableInput(localRow);
     if (validationError) {
       setMessage({ tone: "warn", text: validationError });
-      return false;
+      return null;
     }
 
     let nextRow = localRow;
@@ -1333,7 +1333,7 @@ export function useHealth(
           setMessage({ tone: "neutral", text: "Fitness workouts are now being saved locally until the 7.11.33 Fitness migration is applied." });
         } else {
           setMessage({ tone: "warn", text: error.message });
-          return false;
+          return null;
         }
       } else {
         nextRow = data ?? localRow;
@@ -1355,7 +1355,7 @@ export function useHealth(
       weightEntries,
     }));
     setMessage({ tone: "good", text: "Workout saved." });
-    return true;
+    return nextRow;
   }
 
   async function updateWorkout(workoutId: string, input: HealthWorkoutUpdate) {
