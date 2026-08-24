@@ -1,6 +1,8 @@
 import { buildNewTaskDraft, type TaskDraft } from "@/components/task-app/task-editor-model";
 import type { Task } from "@/lib/database.types";
+import { getLogicalDayKey } from "@/lib/logical-day";
 import type { TaskListMembership } from "@/lib/task-lists";
+import { shiftDateKey } from "@/lib/task-grid-layout";
 
 export type HomeTodoStateV1 = {
   clientUpdatedAt: string;
@@ -8,11 +10,92 @@ export type HomeTodoStateV1 = {
   taskIds: string[];
 };
 
-export const EMPTY_HOME_TODO_STATE: HomeTodoStateV1 = {
-  clientUpdatedAt: new Date(0).toISOString(),
-  schemaVersion: 1,
-  taskIds: [],
+export type HomeTodoStateV2 = {
+  clientUpdatedAt: string;
+  schemaVersion: 2;
+  taskIds: string[];
+  tasksPerDay: HomeTodoTasksPerDay;
 };
+
+type HomeTodoStateCandidate = {
+  clientUpdatedAt?: unknown;
+  taskIds?: unknown;
+  tasksPerDay?: unknown;
+};
+
+export const HOME_TODO_TASKS_PER_DAY_OPTIONS = [10, 11, 12, 13, 14, 15] as const;
+export type HomeTodoTasksPerDay = typeof HOME_TODO_TASKS_PER_DAY_OPTIONS[number];
+export const DEFAULT_HOME_TODO_TASKS_PER_DAY: HomeTodoTasksPerDay = 10;
+
+export const EMPTY_HOME_TODO_STATE: HomeTodoStateV2 = {
+  clientUpdatedAt: new Date(0).toISOString(),
+  schemaVersion: 2,
+  taskIds: [],
+  tasksPerDay: DEFAULT_HOME_TODO_TASKS_PER_DAY,
+};
+
+export type HomeTodoDaySection<T = string> = {
+  dayIndex: number;
+  dateKey: string;
+  label: string;
+  startIndex: number;
+  taskIds: T[];
+};
+
+export function normalizeHomeTodoTasksPerDay(value: unknown): HomeTodoTasksPerDay {
+  return HOME_TODO_TASKS_PER_DAY_OPTIONS.includes(value as HomeTodoTasksPerDay)
+    ? value as HomeTodoTasksPerDay
+    : DEFAULT_HOME_TODO_TASKS_PER_DAY;
+}
+
+function formatOrdinalDay(day: number) {
+  const suffix = day % 100 >= 11 && day % 100 <= 13
+    ? "th"
+    : day % 10 === 1
+      ? "st"
+      : day % 10 === 2
+        ? "nd"
+        : day % 10 === 3
+          ? "rd"
+          : "th";
+  return `${day}${suffix}`;
+}
+
+export function formatHomeTodoDateLabel(dateKey: string, dayIndex: number) {
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  const month = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" }).format(date);
+  const day = Number.parseInt(new Intl.DateTimeFormat("en-US", { day: "numeric", timeZone: "UTC" }).format(date), 10);
+  const dateLabel = `${month} ${formatOrdinalDay(day)}`;
+  const prefix = dayIndex === 0
+    ? "Today"
+    : dayIndex === 1
+      ? "Tomorrow"
+      : new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "long" }).format(date);
+  return `${prefix} · ${dateLabel}`;
+}
+
+export function buildHomeTodoDaySections<T>(
+  taskIds: readonly T[],
+  tasksPerDay: unknown = DEFAULT_HOME_TODO_TASKS_PER_DAY,
+  now: Date = new Date(),
+) {
+  const normalizedTasksPerDay = normalizeHomeTodoTasksPerDay(tasksPerDay);
+  const todayDateKey = getLogicalDayKey(now);
+  const sections: HomeTodoDaySection<T>[] = Array.from({ length: 7 }, (_, dayIndex) => {
+    const startIndex = dayIndex * normalizedTasksPerDay;
+    return {
+      dayIndex,
+      dateKey: shiftDateKey(todayDateKey, dayIndex),
+      label: formatHomeTodoDateLabel(shiftDateKey(todayDateKey, dayIndex), dayIndex),
+      startIndex,
+      taskIds: [...taskIds.slice(startIndex, startIndex + normalizedTasksPerDay)],
+    };
+  });
+  return {
+    sections,
+    laterTaskIds: [...taskIds.slice(normalizedTasksPerDay * 7)],
+  };
+}
 
 export async function createHomeTodoTask(
   title: string,
@@ -29,11 +112,11 @@ export async function createHomeTodoTask(
   return createdTask;
 }
 
-export function normalizeHomeTodoState(value: unknown): HomeTodoStateV1 {
+export function normalizeHomeTodoState(value: unknown): HomeTodoStateV2 {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...EMPTY_HOME_TODO_STATE };
   }
-  const candidate = value as Partial<HomeTodoStateV1>;
+  const candidate = value as HomeTodoStateCandidate;
   const seen = new Set<string>();
   const taskIds = Array.isArray(candidate.taskIds)
     ? candidate.taskIds.filter((taskId): taskId is string => {
@@ -49,8 +132,9 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV1 {
     clientUpdatedAt: Number.isFinite(parsedUpdatedAt)
       ? new Date(parsedUpdatedAt).toISOString()
       : EMPTY_HOME_TODO_STATE.clientUpdatedAt,
-    schemaVersion: 1,
+    schemaVersion: 2,
     taskIds,
+    tasksPerDay: normalizeHomeTodoTasksPerDay(candidate.tasksPerDay),
   };
 }
 

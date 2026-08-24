@@ -5,12 +5,15 @@ import { readFileSync } from "node:fs";
 import type { TaskDraft } from "../src/components/task-app/task-editor-model.ts";
 import type { Task } from "../src/lib/database.types.ts";
 import {
+  buildHomeTodoDaySections,
   buildHomeTodoHierarchy,
   createHomeTodoTask,
+  formatHomeTodoDateLabel,
   getHomeTodoSearchText,
   isHomeTodoTaskEligible,
   moveHomeTodoTaskId,
   moveHomeTodoTaskIdToEdge,
+  normalizeHomeTodoTasksPerDay,
   normalizeHomeTodoState,
   reconcileHomeTodoTaskIds,
   sortHomeTodoSearchResults,
@@ -28,16 +31,65 @@ function task(id: string, overrides: Partial<Task> = {}) {
   } as Task;
 }
 
-test("Home todo state normalizes to ordered unique task ids", () => {
+test("Home todo V1 state normalizes to V2 with the default capacity", () => {
   assert.deepEqual(normalizeHomeTodoState({
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
-    schemaVersion: 99,
+    schemaVersion: 1,
     taskIds: ["a", "a", "", 4, "b"],
   }), {
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
-    schemaVersion: 1,
+    schemaVersion: 2,
     taskIds: ["a", "b"],
+    tasksPerDay: 10,
   });
+});
+
+test("Home todo tasks-per-day accepts 10 through 15 and safely defaults invalid values", () => {
+  assert.deepEqual([10, 11, 12, 13, 14, 15].map(normalizeHomeTodoTasksPerDay), [10, 11, 12, 13, 14, 15]);
+  assert.equal(normalizeHomeTodoTasksPerDay(9), 10);
+  assert.equal(normalizeHomeTodoTasksPerDay("12"), 10);
+  assert.equal(normalizeHomeTodoTasksPerDay(null), 10);
+});
+
+test("Home todo generates seven local calendar sections with Today, Tomorrow, weekdays, and ordinal dates", () => {
+  const { sections, laterTaskIds } = buildHomeTodoDaySections(
+    Array.from({ length: 71 }, (_, index) => `task-${index}`),
+    10,
+    new Date("2026-08-23T12:00:00-04:00"),
+  );
+  assert.equal(sections.length, 7);
+  assert.deepEqual(sections.map((section) => section.label), [
+    "Today · August 23rd",
+    "Tomorrow · August 24th",
+    "Tuesday · August 25th",
+    "Wednesday · August 26th",
+    "Thursday · August 27th",
+    "Friday · August 28th",
+    "Saturday · August 29th",
+  ]);
+  assert.equal(formatHomeTodoDateLabel("2026-08-11", 2), "Tuesday · August 11th");
+  assert.deepEqual(laterTaskIds, ["task-70"]);
+});
+
+test("Home todo preserves flat order at 10-task and 15-task chunk boundaries", () => {
+  const taskIds = Array.from({ length: 106 }, (_, index) => `task-${index}`);
+  const ten = buildHomeTodoDaySections(taskIds, 10, new Date("2026-08-23T12:00:00-04:00"));
+  const fifteen = buildHomeTodoDaySections(taskIds, 15, new Date("2026-08-23T12:00:00-04:00"));
+  assert.deepEqual(ten.sections.map((section) => section.taskIds.length), [10, 10, 10, 10, 10, 10, 10]);
+  assert.deepEqual(fifteen.sections.map((section) => section.taskIds.length), [15, 15, 15, 15, 15, 15, 15]);
+  assert.deepEqual(fifteen.laterTaskIds, ["task-105"]);
+  assert.deepEqual([...ten.sections.flatMap((section) => section.taskIds), ...ten.laterTaskIds], taskIds);
+  assert.deepEqual([...fifteen.sections.flatMap((section) => section.taskIds), ...fifteen.laterTaskIds], taskIds);
+  const twelve = buildHomeTodoDaySections(taskIds, 12);
+  assert.deepEqual([...twelve.sections.flatMap((section) => section.taskIds), ...twelve.laterTaskIds], taskIds);
+});
+
+test("Home todo cross-section reorder changes only the canonical global order", () => {
+  const taskIds = Array.from({ length: 21 }, (_, index) => `task-${index}`);
+  const moved = reorderListItems(taskIds, 10, 3);
+  assert.equal(moved[3], "task-10");
+  assert.equal(moved[10], "task-9");
+  assert.deepEqual(buildHomeTodoDaySections(moved, 10).sections.flatMap((section) => section.taskIds), moved);
 });
 
 test("Home task creation ignores whitespace-only titles without calling canonical creation", async () => {
@@ -171,12 +223,27 @@ test("shared drag reorder moves Home task ids without mutating the source", () =
   assert.deepEqual(source, ["a", "b", "c"]);
 });
 
-test("Home todo renders the recovered ten-item, wrapped-title, status, and picker behavior", () => {
+test("Home todo renders seven flat sortable sections, settings, and the recovered task behavior", () => {
   const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
   const sharedIconButton = readFileSync(new URL("../src/components/ui-system/adhd-icon-button.tsx", import.meta.url), "utf8");
-  assert.match(source, /const HOME_TODO_VISIBLE_LIMIT = 10/);
-  assert.match(source, /todoTasks\.slice\(0, HOME_TODO_VISIBLE_LIMIT\)/);
-  assert.match(source, /Do later \(\{doLaterTasks\.length\}\)/);
+  const sortableSource = readFileSync(new URL("../src/components/ui/sortable-list.tsx", import.meta.url), "utf8");
+  const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /HOME_TODO_VISIBLE_LIMIT/);
+  assert.match(source, /buildHomeTodoDaySections/);
+  assert.match(source, /const sevenDayCapacity = state\.tasksPerDay \* daySections\.length/);
+  assert.match(source, /items=\{visibleTasks\}/);
+  assert.match(source, /Later \(\{doLaterTasks\.length\}\)/);
+  assert.match(source, /Settings2/);
+  assert.match(source, /updateTasksPerDay\(tasksPerDay\)/);
+  assert.match(source, /setIsSettingsOpen\(false\)/);
+  assert.match(source, /event\.key === "Escape"/);
+  assert.match(sortableSource, /renderBeforeItem\?:/);
+  assert.match(sortableSource, /renderAfterItems\}/);
+  assert.match(sortableSource, /renderBeforeItem\?\.\(item, index\)/);
+  assert.match(sortableSource, /data-sortable-row=\{id\}/);
+  assert.match(hookSource, /state: outgoing/);
+  assert.match(hookSource, /tasksPerDay: nextTasksPerDay/);
+  assert.match(hookSource, /cacheKey\(ownerId\)/);
   assert.match(source, /const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-\[#26324f\] dark:text-white"/);
   assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 3);
   assert.match(source, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto\] items-center gap-x-0/);
@@ -209,7 +276,7 @@ test("Home todo renders the recovered ten-item, wrapped-title, status, and picke
   assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)/);
   assert.match(source, /from Home To-do/);
   assert.match(source, /<Minus aria-hidden="true" \/>/);
-  assert.equal((source.match(/size="sm"/g) ?? []).length, 3);
+  assert.equal((source.match(/size="sm"/g) ?? []).length, 4);
   assert.match(source, /const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7"/);
   assert.match(source, /const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-\[12\.25px\] max-sm:!w-\[12\.25px\]"/);
   assert.equal((source.match(/className=\{HOME_TODO_ACTION_CLASS\}/g) ?? []).length, 3);
@@ -231,6 +298,7 @@ test("Home todo renders the recovered ten-item, wrapped-title, status, and picke
   assert.doesNotMatch(source, /setQuery\(""\)/);
   assert.doesNotMatch(source, /font-semibold leading-5/);
   assert.doesNotMatch(source, /text-\[#443d60\]/);
+  assert.doesNotMatch(source, /due_on|due date|repeat_frequency/);
 });
 
 test("TaskApp passes Home creation through the shared canonical addTask seam", () => {
