@@ -1695,6 +1695,78 @@ export type HealthWorkoutUpdate = Partial<
   Pick<HealthWorkout, "workout_date" | "started_at" | "ended_at" | "duration_seconds" | "title" | "workout_type" | "active_calories" | "notes">
 >;
 
+export type HealthFitnessPlan = {
+  id: string;
+  user_id: string;
+  name: string;
+  starts_on: string;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthFitnessPlanInsert = {
+  id?: string;
+  user_id: string;
+  name: string;
+  starts_on: string;
+  archived_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthFitnessPlanUpdate = Partial<Pick<HealthFitnessPlan, "name" | "starts_on" | "archived_at">>;
+
+export type HealthFitnessPlanItem = {
+  id: string;
+  user_id: string;
+  plan_id: string;
+  day_of_week: number;
+  workout_type: string;
+  title: string | null;
+  expected_duration_seconds: number | null;
+  notes: string | null;
+  sort_order: number;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthFitnessPlanItemInsert = {
+  id?: string;
+  user_id: string;
+  plan_id: string;
+  day_of_week: number;
+  workout_type: string;
+  title?: string | null;
+  expected_duration_seconds?: number | null;
+  notes?: string | null;
+  sort_order?: number;
+  archived_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthFitnessPlanItemUpdate = Partial<Pick<HealthFitnessPlanItem, "day_of_week" | "workout_type" | "title" | "expected_duration_seconds" | "notes" | "sort_order" | "archived_at">>;
+
+export type HealthWorkoutPlanItemLink = {
+  id: string;
+  user_id: string;
+  workout_id: string;
+  plan_item_id: string;
+  created_at: string;
+};
+
+export type HealthWorkoutPlanItemLinkInsert = {
+  id?: string;
+  user_id: string;
+  workout_id: string;
+  plan_item_id: string;
+  created_at?: string;
+};
+
+export type HealthWorkoutPlanItemLinkUpdate = Record<string, never>;
+
 export type HealthImportAudit = {
   id: string;
   user_id: string;
@@ -2300,6 +2372,24 @@ export type Database = {
         Row: HealthWorkout;
         Insert: HealthWorkoutInsert;
         Update: HealthWorkoutUpdate;
+        Relationships: [];
+      };
+      adhdice_health_fitness_plans: {
+        Row: HealthFitnessPlan;
+        Insert: HealthFitnessPlanInsert;
+        Update: HealthFitnessPlanUpdate;
+        Relationships: [];
+      };
+      adhdice_health_fitness_plan_items: {
+        Row: HealthFitnessPlanItem;
+        Insert: HealthFitnessPlanItemInsert;
+        Update: HealthFitnessPlanItemUpdate;
+        Relationships: [];
+      };
+      adhdice_health_workout_plan_item_links: {
+        Row: HealthWorkoutPlanItemLink;
+        Insert: HealthWorkoutPlanItemLinkInsert;
+        Update: HealthWorkoutPlanItemLinkUpdate;
         Relationships: [];
       };
       adhdice_health_import_audits: {

@@ -6,6 +6,12 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactN
 import type {
   HealthAchievementAward,
   HealthCheckIn,
+  HealthFitnessPlan,
+  HealthFitnessPlanInsert,
+  HealthFitnessPlanItem,
+  HealthFitnessPlanItemInsert,
+  HealthFitnessPlanItemUpdate,
+  HealthFitnessPlanUpdate,
   HealthFoodLibraryItem,
   HealthImportAudit,
   HealthMealEntry,
@@ -25,6 +31,7 @@ import type {
   HealthWaterUnit,
   HealthWorkout,
   HealthWorkoutInsert,
+  HealthWorkoutPlanItemLink,
   HealthWorkoutUpdate,
   HealthWeightEntry,
 } from "@/lib/database.types";
@@ -202,7 +209,18 @@ type HealthPageProps = {
     entry_date: string;
     unit: HealthWaterUnit;
   }) => Promise<boolean>;
-  addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<boolean>;
+  addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<HealthWorkout | null>;
+  archivePlan: (planId: string) => Promise<boolean>;
+  archivePlanItem: (itemId: string) => Promise<boolean>;
+  createPlan: (input: Omit<HealthFitnessPlanInsert, "user_id">) => Promise<HealthFitnessPlan | null>;
+  createPlanItem: (input: Omit<HealthFitnessPlanItemInsert, "user_id">) => Promise<HealthFitnessPlanItem | null>;
+  fitnessPlanError: string | null;
+  fitnessPlansLoading: boolean;
+  planItems: HealthFitnessPlanItem[];
+  plans: HealthFitnessPlan[];
+  saveWorkoutPlanItemLinks: (workoutId: string, planItemIds: readonly string[]) => Promise<boolean>;
+  updatePlan: (planId: string, input: HealthFitnessPlanUpdate) => Promise<boolean>;
+  updatePlanItem: (itemId: string, input: HealthFitnessPlanItemUpdate) => Promise<boolean>;
   updateWaterEntry: (entryId: string, input: {
     amount: number;
     amount_ml: number;
@@ -212,6 +230,7 @@ type HealthPageProps = {
   }) => Promise<boolean>;
   updateMealEntry: (entryId: string, input: HealthMealEntryUpdate) => Promise<boolean>;
   updateWorkout: (workoutId: string, input: HealthWorkoutUpdate) => Promise<boolean>;
+  workoutPlanItemLinks: HealthWorkoutPlanItemLink[];
   storageMode: "local" | "remote";
   onOpenReminderTemplate: (templateKey: HealthReminderTemplateKey) => void;
   weightEntries: HealthWeightEntry[];
@@ -402,9 +421,18 @@ export function HealthPage({
   addWeightEntry,
   addWaterEntry,
   addWorkout,
+  archivePlan,
+  archivePlanItem,
+  createPlan,
+  createPlanItem,
+  fitnessPlanError,
+  fitnessPlansLoading,
   updateWaterEntry,
   updateWorkout,
   updateMealEntry,
+  saveWorkoutPlanItemLinks,
+  updatePlan,
+  updatePlanItem,
   sleepCategory,
   sleepActiveSession,
   onToggleSleepClock,
@@ -414,6 +442,9 @@ export function HealthPage({
   weightEntries,
   waterEntries,
   workouts,
+  planItems,
+  plans,
+  workoutPlanItemLinks,
 }: HealthPageProps) {
   const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
@@ -1404,11 +1435,23 @@ export function HealthPage({
       {activeTab === "Fitness" ? (
         <HealthFitnessTab
           addWorkout={addWorkout}
+          archivePlan={archivePlan}
+          archivePlanItem={archivePlanItem}
+          createPlan={createPlan}
+          createPlanItem={createPlanItem}
           deleteWorkout={deleteWorkout}
+          fitnessPlanError={fitnessPlanError}
+          fitnessPlansLoading={fitnessPlansLoading}
           metricEntries={metricEntries}
+          planItems={planItems}
+          plans={plans}
           profile={activeProfile}
           saveProfile={saveProfile}
+          saveWorkoutPlanItemLinks={saveWorkoutPlanItemLinks}
+          updatePlan={updatePlan}
+          updatePlanItem={updatePlanItem}
           updateWorkout={updateWorkout}
+          workoutPlanItemLinks={workoutPlanItemLinks}
           workouts={workouts}
         />
       ) : null}
