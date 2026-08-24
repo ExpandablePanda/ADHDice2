@@ -13,12 +13,23 @@ type DragState = {
   pointerY: number;
   sourceIndex: number;
   targetIndex: number;
+  dropZoneId: string | null;
+};
+
+type SortableReorderContext = {
+  dropZoneId: string | null;
+  sourceIndex: number;
+  targetIndex: number;
 };
 
 function getDropIndex(midpoints: readonly number[], pointerY: number, sourceIndex: number) {
   const remaining = midpoints.filter((_, index) => index !== sourceIndex);
   const insertionIndex = remaining.findIndex((midpoint) => pointerY < midpoint);
   return insertionIndex < 0 ? remaining.length : insertionIndex;
+}
+
+function getDropZoneIndex(rawIndex: number, itemCount: number) {
+  return Math.max(0, Math.min(Math.max(0, itemCount - 1), rawIndex));
 }
 
 export function SortableList<T>({
@@ -36,7 +47,7 @@ export function SortableList<T>({
   getId: (item: T) => string;
   getLabel: (item: T) => string;
   items: readonly T[];
-  onReorder: (items: T[]) => void;
+  onReorder: (items: T[], context: SortableReorderContext) => void;
   renderAfterItems?: ReactNode;
   renderBeforeItem?: (item: T, index: number) => ReactNode;
 }) {
@@ -53,6 +64,36 @@ export function SortableList<T>({
     setDrag(next);
   }, []);
 
+  const getDropState = useCallback((current: DragState, pointerY: number) => {
+    const rows = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-sortable-row]") ?? []);
+    const midpoints = rows.map((row) => {
+      const rect = row.getBoundingClientRect();
+      return rect.top + rect.height / 2;
+    });
+    const dropZone = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-sortable-drop-index]") ?? [])
+      .map((element) => {
+        const rawIndex = Number.parseInt(element.dataset.sortableDropIndex ?? "", 10);
+        const rect = element.getBoundingClientRect();
+        return Number.isFinite(rawIndex)
+          ? { bottom: rect.bottom, id: element.dataset.sortableDropId ?? null, rawIndex, top: rect.top }
+          : null;
+      })
+      .find((candidate) => candidate && pointerY >= candidate.top && pointerY <= candidate.bottom);
+    return {
+      dropZoneId: dropZone?.id ?? null,
+      pointerY,
+      targetIndex: dropZone
+        ? getDropZoneIndex(dropZone.rawIndex, snapshotRef.current.length)
+        : getDropIndex(midpoints, pointerY, current.sourceIndex),
+    };
+  }, []);
+
+  const processPointerMove = useCallback((pointerY: number) => {
+    const current = dragRef.current;
+    if (!current?.active) return;
+    updateDrag({ ...current, ...getDropState(current, pointerY) });
+  }, [getDropState, updateDrag]);
+
   const cancelDrag = useCallback(() => {
     if (holdRef.current !== null) window.clearTimeout(holdRef.current);
     if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
@@ -65,8 +106,12 @@ export function SortableList<T>({
   const finish = useCallback((pointerId: number, cancelled = false) => {
     const current = dragRef.current;
     if (!current || current.pointerId !== pointerId) return;
-    if (current.active && !cancelled && current.targetIndex !== current.sourceIndex) {
-      onReorder(reorderListItems(snapshotRef.current, current.sourceIndex, current.targetIndex));
+    if (current.active && !cancelled && (current.targetIndex !== current.sourceIndex || current.dropZoneId !== null)) {
+      onReorder(reorderListItems(snapshotRef.current, current.sourceIndex, current.targetIndex), {
+        dropZoneId: current.dropZoneId,
+        sourceIndex: current.sourceIndex,
+        targetIndex: current.targetIndex,
+      });
       suppressClickRef.current = true;
       window.setTimeout(() => {
         suppressClickRef.current = false;
@@ -89,21 +134,38 @@ export function SortableList<T>({
     if (frameRef.current !== null) return;
     frameRef.current = window.requestAnimationFrame(() => {
       frameRef.current = null;
-      const current = dragRef.current;
       const y = pendingYRef.current;
-      if (!current?.active || y === null) return;
-      const rows = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-sortable-row]") ?? []);
-      const midpoints = rows.map((row) => {
-        const rect = row.getBoundingClientRect();
-        return rect.top + rect.height / 2;
-      });
-      updateDrag({
-        ...current,
-        pointerY: y,
-        targetIndex: getDropIndex(midpoints, y, current.sourceIndex),
-      });
+      if (y === null) return;
+      processPointerMove(y);
     });
-  }, [updateDrag]);
+  }, [processPointerMove]);
+
+  const renderDropShadow = () => {
+    if (!drag?.active || (drag.targetIndex === drag.sourceIndex && drag.dropZoneId === null)) return null;
+    return (
+      <div
+        aria-hidden="true"
+        className="pointer-events-none my-2 flex min-h-14 items-center rounded-[1.1rem] border-2 border-dashed border-[#bbaeff] bg-[#f8f5ff] px-4 text-sm font-medium text-[#6f57f6] opacity-80 dark:border-[#8b76dd] dark:bg-[#241d3d] dark:text-[#cabfff]"
+        data-sortable-placeholder
+      >
+        Drop “{drag.label}” here
+      </div>
+    );
+  };
+
+  const shouldRenderDropShadowBefore = (index: number) => {
+    if (!drag?.active || (drag.targetIndex === drag.sourceIndex && drag.dropZoneId === null) || index === drag.sourceIndex) return false;
+    const remainingBeforeIndex = items.slice(0, index).reduce((count, _, itemIndex) => count + (itemIndex === drag.sourceIndex ? 0 : 1), 0);
+    return remainingBeforeIndex === drag.targetIndex;
+  };
+
+  const shouldRenderDropShadowAfter = () => (
+    Boolean(
+      drag?.active
+      && (drag.targetIndex !== drag.sourceIndex || drag.dropZoneId !== null)
+      && drag.targetIndex >= items.length - 1,
+    )
+  );
 
   return (
     <div
@@ -122,6 +184,7 @@ export function SortableList<T>({
         return (
           <Fragment key={id}>
             {renderBeforeItem?.(item, index)}
+            {shouldRenderDropShadowBefore(index) ? renderDropShadow() : null}
             <div
               className={drag?.active && drag.id === id ? "rounded-[1.1rem] opacity-35 ring-2 ring-dashed ring-[#bbaeff]" : ""}
               data-sortable-row={id}
@@ -146,6 +209,7 @@ export function SortableList<T>({
                       pointerY: event.clientY,
                       sourceIndex: index,
                       targetIndex: index,
+                      dropZoneId: null,
                     };
                     updateDrag(next);
                     const handle = event.currentTarget;
@@ -171,7 +235,10 @@ export function SortableList<T>({
                     event.preventDefault();
                     queuePointerMove(event.clientY);
                   }}
-                  onPointerUp={(event) => finish(event.pointerId)}
+                  onPointerUp={(event) => {
+                    processPointerMove(event.clientY);
+                    finish(event.pointerId);
+                  }}
                   style={{ touchAction: drag?.id === id && drag.active ? "none" : "pan-y" }}
                   type="button"
                 >
@@ -182,6 +249,7 @@ export function SortableList<T>({
           </Fragment>
         );
       })}
+      {shouldRenderDropShadowAfter() ? renderDropShadow() : null}
       {renderAfterItems}
       {drag?.active ? (
         <div
