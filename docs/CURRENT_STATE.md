@@ -5,14 +5,18 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.45`.
-- Current release group: `7.11.x` Home To-Do membership data-loss safeguard.
+- Current working app version: `7.11.46`.
+- Current release group: `7.11.x` structured Fitness session evidence.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-24 7.11.46 Structured Fitness sessions
+
+Fitness keeps `adhdice_health_workouts` as the canonical manual/imported session ledger and adds isolated Exercise Library, Workout Exercise snapshot, and ordered Set child data. Manual workout create/edit saves the canonical row first, then diffs structured children by stable IDs, then saves optional Fitness Plan links; partial child or association failures preserve the workout and keep the editor open for retry. Library entries archive rather than delete, workout deletion cascades children in SQL and clears local structured state after canonical success, and imported workout edit restrictions remain unchanged. Focused structured Fitness tests passed 25/25, targeted new-file ESLint passed, and `git diff --check` passed; browser QA, live SQL, builds, and device deployment remain unverified. The 7.11.46 migration is authored only and must be applied manually.
 
 ## 2026-08-24 7.11.45 Fitness Plan item workflow
 

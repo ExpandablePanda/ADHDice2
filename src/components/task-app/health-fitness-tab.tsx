@@ -6,6 +6,9 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import type {
+  HealthExercise,
+  HealthExerciseInsert,
+  HealthExerciseUpdate,
   HealthFitnessPlan,
   HealthFitnessPlanInsert,
   HealthFitnessPlanItem,
@@ -16,10 +19,13 @@ import type {
   HealthProfile,
   HealthProfileUpdate,
   HealthWorkout,
+  HealthWorkoutExercise,
   HealthWorkoutInsert,
   HealthWorkoutPlanItemLink,
+  HealthWorkoutSet,
   HealthWorkoutUpdate,
 } from "@/lib/database.types";
+import type { HealthWorkoutSessionDetails } from "@/hooks/useFitnessSessionDetails";
 import {
   buildHealthWorkoutFormPayload,
   addHealthWorkoutTypeOption,
@@ -37,6 +43,7 @@ import {
   moveFitnessOption,
   type HealthWorkoutFormInput,
 } from "@/lib/health-fitness";
+import { getHealthWorkoutStructuredSummary, type HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
 import { getHealthWorkoutPlanItemIds } from "@/lib/health-fitness-plans";
 import {
   clampPercent,
@@ -48,17 +55,26 @@ import {
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { FitnessPlanAssociationPicker, HealthFitnessPlansPanel } from "./health-fitness-plans-panel";
+import { HealthFitnessExerciseLibrary } from "./health-fitness-exercise-library";
+import { HealthFitnessSessionEditor } from "./health-fitness-session-editor";
 
 type HealthFitnessTabProps = {
   addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<HealthWorkout | null>;
+  archiveExercise: (exerciseId: string) => Promise<boolean>;
   archivePlan: (planId: string) => Promise<boolean>;
   archivePlanItem: (itemId: string) => Promise<boolean>;
+  createExercise: (input: Omit<HealthExerciseInsert, "user_id">) => Promise<HealthExercise | null>;
   createPlan: (input: Omit<HealthFitnessPlanInsert, "user_id">) => Promise<HealthFitnessPlan | null>;
   createPlanItem: (input: Omit<HealthFitnessPlanItemInsert, "user_id">) => Promise<HealthFitnessPlanItem | null>;
   deleteWorkout: (workoutId: string) => Promise<boolean>;
+  exerciseLibrary: HealthExercise[];
   metricEntries: HealthMetricEntry[];
   fitnessPlanError: string | null;
   fitnessPlansLoading: boolean;
+  fitnessSessionError: string | null;
+  fitnessSessionLoaded: boolean;
+  fitnessSessionLoading: boolean;
+  getWorkoutSessionDetails: (workoutId: string) => HealthWorkoutSessionDetails;
   planItems: HealthFitnessPlanItem[];
   plans: HealthFitnessPlan[];
   profile: HealthProfile;
@@ -66,8 +82,12 @@ type HealthFitnessTabProps = {
   saveWorkoutPlanItemLinks: (workoutId: string, planItemIds: readonly string[]) => Promise<boolean>;
   updatePlan: (planId: string, input: HealthFitnessPlanUpdate) => Promise<boolean>;
   updatePlanItem: (itemId: string, input: HealthFitnessPlanItemUpdate) => Promise<boolean>;
+  updateExercise: (exerciseId: string, input: HealthExerciseUpdate) => Promise<boolean>;
   updateWorkout: (workoutId: string, input: HealthWorkoutUpdate) => Promise<boolean>;
+  saveWorkoutSessionDetails: (workoutId: string, draft: HealthWorkoutStructuredDraft) => Promise<boolean>;
   workoutPlanItemLinks: HealthWorkoutPlanItemLink[];
+  workoutExercises: HealthWorkoutExercise[];
+  workoutSets: HealthWorkoutSet[];
   workouts: HealthWorkout[];
 };
 
@@ -86,13 +106,20 @@ function createDefaultWorkoutDraft(workoutTypes: readonly string[] = HEALTH_WORK
 
 export function HealthFitnessTab({
   addWorkout,
+  archiveExercise,
   archivePlan,
   archivePlanItem,
+  createExercise,
   createPlan,
   createPlanItem,
   deleteWorkout,
+  exerciseLibrary,
   fitnessPlanError,
   fitnessPlansLoading,
+  fitnessSessionError,
+  fitnessSessionLoaded,
+  fitnessSessionLoading,
+  getWorkoutSessionDetails,
   metricEntries,
   planItems,
   plans,
@@ -101,12 +128,17 @@ export function HealthFitnessTab({
   saveWorkoutPlanItemLinks,
   updatePlan,
   updatePlanItem,
+  updateExercise,
   updateWorkout,
+  saveWorkoutSessionDetails,
   workoutPlanItemLinks,
+  workoutExercises,
+  workoutSets,
   workouts,
 }: HealthFitnessTabProps) {
   const today = todayHealthDate();
   const [draft, setDraft] = useState<HealthWorkoutFormInput>(() => createDefaultWorkoutDraft());
+  const [structuredDraft, setStructuredDraft] = useState<HealthWorkoutStructuredDraft>({ exercises: [] });
   const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -129,6 +161,10 @@ export function HealthFitnessTab({
   const dailyMovement = useMemo(() => getHealthDailyMovementMetrics(metricEntries, today), [metricEntries, today]);
   const weeklySummary = useMemo(() => getHealthWeeklyWorkoutSummary(workouts, today), [today, workouts]);
   const orderedWorkouts = useMemo(() => sortHealthWorkouts(workouts), [workouts]);
+  const structuredSummaries = useMemo(
+    () => new Map(orderedWorkouts.map((workout) => [workout.id, getHealthWorkoutStructuredSummary(workout.id, workoutExercises, workoutSets)])),
+    [orderedWorkouts, workoutExercises, workoutSets],
+  );
   const workoutTypes = useMemo(
     () => profile.workout_type_options?.length ? profile.workout_type_options : [...HEALTH_WORKOUT_TYPES],
     [profile.workout_type_options],
@@ -174,6 +210,7 @@ export function HealthFitnessTab({
 
   function resetForm() {
     setDraft(createDefaultWorkoutDraft());
+    setStructuredDraft({ exercises: [] });
     setEditingWorkoutId(null);
     setFormError(null);
     setSelectedPlanItemIds([]);
@@ -197,6 +234,7 @@ export function HealthFitnessTab({
 
   function openWorkoutForm(plannedItem?: HealthFitnessPlanItem) {
     setDraft(createDefaultWorkoutDraft(workoutTypes, plannedItem));
+    setStructuredDraft({ exercises: [] });
     setEditingWorkoutId(null);
     setFormError(null);
     setSelectedPlanItemIds(plannedItem ? [plannedItem.id] : []);
@@ -216,6 +254,25 @@ export function HealthFitnessTab({
         : "",
       title: workout.title,
       workoutType: workout.workout_type,
+    });
+    const details = getWorkoutSessionDetails(workout.id);
+    setStructuredDraft({
+      exercises: details.exercises.map((exercise) => ({
+        exerciseId: exercise.exercise_id,
+        exerciseName: exercise.exercise_name,
+        id: exercise.id,
+        measurementType: exercise.measurement_type,
+        notes: exercise.notes ?? "",
+        sets: details.sets
+          .filter((set) => set.workout_exercise_id === exercise.id)
+          .sort((left, right) => left.sort_order - right.sort_order || left.created_at.localeCompare(right.created_at))
+          .map((set) => ({
+            durationSeconds: set.duration_seconds === null ? "" : String(set.duration_seconds),
+            id: set.id,
+            notes: set.notes ?? "",
+            reps: set.reps === null ? "" : String(set.reps),
+          })),
+      })),
     });
     setEditingWorkoutId(workout.id);
     setFormError(null);
@@ -341,6 +398,10 @@ export function HealthFitnessTab({
       if (!saved) {
         return;
       }
+      if (!(await saveWorkoutSessionDetails(editingWorkoutId, structuredDraft))) {
+        setFormError("Workout updated, but exercise details could not be saved. Try again.");
+        return;
+      }
       const hasExistingOrSelectedLinks = workoutPlanItemLinks.some((link) => link.workout_id === editingWorkoutId) || selectedPlanItemIds.length > 0;
       if (hasExistingOrSelectedLinks && !(await saveWorkoutPlanItemLinks(editingWorkoutId, selectedPlanItemIds))) {
         setFormError("Workout updated, but its Fitness Plan associations could not be saved. Try again.");
@@ -354,8 +415,12 @@ export function HealthFitnessTab({
     if (!savedWorkout) {
       return;
     }
+    setEditingWorkoutId(savedWorkout.id);
+    if (structuredDraft.exercises.length > 0 && !(await saveWorkoutSessionDetails(savedWorkout.id, structuredDraft))) {
+      setFormError("Workout saved, but exercise details could not be saved. Try again.");
+      return;
+    }
     if (selectedPlanItemIds.length > 0 && !(await saveWorkoutPlanItemLinks(savedWorkout.id, selectedPlanItemIds))) {
-      setEditingWorkoutId(savedWorkout.id);
       setFormError("Workout saved, but its Fitness Plan associations could not be saved. Try again.");
       return;
     }
@@ -511,6 +576,15 @@ export function HealthFitnessTab({
                   <p className="text-xs text-[#8d87a7] dark:text-white/40">No saved titles yet.</p>
                 )}
               </section>
+
+              <HealthFitnessExerciseLibrary
+                archiveExercise={archiveExercise}
+                createExercise={createExercise}
+                error={fitnessSessionError}
+                exerciseLibrary={exerciseLibrary}
+                isLoading={fitnessSessionLoading}
+                updateExercise={updateExercise}
+              />
             </div>
           ) : null}
         </div>
@@ -616,6 +690,8 @@ export function HealthFitnessTab({
             <FitnessField label="Notes (optional)">
               <textarea aria-label="Workout notes" className="health-input min-h-20 w-full resize-y rounded-[1rem] px-3 py-2 text-[13px] max-sm:text-[16px]" onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} value={draft.notes} />
             </FitnessField>
+            {fitnessSessionLoading && !fitnessSessionLoaded ? <p className="text-xs text-[#7d7598] dark:text-white/50">Loading structured exercise details…</p> : null}
+            <HealthFitnessSessionEditor draft={structuredDraft} exerciseLibrary={exerciseLibrary} onChange={setStructuredDraft} />
             <FitnessPlanAssociationPicker
               onToggle={(planItemId) => setSelectedPlanItemIds((current) => current.includes(planItemId) ? current.filter((id) => id !== planItemId) : [...current, planItemId])}
               planItems={planItems}
@@ -635,7 +711,7 @@ export function HealthFitnessTab({
         ) : (
           <div className="grid gap-3">
             {orderedWorkouts.map((workout) => (
-              <WorkoutHistoryRow key={workout.id} onDelete={deleteWorkout} onEdit={openEditForm} workout={workout} />
+              <WorkoutHistoryRow key={workout.id} onDelete={deleteWorkout} onEdit={openEditForm} structuredSummary={structuredSummaries.get(workout.id) ?? []} workout={workout} />
             ))}
           </div>
         )}
@@ -896,10 +972,12 @@ function FitnessOptionReorderList({
 function WorkoutHistoryRow({
   onDelete,
   onEdit,
+  structuredSummary,
   workout,
 }: {
   onDelete: (workoutId: string) => Promise<boolean>;
   onEdit: (workout: HealthWorkout) => void;
+  structuredSummary: ReturnType<typeof getHealthWorkoutStructuredSummary>;
   workout: HealthWorkout;
 }) {
   const startTime = formatMealLoggedTime(workout.started_at ?? "");
@@ -916,6 +994,16 @@ function WorkoutHistoryRow({
             {workout.active_calories === null ? "" : ` · ${formatWholeNumber(workout.active_calories)} kcal`}
           </p>
           {workout.notes.trim() ? <p className="mt-2 whitespace-pre-wrap text-sm text-[#5d6783] dark:text-white/65">{workout.notes}</p> : null}
+          {structuredSummary.length > 0 ? (
+            <div className="mt-3 grid gap-1.5 border-t border-[#eeeaf8] pt-2 dark:border-white/10">
+              {structuredSummary.map((summary, summaryIndex) => (
+                <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm" key={`${summary.exerciseName}-${summaryIndex}`}>
+                  <span className="font-semibold text-[#4a5470] dark:text-white/75">{summary.exerciseName}</span>
+                  <span className="text-xs text-[#74809b] dark:text-white/50">{summary.values.join(" · ")}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
         {workout.source === "manual" ? (
           <div className="flex shrink-0 items-center gap-1">
