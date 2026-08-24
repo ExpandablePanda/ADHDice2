@@ -37,6 +37,8 @@ export function HomePage({
   onOpenTask,
   onSetStatus,
   taskDisplayStatusByTaskId,
+  calendarNowMs,
+  calendarTimeZone,
   tasks,
   userId,
 }: {
@@ -45,6 +47,8 @@ export function HomePage({
   onOpenTask: (taskId: string) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
+  calendarNowMs: number;
+  calendarTimeZone: string;
   tasks: Task[];
   userId: string | null;
 }) {
@@ -85,8 +89,8 @@ export function HomePage({
   }, [listMembershipsByTaskId, query, reconciledTaskIds, taskById, tasks]);
 
   const { sections: daySections } = useMemo(
-    () => buildHomeTodoDaySections(todoTasks, state.tasksPerDay),
-    [state.tasksPerDay, todoTasks],
+    () => buildHomeTodoDaySections(todoTasks, state.tasksPerDay, new Date(calendarNowMs), calendarTimeZone),
+    [calendarNowMs, calendarTimeZone, state.tasksPerDay, todoTasks],
   );
   const sevenDayCapacity = state.tasksPerDay * daySections.length;
   const doLaterTasks = todoTasks.slice(sevenDayCapacity);

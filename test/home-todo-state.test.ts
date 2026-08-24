@@ -18,6 +18,7 @@ import {
   reconcileHomeTodoTaskIds,
   sortHomeTodoSearchResults,
 } from "../src/lib/home-todo-state.ts";
+import { getCalendarDayKey, getLogicalDayKey } from "../src/lib/logical-day.ts";
 import { reorderListItems } from "../src/lib/list-reorder.ts";
 
 function task(id: string, overrides: Partial<Task> = {}) {
@@ -56,6 +57,7 @@ test("Home todo generates seven local calendar sections with Today, Tomorrow, we
     Array.from({ length: 71 }, (_, index) => `task-${index}`),
     10,
     new Date("2026-08-23T12:00:00-04:00"),
+    "America/New_York",
   );
   assert.equal(sections.length, 7);
   assert.deepEqual(sections.map((section) => section.label), [
@@ -69,6 +71,54 @@ test("Home todo generates seven local calendar sections with Today, Tomorrow, we
   ]);
   assert.equal(formatHomeTodoDateLabel("2026-08-11", 2), "Tuesday · August 11th");
   assert.deepEqual(laterTaskIds, ["task-70"]);
+});
+
+test("Home todo uses calendar midnight instead of the logical-day cutoff", () => {
+  const now = new Date("2026-08-24T02:00:00-04:00");
+  const { sections } = buildHomeTodoDaySections([], 10, now, "America/New_York");
+  assert.equal(getCalendarDayKey(now, "America/New_York"), "2026-08-24");
+  assert.equal(getLogicalDayKey(now, { dayStartTime: "06:00", timezone: "America/New_York" }), "2026-08-23");
+  assert.equal(sections[0]?.label, "Today · August 24th");
+  assert.equal(sections[1]?.label, "Tomorrow · August 25th");
+  assert.deepEqual(sections.map((section) => section.dateKey), [
+    "2026-08-24",
+    "2026-08-25",
+    "2026-08-26",
+    "2026-08-27",
+    "2026-08-28",
+    "2026-08-29",
+    "2026-08-30",
+  ]);
+});
+
+test("Home todo respects configured timezone at calendar boundaries", () => {
+  const now = new Date("2026-08-24T01:00:00.000Z");
+  assert.equal(getCalendarDayKey(now, "America/Los_Angeles"), "2026-08-23");
+  assert.equal(getCalendarDayKey(now, "Asia/Tokyo"), "2026-08-24");
+  assert.equal(buildHomeTodoDaySections([], 10, now, "America/Los_Angeles").sections[0]?.label, "Today · August 23rd");
+  assert.equal(buildHomeTodoDaySections([], 10, now, "Asia/Tokyo").sections[0]?.label, "Today · August 24th");
+});
+
+test("Home todo date sections handle month, year, leap-day, and ordinal boundaries", () => {
+  const labelsAt = (date: string) => buildHomeTodoDaySections([], 10, new Date(`${date}T12:00:00Z`), "UTC").sections.map((section) => section.label);
+  assert.deepEqual(labelsAt("2026-12-31").slice(0, 3), [
+    "Today · December 31st",
+    "Tomorrow · January 1st",
+    "Saturday · January 2nd",
+  ]);
+  assert.deepEqual(labelsAt("2028-02-28").slice(0, 3), [
+    "Today · February 28th",
+    "Tomorrow · February 29th",
+    "Wednesday · March 1st",
+  ]);
+  assert.equal(labelsAt("2026-01-09")[2], "Sunday · January 11th");
+  assert.equal(labelsAt("2026-01-20")[2], "Thursday · January 22nd");
+  assert.equal(labelsAt("2026-01-21")[2], "Friday · January 23rd");
+  assert.deepEqual(
+    ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-11", "2026-01-12", "2026-01-13", "2026-01-21", "2026-01-22", "2026-01-23", "2026-01-31"]
+      .map((date) => labelsAt(date)[0]?.split(" · ")[1]),
+    ["January 1st", "January 2nd", "January 3rd", "January 11th", "January 12th", "January 13th", "January 21st", "January 22nd", "January 23rd", "January 31st"],
+  );
 });
 
 test("Home todo preserves flat order at 10-task and 15-task chunk boundaries", () => {
@@ -225,11 +275,14 @@ test("shared drag reorder moves Home task ids without mutating the source", () =
 
 test("Home todo renders seven flat sortable sections, settings, and the recovered task behavior", () => {
   const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const sharedIconButton = readFileSync(new URL("../src/components/ui-system/adhd-icon-button.tsx", import.meta.url), "utf8");
   const sortableSource = readFileSync(new URL("../src/components/ui/sortable-list.tsx", import.meta.url), "utf8");
   const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
+  const logicalDaySource = readFileSync(new URL("../src/lib/logical-day.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /HOME_TODO_VISIBLE_LIMIT/);
   assert.match(source, /buildHomeTodoDaySections/);
+  assert.match(source, /buildHomeTodoDaySections\(todoTasks, state\.tasksPerDay, new Date\(calendarNowMs\), calendarTimeZone\)/);
   assert.match(source, /const sevenDayCapacity = state\.tasksPerDay \* daySections\.length/);
   assert.match(source, /items=\{visibleTasks\}/);
   assert.match(source, /Later \(\{doLaterTasks\.length\}\)/);
@@ -244,6 +297,10 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(hookSource, /state: outgoing/);
   assert.match(hookSource, /tasksPerDay: nextTasksPerDay/);
   assert.match(hookSource, /cacheKey\(ownerId\)/);
+  assert.match(logicalDaySource, /export function getCalendarDayKey/);
+  assert.match(logicalDaySource, /export function getLogicalDayKey/);
+  assert.match(taskAppSource, /calendarNowMs=\{logicalDayNow\}/);
+  assert.match(taskAppSource, /calendarTimeZone=\{userTimeZone\}/);
   assert.match(source, /const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-\[#26324f\] dark:text-white"/);
   assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 3);
   assert.match(source, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto\] items-center gap-x-0/);
@@ -299,6 +356,7 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.doesNotMatch(source, /font-semibold leading-5/);
   assert.doesNotMatch(source, /text-\[#443d60\]/);
   assert.doesNotMatch(source, /due_on|due date|repeat_frequency/);
+  assert.doesNotMatch(readFileSync(new URL("../src/lib/home-todo-state.ts", import.meta.url), "utf8"), /getLogicalDayKey/);
 });
 
 test("TaskApp passes Home creation through the shared canonical addTask seam", () => {
