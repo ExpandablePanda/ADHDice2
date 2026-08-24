@@ -19,6 +19,7 @@ import { getHealthWeekBounds } from "@/lib/health-fitness";
 
 const migration = readFileSync(new URL("../supabase/add_health_fitness_plans_7_11_44.sql", import.meta.url), "utf8");
 const plansHook = readFileSync(new URL("../src/hooks/useFitnessPlans.ts", import.meta.url), "utf8");
+const plansPanel = readFileSync(new URL("../src/components/task-app/health-fitness-plans-panel.tsx", import.meta.url), "utf8");
 const healthHook = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const fitnessTab = readFileSync(new URL("../src/components/task-app/health-fitness-tab.tsx", import.meta.url), "utf8");
 const pageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
@@ -187,6 +188,15 @@ test("Fitness Plan loading is isolated from workout recovery and Health snapshot
   assert.match(plansHook, /setPlans\(\[\]\)/);
   assert.match(plansHook, /reportError\(`Fitness Plans are unavailable until the 7\.11\.44 Fitness Plans migration is applied/);
   assert.match(healthHook, /reconcileHealthWorkouts/);
+});
+
+test("the Fitness Plan editor keeps one Add Planned Item action at the bottom", () => {
+  assert.equal(plansPanel.match(/>Add Planned Item<\/AdhdChip>/g)?.length, 1);
+  const itemsIndex = plansPanel.indexOf("{editor.items.map");
+  const addItemIndex = plansPanel.indexOf(">Add Planned Item</AdhdChip>");
+  const saveIndex = plansPanel.indexOf("Save Plan");
+  assert.ok(itemsIndex >= 0 && itemsIndex < addItemIndex);
+  assert.ok(addItemIndex < saveIndex);
 });
 
 test("links use explicit identifiers and never attach a plan item to the workout row", () => {
