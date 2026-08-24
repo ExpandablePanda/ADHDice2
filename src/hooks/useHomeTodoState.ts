@@ -188,7 +188,7 @@ export function useHomeTodoState(userId: string | null) {
       return;
     }
     const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({ ...current, clientUpdatedAt: nextTimestamp, schemaVersion: 2, taskIds });
+    const next = normalizeHomeTodoState({ ...current, clientUpdatedAt: nextTimestamp, schemaVersion: 3, taskIds });
     dirtyRef.current = true;
     stateRef.current = next;
     setState(next);
@@ -206,7 +206,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 2,
+      schemaVersion: 3,
       tasksPerDay: nextTasksPerDay,
     });
     dirtyRef.current = true;
@@ -217,5 +217,28 @@ export function useHomeTodoState(userId: string | null) {
     scheduleWrite();
   }, [persistCache, scheduleWrite, userId]);
 
-  return { state, syncStatus, updateTaskIds, updateTasksPerDay };
+  const updateTaskDayOffset = useCallback((taskId: string, dayOffset: number | null) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const taskDayOffsets = { ...current.taskDayOffsets };
+    if (dayOffset === null) delete taskDayOffsets[taskId];
+    else taskDayOffsets[taskId] = dayOffset;
+    const currentTaskDayOffset = current.taskDayOffsets[taskId] ?? null;
+    if (currentTaskDayOffset === dayOffset) return;
+    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
+    const next = normalizeHomeTodoState({
+      ...current,
+      clientUpdatedAt: nextTimestamp,
+      schemaVersion: 3,
+      taskDayOffsets,
+    });
+    dirtyRef.current = true;
+    stateRef.current = next;
+    setState(next);
+    persistCache(next, userId);
+    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
+    scheduleWrite();
+  }, [persistCache, scheduleWrite, userId]);
+
+  return { state, syncStatus, updateTaskDayOffset, updateTaskIds, updateTasksPerDay };
 }

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.42`.
+- Current working app version: `7.11.43`.
 - Current release group: `7.11.x` Home To-Do membership data-loss safeguard.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
