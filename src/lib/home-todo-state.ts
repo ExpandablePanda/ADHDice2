@@ -12,14 +12,16 @@ export type HomeTodoStateV1 = {
 
 export type HomeTodoStateV2 = {
   clientUpdatedAt: string;
-  schemaVersion: 2;
+  schemaVersion: 3;
   taskIds: string[];
+  taskDayOffsets: Record<string, number>;
   tasksPerDay: HomeTodoTasksPerDay;
 };
 
 type HomeTodoStateCandidate = {
   clientUpdatedAt?: unknown;
   taskIds?: unknown;
+  taskDayOffsets?: unknown;
   tasksPerDay?: unknown;
 };
 
@@ -29,8 +31,9 @@ export const DEFAULT_HOME_TODO_TASKS_PER_DAY: HomeTodoTasksPerDay = 10;
 
 export const EMPTY_HOME_TODO_STATE: HomeTodoStateV2 = {
   clientUpdatedAt: new Date(0).toISOString(),
-  schemaVersion: 2,
+  schemaVersion: 3,
   taskIds: [],
+  taskDayOffsets: {},
   tasksPerDay: DEFAULT_HOME_TODO_TASKS_PER_DAY,
 };
 
@@ -79,23 +82,42 @@ export function buildHomeTodoDaySections<T>(
   tasksPerDay: unknown = DEFAULT_HOME_TODO_TASKS_PER_DAY,
   now: Date = new Date(),
   timezone?: string,
+  taskDayOffsets: Readonly<Record<string, number>> = {},
 ) {
   const normalizedTasksPerDay = normalizeHomeTodoTasksPerDay(tasksPerDay);
   const todayDateKey = getCalendarDayKey(now, timezone);
-  const sections: HomeTodoDaySection<T>[] = Array.from({ length: 7 }, (_, dayIndex) => {
-    const startIndex = dayIndex * normalizedTasksPerDay;
-    return {
-      dayIndex,
-      dateKey: shiftDateKey(todayDateKey, dayIndex),
-      label: formatHomeTodoDateLabel(shiftDateKey(todayDateKey, dayIndex), dayIndex),
-      startIndex,
-      taskIds: [...taskIds.slice(startIndex, startIndex + normalizedTasksPerDay)],
-    };
+  const sections: HomeTodoDaySection<T>[] = Array.from({ length: 7 }, (_, dayIndex) => ({
+    dayIndex,
+    dateKey: shiftDateKey(todayDateKey, dayIndex),
+    label: formatHomeTodoDateLabel(shiftDateKey(todayDateKey, dayIndex), dayIndex),
+    startIndex: 0,
+    taskIds: [],
+  }));
+  const unassignedTaskIds: T[] = [];
+  const laterTaskIds: T[] = [];
+
+  for (const taskId of taskIds) {
+    const assignedDayOffset = taskDayOffsets[String(taskId)];
+    if (Number.isInteger(assignedDayOffset) && assignedDayOffset >= 0 && assignedDayOffset <= 7) {
+      if (assignedDayOffset === 7) laterTaskIds.push(taskId);
+      else sections[assignedDayOffset]!.taskIds.push(taskId);
+    } else {
+      unassignedTaskIds.push(taskId);
+    }
+  }
+
+  unassignedTaskIds.forEach((taskId, index) => {
+    const dayIndex = Math.floor(index / normalizedTasksPerDay);
+    if (dayIndex >= sections.length) laterTaskIds.push(taskId);
+    else sections[dayIndex]!.taskIds.push(taskId);
   });
-  return {
-    sections,
-    laterTaskIds: [...taskIds.slice(normalizedTasksPerDay * 7)],
-  };
+
+  let startIndex = 0;
+  for (const section of sections) {
+    section.startIndex = startIndex;
+    startIndex += section.taskIds.length;
+  }
+  return { sections, laterTaskIds };
 }
 
 export async function createHomeTodoTask(
@@ -129,12 +151,19 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV2 {
   const parsedUpdatedAt = typeof candidate.clientUpdatedAt === "string"
     ? Date.parse(candidate.clientUpdatedAt)
     : Number.NaN;
+  const taskIdSet = new Set(taskIds);
+  const taskDayOffsets = candidate.taskDayOffsets && typeof candidate.taskDayOffsets === "object" && !Array.isArray(candidate.taskDayOffsets)
+    ? Object.fromEntries(Object.entries(candidate.taskDayOffsets as Record<string, unknown>).filter(([taskId, offset]) => (
+      taskIdSet.has(taskId) && Number.isInteger(offset) && Number(offset) >= 0 && Number(offset) <= 7
+    )).map(([taskId, offset]) => [taskId, Number(offset)]))
+    : {};
   return {
     clientUpdatedAt: Number.isFinite(parsedUpdatedAt)
       ? new Date(parsedUpdatedAt).toISOString()
       : EMPTY_HOME_TODO_STATE.clientUpdatedAt,
-    schemaVersion: 2,
+    schemaVersion: 3,
     taskIds,
+    taskDayOffsets,
     tasksPerDay: normalizeHomeTodoTasksPerDay(candidate.tasksPerDay),
   };
 }

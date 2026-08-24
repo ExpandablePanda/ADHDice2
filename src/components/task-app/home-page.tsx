@@ -53,7 +53,7 @@ export function HomePage({
   tasks: Task[];
   userId: string | null;
 }) {
-  const { state, syncStatus, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
+  const { state, syncStatus, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -89,13 +89,15 @@ export function HomePage({
       .filter((item) => item.searchable.includes(needle)));
   }, [listMembershipsByTaskId, query, reconciledTaskIds, taskById, tasks]);
 
-  const { sections: daySections } = useMemo(
-    () => buildHomeTodoDaySections(todoTasks, state.tasksPerDay, new Date(calendarNowMs), calendarTimeZone),
-    [calendarNowMs, calendarTimeZone, state.tasksPerDay, todoTasks],
+  const { laterTaskIds, sections: daySections } = useMemo(
+    () => buildHomeTodoDaySections(todoTasks.map((task) => task.id), state.tasksPerDay, new Date(calendarNowMs), calendarTimeZone, state.taskDayOffsets),
+    [calendarNowMs, calendarTimeZone, state.taskDayOffsets, state.tasksPerDay, todoTasks],
   );
-  const sevenDayCapacity = state.tasksPerDay * daySections.length;
-  const doLaterTasks = todoTasks.slice(sevenDayCapacity);
-  const visibleTasks = isDoLaterOpen ? todoTasks : todoTasks.slice(0, sevenDayCapacity);
+  const dayTaskIds = daySections.flatMap((section) => section.taskIds);
+  const sevenDayCapacity = dayTaskIds.length;
+  const dayTasks = dayTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task));
+  const doLaterTasks = laterTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task));
+  const visibleTasks = isDoLaterOpen ? [...dayTasks, ...doLaterTasks] : dayTasks;
 
   useEffect(() => {
     if (isCreateOpen) newTaskInputRef.current?.focus();
@@ -161,7 +163,7 @@ export function HomePage({
 
   function renderDaySectionHeader(section: typeof daySections[number]) {
     return (
-      <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 first:mt-3 first:border-t-0 first:pt-0 dark:border-white/10" key={`home-day-${section.dayIndex}`}>
+      <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 first:mt-3 first:border-t-0 dark:border-white/10" data-sortable-drop-id={`day-${section.dayIndex}`} data-sortable-drop-index={section.startIndex} key={`home-day-${section.dayIndex}`}>
         <div>
           <h2 className="text-sm font-bold text-[#4d466d] dark:text-white/85">{section.label}</h2>
           <p className="mt-0.5 text-xs text-[#9a92b1] dark:text-white/42">
@@ -174,7 +176,7 @@ export function HomePage({
 
   function renderLaterSectionHeader() {
     return (
-      <section className="mt-5 border-t border-[#ece8f8] pt-4 dark:border-white/10">
+      <section className="mt-5 border-t border-[#ece8f8] pt-4 dark:border-white/10" data-sortable-drop-id="later" data-sortable-drop-index={sevenDayCapacity}>
         <AdhdChip
           aria-expanded={isDoLaterOpen}
           contentClassName="gap-1.5"
@@ -185,6 +187,11 @@ export function HomePage({
         </AdhdChip>
       </section>
     );
+  }
+
+  function getDayOffsetForInsertion(index: number) {
+    if (index >= sevenDayCapacity) return 7;
+    return daySections.reduce((dayOffset, section) => section.startIndex <= index ? section.dayIndex : dayOffset, 0);
   }
 
   function renderTodoTask(task: Task, index: number, handle: ReactNode) {
@@ -434,11 +441,22 @@ export function HomePage({
             getId={(task) => task.id}
             getLabel={(task) => task.title || "Untitled task"}
             items={visibleTasks}
-            onReorder={(nextTasks) => updateTaskIds((taskIds) => mergeHomeTodoVisibleTaskIds(
-              taskIds,
-              visibleTasks.map((task) => task.id),
-              nextTasks.map((task) => task.id),
-            ))}
+            onReorder={(nextTasks, context) => {
+              const sourceTask = visibleTasks[context.sourceIndex];
+              updateTaskIds((taskIds) => mergeHomeTodoVisibleTaskIds(
+                taskIds,
+                visibleTasks.map((task) => task.id),
+                nextTasks.map((task) => task.id),
+              ));
+              if (sourceTask) {
+                const targetDayOffset = context.dropZoneId === "later"
+                  ? 7
+                  : context.dropZoneId?.startsWith("day-")
+                    ? Number.parseInt(context.dropZoneId.slice(4), 10)
+                    : getDayOffsetForInsertion(context.targetIndex);
+                updateTaskDayOffset(sourceTask.id, Number.isInteger(targetDayOffset) ? targetDayOffset : null);
+              }
+            }}
             renderAfterItems={(
               <>
                 {daySections
@@ -449,9 +467,9 @@ export function HomePage({
             )}
             renderBeforeItem={(_, index) => (
               <>
-                {daySections.find((section) => section.startIndex === index)?.taskIds.length
-                  ? renderDaySectionHeader(daySections.find((section) => section.startIndex === index)!)
-                  : null}
+                {daySections
+                  .filter((section) => section.startIndex === index)
+                  .map(renderDaySectionHeader)}
                 {isDoLaterOpen && index === sevenDayCapacity && doLaterTasks.length ? renderLaterSectionHeader() : null}
               </>
             )}

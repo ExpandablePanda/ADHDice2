@@ -33,17 +33,31 @@ function task(id: string, overrides: Partial<Task> = {}) {
   } as Task;
 }
 
-test("Home todo V1 state normalizes to V2 with the default capacity", () => {
+test("Home todo V1 state normalizes with the default capacity and no day overrides", () => {
   assert.deepEqual(normalizeHomeTodoState({
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
     schemaVersion: 1,
     taskIds: ["a", "a", "", 4, "b"],
   }), {
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
-    schemaVersion: 2,
+    schemaVersion: 3,
     taskIds: ["a", "b"],
+    taskDayOffsets: {},
     tasksPerDay: 10,
   });
+});
+
+test("Home todo explicit day placement moves a task into an otherwise empty day", () => {
+  const { sections, laterTaskIds } = buildHomeTodoDaySections(
+    ["today", "tomorrow"],
+    10,
+    new Date("2026-08-23T12:00:00-04:00"),
+    "America/New_York",
+    { "tomorrow": 1 },
+  );
+  assert.deepEqual(sections[0]?.taskIds, ["today"]);
+  assert.deepEqual(sections[1]?.taskIds, ["tomorrow"]);
+  assert.deepEqual(laterTaskIds, []);
 });
 
 test("Home todo tasks-per-day accepts 10 through 15 and safely defaults invalid values", () => {
@@ -328,8 +342,8 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   const logicalDaySource = readFileSync(new URL("../src/lib/logical-day.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /HOME_TODO_VISIBLE_LIMIT/);
   assert.match(source, /buildHomeTodoDaySections/);
-  assert.match(source, /buildHomeTodoDaySections\(todoTasks, state\.tasksPerDay, new Date\(calendarNowMs\), calendarTimeZone\)/);
-  assert.match(source, /const sevenDayCapacity = state\.tasksPerDay \* daySections\.length/);
+  assert.match(source, /buildHomeTodoDaySections\(todoTasks\.map\(\(task\) => task\.id\), state\.tasksPerDay, new Date\(calendarNowMs\), calendarTimeZone, state\.taskDayOffsets\)/);
+  assert.match(source, /const sevenDayCapacity = dayTaskIds\.length/);
   assert.match(source, /items=\{visibleTasks\}/);
   assert.match(source, /mergeHomeTodoVisibleTaskIds\(\s*taskIds,\s*visibleTasks\.map\(\(task\) => task\.id\),\s*nextTasks\.map\(\(task\) => task\.id\),\s*\)/);
   assert.doesNotMatch(source, /updateTaskIds\(\(\) => reconciledTaskIds\)/);
@@ -344,6 +358,14 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(sortableSource, /renderAfterItems\}/);
   assert.match(sortableSource, /renderBeforeItem\?\.\(item, index\)/);
   assert.match(sortableSource, /data-sortable-row=\{id\}/);
+  assert.match(source, /data-sortable-drop-index=\{section\.startIndex\}/);
+  assert.match(source, /daySections\s*\.filter\(\(section\) => section\.startIndex === index\)\s*\.map\(renderDaySectionHeader\)/);
+  assert.match(sortableSource, /data-sortable-drop-index/);
+  assert.match(sortableSource, /getDropZoneIndex\(rawIndex: number, itemCount: number\)/);
+  assert.match(sortableSource, /dropZoneId: string \| null/);
+  assert.match(sortableSource, /data-sortable-placeholder/);
+  assert.match(sortableSource, /Drop “\{drag\.label\}” here/);
+  assert.match(sortableSource, /processPointerMove\(event\.clientY\)/);
   assert.match(hookSource, /state: outgoing/);
   assert.match(hookSource, /tasksPerDay: nextTasksPerDay/);
   assert.match(hookSource, /cacheKey\(ownerId\)/);
