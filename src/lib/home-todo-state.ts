@@ -1,6 +1,6 @@
 import { buildNewTaskDraft, type TaskDraft } from "@/components/task-app/task-editor-model";
 import type { Task } from "@/lib/database.types";
-import { getLogicalDayKey } from "@/lib/logical-day";
+import { getCalendarDayKey } from "@/lib/logical-day";
 import type { TaskListMembership } from "@/lib/task-lists";
 import { shiftDateKey } from "@/lib/task-grid-layout";
 
@@ -78,9 +78,10 @@ export function buildHomeTodoDaySections<T>(
   taskIds: readonly T[],
   tasksPerDay: unknown = DEFAULT_HOME_TODO_TASKS_PER_DAY,
   now: Date = new Date(),
+  timezone?: string,
 ) {
   const normalizedTasksPerDay = normalizeHomeTodoTasksPerDay(tasksPerDay);
-  const todayDateKey = getLogicalDayKey(now);
+  const todayDateKey = getCalendarDayKey(now, timezone);
   const sections: HomeTodoDaySection<T>[] = Array.from({ length: 7 }, (_, dayIndex) => {
     const startIndex = dayIndex * normalizedTasksPerDay;
     return {

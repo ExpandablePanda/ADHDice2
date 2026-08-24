@@ -77,6 +77,13 @@ export function formatDateKeyInTimeZone(date: Date, timezone: string) {
   return `${year}-${month}-${day}`;
 }
 
+export function getCalendarDayKey(
+  date: Date = new Date(),
+  timezone: string = readLogicalDaySettings().timezone,
+) {
+  return formatDateKeyInTimeZone(date, timezone);
+}
+
 export function getLogicalDayKey(
   date: Date = new Date(),
   settings: Partial<LogicalDaySettings> | null | undefined = null,
