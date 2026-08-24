@@ -21,6 +21,7 @@ import {
   createHomeTodoTask,
   getHomeTodoSearchText,
   isHomeTodoTaskEligible,
+  mergeHomeTodoVisibleTaskIds,
   moveHomeTodoTaskIdToEdge,
   reconcileHomeTodoTaskIds,
   sortHomeTodoSearchResults,
@@ -232,7 +233,7 @@ export function HomePage({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          {index !== 0 ? (
+          {state.taskIds.indexOf(task.id) !== 0 ? (
             <AdhdIconButton
               aria-label={`Move ${task.title || "Untitled task"} to Top`}
               className={HOME_TODO_ACTION_CLASS}
@@ -244,7 +245,7 @@ export function HomePage({
               <ArrowUpToLine aria-hidden="true" />
             </AdhdIconButton>
           ) : null}
-          {index !== todoTasks.length - 1 ? (
+          {state.taskIds.indexOf(task.id) !== state.taskIds.length - 1 ? (
             <AdhdIconButton
               aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
               className={HOME_TODO_ACTION_CLASS}
@@ -271,15 +272,6 @@ export function HomePage({
       </AdhdCard>
     );
   }
-
-  useEffect(() => {
-    if (
-      reconciledTaskIds.length !== state.taskIds.length
-      || reconciledTaskIds.some((taskId, index) => taskId !== state.taskIds[index])
-    ) {
-      updateTaskIds(() => reconciledTaskIds);
-    }
-  }, [reconciledTaskIds, state.taskIds, updateTaskIds]);
 
   useEffect(() => {
     if (!isSearchOpen) return;
@@ -442,7 +434,11 @@ export function HomePage({
             getId={(task) => task.id}
             getLabel={(task) => task.title || "Untitled task"}
             items={visibleTasks}
-            onReorder={(nextTasks) => updateTaskIds(() => [...nextTasks, ...(isDoLaterOpen ? [] : doLaterTasks)].map((task) => task.id))}
+            onReorder={(nextTasks) => updateTaskIds((taskIds) => mergeHomeTodoVisibleTaskIds(
+              taskIds,
+              visibleTasks.map((task) => task.id),
+              nextTasks.map((task) => task.id),
+            ))}
             renderAfterItems={(
               <>
                 {daySections
