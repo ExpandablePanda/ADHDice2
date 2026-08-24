@@ -1,0 +1,232 @@
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+
+import type { HealthExercise, HealthWorkoutExercise, HealthWorkoutSet } from "@/lib/database.types";
+import {
+  getHealthWorkoutStructuredSummary,
+  validateHealthWorkoutStructuredDraft,
+  type HealthWorkoutStructuredDraft,
+} from "@/lib/health-fitness-session";
+import { buildHealthWorkoutFormPayload } from "@/lib/health-fitness";
+
+const migration = readFileSync(new URL("../supabase/add_health_fitness_sessions_7_11_46.sql", import.meta.url), "utf8");
+const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+const sessionHook = readFileSync(new URL("../src/hooks/useFitnessSessionDetails.ts", import.meta.url), "utf8");
+const sessionEditor = readFileSync(new URL("../src/components/task-app/health-fitness-session-editor.tsx", import.meta.url), "utf8");
+const exerciseLibrary = readFileSync(new URL("../src/components/task-app/health-fitness-exercise-library.tsx", import.meta.url), "utf8");
+const fitnessTab = readFileSync(new URL("../src/components/task-app/health-fitness-tab.tsx", import.meta.url), "utf8");
+const taskApp = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+const databaseTypes = readFileSync(new URL("../src/lib/database.types.ts", import.meta.url), "utf8");
+
+function libraryExercise(overrides: Partial<HealthExercise> = {}): HealthExercise {
+  return {
+    archived_at: null,
+    created_at: "2026-08-24T12:00:00.000Z",
+    default_measurement: "reps",
+    id: "exercise-1",
+    name: "Push-Ups",
+    updated_at: "2026-08-24T12:00:00.000Z",
+    user_id: "user-1",
+    ...overrides,
+  };
+}
+
+function draft(overrides: Partial<HealthWorkoutStructuredDraft> = {}): HealthWorkoutStructuredDraft {
+  return {
+    exercises: [{
+      exerciseId: "exercise-1",
+      exerciseName: "Push-Ups",
+      id: "workout-exercise-1",
+      measurementType: "reps",
+      notes: "",
+      sets: [
+        { durationSeconds: "", id: "set-1", notes: "", reps: "12" },
+        { durationSeconds: "", id: "set-2", notes: "", reps: "10" },
+      ],
+    }],
+    ...overrides,
+  };
+}
+
+function workoutExercise(overrides: Partial<HealthWorkoutExercise> = {}): HealthWorkoutExercise {
+  return {
+    created_at: "2026-08-24T12:00:00.000Z",
+    exercise_id: "exercise-1",
+    exercise_name: "Push-Ups",
+    id: "workout-exercise-1",
+    measurement_type: "reps",
+    notes: null,
+    sort_order: 0,
+    updated_at: "2026-08-24T12:00:00.000Z",
+    user_id: "user-1",
+    workout_id: "workout-1",
+    ...overrides,
+  };
+}
+
+function workoutSet(overrides: Partial<HealthWorkoutSet> = {}): HealthWorkoutSet {
+  return {
+    created_at: "2026-08-24T12:00:00.000Z",
+    duration_seconds: null,
+    id: "set-1",
+    notes: null,
+    reps: 12,
+    sort_order: 0,
+    updated_at: "2026-08-24T12:00:00.000Z",
+    user_id: "user-1",
+    workout_exercise_id: "workout-exercise-1",
+    ...overrides,
+  };
+}
+
+test("multiple Exercise Library entries can coexist", () => {
+  const entries = [libraryExercise(), libraryExercise({ id: "exercise-2", name: "Squats" })];
+  assert.deepEqual(entries.map((entry) => entry.name), ["Push-Ups", "Squats"]);
+  assert.doesNotMatch(migration, /unique \(user_id, name\)/);
+});
+
+test("Exercise Library supports reps and duration defaults", () => {
+  assert.equal(libraryExercise().default_measurement, "reps");
+  assert.equal(libraryExercise({ default_measurement: "duration", name: "Plank" }).default_measurement, "duration");
+  assert.match(migration, /default_measurement text not null check \(default_measurement in \('reps', 'duration'\)\)/);
+});
+
+test("archived exercises are excluded from normal selection", () => {
+  assert.match(exerciseLibrary, /exercise\.archived_at === null/);
+  assert.match(sessionEditor, /candidate\.archived_at === null/);
+  assert.match(migration, /archived_at timestamptz/);
+});
+
+test("library rename does not rewrite historical Workout Exercise snapshots", () => {
+  const summary = getHealthWorkoutStructuredSummary("workout-1", [workoutExercise({ exercise_name: "Push-Ups" })], [workoutSet()]);
+  const renamedLibraryEntry = libraryExercise({ name: "Pushups" });
+  assert.equal(renamedLibraryEntry.name, "Pushups");
+  assert.equal(summary[0]?.exerciseName, "Push-Ups");
+});
+
+test("library default-measurement changes do not rewrite historical snapshots", () => {
+  const summary = getHealthWorkoutStructuredSummary("workout-1", [workoutExercise({ measurement_type: "reps" })], [workoutSet()]);
+  assert.equal(libraryExercise({ default_measurement: "duration" }).default_measurement, "duration");
+  assert.equal(summary[0]?.measurementType, "reps");
+});
+
+test("one workout can contain multiple Workout Exercises", () => {
+  const summaries = getHealthWorkoutStructuredSummary("workout-1", [workoutExercise(), workoutExercise({ id: "workout-exercise-2", exercise_id: "exercise-2", exercise_name: "Squats", sort_order: 1 })], [workoutSet(), workoutSet({ id: "set-2", workout_exercise_id: "workout-exercise-2", reps: 15 })]);
+  assert.deepEqual(summaries.map((summary) => summary.exerciseName), ["Push-Ups", "Squats"]);
+});
+
+test("one Workout Exercise can contain multiple ordered Sets", () => {
+  const summary = getHealthWorkoutStructuredSummary("workout-1", [workoutExercise()], [workoutSet(), workoutSet({ id: "set-2", reps: 10, sort_order: 1 }), workoutSet({ id: "set-3", reps: 8, sort_order: 2 })]);
+  assert.deepEqual(summary[0]?.values, ["12 reps", "10 reps", "8 reps"]);
+});
+
+test("reps exercise accepts ordered positive reps", () => {
+  assert.equal(validateHealthWorkoutStructuredDraft(draft(), [libraryExercise()]), null);
+});
+
+test("duration exercise accepts ordered positive duration seconds", () => {
+  const durationExercise = libraryExercise({ default_measurement: "duration", id: "exercise-duration", name: "Plank" });
+  const result = validateHealthWorkoutStructuredDraft({ exercises: [{ ...draft().exercises[0]!, exerciseId: durationExercise.id, exerciseName: durationExercise.name, measurementType: "duration", sets: [{ durationSeconds: "45", id: "set-duration", notes: "", reps: "" }] }] }, [durationExercise]);
+  assert.equal(result, null);
+});
+
+test("zero and negative reps are rejected", () => {
+  for (const reps of ["0", "-1"]) {
+    assert.match(validateHealthWorkoutStructuredDraft({ exercises: [{ ...draft().exercises[0]!, sets: [{ durationSeconds: "", id: "set-invalid", notes: "", reps }] }] }, [libraryExercise()]) ?? "", /positive whole-number reps/);
+  }
+});
+
+test("zero and negative duration are rejected", () => {
+  const durationExercise = libraryExercise({ default_measurement: "duration", id: "exercise-duration", name: "Plank" });
+  for (const durationSeconds of ["0", "-1"]) {
+    assert.match(validateHealthWorkoutStructuredDraft({ exercises: [{ ...draft().exercises[0]!, exerciseId: durationExercise.id, exerciseName: durationExercise.name, measurementType: "duration", sets: [{ durationSeconds, id: "set-invalid", notes: "", reps: "" }] }] }, [durationExercise]) ?? "", /positive duration seconds/);
+  }
+});
+
+test("a workout with zero structured exercises remains valid", () => {
+  assert.equal(validateHealthWorkoutStructuredDraft({ exercises: [] }, [libraryExercise()]), null);
+  assert.match(fitnessTab, /structuredDraft\.exercises\.length > 0/);
+});
+
+test("Workout Exercises reference the canonical adhdice_health_workouts authority", () => {
+  assert.match(migration, /foreign key \(user_id, workout_id\)[\s\S]*references public\.adhdice_health_workouts \(user_id, id\)[\s\S]*on delete cascade/);
+  assert.match(schema, /create table public\.adhdice_health_workouts/);
+  assert.doesNotMatch(migration, /create table if not exists public\.adhdice_health_sessions/);
+});
+
+test("no second workout or session authority is introduced", () => {
+  assert.doesNotMatch(migration, /create table if not exists public\.adhdice_health_(sessions|fitness_sessions|workout_sessions)/);
+  assert.match(fitnessTab, /addWorkout\(result\.value\)/);
+  assert.match(fitnessTab, /saveWorkoutSessionDetails\(/);
+});
+
+test("owner-scoped foreign keys prevent cross-user relationships", () => {
+  assert.match(migration, /foreign key \(user_id, workout_id\)[\s\S]*references public\.adhdice_health_workouts \(user_id, id\)/);
+  assert.match(migration, /foreign key \(user_id, exercise_id\)[\s\S]*references public\.adhdice_health_exercises \(user_id, id\)/);
+  assert.match(migration, /foreign key \(user_id, workout_exercise_id\)[\s\S]*references public\.adhdice_health_workout_exercises \(user_id, id\)/);
+});
+
+test("RLS and authenticated owner policies exist on every new table", () => {
+  for (const table of ["adhdice_health_exercises", "adhdice_health_workout_exercises", "adhdice_health_workout_sets"]) {
+    assert.match(migration, new RegExp(`alter table public\\.${table} enable row level security`));
+    assert.match(migration, new RegExp(`grant select, insert, update, delete on table public\\.${table} to authenticated`));
+  }
+  assert.match(migration, /to authenticated[\s\S]*using \(\(select auth\.uid\(\)\) = user_id\)[\s\S]*with check \(\(select auth\.uid\(\)\) = user_id\)/);
+});
+
+test("workout deletion cascades Workout Exercises and Sets", () => {
+  assert.match(migration, /references public\.adhdice_health_workouts \(user_id, id\)\s+on delete cascade/);
+  assert.match(migration, /references public\.adhdice_health_workout_exercises \(user_id, id\)\s+on delete cascade/);
+  assert.match(taskApp, /removeLocalWorkoutSessionDetails\(workoutId\)/);
+});
+
+test("Exercise Library archive does not delete historical workout data", () => {
+  assert.match(exerciseLibrary, /archiveExercise/);
+  assert.match(sessionHook, /archived_at: new Date\(\)\.toISOString\(\)/);
+  assert.match(migration, /references public\.adhdice_health_exercises \(user_id, id\)\s+on delete restrict/);
+});
+
+test("structured edits use stable IDs and additions/updates before removals", () => {
+  assert.match(sessionHook, /\.eq\("id", existing\.id\)/);
+  assert.match(sessionHook, /\.update\(toWorkoutExerciseUpdate/);
+  assert.match(sessionHook, /\.update\(toWorkoutSetUpdate/);
+  assert.match(sessionHook, /failStructuredSave[\s\S]*await reload\(\)/);
+  assert.doesNotMatch(sessionHook, /delete\(\)[\s\S]*insert\([\s\S]*delete all/i);
+});
+
+test("failed child persistence keeps retry in the existing workout edit flow", () => {
+  assert.match(fitnessTab, /setEditingWorkoutId\(savedWorkout\.id\)/);
+  assert.match(fitnessTab, /Workout saved, but exercise details could not be saved\. Try again\./);
+  assert.match(fitnessTab, /if \(editingWorkoutId\)/);
+});
+
+test("Fitness Plan associations remain after structured details", () => {
+  const structuredIndex = fitnessTab.indexOf("saveWorkoutSessionDetails");
+  const planIndex = fitnessTab.indexOf("saveWorkoutPlanItemLinks", structuredIndex);
+  assert.ok(structuredIndex >= 0 && planIndex > structuredIndex);
+});
+
+test("future workout validation remains intact", () => {
+  const result = buildHealthWorkoutFormPayload({ activeCalories: "", date: "2026-08-25", durationMinutes: "30", notes: "", startTime: "", title: "", workoutType: "Strength Training" }, "2026-08-24");
+  assert.equal(result.error, "Future workout dates cannot be saved.");
+});
+
+test("imported workouts remain non-editable", () => {
+  assert.match(fitnessTab, /workout\.source === "manual"/);
+  assert.match(fitnessTab, /Imported workout · editing unavailable/);
+  assert.match(fitnessTab, /onEdit=\{openEditForm\}/);
+});
+
+test("Workout History derives compact structured summaries", () => {
+  const summary = getHealthWorkoutStructuredSummary("workout-1", [workoutExercise({ exercise_name: "Plank", measurement_type: "duration" })], [workoutSet({ duration_seconds: 45, reps: null }), workoutSet({ duration_seconds: 40, id: "set-2", reps: null, sort_order: 1 })]);
+  assert.deepEqual(summary[0]?.values, ["45s", "40s"]);
+  assert.match(fitnessTab, /structuredSummary\.map/);
+});
+
+test("database types expose the three structured tables without a second workout table", () => {
+  assert.match(databaseTypes, /adhdice_health_exercises:/);
+  assert.match(databaseTypes, /adhdice_health_workout_exercises:/);
+  assert.match(databaseTypes, /adhdice_health_workout_sets:/);
+  assert.doesNotMatch(databaseTypes, /adhdice_health_fitness_sessions/);
+});

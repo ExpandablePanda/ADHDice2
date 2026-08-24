@@ -1695,6 +1695,84 @@ export type HealthWorkoutUpdate = Partial<
   Pick<HealthWorkout, "workout_date" | "started_at" | "ended_at" | "duration_seconds" | "title" | "workout_type" | "active_calories" | "notes">
 >;
 
+export type HealthFitnessMeasurement = "reps" | "duration";
+
+export type HealthExercise = {
+  id: string;
+  user_id: string;
+  name: string;
+  default_measurement: HealthFitnessMeasurement;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthExerciseInsert = {
+  id?: string;
+  user_id: string;
+  name: string;
+  default_measurement: HealthFitnessMeasurement;
+  archived_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthExerciseUpdate = Partial<Pick<HealthExercise, "name" | "default_measurement" | "archived_at">>;
+
+export type HealthWorkoutExercise = {
+  id: string;
+  user_id: string;
+  workout_id: string;
+  exercise_id: string;
+  exercise_name: string;
+  measurement_type: HealthFitnessMeasurement;
+  sort_order: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthWorkoutExerciseInsert = {
+  id?: string;
+  user_id: string;
+  workout_id: string;
+  exercise_id: string;
+  exercise_name: string;
+  measurement_type: HealthFitnessMeasurement;
+  sort_order?: number;
+  notes?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthWorkoutExerciseUpdate = Partial<Pick<HealthWorkoutExercise, "exercise_id" | "exercise_name" | "measurement_type" | "sort_order" | "notes">>;
+
+export type HealthWorkoutSet = {
+  id: string;
+  user_id: string;
+  workout_exercise_id: string;
+  sort_order: number;
+  reps: number | null;
+  duration_seconds: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthWorkoutSetInsert = {
+  id?: string;
+  user_id: string;
+  workout_exercise_id: string;
+  sort_order?: number;
+  reps?: number | null;
+  duration_seconds?: number | null;
+  notes?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthWorkoutSetUpdate = Partial<Pick<HealthWorkoutSet, "sort_order" | "reps" | "duration_seconds" | "notes">>;
+
 export type HealthFitnessPlan = {
   id: string;
   user_id: string;
@@ -2372,6 +2450,24 @@ export type Database = {
         Row: HealthWorkout;
         Insert: HealthWorkoutInsert;
         Update: HealthWorkoutUpdate;
+        Relationships: [];
+      };
+      adhdice_health_exercises: {
+        Row: HealthExercise;
+        Insert: HealthExerciseInsert;
+        Update: HealthExerciseUpdate;
+        Relationships: [];
+      };
+      adhdice_health_workout_exercises: {
+        Row: HealthWorkoutExercise;
+        Insert: HealthWorkoutExerciseInsert;
+        Update: HealthWorkoutExerciseUpdate;
+        Relationships: [];
+      };
+      adhdice_health_workout_sets: {
+        Row: HealthWorkoutSet;
+        Insert: HealthWorkoutSetInsert;
+        Update: HealthWorkoutSetUpdate;
         Relationships: [];
       };
       adhdice_health_fitness_plans: {
