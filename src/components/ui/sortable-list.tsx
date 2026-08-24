@@ -1,7 +1,7 @@
 "use client";
 
 import { GripVertical } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { reorderListItems } from "@/lib/list-reorder";
 
 type DragState = {
@@ -28,6 +28,8 @@ export function SortableList<T>({
   getLabel,
   items,
   onReorder,
+  renderAfterItems,
+  renderBeforeItem,
 }: {
   children: (item: T, index: number, handle: ReactNode) => ReactNode;
   className?: string;
@@ -35,6 +37,8 @@ export function SortableList<T>({
   getLabel: (item: T) => string;
   items: readonly T[];
   onReorder: (items: T[]) => void;
+  renderAfterItems?: ReactNode;
+  renderBeforeItem?: (item: T, index: number) => ReactNode;
 }) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -116,66 +120,69 @@ export function SortableList<T>({
         const id = getId(item);
         const label = getLabel(item);
         return (
-          <div
-            className={drag?.active && drag.id === id ? "rounded-[1.1rem] opacity-35 ring-2 ring-dashed ring-[#bbaeff]" : ""}
-            data-sortable-row={id}
-            key={id}
-          >
-            {children(item, index, (
-              <button
-                aria-label={`Drag ${label}`}
-                className="touch-pan-y cursor-grab rounded-full p-2 text-[#948bac] select-none active:cursor-grabbing"
-                onLostPointerCapture={(event) => finish(event.pointerId, true)}
-                onPointerCancel={(event) => finish(event.pointerId, true)}
-                onPointerDown={(event) => {
-                  if (event.button !== 0) return;
-                  const row = event.currentTarget.closest<HTMLElement>("[data-sortable-row]");
-                  const rect = row?.getBoundingClientRect();
-                  snapshotRef.current = items;
-                  const next: DragState = {
-                    active: event.pointerType === "mouse",
-                    id,
-                    label,
-                    pointerId: event.pointerId,
-                    pointerOffsetY: rect ? event.clientY - rect.top : 20,
-                    pointerY: event.clientY,
-                    sourceIndex: index,
-                    targetIndex: index,
-                  };
-                  updateDrag(next);
-                  const handle = event.currentTarget;
-                  if (event.pointerType === "mouse") {
-                    handle.setPointerCapture(event.pointerId);
-                  } else {
-                    holdRef.current = window.setTimeout(() => {
-                      if (handle.isConnected) handle.setPointerCapture(event.pointerId);
-                      const current = dragRef.current;
-                      if (current?.pointerId === event.pointerId) {
-                        updateDrag({ ...current, active: true });
-                      }
-                    }, 350);
-                  }
-                }}
-                onPointerMove={(event) => {
-                  const current = dragRef.current;
-                  if (!current || current.pointerId !== event.pointerId) return;
-                  if (!current.active) {
-                    if (Math.abs(event.clientY - current.pointerY) > 8) cancelDrag();
-                    return;
-                  }
-                  event.preventDefault();
-                  queuePointerMove(event.clientY);
-                }}
-                onPointerUp={(event) => finish(event.pointerId)}
-                style={{ touchAction: drag?.id === id && drag.active ? "none" : "pan-y" }}
-                type="button"
-              >
-                <GripVertical size={18} />
-              </button>
-            ))}
-          </div>
+          <Fragment key={id}>
+            {renderBeforeItem?.(item, index)}
+            <div
+              className={drag?.active && drag.id === id ? "rounded-[1.1rem] opacity-35 ring-2 ring-dashed ring-[#bbaeff]" : ""}
+              data-sortable-row={id}
+            >
+              {children(item, index, (
+                <button
+                  aria-label={`Drag ${label}`}
+                  className="touch-pan-y cursor-grab rounded-full p-2 text-[#948bac] select-none active:cursor-grabbing"
+                  onLostPointerCapture={(event) => finish(event.pointerId, true)}
+                  onPointerCancel={(event) => finish(event.pointerId, true)}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return;
+                    const row = event.currentTarget.closest<HTMLElement>("[data-sortable-row]");
+                    const rect = row?.getBoundingClientRect();
+                    snapshotRef.current = items;
+                    const next: DragState = {
+                      active: event.pointerType === "mouse",
+                      id,
+                      label,
+                      pointerId: event.pointerId,
+                      pointerOffsetY: rect ? event.clientY - rect.top : 20,
+                      pointerY: event.clientY,
+                      sourceIndex: index,
+                      targetIndex: index,
+                    };
+                    updateDrag(next);
+                    const handle = event.currentTarget;
+                    if (event.pointerType === "mouse") {
+                      handle.setPointerCapture(event.pointerId);
+                    } else {
+                      holdRef.current = window.setTimeout(() => {
+                        if (handle.isConnected) handle.setPointerCapture(event.pointerId);
+                        const current = dragRef.current;
+                        if (current?.pointerId === event.pointerId) {
+                          updateDrag({ ...current, active: true });
+                        }
+                      }, 350);
+                    }
+                  }}
+                  onPointerMove={(event) => {
+                    const current = dragRef.current;
+                    if (!current || current.pointerId !== event.pointerId) return;
+                    if (!current.active) {
+                      if (Math.abs(event.clientY - current.pointerY) > 8) cancelDrag();
+                      return;
+                    }
+                    event.preventDefault();
+                    queuePointerMove(event.clientY);
+                  }}
+                  onPointerUp={(event) => finish(event.pointerId)}
+                  style={{ touchAction: drag?.id === id && drag.active ? "none" : "pan-y" }}
+                  type="button"
+                >
+                  <GripVertical size={18} />
+                </button>
+              ))}
+            </div>
+          </Fragment>
         );
       })}
+      {renderAfterItems}
       {drag?.active ? (
         <div
           className="pointer-events-none fixed left-1/2 z-50 w-[min(22rem,calc(100vw-2rem))] -translate-x-1/2 rounded-[1rem] border border-[#cfc3ed] bg-white px-4 py-2 text-sm font-medium text-[#5f587d] shadow-xl dark:bg-[#201a35]"
