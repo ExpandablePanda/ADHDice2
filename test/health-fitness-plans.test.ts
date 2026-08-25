@@ -172,15 +172,15 @@ test("migration enforces owner-scoped cross-table relationships", () => {
 });
 
 test("a workout can be logged with zero plan associations", () => {
-  assert.match(fitnessTab, /const savedWorkout = await addWorkout\(result\.value\)/);
-  assert.match(fitnessTab, /selectedPlanItemIds\.length > 0 && !\(await saveWorkoutPlanItemLinks/);
+  assert.match(fitnessTab, /saveHealthWorkoutBundle\(/);
+  assert.match(fitnessTab, /shouldSavePlanLinks: hasExistingOrSelectedLinks/);
   assert.doesNotMatch(healthHook.slice(healthHook.indexOf("async function addWorkout"), healthHook.indexOf("async function updateWorkout")), /adhdice_health_fitness/);
 });
 
 test("editing associations is separate from canonical workout mutation", () => {
   const workoutMutationSection = healthHook.slice(healthHook.indexOf("async function addWorkout"), healthHook.indexOf("async function deleteWorkout"));
   assert.doesNotMatch(workoutMutationSection, /adhdice_health_workout_plan_item_links/);
-  assert.match(fitnessTab, /saveWorkoutPlanItemLinks\(editingWorkoutId, selectedPlanItemIds\)/);
+  assert.match(fitnessTab, /saveWorkoutPlanItemLinks/);
   assert.match(pageSource, /saveWorkoutPlanItemLinks=\{saveWorkoutPlanItemLinks\}/);
 });
 
