@@ -516,6 +516,7 @@ create table public.adhdice_health_exercises (
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null check (char_length(trim(name)) > 0),
   default_measurement text not null check (default_measurement in ('reps', 'duration')),
+  sort_order integer not null default 0 check (sort_order >= 0),
   archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -705,8 +706,8 @@ create index adhdice_health_workouts_user_date_idx
 create unique index adhdice_health_workouts_user_source_external_id_idx
   on public.adhdice_health_workouts (user_id, source, source_external_id)
   where source_external_id is not null;
-create index adhdice_health_exercises_user_active_name_idx
-  on public.adhdice_health_exercises (user_id, archived_at, name);
+create index adhdice_health_exercises_user_active_order_idx
+  on public.adhdice_health_exercises (user_id, archived_at, sort_order, created_at, id);
 create index adhdice_health_workout_exercises_user_workout_order_idx
   on public.adhdice_health_workout_exercises (user_id, workout_id, sort_order, created_at);
 create index adhdice_health_workout_sets_user_exercise_order_idx

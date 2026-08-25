@@ -1702,6 +1702,7 @@ export type HealthExercise = {
   user_id: string;
   name: string;
   default_measurement: HealthFitnessMeasurement;
+  sort_order: number;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
@@ -1712,12 +1713,13 @@ export type HealthExerciseInsert = {
   user_id: string;
   name: string;
   default_measurement: HealthFitnessMeasurement;
+  sort_order?: number;
   archived_at?: string | null;
   created_at?: string;
   updated_at?: string;
 };
 
-export type HealthExerciseUpdate = Partial<Pick<HealthExercise, "name" | "archived_at">>;
+export type HealthExerciseUpdate = Partial<Pick<HealthExercise, "name" | "sort_order" | "archived_at">>;
 
 export type HealthWorkoutExercise = {
   id: string;

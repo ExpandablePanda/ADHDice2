@@ -146,7 +146,6 @@ function WorkoutExerciseDraftRow({
       <div className="grid gap-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/40">Sets</p>
-          <AdhdChip icon={<Plus aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => onChange({ sets: [...exercise.sets, createEmptyHealthWorkoutDraftSet()] })} type="button">Add Set</AdhdChip>
         </div>
         {exercise.sets.map((set, index) => (
           <div className="flex flex-wrap items-end gap-2 rounded-[0.85rem] border border-[#eeeaf8] bg-[#fbfaff] p-2 dark:border-white/10 dark:bg-white/[0.03]" key={set.id ?? `set-${index}`}>
@@ -165,6 +164,7 @@ function WorkoutExerciseDraftRow({
             <AdhdIconButton aria-label={`Remove ${exercise.exerciseName} Set ${index + 1}`} disabled={exercise.sets.length <= 1} onClick={() => onChange({ sets: exercise.sets.filter((_, setIndex) => setIndex !== index) })} size="sm" tone="danger" variant="rowToolbar"><Trash2 aria-hidden="true" /></AdhdIconButton>
           </div>
         ))}
+        <AdhdChip className="justify-self-start" icon={<Plus aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => onChange({ sets: [...exercise.sets, createEmptyHealthWorkoutDraftSet()] })} type="button">Add Set</AdhdChip>
       </div>
     </article>
   );
