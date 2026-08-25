@@ -22,6 +22,7 @@ import type {
   HealthMealEntryUpdate,
   HealthMealFoodSnapshot,
   HealthMetricEntry,
+  HealthNutritionDetails,
   HealthProfile,
   HealthProfileUpdate,
   HealthRecipe,
@@ -100,8 +101,12 @@ import {
 import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import {
   calculateHealthFoodNutrition,
+  HEALTH_NUTRITION_FIELD_REGISTRY,
   getHealthFoodMeasurementOptions,
   lookupOpenFoodFactsByBarcode,
+  normalizeHealthNutritionDetails,
+  type HealthNutritionCoverage,
+  type HealthNutritionFieldDefinition,
 } from "@/lib/health-nutrition";
 import {
   composeHealthFoodServingDefinition,
@@ -185,6 +190,7 @@ type HealthPageProps = {
     calories: number;
     carbs_g?: number | null;
     fat_g?: number | null;
+    nutrition_details?: HealthNutritionDetails | null;
     food_name: string;
     id?: string;
     protein_g?: number | null;
@@ -294,6 +300,7 @@ type MealFoodSelection = {
   protein: number | null;
   carbs: number | null;
   fat: number | null;
+  nutritionDetails: HealthNutritionDetails | null;
   attribution: string | null;
   barcode: string | null;
   provider: string | null;
@@ -774,6 +781,9 @@ export function HealthPage({
         id: createQuickFoodId(),
         protein_g: calculation.nutrientTotals.protein_g,
         provider: "manual",
+        ...(calculation.nutrientTotals.nutrition_details
+          ? { nutrition_details: calculation.nutrientTotals.nutrition_details }
+          : {}),
         serving_label: "1 serving",
         serving_size: "1 serving",
         serving_quantity: 1,
@@ -905,6 +915,9 @@ export function HealthPage({
     if (!loggedAt || isHealthMealTimestampFuture(mealEditDraft.date, mealEditDraft.time)) {
       return;
     }
+    if (!currentEntry) {
+      return;
+    }
     if (structuredMeal && mealEditDraft.mode === "structured") {
       const calculation = calculateMealSelection(
         structuredMeal,
@@ -1001,6 +1014,7 @@ export function HealthPage({
       servingUnit: selection.servingUnit,
       servingMeasureValue: selection.servingMeasureValue,
       servingMeasureUnit: selection.servingMeasureUnit,
+      nutritionDetails: selection.nutritionDetails,
     });
   }
 
@@ -1026,6 +1040,7 @@ export function HealthPage({
       servingUnit: item.food_snapshot?.serving_unit,
       servingMeasureValue: item.food_snapshot?.serving_measure_value,
       servingMeasureUnit: item.food_snapshot?.serving_measure_unit,
+      nutritionDetails: item.food_snapshot?.nutrition_details ?? null,
     });
   }
 
@@ -1049,6 +1064,9 @@ export function HealthPage({
       fat_g: entry.fat_g,
       food_category: entry.food_snapshot?.food_category,
       food_name: entry.food_name,
+      ...(entry.food_snapshot?.nutrition_details
+        ? { nutrition_details: entry.food_snapshot.nutrition_details }
+        : {}),
       protein_g: entry.protein_g,
       provider: entry.provider,
       provider_item_id: entry.provider_item_id,
@@ -1103,7 +1121,7 @@ export function HealthPage({
     barcode?: string | null;
     brandName: string | null;
     foodCategory?: string | null;
-    calories: number;
+    calories: number | null;
     carbs: number | null;
     fat: number | null;
     foodName: string;
@@ -1116,6 +1134,7 @@ export function HealthPage({
     servingUnit?: string | null;
     servingMeasureValue?: number | null;
     servingMeasureUnit?: HealthServingMeasureUnit | null;
+    nutritionDetails?: HealthNutritionDetails | null;
   }) {
     setIsQuickEntryOpen(false);
     setSaveQuickEntryToLibrary(false);
@@ -1127,7 +1146,7 @@ export function HealthPage({
       attribution: result.attribution ?? null,
       barcode: result.barcode ?? current.barcode,
       brandName: result.brandName ?? "",
-      calories: String(result.calories),
+      calories: result.calories === null ? "" : String(result.calories),
       carbs: result.carbs === null ? "" : String(result.carbs),
       fat: result.fat === null ? "" : String(result.fat),
       foodName: result.foodName,
@@ -1140,6 +1159,7 @@ export function HealthPage({
       servingUnit,
       servingMeasureValue: positiveFiniteNumber(result.servingMeasureValue),
       servingMeasureUnit: result.servingMeasureUnit ?? null,
+      nutritionDetails: result.nutritionDetails ?? null,
       quantity: "1",
       measurement: "serving",
       servingLabel: result.servingLabel ?? "",
@@ -1167,6 +1187,7 @@ export function HealthPage({
         servingUnit: item.serving_unit,
         servingMeasureValue: item.serving_measure_value,
         servingMeasureUnit: item.serving_measure_unit,
+        nutritionDetails: item.nutrition_details ?? null,
       });
       return;
     }
@@ -1185,6 +1206,7 @@ export function HealthPage({
         servingLabel: suggestion.item.servings === 1 ? "1 serving" : `1 of ${suggestion.item.servings} servings`,
         servingQuantity: 1,
         servingUnit: "serving",
+        nutritionDetails: nutrition.nutrition_details ?? null,
       });
       return;
     }
@@ -1202,6 +1224,7 @@ export function HealthPage({
       servingLabel: "1 saved meal",
       servingQuantity: 1,
       servingUnit: "serving",
+      nutritionDetails: nutrition.nutrition_details ?? null,
     });
   }
 
@@ -1362,7 +1385,7 @@ export function HealthPage({
         {mealTimestampError ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">{mealTimestampError}</p> : null}
         {mealDraft.foodName ? (
           <div aria-live="polite" className="rounded-[1rem] border border-[#e8e2f7] bg-white px-4 py-3 text-sm text-[#5d6783] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/65">
-            {mealCalculation ? <><div className="mb-1">{composeHealthFoodServingDefinition({ ...mealCalculation.serving, servingLabel: mealDraft.servingLabel })}</div><div>Nutrition preview: <strong className="text-[#3d4670] dark:text-white">{formatHealthNutritionNumber(mealCalculation.nutrientTotals.calories)} kcal</strong> / Protein {formatHealthNutritionNumber(mealCalculation.nutrientTotals.protein_g)}g / Carbs {formatHealthNutritionNumber(mealCalculation.nutrientTotals.carbs_g)}g / Fat {formatHealthNutritionNumber(mealCalculation.nutrientTotals.fat_g)}g</div></> : "Enter a positive amount using one of this food’s supported measurements."}
+            {mealCalculation ? <><div className="mb-1">{composeHealthFoodServingDefinition({ ...mealCalculation.serving, servingLabel: mealDraft.servingLabel })}</div><div>Nutrition preview: <strong className="text-[#3d4670] dark:text-white">{formatHealthNutritionNumber(mealCalculation.nutrientTotals.calories)} kcal</strong> / Protein {formatHealthNutritionNumber(mealCalculation.nutrientTotals.protein_g)}g / Carbs {formatHealthNutritionNumber(mealCalculation.nutrientTotals.carbs_g)}g / Fat {formatHealthNutritionNumber(mealCalculation.nutrientTotals.fat_g)}g</div><NutritionDetailsDisclosure details={mealCalculation.nutrientTotals.nutrition_details} /></> : "Enter a positive amount using one of this food’s supported measurements."}
           </div>
         ) : null}
         <div className="grid gap-3">
@@ -1376,7 +1399,7 @@ export function HealthPage({
             <div className="adhdice-scrollbar max-h-24 overflow-y-auto pr-1">
               <div className="flex flex-wrap gap-2">
                 {matchingCustomFoods.map((item) => (
-                  <button className={`ui-pill-button-light inline-flex min-w-0 max-w-full whitespace-normal text-left ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`} key={item.id} onClick={() => { setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name); applyLookupResult({ attribution: item.attribution, barcode: item.barcode, brandName: item.brand_name, foodCategory: item.food_category ?? item.category, calories: item.calories, carbs: item.carbs_g, fat: item.fat_g, foodName: item.food_name, protein: item.protein_g, provider: item.provider, providerItemId: item.provider_item_id ?? item.id, servingLabel: item.serving_label, sourceFoodId: item.id, servingQuantity: item.serving_quantity, servingUnit: item.serving_unit, servingMeasureValue: item.serving_measure_value, servingMeasureUnit: item.serving_measure_unit }); }} type="button">{formatBrandedFoodName(item)} · {item.calories} kcal</button>
+                  <button className={`ui-pill-button-light inline-flex min-w-0 max-w-full whitespace-normal text-left ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`} key={item.id} onClick={() => { setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name); applyLookupResult({ attribution: item.attribution, barcode: item.barcode, brandName: item.brand_name, foodCategory: item.food_category ?? item.category, calories: item.calories, carbs: item.carbs_g, fat: item.fat_g, foodName: item.food_name, nutritionDetails: item.nutrition_details ?? null, protein: item.protein_g, provider: item.provider, providerItemId: item.provider_item_id ?? item.id, servingLabel: item.serving_label, sourceFoodId: item.id, servingQuantity: item.serving_quantity, servingUnit: item.serving_unit, servingMeasureValue: item.serving_measure_value, servingMeasureUnit: item.serving_measure_unit }); }} type="button">{formatBrandedFoodName(item)} · {item.calories} kcal</button>
                 ))}
               </div>
             </div>
@@ -1577,6 +1600,7 @@ export function HealthPage({
                       <div className="min-w-0 flex-1">
                         <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(entry)}</p>
                         <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">{formatHealthMealSummary(entry)}</p>
+                        <NutritionDetailsDisclosure details={entry.nutrition_snapshot?.nutrition_details} />
                       </div>
                       <div className="flex shrink-0 flex-wrap justify-end gap-2">
                         <button
@@ -1729,6 +1753,18 @@ export function HealthPage({
               <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.carbs)}g`} />
               <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.fat)}g`} />
             </div>
+            <NutritionDetailsDisclosure
+              coverage={selectedNutrition.nutrition_coverage}
+              details={selectedNutrition.nutrition_details}
+              groups={["Nutrition Details", "Other"]}
+              title="Additional Nutrition"
+            />
+            <NutritionDetailsDisclosure
+              coverage={selectedNutrition.nutrition_coverage}
+              details={selectedNutrition.nutrition_details}
+              groups={["Vitamins & Minerals"]}
+              title="Vitamins & Minerals"
+            />
             <HealthCalorieLineChart series={dailyCalorieSeries} />
           </HealthPanel>
 
@@ -2598,6 +2634,44 @@ function InlineNotice({ text }: { text: string }) {
   return <p aria-live="polite" className="rounded-[1rem] bg-[#eef3ff] px-4 py-3 text-sm text-[#4e5ec8] dark:bg-[#1d2342] dark:text-[#c4d1ff]" role="status">{text}</p>;
 }
 
+function NutritionDetailsDisclosure({
+  coverage,
+  details,
+  groups,
+  title = "Nutrition Details",
+}: {
+  coverage?: HealthNutritionCoverage;
+  details?: HealthNutritionDetails | null;
+  groups?: readonly HealthNutritionFieldDefinition["group"][];
+  title?: string;
+}) {
+  const normalized = normalizeHealthNutritionDetails(details);
+  const fields = HEALTH_NUTRITION_FIELD_REGISTRY.filter((field) => (groups ? groups.includes(field.group) : true) && typeof normalized?.[field.key] === "number");
+  if (fields.length === 0) {
+    return null;
+  }
+  return (
+    <details className="mt-3 rounded-[1rem] border border-[#eeeaf8] bg-[#fbfaff] px-3 py-2 text-xs dark:border-white/10 dark:bg-white/[0.03]">
+      <summary className="cursor-pointer font-semibold text-[#5d6783] dark:text-white/70">{title}</summary>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {fields.map((field) => {
+          const value = normalized?.[field.key] as number;
+          const fieldCoverage = coverage?.[field.key];
+          return (
+            <div className="flex min-w-0 items-baseline justify-between gap-3" key={field.key}>
+              <span className="text-[#7d7598] dark:text-white/50">{field.label}</span>
+              <span className="shrink-0 font-semibold text-[#4f5872] dark:text-white/70">
+                {formatHealthNutritionNumber(value)} {field.unit}
+                {fieldCoverage && !fieldCoverage.complete ? ` · ${fieldCoverage.knownEntries}/${fieldCoverage.totalEntries} foods known` : ""}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 function calculateMealDraft(draft: MealDraft) {
   const selection = mealFoodSelectionFromDraft(draft);
   return selection ? calculateMealSelection(selection, parsePositiveQuantity(draft.quantity), draft.measurement) : null;
@@ -2616,6 +2690,7 @@ function calculateMealSelection(selection: MealFoodSelection, quantity: number |
         carbs_g: selection.carbs,
         fat_g: selection.fat,
         protein_g: selection.protein,
+        nutrition_details: selection.nutritionDetails,
       },
       servingMeasureUnit: selection.servingMeasureUnit,
       servingMeasureValue: selection.servingMeasureValue,
@@ -2642,6 +2717,7 @@ function mealFoodSelectionFromDraft(draft: MealDraft): MealFoodSelection | null 
     fat: nullableFiniteNumber(draft.fat),
     foodCategory: draft.foodCategory,
     foodName: draft.foodName.trim(),
+    nutritionDetails: draft.nutritionDetails,
     provider: draft.provider,
     providerItemId: draft.providerItemId,
     protein: nullableFiniteNumber(draft.protein),
@@ -2667,6 +2743,7 @@ function mealFoodSelectionFromLibraryItem(item: HealthFoodLibraryItem): MealFood
     provider: item.provider,
     providerItemId: item.provider_item_id ?? item.id,
     protein: item.protein_g,
+    nutritionDetails: item.nutrition_details ?? null,
     servingLabel: item.serving_label,
     servingMeasureUnit: validServingMeasureUnit(item.serving_measure_unit),
     servingMeasureValue: positiveFiniteNumber(item.serving_measure_value),
@@ -2698,6 +2775,7 @@ function getStructuredMealDefinition(entry: HealthMealEntry): MealFoodSelection 
     provider: snapshot.provider || entry.provider,
     providerItemId: snapshot.provider_item_id ?? entry.provider_item_id,
     protein: nullableFiniteNumber(snapshot.protein_g),
+    nutritionDetails: snapshot.nutrition_details ?? null,
     servingLabel: snapshot.serving_label ?? entry.serving_label,
     servingMeasureUnit: validServingMeasureUnit(snapshot.serving_measure_unit),
     servingMeasureValue: positiveFiniteNumber(snapshot.serving_measure_value),
@@ -2726,6 +2804,7 @@ function buildMealFoodSnapshot(source: MealDraft | MealFoodSelection): HealthMea
     serving_unit: source.servingUnit.trim() || "serving",
     source_food_id: source.sourceFoodId,
     protein_g: nullableFiniteNumber(source.protein),
+    nutrition_details: source.nutritionDetails,
   };
 }
 

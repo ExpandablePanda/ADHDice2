@@ -5,12 +5,14 @@ import type {
   HealthCheckIn,
   HealthMealEntry,
   HealthMetricEntry,
+  HealthNutritionDetails,
   HealthProfile,
   Task,
   HealthWeightEntry,
 } from "@/lib/database.types";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { formatHealthFoodQuantityUnit } from "@/lib/health-library";
+import { aggregateHealthNutritionDetails, type HealthNutritionCoverage } from "@/lib/health-nutrition";
 import { HEALTH_WORKOUT_TYPES, normalizeHealthWorkoutOptionValues } from "@/lib/health-workout-options";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 
@@ -499,13 +501,19 @@ export function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-export function sumMealNutritionForDate(entries: HealthMealEntry[], entryDate: string) {
-  return entries.reduce(
-    (accumulator, entry) => {
-      if (entry.entry_date !== entryDate) {
-        return accumulator;
-      }
+export type HealthDailyNutritionTotals = {
+  calories: number;
+  carbs: number;
+  fat: number;
+  protein: number;
+  nutrition_details?: HealthNutritionDetails;
+  nutrition_coverage?: HealthNutritionCoverage;
+};
 
+export function sumMealNutritionForDate(entries: HealthMealEntry[], entryDate: string): HealthDailyNutritionTotals {
+  const datedEntries = entries.filter((entry) => entry.entry_date === entryDate);
+  const totals = datedEntries.reduce(
+    (accumulator, entry) => {
       const snapshot = entry.nutrition_snapshot;
       accumulator.calories += finiteOrFallback(snapshot?.calories, entry.calories);
       accumulator.protein += finiteOrFallback(snapshot?.protein_g, entry.protein_g ?? 0);
@@ -515,6 +523,16 @@ export function sumMealNutritionForDate(entries: HealthMealEntry[], entryDate: s
     },
     { calories: 0, carbs: 0, fat: 0, protein: 0 },
   );
+  const expanded = aggregateHealthNutritionDetails(datedEntries.map((entry) => ({
+    nutritionDetails: entry.nutrition_snapshot?.nutrition_details,
+  })));
+  return expanded.nutritionDetails
+    ? {
+        ...totals,
+        nutrition_details: expanded.nutritionDetails,
+        nutrition_coverage: expanded.coverage,
+      }
+    : totals;
 }
 
 function finiteOrFallback(value: number | null | undefined, fallback: number) {

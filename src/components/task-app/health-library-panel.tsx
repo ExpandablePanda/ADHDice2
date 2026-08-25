@@ -13,6 +13,8 @@ import type {
   HealthRecipeIngredient,
   HealthSavedMeal,
   HealthSavedMealItem,
+  HealthNutritionDetailKey,
+  HealthNutritionDetails,
   HealthServingMeasureUnit,
   HealthServingWeightUnit,
 } from "@/lib/database.types";
@@ -40,7 +42,13 @@ import {
   type HealthCustomFoodImportFieldKey,
 } from "@/lib/health-food-import";
 import { getMealSlotLabel, HEALTH_MEAL_SLOTS } from "@/lib/health-utils";
-import { lookupOpenFoodFactsByBarcode, type HealthFoodLookupResult } from "@/lib/health-nutrition";
+import {
+  HEALTH_NUTRITION_FIELD_REGISTRY,
+  lookupOpenFoodFactsByBarcode,
+  normalizeHealthNutritionDetails,
+  parseHealthNutritionDetailsInput,
+  type HealthFoodLookupResult,
+} from "@/lib/health-nutrition";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthBarcodeScanner } from "./health-barcode-scanner";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
@@ -61,7 +69,12 @@ type FoodDraft = {
   protein: string;
   carbs: string;
   fat: string;
+  nutritionDetails: Record<HealthNutritionDetailKey, string>;
 };
+
+function createEmptyNutritionDetailDraft() {
+  return Object.fromEntries(HEALTH_NUTRITION_FIELD_REGISTRY.map((field) => [field.key, ""])) as Record<HealthNutritionDetailKey, string>;
+}
 
 const EMPTY_FOOD_DRAFT: FoodDraft = {
   barcode: "",
@@ -76,6 +89,7 @@ const EMPTY_FOOD_DRAFT: FoodDraft = {
   protein: "",
   carbs: "",
   fat: "",
+  nutritionDetails: createEmptyNutritionDetailDraft(),
 };
 
 type FoodImportRow = {
@@ -148,6 +162,7 @@ type HealthLibraryPanelProps = {
     protein_g?: number | null;
     carbs_g?: number | null;
     fat_g?: number | null;
+    nutrition_details?: HealthNutritionDetails | null;
     provider?: string;
     provider_item_id?: string | null;
   }) => Promise<boolean>;
@@ -233,6 +248,11 @@ export function HealthLibraryPanel({
     const calories = Number.parseInt(foodDraft.calories, 10);
     const servingQuantity = nullablePositiveNumber(foodDraft.servingQuantity);
     const servingMeasureValue = nullablePositiveNumber(foodDraft.servingMeasureValue);
+    const nutritionDetails = parseHealthNutritionDetailsInput(foodDraft.nutritionDetails);
+    const hasInvalidNutritionDetail = HEALTH_NUTRITION_FIELD_REGISTRY.some((field) => {
+      const rawValue = foodDraft.nutritionDetails[field.key]?.trim() ?? "";
+      return rawValue.length > 0 && typeof nutritionDetails?.[field.key] !== "number";
+    });
     const hasMeasureValue = foodDraft.servingMeasureValue.trim().length > 0;
     const hasMeasureUnit = Boolean(foodDraft.servingMeasureUnit);
     if (
@@ -243,6 +263,7 @@ export function HealthLibraryPanel({
       || !foodDraft.servingUnit.trim()
       || (hasMeasureValue && (servingMeasureValue === null || !hasMeasureUnit))
       || (!hasMeasureValue && hasMeasureUnit)
+      || hasInvalidNutritionDetail
     ) {
       return;
     }
@@ -272,6 +293,7 @@ export function HealthLibraryPanel({
       serving_measure_unit: foodDraft.servingMeasureUnit || null,
       serving_weight_amount: foodDraft.servingMeasureUnit === "g" || foodDraft.servingMeasureUnit === "oz" || foodDraft.servingMeasureUnit === "fl_oz" ? servingMeasureValue : null,
       serving_weight_unit: foodDraft.servingMeasureUnit === "g" || foodDraft.servingMeasureUnit === "oz" || foodDraft.servingMeasureUnit === "fl_oz" ? foodDraft.servingMeasureUnit : null,
+      ...(nutritionDetails ? { nutrition_details: nutritionDetails } : {}),
     });
     if (saved) {
       setIsBarcodeScannerOpen(false);
@@ -609,6 +631,38 @@ export function HealthLibraryPanel({
                   <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, fat: event.target.value }))} value={foodDraft.fat} />
                 </LibraryField>
               </div>
+              <div className="mt-4 grid gap-3">
+                <details className="rounded-[1rem] border border-[#e8e2f7] bg-white/70 px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+                  <summary className="cursor-pointer text-sm font-semibold text-[#595378] dark:text-white/75">Nutrition Details</summary>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    {HEALTH_NUTRITION_FIELD_REGISTRY.filter((field) => field.group !== "Vitamins & Minerals").map((field) => (
+                      <LibraryField label={`${field.label} (${field.unit})`} key={field.key}>
+                        <input
+                          className={HEALTH_COMPACT_INPUT_CLASS}
+                          inputMode="decimal"
+                          onChange={(event) => setFoodDraft((current) => ({ ...current, nutritionDetails: { ...current.nutritionDetails, [field.key]: event.target.value } }))}
+                          value={foodDraft.nutritionDetails[field.key]}
+                        />
+                      </LibraryField>
+                    ))}
+                  </div>
+                </details>
+                <details className="rounded-[1rem] border border-[#e8e2f7] bg-white/70 px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+                  <summary className="cursor-pointer text-sm font-semibold text-[#595378] dark:text-white/75">Vitamins &amp; Minerals</summary>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    {HEALTH_NUTRITION_FIELD_REGISTRY.filter((field) => field.group === "Vitamins & Minerals").map((field) => (
+                      <LibraryField label={`${field.label} (${field.unit})`} key={field.key}>
+                        <input
+                          className={HEALTH_COMPACT_INPUT_CLASS}
+                          inputMode="decimal"
+                          onChange={(event) => setFoodDraft((current) => ({ ...current, nutritionDetails: { ...current.nutritionDetails, [field.key]: event.target.value } }))}
+                          value={foodDraft.nutritionDetails[field.key]}
+                        />
+                      </LibraryField>
+                    ))}
+                  </div>
+                </details>
+              </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 <AdhdChip onClick={() => { void handleSaveFood(); }} selected>
                   Save food
@@ -626,7 +680,7 @@ export function HealthLibraryPanel({
                       detail={`${food.food_category || "Uncategorized"} / ${food.serving_label || "1 serving"} / ${food.calories} kcal`}
                       title={formatBrandedFoodName(food)}
                     />
-                    <NutritionLine calories={food.calories} carbs={food.carbs_g ?? 0} fat={food.fat_g ?? 0} protein={food.protein_g ?? 0} />
+                    <NutritionLine calories={food.calories} carbs={food.carbs_g} fat={food.fat_g} protein={food.protein_g} />
                   </div>
                   <div className="flex min-w-0 max-w-full flex-wrap justify-end gap-2">
                     <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setFoodDraft(foodToDraft(food))}>Edit</AdhdChip>
@@ -879,16 +933,21 @@ function formatBrandedFoodName(food: Pick<HealthFoodLibraryItem, "brand_name" | 
     : food.food_name;
 }
 
-function NutritionLine({ calories, protein, carbs, fat }: { calories: number; protein: number; carbs: number; fat: number }) {
+function NutritionLine({ calories, protein, carbs, fat }: { calories: number | null; protein: number | null; carbs: number | null; fat: number | null }) {
   return (
     <p className="mt-2 text-xs text-[#6d7a96] dark:text-white/50">
-      {Math.round(calories)} kcal / Protein {Math.round(protein)}g / Carbs {Math.round(carbs)}g / Fat {Math.round(fat)}g
+      {formatNutritionValue(calories)} kcal / Protein {formatNutritionValue(protein)}g / Carbs {formatNutritionValue(carbs)}g / Fat {formatNutritionValue(fat)}g
     </p>
   );
 }
 
+function formatNutritionValue(value: number | null) {
+  return typeof value === "number" && Number.isFinite(value) ? String(Math.round(value)) : "—";
+}
+
 function foodToDraft(food: HealthFoodLibraryItem): FoodDraft {
   const servingMeasureUnit = food.serving_measure_unit ?? "";
+  const nutritionDetails = normalizeHealthNutritionDetails(food.nutrition_details);
   return {
     id: food.id,
     barcode: food.barcode ?? "",
@@ -903,11 +962,18 @@ function foodToDraft(food: HealthFoodLibraryItem): FoodDraft {
     servingUnit: food.serving_unit || "serving",
     servingMeasureValue: food.serving_measure_value == null ? "" : String(food.serving_measure_value),
     servingMeasureUnit: servingMeasureUnit,
+    nutritionDetails: Object.fromEntries(HEALTH_NUTRITION_FIELD_REGISTRY.map((field) => [field.key, typeof nutritionDetails?.[field.key] === "number" ? String(nutritionDetails[field.key]) : ""])) as Record<HealthNutritionDetailKey, string>,
   };
 }
 
 function mergeFoodDraftWithBarcodeResult(draft: FoodDraft, result: HealthFoodLookupResult, scannedBarcode: string): FoodDraft {
-  const serving = parseBarcodeServingLabel(result.servingLabel);
+  const parsedServing = parseBarcodeServingLabel(result.servingLabel);
+  const serving = {
+    quantity: result.servingQuantity > 0 ? String(result.servingQuantity) : parsedServing.quantity,
+    unit: result.servingUnit || parsedServing.unit,
+    measureValue: result.servingMeasureValue === null ? parsedServing.measureValue : String(result.servingMeasureValue),
+    measureUnit: result.servingMeasureUnit ?? parsedServing.measureUnit,
+  };
   const hasEditedServing = draft.servingQuantity.trim() !== "1"
     || draft.servingUnit.trim() !== "serving"
     || draft.servingMeasureValue.trim().length > 0
@@ -916,7 +982,7 @@ function mergeFoodDraftWithBarcodeResult(draft: FoodDraft, result: HealthFoodLoo
     ...draft,
     barcode: result.barcode ?? scannedBarcode,
     brandName: draft.brandName.trim() ? draft.brandName : result.brandName ?? "",
-    calories: draft.calories.trim() ? draft.calories : String(result.calories),
+    calories: draft.calories.trim() ? draft.calories : result.calories === null ? "" : String(result.calories),
     carbs: draft.carbs.trim() ? draft.carbs : result.carbs === null ? "" : String(result.carbs),
     foodCategory: draft.foodCategory.trim() ? draft.foodCategory : result.foodCategory ?? "",
     foodName: draft.foodName.trim() ? draft.foodName : result.foodName,
@@ -926,6 +992,11 @@ function mergeFoodDraftWithBarcodeResult(draft: FoodDraft, result: HealthFoodLoo
     servingUnit: hasEditedServing ? draft.servingUnit : serving.unit,
     servingMeasureValue: hasEditedServing ? draft.servingMeasureValue : serving.measureValue,
     servingMeasureUnit: hasEditedServing ? draft.servingMeasureUnit : serving.measureUnit,
+    nutritionDetails: Object.fromEntries(HEALTH_NUTRITION_FIELD_REGISTRY.map((field) => {
+      const existing = draft.nutritionDetails[field.key]?.trim() ?? "";
+      const incoming = result.nutritionDetails?.[field.key];
+      return [field.key, existing || (typeof incoming === "number" ? String(incoming) : "")];
+    })) as Record<HealthNutritionDetailKey, string>,
   };
 }
 

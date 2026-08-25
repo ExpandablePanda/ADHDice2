@@ -1243,6 +1243,60 @@ export type HealthAchievementCode =
   | "care_week"
   | "care_month";
 
+/**
+ * Additional Nutrition Facts values. The four primary macros remain the
+ * canonical top-level fields on foods and meal snapshots.
+ *
+ * Optional properties preserve the distinction between an unknown nutrient
+ * and a provider/manual value of zero.
+ */
+export type HealthNutritionDetails = {
+  saturated_fat_g?: number | null;
+  trans_fat_g?: number | null;
+  monounsaturated_fat_g?: number | null;
+  polyunsaturated_fat_g?: number | null;
+  cholesterol_mg?: number | null;
+  sodium_mg?: number | null;
+  dietary_fiber_g?: number | null;
+  soluble_fiber_g?: number | null;
+  insoluble_fiber_g?: number | null;
+  total_sugars_g?: number | null;
+  added_sugars_g?: number | null;
+  sugar_alcohol_g?: number | null;
+  vitamin_a_mcg_rae?: number | null;
+  vitamin_c_mg?: number | null;
+  vitamin_d_mcg?: number | null;
+  vitamin_e_mg?: number | null;
+  vitamin_k_mcg?: number | null;
+  thiamin_b1_mg?: number | null;
+  riboflavin_b2_mg?: number | null;
+  niacin_b3_mg?: number | null;
+  pantothenic_acid_b5_mg?: number | null;
+  vitamin_b6_mg?: number | null;
+  biotin_b7_mcg?: number | null;
+  folate_b9_mcg_dfe?: number | null;
+  vitamin_b12_mcg?: number | null;
+  choline_mg?: number | null;
+  calcium_mg?: number | null;
+  iron_mg?: number | null;
+  magnesium_mg?: number | null;
+  phosphorus_mg?: number | null;
+  potassium_mg?: number | null;
+  zinc_mg?: number | null;
+  copper_mg?: number | null;
+  manganese_mg?: number | null;
+  selenium_mcg?: number | null;
+  iodine_mcg?: number | null;
+  chromium_mcg?: number | null;
+  molybdenum_mcg?: number | null;
+  chloride_mg?: number | null;
+  caffeine_mg?: number | null;
+  omega_3_g?: number | null;
+  omega_6_g?: number | null;
+};
+
+export type HealthNutritionDetailKey = keyof HealthNutritionDetails;
+
 export type HealthProfile = {
   user_id: string;
   preferred_weight_unit: HealthWeightUnit;
@@ -1340,6 +1394,7 @@ export type HealthFoodLibraryItem = {
   protein_g: number | null;
   carbs_g: number | null;
   fat_g: number | null;
+  nutrition_details?: HealthNutritionDetails | null;
   barcode: string | null;
   provider: string;
   provider_item_id: string | null;
@@ -1368,6 +1423,7 @@ export type HealthFoodLibraryItemInsert = {
   protein_g?: number | null;
   carbs_g?: number | null;
   fat_g?: number | null;
+  nutrition_details?: HealthNutritionDetails | null;
   barcode?: string | null;
   provider?: string;
   provider_item_id?: string | null;
@@ -1394,6 +1450,7 @@ export type HealthFoodLibraryItemUpdate = Partial<
     | "protein_g"
     | "carbs_g"
     | "fat_g"
+    | "nutrition_details"
     | "barcode"
     | "provider"
     | "provider_item_id"
@@ -1411,6 +1468,7 @@ export type HealthRecipeIngredient = {
   protein_g: number | null;
   carbs_g: number | null;
   fat_g: number | null;
+  nutrition_details?: HealthNutritionDetails | null;
 };
 
 export type HealthRecipe = {
@@ -1447,6 +1505,7 @@ export type HealthSavedMealItem = {
   protein_g: number | null;
   carbs_g: number | null;
   fat_g: number | null;
+  nutrition_details?: HealthNutritionDetails | null;
 };
 
 export type HealthSavedMeal = {
@@ -1541,6 +1600,7 @@ export type HealthMealFoodSnapshot = {
   protein_g: number | null;
   carbs_g: number | null;
   fat_g: number | null;
+  nutrition_details?: HealthNutritionDetails | null;
   barcode: string | null;
   provider: string;
   provider_item_id: string | null;
@@ -1552,6 +1612,7 @@ export type HealthMealNutritionSnapshot = {
   protein_g: number | null;
   carbs_g: number | null;
   fat_g: number | null;
+  nutrition_details?: HealthNutritionDetails | null;
 };
 
 export type HealthMealEntryInsert = {

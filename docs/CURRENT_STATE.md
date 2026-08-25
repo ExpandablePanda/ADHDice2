@@ -15,6 +15,10 @@ Role: active working
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 
+## 2026-08-25 7.11.59 Expanded Nutrition Facts
+
+Native barcode scanner real-device QA passed checks 1–6 and barcode scanning is closed for the 7.11.x cycle. The Food architecture now carries one canonical `HealthNutritionDetails` structure for fat subtypes, sodium, fiber, sugars, vitamins, minerals, caffeine, and omega fats. Unknown values remain null/blank and are never normalized to zero; a numeric zero remains a known value. Custom Food rows remain the current Food Library definition authority, while logged meals use immutable `food_snapshot` and `nutrition_snapshot` data. Recipes and Saved Meals copy and aggregate expanded nutrition, and daily totals report known-entry coverage for incomplete nutrients. Open Food Facts normalization now uses one explicit per-serving or per-100g basis across calories, macros, and expanded nutrients, and missing barcode calories remain null. The additive `supabase/add_health_expanded_nutrition_7_11_59.sql` migration adds `adhdice_health_food_library.nutrition_details` and has not been applied automatically.
+
 ## 2026-08-25 7.11.58 Native iOS Food Barcode Scanner
 
 Real iOS QA proved that `BarcodeDetector` is unavailable in the installed WKWebView, so 7.11.58 adds the official `@capacitor/barcode-scanner` 3.1.1 native fallback behind the shared `HealthBarcodeScanner` boundary. Native Capacitor scanning now uses the rear camera and returns the raw barcode to the existing Add Food and Custom Food flows; the browser keeps the existing `BarcodeDetector` plus `getUserMedia` fallback and browser-only unsupported message. Open Food Facts remains the lookup authority, scanning never saves automatically, and no-match barcodes remain available for manual completion. No SQL or migration was added.
