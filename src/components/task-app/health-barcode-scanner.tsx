@@ -1,5 +1,11 @@
 "use client";
 
+import { Capacitor } from "@capacitor/core";
+import {
+  CapacitorBarcodeScanner,
+  CapacitorBarcodeScannerCameraDirection,
+  CapacitorBarcodeScannerTypeHint,
+} from "@capacitor/barcode-scanner";
 import { Camera, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -13,18 +19,55 @@ type BarcodeDetectorInstance = {
 
 type BarcodeDetectorCtor = new (options?: { formats?: string[] }) => BarcodeDetectorInstance;
 
+type ScannerSupport = "checking" | "native" | "ready" | "unsupported";
+
 type HealthBarcodeScannerProps = {
   isOpen: boolean;
   onClose: () => void;
   onDetected: (barcode: string) => void;
 };
 
+const NATIVE_BARCODE_SCANNER_PLUGIN = "CapacitorBarcodeScanner";
+const NATIVE_SCAN_CANCELLED_CODE = "OS-PLUG-BARC-0006";
+const NATIVE_SCAN_CAMERA_DENIED_CODE = "OS-PLUG-BARC-0007";
+
+function getNativeScanErrorCode(error: unknown) {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return "";
+  }
+  return String(error.code ?? "");
+}
+
+function getNativeScanErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error ?? "");
+}
+
+function isNativeScanCancellation(error: unknown) {
+  const code = getNativeScanErrorCode(error);
+  const message = getNativeScanErrorMessage(error);
+  return code === NATIVE_SCAN_CANCELLED_CODE || /cancel(?:ed|led)/i.test(message);
+}
+
+function getNativeScanFailureMessage(error: unknown) {
+  const code = getNativeScanErrorCode(error);
+  const message = getNativeScanErrorMessage(error);
+  if (code === NATIVE_SCAN_CAMERA_DENIED_CODE || /camera access|permission/i.test(message)) {
+    return "Camera permission is unavailable. Allow camera access and try again.";
+  }
+  if (code === "OS-PLUG-BARC-0013" || /not implemented|unavailable|plugin/i.test(message)) {
+    return "The native barcode scanner is unavailable in this app.";
+  }
+  return "Unable to start the native barcode scanner. Try again.";
+}
+
 export function HealthBarcodeScanner({ isOpen, onClose, onDetected }: HealthBarcodeScannerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const onCloseRef = useRef(onClose);
   const onDetectedRef = useRef(onDetected);
+  const nativeScanInFlightRef = useRef(false);
   const [error, setError] = useState("");
-  const [support, setSupport] = useState<"checking" | "ready" | "unsupported">("checking");
+  const [support, setSupport] = useState<ScannerSupport>("checking");
+  const [nativeScanActive, setNativeScanActive] = useState(false);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -36,12 +79,71 @@ export function HealthBarcodeScanner({ isOpen, onClose, onDetected }: HealthBarc
       return;
     }
     const timeoutId = window.setTimeout(() => {
+      if (Capacitor.isNativePlatform()) {
+        setSupport("native");
+        return;
+      }
       const detector = (window as Window & { BarcodeDetector?: BarcodeDetectorCtor }).BarcodeDetector;
       const hasCamera = !!navigator.mediaDevices?.getUserMedia;
       setSupport(detector && hasCamera ? "ready" : "unsupported");
     }, 0);
     return () => window.clearTimeout(timeoutId);
   }, []);
+
+  useEffect(() => {
+    if (!isOpen || support !== "native" || nativeScanInFlightRef.current) {
+      return;
+    }
+
+    nativeScanInFlightRef.current = true;
+    let cancelled = false;
+
+    async function startNativeScanner() {
+      try {
+        setError("");
+        setNativeScanActive(true);
+        if (!Capacitor.isPluginAvailable(NATIVE_BARCODE_SCANNER_PLUGIN)) {
+          setError("The native barcode scanner is unavailable in this app.");
+          return;
+        }
+
+        // The official plugin accepts one hint, so ALL is the only clean native
+        // option that keeps EAN-8, EAN-13/UPC-A, and UPC-E available together.
+        const result = await CapacitorBarcodeScanner.scanBarcode({
+          cameraDirection: CapacitorBarcodeScannerCameraDirection.BACK,
+          cancelButtonAccessibilityLabel: "Cancel barcode scan",
+          hint: CapacitorBarcodeScannerTypeHint.ALL,
+          scanInstructions: "Point the rear camera at a food barcode.",
+        });
+        const barcode = result.ScanResult?.trim();
+        if (!barcode || cancelled) {
+          return;
+        }
+        onCloseRef.current();
+        onDetectedRef.current(barcode);
+      } catch (caughtError) {
+        if (cancelled) {
+          return;
+        }
+        if (isNativeScanCancellation(caughtError)) {
+          onCloseRef.current();
+          return;
+        }
+        setError(getNativeScanFailureMessage(caughtError));
+      } finally {
+        nativeScanInFlightRef.current = false;
+        if (!cancelled) {
+          setNativeScanActive(false);
+        }
+      }
+    }
+
+    void startNativeScanner();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, support]);
 
   useEffect(() => {
     if (!isOpen || support !== "ready") {
@@ -136,17 +238,21 @@ export function HealthBarcodeScanner({ isOpen, onClose, onDetected }: HealthBarc
     <div className="grid gap-2 rounded-[1rem] border border-[#dfe6fb] bg-white/90 p-3 dark:border-white/10 dark:bg-white/[0.05]">
       <div className="flex items-center justify-between gap-2">
         <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#26324f] dark:text-white"><Camera aria-hidden="true" className="h-3.5 w-3.5" />Scan barcode</p>
-        <button
-          aria-label="Close barcode scanner"
-          className="rounded-full bg-[#fff1f3] p-1.5 text-[#d64b5f] dark:bg-[#44232f] dark:text-[#ff9eaf]"
-          onClick={onClose}
-          type="button"
-        >
-          <X aria-hidden="true" className="h-3.5 w-3.5" />
-        </button>
+        {support !== "native" || error ? (
+          <button
+            aria-label="Close barcode scanner"
+            className="rounded-full bg-[#fff1f3] p-1.5 text-[#d64b5f] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+            onClick={onClose}
+            type="button"
+          >
+            <X aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
       </div>
       {support === "unsupported" ? (
         <p className="text-xs text-[#73809c] dark:text-white/50">Camera barcode scanning is not available in this browser.</p>
+      ) : support === "native" ? (
+        <p className="text-xs text-[#73809c] dark:text-white/50">{nativeScanActive ? "Opening the native camera scanner..." : "Use the native camera view to scan a food barcode."}</p>
       ) : (
         <>
           <video

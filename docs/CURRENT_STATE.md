@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.57`.
+- Current working app version: `7.11.58`.
 - Current release group: `7.11.x` Active Workout Runtime Stabilization.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,10 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.58 Native iOS Food Barcode Scanner
+
+Real iOS QA proved that `BarcodeDetector` is unavailable in the installed WKWebView, so 7.11.58 adds the official `@capacitor/barcode-scanner` 3.1.1 native fallback behind the shared `HealthBarcodeScanner` boundary. Native Capacitor scanning now uses the rear camera and returns the raw barcode to the existing Add Food and Custom Food flows; the browser keeps the existing `BarcodeDetector` plus `getUserMedia` fallback and browser-only unsupported message. Open Food Facts remains the lookup authority, scanning never saves automatically, and no-match barcodes remain available for manual completion. No SQL or migration was added.
 
 ## 2026-08-25 7.11.57 iOS Barcode Camera Permission Readiness
 

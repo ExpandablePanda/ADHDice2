@@ -49,6 +49,36 @@ test("the reusable barcode scanner prefers the rear camera and cleans up on ever
   assert.match(scannerSource, /onDetectedRef\.current\(firstCode\)/);
 });
 
+test("native Capacitor scanning bypasses web capability detection and returns the raw barcode", () => {
+  assert.match(scannerSource, /import \{ Capacitor \} from "@capacitor\/core"/);
+  assert.match(scannerSource, /CapacitorBarcodeScanner\.scanBarcode\(/);
+  assert.match(scannerSource, /CapacitorBarcodeScannerCameraDirection\.BACK/);
+  assert.match(scannerSource, /CapacitorBarcodeScannerTypeHint\.ALL/);
+  assert.match(scannerSource, /const result = await CapacitorBarcodeScanner\.scanBarcode/);
+  assert.match(scannerSource, /const barcode = result\.ScanResult\?\.trim\(\)/);
+  assert.match(scannerSource, /onDetectedRef\.current\(barcode\)/);
+  const nativePlatformCheck = scannerSource.slice(scannerSource.indexOf("if (Capacitor.isNativePlatform())"), scannerSource.indexOf("const detector ="));
+  assert.doesNotMatch(nativePlatformCheck, /BarcodeDetector|getUserMedia/);
+});
+
+test("native cancellation closes cleanly while genuine native failures remain in the scanner surface", () => {
+  assert.match(scannerSource, /NATIVE_SCAN_CANCELLED_CODE/);
+  assert.match(scannerSource, /isNativeScanCancellation\(caughtError\)/);
+  assert.match(scannerSource, /if \(isNativeScanCancellation\(caughtError\)\) \{\s+onCloseRef\.current\(\);\s+return;/);
+  assert.match(scannerSource, /setError\(getNativeScanFailureMessage\(caughtError\)\)/);
+  assert.doesNotMatch(scannerSource.slice(scannerSource.indexOf("if (isNativeScanCancellation"), scannerSource.indexOf("setError(getNativeScanFailureMessage")), /onDetectedRef/);
+  assert.match(scannerSource, /Camera permission is unavailable/);
+  assert.match(scannerSource, /native barcode scanner is unavailable/);
+});
+
+test("web fallback keeps BarcodeDetector support detection and browser-only unsupported copy", () => {
+  assert.match(scannerSource, /setSupport\(detector && hasCamera \? "ready" : "unsupported"\)/);
+  assert.match(scannerSource, /new detectorCtor\(\{ formats: \["ean_13", "ean_8", "upc_a", "upc_e"\] \}\)/);
+  assert.match(scannerSource, /Camera barcode scanning is not available in this browser\./);
+  assert.match(scannerSource, /support === "unsupported"/);
+  assert.match(scannerSource, /support === "native"/);
+});
+
 test("all four canonical meal sections remain visible for empty and populated days", () => {
   assert.match(source, /HEALTH_MEAL_SLOTS\.map\(\(slot\) =>/);
   assert.match(source, /No \$\{getMealSlotLabel\(slot\)\.toLowerCase\(\)\} logged yet\./);
