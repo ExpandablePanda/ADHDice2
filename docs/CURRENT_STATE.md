@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.52`.
+- Current working app version: `7.11.53`.
 - Current release group: `7.11.x` Active Workout Runtime Stabilization.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,10 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.53 Selected-day meal logging
+
+Health Food logging now keeps the selected meal-history date aligned with the meal composer. Breakfast, Lunch, Dinner, and Snack each expose an `Add Food` action that targets the selected date and slot, reveals the existing composer, and preserves editable Date and Meal controls. Successful logging clears food-specific draft data while preserving date, meal slot, and time for multi-add; Quick Entry follows the same context rules. Completely empty selected days still render all four meal sections and their add actions. Existing canonical Health Meal Entry persistence, editing, deletion, nutrition snapshots, and totals remain unchanged. No SQL or migration was added.
 
 ## 2026-08-25 7.11.52 Fitness Runtime Stabilization
 

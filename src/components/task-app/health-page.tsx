@@ -49,6 +49,13 @@ import {
 import type { HealthImportSaveProgress } from "@/hooks/useHealth";
 import type { HealthWorkoutSessionDetails, HealthWorkoutSessionSaveResult } from "@/hooks/useFitnessSessionDetails";
 import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
+import {
+  createDefaultMealDraft,
+  hasMeaningfulMealDraft,
+  prepareMealDraftForSelectedSlot,
+  resetMealDraftForNextItem,
+  type MealDraft,
+} from "@/lib/health-meal-draft";
 import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
   clampPercent,
@@ -258,31 +265,6 @@ type HealthPageProps = {
   workouts: HealthWorkout[];
 };
 
-type MealDraft = {
-  attribution: string | null;
-  barcode: string | null;
-  brandName: string;
-  calories: string;
-  carbs: string;
-  date: string;
-  fat: string;
-  foodName: string;
-  mealSlot: HealthMealEntry["meal_slot"];
-  protein: string;
-  provider: string | null;
-  providerItemId: string | null;
-  quantity: string;
-  measurement: string;
-  sourceFoodId: string | null;
-  foodCategory: string | null;
-  servingQuantity: number | null;
-  servingUnit: string;
-  servingMeasureValue: number | null;
-  servingMeasureUnit: HealthServingMeasureUnit | null;
-  servingLabel: string;
-  time: string;
-};
-
 type SleepDraft = {
   date: string;
   hours: string;
@@ -325,39 +307,6 @@ type MealFoodSelection = {
   servingMeasureUnit: HealthServingMeasureUnit | null;
   consumedUnit?: string;
 };
-
-const DEFAULT_MEAL_DRAFT: MealDraft = {
-  attribution: null,
-  barcode: null,
-  brandName: "",
-  calories: "",
-  carbs: "",
-  date: "",
-  fat: "",
-  foodName: "",
-  mealSlot: "breakfast",
-  protein: "",
-  provider: null,
-  providerItemId: null,
-  quantity: "1",
-  measurement: "serving",
-  sourceFoodId: null,
-  foodCategory: null,
-  servingQuantity: null,
-  servingUnit: "serving",
-  servingMeasureValue: null,
-  servingMeasureUnit: null,
-  servingLabel: "",
-  time: "",
-};
-
-function createDefaultMealDraft(mealSlot: HealthMealEntry["meal_slot"] = "breakfast"): MealDraft {
-  return {
-    ...DEFAULT_MEAL_DRAFT,
-    ...getCurrentHealthDateTimeInputs(),
-    mealSlot,
-  };
-}
 
 function createQuickFoodId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -447,6 +396,7 @@ export function HealthPage({
   const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
   const [mealDraft, setMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
+  const mealComposerRef = useRef<HTMLDivElement | null>(null);
   const [foodSearchQuery, setFoodSearchQuery] = useState("");
   const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
   const [selectedCustomFoodCategory, setSelectedCustomFoodCategory] = useState<string | null>(null);
@@ -967,11 +917,27 @@ export function HealthPage({
       nutrition_snapshot: calculation.nutrientTotals,
     });
     if (saved) {
-      setMealDraft((current) => createDefaultMealDraft(current.mealSlot));
+      setMealDraft((current) => {
+        const nextDraft = resetMealDraftForNextItem(current);
+        return isQuickEntryOpen ? { ...nextDraft, servingQuantity: 1 } : nextDraft;
+      });
       setCustomFoodSearchQuery("");
-      setIsQuickEntryOpen(false);
       setSaveQuickEntryToLibrary(false);
     }
+  }
+
+  function openMealComposerForSlot(slot: HealthMealEntry["meal_slot"]) {
+    const preserveFoodDraft = hasMeaningfulMealDraft(mealDraft);
+    setMealDraft((current) => preserveFoodDraft
+      ? { ...current, date: foodHistoryDate, mealSlot: slot }
+      : prepareMealDraftForSelectedSlot(current, foodHistoryDate, slot));
+    if (!preserveFoodDraft) {
+      setCustomFoodSearchQuery("");
+      setFoodLookupResults(EMPTY_FOOD_LOOKUP_RESULTS);
+      setFoodLookupError("");
+    }
+    mealComposerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.requestAnimationFrame(() => document.getElementById("health-food-composer-input")?.focus());
   }
 
   function openQuickEntry() {
@@ -979,12 +945,8 @@ export function HealthPage({
     setSaveQuickEntryToLibrary(false);
     setCustomFoodSearchQuery("");
     setMealDraft((current) => ({
-      ...createDefaultMealDraft(current.mealSlot),
-      date: current.date || today,
-      time: current.time || getCurrentHealthDateTimeInputs().time,
+      ...resetMealDraftForNextItem(current),
       servingQuantity: 1,
-      servingUnit: "serving",
-      servingLabel: "",
     }));
   }
 
@@ -992,9 +954,7 @@ export function HealthPage({
     setIsQuickEntryOpen(false);
     setSaveQuickEntryToLibrary(false);
     setMealDraft((current) => ({
-      ...createDefaultMealDraft(current.mealSlot),
-      date: current.date || today,
-      time: current.time || getCurrentHealthDateTimeInputs().time,
+      ...resetMealDraftForNextItem(current),
     }));
   }
 
@@ -1671,7 +1631,7 @@ export function HealthPage({
               ) : null}
             </HealthCollapsiblePanel>
 
-            <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(5rem,0.65fr)_minmax(0,1.35fr)_minmax(7rem,0.7fr)_minmax(4rem,0.55fr)_auto]">
+            <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(5rem,0.65fr)_minmax(0,1.35fr)_minmax(7rem,0.7fr)_minmax(4rem,0.55fr)_auto]" ref={mealComposerRef}>
               <Field label="Meal">
                 <HealthDropdown
                   ariaLabel="Meal"
@@ -1683,6 +1643,7 @@ export function HealthPage({
               <Field label="Food">
                 <HealthAutocomplete
                   ariaLabel="Search custom foods"
+                  id="health-food-composer-input"
                   onChange={setCustomFoodSearchQuery}
                   onSelect={(suggestion) => {
                     const selected = mealFoodSuggestions.find((candidate) => candidate.value === suggestion.value);
@@ -1866,17 +1827,24 @@ export function HealthPage({
                 actions={<FoodHistoryDateChip date={foodHistoryDate} onChange={setFoodHistoryDate} today={today} />}
                 title={`${foodHistoryDate === today ? "Today’s Meals" : `Meals — ${formatHealthDateLabel(foodHistoryDate)}`} — ${formatHealthNutritionNumber(selectedNutrition.calories)} kcal`}
               />
-              {selectedMeals.length === 0 ? (
-                <EmptyCopy text={foodHistoryDate === today ? "Meals logged today will appear here with calories and macros." : "No meals were logged on this date."} />
-              ) : (
-                HEALTH_MEAL_SLOTS.map((slot) => {
+              {HEALTH_MEAL_SLOTS.map((slot) => {
                   const slotMeals = selectedMeals.filter((entry) => entry.meal_slot === slot);
                   const slotCaloriesTotal = slotMeals.reduce((total, entry) => total + mealNutritionValue(entry, "calories"), 0);
                   return (
                   <section className="grid gap-3" key={slot}>
-                    <h4 className="text-sm font-semibold text-[#4f5872] dark:text-white/70">
-                      {getMealSlotLabel(slot)}{slotMeals.length > 0 ? ` — ${formatHealthNutritionNumber(slotCaloriesTotal)} kcal` : ""}
-                    </h4>
+                    <div className="flex items-center justify-between gap-3">
+                      <h4 className="text-sm font-semibold text-[#4f5872] dark:text-white/70">
+                        {getMealSlotLabel(slot)}{slotMeals.length > 0 ? ` — ${formatHealthNutritionNumber(slotCaloriesTotal)} kcal` : ""}
+                      </h4>
+                      <button
+                        aria-label={`Add food to ${getMealSlotLabel(slot)}`}
+                        className="ui-pill-button-light shrink-0 px-2 py-1 text-xs"
+                        onClick={() => openMealComposerForSlot(slot)}
+                        type="button"
+                      >
+                        + Add Food
+                      </button>
+                    </div>
                     {slotMeals.length === 0 ? (
                       <EmptyCopy text={`No ${getMealSlotLabel(slot).toLowerCase()} logged yet.`} />
                     ) : slotMeals.map((entry) => {
@@ -2023,8 +1991,7 @@ export function HealthPage({
                     })}
                   </section>
                   );
-                })
-              )}
+                })}
             </div>
           </HealthPanel>
           </div>
