@@ -143,6 +143,7 @@ type HealthPageProps = {
   fitnessSessionLoading: boolean;
   exerciseLibrary: HealthExercise[];
   getWorkoutSessionDetails: (workoutId: string) => HealthWorkoutSessionDetails;
+  reorderExercises: (orderedExerciseIds: readonly string[]) => Promise<boolean>;
   deleteWeightEntry: (entryId: string) => Promise<boolean>;
   favorites: HealthFoodLibraryItem[];
   importAudits: HealthImportAudit[];
@@ -419,6 +420,7 @@ export function HealthPage({
   fitnessSessionLoading,
   exerciseLibrary,
   getWorkoutSessionDetails,
+  reorderExercises,
   updateWaterEntry,
   updateWorkout,
   updateMealEntry,
@@ -1435,6 +1437,7 @@ export function HealthPage({
           archivePlan={archivePlan}
           archivePlanItem={archivePlanItem}
           createExercise={createExercise}
+          reorderExercises={reorderExercises}
           createPlan={createPlan}
           createPlanItem={createPlanItem}
           deleteWorkout={deleteWorkout}

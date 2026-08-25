@@ -58,6 +58,7 @@ export function reconcileHealthWorkoutSetDraft(
 export type HealthWorkoutStructuredSummary = {
   exerciseName: string;
   measurementType: HealthFitnessMeasurement;
+  totalLabel: string;
   values: string[];
 };
 
@@ -168,11 +169,26 @@ export function getHealthWorkoutStructuredSummary(
     .map((exercise) => ({
       exerciseName: exercise.exercise_name,
       measurementType: exercise.measurement_type,
+      totalLabel: exercise.measurement_type === "reps"
+        ? `Total ${workoutSets.filter((set) => set.workout_exercise_id === exercise.id).reduce((total, set) => total + (set.reps ?? 0), 0)} reps`
+        : `Total ${formatHealthWorkoutDuration(workoutSets.filter((set) => set.workout_exercise_id === exercise.id).reduce((total, set) => total + (set.duration_seconds ?? 0), 0))}`,
       values: workoutSets
         .filter((set) => set.workout_exercise_id === exercise.id)
         .sort(compareStructuredOrder)
         .map((set) => exercise.measurement_type === "reps" ? `${set.reps} reps` : `${set.duration_seconds}s`),
     }));
+}
+
+export function formatHealthWorkoutDuration(totalSeconds: number) {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (remainingSeconds > 0 || parts.length === 0) parts.push(`${remainingSeconds}s`);
+  return parts.join(" ");
 }
 
 function compareStructuredOrder(left: { sort_order: number; created_at: string }, right: { sort_order: number; created_at: string }) {

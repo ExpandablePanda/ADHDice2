@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Check, Flame, GripVertical, Pencil, Plus, Settings2, Timer, Trash2, X } from "lucide-react";
+import { Activity, Check, Flame, Pencil, Plus, Settings2, Timer, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -40,7 +40,6 @@ import {
   removeHealthWorkoutTypeOption,
   removeHealthWorkoutTitleOption,
   sortHealthWorkouts,
-  moveFitnessOption,
   type HealthWorkoutFormInput,
 } from "@/lib/health-fitness";
 import { getHealthWorkoutStructuredSummary, type HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
@@ -56,6 +55,7 @@ import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { FitnessPlanAssociationPicker, HealthFitnessPlansPanel } from "./health-fitness-plans-panel";
 import { HealthFitnessExerciseLibrary } from "./health-fitness-exercise-library";
+import { HealthFitnessReorderList } from "./health-fitness-reorder-list";
 import { HealthFitnessSessionEditor } from "./health-fitness-session-editor";
 
 type HealthFitnessTabProps = {
@@ -80,6 +80,7 @@ type HealthFitnessTabProps = {
   profile: HealthProfile;
   saveProfile: (updates: HealthProfileUpdate) => Promise<boolean>;
   saveWorkoutPlanItemLinks: (workoutId: string, planItemIds: readonly string[]) => Promise<boolean>;
+  reorderExercises: (orderedExerciseIds: readonly string[]) => Promise<boolean>;
   updatePlan: (planId: string, input: HealthFitnessPlanUpdate) => Promise<boolean>;
   updatePlanItem: (itemId: string, input: HealthFitnessPlanItemUpdate) => Promise<boolean>;
   updateExercise: (exerciseId: string, input: HealthExerciseUpdate) => Promise<boolean>;
@@ -124,6 +125,7 @@ export function HealthFitnessTab({
   planItems,
   plans,
   profile,
+  reorderExercises,
   saveProfile,
   saveWorkoutPlanItemLinks,
   updatePlan,
@@ -489,12 +491,14 @@ export function HealthFitnessTab({
                   <AdhdChip disabled={isSavingTitleOptions} tone="purple" type="submit">Add</AdhdChip>
                 </form>
                 {workoutTypeError ? <p className="text-xs text-[#d65775] dark:text-[#ffb0c1]" role="alert">{workoutTypeError}</p> : null}
-                <FitnessOptionReorderList
+                <HealthFitnessReorderList
                   disabled={isSavingTitleOptions}
+                  getItemId={(type) => type}
+                  getItemLabel={(type) => type}
                   label="workout type"
                   onSave={(nextOptions) => saveWorkoutTypeOptions(nextOptions, "Workout types could not be saved.")}
-                  options={workoutTypes}
-                  renderOption={(type) => editingWorkoutType === type ? (
+                  items={workoutTypes}
+                  renderItem={(type) => editingWorkoutType === type ? (
                     <form className="flex min-w-0 flex-1 flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); void handleRenameWorkoutType(type); }}>
                       <input
                         aria-label={`Rename workout type ${type}`}
@@ -512,8 +516,8 @@ export function HealthFitnessTab({
                       <AdhdIconButton aria-label="Cancel workout type rename" disabled={isSavingTitleOptions} onClick={() => setEditingWorkoutType(null)} size="sm" tone="default" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
                     </form>
                   ) : (
-                    <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
-                      <AdhdChip className="pointer-events-none min-w-0 truncate" tone="purple" type="button">{type}</AdhdChip>
+                    <div className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-[0.9rem] border border-[#eeeaf8] bg-white/80 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
+                      <p className="min-w-0 truncate text-sm font-semibold text-[#4a5470] dark:text-white/75">{type}</p>
                       <div className="flex items-center gap-1">
                         <AdhdIconButton aria-label={`Rename workout type ${type}`} disabled={isSavingTitleOptions} onClick={() => { setEditingWorkoutType(type); setEditingWorkoutTypeDraft(type); }} size="sm" tone="default" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
                         <AdhdIconButton aria-label={`Remove workout type ${type}`} disabled={isSavingTitleOptions || workoutTypes.length <= 1} onClick={() => { void handleRemoveWorkoutType(type); }} size="sm" tone="danger" variant="rowToolbar"><Trash2 aria-hidden="true" /></AdhdIconButton>
@@ -546,12 +550,14 @@ export function HealthFitnessTab({
                 </form>
                 {savedTitleError ? <p className="text-xs text-[#d65775] dark:text-[#ffb0c1]" role="alert">{savedTitleError}</p> : null}
                 {savedWorkoutTitles.length > 0 ? (
-                  <FitnessOptionReorderList
+                  <HealthFitnessReorderList
                     disabled={isSavingTitleOptions}
+                    getItemId={(title) => title}
+                    getItemLabel={(title) => title}
                     label="saved workout title"
                     onSave={(nextOptions) => saveProfile({ workout_title_options: nextOptions })}
-                    options={savedWorkoutTitles}
-                    renderOption={(title) => editingSavedTitle === title ? (
+                    items={savedWorkoutTitles}
+                    renderItem={(title) => editingSavedTitle === title ? (
                       <form className="flex min-w-0 flex-1 flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); void handleRenameSavedTitle(title); }}>
                         <input
                           aria-label={`Rename saved workout title ${title}`}
@@ -589,6 +595,7 @@ export function HealthFitnessTab({
                 error={fitnessSessionError}
                 exerciseLibrary={exerciseLibrary}
                 isLoading={fitnessSessionLoading}
+                reorderExercises={reorderExercises}
                 updateExercise={updateExercise}
               />
             </div>
@@ -726,255 +733,6 @@ export function HealthFitnessTab({
   );
 }
 
-type FitnessOptionReorderListProps = {
-  disabled?: boolean;
-  label: string;
-  onSave: (options: string[]) => Promise<boolean>;
-  options: readonly string[];
-  renderOption: (option: string, index: number) => ReactNode;
-};
-
-type FitnessOptionDragState = {
-  currentIndex: number;
-  fromIndex: number;
-  handle: HTMLButtonElement;
-  pointerId: number;
-  startingOptions: string[];
-};
-
-type FitnessOptionRowGeometry = {
-  midpoint: number;
-};
-
-function areFitnessOptionOrdersEqual(left: readonly string[], right: readonly string[]) {
-  return left.length === right.length && left.every((option, index) => option === right[index]);
-}
-
-function FitnessOptionReorderList({
-  disabled = false,
-  label,
-  onSave,
-  options,
-  renderOption,
-}: FitnessOptionReorderListProps) {
-  const [previewOptions, setPreviewOptions] = useState<string[] | null>(null);
-  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
-  const dragRef = useRef<FitnessOptionDragState | null>(null);
-  const optionsRef = useRef<string[]>([...options]);
-  const previewRef = useRef<string[] | null>(null);
-  const committedPreviewRef = useRef<string[] | null>(null);
-  const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const rowGeometryRef = useRef<Array<FitnessOptionRowGeometry | null>>([]);
-  const pendingPointerYRef = useRef<number | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const visibleOptions = previewOptions ?? options;
-
-  useEffect(() => {
-    optionsRef.current = [...options];
-    const committedOptions = committedPreviewRef.current;
-    if (committedOptions && !dragRef.current && areFitnessOptionOrdersEqual(options, committedOptions)) {
-      committedPreviewRef.current = null;
-      previewRef.current = null;
-      setPreviewOptions(null);
-    }
-  }, [options]);
-
-  function clearCommittedPreview(committedOptions: string[]) {
-    if (committedPreviewRef.current !== committedOptions) {
-      return;
-    }
-    committedPreviewRef.current = null;
-    if (previewRef.current === committedOptions) {
-      previewRef.current = null;
-      setPreviewOptions(null);
-    }
-  }
-
-  async function persistCommittedPreview(committedOptions: string[]) {
-    let saved = false;
-    try {
-      saved = await onSave(committedOptions);
-    } catch {
-      saved = false;
-    }
-    if (!saved) {
-      clearCommittedPreview(committedOptions);
-    }
-  }
-
-  function cancelScheduledPointerMove() {
-    if (animationFrameRef.current !== null) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-    pendingPointerYRef.current = null;
-  }
-
-  function clearDragState(pointerId?: number) {
-    const drag = dragRef.current;
-    if (!drag || (pointerId !== undefined && drag.pointerId !== pointerId)) {
-      return;
-    }
-
-    cancelScheduledPointerMove();
-    dragRef.current = null;
-    setDraggingIndex(null);
-    const nextOptions = previewRef.current;
-    rowGeometryRef.current = [];
-    if (drag.handle.hasPointerCapture(drag.pointerId)) {
-      drag.handle.releasePointerCapture(drag.pointerId);
-    }
-    if (!nextOptions || areFitnessOptionOrdersEqual(nextOptions, drag.startingOptions)) {
-      const committedOptions = committedPreviewRef.current;
-      if (!committedOptions) {
-        previewRef.current = null;
-        setPreviewOptions(null);
-      } else if (areFitnessOptionOrdersEqual(optionsRef.current, committedOptions)) {
-        clearCommittedPreview(committedOptions);
-      }
-      return;
-    }
-    const committedOptions = [...nextOptions];
-    committedPreviewRef.current = committedOptions;
-    previewRef.current = committedOptions;
-    void persistCommittedPreview(committedOptions);
-  }
-
-  function getTargetIndex(clientY: number, currentIndex: number) {
-    let targetIndex = currentIndex;
-    for (let index = 0; index < rowGeometryRef.current.length; index += 1) {
-      const geometry = rowGeometryRef.current[index];
-      if (!geometry) {
-        continue;
-      }
-      if (clientY < geometry.midpoint) {
-        return index;
-      }
-      targetIndex = index;
-    }
-    return targetIndex;
-  }
-
-  function cacheRowGeometry(optionCount: number) {
-    rowGeometryRef.current = rowRefs.current.slice(0, optionCount).map((row) => {
-      if (!row) {
-        return null;
-      }
-      const bounds = row.getBoundingClientRect();
-      return { midpoint: bounds.top + bounds.height / 2 };
-    });
-  }
-
-  function handlePointerDown(event: React.PointerEvent<HTMLButtonElement>, index: number) {
-    if (disabled || (event.pointerType === "mouse" && event.button !== 0)) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const startingOptions = [...(previewRef.current ?? optionsRef.current)];
-    cacheRowGeometry(startingOptions.length);
-    dragRef.current = {
-      currentIndex: index,
-      fromIndex: index,
-      handle: event.currentTarget,
-      pointerId: event.pointerId,
-      startingOptions,
-    };
-    previewRef.current = startingOptions;
-    setPreviewOptions(startingOptions);
-    setDraggingIndex(index);
-  }
-
-  function processPointerMove(clientY: number) {
-    const drag = dragRef.current;
-    if (!drag) {
-      return;
-    }
-    const currentOptions = previewRef.current ?? optionsRef.current;
-    const targetIndex = getTargetIndex(clientY, drag.currentIndex);
-    if (targetIndex === drag.currentIndex) {
-      return;
-    }
-    const nextOptions = moveFitnessOption(currentOptions, drag.currentIndex, targetIndex);
-    drag.currentIndex = targetIndex;
-    previewRef.current = nextOptions;
-    setPreviewOptions(nextOptions);
-    setDraggingIndex(targetIndex);
-  }
-
-  function handlePointerMove(event: React.PointerEvent<HTMLButtonElement>) {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    pendingPointerYRef.current = event.clientY;
-    if (animationFrameRef.current !== null) {
-      return;
-    }
-    animationFrameRef.current = requestAnimationFrame(() => {
-      animationFrameRef.current = null;
-      const pointerY = pendingPointerYRef.current;
-      pendingPointerYRef.current = null;
-      if (pointerY !== null) {
-        processPointerMove(pointerY);
-      }
-    });
-  }
-
-  function handlePointerEnd(event: React.PointerEvent<HTMLButtonElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.type === "pointerup" && pendingPointerYRef.current !== null) {
-      const pointerY = pendingPointerYRef.current;
-      cancelScheduledPointerMove();
-      processPointerMove(pointerY);
-    }
-    clearDragState(event.pointerId);
-  }
-
-  useEffect(() => () => {
-    cancelScheduledPointerMove();
-    dragRef.current = null;
-    previewRef.current = null;
-    committedPreviewRef.current = null;
-    rowGeometryRef.current = [];
-  }, []);
-
-  return (
-    <div className="grid gap-1.5" data-fitness-option-list={label}>
-      {visibleOptions.map((option, index) => (
-        <div
-          className={`flex min-w-0 items-center gap-1.5 rounded-[0.9rem] ${draggingIndex === index ? "bg-[#f7f3ff] dark:bg-white/[0.06]" : ""}`}
-          key={option}
-          ref={(element) => {
-            rowRefs.current[index] = element;
-          }}
-        >
-          <button
-            aria-grabbed={draggingIndex === index}
-            aria-label={`Reorder ${label} ${option}`}
-            className="touch-none inline-flex h-7 w-7 shrink-0 cursor-grab items-center justify-center rounded-full text-[#8d87a7] hover:bg-[#f1ecff] hover:text-[#6f57f6] active:cursor-grabbing dark:text-white/45 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
-            disabled={disabled}
-            draggable={false}
-            onLostPointerCapture={handlePointerEnd}
-            onPointerCancel={handlePointerEnd}
-            onPointerDown={(event) => handlePointerDown(event, index)}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerEnd}
-            type="button"
-          >
-            <GripVertical aria-hidden="true" className="h-4 w-4" />
-          </button>
-          {renderOption(option, index)}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function WorkoutHistoryRow({
   onDelete,
   onEdit,
@@ -1005,7 +763,7 @@ function WorkoutHistoryRow({
               {structuredSummary.map((summary, summaryIndex) => (
                 <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm" key={`${summary.exerciseName}-${summaryIndex}`}>
                   <span className="font-semibold text-[#4a5470] dark:text-white/75">{summary.exerciseName}</span>
-                  <span className="text-xs text-[#74809b] dark:text-white/50">{summary.values.join(" · ")}</span>
+                  <span className="text-xs text-[#74809b] dark:text-white/50">{[...summary.values, summary.totalLabel].join(" · ")}</span>
                 </div>
               ))}
             </div>

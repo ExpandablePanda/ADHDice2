@@ -6,6 +6,7 @@ import type { HealthExercise, HealthWorkoutExercise, HealthWorkoutSet } from "@/
 import {
   buildHealthWorkoutExerciseOptions,
   createHealthWorkoutExerciseDraft,
+  formatHealthWorkoutDuration,
   getHealthWorkoutStructuredSummary,
   reconcileHealthWorkoutExerciseDraft,
   reconcileHealthWorkoutSetDraft,
@@ -17,6 +18,7 @@ import {
 import { buildHealthWorkoutFormPayload } from "@/lib/health-fitness";
 
 const migration = readFileSync(new URL("../supabase/add_health_fitness_sessions_7_11_46.sql", import.meta.url), "utf8");
+const sortOrderMigration = readFileSync(new URL("../supabase/add_health_exercise_sort_order_7_11_50.sql", import.meta.url), "utf8");
 const indexCorrectionMigration = readFileSync(new URL("../supabase/correct_health_fitness_sessions_index_7_11_46.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 const sessionHook = readFileSync(new URL("../src/hooks/useFitnessSessionDetails.ts", import.meta.url), "utf8");
@@ -33,6 +35,7 @@ function libraryExercise(overrides: Partial<HealthExercise> = {}): HealthExercis
     default_measurement: "reps",
     id: "exercise-1",
     name: "Push-Ups",
+    sort_order: 0,
     updated_at: "2026-08-24T12:00:00.000Z",
     user_id: "user-1",
     ...overrides,
@@ -98,6 +101,21 @@ test("Exercise Library keeps default_measurement only for the existing database 
   assert.equal(libraryExercise({ default_measurement: "duration", name: "Plank" }).default_measurement, "duration");
   assert.match(migration, /default_measurement text not null check \(default_measurement in \('reps', 'duration'\)\)/);
   assert.match(sessionHook, /default_measurement: "reps"/);
+});
+
+test("Exercise Library sort order is durable, deterministic, and separate from historical snapshots", () => {
+  assert.match(sortOrderMigration, /add column if not exists sort_order integer/);
+  assert.match(sortOrderMigration, /partition by user_id[\s\S]*order by lower\(trim\(name\)\), created_at, id/);
+  assert.match(sortOrderMigration, /row_number\(\) over[\s\S]*\) - 1 as next_sort_order/);
+  assert.match(schema, /name text not null[\s\S]*sort_order integer not null default 0 check \(sort_order >= 0\)/);
+  assert.match(databaseTypes, /export type HealthExercise = \{[\s\S]*sort_order: number/);
+  assert.match(sessionHook, /order\("sort_order", \{ ascending: true \}\)[\s\S]*order\("created_at", \{ ascending: true \}\)[\s\S]*order\("id", \{ ascending: true \}\)/);
+  assert.match(sessionHook, /sort_order: nextSortOrder/);
+  assert.match(sessionHook, /setExerciseLibrary\(\(current\) => current\.map/);
+  assert.match(sessionHook, /async function reorderExercises\(orderedExerciseIds: readonly string\[\]\)/);
+  assert.match(sessionHook, /\.update\(\{ sort_order: sortOrder \}\)/);
+  assert.match(sessionHook, /await reload\(\);[\s\S]*canonical order was reloaded/);
+  assert.doesNotMatch(sessionHook, /setExerciseLibrary\([\s\S]*sort\(\(left, right\) => left\.name/);
 });
 
 test("Exercise Library settings expose only name and archive behavior", () => {
@@ -210,6 +228,24 @@ test("one workout can contain multiple Workout Exercises", () => {
 test("one Workout Exercise can contain multiple ordered Sets", () => {
   const summary = getHealthWorkoutStructuredSummary("workout-1", [workoutExercise()], [workoutSet(), workoutSet({ id: "set-2", reps: 10, sort_order: 1 }), workoutSet({ id: "set-3", reps: 8, sort_order: 2 })]);
   assert.deepEqual(summary[0]?.values, ["12 reps", "10 reps", "8 reps"]);
+});
+
+test("Set builder renders Add Set after the ordered Set rows", () => {
+  const setsStart = sessionEditor.indexOf("{exercise.sets.map");
+  const addSetIndex = sessionEditor.indexOf(">Add Set</AdhdChip>", setsStart);
+  assert.ok(setsStart >= 0);
+  assert.ok(addSetIndex > setsStart);
+  assert.match(sessionEditor.slice(setsStart, addSetIndex), /Set \{index \+ 1\}/);
+  assert.match(sessionEditor, /sets: \[\.\.\.exercise\.sets, createEmptyHealthWorkoutDraftSet\(\)\]/);
+});
+
+test("Workout Types use plain settings rows while Exercises use the shared reorder list", () => {
+  assert.match(fitnessTab, /<HealthFitnessReorderList[\s\S]*label="workout type"/);
+  assert.match(fitnessTab, /<p className="min-w-0 truncate text-sm font-semibold[\s\S]*>\{type\}<\/p>/);
+  assert.doesNotMatch(fitnessTab, /<AdhdChip className="pointer-events-none min-w-0 truncate" tone="purple" type="button">\{type\}<\/AdhdChip>/);
+  assert.match(exerciseLibrary, /<HealthFitnessReorderList[\s\S]*getItemId=\{\(exercise\) => exercise\.id\}/);
+  assert.match(exerciseLibrary, /onSave=\{reorderExercises\}/);
+  assert.match(exerciseLibrary, /archivedExercises\.map\(\(exercise\) => <ExerciseLibraryRow archived/);
 });
 
 test("reps exercise accepts ordered positive reps", () => {
@@ -346,7 +382,28 @@ test("imported workouts remain non-editable", () => {
 test("Workout History derives compact structured summaries", () => {
   const summary = getHealthWorkoutStructuredSummary("workout-1", [workoutExercise({ exercise_name: "Plank", measurement_type: "duration" })], [workoutSet({ duration_seconds: 45, reps: null }), workoutSet({ duration_seconds: 40, id: "set-2", reps: null, sort_order: 1 })]);
   assert.deepEqual(summary[0]?.values, ["45s", "40s"]);
+  assert.equal(summary[0]?.totalLabel, "Total 1m 25s");
   assert.match(fitnessTab, /structuredSummary\.map/);
+  assert.match(fitnessTab, /summary\.totalLabel/);
+});
+
+test("Workout History totals preserve individual reps and sum canonical numeric fields", () => {
+  const summary = getHealthWorkoutStructuredSummary("workout-1", [workoutExercise()], [
+    workoutSet({ reps: 10 }),
+    workoutSet({ id: "set-2", reps: 10, sort_order: 1 }),
+    workoutSet({ id: "set-3", reps: 10, sort_order: 2 }),
+    workoutSet({ id: "set-4", reps: 10, sort_order: 3 }),
+  ]);
+  assert.deepEqual(summary[0]?.values, ["10 reps", "10 reps", "10 reps", "10 reps"]);
+  assert.equal(summary[0]?.totalLabel, "Total 40 reps");
+});
+
+test("Workout History duration formatter uses compact human-readable units", () => {
+  assert.equal(formatHealthWorkoutDuration(45), "45s");
+  assert.equal(formatHealthWorkoutDuration(60), "1m");
+  assert.equal(formatHealthWorkoutDuration(65), "1m 5s");
+  assert.equal(formatHealthWorkoutDuration(125), "2m 5s");
+  assert.equal(formatHealthWorkoutDuration(3600), "1h");
 });
 
 test("database types expose the three structured tables without a second workout table", () => {

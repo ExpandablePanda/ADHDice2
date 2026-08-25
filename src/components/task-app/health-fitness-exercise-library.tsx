@@ -7,6 +7,7 @@ import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import type { HealthExercise, HealthExerciseInsert, HealthExerciseUpdate } from "@/lib/database.types";
 import { HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
+import { HealthFitnessReorderList } from "./health-fitness-reorder-list";
 
 type HealthFitnessExerciseLibraryProps = {
   archiveExercise: (exerciseId: string) => Promise<boolean>;
@@ -14,6 +15,7 @@ type HealthFitnessExerciseLibraryProps = {
   error: string | null;
   exerciseLibrary: HealthExercise[];
   isLoading: boolean;
+  reorderExercises: (orderedExerciseIds: readonly string[]) => Promise<boolean>;
   updateExercise: (exerciseId: string, input: HealthExerciseUpdate) => Promise<boolean>;
 };
 
@@ -23,6 +25,7 @@ export function HealthFitnessExerciseLibrary({
   error,
   exerciseLibrary,
   isLoading,
+  reorderExercises,
   updateExercise,
 }: HealthFitnessExerciseLibraryProps) {
   const [nameDraft, setNameDraft] = useState("");
@@ -73,20 +76,29 @@ export function HealthFitnessExerciseLibrary({
       {error ? <p className="text-xs text-[#d65775] dark:text-[#ffb0c1]" role="alert">{error}</p> : null}
       {isLoading ? <p className="text-xs text-[#7d7598] dark:text-white/50">Loading exercises…</p> : null}
       <div className="grid gap-1.5">
-        {activeExercises.map((exercise) => (
-          <ExerciseLibraryRow
-            editing={editingId === exercise.id}
-            exercise={exercise}
-            editingName={editingName}
-            isSaving={isSaving}
-            key={exercise.id}
-            onArchive={() => { void archiveExercise(exercise.id); }}
-            onCancel={() => setEditingId(null)}
-            onEdit={() => beginEdit(exercise)}
-            onSave={() => { void handleSaveEdit(exercise.id); }}
-            setEditingName={setEditingName}
+        {activeExercises.length > 0 ? (
+          <HealthFitnessReorderList
+            disabled={isSaving}
+            getItemId={(exercise) => exercise.id}
+            getItemLabel={(exercise) => exercise.name}
+            items={activeExercises}
+            label="exercise"
+            onSave={reorderExercises}
+            renderItem={(exercise) => (
+              <ExerciseLibraryRow
+                editing={editingId === exercise.id}
+                exercise={exercise}
+                editingName={editingName}
+                isSaving={isSaving}
+                onArchive={() => { void archiveExercise(exercise.id); }}
+                onCancel={() => setEditingId(null)}
+                onEdit={() => beginEdit(exercise)}
+                onSave={() => { void handleSaveEdit(exercise.id); }}
+                setEditingName={setEditingName}
+              />
+            )}
           />
-        ))}
+        ) : null}
         {activeExercises.length === 0 ? <p className="rounded-[0.9rem] border border-dashed border-[#ddd7ef] px-3 py-3 text-xs text-[#7d7598] dark:border-white/15 dark:text-white/50">No active exercises yet.</p> : null}
       </div>
       {archivedExercises.length > 0 ? (
@@ -124,7 +136,7 @@ function ExerciseLibraryRow({
 }) {
   if (editing && !archived && editingName !== undefined && setEditingName) {
     return (
-      <div className="flex flex-wrap items-end gap-2 rounded-[0.9rem] border border-[#ddd2ff] bg-[#fbfaff] p-2 dark:border-[#42306f] dark:bg-white/[0.03]">
+      <div className="flex min-w-0 flex-1 flex-wrap items-end gap-2 rounded-[0.9rem] border border-[#ddd2ff] bg-[#fbfaff] p-2 dark:border-[#42306f] dark:bg-white/[0.03]">
         <input aria-label={`Rename exercise ${exercise.name}`} className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-[12rem] flex-1`} disabled={isSaving} onChange={(event) => setEditingName(event.target.value)} type="text" value={editingName} />
         <AdhdIconButton aria-label={`Save exercise ${exercise.name}`} disabled={isSaving} onClick={onSave} size="sm" tone="purple" variant="rowToolbar"><Check aria-hidden="true" /></AdhdIconButton>
         <AdhdIconButton aria-label={`Cancel editing ${exercise.name}`} disabled={isSaving} onClick={onCancel} size="sm" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
@@ -133,7 +145,7 @@ function ExerciseLibraryRow({
   }
 
   return (
-    <div className={`flex flex-wrap items-center justify-between gap-2 rounded-[0.9rem] border px-3 py-2 ${archived ? "border-[#eeeaf8] bg-[#faf9fd] dark:border-white/10 dark:bg-white/[0.02]" : "border-[#eeeaf8] bg-white/80 dark:border-white/10 dark:bg-white/[0.03]"}`}>
+    <div className={`flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 rounded-[0.9rem] border px-3 py-2 ${archived ? "border-[#eeeaf8] bg-[#faf9fd] dark:border-white/10 dark:bg-white/[0.02]" : "border-[#eeeaf8] bg-white/80 dark:border-white/10 dark:bg-white/[0.03]"}`}>
       <div className="min-w-0">
         <p className={`truncate text-sm font-semibold ${archived ? "text-[#7d7598] dark:text-white/50" : "text-[#4a5470] dark:text-white/75"}`}>{exercise.name}</p>
         {archived ? <p className="mt-0.5 text-xs text-[#8d87a7] dark:text-white/40">Archived</p> : null}

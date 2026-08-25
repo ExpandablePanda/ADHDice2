@@ -91,13 +91,13 @@ export function useFitnessSessionDetails(
     setWorkoutExercises([]);
     setWorkoutSets([]);
     const [libraryResult, workoutExercisesResult, workoutSetsResult] = await Promise.all([
-      client.from("adhdice_health_exercises").select("*").eq("user_id", userId).order("name", { ascending: true }),
+      client.from("adhdice_health_exercises").select("*").eq("user_id", userId).order("sort_order", { ascending: true }).order("created_at", { ascending: true }).order("id", { ascending: true }),
       client.from("adhdice_health_workout_exercises").select("*").eq("user_id", userId).order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
       client.from("adhdice_health_workout_sets").select("*").eq("user_id", userId).order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
     ]);
     const firstError = libraryResult.error ?? workoutExercisesResult.error ?? workoutSetsResult.error;
     if (firstError) {
-      reportError(`Structured Fitness is unavailable until the 7.11.46 Fitness Sessions migration is applied. ${firstError.message}`);
+      reportError(`Structured Fitness is unavailable until the 7.11.46 Fitness Sessions and 7.11.50 Exercise sort-order migrations are applied. ${firstError.message}`);
       setIsLoading(false);
       setIsLoaded(true);
       return false;
@@ -138,16 +138,22 @@ export function useFitnessSessionDetails(
       reportError("Exercise name cannot be blank.");
       return null;
     }
+    const activeExercises = exerciseLibrary.filter((exercise) => exercise.archived_at === null);
+    const nextSortOrder = activeExercises.reduce((maximum, exercise) => Math.max(maximum, exercise.sort_order), -1) + 1;
     const { data, error: insertError } = await client
       .from("adhdice_health_exercises")
-      .insert({ ...normalizedInput, user_id: userId })
+      .insert({ ...normalizedInput, sort_order: nextSortOrder, user_id: userId })
       .select("*")
       .single();
     if (insertError || !data) {
       reportError(insertError?.message ?? "Exercise could not be added.");
       return null;
     }
-    setExerciseLibrary((current) => [...current, data].sort((left, right) => left.name.localeCompare(right.name)));
+    setExerciseLibrary((current) => {
+      const active = current.filter((exercise) => exercise.archived_at === null);
+      const archived = current.filter((exercise) => exercise.archived_at !== null);
+      return [...active, data, ...archived];
+    });
     setError(null);
     return data;
   }
@@ -176,13 +182,51 @@ export function useFitnessSessionDetails(
       reportError(updateError?.message ?? "Exercise could not be updated.");
       return false;
     }
-    setExerciseLibrary((current) => current.map((exercise) => exercise.id === exerciseId ? data : exercise).sort((left, right) => left.name.localeCompare(right.name)));
+    setExerciseLibrary((current) => current.map((exercise) => exercise.id === exerciseId ? data : exercise));
     setError(null);
     return true;
   }
 
   async function archiveExercise(exerciseId: string) {
     return updateExercise(exerciseId, { archived_at: new Date().toISOString() });
+  }
+
+  async function reorderExercises(orderedExerciseIds: readonly string[]) {
+    if (!client || !userId) {
+      reportError("Exercise Library is unavailable while Health is offline.");
+      return false;
+    }
+    const activeExercises = exerciseLibrary.filter((exercise) => exercise.archived_at === null);
+    const expectedIds = activeExercises.map((exercise) => exercise.id);
+    const expectedIdSet = new Set(expectedIds);
+    const receivedIds = [...orderedExerciseIds];
+    if (
+      receivedIds.length !== expectedIds.length
+      || new Set(receivedIds).size !== receivedIds.length
+      || receivedIds.some((exerciseId) => !expectedIdSet.has(exerciseId))
+    ) {
+      reportError("Exercise order could not be saved because the list changed. Reload and try again.");
+      return false;
+    }
+
+    const exerciseById = new Map(activeExercises.map((exercise) => [exercise.id, exercise]));
+    const orderedExercises = receivedIds.map((exerciseId) => exerciseById.get(exerciseId)).filter((exercise): exercise is HealthExercise => Boolean(exercise));
+    setExerciseLibrary((current) => [...orderedExercises, ...current.filter((exercise) => exercise.archived_at !== null)]);
+    const writes = receivedIds.map((exerciseId, sortOrder) => client
+      .from("adhdice_health_exercises")
+      .update({ sort_order: sortOrder })
+      .eq("id", exerciseId)
+      .eq("user_id", userId)
+      .is("archived_at", null));
+    const results = await Promise.all(writes);
+    const writeError = results.find((result) => result.error)?.error;
+    if (writeError) {
+      await reload();
+      reportError(`Exercise order could not be saved. The canonical order was reloaded. ${writeError.message}`);
+      return false;
+    }
+    setError(null);
+    return true;
   }
 
   function getWorkoutSessionDetails(workoutId: string): HealthWorkoutSessionDetails {
@@ -392,6 +436,7 @@ export function useFitnessSessionDetails(
     isLoading,
     reload,
     removeLocalWorkoutSessionDetails,
+    reorderExercises,
     saveWorkoutSessionDetails,
     updateExercise,
     workoutExercises,
