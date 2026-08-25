@@ -35,10 +35,11 @@ export type HealthWorkoutSessionSaveResult = {
   ok: boolean;
 };
 
-function normalizeExerciseInput(input: Omit<HealthExerciseInsert, "user_id">) {
+function normalizeExerciseInput(input: Omit<HealthExerciseInsert, "user_id" | "default_measurement">) {
   return {
     ...input,
-    default_measurement: input.default_measurement,
+    // Compatibility-only schema field. Measurement authority belongs to each Workout Exercise.
+    default_measurement: "reps" as const,
     name: input.name.trim(),
   };
 }
@@ -127,7 +128,7 @@ export function useFitnessSessionDetails(
     });
   }, [active, client, reload, userId]);
 
-  async function createExercise(input: Omit<HealthExerciseInsert, "user_id">) {
+  async function createExercise(input: Omit<HealthExerciseInsert, "user_id" | "default_measurement">) {
     if (!client || !userId) {
       reportError("Exercise Library is unavailable while Health is offline.");
       return null;

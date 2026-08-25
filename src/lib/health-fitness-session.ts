@@ -27,6 +27,11 @@ export type HealthWorkoutStructuredDraft = {
   exercises: HealthWorkoutExerciseDraft[];
 };
 
+export type HealthExerciseOption = {
+  label: string;
+  value: string;
+};
+
 export function reconcileHealthWorkoutExerciseDraft(
   draft: HealthWorkoutStructuredDraft,
   exerciseIndex: number,
@@ -60,14 +65,57 @@ export function createEmptyHealthWorkoutDraftSet(): HealthWorkoutDraftSet {
   return { durationSeconds: "", notes: "", reps: "" };
 }
 
-export function createHealthWorkoutExerciseDraft(exercise: HealthExercise): HealthWorkoutExerciseDraft {
+export function createHealthWorkoutExerciseDraft(
+  exercise: HealthExercise,
+  measurementType: HealthFitnessMeasurement = "reps",
+): HealthWorkoutExerciseDraft {
   return {
     exerciseId: exercise.id,
     exerciseName: exercise.name,
-    measurementType: exercise.default_measurement,
+    // Exercise Library rows are reusable identities; the Workout Exercise owns this choice.
+    measurementType,
     notes: "",
     sets: [createEmptyHealthWorkoutDraftSet()],
   };
+}
+
+export function buildHealthWorkoutExerciseOptions(
+  library: readonly HealthExercise[],
+  currentExerciseId: string,
+): HealthExerciseOption[] {
+  const current = library.find((exercise) => exercise.id === currentExerciseId);
+  const options = current
+    ? [{ label: current.archived_at === null ? current.name : `${current.name} (archived)`, value: current.id }]
+    : [];
+  const seenIds = new Set(options.map((option) => option.value));
+  for (const exercise of library) {
+    if (exercise.archived_at !== null || seenIds.has(exercise.id)) continue;
+    options.push({ label: exercise.name, value: exercise.id });
+    seenIds.add(exercise.id);
+  }
+  return options;
+}
+
+export function replaceHealthWorkoutExerciseIdentity(
+  draft: HealthWorkoutExerciseDraft,
+  exercise: HealthExercise,
+): HealthWorkoutExerciseDraft {
+  return {
+    ...draft,
+    exerciseId: exercise.id,
+    exerciseName: exercise.name,
+  };
+}
+
+export function switchHealthWorkoutMeasurementType(
+  sets: readonly HealthWorkoutDraftSet[],
+  measurementType: HealthFitnessMeasurement,
+): HealthWorkoutDraftSet[] {
+  return sets.map((set) => ({
+    ...set,
+    durationSeconds: measurementType === "duration" ? set.durationSeconds : "",
+    reps: measurementType === "reps" ? set.reps : "",
+  }));
 }
 
 export function validateHealthWorkoutStructuredDraft(

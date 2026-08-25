@@ -4,9 +4,13 @@ import { test } from "node:test";
 
 import type { HealthExercise, HealthWorkoutExercise, HealthWorkoutSet } from "@/lib/database.types";
 import {
+  buildHealthWorkoutExerciseOptions,
+  createHealthWorkoutExerciseDraft,
   getHealthWorkoutStructuredSummary,
   reconcileHealthWorkoutExerciseDraft,
   reconcileHealthWorkoutSetDraft,
+  replaceHealthWorkoutExerciseIdentity,
+  switchHealthWorkoutMeasurementType,
   validateHealthWorkoutStructuredDraft,
   type HealthWorkoutStructuredDraft,
 } from "@/lib/health-fitness-session";
@@ -89,24 +93,28 @@ test("multiple Exercise Library entries can coexist", () => {
   assert.doesNotMatch(migration, /unique \(user_id, name\)/);
 });
 
-test("Exercise Library supports reps and duration defaults", () => {
+test("Exercise Library keeps default_measurement only for the existing database contract", () => {
   assert.equal(libraryExercise().default_measurement, "reps");
   assert.equal(libraryExercise({ default_measurement: "duration", name: "Plank" }).default_measurement, "duration");
   assert.match(migration, /default_measurement text not null check \(default_measurement in \('reps', 'duration'\)\)/);
+  assert.match(sessionHook, /default_measurement: "reps"/);
 });
 
-test("Exercise Library tracking selector defaults to reps and persists either choice", () => {
-  assert.match(exerciseLibrary, /useState<HealthFitnessMeasurement>\("reps"\)/);
-  assert.match(exerciseLibrary, /onChange\(option\.value\)/);
-  assert.match(exerciseLibrary, /createExercise\(\{ default_measurement: measurementDraft/);
-  assert.match(exerciseLibrary, /selected=\{value === option\.value\}/);
-  assert.match(exerciseLibrary, /aria-pressed=\{value === option\.value\}/);
-  assert.match(exerciseLibrary, /updateExercise\(exerciseId, \{ default_measurement: editingMeasurement/);
+test("Exercise Library settings expose only name and archive behavior", () => {
+  assert.doesNotMatch(exerciseLibrary, /MeasurementSelector|measurementDraft|editingMeasurement|default_measurement:/);
+  assert.match(exerciseLibrary, /createExercise\(\{ name: nameDraft \}\)/);
+  assert.match(exerciseLibrary, /updateExercise\(exerciseId, \{ name: editingName \}\)/);
 });
 
-test("Exercise Library edit changes the future default without rewriting snapshots", () => {
-  assert.match(exerciseLibrary, /setEditingMeasurement\(exercise\.default_measurement\)/);
-  assert.match(exerciseLibrary, /setEditingMeasurement\} value=\{editingMeasurement\}/);
+test("new Workout Exercise drafts default independently to reps and can choose duration", () => {
+  const durationLibraryEntry = libraryExercise({ default_measurement: "duration", id: "exercise-duration", name: "Plank" });
+  assert.equal(createHealthWorkoutExerciseDraft(durationLibraryEntry).measurementType, "reps");
+  assert.equal(createHealthWorkoutExerciseDraft(durationLibraryEntry, "duration").measurementType, "duration");
+  assert.match(sessionEditor, /MeasurementToggle ariaLabel="Measurement type for new exercise"/);
+  assert.match(sessionEditor, /createHealthWorkoutExerciseDraft\(exercise, measurementToAdd\)/);
+});
+
+test("Exercise Library changes do not rewrite historical Workout Exercise snapshots", () => {
   const summary = getHealthWorkoutStructuredSummary("workout-1", [workoutExercise({ measurement_type: "reps" })], [workoutSet()]);
   assert.equal(libraryExercise({ default_measurement: "duration" }).default_measurement, "duration");
   assert.equal(summary[0]?.measurementType, "reps");
@@ -120,8 +128,65 @@ test("Fitness index correction migration is idempotent and limited to the intend
 
 test("archived exercises are excluded from normal selection", () => {
   assert.match(exerciseLibrary, /exercise\.archived_at === null/);
-  assert.match(sessionEditor, /candidate\.archived_at === null/);
+  assert.match(sessionEditor, /exercise\.archived_at === null/);
   assert.match(migration, /archived_at timestamptz/);
+});
+
+test("Workout Exercise selector keeps the current active exercise and active alternatives", () => {
+  const pushUps = libraryExercise();
+  const planks = libraryExercise({ id: "exercise-2", name: "Planks" });
+  const options = buildHealthWorkoutExerciseOptions([pushUps, planks], pushUps.id);
+  assert.deepEqual(options, [
+    { label: "Push-Ups", value: "exercise-1" },
+    { label: "Planks", value: "exercise-2" },
+  ]);
+  assert.equal(options.find((option) => option.value === "exercise-1")?.label, "Push-Ups");
+  assert.match(sessionEditor, /buildHealthWorkoutExerciseOptions\(exerciseLibrary, exercise\.exerciseId\)/);
+});
+
+test("Workout Exercise selector keeps an archived current exercise beside active alternatives", () => {
+  const archivedPushUps = libraryExercise({ archived_at: "2026-08-25T12:00:00.000Z" });
+  const planks = libraryExercise({ id: "exercise-2", name: "Planks" });
+  assert.deepEqual(buildHealthWorkoutExerciseOptions([archivedPushUps, planks], archivedPushUps.id), [
+    { label: "Push-Ups (archived)", value: "exercise-1" },
+    { label: "Planks", value: "exercise-2" },
+  ]);
+});
+
+test("intentional exercise replacement updates identity without changing measurement or sets", () => {
+  const next = libraryExercise({ id: "exercise-2", name: "Planks", default_measurement: "duration" });
+  const replaced = replaceHealthWorkoutExerciseIdentity(draft().exercises[0]!, next);
+  assert.equal(replaced.exerciseId, "exercise-2");
+  assert.equal(replaced.exerciseName, "Planks");
+  assert.equal(replaced.measurementType, "reps");
+  assert.deepEqual(replaced.sets, draft().exercises[0]?.sets);
+  assert.match(sessionEditor, /replaceHealthWorkoutExerciseIdentity\(exercise, nextExercise\)/);
+  assert.doesNotMatch(sessionEditor, /measurementType: nextExercise\.default_measurement/);
+});
+
+test("Workout Exercise rows expose both measurement choices", () => {
+  assert.match(sessionEditor, /ariaLabel=\{`Measurement type for \$\{exercise\.exerciseName\}`\}/);
+  assert.match(sessionEditor, /selected=\{value === "reps"\}/);
+  assert.match(sessionEditor, /selected=\{value === "duration"\}/);
+  assert.match(sessionHook, /measurement_type: draftExercise\.measurementType/);
+});
+
+test("switching measurement clears incompatible values but preserves set structure and notes", () => {
+  const sets = [
+    { durationSeconds: "", id: "set-1", notes: "warmup", reps: "12" },
+    { durationSeconds: "", id: "set-2", notes: "hard", reps: "10" },
+  ];
+  const durationSets = switchHealthWorkoutMeasurementType(sets, "duration");
+  assert.deepEqual(durationSets, [
+    { durationSeconds: "", id: "set-1", notes: "warmup", reps: "" },
+    { durationSeconds: "", id: "set-2", notes: "hard", reps: "" },
+  ]);
+  const repsSets = switchHealthWorkoutMeasurementType([{ ...durationSets[0]!, durationSeconds: "45" }, { ...durationSets[1]!, durationSeconds: "30" }], "reps");
+  assert.deepEqual(repsSets, [
+    { durationSeconds: "", id: "set-1", notes: "warmup", reps: "" },
+    { durationSeconds: "", id: "set-2", notes: "hard", reps: "" },
+  ]);
+  assert.match(sessionEditor, /switchHealthWorkoutMeasurementType\(exercise\.sets, measurementType\)/);
 });
 
 test("library rename does not rewrite historical Workout Exercise snapshots", () => {

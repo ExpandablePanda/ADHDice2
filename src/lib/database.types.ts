@@ -1717,7 +1717,7 @@ export type HealthExerciseInsert = {
   updated_at?: string;
 };
 
-export type HealthExerciseUpdate = Partial<Pick<HealthExercise, "name" | "default_measurement" | "archived_at">>;
+export type HealthExerciseUpdate = Partial<Pick<HealthExercise, "name" | "archived_at">>;
 
 export type HealthWorkoutExercise = {
   id: string;

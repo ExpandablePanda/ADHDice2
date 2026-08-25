@@ -137,7 +137,7 @@ type HealthPageProps = {
   deleteWaterEntry: (entryId: string) => Promise<boolean>;
   deleteWorkout: (workoutId: string) => Promise<boolean>;
   archiveExercise: (exerciseId: string) => Promise<boolean>;
-  createExercise: (input: Omit<HealthExerciseInsert, "user_id">) => Promise<HealthExercise | null>;
+  createExercise: (input: Omit<HealthExerciseInsert, "user_id" | "default_measurement">) => Promise<HealthExercise | null>;
   fitnessSessionError: string | null;
   fitnessSessionLoaded: boolean;
   fitnessSessionLoading: boolean;
