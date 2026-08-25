@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Apple, CalendarDays, Camera, Check, ChevronDown, ChevronUp, Heart, HeartPulse, MoonStar, Pencil, Salad, Scale, ScanSearch, Search, Sparkles, Target, Trophy, X } from "lucide-react";
+import { Activity, Apple, CalendarDays, Camera, Check, ChevronDown, ChevronUp, Heart, HeartPulse, MoonStar, Pencil, Salad, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import type {
@@ -102,8 +102,6 @@ import {
   calculateHealthFoodNutrition,
   getHealthFoodMeasurementOptions,
   lookupOpenFoodFactsByBarcode,
-  searchHealthFoods,
-  type HealthFoodLookupResult,
 } from "@/lib/health-nutrition";
 import {
   composeHealthFoodServingDefinition,
@@ -125,8 +123,8 @@ import {
 } from "@/components/ui/task-table-primitives";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
+import { HealthBarcodeScanner } from "./health-barcode-scanner";
 import { HealthLibraryPanel } from "./health-library-panel";
-import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_CONTROL_CLASS, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { HealthCalorieLineChart } from "./health-calorie-line-chart";
 import { HealthSleepLineChart } from "./health-sleep-line-chart";
@@ -314,17 +312,7 @@ function createQuickFoodId() {
     : `quick-food-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-const EMPTY_FOOD_LOOKUP_RESULTS: HealthFoodLookupResult[] = [];
 const DEFAULT_IMPORT_STATUS = "Waiting for an Apple Health export.";
-type DetectedBarcode = {
-  rawValue?: string;
-};
-
-type BarcodeDetectorInstance = {
-  detect: (source: ImageBitmapSource) => Promise<DetectedBarcode[]>;
-};
-
-type BarcodeDetectorCtor = new (options?: { formats?: string[] }) => BarcodeDetectorInstance;
 
 export function HealthPage({
   checkIns,
@@ -397,7 +385,6 @@ export function HealthPage({
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
   const [mealDraft, setMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
   const [activeMealEntrySlot, setActiveMealEntrySlot] = useState<HealthMealEntry["meal_slot"] | null>(null);
-  const [foodSearchQuery, setFoodSearchQuery] = useState("");
   const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
   const [selectedCustomFoodCategory, setSelectedCustomFoodCategory] = useState<string | null>(null);
   const [foodHistoryDate, setFoodHistoryDate] = useState(todayHealthDate());
@@ -405,9 +392,8 @@ export function HealthPage({
   const [expandedFavoriteId, setExpandedFavoriteId] = useState<string | null>(null);
   const [targetWeightDraft, setTargetWeightDraft] = useState("");
   const [barcodeLookup, setBarcodeLookup] = useState("");
-  const [foodLookupResults, setFoodLookupResults] = useState<HealthFoodLookupResult[]>(EMPTY_FOOD_LOOKUP_RESULTS);
-  const [foodLookupError, setFoodLookupError] = useState("");
-  const [foodLookupStatus, setFoodLookupStatus] = useState<"idle" | "searching" | "barcode">("idle");
+  const [barcodeLookupError, setBarcodeLookupError] = useState("");
+  const [barcodeLookupStatus, setBarcodeLookupStatus] = useState<"idle" | "barcode">("idle");
   const [isQuickEntryOpen, setIsQuickEntryOpen] = useState(false);
   const [saveQuickEntryToLibrary, setSaveQuickEntryToLibrary] = useState(false);
   const [editingMealId, setEditingMealId] = useState<string | null>(null);
@@ -425,8 +411,6 @@ export function HealthPage({
     time: "12:00",
   });
   const [isScannerOpen, setIsScannerOpen] = useState(false);
-  const [scannerError, setScannerError] = useState("");
-  const [scannerSupport, setScannerSupport] = useState<"checking" | "ready" | "unsupported">("checking");
   const [importPreview, setImportPreview] = useState<AppleHealthImportPreview | null>(null);
   const [importError, setImportError] = useState("");
   const [isParsingImport, setIsParsingImport] = useState(false);
@@ -452,7 +436,6 @@ export function HealthPage({
   const [sleepEditDraft, setSleepEditDraft] = useState<SleepDraft | null>(null);
   const [sleepFormError, setSleepFormError] = useState<string | null>(null);
   const [sleepClockNow, setSleepClockNow] = useState(() => Date.now());
-  const scannerVideoRef = useRef<HTMLVideoElement | null>(null);
   const importAbortRef = useRef<AbortController | null>(null);
   const today = todayHealthDate();
 
@@ -485,15 +468,6 @@ export function HealthPage({
         : formatEditableWeight(profile.target_weight_kg, profile.preferred_weight_unit),
     );
   }, [profile]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const detector = (window as Window & { BarcodeDetector?: BarcodeDetectorCtor }).BarcodeDetector;
-    const hasCamera = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
-    setScannerSupport(detector && hasCamera ? "ready" : "unsupported");
-  }, []);
 
   useEffect(() => () => {
     importAbortRef.current?.abort();
@@ -710,85 +684,6 @@ export function HealthPage({
     setSleepEditDraft(null);
   }
 
-  useEffect(() => {
-    if (!isScannerOpen || scannerSupport !== "ready" || typeof window === "undefined") {
-      return;
-    }
-
-    const detectorCtor = (window as Window & { BarcodeDetector?: BarcodeDetectorCtor }).BarcodeDetector;
-    const video = scannerVideoRef.current;
-    if (!detectorCtor || !video || !navigator.mediaDevices?.getUserMedia) {
-      setScannerError("Camera barcode scan is not supported in this browser.");
-      return;
-    }
-
-    const videoElement = video;
-    const detector = new detectorCtor({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"] });
-    let stream: MediaStream | null = null;
-    let cancelled = false;
-    let frameId = 0;
-
-    async function startScanner() {
-      try {
-        setScannerError("");
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: { ideal: "environment" },
-          },
-        });
-        if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        videoElement.srcObject = stream;
-        await videoElement.play();
-
-        const scanFrame = async () => {
-          if (cancelled) {
-            return;
-          }
-          try {
-            const barcodes = await detector.detect(videoElement);
-            const firstCode = barcodes.find((entry) => typeof entry.rawValue === "string" && entry.rawValue.trim().length > 0)?.rawValue?.trim();
-            if (firstCode) {
-              setBarcodeLookup(firstCode);
-              setIsScannerOpen(false);
-              void runBarcodeLookup(firstCode);
-              return;
-            }
-          } catch {
-            setScannerError("Camera is open, but a barcode has not been detected yet.");
-          }
-          frameId = window.requestAnimationFrame(() => {
-            void scanFrame();
-          });
-        };
-
-        await scanFrame();
-      } catch (error) {
-        setScannerError(error instanceof Error ? error.message : "Unable to start the camera scanner.");
-      }
-    }
-
-    void startScanner();
-
-    return () => {
-      cancelled = true;
-      if (frameId) {
-        window.cancelAnimationFrame(frameId);
-      }
-      if (video.srcObject) {
-        const mediaStream = video.srcObject as MediaStream;
-        mediaStream.getTracks().forEach((track) => track.stop());
-        video.srcObject = null;
-      }
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, [isScannerOpen, scannerSupport]);
-
   if (!profile) {
     return (
       <section className="-mx-[15px] px-3 pb-32 sm:mx-0 sm:px-4">
@@ -929,6 +824,8 @@ export function HealthPage({
         return isQuickEntryOpen ? { ...nextDraft, servingQuantity: 1 } : nextDraft;
       });
       setCustomFoodSearchQuery("");
+      setBarcodeLookup("");
+      setBarcodeLookupError("");
       setSaveQuickEntryToLibrary(false);
     }
   }
@@ -942,19 +839,21 @@ export function HealthPage({
     if (!preserveFoodDraft) {
       setIsQuickEntryOpen(false);
       setCustomFoodSearchQuery("");
-      setFoodLookupResults(EMPTY_FOOD_LOOKUP_RESULTS);
-      setFoodLookupError("");
+      setBarcodeLookup("");
+      setBarcodeLookupError("");
     }
     setSaveQuickEntryToLibrary(false);
   }
 
   function closeMealEntryEditor() {
     setActiveMealEntrySlot(null);
+    setIsScannerOpen(false);
     setSaveQuickEntryToLibrary(false);
   }
 
   function handleFoodHistoryDateChange(date: string) {
     setActiveMealEntrySlot(null);
+    setIsScannerOpen(false);
     setFoodHistoryDate(date);
   }
 
@@ -964,6 +863,7 @@ export function HealthPage({
     setCustomFoodSearchQuery("");
     setMealDraft((current) => ({
       ...resetMealDraftForNextItem(current),
+      barcode: current.barcode,
       date: foodHistoryDate,
       mealSlot: activeMealEntrySlot ?? current.mealSlot,
       servingQuantity: 1,
@@ -1166,58 +1066,36 @@ export function HealthPage({
     return key ? favoriteFoodKeys.has(key) : false;
   }
 
-  async function handleFoodSearch() {
-    const query = foodSearchQuery.trim();
-    if (!query) {
-      setFoodLookupResults(EMPTY_FOOD_LOOKUP_RESULTS);
-      setFoodLookupError("Type a food name before searching.");
-      return;
-    }
-    setFoodLookupStatus("searching");
-    setFoodLookupError("");
-    setFoodLookupResults(EMPTY_FOOD_LOOKUP_RESULTS);
-    try {
-      const results = await searchHealthFoods(query);
-      setFoodLookupResults(results);
-      if (results.length === 0) {
-        setFoodLookupError("No matching foods showed up. You can still log it manually below.");
-      }
-    } catch (error) {
-      setFoodLookupResults(EMPTY_FOOD_LOOKUP_RESULTS);
-      setFoodLookupError(error instanceof Error ? error.message : "Food search did not complete.");
-    } finally {
-      setFoodLookupStatus("idle");
-    }
-  }
-
   async function runBarcodeLookup(code: string) {
     const trimmedCode = code.trim();
     if (!trimmedCode) {
-      setFoodLookupResults(EMPTY_FOOD_LOOKUP_RESULTS);
-      setFoodLookupError("Type a barcode before looking it up.");
+      setBarcodeLookupError("Type a barcode before looking it up.");
       return;
     }
-    setFoodLookupStatus("barcode");
-    setFoodLookupError("");
-    setFoodLookupResults(EMPTY_FOOD_LOOKUP_RESULTS);
+    setBarcodeLookup(trimmedCode);
+    setBarcodeLookupError("");
+    setBarcodeLookupStatus("barcode");
+    setMealDraft((current) => ({ ...current, barcode: trimmedCode }));
     try {
       const result = await lookupOpenFoodFactsByBarcode(trimmedCode);
       if (!result) {
-        setFoodLookupResults(EMPTY_FOOD_LOOKUP_RESULTS);
-        setFoodLookupError("No barcode match found. You can type the meal in manually below.");
+        setBarcodeLookupError("No food details found for this barcode. You can enter the food manually.");
         return;
       }
-      setFoodLookupResults([result]);
+      applyLookupResult(result);
     } catch (error) {
-      setFoodLookupResults(EMPTY_FOOD_LOOKUP_RESULTS);
-      setFoodLookupError(error instanceof Error ? error.message : "Barcode lookup did not complete.");
+      setBarcodeLookupError(error instanceof Error ? error.message : "Barcode lookup did not complete.");
     } finally {
-      setFoodLookupStatus("idle");
+      setBarcodeLookupStatus("idle");
     }
   }
 
   async function handleBarcodeLookup() {
     await runBarcodeLookup(barcodeLookup);
+  }
+
+  function handleMealBarcodeDetected(barcode: string) {
+    void runBarcodeLookup(barcode);
   }
 
   function applyLookupResult(result: {
@@ -1247,7 +1125,7 @@ export function HealthPage({
     setMealDraft((current) => ({
       ...current,
       attribution: result.attribution ?? null,
-      barcode: result.barcode ?? null,
+      barcode: result.barcode ?? current.barcode,
       brandName: result.brandName ?? "",
       calories: String(result.calories),
       carbs: result.carbs === null ? "" : String(result.carbs),
@@ -1400,128 +1278,37 @@ export function HealthPage({
     }
   }
 
-  function renderMealFoodLookupPanel() {
+  function renderMealBarcodeTools() {
     return (
-      <HealthCollapsiblePanel
-        defaultOpen={false}
-        onOpenChange={(isOpen) => {
-          if (!isOpen) setIsScannerOpen(false);
-        }}
-        subtitle="Search public foods, enter a barcode, or scan with the camera."
-        title="Search foods and barcodes"
-        variant="subpanel"
-      >
-        <div className="grid min-w-0 gap-3 lg:grid-cols-2">
-          <Field label="Search foods">
-            <div className="flex min-w-0 flex-wrap gap-2">
-              <input
-                className="health-input min-w-0 flex-1"
-                onChange={(event) => setFoodSearchQuery(event.target.value)}
-                placeholder="Greek yogurt, protein bar, soup"
-                value={foodSearchQuery}
-              />
-              <button
-                className="ui-pill-button-strong-light inline-flex items-center gap-2"
-                disabled={foodLookupStatus !== "idle" || foodSearchQuery.trim().length === 0}
-                onClick={() => { void handleFoodSearch(); }}
-                type="button"
-              >
-                <Search className="h-4 w-4" />
-                Search
-              </button>
-            </div>
-          </Field>
-          <Field label="Typed barcode">
-            <div className="flex min-w-0 flex-wrap gap-2">
-              <input
-                className="health-input min-w-0 flex-1"
-                inputMode="numeric"
-                onChange={(event) => setBarcodeLookup(event.target.value)}
-                placeholder="012345678905"
-                value={barcodeLookup}
-              />
-              <button
-                className="ui-pill-button-strong-light inline-flex items-center gap-2"
-                disabled={foodLookupStatus !== "idle" || barcodeLookup.trim().length === 0}
-                onClick={() => { void handleBarcodeLookup(); }}
-                type="button"
-              >
-                <ScanSearch className="h-4 w-4" />
-                Lookup
-              </button>
-              <button
-                className="ui-pill-button-strong-light inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={scannerSupport !== "ready"}
-                onClick={() => {
-                  setScannerError("");
-                  setIsScannerOpen(true);
-                }}
-                type="button"
-              >
-                <Camera className="h-4 w-4" />
-                Scan
-              </button>
-            </div>
-          </Field>
+      <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <Field label="Barcode (optional)">
+          <input
+            className={HEALTH_COMPACT_INPUT_CLASS}
+            inputMode="numeric"
+            onChange={(event) => {
+              setBarcodeLookup(event.target.value);
+              setMealDraft((current) => ({ ...current, barcode: event.target.value }));
+            }}
+            placeholder="012345678905"
+            value={barcodeLookup}
+          />
+        </Field>
+        <div className="flex flex-wrap items-end gap-2">
+          <AdhdChip disabled={barcodeLookupStatus !== "idle" || barcodeLookup.trim().length === 0} onClick={() => { void handleBarcodeLookup(); }}>Lookup</AdhdChip>
+          <AdhdChip contentClassName="gap-1.5" icon={<Camera aria-hidden="true" className="h-3 w-3" />} onClick={() => setIsScannerOpen(true)}>Scan Barcode</AdhdChip>
         </div>
-        <p className="text-xs leading-5 text-[#6a7793] dark:text-white/50">
-          Search uses USDA FoodData Central when available, with Open Food Facts fallback. Barcode lookup currently uses Open Food Facts.
-        </p>
-        {scannerSupport === "unsupported" ? (
-          <EmptyCopy text="Camera barcode scanning is not available in this browser yet, but typed barcode lookup still works." />
-        ) : null}
-        {isScannerOpen ? (
-          <div className="grid gap-3 rounded-[1.25rem] border border-[#dfe6fb] bg-white/90 p-4 dark:border-white/10 dark:bg-white/[0.05]">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-[#26324f] dark:text-white">Camera scanner</p>
-                <p className="mt-1 text-xs text-[#73809c] dark:text-white/50">Point the camera at a barcode. The first detected code will fill the lookup automatically.</p>
-              </div>
-              <button
-                aria-label="Close camera scanner"
-                className="rounded-full bg-[#fff1f3] p-2 text-[#d64b5f] dark:bg-[#44232f] dark:text-[#ff9eaf]"
-                onClick={() => setIsScannerOpen(false)}
-                type="button"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <video
-              className="w-full overflow-hidden rounded-[1.25rem] border border-[#e5e9f7] bg-[#111827] object-cover dark:border-white/10"
-              muted
-              playsInline
-              ref={scannerVideoRef}
-            />
-            {scannerError ? <EmptyCopy text={scannerError} /> : <InlineNotice text="Camera active. Hold the barcode steady for a moment." />}
-          </div>
-        ) : null}
-        {foodLookupError ? <EmptyCopy text={foodLookupError} /> : null}
-        {foodLookupStatus !== "idle" ? <InlineNotice text={foodLookupStatus === "barcode" ? "Looking up barcode..." : "Searching foods..."} /> : null}
-        {foodLookupResults.length > 0 ? (
-          <div className="grid gap-3">
-            <SectionMiniTitle title="Lookup results" />
-            {foodLookupResults.map((result) => (
-              <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/90 px-4 py-3 dark:border-white/10 dark:bg-white/[0.05]" key={`${result.provider}-${result.providerItemId}`}>
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{result.foodName}</p>
-                    <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{result.brandName || "No brand"} / {result.servingLabel || "Serving not listed"} / {result.calories} kcal</p>
-                    <p className="mt-2 text-xs text-[#6d7a96] dark:text-white/50">Protein {Math.round(result.protein ?? 0)}g / Carbs {Math.round(result.carbs ?? 0)}g / Fat {Math.round(result.fat ?? 0)}g</p>
-                  </div>
-                  <button className="ui-pill-button-strong-light shrink-0" onClick={() => applyLookupResult(result)} type="button">Use This</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </HealthCollapsiblePanel>
+        <div className="sm:col-span-2">
+          <HealthBarcodeScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onDetected={handleMealBarcodeDetected} />
+          {barcodeLookupError ? <EmptyCopy text={barcodeLookupError} /> : null}
+          {barcodeLookupStatus !== "idle" ? <InlineNotice text="Looking up barcode..." /> : null}
+        </div>
+      </div>
     );
   }
 
   function renderMealEntryEditor() {
     return (
       <div className="grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
-        {renderMealFoodLookupPanel()}
         <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1.35fr)_minmax(7rem,0.7fr)_minmax(5.5rem,0.6fr)_auto]">
           <Field label="Food">
             <HealthAutocomplete
@@ -1558,6 +1345,7 @@ export function HealthPage({
             <HealthMealDateTimeInput onChange={(value) => setMealDraft((current) => ({ ...current, time: value }))} type="time" value={mealDraft.time} />
           </Field>
         </div>
+        {renderMealBarcodeTools()}
         {isQuickEntryOpen ? (
           <div className="grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-white p-3 dark:border-white/10 dark:bg-white/[0.04]">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -1750,10 +1538,10 @@ export function HealthPage({
       ) : null}
 
       {activeTab === "Food" ? (
-        <div aria-labelledby="health-tab-food" className="mt-6 grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]" id={getHealthTabPanelId("Food")} role="tabpanel">
+        <div aria-labelledby="health-tab-food" className="mt-3 grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]" id={getHealthTabPanelId("Food")} role="tabpanel">
           <div className="grid min-w-0 content-start gap-5">
           <HealthPanel className="min-w-0" icon={<Salad />} subtitle="Meal logging">
-            <div className="mt-6 grid gap-3">
+            <div className="mt-3 grid gap-3">
               <SectionMiniTitle
                 actions={<FoodHistoryDateChip date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
                 title={`${foodHistoryDate === today ? "Today’s Meals" : `Meals — ${formatHealthDateLabel(foodHistoryDate)}`} — ${formatHealthNutritionNumber(selectedNutrition.calories)} kcal`}

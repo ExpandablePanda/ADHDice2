@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
+const scannerSource = readFileSync(new URL("../src/components/task-app/health-barcode-scanner.tsx", import.meta.url), "utf8");
 const useHealthSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const healthUtilsSource = readFileSync(new URL("../src/lib/health-utils.ts", import.meta.url), "utf8");
 const foodSource = source.slice(source.indexOf('{activeTab === "Food"'), source.indexOf('{activeTab === "Water"'));
@@ -19,6 +20,33 @@ test("the Food page no longer renders a global meal composer", () => {
   assert.doesNotMatch(foodSource, /Quick Add Food/);
   assert.doesNotMatch(foodSource, /Log Quick Entry/);
   assert.doesNotMatch(foodSource, /ref=\{mealComposerRef\}/);
+});
+
+test("Add Food keeps personal sources and removes public text search", () => {
+  assert.doesNotMatch(source, /searchHealthFoods|Search foods and barcodes|USDA FoodData Central|Search public foods/);
+  assert.match(inlineEditorSource, /placeholder="Search custom foods"/);
+  assert.match(source, /title="Favorites & Recent Foods"/);
+  assert.match(source, /<HealthLibraryPanel/);
+});
+
+test("Add Food barcode lookup fills the draft without saving it", () => {
+  assert.match(source, /<HealthBarcodeScanner/);
+  assert.match(inlineEditorSource, /renderMealBarcodeTools\(\)/);
+  assert.match(source, /function handleMealBarcodeDetected\(barcode: string\)/);
+  assert.match(source, /void runBarcodeLookup\(barcode\)/);
+  assert.match(source, /setMealDraft\(\(current\) => \(\{ \.\.\.current, barcode: trimmedCode \}\)\)/);
+  assert.match(source, /if \(!result\) \{\s+setBarcodeLookupError\("No food details found for this barcode\./);
+  assert.match(source, /applyLookupResult\(result\)/);
+  assert.doesNotMatch(source.slice(source.indexOf("function handleMealBarcodeDetected"), source.indexOf("function applyLookupResult")), /addMealEntry/);
+});
+
+test("the reusable barcode scanner prefers the rear camera and cleans up on every exit", () => {
+  assert.match(scannerSource, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(scannerSource, /facingMode: \{ ideal: "environment" \}/);
+  assert.match(scannerSource, /formats: \["ean_13", "ean_8", "upc_a", "upc_e"\]/);
+  assert.match(scannerSource, /track\.stop\(\)/);
+  assert.match(scannerSource, /cancelAnimationFrame\(frameId\)/);
+  assert.match(scannerSource, /onDetectedRef\.current\(firstCode\)/);
 });
 
 test("all four canonical meal sections remain visible for empty and populated days", () => {
@@ -81,7 +109,7 @@ test("Done closes only the active inline editor", () => {
 });
 
 test("changing the ledger date closes the editor before changing date authority", () => {
-  assert.match(source, /function handleFoodHistoryDateChange\(date: string\) \{\s+setActiveMealEntrySlot\(null\);\s+setFoodHistoryDate\(date\);/);
+  assert.match(source, /function handleFoodHistoryDateChange\(date: string\) \{\s+setActiveMealEntrySlot\(null\);\s+setIsScannerOpen\(false\);\s+setFoodHistoryDate\(date\);/);
   assert.equal((source.match(/onChange=\{handleFoodHistoryDateChange\}/g) ?? []).length, 2);
   assert.doesNotMatch(saveSource, /setFoodHistoryDate/);
 });
@@ -90,6 +118,7 @@ test("Quick Entry remains available inside the active section and uses its conte
   assert.match(inlineEditorSource, /onClick=\{isQuickEntryOpen \? closeQuickEntry : openQuickEntry\}/);
   assert.match(inlineEditorSource, /Add Quick Entry/);
   assert.match(source, /date: foodHistoryDate,\s+mealSlot: activeMealEntrySlot \?\? current\.mealSlot,\s+servingQuantity: 1/);
+  assert.match(source, /\.\.\.resetMealDraftForNextItem\(current\),\s+barcode: current\.barcode,/);
   assert.match(saveSource, /sourceFoodId = null/);
   assert.match(saveSource, /return isQuickEntryOpen \? \{ \.\.\.nextDraft, servingQuantity: 1 \} : nextDraft/);
 });
