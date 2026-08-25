@@ -13,6 +13,7 @@ import {
 import { buildHealthWorkoutFormPayload } from "@/lib/health-fitness";
 
 const migration = readFileSync(new URL("../supabase/add_health_fitness_sessions_7_11_46.sql", import.meta.url), "utf8");
+const indexCorrectionMigration = readFileSync(new URL("../supabase/correct_health_fitness_sessions_index_7_11_46.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 const sessionHook = readFileSync(new URL("../src/hooks/useFitnessSessionDetails.ts", import.meta.url), "utf8");
 const sessionEditor = readFileSync(new URL("../src/components/task-app/health-fitness-session-editor.tsx", import.meta.url), "utf8");
@@ -92,6 +93,29 @@ test("Exercise Library supports reps and duration defaults", () => {
   assert.equal(libraryExercise().default_measurement, "reps");
   assert.equal(libraryExercise({ default_measurement: "duration", name: "Plank" }).default_measurement, "duration");
   assert.match(migration, /default_measurement text not null check \(default_measurement in \('reps', 'duration'\)\)/);
+});
+
+test("Exercise Library tracking selector defaults to reps and persists either choice", () => {
+  assert.match(exerciseLibrary, /useState<HealthFitnessMeasurement>\("reps"\)/);
+  assert.match(exerciseLibrary, /onChange\(option\.value\)/);
+  assert.match(exerciseLibrary, /createExercise\(\{ default_measurement: measurementDraft/);
+  assert.match(exerciseLibrary, /selected=\{value === option\.value\}/);
+  assert.match(exerciseLibrary, /aria-pressed=\{value === option\.value\}/);
+  assert.match(exerciseLibrary, /updateExercise\(exerciseId, \{ default_measurement: editingMeasurement/);
+});
+
+test("Exercise Library edit changes the future default without rewriting snapshots", () => {
+  assert.match(exerciseLibrary, /setEditingMeasurement\(exercise\.default_measurement\)/);
+  assert.match(exerciseLibrary, /setEditingMeasurement\} value=\{editingMeasurement\}/);
+  const summary = getHealthWorkoutStructuredSummary("workout-1", [workoutExercise({ measurement_type: "reps" })], [workoutSet()]);
+  assert.equal(libraryExercise({ default_measurement: "duration" }).default_measurement, "duration");
+  assert.equal(summary[0]?.measurementType, "reps");
+});
+
+test("Fitness index correction migration is idempotent and limited to the intended index", () => {
+  assert.match(indexCorrectionMigration, /drop index if exists public\.adhdice_health_workout_sets_user_exercise_order_indx/);
+  assert.match(indexCorrectionMigration, /create index if not exists adhdice_health_workout_sets_user_exercise_order_idx/);
+  assert.doesNotMatch(indexCorrectionMigration, /alter table|drop table|delete from|update public\./i);
 });
 
 test("archived exercises are excluded from normal selection", () => {

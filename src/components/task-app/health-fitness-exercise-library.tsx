@@ -6,9 +6,9 @@ import { useState, type FormEvent } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import type { HealthExercise, HealthExerciseInsert, HealthExerciseUpdate, HealthFitnessMeasurement } from "@/lib/database.types";
-import { HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
+import { HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 
-const MEASUREMENT_OPTIONS = [
+const MEASUREMENT_OPTIONS: Array<{ label: string; value: HealthFitnessMeasurement }> = [
   { label: "Reps", value: "reps" },
   { label: "Duration", value: "duration" },
 ];
@@ -70,17 +70,17 @@ export function HealthFitnessExerciseLibrary({
     <section className="grid gap-2 border-t border-[#eeeaf8] pt-4 dark:border-white/10" aria-labelledby="fitness-settings-exercises">
       <div>
         <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-[#6f57f6] dark:text-[#cabfff]" id="fitness-settings-exercises">Exercises</h3>
-        <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">Reusable Exercise Library entries for structured workout details.</p>
+        <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">Choose how this exercise is normally tracked. Actual reps or time are entered during workouts.</p>
       </div>
       <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => { void handleAddExercise(event); }}>
         <label className="grid min-w-[12rem] flex-1 gap-1.5">
           <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/40">Name</span>
           <input aria-label="Add exercise name" className={HEALTH_COMPACT_INPUT_CLASS} disabled={isSaving} onChange={(event) => setNameDraft(event.target.value)} placeholder="Add an exercise" type="text" value={nameDraft} />
         </label>
-        <label className="grid min-w-[9rem] gap-1.5">
+        <div className="grid min-w-[9rem] gap-1.5">
           <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/40">Default tracking</span>
-          <HealthDropdown ariaLabel="Exercise default tracking type" disabled={isSaving} onChange={(value) => setMeasurementDraft(value as HealthFitnessMeasurement)} options={MEASUREMENT_OPTIONS} value={measurementDraft} />
-        </label>
+          <MeasurementSelector ariaLabel="Exercise default tracking type" disabled={isSaving} onChange={setMeasurementDraft} value={measurementDraft} />
+        </div>
         <AdhdChip disabled={isSaving} tone="purple" type="submit">Add Exercise</AdhdChip>
       </form>
       {error ? <p className="text-xs text-[#d65775] dark:text-[#ffb0c1]" role="alert">{error}</p> : null}
@@ -145,7 +145,7 @@ function ExerciseLibraryRow({
     return (
       <div className="flex flex-wrap items-end gap-2 rounded-[0.9rem] border border-[#ddd2ff] bg-[#fbfaff] p-2 dark:border-[#42306f] dark:bg-white/[0.03]">
         <input aria-label={`Rename exercise ${exercise.name}`} className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-[12rem] flex-1`} disabled={isSaving} onChange={(event) => setEditingName(event.target.value)} type="text" value={editingName} />
-        <HealthDropdown ariaLabel={`Change tracking type for ${exercise.name}`} disabled={isSaving} onChange={(value) => setEditingMeasurement(value as HealthFitnessMeasurement)} options={MEASUREMENT_OPTIONS} value={editingMeasurement} />
+        <MeasurementSelector ariaLabel={`Change tracking type for ${exercise.name}`} disabled={isSaving} onChange={setEditingMeasurement} value={editingMeasurement} />
         <AdhdIconButton aria-label={`Save exercise ${exercise.name}`} disabled={isSaving} onClick={onSave} size="sm" tone="purple" variant="rowToolbar"><Check aria-hidden="true" /></AdhdIconButton>
         <AdhdIconButton aria-label={`Cancel editing ${exercise.name}`} disabled={isSaving} onClick={onCancel} size="sm" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
       </div>
@@ -164,6 +164,35 @@ function ExerciseLibraryRow({
           <AdhdIconButton aria-label={`Archive exercise ${exercise.name}`} disabled={isSaving} onClick={onArchive} size="sm" tone="danger" variant="rowToolbar"><Trash2 aria-hidden="true" /></AdhdIconButton>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function MeasurementSelector({
+  ariaLabel,
+  disabled = false,
+  onChange,
+  value,
+}: {
+  ariaLabel: string;
+  disabled?: boolean;
+  onChange: (value: HealthFitnessMeasurement) => void;
+  value: HealthFitnessMeasurement;
+}) {
+  return (
+    <div aria-label={ariaLabel} className="inline-flex w-fit items-center gap-1 rounded-full border border-[#e4deef] bg-[#f4f5f8] p-1 dark:border-white/10 dark:bg-white/8" role="group">
+      {MEASUREMENT_OPTIONS.map((option) => (
+        <AdhdChip
+          aria-pressed={value === option.value}
+          disabled={disabled}
+          key={option.value}
+          onClick={() => onChange(option.value)}
+          selected={value === option.value}
+          type="button"
+        >
+          {option.label}
+        </AdhdChip>
+      ))}
     </div>
   );
 }
