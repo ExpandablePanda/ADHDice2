@@ -24,6 +24,7 @@ const fitnessSource = readFileSync(new URL("../src/components/task-app/health-fi
 const dropdownSource = readFileSync(new URL("../src/components/task-app/health-dropdown.tsx", import.meta.url), "utf8");
 const hookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const pageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
+const healthTabPreferenceSource = readFileSync(new URL("../src/lib/health-tab-preference.ts", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../supabase/add_health_fitness_foundation_7_11_33.sql", import.meta.url), "utf8");
 const titleOptionsMigrationSource = readFileSync(new URL("../supabase/add_health_workout_title_options_7_11_34.sql", import.meta.url), "utf8");
 const typeOptionsMigrationSource = readFileSync(new URL("../supabase/add_health_workout_type_options_7_11_35.sql", import.meta.url), "utf8");
@@ -115,7 +116,7 @@ test("Workout title reorder moves first-to-last and last-to-first", () => {
 });
 
 test("old saved Health tab values still normalize through the current tab list", () => {
-  assert.match(pageSource, /return HEALTH_TABS\.includes\(stored as HealthTab\) \? stored as HealthTab : "Today"/);
+  assert.match(healthTabPreferenceSource, /return HEALTH_TABS\.includes\(stored as HealthTab\) \? stored as HealthTab : "Today"/);
   assert.match(pageSource, /const activeTab = useSyncExternalStore\(subscribeToHealthTabPreference, readHealthTabPreference, \(\) => "Today"\)/);
 });
 
@@ -538,12 +539,12 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.11.46 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.11.46");
-  assert.equal(packageLock.version, "7.11.46");
-  assert.equal(packageLock.packages[""].version, "7.11.46");
-  assert.match(appVersionSource, /"version":\s*"7\.11\.46"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.46"/);
+test("all 7.11.47 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.11.47");
+  assert.equal(packageLock.version, "7.11.47");
+  assert.equal(packageLock.packages[""].version, "7.11.47");
+  assert.match(appVersionSource, /"version":\s*"7\.11\.47"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.47"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
-  assert.match(currentStateSource, /Current working app version: `7\.11\.46`/);
+  assert.match(currentStateSource, /Current working app version: `7\.11\.47`/);
 });

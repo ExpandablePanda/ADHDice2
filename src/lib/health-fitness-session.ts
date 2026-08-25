@@ -27,6 +27,29 @@ export type HealthWorkoutStructuredDraft = {
   exercises: HealthWorkoutExerciseDraft[];
 };
 
+export function reconcileHealthWorkoutExerciseDraft(
+  draft: HealthWorkoutStructuredDraft,
+  exerciseIndex: number,
+  persistedId: string,
+): HealthWorkoutStructuredDraft {
+  return {
+    exercises: draft.exercises.map((exercise, index) => index === exerciseIndex ? { ...exercise, id: persistedId } : exercise),
+  };
+}
+
+export function reconcileHealthWorkoutSetDraft(
+  draft: HealthWorkoutStructuredDraft,
+  exerciseIndex: number,
+  setIndex: number,
+  persistedId: string,
+): HealthWorkoutStructuredDraft {
+  return {
+    exercises: draft.exercises.map((exercise, currentExerciseIndex) => currentExerciseIndex === exerciseIndex
+      ? { ...exercise, sets: exercise.sets.map((set, currentSetIndex) => currentSetIndex === setIndex ? { ...set, id: persistedId } : set) }
+      : exercise),
+  };
+}
+
 export type HealthWorkoutStructuredSummary = {
   exerciseName: string;
   measurementType: HealthFitnessMeasurement;
@@ -34,14 +57,13 @@ export type HealthWorkoutStructuredSummary = {
 };
 
 export function createEmptyHealthWorkoutDraftSet(): HealthWorkoutDraftSet {
-  return { durationSeconds: "", id: createHealthFitnessDraftId(), notes: "", reps: "" };
+  return { durationSeconds: "", notes: "", reps: "" };
 }
 
 export function createHealthWorkoutExerciseDraft(exercise: HealthExercise): HealthWorkoutExerciseDraft {
   return {
     exerciseId: exercise.id,
     exerciseName: exercise.name,
-    id: createHealthFitnessDraftId(),
     measurementType: exercise.default_measurement,
     notes: "",
     sets: [createEmptyHealthWorkoutDraftSet()],
@@ -111,10 +133,4 @@ function compareStructuredOrder(left: { sort_order: number; created_at: string }
 
 function isPositiveInteger(value: string) {
   return /^\d+$/.test(value) && Number(value) > 0;
-}
-
-function createHealthFitnessDraftId() {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }

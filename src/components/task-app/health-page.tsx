@@ -47,8 +47,9 @@ import {
   type AppleHealthImportPreview,
 } from "@/lib/health-apple-import";
 import type { HealthImportSaveProgress } from "@/hooks/useHealth";
-import type { HealthWorkoutSessionDetails } from "@/hooks/useFitnessSessionDetails";
+import type { HealthWorkoutSessionDetails, HealthWorkoutSessionSaveResult } from "@/hooks/useFitnessSessionDetails";
 import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
+import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
   clampPercent,
   buildHealthMealLoggedAt,
@@ -244,7 +245,7 @@ type HealthPageProps = {
   }) => Promise<boolean>;
   updateMealEntry: (entryId: string, input: HealthMealEntryUpdate) => Promise<boolean>;
   updateWorkout: (workoutId: string, input: HealthWorkoutUpdate) => Promise<boolean>;
-  saveWorkoutSessionDetails: (workoutId: string, draft: HealthWorkoutStructuredDraft) => Promise<boolean>;
+  saveWorkoutSessionDetails: (workoutId: string, draft: HealthWorkoutStructuredDraft) => Promise<HealthWorkoutSessionSaveResult>;
   updateExercise: (exerciseId: string, input: HealthExerciseUpdate) => Promise<boolean>;
   workoutPlanItemLinks: HealthWorkoutPlanItemLink[];
   workoutExercises: HealthWorkoutExercise[];
@@ -365,40 +366,6 @@ function createQuickFoodId() {
 
 const EMPTY_FOOD_LOOKUP_RESULTS: HealthFoodLookupResult[] = [];
 const DEFAULT_IMPORT_STATUS = "Waiting for an Apple Health export.";
-const HEALTH_TAB_STORAGE_KEY = "adhdice-health-tab";
-const healthTabPreferenceListeners = new Set<() => void>();
-
-function readHealthTabPreference(): HealthTab {
-  if (typeof window === "undefined") {
-    return "Today";
-  }
-  try {
-    const stored = window.localStorage.getItem(HEALTH_TAB_STORAGE_KEY);
-    return HEALTH_TABS.includes(stored as HealthTab) ? stored as HealthTab : "Today";
-  } catch {
-    return "Today";
-  }
-}
-
-function subscribeToHealthTabPreference(listener: () => void) {
-  healthTabPreferenceListeners.add(listener);
-  const handleStorage = () => listener();
-  window.addEventListener("storage", handleStorage);
-  return () => {
-    healthTabPreferenceListeners.delete(listener);
-    window.removeEventListener("storage", handleStorage);
-  };
-}
-
-function persistHealthTabPreference(tab: HealthTab) {
-  try {
-    window.localStorage.setItem(HEALTH_TAB_STORAGE_KEY, tab);
-  } catch {
-    // UI preference persistence is best effort.
-  }
-  healthTabPreferenceListeners.forEach((listener) => listener());
-}
-
 type DetectedBarcode = {
   rawValue?: string;
 };

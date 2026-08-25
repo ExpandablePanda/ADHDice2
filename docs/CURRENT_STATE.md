@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-24
+Last reviewed: 2026-08-25
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.46`.
+- Current working app version: `7.11.47`.
 - Current release group: `7.11.x` structured Fitness session evidence.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,10 @@ Role: active working
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.47 Fitness retry safety and Home capacity
+
+Fitness Plan saves now reconcile each newly created planned item’s returned database ID into the open editor draft before later item/archive operations continue, so a partial save retry updates the successful item instead of inserting it again. Structured Fitness saves now return a reconciled draft result; newly created Workout Exercise and Set rows reconcile their returned database IDs into the editor before any later child or association failure, while the canonical workout remains in edit mode for retry. Home To-Do automatic placement now consumes only each day’s remaining capacity after explicit manual placements; pinned items stay authoritative, Later pins do not consume normal-day capacity, and overflow remains Later. The existing Health tab preference signal now gates Fitness Plan and Structured Fitness hook loading to the Fitness tab. The 7.11.46 migration remains unchanged and authored only; no SQL was applied or run. Focused Plan, Structured Fitness, Home, and Health regression tests passed 130/130; narrow focused-file ESLint passed, while broader changed files retain pre-existing warnings/errors outside this ticket. Browser QA, live SQL, builds, and device deployment remain unverified.
 
 ## 2026-08-24 7.11.46 Structured Fitness sessions
 

@@ -25,7 +25,7 @@ import type {
   HealthWorkoutSet,
   HealthWorkoutUpdate,
 } from "@/lib/database.types";
-import type { HealthWorkoutSessionDetails } from "@/hooks/useFitnessSessionDetails";
+import type { HealthWorkoutSessionDetails, HealthWorkoutSessionSaveResult } from "@/hooks/useFitnessSessionDetails";
 import {
   buildHealthWorkoutFormPayload,
   addHealthWorkoutTypeOption,
@@ -84,7 +84,7 @@ type HealthFitnessTabProps = {
   updatePlanItem: (itemId: string, input: HealthFitnessPlanItemUpdate) => Promise<boolean>;
   updateExercise: (exerciseId: string, input: HealthExerciseUpdate) => Promise<boolean>;
   updateWorkout: (workoutId: string, input: HealthWorkoutUpdate) => Promise<boolean>;
-  saveWorkoutSessionDetails: (workoutId: string, draft: HealthWorkoutStructuredDraft) => Promise<boolean>;
+  saveWorkoutSessionDetails: (workoutId: string, draft: HealthWorkoutStructuredDraft) => Promise<HealthWorkoutSessionSaveResult>;
   workoutPlanItemLinks: HealthWorkoutPlanItemLink[];
   workoutExercises: HealthWorkoutExercise[];
   workoutSets: HealthWorkoutSet[];
@@ -398,7 +398,9 @@ export function HealthFitnessTab({
       if (!saved) {
         return;
       }
-      if (!(await saveWorkoutSessionDetails(editingWorkoutId, structuredDraft))) {
+      const structuredSave = await saveWorkoutSessionDetails(editingWorkoutId, structuredDraft);
+      setStructuredDraft(structuredSave.draft);
+      if (!structuredSave.ok) {
         setFormError("Workout updated, but exercise details could not be saved. Try again.");
         return;
       }
@@ -416,9 +418,13 @@ export function HealthFitnessTab({
       return;
     }
     setEditingWorkoutId(savedWorkout.id);
-    if (structuredDraft.exercises.length > 0 && !(await saveWorkoutSessionDetails(savedWorkout.id, structuredDraft))) {
-      setFormError("Workout saved, but exercise details could not be saved. Try again.");
-      return;
+    if (structuredDraft.exercises.length > 0) {
+      const structuredSave = await saveWorkoutSessionDetails(savedWorkout.id, structuredDraft);
+      setStructuredDraft(structuredSave.draft);
+      if (!structuredSave.ok) {
+        setFormError("Workout saved, but exercise details could not be saved. Try again.");
+        return;
+      }
     }
     if (selectedPlanItemIds.length > 0 && !(await saveWorkoutPlanItemLinks(savedWorkout.id, selectedPlanItemIds))) {
       setFormError("Workout saved, but its Fitness Plan associations could not be saved. Try again.");
