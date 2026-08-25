@@ -96,7 +96,7 @@ export function prepareMealDraftForSelectedSlot(
 }
 
 export function hasMeaningfulMealDraft(currentDraft: MealDraft) {
-  return [
+  const hasFoodData = [
     currentDraft.attribution,
     currentDraft.barcode,
     currentDraft.brandName,
@@ -110,8 +110,8 @@ export function hasMeaningfulMealDraft(currentDraft: MealDraft) {
     currentDraft.sourceFoodId,
     currentDraft.foodCategory,
     currentDraft.servingLabel,
-  ].some((value) => typeof value === "string" && value.trim().length > 0)
-    || currentDraft.servingQuantity !== null
+  ].some((value) => typeof value === "string" && value.trim().length > 0);
+  return hasFoodData
     || currentDraft.servingMeasureValue !== null
     || currentDraft.servingMeasureUnit !== null
     || currentDraft.quantity !== "1"

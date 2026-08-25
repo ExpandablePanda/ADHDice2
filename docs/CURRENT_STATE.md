@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.53`.
+- Current working app version: `7.11.54`.
 - Current release group: `7.11.x` Active Workout Runtime Stabilization.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,10 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.54 Inline meal ledger food entry
+
+The global Food composer has been removed. The selected-day meal ledger is now the creation authority: Breakfast, Lunch, Dinner, and Snack each expose an inline `Add Food` editor, with Date and Meal implicit from the selected ledger date and active section. Successful Add stays open, preserves date, meal slot, and time, and clears only food-specific data for rapid multi-add. Completely empty selected days still render all four sections and actions. Existing canonical Health Meal Entry persistence, editing, deletion, nutrition snapshots, and totals remain unchanged. No SQL or migration was added.
 
 ## 2026-08-25 7.11.53 Selected-day meal logging
 
