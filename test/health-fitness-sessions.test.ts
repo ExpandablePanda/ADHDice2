@@ -16,6 +16,7 @@ import {
   type HealthWorkoutStructuredDraft,
 } from "@/lib/health-fitness-session";
 import { buildHealthWorkoutFormPayload } from "@/lib/health-fitness";
+import { isCurrentFitnessReloadRequest } from "@/lib/fitness-reload-guard";
 
 const migration = readFileSync(new URL("../supabase/add_health_fitness_sessions_7_11_46.sql", import.meta.url), "utf8");
 const sortOrderMigration = readFileSync(new URL("../supabase/add_health_exercise_sort_order_7_11_50.sql", import.meta.url), "utf8");
@@ -320,6 +321,25 @@ test("structured edits use stable IDs and additions/updates before removals", ()
   assert.match(sessionHook, /\.update\(toWorkoutSetUpdate/);
   assert.match(sessionHook, /failStructuredSave[\s\S]*await reload\(\)/);
   assert.doesNotMatch(sessionHook, /delete\(\)[\s\S]*insert\([\s\S]*delete all/i);
+});
+
+test("Structured Fitness reload generations and scopes reject stale responses", () => {
+  const clientA = {};
+  const clientB = {};
+  const current = { active: true, client: clientB, userId: "user-b" };
+  assert.equal(isCurrentFitnessReloadRequest({ ...current, generation: 2 }, current, 2), true);
+  assert.equal(isCurrentFitnessReloadRequest({ active: true, client: clientA, generation: 1, userId: "user-a" }, current, 2), false);
+  assert.equal(isCurrentFitnessReloadRequest({ active: true, client: clientB, generation: 2, userId: "user-a" }, current, 2), false);
+  assert.equal(isCurrentFitnessReloadRequest({ active: false, client: clientB, generation: 2, userId: "user-b" }, current, 2), false);
+});
+
+test("Structured Fitness guard success, error, loading, and inactive clears to the current request", () => {
+  assert.match(sessionHook, /const reloadGenerationRef = useRef\(0\)/);
+  assert.match(sessionHook, /const generation = \+\+reloadGenerationRef\.current/);
+  assert.match(sessionHook, /if \(!isCurrent\(\)\) return false;/);
+  assert.match(sessionHook, /if \(!isCurrent\(\)\) return false;[\s\S]*reportError\(/);
+  assert.match(sessionHook, /if \(!active \|\| !userId \|\| !client\) \{[\s\S]*setExerciseLibrary\(\[\]\)[\s\S]*setWorkoutExercises\(\[\]\)[\s\S]*setWorkoutSets\(\[\]\)[\s\S]*setIsLoading\(false\)[\s\S]*setIsLoaded\(false\)/);
+  assert.match(sessionHook, /setIsLoading\(false\);\s*setIsLoaded\(true\);\s*setError\(null\)/);
 });
 
 test("failed child persistence keeps retry in the existing workout edit flow", () => {

@@ -13,8 +13,10 @@ import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session"
 import {
   addActiveFitnessWorkoutExercise,
   addActiveFitnessWorkoutSet,
+  ACTIVE_FITNESS_WORKOUT_TIMING_LOCKED_MESSAGE,
   applyActiveFitnessWorkoutFinishResult,
   buildActiveFitnessWorkoutFinishPayload,
+  canResumeActiveFitnessWorkout,
   canDiscardActiveFitnessWorkout,
   completeActiveFitnessDurationSet,
   completeActiveFitnessRepsSet,
@@ -105,8 +107,13 @@ export function useActiveFitnessWorkout({
   }, [updateRuntime]);
 
   const resumeWorkout = useCallback(() => {
+    if (runtime?.canonicalWorkoutId) {
+      setError(ACTIVE_FITNESS_WORKOUT_TIMING_LOCKED_MESSAGE);
+      return;
+    }
+    if (!canResumeActiveFitnessWorkout(runtime)) return;
     updateRuntime((current) => resumeActiveFitnessWorkout(current));
-  }, [updateRuntime]);
+  }, [runtime, updateRuntime]);
 
   const addExercise = useCallback((exercise: Pick<HealthExercise, "id" | "name">, measurementType: HealthFitnessMeasurement = "reps") => {
     updateRuntime((current) => addActiveFitnessWorkoutExercise(current, exercise, measurementType));
@@ -148,12 +155,16 @@ export function useActiveFitnessWorkout({
   }, [updateRuntime]);
 
   const startDurationSet = useCallback((runtimeExerciseId: string, runtimeSetId: string) => {
+    if (runtime?.canonicalWorkoutId) {
+      setError(ACTIVE_FITNESS_WORKOUT_TIMING_LOCKED_MESSAGE);
+      return;
+    }
     if (runtime?.state !== "running") {
       setError("Resume the overall workout before starting a Duration Set.");
       return;
     }
     updateRuntime((current) => startActiveFitnessDurationSet(current, runtimeExerciseId, runtimeSetId));
-  }, [runtime?.state, updateRuntime]);
+  }, [runtime?.canonicalWorkoutId, runtime?.state, updateRuntime]);
 
   const pauseDurationSet = useCallback((runtimeExerciseId: string, runtimeSetId: string) => {
     updateRuntime((current) => pauseActiveFitnessWorkoutSet(current, runtimeExerciseId, runtimeSetId).runtime);

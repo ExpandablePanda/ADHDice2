@@ -17,6 +17,7 @@ import {
   reconcileHealthFitnessPlanItemDraft,
 } from "@/lib/health-fitness-plans";
 import { getHealthWeekBounds } from "@/lib/health-fitness";
+import { isCurrentFitnessReloadRequest } from "@/lib/fitness-reload-guard";
 
 const migration = readFileSync(new URL("../supabase/add_health_fitness_plans_7_11_44.sql", import.meta.url), "utf8");
 const plansHook = readFileSync(new URL("../src/hooks/useFitnessPlans.ts", import.meta.url), "utf8");
@@ -189,6 +190,25 @@ test("Fitness Plan loading is isolated from workout recovery and Health snapshot
   assert.match(plansHook, /setPlans\(\[\]\)/);
   assert.match(plansHook, /reportError\(`Fitness Plans are unavailable until the 7\.11\.44 Fitness Plans migration is applied/);
   assert.match(healthHook, /reconcileHealthWorkouts/);
+});
+
+test("Fitness Plans reload generations and scopes reject stale responses", () => {
+  const clientA = {};
+  const clientB = {};
+  const current = { active: true, client: clientB, userId: "user-b" };
+  assert.equal(isCurrentFitnessReloadRequest({ ...current, generation: 2 }, current, 2), true);
+  assert.equal(isCurrentFitnessReloadRequest({ active: true, client: clientA, generation: 1, userId: "user-a" }, current, 2), false);
+  assert.equal(isCurrentFitnessReloadRequest({ active: true, client: clientB, generation: 2, userId: "user-a" }, current, 2), false);
+  assert.equal(isCurrentFitnessReloadRequest({ active: false, client: clientB, generation: 2, userId: "user-b" }, current, 2), false);
+});
+
+test("Fitness Plans guard success, error, loading, and inactive clears to the current request", () => {
+  assert.match(plansHook, /const reloadGenerationRef = useRef\(0\)/);
+  assert.match(plansHook, /const generation = \+\+reloadGenerationRef\.current/);
+  assert.match(plansHook, /if \(!isCurrent\(\)\) return false;/);
+  assert.match(plansHook, /if \(!isCurrent\(\)\) return false;[\s\S]*reportError\(/);
+  assert.match(plansHook, /if \(!active \|\| !userId \|\| !client\) \{[\s\S]*setPlans\(\[\]\)[\s\S]*setPlanItems\(\[\]\)[\s\S]*setWorkoutPlanItemLinks\(\[\]\)[\s\S]*setIsLoading\(false\)/);
+  assert.match(plansHook, /setIsLoading\(false\);\s*return true;/);
 });
 
 test("the Fitness Plan editor keeps one Add Planned Item action at the bottom", () => {
