@@ -20,6 +20,7 @@ import {
   getHealthPlanItemDurationSeconds,
   getHealthPlanWeekdayLabel,
   HEALTH_PLAN_WEEKDAYS,
+  reconcileHealthFitnessPlanItemDraft,
   validateHealthFitnessPlanItemDraft,
   type HealthFitnessPlanItemDraft,
 } from "@/lib/health-fitness-plans";
@@ -193,9 +194,19 @@ export function HealthFitnessPlansPanel({
     let saved = true;
     for (const [index, item] of editor.items.entries()) {
       const input = toPlanItemInput(item, plan.id, index);
-      const itemSaved = item.id
-        ? await updatePlanItem(item.id, toPlanItemUpdate(input))
-        : Boolean(await createPlanItem(input));
+      let itemSaved = false;
+      if (item.id) {
+        itemSaved = await updatePlanItem(item.id, toPlanItemUpdate(input));
+      } else {
+        const created = await createPlanItem(input);
+        itemSaved = Boolean(created);
+        if (created) {
+          setEditor((current) => current ? {
+            ...current,
+            items: reconcileHealthFitnessPlanItemDraft(current.items, index, created.id),
+          } : current);
+        }
+      }
       if (!itemSaved) {
         saved = false;
         break;

@@ -15,6 +15,8 @@ import type {
 } from "@/lib/database.types";
 import {
   parsePositiveHealthFitnessInteger,
+  reconcileHealthWorkoutExerciseDraft,
+  reconcileHealthWorkoutSetDraft,
   type HealthWorkoutStructuredDraft,
   validateHealthWorkoutStructuredDraft,
 } from "@/lib/health-fitness-session";
@@ -26,6 +28,11 @@ type SetMessage = (message: { tone: "neutral" | "good" | "warn"; text: string } 
 export type HealthWorkoutSessionDetails = {
   exercises: HealthWorkoutExercise[];
   sets: HealthWorkoutSet[];
+};
+
+export type HealthWorkoutSessionSaveResult = {
+  draft: HealthWorkoutStructuredDraft;
+  ok: boolean;
 };
 
 function normalizeExerciseInput(input: Omit<HealthExerciseInsert, "user_id">) {
@@ -188,53 +195,55 @@ export function useFitnessSessionDetails(
     };
   }
 
-  async function saveWorkoutSessionDetails(workoutId: string, draft: HealthWorkoutStructuredDraft) {
-    const validationError = validateHealthWorkoutStructuredDraft(draft, exerciseLibrary);
+  async function saveWorkoutSessionDetails(workoutId: string, draft: HealthWorkoutStructuredDraft): Promise<HealthWorkoutSessionSaveResult> {
+    let reconciledDraft = draft;
+    const validationError = validateHealthWorkoutStructuredDraft(reconciledDraft, exerciseLibrary);
     if (validationError) {
       reportError(validationError);
-      return false;
+      return { draft: reconciledDraft, ok: false };
     }
     if (!client || !userId) {
       reportError("Structured Fitness is unavailable while Health is offline.");
-      return false;
+      return { draft: reconciledDraft, ok: false };
     }
 
     const existingExercises = workoutExercises.filter((exercise) => exercise.workout_id === workoutId);
     const existingExerciseById = new Map(existingExercises.map((exercise) => [exercise.id, exercise]));
-    const desiredExerciseIds = new Set(draft.exercises.map((exercise) => exercise.id).filter((id): id is string => Boolean(id)));
+    const desiredExerciseIds = new Set(reconciledDraft.exercises.map((exercise) => exercise.id).filter((id): id is string => Boolean(id)));
     if ([...desiredExerciseIds].some((id) => !existingExerciseById.has(id) && workoutExercises.some((exercise) => exercise.id === id))) {
-      return failStructuredSave(`Structured exercise identity is not owned by Workout ${workoutId}.`);
+      return failStructuredSave(`Structured exercise identity is not owned by Workout ${workoutId}.`, reconciledDraft);
     }
 
-    const preparedExercises = draft.exercises.map((draftExercise, sortOrder) => normalizeWorkoutExerciseInput({
-        ...(draftExercise.id ? { id: draftExercise.id } : {}),
-        exercise_id: draftExercise.exerciseId,
-        exercise_name: draftExercise.exerciseName,
-        measurement_type: draftExercise.measurementType,
-        notes: draftExercise.notes,
-        sort_order: sortOrder,
-        workout_id: workoutId,
-      }));
-    const persistedExercises: Array<HealthWorkoutExercise | undefined> = new Array(draft.exercises.length);
-    for (const [exerciseIndex, draftExercise] of draft.exercises.entries()) {
+    const preparedExercises = reconciledDraft.exercises.map((draftExercise, sortOrder) => normalizeWorkoutExerciseInput({
+      ...(draftExercise.id ? { id: draftExercise.id } : {}),
+      exercise_id: draftExercise.exerciseId,
+      exercise_name: draftExercise.exerciseName,
+      measurement_type: draftExercise.measurementType,
+      notes: draftExercise.notes,
+      sort_order: sortOrder,
+      workout_id: workoutId,
+    }));
+    const persistedExercises: Array<HealthWorkoutExercise | undefined> = new Array(reconciledDraft.exercises.length);
+    for (const [exerciseIndex, draftExercise] of reconciledDraft.exercises.entries()) {
       if (draftExercise.id && existingExerciseById.has(draftExercise.id)) continue;
       const input = preparedExercises[exerciseIndex];
-      if (!input) return failStructuredSave("Structured exercise details could not be prepared for saving.");
+      if (!input) return failStructuredSave("Structured exercise details could not be prepared for saving.", reconciledDraft);
       const { data, error: insertError } = await client
         .from("adhdice_health_workout_exercises")
         .insert({ ...input, user_id: userId })
         .select("*")
         .single();
       if (insertError || !data) {
-        return failStructuredSave(`Exercise details could not be added. ${insertError?.message ?? "Try again."}`);
+        return failStructuredSave(`Exercise details could not be added. ${insertError?.message ?? "Try again."}`, reconciledDraft);
       }
       persistedExercises[exerciseIndex] = data;
+      reconciledDraft = reconcileHealthWorkoutExerciseDraft(reconciledDraft, exerciseIndex, data.id);
     }
-    for (const [exerciseIndex, draftExercise] of draft.exercises.entries()) {
+    for (const [exerciseIndex, draftExercise] of reconciledDraft.exercises.entries()) {
       const existing = draftExercise.id ? existingExerciseById.get(draftExercise.id) : undefined;
       if (!existing) continue;
       const input = preparedExercises[exerciseIndex];
-      if (!input) return failStructuredSave("Structured exercise details could not be prepared for saving.");
+      if (!input) return failStructuredSave("Structured exercise details could not be prepared for saving.", reconciledDraft);
       const { data, error: updateError } = await client
         .from("adhdice_health_workout_exercises")
         .update(toWorkoutExerciseUpdate(input))
@@ -244,7 +253,7 @@ export function useFitnessSessionDetails(
         .select("*")
         .single();
       if (updateError || !data) {
-        return failStructuredSave(`Exercise details could not be updated. ${updateError?.message ?? "Try again."}`);
+        return failStructuredSave(`Exercise details could not be updated. ${updateError?.message ?? "Try again."}`, reconciledDraft);
       }
       persistedExercises[exerciseIndex] = data;
     }
@@ -255,7 +264,7 @@ export function useFitnessSessionDetails(
     }
     const persistedSets: HealthWorkoutSet[] = [];
     const desiredSetIds = new Set<string>();
-    const preparedSets = draft.exercises.map((draftExercise, exerciseIndex) => {
+    const preparedSets = reconciledDraft.exercises.map((draftExercise, exerciseIndex) => {
       const persistedExercise = persistedExercises[exerciseIndex];
       return draftExercise.sets.map((draftSet, sortOrder) => ({
         draftSet,
@@ -271,12 +280,12 @@ export function useFitnessSessionDetails(
     });
     for (const [exerciseIndex, sets] of preparedSets.entries()) {
       const persistedExercise = persistedExercises[exerciseIndex];
-      if (!persistedExercise) return failStructuredSave("Structured exercise details could not be matched for saving.");
+      if (!persistedExercise) return failStructuredSave("Structured exercise details could not be matched for saving.", reconciledDraft);
       const existingSetById = new Map((existingSetsByExerciseId.get(persistedExercise.id) ?? []).map((set) => [set.id, set]));
-      for (const { draftSet, input } of sets) {
+      for (const [setIndex, { draftSet, input }] of sets.entries()) {
         if (draftSet.id) desiredSetIds.add(draftSet.id);
         if (draftSet.id && !existingSetById.has(draftSet.id) && workoutSets.some((set) => set.id === draftSet.id)) {
-          return failStructuredSave("Structured set identity is not owned by this Workout Exercise.");
+          return failStructuredSave("Structured set identity is not owned by this Workout Exercise.", reconciledDraft);
         }
         if (draftSet.id && existingSetById.has(draftSet.id)) continue;
         const { data, error: insertError } = await client
@@ -285,15 +294,17 @@ export function useFitnessSessionDetails(
           .select("*")
           .single();
         if (insertError || !data) {
-          return failStructuredSave(`Set details could not be added. ${insertError?.message ?? "Try again."}`);
+          return failStructuredSave(`Set details could not be added. ${insertError?.message ?? "Try again."}`, reconciledDraft);
         }
+        desiredSetIds.add(data.id);
         persistedSets.push(data);
+        reconciledDraft = reconcileHealthWorkoutSetDraft(reconciledDraft, exerciseIndex, setIndex, data.id);
       }
     }
-    for (const [exerciseIndex] of draft.exercises.entries()) {
+    for (const [exerciseIndex] of reconciledDraft.exercises.entries()) {
       const persistedExercise = persistedExercises[exerciseIndex];
       if (!persistedExercise) {
-        return failStructuredSave("Structured exercise details could not be matched for saving.");
+        return failStructuredSave("Structured exercise details could not be matched for saving.", reconciledDraft);
       }
       const existingSetById = new Map((existingSetsByExerciseId.get(persistedExercise.id) ?? []).map((set) => [set.id, set]));
       for (const { draftSet, input } of preparedSets[exerciseIndex] ?? []) {
@@ -308,7 +319,7 @@ export function useFitnessSessionDetails(
           .select("*")
           .single();
         if (updateError || !data) {
-          return failStructuredSave(`Set details could not be updated. ${updateError?.message ?? "Try again."}`);
+          return failStructuredSave(`Set details could not be updated. ${updateError?.message ?? "Try again."}`, reconciledDraft);
         }
         persistedSets.push(data);
       }
@@ -330,7 +341,7 @@ export function useFitnessSessionDetails(
           .eq("workout_exercise_id", workoutExerciseId)
           .in("id", ids);
         if (deleteError) {
-          return failStructuredSave(`Some removed sets could not be deleted. ${deleteError.message}`);
+          return failStructuredSave(`Some removed sets could not be deleted. ${deleteError.message}`, reconciledDraft);
         }
       }
     }
@@ -344,7 +355,7 @@ export function useFitnessSessionDetails(
         .eq("workout_id", workoutId)
         .in("id", exercisesToRemove.map((exercise) => exercise.id));
       if (deleteError) {
-        return failStructuredSave(`Some removed exercises could not be deleted. ${deleteError.message}`);
+        return failStructuredSave(`Some removed exercises could not be deleted. ${deleteError.message}`, reconciledDraft);
       }
     }
 
@@ -355,7 +366,7 @@ export function useFitnessSessionDetails(
       ...persistedSets,
     ]);
     setError(null);
-    return true;
+    return { draft: reconciledDraft, ok: true };
   }
 
   function removeLocalWorkoutSessionDetails(workoutId: string) {
@@ -364,10 +375,10 @@ export function useFitnessSessionDetails(
     setWorkoutSets((current) => current.filter((set) => !exerciseIds.has(set.workout_exercise_id)));
   }
 
-  async function failStructuredSave(message: string) {
+  async function failStructuredSave(message: string, draft: HealthWorkoutStructuredDraft): Promise<HealthWorkoutSessionSaveResult> {
     await reload();
     reportError(message);
-    return false;
+    return { draft, ok: false };
   }
 
   return {

@@ -25,6 +25,14 @@ export type HealthFitnessPlanItemDraft = {
   notes: string;
 };
 
+export function reconcileHealthFitnessPlanItemDraft(
+  items: readonly HealthFitnessPlanItemDraft[],
+  itemIndex: number,
+  persistedId: string,
+) {
+  return items.map((item, index) => index === itemIndex ? { ...item, id: persistedId } : item);
+}
+
 export type HealthFitnessPlanItemWeekStatus = HealthFitnessPlanItem & {
   activeForCurrentWeek: boolean;
   completedForCurrentWeek: boolean;

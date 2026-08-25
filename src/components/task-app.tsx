@@ -166,6 +166,7 @@ import {
 } from "@/lib/focus-utils";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { createBrowserSupabaseClient, subscribeToBrowserAuth } from "@/lib/supabase";
+import { readHealthTabPreference, subscribeToHealthTabPreference } from "@/lib/health-tab-preference";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { getLevelProgress } from "@/lib/economy-levels";
 import { buildHealthReminderTemplate, type HealthReminderTemplateKey, type HealthSleepKind } from "@/lib/health-utils";
@@ -579,7 +580,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.46";
+const APP_VERSION = "7.11.47";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1291,6 +1292,8 @@ export function TaskApp() {
     waterEntries: healthWaterEntries,
     workouts: healthWorkouts,
   } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health");
+  const activeHealthTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
+  const fitnessHooksActive = activePage === "Health" && activeHealthTab === "Fitness";
   const {
     archivePlan: archiveFitnessPlan,
     archivePlanItem: archiveFitnessPlanItem,
@@ -1304,7 +1307,7 @@ export function TaskApp() {
     updatePlan: updateFitnessPlan,
     updatePlanItem: updateFitnessPlanItem,
     workoutPlanItemLinks,
-  } = useFitnessPlans(supabase, session?.user?.id ?? null, setMessage, activePage === "Health");
+  } = useFitnessPlans(supabase, session?.user?.id ?? null, setMessage, fitnessHooksActive);
   const {
     archiveExercise,
     createExercise,
@@ -1318,7 +1321,7 @@ export function TaskApp() {
     updateExercise,
     workoutExercises,
     workoutSets,
-  } = useFitnessSessionDetails(supabase, session?.user?.id ?? null, setMessage, activePage === "Health");
+  } = useFitnessSessionDetails(supabase, session?.user?.id ?? null, setMessage, fitnessHooksActive);
   async function deleteHealthWorkoutWithStructuredDetails(workoutId: string) {
     const deleted = await deleteHealthWorkout(workoutId);
     if (deleted) {

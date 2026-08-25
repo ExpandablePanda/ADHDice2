@@ -5,6 +5,8 @@ import { test } from "node:test";
 import type { HealthExercise, HealthWorkoutExercise, HealthWorkoutSet } from "@/lib/database.types";
 import {
   getHealthWorkoutStructuredSummary,
+  reconcileHealthWorkoutExerciseDraft,
+  reconcileHealthWorkoutSetDraft,
   validateHealthWorkoutStructuredDraft,
   type HealthWorkoutStructuredDraft,
 } from "@/lib/health-fitness-session";
@@ -199,6 +201,40 @@ test("failed child persistence keeps retry in the existing workout edit flow", (
   assert.match(fitnessTab, /setEditingWorkoutId\(savedWorkout\.id\)/);
   assert.match(fitnessTab, /Workout saved, but exercise details could not be saved\. Try again\./);
   assert.match(fitnessTab, /if \(editingWorkoutId\)/);
+});
+
+test("a partially saved Workout Exercise is reconciled before child retry", () => {
+  const newDraft = draft({ exercises: [{ ...draft().exercises[0]!, id: undefined, sets: [{ durationSeconds: "", id: undefined, notes: "", reps: "12" }, { durationSeconds: "", id: undefined, notes: "", reps: "10" }] }] });
+  const afterExerciseInsert = reconcileHealthWorkoutExerciseDraft(newDraft, 0, "persisted-exercise");
+  const afterFirstSetInsert = reconcileHealthWorkoutSetDraft(afterExerciseInsert, 0, 0, "persisted-set");
+  assert.equal(afterFirstSetInsert.exercises[0]?.id, "persisted-exercise");
+  assert.equal(afterFirstSetInsert.exercises[0]?.sets[0]?.id, "persisted-set");
+  assert.equal(afterFirstSetInsert.exercises[0]?.sets[1]?.id, undefined);
+  assert.equal(afterFirstSetInsert.exercises.filter((exercise) => !exercise.id).length, 0);
+  assert.equal(afterFirstSetInsert.exercises[0]?.sets.filter((set) => !set.id).length, 1);
+  assert.match(sessionHook, /return \{ draft: reconciledDraft, ok: false \}/);
+  assert.match(fitnessTab, /setStructuredDraft\(structuredSave\.draft\)/);
+});
+
+test("structured retry reuses reconciled Exercise and Set IDs and the canonical workout edit path", () => {
+  const reconciled = reconcileHealthWorkoutSetDraft(
+    reconcileHealthWorkoutExerciseDraft(draft({ exercises: [{ ...draft().exercises[0]!, id: undefined, sets: [{ durationSeconds: "", id: undefined, notes: "", reps: "12" }] }] }), 0, "persisted-exercise"),
+    0,
+    0,
+    "persisted-set",
+  );
+  assert.deepEqual(reconciled.exercises.map((exercise) => exercise.id), ["persisted-exercise"]);
+  assert.deepEqual(reconciled.exercises[0]?.sets.map((set) => set.id), ["persisted-set"]);
+  assert.match(fitnessTab, /setEditingWorkoutId\(savedWorkout\.id\)/);
+  assert.match(sessionHook, /reconcileHealthWorkoutExerciseDraft\(reconciledDraft, exerciseIndex, data\.id\)/);
+  assert.match(sessionHook, /reconcileHealthWorkoutSetDraft\(reconciledDraft, exerciseIndex, setIndex, data\.id\)/);
+  assert.match(sessionHook, /additions\/updates before removals|setsToRemove/);
+});
+
+test("Fitness hooks are gated by the existing Health Fitness tab signal", () => {
+  assert.match(taskApp, /const fitnessHooksActive = activePage === "Health" && activeHealthTab === "Fitness"/);
+  assert.match(taskApp, /useFitnessPlans\([^\n]*fitnessHooksActive\)/);
+  assert.match(taskApp, /useFitnessSessionDetails\([^\n]*fitnessHooksActive\)/);
 });
 
 test("Fitness Plan associations remain after structured details", () => {
