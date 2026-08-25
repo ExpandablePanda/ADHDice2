@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.54`.
+- Current working app version: `7.11.55`.
 - Current release group: `7.11.x` Active Workout Runtime Stabilization.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,10 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.55 Food shortcuts use the inline meal ledger
+
+Favorites and Recent Foods now only populate a visible active inline meal editor. With no active Breakfast, Lunch, Dinner, or Snack editor, both shortcut actions are disabled with `Open a meal first`; they cannot save or mutate a hidden draft. Favorite and Recent Food selection preserves the selected history date, active meal section, current time, and normal inline Add confirmation. All new food persistence remains on `handleSaveMeal` → `addMealEntry`. No SQL or migration was added.
 
 ## 2026-08-25 7.11.54 Inline meal ledger food entry
 

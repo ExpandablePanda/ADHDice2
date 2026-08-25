@@ -1078,32 +1078,54 @@ export function HealthPage({
     }
   }
 
-  async function handleFavoriteReuse(item: HealthFoodLibraryItem) {
-    const selection = mealFoodSelectionFromLibraryItem(item);
-    const calculation = calculateMealSelection(selection, 1, "serving");
-    if (!calculation) {
+  function handleFavoriteReuse(item: HealthFoodLibraryItem) {
+    if (activeMealEntrySlot === null) {
       return;
     }
-    await addMealEntry({
+    const selection = mealFoodSelectionFromLibraryItem(item);
+    applyLookupResult({
       attribution: selection.attribution,
       barcode: selection.barcode,
-      brand_name: emptyToNull(selection.brandName),
-      calories: Math.round(calculation.nutrientTotals.calories),
-      carbs_g: calculation.nutrientTotals.carbs_g,
-      entry_date: today,
-      fat_g: calculation.nutrientTotals.fat_g,
-      food_name: selection.foodName,
-      meal_slot: mealDraft.mealSlot,
-      protein_g: calculation.nutrientTotals.protein_g,
-      provider: selection.provider ?? "manual",
-      provider_item_id: selection.providerItemId,
-      serving_label: formatConsumedMealLabel(calculation, selection.servingLabel),
-      source_food_id: selection.sourceFoodId,
-      consumed_quantity: calculation.consumed.quantity,
-      consumed_unit: calculation.consumed.unit,
-      serving_fraction: calculation.servingFraction,
-      food_snapshot: buildMealFoodSnapshot(selection),
-      nutrition_snapshot: calculation.nutrientTotals,
+      brandName: selection.brandName,
+      foodCategory: selection.foodCategory,
+      calories: selection.calories,
+      carbs: selection.carbs,
+      fat: selection.fat,
+      foodName: selection.foodName,
+      protein: selection.protein,
+      provider: selection.provider,
+      providerItemId: selection.providerItemId,
+      servingLabel: selection.servingLabel,
+      sourceFoodId: selection.sourceFoodId,
+      servingQuantity: selection.servingQuantity,
+      servingUnit: selection.servingUnit,
+      servingMeasureValue: selection.servingMeasureValue,
+      servingMeasureUnit: selection.servingMeasureUnit,
+    });
+  }
+
+  function handleRecentFoodReuse(item: HealthMealEntry) {
+    if (activeMealEntrySlot === null) {
+      return;
+    }
+    applyLookupResult({
+      attribution: item.attribution,
+      barcode: item.barcode,
+      brandName: item.brand_name,
+      foodCategory: item.food_snapshot?.food_category,
+      calories: item.calories,
+      carbs: item.carbs_g,
+      fat: item.fat_g,
+      foodName: item.food_name,
+      protein: item.protein_g,
+      provider: item.provider,
+      providerItemId: item.provider_item_id ?? item.id,
+      servingLabel: item.serving_label,
+      sourceFoodId: item.source_food_id ?? item.food_snapshot?.source_food_id,
+      servingQuantity: item.food_snapshot?.serving_quantity,
+      servingUnit: item.food_snapshot?.serving_unit,
+      servingMeasureValue: item.food_snapshot?.serving_measure_value,
+      servingMeasureUnit: item.food_snapshot?.serving_measure_unit,
     });
   }
 
@@ -1947,8 +1969,14 @@ export function HealthPage({
                             </p>
                           </button>
                           <div className="flex min-w-0 max-w-full flex-wrap justify-end gap-2">
-                            <button className="ui-pill-button-strong-light shrink-0" onClick={() => { void handleFavoriteReuse(item); }} type="button">
-                              Add Today
+                            <button
+                              aria-label={activeMealEntrySlot === null ? "Open a meal first" : `Use in ${getMealSlotLabel(activeMealEntrySlot)}`}
+                              className="ui-pill-button-strong-light shrink-0 disabled:cursor-not-allowed disabled:opacity-60"
+                              disabled={activeMealEntrySlot === null}
+                              onClick={() => handleFavoriteReuse(item)}
+                              type="button"
+                            >
+                              {activeMealEntrySlot === null ? "Open a meal first" : `Use in ${getMealSlotLabel(activeMealEntrySlot)}`}
                             </button>
                             <button className="ui-pill-button-danger-light shrink-0" onClick={() => { void handleRemoveFavorite(item); }} type="button">
                               Remove
@@ -1981,31 +2009,13 @@ export function HealthPage({
                             </p>
                           </div>
                           <button
-                            className="ui-pill-button-strong-light shrink-0"
-                            onClick={() =>
-                              applyLookupResult({
-                                attribution: item.attribution,
-                                barcode: item.barcode,
-                                brandName: item.brand_name,
-                                foodCategory: item.food_snapshot?.food_category,
-                                calories: item.calories,
-                                carbs: item.carbs_g,
-                                fat: item.fat_g,
-                                foodName: item.food_name,
-                                protein: item.protein_g,
-                                provider: item.provider,
-                                providerItemId: item.provider_item_id ?? item.id,
-                                servingLabel: item.serving_label,
-                                sourceFoodId: item.source_food_id ?? item.food_snapshot?.source_food_id,
-                                servingQuantity: item.food_snapshot?.serving_quantity,
-                                servingUnit: item.food_snapshot?.serving_unit,
-                                servingMeasureValue: item.food_snapshot?.serving_measure_value,
-                                servingMeasureUnit: item.food_snapshot?.serving_measure_unit,
-                              })
-                            }
+                            aria-label={activeMealEntrySlot === null ? "Open a meal first" : `Use in ${getMealSlotLabel(activeMealEntrySlot)}`}
+                            className="ui-pill-button-strong-light shrink-0 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={activeMealEntrySlot === null}
+                            onClick={() => handleRecentFoodReuse(item)}
                             type="button"
                           >
-                            Fill Draft
+                            {activeMealEntrySlot === null ? "Open a meal first" : `Use in ${getMealSlotLabel(activeMealEntrySlot)}`}
                           </button>
                         </div>
                       </div>

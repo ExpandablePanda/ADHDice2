@@ -8,6 +8,9 @@ const healthUtilsSource = readFileSync(new URL("../src/lib/health-utils.ts", imp
 const foodSource = source.slice(source.indexOf('{activeTab === "Food"'), source.indexOf('{activeTab === "Water"'));
 const inlineEditorSource = source.slice(source.indexOf("function renderMealEntryEditor()"), source.indexOf("\n\n  return (", source.indexOf("function renderMealEntryEditor()")));
 const saveSource = source.slice(source.indexOf("async function handleSaveMeal()"), source.indexOf("function openMealComposerForSlot"));
+const favoriteHandlerSource = source.slice(source.indexOf("function handleFavoriteReuse"), source.indexOf("async function handleRemoveFavorite"));
+const recentHandlerSource = source.slice(source.indexOf("function handleRecentFoodReuse"), source.indexOf("async function handleRemoveFavorite"));
+const lookupHandlerSource = source.slice(source.indexOf("function applyLookupResult"), source.indexOf("function applyMealFoodPickerSuggestion"));
 
 test("the Food page no longer renders a global meal composer", () => {
   assert.doesNotMatch(source, /mealComposerRef/);
@@ -96,9 +99,52 @@ test("future timestamp validation remains on the canonical selected-date save pa
   assert.match(source, /Future meal times cannot be saved\./);
 });
 
-test("Favorite Add Today remains an explicit today-only action", () => {
-  assert.match(source, /entry_date: today,/);
-  assert.match(source, /Add Today/);
+test("Favorite reuse cannot save or silently choose a meal when the editor is closed", () => {
+  assert.match(favoriteHandlerSource, /if \(activeMealEntrySlot === null\) \{\s+return;/);
+  assert.doesNotMatch(favoriteHandlerSource, /addMealEntry/);
+  assert.doesNotMatch(favoriteHandlerSource, /entry_date:/);
+  assert.doesNotMatch(favoriteHandlerSource, /meal_slot:/);
+  assert.doesNotMatch(favoriteHandlerSource, /today/);
+  assert.match(foodSource, /disabled=\{activeMealEntrySlot === null\}/);
+  assert.match(foodSource, /Open a meal first/);
+});
+
+test("Favorite reuse fills the active Breakfast, Lunch, Dinner, or Snack editor", () => {
+  assert.match(favoriteHandlerSource, /applyLookupResult\(\{/);
+  assert.match(favoriteHandlerSource, /foodName: selection\.foodName/);
+  assert.match(favoriteHandlerSource, /servingMeasureUnit: selection\.servingMeasureUnit/);
+  assert.match(foodSource, /`Use in \$\{getMealSlotLabel\(activeMealEntrySlot\)\}`/);
+  assert.match(source, /activeMealEntrySlot === slot \? renderMealEntryEditor\(\) : null/);
+  assert.match(saveSource, /entry_date: foodHistoryDate,/);
+  assert.match(saveSource, /meal_slot: activeMealEntrySlot,/);
+});
+
+test("Favorite reuse preserves selected date, active slot, current time, and normal Add confirmation", () => {
+  assert.match(lookupHandlerSource, /setMealDraft\(\(current\) => \(\{\s+\.\.\.current,/);
+  assert.doesNotMatch(lookupHandlerSource, /date:|mealSlot:/);
+  assert.match(favoriteHandlerSource, /applyLookupResult\(\{/);
+  assert.match(source, /time: value/);
+  assert.match(inlineEditorSource, /disabled=\{!canSaveMeal\}/);
+  assert.match(inlineEditorSource, /Add Food/);
+  assert.doesNotMatch(favoriteHandlerSource, /await/);
+});
+
+test("Recent Food reuse cannot invisibly fill a closed editor", () => {
+  assert.match(recentHandlerSource, /if \(activeMealEntrySlot === null\) \{\s+return;/);
+  assert.match(recentHandlerSource, /applyLookupResult\(\{/);
+  assert.doesNotMatch(recentHandlerSource, /addMealEntry/);
+  assert.match(foodSource, /disabled=\{activeMealEntrySlot === null\}/);
+});
+
+test("Recent Food reuse fills the active editor without changing date or meal slot", () => {
+  assert.match(recentHandlerSource, /foodName: item\.food_name/);
+  assert.match(recentHandlerSource, /providerItemId: item\.provider_item_id \?\? item\.id/);
+  assert.match(recentHandlerSource, /sourceFoodId: item\.source_food_id \?\? item\.food_snapshot\?\.source_food_id/);
+  assert.match(lookupHandlerSource, /setMealDraft\(\(current\) => \(\{\s+\.\.\.current,/);
+  assert.doesNotMatch(lookupHandlerSource, /date:|mealSlot:/);
+  assert.match(saveSource, /entry_date: foodHistoryDate,/);
+  assert.match(saveSource, /meal_slot: activeMealEntrySlot,/);
+  assert.match(inlineEditorSource, /disabled=\{!canSaveMeal\}/);
 });
 
 test("canonical persistence, editing, deletion, and totals remain unchanged", () => {
