@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.56`.
+- Current working app version: `7.11.57`.
 - Current release group: `7.11.x` Active Workout Runtime Stabilization.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,10 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.57 iOS Barcode Camera Permission Readiness
+
+The 7.11.56 scanner source review passed, but real iOS review found that `ios/App/App/Info.plist` did not declare `NSCameraUsageDescription`. This checkpoint adds the required native camera privacy declaration for real-device scanner QA. The scanner still uses the shared `HealthBarcodeScanner` with `BarcodeDetector` plus `getUserMedia`; no native scanner plugin has been added. Real device QA is the next gate. If `BarcodeDetector` or WKWebView support fails after camera permission is correct, diagnose a native scanner implementation in a follow-up rather than assuming the shared WebView path is sufficient.
 
 ## 2026-08-25 7.11.56 Compact Food entry and shared barcode scanning
 
