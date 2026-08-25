@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
+import { useActiveFitnessWorkout } from "@/hooks/useActiveFitnessWorkout";
 import type {
   HealthExercise,
   HealthExerciseInsert,
@@ -44,6 +45,7 @@ import {
 } from "@/lib/health-fitness";
 import { getHealthWorkoutStructuredSummary, type HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
 import { getHealthWorkoutPlanItemIds } from "@/lib/health-fitness-plans";
+import { saveHealthWorkoutBundle } from "@/lib/health-workout-save";
 import {
   clampPercent,
   formatHealthDateLabel,
@@ -57,6 +59,7 @@ import { FitnessPlanAssociationPicker, HealthFitnessPlansPanel } from "./health-
 import { HealthFitnessExerciseLibrary } from "./health-fitness-exercise-library";
 import { HealthFitnessReorderList } from "./health-fitness-reorder-list";
 import { HealthFitnessSessionEditor } from "./health-fitness-session-editor";
+import { HealthActiveWorkout } from "./health-active-workout";
 
 type HealthFitnessTabProps = {
   addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<HealthWorkout | null>;
@@ -179,6 +182,14 @@ export function HealthFitnessTab({
     return options;
   }, [draft.workoutType, editingWorkoutId, workoutTypes]);
   const savedWorkoutTitles = profile.workout_title_options ?? [];
+  const activeWorkout = useActiveFitnessWorkout({
+    addWorkout,
+    saveWorkoutPlanItemLinks,
+    saveWorkoutSessionDetails,
+    updateWorkout,
+    userId: profile.user_id,
+    workoutTypes,
+  });
 
   useEffect(() => {
     if (!isFormOpen || !pendingRevealRef.current) {
@@ -386,8 +397,21 @@ export function HealthFitnessTab({
       return;
     }
 
-    if (editingWorkoutId) {
-      const saved = await updateWorkout(editingWorkoutId, {
+    const hasExistingOrSelectedLinks = editingWorkoutId
+      ? workoutPlanItemLinks.some((link) => link.workout_id === editingWorkoutId) || selectedPlanItemIds.length > 0
+      : selectedPlanItemIds.length > 0;
+    const bundleSave = await saveHealthWorkoutBundle({
+      addWorkout,
+      canonicalWorkoutId: editingWorkoutId,
+      draft: structuredDraft,
+      hasExistingPlanLinks: hasExistingOrSelectedLinks,
+      planItemIds: selectedPlanItemIds,
+      saveWorkoutPlanItemLinks,
+      saveWorkoutSessionDetails,
+      shouldSavePlanLinks: hasExistingOrSelectedLinks,
+      shouldSaveStructuredDetails: editingWorkoutId !== null || structuredDraft.exercises.length > 0,
+      updateWorkout,
+      workout: {
         active_calories: result.value.active_calories ?? null,
         duration_seconds: result.value.duration_seconds,
         ended_at: result.value.ended_at ?? null,
@@ -396,40 +420,16 @@ export function HealthFitnessTab({
         title: result.value.title,
         workout_date: result.value.workout_date,
         workout_type: result.value.workout_type,
-      });
-      if (!saved) {
-        return;
-      }
-      const structuredSave = await saveWorkoutSessionDetails(editingWorkoutId, structuredDraft);
-      setStructuredDraft(structuredSave.draft);
-      if (!structuredSave.ok) {
-        setFormError("Workout updated, but exercise details could not be saved. Try again.");
-        return;
-      }
-      const hasExistingOrSelectedLinks = workoutPlanItemLinks.some((link) => link.workout_id === editingWorkoutId) || selectedPlanItemIds.length > 0;
-      if (hasExistingOrSelectedLinks && !(await saveWorkoutPlanItemLinks(editingWorkoutId, selectedPlanItemIds))) {
-        setFormError("Workout updated, but its Fitness Plan associations could not be saved. Try again.");
-        return;
-      }
-      resetForm();
-      return;
-    }
-
-    const savedWorkout = await addWorkout(result.value);
-    if (!savedWorkout) {
-      return;
-    }
-    setEditingWorkoutId(savedWorkout.id);
-    if (structuredDraft.exercises.length > 0) {
-      const structuredSave = await saveWorkoutSessionDetails(savedWorkout.id, structuredDraft);
-      setStructuredDraft(structuredSave.draft);
-      if (!structuredSave.ok) {
-        setFormError("Workout saved, but exercise details could not be saved. Try again.");
-        return;
-      }
-    }
-    if (selectedPlanItemIds.length > 0 && !(await saveWorkoutPlanItemLinks(savedWorkout.id, selectedPlanItemIds))) {
-      setFormError("Workout saved, but its Fitness Plan associations could not be saved. Try again.");
+      },
+    });
+    setStructuredDraft(bundleSave.draft);
+    if (!bundleSave.ok) {
+      if (!editingWorkoutId && bundleSave.canonicalWorkoutId) setEditingWorkoutId(bundleSave.canonicalWorkoutId);
+      setFormError(bundleSave.failedStage === "plans"
+        ? "Workout saved, but its Fitness Plan associations could not be saved. Try again."
+        : bundleSave.failedStage === "structured"
+          ? `${editingWorkoutId ? "Workout updated" : "Workout saved"}, but exercise details could not be saved. Try again.`
+          : "Workout could not be saved. Try again.");
       return;
     }
     resetForm();
@@ -453,6 +453,9 @@ export function HealthFitnessTab({
             type="button"
           >
             Fitness Settings
+          </AdhdChip>
+          <AdhdChip icon={<Timer aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { activeWorkout.startWorkout(); }} tone="purple" type="button">
+            Start Workout
           </AdhdChip>
           <AdhdChip icon={<Plus aria-hidden="true" className="h-3.5 w-3.5" />} onClick={isFormOpen ? resetForm : openCreateForm} tone="purple" type="button">
             {isFormOpen ? "Cancel" : "Log Workout"}
@@ -602,6 +605,8 @@ export function HealthFitnessTab({
           ) : null}
         </div>
       </div>
+
+      <HealthActiveWorkout controller={activeWorkout} exerciseLibrary={exerciseLibrary} planItems={planItems} plans={plans} workoutTypes={workoutTypes} />
 
       <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
         <HealthCollapsiblePanel

@@ -1322,11 +1322,17 @@ export function useHealth(
 
     let nextRow = localRow;
     if (client && storageMode === "remote" && workoutRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_workouts")
-        .insert({ ...normalizedInput, user_id: userId })
-        .select("*")
-        .single();
+      const workoutQuery = client
+        .from("adhdice_health_workouts");
+      const { data, error } = normalizedInput.id
+        ? await workoutQuery
+          .upsert({ ...normalizedInput, user_id: userId }, { onConflict: "id" })
+          .select("*")
+          .single()
+        : await workoutQuery
+          .insert({ ...normalizedInput, user_id: userId })
+          .select("*")
+          .single();
       if (error) {
         if (isMissingHealthPersistence(error.message)) {
           workoutRemoteEnabledRef.current = false;

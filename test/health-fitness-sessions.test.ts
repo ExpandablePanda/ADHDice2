@@ -284,8 +284,8 @@ test("Workout Exercises reference the canonical adhdice_health_workouts authorit
 
 test("no second workout or session authority is introduced", () => {
   assert.doesNotMatch(migration, /create table if not exists public\.adhdice_health_(sessions|fitness_sessions|workout_sessions)/);
-  assert.match(fitnessTab, /addWorkout\(result\.value\)/);
-  assert.match(fitnessTab, /saveWorkoutSessionDetails\(/);
+  assert.match(fitnessTab, /saveHealthWorkoutBundle\(/);
+  assert.match(fitnessTab, /saveWorkoutSessionDetails/);
 });
 
 test("owner-scoped foreign keys prevent cross-user relationships", () => {
@@ -323,9 +323,9 @@ test("structured edits use stable IDs and additions/updates before removals", ()
 });
 
 test("failed child persistence keeps retry in the existing workout edit flow", () => {
-  assert.match(fitnessTab, /setEditingWorkoutId\(savedWorkout\.id\)/);
-  assert.match(fitnessTab, /Workout saved, but exercise details could not be saved\. Try again\./);
-  assert.match(fitnessTab, /if \(editingWorkoutId\)/);
+  assert.match(fitnessTab, /bundleSave\.canonicalWorkoutId/);
+  assert.match(fitnessTab, /exercise details could not be saved\. Try again\./);
+  assert.match(fitnessTab, /editingWorkoutId/);
 });
 
 test("a partially saved Workout Exercise is reconciled before child retry", () => {
@@ -338,7 +338,7 @@ test("a partially saved Workout Exercise is reconciled before child retry", () =
   assert.equal(afterFirstSetInsert.exercises.filter((exercise) => !exercise.id).length, 0);
   assert.equal(afterFirstSetInsert.exercises[0]?.sets.filter((set) => !set.id).length, 1);
   assert.match(sessionHook, /return \{ draft: reconciledDraft, ok: false \}/);
-  assert.match(fitnessTab, /setStructuredDraft\(structuredSave\.draft\)/);
+  assert.match(fitnessTab, /setStructuredDraft\(bundleSave\.draft\)/);
 });
 
 test("structured retry reuses reconciled Exercise and Set IDs and the canonical workout edit path", () => {
@@ -350,7 +350,7 @@ test("structured retry reuses reconciled Exercise and Set IDs and the canonical 
   );
   assert.deepEqual(reconciled.exercises.map((exercise) => exercise.id), ["persisted-exercise"]);
   assert.deepEqual(reconciled.exercises[0]?.sets.map((set) => set.id), ["persisted-set"]);
-  assert.match(fitnessTab, /setEditingWorkoutId\(savedWorkout\.id\)/);
+  assert.match(fitnessTab, /canonicalWorkoutId: editingWorkoutId/);
   assert.match(sessionHook, /reconcileHealthWorkoutExerciseDraft\(reconciledDraft, exerciseIndex, data\.id\)/);
   assert.match(sessionHook, /reconcileHealthWorkoutSetDraft\(reconciledDraft, exerciseIndex, setIndex, data\.id\)/);
   assert.match(sessionHook, /additions\/updates before removals|setsToRemove/);

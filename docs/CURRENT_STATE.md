@@ -5,19 +5,23 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.50`.
-- Current release group: `7.11.x` structured Fitness session evidence.
+- Current working app version: `7.11.51`.
+- Current release group: `7.11.x` Active Workout Sandbox MVP.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
-- The next planned Fitness feature is `7.11.51 Active Workout Sandbox MVP`, using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
+- Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 
 ## 2026-08-25 7.11.50 Fitness settings reorder, set flow, and history totals
 
 The structured Set builder now grows above a bottom Add Set action. Workout Types and Exercises share the same clean settings-row treatment and pointer-based reorder implementation. Exercise Library ordering is persisted per user through `adhdice_health_exercises.sort_order`, with existing rows backfilled alphabetically and new rows appended after active exercises. Structured Workout History now shows per-exercise aggregate reps or duration while preserving individual Set values and the canonical Workout duration. The `add_health_exercise_sort_order_7_11_50.sql` migration is authored only and must be applied manually before browser QA. No live SQL, browser QA, builds, or device deployment ran. The next planned feature is `7.11.51 Active Workout Sandbox MVP`.
+
+## 2026-08-25 7.11.51 Active Workout Sandbox MVP
+
+Active Workout is a temporary versioned local runtime at `adhdice-health-active-workout:<userId>` (version 1). It restores after same-device navigation or reload and uses timestamp-derived overall and per-Set elapsed time; display intervals are not time authority. The canonical Workout is created or reused only during Finish Workout, followed by structured Workout Exercise/Set persistence and explicit Fitness Plan links. Partial saves retain the runtime and `canonicalWorkoutId` for retry, while Discard refuses to silently remove a partially canonicalized workout. Cross-device runtime sync is deferred. No new SQL was added or run; no native build or device deployment ran.
 
 ## 2026-08-25 7.11.49 Exercise selection, per-workout measurement, and chip alignment
 
