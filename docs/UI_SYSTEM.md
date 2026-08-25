@@ -33,7 +33,8 @@ legible without becoming visually loud or crowded.
 - Preserve chip geometry when introducing a new semantic tone; color may change
   for meaning, but the basic density and shape should remain stable.
 - Controls containing an icon and visible text use explicit inline-flex alignment
-  and `gap-1.5` by default. Use `gap-2` only for an established larger family.
+  and the compact `gap-1` rhythm by default. Use `gap-2` only for an established
+  larger family.
 - Do not rely on JSX whitespace, literal label spaces, or one-off icon margins
   when a flex gap is available.
 - Use a larger non-chip text control only for a documented action-row need or

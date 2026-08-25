@@ -511,6 +511,58 @@ create table public.adhdice_health_workouts (
   unique (user_id, id)
 );
 
+create table public.adhdice_health_exercises (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null check (char_length(trim(name)) > 0),
+  default_measurement text not null check (default_measurement in ('reps', 'duration')),
+  sort_order integer not null default 0 check (sort_order >= 0),
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, id)
+);
+
+create table public.adhdice_health_workout_exercises (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  workout_id uuid not null,
+  exercise_id uuid not null,
+  exercise_name text not null check (char_length(trim(exercise_name)) > 0),
+  measurement_type text not null check (measurement_type in ('reps', 'duration')),
+  sort_order integer not null default 0 check (sort_order >= 0),
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, id),
+  foreign key (user_id, workout_id)
+    references public.adhdice_health_workouts (user_id, id)
+    on delete cascade,
+  foreign key (user_id, exercise_id)
+    references public.adhdice_health_exercises (user_id, id)
+    on delete restrict
+);
+
+create table public.adhdice_health_workout_sets (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  workout_exercise_id uuid not null,
+  sort_order integer not null default 0 check (sort_order >= 0),
+  reps integer,
+  duration_seconds integer,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, id),
+  check (
+    (reps is not null and reps > 0 and duration_seconds is null)
+    or (reps is null and duration_seconds is not null and duration_seconds > 0)
+  ),
+  foreign key (user_id, workout_exercise_id)
+    references public.adhdice_health_workout_exercises (user_id, id)
+    on delete cascade
+);
+
 create table public.adhdice_health_fitness_plans (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -654,6 +706,12 @@ create index adhdice_health_workouts_user_date_idx
 create unique index adhdice_health_workouts_user_source_external_id_idx
   on public.adhdice_health_workouts (user_id, source, source_external_id)
   where source_external_id is not null;
+create index adhdice_health_exercises_user_active_order_idx
+  on public.adhdice_health_exercises (user_id, archived_at, sort_order, created_at, id);
+create index adhdice_health_workout_exercises_user_workout_order_idx
+  on public.adhdice_health_workout_exercises (user_id, workout_id, sort_order, created_at);
+create index adhdice_health_workout_sets_user_exercise_order_idx
+  on public.adhdice_health_workout_sets (user_id, workout_exercise_id, sort_order, created_at);
 create index adhdice_health_fitness_plans_user_active_idx
   on public.adhdice_health_fitness_plans (user_id, archived_at, starts_on);
 create index adhdice_health_fitness_plan_items_user_schedule_idx
@@ -697,6 +755,9 @@ alter table public.adhdice_health_meal_entries enable row level security;
 alter table public.adhdice_health_weight_entries enable row level security;
 alter table public.adhdice_health_metric_entries enable row level security;
 alter table public.adhdice_health_workouts enable row level security;
+alter table public.adhdice_health_exercises enable row level security;
+alter table public.adhdice_health_workout_exercises enable row level security;
+alter table public.adhdice_health_workout_sets enable row level security;
 alter table public.adhdice_health_fitness_plans enable row level security;
 alter table public.adhdice_health_fitness_plan_items enable row level security;
 alter table public.adhdice_health_workout_plan_item_links enable row level security;
@@ -1073,6 +1134,24 @@ create policy "Users can manage their own health workouts"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+create policy "Users can manage their own health exercises"
+  on public.adhdice_health_exercises
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can manage their own health workout exercises"
+  on public.adhdice_health_workout_exercises
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can manage their own health workout sets"
+  on public.adhdice_health_workout_sets
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
 create policy "Users can manage their own health fitness plans"
   on public.adhdice_health_fitness_plans
   for all
@@ -1242,6 +1321,21 @@ create trigger adhdice_health_metric_entries_set_updated_at
 
 create trigger adhdice_health_workouts_set_updated_at
   before update on public.adhdice_health_workouts
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_exercises_set_updated_at
+  before update on public.adhdice_health_exercises
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_workout_exercises_set_updated_at
+  before update on public.adhdice_health_workout_exercises
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_workout_sets_set_updated_at
+  before update on public.adhdice_health_workout_sets
   for each row
   execute function public.adhdice_clean_set_updated_at();
 

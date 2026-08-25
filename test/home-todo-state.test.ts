@@ -60,6 +60,79 @@ test("Home todo explicit day placement moves a task into an otherwise empty day"
   assert.deepEqual(laterTaskIds, []);
 });
 
+test("Home todo manual placement consumes only that day's automatic capacity", () => {
+  const unassigned = Array.from({ length: 10 }, (_, index) => `automatic-${index}`);
+  const { sections, laterTaskIds } = buildHomeTodoDaySections(
+    ["pinned-today", ...unassigned],
+    10,
+    new Date("2026-08-23T12:00:00-04:00"),
+    "America/New_York",
+    { "pinned-today": 0 },
+  );
+  assert.equal(sections[0]?.taskIds.length, 10);
+  assert.deepEqual(sections[0]?.taskIds, ["pinned-today", ...unassigned.slice(0, 9)]);
+  assert.deepEqual(sections[1]?.taskIds, ["automatic-9"]);
+  assert.deepEqual(laterTaskIds, []);
+});
+
+test("Home todo does not add automatic tasks to a full pinned day", () => {
+  const pinned = Array.from({ length: 10 }, (_, index) => `pinned-${index}`);
+  const { sections } = buildHomeTodoDaySections(
+    [...pinned, "automatic"],
+    10,
+    new Date("2026-08-23T12:00:00-04:00"),
+    "America/New_York",
+    Object.fromEntries(pinned.map((taskId) => [taskId, 0])),
+  );
+  assert.deepEqual(sections[0]?.taskIds, pinned);
+  assert.deepEqual(sections[1]?.taskIds, ["automatic"]);
+});
+
+test("Home todo preserves pinned tasks above capacity and starts automatic tasks later", () => {
+  const pinned = Array.from({ length: 12 }, (_, index) => `pinned-${index}`);
+  const { sections } = buildHomeTodoDaySections(
+    [...pinned, "automatic-1", "automatic-2"],
+    10,
+    new Date("2026-08-23T12:00:00-04:00"),
+    "America/New_York",
+    Object.fromEntries(pinned.map((taskId) => [taskId, 0])),
+  );
+  assert.deepEqual(sections[0]?.taskIds, pinned);
+  assert.deepEqual(sections[1]?.taskIds, ["automatic-1", "automatic-2"]);
+});
+
+test("Home todo applies pinned capacity independently across days", () => {
+  const pinnedToday = ["today-pinned"];
+  const pinnedTomorrow = ["tomorrow-pinned-1", "tomorrow-pinned-2", "tomorrow-pinned-3"];
+  const automatic = Array.from({ length: 17 }, (_, index) => `automatic-${index}`);
+  const { sections } = buildHomeTodoDaySections(
+    [...pinnedToday, ...pinnedTomorrow, ...automatic],
+    10,
+    new Date("2026-08-23T12:00:00-04:00"),
+    "America/New_York",
+    Object.fromEntries([
+      ...pinnedToday.map((taskId) => [taskId, 0]),
+      ...pinnedTomorrow.map((taskId) => [taskId, 1]),
+    ]),
+  );
+  assert.equal(sections[0]?.taskIds.length, 10);
+  assert.equal(sections[1]?.taskIds.length, 10);
+  assert.deepEqual(sections[2]?.taskIds, ["automatic-16"]);
+});
+
+test("Home todo Later pins do not consume normal-day capacity", () => {
+  const automatic = Array.from({ length: 10 }, (_, index) => `automatic-${index}`);
+  const { sections, laterTaskIds } = buildHomeTodoDaySections(
+    ["later-pinned", ...automatic],
+    10,
+    new Date("2026-08-23T12:00:00-04:00"),
+    "America/New_York",
+    { "later-pinned": 7 },
+  );
+  assert.deepEqual(sections[0]?.taskIds, automatic);
+  assert.deepEqual(laterTaskIds, ["later-pinned"]);
+});
+
 test("Home todo tasks-per-day accepts 10 through 15 and safely defaults invalid values", () => {
   assert.deepEqual([10, 11, 12, 13, 14, 15].map(normalizeHomeTodoTasksPerDay), [10, 11, 12, 13, 14, 15]);
   assert.equal(normalizeHomeTodoTasksPerDay(9), 10);

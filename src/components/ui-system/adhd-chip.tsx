@@ -5,6 +5,7 @@ import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
   TASK_TABLE_CHIP_BASE_CLASS,
   TASK_TABLE_CONTROL_FONT_CLASS,
+  TASK_TABLE_ICON_LABEL_GAP_CLASS,
   TASK_TABLE_LIST_CHIP_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
@@ -95,9 +96,9 @@ export function AdhdChip({
       type={props.type ?? "button"}
       {...props}
     >
-      <span className={joinClasses(TASK_TABLE_CHIP_BASE_CLASS, resolvedToneClassName, className)}>
-        <span className={joinClasses("inline-flex items-center", contentClassName)}>
-          {icon ? <span className="shrink-0">{icon}</span> : null}
+      <span className={joinClasses(TASK_TABLE_CHIP_BASE_CLASS, resolvedToneClassName, icon ? "pl-1.5 pr-2" : null, className)}>
+        <span className={joinClasses("inline-flex items-center", icon ? TASK_TABLE_ICON_LABEL_GAP_CLASS : null, contentClassName)}>
+          {icon ? <span className="inline-flex items-center justify-center shrink-0">{icon}</span> : null}
           {children}
           {count === undefined ? null : (
             <span className={joinClasses("ml-1 opacity-70", countClassName)}>{count}</span>

@@ -1,18 +1,35 @@
 # Current State
 
-Last reviewed: 2026-08-24
+Last reviewed: 2026-08-25
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.45`.
-- Current release group: `7.11.x` Home To-Do membership data-loss safeguard.
+- Current working app version: `7.11.50`.
+- Current release group: `7.11.x` structured Fitness session evidence.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+- The next planned Fitness feature is `7.11.51 Active Workout Sandbox MVP`, using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.50 Fitness settings reorder, set flow, and history totals
+
+The structured Set builder now grows above a bottom Add Set action. Workout Types and Exercises share the same clean settings-row treatment and pointer-based reorder implementation. Exercise Library ordering is persisted per user through `adhdice_health_exercises.sort_order`, with existing rows backfilled alphabetically and new rows appended after active exercises. Structured Workout History now shows per-exercise aggregate reps or duration while preserving individual Set values and the canonical Workout duration. The `add_health_exercise_sort_order_7_11_50.sql` migration is authored only and must be applied manually before browser QA. No live SQL, browser QA, builds, or device deployment ran. The next planned feature is `7.11.51 Active Workout Sandbox MVP`.
+
+## 2026-08-25 7.11.49 Exercise selection, per-workout measurement, and chip alignment
+
+Exercise Library entries are reusable exercise identities: Settings requires only an exercise name and archive/rename behavior. The existing `default_measurement` column remains in the live-compatible schema as deprecated compatibility data; new rows receive `reps`, and the application does not present or edit that value. `adhdice_health_workout_exercises.measurement_type` is the actual measurement authority for each Workout Exercise occurrence. Every occurrence exposes both Reps and Duration, and switching modes clears incompatible set values while preserving set IDs, count, and notes. The selector retains its current active or archived exercise option alongside active alternatives, and replacement updates only the Workout Exercise ID/name snapshot without deriving measurement from the library. Shared icon-bearing `AdhdChip` controls now use compact `gap-1`, a centered shrink-resistant icon wrapper, and slightly reduced leading padding while text-only/count-only chips and `AdhdIconButton` remain unchanged. No live SQL was run; browser QA, builds, and device deployment remain unverified. The next planned feature is `7.11.50 Active Workout Sandbox MVP`.
+
+## 2026-08-25 7.11.47 Fitness retry safety and Home capacity
+
+Fitness Plan saves now reconcile each newly created planned item’s returned database ID into the open editor draft before later item/archive operations continue, so a partial save retry updates the successful item instead of inserting it again. Structured Fitness saves now return a reconciled draft result; newly created Workout Exercise and Set rows reconcile their returned database IDs into the editor before any later child or association failure, while the canonical workout remains in edit mode for retry. Home To-Do automatic placement now consumes only each day’s remaining capacity after explicit manual placements; pinned items stay authoritative, Later pins do not consume normal-day capacity, and overflow remains Later. The existing Health tab preference signal now gates Fitness Plan and Structured Fitness hook loading to the Fitness tab. The 7.11.46 migration remains unchanged and authored only; no SQL was applied or run. Focused Plan, Structured Fitness, Home, and Health regression tests passed 130/130; narrow focused-file ESLint passed, while broader changed files retain pre-existing warnings/errors outside this ticket. Browser QA, live SQL, builds, and device deployment remain unverified.
+
+## 2026-08-24 7.11.46 Structured Fitness sessions
+
+Fitness keeps `adhdice_health_workouts` as the canonical manual/imported session ledger and adds isolated Exercise Library, Workout Exercise snapshot, and ordered Set child data. Manual workout create/edit saves the canonical row first, then diffs structured children by stable IDs, then saves optional Fitness Plan links; partial child or association failures preserve the workout and keep the editor open for retry. Library entries archive rather than delete, workout deletion cascades children in SQL and clears local structured state after canonical success, and imported workout edit restrictions remain unchanged. Focused structured Fitness tests passed 25/25, targeted new-file ESLint passed, and `git diff --check` passed; browser QA, live SQL, builds, and device deployment remain unverified. The 7.11.46 migration is authored only and must be applied manually.
 
 ## 2026-08-24 7.11.45 Fitness Plan item workflow
 

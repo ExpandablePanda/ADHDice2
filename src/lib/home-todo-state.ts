@@ -106,11 +106,17 @@ export function buildHomeTodoDaySections<T>(
     }
   }
 
-  unassignedTaskIds.forEach((taskId, index) => {
-    const dayIndex = Math.floor(index / normalizedTasksPerDay);
-    if (dayIndex >= sections.length) laterTaskIds.push(taskId);
-    else sections[dayIndex]!.taskIds.push(taskId);
-  });
+  let automaticDayIndex = 0;
+  for (const taskId of unassignedTaskIds) {
+    while (automaticDayIndex < sections.length && sections[automaticDayIndex]!.taskIds.length >= normalizedTasksPerDay) {
+      automaticDayIndex += 1;
+    }
+    if (automaticDayIndex >= sections.length) {
+      laterTaskIds.push(taskId);
+    } else {
+      sections[automaticDayIndex]!.taskIds.push(taskId);
+    }
+  }
 
   let startIndex = 0;
   for (const section of sections) {

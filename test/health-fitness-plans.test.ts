@@ -14,6 +14,7 @@ import {
   getHealthPlanWeekdayDate,
   getHealthWorkoutPlanItemLabel,
   isHealthWorkoutInWeek,
+  reconcileHealthFitnessPlanItemDraft,
 } from "@/lib/health-fitness-plans";
 import { getHealthWeekBounds } from "@/lib/health-fitness";
 
@@ -197,6 +198,18 @@ test("the Fitness Plan editor keeps one Add Planned Item action at the bottom", 
   const saveIndex = plansPanel.indexOf("Save Plan");
   assert.ok(itemsIndex >= 0 && itemsIndex < addItemIndex);
   assert.ok(addItemIndex < saveIndex);
+});
+
+test("a created Fitness Plan item keeps its persisted identity for a later retry", () => {
+  const initial = [
+    { day_of_week: 1, expected_duration_minutes: "30", notes: "", title: "A", workout_type: "Strength" },
+    { day_of_week: 2, expected_duration_minutes: "30", notes: "", title: "B", workout_type: "Strength" },
+  ];
+  const afterFirstInsert = reconcileHealthFitnessPlanItemDraft(initial, 0, "persisted-a");
+  const retryOperations = afterFirstInsert.map((item) => item.id ? "update" : "insert");
+  assert.deepEqual(retryOperations, ["update", "insert"]);
+  assert.equal(afterFirstInsert[0]?.id, "persisted-a");
+  assert.match(plansPanel, /reconcileHealthFitnessPlanItemDraft\(current\.items, index, created\.id\)/);
 });
 
 test("links use explicit identifiers and never attach a plan item to the workout row", () => {

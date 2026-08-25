@@ -6,6 +6,9 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactN
 import type {
   HealthAchievementAward,
   HealthCheckIn,
+  HealthExercise,
+  HealthExerciseInsert,
+  HealthExerciseUpdate,
   HealthFitnessPlan,
   HealthFitnessPlanInsert,
   HealthFitnessPlanItem,
@@ -30,8 +33,10 @@ import type {
   HealthWaterEntry,
   HealthWaterUnit,
   HealthWorkout,
+  HealthWorkoutExercise,
   HealthWorkoutInsert,
   HealthWorkoutPlanItemLink,
+  HealthWorkoutSet,
   HealthWorkoutUpdate,
   HealthWeightEntry,
 } from "@/lib/database.types";
@@ -42,6 +47,9 @@ import {
   type AppleHealthImportPreview,
 } from "@/lib/health-apple-import";
 import type { HealthImportSaveProgress } from "@/hooks/useHealth";
+import type { HealthWorkoutSessionDetails, HealthWorkoutSessionSaveResult } from "@/hooks/useFitnessSessionDetails";
+import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
+import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
   clampPercent,
   buildHealthMealLoggedAt,
@@ -128,6 +136,14 @@ type HealthPageProps = {
   deleteSavedMeal: (mealId: string) => Promise<boolean>;
   deleteWaterEntry: (entryId: string) => Promise<boolean>;
   deleteWorkout: (workoutId: string) => Promise<boolean>;
+  archiveExercise: (exerciseId: string) => Promise<boolean>;
+  createExercise: (input: Omit<HealthExerciseInsert, "user_id" | "default_measurement">) => Promise<HealthExercise | null>;
+  fitnessSessionError: string | null;
+  fitnessSessionLoaded: boolean;
+  fitnessSessionLoading: boolean;
+  exerciseLibrary: HealthExercise[];
+  getWorkoutSessionDetails: (workoutId: string) => HealthWorkoutSessionDetails;
+  reorderExercises: (orderedExerciseIds: readonly string[]) => Promise<boolean>;
   deleteWeightEntry: (entryId: string) => Promise<boolean>;
   favorites: HealthFoodLibraryItem[];
   importAudits: HealthImportAudit[];
@@ -230,7 +246,11 @@ type HealthPageProps = {
   }) => Promise<boolean>;
   updateMealEntry: (entryId: string, input: HealthMealEntryUpdate) => Promise<boolean>;
   updateWorkout: (workoutId: string, input: HealthWorkoutUpdate) => Promise<boolean>;
+  saveWorkoutSessionDetails: (workoutId: string, draft: HealthWorkoutStructuredDraft) => Promise<HealthWorkoutSessionSaveResult>;
+  updateExercise: (exerciseId: string, input: HealthExerciseUpdate) => Promise<boolean>;
   workoutPlanItemLinks: HealthWorkoutPlanItemLink[];
+  workoutExercises: HealthWorkoutExercise[];
+  workoutSets: HealthWorkoutSet[];
   storageMode: "local" | "remote";
   onOpenReminderTemplate: (templateKey: HealthReminderTemplateKey) => void;
   weightEntries: HealthWeightEntry[];
@@ -347,40 +367,6 @@ function createQuickFoodId() {
 
 const EMPTY_FOOD_LOOKUP_RESULTS: HealthFoodLookupResult[] = [];
 const DEFAULT_IMPORT_STATUS = "Waiting for an Apple Health export.";
-const HEALTH_TAB_STORAGE_KEY = "adhdice-health-tab";
-const healthTabPreferenceListeners = new Set<() => void>();
-
-function readHealthTabPreference(): HealthTab {
-  if (typeof window === "undefined") {
-    return "Today";
-  }
-  try {
-    const stored = window.localStorage.getItem(HEALTH_TAB_STORAGE_KEY);
-    return HEALTH_TABS.includes(stored as HealthTab) ? stored as HealthTab : "Today";
-  } catch {
-    return "Today";
-  }
-}
-
-function subscribeToHealthTabPreference(listener: () => void) {
-  healthTabPreferenceListeners.add(listener);
-  const handleStorage = () => listener();
-  window.addEventListener("storage", handleStorage);
-  return () => {
-    healthTabPreferenceListeners.delete(listener);
-    window.removeEventListener("storage", handleStorage);
-  };
-}
-
-function persistHealthTabPreference(tab: HealthTab) {
-  try {
-    window.localStorage.setItem(HEALTH_TAB_STORAGE_KEY, tab);
-  } catch {
-    // UI preference persistence is best effort.
-  }
-  healthTabPreferenceListeners.forEach((listener) => listener());
-}
-
 type DetectedBarcode = {
   rawValue?: string;
 };
@@ -421,15 +407,25 @@ export function HealthPage({
   addWeightEntry,
   addWaterEntry,
   addWorkout,
+  archiveExercise,
   archivePlan,
   archivePlanItem,
+  createExercise,
   createPlan,
   createPlanItem,
   fitnessPlanError,
   fitnessPlansLoading,
+  fitnessSessionError,
+  fitnessSessionLoaded,
+  fitnessSessionLoading,
+  exerciseLibrary,
+  getWorkoutSessionDetails,
+  reorderExercises,
   updateWaterEntry,
   updateWorkout,
   updateMealEntry,
+  saveWorkoutSessionDetails,
+  updateExercise,
   saveWorkoutPlanItemLinks,
   updatePlan,
   updatePlanItem,
@@ -445,6 +441,8 @@ export function HealthPage({
   planItems,
   plans,
   workoutPlanItemLinks,
+  workoutExercises,
+  workoutSets,
 }: HealthPageProps) {
   const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
@@ -1435,13 +1433,21 @@ export function HealthPage({
       {activeTab === "Fitness" ? (
         <HealthFitnessTab
           addWorkout={addWorkout}
+          archiveExercise={archiveExercise}
           archivePlan={archivePlan}
           archivePlanItem={archivePlanItem}
+          createExercise={createExercise}
+          reorderExercises={reorderExercises}
           createPlan={createPlan}
           createPlanItem={createPlanItem}
           deleteWorkout={deleteWorkout}
+          exerciseLibrary={exerciseLibrary}
           fitnessPlanError={fitnessPlanError}
           fitnessPlansLoading={fitnessPlansLoading}
+          fitnessSessionError={fitnessSessionError}
+          fitnessSessionLoaded={fitnessSessionLoaded}
+          fitnessSessionLoading={fitnessSessionLoading}
+          getWorkoutSessionDetails={getWorkoutSessionDetails}
           metricEntries={metricEntries}
           planItems={planItems}
           plans={plans}
@@ -1450,8 +1456,12 @@ export function HealthPage({
           saveWorkoutPlanItemLinks={saveWorkoutPlanItemLinks}
           updatePlan={updatePlan}
           updatePlanItem={updatePlanItem}
+          updateExercise={updateExercise}
           updateWorkout={updateWorkout}
+          saveWorkoutSessionDetails={saveWorkoutSessionDetails}
           workoutPlanItemLinks={workoutPlanItemLinks}
+          workoutExercises={workoutExercises}
+          workoutSets={workoutSets}
           workouts={workouts}
         />
       ) : null}
