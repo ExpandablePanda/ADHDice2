@@ -121,6 +121,10 @@ test("a clean draft is safe to replace from another section", () => {
   assert.equal(hasMeaningfulMealDraft(draft()), false);
 });
 
+test("an empty Quick Entry draft with its default serving quantity is safe to replace", () => {
+  assert.equal(hasMeaningfulMealDraft(draft({ servingQuantity: 1 })), false);
+});
+
 test("a selected food makes a draft meaningful for dirty-draft preservation", () => {
   assert.equal(hasMeaningfulMealDraft(draft({ foodName: "Turkey sandwich", calories: "450", servingQuantity: 1 })), true);
 });

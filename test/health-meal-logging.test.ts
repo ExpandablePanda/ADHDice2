@@ -4,76 +4,105 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const useHealthSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
+const healthUtilsSource = readFileSync(new URL("../src/lib/health-utils.ts", import.meta.url), "utf8");
+const foodSource = source.slice(source.indexOf('{activeTab === "Food"'), source.indexOf('{activeTab === "Water"'));
+const inlineEditorSource = source.slice(source.indexOf("function renderMealEntryEditor()"), source.indexOf("\n\n  return (", source.indexOf("function renderMealEntryEditor()")));
+const saveSource = source.slice(source.indexOf("async function handleSaveMeal()"), source.indexOf("function openMealComposerForSlot"));
 
-test("successful save resets only inside the saved branch and preserves draft context", () => {
-  assert.match(source, /if \(saved\) \{\s+setMealDraft\(\(current\) => \{[\s\S]*?resetMealDraftForNextItem\(current\)/);
-  assert.doesNotMatch(source, /if \(saved\) \{\s+setMealDraft\(\(current\) => createDefaultMealDraft/);
-  assert.match(source, /setSaveQuickEntryToLibrary\(false\);\s+\}/);
+test("the Food page no longer renders a global meal composer", () => {
+  assert.doesNotMatch(source, /mealComposerRef/);
+  assert.doesNotMatch(source, /scrollIntoView/);
+  assert.doesNotMatch(source, /health-food-composer-input/);
+  assert.doesNotMatch(foodSource, /Quick Add Food/);
+  assert.doesNotMatch(foodSource, /Log Quick Entry/);
+  assert.doesNotMatch(foodSource, /ref=\{mealComposerRef\}/);
 });
 
-test("failed addMealEntry leaves the draft untouched", () => {
-  const saveBlock = source.slice(source.indexOf("async function handleSaveMeal()"), source.indexOf("function openMealComposerForSlot"));
-  assert.match(saveBlock, /const saved = await addMealEntry\(/);
-  assert.match(saveBlock, /if \(saved\) \{/);
-  assert.equal((saveBlock.match(/resetMealDraftForNextItem/g) ?? []).length, 1);
-});
-
-test("the canonical meal payload sends the draft date, slot, and logged timestamp", () => {
-  assert.match(source, /entry_date: mealDraft\.date,/);
-  assert.match(source, /meal_slot: mealDraft\.mealSlot,/);
-  assert.match(source, /logged_at: loggedAt,/);
-  assert.match(useHealthSource, /from\("adhdice_health_meal_entries"\)\s*\.insert/);
-});
-
-test("section Add Food targets the selected history date through one composer helper", () => {
-  assert.match(source, /function openMealComposerForSlot\(slot: HealthMealEntry\["meal_slot"\]\)/);
-  assert.match(source, /prepareMealDraftForSelectedSlot\(current, foodHistoryDate, slot\)/);
-  assert.match(source, /onClick=\{\(\) => openMealComposerForSlot\(slot\)\}/);
-  assert.match(source, /mealComposerRef\.current\?\.scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
-  assert.match(source, /id="health-food-composer-input"/);
-});
-
-test("all meal slots render from the canonical slot list with an Add Food action", () => {
+test("all four canonical meal sections remain visible for empty and populated days", () => {
   assert.match(source, /HEALTH_MEAL_SLOTS\.map\(\(slot\) =>/);
-  assert.match(source, /\+ Add Food/);
-  assert.match(source, /aria-label=\{`Add food to \$\{getMealSlotLabel\(slot\)\}`\}/);
   assert.match(source, /No \$\{getMealSlotLabel\(slot\)\.toLowerCase\(\)\} logged yet\./);
-  assert.doesNotMatch(source, /selectedMeals\.length === 0 \? \([\s\S]*?No meals were logged on this date/);
+  assert.match(source, /aria-label=\{`Add food to \$\{getMealSlotLabel\(slot\)\}`\}/);
+  assert.match(source, /\+ Add Food/);
+  assert.doesNotMatch(foodSource, /selectedMeals\.length === 0 \? \([\s\S]*?No meals were logged on this date/);
 });
 
-test("the four canonical meal slots remain breakfast, lunch, dinner, and snack", () => {
-  assert.match(source, /HEALTH_MEAL_SLOTS/);
-  assert.match(readFileSync(new URL("../src/lib/health-utils.ts", import.meta.url), "utf8"), /\["breakfast", "lunch", "dinner", "snack"\]/);
+test("the meal ledger keeps breakfast, lunch, dinner, and snack as its only slots", () => {
+  assert.match(healthUtilsSource, /\["breakfast", "lunch", "dinner", "snack"\]/);
 });
 
-test("manual date and meal controls remain editable", () => {
-  assert.match(source, /onChange=\{\(value\) => setMealDraft\(\(current\) => \(\{ \.\.\.current, mealSlot: value/);
-  assert.match(source, /onChange=\{\(value\) => setMealDraft\(\(current\) => \(\{ \.\.\.current, date: value \}\)\)\}/);
-  assert.match(source, /onChange=\{\(value\) => setMealDraft\(\(current\) => \(\{ \.\.\.current, time: value \}\)\)\}/);
+test("each section opens the one shared inline editor for its own slot", () => {
+  assert.match(source, /const \[activeMealEntrySlot, setActiveMealEntrySlot\] = useState/);
+  assert.match(foodSource, /onClick=\{\(\) => openMealComposerForSlot\(slot\)\}/);
+  assert.match(foodSource, /activeMealEntrySlot === slot \? renderMealEntryEditor\(\) : null/);
+  assert.match(source, /setActiveMealEntrySlot\(slot\);/);
 });
 
-test("future meal timestamp validation remains on the canonical save path", () => {
-  assert.match(source, /isHealthMealTimestampFuture\(mealDraft\.date, mealDraft\.time\)/);
+test("inline editor keeps food capabilities and excludes Date and Meal controls", () => {
+  assert.match(inlineEditorSource, /HealthAutocomplete/);
+  assert.match(inlineEditorSource, /getHealthFoodMeasurementOptions/);
+  assert.match(inlineEditorSource, /Quick Entry/);
+  assert.match(inlineEditorSource, /type=\"time\"/);
+  assert.match(inlineEditorSource, /Add Food/);
+  assert.match(inlineEditorSource, /Done/);
+  assert.doesNotMatch(inlineEditorSource, /<Field label=\"Date\">/);
+  assert.doesNotMatch(inlineEditorSource, /<Field label=\"Meal\">/);
+  assert.doesNotMatch(inlineEditorSource, /ariaLabel=\"Meal\"/);
+});
+
+test("selected ledger date and active section are the canonical new-entry authorities", () => {
+  assert.match(saveSource, /buildHealthMealLoggedAt\(foodHistoryDate, mealDraft\.time\)/);
+  assert.match(saveSource, /entry_date: foodHistoryDate,/);
+  assert.match(saveSource, /meal_slot: activeMealEntrySlot,/);
+  assert.match(source, /prepareMealDraftForSelectedSlot\(current, foodHistoryDate, slot\)/);
+  assert.match(source, /preserveFoodDraft\s*\? \{ \.\.\.current, date: foodHistoryDate, mealSlot: slot \}/);
+});
+
+test("successful save preserves context, clears food fields, and keeps the inline editor open", () => {
+  assert.match(saveSource, /if \(saved\) \{\s+setMealDraft\(\(current\) => \{[\s\S]*?resetMealDraftForNextItem\(current\)/);
+  assert.match(saveSource, /date: foodHistoryDate,/);
+  assert.match(saveSource, /mealSlot: activeMealEntrySlot,/);
+  assert.match(saveSource, /return isQuickEntryOpen \? \{ \.\.\.nextDraft, servingQuantity: 1 \} : nextDraft/);
+  assert.doesNotMatch(saveSource, /setActiveMealEntrySlot\(null\)/);
+  assert.doesNotMatch(saveSource, /createDefaultMealDraft/);
+});
+
+test("failed canonical saves leave the inline draft intact", () => {
+  assert.match(saveSource, /const saved = await addMealEntry\(/);
+  assert.equal((saveSource.match(/resetMealDraftForNextItem/g) ?? []).length, 1);
+  assert.match(saveSource, /if \(saved\) \{/);
+});
+
+test("Done closes only the active inline editor", () => {
+  assert.match(source, /function closeMealEntryEditor\(\) \{\s+setActiveMealEntrySlot\(null\);/);
+  assert.match(inlineEditorSource, /<AdhdChip onClick=\{closeMealEntryEditor\}>Done<\/AdhdChip>/);
+});
+
+test("changing the ledger date closes the editor before changing date authority", () => {
+  assert.match(source, /function handleFoodHistoryDateChange\(date: string\) \{\s+setActiveMealEntrySlot\(null\);\s+setFoodHistoryDate\(date\);/);
+  assert.equal((source.match(/onChange=\{handleFoodHistoryDateChange\}/g) ?? []).length, 2);
+  assert.doesNotMatch(saveSource, /setFoodHistoryDate/);
+});
+
+test("Quick Entry remains available inside the active section and uses its context", () => {
+  assert.match(inlineEditorSource, /onClick=\{isQuickEntryOpen \? closeQuickEntry : openQuickEntry\}/);
+  assert.match(inlineEditorSource, /Add Quick Entry/);
+  assert.match(source, /date: foodHistoryDate,\s+mealSlot: activeMealEntrySlot \?\? current\.mealSlot,\s+servingQuantity: 1/);
+  assert.match(saveSource, /sourceFoodId = null/);
+  assert.match(saveSource, /return isQuickEntryOpen \? \{ \.\.\.nextDraft, servingQuantity: 1 \} : nextDraft/);
+});
+
+test("future timestamp validation remains on the canonical selected-date save path", () => {
+  assert.match(source, /isHealthMealTimestampFuture\(foodHistoryDate, mealDraft\.time\)/);
   assert.match(source, /Future meal times cannot be saved\./);
 });
 
-test("Quick Entry uses the same draft context and stays available for another item", () => {
-  assert.match(source, /function openQuickEntry\(\)[\s\S]*?resetMealDraftForNextItem\(current\)/);
-  assert.match(source, /return isQuickEntryOpen \? \{ \.\.\.nextDraft, servingQuantity: 1 \} : nextDraft/);
-  assert.match(source, /\{isQuickEntryOpen \? "Log Quick Entry" : "Log"\}/);
-});
-
-test("Favorite Add Today remains an explicit today-only persistence action", () => {
+test("Favorite Add Today remains an explicit today-only action", () => {
   assert.match(source, /entry_date: today,/);
   assert.match(source, /Add Today/);
 });
 
-test("history date state is not rewritten by the meal-save handler", () => {
-  const saveBlock = source.slice(source.indexOf("async function handleSaveMeal()"), source.indexOf("function openMealComposerForSlot"));
-  assert.doesNotMatch(saveBlock, /setFoodHistoryDate/);
-});
-
-test("existing edit, delete, and canonical totals paths remain present", () => {
+test("canonical persistence, editing, deletion, and totals remain unchanged", () => {
+  assert.match(useHealthSource, /from\("adhdice_health_meal_entries"\)\s*\.insert/);
   assert.match(source, /function startEditingMeal\(entry: HealthMealEntry\)/);
   assert.match(source, /deleteMealEntry\(entry\.id\)/);
   assert.match(source, /sumMealNutritionForDate\(mealEntries, foodHistoryDate\)/);

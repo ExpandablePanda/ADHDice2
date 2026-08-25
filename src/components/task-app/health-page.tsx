@@ -396,7 +396,7 @@ export function HealthPage({
   const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
   const [mealDraft, setMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
-  const mealComposerRef = useRef<HTMLDivElement | null>(null);
+  const [activeMealEntrySlot, setActiveMealEntrySlot] = useState<HealthMealEntry["meal_slot"] | null>(null);
   const [foodSearchQuery, setFoodSearchQuery] = useState("");
   const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
   const [selectedCustomFoodCategory, setSelectedCustomFoodCategory] = useState<string | null>(null);
@@ -652,13 +652,13 @@ export function HealthPage({
     () => calculateMealDraft(mealDraft),
     [mealDraft],
   );
-  const mealLoggedAt = buildHealthMealLoggedAt(mealDraft.date, mealDraft.time);
+  const mealLoggedAt = buildHealthMealLoggedAt(foodHistoryDate, mealDraft.time);
   const mealTimestampError = mealLoggedAt === null
     ? "Choose a valid meal date and time."
-    : isHealthMealTimestampFuture(mealDraft.date, mealDraft.time)
+    : isHealthMealTimestampFuture(foodHistoryDate, mealDraft.time)
       ? "Future meal times cannot be saved."
       : null;
-  const canSaveMeal = mealDraft.foodName.trim().length > 0 && mealCalculation !== null && mealTimestampError === null;
+  const canSaveMeal = activeMealEntrySlot !== null && mealDraft.foodName.trim().length > 0 && mealCalculation !== null && mealTimestampError === null;
   const weightValue = Number.parseFloat(weightDraft);
   const canSaveWeight = Number.isFinite(weightValue) && weightValue > 0;
 
@@ -860,8 +860,11 @@ export function HealthPage({
 
   async function handleSaveMeal() {
     const calculation = mealCalculation;
-    const loggedAt = buildHealthMealLoggedAt(mealDraft.date, mealDraft.time);
-    if (!calculation || !loggedAt || isHealthMealTimestampFuture(mealDraft.date, mealDraft.time)) {
+    if (!activeMealEntrySlot) {
+      return;
+    }
+    const loggedAt = buildHealthMealLoggedAt(foodHistoryDate, mealDraft.time);
+    if (!calculation || !loggedAt || isHealthMealTimestampFuture(foodHistoryDate, mealDraft.time)) {
       return;
     }
 
@@ -900,10 +903,10 @@ export function HealthPage({
       brand_name: emptyToNull(mealDraft.brandName),
       calories: Math.round(calculation.nutrientTotals.calories),
       carbs_g: calculation.nutrientTotals.carbs_g,
-      entry_date: mealDraft.date,
+      entry_date: foodHistoryDate,
       fat_g: calculation.nutrientTotals.fat_g,
       food_name: mealDraft.foodName.trim(),
-      meal_slot: mealDraft.mealSlot,
+      meal_slot: activeMealEntrySlot,
       logged_at: loggedAt,
       protein_g: calculation.nutrientTotals.protein_g,
       provider: mealDraft.provider ?? "manual",
@@ -918,7 +921,11 @@ export function HealthPage({
     });
     if (saved) {
       setMealDraft((current) => {
-        const nextDraft = resetMealDraftForNextItem(current);
+        const nextDraft = {
+          ...resetMealDraftForNextItem(current),
+          date: foodHistoryDate,
+          mealSlot: activeMealEntrySlot,
+        };
         return isQuickEntryOpen ? { ...nextDraft, servingQuantity: 1 } : nextDraft;
       });
       setCustomFoodSearchQuery("");
@@ -928,16 +935,27 @@ export function HealthPage({
 
   function openMealComposerForSlot(slot: HealthMealEntry["meal_slot"]) {
     const preserveFoodDraft = hasMeaningfulMealDraft(mealDraft);
+    setActiveMealEntrySlot(slot);
     setMealDraft((current) => preserveFoodDraft
       ? { ...current, date: foodHistoryDate, mealSlot: slot }
       : prepareMealDraftForSelectedSlot(current, foodHistoryDate, slot));
     if (!preserveFoodDraft) {
+      setIsQuickEntryOpen(false);
       setCustomFoodSearchQuery("");
       setFoodLookupResults(EMPTY_FOOD_LOOKUP_RESULTS);
       setFoodLookupError("");
     }
-    mealComposerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    window.requestAnimationFrame(() => document.getElementById("health-food-composer-input")?.focus());
+    setSaveQuickEntryToLibrary(false);
+  }
+
+  function closeMealEntryEditor() {
+    setActiveMealEntrySlot(null);
+    setSaveQuickEntryToLibrary(false);
+  }
+
+  function handleFoodHistoryDateChange(date: string) {
+    setActiveMealEntrySlot(null);
+    setFoodHistoryDate(date);
   }
 
   function openQuickEntry() {
@@ -946,6 +964,8 @@ export function HealthPage({
     setCustomFoodSearchQuery("");
     setMealDraft((current) => ({
       ...resetMealDraftForNextItem(current),
+      date: foodHistoryDate,
+      mealSlot: activeMealEntrySlot ?? current.mealSlot,
       servingQuantity: 1,
     }));
   }
@@ -1196,7 +1216,6 @@ export function HealthPage({
     servingUnit?: string | null;
     servingMeasureValue?: number | null;
     servingMeasureUnit?: HealthServingMeasureUnit | null;
-    mealSlot?: HealthMealEntry["meal_slot"];
   }) {
     setIsQuickEntryOpen(false);
     setSaveQuickEntryToLibrary(false);
@@ -1217,7 +1236,6 @@ export function HealthPage({
       providerItemId: result.providerItemId ?? null,
       sourceFoodId: result.sourceFoodId ?? null,
       foodCategory: result.foodCategory ?? null,
-      mealSlot: result.mealSlot ?? current.mealSlot,
       servingQuantity,
       servingUnit,
       servingMeasureValue: positiveFiniteNumber(result.servingMeasureValue),
@@ -1278,7 +1296,6 @@ export function HealthPage({
       carbs: nutrition.carbs,
       fat: nutrition.fat,
       foodName: suggestion.item.name,
-      mealSlot: suggestion.item.default_meal_slot,
       protein: nutrition.protein,
       provider: "saved_meal",
       providerItemId: suggestion.item.id,
@@ -1359,6 +1376,214 @@ export function HealthPage({
     } finally {
       setIsSavingImport(false);
     }
+  }
+
+  function renderMealFoodLookupPanel() {
+    return (
+      <HealthCollapsiblePanel
+        defaultOpen={false}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setIsScannerOpen(false);
+        }}
+        subtitle="Search public foods, enter a barcode, or scan with the camera."
+        title="Search foods and barcodes"
+        variant="subpanel"
+      >
+        <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+          <Field label="Search foods">
+            <div className="flex min-w-0 flex-wrap gap-2">
+              <input
+                className="health-input min-w-0 flex-1"
+                onChange={(event) => setFoodSearchQuery(event.target.value)}
+                placeholder="Greek yogurt, protein bar, soup"
+                value={foodSearchQuery}
+              />
+              <button
+                className="ui-pill-button-strong-light inline-flex items-center gap-2"
+                disabled={foodLookupStatus !== "idle" || foodSearchQuery.trim().length === 0}
+                onClick={() => { void handleFoodSearch(); }}
+                type="button"
+              >
+                <Search className="h-4 w-4" />
+                Search
+              </button>
+            </div>
+          </Field>
+          <Field label="Typed barcode">
+            <div className="flex min-w-0 flex-wrap gap-2">
+              <input
+                className="health-input min-w-0 flex-1"
+                inputMode="numeric"
+                onChange={(event) => setBarcodeLookup(event.target.value)}
+                placeholder="012345678905"
+                value={barcodeLookup}
+              />
+              <button
+                className="ui-pill-button-strong-light inline-flex items-center gap-2"
+                disabled={foodLookupStatus !== "idle" || barcodeLookup.trim().length === 0}
+                onClick={() => { void handleBarcodeLookup(); }}
+                type="button"
+              >
+                <ScanSearch className="h-4 w-4" />
+                Lookup
+              </button>
+              <button
+                className="ui-pill-button-strong-light inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={scannerSupport !== "ready"}
+                onClick={() => {
+                  setScannerError("");
+                  setIsScannerOpen(true);
+                }}
+                type="button"
+              >
+                <Camera className="h-4 w-4" />
+                Scan
+              </button>
+            </div>
+          </Field>
+        </div>
+        <p className="text-xs leading-5 text-[#6a7793] dark:text-white/50">
+          Search uses USDA FoodData Central when available, with Open Food Facts fallback. Barcode lookup currently uses Open Food Facts.
+        </p>
+        {scannerSupport === "unsupported" ? (
+          <EmptyCopy text="Camera barcode scanning is not available in this browser yet, but typed barcode lookup still works." />
+        ) : null}
+        {isScannerOpen ? (
+          <div className="grid gap-3 rounded-[1.25rem] border border-[#dfe6fb] bg-white/90 p-4 dark:border-white/10 dark:bg-white/[0.05]">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-[#26324f] dark:text-white">Camera scanner</p>
+                <p className="mt-1 text-xs text-[#73809c] dark:text-white/50">Point the camera at a barcode. The first detected code will fill the lookup automatically.</p>
+              </div>
+              <button
+                aria-label="Close camera scanner"
+                className="rounded-full bg-[#fff1f3] p-2 text-[#d64b5f] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+                onClick={() => setIsScannerOpen(false)}
+                type="button"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <video
+              className="w-full overflow-hidden rounded-[1.25rem] border border-[#e5e9f7] bg-[#111827] object-cover dark:border-white/10"
+              muted
+              playsInline
+              ref={scannerVideoRef}
+            />
+            {scannerError ? <EmptyCopy text={scannerError} /> : <InlineNotice text="Camera active. Hold the barcode steady for a moment." />}
+          </div>
+        ) : null}
+        {foodLookupError ? <EmptyCopy text={foodLookupError} /> : null}
+        {foodLookupStatus !== "idle" ? <InlineNotice text={foodLookupStatus === "barcode" ? "Looking up barcode..." : "Searching foods..."} /> : null}
+        {foodLookupResults.length > 0 ? (
+          <div className="grid gap-3">
+            <SectionMiniTitle title="Lookup results" />
+            {foodLookupResults.map((result) => (
+              <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/90 px-4 py-3 dark:border-white/10 dark:bg-white/[0.05]" key={`${result.provider}-${result.providerItemId}`}>
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{result.foodName}</p>
+                    <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{result.brandName || "No brand"} / {result.servingLabel || "Serving not listed"} / {result.calories} kcal</p>
+                    <p className="mt-2 text-xs text-[#6d7a96] dark:text-white/50">Protein {Math.round(result.protein ?? 0)}g / Carbs {Math.round(result.carbs ?? 0)}g / Fat {Math.round(result.fat ?? 0)}g</p>
+                  </div>
+                  <button className="ui-pill-button-strong-light shrink-0" onClick={() => applyLookupResult(result)} type="button">Use This</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </HealthCollapsiblePanel>
+    );
+  }
+
+  function renderMealEntryEditor() {
+    return (
+      <div className="grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+        {renderMealFoodLookupPanel()}
+        <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1.35fr)_minmax(7rem,0.7fr)_minmax(5.5rem,0.6fr)_auto]">
+          <Field label="Food">
+            <HealthAutocomplete
+              ariaLabel="Search custom foods"
+              onChange={setCustomFoodSearchQuery}
+              onSelect={(suggestion) => {
+                const selected = mealFoodSuggestions.find((candidate) => candidate.value === suggestion.value);
+                if (selected) applyMealFoodPickerSuggestion(selected);
+              }}
+              placeholder="Search custom foods"
+              suggestions={mealFoodSuggestions}
+              value={customFoodSearchQuery}
+            />
+          </Field>
+          {isQuickEntryOpen ? (
+            <div className="rounded-[1rem] border border-[#e8e2f7] bg-white px-3 py-2 text-xs text-[#6d7894] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/55">One-off entry</div>
+          ) : (
+            <Field label="Measurement">
+              <HealthDropdown
+                ariaLabel="Measurement"
+                disabled={!mealDraft.foodName}
+                onChange={(value) => setMealDraft((current) => ({ ...current, measurement: value }))}
+                options={getHealthFoodMeasurementOptions({ servingMeasureUnit: mealDraft.servingMeasureUnit, servingUnit: mealDraft.servingUnit })}
+                value={mealDraft.measurement}
+              />
+            </Field>
+          )}
+          {isQuickEntryOpen ? null : (
+            <Field label="Amount">
+              <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, quantity: event.target.value }))} placeholder="1" value={mealDraft.quantity} />
+            </Field>
+          )}
+          <Field label="Time">
+            <HealthMealDateTimeInput onChange={(value) => setMealDraft((current) => ({ ...current, time: value }))} type="time" value={mealDraft.time} />
+          </Field>
+        </div>
+        {isQuickEntryOpen ? (
+          <div className="grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-white p-3 dark:border-white/10 dark:bg-white/[0.04]">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Food name"><input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setMealDraft((current) => ({ ...current, foodName: event.target.value }))} placeholder="Homemade snack" value={mealDraft.foodName} /></Field>
+              <Field label="Calories"><input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="numeric" onChange={(event) => setMealDraft((current) => ({ ...current, calories: event.target.value }))} placeholder="250" value={mealDraft.calories} /></Field>
+              <Field label="Protein (optional)"><input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, protein: event.target.value }))} value={mealDraft.protein} /></Field>
+              <Field label="Carbohydrates (optional)"><input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, carbs: event.target.value }))} value={mealDraft.carbs} /></Field>
+              <Field label="Fat (optional)"><input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, fat: event.target.value }))} value={mealDraft.fat} /></Field>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-[#66718f] dark:text-white/60"><input checked={saveQuickEntryToLibrary} onChange={(event) => setSaveQuickEntryToLibrary(event.target.checked)} type="checkbox" />Save to Custom Nutrition Library</label>
+            <p className="text-xs text-[#73809c] dark:text-white/50">The selected ledger date and meal section set this entry context.</p>
+          </div>
+        ) : null}
+        {mealTimestampError ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">{mealTimestampError}</p> : null}
+        {mealDraft.foodName ? (
+          <div aria-live="polite" className="rounded-[1rem] border border-[#e8e2f7] bg-white px-4 py-3 text-sm text-[#5d6783] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/65">
+            {mealCalculation ? <><div className="mb-1">{composeHealthFoodServingDefinition({ ...mealCalculation.serving, servingLabel: mealDraft.servingLabel })}</div><div>Nutrition preview: <strong className="text-[#3d4670] dark:text-white">{formatHealthNutritionNumber(mealCalculation.nutrientTotals.calories)} kcal</strong> / Protein {formatHealthNutritionNumber(mealCalculation.nutrientTotals.protein_g)}g / Carbs {formatHealthNutritionNumber(mealCalculation.nutrientTotals.carbs_g)}g / Fat {formatHealthNutritionNumber(mealCalculation.nutrientTotals.fat_g)}g</div></> : "Enter a positive amount using one of this food’s supported measurements."}
+          </div>
+        ) : null}
+        <div className="grid gap-3">
+          {customFoodCategories.length > 0 ? (
+            <div aria-label="Filter custom foods by category" className="flex flex-wrap gap-1.5">
+              {customFoodCategories.map((category) => <AdhdChip className="shrink-0" key={category} onClick={() => setSelectedCustomFoodCategory((current) => current === category ? null : category)} selected={selectedCustomFoodCategory === category} toneClassName="border-[#e4deef] bg-white text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60">{category}</AdhdChip>)}
+            </div>
+          ) : null}
+          {customFoodCategories.length > 0 ? <div aria-hidden="true" className="border-t border-[#ece8f6] dark:border-white/10" /> : null}
+          {matchingCustomFoods.length === 0 ? <EmptyCopy text="No custom foods match this search." /> : (
+            <div className="adhdice-scrollbar max-h-24 overflow-y-auto pr-1">
+              <div className="flex flex-wrap gap-2">
+                {matchingCustomFoods.map((item) => (
+                  <button className={`ui-pill-button-light inline-flex min-w-0 max-w-full whitespace-normal text-left ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`} key={item.id} onClick={() => { setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name); applyLookupResult({ attribution: item.attribution, barcode: item.barcode, brandName: item.brand_name, foodCategory: item.food_category ?? item.category, calories: item.calories, carbs: item.carbs_g, fat: item.fat_g, foodName: item.food_name, protein: item.protein_g, provider: item.provider, providerItemId: item.provider_item_id ?? item.id, servingLabel: item.serving_label, sourceFoodId: item.id, servingQuantity: item.serving_quantity, servingUnit: item.serving_unit, servingMeasureValue: item.serving_measure_value, servingMeasureUnit: item.serving_measure_unit }); }} type="button">{formatBrandedFoodName(item)} · {item.calories} kcal</button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <AdhdChip contentClassName="gap-1.5" onClick={isQuickEntryOpen ? closeQuickEntry : openQuickEntry} selected={isQuickEntryOpen}>Quick Entry</AdhdChip>
+            <span className="text-xs text-[#73809c] dark:text-white/50">Add another food to this meal, or finish when you’re done.</span>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <AdhdChip onClick={closeMealEntryEditor}>Done</AdhdChip>
+            <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveMeal} onClick={() => { void handleSaveMeal(); }} type="button">{isQuickEntryOpen ? "Add Quick Entry" : "Add Food"}</button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1506,325 +1731,9 @@ export function HealthPage({
         <div aria-labelledby="health-tab-food" className="mt-6 grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]" id={getHealthTabPanelId("Food")} role="tabpanel">
           <div className="grid min-w-0 content-start gap-5">
           <HealthPanel className="min-w-0" icon={<Salad />} subtitle="Meal logging">
-            <HealthCollapsiblePanel
-              className="mb-5"
-              defaultOpen={false}
-              onOpenChange={(isOpen) => {
-                if (!isOpen) setIsScannerOpen(false);
-              }}
-              subtitle="Search public foods, enter a barcode, or scan with the camera."
-              title="Search foods and barcodes"
-              variant="subpanel"
-            >
-              <div className="grid min-w-0 gap-3 lg:grid-cols-2">
-                <Field label="Search foods">
-                  <div className="flex min-w-0 flex-wrap gap-2">
-                    <input
-                      className="health-input min-w-0 flex-1"
-                      onChange={(event) => setFoodSearchQuery(event.target.value)}
-                      placeholder="Greek yogurt, protein bar, soup"
-                      value={foodSearchQuery}
-                    />
-                    <button
-                      className="ui-pill-button-strong-light inline-flex items-center gap-2"
-                      disabled={foodLookupStatus !== "idle" || foodSearchQuery.trim().length === 0}
-                      onClick={() => { void handleFoodSearch(); }}
-                      type="button"
-                    >
-                      <Search className="h-4 w-4" />
-                      Search
-                    </button>
-                  </div>
-                </Field>
-                <Field label="Typed barcode">
-                  <div className="flex min-w-0 flex-wrap gap-2">
-                    <input
-                      className="health-input min-w-0 flex-1"
-                      inputMode="numeric"
-                      onChange={(event) => setBarcodeLookup(event.target.value)}
-                      placeholder="012345678905"
-                      value={barcodeLookup}
-                    />
-                    <button
-                      className="ui-pill-button-strong-light inline-flex items-center gap-2"
-                      disabled={foodLookupStatus !== "idle" || barcodeLookup.trim().length === 0}
-                      onClick={() => { void handleBarcodeLookup(); }}
-                      type="button"
-                    >
-                      <ScanSearch className="h-4 w-4" />
-                      Lookup
-                    </button>
-                    <button
-                      className="ui-pill-button-strong-light inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={scannerSupport !== "ready"}
-                      onClick={() => {
-                        setScannerError("");
-                        setIsScannerOpen(true);
-                      }}
-                      type="button"
-                    >
-                      <Camera className="h-4 w-4" />
-                      Scan
-                    </button>
-                  </div>
-                </Field>
-              </div>
-              <p className="text-xs leading-5 text-[#6a7793] dark:text-white/50">
-                Search uses USDA FoodData Central when available, with Open Food Facts fallback. Barcode lookup currently uses Open Food Facts.
-              </p>
-              {scannerSupport === "unsupported" ? (
-                <EmptyCopy text="Camera barcode scanning is not available in this browser yet, but typed barcode lookup still works." />
-              ) : null}
-              {isScannerOpen ? (
-                <div className="grid gap-3 rounded-[1.25rem] border border-[#dfe6fb] bg-white/90 p-4 dark:border-white/10 dark:bg-white/[0.05]">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-[#26324f] dark:text-white">Camera scanner</p>
-                      <p className="mt-1 text-xs text-[#73809c] dark:text-white/50">Point the camera at a barcode. The first detected code will fill the lookup automatically.</p>
-                    </div>
-                    <button
-                      aria-label="Close camera scanner"
-                      className="rounded-full bg-[#fff1f3] p-2 text-[#d64b5f] dark:bg-[#44232f] dark:text-[#ff9eaf]"
-                      onClick={() => setIsScannerOpen(false)}
-                      type="button"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <video
-                    className="w-full overflow-hidden rounded-[1.25rem] border border-[#e5e9f7] bg-[#111827] object-cover dark:border-white/10"
-                    muted
-                    playsInline
-                    ref={scannerVideoRef}
-                  />
-                  {scannerError ? <EmptyCopy text={scannerError} /> : <InlineNotice text="Camera active. Hold the barcode steady for a moment." />}
-                </div>
-              ) : null}
-              {foodLookupError ? <EmptyCopy text={foodLookupError} /> : null}
-              {foodLookupStatus !== "idle" ? <InlineNotice text={foodLookupStatus === "barcode" ? "Looking up barcode..." : "Searching foods..."} /> : null}
-              {foodLookupResults.length > 0 ? (
-                <div className="grid gap-3">
-                  <SectionMiniTitle title="Lookup results" />
-                  {foodLookupResults.map((result) => (
-                    <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/90 px-4 py-3 dark:border-white/10 dark:bg-white/[0.05]" key={`${result.provider}-${result.providerItemId}`}>
-                      <div className="flex min-w-0 items-start gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{result.foodName}</p>
-                          <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">
-                            {result.brandName || "No brand"} / {result.servingLabel || "Serving not listed"} / {result.calories} kcal
-                          </p>
-                          <p className="mt-2 text-xs text-[#6d7a96] dark:text-white/50">
-                            Protein {Math.round(result.protein ?? 0)}g / Carbs {Math.round(result.carbs ?? 0)}g / Fat {Math.round(result.fat ?? 0)}g
-                          </p>
-                        </div>
-                        <button
-                          className="ui-pill-button-strong-light shrink-0"
-                          onClick={() => applyLookupResult(result)}
-                          type="button"
-                        >
-                          Use This
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </HealthCollapsiblePanel>
-
-            <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(5rem,0.65fr)_minmax(0,1.35fr)_minmax(7rem,0.7fr)_minmax(4rem,0.55fr)_auto]" ref={mealComposerRef}>
-              <Field label="Meal">
-                <HealthDropdown
-                  ariaLabel="Meal"
-                  onChange={(value) => setMealDraft((current) => ({ ...current, mealSlot: value as HealthMealEntry["meal_slot"] }))}
-                  options={HEALTH_MEAL_SLOTS.map((slot) => ({ label: getMealSlotLabel(slot), value: slot }))}
-                  value={mealDraft.mealSlot}
-                />
-              </Field>
-              <Field label="Food">
-                <HealthAutocomplete
-                  ariaLabel="Search custom foods"
-                  id="health-food-composer-input"
-                  onChange={setCustomFoodSearchQuery}
-                  onSelect={(suggestion) => {
-                    const selected = mealFoodSuggestions.find((candidate) => candidate.value === suggestion.value);
-                    if (selected) {
-                      applyMealFoodPickerSuggestion(selected);
-                    }
-                  }}
-                  placeholder="Search custom foods"
-                  suggestions={mealFoodSuggestions}
-                  value={customFoodSearchQuery}
-                />
-              </Field>
-              {isQuickEntryOpen ? (
-                <div className="rounded-[1rem] border border-[#e8e2f7] bg-[#fbf9ff] px-3 py-2 text-xs text-[#6d7894] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/55">
-                  One-off entry
-                </div>
-              ) : (
-                <>
-                  <Field label="Measurement">
-                    <HealthDropdown
-                      ariaLabel="Measurement"
-                      disabled={!mealDraft.foodName}
-                      onChange={(value) => setMealDraft((current) => ({ ...current, measurement: value }))}
-                      options={getHealthFoodMeasurementOptions({
-                        servingMeasureUnit: mealDraft.servingMeasureUnit,
-                        servingUnit: mealDraft.servingUnit,
-                      })}
-                      value={mealDraft.measurement}
-                    />
-                  </Field>
-                  <Field label="Amount">
-                    <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, quantity: event.target.value }))} placeholder="1" value={mealDraft.quantity} />
-                  </Field>
-                </>
-              )}
-              <div className="flex items-end">
-                <button
-                  className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!canSaveMeal}
-                  onClick={() => { void handleSaveMeal(); }}
-                  type="button"
-                >
-                  {isQuickEntryOpen ? "Log Quick Entry" : "Log"}
-                </button>
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <AdhdChip contentClassName="gap-1.5" onClick={openQuickEntry} selected={isQuickEntryOpen}>
-                Quick Add Food
-              </AdhdChip>
-              <span className="text-xs text-[#73809c] dark:text-white/50">Log a one-off meal when no library food fits.</span>
-            </div>
-            {isQuickEntryOpen ? (
-              <div className="mt-3 grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-[#fbf9ff] p-4 dark:border-white/10 dark:bg-white/[0.04]">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Food name">
-                    <input
-                      className={HEALTH_COMPACT_INPUT_CLASS}
-                      onChange={(event) => setMealDraft((current) => ({ ...current, foodName: event.target.value }))}
-                      placeholder="Homemade snack"
-                      value={mealDraft.foodName}
-                    />
-                  </Field>
-                  <Field label="Calories">
-                    <input
-                      className={HEALTH_COMPACT_INPUT_CLASS}
-                      inputMode="numeric"
-                      onChange={(event) => setMealDraft((current) => ({ ...current, calories: event.target.value }))}
-                      placeholder="250"
-                      value={mealDraft.calories}
-                    />
-                  </Field>
-                  <Field label="Protein (optional)">
-                    <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, protein: event.target.value }))} value={mealDraft.protein} />
-                  </Field>
-                  <Field label="Carbohydrates (optional)">
-                    <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, carbs: event.target.value }))} value={mealDraft.carbs} />
-                  </Field>
-                  <Field label="Fat (optional)">
-                    <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, fat: event.target.value }))} value={mealDraft.fat} />
-                  </Field>
-                </div>
-                <label className="flex items-center gap-2 text-xs text-[#66718f] dark:text-white/60">
-                  <input checked={saveQuickEntryToLibrary} onChange={(event) => setSaveQuickEntryToLibrary(event.target.checked)} type="checkbox" />
-                  Save to Custom Nutrition Library
-                </label>
-                <div className="flex items-start gap-2">
-                  <span className="min-w-0 flex-1 break-words text-xs text-[#73809c] dark:text-white/50">Meal, date, and time use the controls above.</span>
-                  <AdhdChip className="shrink-0" onClick={closeQuickEntry}>Use Library Food</AdhdChip>
-                </div>
-              </div>
-            ) : null}
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <Field label="Date">
-                <HealthMealDateTimeInput
-                  max={today}
-                  onChange={(value) => setMealDraft((current) => ({ ...current, date: value }))}
-                  type="date"
-                  value={mealDraft.date}
-                />
-              </Field>
-              <Field label="Time">
-                <HealthMealDateTimeInput
-                  onChange={(value) => setMealDraft((current) => ({ ...current, time: value }))}
-                  type="time"
-                  value={mealDraft.time}
-                />
-              </Field>
-            </div>
-            {mealTimestampError ? <p className="mt-2 text-xs text-[#a25b50] dark:text-[#ffb3a9]">{mealTimestampError}</p> : null}
-            {mealDraft.foodName ? (
-              <div aria-live="polite" className="mt-3 rounded-[1rem] border border-[#e8e2f7] bg-[#fbf9ff] px-4 py-3 text-sm text-[#5d6783] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/65">
-                {mealCalculation ? (
-                  <>
-                    <div className="mb-1">{composeHealthFoodServingDefinition({ ...mealCalculation.serving, servingLabel: mealDraft.servingLabel })}</div>
-                    <div>Nutrition preview: <strong className="text-[#3d4670] dark:text-white">{formatHealthNutritionNumber(mealCalculation.nutrientTotals.calories)} kcal</strong> / Protein {formatHealthNutritionNumber(mealCalculation.nutrientTotals.protein_g)}g / Carbs {formatHealthNutritionNumber(mealCalculation.nutrientTotals.carbs_g)}g / Fat {formatHealthNutritionNumber(mealCalculation.nutrientTotals.fat_g)}g</div>
-                  </>
-                ) : "Enter a positive amount using one of this food’s supported measurements."}
-              </div>
-            ) : null}
-            <div className="mt-3 grid gap-3">
-              {customFoodCategories.length > 0 ? (
-                <div aria-label="Filter custom foods by category" className="flex flex-wrap gap-1.5">
-                  {customFoodCategories.map((category) => (
-                    <AdhdChip
-                      className="shrink-0"
-                      key={category}
-                      onClick={() => setSelectedCustomFoodCategory((current) => current === category ? null : category)}
-                      selected={selectedCustomFoodCategory === category}
-                      toneClassName="border-[#e4deef] bg-white text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60"
-                    >
-                      {category}
-                    </AdhdChip>
-                  ))}
-                </div>
-              ) : null}
-              {customFoodCategories.length > 0 ? <div aria-hidden="true" className="border-t border-[#ece8f6] dark:border-white/10" /> : null}
-              {matchingCustomFoods.length === 0 ? (
-                <EmptyCopy text="No custom foods match this search." />
-              ) : (
-                <div className="adhdice-scrollbar max-h-24 overflow-y-auto pr-1">
-                  <div className="flex flex-wrap gap-2">
-                  {matchingCustomFoods.map((item) => (
-                    <button
-                      className={`ui-pill-button-light inline-flex min-w-0 max-w-full whitespace-normal text-left ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`}
-                      key={item.id}
-                      onClick={() => {
-                        setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name);
-                        applyLookupResult({
-                          attribution: item.attribution,
-                          barcode: item.barcode,
-                          brandName: item.brand_name,
-                          foodCategory: item.food_category ?? item.category,
-                          calories: item.calories,
-                          carbs: item.carbs_g,
-                          fat: item.fat_g,
-                          foodName: item.food_name,
-                          protein: item.protein_g,
-                          provider: item.provider,
-                          providerItemId: item.provider_item_id ?? item.id,
-                          servingLabel: item.serving_label,
-                          sourceFoodId: item.id,
-                          servingQuantity: item.serving_quantity,
-                          servingUnit: item.serving_unit,
-                          servingMeasureValue: item.serving_measure_value,
-                          servingMeasureUnit: item.serving_measure_unit,
-                        });
-                      }}
-                      type="button"
-                    >
-                      {formatBrandedFoodName(item)} · {item.calories} kcal
-                    </button>
-                  ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
             <div className="mt-6 grid gap-3">
               <SectionMiniTitle
-                actions={<FoodHistoryDateChip date={foodHistoryDate} onChange={setFoodHistoryDate} today={today} />}
+                actions={<FoodHistoryDateChip date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
                 title={`${foodHistoryDate === today ? "Today’s Meals" : `Meals — ${formatHealthDateLabel(foodHistoryDate)}`} — ${formatHealthNutritionNumber(selectedNutrition.calories)} kcal`}
               />
               {HEALTH_MEAL_SLOTS.map((slot) => {
@@ -1989,6 +1898,7 @@ export function HealthPage({
                   </div>
                   );
                     })}
+                    {activeMealEntrySlot === slot ? renderMealEntryEditor() : null}
                   </section>
                   );
                 })}
@@ -1998,7 +1908,7 @@ export function HealthPage({
 
           <div className="grid min-w-0 content-start gap-5">
           <HealthPanel
-            headerActions={<FoodHistoryDateChip date={foodHistoryDate} onChange={setFoodHistoryDate} today={today} />}
+            headerActions={<FoodHistoryDateChip date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
             className="min-w-0"
             icon={<Target />}
             subtitle="Daily totals"
