@@ -5,14 +5,19 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.47`.
+- Current working app version: `7.11.48`.
 - Current release group: `7.11.x` structured Fitness session evidence.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+- The next planned Fitness feature is `7.11.49 Active Workout Sandbox MVP`, using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.48 Fitness QA polish and shared chip spacing
+
+Shared `AdhdChip` icon labels now use the compact `gap-1.5` rhythm without changing chip height, typography, icon size, count-only spacing, or `AdhdIconButton`. Exercise Library Add and Edit use a clear Reps/Duration segmented selector; new entries default to Reps, and the selected value remains the library `default_measurement` while actual values stay in Workout Sets. The repository records the already-applied live index-name correction in `supabase/correct_health_fitness_sessions_index_7_11_46.sql`; no live SQL was run in this ticket. Focused QA tests, targeted lint, and `git diff --check` are the implementation verification boundary; browser QA, live SQL, builds, and device deployment remain unverified. The next planned feature is `7.11.49 Active Workout Sandbox MVP` on the existing canonical Workout → Workout Exercise → Set system.
 
 ## 2026-08-25 7.11.47 Fitness retry safety and Home capacity
 
