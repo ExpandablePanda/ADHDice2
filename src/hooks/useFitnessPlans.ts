@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   HealthFitnessPlan,
@@ -13,6 +13,7 @@ import type {
   HealthWorkoutPlanItemLinkInsert,
 } from "@/lib/database.types";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
+import { isCurrentFitnessReloadRequest, type FitnessReloadScope } from "@/lib/fitness-reload-guard";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (message: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
@@ -50,6 +51,9 @@ export function useFitnessPlans(
   const [workoutPlanItemLinks, setWorkoutPlanItemLinks] = useState<HealthWorkoutPlanItemLink[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stateScope, setStateScope] = useState<FitnessReloadScope<SupabaseClient> | null>(null);
+  const reloadGenerationRef = useRef(0);
+  const scopeRef = useRef<FitnessReloadScope<SupabaseClient>>({ active, client, userId });
 
   const reportError = useCallback((message: string) => {
     setError(message);
@@ -57,10 +61,11 @@ export function useFitnessPlans(
   }, [setMessage]);
 
   const reload = useCallback(async () => {
-    if (!client || !userId) {
-      return false;
-    }
+    const generation = ++reloadGenerationRef.current;
+    const requestedScope = { active, client, userId };
+    if (!active || !client || !userId) return false;
 
+    setStateScope(requestedScope);
     setPlans([]);
     setPlanItems([]);
     setWorkoutPlanItemLinks([]);
@@ -72,6 +77,8 @@ export function useFitnessPlans(
       client.from("adhdice_health_workout_plan_item_links").select("*").eq("user_id", userId),
     ]);
 
+    const isCurrent = () => isCurrentFitnessReloadRequest({ ...requestedScope, generation }, scopeRef.current, reloadGenerationRef.current);
+    if (!isCurrent()) return false;
     const firstError = plansResult.error ?? planItemsResult.error ?? linksResult.error;
     if (firstError) {
       reportError(`Fitness Plans are unavailable until the 7.11.44 Fitness Plans migration is applied. ${firstError.message}`);
@@ -85,16 +92,38 @@ export function useFitnessPlans(
     setError(null);
     setIsLoading(false);
     return true;
-  }, [client, reportError, userId]);
+  }, [active, client, reportError, userId]);
 
   useEffect(() => {
+    scopeRef.current = { active, client, userId };
+    const effectGeneration = ++reloadGenerationRef.current;
     if (!active || !userId || !client) {
-      return;
+      queueMicrotask(() => {
+        if (effectGeneration !== reloadGenerationRef.current) return;
+        setPlans([]);
+        setPlanItems([]);
+        setWorkoutPlanItemLinks([]);
+        setIsLoading(false);
+        setError(null);
+        setStateScope(null);
+      });
+      return () => {
+        reloadGenerationRef.current += 1;
+      };
     }
     queueMicrotask(() => {
+      if (effectGeneration !== reloadGenerationRef.current) return;
       void reload();
     });
+    return () => {
+      reloadGenerationRef.current += 1;
+    };
   }, [active, client, reload, userId]);
+
+  const isCurrentScope = Boolean(active && userId && client
+    && stateScope?.active
+    && stateScope.client === client
+    && stateScope.userId === userId);
 
   async function createPlan(input: Omit<HealthFitnessPlanInsert, "user_id">) {
     if (!client || !userId) {
@@ -256,14 +285,14 @@ export function useFitnessPlans(
     archivePlanItem,
     createPlan,
     createPlanItem,
-    error,
-    isLoading,
-    planItems,
-    plans,
+    error: isCurrentScope ? error : null,
+    isLoading: isCurrentScope ? isLoading : Boolean(active && userId && client),
+    planItems: isCurrentScope ? planItems : [],
+    plans: isCurrentScope ? plans : [],
     reload,
     saveWorkoutPlanItemLinks,
     updatePlan,
     updatePlanItem,
-    workoutPlanItemLinks,
+    workoutPlanItemLinks: isCurrentScope ? workoutPlanItemLinks : [],
   };
 }

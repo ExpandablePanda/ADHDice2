@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   HealthExercise,
@@ -21,6 +21,7 @@ import {
   validateHealthWorkoutStructuredDraft,
 } from "@/lib/health-fitness-session";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
+import { isCurrentFitnessReloadRequest, type FitnessReloadScope } from "@/lib/fitness-reload-guard";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (message: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
@@ -73,6 +74,9 @@ export function useFitnessSessionDetails(
   const [isLoading, setIsLoading] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stateScope, setStateScope] = useState<FitnessReloadScope<SupabaseClient> | null>(null);
+  const reloadGenerationRef = useRef(0);
+  const scopeRef = useRef<FitnessReloadScope<SupabaseClient>>({ active, client, userId });
 
   const reportError = useCallback((message: string) => {
     setError(message);
@@ -80,10 +84,11 @@ export function useFitnessSessionDetails(
   }, [setMessage]);
 
   const reload = useCallback(async () => {
-    if (!client || !userId) {
-      return false;
-    }
+    const generation = ++reloadGenerationRef.current;
+    const requestedScope = { active, client, userId };
+    if (!active || !client || !userId) return false;
 
+    setStateScope(requestedScope);
     setIsLoading(true);
     setIsLoaded(false);
     setError(null);
@@ -95,6 +100,8 @@ export function useFitnessSessionDetails(
       client.from("adhdice_health_workout_exercises").select("*").eq("user_id", userId).order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
       client.from("adhdice_health_workout_sets").select("*").eq("user_id", userId).order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
     ]);
+    const isCurrent = () => isCurrentFitnessReloadRequest({ ...requestedScope, generation }, scopeRef.current, reloadGenerationRef.current);
+    if (!isCurrent()) return false;
     const firstError = libraryResult.error ?? workoutExercisesResult.error ?? workoutSetsResult.error;
     if (firstError) {
       reportError(`Structured Fitness is unavailable until the 7.11.46 Fitness Sessions and 7.11.50 Exercise sort-order migrations are applied. ${firstError.message}`);
@@ -110,23 +117,39 @@ export function useFitnessSessionDetails(
     setIsLoaded(true);
     setError(null);
     return true;
-  }, [client, reportError, userId]);
+  }, [active, client, reportError, userId]);
 
   useEffect(() => {
+    scopeRef.current = { active, client, userId };
+    const effectGeneration = ++reloadGenerationRef.current;
     if (!active || !userId || !client) {
       queueMicrotask(() => {
+        if (effectGeneration !== reloadGenerationRef.current) return;
         setExerciseLibrary([]);
         setWorkoutExercises([]);
         setWorkoutSets([]);
+        setIsLoading(false);
         setIsLoaded(false);
         setError(null);
+        setStateScope(null);
       });
-      return;
+      return () => {
+        reloadGenerationRef.current += 1;
+      };
     }
     queueMicrotask(() => {
+      if (effectGeneration !== reloadGenerationRef.current) return;
       void reload();
     });
+    return () => {
+      reloadGenerationRef.current += 1;
+    };
   }, [active, client, reload, userId]);
+
+  const isCurrentScope = Boolean(active && userId && client
+    && stateScope?.active
+    && stateScope.client === client
+    && stateScope.userId === userId);
 
   async function createExercise(input: Omit<HealthExerciseInsert, "user_id" | "default_measurement">) {
     if (!client || !userId) {
@@ -429,18 +452,18 @@ export function useFitnessSessionDetails(
   return {
     archiveExercise,
     createExercise,
-    error,
-    exerciseLibrary,
+    error: isCurrentScope ? error : null,
+    exerciseLibrary: isCurrentScope ? exerciseLibrary : [],
     getWorkoutSessionDetails,
-    isLoaded,
-    isLoading,
+    isLoaded: isCurrentScope && isLoaded,
+    isLoading: isCurrentScope ? isLoading : Boolean(active && userId && client),
     reload,
     removeLocalWorkoutSessionDetails,
     reorderExercises,
     saveWorkoutSessionDetails,
     updateExercise,
-    workoutExercises,
-    workoutSets,
+    workoutExercises: isCurrentScope ? workoutExercises : [],
+    workoutSets: isCurrentScope ? workoutSets : [],
   };
 }
 

@@ -8,6 +8,8 @@ import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import type { ActiveFitnessWorkoutController } from "@/hooks/useActiveFitnessWorkout";
 import type { HealthExercise, HealthFitnessMeasurement, HealthFitnessPlan, HealthFitnessPlanItem } from "@/lib/database.types";
 import {
+  buildActiveFitnessWorkoutTypeOptions,
+  canResumeActiveFitnessWorkout,
   formatActiveFitnessWorkoutClock,
   formatActiveFitnessWorkoutTotal,
   getActiveFitnessWorkoutElapsedSeconds,
@@ -30,6 +32,7 @@ export function HealthActiveWorkout({ controller, exerciseLibrary, planItems, pl
   const [exerciseToAdd, setExerciseToAdd] = useState("");
   const [measurementToAdd, setMeasurementToAdd] = useState<HealthFitnessMeasurement>("reps");
   const activeExercises = useMemo(() => exerciseLibrary.filter((exercise) => exercise.archived_at === null), [exerciseLibrary]);
+  const activeWorkoutTypeOptions = useMemo(() => buildActiveFitnessWorkoutTypeOptions(runtime?.workoutType ?? "", workoutTypes), [runtime?.workoutType, workoutTypes]);
   const selectedExerciseId = activeExercises.some((exercise) => exercise.id === exerciseToAdd) ? exerciseToAdd : activeExercises[0]?.id ?? "";
 
   useEffect(() => {
@@ -46,6 +49,8 @@ export function HealthActiveWorkout({ controller, exerciseLibrary, planItems, pl
   if (!runtime) return null;
 
   const elapsedSeconds = getActiveFitnessWorkoutElapsedSeconds(runtime, nowMs);
+  const canResume = canResumeActiveFitnessWorkout(runtime);
+  const isRetryState = Boolean(runtime.canonicalWorkoutId);
   const selectedPlanItemIds = runtime.selectedPlanItemIds;
 
   function addExercise() {
@@ -75,18 +80,20 @@ export function HealthActiveWorkout({ controller, exerciseLibrary, planItems, pl
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-xl font-bold tabular-nums text-[#31256d] dark:text-[#e2dcff]">{formatActiveFitnessWorkoutClock(elapsedSeconds)}</span>
-          {runtime.state === "running" ? (
+          {runtime.state === "running" && !isRetryState ? (
             <AdhdChip icon={<Pause aria-hidden="true" className="h-3.5 w-3.5" />} onClick={controller.pauseWorkout} type="button">Pause</AdhdChip>
-          ) : (
+          ) : canResume ? (
             <AdhdChip icon={<Play aria-hidden="true" className="h-3.5 w-3.5" />} onClick={controller.resumeWorkout} tone="purple" type="button">Resume</AdhdChip>
-          )}
+          ) : null}
         </div>
       </div>
+
+      {isRetryState ? <p className="text-xs text-[#8d5670] dark:text-[#ffb0c1]">Workout timing is locked because the workout log was already created. Retry Finish Workout to complete saving.</p> : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="grid gap-1.5">
           <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/40">Workout Type</span>
-          <HealthDropdown ariaLabel="Active workout type" onChange={(value) => controller.updateDetails({ workoutType: value })} options={workoutTypes.map((type) => ({ label: type, value: type }))} value={runtime.workoutType} />
+          <HealthDropdown ariaLabel="Active workout type" onChange={(value) => controller.updateDetails({ workoutType: value })} options={activeWorkoutTypeOptions} value={runtime.workoutType} />
         </label>
         <label className="grid gap-1.5">
           <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/40">Title (optional)</span>

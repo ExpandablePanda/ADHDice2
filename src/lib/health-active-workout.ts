@@ -57,6 +57,13 @@ export type ActiveFitnessWorkoutTotals = {
   totalReps: number;
 };
 
+export type ActiveFitnessWorkoutTypeOption = {
+  label: string;
+  value: string;
+};
+
+export const ACTIVE_FITNESS_WORKOUT_TIMING_LOCKED_MESSAGE = "Workout timing is locked because the workout log was already created. Retry Finish Workout to complete saving.";
+
 export function applyActiveFitnessWorkoutFinishResult(
   runtime: ActiveFitnessWorkoutRuntime,
   result: { canonicalWorkoutId: string | null; ok: boolean },
@@ -108,6 +115,31 @@ export function canDiscardActiveFitnessWorkout(runtime: Pick<ActiveFitnessWorkou
   return !runtime?.canonicalWorkoutId;
 }
 
+export function canResumeActiveFitnessWorkout(
+  runtime: Pick<ActiveFitnessWorkoutRuntime, "canonicalWorkoutId" | "state"> | null | undefined,
+) {
+  return Boolean(runtime && runtime.state === "paused" && !runtime.canonicalWorkoutId);
+}
+
+export function buildActiveFitnessWorkoutTypeOptions(
+  currentWorkoutType: string,
+  configuredTypes: readonly string[],
+): ActiveFitnessWorkoutTypeOption[] {
+  const options: ActiveFitnessWorkoutTypeOption[] = [];
+  const seenValues = new Set<string>();
+  for (const configuredType of configuredTypes) {
+    const value = configuredType.trim();
+    if (!value || seenValues.has(value)) continue;
+    seenValues.add(value);
+    options.push({ label: value, value });
+  }
+  const currentValue = currentWorkoutType.trim();
+  if (currentValue && !seenValues.has(currentValue)) {
+    options.push({ label: `${currentValue} (removed)`, value: currentValue });
+  }
+  return options;
+}
+
 export function updateActiveFitnessWorkoutDetails(
   runtime: ActiveFitnessWorkoutRuntime,
   patch: Partial<Pick<ActiveFitnessWorkoutRuntime, "notes" | "selectedPlanItemIds" | "title" | "workoutType">>,
@@ -121,8 +153,8 @@ export function updateActiveFitnessWorkoutDetails(
   }, nowMs);
 }
 
-export function getActiveFitnessWorkoutElapsedSeconds(runtime: Pick<ActiveFitnessWorkoutRuntime, "accumulatedSeconds" | "currentRunStartedAt" | "state">, nowMs: number) {
-  return getElapsedSeconds(runtime.accumulatedSeconds, runtime.currentRunStartedAt, runtime.state === "running", nowMs);
+export function getActiveFitnessWorkoutElapsedSeconds(runtime: Pick<ActiveFitnessWorkoutRuntime, "accumulatedSeconds" | "canonicalWorkoutId" | "currentRunStartedAt" | "state">, nowMs: number) {
+  return getElapsedSeconds(runtime.accumulatedSeconds, runtime.currentRunStartedAt, runtime.state === "running" && !runtime.canonicalWorkoutId, nowMs);
 }
 
 export function getActiveFitnessWorkoutSetElapsedSeconds(
@@ -151,9 +183,9 @@ export function pauseActiveFitnessWorkout(runtime: ActiveFitnessWorkoutRuntime, 
 }
 
 export function resumeActiveFitnessWorkout(runtime: ActiveFitnessWorkoutRuntime, nowMs = Date.now()) {
-  if (runtime.state === "running") return runtime;
+  if (!canResumeActiveFitnessWorkout(runtime)) return runtime;
   const now = new Date(nowMs).toISOString();
-  return touchRuntime({ ...runtime, currentRunStartedAt: now, state: "running" }, nowMs, now);
+  return touchRuntime({ ...runtime, currentRunStartedAt: now, finishAttemptedAt: undefined, state: "running" }, nowMs, now);
 }
 
 export function addActiveFitnessWorkoutExercise(
@@ -299,7 +331,7 @@ export function startActiveFitnessDurationSet(
   runtimeSetId: string,
   nowMs = Date.now(),
 ) {
-  if (runtime.state !== "running") return runtime;
+  if (runtime.state !== "running" || runtime.canonicalWorkoutId) return runtime;
   const selectedSet = runtime.exercises
     .find((exercise) => exercise.runtimeExerciseId === runtimeExerciseId)
     ?.sets.find((set) => set.runtimeSetId === runtimeSetId);
