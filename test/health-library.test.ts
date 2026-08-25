@@ -487,13 +487,15 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(source, /HealthAutocomplete[\s\S]*ariaLabel="Search custom foods"/);
   assert.match(source, /formatHealthFoodDisplayName\(item\)/);
   assert.match(source, /applyLookupResult\(/);
+  assert.match(source, /<HealthBarcodeScanner/);
+  assert.doesNotMatch(source, /Search foods and barcodes|USDA FoodData Central/);
   assert.match(source, /border-t border-\[#ece8f6\]/);
   assert.match(source, /sortHealthFoodsForMealPicker/);
   assert.match(source, /selectedCustomFoodCategory/);
   assert.doesNotMatch(source, /matchingCustomFoodGroups/);
   assert.match(source, /getHealthFoodIdentityKey/);
-  assert.match(source, /HEALTH_TAB_STORAGE_KEY/);
-  assert.match(source, /HEALTH_TABS\.includes/);
+  assert.match(source, /readHealthTabPreference/);
+  assert.match(source, /HEALTH_TABS/);
   assert.match(source, /adhdice-scrollbar max-h-\[26rem\].*overflow-y-auto/);
   assert.match(source, /adhdice-scrollbar max-h-24 overflow-y-auto/);
   assert.match(library, /grid min-w-0 items-start gap-5 xl:grid-cols-\[minmax\(0,0\.9fr\)_minmax\(0,1\.1fr\)\]/);

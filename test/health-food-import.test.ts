@@ -120,6 +120,22 @@ test("Health Library wires import preview, confirmation, and normal persistence"
   assert.match(source, /duplicate/);
 });
 
+test("Custom Food editing exposes and persists barcode without changing import fields", () => {
+  const panel = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
+  const barcodeHandler = panel.slice(panel.indexOf("function handleFoodBarcodeDetected"), panel.indexOf("function openFoodImport"));
+  assert.match(panel, /barcode: string/);
+  assert.match(panel, /barcode: food\.barcode \?\? ""/);
+  assert.match(panel, /barcode: emptyToNull\(foodDraft\.barcode\)/);
+  assert.match(panel, /<HealthBarcodeScanner/);
+  assert.match(barcodeHandler, /setFoodDraft\(\(current\) => \(\{ \.\.\.current, barcode: scannedBarcode \}\)\)/);
+  assert.match(panel, /Barcode scanned\. No food details found, enter the remaining information manually\./);
+  assert.match(panel, /mergeFoodDraftWithBarcodeResult/);
+  assert.match(panel, /parseBarcodeServingLabel\(result\.servingLabel\)/);
+  assert.match(panel, /servingMeasureValue: hasEditedServing \? draft\.servingMeasureValue : serving\.measureValue/);
+  assert.doesNotMatch(barcodeHandler, /saveFood\(/);
+  assert.match(panel, /Save food/);
+});
+
 test("Health import merges each successful food with the latest state and keeps counts distinct", () => {
   const hook = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
   const panel = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
@@ -145,21 +161,22 @@ test("Deleting a custom food leaves meal rows and snapshot-backed editing indepe
   assert.match(page, /formatHealthMealSummary\(entry\)/);
 });
 
-test("Health meal logger wires selected date/time through insert and edit paths", () => {
+test("Health meal logger uses the selected ledger date and active section through insert and edit paths", () => {
   const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
-  assert.match(source, /type=\"date\"[\s\S]*value=\{mealDraft\.date\}/);
   assert.match(source, /type=\"time\"[\s\S]*value=\{mealDraft\.time\}/);
-  assert.match(source, /entry_date: mealDraft\.date/);
+  assert.match(source, /buildHealthMealLoggedAt\(foodHistoryDate, mealDraft\.time\)/);
+  assert.match(source, /entry_date: foodHistoryDate/);
+  assert.match(source, /meal_slot: activeMealEntrySlot/);
   assert.match(source, /logged_at: loggedAt/);
-  assert.match(source, /isHealthMealTimestampFuture\(mealDraft\.date, mealDraft\.time\)/);
+  assert.match(source, /isHealthMealTimestampFuture\(foodHistoryDate, mealDraft\.time\)/);
   assert.match(source, /updateMealEntry\(entryId/);
 });
 
-test("Health meal logger exposes Quick Add Food with optional library persistence and safe editing", () => {
+test("Health meal logger exposes Quick Entry with optional library persistence and safe editing", () => {
   const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
   const hook = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
   assert.match(source, /const \[saveQuickEntryToLibrary, setSaveQuickEntryToLibrary\] = useState\(false\)/);
-  assert.match(source, /Quick Add Food/);
+  assert.match(source, /Quick Entry/);
   assert.match(source, /food_name: mealDraft\.foodName\.trim\(\)/);
   assert.match(source, /calories: Math\.round\(calculation\.nutrientTotals\.calories\)/);
   assert.match(source, /protein_g: calculation\.nutrientTotals\.protein_g/);
@@ -168,8 +185,8 @@ test("Health meal logger exposes Quick Add Food with optional library persistenc
   assert.match(source, /await saveFavoriteFood\(libraryInput\)/);
   assert.match(source, /source_food_id: sourceFoodId/);
   assert.match(source, /food_snapshot: buildMealFoodSnapshot\(\{ \.\.\.mealDraft, sourceFoodId \}\)/);
-  assert.match(source, /meal_slot: mealDraft\.mealSlot/);
-  assert.match(source, /entry_date: mealDraft\.date/);
+  assert.match(source, /meal_slot: activeMealEntrySlot/);
+  assert.match(source, /entry_date: foodHistoryDate/);
   assert.match(source, /logged_at: loggedAt/);
   assert.match(hook, /\.map\(\(entry\) => entry\.id === entryId \? nextRow : entry\)/);
 });

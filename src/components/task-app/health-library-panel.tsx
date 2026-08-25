@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, FileUp, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Camera, Copy, FileUp, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
@@ -40,13 +40,16 @@ import {
   type HealthCustomFoodImportFieldKey,
 } from "@/lib/health-food-import";
 import { getMealSlotLabel, HEALTH_MEAL_SLOTS } from "@/lib/health-utils";
+import { lookupOpenFoodFactsByBarcode, type HealthFoodLookupResult } from "@/lib/health-nutrition";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
+import { HealthBarcodeScanner } from "./health-barcode-scanner";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 
 type LibrarySection = "foods" | "recipes" | "meals";
 
 type FoodDraft = {
   id?: string;
+  barcode: string;
   foodName: string;
   brandName: string;
   foodCategory: string;
@@ -61,6 +64,7 @@ type FoodDraft = {
 };
 
 const EMPTY_FOOD_DRAFT: FoodDraft = {
+  barcode: "",
   foodName: "",
   brandName: "",
   foodCategory: "",
@@ -179,6 +183,9 @@ export function HealthLibraryPanel({
   const [foodImportText, setFoodImportText] = useState("");
   const [foodImportRows, setFoodImportRows] = useState<FoodImportRow[]>([]);
   const [foodImportStatus, setFoodImportStatus] = useState("");
+  const [isBarcodeScannerOpen, setIsBarcodeScannerOpen] = useState(false);
+  const [barcodeLookupStatus, setBarcodeLookupStatus] = useState<"idle" | "lookup">("idle");
+  const [barcodeLookupMessage, setBarcodeLookupMessage] = useState("");
   const [isFoodImportOpen, setIsFoodImportOpen] = useState(false);
   const [isSavingFoodImport, setIsSavingFoodImport] = useState(false);
   const [ingredientSearchQuery, setIngredientSearchQuery] = useState("");
@@ -248,6 +255,7 @@ export function HealthLibraryPanel({
     const saved = await saveFood({
       id: foodDraft.id,
       brand_name: emptyToNull(foodDraft.brandName),
+      barcode: emptyToNull(foodDraft.barcode),
       calories,
       category: emptyToNull(foodDraft.foodCategory) ?? "Uncategorized",
       food_category: emptyToNull(foodDraft.foodCategory) ?? "Uncategorized",
@@ -266,8 +274,33 @@ export function HealthLibraryPanel({
       serving_weight_unit: foodDraft.servingMeasureUnit === "g" || foodDraft.servingMeasureUnit === "oz" || foodDraft.servingMeasureUnit === "fl_oz" ? foodDraft.servingMeasureUnit : null,
     });
     if (saved) {
+      setIsBarcodeScannerOpen(false);
+      setBarcodeLookupMessage("");
       setFoodDraft(EMPTY_FOOD_DRAFT);
     }
+  }
+
+  function handleFoodBarcodeDetected(barcode: string) {
+    const scannedBarcode = barcode.trim();
+    if (!scannedBarcode) {
+      return;
+    }
+    setBarcodeLookupMessage("");
+    setBarcodeLookupStatus("lookup");
+    setFoodDraft((current) => ({ ...current, barcode: scannedBarcode }));
+    void lookupOpenFoodFactsByBarcode(scannedBarcode)
+      .then((result) => {
+        if (!result) {
+          setBarcodeLookupMessage("Barcode scanned. No food details found, enter the remaining information manually.");
+          return;
+        }
+        setFoodDraft((current) => mergeFoodDraftWithBarcodeResult(current, result, scannedBarcode));
+        setBarcodeLookupMessage("Barcode details loaded. Review before saving.");
+      })
+      .catch((error) => {
+        setBarcodeLookupMessage(error instanceof Error ? error.message : "Barcode lookup did not complete.");
+      })
+      .finally(() => setBarcodeLookupStatus("idle"));
   }
 
   function openFoodImport() {
@@ -515,6 +548,17 @@ export function HealthLibraryPanel({
                     value={foodDraft.brandName}
                   />
                 </LibraryField>
+                <LibraryField label="Barcode">
+                  <div className="flex min-w-0 flex-wrap gap-2">
+                    <input className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 flex-1`} inputMode="numeric" onChange={(event) => setFoodDraft((current) => ({ ...current, barcode: event.target.value }))} placeholder="012345678905" value={foodDraft.barcode} />
+                    <AdhdChip contentClassName="gap-1.5" disabled={barcodeLookupStatus !== "idle"} icon={<Camera aria-hidden="true" className="h-3 w-3" />} onClick={() => setIsBarcodeScannerOpen(true)}>Scan</AdhdChip>
+                  </div>
+                </LibraryField>
+                <div className="sm:col-span-2">
+                  <HealthBarcodeScanner isOpen={isBarcodeScannerOpen} onClose={() => setIsBarcodeScannerOpen(false)} onDetected={handleFoodBarcodeDetected} />
+                  {barcodeLookupStatus !== "idle" ? <p className="text-xs text-[#73809c] dark:text-white/50" role="status">Looking up barcode...</p> : null}
+                  {barcodeLookupMessage ? <p aria-live="polite" className="text-xs text-[#5f6c88] dark:text-white/60" role="status">{barcodeLookupMessage}</p> : null}
+                </div>
                 <LibraryField label="Food category">
                   <HealthAutocomplete
                     ariaLabel="Food category"
@@ -847,6 +891,7 @@ function foodToDraft(food: HealthFoodLibraryItem): FoodDraft {
   const servingMeasureUnit = food.serving_measure_unit ?? "";
   return {
     id: food.id,
+    barcode: food.barcode ?? "",
     brandName: food.brand_name ?? "",
     calories: String(food.calories),
     foodCategory: food.food_category ?? "Uncategorized",
@@ -858,6 +903,49 @@ function foodToDraft(food: HealthFoodLibraryItem): FoodDraft {
     servingUnit: food.serving_unit || "serving",
     servingMeasureValue: food.serving_measure_value == null ? "" : String(food.serving_measure_value),
     servingMeasureUnit: servingMeasureUnit,
+  };
+}
+
+function mergeFoodDraftWithBarcodeResult(draft: FoodDraft, result: HealthFoodLookupResult, scannedBarcode: string): FoodDraft {
+  const serving = parseBarcodeServingLabel(result.servingLabel);
+  const hasEditedServing = draft.servingQuantity.trim() !== "1"
+    || draft.servingUnit.trim() !== "serving"
+    || draft.servingMeasureValue.trim().length > 0
+    || draft.servingMeasureUnit.length > 0;
+  return {
+    ...draft,
+    barcode: result.barcode ?? scannedBarcode,
+    brandName: draft.brandName.trim() ? draft.brandName : result.brandName ?? "",
+    calories: draft.calories.trim() ? draft.calories : String(result.calories),
+    carbs: draft.carbs.trim() ? draft.carbs : result.carbs === null ? "" : String(result.carbs),
+    foodCategory: draft.foodCategory.trim() ? draft.foodCategory : result.foodCategory ?? "",
+    foodName: draft.foodName.trim() ? draft.foodName : result.foodName,
+    fat: draft.fat.trim() ? draft.fat : result.fat === null ? "" : String(result.fat),
+    protein: draft.protein.trim() ? draft.protein : result.protein === null ? "" : String(result.protein),
+    servingQuantity: hasEditedServing ? draft.servingQuantity : serving.quantity,
+    servingUnit: hasEditedServing ? draft.servingUnit : serving.unit,
+    servingMeasureValue: hasEditedServing ? draft.servingMeasureValue : serving.measureValue,
+    servingMeasureUnit: hasEditedServing ? draft.servingMeasureUnit : serving.measureUnit,
+  };
+}
+
+function parseBarcodeServingLabel(label: string | null) {
+  const servingMatch = /^\s*(\d+(?:\.\d+)?)\s*([a-z][a-z-]*)?/i.exec(label ?? "");
+  const servingUnit = servingMatch?.[2]?.toLowerCase();
+  const measureMatch = /(\d+(?:\.\d+)?)\s*(fl\s*oz|g|oz|ml)\b/i.exec(label ?? "");
+  const normalizedMeasureUnit = measureMatch?.[2]?.toLowerCase().replace(/\s+/g, "_");
+  const measureUnit: HealthServingMeasureUnit | "" = normalizedMeasureUnit === "g"
+    || normalizedMeasureUnit === "oz"
+    || normalizedMeasureUnit === "ml"
+    || normalizedMeasureUnit === "fl_oz"
+    ? normalizedMeasureUnit
+    : "";
+  const isMeasureServingUnit = servingUnit === "g" || servingUnit === "oz" || servingUnit === "ml" || servingUnit === "fl";
+  return {
+    quantity: servingMatch?.[1] ?? "1",
+    unit: isMeasureServingUnit || !servingUnit ? "serving" : servingUnit.replace(/s$/, ""),
+    measureValue: measureMatch?.[1] ?? "",
+    measureUnit: measureUnit ?? "",
   };
 }
 
