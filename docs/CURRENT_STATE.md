@@ -5,19 +5,19 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.48`.
+- Current working app version: `7.11.49`.
 - Current release group: `7.11.x` structured Fitness session evidence.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
-- The next planned Fitness feature is `7.11.49 Active Workout Sandbox MVP`, using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
+- The next planned Fitness feature is `7.11.50 Active Workout Sandbox MVP`, using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 
-## 2026-08-25 7.11.48 Fitness QA polish and shared chip spacing
+## 2026-08-25 7.11.49 Exercise selection, per-workout measurement, and chip alignment
 
-Shared `AdhdChip` icon labels now use the compact `gap-1.5` rhythm without changing chip height, typography, icon size, count-only spacing, or `AdhdIconButton`. Exercise Library Add and Edit use a clear Reps/Duration segmented selector; new entries default to Reps, and the selected value remains the library `default_measurement` while actual values stay in Workout Sets. The repository records the already-applied live index-name correction in `supabase/correct_health_fitness_sessions_index_7_11_46.sql`; no live SQL was run in this ticket. Focused QA tests, targeted lint, and `git diff --check` are the implementation verification boundary; browser QA, live SQL, builds, and device deployment remain unverified. The next planned feature is `7.11.49 Active Workout Sandbox MVP` on the existing canonical Workout → Workout Exercise → Set system.
+Exercise Library entries are reusable exercise identities: Settings requires only an exercise name and archive/rename behavior. The existing `default_measurement` column remains in the live-compatible schema as deprecated compatibility data; new rows receive `reps`, and the application does not present or edit that value. `adhdice_health_workout_exercises.measurement_type` is the actual measurement authority for each Workout Exercise occurrence. Every occurrence exposes both Reps and Duration, and switching modes clears incompatible set values while preserving set IDs, count, and notes. The selector retains its current active or archived exercise option alongside active alternatives, and replacement updates only the Workout Exercise ID/name snapshot without deriving measurement from the library. Shared icon-bearing `AdhdChip` controls now use compact `gap-1`, a centered shrink-resistant icon wrapper, and slightly reduced leading padding while text-only/count-only chips and `AdhdIconButton` remain unchanged. No live SQL was run; browser QA, builds, and device deployment remain unverified. The next planned feature is `7.11.50 Active Workout Sandbox MVP`.
 
 ## 2026-08-25 7.11.47 Fitness retry safety and Home capacity
 
