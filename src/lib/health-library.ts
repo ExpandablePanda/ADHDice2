@@ -2,6 +2,7 @@ import type {
   HealthFoodLibraryItem,
   HealthFoodLibraryItemInsert,
   HealthMealEntry,
+  HealthNutritionDetails,
   HealthServingMeasureUnit,
   HealthServingWeightUnit,
   HealthRecipe,
@@ -11,12 +12,20 @@ import type {
   HealthWaterEntry,
   HealthWaterUnit,
 } from "@/lib/database.types";
+import {
+  aggregateHealthNutritionDetails,
+  normalizeHealthNutritionDetails,
+  scaleHealthNutritionDetails,
+  type HealthNutritionCoverage,
+} from "@/lib/health-nutrition";
 
 export type HealthNutritionTotals = {
   calories: number;
   protein: number;
   carbs: number;
   fat: number;
+  nutrition_details?: HealthNutritionDetails | null;
+  nutrition_coverage?: HealthNutritionCoverage;
 };
 
 export type HealthMealPickerSuggestion =
@@ -68,6 +77,7 @@ export function buildRecipeIngredient(
     protein_g: food.protein_g,
     carbs_g: food.carbs_g,
     fat_g: food.fat_g,
+    nutrition_details: food.nutrition_details ?? null,
   };
 }
 
@@ -85,6 +95,7 @@ export function buildSavedMealFoodItem(
     protein_g: food.protein_g,
     carbs_g: food.carbs_g,
     fat_g: food.fat_g,
+    nutrition_details: food.nutrition_details ?? null,
   };
 }
 
@@ -103,6 +114,7 @@ export function buildSavedMealRecipeItem(
     protein_g: perServing.protein,
     carbs_g: perServing.carbs,
     fat_g: perServing.fat,
+    nutrition_details: perServing.nutrition_details ?? null,
   };
 }
 
@@ -120,6 +132,12 @@ export function getRecipeNutritionPerServing(
     protein: roundNutrition(totals.protein / servings),
     carbs: roundNutrition(totals.carbs / servings),
     fat: roundNutrition(totals.fat / servings),
+    ...(totals.nutrition_details
+      ? {
+          nutrition_details: scaleHealthNutritionDetails(totals.nutrition_details, 1 / servings),
+          nutrition_coverage: scaleHealthNutritionCoverage(totals.nutrition_coverage, 1 / servings),
+        }
+      : {}),
   };
 }
 
@@ -561,6 +579,9 @@ export function normalizeHealthFoodLibraryInput(input: Omit<HealthFoodLibraryIte
     serving_unit: servingUnit,
     serving_measure_value: servingMeasureValue,
     serving_measure_unit: servingMeasureUnit,
+    ...(Object.prototype.hasOwnProperty.call(input, "nutrition_details")
+      ? { nutrition_details: normalizeHealthNutritionDetails(input.nutrition_details) }
+      : {}),
   };
 }
 
@@ -613,6 +634,7 @@ export function normalizeHealthFoodLibraryItem(food: HealthFoodLibraryItem): Hea
     serving_measure_unit: servingMeasureUnit,
     serving_weight_amount: servingWeightAmount,
     serving_weight_unit: servingWeightUnit,
+    nutrition_details: normalizeHealthNutritionDetails(rawFood.nutrition_details),
   };
 }
 
@@ -664,6 +686,7 @@ function sumNutritionItems(
     protein_g: number | null;
     carbs_g: number | null;
     fat_g: number | null;
+    nutrition_details?: HealthNutritionDetails | null;
     quantity: number;
   }>,
 ): HealthNutritionTotals {
@@ -678,11 +701,21 @@ function sumNutritionItems(
     },
     { calories: 0, protein: 0, carbs: 0, fat: 0 },
   );
+  const nutrition = aggregateHealthNutritionDetails(items.map((item) => ({
+    nutritionDetails: item.nutrition_details,
+    quantity: positiveNumber(item.quantity),
+  })));
   return {
     calories: Math.round(totals.calories),
     protein: roundNutrition(totals.protein),
     carbs: roundNutrition(totals.carbs),
     fat: roundNutrition(totals.fat),
+    ...(nutrition.nutritionDetails
+      ? {
+          nutrition_details: nutrition.nutritionDetails,
+          nutrition_coverage: nutrition.coverage,
+        }
+      : {}),
   };
 }
 
@@ -692,4 +725,12 @@ function positiveNumber(value: number) {
 
 function roundNutrition(value: number) {
   return Number(value.toFixed(2));
+}
+
+function scaleHealthNutritionCoverage(coverage: HealthNutritionCoverage | undefined, factor: number): HealthNutritionCoverage | undefined {
+  if (!coverage) return undefined;
+  return Object.fromEntries(Object.entries(coverage).map(([key, value]) => [
+    key,
+    value ? { ...value, value: value.value * factor } : value,
+  ])) as HealthNutritionCoverage;
 }

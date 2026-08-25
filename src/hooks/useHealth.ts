@@ -834,6 +834,7 @@ export function useHealth(
       is_favorite: normalizedInput.is_favorite ?? false,
       food_category: normalizedInput.food_category ?? normalizedInput.category ?? "Uncategorized",
       protein_g: normalizedInput.protein_g ?? null,
+      nutrition_details: normalizedInput.nutrition_details ?? null,
       provider: normalizedInput.provider ?? "manual",
       provider_item_id: normalizedInput.provider_item_id ?? null,
       serving_label: normalizedInput.serving_label ?? null,

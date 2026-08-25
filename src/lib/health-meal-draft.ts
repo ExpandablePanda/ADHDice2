@@ -1,4 +1,4 @@
-import type { HealthMealEntry, HealthServingMeasureUnit } from "@/lib/database.types";
+import type { HealthMealEntry, HealthNutritionDetails, HealthServingMeasureUnit } from "@/lib/database.types";
 import { getCurrentHealthDateTimeInputs } from "@/lib/health-utils";
 
 export type MealDraft = {
@@ -10,6 +10,7 @@ export type MealDraft = {
   date: string;
   fat: string;
   foodName: string;
+  nutritionDetails: HealthNutritionDetails | null;
   mealSlot: HealthMealEntry["meal_slot"];
   protein: string;
   provider: string | null;
@@ -35,6 +36,7 @@ const DEFAULT_MEAL_DRAFT: MealDraft = {
   date: "",
   fat: "",
   foodName: "",
+  nutritionDetails: null,
   mealSlot: "breakfast",
   protein: "",
   provider: null,
@@ -104,6 +106,7 @@ export function hasMeaningfulMealDraft(currentDraft: MealDraft) {
     currentDraft.carbs,
     currentDraft.fat,
     currentDraft.foodName,
+    currentDraft.nutritionDetails,
     currentDraft.protein,
     currentDraft.provider,
     currentDraft.providerItemId,
@@ -112,6 +115,7 @@ export function hasMeaningfulMealDraft(currentDraft: MealDraft) {
     currentDraft.servingLabel,
   ].some((value) => typeof value === "string" && value.trim().length > 0);
   return hasFoodData
+    || currentDraft.nutritionDetails !== null
     || currentDraft.servingMeasureValue !== null
     || currentDraft.servingMeasureUnit !== null
     || currentDraft.quantity !== "1"

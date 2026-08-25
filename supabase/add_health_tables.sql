@@ -39,6 +39,7 @@ create table if not exists public.adhdice_health_food_library (
   protein_g numeric(7,2) check (protein_g is null or protein_g >= 0),
   carbs_g numeric(7,2) check (carbs_g is null or carbs_g >= 0),
   fat_g numeric(7,2) check (fat_g is null or fat_g >= 0),
+  nutrition_details jsonb,
   barcode text,
   provider text not null default 'manual',
   provider_item_id text,
