@@ -16,7 +16,7 @@ import { createDefaultMealDraft } from "../src/lib/health-meal-draft.ts";
 const pageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const hookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../supabase/add_health_meal_planning_7_11_61.sql", import.meta.url), "utf8");
-const correctionMigrationSource = readFileSync(new URL("../supabase/correct_health_meal_plan_confirmation_7_11_62.sql", import.meta.url), "utf8");
+const correctionMigrationSource = readFileSync(new URL("../supabase/fix_health_meal_plan_done_ambiguity_7_11_63.sql", import.meta.url), "utf8");
 
 function plan(overrides: Partial<HealthMealPlanEntry> = {}): HealthMealPlanEntry {
   return {
@@ -213,8 +213,8 @@ test("7.11.61 migration isolates the table, RLS, and atomic idempotent confirmat
   assert.doesNotMatch(migrationSource, /alter table public\.adhdice_health_meal_entries[\s\S]*planned/);
 });
 
-test("7.11.62 correction uses local entry date, server confirmation time, snapshots, and one locked idempotent insert", () => {
-  assert.match(correctionMigrationSource, /drop function if exists public\.adhdice_confirm_health_meal_plan_entry\(uuid\)/);
+test("7.11.63 correction qualifies the Done update while preserving local date, server time, snapshots, and idempotency", () => {
+  assert.match(correctionMigrationSource, /create or replace function public\.adhdice_confirm_health_meal_plan_entry/);
   assert.match(correctionMigrationSource, /adhdice_confirm_health_meal_plan_entry\(\s*p_plan_entry_id uuid,\s*p_actual_entry_date date/);
   assert.match(correctionMigrationSource, /for update/);
   assert.match(correctionMigrationSource, /if v_plan\.confirmed_at is not null/);
@@ -223,7 +223,9 @@ test("7.11.62 correction uses local entry date, server confirmation time, snapsh
   assert.match(correctionMigrationSource, /logged_at,[\s\S]*v_confirmed_at/);
   assert.match(correctionMigrationSource, /food_snapshot,[\s\S]*v_plan\.food_snapshot/);
   assert.match(correctionMigrationSource, /nutrition_snapshot[\s\S]*v_plan\.nutrition_snapshot/);
-  assert.match(correctionMigrationSource, /and confirmed_at is null/);
+  assert.match(correctionMigrationSource, /update public\.adhdice_health_meal_plan_entries as plan_row/);
+  assert.match(correctionMigrationSource, /and plan_row\.confirmed_at is null/);
+  assert.doesNotMatch(correctionMigrationSource, /and confirmed_at is null/);
   assert.match(correctionMigrationSource, /newly_created/);
   assert.doesNotMatch(correctionMigrationSource, /v_plan\.planned_at\s*>\s*now\(\)/);
   assert.doesNotMatch(correctionMigrationSource, /select .*from public\.adhdice_health_food_library/);

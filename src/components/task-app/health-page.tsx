@@ -1710,8 +1710,8 @@ export function HealthPage({
       {activeTab === "Food" ? (
         <div aria-labelledby="health-tab-food" className="mt-3 grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]" id={getHealthTabPanelId("Food")} role="tabpanel">
           <div className="grid min-w-0 content-start gap-5">
-          <HealthPanel className="min-w-0" icon={<Salad />} subtitle="Meal logging">
-            <div className="mt-3 grid gap-3">
+          <HealthPanel className="min-w-0" contentTopClassName="pt-3 sm:pt-3" icon={<Salad />} subtitle="Meal logging">
+            <div className="grid gap-3">
               <SectionMiniTitle
                 actions={<FoodHistoryDateChip allowFuture date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
                 title={`${foodHistoryDate === today ? "Today’s Meals" : `Meals — ${formatHealthDateLabel(foodHistoryDate)}`} — ${formatHealthNutritionNumber(selectedNutrition.calories)} kcal`}
@@ -2426,6 +2426,7 @@ function HealthPanel({
   className,
   collapseAfterHeaderActions = false,
   children,
+  contentTopClassName = "pt-3 sm:pt-4",
   headerActions,
   icon,
   subtitle,
@@ -2434,6 +2435,7 @@ function HealthPanel({
   className?: string;
   collapseAfterHeaderActions?: boolean;
   children: ReactNode;
+  contentTopClassName?: string;
   headerActions?: ReactNode;
   icon: ReactNode;
   subtitle: string;
@@ -2500,7 +2502,7 @@ function HealthPanel({
         )}
         {collapseAfterHeaderActions ? collapseButton : headerActions}
       </div>
-      {isOpen ? <div className="px-3 pb-4 pt-3 sm:px-5 sm:pb-5 sm:pt-4">{children}</div> : null}
+      {isOpen ? <div className={`px-3 pb-4 sm:px-5 sm:pb-5 ${contentTopClassName}`}>{children}</div> : null}
     </div>
   );
 }

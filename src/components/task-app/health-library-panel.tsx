@@ -1,7 +1,7 @@
 "use client";
 
-import { Camera, Copy, FileUp, Pencil, Plus, Search, Trash2 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { Camera, Copy, FileUp, Pencil, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -201,6 +201,9 @@ export function HealthLibraryPanel({
   const [isBarcodeScannerOpen, setIsBarcodeScannerOpen] = useState(false);
   const [barcodeLookupStatus, setBarcodeLookupStatus] = useState<"idle" | "lookup">("idle");
   const [barcodeLookupMessage, setBarcodeLookupMessage] = useState("");
+  const barcodeLookupGenerationRef = useRef(0);
+  const foodScanBaselineRef = useRef<FoodDraft | null>(null);
+  const [hasFoodScanBaseline, setHasFoodScanBaseline] = useState(false);
   const [isFoodImportOpen, setIsFoodImportOpen] = useState(false);
   const [isSavingFoodImport, setIsSavingFoodImport] = useState(false);
   const [ingredientSearchQuery, setIngredientSearchQuery] = useState("");
@@ -243,6 +246,30 @@ export function HealthLibraryPanel({
     () => reviewFoodImportRows(foodImportRows, favorites),
     [favorites, foodImportRows],
   );
+
+  function resetFoodDraft() {
+    barcodeLookupGenerationRef.current += 1;
+    foodScanBaselineRef.current = null;
+    setHasFoodScanBaseline(false);
+    setIsBarcodeScannerOpen(false);
+    setBarcodeLookupStatus("idle");
+    setBarcodeLookupMessage("");
+    setFoodDraft(EMPTY_FOOD_DRAFT);
+  }
+
+  function clearFoodScan() {
+    const baseline = foodScanBaselineRef.current;
+    if (!baseline) {
+      return;
+    }
+    barcodeLookupGenerationRef.current += 1;
+    foodScanBaselineRef.current = null;
+    setHasFoodScanBaseline(false);
+    setIsBarcodeScannerOpen(false);
+    setBarcodeLookupStatus("idle");
+    setBarcodeLookupMessage("");
+    setFoodDraft(cloneFoodDraft(baseline));
+  }
 
   async function handleSaveFood() {
     const calories = Number.parseInt(foodDraft.calories, 10);
@@ -296,9 +323,7 @@ export function HealthLibraryPanel({
       ...(nutritionDetails ? { nutrition_details: nutritionDetails } : {}),
     });
     if (saved) {
-      setIsBarcodeScannerOpen(false);
-      setBarcodeLookupMessage("");
-      setFoodDraft(EMPTY_FOOD_DRAFT);
+      resetFoodDraft();
     }
   }
 
@@ -307,11 +332,17 @@ export function HealthLibraryPanel({
     if (!scannedBarcode) {
       return;
     }
+    const requestGeneration = ++barcodeLookupGenerationRef.current;
+    foodScanBaselineRef.current = cloneFoodDraft(foodDraft);
+    setHasFoodScanBaseline(true);
     setBarcodeLookupMessage("");
     setBarcodeLookupStatus("lookup");
     setFoodDraft((current) => ({ ...current, barcode: scannedBarcode }));
     void lookupOpenFoodFactsByBarcode(scannedBarcode)
       .then((result) => {
+        if (requestGeneration !== barcodeLookupGenerationRef.current) {
+          return;
+        }
         if (!result) {
           setBarcodeLookupMessage("Barcode scanned. No food details found, enter the remaining information manually.");
           return;
@@ -320,9 +351,26 @@ export function HealthLibraryPanel({
         setBarcodeLookupMessage("Barcode details loaded. Review before saving.");
       })
       .catch((error) => {
+        if (requestGeneration !== barcodeLookupGenerationRef.current) {
+          return;
+        }
         setBarcodeLookupMessage(error instanceof Error ? error.message : "Barcode lookup did not complete.");
       })
-      .finally(() => setBarcodeLookupStatus("idle"));
+      .finally(() => {
+        if (requestGeneration === barcodeLookupGenerationRef.current) {
+          setBarcodeLookupStatus("idle");
+        }
+      });
+  }
+
+  function startEditingFood(food: HealthFoodLibraryItem) {
+    barcodeLookupGenerationRef.current += 1;
+    foodScanBaselineRef.current = null;
+    setHasFoodScanBaseline(false);
+    setIsBarcodeScannerOpen(false);
+    setBarcodeLookupStatus("idle");
+    setBarcodeLookupMessage("");
+    setFoodDraft(foodToDraft(food));
   }
 
   function openFoodImport() {
@@ -574,6 +622,7 @@ export function HealthLibraryPanel({
                   <div className="flex min-w-0 flex-wrap gap-2">
                     <input className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 flex-1`} inputMode="numeric" onChange={(event) => setFoodDraft((current) => ({ ...current, barcode: event.target.value }))} placeholder="012345678905" value={foodDraft.barcode} />
                     <AdhdChip contentClassName="gap-1.5" disabled={barcodeLookupStatus !== "idle"} icon={<Camera aria-hidden="true" className="h-3 w-3" />} onClick={() => setIsBarcodeScannerOpen(true)}>Scan</AdhdChip>
+                    {hasFoodScanBaseline ? <AdhdChip contentClassName="gap-1.5" icon={<RotateCcw aria-hidden="true" className="h-3 w-3" />} onClick={clearFoodScan}>Clear</AdhdChip> : null}
                   </div>
                 </LibraryField>
                 <div className="sm:col-span-2">
@@ -667,7 +716,7 @@ export function HealthLibraryPanel({
                 <AdhdChip onClick={() => { void handleSaveFood(); }} selected>
                   Save food
                 </AdhdChip>
-                {foodDraft.id ? <AdhdChip onClick={() => setFoodDraft(EMPTY_FOOD_DRAFT)}>Cancel</AdhdChip> : null}
+                {foodDraft.id ? <AdhdChip onClick={resetFoodDraft}>Cancel</AdhdChip> : null}
               </div>
             </HealthCollapsiblePanel>
           </div>
@@ -683,7 +732,7 @@ export function HealthLibraryPanel({
                     <NutritionLine calories={food.calories} carbs={food.carbs_g} fat={food.fat_g} protein={food.protein_g} />
                   </div>
                   <div className="flex min-w-0 max-w-full flex-wrap justify-end gap-2">
-                    <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setFoodDraft(foodToDraft(food))}>Edit</AdhdChip>
+                    <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => startEditingFood(food)}>Edit</AdhdChip>
                     <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void deleteFood(food.id); }} tone="danger">Remove</AdhdChip>
                   </div>
                 </div>
@@ -963,6 +1012,13 @@ function foodToDraft(food: HealthFoodLibraryItem): FoodDraft {
     servingMeasureValue: food.serving_measure_value == null ? "" : String(food.serving_measure_value),
     servingMeasureUnit: servingMeasureUnit,
     nutritionDetails: Object.fromEntries(HEALTH_NUTRITION_FIELD_REGISTRY.map((field) => [field.key, typeof nutritionDetails?.[field.key] === "number" ? String(nutritionDetails[field.key]) : ""])) as Record<HealthNutritionDetailKey, string>,
+  };
+}
+
+function cloneFoodDraft(draft: FoodDraft): FoodDraft {
+  return {
+    ...draft,
+    nutritionDetails: { ...draft.nutritionDetails },
   };
 }
 
