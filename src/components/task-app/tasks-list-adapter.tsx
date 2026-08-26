@@ -8,6 +8,7 @@ import {
   TaskTitleDraftInput,
   TaskRowContextMenu,
   stopRowActionPointerEvent,
+  type TaskDueChangeHandler,
   type PrototypeTaskRow,
   type RowContextMenuState,
   type TaskManagementTableColumnId,
@@ -314,7 +315,7 @@ type TasksTableSourceProps = {
   onPreviousTaskTimer?: () => void;
   onClearSelection?: () => void;
   onSetActualSeconds?: (taskId: string, seconds: number) => void;
-  onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }, options?: { manualAction?: "unscheduled_status" }) => void;
+  onSetDue?: TaskDueChangeHandler;
   onSetEnergy?: (taskId: string, energy: PrototypeTaskRow["energy"]) => void;
   onSetEstimatedMinutes?: (taskId: string, minutes: number | null) => void;
   onSetLink?: (taskId: string, nextLink: { label: string; url: string }) => void;
@@ -1005,7 +1006,7 @@ function StepsCardPreview({
   onReorderStep?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onDelayTaskUntil?: (taskId: string, dueOn: string | null) => Promise<boolean> | boolean;
   onSetActualSeconds?: (taskId: string, seconds: number) => void;
-  onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }, options?: { manualAction?: "unscheduled_status" }) => void;
+  onSetDue?: TaskDueChangeHandler;
   onSetEnergy?: (taskId: string, energy: PrototypeTaskRow["energy"]) => void;
   onSetEstimatedMinutes?: (taskId: string, minutes: number | null) => void;
   onSetLink?: (taskId: string, nextLink: { label: string; url: string }) => void;

@@ -95,6 +95,11 @@ import { resolveTaskTableLayoutPublishDecision, type TaskTableLayoutPreferences 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = TaskPriorityLevelOption;
 type TaskRepeat = "custom" | "daily" | "daily_until_complete" | "monthly" | "none" | "weekly";
+export type TaskDueChangeHandler = (
+  taskId: string,
+  schedule: { dueOn: string; dueTime: string },
+  options?: { manualAction?: "unscheduled_status" },
+) => Promise<boolean> | boolean;
 type TaskRepeatCategory = TaskRepeat | "weekdays";
 type SortOptionId =
   | "status_asc"
@@ -361,6 +366,40 @@ function clonePrototypeSubtask(subtask: PrototypeTaskSubtask): PrototypeTaskSubt
     ...subtask,
     children: subtask.children.map(clonePrototypeSubtask),
   };
+}
+
+export async function reconcileTableDueMutation({
+  getCurrentGeneration,
+  onRollback,
+  onTaskDueChange,
+  schedule,
+  snapshots,
+}: {
+  onRollback: (taskId: string, snapshot: PrototypeTaskRow) => void;
+  onTaskDueChange?: TaskDueChangeHandler;
+  schedule: { dueOn: string; dueTime: string };
+  snapshots: Array<{ generation: number; snapshot: PrototypeTaskRow | null; taskId: string }>;
+  getCurrentGeneration: (taskId: string) => number;
+}): Promise<void> {
+  await Promise.all(snapshots.map(async ({ generation, snapshot, taskId }) => {
+    if (!onTaskDueChange) {
+      return;
+    }
+
+    let didPersist = true;
+    try {
+      didPersist = await onTaskDueChange(taskId, schedule, schedule.dueOn ? undefined : { manualAction: "unscheduled_status" });
+    } catch {
+      didPersist = false;
+    }
+
+    if (didPersist !== false) {
+      return;
+    }
+    if (snapshot && getCurrentGeneration(taskId) === generation) {
+      onRollback(taskId, snapshot);
+    }
+  }));
 }
 
 function getPrototypeTaskRowKey(task: PrototypeTaskRow) {
@@ -1129,7 +1168,7 @@ type TaskManagementTableV2Props = {
   onStopTaskTimer?: (taskId: string) => void;
   onDiscardTaskTimer?: (taskId: string) => void;
   onTaskActualSecondsChange?: (taskId: string, seconds: number) => void;
-  onTaskDueChange?: (taskId: string, schedule: { dueOn: string; dueTime: string }, options?: { manualAction?: "unscheduled_status" }) => void;
+  onTaskDueChange?: TaskDueChangeHandler;
   onTaskEnergyChange?: (taskId: string, energy: TaskEnergy) => void;
   onTaskEstimatedMinutesChange?: (taskId: string, minutes: number | null) => void;
   onTaskLinkChange?: (taskId: string, nextLink: { label: string; url: string }) => void;
@@ -2586,6 +2625,7 @@ export function TaskManagementTableV2({
   const handledEditorFocusTokensRef = useRef(new Set<number>());
   const statusRailLongPressTimeoutRef = useRef<number | null>(null);
   const statusRailLongPressTriggeredRef = useRef(false);
+  const dueMutationGenerationRef = useRef(new Map<string, number>());
   const recentInlineCommitRef = useRef<Map<string, { expiresAt: number; value: string }>>(new Map());
   const selectMetadataPanel = useCallback((taskId: string, panelId: MetadataPanelId) => {
     setActiveMetadataPanelByTaskId((current) => current[taskId] === panelId
@@ -4384,6 +4424,16 @@ export function TaskManagementTableV2({
   function setTaskDue(taskId: string, dueOn: string, dueTime: string) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
     const isUnscheduled = dueOn.length === 0;
+    const snapshots = targetTaskIds.map((targetTaskId) => {
+      const generation = (dueMutationGenerationRef.current.get(targetTaskId) ?? 0) + 1;
+      dueMutationGenerationRef.current.set(targetTaskId, generation);
+      const currentTask = getTaskById(targetTaskId);
+      return {
+        generation,
+        snapshot: currentTask ? clonePrototypeTaskRow(currentTask) : null,
+        taskId: targetTaskId,
+      };
+    });
     queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTaskIds, (task) => ({
       ...task,
@@ -4402,9 +4452,15 @@ export function TaskManagementTableV2({
         ? Array.from(new Set(task.lists.filter((list) => list !== "Inbox").concat("Today")))
         : task.lists.filter((list) => list !== "Today"),
     }));
-    for (const targetTaskId of targetTaskIds) {
-      onTaskDueChange?.(targetTaskId, { dueOn, dueTime }, isUnscheduled ? { manualAction: "unscheduled_status" } : undefined);
-    }
+    void reconcileTableDueMutation({
+      getCurrentGeneration: (targetTaskId) => dueMutationGenerationRef.current.get(targetTaskId) ?? 0,
+      onRollback: (targetTaskId, snapshot) => {
+        patchTask(targetTaskId, () => clonePrototypeTaskRow(snapshot));
+      },
+      onTaskDueChange,
+      schedule: { dueOn, dueTime },
+      snapshots,
+    });
   }
 
   function canDelayTask(task: PrototypeTaskRow) {
