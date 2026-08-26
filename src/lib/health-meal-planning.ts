@@ -122,18 +122,101 @@ export function sortHealthMealPlans(left: HealthMealPlanEntry, right: HealthMeal
     || left.id.localeCompare(right.id);
 }
 
-export function reconcileHealthMealPlans(localMealPlans: HealthMealPlanEntry[], remoteMealPlans: HealthMealPlanEntry[]) {
-  const remoteIds = new Set(remoteMealPlans.map((mealPlan) => mealPlan.id));
-  const unreconciledLocalMealPlans = localMealPlans.filter((mealPlan) => !remoteIds.has(mealPlan.id));
-  const mergedMealPlans = [
-    ...remoteMealPlans,
-    ...unreconciledLocalMealPlans,
-  ].sort(sortHealthMealPlans);
+export type HealthMealPlanPendingMutation =
+  | { operation: "upsert"; plan: HealthMealPlanEntry }
+  | { operation: "delete"; planId: string };
 
+export type HealthMealPlanPendingMutationJournal = Record<string, HealthMealPlanPendingMutation>;
+
+export function recordHealthMealPlanPendingUpsert(
+  journal: HealthMealPlanPendingMutationJournal,
+  plan: HealthMealPlanEntry,
+): HealthMealPlanPendingMutationJournal {
   return {
-    mergedMealPlans,
-    unreconciledLocalMealPlans,
+    ...journal,
+    [plan.id]: { operation: "upsert", plan },
   };
+}
+
+export function recordHealthMealPlanPendingDelete(
+  journal: HealthMealPlanPendingMutationJournal,
+  planId: string,
+): HealthMealPlanPendingMutationJournal {
+  return {
+    ...journal,
+    [planId]: { operation: "delete", planId },
+  };
+}
+
+export function clearHealthMealPlanPendingMutation(
+  journal: HealthMealPlanPendingMutationJournal,
+  planId: string,
+): HealthMealPlanPendingMutationJournal {
+  if (!journal[planId]) {
+    return journal;
+  }
+  const nextJournal = { ...journal };
+  delete nextJournal[planId];
+  return nextJournal;
+}
+
+export function clearCompletedHealthMealPlanPendingMutations(
+  journal: HealthMealPlanPendingMutationJournal,
+  completed: readonly { planId: string; mutation: HealthMealPlanPendingMutation }[],
+): HealthMealPlanPendingMutationJournal {
+  let nextJournal = journal;
+  for (const { planId, mutation } of completed) {
+    if (nextJournal[planId] !== mutation) {
+      continue;
+    }
+    nextJournal = clearHealthMealPlanPendingMutation(nextJournal, planId);
+  }
+  return nextJournal;
+}
+
+export function normalizeHealthMealPlanPendingMutations(value: unknown): HealthMealPlanPendingMutationJournal {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const journal: HealthMealPlanPendingMutationJournal = {};
+  for (const candidate of Object.values(value)) {
+    if (!candidate || typeof candidate !== "object") {
+      continue;
+    }
+    const record = candidate as { operation?: unknown; plan?: unknown; planId?: unknown };
+    if (record.operation === "delete" && typeof record.planId === "string") {
+      journal[record.planId] = { operation: "delete", planId: record.planId };
+      continue;
+    }
+    if (record.operation !== "upsert" || !record.plan || typeof record.plan !== "object") {
+      continue;
+    }
+    const plan = record.plan as Partial<HealthMealPlanEntry>;
+    if (typeof plan.id === "string") {
+      journal[plan.id] = { operation: "upsert", plan: plan as HealthMealPlanEntry };
+    }
+  }
+  return journal;
+}
+
+export function replayHealthMealPlanPendingMutations(
+  remoteMealPlans: HealthMealPlanEntry[],
+  journal: HealthMealPlanPendingMutationJournal,
+  userId?: string,
+) {
+  const mergedMealPlans = new Map(remoteMealPlans.map((mealPlan) => [mealPlan.id, mealPlan] as const));
+  for (const mutation of Object.values(journal)) {
+    if (mutation.operation === "delete") {
+      mergedMealPlans.delete(mutation.planId);
+      continue;
+    }
+    mergedMealPlans.set(
+      mutation.plan.id,
+      userId ? { ...mutation.plan, user_id: userId } : mutation.plan,
+    );
+  }
+  return [...mergedMealPlans.values()].sort(sortHealthMealPlans);
 }
 
 export function sumHealthMealPlanNutritionForDate(entries: HealthMealPlanEntry[], plannedDate: string): PlannedNutritionTotals {
