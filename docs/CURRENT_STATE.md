@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.69`.
+- Current working app version: `7.11.70`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,16 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-26 7.11.70 Meal Plan recovery
+
+Meal Plan hydration now reconciles local-only rows against successful remote
+results, promotes those rows with owner-scoped idempotent upserts, and keeps
+local rows visible for retry when promotion fails. The live Meal Plan Done RPC
+is already the corrected two-argument function
+`adhdice_confirm_health_meal_plan_entry(uuid, date)`: the 7.11.62 confirmation
+correction and 7.11.63 qualified ambiguity correction are live. This source
+inspection does not establish browser or device QA.
 
 ## 2026-08-26 7.11.69 Fitness Goals + Levels Foundation
 
@@ -85,17 +95,20 @@ added.
 QA 3, 4, 5, and 8 passed in the 7.11.62 Food flow. The remaining Done failure
 was diagnosed as a PL/pgSQL naming ambiguity: the `confirmed_at` output
 variable collided with the plan table column in the unqualified update
-predicate. The additive, authored-only
+predicate. The additive
 `supabase/fix_health_meal_plan_done_ambiguity_7_11_63.sql` migration qualifies
 the plan row references and preserves the row-locked, idempotent RPC behavior.
+The 7.11.62 confirmation correction and this 7.11.63 ambiguity correction are
+live; the current live RPC is the corrected two-argument
+`adhdice_confirm_health_meal_plan_entry(uuid, date)` function.
 
 Custom Food barcode scanning now captures a safe pre-scan draft baseline,
 offers a compact Clear action, restores that baseline for both blank and
 manually edited foods, and ignores stale lookup responses after Clear. Meal
 Logging uses compact body spacing without changing other Health panels.
 The native scanner architecture and barcode nutrition accuracy investigation
-remain unchanged/deferred. Remaining Food QA continues after the migration is
-applied; live SQL has not been applied.
+remain unchanged/deferred. Browser and device QA are not established by this
+source inspection.
 
 ## 2026-08-25 7.11.62 Food Logging Speed + Meal Plan Done Correction
 
@@ -110,9 +123,12 @@ hydrated PostgreSQL `time` values accept and normalize both `HH:MM` and
 Meal plans now use planned time as intention only. Done is available before,
 at, or after the planned time and creates the actual meal with the user's local
 current date and server confirmation timestamp while preserving the plan's
-meal slot and immutable snapshots. The authored-only
+meal slot and immutable snapshots. The
 `supabase/correct_health_meal_plan_confirmation_7_11_62.sql` correction keeps
-confirmation row-locked and idempotent; live SQL has not been applied.
+confirmation row-locked and idempotent. That correction is live; the follow-up
+7.11.63 ambiguity correction is also live, and the current live RPC is the
+corrected two-argument `adhdice_confirm_health_meal_plan_entry(uuid, date)`
+function.
 
 Combined Food QA 1–3 passed. Barcode nutrition provider accuracy remains under
 observation and is deferred for a separate basis/provider investigation.
@@ -131,9 +147,9 @@ copies the current plan snapshots into one canonical HealthMealEntry, and
 retains the confirmed plan audit anchor. Planned and actual nutrition totals
 remain separate, including expanded nutrition coverage semantics. The
 `supabase/add_health_meal_planning_7_11_61.sql` migration is live; the 7.11.62
-correction migration is authored only. The 7.11.59/7.11.60 browser QA remains
-deferred and should be combined with 7.11.62 QA; native scanner implementation
-is unchanged.
+confirmation correction and 7.11.63 ambiguity correction are also live. The
+7.11.59/7.11.60 browser QA remains deferred and should be combined with later
+QA; native scanner implementation is unchanged.
 
 ## 2026-08-25 7.11.60 Faster Add Food Entry
 

@@ -122,6 +122,20 @@ export function sortHealthMealPlans(left: HealthMealPlanEntry, right: HealthMeal
     || left.id.localeCompare(right.id);
 }
 
+export function reconcileHealthMealPlans(localMealPlans: HealthMealPlanEntry[], remoteMealPlans: HealthMealPlanEntry[]) {
+  const remoteIds = new Set(remoteMealPlans.map((mealPlan) => mealPlan.id));
+  const unreconciledLocalMealPlans = localMealPlans.filter((mealPlan) => !remoteIds.has(mealPlan.id));
+  const mergedMealPlans = [
+    ...remoteMealPlans,
+    ...unreconciledLocalMealPlans,
+  ].sort(sortHealthMealPlans);
+
+  return {
+    mergedMealPlans,
+    unreconciledLocalMealPlans,
+  };
+}
+
 export function sumHealthMealPlanNutritionForDate(entries: HealthMealPlanEntry[], plannedDate: string): PlannedNutritionTotals {
   const datedEntries = getActiveHealthMealPlans(entries, plannedDate);
   const expanded = aggregateHealthNutritionDetails(datedEntries.map((entry) => ({
