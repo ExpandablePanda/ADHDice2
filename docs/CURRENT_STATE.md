@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.65`.
+- Current working app version: `7.11.66`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,15 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-26 7.11.66 Table Due optimistic failure reconciliation
+
+Food work from 7.11.59 through 7.11.65 is QA accepted. The Coke/Open Food
+Facts accuracy investigation remains deferred. Table Due mutations now receive
+canonical success/failure acknowledgement; failed optimistic Due changes
+restore their captured complete Table row snapshot, and stale failed requests
+cannot overwrite newer Due edits. No SQL, schema, or canonical Task State
+redesign was added.
 
 ## 2026-08-25 7.11.65 Inline Food Date Chip
 
