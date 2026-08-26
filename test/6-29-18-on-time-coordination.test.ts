@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { clearMatchingOnTimeExecution, createEmptyOnTimePlan, type OnTimePlanV3 } from "../src/lib/on-time-plan-state.ts";
+import { clearMatchingOnTimeExecution, createEmptyOnTimePlan, recordMatchingOnTimeStoppedProgress, type OnTimePlanV3 } from "../src/lib/on-time-plan-state.ts";
 
 const execution = { plannedSeconds: 900, startedAt: "2026-07-14T12:00:00.000Z" };
 const linkedItem = (id: string, occurrenceKey: string) => ({
@@ -13,6 +13,7 @@ const linkedItem = (id: string, occurrenceKey: string) => ({
   occurrenceDueOn: "2026-07-14",
   occurrenceKey,
   plannedSeconds: 900,
+  savedElapsedSeconds: 0,
   taskId: "task-1",
   titleSnapshot: id,
 });
@@ -27,6 +28,17 @@ test("execution clearing is occurrence-exact, preserves other items, and is idem
   assert.equal(clearMatchingOnTimeExecution(plan, { ...origin, occurrenceKey: "occ-b" }), null);
 });
 
+test("execution clearing preserves saved elapsed progress", () => {
+  const plan: OnTimePlanV3 = { ...createEmptyOnTimePlan(), items: [{ ...linkedItem("item-a", "occ-a"), savedElapsedSeconds: 600 }] };
+  const origin = { itemId: "item-a", occurrenceDueOn: "2026-07-14", occurrenceKey: "occ-a", taskId: "task-1" };
+  const cleared = clearMatchingOnTimeExecution(plan, origin);
+  assert.equal(cleared?.items[0]?.savedElapsedSeconds, 600);
+  assert.equal(clearMatchingOnTimeExecution(cleared!, origin), null);
+  const recorded = recordMatchingOnTimeStoppedProgress(plan, origin, 300, "2026-07-14T12:05:00Z");
+  assert.equal(recorded?.items[0]?.savedElapsedSeconds, 300);
+  assert.equal(recorded?.items[0]?.execution, null);
+});
+
 test("Finish and Log stops the active timer, records actual seconds, and clears execution", async () => {
   const [app, workspace] = await Promise.all([
     readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8"),
@@ -38,7 +50,15 @@ test("Finish and Log stops the active timer, records actual seconds, and clears 
   assert.match(app, /stageTimedTaskCompletion\(task, \{ kind: "status", status \}, onTimeOrigin\)/);
   assert.match(app, /async function recordStoppedTaskTimer/);
   assert.match(app, /actual_seconds: nextActualSeconds/);
-  assert.match(app, /clearOnTimeExecution\(onTimeOrigin\)/);
+  assert.match(app, /recordOnTimeStoppedProgress\(stoppedTimer, onTimeOrigin\)/);
+  assert.match(app, /recordMatchingOnTimeStoppedProgress/);
+  assert.ok(app.indexOf("await recordStoppedTaskTimer(stoppedTimer)") < app.indexOf("recordOnTimeStoppedProgress(stoppedTimer, onTimeOrigin)"));
+});
+
+test("new and relinked On-Time linked occurrences start with zero saved progress", async () => {
+  const workspace = await readFile(new URL("../src/components/task-app/on-time-planner-workspace.tsx", import.meta.url), "utf8");
+  assert.match(workspace, /durationSource: "manual", savedElapsedSeconds: 0, execution: null/);
+  assert.match(workspace, /onRelink=\{\(task\) => \{[\s\S]*?savedElapsedSeconds: 0, execution: null/);
 });
 
 test("On-Time action availability and Finish and Log use the shared resolved Active Status", async () => {

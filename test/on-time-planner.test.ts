@@ -106,7 +106,7 @@ test("raw In Progress narrowly overrides anchored occurrence history for parents
 });
 
 test("occurrence advancement is stale and completion statuses contribute zero only while current", () => {
-  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-12", occurrenceDueOn: "2026-07-12", plannedSeconds: 600, durationSource: "manual", execution: null };
+  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-12", occurrenceDueOn: "2026-07-12", plannedSeconds: 600, durationSource: "manual", savedElapsedSeconds: 0, execution: null };
   const current = task({ repeat_frequency: "daily", active_occurrence_due_on: "2026-07-12", status: "done" });
   assert.equal(isLinkedItemOccurrenceCurrent(linked, current), true);
   assert.equal(calculateOnTimeSchedule({ ...base, items: [linked], completionByItemId: { linked: true } }).remainingPreparationSeconds, 0);
@@ -114,7 +114,7 @@ test("occurrence advancement is stale and completion statuses contribute zero on
 });
 
 test("linked terminal row states keep Missed visible and active while true terminal statuses resolve", () => {
-  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: null, occurrenceDueOn: null, plannedSeconds: 600, durationSource: "manual", execution: null };
+  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: null, occurrenceDueOn: null, plannedSeconds: 600, durationSource: "manual", savedElapsedSeconds: 0, execution: null };
   for (const [status, label] of [["done", "Done"], ["did_my_best", "Did My Best"], ["complete", "Complete"]] as const) {
     const state = classifyOnTimeRowState(linked, status);
     assert.equal(state.scheduleResolved, true);
@@ -146,12 +146,36 @@ test("arrival detail and operational countdown preserve exact schedule classific
 });
 
 test("timer deduction counts only the active task-timer delta", () => {
-  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-12", occurrenceDueOn: "2026-07-12", plannedSeconds: 1000, durationSource: "manual", execution: null };
+  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-12", occurrenceDueOn: "2026-07-12", plannedSeconds: 1000, durationSource: "manual", savedElapsedSeconds: 0, execution: null };
   const timer: RunningTaskTimer = { baseSeconds: 500, startedActualSeconds: 400, startedAt: 1_000, pausedAt: null, taskId: "task-a", title: "Parent", occurrenceKey: linked.occurrenceKey, occurrenceDueOn: linked.occurrenceDueOn };
   const elapsed = getOnTimeElapsedSecondsByItemId({ items: [linked], now: 11_000, timers: [timer] });
   assert.equal(elapsed.linked, 110);
   assert.equal(calculateOnTimeSchedule({ ...base, items: [linked], elapsedSecondsByItemId: elapsed }).remainingPreparationSeconds, 890);
   assert.equal(getOnTimeElapsedSecondsByItemId({ items: [linked], now: 11_000, timers: [] }).linked, 0);
+});
+
+test("effective elapsed includes saved progress plus only an exact active timer occurrence", () => {
+  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-12", occurrenceDueOn: "2026-07-12", plannedSeconds: 1800, durationSource: "manual", savedElapsedSeconds: 600, execution: null };
+  const matching: RunningTaskTimer = { baseSeconds: 7200, startedActualSeconds: 7200, startedAt: 1_000, pausedAt: null, taskId: "task-a", title: "Parent", occurrenceKey: linked.occurrenceKey, occurrenceDueOn: linked.occurrenceDueOn };
+  const otherOccurrence = { ...matching, occurrenceKey: "occurrence:2026-07-13", occurrenceDueOn: "2026-07-13" };
+  const elapsed = getOnTimeElapsedSecondsByItemId({ items: [linked], now: 301_000, timers: [matching, otherOccurrence] });
+  assert.equal(elapsed.linked, 900);
+  assert.equal(calculateOnTimeSchedule({ ...base, items: [linked], elapsedSecondsByItemId: elapsed }).remainingPreparationSeconds, 900);
+});
+
+test("saved progress keeps schedule and sequential finish projections reduced after the timer disappears", () => {
+  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-12", occurrenceDueOn: "2026-07-12", plannedSeconds: 1800, durationSource: "manual", savedElapsedSeconds: 900, execution: null };
+  const input = { now: "2026-07-12T10:00:00Z", items: [linked], elapsedSecondsByItemId: { linked: 900 } };
+  const savedElapsed = getOnTimeElapsedSecondsByItemId({ items: [linked], now: Date.parse(input.now), timers: [] });
+  assert.equal(calculateOnTimeSequentialFinishes(input).linked?.estimatedFinishAt, "2026-07-12T10:15:00.000Z");
+  assert.equal(calculateOnTimeSchedule({ ...base, items: [linked], elapsedSecondsByItemId: { linked: 900 } }).remainingPreparationSeconds, 900);
+  assert.equal(savedElapsed.linked, 900);
+  assert.equal(calculateOnTimeSchedule({ ...base, items: [linked], elapsedSecondsByItemId: savedElapsed }).remainingPreparationSeconds, 900);
+});
+
+test("saved progress is independent of lifetime Task actual seconds", () => {
+  const linked: OnTimePlanItem = { id: "new-occurrence", kind: "task", taskId: "task-a", titleSnapshot: "Recurring task", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-14", occurrenceDueOn: "2026-07-14", plannedSeconds: 1800, durationSource: "manual", savedElapsedSeconds: 0, execution: null };
+  assert.equal(getOnTimeElapsedSecondsByItemId({ items: [linked], now: Date.parse("2026-07-14T12:00:00Z"), timers: [] })["new-occurrence"], 0);
 });
 
 test("temporary completion and move fallback update remaining time and preserve boundaries", () => {
@@ -187,7 +211,7 @@ test("drop index uses stable fixed midpoints and final order changes only once",
 });
 
 test("active and paused timer deductions shift sequential finishes without exceeding planned time", () => {
-  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "lifetime:task-a", occurrenceDueOn: null, plannedSeconds: 600, durationSource: "manual", execution: null };
+  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "lifetime:task-a", occurrenceDueOn: null, plannedSeconds: 600, durationSource: "manual", savedElapsedSeconds: 0, execution: null };
   const running: RunningTaskTimer = { baseSeconds: 120, startedActualSeconds: 120, startedAt: 1_000, pausedAt: null, taskId: "task-a", title: "Parent", occurrenceKey: "lifetime:task-a", occurrenceDueOn: null };
   const paused = { ...running, pausedAt: 121_000 };
   const runningElapsed = getOnTimeElapsedSecondsByItemId({ entries: [], items: [linked], now: 181_000, timers: [running] });

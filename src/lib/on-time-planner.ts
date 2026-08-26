@@ -235,13 +235,16 @@ export function getOnTimeElapsedSecondsByItemId({
 }) {
   const result: Record<string, number> = {};
   for (const item of items) {
-    if (item.kind !== "task" || !item.occurrenceKey) continue;
+    if (item.kind !== "task") continue;
     const active = timers.reduce((total, timer) => {
       if (timer.taskId !== item.taskId || !occurrenceIdentityMatches(item, timer)) return total;
       const displayed = timer.baseSeconds + Math.max(0, Math.floor(((timer.pausedAt ?? now) - timer.startedAt) / 1000));
       return total + Math.max(displayed - timer.startedActualSeconds, 0);
     }, 0);
-    result[item.id] = active;
+    const savedElapsedSeconds = typeof item.savedElapsedSeconds === "number" && Number.isFinite(item.savedElapsedSeconds) && item.savedElapsedSeconds >= 0
+      ? Math.floor(item.savedElapsedSeconds)
+      : 0;
+    result[item.id] = savedElapsedSeconds + active;
   }
   return result;
 }
