@@ -8,6 +8,7 @@ const useHealthSource = readFileSync(new URL("../src/hooks/useHealth.ts", import
 const healthUtilsSource = readFileSync(new URL("../src/lib/health-utils.ts", import.meta.url), "utf8");
 const foodSource = source.slice(source.indexOf('{activeTab === "Food"'), source.indexOf('{activeTab === "Water"'));
 const inlineEditorSource = source.slice(source.indexOf("function renderMealEntryEditor()"), source.indexOf("\n\n  return (", source.indexOf("function renderMealEntryEditor()")));
+const barcodeToolsSource = source.slice(source.indexOf("function renderMealBarcodeTools()"), source.indexOf("function renderMealEntryEditor()"));
 const saveSource = source.slice(source.indexOf("async function handleSaveMeal()"), source.indexOf("function openMealComposerForSlot"));
 const favoriteHandlerSource = source.slice(source.indexOf("function handleFavoriteReuse"), source.indexOf("async function handleRemoveFavorite"));
 const recentHandlerSource = source.slice(source.indexOf("function handleRecentFoodReuse"), source.indexOf("async function handleRemoveFavorite"));
@@ -38,6 +39,40 @@ test("Add Food barcode lookup fills the draft without saving it", () => {
   assert.match(source, /if \(!result\) \{\s+setBarcodeLookupError\("No food details found for this barcode\./);
   assert.match(source, /applyLookupResult\(result\)/);
   assert.doesNotMatch(source.slice(source.indexOf("function handleMealBarcodeDetected"), source.indexOf("function applyLookupResult")), /addMealEntry/);
+});
+
+test("inline Add Food removes manual barcode controls and keeps one compact scanner action", () => {
+  assert.doesNotMatch(inlineEditorSource, /Barcode \(optional\)/);
+  assert.doesNotMatch(barcodeToolsSource, /<input/);
+  assert.doesNotMatch(barcodeToolsSource, />Lookup</);
+  assert.match(barcodeToolsSource, /<AdhdIconButton/);
+  assert.match(barcodeToolsSource, /aria-label="Scan barcode"/);
+  assert.match(barcodeToolsSource, /title="Scan barcode"/);
+  assert.match(barcodeToolsSource, /<ScanBarcode/);
+  assert.match(barcodeToolsSource, /<HealthBarcodeScanner/);
+});
+
+test("inline Add Food categories are collapsed by default and visibly retain an active filter", () => {
+  assert.match(source, /const \[isCustomFoodCategoriesOpen, setIsCustomFoodCategoriesOpen\] = useState\(false\)/);
+  assert.match(inlineEditorSource, /aria-expanded=\{isCustomFoodCategoriesOpen\}/);
+  assert.match(inlineEditorSource, /\{selectedCustomFoodCategory && !isCustomFoodCategoriesOpen \? `Categories · \$\{selectedCustomFoodCategory\}` : "Categories"\}/);
+  assert.match(inlineEditorSource, /\{isCustomFoodCategoriesOpen \? \(/);
+  assert.match(inlineEditorSource, /setSelectedCustomFoodCategory\(\(current\) => current === category \? null : category\)/);
+  const openSource = source.slice(source.indexOf("function openMealComposerForSlot"), source.indexOf("function closeMealEntryEditor"));
+  assert.match(openSource, /setSelectedCustomFoodCategory\(null\)/);
+  assert.match(openSource, /setIsCustomFoodCategoriesOpen\(false\)/);
+});
+
+test("normal Add Food keeps the primary keyboard fields ahead of the scanner action", () => {
+  const foodIndex = inlineEditorSource.indexOf('ariaLabel="Search custom foods"');
+  const measurementIndex = inlineEditorSource.indexOf('ariaLabel="Measurement"');
+  const amountIndex = inlineEditorSource.indexOf('label="Amount"');
+  const timeIndex = inlineEditorSource.indexOf('label="Time"');
+  const scannerIndex = inlineEditorSource.indexOf("renderMealBarcodeTools()");
+  assert.ok(foodIndex >= 0 && foodIndex < measurementIndex);
+  assert.ok(measurementIndex < amountIndex);
+  assert.ok(amountIndex < timeIndex);
+  assert.ok(timeIndex < scannerIndex);
 });
 
 test("the reusable barcode scanner prefers the rear camera and cleans up on every exit", () => {

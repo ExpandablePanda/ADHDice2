@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Apple, CalendarDays, Camera, Check, ChevronDown, ChevronUp, Heart, HeartPulse, MoonStar, Pencil, Salad, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
+import { Activity, Apple, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, MoonStar, Pencil, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import type {
@@ -394,11 +394,11 @@ export function HealthPage({
   const [activeMealEntrySlot, setActiveMealEntrySlot] = useState<HealthMealEntry["meal_slot"] | null>(null);
   const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
   const [selectedCustomFoodCategory, setSelectedCustomFoodCategory] = useState<string | null>(null);
+  const [isCustomFoodCategoriesOpen, setIsCustomFoodCategoriesOpen] = useState(false);
   const [foodHistoryDate, setFoodHistoryDate] = useState(todayHealthDate());
   const [sleepLedgerDate, setSleepLedgerDate] = useState(todayHealthDate());
   const [expandedFavoriteId, setExpandedFavoriteId] = useState<string | null>(null);
   const [targetWeightDraft, setTargetWeightDraft] = useState("");
-  const [barcodeLookup, setBarcodeLookup] = useState("");
   const [barcodeLookupError, setBarcodeLookupError] = useState("");
   const [barcodeLookupStatus, setBarcodeLookupStatus] = useState<"idle" | "barcode">("idle");
   const [isQuickEntryOpen, setIsQuickEntryOpen] = useState(false);
@@ -834,7 +834,6 @@ export function HealthPage({
         return isQuickEntryOpen ? { ...nextDraft, servingQuantity: 1 } : nextDraft;
       });
       setCustomFoodSearchQuery("");
-      setBarcodeLookup("");
       setBarcodeLookupError("");
       setSaveQuickEntryToLibrary(false);
     }
@@ -849,8 +848,9 @@ export function HealthPage({
     if (!preserveFoodDraft) {
       setIsQuickEntryOpen(false);
       setCustomFoodSearchQuery("");
-      setBarcodeLookup("");
       setBarcodeLookupError("");
+      setSelectedCustomFoodCategory(null);
+      setIsCustomFoodCategoriesOpen(false);
     }
     setSaveQuickEntryToLibrary(false);
   }
@@ -1087,10 +1087,8 @@ export function HealthPage({
   async function runBarcodeLookup(code: string) {
     const trimmedCode = code.trim();
     if (!trimmedCode) {
-      setBarcodeLookupError("Type a barcode before looking it up.");
       return;
     }
-    setBarcodeLookup(trimmedCode);
     setBarcodeLookupError("");
     setBarcodeLookupStatus("barcode");
     setMealDraft((current) => ({ ...current, barcode: trimmedCode }));
@@ -1106,10 +1104,6 @@ export function HealthPage({
     } finally {
       setBarcodeLookupStatus("idle");
     }
-  }
-
-  async function handleBarcodeLookup() {
-    await runBarcodeLookup(barcodeLookup);
   }
 
   function handleMealBarcodeDetected(barcode: string) {
@@ -1303,28 +1297,19 @@ export function HealthPage({
 
   function renderMealBarcodeTools() {
     return (
-      <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-        <Field label="Barcode (optional)">
-          <input
-            className={HEALTH_COMPACT_INPUT_CLASS}
-            inputMode="numeric"
-            onChange={(event) => {
-              setBarcodeLookup(event.target.value);
-              setMealDraft((current) => ({ ...current, barcode: event.target.value }));
-            }}
-            placeholder="012345678905"
-            value={barcodeLookup}
-          />
-        </Field>
-        <div className="flex flex-wrap items-end gap-2">
-          <AdhdChip disabled={barcodeLookupStatus !== "idle" || barcodeLookup.trim().length === 0} onClick={() => { void handleBarcodeLookup(); }}>Lookup</AdhdChip>
-          <AdhdChip contentClassName="gap-1.5" icon={<Camera aria-hidden="true" className="h-3 w-3" />} onClick={() => setIsScannerOpen(true)}>Scan Barcode</AdhdChip>
-        </div>
-        <div className="sm:col-span-2">
-          <HealthBarcodeScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onDetected={handleMealBarcodeDetected} />
-          {barcodeLookupError ? <EmptyCopy text={barcodeLookupError} /> : null}
-          {barcodeLookupStatus !== "idle" ? <InlineNotice text="Looking up barcode..." /> : null}
-        </div>
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+        <AdhdIconButton
+          aria-label="Scan barcode"
+          disabled={barcodeLookupStatus !== "idle"}
+          onClick={() => setIsScannerOpen(true)}
+          size="sm"
+          title="Scan barcode"
+        >
+          <ScanBarcode aria-hidden="true" />
+        </AdhdIconButton>
+        <HealthBarcodeScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onDetected={handleMealBarcodeDetected} />
+        {barcodeLookupStatus !== "idle" ? <InlineNotice text="Looking up barcode..." /> : null}
+        {barcodeLookupError ? <EmptyCopy text={barcodeLookupError} /> : null}
       </div>
     );
   }
@@ -1390,8 +1375,25 @@ export function HealthPage({
         ) : null}
         <div className="grid gap-3">
           {customFoodCategories.length > 0 ? (
-            <div aria-label="Filter custom foods by category" className="flex flex-wrap gap-1.5">
-              {customFoodCategories.map((category) => <AdhdChip className="shrink-0" key={category} onClick={() => setSelectedCustomFoodCategory((current) => current === category ? null : category)} selected={selectedCustomFoodCategory === category} toneClassName="border-[#e4deef] bg-white text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60">{category}</AdhdChip>)}
+            <div className="grid gap-2">
+              <div className="flex items-center gap-2">
+                <AdhdChip
+                  aria-controls="inline-meal-food-categories"
+                  aria-expanded={isCustomFoodCategoriesOpen}
+                  contentClassName="gap-1"
+                  icon={<ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isCustomFoodCategoriesOpen ? "rotate-180" : ""}`} />}
+                  onClick={() => setIsCustomFoodCategoriesOpen((current) => !current)}
+                  selected={isCustomFoodCategoriesOpen || selectedCustomFoodCategory !== null}
+                  title={selectedCustomFoodCategory ? `Filter by ${selectedCustomFoodCategory}` : "Filter custom foods by category"}
+                >
+                  {selectedCustomFoodCategory && !isCustomFoodCategoriesOpen ? `Categories · ${selectedCustomFoodCategory}` : "Categories"}
+                </AdhdChip>
+              </div>
+              {isCustomFoodCategoriesOpen ? (
+                <div aria-label="Filter custom foods by category" className="flex flex-wrap gap-1.5" id="inline-meal-food-categories">
+                  {customFoodCategories.map((category) => <AdhdChip className="shrink-0" key={category} onClick={() => setSelectedCustomFoodCategory((current) => current === category ? null : category)} selected={selectedCustomFoodCategory === category} toneClassName="border-[#e4deef] bg-white text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60">{category}</AdhdChip>)}
+                </div>
+              ) : null}
             </div>
           ) : null}
           {customFoodCategories.length > 0 ? <div aria-hidden="true" className="border-t border-[#ece8f6] dark:border-white/10" /> : null}
