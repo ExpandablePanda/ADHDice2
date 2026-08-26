@@ -377,16 +377,32 @@ export function getHealthSleepElapsedSeconds(session: { accumulatedSeconds: numb
   return Math.max(0, Math.floor(session.accumulatedSeconds)) + runningSeconds;
 }
 
-export function buildHealthMealLoggedAt(date: string, time: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+export function normalizeHealthMealTime(time: string) {
+  const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(time);
+  if (!match) {
     return null;
   }
-  const localDate = new Date(`${date}T${time}:00`);
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3] ?? "0");
+  if (hours > 23 || minutes > 59 || seconds > 59) {
+    return null;
+  }
+  return `${match[1]}:${match[2]}`;
+}
+
+export function buildHealthMealLoggedAt(date: string, time: string) {
+  const normalizedTime = normalizeHealthMealTime(time);
+  const seconds = /^(?:\d{2}):(?:\d{2}):(\d{2})$/.exec(time)?.[1] ?? "00";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !normalizedTime) {
+    return null;
+  }
+  const localDate = new Date(`${date}T${normalizedTime}:${seconds}`);
   if (Number.isNaN(localDate.getTime())) {
     return null;
   }
   const [year, month, day] = date.split("-").map((part) => Number.parseInt(part, 10));
-  const [hours, minutes] = time.split(":").map((part) => Number.parseInt(part, 10));
+  const [hours, minutes] = normalizedTime.split(":").map((part) => Number.parseInt(part, 10));
   if (
     localDate.getFullYear() !== year
     || localDate.getMonth() + 1 !== month
@@ -455,7 +471,7 @@ export function formatEditableWeight(weightKg: number | null, unit: WeightUnit) 
 export function formatMealLoggedTime(value: string, locale?: string) {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return null;
-  return new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" }).format(timestamp);
+  return new Intl.DateTimeFormat(locale, { hour: "numeric", hour12: true, minute: "2-digit" }).format(timestamp);
 }
 
 export function formatHealthNutritionNumber(value: number | null | undefined) {

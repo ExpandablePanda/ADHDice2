@@ -5,8 +5,8 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.61`.
-- Current release group: `7.11.x` Meal Planning + Confirm to Actual.
+- Current working app version: `7.11.62`.
+- Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
@@ -14,6 +14,26 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.62 Food Logging Speed + Meal Plan Done Correction
+
+Combined Food QA corrections keep the native barcode scanner unchanged while
+adding a shared draft Clear action, a compact Food | Measurement | Amount | Time
+| Scan layout, Categories beneath Food without changing fast keyboard order,
+Measurement open-on-focus behavior, and Amount Enter fast-submit for actual
+food, new plans, and edited plans. Food times render as forced 12-hour AM/PM;
+hydrated PostgreSQL `time` values accept and normalize both `HH:MM` and
+`HH:MM:SS`.
+
+Meal plans now use planned time as intention only. Done is available before,
+at, or after the planned time and creates the actual meal with the user's local
+current date and server confirmation timestamp while preserving the plan's
+meal slot and immutable snapshots. The authored-only
+`supabase/correct_health_meal_plan_confirmation_7_11_62.sql` correction keeps
+confirmation row-locked and idempotent; live SQL has not been applied.
+
+Combined Food QA 1–3 passed. Barcode nutrition provider accuracy remains under
+observation and is deferred for a separate basis/provider investigation.
 
 ## 2026-08-25 7.11.61 Meal Planning + Confirm to Actual
 
@@ -28,9 +48,10 @@ authenticated atomic/idempotent `adhdice_confirm_health_meal_plan_entry` RPC,
 copies the current plan snapshots into one canonical HealthMealEntry, and
 retains the confirmed plan audit anchor. Planned and actual nutrition totals
 remain separate, including expanded nutrition coverage semantics. The
-`supabase/add_health_meal_planning_7_11_61.sql` migration is authored only and
-has not been applied. The 7.11.59/7.11.60 browser QA remains deferred and
-should be combined with 7.11.61 QA; native scanner implementation is unchanged.
+`supabase/add_health_meal_planning_7_11_61.sql` migration is live; the 7.11.62
+correction migration is authored only. The 7.11.59/7.11.60 browser QA remains
+deferred and should be combined with 7.11.62 QA; native scanner implementation
+is unchanged.
 
 ## 2026-08-25 7.11.60 Faster Add Food Entry
 

@@ -16,6 +16,7 @@ import { createDefaultMealDraft } from "../src/lib/health-meal-draft.ts";
 const pageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const hookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../supabase/add_health_meal_planning_7_11_61.sql", import.meta.url), "utf8");
+const correctionMigrationSource = readFileSync(new URL("../supabase/correct_health_meal_plan_confirmation_7_11_62.sql", import.meta.url), "utf8");
 
 function plan(overrides: Partial<HealthMealPlanEntry> = {}): HealthMealPlanEntry {
   return {
@@ -127,12 +128,14 @@ test("confirmation input copies the current plan snapshot exactly and never look
     nutrition_snapshot: { calories: 320, carbs_g: 22, fat_g: 11, nutrition_details: { sodium_mg: 550 }, protein_g: 36 },
     confirmed_meal_entry_id: "actual-from-rpc",
   });
-  const input = buildActualMealEntryInputFromPlan(currentPlan);
+  const input = buildActualMealEntryInputFromPlan(currentPlan, { entryDate: "2026-08-26", loggedAt: "2026-08-26T21:42:00.000Z" });
   assert.equal(input.id, "actual-from-rpc");
   assert.equal(input.calories, 320);
+  assert.equal(input.entry_date, "2026-08-26");
+  assert.equal(input.logged_at, "2026-08-26T21:42:00.000Z");
+  assert.equal(input.meal_slot, currentPlan.meal_slot);
   assert.deepEqual(input.food_snapshot, currentPlan.food_snapshot);
   assert.deepEqual(input.nutrition_snapshot, currentPlan.nutrition_snapshot);
-  assert.equal(input.logged_at, currentPlan.planned_at);
 });
 
 test("plan payload stores selected date, slot, time, serving fraction, and immutable snapshots", () => {
@@ -157,14 +160,21 @@ test("plan payload stores selected date, slot, time, serving fraction, and immut
   assert.deepEqual(payload.nutrition_snapshot?.nutrition_details, { sodium_mg: 375 });
 });
 
-test("future planned time is allowed to remain planned but cannot be confirmed", () => {
+test("future and past plans can be marked Done; only invalid or confirmed plans are ineligible", () => {
   const futurePlan = plan({
     planned_at: "2026-08-27T23:00:00.000Z",
     planned_date: "2026-08-27",
     planned_time: "19:00",
   });
-  assert.equal(isHealthMealPlanConfirmEligible(futurePlan, new Date("2026-08-25T12:00:00.000Z")), false);
-  assert.equal(isHealthMealPlanConfirmEligible(plan(), new Date("2026-08-26T00:00:00.000Z")), true);
+  const pastPlan = plan({
+    planned_at: "2026-08-20T23:00:00.000Z",
+    planned_date: "2026-08-20",
+    planned_time: "19:00",
+  });
+  assert.equal(isHealthMealPlanConfirmEligible(futurePlan), true);
+  assert.equal(isHealthMealPlanConfirmEligible(pastPlan), true);
+  assert.equal(isHealthMealPlanConfirmEligible(plan({ planned_time: "not-a-time" })), false);
+  assert.equal(isHealthMealPlanConfirmEligible(plan({ confirmed_at: "2026-08-25T23:05:00.000Z", confirmed_meal_entry_id: "actual-1" })), false);
 });
 
 test("confirmed rows stop appearing as active plans and retain their audit anchor", () => {
@@ -182,6 +192,7 @@ test("Health production wiring keeps meal plans out of actual and achievement in
   assert.match(pageSource, /mealEditorMode/);
   assert.match(pageSource, /\+ Plan Food/);
   assert.match(pageSource, /Add to Plan/);
+  assert.match(pageSource, />Done<\/button>/);
   assert.match(pageSource, /selectedPlannedNutrition/);
 });
 
@@ -200,4 +211,37 @@ test("7.11.61 migration isolates the table, RLS, and atomic idempotent confirmat
   assert.match(migrationSource, /revoke all on function/);
   assert.match(migrationSource, /grant execute on function .* to authenticated/);
   assert.doesNotMatch(migrationSource, /alter table public\.adhdice_health_meal_entries[\s\S]*planned/);
+});
+
+test("7.11.62 correction uses local entry date, server confirmation time, snapshots, and one locked idempotent insert", () => {
+  assert.match(correctionMigrationSource, /drop function if exists public\.adhdice_confirm_health_meal_plan_entry\(uuid\)/);
+  assert.match(correctionMigrationSource, /adhdice_confirm_health_meal_plan_entry\(\s*p_plan_entry_id uuid,\s*p_actual_entry_date date/);
+  assert.match(correctionMigrationSource, /for update/);
+  assert.match(correctionMigrationSource, /if v_plan\.confirmed_at is not null/);
+  assert.match(correctionMigrationSource, /select v_plan\.confirmed_meal_entry_id, v_plan\.confirmed_at, false/);
+  assert.match(correctionMigrationSource, /entry_date,[\s\S]*p_actual_entry_date/);
+  assert.match(correctionMigrationSource, /logged_at,[\s\S]*v_confirmed_at/);
+  assert.match(correctionMigrationSource, /food_snapshot,[\s\S]*v_plan\.food_snapshot/);
+  assert.match(correctionMigrationSource, /nutrition_snapshot[\s\S]*v_plan\.nutrition_snapshot/);
+  assert.match(correctionMigrationSource, /and confirmed_at is null/);
+  assert.match(correctionMigrationSource, /newly_created/);
+  assert.doesNotMatch(correctionMigrationSource, /v_plan\.planned_at\s*>\s*now\(\)/);
+  assert.doesNotMatch(correctionMigrationSource, /select .*from public\.adhdice_health_food_library/);
+});
+
+test("Done transitions planned nutrition to actual nutrition exactly once", () => {
+  const planned = plan();
+  assert.equal(sumHealthMealPlanNutritionForDate([planned], planned.planned_date).calories, 300);
+  assert.equal(sumMealNutritionForDate([], "2026-08-26").calories, 0);
+  const confirmed = plan({ confirmed_at: "2026-08-26T21:42:00.000Z", confirmed_meal_entry_id: "actual-1" });
+  const actualEntry = actual({
+    calories: confirmed.calories,
+    entry_date: "2026-08-26",
+    food_name: confirmed.food_name,
+    logged_at: "2026-08-26T21:42:00.000Z",
+    meal_slot: confirmed.meal_slot,
+    nutrition_snapshot: confirmed.nutrition_snapshot,
+  });
+  assert.equal(sumHealthMealPlanNutritionForDate([confirmed], confirmed.planned_date).calories, 0);
+  assert.equal(sumMealNutritionForDate([actualEntry], "2026-08-26").calories, 300);
 });

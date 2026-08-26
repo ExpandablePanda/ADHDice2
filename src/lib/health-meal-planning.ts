@@ -7,7 +7,7 @@ import type {
   HealthNutritionDetails,
 } from "@/lib/database.types";
 import { aggregateHealthNutritionDetails } from "@/lib/health-nutrition";
-import { buildHealthMealLoggedAt, isHealthMealTimestampFuture } from "@/lib/health-utils";
+import { buildHealthMealLoggedAt, normalizeHealthMealTime } from "@/lib/health-utils";
 import type { MealDraft } from "@/lib/health-meal-draft";
 
 export type MealCalculationSnapshot = {
@@ -75,18 +75,21 @@ export function buildHealthMealPlanPayload({
   };
 }
 
-export function buildActualMealEntryInputFromPlan(plan: HealthMealPlanEntry): Omit<HealthMealEntryInsert, "user_id"> {
+export function buildActualMealEntryInputFromPlan(
+  plan: HealthMealPlanEntry,
+  confirmation: { entryDate: string; loggedAt: string },
+): Omit<HealthMealEntryInsert, "user_id"> {
   return {
     attribution: plan.attribution,
     barcode: plan.barcode,
     brand_name: plan.brand_name,
     calories: plan.calories,
     carbs_g: plan.carbs_g,
-    entry_date: plan.planned_date,
+    entry_date: confirmation.entryDate,
     fat_g: plan.fat_g,
     food_name: plan.food_name,
     id: plan.confirmed_meal_entry_id ?? undefined,
-    logged_at: plan.planned_at,
+    logged_at: confirmation.loggedAt,
     meal_slot: plan.meal_slot,
     nutrition_snapshot: plan.nutrition_snapshot ?? null,
     provider: plan.provider,
@@ -137,10 +140,9 @@ export function sumHealthMealPlanNutritionForDate(entries: HealthMealPlanEntry[]
   };
 }
 
-export function isHealthMealPlanConfirmEligible(plan: HealthMealPlanEntry, now = new Date()) {
+export function isHealthMealPlanConfirmEligible(plan: HealthMealPlanEntry) {
   return plan.confirmed_at === null
-    && Boolean(buildHealthMealLoggedAt(plan.planned_date, plan.planned_time))
-    && !isHealthMealTimestampFuture(plan.planned_date, plan.planned_time, now);
+    && Boolean(buildHealthMealLoggedAt(plan.planned_date, plan.planned_time));
 }
 
 export function mealDraftFromHealthMealPlan(plan: HealthMealPlanEntry): MealDraft {
@@ -167,7 +169,7 @@ export function mealDraftFromHealthMealPlan(plan: HealthMealPlanEntry): MealDraf
     servingMeasureValue: plan.food_snapshot?.serving_measure_value ?? null,
     servingMeasureUnit: plan.food_snapshot?.serving_measure_unit ?? null,
     servingLabel: plan.food_snapshot?.serving_label ?? plan.serving_label ?? "",
-    time: plan.planned_time,
+    time: normalizeHealthMealTime(plan.planned_time) ?? "",
   };
 }
 

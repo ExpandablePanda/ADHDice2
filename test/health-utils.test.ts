@@ -23,6 +23,7 @@ import {
   getSleepFocusSessions,
   sortHealthSleepSessionsByStart,
   HEALTH_SLEEP_KINDS,
+  normalizeHealthMealTime,
   normalizeHealthSleepKind,
   resolveHealthSleepKind,
   parseHealthSleepDuration,
@@ -46,6 +47,9 @@ test("target-weight draft display removes conversion noise", () => {
 test("meal logged time formats valid timestamps and omits invalid values", () => {
   assert.equal(formatMealLoggedTime("invalid", "en-US"), null);
   assert.match(formatMealLoggedTime("2026-07-28T12:30:00.000Z", "en-US") ?? "", /\d{1,2}:30/);
+  assert.equal(formatMealLoggedTime("2026-07-28T07:00:00", "en-US"), "7:00 AM");
+  assert.equal(formatMealLoggedTime("2026-07-28T12:00:00", "en-US"), "12:00 PM");
+  assert.equal(formatMealLoggedTime("2026-07-28T19:30:00", "en-US"), "7:30 PM");
 });
 
 test("meal logger defaults and validates local date/time inputs", () => {
@@ -56,6 +60,17 @@ test("meal logger defaults and validates local date/time inputs", () => {
   assert.equal(isHealthMealTimestampFuture("2026-08-03", "09:12", now), false);
   assert.equal(isHealthMealTimestampFuture("2026-08-04", "15:27", now), true);
   assert.equal(buildHealthMealLoggedAt("not-a-date", "09:12"), null);
+});
+
+test("meal timestamps accept PostgreSQL HH:MM and HH:MM:SS values and normalize time inputs", () => {
+  assert.equal(normalizeHealthMealTime("19:30"), "19:30");
+  assert.equal(normalizeHealthMealTime("19:30:00"), "19:30");
+  assert.equal(buildHealthMealLoggedAt("2026-08-25", "19:30:00"), buildHealthMealLoggedAt("2026-08-25", "19:30"));
+  const secondsLoggedAt = buildHealthMealLoggedAt("2026-08-25", "19:30:45");
+  const minuteLoggedAt = buildHealthMealLoggedAt("2026-08-25", "19:30:00");
+  assert.ok(secondsLoggedAt && minuteLoggedAt);
+  assert.equal(Date.parse(secondsLoggedAt) - Date.parse(minuteLoggedAt), 45_000);
+  assert.equal(normalizeHealthMealTime("19:30:61"), null);
 });
 
 test("health nutrition display numbers round to two decimals without forced zeroes", () => {

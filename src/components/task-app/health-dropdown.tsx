@@ -153,6 +153,7 @@ export function HealthDropdown({
   disabled = false,
   id,
   onChange,
+  openOnFocus = false,
   options,
   value,
 }: {
@@ -161,6 +162,7 @@ export function HealthDropdown({
   disabled?: boolean;
   id?: string;
   onChange: (value: string) => void;
+  openOnFocus?: boolean;
   options: HealthDropdownOption[];
   value: string;
 }) {
@@ -225,6 +227,12 @@ export function HealthDropdown({
           setHighlightedIndex(selectedIndex);
           setIsOpen((current) => !current);
         }}
+        onFocus={() => {
+          if (openOnFocus) {
+            setHighlightedIndex(selectedIndex);
+            setIsOpen(true);
+          }
+        }}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {
             event.preventDefault();
@@ -243,6 +251,8 @@ export function HealthDropdown({
           } else if ((event.key === "Enter" || event.key === " ") && isOpen) {
             event.preventDefault();
             chooseOption(highlightedIndex);
+          } else if (event.key === "Tab") {
+            setIsOpen(false);
           } else if (event.key === "Escape") {
             event.preventDefault();
             setIsOpen(false);
@@ -272,6 +282,7 @@ export function HealthDropdown({
               onMouseEnter={() => setHighlightedIndex(index)}
               ref={index === highlightedIndex ? highlightedOptionRef : undefined}
               role="option"
+              tabIndex={-1}
               type="button"
             >
               {option.label}

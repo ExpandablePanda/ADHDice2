@@ -164,7 +164,7 @@ test("Deleting a custom food leaves meal rows and snapshot-backed editing indepe
 test("Health meal logger uses the selected ledger date and active section through insert and edit paths", () => {
   const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
   assert.match(source, /type=\"time\"[\s\S]*value=\{mealDraft\.time\}/);
-  assert.match(source, /buildHealthMealLoggedAt\(foodHistoryDate, mealDraft\.time\)/);
+  assert.match(source, /buildHealthMealLoggedAt\(selectedMealDate, mealDraft\.time\)/);
   assert.match(source, /entry_date: foodHistoryDate/);
   assert.match(source, /meal_slot: activeMealEntrySlot/);
   assert.match(source, /logged_at: loggedAt/);
@@ -184,7 +184,8 @@ test("Health meal logger exposes Quick Entry with optional library persistence a
   assert.match(source, /fat_g: calculation\.nutrientTotals\.fat_g/);
   assert.match(source, /await saveFavoriteFood\(libraryInput\)/);
   assert.match(source, /source_food_id: sourceFoodId/);
-  assert.match(source, /food_snapshot: buildMealFoodSnapshot\(\{ \.\.\.mealDraft, sourceFoodId \}\)/);
+  assert.match(source, /const foodSnapshot = buildMealFoodSnapshot\(\{ \.\.\.mealDraft, sourceFoodId \}\)/);
+  assert.match(source, /food_snapshot: foodSnapshot/);
   assert.match(source, /meal_slot: activeMealEntrySlot/);
   assert.match(source, /entry_date: foodHistoryDate/);
   assert.match(source, /logged_at: loggedAt/);

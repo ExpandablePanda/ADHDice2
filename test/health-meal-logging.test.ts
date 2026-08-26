@@ -8,8 +8,11 @@ const useHealthSource = readFileSync(new URL("../src/hooks/useHealth.ts", import
 const healthUtilsSource = readFileSync(new URL("../src/lib/health-utils.ts", import.meta.url), "utf8");
 const foodSource = source.slice(source.indexOf('{activeTab === "Food"'), source.indexOf('{activeTab === "Water"'));
 const inlineEditorSource = source.slice(source.indexOf("function renderMealEntryEditor()"), source.indexOf("\n\n  return (", source.indexOf("function renderMealEntryEditor()")));
-const barcodeToolsSource = source.slice(source.indexOf("function renderMealBarcodeTools()"), source.indexOf("function renderMealEntryEditor()"));
+const barcodeToolsSource = source.slice(source.indexOf("function renderMealBarcodeTools()"), source.indexOf("function renderMealCategoryFilter()"));
+const categorySource = source.slice(source.indexOf("function renderMealCategoryFilter()"), source.indexOf("function renderMealEntryEditor()"));
 const saveSource = source.slice(source.indexOf("async function handleSaveMeal()"), source.indexOf("function openMealComposerForSlot"));
+const submitSource = source.slice(source.indexOf("async function submitMeal()"), source.indexOf("function clearMealDraft"));
+const clearSource = source.slice(source.indexOf("function clearMealDraft"), source.indexOf("function openMealComposerForSlot"));
 const favoriteHandlerSource = source.slice(source.indexOf("function handleFavoriteReuse"), source.indexOf("async function handleRemoveFavorite"));
 const recentHandlerSource = source.slice(source.indexOf("function handleRecentFoodReuse"), source.indexOf("async function handleRemoveFavorite"));
 const lookupHandlerSource = source.slice(source.indexOf("function applyLookupResult"), source.indexOf("function applyMealFoodPickerSuggestion"));
@@ -41,6 +44,16 @@ test("Add Food barcode lookup fills the draft without saving it", () => {
   assert.doesNotMatch(source.slice(source.indexOf("function handleMealBarcodeDetected"), source.indexOf("function applyLookupResult")), /addMealEntry/);
 });
 
+test("Clear resets the current food draft and lookup state without changing editor context", () => {
+  assert.match(inlineEditorSource, /title="Clear current food selection"/);
+  assert.match(clearSource, /setMealDraft\(\(current\) => resetMealDraftForNextItem\(current\)\)/);
+  assert.match(clearSource, /setCustomFoodSearchQuery\(""\)/);
+  assert.match(clearSource, /setBarcodeLookupError\(""\)/);
+  assert.match(clearSource, /setBarcodeLookupStatus\("idle"\)/);
+  assert.match(clearSource, /setIsScannerOpen\(false\)/);
+  assert.doesNotMatch(clearSource, /setMealEditorMode|setEditingMealPlanId|setActiveMealEntrySlot/);
+});
+
 test("inline Add Food removes manual barcode controls and keeps one compact scanner action", () => {
   assert.doesNotMatch(inlineEditorSource, /Barcode \(optional\)/);
   assert.doesNotMatch(barcodeToolsSource, /<input/);
@@ -49,15 +62,16 @@ test("inline Add Food removes manual barcode controls and keeps one compact scan
   assert.match(barcodeToolsSource, /aria-label="Scan barcode"/);
   assert.match(barcodeToolsSource, /title="Scan barcode"/);
   assert.match(barcodeToolsSource, /<ScanBarcode/);
-  assert.match(barcodeToolsSource, /<HealthBarcodeScanner/);
+  assert.match(inlineEditorSource, /isScannerOpen \? <HealthBarcodeScanner/);
+  assert.doesNotMatch(barcodeToolsSource, /<div/);
 });
 
 test("inline Add Food categories are collapsed by default and visibly retain an active filter", () => {
   assert.match(source, /const \[isCustomFoodCategoriesOpen, setIsCustomFoodCategoriesOpen\] = useState\(false\)/);
-  assert.match(inlineEditorSource, /aria-expanded=\{isCustomFoodCategoriesOpen\}/);
-  assert.match(inlineEditorSource, /\{selectedCustomFoodCategory && !isCustomFoodCategoriesOpen \? `Categories · \$\{selectedCustomFoodCategory\}` : "Categories"\}/);
-  assert.match(inlineEditorSource, /\{isCustomFoodCategoriesOpen \? \(/);
-  assert.match(inlineEditorSource, /setSelectedCustomFoodCategory\(\(current\) => current === category \? null : category\)/);
+  assert.match(categorySource, /aria-expanded=\{isCustomFoodCategoriesOpen\}/);
+  assert.match(categorySource, /\{selectedCustomFoodCategory && !isCustomFoodCategoriesOpen \? `Categories · \$\{selectedCustomFoodCategory\}` : "Categories"\}/);
+  assert.match(categorySource, /\{isCustomFoodCategoriesOpen \? \(/);
+  assert.match(categorySource, /setSelectedCustomFoodCategory\(\(current\) => current === category \? null : category\)/);
   const openSource = source.slice(source.indexOf("function openMealComposerForSlot"), source.indexOf("function closeMealEntryEditor"));
   assert.match(openSource, /setSelectedCustomFoodCategory\(null\)/);
   assert.match(openSource, /setIsCustomFoodCategoriesOpen\(false\)/);
@@ -73,6 +87,42 @@ test("normal Add Food keeps the primary keyboard fields ahead of the scanner act
   assert.ok(measurementIndex < amountIndex);
   assert.ok(amountIndex < timeIndex);
   assert.ok(timeIndex < scannerIndex);
+  assert.match(inlineEditorSource, /minmax\(4rem,0\.4fr\)/);
+  assert.ok(scannerIndex < inlineEditorSource.indexOf("renderMealCategoryFilter()"));
+});
+
+test("Categories are visually placed beneath Food without changing the fast keyboard order", () => {
+  assert.match(categorySource, /sm:col-start-1 sm:row-start-2/);
+  assert.ok(inlineEditorSource.indexOf('ariaLabel="Search custom foods"') < inlineEditorSource.indexOf('ariaLabel="Measurement"'));
+  assert.ok(inlineEditorSource.indexOf('ariaLabel="Measurement"') < inlineEditorSource.indexOf('label="Amount"'));
+  assert.ok(inlineEditorSource.indexOf('label="Amount"') < inlineEditorSource.indexOf('label="Time"'));
+  assert.ok(inlineEditorSource.indexOf('label="Time"') < inlineEditorSource.indexOf("renderMealBarcodeTools()"));
+  assert.ok(inlineEditorSource.indexOf("renderMealBarcodeTools()") < inlineEditorSource.indexOf("renderMealCategoryFilter()"));
+  assert.match(source, /const \[isCustomFoodCategoriesOpen, setIsCustomFoodCategoriesOpen\] = useState\(false\)/);
+});
+
+test("Amount Enter fast-submits actual and plan food, while invalid or composing Enter does nothing", () => {
+  assert.match(inlineEditorSource, /event\.key !== "Enter"/);
+  assert.match(inlineEditorSource, /event\.isComposing/);
+  assert.match(inlineEditorSource, /event\.preventDefault\(\)/);
+  assert.match(inlineEditorSource, /if \(canSaveMeal\) \{\s+void submitMeal\(\);/);
+  assert.match(submitSource, /if \(!canSaveMeal \|\| mealSaveInFlightRef\.current\)/);
+  assert.match(inlineEditorSource, /: isQuickEntryOpen \? "Add Quick Entry" : "Add Food"/);
+  assert.match(inlineEditorSource, /editingMealPlanId \? "Save Plan" : "Add to Plan"/);
+});
+
+test("Done is the plan action and planned time no longer disables it", () => {
+  assert.match(inlineEditorSource, />Done<\/AdhdChip>/);
+  assert.match(source, /canMarkDone = isHealthMealPlanConfirmEligible\(plan\)/);
+  assert.match(source, />Done<\/button>/);
+  assert.doesNotMatch(source, /Confirm becomes available when the planned time arrives/);
+});
+
+test("Done uses the local date RPC input, server timestamp, and plan snapshots", () => {
+  assert.match(source, /todayHealthDate\(\)/);
+  assert.match(useHealthSource, /p_actual_entry_date: actualEntryDate/);
+  assert.match(useHealthSource, /buildActualMealEntryInputFromPlan\(plan, \{ entryDate: actualEntryDate, loggedAt: confirmedAt \}\)/);
+  assert.match(useHealthSource, /setMessage\(\{ tone: "good", text: newlyCreated \? "Meal plan marked Done\."/);
 });
 
 test("the reusable barcode scanner prefers the rear camera and cleans up on every exit", () => {
@@ -167,7 +217,7 @@ test("successful save preserves context, clears food fields, and keeps the inlin
 
 test("failed canonical saves leave the inline draft intact", () => {
   assert.match(saveSource, /addMealEntry\(\{/);
-  assert.equal((saveSource.match(/resetMealDraftForNextItem/g) ?? []).length, 1);
+  assert.equal((saveSource.match(/resetMealDraftForNextItem/g) ?? []).length, 2);
   assert.match(saveSource, /if \(saved\) \{/);
 });
 
