@@ -1710,7 +1710,14 @@ export function HealthPage({
       {activeTab === "Food" ? (
         <div aria-labelledby="health-tab-food" className="mt-3 grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]" id={getHealthTabPanelId("Food")} role="tabpanel">
           <div className="grid min-w-0 content-start gap-5">
-          <HealthPanel className="min-w-0" contentTopClassName="pt-3 sm:pt-3" icon={<Salad />} subtitle="Meal logging">
+          <HealthPanel
+            className="min-w-0"
+            contentTopClassName="pt-1 sm:pt-1"
+            headerChevronClassName="-translate-y-0.5"
+            headerPaddingClassName="py-2 sm:py-2"
+            icon={<Salad />}
+            subtitle="Meal logging"
+          >
             <div className="grid gap-3">
               <SectionMiniTitle
                 actions={<FoodHistoryDateChip allowFuture date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
@@ -2427,6 +2434,8 @@ function HealthPanel({
   collapseAfterHeaderActions = false,
   children,
   contentTopClassName = "pt-3 sm:pt-4",
+  headerChevronClassName = "",
+  headerPaddingClassName = "py-4 sm:py-5",
   headerActions,
   icon,
   subtitle,
@@ -2436,12 +2445,24 @@ function HealthPanel({
   collapseAfterHeaderActions?: boolean;
   children: ReactNode;
   contentTopClassName?: string;
+  headerChevronClassName?: string;
+  headerPaddingClassName?: string;
   headerActions?: ReactNode;
   icon: ReactNode;
   subtitle: string;
   title?: string;
 }) {
   const [isOpen, setIsOpen] = useState(true);
+  const collapseButtonChevronClassName = [
+    "h-4 w-4 transition-transform",
+    headerChevronClassName,
+    isOpen ? "rotate-180" : "",
+  ].filter(Boolean).join(" ");
+  const inlineCollapseChevronClassName = [
+    "h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45",
+    headerChevronClassName,
+    isOpen ? "rotate-180" : "",
+  ].filter(Boolean).join(" ");
   const panelTitle = (
     <span className="flex min-w-0 items-center gap-3">
       <span className="flex h-8 w-8 shrink-0 items-center justify-center text-[#6f57f6] dark:text-[#cabfff] [&_svg]:h-6 [&_svg]:w-6">
@@ -2463,7 +2484,7 @@ function HealthPanel({
     >
       <ChevronDown
         aria-hidden="true"
-        className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
+        className={collapseButtonChevronClassName}
       />
     </button>
   );
@@ -2473,7 +2494,7 @@ function HealthPanel({
       "rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]",
       className,
     ].filter(Boolean).join(" ")}>
-      <div className="flex items-center gap-2 px-3 py-4 sm:px-5 sm:py-5">
+      <div className={["flex items-center gap-2 px-3 sm:px-5", headerPaddingClassName].filter(Boolean).join(" ")}>
         {collapseAfterHeaderActions ? (
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
@@ -2496,7 +2517,7 @@ function HealthPanel({
             {panelTitle}
             <ChevronDown
               aria-hidden="true"
-              className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${isOpen ? "rotate-180" : ""}`}
+              className={inlineCollapseChevronClassName}
             />
           </button>
         )}

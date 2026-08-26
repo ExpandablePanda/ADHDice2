@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.63`.
+- Current working app version: `7.11.64`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,16 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.64 Compact Meal Logging Header
+
+Meal Logging now opts into a compact `HealthPanel` header (`py-2` at mobile and
+desktop) and minimal body top spacing (`pt-1`), while all other Health panels
+retain the generic header padding and body defaults. Its collapse chevron gets
+a small upward optical adjustment for the single-line label; the existing
+full-header clickable collapse target and accessible state remain unchanged.
+Daily Totals and other Health panels are unchanged. No SQL or migration was
+added.
 
 ## 2026-08-25 7.11.63 Meal Plan Done SQL Fix + Food Scanner Reset
 
@@ -27,7 +37,7 @@ the plan row references and preserves the row-locked, idempotent RPC behavior.
 Custom Food barcode scanning now captures a safe pre-scan draft baseline,
 offers a compact Clear action, restores that baseline for both blank and
 manually edited foods, and ignores stale lookup responses after Clear. Meal
-Logging uses compact header/body spacing without changing other Health panels.
+Logging uses compact body spacing without changing other Health panels.
 The native scanner architecture and barcode nutrition accuracy investigation
 remain unchanged/deferred. Remaining Food QA continues after the migration is
 applied; live SQL has not been applied.
