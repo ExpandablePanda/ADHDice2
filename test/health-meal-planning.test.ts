@@ -8,6 +8,7 @@ import {
   buildHealthMealPlanPayload,
   getActiveHealthMealPlans,
   isHealthMealPlanConfirmEligible,
+  reconcileHealthMealPlans,
   sumHealthMealPlanNutritionForDate,
 } from "../src/lib/health-meal-planning.ts";
 import { sumMealNutritionForDate } from "../src/lib/health-utils.ts";
@@ -183,6 +184,58 @@ test("confirmed rows stop appearing as active plans and retain their audit ancho
   assert.equal(confirmed.confirmed_meal_entry_id, "actual-1");
 });
 
+test("remote-only meal plans remain unchanged", () => {
+  const remotePlans = [plan({ id: "remote-early", planned_time: "08:00" }), plan({ id: "remote-late", planned_time: "20:00" })];
+  const recovery = reconcileHealthMealPlans([], remotePlans);
+  assert.deepEqual(recovery.mergedMealPlans, remotePlans);
+  assert.deepEqual(recovery.unreconciledLocalMealPlans, []);
+});
+
+test("local-only meal plan is retained in the merged state", () => {
+  const localPlan = plan({ id: "local-only" });
+  const recovery = reconcileHealthMealPlans([localPlan], []);
+  assert.deepEqual(recovery.mergedMealPlans, [localPlan]);
+});
+
+test("local-only meal plan is identified for recovery", () => {
+  const localPlan = plan({ id: "local-only" });
+  const recovery = reconcileHealthMealPlans([localPlan], []);
+  assert.deepEqual(recovery.unreconciledLocalMealPlans, [localPlan]);
+});
+
+test("matching meal plan IDs are not duplicated", () => {
+  const localPlan = plan({ id: "same-id", food_name: "Stale Local" });
+  const remotePlan = plan({ id: "same-id", food_name: "Canonical Remote" });
+  const recovery = reconcileHealthMealPlans([localPlan], [remotePlan]);
+  assert.deepEqual(recovery.unreconciledLocalMealPlans, []);
+  assert.equal(recovery.mergedMealPlans.length, 1);
+});
+
+test("remote version wins for a matching meal plan ID", () => {
+  const localPlan = plan({ id: "same-id", food_name: "Stale Local" });
+  const remotePlan = plan({ id: "same-id", food_name: "Canonical Remote" });
+  const recovery = reconcileHealthMealPlans([localPlan], [remotePlan]);
+  assert.deepEqual(recovery.mergedMealPlans, [remotePlan]);
+});
+
+test("multiple local-only meal plans are identified for recovery", () => {
+  const localPlans = [
+    plan({ id: "local-late", planned_date: "2026-08-27", planned_time: "20:00" }),
+    plan({ id: "local-early", planned_date: "2026-08-26", planned_time: "08:00" }),
+  ];
+  const recovery = reconcileHealthMealPlans(localPlans, []);
+  assert.deepEqual(recovery.unreconciledLocalMealPlans, localPlans);
+});
+
+test("meal plan reconciliation preserves normal planned sort order", () => {
+  const localPlans = [
+    plan({ id: "local-late", planned_date: "2026-08-27", planned_time: "20:00" }),
+    plan({ id: "local-early", planned_date: "2026-08-26", planned_time: "08:00" }),
+  ];
+  const recovery = reconcileHealthMealPlans(localPlans, []);
+  assert.deepEqual(recovery.mergedMealPlans.map((entry) => entry.id), ["local-early", "local-late"]);
+});
+
 test("Health production wiring keeps meal plans out of actual and achievement inputs", () => {
   assert.match(hookSource, /mealPlanEntries/);
   assert.match(hookSource, /from\("adhdice_health_meal_plan_entries"\)/);
@@ -194,6 +247,24 @@ test("Health production wiring keeps meal plans out of actual and achievement in
   assert.match(pageSource, /Add to Plan/);
   assert.match(pageSource, />Done<\/button>/);
   assert.match(pageSource, /selectedPlannedNutrition/);
+});
+
+test("Meal Plan hydration reconciles current local rows before applying a successful remote snapshot", () => {
+  const recoveryStart = hookSource.indexOf("const latestLocalMealPlans =");
+  const recoveryEnd = hookSource.indexOf("const remoteSnapshot =", recoveryStart);
+  const recoverySection = hookSource.slice(recoveryStart, recoveryEnd);
+  assert.match(recoverySection, /reconcileHealthMealPlans\(latestLocalMealPlans, mealPlanEntriesResult\.data \?\? \[\]\)/);
+  assert.match(recoverySection, /\.from\("adhdice_health_meal_plan_entries"\)[\s\S]*?\.upsert\([\s\S]*?mealPlanRecovery\.unreconciledLocalMealPlans/);
+  assert.match(hookSource, /mealPlanEntries: mealPlanEntriesResult\.error \? localState\.mealPlanEntries : mealPlanRecovery\.mergedMealPlans/);
+});
+
+test("Meal Plan recovery failure keeps local rows visible and retries on later hydration", () => {
+  const recoveryStart = hookSource.indexOf("const latestLocalMealPlans =");
+  const recoveryEnd = hookSource.indexOf("const remoteSnapshot =", recoveryStart);
+  const recoverySection = hookSource.slice(recoveryStart, recoveryEnd);
+  assert.match(recoverySection, /if \(recoveryError\) \{[\s\S]*?mealPlanRemoteEnabledRef\.current = false[\s\S]*?Local Meal Plans remain visible and saved locally[\s\S]*?retried/);
+  assert.match(hookSource, /mealPlanRemoteEnabledRef\.current = !mealPlanEntriesResult\.error/);
+  assert.match(hookSource, /mealPlanEntries: mealPlanEntriesResult\.error \? localState\.mealPlanEntries : mealPlanRecovery\.mergedMealPlans/);
 });
 
 test("7.11.61 migration isolates the table, RLS, and atomic idempotent confirmation", () => {

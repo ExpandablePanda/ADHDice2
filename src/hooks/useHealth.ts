@@ -58,6 +58,7 @@ import {
 import {
   buildActualMealEntryInputFromPlan,
   isHealthMealPlanConfirmEligible,
+  reconcileHealthMealPlans,
   sortHealthMealPlans,
 } from "@/lib/health-meal-planning";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
@@ -529,6 +530,27 @@ export function useHealth(
         }
       }
 
+      const latestLocalMealPlans = healthSnapshotRef.current?.mealPlanEntries ?? localState.mealPlanEntries;
+      const mealPlanRecovery = mealPlanEntriesResult.error
+        ? { mergedMealPlans: latestLocalMealPlans, unreconciledLocalMealPlans: [] }
+        : reconcileHealthMealPlans(latestLocalMealPlans, mealPlanEntriesResult.data ?? []);
+
+      if (!mealPlanEntriesResult.error && mealPlanRecovery.unreconciledLocalMealPlans.length > 0) {
+        const { error: recoveryError } = await client
+          .from("adhdice_health_meal_plan_entries")
+          .upsert(
+            mealPlanRecovery.unreconciledLocalMealPlans.map((mealPlan) => ({ ...mealPlan, user_id: userId })),
+            { ignoreDuplicates: true, onConflict: "id" },
+          );
+        if (recoveryError) {
+          mealPlanRemoteEnabledRef.current = false;
+          setMessage({
+            tone: "warn",
+            text: "Meal Plan recovery could not finish. Local Meal Plans remain visible and saved locally; recovery will be retried.",
+          });
+        }
+      }
+
       if (!isActive) {
         return;
       }
@@ -539,7 +561,7 @@ export function useHealth(
         favorites: (favoritesResult.data ?? []).map(normalizeHealthFoodLibraryItem),
         importAudits: importAuditsResult.data ?? [],
         mealEntries: mealEntriesResult.data ?? [],
-        mealPlanEntries: mealPlanEntriesResult.error ? localState.mealPlanEntries : (mealPlanEntriesResult.data ?? []),
+        mealPlanEntries: mealPlanEntriesResult.error ? localState.mealPlanEntries : mealPlanRecovery.mergedMealPlans,
         metricEntries: metricEntriesResult.data ?? [],
         profile: normalizeHealthProfile(profileResult.data, userId),
         recipes: recipesResult.data ?? [],
