@@ -13,6 +13,7 @@ const categorySource = source.slice(source.indexOf("function renderMealCategoryF
 const saveSource = source.slice(source.indexOf("async function handleSaveMeal()"), source.indexOf("function openMealComposerForSlot"));
 const submitSource = source.slice(source.indexOf("async function submitMeal()"), source.indexOf("function clearMealDraft"));
 const clearSource = source.slice(source.indexOf("function clearMealDraft"), source.indexOf("function openMealComposerForSlot"));
+const healthPanelSource = source.slice(source.indexOf("function HealthPanel("));
 const favoriteHandlerSource = source.slice(source.indexOf("function handleFavoriteReuse"), source.indexOf("async function handleRemoveFavorite"));
 const recentHandlerSource = source.slice(source.indexOf("function handleRecentFoodReuse"), source.indexOf("async function handleRemoveFavorite"));
 const lookupHandlerSource = source.slice(source.indexOf("function applyLookupResult"), source.indexOf("function applyMealFoodPickerSuggestion"));
@@ -52,6 +53,20 @@ test("Clear resets the current food draft and lookup state without changing edit
   assert.match(clearSource, /setBarcodeLookupStatus\("idle"\)/);
   assert.match(clearSource, /setIsScannerOpen\(false\)/);
   assert.doesNotMatch(clearSource, /setMealEditorMode|setEditingMealPlanId|setActiveMealEntrySlot/);
+});
+
+test("Meal Logging uses compact body spacing while other HealthPanel instances keep the default", () => {
+  const mealLoggingStart = foodSource.indexOf('<HealthPanel className="min-w-0" contentTopClassName="pt-3 sm:pt-3"');
+  const mealLoggingEnd = foodSource.indexOf("<HealthPanel\n", mealLoggingStart);
+  const mealLoggingPanel = foodSource.slice(mealLoggingStart, mealLoggingEnd);
+  assert.ok(mealLoggingStart >= 0 && mealLoggingEnd > mealLoggingStart);
+  assert.match(mealLoggingPanel, /contentTopClassName="pt-3 sm:pt-3"/);
+  assert.match(mealLoggingPanel, /<div className="grid gap-3">/);
+  assert.doesNotMatch(mealLoggingPanel, /className="mt-3 grid gap-3"/);
+  assert.match(healthPanelSource, /contentTopClassName = "pt-3 sm:pt-4"/);
+  assert.match(healthPanelSource, /className=\{`px-3 pb-4 sm:px-5 sm:pb-5 \$\{contentTopClassName\}`\}/);
+  assert.match(foodSource, /<HealthPanel[\s\S]*?subtitle="Daily totals"/);
+  assert.match(foodSource, /<HealthPanel[\s\S]*?title="Favorites & Recent Foods"/);
 });
 
 test("inline Add Food removes manual barcode controls and keeps one compact scanner action", () => {

@@ -1009,7 +1009,7 @@ export function useHealth(
     let newlyCreated = true;
     if (client && storageMode === "remote") {
       if (!mealPlanRemoteEnabledRef.current) {
-        setMessage({ tone: "warn", text: "Apply the 7.11.62 meal-plan confirmation correction before marking a remotely stored plan Done." });
+        setMessage({ tone: "warn", text: "Apply the 7.11.63 meal-plan confirmation correction before marking a remotely stored plan Done." });
         return false;
       }
       const rpcClient = client as unknown as {

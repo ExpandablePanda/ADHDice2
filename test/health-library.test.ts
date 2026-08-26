@@ -538,6 +538,31 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.doesNotMatch(source, /sortHealthFoodsForMealPicker\(favorites, mealEntries\)[\s\S]{0,1000}\.slice\(0, 8\)/);
 });
 
+test("Custom Food barcode Clear restores its scan baseline and ignores stale lookup responses", () => {
+  const library = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
+  const scanHandler = library.slice(library.indexOf("function handleFoodBarcodeDetected"), library.indexOf("function startEditingFood"));
+  const clearHandler = library.slice(library.indexOf("function clearFoodScan"), library.indexOf("async function handleSaveFood"));
+  assert.match(library, /const barcodeLookupGenerationRef = useRef\(0\)/);
+  assert.match(library, /const foodScanBaselineRef = useRef<FoodDraft \| null>\(null\)/);
+  assert.match(scanHandler, /const requestGeneration = \+\+barcodeLookupGenerationRef\.current/);
+  assert.match(scanHandler, /foodScanBaselineRef\.current = cloneFoodDraft\(foodDraft\)/);
+  assert.match(scanHandler, /if \(requestGeneration !== barcodeLookupGenerationRef\.current\)/);
+  assert.match(scanHandler, /if \(requestGeneration === barcodeLookupGenerationRef\.current\)/);
+  assert.match(clearHandler, /const baseline = foodScanBaselineRef\.current/);
+  assert.match(clearHandler, /barcodeLookupGenerationRef\.current \+= 1/);
+  assert.match(clearHandler, /foodScanBaselineRef\.current = null/);
+  assert.match(clearHandler, /setFoodDraft\(cloneFoodDraft\(baseline\)\)/);
+  assert.match(clearHandler, /setBarcodeLookupStatus\("idle"\)/);
+  assert.match(clearHandler, /setBarcodeLookupMessage\(""\)/);
+  assert.match(clearHandler, /setIsBarcodeScannerOpen\(false\)/);
+  assert.match(library, /hasFoodScanBaseline \? <AdhdChip[\s\S]*?onClick=\{clearFoodScan\}>Clear<\/AdhdChip>/);
+  assert.match(library, /function startEditingFood\(food: HealthFoodLibraryItem\)/);
+  assert.match(library, /onClick=\{\(\) => startEditingFood\(food\)\}/);
+  assert.doesNotMatch(scanHandler, /saveFood\(/);
+  assert.match(library, /onClick=\{\(\) => \{ void handleSaveFood\(\); \}\}/);
+  assert.doesNotMatch(library, />Lookup<\//);
+});
+
 test("Task History selected actions use semantic inverted status fills", () => {
   const source = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
   assert.match(source, /TASK_STATUS_INVERTED_CHIP_STYLES/);
