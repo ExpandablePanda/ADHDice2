@@ -1719,10 +1719,10 @@ export function HealthPage({
             subtitle="Meal logging"
           >
             <div className="grid gap-3">
-              <SectionMiniTitle
-                actions={<FoodHistoryDateChip allowFuture date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
-                title={`${foodHistoryDate === today ? "Today’s Meals" : `Meals — ${formatHealthDateLabel(foodHistoryDate)}`} — ${formatHealthNutritionNumber(selectedNutrition.calories)} kcal`}
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{`${foodHistoryDate === today ? "Today’s Meals" : `Meals — ${formatHealthDateLabel(foodHistoryDate)}`} — ${formatHealthNutritionNumber(selectedNutrition.calories)} kcal`}</p>
+                <FoodHistoryDateChip allowFuture date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />
+              </div>
               {HEALTH_MEAL_SLOTS.map((slot) => {
                 const slotMeals = selectedMeals.filter((entry) => entry.meal_slot === slot);
                   const slotPlans = selectedMealPlans.filter((entry) => entry.meal_slot === slot);
