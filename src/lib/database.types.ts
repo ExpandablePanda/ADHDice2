@@ -1666,6 +1666,89 @@ export type HealthMealEntryUpdate = Partial<
   >
 >;
 
+export type HealthMealPlanEntry = {
+  id: string;
+  user_id: string;
+  planned_date: string;
+  meal_slot: HealthMealSlot;
+  planned_time: string;
+  planned_at: string;
+  food_name: string;
+  brand_name: string | null;
+  serving_label: string | null;
+  calories: number;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  barcode: string | null;
+  provider: string;
+  provider_item_id: string | null;
+  attribution: string | null;
+  source_food_id?: string | null;
+  consumed_quantity?: number | null;
+  consumed_unit?: string | null;
+  serving_fraction?: number | null;
+  food_snapshot?: HealthMealFoodSnapshot | null;
+  nutrition_snapshot?: HealthMealNutritionSnapshot | null;
+  confirmed_at: string | null;
+  confirmed_meal_entry_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthMealPlanEntryInsert = {
+  id?: string;
+  user_id: string;
+  planned_date: string;
+  meal_slot: HealthMealSlot;
+  planned_time: string;
+  planned_at: string;
+  food_name: string;
+  brand_name?: string | null;
+  serving_label?: string | null;
+  calories: number;
+  protein_g?: number | null;
+  carbs_g?: number | null;
+  fat_g?: number | null;
+  barcode?: string | null;
+  provider?: string;
+  provider_item_id?: string | null;
+  attribution?: string | null;
+  source_food_id?: string | null;
+  consumed_quantity?: number | null;
+  consumed_unit?: string | null;
+  serving_fraction?: number | null;
+  food_snapshot?: HealthMealFoodSnapshot | null;
+  nutrition_snapshot?: HealthMealNutritionSnapshot | null;
+};
+
+export type HealthMealPlanEntryUpdate = Partial<
+  Pick<
+    HealthMealPlanEntry,
+    | "planned_date"
+    | "meal_slot"
+    | "planned_time"
+    | "planned_at"
+    | "food_name"
+    | "brand_name"
+    | "serving_label"
+    | "calories"
+    | "protein_g"
+    | "carbs_g"
+    | "fat_g"
+    | "barcode"
+    | "provider"
+    | "provider_item_id"
+    | "attribution"
+    | "source_food_id"
+    | "consumed_quantity"
+    | "consumed_unit"
+    | "serving_fraction"
+    | "food_snapshot"
+    | "nutrition_snapshot"
+  >
+>;
+
 export type HealthWeightEntry = {
   id: string;
   user_id: string;
@@ -2495,6 +2578,12 @@ export type Database = {
         Row: HealthMealEntry;
         Insert: HealthMealEntryInsert;
         Update: HealthMealEntryUpdate;
+        Relationships: [];
+      };
+      adhdice_health_meal_plan_entries: {
+        Row: HealthMealPlanEntry;
+        Insert: HealthMealPlanEntryInsert;
+        Update: HealthMealPlanEntryUpdate;
         Relationships: [];
       };
       adhdice_health_weight_entries: {

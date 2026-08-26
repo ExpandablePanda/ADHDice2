@@ -5,8 +5,8 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.60`.
-- Current release group: `7.11.x` Active Workout Runtime Stabilization.
+- Current working app version: `7.11.61`.
+- Current release group: `7.11.x` Meal Planning + Confirm to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
@@ -14,6 +14,23 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.61 Meal Planning + Confirm to Actual
+
+The 7.11.60 source-reviewed Food fast-entry workflow now supports a separate
+planned-occurrence authority in `adhdice_health_meal_plan_entries`. Plan Food
+reuses the shared inline MealDraft editor for Custom Foods, Favorites, Recent
+options, Recipes, Saved Meals, Quick Entry, and barcode scanning. Unconfirmed
+plans are excluded from actual meals, totals, Recently Eaten, food-log counts,
+and consumption achievements. Future dates and planned times are supported;
+actual Add Food keeps its future-timestamp protection. Confirm uses the
+authenticated atomic/idempotent `adhdice_confirm_health_meal_plan_entry` RPC,
+copies the current plan snapshots into one canonical HealthMealEntry, and
+retains the confirmed plan audit anchor. Planned and actual nutrition totals
+remain separate, including expanded nutrition coverage semantics. The
+`supabase/add_health_meal_planning_7_11_61.sql` migration is authored only and
+has not been applied. The 7.11.59/7.11.60 browser QA remains deferred and
+should be combined with 7.11.61 QA; native scanner implementation is unchanged.
 
 ## 2026-08-25 7.11.60 Faster Add Food Entry
 
