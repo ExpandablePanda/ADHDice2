@@ -55,15 +55,22 @@ test("Clear resets the current food draft and lookup state without changing edit
   assert.doesNotMatch(clearSource, /setMealEditorMode|setEditingMealPlanId|setActiveMealEntrySlot/);
 });
 
-test("Meal Logging uses compact body spacing while other HealthPanel instances keep the default", () => {
-  const mealLoggingStart = foodSource.indexOf('<HealthPanel className="min-w-0" contentTopClassName="pt-3 sm:pt-3"');
-  const mealLoggingEnd = foodSource.indexOf("<HealthPanel\n", mealLoggingStart);
+test("Meal Logging uses compact header/body spacing while other HealthPanel instances keep the default", () => {
+  const mealLoggingStart = foodSource.indexOf('<HealthPanel\n            className="min-w-0"');
+  const mealLoggingEnd = foodSource.indexOf("<HealthPanel\n", mealLoggingStart + 1);
   const mealLoggingPanel = foodSource.slice(mealLoggingStart, mealLoggingEnd);
   assert.ok(mealLoggingStart >= 0 && mealLoggingEnd > mealLoggingStart);
-  assert.match(mealLoggingPanel, /contentTopClassName="pt-3 sm:pt-3"/);
+  assert.match(mealLoggingPanel, /contentTopClassName="pt-1 sm:pt-1"/);
+  assert.match(mealLoggingPanel, /headerChevronClassName="-translate-y-0.5"/);
+  assert.match(mealLoggingPanel, /headerPaddingClassName="py-2 sm:py-2"/);
   assert.match(mealLoggingPanel, /<div className="grid gap-3">/);
   assert.doesNotMatch(mealLoggingPanel, /className="mt-3 grid gap-3"/);
   assert.match(healthPanelSource, /contentTopClassName = "pt-3 sm:pt-4"/);
+  assert.match(healthPanelSource, /headerChevronClassName = ""/);
+  assert.match(healthPanelSource, /headerPaddingClassName = "py-4 sm:py-5"/);
+  assert.match(healthPanelSource, /headerChevronClassName\?: string/);
+  assert.match(healthPanelSource, /headerPaddingClassName\?: string/);
+  assert.match(healthPanelSource, /headerPaddingClassName\].filter\(Boolean\).join\(" "\)/);
   assert.match(healthPanelSource, /className=\{`px-3 pb-4 sm:px-5 sm:pb-5 \$\{contentTopClassName\}`\}/);
   assert.match(foodSource, /<HealthPanel[\s\S]*?subtitle="Daily totals"/);
   assert.match(foodSource, /<HealthPanel[\s\S]*?title="Favorites & Recent Foods"/);
