@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.58`.
+- Current working app version: `7.11.60`.
 - Current release group: `7.11.x` Active Workout Runtime Stabilization.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -15,9 +15,13 @@ Role: active working
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 
+## 2026-08-25 7.11.60 Faster Add Food Entry
+
+Inline Add Food no longer exposes a manual barcode input or Lookup action. Barcode acquisition remains scanner-only through the compact `ScanBarcode` icon, with the existing native and web scanner architecture unchanged. Custom Food category chips are collapsed by default, fresh meal editors clear any prior category filter, and a collapsed active filter remains visible on the Categories control. HealthAutocomplete options are not Tab stops; Arrow keys and Enter continue to select suggestions, Tab commits the highlighted food and advances through the normal Food → Measurement → Amount → Time order, and pointer selection keeps keyboard focus predictable. No SQL or migration changes were added. The 7.11.59 expanded-nutrition browser QA remains deferred and can be combined with 7.11.60 browser QA later.
+
 ## 2026-08-25 7.11.59 Expanded Nutrition Facts
 
-Native barcode scanner real-device QA passed checks 1–6 and barcode scanning is closed for the 7.11.x cycle. The Food architecture now carries one canonical `HealthNutritionDetails` structure for fat subtypes, sodium, fiber, sugars, vitamins, minerals, caffeine, and omega fats. Unknown values remain null/blank and are never normalized to zero; a numeric zero remains a known value. Custom Food rows remain the current Food Library definition authority, while logged meals use immutable `food_snapshot` and `nutrition_snapshot` data. Recipes and Saved Meals copy and aggregate expanded nutrition, and daily totals report known-entry coverage for incomplete nutrients. Open Food Facts normalization now uses one explicit per-serving or per-100g basis across calories, macros, and expanded nutrients, and missing barcode calories remain null. The additive `supabase/add_health_expanded_nutrition_7_11_59.sql` migration adds `adhdice_health_food_library.nutrition_details` and has not been applied automatically.
+Native barcode scanner real-device QA passed checks 1–6 and barcode scanning is closed for the 7.11.x cycle. The Food architecture now carries one canonical `HealthNutritionDetails` structure for fat subtypes, sodium, fiber, sugars, vitamins, minerals, caffeine, and omega fats. Unknown values remain null/blank and are never normalized to zero; a numeric zero remains a known value. Custom Food rows remain the current Food Library definition authority, while logged meals use immutable `food_snapshot` and `nutrition_snapshot` data. Recipes and Saved Meals copy and aggregate expanded nutrition, and daily totals report known-entry coverage for incomplete nutrients. Open Food Facts normalization now uses one explicit per-serving or per-100g basis across calories, macros, and expanded nutrients, and missing barcode calories remain null. The additive `supabase/add_health_expanded_nutrition_7_11_59.sql` migration adds `adhdice_health_food_library.nutrition_details` and is live. Browser QA remains deferred to the combined 7.11.60 pass.
 
 ## 2026-08-25 7.11.58 Native iOS Food Barcode Scanner
 

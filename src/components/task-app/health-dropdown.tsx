@@ -106,6 +106,8 @@ export function HealthAutocomplete({
           } else if (event.key === "Enter" && isOpen && matchingSuggestions.length > 0) {
             event.preventDefault();
             chooseSuggestion(highlightedIndex);
+          } else if (event.key === "Tab" && isOpen && matchingSuggestions[highlightedIndex]) {
+            chooseSuggestion(highlightedIndex);
           } else if (event.key === "Escape") {
             event.preventDefault();
             setIsOpen(false);
@@ -129,9 +131,11 @@ export function HealthAutocomplete({
               id={`${listboxId}-option-${index}`}
               key={`${suggestion.value}-${index}`}
               onClick={() => chooseSuggestion(index)}
+              onMouseDown={(event) => event.preventDefault()}
               onMouseEnter={() => setHighlightedIndex(index)}
               ref={index === highlightedIndex ? highlightedOptionRef : undefined}
               role="option"
+              tabIndex={-1}
               type="button"
             >
               {suggestion.label}
