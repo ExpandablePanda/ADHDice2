@@ -594,6 +594,38 @@ create table public.adhdice_health_fitness_plan_items (
     on delete restrict
 );
 
+create table public.adhdice_health_fitness_goals (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  exercise_id uuid not null,
+  metric text not null check (metric in ('single_set_reps', 'session_total_reps', 'longest_set_duration', 'session_total_duration')),
+  title text not null check (char_length(trim(title)) > 0),
+  target integer not null check (target > 0),
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, id),
+  foreign key (user_id, exercise_id)
+    references public.adhdice_health_exercises (user_id, id)
+    on delete restrict
+);
+
+create table public.adhdice_health_fitness_goal_levels (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  goal_id uuid not null,
+  label text not null check (char_length(trim(label)) > 0),
+  target integer not null check (target > 0),
+  sort_order integer not null default 0 check (sort_order >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, id),
+  unique (user_id, goal_id, target),
+  foreign key (user_id, goal_id)
+    references public.adhdice_health_fitness_goals (user_id, id)
+    on delete cascade
+);
+
 create table public.adhdice_health_workout_plan_item_links (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -717,6 +749,12 @@ create index adhdice_health_fitness_plans_user_active_idx
   on public.adhdice_health_fitness_plans (user_id, archived_at, starts_on);
 create index adhdice_health_fitness_plan_items_user_schedule_idx
   on public.adhdice_health_fitness_plan_items (user_id, plan_id, archived_at, day_of_week, sort_order);
+create index adhdice_health_fitness_goals_user_active_created_idx
+  on public.adhdice_health_fitness_goals (user_id, archived_at, created_at);
+create index adhdice_health_fitness_goals_user_exercise_idx
+  on public.adhdice_health_fitness_goals (user_id, exercise_id);
+create index adhdice_health_fitness_goal_levels_user_goal_order_idx
+  on public.adhdice_health_fitness_goal_levels (user_id, goal_id, sort_order, created_at);
 create index adhdice_health_workout_plan_item_links_user_workout_idx
   on public.adhdice_health_workout_plan_item_links (user_id, workout_id);
 create index adhdice_health_workout_plan_item_links_user_plan_item_idx
@@ -761,9 +799,16 @@ alter table public.adhdice_health_workout_exercises enable row level security;
 alter table public.adhdice_health_workout_sets enable row level security;
 alter table public.adhdice_health_fitness_plans enable row level security;
 alter table public.adhdice_health_fitness_plan_items enable row level security;
+alter table public.adhdice_health_fitness_goals enable row level security;
+alter table public.adhdice_health_fitness_goal_levels enable row level security;
 alter table public.adhdice_health_workout_plan_item_links enable row level security;
 alter table public.adhdice_health_import_audits enable row level security;
 alter table public.adhdice_health_achievement_awards enable row level security;
+
+revoke all on table public.adhdice_health_fitness_goals from anon, authenticated;
+revoke all on table public.adhdice_health_fitness_goal_levels from anon, authenticated;
+grant select, insert, update, delete on table public.adhdice_health_fitness_goals to authenticated;
+grant select, insert, update, delete on table public.adhdice_health_fitness_goal_levels to authenticated;
 
 create policy "Users can read their own clean tasks"
   on public.adhdice_clean_tasks
@@ -1165,6 +1210,18 @@ create policy "Users can manage their own health fitness plan items"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+create policy "Users can manage their own health fitness goals"
+  on public.adhdice_health_fitness_goals
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can manage their own health fitness goal levels"
+  on public.adhdice_health_fitness_goal_levels
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
 create policy "Users can manage their own health workout plan item links"
   on public.adhdice_health_workout_plan_item_links
   for all
@@ -1347,6 +1404,16 @@ create trigger adhdice_health_fitness_plans_set_updated_at
 
 create trigger adhdice_health_fitness_plan_items_set_updated_at
   before update on public.adhdice_health_fitness_plan_items
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_fitness_goals_set_updated_at
+  before update on public.adhdice_health_fitness_goals
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_fitness_goal_levels_set_updated_at
+  before update on public.adhdice_health_fitness_goal_levels
   for each row
   execute function public.adhdice_clean_set_updated_at();
 

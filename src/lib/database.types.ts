@@ -1840,6 +1840,11 @@ export type HealthWorkoutUpdate = Partial<
 >;
 
 export type HealthFitnessMeasurement = "reps" | "duration";
+export type HealthFitnessPerformanceMetric =
+  | "single_set_reps"
+  | "session_total_reps"
+  | "longest_set_duration"
+  | "session_total_duration";
 
 export type HealthExercise = {
   id: string;
@@ -1990,6 +1995,56 @@ export type HealthWorkoutPlanItemLinkInsert = {
 };
 
 export type HealthWorkoutPlanItemLinkUpdate = Record<string, never>;
+
+export type HealthFitnessGoal = {
+  id: string;
+  user_id: string;
+  exercise_id: string;
+  metric: HealthFitnessPerformanceMetric;
+  title: string;
+  target: number;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthFitnessGoalInsert = {
+  id?: string;
+  user_id: string;
+  exercise_id: string;
+  metric: HealthFitnessPerformanceMetric;
+  title: string;
+  target: number;
+  archived_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthFitnessGoalUpdate = Partial<Pick<HealthFitnessGoal, "exercise_id" | "metric" | "title" | "target" | "archived_at">>;
+
+export type HealthFitnessGoalLevel = {
+  id: string;
+  user_id: string;
+  goal_id: string;
+  label: string;
+  target: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthFitnessGoalLevelInsert = {
+  id?: string;
+  user_id: string;
+  goal_id: string;
+  label: string;
+  target: number;
+  sort_order?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthFitnessGoalLevelUpdate = Partial<Pick<HealthFitnessGoalLevel, "label" | "target" | "sort_order">>;
 
 export type HealthImportAudit = {
   id: string;
@@ -2638,6 +2693,18 @@ export type Database = {
         Row: HealthWorkoutPlanItemLink;
         Insert: HealthWorkoutPlanItemLinkInsert;
         Update: HealthWorkoutPlanItemLinkUpdate;
+        Relationships: [];
+      };
+      adhdice_health_fitness_goals: {
+        Row: HealthFitnessGoal;
+        Insert: HealthFitnessGoalInsert;
+        Update: HealthFitnessGoalUpdate;
+        Relationships: [];
+      };
+      adhdice_health_fitness_goal_levels: {
+        Row: HealthFitnessGoalLevel;
+        Insert: HealthFitnessGoalLevelInsert;
+        Update: HealthFitnessGoalLevelUpdate;
         Relationships: [];
       };
       adhdice_health_import_audits: {

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.68`.
+- Current working app version: `7.11.69`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,20 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-26 7.11.69 Fitness Goals + Levels Foundation
+
+The 7.11.68 On-Time source review passed; browser QA remains deferred. Fitness
+Goals + Levels foundation adds `single_set_reps`, `session_total_reps`,
+`longest_set_duration`, and `session_total_duration`, while keeping Workout →
+Workout Exercise → Set as the canonical performance authority. Personal Records,
+threshold reached state, and reached dates are derived from current canonical
+rows, so corrections and deletions self-heal; no PR, record-history, or
+achievement rows are persisted. Goals and Levels persist configuration only,
+with owner-scoped relationships and explicit Level ordering. The
+`supabase/add_health_fitness_goals_7_11_69.sql` migration is authored only and
+has not been applied. No Goals/Records UI, generic Records integration, or
+Achievement integration was added.
 
 ## 2026-08-26 7.11.68 Preserve On-Time Stop & Save Progress
 
