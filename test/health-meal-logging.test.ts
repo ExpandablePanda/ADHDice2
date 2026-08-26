@@ -14,6 +14,7 @@ const saveSource = source.slice(source.indexOf("async function handleSaveMeal()"
 const submitSource = source.slice(source.indexOf("async function submitMeal()"), source.indexOf("function clearMealDraft"));
 const clearSource = source.slice(source.indexOf("function clearMealDraft"), source.indexOf("function openMealComposerForSlot"));
 const healthPanelSource = source.slice(source.indexOf("function HealthPanel("));
+const sectionMiniTitleSource = source.slice(source.indexOf("function SectionMiniTitle("), source.indexOf("function FoodHistoryDateChip("));
 const favoriteHandlerSource = source.slice(source.indexOf("function handleFavoriteReuse"), source.indexOf("async function handleRemoveFavorite"));
 const recentHandlerSource = source.slice(source.indexOf("function handleRecentFoodReuse"), source.indexOf("async function handleRemoveFavorite"));
 const lookupHandlerSource = source.slice(source.indexOf("function applyLookupResult"), source.indexOf("function applyMealFoodPickerSuggestion"));
@@ -74,6 +75,23 @@ test("Meal Logging uses compact header/body spacing while other HealthPanel inst
   assert.match(healthPanelSource, /className=\{`px-3 pb-4 sm:px-5 sm:pb-5 \$\{contentTopClassName\}`\}/);
   assert.match(foodSource, /<HealthPanel[\s\S]*?subtitle="Daily totals"/);
   assert.match(foodSource, /<HealthPanel[\s\S]*?title="Favorites & Recent Foods"/);
+});
+
+test("Meal Logging keeps its date chip inline while SectionMiniTitle keeps default action alignment", () => {
+  const mealLoggingStart = foodSource.indexOf('<HealthPanel\n            className="min-w-0"');
+  const mealLoggingEnd = foodSource.indexOf("<HealthPanel\n", mealLoggingStart + 1);
+  const mealLoggingPanel = foodSource.slice(mealLoggingStart, mealLoggingEnd);
+  const titleRowStart = mealLoggingPanel.indexOf('<div className="flex flex-wrap items-center gap-2">');
+  const titleRowEnd = mealLoggingPanel.indexOf("</div>", titleRowStart);
+  const titleRow = mealLoggingPanel.slice(titleRowStart, titleRowEnd);
+  assert.ok(titleRowStart >= 0 && titleRowEnd > titleRowStart);
+  assert.doesNotMatch(titleRow, /justify-between/);
+  assert.doesNotMatch(titleRow, /SectionMiniTitle/);
+  assert.ok(titleRow.indexOf('<p className="text-[11px]') < titleRow.indexOf("<FoodHistoryDateChip"));
+  assert.match(sectionMiniTitleSource, /<div className="flex flex-wrap items-center justify-between gap-2">/);
+  assert.match(foodSource, /<SectionMiniTitle title="Planned" \/>/);
+  assert.match(foodSource, /<SectionMiniTitle title="Favorites" \/>/);
+  assert.match(foodSource, /<SectionMiniTitle title="Recent Foods" \/>/);
 });
 
 test("inline Add Food removes manual barcode controls and keeps one compact scanner action", () => {

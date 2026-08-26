@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.64`.
+- Current working app version: `7.11.65`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,14 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-25 7.11.65 Inline Food Date Chip
+
+Meal Logging now keeps the selected Food date chip directly beside the
+selected-day meal title and calorie total in a compact wrapping row. The
+shared `SectionMiniTitle` default remains right-aligned for its existing
+callers, and Daily Totals plus other Health section-title layouts are
+unchanged. No SQL or migration was added.
 
 ## 2026-08-25 7.11.64 Compact Meal Logging Header
 
