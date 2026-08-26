@@ -155,7 +155,7 @@ import {
   formatBatchEditProgressText,
   type BatchEditProgress,
 } from "@/lib/task-batch-edit-progress";
-import { clearMatchingOnTimeExecution, reconcileOnTimeManualDurationsFromTasks, type OnTimeLinkedItemOrigin } from "@/lib/on-time-plan-state";
+import { clearMatchingOnTimeExecution, reconcileOnTimeManualDurationsFromTasks, recordMatchingOnTimeStoppedProgress, type OnTimeLinkedItemOrigin } from "@/lib/on-time-plan-state";
 import { buildTaskOccurrenceIdentity, occurrenceIdentityMatches } from "@/lib/on-time-planner";
 import { useBrainstormState } from "@/hooks/useBrainstormState";
 import {
@@ -580,7 +580,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.67";
+const APP_VERSION = "7.11.68";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -4740,6 +4740,14 @@ export function TaskApp() {
     onTimePlan.updatePlanFromCurrent((current) => clearMatchingOnTimeExecution(current, origin));
   }
 
+  function recordOnTimeStoppedProgress(
+    stoppedTimer: NonNullable<Awaited<ReturnType<typeof persistStoppedTaskTimer>>>,
+    origin: OnTimeLinkedItemOrigin | null | undefined,
+  ) {
+    if (!origin) return;
+    onTimePlan.updatePlanFromCurrent((current) => recordMatchingOnTimeStoppedProgress(current, origin, stoppedTimer.elapsedSeconds, stoppedTimer.pausedAt));
+  }
+
   async function recordStoppedTaskTimer(stoppedTimer: Awaited<ReturnType<typeof persistStoppedTaskTimer>>) {
     if (!stoppedTimer) return false;
     const task = tasks.find((candidate) => candidate.id === stoppedTimer.taskId);
@@ -4755,7 +4763,8 @@ export function TaskApp() {
   function stopHudTaskTimer(taskId: string, onTimeOrigin?: OnTimeLinkedItemOrigin) {
     void (async () => {
       const stoppedTimer = await persistStoppedTaskTimer(taskId);
-      if (await recordStoppedTaskTimer(stoppedTimer)) clearOnTimeExecution(onTimeOrigin);
+      if (!stoppedTimer) return;
+      if (await recordStoppedTaskTimer(stoppedTimer)) recordOnTimeStoppedProgress(stoppedTimer, onTimeOrigin);
     })();
   }
 
@@ -4769,8 +4778,8 @@ export function TaskApp() {
       return "none";
     }
     const stoppedTimer = await persistStoppedTaskTimer(task.id);
-    if (!await recordStoppedTaskTimer(stoppedTimer)) return "failed";
-    clearOnTimeExecution(onTimeOrigin);
+    if (!stoppedTimer || !await recordStoppedTaskTimer(stoppedTimer)) return "failed";
+    recordOnTimeStoppedProgress(stoppedTimer, onTimeOrigin);
     return "none";
   }
 

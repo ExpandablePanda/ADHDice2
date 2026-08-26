@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compareOnTimePlanPriority, createEmptyOnTimePlan, getOnTimePlanSchemaVersion, isMeaningfulOnTimePlan, normalizeOnTimePlan, onTimePlanSignature, reconcileOnTimeManualDurationAfterTaskSave, reconcileOnTimeManualDurationsFromTasks, updateOnTimePlan, withOnTimeDestinationLabel } from "../src/lib/on-time-plan-state.ts";
+import { compareOnTimePlanPriority, createEmptyOnTimePlan, getOnTimePlanSchemaVersion, isMeaningfulOnTimePlan, normalizeOnTimePlan, onTimePlanSignature, reconcileOnTimeManualDurationAfterTaskSave, reconcileOnTimeManualDurationsFromTasks, recordMatchingOnTimeStoppedProgress, updateOnTimePlan, withOnTimeDestinationLabel } from "../src/lib/on-time-plan-state.ts";
 
 const v1 = {
   schemaVersion: 1,
@@ -48,6 +48,15 @@ test("normalizes malformed plan and invalid preparation item fields safely", () 
   assert.equal(plan.items[0]?.plannedSeconds, null);
 });
 
+test("linked saved elapsed progress normalizes legacy, valid, and invalid values safely", () => {
+  const base = { id: "task-item", kind: "task", taskId: "task-a", titleSnapshot: "Task", hierarchySnapshot: [], occurrenceKey: "occ-a", occurrenceDueOn: "2026-07-14", plannedSeconds: 1800, durationSource: "manual", execution: null };
+  assert.equal(normalizeOnTimePlan({ ...createEmptyOnTimePlan(), items: [base] }).items[0]?.savedElapsedSeconds, 0);
+  assert.equal(normalizeOnTimePlan({ ...createEmptyOnTimePlan(), items: [{ ...base, savedElapsedSeconds: 600 }] }).items[0]?.savedElapsedSeconds, 600);
+  for (const savedElapsedSeconds of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(normalizeOnTimePlan({ ...createEmptyOnTimePlan(), items: [{ ...base, savedElapsedSeconds }] }).items[0]?.savedElapsedSeconds, 0);
+  }
+});
+
 test("empty and immutable updates provide meaningful detection", () => {
   const empty = createEmptyOnTimePlan("UTC");
   assert.equal(isMeaningfulOnTimePlan(empty), false);
@@ -76,6 +85,15 @@ test("stable signatures suppress realtime echoes", () => {
   assert.equal(compareOnTimePlanPriority({ plan, sourceSchemaVersion: 3 }, { plan: echo, sourceSchemaVersion: 3 }), 0);
 });
 
+test("normalized signatures include occurrence-owned saved progress", () => {
+  const base = { id: "task-item", kind: "task", taskId: "task-a", titleSnapshot: "Task", hierarchySnapshot: [], occurrenceKey: "occ-a", occurrenceDueOn: "2026-07-14", plannedSeconds: 1800, durationSource: "manual", execution: null };
+  const legacySignature = onTimePlanSignature(normalizeOnTimePlan({ ...createEmptyOnTimePlan(), items: [base] }));
+  const savedSignature = onTimePlanSignature(normalizeOnTimePlan({ ...createEmptyOnTimePlan(), items: [{ ...base, savedElapsedSeconds: 600 }] }));
+  assert.match(legacySignature, /"savedElapsedSeconds":0/);
+  assert.match(savedSignature, /"savedElapsedSeconds":600/);
+  assert.notEqual(legacySignature, savedSignature);
+});
+
 test("stale v1 local cache cannot downgrade remote v3", () => {
   const staleCache = normalizeOnTimePlan({ ...v1, clientUpdatedAt: "2026-07-15T12:00:00Z" });
   const remote = updateOnTimePlan(createEmptyOnTimePlan(), withOnTimeDestinationLabel("Remote v2"), new Date("2026-07-13T12:00:00Z"));
@@ -89,6 +107,37 @@ test("valid execution survives normalization and persistence round-trip", () => 
   });
   assert.deepEqual(plan.items[0]?.execution, { startedAt: "2026-07-14T12:00:00.000Z", plannedSeconds: 900 });
   assert.deepEqual(normalizeOnTimePlan(JSON.parse(onTimePlanSignature(plan))).items[0]?.execution, plan.items[0]?.execution);
+});
+
+test("Stop and Save records exact occurrence progress and clears only its execution", () => {
+  const execution = { startedAt: "2026-07-14T11:50:00.000Z", plannedSeconds: 1800 };
+  const plan = normalizeOnTimePlan({
+    ...createEmptyOnTimePlan(),
+    items: [
+      { id: "continued", kind: "task", taskId: "task-a", titleSnapshot: "A", hierarchySnapshot: [], occurrenceKey: "occ-a", occurrenceDueOn: "2026-07-14", plannedSeconds: 1800, durationSource: "manual", savedElapsedSeconds: 600, execution },
+      { id: "other", kind: "task", taskId: "task-a", titleSnapshot: "A", hierarchySnapshot: [], occurrenceKey: "occ-b", occurrenceDueOn: "2026-07-15", plannedSeconds: 1800, durationSource: "manual", savedElapsedSeconds: 90, execution },
+    ],
+  });
+  const origin = { itemId: "continued", taskId: "task-a", occurrenceKey: "occ-a", occurrenceDueOn: "2026-07-14" };
+  const continued = recordMatchingOnTimeStoppedProgress(plan, origin, 300, "2026-07-14T12:05:00Z");
+  assert.equal(continued?.items[0]?.savedElapsedSeconds, 900);
+  assert.equal(continued?.items[0]?.execution, null);
+  assert.equal(continued?.items[1]?.savedElapsedSeconds, 90);
+  const wrongOccurrence = recordMatchingOnTimeStoppedProgress(plan, { ...origin, occurrenceKey: "occ-missing" }, 300, "2026-07-14T12:05:00Z");
+  assert.equal(wrongOccurrence, null);
+});
+
+test("Stop and Save without execution adds only the stopped session, while restart replaces prior progress", () => {
+  const base = normalizeOnTimePlan({
+    ...createEmptyOnTimePlan(),
+    items: [{ id: "item", kind: "task", taskId: "task-a", titleSnapshot: "A", hierarchySnapshot: [], occurrenceKey: "occ-a", occurrenceDueOn: "2026-07-14", plannedSeconds: 1800, durationSource: "manual", savedElapsedSeconds: 600, execution: null }],
+  });
+  const origin = { itemId: "item", taskId: "task-a", occurrenceKey: "occ-a", occurrenceDueOn: "2026-07-14" };
+  assert.equal(recordMatchingOnTimeStoppedProgress(base, origin, 300, "2026-07-14T12:05:00Z")?.items[0]?.savedElapsedSeconds, 900);
+  const restarted = normalizeOnTimePlan({ ...base, items: [{ ...base.items[0]!, execution: { startedAt: "2026-07-14T12:04:00Z", plannedSeconds: 1800 } }] });
+  const restartedResult = recordMatchingOnTimeStoppedProgress(restarted, origin, 300, "2026-07-14T12:05:00Z");
+  assert.equal(restartedResult?.items[0]?.savedElapsedSeconds, 60);
+  assert.equal(restartedResult?.items[0]?.execution, null);
 });
 
 test("malformed execution timestamps and nonpositive durations normalize to null", () => {
@@ -106,7 +155,7 @@ test("saved manual estimates reconcile only matching linked Manual items and pre
   const plan = normalizeOnTimePlan({
     ...createEmptyOnTimePlan(),
     items: [
-      { id: "manual", kind: "task", taskId: "task-a", titleSnapshot: "A", hierarchySnapshot: ["Parent"], occurrenceKey: "occurrence:2026-07-14", occurrenceDueOn: "2026-07-14", plannedSeconds: 900, durationSource: "manual", execution },
+      { id: "manual", kind: "task", taskId: "task-a", titleSnapshot: "A", hierarchySnapshot: ["Parent"], occurrenceKey: "occurrence:2026-07-14", occurrenceDueOn: "2026-07-14", plannedSeconds: 900, durationSource: "manual", savedElapsedSeconds: 300, execution },
       { id: "typical", kind: "task", taskId: "task-a", titleSnapshot: "A", hierarchySnapshot: [], occurrenceKey: null, occurrenceDueOn: null, plannedSeconds: 600, durationSource: "typical", execution: null },
       { id: "custom", kind: "task", taskId: "task-a", titleSnapshot: "A", hierarchySnapshot: [], occurrenceKey: null, occurrenceDueOn: null, plannedSeconds: 300, durationSource: "custom", execution: null },
       { id: "other", kind: "task", taskId: "task-b", titleSnapshot: "B", hierarchySnapshot: [], occurrenceKey: null, occurrenceDueOn: null, plannedSeconds: 300, durationSource: "manual", execution: null },
@@ -116,6 +165,7 @@ test("saved manual estimates reconcile only matching linked Manual items and pre
   const next = reconcileOnTimeManualDurationAfterTaskSave(plan, { id: "task-a" }, 20);
   assert.deepEqual(next.items.map((item) => item.plannedSeconds), [1200, 600, 300, 300, 120]);
   assert.deepEqual(next.items[0]?.execution, execution);
+  assert.equal(next.items[0]?.savedElapsedSeconds, 300);
   assert.deepEqual(next.items.map((item) => item.id), plan.items.map((item) => item.id));
   for (const estimate of [null, 0, -1, Number.NaN]) {
     const cleared = reconcileOnTimeManualDurationAfterTaskSave(plan, { id: "task-a" }, estimate);

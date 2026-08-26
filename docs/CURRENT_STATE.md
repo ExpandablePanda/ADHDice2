@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.67`.
+- Current working app version: `7.11.68`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,19 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-26 7.11.68 Preserve On-Time Stop & Save Progress
+
+The 7.11.67 Table Due implementation/source review passed; real offline browser
+failure-path QA remains deferred. On-Time Stop & Save now persists
+occurrence-owned linked-item `savedElapsedSeconds` inside the existing JSON
+`plan_state`. The root cause was active-timer-only elapsed accounting, which
+lost progress when the timer row was deleted. `Task.actual_seconds` remains
+lifetime Task time and is not planner-progress authority. Start continues saved
+progress, Restart resets planner deadline progress semantics, and Reset Deadline
+preserves saved progress. Recurring occurrences remain isolated, Finish & Log
+records the same timer progress exactly once, and no SQL/schema migration was
+added.
 
 ## 2026-08-26 7.11.66 Table Due optimistic failure reconciliation
 

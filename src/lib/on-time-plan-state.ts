@@ -15,6 +15,7 @@ export type LinkedPlanItem = {
   occurrenceDueOn: string | null;
   plannedSeconds: number | null;
   durationSource: "manual" | "typical" | "custom";
+  savedElapsedSeconds: number;
   execution: OnTimeExecutionSnapshot | null;
 };
 
@@ -67,24 +68,52 @@ export type OnTimeLinkedItemOrigin = {
   taskId: string;
 };
 
+function matchingLinkedItem(item: OnTimePlanItem, origin: OnTimeLinkedItemOrigin): item is LinkedPlanItem {
+  return item.kind === "task"
+    && item.id === origin.itemId
+    && item.taskId === origin.taskId
+    && item.occurrenceKey === origin.occurrenceKey
+    && item.occurrenceDueOn === origin.occurrenceDueOn;
+}
+
 export function clearMatchingOnTimeExecution(
   plan: OnTimePlanV3,
   origin: OnTimeLinkedItemOrigin,
 ): OnTimePlanV3 | null {
   let changed = false;
   const items = plan.items.map((item) => {
-    if (
-      item.kind !== "task"
-      || item.id !== origin.itemId
-      || item.taskId !== origin.taskId
-      || item.occurrenceKey !== origin.occurrenceKey
-      || item.occurrenceDueOn !== origin.occurrenceDueOn
-      || item.execution === null
-    ) {
+    if (!matchingLinkedItem(item, origin) || item.execution === null) {
       return item;
     }
     changed = true;
     return { ...item, execution: null };
+  });
+  return changed ? { ...plan, items } : null;
+}
+
+function normalizeSavedElapsedSeconds(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
+}
+
+export function recordMatchingOnTimeStoppedProgress(
+  plan: OnTimePlanV3,
+  origin: OnTimeLinkedItemOrigin,
+  stoppedSessionElapsedSeconds: number,
+  stoppedAt: string | number | Date,
+): OnTimePlanV3 | null {
+  const stoppedSeconds = normalizeSavedElapsedSeconds(stoppedSessionElapsedSeconds);
+  const stoppedAtMs = new Date(stoppedAt).getTime();
+  let changed = false;
+  const items = plan.items.map((item) => {
+    if (!matchingLinkedItem(item, origin)) return item;
+    const executionStartedAtMs = item.execution ? Date.parse(item.execution.startedAt) : Number.NaN;
+    const executionElapsedSeconds = item.execution && Number.isFinite(stoppedAtMs) && Number.isFinite(executionStartedAtMs)
+      ? Math.max(0, Math.floor((stoppedAtMs - executionStartedAtMs) / 1000))
+      : null;
+    const savedElapsedSeconds = executionElapsedSeconds ?? normalizeSavedElapsedSeconds(item.savedElapsedSeconds) + stoppedSeconds;
+    if (item.savedElapsedSeconds === savedElapsedSeconds && item.execution === null) return item;
+    changed = true;
+    return { ...item, savedElapsedSeconds, execution: null };
   });
   return changed ? { ...plan, items } : null;
 }
@@ -137,6 +166,7 @@ function normalizeItem(value: unknown): OnTimePlanItem | null {
       occurrenceDueOn: typeof item.occurrenceDueOn === "string" ? item.occurrenceDueOn : null,
       plannedSeconds: nullablePositiveNumber(item.plannedSeconds, MAX_ITEM_SECONDS),
       durationSource: source === "typical" || source === "custom" ? source : "manual",
+      savedElapsedSeconds: normalizeSavedElapsedSeconds(item.savedElapsedSeconds),
       execution: normalizeExecution(item.execution),
     };
   }
