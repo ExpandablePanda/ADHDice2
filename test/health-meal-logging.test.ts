@@ -133,20 +133,21 @@ test("each section opens the one shared inline editor for its own slot", () => {
   assert.match(source, /setActiveMealEntrySlot\(slot\);/);
 });
 
-test("inline editor keeps food capabilities and excludes Date and Meal controls", () => {
+test("inline editor keeps actual fast-entry order and adds Date/Meal only for plan mode", () => {
   assert.match(inlineEditorSource, /HealthAutocomplete/);
   assert.match(inlineEditorSource, /getHealthFoodMeasurementOptions/);
   assert.match(inlineEditorSource, /Quick Entry/);
   assert.match(inlineEditorSource, /type=\"time\"/);
   assert.match(inlineEditorSource, /Add Food/);
   assert.match(inlineEditorSource, /Done/);
-  assert.doesNotMatch(inlineEditorSource, /<Field label=\"Date\">/);
-  assert.doesNotMatch(inlineEditorSource, /<Field label=\"Meal\">/);
-  assert.doesNotMatch(inlineEditorSource, /ariaLabel=\"Meal\"/);
+  assert.match(inlineEditorSource, /isPlanMode/);
+  assert.match(inlineEditorSource, /<Field label=\"Planned date\">/);
+  assert.match(inlineEditorSource, /ariaLabel=\"Planned meal\"/);
 });
 
 test("selected ledger date and active section are the canonical new-entry authorities", () => {
-  assert.match(saveSource, /buildHealthMealLoggedAt\(foodHistoryDate, mealDraft\.time\)/);
+  assert.match(saveSource, /const selectedMealDate = mealEditorMode === \"plan\" \? mealDraft\.date : foodHistoryDate/);
+  assert.match(saveSource, /buildHealthMealLoggedAt\(selectedMealDate, mealDraft\.time\)/);
   assert.match(saveSource, /entry_date: foodHistoryDate,/);
   assert.match(saveSource, /meal_slot: activeMealEntrySlot,/);
   assert.match(source, /prepareMealDraftForSelectedSlot\(current, foodHistoryDate, slot\)/);
@@ -154,16 +155,18 @@ test("selected ledger date and active section are the canonical new-entry author
 });
 
 test("successful save preserves context, clears food fields, and keeps the inline editor open", () => {
-  assert.match(saveSource, /if \(saved\) \{\s+setMealDraft\(\(current\) => \{[\s\S]*?resetMealDraftForNextItem\(current\)/);
-  assert.match(saveSource, /date: foodHistoryDate,/);
+  assert.match(saveSource, /if \(saved\) \{/);
+  assert.match(saveSource, /setMealDraft\(\(current\) => \{[\s\S]*?resetMealDraftForNextItem\(current\)/);
+  assert.match(saveSource, /date: selectedMealDate,/);
   assert.match(saveSource, /mealSlot: activeMealEntrySlot,/);
   assert.match(saveSource, /return isQuickEntryOpen \? \{ \.\.\.nextDraft, servingQuantity: 1 \} : nextDraft/);
-  assert.doesNotMatch(saveSource, /setActiveMealEntrySlot\(null\)/);
+  assert.match(saveSource, /mealEditorMode === "plan" && editingMealPlanId/);
+  assert.match(saveSource, /setActiveMealEntrySlot\(null\)/);
   assert.doesNotMatch(saveSource, /createDefaultMealDraft/);
 });
 
 test("failed canonical saves leave the inline draft intact", () => {
-  assert.match(saveSource, /const saved = await addMealEntry\(/);
+  assert.match(saveSource, /addMealEntry\(\{/);
   assert.equal((saveSource.match(/resetMealDraftForNextItem/g) ?? []).length, 1);
   assert.match(saveSource, /if \(saved\) \{/);
 });
@@ -174,7 +177,7 @@ test("Done closes only the active inline editor", () => {
 });
 
 test("changing the ledger date closes the editor before changing date authority", () => {
-  assert.match(source, /function handleFoodHistoryDateChange\(date: string\) \{\s+setActiveMealEntrySlot\(null\);\s+setIsScannerOpen\(false\);\s+setFoodHistoryDate\(date\);/);
+  assert.match(source, /function handleFoodHistoryDateChange\(date: string\) \{\s+setActiveMealEntrySlot\(null\);\s+setEditingMealPlanId\(null\);\s+setMealEditorMode\("actual"\);\s+setIsScannerOpen\(false\);\s+setFoodHistoryDate\(date\);/);
   assert.equal((source.match(/onChange=\{handleFoodHistoryDateChange\}/g) ?? []).length, 2);
   assert.doesNotMatch(saveSource, /setFoodHistoryDate/);
 });

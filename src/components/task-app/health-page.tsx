@@ -20,6 +20,9 @@ import type {
   HealthMealEntry,
   HealthMealEntryInsert,
   HealthMealEntryUpdate,
+  HealthMealPlanEntry,
+  HealthMealPlanEntryInsert,
+  HealthMealPlanEntryUpdate,
   HealthMealFoodSnapshot,
   HealthMetricEntry,
   HealthNutritionDetails,
@@ -123,6 +126,14 @@ import {
   type HealthMealPickerSuggestion,
 } from "@/lib/health-library";
 import {
+  buildHealthMealPlanPayload,
+  buildHealthMealPlanUpdateFromPayload,
+  getActiveHealthMealPlans,
+  isHealthMealPlanConfirmEligible,
+  mealDraftFromHealthMealPlan,
+  sumHealthMealPlanNutritionForDate,
+} from "@/lib/health-meal-planning";
+import {
   TASK_TABLE_CHIP_BASE_CLASS,
   TASK_TABLE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
@@ -171,6 +182,7 @@ type HealthPageProps = {
   onLogManualSleep: (input: { date: string; durationSeconds: number; endedAt: string; kind: HealthSleepKind; startedAt: string }) => Promise<boolean>;
   onUpdateSleepSession: (entryId: string, input: { date: string; durationSeconds: number; endedAt: string; kind: HealthSleepKind; startedAt: string }) => Promise<void>;
   mealEntries: HealthMealEntry[];
+  mealPlanEntries: HealthMealPlanEntry[];
   metricEntries: HealthMetricEntry[];
   profile: HealthProfile | null;
   recipes: HealthRecipe[];
@@ -223,6 +235,10 @@ type HealthPageProps = {
   }) => Promise<boolean>;
   saveProfile: (updates: HealthProfileUpdate) => Promise<boolean>;
   addMealEntry: (input: Omit<HealthMealEntryInsert, "user_id">) => Promise<boolean>;
+  addMealPlanEntry: (input: Omit<HealthMealPlanEntryInsert, "user_id">) => Promise<boolean>;
+  updateMealPlanEntry: (entryId: string, input: HealthMealPlanEntryUpdate) => Promise<boolean>;
+  deleteMealPlanEntry: (entryId: string) => Promise<boolean>;
+  confirmMealPlanEntry: (entryId: string) => Promise<boolean>;
   addWeightEntry: (input: {
     entry_date: string;
     logged_at?: string;
@@ -337,6 +353,7 @@ export function HealthPage({
   focusCategories,
   focusHistory,
   mealEntries,
+  mealPlanEntries,
   metricEntries,
   profile,
   recipes,
@@ -348,6 +365,10 @@ export function HealthPage({
   saveSavedMeal,
   saveProfile,
   addMealEntry,
+  addMealPlanEntry,
+  updateMealPlanEntry,
+  deleteMealPlanEntry,
+  confirmMealPlanEntry,
   addWeightEntry,
   addWaterEntry,
   addWorkout,
@@ -392,6 +413,8 @@ export function HealthPage({
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
   const [mealDraft, setMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
   const [activeMealEntrySlot, setActiveMealEntrySlot] = useState<HealthMealEntry["meal_slot"] | null>(null);
+  const [mealEditorMode, setMealEditorMode] = useState<"actual" | "plan">("actual");
+  const [editingMealPlanId, setEditingMealPlanId] = useState<string | null>(null);
   const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
   const [selectedCustomFoodCategory, setSelectedCustomFoodCategory] = useState<string | null>(null);
   const [isCustomFoodCategoriesOpen, setIsCustomFoodCategoriesOpen] = useState(false);
@@ -499,6 +522,14 @@ export function HealthPage({
   const selectedNutrition = useMemo(
     () => sumMealNutritionForDate(mealEntries, foodHistoryDate),
     [foodHistoryDate, mealEntries],
+  );
+  const selectedMealPlans = useMemo(
+    () => getActiveHealthMealPlans(mealPlanEntries, foodHistoryDate),
+    [foodHistoryDate, mealPlanEntries],
+  );
+  const selectedPlannedNutrition = useMemo(
+    () => sumHealthMealPlanNutritionForDate(mealPlanEntries, foodHistoryDate),
+    [foodHistoryDate, mealPlanEntries],
   );
   const foodLogHistoryIndex = useMemo(
     () => buildHealthFoodLogHistoryIndex(mealEntries),
@@ -633,10 +664,11 @@ export function HealthPage({
     () => calculateMealDraft(mealDraft),
     [mealDraft],
   );
-  const mealLoggedAt = buildHealthMealLoggedAt(foodHistoryDate, mealDraft.time);
+  const mealDate = mealEditorMode === "plan" ? mealDraft.date : foodHistoryDate;
+  const mealLoggedAt = buildHealthMealLoggedAt(mealDate, mealDraft.time);
   const mealTimestampError = mealLoggedAt === null
     ? "Choose a valid meal date and time."
-    : isHealthMealTimestampFuture(foodHistoryDate, mealDraft.time)
+    : mealEditorMode === "actual" && isHealthMealTimestampFuture(foodHistoryDate, mealDraft.time)
       ? "Future meal times cannot be saved."
       : null;
   const canSaveMeal = activeMealEntrySlot !== null && mealDraft.foodName.trim().length > 0 && mealCalculation !== null && mealTimestampError === null;
@@ -765,8 +797,9 @@ export function HealthPage({
     if (!activeMealEntrySlot) {
       return;
     }
-    const loggedAt = buildHealthMealLoggedAt(foodHistoryDate, mealDraft.time);
-    if (!calculation || !loggedAt || isHealthMealTimestampFuture(foodHistoryDate, mealDraft.time)) {
+    const selectedMealDate = mealEditorMode === "plan" ? mealDraft.date : foodHistoryDate;
+    const loggedAt = buildHealthMealLoggedAt(selectedMealDate, mealDraft.time);
+    if (!calculation || !loggedAt || (mealEditorMode === "actual" && isHealthMealTimestampFuture(foodHistoryDate, mealDraft.time))) {
       return;
     }
 
@@ -802,33 +835,56 @@ export function HealthPage({
       sourceFoodId = null;
     }
 
-    const saved = await addMealEntry({
-      attribution: mealDraft.attribution,
-      barcode: mealDraft.barcode,
-      brand_name: emptyToNull(mealDraft.brandName),
-      calories: Math.round(calculation.nutrientTotals.calories),
-      carbs_g: calculation.nutrientTotals.carbs_g,
-      entry_date: foodHistoryDate,
-      fat_g: calculation.nutrientTotals.fat_g,
-      food_name: mealDraft.foodName.trim(),
-      meal_slot: activeMealEntrySlot,
-      logged_at: loggedAt,
-      protein_g: calculation.nutrientTotals.protein_g,
-      provider: mealDraft.provider ?? "manual",
-      provider_item_id: mealDraft.providerItemId,
-      serving_label: formatConsumedMealLabel(calculation, mealDraft.servingLabel),
-      source_food_id: sourceFoodId,
-      consumed_quantity: calculation.consumed.quantity,
-      consumed_unit: calculation.consumed.unit,
-      serving_fraction: calculation.servingFraction,
-      food_snapshot: buildMealFoodSnapshot({ ...mealDraft, sourceFoodId }),
-      nutrition_snapshot: calculation.nutrientTotals,
-    });
+    const foodSnapshot = buildMealFoodSnapshot({ ...mealDraft, sourceFoodId });
+    const saved = mealEditorMode === "plan"
+      ? await (async () => {
+        const payload = buildHealthMealPlanPayload({
+          calculation,
+          draft: { ...mealDraft, sourceFoodId },
+          foodSnapshot,
+          mealSlot: activeMealEntrySlot,
+          plannedDate: selectedMealDate,
+          plannedTime: mealDraft.time,
+        });
+        if (editingMealPlanId) {
+          return updateMealPlanEntry(editingMealPlanId, buildHealthMealPlanUpdateFromPayload(payload));
+        }
+        return addMealPlanEntry(payload);
+      })()
+      : await addMealEntry({
+        attribution: mealDraft.attribution,
+        barcode: mealDraft.barcode,
+        brand_name: emptyToNull(mealDraft.brandName),
+        calories: Math.round(calculation.nutrientTotals.calories),
+        carbs_g: calculation.nutrientTotals.carbs_g,
+        entry_date: foodHistoryDate,
+        fat_g: calculation.nutrientTotals.fat_g,
+        food_name: mealDraft.foodName.trim(),
+        meal_slot: activeMealEntrySlot,
+        logged_at: loggedAt,
+        protein_g: calculation.nutrientTotals.protein_g,
+        provider: mealDraft.provider ?? "manual",
+        provider_item_id: mealDraft.providerItemId,
+        serving_label: formatConsumedMealLabel(calculation, mealDraft.servingLabel),
+        source_food_id: sourceFoodId,
+        consumed_quantity: calculation.consumed.quantity,
+        consumed_unit: calculation.consumed.unit,
+        serving_fraction: calculation.servingFraction,
+        food_snapshot: foodSnapshot,
+        nutrition_snapshot: calculation.nutrientTotals,
+      });
     if (saved) {
+      if (mealEditorMode === "plan" && editingMealPlanId) {
+        setEditingMealPlanId(null);
+        setMealEditorMode("actual");
+        setActiveMealEntrySlot(null);
+        setIsQuickEntryOpen(false);
+        return;
+      }
       setMealDraft((current) => {
         const nextDraft = {
           ...resetMealDraftForNextItem(current),
-          date: foodHistoryDate,
+          date: selectedMealDate,
           mealSlot: activeMealEntrySlot,
         };
         return isQuickEntryOpen ? { ...nextDraft, servingQuantity: 1 } : nextDraft;
@@ -839,9 +895,11 @@ export function HealthPage({
     }
   }
 
-  function openMealComposerForSlot(slot: HealthMealEntry["meal_slot"]) {
+  function openMealComposerForSlot(slot: HealthMealEntry["meal_slot"], mode: "actual" | "plan" = "actual") {
     const preserveFoodDraft = hasMeaningfulMealDraft(mealDraft);
     setActiveMealEntrySlot(slot);
+    setMealEditorMode(mode);
+    setEditingMealPlanId(null);
     setMealDraft((current) => preserveFoodDraft
       ? { ...current, date: foodHistoryDate, mealSlot: slot }
       : prepareMealDraftForSelectedSlot(current, foodHistoryDate, slot));
@@ -857,12 +915,16 @@ export function HealthPage({
 
   function closeMealEntryEditor() {
     setActiveMealEntrySlot(null);
+    setEditingMealPlanId(null);
+    setMealEditorMode("actual");
     setIsScannerOpen(false);
     setSaveQuickEntryToLibrary(false);
   }
 
   function handleFoodHistoryDateChange(date: string) {
     setActiveMealEntrySlot(null);
+    setEditingMealPlanId(null);
+    setMealEditorMode("actual");
     setIsScannerOpen(false);
     setFoodHistoryDate(date);
   }
@@ -892,6 +954,8 @@ export function HealthPage({
     const structuredMeal = getStructuredMealDefinition(entry);
     const parsedServing = parseQuantityServingLabel(entry.serving_label ?? "");
     const quantity = parsedServing.quantity;
+    setMealEditorMode("actual");
+    setEditingMealPlanId(null);
     setEditingMealId(entry.id);
     setMealEditDraft({
       mode: structuredMeal ? "structured" : "legacy",
@@ -906,6 +970,21 @@ export function HealthPage({
       servingLabel: structuredMeal?.servingLabel ?? parsedServing.servingLabel,
       time: formatTimeInput(entry.logged_at),
     });
+  }
+
+  function startEditingMealPlan(plan: HealthMealPlanEntry) {
+    setFoodHistoryDate(plan.planned_date);
+    setActiveMealEntrySlot(plan.meal_slot);
+    setMealEditorMode("plan");
+    setEditingMealId(null);
+    setEditingMealPlanId(plan.id);
+    setMealDraft(mealDraftFromHealthMealPlan(plan));
+    setCustomFoodSearchQuery(plan.brand_name ? `${plan.brand_name} · ${plan.food_name}` : plan.food_name);
+    setIsQuickEntryOpen(false);
+    setSaveQuickEntryToLibrary(false);
+    setBarcodeLookupError("");
+    setSelectedCustomFoodCategory(null);
+    setIsCustomFoodCategoriesOpen(false);
   }
 
   async function saveMealEdit(entryId: string) {
@@ -1315,6 +1394,7 @@ export function HealthPage({
   }
 
   function renderMealEntryEditor() {
+    const isPlanMode = mealEditorMode === "plan";
     return (
       <div className="grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
         <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1.35fr)_minmax(7rem,0.7fr)_minmax(5.5rem,0.6fr)_auto]">
@@ -1353,6 +1433,21 @@ export function HealthPage({
             <HealthMealDateTimeInput onChange={(value) => setMealDraft((current) => ({ ...current, time: value }))} type="time" value={mealDraft.time} />
           </Field>
         </div>
+        {isPlanMode ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Planned date">
+              <HealthMealDateTimeInput onChange={(value) => { setFoodHistoryDate(value); setMealDraft((current) => ({ ...current, date: value })); }} type="date" value={mealDraft.date} />
+            </Field>
+            <Field label="Meal">
+              <HealthDropdown
+                ariaLabel="Planned meal"
+                onChange={(value) => { const nextSlot = value as HealthMealEntry["meal_slot"]; setActiveMealEntrySlot(nextSlot); setMealDraft((current) => ({ ...current, mealSlot: nextSlot })); }}
+                options={HEALTH_MEAL_SLOTS.map((slot) => ({ label: getMealSlotLabel(slot), value: slot }))}
+                value={activeMealEntrySlot ?? mealDraft.mealSlot}
+              />
+            </Field>
+          </div>
+        ) : null}
         {renderMealBarcodeTools()}
         {isQuickEntryOpen ? (
           <div className="grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-white p-3 dark:border-white/10 dark:bg-white/[0.04]">
@@ -1410,11 +1505,11 @@ export function HealthPage({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <AdhdChip contentClassName="gap-1.5" onClick={isQuickEntryOpen ? closeQuickEntry : openQuickEntry} selected={isQuickEntryOpen}>Quick Entry</AdhdChip>
-            <span className="text-xs text-[#73809c] dark:text-white/50">Add another food to this meal, or finish when you’re done.</span>
+            <span className="text-xs text-[#73809c] dark:text-white/50">{isPlanMode ? "Add another food to this plan, or finish when you’re done." : "Add another food to this meal, or finish when you’re done."}</span>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
             <AdhdChip onClick={closeMealEntryEditor}>Done</AdhdChip>
-            <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveMeal} onClick={() => { void handleSaveMeal(); }} type="button">{isQuickEntryOpen ? "Add Quick Entry" : "Add Food"}</button>
+          <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveMeal} onClick={() => { void handleSaveMeal(); }} type="button">{isPlanMode ? (isQuickEntryOpen ? "Add Quick Entry to Plan" : editingMealPlanId ? "Save Plan" : "Add to Plan") : isQuickEntryOpen ? "Add Quick Entry" : "Add Food"}</button>
           </div>
         </div>
       </div>
@@ -1568,27 +1663,66 @@ export function HealthPage({
           <HealthPanel className="min-w-0" icon={<Salad />} subtitle="Meal logging">
             <div className="mt-3 grid gap-3">
               <SectionMiniTitle
-                actions={<FoodHistoryDateChip date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
+                actions={<FoodHistoryDateChip allowFuture date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
                 title={`${foodHistoryDate === today ? "Today’s Meals" : `Meals — ${formatHealthDateLabel(foodHistoryDate)}`} — ${formatHealthNutritionNumber(selectedNutrition.calories)} kcal`}
               />
               {HEALTH_MEAL_SLOTS.map((slot) => {
-                  const slotMeals = selectedMeals.filter((entry) => entry.meal_slot === slot);
+                const slotMeals = selectedMeals.filter((entry) => entry.meal_slot === slot);
+                  const slotPlans = selectedMealPlans.filter((entry) => entry.meal_slot === slot);
                   const slotCaloriesTotal = slotMeals.reduce((total, entry) => total + mealNutritionValue(entry, "calories"), 0);
+                  const slotPlannedCaloriesTotal = slotPlans.reduce((total, entry) => total + (entry.nutrition_snapshot?.calories ?? entry.calories), 0);
                   return (
                   <section className="grid gap-3" key={slot}>
                     <div className="flex items-center justify-between gap-3">
                       <h4 className="text-sm font-semibold text-[#4f5872] dark:text-white/70">
                         {getMealSlotLabel(slot)}{slotMeals.length > 0 ? ` — ${formatHealthNutritionNumber(slotCaloriesTotal)} kcal` : ""}
                       </h4>
-                      <button
-                        aria-label={`Add food to ${getMealSlotLabel(slot)}`}
-                        className="ui-pill-button-light shrink-0 px-2 py-1 text-xs"
-                        onClick={() => openMealComposerForSlot(slot)}
-                        type="button"
-                      >
-                        + Add Food
-                      </button>
+                      <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                        <button
+                          aria-label={`Add food to ${getMealSlotLabel(slot)}`}
+                          className="ui-pill-button-light shrink-0 px-2 py-1 text-xs"
+                          onClick={() => openMealComposerForSlot(slot)}
+                          type="button"
+                        >
+                          + Add Food
+                        </button>
+                        <button
+                          aria-label={`Plan food for ${getMealSlotLabel(slot)}`}
+                          className="ui-pill-button-light shrink-0 px-2 py-1 text-xs"
+                          onClick={() => openMealComposerForSlot(slot, "plan")}
+                          type="button"
+                        >
+                          + Plan Food
+                        </button>
+                      </div>
                     </div>
+                    {slotPlans.length > 0 ? (
+                      <div className="grid gap-2 rounded-[1.1rem] border border-dashed border-[#d9d2f1] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.025]">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Planned</span>
+                          <span className="text-xs font-semibold text-[#74809b] dark:text-white/45">{formatHealthNutritionNumber(slotPlannedCaloriesTotal)} kcal</span>
+                        </div>
+                        {slotPlans.map((plan) => {
+                          const canConfirm = isHealthMealPlanConfirmEligible(plan);
+                          return (
+                            <div className="rounded-[1rem] border border-[#e9e4f7] bg-white/80 px-3 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={plan.id}>
+                              <div className="flex items-start gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(plan)}</p>
+                                  <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">{plan.serving_label || "Planned serving"} · {formatHealthNutritionNumber(plan.nutrition_snapshot?.calories ?? plan.calories)} kcal · {formatPlanTime(plan.planned_date, plan.planned_time)}</p>
+                                  <NutritionDetailsDisclosure details={plan.nutrition_snapshot?.nutrition_details} />
+                                </div>
+                                <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                                  <button className="ui-pill-button-strong-light shrink-0 disabled:cursor-not-allowed disabled:opacity-50" disabled={!canConfirm} onClick={() => { void confirmMealPlanEntry(plan.id); }} title={canConfirm ? "Confirm this planned food" : "Confirm becomes available when the planned time arrives"} type="button">Confirm</button>
+                                  <button className="ui-pill-button-light shrink-0" onClick={() => startEditingMealPlan(plan)} type="button">Edit</button>
+                                  <button className="ui-pill-button-danger-light shrink-0" onClick={() => { void deleteMealPlanEntry(plan.id); }} type="button">Remove</button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                     {slotMeals.length === 0 ? (
                       <EmptyCopy text={`No ${getMealSlotLabel(slot).toLowerCase()} logged yet.`} />
                     ) : slotMeals.map((entry) => {
@@ -1744,7 +1878,7 @@ export function HealthPage({
 
           <div className="grid min-w-0 content-start gap-5">
           <HealthPanel
-            headerActions={<FoodHistoryDateChip date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
+            headerActions={<FoodHistoryDateChip allowFuture date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
             className="min-w-0"
             icon={<Target />}
             subtitle="Daily totals"
@@ -1767,6 +1901,29 @@ export function HealthPage({
               groups={["Vitamins & Minerals"]}
               title="Vitamins & Minerals"
             />
+            {selectedMealPlans.length > 0 ? (
+              <div className="mt-4 rounded-[1.1rem] border border-dashed border-[#d9d2f1] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.025]">
+                <SectionMiniTitle title="Planned" />
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <CompactStat detail="planned foods" label="Calories" progressPercent={null} value={formatHealthNutritionNumber(selectedPlannedNutrition.calories)} />
+                  <CompactStat detail="planned foods" label="Protein" progressPercent={null} value={`${formatHealthNutritionNumber(selectedPlannedNutrition.protein)}g`} />
+                  <CompactStat detail="planned foods" label="Carbs" progressPercent={null} value={`${formatHealthNutritionNumber(selectedPlannedNutrition.carbs)}g`} />
+                  <CompactStat detail="planned foods" label="Fat" progressPercent={null} value={`${formatHealthNutritionNumber(selectedPlannedNutrition.fat)}g`} />
+                </div>
+                <NutritionDetailsDisclosure
+                  coverage={selectedPlannedNutrition.nutrition_coverage}
+                  details={selectedPlannedNutrition.nutrition_details}
+                  groups={["Nutrition Details", "Other"]}
+                  title="Planned Additional Nutrition"
+                />
+                <NutritionDetailsDisclosure
+                  coverage={selectedPlannedNutrition.nutrition_coverage}
+                  details={selectedPlannedNutrition.nutrition_details}
+                  groups={["Vitamins & Minerals"]}
+                  title="Planned Vitamins & Minerals"
+                />
+              </div>
+            ) : null}
             <HealthCalorieLineChart series={dailyCalorieSeries} />
           </HealthPanel>
 
@@ -2510,11 +2667,13 @@ function SectionMiniTitle({ actions, title }: { actions?: ReactNode; title: stri
 
 function FoodHistoryDateChip({
   ariaLabel = "Food history date",
+  allowFuture = false,
   date,
   dayStepper = false,
   onChange,
   today,
-}: {
+  }: {
+  allowFuture?: boolean;
   ariaLabel?: string;
   date: string;
   dayStepper?: boolean;
@@ -2527,7 +2686,7 @@ function FoodHistoryDateChip({
       <input
         aria-label={ariaLabel}
         className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS} h-[26px] min-h-[26px] min-w-[9.5rem] pl-7 text-[13px] leading-none`}
-        max={today}
+        max={allowFuture ? undefined : today}
         onChange={(event) => onChange(event.target.value || today)}
         type="date"
         value={date}
@@ -2902,12 +3061,17 @@ function formatTimeInput(loggedAt: string) {
   return `${hours}:${minutes}`;
 }
 
+function formatPlanTime(date: string, time: string) {
+  const loggedAt = buildHealthMealLoggedAt(date, time);
+  return loggedAt ? formatMealLoggedTime(loggedAt) : time;
+}
+
 function emptyToNull(value: string) {
   const trimmed = value.trim();
   return trimmed.length === 0 ? null : trimmed;
 }
 
-function formatBrandedFoodName(food: Pick<HealthMealEntry | HealthFoodLibraryItem, "brand_name" | "food_name">) {
+function formatBrandedFoodName(food: Pick<HealthMealEntry | HealthMealPlanEntry | HealthFoodLibraryItem, "brand_name" | "food_name">) {
   return food.brand_name?.trim()
     ? `${food.brand_name.trim()} · ${food.food_name}`
     : food.food_name;

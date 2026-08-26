@@ -16,6 +16,9 @@ import type {
   HealthMealEntry,
   HealthMealEntryInsert,
   HealthMealEntryUpdate,
+  HealthMealPlanEntry,
+  HealthMealPlanEntryInsert,
+  HealthMealPlanEntryUpdate,
   HealthMetricEntry,
   HealthMetricEntryInsert,
   HealthProfile,
@@ -51,6 +54,11 @@ import {
   sortHealthWorkouts,
   validateHealthWorkoutEditableInput,
 } from "@/lib/health-fitness";
+import {
+  buildActualMealEntryInputFromPlan,
+  isHealthMealPlanConfirmEligible,
+  sortHealthMealPlans,
+} from "@/lib/health-meal-planning";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -68,6 +76,7 @@ type HealthStateSnapshot = {
   favorites: HealthFoodLibraryItem[];
   importAudits: HealthImportAudit[];
   mealEntries: HealthMealEntry[];
+  mealPlanEntries: HealthMealPlanEntry[];
   metricEntries: HealthMetricEntry[];
   profile: HealthProfile;
   recipes: HealthRecipe[];
@@ -84,6 +93,7 @@ function buildEmptyState(userId: string): HealthStateSnapshot {
     favorites: [],
     importAudits: [],
     mealEntries: [],
+    mealPlanEntries: [],
     metricEntries: [],
     profile: buildDefaultHealthProfile(userId),
     recipes: [],
@@ -132,6 +142,7 @@ function readLocalHealthState(userId: string) {
       .map(normalizeHealthFoodLibraryItem),
     importAudits: readStoredJson(storageKey(userId, "imports"), emptyState.importAudits),
     mealEntries: readStoredJson(storageKey(userId, "meals"), emptyState.mealEntries),
+    mealPlanEntries: readStoredJson(storageKey(userId, "meal-plans"), emptyState.mealPlanEntries),
     metricEntries: readStoredJson(storageKey(userId, "metrics"), emptyState.metricEntries),
     profile: normalizeHealthProfile(
       readStoredJson<Partial<HealthProfile> | null>(storageKey(userId, "profile"), null),
@@ -154,6 +165,7 @@ function persistLocalHealthState(state: HealthStateSnapshot) {
     profile,
     checkIns,
     mealEntries,
+    mealPlanEntries,
     favorites,
     recipes,
     savedMeals,
@@ -167,6 +179,7 @@ function persistLocalHealthState(state: HealthStateSnapshot) {
   window.localStorage.setItem(storageKey(profile.user_id, "profile"), JSON.stringify(profile));
   window.localStorage.setItem(storageKey(profile.user_id, "checkins"), JSON.stringify(checkIns));
   window.localStorage.setItem(storageKey(profile.user_id, "meals"), JSON.stringify(mealEntries));
+  window.localStorage.setItem(storageKey(profile.user_id, "meal-plans"), JSON.stringify(mealPlanEntries));
   window.localStorage.setItem(storageKey(profile.user_id, "favorites"), JSON.stringify(favorites));
   window.localStorage.setItem(storageKey(profile.user_id, "recipes"), JSON.stringify(recipes));
   window.localStorage.setItem(storageKey(profile.user_id, "saved-meals"), JSON.stringify(savedMeals));
@@ -195,6 +208,7 @@ export function useHealth(
   const [profile, setProfile] = useState<HealthProfile | null>(null);
   const [checkIns, setCheckIns] = useState<HealthCheckIn[]>([]);
   const [mealEntries, setMealEntries] = useState<HealthMealEntry[]>([]);
+  const [mealPlanEntries, setMealPlanEntries] = useState<HealthMealPlanEntry[]>([]);
   const [favorites, setFavorites] = useState<HealthFoodLibraryItem[]>([]);
   const [weightEntries, setWeightEntries] = useState<HealthWeightEntry[]>([]);
   const [metricEntries, setMetricEntries] = useState<HealthMetricEntry[]>([]);
@@ -209,12 +223,14 @@ export function useHealth(
   const healthSnapshotRef = useRef<HealthStateSnapshot | null>(null);
   const healthFoodMutationRevisionRef = useRef(0);
   const workoutRemoteEnabledRef = useRef(true);
+  const mealPlanRemoteEnabledRef = useRef(true);
 
   function buildHealthSnapshot(
-    snapshot: Omit<HealthStateSnapshot, "workouts"> & { workouts?: HealthWorkout[] },
+    snapshot: Omit<HealthStateSnapshot, "workouts" | "mealPlanEntries"> & { mealPlanEntries?: HealthMealPlanEntry[]; workouts?: HealthWorkout[] },
   ) {
     return {
       ...snapshot,
+      mealPlanEntries: snapshot.mealPlanEntries ?? healthSnapshotRef.current?.mealPlanEntries ?? [],
       workouts: snapshot.workouts ?? healthSnapshotRef.current?.workouts ?? [],
     } satisfies HealthStateSnapshot;
   }
@@ -224,6 +240,7 @@ export function useHealth(
     setProfile(snapshot.profile);
     setCheckIns(snapshot.checkIns);
     setMealEntries(snapshot.mealEntries);
+    setMealPlanEntries([...snapshot.mealPlanEntries].sort(sortHealthMealPlans));
     setFavorites(snapshot.favorites);
     setWeightEntries(snapshot.weightEntries);
     setMetricEntries(snapshot.metricEntries);
@@ -376,6 +393,7 @@ export function useHealth(
       setProfile(null);
       setCheckIns([]);
       setMealEntries([]);
+      setMealPlanEntries([]);
       setFavorites([]);
       setWeightEntries([]);
       setMetricEntries([]);
@@ -387,6 +405,7 @@ export function useHealth(
       setAwards([]);
       setStorageMode("local");
       workoutRemoteEnabledRef.current = true;
+      mealPlanRemoteEnabledRef.current = true;
       return;
     }
 
@@ -409,6 +428,7 @@ export function useHealth(
         profileResult,
         checkInsResult,
         mealEntriesResult,
+        mealPlanEntriesResult,
         favoritesResult,
         recipesResult,
         savedMealsResult,
@@ -422,6 +442,7 @@ export function useHealth(
         client.from("adhdice_health_profiles").select("*").eq("user_id", userId).maybeSingle(),
         client.from("adhdice_health_checkins").select("*").eq("user_id", userId).order("entry_date", { ascending: false }),
         client.from("adhdice_health_meal_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
+        client.from("adhdice_health_meal_plan_entries").select("*").eq("user_id", userId).order("planned_date", { ascending: true }).order("planned_time", { ascending: true }),
         client.from("adhdice_health_food_library").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
         client.from("adhdice_health_recipes").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
         client.from("adhdice_health_saved_meals").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
@@ -467,6 +488,15 @@ export function useHealth(
       }
 
       workoutRemoteEnabledRef.current = !workoutsResult.error;
+      mealPlanRemoteEnabledRef.current = !mealPlanEntriesResult.error;
+      if (mealPlanEntriesResult.error && isMissingHealthPersistence(mealPlanEntriesResult.error.message)) {
+        setMessage({
+          text: "Meal planning is using local storage until the 7.11.61 meal-planning migration is applied. Existing Health data remains connected.",
+          tone: "neutral",
+        });
+      } else if (mealPlanEntriesResult.error) {
+        setMessage({ tone: "warn", text: mealPlanEntriesResult.error.message });
+      }
       if (workoutsResult.error && !isMissingHealthPersistence(workoutsResult.error.message)) {
         setMessage({ tone: "warn", text: workoutsResult.error.message });
       } else if (workoutsResult.error) {
@@ -508,6 +538,7 @@ export function useHealth(
         favorites: (favoritesResult.data ?? []).map(normalizeHealthFoodLibraryItem),
         importAudits: importAuditsResult.data ?? [],
         mealEntries: mealEntriesResult.data ?? [],
+        mealPlanEntries: mealPlanEntriesResult.error ? localState.mealPlanEntries : (mealPlanEntriesResult.data ?? []),
         metricEntries: metricEntriesResult.data ?? [],
         profile: normalizeHealthProfile(profileResult.data, userId),
         recipes: recipesResult.data ?? [],
@@ -789,6 +820,267 @@ export function useHealth(
     applySnapshot(nextSnapshot);
     await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
     setMessage({ tone: "good", text: "Meal updated." });
+    return true;
+  }
+
+  async function addMealPlanEntry(input: Omit<HealthMealPlanEntryInsert, "user_id">) {
+    if (!userId || !profile) {
+      return false;
+    }
+
+    const now = new Date().toISOString();
+    const localRow: HealthMealPlanEntry = {
+      attribution: input.attribution ?? null,
+      barcode: input.barcode ?? null,
+      brand_name: input.brand_name ?? null,
+      calories: input.calories,
+      carbs_g: input.carbs_g ?? null,
+      confirmed_at: null,
+      confirmed_meal_entry_id: null,
+      created_at: now,
+      fat_g: input.fat_g ?? null,
+      food_name: input.food_name,
+      id: input.id ?? createLocalId("health-meal-plan"),
+      meal_slot: input.meal_slot,
+      nutrition_snapshot: input.nutrition_snapshot ?? null,
+      planned_at: input.planned_at,
+      planned_date: input.planned_date,
+      planned_time: input.planned_time,
+      protein_g: input.protein_g ?? null,
+      provider: input.provider ?? "manual",
+      provider_item_id: input.provider_item_id ?? null,
+      serving_fraction: input.serving_fraction ?? null,
+      serving_label: input.serving_label ?? null,
+      source_food_id: input.source_food_id ?? null,
+      consumed_quantity: input.consumed_quantity ?? null,
+      consumed_unit: input.consumed_unit ?? null,
+      food_snapshot: input.food_snapshot ?? null,
+      updated_at: now,
+      user_id: userId,
+    };
+
+    let nextRow = localRow;
+    if (client && storageMode === "remote" && mealPlanRemoteEnabledRef.current) {
+      const { data, error } = await client
+        .from("adhdice_health_meal_plan_entries")
+        .insert({ ...input, user_id: userId })
+        .select("*")
+        .single();
+      if (error) {
+        if (!isMissingHealthPersistence(error.message)) {
+          setMessage({ tone: "warn", text: error.message });
+          return false;
+        }
+        mealPlanRemoteEnabledRef.current = false;
+        setMessage({ tone: "neutral", text: "Meal planning is saved locally until the 7.11.61 migration is applied." });
+      } else {
+        nextRow = data ?? localRow;
+      }
+    }
+
+    const nextSnapshot = buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      mealPlanEntries: [nextRow, ...mealPlanEntries.filter((entry) => entry.id !== nextRow.id)].sort(sortHealthMealPlans),
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries,
+      weightEntries,
+    });
+    applySnapshot(nextSnapshot);
+    setMessage({ tone: "good", text: "Meal added to plan." });
+    return true;
+  }
+
+  async function updateMealPlanEntry(entryId: string, input: HealthMealPlanEntryUpdate) {
+    if (!userId || !profile) {
+      return false;
+    }
+    const currentEntry = mealPlanEntries.find((entry) => entry.id === entryId);
+    if (!currentEntry || currentEntry.confirmed_at !== null) {
+      return false;
+    }
+
+    const now = new Date().toISOString();
+    const localRow: HealthMealPlanEntry = { ...currentEntry, ...input, updated_at: now };
+    let nextRow = localRow;
+    if (client && storageMode === "remote" && mealPlanRemoteEnabledRef.current) {
+      const { data, error } = await client
+        .from("adhdice_health_meal_plan_entries")
+        .update(input)
+        .eq("id", entryId)
+        .eq("user_id", userId)
+        .is("confirmed_at", null)
+        .select("*")
+        .single();
+      if (error) {
+        if (!isMissingHealthPersistence(error.message)) {
+          setMessage({ tone: "warn", text: error.message });
+          return false;
+        }
+        mealPlanRemoteEnabledRef.current = false;
+        setMessage({ tone: "neutral", text: "Meal-plan edits are saved locally until the 7.11.61 migration is applied." });
+      } else {
+        nextRow = data ?? localRow;
+      }
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      mealPlanEntries: mealPlanEntries.map((entry) => entry.id === entryId ? nextRow : entry).sort(sortHealthMealPlans),
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Meal plan updated." });
+    return true;
+  }
+
+  async function deleteMealPlanEntry(entryId: string) {
+    if (!profile) {
+      return false;
+    }
+    const currentEntry = mealPlanEntries.find((entry) => entry.id === entryId);
+    if (!currentEntry || currentEntry.confirmed_at !== null) {
+      return false;
+    }
+
+    if (client && storageMode === "remote" && mealPlanRemoteEnabledRef.current) {
+      const { error } = await client
+        .from("adhdice_health_meal_plan_entries")
+        .delete()
+        .eq("id", entryId)
+        .eq("user_id", profile.user_id)
+        .is("confirmed_at", null);
+      if (error) {
+        if (!isMissingHealthPersistence(error.message)) {
+          setMessage({ tone: "warn", text: error.message });
+          return false;
+        }
+        mealPlanRemoteEnabledRef.current = false;
+        setMessage({ tone: "neutral", text: "Meal-plan removal is local until the 7.11.61 migration is applied." });
+      }
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      mealPlanEntries: mealPlanEntries.filter((entry) => entry.id !== entryId),
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Meal plan removed." });
+    return true;
+  }
+
+  async function confirmMealPlanEntry(planId: string) {
+    if (!userId || !profile) {
+      return false;
+    }
+    const plan = mealPlanEntries.find((entry) => entry.id === planId);
+    if (!plan || !isHealthMealPlanConfirmEligible(plan)) {
+      setMessage({ tone: "neutral", text: "This meal plan is not ready to confirm yet." });
+      return false;
+    }
+
+    let actualMealEntryId = plan.confirmed_meal_entry_id ?? createLocalId("health-meal");
+    let confirmedAt = new Date().toISOString();
+    let newlyCreated = true;
+    if (client && storageMode === "remote") {
+      if (!mealPlanRemoteEnabledRef.current) {
+        setMessage({ tone: "warn", text: "Apply the 7.11.61 meal-planning migration before confirming a remotely stored plan." });
+        return false;
+      }
+      const rpcClient = client as unknown as {
+        rpc: (
+          fn: "adhdice_confirm_health_meal_plan_entry",
+          params: { p_plan_entry_id: string },
+        ) => Promise<{ data: Array<Record<string, unknown>> | Record<string, unknown> | null; error: { message: string } | null }>;
+      };
+      const { data, error } = await rpcClient.rpc("adhdice_confirm_health_meal_plan_entry", { p_plan_entry_id: planId });
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+      const rpcRow = Array.isArray(data) ? data[0] : data;
+      if (!rpcRow || typeof rpcRow.actual_meal_entry_id !== "string") {
+        setMessage({ tone: "warn", text: "Meal-plan confirmation returned no actual meal." });
+        return false;
+      }
+      actualMealEntryId = rpcRow.actual_meal_entry_id;
+      confirmedAt = typeof rpcRow.confirmed_at === "string" ? rpcRow.confirmed_at : confirmedAt;
+      newlyCreated = rpcRow.newly_created !== false;
+    }
+
+    const actualInput = buildActualMealEntryInputFromPlan(plan);
+    const actualRow: HealthMealEntry = {
+      attribution: actualInput.attribution ?? null,
+      barcode: actualInput.barcode ?? null,
+      brand_name: actualInput.brand_name ?? null,
+      calories: actualInput.calories,
+      carbs_g: actualInput.carbs_g ?? null,
+      entry_date: actualInput.entry_date,
+      fat_g: actualInput.fat_g ?? null,
+      food_name: actualInput.food_name,
+      id: actualMealEntryId,
+      logged_at: actualInput.logged_at ?? confirmedAt,
+      meal_slot: actualInput.meal_slot,
+      nutrition_snapshot: actualInput.nutrition_snapshot ?? null,
+      provider: actualInput.provider ?? "manual",
+      provider_item_id: actualInput.provider_item_id ?? null,
+      protein_g: actualInput.protein_g ?? null,
+      serving_fraction: actualInput.serving_fraction ?? null,
+      serving_label: actualInput.serving_label ?? null,
+      source_food_id: actualInput.source_food_id ?? null,
+      consumed_quantity: actualInput.consumed_quantity ?? null,
+      consumed_unit: actualInput.consumed_unit ?? null,
+      food_snapshot: actualInput.food_snapshot ?? null,
+      created_at: confirmedAt,
+      updated_at: confirmedAt,
+      user_id: userId,
+    };
+    const nextMealEntries = mealEntries.some((entry) => entry.id === actualMealEntryId)
+      ? mealEntries
+      : [actualRow, ...mealEntries].sort((left, right) => right.logged_at.localeCompare(left.logged_at));
+    const nextPlanEntries = mealPlanEntries.map((entry) => entry.id === planId
+      ? { ...entry, confirmed_at: confirmedAt, confirmed_meal_entry_id: actualMealEntryId, updated_at: confirmedAt }
+      : entry);
+    const nextSnapshot = buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries: nextMealEntries,
+      mealPlanEntries: nextPlanEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries,
+      weightEntries,
+    });
+    applySnapshot(nextSnapshot);
+    await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
+    setMessage({ tone: "good", text: newlyCreated ? "Meal plan confirmed." : "Meal plan confirmation recovered." });
     return true;
   }
 
@@ -1708,6 +2000,11 @@ export function useHealth(
     isLoading,
     importAppleHealthData,
     mealEntries,
+    mealPlanEntries,
+    addMealPlanEntry,
+    updateMealPlanEntry,
+    deleteMealPlanEntry,
+    confirmMealPlanEntry,
     metricEntries,
     profile,
     recipes,
