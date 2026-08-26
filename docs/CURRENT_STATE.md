@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-25
+Last reviewed: 2026-08-26
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.66`.
+- Current working app version: `7.11.67`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,6 +23,17 @@ canonical success/failure acknowledgement; failed optimistic Due changes
 restore their captured complete Table row snapshot, and stale failed requests
 cannot overwrite newer Due edits. No SQL, schema, or canonical Task State
 redesign was added.
+
+## 2026-08-26 7.11.67 Distinguish persisted Due edits from refresh failures
+
+The 7.11.66 source review found that Table's boolean acknowledgement conflated
+true canonical persistence failure with post-commit reconciliation failure.
+Table rollback now occurs only when the canonical Due mutation never persisted.
+Committed-but-unreconciled Due changes keep their optimistic state and retain
+the existing `Task was saved, but ADHDice couldn't refresh...` warning. The
+existing complete-row snapshot, stale-generation, multi-target rollback, and
+viewport-hold logic is preserved. No SQL, migration, Task State RPC, or schema
+changes were added.
 
 ## 2026-08-25 7.11.65 Inline Food Date Chip
 

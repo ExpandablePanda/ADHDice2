@@ -144,9 +144,11 @@ test("canonical creation projection survives metadata and exact committed schedu
     [unscheduledBoundary.id, unscheduledBoundary],
   ]);
   const messages: Array<{ tone: string; text: string }> = [];
+  const callbackEvents: string[] = [];
 
   const update = useTaskUpdateAction({
     canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => {
+      callbackEvents.push("command");
       const nextBoundary = action.actionType === "set_due_date"
         ? action.intent?.type === "set_due_date" && action.intent.schedule.schedule_model === "unscheduled"
           ? unscheduledBoundary
@@ -165,7 +167,10 @@ test("canonical creation projection survives metadata and exact committed schedu
       };
     },
     currentDayKey: "2026-08-19",
-    loadCanonicalScheduleBoundary: async (_taskId, boundaryId) => committedBoundaries.get(boundaryId) ?? null,
+    loadCanonicalScheduleBoundary: async (_taskId, boundaryId) => {
+      callbackEvents.push("schedule-reconciliation");
+      return committedBoundaries.get(boundaryId) ?? null;
+    },
     onTasksCompleted: async () => {},
     routeTask: () => {},
     setMessage: (message) => {
@@ -199,7 +204,11 @@ test("canonical creation projection survives metadata and exact committed schedu
   assert.equal(localTasks[0]?.title, "Renamed");
   assert.equal(localTasks[0]?.canonical_schedule_boundary?.id, initialBoundary.id);
 
-  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }), true);
+  callbackEvents.length = 0;
+  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }, {
+    onCanonicalMutationPersisted: () => callbackEvents.push("persisted"),
+  }), true);
+  assert.deepEqual(callbackEvents, ["command", "persisted", "schedule-reconciliation"]);
   assert.equal(localTasks[0]?.canonical_schedule_boundary?.id, dueBoundary.id);
   assert.equal(localTasks[0]?.due_on, "2026-08-19");
   assert.doesNotThrow(() => resolveActiveTaskStatuses({
@@ -250,6 +259,7 @@ test("canonical command rejection is visible as a Task edit failure", async () =
   const initialBoundary = boundary();
   const localTasks = [canonicalTask(initialBoundary)];
   const messages: Array<{ tone: string; text: string }> = [];
+  let persistedCallbacks = 0;
   const update = useTaskUpdateAction({
     canonicalCommandExecutor: async (): Promise<TaskStateRuntimeExecutionResult> => ({
       success: false,
@@ -273,7 +283,10 @@ test("canonical command rejection is visible as a Task edit failure", async () =
     },
   });
 
-  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }), false);
+  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }, {
+    onCanonicalMutationPersisted: () => { persistedCallbacks += 1; },
+  }), false);
+  assert.equal(persistedCallbacks, 0);
   assert.equal(messages.at(-1)?.tone, "warn");
   assert.match(messages.at(-1)?.text ?? "", /^Task wasn't updated:/);
 });
@@ -336,6 +349,7 @@ test("committed Task edits report post-commit boundary reconciliation failures d
   const initialBoundary = boundary();
   const localTasks = [canonicalTask(initialBoundary)];
   const messages: Array<{ tone: string; text: string }> = [];
+  let persistedCallbacks = 0;
   const update = useTaskUpdateAction({
     canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => ({
       success: true,
@@ -359,7 +373,91 @@ test("committed Task edits report post-commit boundary reconciliation failures d
     },
   });
 
-  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }), false);
+  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }, {
+    onCanonicalMutationPersisted: () => { persistedCallbacks += 1; },
+  }), false);
+  assert.equal(persistedCallbacks, 1);
   assert.equal(messages.at(-1)?.tone, "warn");
   assert.match(messages.at(-1)?.text ?? "", /^Task was saved, but ADHDice couldn't refresh the updated Task state\. Refresh before editing it again\./);
+});
+
+test("committed Task edits retain persistence acknowledgement when History refresh fails", async () => {
+  const initialBoundary = boundary();
+  const committedBoundary = boundary({ id: "boundary-history-refresh", boundary_sequence: 2, boundary_type: "due_date_change", source: "set_due_date" });
+  const localTasks = [canonicalTask(initialBoundary)];
+  const messages: Array<{ tone: string; text: string }> = [];
+  let persistedCallbacks = 0;
+  const update = useTaskUpdateAction({
+    canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => ({
+      success: true,
+      task: { ...currentTask, due_on: "2026-08-19", canonical_revision: currentTask.canonical_revision + 1 },
+      response: {
+        ...commandResponse(committedBoundary.id, action.expectedRevision),
+        side_effect_ids: { history_fact_id: "history-1", schedule_boundary_id: committedBoundary.id },
+      },
+    }),
+    currentDayKey: "2026-08-19",
+    loadCanonicalScheduleBoundary: async () => committedBoundary,
+    loadTaskHistoryForTasks: async () => ({
+      [taskId]: { error: "History refresh failed.", history: null, status: "error" as const },
+    }),
+    onTasksCompleted: async () => {},
+    routeTask: () => {},
+    setMessage: (message) => {
+      const next = typeof message === "function" ? message(messages.at(-1) ?? null) : message;
+      if (next) messages.push(next);
+    },
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: localTasks,
+    updateTaskRowWithLegacyEnergyFallback: async () => {
+      throw new Error("Legacy fallback must not run.");
+    },
+  });
+
+  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }, {
+    onCanonicalMutationPersisted: () => { persistedCallbacks += 1; },
+  }), false);
+  assert.equal(persistedCallbacks, 1);
+  assert.match(messages.at(-1)?.text ?? "", /Task was saved, but ADHDice couldn't refresh/);
+});
+
+test("committed Task edits retain persistence acknowledgement when local reconciliation fails", async () => {
+  const initialBoundary = boundary();
+  const committedBoundary = boundary({ id: "boundary-local-refresh", boundary_sequence: 2, boundary_type: "due_date_change", source: "set_due_date" });
+  const localTasks = [canonicalTask(initialBoundary)];
+  const messages: Array<{ tone: string; text: string }> = [];
+  let persistedCallbacks = 0;
+  const update = useTaskUpdateAction({
+    canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => ({
+      success: true,
+      task: { ...currentTask, due_on: "2026-08-19", canonical_revision: currentTask.canonical_revision + 1 },
+      response: commandResponse(committedBoundary.id, action.expectedRevision),
+    }),
+    currentDayKey: "2026-08-19",
+    loadCanonicalScheduleBoundary: async () => committedBoundary,
+    onTaskHistoryMutation: async () => {
+      throw new Error("Local reconciliation failed.");
+    },
+    onTasksCompleted: async () => {},
+    routeTask: () => {},
+    setMessage: (message) => {
+      const next = typeof message === "function" ? message(messages.at(-1) ?? null) : message;
+      if (next) messages.push(next);
+    },
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: localTasks,
+    updateTaskRowWithLegacyEnergyFallback: async () => {
+      throw new Error("Legacy fallback must not run.");
+    },
+  });
+
+  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }, {
+    onCanonicalMutationPersisted: () => { persistedCallbacks += 1; },
+  }), false);
+  assert.equal(persistedCallbacks, 1);
+  assert.match(messages.at(-1)?.text ?? "", /Task was saved, but ADHDice couldn't refresh/);
 });
