@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Apple, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, MoonStar, Pencil, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
+import { Activity, Apple, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, MoonStar, Pencil, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import type {
@@ -90,6 +90,7 @@ import {
   HEALTH_SYMPTOM_TAGS,
   HEALTH_TABS,
   kilogramsToDisplayValue,
+  normalizeHealthMealTime,
   sumMealNutritionForDate,
   sumMetricValueForDate,
   shiftHealthDate,
@@ -467,6 +468,8 @@ export function HealthPage({
   const [sleepFormError, setSleepFormError] = useState<string | null>(null);
   const [sleepClockNow, setSleepClockNow] = useState(() => Date.now());
   const importAbortRef = useRef<AbortController | null>(null);
+  const barcodeLookupGenerationRef = useRef(0);
+  const mealSaveInFlightRef = useRef(false);
   const today = todayHealthDate();
 
   useEffect(() => {
@@ -895,6 +898,28 @@ export function HealthPage({
     }
   }
 
+  async function submitMeal() {
+    if (!canSaveMeal || mealSaveInFlightRef.current) {
+      return;
+    }
+    mealSaveInFlightRef.current = true;
+    try {
+      await handleSaveMeal();
+    } finally {
+      mealSaveInFlightRef.current = false;
+    }
+  }
+
+  function clearMealDraft() {
+    barcodeLookupGenerationRef.current += 1;
+    setMealDraft((current) => resetMealDraftForNextItem(current));
+    setCustomFoodSearchQuery("");
+    setBarcodeLookupError("");
+    setBarcodeLookupStatus("idle");
+    setIsScannerOpen(false);
+    setSaveQuickEntryToLibrary(false);
+  }
+
   function openMealComposerForSlot(slot: HealthMealEntry["meal_slot"], mode: "actual" | "plan" = "actual") {
     const preserveFoodDraft = hasMeaningfulMealDraft(mealDraft);
     setActiveMealEntrySlot(slot);
@@ -1168,20 +1193,29 @@ export function HealthPage({
     if (!trimmedCode) {
       return;
     }
+    const requestGeneration = ++barcodeLookupGenerationRef.current;
     setBarcodeLookupError("");
     setBarcodeLookupStatus("barcode");
     setMealDraft((current) => ({ ...current, barcode: trimmedCode }));
     try {
       const result = await lookupOpenFoodFactsByBarcode(trimmedCode);
+      if (requestGeneration !== barcodeLookupGenerationRef.current) {
+        return;
+      }
       if (!result) {
         setBarcodeLookupError("No food details found for this barcode. You can enter the food manually.");
         return;
       }
       applyLookupResult(result);
     } catch (error) {
+      if (requestGeneration !== barcodeLookupGenerationRef.current) {
+        return;
+      }
       setBarcodeLookupError(error instanceof Error ? error.message : "Barcode lookup did not complete.");
     } finally {
-      setBarcodeLookupStatus("idle");
+      if (requestGeneration === barcodeLookupGenerationRef.current) {
+        setBarcodeLookupStatus("idle");
+      }
     }
   }
 
@@ -1375,20 +1409,33 @@ export function HealthPage({
   }
 
   function renderMealBarcodeTools() {
+    return <AdhdIconButton aria-label="Scan barcode" disabled={barcodeLookupStatus !== "idle"} onClick={() => setIsScannerOpen(true)} size="sm" title="Scan barcode"><ScanBarcode aria-hidden="true" /></AdhdIconButton>;
+  }
+
+  function renderMealCategoryFilter() {
+    if (customFoodCategories.length === 0) {
+      return null;
+    }
     return (
-      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-        <AdhdIconButton
-          aria-label="Scan barcode"
-          disabled={barcodeLookupStatus !== "idle"}
-          onClick={() => setIsScannerOpen(true)}
-          size="sm"
-          title="Scan barcode"
-        >
-          <ScanBarcode aria-hidden="true" />
-        </AdhdIconButton>
-        <HealthBarcodeScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onDetected={handleMealBarcodeDetected} />
-        {barcodeLookupStatus !== "idle" ? <InlineNotice text="Looking up barcode..." /> : null}
-        {barcodeLookupError ? <EmptyCopy text={barcodeLookupError} /> : null}
+      <div className="grid min-w-0 gap-2 sm:col-start-1 sm:row-start-2 sm:self-start">
+        <div className="flex items-center gap-2">
+          <AdhdChip
+            aria-controls="inline-meal-food-categories"
+            aria-expanded={isCustomFoodCategoriesOpen}
+            contentClassName="gap-1"
+            icon={<ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isCustomFoodCategoriesOpen ? "rotate-180" : ""}`} />}
+            onClick={() => setIsCustomFoodCategoriesOpen((current) => !current)}
+            selected={isCustomFoodCategoriesOpen || selectedCustomFoodCategory !== null}
+            title={selectedCustomFoodCategory ? `Filter by ${selectedCustomFoodCategory}` : "Filter custom foods by category"}
+          >
+            {selectedCustomFoodCategory && !isCustomFoodCategoriesOpen ? `Categories · ${selectedCustomFoodCategory}` : "Categories"}
+          </AdhdChip>
+        </div>
+        {isCustomFoodCategoriesOpen ? (
+          <div aria-label="Filter custom foods by category" className="flex flex-wrap gap-1.5" id="inline-meal-food-categories">
+            {customFoodCategories.map((category) => <AdhdChip className="shrink-0" key={category} onClick={() => setSelectedCustomFoodCategory((current) => current === category ? null : category)} selected={selectedCustomFoodCategory === category} toneClassName="border-[#e4deef] bg-white text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60">{category}</AdhdChip>)}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -1397,7 +1444,7 @@ export function HealthPage({
     const isPlanMode = mealEditorMode === "plan";
     return (
       <div className="grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
-        <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1.35fr)_minmax(7rem,0.7fr)_minmax(5.5rem,0.6fr)_auto]">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1.35fr)_minmax(7rem,0.7fr)_minmax(4rem,0.4fr)_minmax(5.5rem,0.5fr)_auto] sm:items-end">
           <Field label="Food">
             <HealthAutocomplete
               ariaLabel="Search custom foods"
@@ -1419,6 +1466,7 @@ export function HealthPage({
                 ariaLabel="Measurement"
                 disabled={!mealDraft.foodName}
                 onChange={(value) => setMealDraft((current) => ({ ...current, measurement: value }))}
+                openOnFocus
                 options={getHealthFoodMeasurementOptions({ servingMeasureUnit: mealDraft.servingMeasureUnit, servingUnit: mealDraft.servingUnit })}
                 value={mealDraft.measurement}
               />
@@ -1426,13 +1474,37 @@ export function HealthPage({
           )}
           {isQuickEntryOpen ? null : (
             <Field label="Amount">
-              <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, quantity: event.target.value }))} placeholder="1" value={mealDraft.quantity} />
+              <input
+                className={HEALTH_COMPACT_INPUT_CLASS}
+                inputMode="decimal"
+                onChange={(event) => setMealDraft((current) => ({ ...current, quantity: event.target.value }))}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.isComposing || event.nativeEvent.isComposing) {
+                    return;
+                  }
+                  event.preventDefault();
+                  if (canSaveMeal) {
+                    void submitMeal();
+                  }
+                }}
+                placeholder="1"
+                value={mealDraft.quantity}
+              />
             </Field>
           )}
           <Field label="Time">
             <HealthMealDateTimeInput onChange={(value) => setMealDraft((current) => ({ ...current, time: value }))} type="time" value={mealDraft.time} />
           </Field>
+          <div className="flex min-w-0 items-center justify-end">{renderMealBarcodeTools()}</div>
+          {renderMealCategoryFilter()}
         </div>
+        {barcodeLookupStatus !== "idle" || barcodeLookupError ? (
+          <div className="grid gap-2">
+            {barcodeLookupStatus !== "idle" ? <InlineNotice text="Looking up barcode..." /> : null}
+            {barcodeLookupError ? <EmptyCopy text={barcodeLookupError} /> : null}
+          </div>
+        ) : null}
+        {isScannerOpen ? <HealthBarcodeScanner isOpen onClose={() => setIsScannerOpen(false)} onDetected={handleMealBarcodeDetected} /> : null}
         {isPlanMode ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Planned date">
@@ -1448,7 +1520,6 @@ export function HealthPage({
             </Field>
           </div>
         ) : null}
-        {renderMealBarcodeTools()}
         {isQuickEntryOpen ? (
           <div className="grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-white p-3 dark:border-white/10 dark:bg-white/[0.04]">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -1469,28 +1540,6 @@ export function HealthPage({
           </div>
         ) : null}
         <div className="grid gap-3">
-          {customFoodCategories.length > 0 ? (
-            <div className="grid gap-2">
-              <div className="flex items-center gap-2">
-                <AdhdChip
-                  aria-controls="inline-meal-food-categories"
-                  aria-expanded={isCustomFoodCategoriesOpen}
-                  contentClassName="gap-1"
-                  icon={<ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isCustomFoodCategoriesOpen ? "rotate-180" : ""}`} />}
-                  onClick={() => setIsCustomFoodCategoriesOpen((current) => !current)}
-                  selected={isCustomFoodCategoriesOpen || selectedCustomFoodCategory !== null}
-                  title={selectedCustomFoodCategory ? `Filter by ${selectedCustomFoodCategory}` : "Filter custom foods by category"}
-                >
-                  {selectedCustomFoodCategory && !isCustomFoodCategoriesOpen ? `Categories · ${selectedCustomFoodCategory}` : "Categories"}
-                </AdhdChip>
-              </div>
-              {isCustomFoodCategoriesOpen ? (
-                <div aria-label="Filter custom foods by category" className="flex flex-wrap gap-1.5" id="inline-meal-food-categories">
-                  {customFoodCategories.map((category) => <AdhdChip className="shrink-0" key={category} onClick={() => setSelectedCustomFoodCategory((current) => current === category ? null : category)} selected={selectedCustomFoodCategory === category} toneClassName="border-[#e4deef] bg-white text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60">{category}</AdhdChip>)}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
           {customFoodCategories.length > 0 ? <div aria-hidden="true" className="border-t border-[#ece8f6] dark:border-white/10" /> : null}
           {matchingCustomFoods.length === 0 ? <EmptyCopy text="No custom foods match this search." /> : (
             <div className="adhdice-scrollbar max-h-24 overflow-y-auto pr-1">
@@ -1508,8 +1557,9 @@ export function HealthPage({
             <span className="text-xs text-[#73809c] dark:text-white/50">{isPlanMode ? "Add another food to this plan, or finish when you’re done." : "Add another food to this meal, or finish when you’re done."}</span>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
+            <AdhdChip contentClassName="gap-1.5" icon={<RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />} onClick={clearMealDraft} title="Clear current food selection">Clear</AdhdChip>
             <AdhdChip onClick={closeMealEntryEditor}>Done</AdhdChip>
-          <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveMeal} onClick={() => { void handleSaveMeal(); }} type="button">{isPlanMode ? (isQuickEntryOpen ? "Add Quick Entry to Plan" : editingMealPlanId ? "Save Plan" : "Add to Plan") : isQuickEntryOpen ? "Add Quick Entry" : "Add Food"}</button>
+          <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveMeal} onClick={() => { void submitMeal(); }} type="button">{isPlanMode ? (isQuickEntryOpen ? "Add Quick Entry to Plan" : editingMealPlanId ? "Save Plan" : "Add to Plan") : isQuickEntryOpen ? "Add Quick Entry" : "Add Food"}</button>
           </div>
         </div>
       </div>
@@ -1703,7 +1753,7 @@ export function HealthPage({
                           <span className="text-xs font-semibold text-[#74809b] dark:text-white/45">{formatHealthNutritionNumber(slotPlannedCaloriesTotal)} kcal</span>
                         </div>
                         {slotPlans.map((plan) => {
-                          const canConfirm = isHealthMealPlanConfirmEligible(plan);
+                          const canMarkDone = isHealthMealPlanConfirmEligible(plan);
                           return (
                             <div className="rounded-[1rem] border border-[#e9e4f7] bg-white/80 px-3 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={plan.id}>
                               <div className="flex items-start gap-3">
@@ -1713,7 +1763,7 @@ export function HealthPage({
                                   <NutritionDetailsDisclosure details={plan.nutrition_snapshot?.nutrition_details} />
                                 </div>
                                 <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                                  <button className="ui-pill-button-strong-light shrink-0 disabled:cursor-not-allowed disabled:opacity-50" disabled={!canConfirm} onClick={() => { void confirmMealPlanEntry(plan.id); }} title={canConfirm ? "Confirm this planned food" : "Confirm becomes available when the planned time arrives"} type="button">Confirm</button>
+                                  <button className="ui-pill-button-strong-light shrink-0 disabled:cursor-not-allowed disabled:opacity-50" disabled={!canMarkDone} onClick={() => { void confirmMealPlanEntry(plan.id); }} title={canMarkDone ? "Mark this planned food Done" : "This planned food cannot be marked Done"} type="button">Done</button>
                                   <button className="ui-pill-button-light shrink-0" onClick={() => startEditingMealPlan(plan)} type="button">Edit</button>
                                   <button className="ui-pill-button-danger-light shrink-0" onClick={() => { void deleteMealPlanEntry(plan.id); }} type="button">Remove</button>
                                 </div>
@@ -2650,7 +2700,7 @@ function HealthMealDateTimeInput({
         max={max}
         onChange={(event) => onChange(event.target.value)}
         type={type}
-        value={value}
+        value={type === "time" ? normalizeHealthMealTime(value) ?? "" : value}
       />
     </div>
   );
@@ -3063,7 +3113,7 @@ function formatTimeInput(loggedAt: string) {
 
 function formatPlanTime(date: string, time: string) {
   const loggedAt = buildHealthMealLoggedAt(date, time);
-  return loggedAt ? formatMealLoggedTime(loggedAt) : time;
+  return loggedAt ? formatMealLoggedTime(loggedAt) : normalizeHealthMealTime(time) ?? "Invalid time";
 }
 
 function emptyToNull(value: string) {

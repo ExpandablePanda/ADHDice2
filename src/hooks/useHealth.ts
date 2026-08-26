@@ -41,6 +41,7 @@ import {
   buildDefaultHealthProfile,
   getEligibleHealthAchievements,
   normalizeHealthProfile,
+  todayHealthDate,
   type HealthAchievementCode,
 } from "@/lib/health-utils";
 import {
@@ -998,25 +999,26 @@ export function useHealth(
     }
     const plan = mealPlanEntries.find((entry) => entry.id === planId);
     if (!plan || !isHealthMealPlanConfirmEligible(plan)) {
-      setMessage({ tone: "neutral", text: "This meal plan is not ready to confirm yet." });
+      setMessage({ tone: "neutral", text: "This meal plan cannot be marked Done yet." });
       return false;
     }
 
+    const actualEntryDate = todayHealthDate();
     let actualMealEntryId = plan.confirmed_meal_entry_id ?? createLocalId("health-meal");
     let confirmedAt = new Date().toISOString();
     let newlyCreated = true;
     if (client && storageMode === "remote") {
       if (!mealPlanRemoteEnabledRef.current) {
-        setMessage({ tone: "warn", text: "Apply the 7.11.61 meal-planning migration before confirming a remotely stored plan." });
+        setMessage({ tone: "warn", text: "Apply the 7.11.62 meal-plan confirmation correction before marking a remotely stored plan Done." });
         return false;
       }
       const rpcClient = client as unknown as {
         rpc: (
           fn: "adhdice_confirm_health_meal_plan_entry",
-          params: { p_plan_entry_id: string },
+          params: { p_actual_entry_date: string; p_plan_entry_id: string },
         ) => Promise<{ data: Array<Record<string, unknown>> | Record<string, unknown> | null; error: { message: string } | null }>;
       };
-      const { data, error } = await rpcClient.rpc("adhdice_confirm_health_meal_plan_entry", { p_plan_entry_id: planId });
+      const { data, error } = await rpcClient.rpc("adhdice_confirm_health_meal_plan_entry", { p_actual_entry_date: actualEntryDate, p_plan_entry_id: planId });
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -1031,7 +1033,7 @@ export function useHealth(
       newlyCreated = rpcRow.newly_created !== false;
     }
 
-    const actualInput = buildActualMealEntryInputFromPlan(plan);
+    const actualInput = buildActualMealEntryInputFromPlan(plan, { entryDate: actualEntryDate, loggedAt: confirmedAt });
     const actualRow: HealthMealEntry = {
       attribution: actualInput.attribution ?? null,
       barcode: actualInput.barcode ?? null,
@@ -1080,7 +1082,7 @@ export function useHealth(
     });
     applySnapshot(nextSnapshot);
     await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
-    setMessage({ tone: "good", text: newlyCreated ? "Meal plan confirmed." : "Meal plan confirmation recovered." });
+    setMessage({ tone: "good", text: newlyCreated ? "Meal plan marked Done." : "Meal plan Done recovered." });
     return true;
   }
 
