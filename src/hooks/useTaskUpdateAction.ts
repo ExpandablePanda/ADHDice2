@@ -39,6 +39,7 @@ function taskCommitReconciliationFailureMessage(reason?: string) {
 
 type UpdateTaskActionOptions = {
   canonicalIntent?: TaskStateRuntimeCanonicalIntent;
+  onCanonicalMutationPersisted?: () => void;
   onCanonicalTaskCommitted?: (task: TaskStateRuntimeLocalTask) => void;
   manualAction?: "unscheduled_status";
   replayIdentity?: string;
@@ -224,11 +225,13 @@ export function useTaskUpdateAction({
           setMessage({ tone: "warn", text: taskEditFailureMessage(error instanceof Error ? error.message : "The canonical Task State command could not be invoked.") });
           return false;
         }
-        clearPendingTaskMutations?.([taskId]);
         if (!canonicalResult.success) {
+          clearPendingTaskMutations?.([taskId]);
           setMessage({ tone: "warn", text: taskEditFailureMessage(canonicalResult.error.message) });
           return false;
         }
+        options?.onCanonicalMutationPersisted?.();
+        clearPendingTaskMutations?.([taskId]);
 
         let reconciledCanonicalTask: TaskStateRuntimeLocalTask;
         try {

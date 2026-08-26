@@ -63,16 +63,20 @@ test("Due handlers accept synchronous and asynchronous boolean acknowledgements"
   assert.equal((adapterSource.match(/onSetDue\?: TaskDueChangeHandler/g) ?? []).length, 2);
 });
 
-test("TaskApp returns updateTask acknowledgement and preserves unscheduled manual action", () => {
+test("TaskApp returns persistence-aware Due acknowledgement and preserves unscheduled manual action", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
   const dueHandlers = [...source.matchAll(/(?:onTaskDueChange|onSetDue)(?:=|:)\s*\{?\s*\(taskId, schedule, options\) => \{([\s\S]*?)\n\s*\}\}?/g)].map((match) => match[1]);
   assert.equal(dueHandlers.length, 3);
   for (const handler of dueHandlers) {
-    assert.match(handler, /return updateTask\(/);
+    assert.match(handler, /let didPersist = false/);
+    assert.match(handler, /onCanonicalMutationPersisted/);
     assert.doesNotMatch(handler, /void updateTask\(/);
     assert.match(handler, /manualAction/);
     assert.match(handler, /"unscheduled_status"/);
   }
+  assert.equal((source.match(/return didFullyReconcile\.then\(\(didReconcile\) => didPersist \|\| didReconcile\)/g) ?? []).length, 3);
+  assert.match(source, /onTaskEnergyChange=\{\(taskId, energy\) => \{ void updateTask\(/);
+  assert.match(source, /onTaskNotesChange=\{\(taskId, notes\) => \{ void updateTask\(/);
 });
 
 test("successful Due acknowledgement keeps the optimistic row", async () => {

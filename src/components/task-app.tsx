@@ -580,7 +580,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.66";
+const APP_VERSION = "7.11.67";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -6567,7 +6567,14 @@ export function TaskApp() {
           onTaskActualSecondsChange={(taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); }}
           onTaskDueChange={(taskId, schedule, options) => {
             const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
-            return updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, manualAction ? { manualAction } : undefined);
+            let didPersist = false;
+            const didFullyReconcile = updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, {
+              ...(manualAction ? { manualAction } : {}),
+              onCanonicalMutationPersisted: () => {
+                didPersist = true;
+              },
+            });
+            return didFullyReconcile.then((didReconcile) => didPersist || didReconcile);
           }}
           onTaskEnergyChange={(taskId, energy) => { void updateTask(taskId, { energy }); }}
           onTaskEstimatedMinutesChange={(taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); }}
@@ -6980,7 +6987,14 @@ export function TaskApp() {
                   },
                   onSetDue: (taskId, schedule, options) => {
                     const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
-                    return updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, manualAction ? { manualAction } : undefined);
+                    let didPersist = false;
+                    const didFullyReconcile = updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, {
+                      ...(manualAction ? { manualAction } : {}),
+                      onCanonicalMutationPersisted: () => {
+                        didPersist = true;
+                      },
+                    });
+                    return didFullyReconcile.then((didReconcile) => didPersist || didReconcile);
                   },
                   onSetEnergy: (taskId, energy) => { void updateTask(taskId, { energy }); },
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
@@ -7141,7 +7155,14 @@ export function TaskApp() {
                   },
                   onSetDue: (taskId, schedule, options) => {
                     const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
-                    return updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, manualAction ? { manualAction } : undefined);
+                    let didPersist = false;
+                    const didFullyReconcile = updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, {
+                      ...(manualAction ? { manualAction } : {}),
+                      onCanonicalMutationPersisted: () => {
+                        didPersist = true;
+                      },
+                    });
+                    return didFullyReconcile.then((didReconcile) => didPersist || didReconcile);
                   },
                   onSetEnergy: (taskId, energy) => { void updateTask(taskId, { energy }); },
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
