@@ -57,9 +57,16 @@ import {
 } from "@/lib/health-fitness";
 import {
   buildActualMealEntryInputFromPlan,
+  clearCompletedHealthMealPlanPendingMutations,
+  clearHealthMealPlanPendingMutation,
   isHealthMealPlanConfirmEligible,
-  reconcileHealthMealPlans,
+  normalizeHealthMealPlanPendingMutations,
+  recordHealthMealPlanPendingDelete,
+  recordHealthMealPlanPendingUpsert,
+  replayHealthMealPlanPendingMutations,
   sortHealthMealPlans,
+  type HealthMealPlanPendingMutation,
+  type HealthMealPlanPendingMutationJournal,
 } from "@/lib/health-meal-planning";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
@@ -86,6 +93,11 @@ type HealthStateSnapshot = {
   waterEntries: HealthWaterEntry[];
   workouts: HealthWorkout[];
   weightEntries: HealthWeightEntry[];
+};
+
+type LocalHealthState = {
+  snapshot: HealthStateSnapshot;
+  mealPlanPendingMutations: HealthMealPlanPendingMutationJournal;
 };
 
 function buildEmptyState(userId: string): HealthStateSnapshot {
@@ -135,9 +147,9 @@ function readStoredJson<T>(key: string, fallback: T): T {
   }
 }
 
-function readLocalHealthState(userId: string) {
+function readLocalHealthState(userId: string): LocalHealthState {
   const emptyState = buildEmptyState(userId);
-  return {
+  const snapshot: HealthStateSnapshot = {
     awards: readStoredJson(storageKey(userId, "awards"), emptyState.awards),
     checkIns: readStoredJson(storageKey(userId, "checkins"), emptyState.checkIns),
     favorites: readStoredJson<HealthFoodLibraryItem[]>(storageKey(userId, "favorites"), emptyState.favorites)
@@ -155,7 +167,17 @@ function readLocalHealthState(userId: string) {
     waterEntries: readStoredJson(storageKey(userId, "water"), emptyState.waterEntries),
     workouts: sortHealthWorkouts(readStoredJson(storageKey(userId, "workouts"), emptyState.workouts)),
     weightEntries: readStoredJson(storageKey(userId, "weights"), emptyState.weightEntries),
-  } satisfies HealthStateSnapshot;
+  };
+  const mealPlanPendingMutations = normalizeHealthMealPlanPendingMutations(
+    readStoredJson<unknown>(storageKey(userId, "meal-plan-pending-mutations"), {}),
+  );
+  return {
+    snapshot: {
+      ...snapshot,
+      mealPlanEntries: replayHealthMealPlanPendingMutations(snapshot.mealPlanEntries, mealPlanPendingMutations, userId),
+    },
+    mealPlanPendingMutations,
+  };
 }
 
 function persistLocalHealthState(state: HealthStateSnapshot) {
@@ -193,6 +215,13 @@ function persistLocalHealthState(state: HealthStateSnapshot) {
   window.localStorage.setItem(storageKey(profile.user_id, "workouts"), JSON.stringify(workouts));
 }
 
+function persistHealthMealPlanPendingMutations(userId: string, journal: HealthMealPlanPendingMutationJournal) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(storageKey(userId, "meal-plan-pending-mutations"), JSON.stringify(journal));
+}
+
 function createLocalId(prefix: string) {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -226,6 +255,29 @@ export function useHealth(
   const healthFoodMutationRevisionRef = useRef(0);
   const workoutRemoteEnabledRef = useRef(true);
   const mealPlanRemoteEnabledRef = useRef(true);
+  const mealPlanPendingMutationsRef = useRef<HealthMealPlanPendingMutationJournal>({});
+
+  function recordMealPlanPendingMutation(mutation: HealthMealPlanPendingMutation) {
+    const currentJournal = mealPlanPendingMutationsRef.current;
+    const nextJournal = mutation.operation === "upsert"
+      ? recordHealthMealPlanPendingUpsert(currentJournal, mutation.plan)
+      : recordHealthMealPlanPendingDelete(currentJournal, mutation.planId);
+    mealPlanPendingMutationsRef.current = nextJournal;
+    if (userId) {
+      persistHealthMealPlanPendingMutations(userId, nextJournal);
+    }
+  }
+
+  function clearMealPlanPendingMutation(planId: string) {
+    const nextJournal = clearHealthMealPlanPendingMutation(mealPlanPendingMutationsRef.current, planId);
+    if (nextJournal === mealPlanPendingMutationsRef.current) {
+      return;
+    }
+    mealPlanPendingMutationsRef.current = nextJournal;
+    if (userId) {
+      persistHealthMealPlanPendingMutations(userId, nextJournal);
+    }
+  }
 
   function buildHealthSnapshot(
     snapshot: Omit<HealthStateSnapshot, "workouts" | "mealPlanEntries"> & { mealPlanEntries?: HealthMealPlanEntry[]; workouts?: HealthWorkout[] },
@@ -408,13 +460,15 @@ export function useHealth(
       setStorageMode("local");
       workoutRemoteEnabledRef.current = true;
       mealPlanRemoteEnabledRef.current = true;
+      mealPlanPendingMutationsRef.current = {};
       return;
     }
 
     if (!active) return;
 
     const localState = readLocalHealthState(userId);
-    applySnapshot(localState);
+    mealPlanPendingMutationsRef.current = localState.mealPlanPendingMutations;
+    applySnapshot(localState.snapshot);
 
     if (!client) {
       setStorageMode("local");
@@ -509,7 +563,7 @@ export function useHealth(
       }
 
       const remoteWorkouts = sortHealthWorkouts(workoutsResult.data ?? []);
-      const latestLocalWorkouts = healthSnapshotRef.current?.workouts ?? localState.workouts;
+      const latestLocalWorkouts = healthSnapshotRef.current?.workouts ?? localState.snapshot.workouts;
       const workoutRecovery = workoutsResult.error
         ? { mergedWorkouts: latestLocalWorkouts, unreconciledLocalWorkouts: [] }
         : reconcileHealthWorkouts(latestLocalWorkouts, remoteWorkouts);
@@ -530,26 +584,52 @@ export function useHealth(
         }
       }
 
-      const latestLocalMealPlans = healthSnapshotRef.current?.mealPlanEntries ?? localState.mealPlanEntries;
-      const mealPlanRecovery = mealPlanEntriesResult.error
-        ? { mergedMealPlans: latestLocalMealPlans, unreconciledLocalMealPlans: [] }
-        : reconcileHealthMealPlans(latestLocalMealPlans, mealPlanEntriesResult.data ?? []);
-
-      if (!mealPlanEntriesResult.error && mealPlanRecovery.unreconciledLocalMealPlans.length > 0) {
-        const { error: recoveryError } = await client
-          .from("adhdice_health_meal_plan_entries")
-          .upsert(
-            mealPlanRecovery.unreconciledLocalMealPlans.map((mealPlan) => ({ ...mealPlan, user_id: userId })),
-            { ignoreDuplicates: true, onConflict: "id" },
-          );
-        if (recoveryError) {
+      const pendingMealPlanMutations = mealPlanPendingMutationsRef.current;
+      const completedMealPlanMutations: { planId: string; mutation: HealthMealPlanPendingMutation }[] = [];
+      let mealPlanRecoveryError: { message: string } | null = null;
+      if (!mealPlanEntriesResult.error) {
+        for (const [planId, mutation] of Object.entries(pendingMealPlanMutations)) {
+          const result = mutation.operation === "upsert"
+            ? await client
+              .from("adhdice_health_meal_plan_entries")
+              .upsert({ ...mutation.plan, user_id: userId }, { onConflict: "id" })
+            : await client
+              .from("adhdice_health_meal_plan_entries")
+              .delete()
+              .eq("id", mutation.planId)
+              .eq("user_id", userId);
+          if (result.error) {
+            mealPlanRecoveryError ??= result.error;
+          } else {
+            completedMealPlanMutations.push({ planId, mutation });
+          }
+        }
+        const nextPendingMealPlanMutations = clearCompletedHealthMealPlanPendingMutations(
+          mealPlanPendingMutationsRef.current,
+          completedMealPlanMutations,
+        );
+        mealPlanPendingMutationsRef.current = nextPendingMealPlanMutations;
+        persistHealthMealPlanPendingMutations(userId, nextPendingMealPlanMutations);
+        if (mealPlanRecoveryError) {
           mealPlanRemoteEnabledRef.current = false;
           setMessage({
             tone: "warn",
-            text: "Meal Plan recovery could not finish. Local Meal Plans remain visible and saved locally; recovery will be retried.",
+            text: "Meal Plan recovery could not finish. Your local Meal Plan changes remain visible and will be retried.",
           });
         }
       }
+
+      const replayedMealPlans = mealPlanEntriesResult.error
+        ? localState.snapshot.mealPlanEntries
+        : replayHealthMealPlanPendingMutations(
+          replayHealthMealPlanPendingMutations(
+            mealPlanEntriesResult.data ?? [],
+            pendingMealPlanMutations,
+            userId,
+          ),
+          mealPlanPendingMutationsRef.current,
+          userId,
+        );
 
       if (!isActive) {
         return;
@@ -561,7 +641,7 @@ export function useHealth(
         favorites: (favoritesResult.data ?? []).map(normalizeHealthFoodLibraryItem),
         importAudits: importAuditsResult.data ?? [],
         mealEntries: mealEntriesResult.data ?? [],
-        mealPlanEntries: mealPlanEntriesResult.error ? localState.mealPlanEntries : mealPlanRecovery.mergedMealPlans,
+        mealPlanEntries: replayedMealPlans,
         metricEntries: metricEntriesResult.data ?? [],
         profile: normalizeHealthProfile(profileResult.data, userId),
         recipes: recipesResult.data ?? [],
@@ -883,6 +963,7 @@ export function useHealth(
     };
 
     let nextRow = localRow;
+    let persistedRemotely = false;
     if (client && storageMode === "remote" && mealPlanRemoteEnabledRef.current) {
       const { data, error } = await client
         .from("adhdice_health_meal_plan_entries")
@@ -898,7 +979,14 @@ export function useHealth(
         setMessage({ tone: "neutral", text: "Meal planning is saved locally until the 7.11.61 migration is applied." });
       } else {
         nextRow = data ?? localRow;
+        persistedRemotely = true;
       }
+    }
+
+    if (persistedRemotely) {
+      clearMealPlanPendingMutation(nextRow.id);
+    } else {
+      recordMealPlanPendingMutation({ operation: "upsert", plan: nextRow });
     }
 
     const nextSnapshot = buildHealthSnapshot({
@@ -932,6 +1020,7 @@ export function useHealth(
     const now = new Date().toISOString();
     const localRow: HealthMealPlanEntry = { ...currentEntry, ...input, updated_at: now };
     let nextRow = localRow;
+    let persistedRemotely = false;
     if (client && storageMode === "remote" && mealPlanRemoteEnabledRef.current) {
       const { data, error } = await client
         .from("adhdice_health_meal_plan_entries")
@@ -950,7 +1039,14 @@ export function useHealth(
         setMessage({ tone: "neutral", text: "Meal-plan edits are saved locally until the 7.11.61 migration is applied." });
       } else {
         nextRow = data ?? localRow;
+        persistedRemotely = true;
       }
+    }
+
+    if (persistedRemotely) {
+      clearMealPlanPendingMutation(nextRow.id);
+    } else {
+      recordMealPlanPendingMutation({ operation: "upsert", plan: nextRow });
     }
 
     applySnapshot(buildHealthSnapshot({
@@ -980,6 +1076,7 @@ export function useHealth(
       return false;
     }
 
+    let persistedRemotely = false;
     if (client && storageMode === "remote" && mealPlanRemoteEnabledRef.current) {
       const { error } = await client
         .from("adhdice_health_meal_plan_entries")
@@ -994,7 +1091,15 @@ export function useHealth(
         }
         mealPlanRemoteEnabledRef.current = false;
         setMessage({ tone: "neutral", text: "Meal-plan removal is local until the 7.11.61 migration is applied." });
+      } else {
+        persistedRemotely = true;
       }
+    }
+
+    if (persistedRemotely) {
+      clearMealPlanPendingMutation(entryId);
+    } else {
+      recordMealPlanPendingMutation({ operation: "delete", planId: entryId });
     }
 
     applySnapshot(buildHealthSnapshot({

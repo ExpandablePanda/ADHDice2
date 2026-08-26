@@ -6,9 +6,14 @@ import type { HealthMealPlanEntry, HealthMealFoodSnapshot, HealthMealEntry } fro
 import {
   buildActualMealEntryInputFromPlan,
   buildHealthMealPlanPayload,
+  clearCompletedHealthMealPlanPendingMutations,
+  clearHealthMealPlanPendingMutation,
   getActiveHealthMealPlans,
   isHealthMealPlanConfirmEligible,
-  reconcileHealthMealPlans,
+  recordHealthMealPlanPendingDelete,
+  recordHealthMealPlanPendingUpsert,
+  replayHealthMealPlanPendingMutations,
+  type HealthMealPlanPendingMutationJournal,
   sumHealthMealPlanNutritionForDate,
 } from "../src/lib/health-meal-planning.ts";
 import { sumMealNutritionForDate } from "../src/lib/health-utils.ts";
@@ -186,54 +191,123 @@ test("confirmed rows stop appearing as active plans and retain their audit ancho
 
 test("remote-only meal plans remain unchanged", () => {
   const remotePlans = [plan({ id: "remote-early", planned_time: "08:00" }), plan({ id: "remote-late", planned_time: "20:00" })];
-  const recovery = reconcileHealthMealPlans([], remotePlans);
-  assert.deepEqual(recovery.mergedMealPlans, remotePlans);
-  assert.deepEqual(recovery.unreconciledLocalMealPlans, []);
+  assert.deepEqual(replayHealthMealPlanPendingMutations(remotePlans, {}), remotePlans);
 });
 
-test("local-only meal plan is retained in the merged state", () => {
+test("locally cached meal plan absent remotely is not recreated without an explicit pending mutation", () => {
   const localPlan = plan({ id: "local-only" });
-  const recovery = reconcileHealthMealPlans([localPlan], []);
-  assert.deepEqual(recovery.mergedMealPlans, [localPlan]);
+  assert.deepEqual(replayHealthMealPlanPendingMutations([], {}), []);
+  assert.deepEqual(replayHealthMealPlanPendingMutations([], recordHealthMealPlanPendingDelete({}, localPlan.id)), []);
 });
 
-test("local-only meal plan is identified for recovery", () => {
+test("local fallback create records and replays a pending upsert when the remote row is absent", () => {
   const localPlan = plan({ id: "local-only" });
-  const recovery = reconcileHealthMealPlans([localPlan], []);
-  assert.deepEqual(recovery.unreconciledLocalMealPlans, [localPlan]);
+  const journal = recordHealthMealPlanPendingUpsert({}, localPlan);
+  assert.deepEqual(journal[localPlan.id], { operation: "upsert", plan: localPlan });
+  assert.deepEqual(replayHealthMealPlanPendingMutations([], journal), [localPlan]);
 });
 
-test("matching meal plan IDs are not duplicated", () => {
+test("local fallback edit records the latest desired row and repeated edits collapse by plan ID", () => {
+  const firstEdit = plan({ id: "same-id", food_name: "First Edit" });
+  const latestEdit = plan({ id: "same-id", food_name: "Latest Edit", calories: 450 });
+  const journal = recordHealthMealPlanPendingUpsert(
+    recordHealthMealPlanPendingUpsert({}, firstEdit),
+    latestEdit,
+  );
+  assert.deepEqual(Object.keys(journal), ["same-id"]);
+  assert.equal(replayHealthMealPlanPendingMutations([firstEdit], journal)[0]?.food_name, "Latest Edit");
+  assert.equal(replayHealthMealPlanPendingMutations([firstEdit], journal)[0]?.calories, 450);
+});
+
+test("matching remote IDs use the remote version when there is no pending mutation", () => {
   const localPlan = plan({ id: "same-id", food_name: "Stale Local" });
   const remotePlan = plan({ id: "same-id", food_name: "Canonical Remote" });
-  const recovery = reconcileHealthMealPlans([localPlan], [remotePlan]);
-  assert.deepEqual(recovery.unreconciledLocalMealPlans, []);
-  assert.equal(recovery.mergedMealPlans.length, 1);
+  assert.deepEqual(replayHealthMealPlanPendingMutations([remotePlan], {}), [remotePlan]);
+  assert.notEqual(localPlan.food_name, replayHealthMealPlanPendingMutations([remotePlan], {})[0]?.food_name);
 });
 
-test("remote version wins for a matching meal plan ID", () => {
-  const localPlan = plan({ id: "same-id", food_name: "Stale Local" });
-  const remotePlan = plan({ id: "same-id", food_name: "Canonical Remote" });
-  const recovery = reconcileHealthMealPlans([localPlan], [remotePlan]);
-  assert.deepEqual(recovery.mergedMealPlans, [remotePlan]);
+test("local fallback delete records a pending delete and supersedes an earlier pending upsert", () => {
+  const localPlan = plan({ id: "delete-me" });
+  const journal = recordHealthMealPlanPendingDelete(
+    recordHealthMealPlanPendingUpsert({}, localPlan),
+    localPlan.id,
+  );
+  assert.deepEqual(journal[localPlan.id], { operation: "delete", planId: localPlan.id });
+  assert.deepEqual(replayHealthMealPlanPendingMutations([localPlan], journal), []);
 });
 
-test("multiple local-only meal plans are identified for recovery", () => {
-  const localPlans = [
-    plan({ id: "local-late", planned_date: "2026-08-27", planned_time: "20:00" }),
-    plan({ id: "local-early", planned_date: "2026-08-26", planned_time: "08:00" }),
+test("successful remote mutation clears its stale pending mutation", () => {
+  const localPlan = plan({ id: "clear-me" });
+  const journal = recordHealthMealPlanPendingUpsert({}, localPlan);
+  assert.deepEqual(clearHealthMealPlanPendingMutation(journal, localPlan.id), {});
+});
+
+test("successful recovery clears only successful pending operations", () => {
+  const successfulPlan = plan({ id: "success" });
+  const failedPlan = plan({ id: "failed" });
+  const journal: HealthMealPlanPendingMutationJournal = recordHealthMealPlanPendingUpsert(
+    recordHealthMealPlanPendingUpsert({}, successfulPlan),
+    failedPlan,
+  );
+  const remaining = clearCompletedHealthMealPlanPendingMutations(journal, [
+    { planId: successfulPlan.id, mutation: journal[successfulPlan.id]! },
+  ]);
+  assert.deepEqual(Object.keys(remaining), [failedPlan.id]);
+});
+
+test("failed recovery preserves its pending operation and intended local-visible state", () => {
+  const desiredPlan = plan({ id: "failed", food_name: "Keep Local Intent" });
+  const journal = recordHealthMealPlanPendingUpsert({}, desiredPlan);
+  const afterFailedRecovery = clearCompletedHealthMealPlanPendingMutations(journal, []);
+  assert.deepEqual(afterFailedRecovery, journal);
+  assert.deepEqual(replayHealthMealPlanPendingMutations([], afterFailedRecovery), [desiredPlan]);
+});
+
+test("pending create, edit, and delete replay against absent or existing remote rows", () => {
+  const pendingCreate = plan({ id: "pending-create", food_name: "Created" });
+  const pendingEdit = plan({ id: "pending-edit", food_name: "Edited" });
+  const pendingDelete = plan({ id: "pending-delete" });
+  const remotePlans = [
+    plan({ id: "pending-edit", food_name: "Remote Before Edit" }),
+    pendingDelete,
   ];
-  const recovery = reconcileHealthMealPlans(localPlans, []);
-  assert.deepEqual(recovery.unreconciledLocalMealPlans, localPlans);
+  const journal = recordHealthMealPlanPendingDelete(
+    recordHealthMealPlanPendingUpsert(
+      recordHealthMealPlanPendingUpsert({}, pendingCreate),
+      pendingEdit,
+    ),
+    pendingDelete.id,
+  );
+  assert.deepEqual(replayHealthMealPlanPendingMutations(remotePlans, journal).map((entry) => entry.id), ["pending-create", "pending-edit"]);
+  assert.equal(replayHealthMealPlanPendingMutations(remotePlans, journal).find((entry) => entry.id === "pending-edit")?.food_name, "Edited");
 });
 
-test("meal plan reconciliation preserves normal planned sort order", () => {
+test("remote deletion stays deleted while an explicit pending create remains recoverable", () => {
+  const pendingCreate = plan({ id: "pending-create", planned_time: "08:00" });
+  const remoteDeleted = plan({ id: "remote-deleted", planned_time: "09:00" });
+  const replayed = replayHealthMealPlanPendingMutations(
+    [],
+    recordHealthMealPlanPendingUpsert({}, pendingCreate),
+  );
+  assert.deepEqual(replayed.map((entry) => entry.id), [pendingCreate.id]);
+  assert.equal(replayHealthMealPlanPendingMutations([], {}).some((entry) => entry.id === remoteDeleted.id), false);
+});
+
+test("meal plan pending replay preserves user scope and normal planned sort order", () => {
   const localPlans = [
-    plan({ id: "local-late", planned_date: "2026-08-27", planned_time: "20:00" }),
-    plan({ id: "local-early", planned_date: "2026-08-26", planned_time: "08:00" }),
+    plan({ id: "local-late", planned_date: "2026-08-27", planned_time: "20:00", user_id: "other-user" }),
+    plan({ id: "local-early", planned_date: "2026-08-26", planned_time: "08:00", user_id: "other-user" }),
   ];
-  const recovery = reconcileHealthMealPlans(localPlans, []);
-  assert.deepEqual(recovery.mergedMealPlans.map((entry) => entry.id), ["local-early", "local-late"]);
+  const replayed = replayHealthMealPlanPendingMutations(
+    [],
+    recordHealthMealPlanPendingUpsert(
+      recordHealthMealPlanPendingUpsert({}, localPlans[0]),
+      localPlans[1],
+    ),
+    "user-1",
+  );
+  assert.deepEqual(replayed.map((entry) => entry.id), ["local-early", "local-late"]);
+  assert.deepEqual(new Set(replayed.map((entry) => entry.user_id)), new Set(["user-1"]));
 });
 
 test("Health production wiring keeps meal plans out of actual and achievement inputs", () => {
@@ -249,22 +323,41 @@ test("Health production wiring keeps meal plans out of actual and achievement in
   assert.match(pageSource, /selectedPlannedNutrition/);
 });
 
-test("Meal Plan hydration reconciles current local rows before applying a successful remote snapshot", () => {
-  const recoveryStart = hookSource.indexOf("const latestLocalMealPlans =");
+test("Meal Plan fallback writes use the separate per-user pending journal and remote success clears it", () => {
+  assert.match(hookSource, /storageKey\(userId, "meal-plan-pending-mutations"\)/);
+  assert.match(hookSource, /persistHealthMealPlanPendingMutations\(userId, nextJournal\)/);
+  assert.match(hookSource, /recordMealPlanPendingMutation\(\{ operation: "upsert", plan: nextRow \}\)/);
+  assert.match(hookSource, /recordMealPlanPendingMutation\(\{ operation: "delete", planId: entryId \}\)/);
+  assert.match(hookSource, /clearMealPlanPendingMutation\(nextRow\.id\)/);
+  assert.match(hookSource, /clearMealPlanPendingMutation\(entryId\)/);
+  assert.match(hookSource, /\.insert\(\{ \.\.\.input, user_id: userId \}\)/);
+  assert.match(hookSource, /\.update\(input\)[\s\S]*?\.eq\("id", entryId\)[\s\S]*?\.eq\("user_id", userId\)/);
+  assert.match(hookSource, /\.delete\(\)[\s\S]*?\.eq\("id", entryId\)[\s\S]*?\.eq\("user_id", profile\.user_id\)/);
+});
+
+test("Meal Plan hydration replays only explicit pending mutations before applying a successful remote snapshot", () => {
+  const recoveryStart = hookSource.indexOf("const pendingMealPlanMutations =");
   const recoveryEnd = hookSource.indexOf("const remoteSnapshot =", recoveryStart);
   const recoverySection = hookSource.slice(recoveryStart, recoveryEnd);
-  assert.match(recoverySection, /reconcileHealthMealPlans\(latestLocalMealPlans, mealPlanEntriesResult\.data \?\? \[\]\)/);
-  assert.match(recoverySection, /\.from\("adhdice_health_meal_plan_entries"\)[\s\S]*?\.upsert\([\s\S]*?mealPlanRecovery\.unreconciledLocalMealPlans/);
-  assert.match(hookSource, /mealPlanEntries: mealPlanEntriesResult\.error \? localState\.mealPlanEntries : mealPlanRecovery\.mergedMealPlans/);
+  assert.match(recoverySection, /Object\.entries\(pendingMealPlanMutations\)/);
+  assert.match(recoverySection, /mutation\.operation === "upsert"/);
+  assert.match(recoverySection, /\.upsert\(\{ \.\.\.mutation\.plan, user_id: userId \}/);
+  assert.match(recoverySection, /\.delete\(\)[\s\S]*?\.eq\("id", mutation\.planId\)[\s\S]*?\.eq\("user_id", userId\)/);
+  assert.match(recoverySection, /clearCompletedHealthMealPlanPendingMutations/);
+  assert.match(recoverySection, /persistHealthMealPlanPendingMutations\(userId, nextPendingMealPlanMutations\)/);
+  assert.match(recoverySection, /replayHealthMealPlanPendingMutations/);
+  assert.doesNotMatch(recoverySection, /latestLocalMealPlans|unreconciledLocalMealPlans|reconcileHealthMealPlans/);
+  assert.match(hookSource, /mealPlanEntries: replayedMealPlans/);
 });
 
 test("Meal Plan recovery failure keeps local rows visible and retries on later hydration", () => {
-  const recoveryStart = hookSource.indexOf("const latestLocalMealPlans =");
+  const recoveryStart = hookSource.indexOf("const pendingMealPlanMutations =");
   const recoveryEnd = hookSource.indexOf("const remoteSnapshot =", recoveryStart);
   const recoverySection = hookSource.slice(recoveryStart, recoveryEnd);
-  assert.match(recoverySection, /if \(recoveryError\) \{[\s\S]*?mealPlanRemoteEnabledRef\.current = false[\s\S]*?Local Meal Plans remain visible and saved locally[\s\S]*?retried/);
+  assert.match(recoverySection, /if \(mealPlanRecoveryError\) \{[\s\S]*?mealPlanRemoteEnabledRef\.current = false[\s\S]*?local Meal Plan changes remain visible[\s\S]*?retried/);
+  assert.match(recoverySection, /clearCompletedHealthMealPlanPendingMutations\([\s\S]*?mealPlanPendingMutationsRef\.current/);
   assert.match(hookSource, /mealPlanRemoteEnabledRef\.current = !mealPlanEntriesResult\.error/);
-  assert.match(hookSource, /mealPlanEntries: mealPlanEntriesResult\.error \? localState\.mealPlanEntries : mealPlanRecovery\.mergedMealPlans/);
+  assert.match(hookSource, /mealPlanEntries: replayedMealPlans/);
 });
 
 test("7.11.61 migration isolates the table, RLS, and atomic idempotent confirmation", () => {

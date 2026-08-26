@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.70`.
+- Current working app version: `7.11.71`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,18 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-26 7.11.71 Explicit Meal Plan pending mutation recovery
+
+The 7.11.70 source review found that absence-based Meal Plan recovery was
+ambiguous across devices: an arbitrary local-only row could be either an
+unsynced create or stale cache for a legitimate remote deletion. Version
+7.11.71 replaces that rule with a per-user, Meal-Plan-specific pending mutation
+journal. Local fallback create/edit/delete operations record explicit upsert or
+delete intent; successful remote hydration replays only those journal entries,
+clears only completed operations, and keeps failed local intent visible for
+retry. Unmarked local-only cache now yields to successful remote authority.
+No SQL or migration changed or was applied.
 
 ## 2026-08-26 7.11.70 Meal Plan recovery
 
