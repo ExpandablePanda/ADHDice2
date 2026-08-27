@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.76`.
+- Current working app version: `7.11.77`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,24 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-27 7.11.77 Task State schedule-backfill Achievement deferral
+
+Live QA task AB3 confirmed that Daily schedule backdating could return Edge
+422 after roughly 9–10 seconds because the canonical Task State RPC inserted
+each automatic Missed fact separately while the History trigger performed a
+full Achievement evaluation for every row. The transaction rolled back
+cleanly; this was a performance timeout, not a recurrence or business-rule
+rejection. The authored-only
+`supabase/patch_task_state_achievement_deferral_7_11_77.sql` reuses the
+established `defer_rollover_achievement_evaluation_7_1_0.sql` architecture:
+it keeps per-row Achievement source capture and Step-set refresh active,
+defers only repeated full evaluation with a transaction-local setting, clears
+that setting, then runs one deterministic command-scoped strict final
+evaluation and raises on any non-success status. Automatic Missed generation,
+History, Calendar, recurrence, streaks, rewards, and `statement_timeout` are
+unchanged. The migration remains authored-only pending source review; no SQL
+was applied and no Edge source or deployment changed.
 
 ## 2026-08-27 7.11.76 Task State client reconciliation
 

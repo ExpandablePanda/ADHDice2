@@ -241,6 +241,8 @@ declare
   v_reward_streak integer := 0;
   v_reward_units_snapshot integer;
   v_reward_streak_fact record;
+  v_achievement_evaluation jsonb;
+  v_achievement_operation_id uuid;
   v_operation_is_new boolean := false;
 begin
   -- Only the trusted Edge Function's secret-key backend role may invoke this
@@ -369,8 +371,9 @@ begin
       using errcode = '42501';
   end if;
 
-  if v_command_type <> 'reconcile_rollover' and v_automatic_history_facts <> '[]'::jsonb then
-    raise exception 'Only trusted rollover may create automatic History facts.'
+  if v_command_type not in ('reconcile_rollover', 'set_due_date', 'set_repeat')
+     and v_automatic_history_facts <> '[]'::jsonb then
+    raise exception 'Only trusted schedule replay or rollover may create automatic History facts.'
       using errcode = '42501';
   end if;
   if v_command_type <> 'set_outcome' and v_automatic_history_delete_ids <> '[]'::jsonb then
@@ -1226,6 +1229,10 @@ begin
     end if;
   end if;
 
+  if jsonb_array_length(v_automatic_history_facts) > 0 then
+    perform set_config('adhdice.achievement_deferred_user_id', p_user_id::text, true);
+  end if;
+
   for v_automatic_history in
     select value from jsonb_array_elements(v_automatic_history_facts)
   loop
@@ -1275,6 +1282,23 @@ begin
     end if;
     v_automatic_history_ids := v_automatic_history_ids || to_jsonb(v_history_row.id);
   end loop;
+
+  if jsonb_array_length(v_automatic_history_facts) > 0 then
+    -- Keep the deferral transaction-local and clear it before the one strict
+    -- final evaluation. Any failure still aborts this command transaction.
+    perform set_config('adhdice.achievement_deferred_user_id', '', true);
+    v_achievement_operation_id := md5('task-state-command-achievement-evaluation:' || p_user_id::text || ':' || v_command_id::text)::uuid;
+    v_achievement_evaluation := public.adhdice_evaluate_achievements(
+      p_user_id,
+      v_achievement_operation_id,
+      'immediate'
+    );
+    if coalesce(v_achievement_evaluation->>'status', '') not in ('completed', 'inactive') then
+      raise exception 'Final Achievement evaluation failed with status % and code %.',
+        coalesce(v_achievement_evaluation->>'status', 'missing'),
+        coalesce(v_achievement_evaluation->>'error_code', 'unknown');
+    end if;
+  end if;
 
   if v_calendar_override <> '{}'::jsonb then
     -- Replaceable instructions retire the prior active row in this same
