@@ -29,7 +29,7 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { AdhdChip, AdhdDropdownPanel, AdhdIconButton } from "@/components/ui-system";
-import { getSelectableTaskStatuses } from "@/lib/task-complete";
+import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import type { TaskListDefinition, TaskListId, TaskListMembership } from "@/lib/task-lists";
 
 type LinkedTaskOption = Task;
@@ -257,7 +257,7 @@ function PathLinkedTaskPill({
 }) {
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   const statusMenuRef = useRef<HTMLSpanElement | null>(null);
-  const statusOptions = useMemo(() => getSelectableTaskStatuses(task), [task]);
+  const statusOptions = useMemo(() => getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }), [task]);
 
   useEffect(() => {
     if (!isStatusMenuOpen) {
@@ -341,7 +341,7 @@ function PathTaskStatusControl({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLSpanElement | null>(null);
-  const statusOptions = useMemo(() => getSelectableTaskStatuses(task), [task]);
+  const statusOptions = useMemo(() => getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }), [task]);
 
   useEffect(() => {
     if (!isOpen) {

@@ -10,7 +10,7 @@ import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import { SortableList } from "@/components/ui/sortable-list";
 import { useHomeTodoState } from "@/hooks/useHomeTodoState";
 import { TaskStatusCircleRail, formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
-import { getSelectableTaskStatuses } from "@/lib/task-complete";
+import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import type { Task, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskDraft } from "@/components/task-app/task-editor-model";
@@ -222,7 +222,7 @@ export function HomePage({
                   onSetStatus(task, status);
                   setStatusMenuTaskId(null);
                 }}
-                options={getSelectableTaskStatuses(task).map((status) => ({ label: formatTaskStatusLabel(status), value: status }))}
+                options={getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus }).map((status) => ({ label: formatTaskStatusLabel(status), value: status }))}
                 statusLabelPrefix="Set task status to"
                 wrap={false}
               />

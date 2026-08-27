@@ -20,7 +20,7 @@ import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
-import { getSelectableTaskDisplayStatuses } from "@/lib/task-complete";
+import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
@@ -1599,7 +1599,9 @@ function StepsCardPreview({
                           currentStatus={displayStatus}
                           onSetStatus={(status) => {
                             if (status === "delayed") {
-                              if (onDelayTaskUntil) onOpenQuickPanel(item.id, "delay");
+                              if (canTaskDelay({ dueOn: item.dueOn, status: displayStatus }) && onDelayTaskUntil) {
+                                onOpenQuickPanel(item.id, "delay");
+                              }
                               return;
                             }
                             if (status === "unscheduled") {
@@ -1608,7 +1610,7 @@ function StepsCardPreview({
                               onSetStatus?.(item.id, status, childTask, [item.id]);
                             }
                           }}
-                          options={getSelectableTaskDisplayStatuses(childTask ?? { repeat_frequency: item.repeat }).map((status) => ({
+                          options={getSelectableTaskDisplayStatusesForTask({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: displayStatus }).map((status) => ({
                             label: formatTaskStatusLabel(status),
                             value: status,
                           }))}
@@ -3346,7 +3348,9 @@ function TasksSimpleList({
                     onSetStatus={(status) => {
                       if (status === "delayed") {
                         setRowContextMenu(null);
-                        if (tableProps.onDelayTaskUntil) openQuickPanel(task.id, "delay");
+                        if (canTaskDelay({ dueOn: task.due_on, status: displayStatus }) && tableProps.onDelayTaskUntil) {
+                          openQuickPanel(task.id, "delay");
+                        }
                         return;
                       }
                       setRowContextMenu(null);
@@ -3357,7 +3361,7 @@ function TasksSimpleList({
                         tableProps.onSetStatus?.(task.id, status, task, queueMeasuredListStatusScrollAnchor(task.id));
                       }
                     }}
-                    options={getSelectableTaskDisplayStatuses(task).map((status) => ({
+                    options={getSelectableTaskDisplayStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus }).map((status) => ({
                       label: formatTaskStatusLabel(status),
                       value: status,
                     }))}

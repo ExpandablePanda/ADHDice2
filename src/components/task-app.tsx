@@ -267,6 +267,7 @@ import {
 } from "@/lib/stable-task-projection";
 import {
   buildCompleteHistoryPayload,
+  canTaskDelay,
   canTaskBeMarkedComplete,
   COMPLETE_BLOCKED_MESSAGE,
   getTaskCompleteConfirmationDescription,
@@ -580,7 +581,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.75";
+const APP_VERSION = "7.11.76";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -4533,14 +4534,7 @@ export function TaskApp() {
 
   const delayTaskToDate = useCallback(async (taskId: string, nextDueOn: string | null) => {
     const task = tasks.find((entry) => entry.id === taskId);
-    if (
-      !task
-      || task.status === "archived"
-      || task.status === "complete"
-      || task.status === "did_my_best"
-      || task.status === "done"
-      || task.status === "trashed"
-    ) {
+    if (!task || !canTaskDelay({ dueOn: task.due_on, status: task.status })) {
       return false;
     }
 

@@ -51,7 +51,7 @@ import {
   renderTaskStatusCircle,
   renderTaskStatusGlyph,
 } from "@/components/task-app/task-status-ui";
-import { getSelectableTaskDisplayStatusesForRepeatFrequency } from "@/lib/task-complete";
+import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
 import { TaskHierarchyChevronButton } from "@/components/task-app/task-hierarchy-chevron-button";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import {
@@ -185,6 +185,7 @@ export type TaskRowContextMenuQuickEditItem = {
 };
 export type PrototypeTaskSubtask = {
   children: PrototypeTaskSubtask[];
+  dueOn: string | null;
   id: string;
   status: TaskDisplayStatus;
   title: string;
@@ -303,6 +304,7 @@ function findPreviewAncestorIdsForTask(
 function buildPrototypeSubtaskSignature(subtasks: PrototypeTaskSubtask[]): string {
   return JSON.stringify(subtasks.map((subtask) => ({
     children: buildPrototypeSubtaskSignature(subtask.children),
+    dueOn: subtask.dueOn,
     id: subtask.id,
     status: subtask.status,
     title: subtask.title,
@@ -938,7 +940,10 @@ function InlineSubtaskEditor({
                   onSetStatus?.(subtask.id, status);
                   setOpenStatusPickerSubtaskId(null);
                 }}
-                options={TASK_SUBTASK_STATUS_OPTIONS}
+                options={TASK_SUBTASK_STATUS_OPTIONS.filter((option) => (
+                  option.value !== "delayed"
+                  || canTaskDelay({ dueOn: subtask.dueOn, status: subtask.status })
+                ))}
                 statusLabelPrefix="Set step status to"
               />
             ) : null}
@@ -1256,6 +1261,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     subtasks: [
       {
         children: [],
+        dueOn: offsetDate(0),
         id: "subtask-v2-1",
         status: "pending",
         title: "Open the brief",
@@ -1299,11 +1305,13 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
         children: [
           {
             children: [],
+            dueOn: offsetDate(1),
             id: "subtask-v2-2a",
             status: "pending",
             title: "Share next draft",
           },
         ],
+        dueOn: offsetDate(1),
         id: "subtask-v2-2",
         status: "done",
         title: "Collect client notes",
@@ -4472,13 +4480,7 @@ export function TaskManagementTableV2({
   }
 
   function canDelayTask(task: PrototypeTaskRow) {
-    return Boolean(
-      task.status !== "archived"
-      && task.status !== "complete"
-      && task.status !== "did_my_best"
-      && task.status !== "done"
-      && task.status !== "trashed",
-    );
+    return canTaskDelay({ dueOn: task.dueOn, status: task.status });
   }
 
   function clearStatusRailLongPress() {
@@ -5315,7 +5317,7 @@ export function TaskManagementTableV2({
     }
 
     if (overlayMode === "status") {
-      return getSelectableTaskDisplayStatusesForRepeatFrequency(task.repeat).map((status, optionIndex) => (
+      return getSelectableTaskDisplayStatusesForTask({ dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status }).map((status, optionIndex) => (
         <button
           className={inlineAccordionButtonClass()}
           key={`${status || "status-option"}-${optionIndex}`}
@@ -6655,7 +6657,7 @@ export function TaskManagementTableV2({
                     }
                   setTaskDisplayStatus(task.id, status);
                   }}
-                  options={getSelectableTaskDisplayStatusesForRepeatFrequency(task.repeat).map((status) => ({
+                  options={getSelectableTaskDisplayStatusesForTask({ dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status }).map((status) => ({
                     label: formatTaskStatusLabel(status),
                     value: status,
                   }))}
@@ -6732,7 +6734,7 @@ export function TaskManagementTableV2({
                   }
                   setTaskDisplayStatus(task.id, status);
                 }}
-                options={getSelectableTaskDisplayStatusesForRepeatFrequency(task.repeat).map((status) => ({
+                options={getSelectableTaskDisplayStatusesForTask({ dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status }).map((status) => ({
                   label: formatTaskStatusLabel(status),
                   value: status,
                 }))}
@@ -7583,7 +7585,7 @@ export function TaskManagementTableV2({
                     onPointerDown={stopRowActionPointerEvent}
                   >
                     <div className="flex flex-wrap gap-1.5" data-step-row-status-icons={item.id}>
-                      {getSelectableTaskDisplayStatusesForRepeatFrequency(item.repeat).map((status) => (
+                      {getSelectableTaskDisplayStatusesForTask({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status }).map((status) => (
                         <button
                           aria-label={`Set step status to ${formatTaskStatusLabel(status)}`}
                           className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${item.status === status ? "" : "opacity-78 hover:opacity-100"}`}
@@ -7742,7 +7744,7 @@ export function TaskManagementTableV2({
                   }
                   setTaskDisplayStatus(item.id, status);
                 }}
-                options={getSelectableTaskDisplayStatusesForRepeatFrequency(item.repeat).map((status) => ({
+                options={getSelectableTaskDisplayStatusesForTask({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status }).map((status) => ({
                   label: formatTaskStatusLabel(status),
                   value: status,
                 }))}
@@ -9434,7 +9436,7 @@ export function TaskManagementTableV2({
                 } else if (metadataPanelId === "status") {
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
-                      {getSelectableTaskDisplayStatusesForRepeatFrequency(metadataTask.repeat).map((status, optionIndex) => (
+                      {getSelectableTaskDisplayStatusesForTask({ dueOn: metadataTask.dueOn, repeatFrequency: metadataTask.repeat, status: metadataTask.status }).map((status, optionIndex) => (
                         <TaskTableChipButton className="gap-1.5" key={`${status || "status-option"}-${optionIndex}`} onClick={() => {
                           if (status === "delayed") {
                             if (canDelayTask(metadataTask)) {
@@ -10146,7 +10148,7 @@ export function TaskManagementTableV2({
                     ) : null}
                     {overlayMode !== "energy" ? (
                     <div className={`${overlayMode === "status" ? "" : "mt-4"} flex flex-wrap gap-2`}>
-                      {getSelectableTaskDisplayStatusesForRepeatFrequency(selectedTask.repeat).map((status, optionIndex) => (
+                      {getSelectableTaskDisplayStatusesForTask({ dueOn: selectedTask.dueOn, repeatFrequency: selectedTask.repeat, status: selectedTask.status }).map((status, optionIndex) => (
                         <TaskTableChipButton
                           className="gap-1.5"
                           key={`${status || "status-option"}-${optionIndex}`}

@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 
 import type { ScratchNote, ScratchNoteStatus, ScratchNoteTaskLink, Task } from "@/lib/database.types";
 import type { ScratchNoteDraft } from "@/hooks/useScratchNotes";
-import { getSelectableTaskStatuses } from "@/lib/task-complete";
+import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import {
   buildScratchTaskLinkToken,
   extractScratchSlashCommand,
@@ -75,7 +75,7 @@ function ScratchTaskPill({
   task: Task;
 }) {
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
-  const statusOptions = getSelectableTaskStatuses(task);
+  const statusOptions = getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status });
 
   return (
     <span className="relative inline-flex align-middle">

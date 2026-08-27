@@ -56,6 +56,44 @@ export function getSelectableTaskDisplayStatusesForRepeatFrequency(repeatFrequen
   return [...getSelectableTaskStatusesForRepeatFrequency(repeatFrequency), "unscheduled"];
 }
 
+export function canTaskDelay({
+  dueOn,
+  status,
+}: {
+  dueOn: string | null | undefined;
+  status: TaskDisplayStatus;
+}) {
+  return Boolean(dueOn)
+    && status !== "unscheduled"
+    && status !== "archived"
+    && status !== "complete"
+    && status !== "did_my_best"
+    && status !== "done"
+    && status !== "trashed";
+}
+
+export function getSelectableTaskStatusesForTask({
+  dueOn,
+  repeatFrequency,
+  status,
+}: {
+  dueOn: string | null | undefined;
+  repeatFrequency: TaskRepeatFrequency;
+  status: TaskDisplayStatus;
+}) {
+  return getSelectableTaskStatusesForRepeatFrequency(repeatFrequency).filter((nextStatus) => (
+    nextStatus !== "delayed" || canTaskDelay({ dueOn, status })
+  ));
+}
+
+export function getSelectableTaskDisplayStatusesForTask(input: {
+  dueOn: string | null | undefined;
+  repeatFrequency: TaskRepeatFrequency;
+  status: TaskDisplayStatus;
+}) {
+  return [...getSelectableTaskStatusesForTask(input), "unscheduled" as const];
+}
+
 export function getSelectableTaskDisplayStatuses(task: Pick<Task, "repeat_frequency">) {
   return getSelectableTaskDisplayStatusesForRepeatFrequency(task.repeat_frequency);
 }

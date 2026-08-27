@@ -3,11 +3,12 @@ import test from "node:test";
 
 import { useTaskUpdateAction } from "../src/hooks/useTaskUpdateAction.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
-import type { Task } from "../src/lib/database.types.ts";
+import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import { loadCanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 import type { TaskStateRuntimeExecutionResult } from "../src/lib/task-state-runtime-executor.ts";
+import { buildTaskHistoryStreakSummary } from "../src/lib/task-history-streak-summaries.ts";
 
 const userId = "user-1";
 const taskId = "task-boundary-reconcile";
@@ -171,6 +172,9 @@ test("canonical creation projection survives metadata and exact committed schedu
       callbackEvents.push("schedule-reconciliation");
       return committedBoundaries.get(boundaryId) ?? null;
     },
+    loadTaskHistoryForTasks: async () => ({
+      [taskId]: { error: null, history: [], status: "ready" as const },
+    }),
     onTasksCompleted: async () => {},
     routeTask: () => {},
     setMessage: (message) => {
@@ -233,6 +237,198 @@ test("canonical creation projection survives metadata and exact committed schedu
   assert.equal(localTasks[0]?.due_on, null);
   assert.equal(localTasks[0]?.repeat_frequency, "none");
   assert.equal(messages.length, 0);
+});
+
+test("canonical Due and Repeat commits reload fresh History before immediate streak reconciliation", async () => {
+  const automaticMissed: TaskHistory = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-08-01T00:00:00.000Z",
+    entry_date: "2026-08-01",
+    event_type: "status",
+    id: "automatic-missed-after-schedule-replay",
+    occurrence_due_on: "2026-08-01",
+    occurrence_key: `task:${taskId}:occurrence:2026-08-01`,
+    canonical_fact_id: "automatic-missed-after-schedule-replay",
+    canonical_provenance_kind: "reconciliation",
+    recurrence_authoritative: true,
+    status: "missed",
+    task_id: taskId,
+    updated_at: "2026-08-01T00:00:00.000Z",
+    user_id: userId,
+    was_completed: false,
+  };
+  const initialBoundary = boundary({
+    id: "schedule-history-initial",
+    schedule_model: "one_time",
+    one_time_due_on: "2026-08-03",
+    prospective_only: false,
+  });
+  const dueBoundary = boundary({
+    id: "schedule-history-due",
+    boundary_type: "due_date_change",
+    schedule_model: "one_time",
+    one_time_due_on: "2026-08-01",
+    prospective_only: false,
+    prior_boundary_id: initialBoundary.id,
+    source: "set_due_date",
+  });
+  const repeatBoundary = boundary({
+    id: "schedule-history-repeat",
+    boundary_type: "repeat_change",
+    schedule_model: "fixed",
+    repeat_frequency: "weekly",
+    repeat_days_of_week: [6],
+    anchor_date: "2026-08-01",
+    anchor_kind: "user_selected",
+    anchor_confidence: "proven",
+    prospective_only: false,
+    prior_boundary_id: dueBoundary.id,
+    source: "set_repeat",
+  });
+  const localTasks = [{ ...canonicalTask(initialBoundary), due_on: "2026-08-03" } as Task];
+  const events: string[] = [];
+  const historyCallbacks: TaskHistory[][] = [];
+  const taskCallbacks: Task[] = [];
+  const historyReloads: string[][] = [];
+
+  const update = useTaskUpdateAction({
+    canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => {
+      events.push("command");
+      const nextBoundary = action.actionType === "set_due_date" ? dueBoundary : repeatBoundary;
+      return {
+        success: true,
+        task: {
+          ...currentTask,
+          ...(action.actionType === "set_due_date"
+            ? { due_on: "2026-08-01" }
+            : { repeat_frequency: "weekly", repeat_days_of_week: [6] }),
+          canonical_revision: currentTask.canonical_revision + 1,
+        },
+        response: commandResponse(nextBoundary.id, action.expectedRevision),
+      };
+    },
+    currentDayKey: "2026-08-05",
+    loadCanonicalScheduleBoundary: async (_taskId, boundaryId) => {
+      events.push("schedule-reload");
+      return boundaryId === dueBoundary.id ? dueBoundary : repeatBoundary;
+    },
+    loadTaskHistoryForTasks: async (taskIds) => {
+      historyReloads.push(taskIds);
+      events.push(`history-reload:${taskIds.join(",")}`);
+      return {
+        [taskId]: {
+          error: null,
+          history: historyReloads.length === 1 ? [automaticMissed] : [],
+          status: "ready" as const,
+        },
+      };
+    },
+    onTaskHistoryMutation: (_taskId, history, nextTask) => {
+      events.push("streak-reconciliation");
+      historyCallbacks.push(history);
+      if (nextTask) taskCallbacks.push(nextTask);
+    },
+    onTasksCompleted: async () => {},
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: (updater) => localTasks.splice(0, localTasks.length, ...(typeof updater === "function" ? updater(localTasks) : updater)),
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    taskHistory: [automaticMissed],
+    tasks: localTasks,
+    timezone: "UTC",
+    updateTaskRowWithLegacyEnergyFallback: async () => { throw new Error("Legacy fallback must not run."); },
+  });
+
+  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-01" }), true);
+  assert.equal(await update.updateTask(taskId, { repeat_frequency: "weekly", repeat_days_of_week: [6] }), true);
+  assert.deepEqual(events, [
+    "command", "schedule-reload", `history-reload:${taskId}`, "streak-reconciliation",
+    "command", "schedule-reload", `history-reload:${taskId}`, "streak-reconciliation",
+  ]);
+  assert.deepEqual(historyCallbacks[0], [automaticMissed]);
+  assert.deepEqual(historyCallbacks[1], []);
+  assert.equal(taskCallbacks[0]?.canonical_schedule_boundary?.id, dueBoundary.id);
+  assert.equal(taskCallbacks[1]?.canonical_schedule_boundary?.id, repeatBoundary.id);
+  assert.equal(buildTaskHistoryStreakSummary(taskCallbacks[0]!, historyCallbacks[0]!, "2026-08-05", { timezone: "UTC", now: "2026-08-05T12:00:00.000Z" }).missedStreak, 1);
+  assert.equal(buildTaskHistoryStreakSummary(taskCallbacks[1]!, historyCallbacks[1]!, "2026-08-05", { timezone: "UTC", now: "2026-08-05T12:00:00.000Z" }).missedStreak, 0);
+});
+
+test("backdating a canonical Due commit immediately recalculates the current streak from fresh History", async () => {
+  const initialBoundary = boundary({
+    id: "current-streak-initial",
+    schedule_model: "one_time",
+    one_time_due_on: "2026-08-10",
+    prospective_only: false,
+  });
+  const committedBoundary = boundary({
+    id: "current-streak-backdated",
+    boundary_type: "due_date_change",
+    schedule_model: "one_time",
+    one_time_due_on: "2026-08-05",
+    prospective_only: false,
+    prior_boundary_id: initialBoundary.id,
+    source: "set_due_date",
+  });
+  const doneHistory: TaskHistory = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-08-05T12:00:00.000Z",
+    entry_date: "2026-08-05",
+    event_type: "status",
+    id: "current-streak-done",
+    occurrence_due_on: "2026-08-05",
+    occurrence_key: `task:${taskId}:occurrence:2026-08-05`,
+    status: "done",
+    task_id: taskId,
+    updated_at: "2026-08-05T12:00:00.000Z",
+    user_id: userId,
+    was_completed: true,
+  };
+  const localTasks = [{ ...canonicalTask(initialBoundary), due_on: "2026-08-10" } as Task];
+  const events: string[] = [];
+  let callbackTask: Task | undefined;
+  let callbackHistory: TaskHistory[] | undefined;
+
+  const update = useTaskUpdateAction({
+    canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => {
+      events.push("command");
+      return {
+        success: true,
+        task: { ...currentTask, due_on: "2026-08-05", canonical_revision: currentTask.canonical_revision + 1 },
+        response: commandResponse(committedBoundary.id, action.expectedRevision),
+      };
+    },
+    currentDayKey: "2026-08-05",
+    loadCanonicalScheduleBoundary: async () => {
+      events.push("schedule-reload");
+      return committedBoundary;
+    },
+    loadTaskHistoryForTasks: async () => {
+      events.push("history-reload");
+      return { [taskId]: { error: null, history: [doneHistory], status: "ready" as const } };
+    },
+    onTaskHistoryMutation: (_taskId, history, nextTask) => {
+      events.push("streak-reconciliation");
+      callbackHistory = history;
+      callbackTask = nextTask;
+    },
+    onTasksCompleted: async () => {},
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: (updater) => localTasks.splice(0, localTasks.length, ...(typeof updater === "function" ? updater(localTasks) : updater)),
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    taskHistory: [],
+    tasks: localTasks,
+    timezone: "UTC",
+    updateTaskRowWithLegacyEnergyFallback: async () => { throw new Error("Legacy fallback must not run."); },
+  });
+
+  assert.equal(await update.updateTask(taskId, { due_on: "2026-08-05" }), true);
+  assert.deepEqual(events, ["command", "schedule-reload", "history-reload", "streak-reconciliation"]);
+  assert.deepEqual(callbackHistory, [doneHistory]);
+  assert.equal(callbackTask?.due_on, "2026-08-05");
+  assert.equal(buildTaskHistoryStreakSummary(callbackTask!, callbackHistory!, "2026-08-05", { timezone: "UTC", now: "2026-08-05T12:00:00.000Z" }).currentStreak, 1);
 });
 
 test("canonical boundary loader constrains the authenticated user, Task, and exact committed boundary", async () => {

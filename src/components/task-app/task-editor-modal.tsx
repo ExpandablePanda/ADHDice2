@@ -9,7 +9,7 @@ import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { isTaskFinishedStatusValue } from "@/lib/task-buckets";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
-import { getSelectableTaskStatuses, getSelectableTaskStatusesForRepeatFrequency } from "@/lib/task-complete";
+import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import { buildTaskPriorityUpdate, formatTaskPriorityMenuLabel, getSelectedTaskPriorityToneClass, getTaskPriorityToneClass, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 
 import {
@@ -483,8 +483,8 @@ export function TaskEditorModal({
   }
 
   const visibleStatusOptions: TaskStatus[] = task
-    ? getSelectableTaskStatuses(task)
-    : getSelectableTaskStatusesForRepeatFrequency(draft.repeatFrequency).filter((status) => status !== "complete");
+    ? getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status })
+    : getSelectableTaskStatusesForTask({ dueOn: draft.dueOn, repeatFrequency: draft.repeatFrequency, status: draft.status }).filter((status) => status !== "complete");
   const compactRepeatOptions = repeatFrequencyOptions;
   const compactRepeatLabel = formatRepeatFrequencyLabel(
     draft.repeatFrequency,
