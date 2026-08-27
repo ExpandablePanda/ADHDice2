@@ -9,6 +9,18 @@ const rolloverMigration = readFileSync(new URL("../supabase/patch_task_state_com
 const autoMissedMigration = readFileSync(new URL("../supabase/patch_task_state_auto_missed_history_copy_7_9_31.sql", import.meta.url), "utf8");
 const scheduleAutoMissedMigration = readFileSync(new URL("../supabase/patch_task_state_schedule_auto_missed_7_11_73.sql", import.meta.url), "utf8");
 
+const legacyAutomaticHistoryGuard = /if\s+v_command_type\s*<>\s*'reconcile_rollover'\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
+const scheduleAwareAutomaticHistoryGuard = /if\s+v_command_type\s+not\s+in\s*\(\s*'reconcile_rollover'\s*,\s*'set_due_date'\s*,\s*'set_repeat'\s*\)\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted schedule replay or rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
+
+function transformAutomaticHistoryGuard(definition: string): string {
+  const matcher = new RegExp(legacyAutomaticHistoryGuard.source, legacyAutomaticHistoryGuard.flags);
+  const matches = Array.from(definition.matchAll(matcher));
+  if (matches.length !== 1) {
+    throw new Error(`automatic History command guard was not found exactly once (found ${matches.length} matches)`);
+  }
+  return definition.replace(matcher, "if v_command_type not in ('reconcile_rollover', 'set_due_date', 'set_repeat') and v_automatic_history_facts <> '[]'::jsonb then raise exception 'Only trusted schedule replay or rollover may create automatic History facts.' using errcode='42501'; end if;");
+}
+
 test("M3A command RPC is a backend-only invoker boundary", () => {
   assert.match(sql, /create or replace function public\.adhdice_execute_task_state_command\(\s*p_user_id uuid,\s*p_command jsonb\s*\)/i);
   assert.match(sql, /security invoker/i);
@@ -203,8 +215,34 @@ test("7.11.73 forward patch allows one trusted schedule replay to persist automa
   assert.match(scheduleAutoMissedMigration, /revoke all on function public\.adhdice_execute_task_state_command\(uuid, jsonb\) from public, anon, authenticated/i);
   assert.match(scheduleAutoMissedMigration, /grant execute on function public\.adhdice_execute_task_state_command\(uuid, jsonb\) to service_role/i);
   assert.doesNotMatch(scheduleAutoMissedMigration, /select\s+public\.adhdice_execute_task_state_command\b/i);
+  assert.doesNotMatch(scheduleAutoMissedMigration, /\b(?:insert|update|delete)\s+(?:into\s+)?public\.adhdice_(?:clean_tasks|task_history(?:_facts)?)\b/i);
   assert.doesNotMatch(scheduleAutoMissedMigration, /insert\s+into\s+public\.adhdice_clean_tasks/i);
   assert.doesNotMatch(scheduleAutoMissedMigration, /insert\s+into\s+public\.adhdice_task_reward_entitlements/i);
+});
+
+test("7.11.74 forward patch matches pretty and compact installed guards exactly once", () => {
+  assert.match(scheduleAutoMissedMigration, /v_guard_matches\s+integer/i);
+  assert.match(scheduleAutoMissedMigration, /from\s+regexp_matches\(v_definition,\s*v_old,\s*'gi'\)/i);
+  assert.match(scheduleAutoMissedMigration, /if\s+v_guard_matches\s+<>\s+1\s+then/i);
+  assert.match(scheduleAutoMissedMigration, /v_definition\s*:=\s*regexp_replace\(v_definition,\s*v_old,\s*v_new,\s*'gi'\)/i);
+  assert.match(scheduleAutoMissedMigration, /\[\[:space:\]\]/i);
+
+  const prettyDefinition = `create function public.adhdice_execute_task_state_command() returns void as $$
+  if v_command_type <> 'reconcile_rollover' and v_automatic_history_facts <> '[]'::jsonb then
+    raise exception 'Only trusted rollover may create automatic History facts.'
+      using errcode = '42501';
+  end if;
+$$ language plpgsql;`;
+  const compactDefinition = `create function public.adhdice_execute_task_state_command() returns void as $$ if v_command_type <> 'reconcile_rollover' and v_automatic_history_facts <> '[]'::jsonb then raise exception 'Only trusted rollover may create automatic History facts.' using errcode='42501'; end if; $$ language plpgsql;`;
+
+  for (const definition of [prettyDefinition, compactDefinition]) {
+    const transformed = transformAutomaticHistoryGuard(definition);
+    assert.equal(Array.from(transformed.matchAll(legacyAutomaticHistoryGuard)).length, 0);
+    assert.equal(Array.from(transformed.matchAll(scheduleAwareAutomaticHistoryGuard)).length, 1);
+  }
+
+  assert.throws(() => transformAutomaticHistoryGuard("create function without the expected guard"), /exactly once/);
+  assert.throws(() => transformAutomaticHistoryGuard(`${prettyDefinition}\n${compactDefinition}`), /exactly once/);
 });
 
 test("reward entitlement persistence uses the canonical identity fence", () => {

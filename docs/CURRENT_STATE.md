@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.73`.
+- Current working app version: `7.11.74`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,16 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-27 7.11.74 Task State forward patch correction
+
+The 7.11.73 TypeScript/source behavior passed architecture review. Review of
+the installed production RPC formatting exposed an authored SQL anchor mismatch:
+the forward patch assumed a pretty-printed automatic History guard while
+production used the same guard in compact form. Version 7.11.74 corrected the
+forward patch with an exact, whitespace-tolerant, fail-closed anchor check.
+SQL and Edge deployment remain pending; browser QA and device QA were not
+performed for this source correction.
 
 ## 2026-08-27 7.11.73 Canonical Task State correctness
 

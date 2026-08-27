@@ -8,6 +8,7 @@ declare
   v_definition text;
   v_old text;
   v_new text;
+  v_guard_matches integer;
 begin
   select pg_get_functiondef(p.oid)
     into v_definition
@@ -21,19 +22,19 @@ begin
     raise exception 'Canonical Task State command RPC is not installed.';
   end if;
 
-  v_old := $old$  if v_command_type <> 'reconcile_rollover' and v_automatic_history_facts <> '[]'::jsonb then
-    raise exception 'Only trusted rollover may create automatic History facts.'
-      using errcode = '42501';
-  end if;$old$;
+  v_old := $old$if[[:space:]]+v_command_type[[:space:]]*<>[[:space:]]*'reconcile_rollover'[[:space:]]+and[[:space:]]+v_automatic_history_facts[[:space:]]*<>[[:space:]]*'\[\]'[[:space:]]*::[[:space:]]*jsonb[[:space:]]+then[[:space:]]+raise[[:space:]]+exception[[:space:]]+'Only trusted rollover may create automatic History facts\.'[[:space:]]+using[[:space:]]+errcode[[:space:]]*=[[:space:]]*'42501'[[:space:]]*;[[:space:]]*end[[:space:]]+if[[:space:]]*;$old$;
   v_new := $new$  if v_command_type not in ('reconcile_rollover', 'set_due_date', 'set_repeat')
      and v_automatic_history_facts <> '[]'::jsonb then
     raise exception 'Only trusted schedule replay or rollover may create automatic History facts.'
       using errcode = '42501';
   end if;$new$;
-  if position(v_old in v_definition) = 0 then
-    raise exception '7.9.20 automatic History command guard was not found.';
+  select count(*)
+    into v_guard_matches
+    from regexp_matches(v_definition, v_old, 'gi');
+  if v_guard_matches <> 1 then
+    raise exception '7.11.74 automatic History command guard was not found exactly once (found % matches).', v_guard_matches;
   end if;
-  v_definition := replace(v_definition, v_old, v_new);
+  v_definition := regexp_replace(v_definition, v_old, v_new, 'gi');
 
   v_old := $old$  if v_automatic_history_delete_ids <> '[]'::jsonb then$old$;
   v_new := $new$  -- A trusted schedule replay may persist only server-derived,
