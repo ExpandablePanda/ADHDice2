@@ -101,20 +101,30 @@ test("normalization trims persisted Goal and Level text", () => {
   assert.equal(normalizeHealthFitnessGoalDraft(draft({ title: "  Trim me  " })).title, "Trim me");
 });
 
-test("missing migration errors stay scoped to Fitness Goals", () => {
-  assert.equal(formatHealthFitnessGoalsError("42P01 relation does not exist"), `${HEALTH_FITNESS_GOALS_MIGRATION_MESSAGE} 42P01 relation does not exist`);
+test("missing migration errors return only the friendly message and unrelated errors stay unchanged", () => {
+  for (const message of [
+    '42P01 relation "public.adhdice_health_fitness_goals" does not exist',
+    "Could not find the table in the schema cache",
+    "PGRST205: Could not find the table 'public.adhdice_health_fitness_goals' in the schema cache",
+    'relation "adhdice_health_fitness_goal_levels" does not exist',
+  ]) {
+    assert.equal(formatHealthFitnessGoalsError(message), HEALTH_FITNESS_GOALS_MIGRATION_MESSAGE);
+  }
+  assert.equal(formatHealthFitnessGoalsError("permission denied"), "permission denied");
   assert.equal(formatHealthFitnessGoalsError("validation failed"), "validation failed");
-  assert.match(hook, /HEALTH_FITNESS_GOALS_MIGRATION_MESSAGE/);
   assert.equal(HEALTH_FITNESS_GOALS_MIGRATION_MESSAGE, "Fitness Goals are unavailable until the 7.11.69 Fitness Goals migration is applied.");
   assert.doesNotMatch(hook, /useHealth|adhdice_health_workouts|adhdice_health_workout_exercises|adhdice_health_workout_sets/);
 });
 
 test("useFitnessGoals reloads Goals and Levels in parallel with owner scope", () => {
+  const reload = hook.slice(hook.indexOf("const reload ="), hook.indexOf("useEffect(() =>"));
   assert.match(hook, /Promise\.all\(\[/);
   assert.match(hook, /from\("adhdice_health_fitness_goals"\)[\s\S]*?\.eq\("user_id", userId\)/);
   assert.match(hook, /from\("adhdice_health_fitness_goal_levels"\)[\s\S]*?\.eq\("user_id", userId\)/);
   assert.match(hook, /order\("archived_at", \{ ascending: true, nullsFirst: true \}\)/);
   assert.match(hook, /order\("sort_order", \{ ascending: true \}\)/);
+  assert.match(reload, /reportError\(formatHealthFitnessGoalsError\(firstError\.message\)\)/);
+  assert.doesNotMatch(reload, /HEALTH_FITNESS_GOALS_MIGRATION_MESSAGE/);
 });
 
 test("useFitnessGoals exposes narrow Goal and Level actions", () => {
@@ -171,6 +181,19 @@ test("schema.sql mirrors Goal and Level table constraints, indexes, RLS, grants,
     assert.match(schema, new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.match(schema, /metric text not null check \(metric in \('single_set_reps', 'session_total_reps', 'longest_set_duration', 'session_total_duration'\)\)/);
+
+  for (const [table, policyName] of [
+    ["adhdice_health_fitness_goals", "Users can manage their own health fitness goals"],
+    ["adhdice_health_fitness_goal_levels", "Users can manage their own health fitness goal levels"],
+  ] as const) {
+    const expectedPolicy = `create policy "${policyName}" on public.${table} for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);`;
+    for (const source of [migration, schema]) {
+      const start = source.indexOf(`create policy "${policyName}"`);
+      assert.notEqual(start, -1, `${table} policy is missing`);
+      const end = source.indexOf(";", start);
+      assert.equal(source.slice(start, end + 1).replace(/\s+/g, " ").trim(), expectedPolicy);
+    }
+  }
 });
 
 test("database types keep one metric union and add both tables", () => {

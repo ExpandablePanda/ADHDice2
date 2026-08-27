@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.71`.
+- Current working app version: `7.11.72`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,18 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-26 7.11.72 Fitness Goals source-review corrections
+
+The 7.11.71 Meal Plan pending mutation recovery source review passed. Fitness
+Goals reload failures now use the shared error formatter: missing-table,
+schema-cache, `42P01`, and `PGRST205` failures return only the friendly
+7.11.69 migration message, while unrelated errors remain unchanged. The
+consolidated `supabase/schema.sql` Goal and Level policies now mirror the
+authored migration's authenticated owner predicates. The authored
+`supabase/add_health_fitness_goals_7_11_69.sql` migration remains unchanged and
+has NOT been applied. No Goals UI, performance/PR engine, or generic Records or
+Achievements integration was added.
 
 ## 2026-08-26 7.11.71 Explicit Meal Plan pending mutation recovery
 

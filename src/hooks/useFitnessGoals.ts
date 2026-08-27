@@ -13,7 +13,6 @@ import type {
 } from "@/lib/database.types";
 import {
   formatHealthFitnessGoalsError,
-  HEALTH_FITNESS_GOALS_MIGRATION_MESSAGE,
   normalizeHealthFitnessGoalDraft,
   normalizeHealthFitnessGoalLevelDraft,
   validateHealthFitnessGoalDraft,
@@ -76,7 +75,7 @@ export function useFitnessGoals(
     if (!isCurrent()) return false;
     const firstError = goalsResult.error ?? levelsResult.error;
     if (firstError) {
-      reportError(`${HEALTH_FITNESS_GOALS_MIGRATION_MESSAGE} ${firstError.message}`);
+      reportError(formatHealthFitnessGoalsError(firstError.message));
       setIsLoading(false);
       return false;
     }

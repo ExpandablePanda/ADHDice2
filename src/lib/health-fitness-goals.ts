@@ -106,6 +106,6 @@ export function isMissingHealthFitnessGoalsMigrationError(message: string) {
 export function formatHealthFitnessGoalsError(message: string | null | undefined) {
   if (!message) return HEALTH_FITNESS_GOALS_MIGRATION_MESSAGE;
   return isMissingHealthFitnessGoalsMigrationError(message)
-    ? `${HEALTH_FITNESS_GOALS_MIGRATION_MESSAGE} ${message}`
+    ? HEALTH_FITNESS_GOALS_MIGRATION_MESSAGE
     : message;
 }
