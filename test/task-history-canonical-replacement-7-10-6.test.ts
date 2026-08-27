@@ -89,6 +89,8 @@ function buildHistoryActions(
   initialTask: TaskStateRuntimeLocalTask,
   execute: NonNullable<Parameters<typeof useTaskHistoryActions>[0]["canonicalCommandExecutor"]>,
   messages: Array<{ tone: string; text: string }>,
+  initialHistory: TaskHistory[] = [historyEntry(initialTask.id, "done")],
+  onHistorySet?: (history: TaskHistory[]) => void,
 ) {
   let localTasks: Task[] = [initialTask];
   return useTaskHistoryActions({
@@ -101,12 +103,15 @@ function buildHistoryActions(
       const next = typeof message === "function" ? message(messages.at(-1) ?? null) : message;
       if (next) messages.push(next);
     },
-    setTaskHistory: () => {},
+    setTaskHistory: (updater) => {
+      const nextHistory = typeof updater === "function" ? updater(initialHistory) : updater;
+      onHistorySet?.(nextHistory);
+    },
     setTasks: (updater) => {
       localTasks = typeof updater === "function" ? updater(localTasks) : updater;
     },
     sortTasksForUi: (tasks) => tasks,
-    taskHistory: [historyEntry(initialTask.id, "done")],
+    taskHistory: initialHistory,
     tasks: localTasks,
     timezone: "UTC",
   });
@@ -215,6 +220,25 @@ test("a failed clear prevents replacement, and a failed replacement stops the ba
   assert.equal(await replacementActions.syncTaskHistoryEntries(initialTask.id, "done", ["2026-08-18", logicalDate]), false);
   assert.deepEqual(replacementCalls, ["set_outcome"]);
   assert.match(replacementMessages.at(-1)?.text ?? "", /replacement command was rejected/i);
+});
+
+test("a failed History outcome replacement leaves the original outcome untouched", async () => {
+  const initialTask = canonicalTask();
+  const original = historyEntry(initialTask.id, "missed");
+  let visibleHistory = [original];
+  const calls: string[] = [];
+  const messages: Array<{ tone: string; text: string }> = [];
+  const actions = buildHistoryActions(initialTask, async (action) => {
+    calls.push(action.actionType);
+    return failed("The outcome replacement was rejected.");
+  }, messages, visibleHistory, (history) => {
+    visibleHistory = history;
+  });
+
+  assert.equal(await actions.syncTaskHistoryEntries(initialTask.id, "done", [logicalDate], { historicalOverride: true }), false);
+  assert.deepEqual(calls, ["set_outcome"]);
+  assert.deepEqual(visibleHistory, [original]);
+  assert.match(messages.at(-1)?.text ?? "", /outcome replacement was rejected/i);
 });
 
 test("the clear callback exposes the committed Task for the following Calendar override", async () => {

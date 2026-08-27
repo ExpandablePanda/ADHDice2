@@ -133,6 +133,15 @@ function doneHistory(logicalDate: string, occurrenceDueOn = logicalDate): TaskSt
   };
 }
 
+function automaticMissedHistory(logicalDate: string, occurrenceDueOn: string): TaskStateHistoryRow {
+  return {
+    ...missedHistory(logicalDate, occurrenceDueOn),
+    id: `automatic-missed-${logicalDate}`,
+    provenance: "rollover",
+    recurrenceAuthoritative: true,
+  };
+}
+
 function command(overrides: Partial<CanonicalTaskStateCommand> = {}): CanonicalTaskStateCommand {
   const result = {
     type: "handled_outcome",
@@ -900,6 +909,48 @@ test("trusted historical replacement derives replaceExisting and previous outcom
   assert.equal(plan.normalizedResult.historyFact?.scheduled_due_on, "2026-08-08");
   assert.equal(plan.normalizedResult.rewardEntitlement?.logicalDate, "2026-08-08");
   assert.equal(plan.command.payload.occurrenceKey, null);
+});
+
+test("trusted Every-3-Days success replacement atomically removes dependent automatic Missed facts", () => {
+  for (const outcome of ["done", "did_my_best"] as const) {
+    const planningState = state({ due_on: "2026-08-17", repeat_frequency: "daily", repeat_interval: 3 });
+    planningState.engineInput = {
+      ...planningState.engineInput!,
+      now: "2026-08-20T12:00:00.000Z",
+      task: {
+        ...planningState.engineInput!.task,
+        dueOn: "2026-08-17",
+        recurrence: { kind: "rolling", intervalDays: 3 },
+      },
+      history: [
+        automaticMissedHistory("2026-08-17", "2026-08-17"),
+        automaticMissedHistory("2026-08-18", "2026-08-17"),
+        automaticMissedHistory("2026-08-19", "2026-08-17"),
+      ],
+    };
+    const commandLogicalDay = { ...logicalDay, logicalDate: "2026-08-20" };
+    const plan = planTaskStateCommand(planningState, trustedCommand({
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: `calendar:every-3-days:${outcome}`,
+      outcome,
+      logical_date: "2026-08-17",
+    }, planningState.task, { ...boundary("rolling"), repeat_interval: 3, anchor_date: "2026-08-17" }, commandLogicalDay));
+    const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
+
+    assert.equal(plan.normalizedResult.historyFact?.outcome, outcome);
+    assert.deepEqual([...plan.normalizedResult.automaticHistoryDeleteIds].sort(), [
+      "automatic-missed-2026-08-18",
+      "automatic-missed-2026-08-19",
+    ].sort(), outcome);
+    assert.deepEqual(
+      [...(payload.automatic_history_delete_ids as string[])].sort(),
+      [...plan.normalizedResult.automaticHistoryDeleteIds].sort(),
+      outcome,
+    );
+    assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-20", outcome);
+    assert.equal(plan.normalizedResult.rewardEntitlement?.logicalDate, "2026-08-17", outcome);
+  }
 });
 
 test("canonical Daily success projection derives its own date after ambiguous old Missed rows", () => {

@@ -580,7 +580,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.74";
+const APP_VERSION = "7.11.75";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -6111,21 +6111,13 @@ export function TaskApp() {
       if (status !== "clear") {
         let currentTask: TaskStateRuntimeLocalTask | null = null;
         for (const entryDate of entryDates) {
-          const clearedHistory = await clearTaskHistoryCalendarDate(
-            taskHistoryModalTaskId,
-            entryDate,
-            formatTaskStatusLabel(status),
-            { clearReplaceableOutcome: true, currentTask },
-          );
-          if (!clearedHistory) return false;
-          currentTask = clearedHistory.task ?? currentTask;
           const saved = await syncTaskHistoryEntries(
             taskHistoryModalTaskId,
             status,
             [entryDate],
             {
               historicalOverride: true,
-              historySnapshot: clearedHistory.history,
+              historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
               currentTask,
               onTaskCommitted: (nextTask) => {
                 currentTask = nextTask;

@@ -1181,6 +1181,113 @@ test("active canonical Daily Delay rebases the historical occurrence to its pers
   assert.equal(dueAgain.days["2026-09-06"]?.obligation, "due");
 });
 
+test("ordinary canonical Delay consumes the effective cursor and survives reload", () => {
+  const delayed = history("2026-08-27", "delayed", {
+    occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-27`,
+    occurrenceDueOn: "2026-08-27",
+    effectiveDueOn: "2026-09-01",
+    recurrenceAuthoritative: true,
+  });
+  const input = {
+    task: {
+      activeStatus: "pending" as const,
+      dueOn: "2026-09-01",
+      historicalScheduleAnchor: "2026-08-27",
+      recurrence: { kind: "rolling" as const, intervalDays: 1 },
+    },
+    history: [delayed],
+    logicalDate: "2026-08-28",
+    calendarStart: "2026-08-27",
+    calendarEnd: "2026-09-01",
+  };
+  const firstRead = timeline(input);
+  const reloadedRead = timeline(input);
+
+  assert.deepEqual(reloadedRead, firstRead);
+  assert.equal(firstRead.days["2026-08-27"]?.state, "delayed");
+  assert.equal(firstRead.days["2026-08-27"]?.sourceKind, "history_fact");
+  assert.equal(firstRead.days["2026-08-27"]?.historyRowId, delayed.id);
+  for (const date of ["2026-08-28", "2026-08-29", "2026-08-30", "2026-08-31"]) {
+    assert.equal(firstRead.days[date]?.state, "not_due", date);
+    assert.equal(firstRead.days[date]?.obligation, "none", date);
+  }
+  assert.equal(firstRead.days["2026-09-01"]?.state, "scheduled");
+  assert.equal(firstRead.days["2026-09-01"]?.obligation, "due");
+  assert.equal(firstRead.days["2026-09-01"]?.occurrenceDueOn, "2026-09-01");
+  assert.equal(firstRead.nextDueOn, "2026-09-01");
+});
+
+test("legacy identity-less Delay keeps its fallback and cannot consume a canonical effective cursor", () => {
+  const legacyDelay = history("2026-08-27", "delayed", {
+    occurrenceDueOn: "2026-08-27",
+  });
+  const fallback = timeline({
+    task: {
+      activeStatus: "delayed",
+      dueOn: "2026-09-01",
+      historicalScheduleAnchor: "2026-08-27",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    history: [legacyDelay],
+    logicalDate: "2026-08-28",
+    calendarStart: "2026-08-27",
+    calendarEnd: "2026-09-01",
+  });
+  assert.equal(fallback.days["2026-08-28"]?.state, "not_due");
+  assert.equal(fallback.nextDueOn, "2026-09-01");
+
+  const identityLessEffectiveDate = timeline({
+    task: {
+      activeStatus: "pending",
+      dueOn: "2026-09-01",
+      historicalScheduleAnchor: "2026-08-27",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    history: [{ ...legacyDelay, effectiveDueOn: "2026-09-01" }],
+    logicalDate: "2026-08-28",
+    calendarStart: "2026-08-27",
+    calendarEnd: "2026-09-01",
+  });
+  assert.equal(identityLessEffectiveDate.days["2026-08-28"]?.state, "open");
+  assert.equal(identityLessEffectiveDate.nextDueOn, "2026-08-27");
+});
+
+test("later authoritative outcomes remain chronological after an ordinary canonical Delay", () => {
+  const occurrence = (date: string) => ({
+    occurrenceIdentity: `task:${TASK_ID}:occurrence:${date}`,
+    occurrenceDueOn: date,
+    recurrenceAuthoritative: true,
+  });
+  const result = timeline({
+    task: {
+      activeStatus: "pending",
+      dueOn: "2026-09-07",
+      historicalScheduleAnchor: "2026-08-27",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    history: [
+      history("2026-08-27", "delayed", { ...occurrence("2026-08-27"), effectiveDueOn: "2026-09-01" }),
+      history("2026-09-01", "done", occurrence("2026-09-01")),
+      history("2026-09-02", "did_my_best", occurrence("2026-09-02")),
+      history("2026-09-03", "missed", occurrence("2026-09-03")),
+      history("2026-09-04", "delayed", { ...occurrence("2026-09-03"), effectiveDueOn: "2026-09-07" }),
+    ],
+    logicalDate: "2026-09-04",
+    calendarStart: "2026-08-27",
+    calendarEnd: "2026-09-07",
+  });
+
+  assert.equal(result.days["2026-09-01"]?.state, "done");
+  assert.equal(result.days["2026-09-02"]?.state, "did_my_best");
+  assert.equal(result.days["2026-09-03"]?.state, "missed");
+  assert.equal(result.days["2026-09-04"]?.state, "delayed");
+  for (const date of ["2026-09-05", "2026-09-06"]) {
+    assert.equal(result.days[date]?.state, "not_due", date);
+  }
+  assert.equal(result.days["2026-09-07"]?.state, "scheduled");
+  assert.equal(result.nextDueOn, "2026-09-07");
+});
+
 test("an inactive canonical Delay with a stale effective target cannot rebase the current cursor", () => {
   const oldDelay = history("2026-08-16", "delayed", {
     occurrenceDueOn: "2026-08-18",

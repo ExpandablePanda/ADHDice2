@@ -140,7 +140,7 @@ function currentCanonicalDelayEffectiveDueOn(
   if (task.activeStatus !== "delayed" || !task.dueOn) return null;
   return rows
     .filter((row) => row.outcome === "delayed")
-    .filter((row) => row.recurrenceAuthoritative !== false)
+    .filter((row) => row.recurrenceAuthoritative === true)
     .filter((row) => row.effectiveDueOn === task.dueOn)
     .sort((left, right) => left.logicalDate.localeCompare(right.logicalDate)
       || left.occurredAt.localeCompare(right.occurredAt)
@@ -450,10 +450,20 @@ export function buildTaskEffectiveTimeline(
       return;
     }
     if (row.outcome === "delayed") {
-      if (input.replay
+      // Only a canonical Delay may move the ordinary read cursor. Scheduled
+      // due-date/recurrence replay retains the established effective-date
+      // behavior for translated rows, while legacy identity-less rows must
+      // not be treated as canonical during ordinary projection.
+      const hasCanonicalEffectiveCursor = row.recurrenceAuthoritative === true
+        && row.effectiveDueOn !== undefined
+        && row.effectiveDueOn !== null;
+      const hasScheduleReplayEffectiveCursor = Boolean(
+        input.replay
         && (input.replay.kind === "due_date" || input.replay.kind === "recurrence")
         && row.effectiveDueOn !== undefined
-        && row.effectiveDueOn !== null) {
+        && row.effectiveDueOn !== null,
+      );
+      if (hasCanonicalEffectiveCursor || hasScheduleReplayEffectiveCursor) {
         activeDueOn = row.effectiveDueOn;
         unresolvedDueOn = null;
         delayedUntilDate = activeDueOn > input.logicalDate ? activeDueOn : null;

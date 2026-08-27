@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.74`.
+- Current working app version: `7.11.75`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,19 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-27 7.11.75 Task History Calendar correctness
+
+Ordinary canonical Calendar projection now consumes a proven non-null
+`effective_due_on` from a canonical Delay row, so the original obligation is
+Not Due until the effective occurrence date; legacy identity-less Delay
+fallback remains unchanged. History Calendar outcome replacements now send one
+canonical `set_outcome` command, allowing the existing trusted planner and RPC
+contract to atomically replace an automatic Missed outcome, remove dependent
+automatic Missed facts, and replay the rolling recurrence. Not Due and explicit
+Clear retain their `clear_outcome` plus Calendar-override semantics. No Edge
+source or SQL changed; no Edge deployment, SQL application, browser QA, or
+device QA was performed.
 
 ## 2026-08-27 7.11.74 Task State forward patch correction
 

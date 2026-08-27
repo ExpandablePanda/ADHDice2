@@ -57,17 +57,18 @@ test("Task History Not Due replaces handled outcomes through clear then override
   assert.match(notDue, /Task was saved, but the requested History change to Not Due/);
 });
 
-test("Task History outcome edits clear an active Calendar override before reusing handled-outcome replacement", () => {
-  const flowStart = appSource.indexOf("const taskHistoryFlow");
-  const flowEnd = appSource.indexOf("\n  function togglePinnedFilter", flowStart);
+test("Task History outcome edits use one set_outcome replacement without pre-clearing History", () => {
+  const flowStart = appSource.indexOf('onSetStatuses: async');
+  const flowEnd = appSource.indexOf('    onSetDelayedStatus:', flowStart);
   const flow = appSource.slice(flowStart, flowEnd);
-  assert.ok(flow.indexOf("clearTaskHistoryCalendarDate(taskHistoryModalTaskId, entryDate") < flow.indexOf("syncTaskHistoryEntries("));
+  assert.doesNotMatch(flow, /clearTaskHistoryCalendarDate/);
+  assert.match(flow, /syncTaskHistoryEntries\(/);
   assert.match(flow, /status !== "clear"/);
-  assert.match(flow, /historySnapshot: clearedHistory/);
+  assert.match(flow, /historySnapshot: taskHistoryByTaskId\[taskHistoryModalTaskId\] \?\? \[\]/);
   assert.match(flow, /for \(const entryDate of entryDates\)/);
 });
 
-test("Task History replacement carries the committed canonical Task across clear and replacement", () => {
+test("Task History Not Due carries the committed canonical Task from clear into its Calendar override", () => {
   const clearStart = appSource.indexOf("async function clearTaskHistoryCalendarDate");
   const clearEnd = appSource.indexOf("\n\n  async function setTaskHistoryNotDue", clearStart);
   const clear = appSource.slice(clearStart, clearEnd);
@@ -77,8 +78,8 @@ test("Task History replacement carries the committed canonical Task across clear
 
   assert.match(clear, /onCanonicalTaskCommitted: \(nextTask\) => \{\s*committedTask = nextTask;/);
   assert.match(clear, /return \{ history: refreshedHistory\.history, task: committedTask \};/);
-  assert.match(flow, /clearReplaceableOutcome: true, currentTask/);
-  assert.match(flow, /historySnapshot: clearedHistory\.history/);
+  assert.doesNotMatch(flow, /clearReplaceableOutcome/);
+  assert.match(flow, /historySnapshot: taskHistoryByTaskId\[taskHistoryModalTaskId\] \?\? \[\]/);
   assert.match(flow, /currentTask,\s*onTaskCommitted: \(nextTask\) => \{\s*currentTask = nextTask;/);
 });
 
