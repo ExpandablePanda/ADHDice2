@@ -49,9 +49,7 @@ begin
   end if;
   v_definition := replace(v_definition, v_old, v_new);
 
-  v_old := $old$  for v_automatic_history in
-    select value from jsonb_array_elements(v_automatic_history_facts)
-  loop$old$;
+  v_old := $old$for[[:space:]]+v_automatic_history[[:space:]]+in[[:space:]]+select[[:space:]]+value[[:space:]]+from[[:space:]]+jsonb_array_elements[[:space:]]*\([[:space:]]*v_automatic_history_facts[[:space:]]*\)[[:space:]]+loop$old$;
   v_new := $new$  if jsonb_array_length(v_automatic_history_facts) > 0 then
     perform set_config('adhdice.achievement_deferred_user_id', p_user_id::text, true);
   end if;
@@ -59,15 +57,15 @@ begin
   for v_automatic_history in
     select value from jsonb_array_elements(v_automatic_history_facts)
   loop$new$;
-  v_match_count := (length(v_definition) - length(replace(v_definition, v_old, ''))) / length(v_old);
+  select count(*)
+    into v_match_count
+    from regexp_matches(v_definition, v_old, 'gi');
   if v_match_count <> 1 then
     raise exception '7.11.77 automatic History loop anchor was not found exactly once (found % matches).', v_match_count;
   end if;
-  v_definition := replace(v_definition, v_old, v_new);
+  v_definition := regexp_replace(v_definition, v_old, v_new, 'gi');
 
-  v_old := $old$  end loop;
-
-  if v_calendar_override <> '{}'::jsonb then$old$;
+  v_old := $old$end[[:space:]]+loop;[[:space:]]*if[[:space:]]+v_calendar_override[[:space:]]*<>[[:space:]]*'\{\}'[[:space:]]*::[[:space:]]*jsonb[[:space:]]+then$old$;
   v_new := $new$  end loop;
 
   if jsonb_array_length(v_automatic_history_facts) > 0 then
@@ -88,11 +86,13 @@ begin
   end if;
 
   if v_calendar_override <> '{}'::jsonb then$new$;
-  v_match_count := (length(v_definition) - length(replace(v_definition, v_old, ''))) / length(v_old);
+  select count(*)
+    into v_match_count
+    from regexp_matches(v_definition, v_old, 'gi');
   if v_match_count <> 1 then
     raise exception '7.11.77 Achievement finalization anchor was not found exactly once (found % matches).', v_match_count;
   end if;
-  v_definition := replace(v_definition, v_old, v_new);
+  v_definition := regexp_replace(v_definition, v_old, v_new, 'gi');
 
   execute v_definition;
 end;

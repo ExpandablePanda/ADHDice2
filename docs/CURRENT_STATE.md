@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.77`.
+- Current working app version: `7.11.78`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,14 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-27 7.11.78 Task State Achievement-deferral RPC compatibility
+
+The 7.11.77 Achievement-deferral architecture passed source review, but
+production `pg_get_functiondef` compact formatting caused the two literal
+loop/finalization migration anchors to miss. Version 7.11.78 makes only those
+anchors whitespace-tolerant and fail-closed. Task State and Achievement
+semantics are unchanged; SQL remains unapplied and no Edge source changed.
 
 ## 2026-08-27 7.11.77 Task State schedule-backfill Achievement deferral
 
