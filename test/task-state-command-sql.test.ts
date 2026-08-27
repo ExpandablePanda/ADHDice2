@@ -7,6 +7,7 @@ const schema = readFileSync(new URL("../supabase/add_task_state_canonical_schema
 const delayMigration = readFileSync(new URL("../supabase/patch_task_state_command_delay_occurrence_7_7_47.sql", import.meta.url), "utf8");
 const rolloverMigration = readFileSync(new URL("../supabase/patch_task_state_command_rollover_7_9_20.sql", import.meta.url), "utf8");
 const autoMissedMigration = readFileSync(new URL("../supabase/patch_task_state_auto_missed_history_copy_7_9_31.sql", import.meta.url), "utf8");
+const scheduleAutoMissedMigration = readFileSync(new URL("../supabase/patch_task_state_schedule_auto_missed_7_11_73.sql", import.meta.url), "utf8");
 
 test("M3A command RPC is a backend-only invoker boundary", () => {
   assert.match(sql, /create or replace function public\.adhdice_execute_task_state_command\(\s*p_user_id uuid,\s*p_command jsonb\s*\)/i);
@@ -188,6 +189,22 @@ test("7.9.31 forward patch targets the installed RPC and migration-only Delay al
   assert.doesNotMatch(autoMissedMigration, /select\s+public\.adhdice_execute_task_state_command\b/i);
   assert.doesNotMatch(autoMissedMigration, /insert\s+into\s+public\.adhdice_clean_tasks/i);
   assert.doesNotMatch(autoMissedMigration, /insert\s+into\s+public\.adhdice_task_reward_entitlements/i);
+});
+
+test("7.11.73 forward patch allows one trusted schedule replay to persist automatic Missed facts", () => {
+  assert.match(scheduleAutoMissedMigration, /pg_get_functiondef\(p\.oid\)/i);
+  assert.match(scheduleAutoMissedMigration, /v_command_type not in \('reconcile_rollover', 'set_due_date', 'set_repeat'\)/i);
+  assert.match(scheduleAutoMissedMigration, /v_schedule->>'effective_from_logical_date'/i);
+  assert.match(scheduleAutoMissedMigration, /v_payload \? 'reward_program_version'/i);
+  assert.match(scheduleAutoMissedMigration, /value->>'schedule_boundary_id' <> v_schedule->>'id'/i);
+  assert.match(scheduleAutoMissedMigration, /value->>'outcome' <> 'missed'/i);
+  assert.match(scheduleAutoMissedMigration, /nullif\(value->>'schedule_boundary_id', ''\) is null/i);
+  assert.match(scheduleAutoMissedMigration, /execute v_definition/i);
+  assert.match(scheduleAutoMissedMigration, /revoke all on function public\.adhdice_execute_task_state_command\(uuid, jsonb\) from public, anon, authenticated/i);
+  assert.match(scheduleAutoMissedMigration, /grant execute on function public\.adhdice_execute_task_state_command\(uuid, jsonb\) to service_role/i);
+  assert.doesNotMatch(scheduleAutoMissedMigration, /select\s+public\.adhdice_execute_task_state_command\b/i);
+  assert.doesNotMatch(scheduleAutoMissedMigration, /insert\s+into\s+public\.adhdice_clean_tasks/i);
+  assert.doesNotMatch(scheduleAutoMissedMigration, /insert\s+into\s+public\.adhdice_task_reward_entitlements/i);
 });
 
 test("reward entitlement persistence uses the canonical identity fence", () => {

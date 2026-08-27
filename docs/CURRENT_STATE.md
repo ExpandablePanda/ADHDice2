@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-26
+Last reviewed: 2026-08-27
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.72`.
+- Current working app version: `7.11.73`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -15,6 +15,22 @@ Role: active working
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 
+## 2026-08-27 7.11.73 Canonical Task State correctness
+
+Status-circle Delayed actions on Table/List task, Step, and Substep surfaces now
+open the existing Delay date-selection flow; the selected date is committed
+through canonical `delay_occurrence`, preserving the original occurrence and
+updating the compatibility `due_on` projection to the effective delayed date.
+Canonical schedule replay now materializes only past unresolved automatic
+Missed facts for a backdated schedule change in the same command transaction.
+Manual History and Calendar overrides remain authoritative, Not Due stays
+derived, current logical day remains live, and automatic Missed facts carry no
+positive completion or reward side effects. Fitness Goals migration is live and
+verified; Goals UI remains explicitly parked. Focused source tests cover the
+7.11.73 regressions. An authored-only forward RPC patch extends the existing
+automatic History contract for schedule replay; no SQL was applied. Edge
+deployment, browser QA, and device QA were not performed by this source change.
+
 ## 2026-08-26 7.11.72 Fitness Goals source-review corrections
 
 The 7.11.71 Meal Plan pending mutation recovery source review passed. Fitness
@@ -22,10 +38,10 @@ Goals reload failures now use the shared error formatter: missing-table,
 schema-cache, `42P01`, and `PGRST205` failures return only the friendly
 7.11.69 migration message, while unrelated errors remain unchanged. The
 consolidated `supabase/schema.sql` Goal and Level policies now mirror the
-authored migration's authenticated owner predicates. The authored
-`supabase/add_health_fitness_goals_7_11_69.sql` migration remains unchanged and
-has NOT been applied. No Goals UI, performance/PR engine, or generic Records or
-Achievements integration was added.
+authored migration's authenticated owner predicates. The
+`supabase/add_health_fitness_goals_7_11_69.sql` migration is now live and
+verified. Goals UI remains parked; no performance/PR engine or generic Records
+or Achievements integration was added.
 
 ## 2026-08-26 7.11.71 Explicit Meal Plan pending mutation recovery
 
@@ -59,8 +75,8 @@ threshold reached state, and reached dates are derived from current canonical
 rows, so corrections and deletions self-heal; no PR, record-history, or
 achievement rows are persisted. Goals and Levels persist configuration only,
 with owner-scoped relationships and explicit Level ordering. The
-`supabase/add_health_fitness_goals_7_11_69.sql` migration is authored only and
-has not been applied. No Goals/Records UI, generic Records integration, or
+`supabase/add_health_fitness_goals_7_11_69.sql` migration is live and verified.
+Goals UI remains parked; no Goals/Records UI, generic Records integration, or
 Achievement integration was added.
 
 ## 2026-08-26 7.11.68 Preserve On-Time Stop & Save Progress

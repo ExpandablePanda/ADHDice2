@@ -233,6 +233,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const recurrenceByDate = authoritativeRowsByDate(rows.filter((row) => row.recurrenceAuthoritative !== false));
   const unscheduled = isUnscheduled(task.recurrence, task.dueOn);
   const scheduleChange = input.action?.type === "change_schedule";
+  const calendarStart = input.calendarStart ?? (task.dueOn && task.dueOn < today ? task.dueOn : today);
+  const calendarEnd = input.calendarEnd ?? shiftDateKey(today, 40);
   const staleWorkflowForRollover = input.action?.type === "reconcile_rollover"
     && task.lifecycle === "active"
     && task.activeStatus === "in_progress"
@@ -376,6 +378,32 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
 
   if (input.action?.type === "reconcile_rollover" && !staleInProgressForRollover) {
     for (const row of automaticMissedRows({ task, history: rows, today, occurredAt: nowIso })) {
+      rows.push(row);
+      byDate.set(row.logicalDate, row);
+      recurrenceByDate.set(row.logicalDate, row);
+      changes.push({ type: "insert", row });
+    }
+  }
+
+  const scheduleReplay = scheduleChange && input.action?.type === "change_schedule"
+    ? {
+        changedLogicalDate: input.action.changedLogicalDate ?? today,
+        kind: input.action.replayKind ?? "recurrence" as const,
+        ...(input.action.manualDueOn !== undefined ? { manualDueOn: input.action.manualDueOn } : {}),
+      }
+    : null;
+  if (scheduleReplay) {
+    const replayPlan = buildTaskEffectiveTimeline({
+      task,
+      history: rows,
+      logicalDate: today,
+      calendarStart,
+      calendarEnd,
+      ...(input.calendarOverrides ? { calendarOverrides: input.calendarOverrides } : {}),
+      ...(input.workflow ? { workflow: input.workflow } : {}),
+      replay: { ...scheduleReplay, materializeAutomaticMissed: true },
+    });
+    for (const row of replayPlan.automaticHistoryRows ?? []) {
       rows.push(row);
       byDate.set(row.logicalDate, row);
       recurrenceByDate.set(row.logicalDate, row);
@@ -613,8 +641,6 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   let activeStatus: TaskActiveStatus;
   let calendar: Record<string, ReturnType<typeof calendarStateForOutcome>> = {};
   for (const [date, row] of byDate) calendar[date] = calendarStateForOutcome(row.outcome);
-  const calendarStart = input.calendarStart ?? (task.dueOn && task.dueOn < today ? task.dueOn : today);
-  const calendarEnd = input.calendarEnd ?? shiftDateKey(today, 40);
   if (!completed) {
     for (const date of dateRange(calendarStart, today)) {
       if (calendar[date]) continue;
@@ -674,15 +700,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       : scheduleChange
         ? {
             replay: {
-              changedLogicalDate: input.action?.type === "change_schedule" && input.action.changedLogicalDate
-                ? input.action.changedLogicalDate
-                : today,
-              kind: input.action?.type === "change_schedule" && input.action.replayKind
-                ? input.action.replayKind
-                : "recurrence" as const,
-              ...(input.action?.type === "change_schedule" && input.action.manualDueOn !== undefined
-                ? { manualDueOn: input.action.manualDueOn }
-                : {}),
+              ...scheduleReplay!,
             },
           }
         : input.action?.type === "recompute"

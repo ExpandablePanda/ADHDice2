@@ -41,6 +41,46 @@ function engineInput(overrides: Partial<TaskStateEngineInput["task"]> = {}, rows
   };
 }
 
+function scheduleReplayInput(rows: TaskStateHistoryRow[] = []): TaskStateEngineInput {
+  return {
+    task: {
+      id: "task-1",
+      lifecycle: "active",
+      activeStatus: "pending",
+      dueOn: "2026-08-17",
+      historicalScheduleAnchor: "2026-08-17",
+      historicalScheduleAnchorProven: true,
+      recurrence: { kind: "rolling", intervalDays: 4 },
+    },
+    history: rows,
+    now: "2026-08-27T12:00:00.000Z",
+    timezone: "UTC",
+    logicalDayRollover: "00:00",
+    calendarStart: "2026-08-17",
+    calendarEnd: "2026-08-27",
+    action: {
+      type: "change_schedule",
+      changedLogicalDate: "2026-08-27",
+      replayKind: "due_date",
+      manualDueOn: "2026-08-17",
+    },
+  };
+}
+
+function scheduledHistory(
+  logicalDate: string,
+  outcome: TaskStateHistoryRow["outcome"],
+  options: { occurrenceDueOn?: string; effectiveDueOn?: string } = {},
+): TaskStateHistoryRow {
+  return {
+    ...history(logicalDate, "manual", options.occurrenceDueOn ?? "2026-08-17"),
+    id: `${outcome}-${logicalDate}`,
+    outcome,
+    ...(options.effectiveDueOn ? { effectiveDueOn: options.effectiveDueOn } : {}),
+    ...(outcome === "complete" ? { eventType: "completed_permanently" as const } : {}),
+  };
+}
+
 function insertedMissed(input: TaskStateEngineInput) {
   return evaluateTaskState(input).proposedHistoryChanges.flatMap((change) => (
     change.type === "insert" && change.row.outcome === "missed" ? [change.row] : []
@@ -127,4 +167,87 @@ test("Auto Missed retry is idempotent and produces no reward entitlement", () =>
   assert.equal(plan.normalizedResult.rewardEntitlement, null);
   assert.equal("reward_program_version" in payload, false);
   assert.equal((payload.automatic_history_facts as Array<Record<string, unknown>>).every((fact) => fact.provenance_kind === "authorized_automation"), true);
+});
+
+test("backdated rolling Every 4 Days schedule replay persists past Missed facts and keeps today live", () => {
+  const result = evaluateTaskState(scheduleReplayInput());
+  const automaticRows = result.proposedHistoryChanges.flatMap((change) => (
+    change.type === "insert" && change.row.provenance === "reconciliation" ? [change.row] : []
+  ));
+
+  assert.deepEqual(automaticRows.map((row) => row.logicalDate), [
+    "2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21",
+    "2026-08-22", "2026-08-23", "2026-08-24", "2026-08-25", "2026-08-26",
+  ]);
+  assert.equal(automaticRows.every((row) => row.occurrenceDueOn === "2026-08-17"), true);
+  assert.equal(result.calendar["2026-08-17"], "missed");
+  assert.equal(result.calendar["2026-08-26"], "missed");
+  assert.equal(result.calendar["2026-08-27"], "open");
+  assert.equal(result.nextDueDate, "2026-08-17");
+  assert.equal(result.activeStatus, "missed");
+  assert.equal(result.calendar["2026-08-27"], "open");
+  assert.equal(automaticRows.some((row) => row.logicalDate === "2026-08-27"), false);
+  assert.equal(automaticRows.some((row) => String(row.outcome) === "not_due"), false);
+  assert.equal(result.rewardEligibility.eligible, false);
+});
+
+test("schedule replay preserves later authoritative outcomes and rebases rolling recurrence", () => {
+  const outcomes: Array<TaskStateHistoryRow["outcome"]> = ["done", "did_my_best", "missed", "delayed", "complete"];
+  for (const outcome of outcomes) {
+    const result = evaluateTaskState(scheduleReplayInput([
+      scheduledHistory("2026-08-21", outcome, outcome === "delayed" ? { effectiveDueOn: "2026-08-25" } : {}),
+    ]));
+    assert.equal(result.calendar["2026-08-21"], outcome, outcome);
+    assert.equal(result.proposedHistoryChanges.some((change) => (
+      change.type === "insert" && change.row.logicalDate === "2026-08-21"
+    )), false, outcome);
+
+    if (outcome === "done" || outcome === "did_my_best") {
+      assert.equal(result.nextDueDate, "2026-08-25", outcome);
+      assert.deepEqual(result.proposedHistoryChanges.flatMap((change) => (
+        change.type === "insert" ? [change.row.logicalDate] : []
+      )), ["2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-25", "2026-08-26"], outcome);
+      for (const date of ["2026-08-22", "2026-08-23", "2026-08-24"]) {
+        assert.equal(result.calendar[date], "not_due", `${outcome}:${date}`);
+      }
+    } else if (outcome === "delayed") {
+      assert.equal(result.nextDueDate, "2026-08-25");
+      for (const date of ["2026-08-22", "2026-08-23", "2026-08-24"]) {
+        assert.equal(result.calendar[date], "not_due", `${outcome}:${date}`);
+      }
+    } else if (outcome === "complete") {
+      assert.equal(result.nextDueDate, null);
+      assert.equal(result.calendar["2026-08-22"], "no_entry");
+    }
+  }
+});
+
+test("schedule replay is idempotent and reprojection does not persist Not Due rows", () => {
+  const first = evaluateTaskState(scheduleReplayInput());
+  const firstRows = first.proposedHistoryChanges.flatMap((change) => (
+    change.type === "insert" ? [change.row] : []
+  ));
+  const second = evaluateTaskState(scheduleReplayInput(firstRows));
+
+  assert.deepEqual(second.proposedHistoryChanges, []);
+  assert.deepEqual(second.calendar, first.calendar);
+  assert.equal(firstRows.some((row) => String(row.outcome) === "not_due"), false);
+  assert.equal(first.rewardEligibility.eligible, false);
+});
+
+test("schedule replay preserves an authoritative Calendar override without persisting Not Due", () => {
+  const result = evaluateTaskState({
+    ...scheduleReplayInput(),
+    calendarOverrides: [{
+      id: "override-2026-08-18",
+      logicalDate: "2026-08-18",
+      overrideState: "not_due",
+      provenance: "manual",
+    }],
+  });
+
+  assert.equal(result.calendar["2026-08-18"], "not_due");
+  assert.equal(result.proposedHistoryChanges.some((change) => (
+    change.type === "insert" && change.row.logicalDate === "2026-08-18"
+  )), false);
 });

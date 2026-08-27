@@ -1598,12 +1598,8 @@ function StepsCardPreview({
                           className="min-w-max flex-nowrap"
                           currentStatus={displayStatus}
                           onSetStatus={(status) => {
-                            if (status === "delayed" && onDelayTaskUntil) {
-                              if (childTask?.due_on ?? item.dueOn) {
-                                onOpenQuickPanel(item.id, "delay");
-                              } else {
-                                void onDelayTaskUntil(item.id, null);
-                              }
+                            if (status === "delayed") {
+                              if (onDelayTaskUntil) onOpenQuickPanel(item.id, "delay");
                               return;
                             }
                             if (status === "unscheduled") {
@@ -3348,14 +3344,9 @@ function TasksSimpleList({
                     className="min-w-max flex-nowrap"
                     currentStatus={displayStatus}
                     onSetStatus={(status) => {
-                      if (status === "delayed" && tableProps.onDelayTaskUntil) {
+                      if (status === "delayed") {
                         setRowContextMenu(null);
-                        if (task.due_on) {
-                          openQuickPanel(task.id, "delay");
-                        } else {
-                          closeQuickPanel();
-                          void tableProps.onDelayTaskUntil(task.id, null);
-                        }
+                        if (tableProps.onDelayTaskUntil) openQuickPanel(task.id, "delay");
                         return;
                       }
                       setRowContextMenu(null);

@@ -447,6 +447,8 @@ function engineInputForScheduleBoundary(
     task: {
       ...engineInput.task,
       dueOn,
+      historicalScheduleAnchor: dueOn,
+      historicalScheduleAnchorProven: dueOn !== null,
       recurrence: recurrenceFromBoundary(boundary),
     },
   };
@@ -566,6 +568,28 @@ function historyFactFor(
     timezone: envelope.logicalDay.timezone,
     day_start_time: envelope.logicalDay.dayStartTime,
     idempotence_identity: `${envelope.idempotenceIdentity}:history:${logicalDate}:${outcome}`,
+  };
+}
+
+function automaticHistoryFactFor(
+  command: CanonicalCommandEnvelope,
+  row: TaskStateHistoryRow,
+  scheduleBoundaryId: string | null,
+): CanonicalHistoryFactPlan {
+  return {
+    logical_date: row.logicalDate,
+    outcome: "missed",
+    event_kind: "authorized_automation",
+    occurrence_id: null,
+    scheduled_due_on: row.occurrenceDueOn ?? null,
+    effective_due_on: null,
+    schedule_boundary_id: scheduleBoundaryId,
+    recurrence_source_fingerprint: scheduleBoundaryId,
+    source: "task_state_command",
+    logical_day_settings_revision: command.logicalDay.settingsRevision,
+    timezone: command.logicalDay.timezone,
+    day_start_time: command.logicalDay.dayStartTime,
+    idempotence_identity: `${command.idempotenceIdentity}:history:${row.logicalDate}:missed`,
   };
 }
 
@@ -878,6 +902,13 @@ export function planTaskStateCommand(
     case "schedule_change": {
       projection = requireProjection(engineResult, task);
       scheduleBoundary = input.scheduleBoundary;
+      automaticHistoryFacts = engineResult?.proposedHistoryChanges.flatMap((change) => (
+        change.type === "insert"
+          && change.row.outcome === "missed"
+          && change.row.provenance === "reconciliation"
+          ? [automaticHistoryFactFor(command, change.row, input.scheduleBoundary.id)]
+          : []
+      )) ?? [];
       break;
     }
     case "calendar_override": {
@@ -923,21 +954,7 @@ export function planTaskStateCommand(
       }
       automaticHistoryFacts = engineResult?.proposedHistoryChanges.flatMap((change) => {
         if (change.type !== "insert" || change.row.outcome !== "missed" || change.row.provenance !== "rollover") return [];
-        return [{
-          logical_date: change.row.logicalDate,
-          outcome: "missed" as const,
-          event_kind: "authorized_automation" as const,
-          occurrence_id: null,
-          scheduled_due_on: change.row.occurrenceDueOn ?? null,
-          effective_due_on: null,
-          schedule_boundary_id: input.scheduleBoundaryId ?? null,
-          recurrence_source_fingerprint: input.scheduleBoundaryId ?? null,
-          source: "task_state_command",
-          logical_day_settings_revision: command.logicalDay.settingsRevision,
-          timezone: command.logicalDay.timezone,
-          day_start_time: command.logicalDay.dayStartTime,
-          idempotence_identity: `${command.idempotenceIdentity}:history:${change.row.logicalDate}:missed`,
-        }];
+        return [automaticHistoryFactFor(command, change.row, input.scheduleBoundaryId ?? null)];
       }) ?? [];
       break;
     }

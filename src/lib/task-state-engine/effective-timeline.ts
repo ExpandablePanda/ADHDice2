@@ -372,6 +372,7 @@ export function buildTaskEffectiveTimeline(
     : null;
   let completed = input.task.lifecycle === "complete";
   const consumed = new Set<string>();
+  const automaticHistoryRows: TaskStateHistoryRow[] = [];
 
   const advanceAfterSuccess = (row: TaskStateHistoryRow) => {
     if (completed) return;
@@ -384,7 +385,8 @@ export function buildTaskEffectiveTimeline(
     if (input.replay?.kind === "due_date"
       && input.replay.manualDueOn !== undefined
       && replayCheckpoint?.kind === "success"
-      && row.logicalDate === replayCheckpoint.logicalDate) {
+      && row.logicalDate === replayCheckpoint.logicalDate
+      && row.logicalDate < (input.replay.manualDueOn ?? row.logicalDate)) {
       activeDueOn = input.replay.manualDueOn;
     } else if (input.task.recurrence.kind === "none") {
       activeDueOn = null;
@@ -448,6 +450,15 @@ export function buildTaskEffectiveTimeline(
       return;
     }
     if (row.outcome === "delayed") {
+      if (input.replay
+        && (input.replay.kind === "due_date" || input.replay.kind === "recurrence")
+        && row.effectiveDueOn !== undefined
+        && row.effectiveDueOn !== null) {
+        activeDueOn = row.effectiveDueOn;
+        unresolvedDueOn = null;
+        delayedUntilDate = activeDueOn > input.logicalDate ? activeDueOn : null;
+        return;
+      }
       // Legacy History has no persisted effective cursor. Preserve its prior
       // compatibility fallback only when the Task itself is currently Delayed;
       // canonical rows always carry effectiveDueOn (including null) and must
@@ -529,6 +540,36 @@ export function buildTaskEffectiveTimeline(
       } else {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       }
+      if (input.replay?.materializeAutomaticMissed
+        && date < input.logicalDate
+        && !completed
+        && !override
+        && activeDueOn
+        && (
+          (input.task.recurrence.kind === "rolling"
+            && (unresolvedDueOn !== null || scheduledOccurrences(input.task.recurrence, activeDueOn, date, date).includes(date)))
+          || (input.task.recurrence.kind === "none" && date === activeDueOn)
+          || (isFixedRecurrence && isFixedScheduledDate)
+        )) {
+        const independent = input.task.recurrence.kind !== "rolling" || input.task.recurrence.intervalDays === 1;
+        const occurrenceDueOn = independent ? date : unresolvedDueOn ?? activeDueOn;
+        const automaticRow: TaskStateHistoryRow = {
+          id: `task-state:${input.task.id}:${date}:missed:reconciliation`,
+          taskId: input.task.id,
+          logicalDate: date,
+          outcome: "missed",
+          provenance: "reconciliation",
+          occurredAt: `${date}T00:00:00.000Z`,
+          occurrenceIdentity: occurrenceIdentity(input.task.id, occurrenceDueOn),
+          occurrenceDueOn,
+          countedAsDueOccurrence: true,
+          wasCompleted: false,
+          eventType: "status",
+        };
+        automaticHistoryRows.push(automaticRow);
+        unresolvedDueOn ??= activeDueOn;
+        calculated = calculatedDay(input.task.id, date, "missed", "overdue", occurrenceDueOn);
+      }
       const baseDay = override
         ? calendarOverrideDay(input.task.id, date, override, input.logicalDate)
         : calculated;
@@ -588,5 +629,6 @@ export function buildTaskEffectiveTimeline(
     recurrenceAnchor: replayCheckpoint?.kind === "success" ? replayCheckpoint.logicalDate : null,
     replayCheckpoint,
     unresolvedDueOn: currentUnresolvedDueOn,
+    ...(input.replay?.materializeAutomaticMissed ? { automaticHistoryRows } : {}),
   };
 }

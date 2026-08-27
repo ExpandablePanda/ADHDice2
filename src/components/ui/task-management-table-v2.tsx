@@ -850,6 +850,7 @@ function InlineSubtaskEditor({
   onCommitTitle,
   onDelete,
   onDraftChange,
+  onRequestDelay,
   onSetStatus,
   subtasks,
 }: {
@@ -860,6 +861,7 @@ function InlineSubtaskEditor({
   onCommitTitle?: (subtaskId: string) => void;
   onDelete?: (subtaskId: string) => void;
   onDraftChange: (subtaskId: string, value: string) => void;
+  onRequestDelay?: (subtaskId: string) => void;
   onSetStatus?: (subtaskId: string, nextStatus: TaskStatus) => void;
   subtasks: PrototypeTaskSubtask[];
 }) {
@@ -928,6 +930,11 @@ function InlineSubtaskEditor({
                 className="mt-2 pl-8"
                 currentStatus={subtask.status as TaskStatus}
                 onSetStatus={(status) => {
+                  if (status === "delayed") {
+                    onRequestDelay?.(subtask.id);
+                    setOpenStatusPickerSubtaskId(null);
+                    return;
+                  }
                   onSetStatus?.(subtask.id, status);
                   setOpenStatusPickerSubtaskId(null);
                 }}
@@ -946,6 +953,7 @@ function InlineSubtaskEditor({
                 onCommitTitle={onCommitTitle}
                 onDelete={onDelete}
                 onDraftChange={onDraftChange}
+                onRequestDelay={onRequestDelay}
                 onSetStatus={onSetStatus}
                 subtasks={subtask.children}
               />
@@ -4516,7 +4524,21 @@ export function TaskManagementTableV2({
     }
   }
 
+  function openTaskDelay(taskId: string, sourceElement?: HTMLElement | null) {
+    const task = getTaskById(taskId);
+    if (!task || !canDelayTask(task)) return;
+    if (childTaskParentInfoByTaskId.has(taskId) && revealChildTaskInParentEditor(taskId)) {
+      setActiveMetadataPanelByTaskId((current) => ({ ...current, [taskId]: "delay" }));
+      return;
+    }
+    openInspector(taskId, "delay", sourceElement);
+  }
+
   function setTaskDisplayStatus(taskId: string, status: TaskDisplayStatus) {
+    if (status === "delayed") {
+      openTaskDelay(taskId);
+      return;
+    }
     if (status === "unscheduled") {
       onTaskDueChange?.(taskId, { dueOn: "", dueTime: "" }, { manualAction: "unscheduled_status" });
       return;
@@ -5298,8 +5320,8 @@ export function TaskManagementTableV2({
           className={inlineAccordionButtonClass()}
           key={`${status || "status-option"}-${optionIndex}`}
           onClick={() => {
-            if (status === "delayed" && task.dueOn && canDelayTask(task)) {
-              setOverlayMode("delay");
+            if (status === "delayed") {
+              if (canDelayTask(task)) setOverlayMode("delay");
               return;
             }
             setTaskDisplayStatus(task.id, status);
@@ -6627,8 +6649,8 @@ export function TaskManagementTableV2({
                       statusRailLongPressTriggeredRef.current = false;
                       return;
                     }
-                    if (status === "delayed" && task.dueOn && canDelayTask(task)) {
-                      openInspector(task.id, "delay", event.currentTarget);
+                    if (status === "delayed") {
+                      openTaskDelay(task.id, event.currentTarget);
                       return;
                     }
                   setTaskDisplayStatus(task.id, status);
@@ -6704,8 +6726,8 @@ export function TaskManagementTableV2({
                     statusRailLongPressTriggeredRef.current = false;
                     return;
                   }
-                  if (status === "delayed" && task.dueOn && canDelayTask(task)) {
-                    openInspector(task.id, "delay", event.currentTarget);
+                  if (status === "delayed") {
+                    openTaskDelay(task.id, event.currentTarget);
                     return;
                   }
                   setTaskDisplayStatus(task.id, status);
@@ -7567,8 +7589,8 @@ export function TaskManagementTableV2({
                           className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${item.status === status ? "" : "opacity-78 hover:opacity-100"}`}
                           key={status}
                           onClick={() => {
-                            if (status === "delayed" && item.dueOn && canDelayTask(item)) {
-                              setActiveMetadataPanelByTaskId((current) => ({ ...current, [item.id]: "delay" }));
+                            if (status === "delayed") {
+                              openTaskDelay(item.id);
                               return;
                             }
                             setTaskDisplayStatus(item.id, status);
@@ -7714,8 +7736,8 @@ export function TaskManagementTableV2({
                 className="w-max max-w-none flex-nowrap"
                 currentStatus={item.status}
                 onSetStatus={(status, event) => {
-                  if (status === "delayed" && item.dueOn && canDelayTask(item)) {
-                    setActiveMetadataPanelByTaskId((current) => ({ ...current, [item.id]: "delay" }));
+                  if (status === "delayed") {
+                    openTaskDelay(item.id, event.currentTarget);
                     return;
                   }
                   setTaskDisplayStatus(item.id, status);
@@ -9414,8 +9436,10 @@ export function TaskManagementTableV2({
                     <div className="flex flex-wrap gap-2">
                       {getSelectableTaskDisplayStatusesForRepeatFrequency(metadataTask.repeat).map((status, optionIndex) => (
                         <TaskTableChipButton className="gap-1.5" key={`${status || "status-option"}-${optionIndex}`} onClick={() => {
-                          if (status === "delayed" && metadataTask.dueOn && canDelayTask(metadataTask)) {
-                            setActiveMetadataPanelByTaskId((current) => ({ ...current, [metadataTask.id]: "delay" }));
+                          if (status === "delayed") {
+                            if (canDelayTask(metadataTask)) {
+                              setActiveMetadataPanelByTaskId((current) => ({ ...current, [metadataTask.id]: "delay" }));
+                            }
                             return;
                           }
                           setTaskDisplayStatus(metadataTask.id, status);
@@ -9546,6 +9570,7 @@ export function TaskManagementTableV2({
                                 [subtaskId]: value,
                               }));
                             }}
+                            onRequestDelay={(subtaskId) => openTaskDelay(subtaskId)}
                             onSetStatus={(subtaskId, nextStatus) => onTaskSubtaskStatusChange?.(subtaskId, nextStatus)}
                             subtasks={selectedTaskVisibleSubtasks}
                           />
@@ -10126,11 +10151,13 @@ export function TaskManagementTableV2({
                           className="gap-1.5"
                           key={`${status || "status-option"}-${optionIndex}`}
                           onClick={() => {
-                            if (status === "delayed" && selectedTask.dueOn && canDelayTask(selectedTask)) {
-                              if (overlayMode === "status") {
-                                setOverlayMode("delay");
-                              } else {
-                                setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: "delay" }));
+                            if (status === "delayed") {
+                              if (canDelayTask(selectedTask)) {
+                                if (overlayMode === "status") {
+                                  setOverlayMode("delay");
+                                } else {
+                                  setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: "delay" }));
+                                }
                               }
                               return;
                             }
