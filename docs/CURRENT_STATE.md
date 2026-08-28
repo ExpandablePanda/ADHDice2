@@ -5,13 +5,25 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.91`.
+- Current working app version: `7.11.92`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-28 7.11.92 Water History entry editing
+
+Health → Water → Water History now exposes individual historical water entries
+inside an ephemeral per-day `Entries` expansion. Historical rows reuse the same
+canonical `WaterEntryCard` editor and `updateWaterEntry` save path as Today’s
+Water, including amount/unit conversion and date/time recalculation. Successful
+date edits re-group entries immediately; moving an entry to today removes it
+from History and shows it in Today’s Water, while empty historical groups
+disappear naturally. The existing 14-day History window remains unchanged. No
+water schema, SQL, migration, persistence hook, deployment, or iOS behavior
+changed.
 
 ## 2026-08-28 7.11.91 Fitness Goals UI metric authority
 

@@ -671,6 +671,25 @@ export function sumWaterForDate(entries: HealthWaterEntry[], dateKey: string) {
   };
 }
 
+export function buildHealthWaterHistory(entries: HealthWaterEntry[], today: string) {
+  const dateKeys = Array.from(new Set(entries.map((entry) => entry.entry_date)))
+    .filter((dateKey) => dateKey !== today)
+    .sort((left, right) => right.localeCompare(left))
+    .slice(0, 14);
+
+  return dateKeys.map((dateKey) => {
+    const dayEntries = entries
+      .filter((entry) => entry.entry_date === dateKey)
+      .sort((left, right) => right.logged_at.localeCompare(left.logged_at));
+    return {
+      dateKey,
+      entries: dayEntries,
+      entryCount: dayEntries.length,
+      totals: sumWaterForDate(entries, dateKey),
+    };
+  });
+}
+
 export function formatQuantity(value: number) {
   return Number.isInteger(value) ? String(value) : String(roundNutrition(value));
 }

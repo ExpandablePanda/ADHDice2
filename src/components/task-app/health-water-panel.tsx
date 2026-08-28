@@ -7,6 +7,7 @@ import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import type { HealthWaterEntry, HealthWaterUnit } from "@/lib/database.types";
 import {
+  buildHealthWaterHistory,
   formatQuantity,
   millilitersToWaterAmount,
   sumWaterForDate,
@@ -44,6 +45,7 @@ export function HealthWaterPanel({
   const [amount, setAmount] = useState("1");
   const [unit, setUnit] = useState<HealthWaterUnit>("cup");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [expandedHistoryDates, setExpandedHistoryDates] = useState<Set<string>>(() => new Set());
   const [editDraft, setEditDraft] = useState({
     amount: "1",
     date: today,
@@ -55,17 +57,7 @@ export function HealthWaterPanel({
     [today, waterEntries],
   );
   const totals = useMemo(() => sumWaterForDate(waterEntries, today), [today, waterEntries]);
-  const waterHistory = useMemo(() => {
-    const dateKeys = Array.from(new Set(waterEntries.map((entry) => entry.entry_date)))
-      .filter((dateKey) => dateKey !== today)
-      .sort((left, right) => right.localeCompare(left))
-      .slice(0, 14);
-    return dateKeys.map((dateKey) => ({
-      dateKey,
-      entryCount: waterEntries.filter((entry) => entry.entry_date === dateKey).length,
-      totals: sumWaterForDate(waterEntries, dateKey),
-    }));
-  }, [today, waterEntries]);
+  const waterHistory = useMemo(() => buildHealthWaterHistory(waterEntries, today), [today, waterEntries]);
 
   async function addAmount(nextAmount: number, nextUnit: HealthWaterUnit) {
     if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
@@ -106,8 +98,23 @@ export function HealthWaterPanel({
       unit: editDraft.unit,
     });
     if (saved) {
+      if (editDraft.date !== today) {
+        setExpandedHistoryDates((current) => new Set(current).add(editDraft.date));
+      }
       setEditingId(null);
     }
+  }
+
+  function toggleHistoryDate(dateKey: string) {
+    setExpandedHistoryDates((current) => {
+      const next = new Set(current);
+      if (next.has(dateKey)) {
+        next.delete(dateKey);
+      } else {
+        next.add(dateKey);
+      }
+      return next;
+    });
   }
 
   return (
@@ -199,11 +206,39 @@ export function HealthWaterPanel({
                         {day.entryCount} {day.entryCount === 1 ? "entry" : "entries"}
                       </p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm font-black text-[#26324f] dark:text-white">{formatQuantity(day.totals.fluidOunces)} fl oz</p>
-                      <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{formatQuantity(day.totals.cups)} cups</p>
+                    <div className="flex shrink-0 flex-col items-end gap-2 text-right">
+                      <div>
+                        <p className="text-sm font-black text-[#26324f] dark:text-white">{formatQuantity(day.totals.fluidOunces)} fl oz</p>
+                        <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{formatQuantity(day.totals.cups)} cups</p>
+                      </div>
+                      <AdhdChip
+                        aria-controls={`water-history-entries-${day.dateKey}`}
+                        aria-expanded={expandedHistoryDates.has(day.dateKey)}
+                        onClick={() => toggleHistoryDate(day.dateKey)}
+                        selected={expandedHistoryDates.has(day.dateKey)}
+                      >
+                        {expandedHistoryDates.has(day.dateKey) ? "Hide entries" : "Entries"}
+                      </AdhdChip>
                     </div>
                   </div>
+                  {expandedHistoryDates.has(day.dateKey) ? (
+                    <div className="mt-4 grid gap-3 border-t border-[#ece8f8] pt-4 dark:border-white/10 sm:grid-cols-2" id={`water-history-entries-${day.dateKey}`}>
+                      {day.entries.map((entry) => (
+                        <WaterEntryCard
+                          deleteWaterEntry={deleteWaterEntry}
+                          editDraft={editDraft}
+                          editingId={editingId}
+                          entry={entry}
+                          key={entry.id}
+                          onCancelEdit={() => setEditingId(null)}
+                          onChangeDraft={setEditDraft}
+                          onSaveEdit={saveEditing}
+                          onStartEdit={startEditing}
+                          showRemove={false}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
                 </AdhdCard>
               ))}
             </div>
@@ -230,6 +265,7 @@ type WaterEntryCardProps = {
   onChangeDraft: (draft: WaterEditDraft) => void;
   onSaveEdit: (entryId: string) => Promise<void>;
   onStartEdit: (entry: HealthWaterEntry) => void;
+  showRemove?: boolean;
 };
 
 function WaterEntryCard({
@@ -241,6 +277,7 @@ function WaterEntryCard({
   onChangeDraft,
   onSaveEdit,
   onStartEdit,
+  showRemove = true,
 }: WaterEntryCardProps) {
   const isEditing = editingId === entry.id;
   if (isEditing) {
@@ -319,15 +356,17 @@ function WaterEntryCard({
           >
             Edit
           </AdhdChip>
-          <AdhdChip
-            className="shrink-0"
-            contentClassName="gap-1"
-            icon={<Trash2 aria-hidden="true" className="h-3 w-3" />}
-            onClick={() => { void deleteWaterEntry(entry.id); }}
-            tone="danger"
-          >
-            Remove
-          </AdhdChip>
+          {showRemove ? (
+            <AdhdChip
+              className="shrink-0"
+              contentClassName="gap-1"
+              icon={<Trash2 aria-hidden="true" className="h-3 w-3" />}
+              onClick={() => { void deleteWaterEntry(entry.id); }}
+              tone="danger"
+            >
+              Remove
+            </AdhdChip>
+          ) : null}
         </div>
       </div>
     </AdhdCard>
