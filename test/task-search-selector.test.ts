@@ -117,6 +117,86 @@ test("child-title search keeps the root as context without expanding siblings", 
   assert.deepEqual([...result.contextRootParentIds], ["root"]);
 });
 
+test("active All search does not re-add a stored-trashed No Fast Food child", () => {
+  const root = entity("root", "No Fast Food", { status: "missed" });
+  const trashedChild = {
+    ...entity("trashed-child", "test", { parent_task_id: root.id, status: "trashed" }),
+    ancestorIds: [root.id],
+    rootParentId: root.id,
+  };
+  const scope = buildStableTaskSearchScope([root, trashedChild], filtersFor("all"));
+  const result = queryTaskSearch("test", scope, true);
+
+  assert.equal(scope.selectedScopeEligibleEntityIds.has(trashedChild.id), false);
+  assert.equal(result.directSearchMatchedEntityIds.has(trashedChild.id), false);
+  assert.equal(result.visibleRootTaskIds.includes(root.id), false);
+});
+
+test("active All search does not re-add a stored-trashed Video Games child", () => {
+  const root = entity("root", "Video Games", { status: "upcoming" });
+  const trashedChild = {
+    ...entity("trashed-child", "test", { parent_task_id: root.id, status: "trashed" }),
+    ancestorIds: [root.id],
+    rootParentId: root.id,
+  };
+  const scope = buildStableTaskSearchScope([root, trashedChild], filtersFor("all"));
+  const result = queryTaskSearch("test", scope, true);
+
+  assert.equal(scope.selectedScopeEligibleEntityIds.has(trashedChild.id), false);
+  assert.equal(result.directSearchMatchedEntityIds.has(trashedChild.id), false);
+  assert.equal(result.visibleRootTaskIds.includes(root.id), false);
+});
+
+test("active child search still returns the root as context", () => {
+  const root = entity("root", "No Fast Food");
+  const child = {
+    ...entity("child", "test", { parent_task_id: root.id }),
+    ancestorIds: [root.id],
+    rootParentId: root.id,
+  };
+  const scope = buildStableTaskSearchScope([root, child], filtersFor("all"));
+  const result = queryTaskSearch("test", scope, true);
+
+  assert.equal(scope.selectedScopeEligibleEntityIds.has(child.id), true);
+  assert.equal(result.directSearchMatchedEntityIds.has(child.id), true);
+  assert.deepEqual(result.visibleRootTaskIds, [root.id]);
+});
+
+test("active search does not re-add a descendant beneath a stored-trashed ancestor", () => {
+  const root = entity("root", "Video Games");
+  const trashedAncestor = {
+    ...entity("trashed-ancestor", "Archived branch", { parent_task_id: root.id, status: "trashed" }),
+    ancestorIds: [root.id],
+    rootParentId: root.id,
+  };
+  const descendant = {
+    ...entity("descendant", "test", { parent_task_id: trashedAncestor.id }),
+    ancestorIds: [trashedAncestor.id, root.id],
+    rootParentId: root.id,
+  };
+  const scope = buildStableTaskSearchScope([root, trashedAncestor, descendant], filtersFor("all"));
+  const result = queryTaskSearch("test", scope, true);
+
+  assert.equal(scope.selectedScopeEligibleEntityIds.has(descendant.id), false);
+  assert.equal(result.directSearchMatchedEntityIds.has(descendant.id), false);
+  assert.equal(result.visibleRootTaskIds.includes(root.id), false);
+});
+
+test("Trash search keeps a trashed child directly searchable with root context", () => {
+  const root = entity("root", "No Fast Food");
+  const trashedChild = {
+    ...entity("trashed-child", "test", { parent_task_id: root.id, status: "trashed", trashed_at: new Date().toISOString() }),
+    ancestorIds: [root.id],
+    rootParentId: root.id,
+  };
+  const scope = buildStableTaskSearchScope([root, trashedChild], filtersFor("trash"));
+  const result = queryTaskSearch("test", scope, true);
+
+  assert.equal(scope.selectedScopeEligibleEntityIds.has(trashedChild.id), true);
+  assert.equal(result.directSearchMatchedEntityIds.has(trashedChild.id), true);
+  assert.deepEqual(result.visibleRootTaskIds, [root.id]);
+});
+
 test("substep search keeps the owning Step and matching branch context", () => {
   const result = queryTaskSearch("controller", buildStableTaskSearchScope([
     entity("root", "Video Game Tasks"),

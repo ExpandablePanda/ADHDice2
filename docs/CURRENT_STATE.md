@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.80`.
+- Current working app version: `7.11.81`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -15,6 +15,14 @@ Role: active working
 
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-27 7.11.81 Authoritative Task search selector excludes trashed descendants
+
+Versions 7.11.79 and 7.11.80 corrected parallel derived search evidence, but
+browser QA showed the authoritative Task search selector re-added trashed
+descendants during selected-root hierarchy expansion. Version 7.11.81 fixes
+that selector eligibility while preserving active descendant search,
+manual/smart list descendant behavior, and Trash search.
 
 ## 2026-08-27 7.11.79 Active Task search excludes trashed child evidence
 

@@ -95,6 +95,11 @@ function isInSelectedBucket(entity: TaskSearchEntity, filters: TaskSearchScopeFi
   return isTaskVisibleInPrimaryViews(task) && entity.listIds.includes(filters.selectedBucket);
 }
 
+function isEligibleSelectedScopeDescendant(entity: TaskSearchEntity, filters: TaskSearchScopeFilters, entitiesById: ReadonlyMap<string, TaskSearchEntity>) {
+  return filters.selectedBucket === "trash"
+    || (entity.task.status !== "trashed" && !hasTrashedAncestor(entity, entitiesById));
+}
+
 function isInPrimaryFacetScope(entity: TaskSearchEntity, entitiesById: ReadonlyMap<string, TaskSearchEntity>) {
   return entity.task.status !== "trashed"
     && !hasTrashedAncestor(entity, entitiesById)
@@ -138,6 +143,7 @@ export function buildStableTaskSearchScope(
       !isPinnedBucket
       && !selectedScopeEligibleEntityIds.has(entity.id)
       && selectedScopeRootIds.has(entity.rootParentId)
+      && isEligibleSelectedScopeDescendant(entity, filters, entitiesById)
       && matchesScopeFilters(entity, filters, focusedTaskIds, { ignoreStatus: true })
     ) {
       selectedScopeEligibleEntityIds.add(entity.id);
