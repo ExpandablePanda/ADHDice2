@@ -46,12 +46,33 @@ export type TaskStateCommandIntent =
   | { type: "trash_task" | "restore_task"; task_id: string; replay_identity: string; expected_revision?: number; milestone_id?: string; expected_milestone_revision?: number; milestone_operation_id?: string }
   | { type: "start_in_progress"; task_id: string; replay_identity: string; expected_revision?: number; occurrence_key?: string };
 
+export type HistoryOutcomeBatchEntry = {
+  logical_date: string;
+  occurrence_key?: string;
+  scheduled_due_on?: string;
+};
+
+export type HistoryOutcomeBatchIntent = {
+  type: "history_outcome_batch";
+  task_id: string;
+  replay_identity: string;
+  expected_revision: number;
+  outcome: "done" | "did_my_best" | "missed";
+  entries: HistoryOutcomeBatchEntry[];
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function isDate(value: unknown): value is string {
   return typeof value === "string" && DATE_KEY.test(value);
+}
+
+function isValidCalendarDate(value: unknown): value is string {
+  if (!isDate(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 function isOptionalDate(value: unknown): value is string | null {
@@ -167,6 +188,47 @@ export function validateTaskStateCommandIntent(value: unknown): TaskStateCommand
   }
   if (value.occurrence_key !== undefined && !isString(value.occurrence_key, 1, 256)) return null;
   return value as TaskStateCommandIntent;
+}
+
+const HISTORY_OUTCOME_BATCH_KEYS = new Set(["type", "task_id", "replay_identity", "expected_revision", "outcome", "entries"]);
+const HISTORY_OUTCOME_BATCH_ENTRY_KEYS = new Set(["logical_date", "occurrence_key", "scheduled_due_on"]);
+export const MAX_HISTORY_OUTCOME_BATCH_ENTRIES = 64;
+
+export function validateHistoryOutcomeBatchIntent(value: unknown): HistoryOutcomeBatchIntent | null {
+  if (!isRecord(value) || value.type !== "history_outcome_batch") return null;
+  if (!exactOrSubsetKeys(value, HISTORY_OUTCOME_BATCH_KEYS)
+    || !isString(value.task_id, 1, 128)
+    || !isString(value.replay_identity, 1, 256)
+    || !Number.isInteger(value.expected_revision)
+    || (value.expected_revision as number) < 1
+    || !["done", "did_my_best", "missed"].includes(String(value.outcome))
+    || !Array.isArray(value.entries)
+    || value.entries.length === 0
+    || value.entries.length > MAX_HISTORY_OUTCOME_BATCH_ENTRIES) return null;
+
+  const seenDates = new Set<string>();
+  const entries: HistoryOutcomeBatchEntry[] = [];
+  for (const entry of value.entries) {
+    if (!isRecord(entry) || !exactOrSubsetKeys(entry, HISTORY_OUTCOME_BATCH_ENTRY_KEYS) || !isValidCalendarDate(entry.logical_date)) return null;
+    if (seenDates.has(entry.logical_date)) return null;
+    seenDates.add(entry.logical_date);
+    if (entry.occurrence_key !== undefined && !isString(entry.occurrence_key, 1, 256)) return null;
+    if (entry.scheduled_due_on !== undefined && !isValidCalendarDate(entry.scheduled_due_on)) return null;
+    entries.push({
+      logical_date: entry.logical_date,
+      ...(entry.occurrence_key !== undefined ? { occurrence_key: entry.occurrence_key } : {}),
+      ...(entry.scheduled_due_on !== undefined ? { scheduled_due_on: entry.scheduled_due_on } : {}),
+    });
+  }
+
+  return {
+    type: "history_outcome_batch",
+    task_id: value.task_id,
+    replay_identity: value.replay_identity,
+    expected_revision: value.expected_revision,
+    outcome: value.outcome,
+    entries,
+  };
 }
 
 function occurrenceFor(readModel: CanonicalTaskStateReadModel, key: string | undefined): CanonicalTaskOccurrence | null {

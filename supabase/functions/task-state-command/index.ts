@@ -2,9 +2,11 @@ import { withSupabase } from "npm:@supabase/server@1.4.1";
 import { userIdFromContext } from "./auth.ts";
 import {
   executeTrustedTaskStateCommand,
+  executeHistoryOutcomeBatch,
   type TrustedTaskStateCommandClient,
 } from "./orchestration.ts";
 import {
+  validateHistoryOutcomeBatchIntent,
   validateTaskStateCommandIntent,
 } from "./domain.ts";
 
@@ -36,6 +38,16 @@ export default {
     } catch {
       return json({ error: { code: "invalid_request", message: "Request body must be valid JSON." } }, 400);
     }
+    const batchIntent = validateHistoryOutcomeBatchIntent(body);
+    if (batchIntent) {
+      const result = await executeHistoryOutcomeBatch({
+        userId,
+        intent: batchIntent,
+        adminClient: context.supabaseAdmin as unknown as TrustedTaskStateCommandClient,
+      });
+      return json(result.body, result.status);
+    }
+
     const intent = validateTaskStateCommandIntent(body);
     if (!intent) return json({ error: { code: "invalid_request", message: "Command intent is malformed or contains privileged persistence fields." } }, 400);
 

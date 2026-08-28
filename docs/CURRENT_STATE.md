@@ -5,13 +5,27 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.83`.
+- Current working app version: `7.11.84`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-27 7.11.84 Trusted History outcome batch
+
+Multi-date History Calendar Done / Did My Best / Missed edits now use one
+trusted browser-to-Edge `history_outcome_batch` request. The Edge branch
+validates and deterministically orders the dates, then sequentially executes
+ordinary canonical `set_outcome` children with threaded revisions and stable
+child replay identities. Each child retains its own History fact, canonical
+revision, and reward entitlement decision. Child Achievement evaluation is
+deferred through a backend-only SQL wrapper and one deterministic final
+Achievement evaluation runs after the children complete. Partial failures keep
+earlier committed dates; final Achievement failure is reported as a
+post-commit warning. The migration remains authored-only; Edge deployment,
+SQL application, browser QA, and device QA were not performed.
 
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.

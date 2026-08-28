@@ -15,7 +15,14 @@ import {
   type TaskStateCommandResponse,
   type TaskStateCommandSuccess,
 } from "@/lib/task-state-command-client";
-import type { TaskStateRuntimeAction } from "@/lib/task-state-runtime-actions";
+import {
+  invokeHistoryOutcomeBatch,
+  type HistoryOutcomeBatchEntryInput,
+  type HistoryOutcomeBatchIntent,
+  type HistoryOutcomeBatchResponse,
+  type HistoryOutcomeBatchSuccess,
+} from "@/lib/task-history-outcome-batch-client";
+import { classifyTaskStateRuntimeAction, type TaskStateRuntimeAction } from "@/lib/task-state-runtime-actions";
 
 export type TaskStateRuntimeCanonicalAction = Extract<TaskStateRuntimeAction, { kind: "canonical_action" }>;
 export type TaskStateRuntimeLocalTask = Task
@@ -46,6 +53,37 @@ export type TaskStateRuntimeExecutorOptions = {
   /** Test seam; production uses the existing browser command client. */
   invoke?: (intent: TaskStateCommandIntent) => Promise<TaskStateCommandResponse>;
 };
+
+export type TaskHistoryOutcomeBatchExecutorInput = {
+  task: TaskStateRuntimeLocalTask;
+  replayIdentity: string;
+  outcome: "done" | "did_my_best" | "missed";
+  entries: HistoryOutcomeBatchEntryInput[];
+  invoke?: (intent: HistoryOutcomeBatchIntent) => Promise<HistoryOutcomeBatchResponse>;
+};
+
+export type TaskHistoryOutcomeBatchCommittedChild = {
+  logicalDate: string;
+  previousTask: TaskStateRuntimeLocalTask;
+  task: TaskStateRuntimeLocalTask;
+  response: TaskStateCommandSuccess;
+};
+
+export type TaskHistoryOutcomeBatchExecutionResult =
+  | {
+      success: true;
+      task: TaskStateRuntimeLocalTask;
+      response: HistoryOutcomeBatchSuccess;
+      completedChildren: TaskHistoryOutcomeBatchCommittedChild[];
+      achievementWarning: string | null;
+    }
+  | {
+      success: false;
+      task: TaskStateRuntimeLocalTask | null;
+      response: HistoryOutcomeBatchResponse;
+      completedChildren: TaskHistoryOutcomeBatchCommittedChild[];
+      error: TaskStateRuntimeExecutorError;
+    };
 
 const TASK_STATUS_VALUES = new Set<Task["status"]>([
   "pending",
@@ -266,7 +304,7 @@ function reconcileProjection(projection: JsonObject): Pick<Task, "status" | "due
   };
 }
 
-function reconcileCommittedTask(
+export function reconcileCommittedTask(
   action: TaskStateRuntimeCanonicalAction,
   task: TaskStateRuntimeLocalTask,
   response: TaskStateCommandSuccess,
@@ -293,6 +331,162 @@ function reconcileCommittedTask(
     ...projection,
     // The canonical command response is the only source for this revision.
     canonical_revision: committedRevision,
+  };
+}
+
+function batchFailureError(response: HistoryOutcomeBatchResponse): TaskStateRuntimeExecutorError {
+  if (response.success) {
+    return {
+      kind: "malformed_response",
+      message: "The History batch response did not contain a failure reason.",
+      code: "MALFORMED_RESPONSE",
+      status: null,
+    };
+  }
+  return {
+    kind: response.error.kind,
+    message: response.error.message,
+    code: response.error.code,
+    status: response.error.status,
+  };
+}
+
+export async function executeTaskHistoryOutcomeBatch(
+  input: TaskHistoryOutcomeBatchExecutorInput,
+): Promise<TaskHistoryOutcomeBatchExecutionResult> {
+  const expectedRevision = input.task.canonical_revision;
+  if (typeof expectedRevision !== "number" || !Number.isInteger(expectedRevision) || expectedRevision < 1) {
+    const error = {
+      kind: "malformed_response" as const,
+      message: "Canonical History batch requires a valid task.canonical_revision.",
+      code: "MALFORMED_RESPONSE",
+      status: null,
+    };
+    return {
+      success: false,
+      task: null,
+      response: {
+        success: false,
+        state: "unavailable",
+        task_id: input.task.id,
+        batch_replay_identity: input.replayIdentity,
+        expected_revision: expectedRevision ?? 0,
+        final_committed_revision: expectedRevision ?? 0,
+        completed_entries: [],
+        failed_entry_index: null,
+        child_results: [],
+        achievement: { status: "not_run", operation_id: "", error_code: null },
+        achievement_warning: null,
+        error,
+      },
+      completedChildren: [],
+      error,
+    };
+  }
+  const validExpectedRevision = expectedRevision;
+  const intent: HistoryOutcomeBatchIntent = {
+    type: "history_outcome_batch",
+    task_id: input.task.id,
+    replay_identity: input.replayIdentity,
+    expected_revision: validExpectedRevision,
+    outcome: input.outcome,
+    entries: input.entries,
+  };
+  let response: HistoryOutcomeBatchResponse;
+  try {
+    response = await (input.invoke ?? invokeHistoryOutcomeBatch)(intent);
+  } catch (error) {
+    return {
+      success: false,
+      task: null,
+      response: {
+        success: false,
+        state: "unavailable",
+        task_id: input.task.id,
+        batch_replay_identity: input.replayIdentity,
+        expected_revision: validExpectedRevision,
+        final_committed_revision: validExpectedRevision,
+        completed_entries: [],
+        failed_entry_index: null,
+        child_results: [],
+        achievement: { status: "not_run", operation_id: "", error_code: null },
+        achievement_warning: null,
+        error: {
+          kind: "invocation_failure",
+          message: error instanceof Error ? error.message : "History outcome batch invocation failed.",
+          code: null,
+          status: null,
+        },
+      },
+      completedChildren: [],
+      error: {
+        kind: "invocation_failure",
+        message: error instanceof Error ? error.message : "History outcome batch invocation failed.",
+        code: null,
+        status: null,
+      },
+    };
+  }
+
+  let currentTask = input.task;
+  const completedChildren: TaskHistoryOutcomeBatchCommittedChild[] = [];
+  try {
+    for (const child of response.child_results) {
+      if (!child.success) break;
+      const action = classifyTaskStateRuntimeAction({
+        canonicalIntent: {
+          type: "set_outcome",
+          outcome: input.outcome,
+          logical_date: child.logical_date,
+        },
+        replayIdentity: child.replay_identity,
+        task: currentTask,
+      });
+      if (action.kind !== "canonical_action") {
+        throw new Error(action.kind === "unsupported_state_mutation" ? action.reason : "The canonical History batch action could not be classified.");
+      }
+      const previousTask = currentTask;
+      currentTask = reconcileCommittedTask(action, currentTask, child);
+      completedChildren.push({
+        logicalDate: child.logical_date,
+        previousTask,
+        task: currentTask,
+        response: child,
+      });
+    }
+    if (response.success) {
+      if (completedChildren.length !== input.entries.length || response.final_committed_revision !== currentTask.canonical_revision) {
+        throw new Error("The committed History batch did not return every canonical child revision.");
+      }
+      return {
+        success: true,
+        task: currentTask,
+        response,
+        completedChildren,
+        achievementWarning: response.achievement_warning,
+      };
+    }
+  } catch (error) {
+    return {
+      success: false,
+      task: completedChildren.length > 0 ? currentTask : null,
+      response,
+      completedChildren,
+      error: {
+        kind: "malformed_response",
+        message: error instanceof Error ? error.message : "The History batch response was malformed.",
+        code: "MALFORMED_RESPONSE",
+        status: null,
+      },
+    };
+  }
+
+  return {
+    success: false,
+    task: completedChildren.length > 0 ? currentTask : null,
+    response,
+    completedChildren,
+    error: batchFailureError(response),
   };
 }
 

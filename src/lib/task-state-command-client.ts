@@ -12,7 +12,7 @@ const SIDE_EFFECT_ID_FIELDS = [
 
 type JsonObject = Record<string, unknown>;
 type TaskStateCommandState = "committed" | "rejected";
-type TaskStateCommandErrorKind =
+export type TaskStateCommandErrorKind =
   | "client_unavailable"
   | "authentication_failure"
   | "invocation_failure"

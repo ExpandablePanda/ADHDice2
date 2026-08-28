@@ -18,9 +18,11 @@ import type { CanonicalTaskCommandOperation } from "../../../src/lib/task-state-
 import {
   buildTrustedTaskStateCommand,
   buildTrustedTaskStateCommandReplayDescriptor,
+  type HistoryOutcomeBatchIntent,
   type TaskStateCommandIntent,
   type TrustedTaskStateCommandReplayDescriptor,
 } from "./domain.ts";
+import { deterministicUuid } from "../../../src/lib/task-state-canonical/digest.ts";
 import { logicalDateForTimestamp } from "../../../src/lib/task-state-engine/calendar.ts";
 
 export type TrustedTaskStateCommandClient = CanonicalReadClient & {
@@ -47,6 +49,12 @@ type OrchestrationDependencies = {
     userId: string;
     serializedPlan: Record<string, unknown>;
     intent: TaskStateCommandIntent;
+    deferAchievements?: boolean;
+  }) => Promise<{ data: unknown; error: { code?: string | null; message?: string } | null }>;
+  finalizeAchievements: (input: {
+    adminClient: TrustedTaskStateCommandClient;
+    userId: string;
+    operationId: string;
   }) => Promise<{ data: unknown; error: { code?: string | null; message?: string } | null }>;
 };
 
@@ -57,7 +65,7 @@ const defaultDependencies: OrchestrationDependencies = {
   buildCommand: buildTrustedTaskStateCommand,
   planCommand: planTaskStateCommand,
   serializePlan: serializeCanonicalTaskStateCommandForRpc,
-  invokeCommand: async ({ adminClient, userId, serializedPlan, intent }) => {
+  invokeCommand: async ({ adminClient, userId, serializedPlan, intent, deferAchievements = false }) => {
     const milestoneIntent = intent as TaskStateCommandIntent & {
       milestone_id?: string;
       expected_milestone_revision?: number;
@@ -72,11 +80,17 @@ const defaultDependencies: OrchestrationDependencies = {
         p_operation_id: milestoneIntent.milestone_operation_id,
       });
     }
-    return adminClient.rpc("adhdice_execute_task_state_command", {
+    return adminClient.rpc(deferAchievements
+      ? "adhdice_execute_task_state_command_deferred_achievements"
+      : "adhdice_execute_task_state_command", {
       p_user_id: userId,
       p_command: serializedPlan,
     });
   },
+  finalizeAchievements: async ({ adminClient, userId, operationId }) => adminClient.rpc("adhdice_finalize_task_history_batch_achievements", {
+    p_user_id: userId,
+    p_operation_id: operationId,
+  }),
 };
 
 function errorResponse(code: string, message: string, status = 409): TrustedTaskStateCommandResponse {
@@ -287,4 +301,194 @@ export async function executeTrustedTaskStateCommand(input: {
     return errorResponse("command_rejected", "Canonical Task State command was rejected.", status);
   }
   return { status: 200, body: rpcResult.data };
+}
+
+function childReplayIdentity(intent: HistoryOutcomeBatchIntent, logicalDate: string) {
+  return `${intent.replay_identity}:history:${logicalDate}:${intent.outcome}`;
+}
+
+function batchOperationId(userId: string, replayIdentity: string) {
+  return deterministicUuid(`task-history-outcome-batch-achievement:${userId}:${replayIdentity}`);
+}
+
+function batchFailure(error: TrustedTaskStateCommandResponse["body"], status: number) {
+  const record = error && typeof error === "object" && !Array.isArray(error)
+    ? error as Record<string, unknown>
+    : {};
+  const nested = record.error && typeof record.error === "object" && !Array.isArray(record.error)
+    ? record.error as Record<string, unknown>
+    : record;
+  return {
+    kind: "command_rejected" as const,
+    message: typeof nested.message === "string" ? nested.message : "Canonical Task State command was rejected.",
+    code: typeof nested.code === "string" ? nested.code : null,
+    status,
+  };
+}
+
+function recordBatchTiming(input: {
+  entryCount: number;
+  childDurationMs: number;
+  achievementDurationMs: number;
+  totalDurationMs: number;
+}) {
+  if (typeof Deno === "undefined" || Deno.env.get("ADHDICE_EDGE_DIAGNOSTICS") !== "1") return;
+  console.info("[task-state-command] history outcome batch timing", input);
+}
+
+export async function executeHistoryOutcomeBatch(input: {
+  userId: string;
+  intent: HistoryOutcomeBatchIntent;
+  adminClient: TrustedTaskStateCommandClient;
+  now?: string;
+  dependencies?: Partial<OrchestrationDependencies>;
+}): Promise<TrustedTaskStateCommandResponse> {
+  const dependencies = { ...defaultDependencies, ...input.dependencies };
+  const orderedEntries = [...input.intent.entries].sort((left, right) => left.logical_date.localeCompare(right.logical_date));
+  const operationId = batchOperationId(input.userId, input.intent.replay_identity);
+  const startedAt = performance.now();
+  let currentRevision = input.intent.expected_revision;
+  const childResults: Array<Record<string, unknown>> = [];
+  const completedEntries: string[] = [];
+  let childStartedAt = startedAt;
+
+  for (const [index, entry] of orderedEntries.entries()) {
+    const replayIdentity = childReplayIdentity(input.intent, entry.logical_date);
+    const childIntent: TaskStateCommandIntent = {
+      type: "set_outcome",
+      task_id: input.intent.task_id,
+      replay_identity: replayIdentity,
+      expected_revision: currentRevision,
+      outcome: input.intent.outcome,
+      logical_date: entry.logical_date,
+      ...(entry.occurrence_key !== undefined ? { occurrence_key: entry.occurrence_key } : {}),
+      ...(entry.scheduled_due_on !== undefined ? { scheduled_due_on: entry.scheduled_due_on } : {}),
+    };
+    const childResult = await executeTrustedTaskStateCommand({
+      userId: input.userId,
+      intent: childIntent,
+      adminClient: input.adminClient,
+      now: input.now,
+      dependencies: {
+        ...dependencies,
+        invokeCommand: (commandInput) => dependencies.invokeCommand({ ...commandInput, deferAchievements: true }),
+      },
+    });
+    const childBody = childResult.body;
+    if (childResult.status !== 200 || !childBody || typeof childBody !== "object" || Array.isArray(childBody) || (childBody as Record<string, unknown>).state !== "committed") {
+      const failure = batchFailure(childBody, childResult.status);
+      childResults.push({
+        index,
+        logical_date: entry.logical_date,
+        replay_identity: replayIdentity,
+        expected_revision: currentRevision,
+        state: "rejected",
+        error: failure,
+      });
+      recordBatchTiming({
+        entryCount: orderedEntries.length,
+        childDurationMs: performance.now() - childStartedAt,
+        achievementDurationMs: 0,
+        totalDurationMs: performance.now() - startedAt,
+      });
+      return {
+        status: 200,
+        body: {
+          type: "history_outcome_batch",
+          state: "partial",
+          task_id: input.intent.task_id,
+          batch_replay_identity: input.intent.replay_identity,
+          expected_revision: input.intent.expected_revision,
+          final_committed_revision: currentRevision,
+          completed_entries: completedEntries,
+          failed_entry_index: index,
+          child_results: childResults,
+          achievement: { status: "not_run", operation_id: operationId, error_code: null },
+          achievement_warning: null,
+          error: failure,
+        },
+      };
+    }
+    childResults.push({
+      index,
+      logical_date: entry.logical_date,
+      replay_identity: replayIdentity,
+      expected_revision: currentRevision,
+      state: "committed",
+      result: childBody,
+    });
+    const nextRevision = (childBody as Record<string, unknown>).next_revision;
+    if (!Number.isInteger(nextRevision) || (nextRevision as number) < currentRevision) {
+      const failure = batchFailure({ error: { code: "MALFORMED_CHILD_RESULT", message: "Canonical child result did not return a valid next revision." } }, 502);
+      return {
+        status: 200,
+        body: {
+          type: "history_outcome_batch",
+          state: "partial",
+          task_id: input.intent.task_id,
+          batch_replay_identity: input.intent.replay_identity,
+          expected_revision: input.intent.expected_revision,
+          final_committed_revision: currentRevision,
+          completed_entries: completedEntries,
+          failed_entry_index: index,
+          child_results: childResults,
+          achievement: { status: "not_run", operation_id: operationId, error_code: null },
+          achievement_warning: null,
+          error: failure,
+        },
+      };
+    }
+    currentRevision = nextRevision as number;
+    completedEntries.push(entry.logical_date);
+    childStartedAt = performance.now();
+  }
+
+  const childDurationMs = performance.now() - startedAt;
+  const achievementStartedAt = performance.now();
+  let achievement = { status: "failed", operation_id: operationId, error_code: "ACHIEVEMENT_FINALIZATION_UNAVAILABLE" };
+  let achievementWarning: string | null = "History committed, but Achievement reconciliation did not complete.";
+  try {
+    const finalizer = await dependencies.finalizeAchievements({
+      adminClient: input.adminClient,
+      userId: input.userId,
+      operationId,
+    });
+    const finalizerData = finalizer.data && typeof finalizer.data === "object" && !Array.isArray(finalizer.data)
+      ? finalizer.data as Record<string, unknown>
+      : null;
+    const status = finalizerData?.status;
+    if (finalizer.error) {
+      achievement = { status: "failed", operation_id: operationId, error_code: finalizer.error.code ?? "ACHIEVEMENT_FINALIZATION_FAILED" };
+    } else if (status === "completed" || status === "inactive") {
+      achievement = { status, operation_id: operationId, error_code: null };
+      achievementWarning = null;
+    } else {
+      achievement = { status: "failed", operation_id: operationId, error_code: typeof finalizerData?.error_code === "string" ? finalizerData.error_code : "ACHIEVEMENT_FINALIZATION_FAILED" };
+    }
+  } catch {
+    achievement = { status: "failed", operation_id: operationId, error_code: "ACHIEVEMENT_FINALIZATION_FAILED" };
+  }
+  recordBatchTiming({
+    entryCount: orderedEntries.length,
+    childDurationMs,
+    achievementDurationMs: performance.now() - achievementStartedAt,
+    totalDurationMs: performance.now() - startedAt,
+  });
+  return {
+    status: 200,
+    body: {
+      type: "history_outcome_batch",
+      state: "committed",
+      task_id: input.intent.task_id,
+      batch_replay_identity: input.intent.replay_identity,
+      expected_revision: input.intent.expected_revision,
+      final_committed_revision: currentRevision,
+      completed_entries: completedEntries,
+      failed_entry_index: null,
+      child_results: childResults,
+      achievement,
+      achievement_warning: achievementWarning,
+      error: null,
+    },
+  };
 }
