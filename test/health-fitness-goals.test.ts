@@ -16,7 +16,7 @@ import {
   validateHealthFitnessGoalLevelDraft,
   validateHealthFitnessGoalTargetAgainstLevels,
 } from "@/lib/health-fitness-goals";
-import { isCurrentFitnessReloadRequest } from "@/lib/fitness-reload-guard";
+import { isCurrentFitnessReloadRequest, isCurrentFitnessScope } from "@/lib/fitness-reload-guard";
 
 const migration = readFileSync(new URL("../supabase/add_health_fitness_goals_7_11_69.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
@@ -137,17 +137,54 @@ test("useFitnessGoals exposes narrow Goal and Level actions", () => {
   assert.match(hook, /\.eq\("user_id", userId\)/);
 });
 
-test("useFitnessGoals reload generations reject stale client, user, and inactive results", () => {
+test("Fitness scope guard accepts only the active current client and user", () => {
+  const clientA = {};
+  const clientB = {};
+  const current = { active: true, client: clientB, userId: "user-b" };
+  assert.equal(isCurrentFitnessScope(current, current), true);
+  assert.equal(isCurrentFitnessScope({ active: false, client: clientB, userId: "user-b" }, current), false);
+  assert.equal(isCurrentFitnessScope(current, { active: false, client: clientB, userId: "user-b" }), false);
+  assert.equal(isCurrentFitnessScope({ active: true, client: clientA, userId: "user-b" }, current), false);
+  assert.equal(isCurrentFitnessScope({ active: true, client: clientB, userId: "user-a" }, current), false);
+});
+
+test("useFitnessGoals reload generations reject stale client, user, inactive, and re-entered results", () => {
   const clientA = {};
   const clientB = {};
   const current = { active: true, client: clientB, userId: "user-b" };
   assert.equal(isCurrentFitnessReloadRequest({ ...current, generation: 2 }, current, 2), true);
+  assert.equal(isCurrentFitnessReloadRequest({ ...current, generation: 1 }, current, 2), false);
   assert.equal(isCurrentFitnessReloadRequest({ active: true, client: clientA, generation: 1, userId: "user-a" }, current, 2), false);
   assert.equal(isCurrentFitnessReloadRequest({ active: true, client: clientB, generation: 2, userId: "user-a" }, current, 2), false);
   assert.equal(isCurrentFitnessReloadRequest({ active: false, client: clientB, generation: 2, userId: "user-b" }, current, 2), false);
   assert.match(hook, /const reloadGenerationRef = useRef\(0\)/);
   assert.match(hook, /if \(!isCurrent\(\)\) return false;/);
   assert.match(hook, /setGoals\(\[\]\);\s*setLevels\(\[\]\)/);
+});
+
+test("Goal and Level mutations ignore stale responses before state, errors, or follow-up reloads", () => {
+  assert.match(hook, /type FitnessMutationRequest = FitnessReloadRequest<SupabaseClient>/);
+  assert.match(hook, /const captureMutationRequest = \(\): FitnessMutationRequest/);
+  assert.match(hook, /const isCurrentMutationRequest = \(request: FitnessMutationRequest\) => isCurrentFitnessReloadRequest/);
+  assert.match(hook, /const reportMutationError = \(request: FitnessMutationRequest, message: string\) => \{[\s\S]*if \(!isCurrentMutationRequest\(request\)\) return false;/);
+
+  for (const action of ["createGoal", "updateGoal", "createLevel", "updateLevel", "deleteLevel", "reorderLevels"]) {
+    const start = hook.indexOf(`async function ${action}`);
+    const end = hook.indexOf("\n  async function", start + 1);
+    const section = hook.slice(start, end === -1 ? hook.indexOf("\n  return {", start) : end);
+    assert.notEqual(start, -1, `${action} is missing`);
+    assert.match(section, /const mutationRequest = captureMutationRequest\(\)/, `${action} must capture its scope`);
+    assert.match(section, /if \(!isCurrentMutationRequest\(mutationRequest\)\) return (null|false);/, `${action} must ignore stale responses`);
+  }
+
+  const updateGoal = hook.slice(hook.indexOf("async function updateGoal"), hook.indexOf("\n  async function archiveGoal"));
+  assert.match(updateGoal, /await getGoalExercise\(nextDraft\.exercise_id, mutationRequest\)/);
+  assert.match(updateGoal, /await getGoalExercise\(nextDraft\.exercise_id, mutationRequest\)[\s\S]*if \(!exercise\) return false;/);
+  assert.match(hook, /setGoals\(\(current\) => isCurrentMutationRequest\(mutationRequest\)/);
+  assert.match(hook, /setLevels\(\(current\) => isCurrentMutationRequest\(mutationRequest\)/);
+  assert.match(hook, /async function reloadForMutation\(request: FitnessMutationRequest\)/);
+  assert.match(hook, /async function archiveGoal\(goalId: string\) \{[\s\S]*return updateGoal\(goalId, \{ archived_at:/);
+  assert.match(hook, /async function restoreGoal\(goalId: string\) \{[\s\S]*return updateGoal\(goalId, \{ archived_at: null \}/);
 });
 
 test("Goals migration defines configuration-only persistence and owner-safe relationships", () => {
