@@ -1296,8 +1296,11 @@ export function computeTaskAppDerivedData({
     const childItems = childTaskPreviewByParentTaskId[task.id]?.items ?? [];
     const matchingChildSearchItems = searchIsActive
       ? childItems.filter((item) => (
-        matchesNormalizedSearchValue(item.title, normalizedSearchQuery)
-        || matchesNormalizedSearchValues(item.tags, normalizedSearchQuery)
+        (taskUiState.selectedBucket === "trash" || item.storedStatus !== "trashed")
+        && (
+          matchesNormalizedSearchValue(item.title, normalizedSearchQuery)
+          || matchesNormalizedSearchValues(item.tags, normalizedSearchQuery)
+        )
       ))
       : childItems;
 

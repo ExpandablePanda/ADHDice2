@@ -58,7 +58,7 @@ import {
   formatChildTaskPreviewDepthLabel,
 } from "../src/lib/task-app-derived.ts";
 import { buildTaskCollections } from "../src/lib/task-selectors.ts";
-import { DEFAULT_TASK_UI_STATE } from "../src/lib/task-ui-state.ts";
+import { DEFAULT_TASK_UI_STATE, type TaskUiState } from "../src/lib/task-ui-state.ts";
 import { buildTaskListCounts, getBuiltInTaskLists } from "../src/lib/task-lists.ts";
 import {
   buildSingleTaskReward,
@@ -74,6 +74,7 @@ function computeDerivedForHierarchyDiagnostics(
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
     taskSubtasksByTaskId: Record<string, ReturnType<typeof createTask>[]>;
     taskEditorTaskId: string | null;
+    taskUiState: TaskUiState;
   }> = {},
 ) {
   return computeTaskAppDerivedData({
@@ -107,7 +108,7 @@ function computeDerivedForHierarchyDiagnostics(
       todayDateKey: "2026-06-18",
     },
     taskSubtasksByTaskId: overrides.taskSubtasksByTaskId ?? {},
-    taskUiState: DEFAULT_TASK_UI_STATE,
+    taskUiState: overrides.taskUiState ?? DEFAULT_TASK_UI_STATE,
     todayDateKey: "2026-06-18",
     tasks,
   });
@@ -130,6 +131,83 @@ test("primary derived source-child search ignores trashed titles but keeps activ
     taskSubtasksByTaskId,
   });
   assert.deepEqual(activeResult.filteredTasksSorted.map((task) => task.id), [parent.id]);
+});
+
+test("primary derived hierarchy search excludes trashed preview evidence but keeps active title and tag evidence", () => {
+  const parent = createTask({ id: "parent", status: "pending", title: "No Fast Food" });
+  const trashedChild = createTask({
+    id: "trashed-child",
+    parent_task_id: parent.id,
+    status: "trashed",
+    title: "test",
+  });
+
+  const trashedResult = computeDerivedForHierarchyDiagnostics([parent, trashedChild], {
+    deferredSearchQuery: "test",
+  });
+  assert.equal(trashedResult.filteredTasksSorted.some((task) => task.id === parent.id), false);
+  const preview = buildChildTaskPreviewLookup([parent, trashedChild], [], {}, "2026-06-18");
+  assert.deepEqual(
+    preview[parent.id]?.items.map((item) => item.id),
+    [trashedChild.id],
+  );
+
+  const activeTitleChild = createTask({
+    id: "active-title-child",
+    parent_task_id: parent.id,
+    status: "pending",
+    title: "test",
+  });
+  const activeTitleResult = computeDerivedForHierarchyDiagnostics([parent, activeTitleChild], {
+    deferredSearchQuery: "test",
+  });
+  assert.equal(activeTitleResult.filteredTasksSorted.some((task) => task.id === parent.id), true);
+
+  const activeTagChild = createTask({
+    id: "active-tag-child",
+    parent_task_id: parent.id,
+    status: "pending",
+    tags: ["test"],
+    title: "Wash face",
+  });
+  const activeTagResult = computeDerivedForHierarchyDiagnostics([parent, activeTagChild], {
+    deferredSearchQuery: "test",
+  });
+  assert.equal(activeTagResult.filteredTasksSorted.some((task) => task.id === parent.id), true);
+
+  const activeMixedChild = createTask({
+    id: "active-mixed-child",
+    parent_task_id: parent.id,
+    status: "pending",
+    title: "purple zebra",
+  });
+  const mixedTrashedResult = computeDerivedForHierarchyDiagnostics([parent, trashedChild, activeMixedChild], {
+    deferredSearchQuery: "test",
+  });
+  assert.equal(mixedTrashedResult.filteredTasksSorted.some((task) => task.id === parent.id), false);
+  const mixedActiveResult = computeDerivedForHierarchyDiagnostics([parent, trashedChild, activeMixedChild], {
+    deferredSearchQuery: "purple",
+  });
+  assert.equal(mixedActiveResult.filteredTasksSorted.some((task) => task.id === parent.id), true);
+
+  const trashedParent = createTask({
+    id: "trashed-parent",
+    status: "trashed",
+    title: "Trashed parent",
+    trashed_at: new Date().toISOString(),
+  });
+  const trashedParentChild = createTask({
+    id: "trashed-parent-child",
+    parent_task_id: trashedParent.id,
+    status: "trashed",
+    title: "test",
+    trashed_at: new Date().toISOString(),
+  });
+  const trashResult = computeDerivedForHierarchyDiagnostics([trashedParent, trashedParentChild], {
+    deferredSearchQuery: "test",
+    taskUiState: { ...DEFAULT_TASK_UI_STATE, selectedBucket: "trash" },
+  });
+  assert.deepEqual(trashResult.trashFilteredTasksSorted.map((task) => task.id), [trashedParent.id]);
 });
 
 function computeDerivedForQueueCount(tasks: ReturnType<typeof createTask>[], focusedTaskIds: string[], todayDateKey: string) {

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.79`.
+- Current working app version: `7.11.80`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,6 +23,15 @@ pollute an active parent result. Active child title and tag ancestor-context
 search remains supported, and direct Trash search remains findable through the
 existing Trash scope and hierarchy behavior. No hierarchy, Task State,
 recurrence, History, SQL, Edge, or iOS behavior changed.
+
+## 2026-08-27 7.11.80 Real child-preview search filtering
+
+The 7.11.79 source-child search filters did not cover the parallel child-preview
+search path exposed by browser QA. Version 7.11.80 filters stored-trashed child
+preview evidence outside Trash while preserving active child title/tag search
+and existing Trash hierarchy behavior. No global child-preview construction,
+hierarchy, delete, Task State, recurrence, History, SQL, Edge, or iOS behavior
+changed.
 
 ## 2026-08-27 7.11.78 Task State Achievement-deferral RPC compatibility
 
