@@ -65,13 +65,14 @@ function project(
   availableTaskLists: TaskListDefinition[],
   manualMembershipsByTaskId: Record<string, TaskListId[]> = {},
   includeSteps = true,
+  taskSubtasksByTaskId: Record<string, ReturnType<typeof createTask>[]> = {},
 ) {
   const index = buildStableCanonicalTaskIndex({
     availableTaskLists,
     focusedTaskIds: [],
     taskHistoryByTaskId: {},
     taskListEvaluationContext: evaluationContext(manualMembershipsByTaskId),
-    taskSubtasksByTaskId: {},
+    taskSubtasksByTaskId,
     tasks,
     todayDateKey: "2026-08-03",
   });
@@ -86,6 +87,114 @@ function project(
     },
   });
 }
+
+test("canonical active search ignores trashed source-child titles", () => {
+  const parent = createTask({ id: "parent", status: "pending", title: "No Fast Food" });
+  const trashedChild = createTask({
+    id: "trashed-child",
+    parent_task_id: parent.id,
+    status: "trashed",
+    title: "test",
+  });
+  const result = project(
+    [parent, trashedChild],
+    "all",
+    "test",
+    getBuiltInTaskLists(),
+    {},
+    true,
+    { [parent.id]: [trashedChild] },
+  );
+
+  assert.equal(result.directSearchMatchedEntityIds.has(parent.id), false);
+  assert.equal(result.visibleRootParentIds.has(parent.id), false);
+});
+
+test("canonical active child title and tag search preserve ancestor context", () => {
+  const parent = createTask({ id: "parent", status: "pending", title: "Video Games" });
+  const child = createTask({
+    id: "child",
+    parent_task_id: parent.id,
+    status: "pending",
+    tags: ["HYGIENE"],
+    title: "test step",
+  });
+
+  const titleResult = project([parent, child], "all", "test", getBuiltInTaskLists());
+  assert.deepEqual([...titleResult.directSearchMatchedEntityIds], [child.id]);
+  assert.equal(titleResult.contextRootParentIds.has(parent.id), true);
+
+  const tagResult = project([parent, child], "all", "hyg", getBuiltInTaskLists());
+  assert.deepEqual([...tagResult.directSearchMatchedEntityIds], [child.id]);
+  assert.equal(tagResult.contextRootParentIds.has(parent.id), true);
+});
+
+test("canonical Trash search keeps a trashed child directly findable", () => {
+  const parent = createTask({ id: "parent", status: "pending", title: "Active parent" });
+  const trashedChild = createTask({
+    id: "trashed-child",
+    parent_task_id: parent.id,
+    status: "trashed",
+    title: "test",
+    trashed_at: new Date().toISOString(),
+  });
+  const result = project([parent, trashedChild], "trash", "test", getBuiltInTaskLists(), {}, true, {
+    [parent.id]: [trashedChild],
+  });
+
+  assert.equal(result.directSearchMatchedEntityIds.has(trashedChild.id), true);
+  assert.equal(result.visibleRootParentIds.has(parent.id), true);
+});
+
+test("canonical mixed child search uses active child evidence only and preserves parent matching", () => {
+  const parent = createTask({ id: "parent", status: "pending", title: "Parent" });
+  const activeChild = createTask({
+    id: "active-child",
+    parent_task_id: parent.id,
+    status: "pending",
+    title: "keep this",
+  });
+  const trashedChild = createTask({
+    id: "trashed-child",
+    parent_task_id: parent.id,
+    status: "trashed",
+    title: "test",
+  });
+  const sourceChildren = { [parent.id]: [activeChild, trashedChild] };
+
+  const trashedEvidenceResult = project(
+    [parent, activeChild, trashedChild],
+    "all",
+    "test",
+    getBuiltInTaskLists(),
+    {},
+    true,
+    sourceChildren,
+  );
+  assert.equal(trashedEvidenceResult.directSearchMatchedEntityIds.has(parent.id), false);
+  assert.deepEqual([...trashedEvidenceResult.directSearchMatchedEntityIds], []);
+
+  const activeEvidenceResult = project(
+    [parent, activeChild, trashedChild],
+    "all",
+    "keep",
+    getBuiltInTaskLists(),
+    {},
+    true,
+    sourceChildren,
+  );
+  assert.deepEqual([...activeEvidenceResult.directSearchMatchedEntityIds], [parent.id, activeChild.id]);
+  assert.equal(activeEvidenceResult.visibleRootParentIds.has(parent.id), true);
+
+  const parentWithTag = createTask({ id: "parent-with-tag", status: "pending", tags: ["TESTING"], title: "Parent" });
+  const parentTagResult = project(
+    [parentWithTag],
+    "all",
+    "est",
+    getBuiltInTaskLists(),
+  );
+  assert.deepEqual([...parentTagResult.directSearchMatchedEntityIds], [parentWithTag.id]);
+});
 
 function pinnedSearchFilters() {
   return {

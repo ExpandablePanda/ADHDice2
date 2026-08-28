@@ -72,6 +72,7 @@ function computeDerivedForHierarchyDiagnostics(
   overrides: Partial<{
     deferredSearchQuery: string;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
+    taskSubtasksByTaskId: Record<string, ReturnType<typeof createTask>[]>;
     taskEditorTaskId: string | null;
   }> = {},
 ) {
@@ -105,12 +106,31 @@ function computeDerivedForHierarchyDiagnostics(
       taskHistoryByTaskId: overrides.taskHistoryByTaskId ?? {},
       todayDateKey: "2026-06-18",
     },
-    taskSubtasksByTaskId: {},
+    taskSubtasksByTaskId: overrides.taskSubtasksByTaskId ?? {},
     taskUiState: DEFAULT_TASK_UI_STATE,
     todayDateKey: "2026-06-18",
     tasks,
   });
 }
+
+test("primary derived source-child search ignores trashed titles but keeps active titles", () => {
+  const parent = createTask({ id: "parent", status: "pending", title: "No Fast Food" });
+  const trashedChild = createTask({ id: "trashed-child", status: "trashed", title: "test" });
+  const activeChild = createTask({ id: "active-child", status: "pending", title: "keep" });
+  const taskSubtasksByTaskId = { [parent.id]: [trashedChild, activeChild] };
+
+  const trashedResult = computeDerivedForHierarchyDiagnostics([parent], {
+    deferredSearchQuery: "test",
+    taskSubtasksByTaskId,
+  });
+  assert.deepEqual(trashedResult.filteredTasksSorted.map((task) => task.id), []);
+
+  const activeResult = computeDerivedForHierarchyDiagnostics([parent], {
+    deferredSearchQuery: "KEEP",
+    taskSubtasksByTaskId,
+  });
+  assert.deepEqual(activeResult.filteredTasksSorted.map((task) => task.id), [parent.id]);
+});
 
 function computeDerivedForQueueCount(tasks: ReturnType<typeof createTask>[], focusedTaskIds: string[], todayDateKey: string) {
   return computeTaskAppDerivedData({

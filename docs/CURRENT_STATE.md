@@ -5,15 +5,24 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.78`.
+- Current working app version: `7.11.79`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-27 7.11.79 Active Task search excludes trashed child evidence
+
+Normal active Task search no longer lets stored-trashed Step/Substep titles
+pollute an active parent result. Active child title and tag ancestor-context
+search remains supported, and direct Trash search remains findable through the
+existing Trash scope and hierarchy behavior. No hierarchy, Task State,
+recurrence, History, SQL, Edge, or iOS behavior changed.
 
 ## 2026-08-27 7.11.78 Task State Achievement-deferral RPC compatibility
 
