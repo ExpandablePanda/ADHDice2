@@ -37,6 +37,15 @@ import type {
   HealthWeightEntryInsert,
 } from "@/lib/database.types";
 import type { AppleHealthImportPreview } from "@/lib/health-apple-import";
+import type { HealthKitSnapshot } from "@/lib/healthkit";
+import {
+  APPLE_HEALTH_SOURCE,
+  buildHealthKitMetricInputs,
+  buildHealthKitWeightInputs,
+  buildHealthKitWorkoutInputs,
+  findLegacyWeightAdoptionCandidate,
+  type HealthKitSyncResult,
+} from "@/lib/healthkit-sync";
 import {
   buildDefaultHealthProfile,
   getEligibleHealthAchievements,
@@ -252,6 +261,7 @@ export function useHealth(
   const [isLoading, setIsLoading] = useState(false);
   const [storageMode, setStorageMode] = useState<"local" | "remote">("local");
   const healthSnapshotRef = useRef<HealthStateSnapshot | null>(null);
+  const healthScopeRevisionRef = useRef(0);
   const healthFoodMutationRevisionRef = useRef(0);
   const workoutRemoteEnabledRef = useRef(true);
   const mealPlanRemoteEnabledRef = useRef(true);
@@ -442,6 +452,7 @@ export function useHealth(
   }
 
   useEffect(() => {
+    healthScopeRevisionRef.current += 1;
     if (!userId) {
       healthSnapshotRef.current = null;
       setProfile(null);
@@ -669,6 +680,7 @@ export function useHealth(
 
     return () => {
       isActive = false;
+      healthScopeRevisionRef.current += 1;
     };
   }, [active, client, userId]);
 
@@ -1666,6 +1678,7 @@ export function useHealth(
       logged_at: input.logged_at ?? now,
       note: input.note ?? null,
       source: input.source ?? "manual",
+      source_external_id: input.source_external_id ?? null,
       updated_at: now,
       user_id: userId,
       weight_kg: input.weight_kg,
@@ -1932,6 +1945,7 @@ export function useHealth(
       logged_at: entry.logged_at ?? now,
       note: entry.note ?? "Imported from Apple Health",
       source: entry.source ?? "apple_health_import",
+      source_external_id: entry.source_external_id ?? null,
       updated_at: now,
       user_id: userId,
       weight_kg: entry.weight_kg,
@@ -2085,6 +2099,143 @@ export function useHealth(
     return true;
   }
 
+  async function syncAppleHealthData(snapshot: HealthKitSnapshot): Promise<HealthKitSyncResult | null> {
+    if (!userId || !profile || !client || storageMode !== "remote" || !workoutRemoteEnabledRef.current) {
+      setMessage({
+        tone: "warn",
+        text: "Apple Health sync requires a signed-in account and migrated remote Health storage.",
+      });
+      return null;
+    }
+
+    const syncUserId = userId;
+    const syncClient = client;
+    const syncStorageMode = storageMode;
+    const syncScopeRevision = healthScopeRevisionRef.current;
+    const isCurrentScope = () => healthScopeRevisionRef.current === syncScopeRevision
+      && userId === syncUserId
+      && client === syncClient
+      && storageMode === syncStorageMode;
+    const metricInputs = buildHealthKitMetricInputs(snapshot);
+    const weightInputs = buildHealthKitWeightInputs(snapshot);
+    const workoutInputs = buildHealthKitWorkoutInputs(snapshot);
+    const syncedMetrics: HealthMetricEntry[] = [];
+    const syncedWeights: HealthWeightEntry[] = [];
+    const syncedWorkouts: HealthWorkout[] = [];
+
+    try {
+      if (!isCurrentScope()) return null;
+      if (metricInputs.length > 0) {
+        const { data, error } = await syncClient
+          .from("adhdice_health_metric_entries")
+          .upsert(
+            metricInputs.map((input) => ({ ...input, user_id: syncUserId })),
+            { onConflict: "user_id,source_fingerprint" },
+          )
+          .select("*");
+        if (error) throw error;
+        if (!data || data.length !== metricInputs.length) {
+          throw new Error("Apple Health metric sync did not return every saved metric.");
+        }
+        syncedMetrics.push(...data);
+      }
+
+      if (!isCurrentScope()) return null;
+      let workingWeights = [...(healthSnapshotRef.current?.weightEntries ?? weightEntries)];
+      for (const input of weightInputs) {
+        if (!isCurrentScope()) return null;
+        const existingLive = workingWeights.find((entry) => entry.source === APPLE_HEALTH_SOURCE && entry.source_external_id === input.source_external_id);
+        const legacyMatch = existingLive ? null : findLegacyWeightAdoptionCandidate(workingWeights, {
+          id: input.source_external_id,
+          timestamp: input.logged_at,
+          weightKg: input.weight_kg,
+        });
+        const result = legacyMatch
+          ? await syncClient
+            .from("adhdice_health_weight_entries")
+            .update({
+              entry_date: input.entry_date,
+              logged_at: input.logged_at,
+              source: APPLE_HEALTH_SOURCE,
+              source_external_id: input.source_external_id,
+              weight_kg: input.weight_kg,
+            })
+            .eq("id", legacyMatch.id)
+            .eq("user_id", syncUserId)
+            .select("*")
+            .single()
+          : await syncClient
+            .from("adhdice_health_weight_entries")
+            .upsert({ ...input, user_id: syncUserId }, { onConflict: "user_id,source,source_external_id" })
+            .select("*")
+            .single();
+        if (result.error) throw result.error;
+        if (!result.data) throw new Error("Apple Health weight sync did not return the saved weigh-in.");
+        syncedWeights.push(result.data);
+        workingWeights = [result.data, ...workingWeights.filter((entry) => entry.id !== result.data.id)];
+      }
+
+      if (!isCurrentScope()) return null;
+      if (workoutInputs.length > 0) {
+        const { data, error } = await syncClient
+          .from("adhdice_health_workouts")
+          .upsert(
+            workoutInputs.map((input) => ({ ...input, user_id: syncUserId })),
+            { onConflict: "user_id,source,source_external_id" },
+          )
+          .select("*");
+        if (error) throw error;
+        if (!data || data.length !== workoutInputs.length) {
+          throw new Error("Apple Health workout sync did not return every saved workout.");
+        }
+        syncedWorkouts.push(...data);
+      }
+
+      if (!isCurrentScope()) return null;
+      const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
+        awards,
+        checkIns,
+        favorites,
+        importAudits,
+        mealEntries,
+        metricEntries,
+        profile,
+        recipes,
+        savedMeals,
+        waterEntries,
+        weightEntries,
+      });
+      const nextSnapshot = buildHealthSnapshot({
+        ...currentSnapshot,
+        metricEntries: [...new Map([...currentSnapshot.metricEntries, ...syncedMetrics].map((entry) => [entry.id, entry])).values()]
+          .sort((left, right) => right.metric_date.localeCompare(left.metric_date)),
+        weightEntries: [...new Map([...currentSnapshot.weightEntries, ...syncedWeights].map((entry) => [entry.id, entry])).values()]
+          .sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
+        workouts: sortHealthWorkouts([...new Map([...currentSnapshot.workouts, ...syncedWorkouts].map((entry) => [entry.id, entry])).values()]),
+      });
+      applySnapshot(nextSnapshot);
+      await claimEligibleAwards(nextSnapshot, { persistRemotely: true, silent: true });
+      if (!isCurrentScope()) return null;
+      const result = {
+        metrics: metricInputs.length,
+        weights: weightInputs.length,
+        workouts: workoutInputs.length,
+      } satisfies HealthKitSyncResult;
+      setMessage({
+        tone: "good",
+        text: `Apple Health synced: ${result.metrics} metrics · ${result.weights} ${result.weights === 1 ? "weight" : "weights"} · ${result.workouts} ${result.workouts === 1 ? "workout" : "workouts"}.`,
+      });
+      return result;
+    } catch (error) {
+      if (!isCurrentScope()) return null;
+      const message = error && typeof error === "object" && "message" in error && typeof error.message === "string"
+        ? error.message
+        : "Remote Health storage rejected the Apple Health sync.";
+      setMessage({ tone: "warn", text: `Apple Health sync could not be saved: ${message}` });
+      return null;
+    }
+  }
+
   async function deleteWeightEntry(entryId: string) {
     if (!profile) {
       return false;
@@ -2128,6 +2279,7 @@ export function useHealth(
     importAudits,
     isLoading,
     importAppleHealthData,
+    syncAppleHealthData,
     mealEntries,
     mealPlanEntries,
     addMealPlanEntry,

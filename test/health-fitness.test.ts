@@ -498,7 +498,8 @@ test("workout CRUD remains isolated from daily metric rows and local persistence
 
 test("imported workout behavior remains read-only and outside recovery CRUD", () => {
   const importStart = hookSource.indexOf("async function importAppleHealthData");
-  const importSection = hookSource.slice(importStart);
+  const importEnd = hookSource.indexOf("async function syncAppleHealthData", importStart);
+  const importSection = hookSource.slice(importStart, importEnd);
   assert.match(hookSource, /existingWorkout\.source !== "manual"/);
   assert.match(hookSource, /Imported workouts cannot be edited yet/);
   assert.match(hookSource, /Imported workouts cannot be deleted yet/);

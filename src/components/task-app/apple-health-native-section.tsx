@@ -15,8 +15,13 @@ import {
   type HealthKitAuthorizationResult,
   type HealthKitSnapshot,
 } from "@/lib/healthkit";
+import type { HealthKitSyncResult } from "@/lib/healthkit-sync";
 
 type DiagnosticState = "checking" | "ready" | "requesting" | "reading" | "unavailable" | "error";
+
+type AppleHealthNativeSectionProps = {
+  syncAppleHealthData: (snapshot: HealthKitSnapshot) => Promise<HealthKitSyncResult | null>;
+};
 
 function formatNumber(value: number | null | undefined, suffix = "") {
   return value === null || value === undefined ? "—" : `${Math.round(value).toLocaleString()}${suffix}`;
@@ -26,11 +31,12 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Apple Health is not available right now.";
 }
 
-export function AppleHealthNativeSection() {
+export function AppleHealthNativeSection({ syncAppleHealthData }: AppleHealthNativeSectionProps) {
   const [availability, setAvailability] = useState<HealthKitAvailability | null>(null);
   const [diagnosticState, setDiagnosticState] = useState<DiagnosticState>("checking");
   const [authorization, setAuthorization] = useState<HealthKitAuthorizationResult | null>(null);
   const [snapshot, setSnapshot] = useState<HealthKitSnapshot | null>(null);
+  const [syncResult, setSyncResult] = useState<HealthKitSyncResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const today = useMemo(() => getHealthKitDateKey(new Date()), []);
 
@@ -69,7 +75,15 @@ export function AppleHealthNativeSection() {
     setDiagnosticState("reading");
     setError(null);
     try {
-      setSnapshot(await readHealthKitSnapshot(getDefaultHealthKitDateRange()));
+      const nextSnapshot = await readHealthKitSnapshot(getDefaultHealthKitDateRange());
+      const result = await syncAppleHealthData(nextSnapshot);
+      if (!result) {
+        setError("Apple Health sync did not complete.");
+        setDiagnosticState("error");
+        return;
+      }
+      setSnapshot(nextSnapshot);
+      setSyncResult(result);
       setDiagnosticState("ready");
     } catch (caughtError) {
       setError(errorMessage(caughtError));
@@ -94,10 +108,14 @@ export function AppleHealthNativeSection() {
       : diagnosticState === "requesting"
         ? "Opening Apple Health access request..."
         : diagnosticState === "reading"
-          ? "Reading the last 7 days from Apple Health..."
-          : authorization
-            ? "Access flow completed. Apple may still limit individual read types."
-            : "Apple Health is ready for a read-access request.";
+            ? "Reading and syncing the last 7 days from Apple Health..."
+            : diagnosticState === "error"
+              ? error ?? "Apple Health sync could not be saved."
+              : syncResult
+                ? `Apple Health synced: ${syncResult.metrics} metrics · ${syncResult.weights} ${syncResult.weights === 1 ? "weight" : "weights"} · ${syncResult.workouts} ${syncResult.workouts === 1 ? "workout" : "workouts"}.`
+                : authorization
+                  ? "Access flow completed. Apple may still limit individual read types."
+                  : "Apple Health is ready for a read-access request.";
 
   return (
     <AdhdCard className="xl:col-span-2" padding="md">
@@ -107,7 +125,7 @@ export function AppleHealthNativeSection() {
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Native diagnostic</p>
             <h2 className="mt-1 text-lg font-black text-[#1e2744] dark:text-white">Apple Health</h2>
-            <p className="mt-1 text-xs leading-5 text-[#73809c] dark:text-white/50">Read-only preview for the existing Health experience. Nothing is saved to ADHDice.</p>
+            <p className="mt-1 text-xs leading-5 text-[#73809c] dark:text-white/50">Manual seven-day sync through canonical ADHDice Health storage.</p>
           </div>
         </div>
         <span className="rounded-full bg-[#f4f6fc] px-3 py-1.5 text-xs font-semibold text-[#68738c] dark:bg-white/8 dark:text-white/60">iOS only</span>
@@ -116,7 +134,7 @@ export function AppleHealthNativeSection() {
       {error ? <p className="mt-2 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{error}</p> : null}
       <div className="mt-4 flex flex-wrap gap-2">
         <AdhdChip disabled={!availability?.available || diagnosticState === "checking" || diagnosticState === "requesting" || diagnosticState === "reading"} onClick={() => { void connectAppleHealth(); }} tone="purple">Connect Apple Health</AdhdChip>
-        <AdhdChip disabled={!availability?.available || diagnosticState === "checking" || diagnosticState === "requesting" || diagnosticState === "reading"} onClick={() => { void readAppleHealth(); }}>Read Health Data</AdhdChip>
+        <AdhdChip disabled={!availability?.available || diagnosticState === "checking" || diagnosticState === "requesting" || diagnosticState === "reading"} onClick={() => { void readAppleHealth(); }}>Sync Apple Health</AdhdChip>
       </div>
       {snapshot ? (
         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">

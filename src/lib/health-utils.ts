@@ -568,8 +568,15 @@ export function sumMetricValueForDate(
   entryDate: string,
   metricTypes: readonly HealthMetricEntry["metric_type"][],
 ) {
+  const matchingEntries = entries.filter((entry) => entry.metric_date === entryDate && metricTypes.includes(entry.metric_type));
+  const liveMetricTypes = new Set(
+    matchingEntries.filter((entry) => entry.source === "apple_health").map((entry) => entry.metric_type),
+  );
   return entries.reduce((total, entry) => {
     if (entry.metric_date !== entryDate || !metricTypes.includes(entry.metric_type)) {
+      return total;
+    }
+    if (liveMetricTypes.has(entry.metric_type) && entry.source === "apple_health_import") {
       return total;
     }
     return total + entry.metric_value;

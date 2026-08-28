@@ -475,10 +475,12 @@ create table public.adhdice_health_weight_entries (
   entry_date date not null,
   logged_at timestamptz not null default now(),
   weight_kg numeric(7,2) not null check (weight_kg > 0),
-  source text not null default 'manual' check (source in ('manual', 'apple_health_import')),
+  source text not null default 'manual' check (source in ('manual', 'apple_health_import', 'apple_health')),
+  source_external_id text,
   note text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  unique (user_id, source, source_external_id)
 );
 
 create table public.adhdice_health_metric_entries (
@@ -487,7 +489,7 @@ create table public.adhdice_health_metric_entries (
   metric_type text not null check (metric_type in ('steps', 'active_energy_kcal', 'exercise_minutes', 'sleep_minutes', 'body_mass_kg')),
   metric_date date not null,
   metric_value numeric(10,2) not null check (metric_value >= 0),
-  source text not null default 'apple_health_import' check (source in ('apple_health_import', 'manual')),
+  source text not null default 'apple_health_import' check (source in ('apple_health_import', 'apple_health', 'manual')),
   source_fingerprint text not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -509,7 +511,8 @@ create table public.adhdice_health_workouts (
   source_external_id text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (user_id, id)
+  unique (user_id, id),
+  unique (user_id, source, source_external_id)
 );
 
 create table public.adhdice_health_exercises (
@@ -736,9 +739,6 @@ create index adhdice_health_metric_entries_user_date_idx
   on public.adhdice_health_metric_entries (user_id, metric_date desc, metric_type);
 create index adhdice_health_workouts_user_date_idx
   on public.adhdice_health_workouts (user_id, workout_date desc, started_at desc, created_at desc);
-create unique index adhdice_health_workouts_user_source_external_id_idx
-  on public.adhdice_health_workouts (user_id, source, source_external_id)
-  where source_external_id is not null;
 create index adhdice_health_exercises_user_active_order_idx
   on public.adhdice_health_exercises (user_id, archived_at, sort_order, created_at, id);
 create index adhdice_health_workout_exercises_user_workout_order_idx

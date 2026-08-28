@@ -1229,8 +1229,8 @@ export type ScratchNoteTaskLinkUpdate = Record<string, never>;
 
 export type HealthWeightUnit = "lb" | "kg";
 export type HealthMetricType = "steps" | "active_energy_kcal" | "exercise_minutes" | "sleep_minutes" | "body_mass_kg";
-export type HealthMetricSource = "apple_health_import" | "manual";
-export type HealthWeightSource = "manual" | "apple_health_import";
+export type HealthMetricSource = "apple_health_import" | "apple_health" | "manual";
+export type HealthWeightSource = "manual" | "apple_health_import" | "apple_health";
 export type HealthMealSlot = "breakfast" | "lunch" | "dinner" | "snack";
 export type HealthAchievementCode =
   | "first_check_in"
@@ -1756,6 +1756,7 @@ export type HealthWeightEntry = {
   logged_at: string;
   weight_kg: number;
   source: HealthWeightSource;
+  source_external_id: string | null;
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -1768,11 +1769,12 @@ export type HealthWeightEntryInsert = {
   logged_at?: string;
   weight_kg: number;
   source?: HealthWeightSource;
+  source_external_id?: string | null;
   note?: string | null;
 };
 
 export type HealthWeightEntryUpdate = Partial<
-  Pick<HealthWeightEntry, "entry_date" | "logged_at" | "weight_kg" | "source" | "note">
+  Pick<HealthWeightEntry, "entry_date" | "logged_at" | "weight_kg" | "source" | "source_external_id" | "note">
 >;
 
 export type HealthMetricEntry = {
