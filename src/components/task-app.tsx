@@ -91,7 +91,6 @@ import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-a
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
-import { NavigatorSearchModal } from "./task-app/navigator-search-modal";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
 import { TaskActiveTimersTray } from "./task-app/task-active-timers-tray";
@@ -589,7 +588,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.88";
+const APP_VERSION = "7.11.89";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1575,7 +1574,6 @@ export function TaskApp() {
   const [showBackToTop, setShowBackToTop] = useState(false);
   const profile = useProfileStore();
   const [isAccountOpen, setIsAccountOpen] = useState(false);
-  const [isNavigatorSearchOpen, setIsNavigatorSearchOpen] = useState(false);
   const [requestedSettingsSection, setRequestedSettingsSection] = useState<NavigatorSettingsSection | null>(null);
   const [isListColumnMenuOpen, setIsListColumnMenuOpen] = useState(false);
   const [isKeyboardShortcutsMenuOpen, setIsKeyboardShortcutsMenuOpen] = useState(false);
@@ -4094,7 +4092,6 @@ export function TaskApp() {
       setActivePage("Settings");
       setRequestedSettingsSection(action.section);
     }
-    setIsNavigatorSearchOpen(false);
   }, [handleTaskWorkspaceSurfaceChange, setActivePage, setTaskUiState]);
 
   const openBlankTaskEditor = useCallback(() => {
@@ -7492,17 +7489,11 @@ export function TaskApp() {
           dockIcons={dockIcons}
           dockItems={dockItems}
           onNavigate={setActivePage}
-          onOpenSearch={() => setIsNavigatorSearchOpen(true)}
+          onNavigateSearchTarget={handleNavigatorSearchTarget}
           renderIcon={(name) => <CategoryIcon className="h-6 w-6" name={name} />}
+          searchTargets={navigatorSearchTargets}
         />
       </div>
-      {isNavigatorSearchOpen ? (
-        <NavigatorSearchModal
-          onClose={() => setIsNavigatorSearchOpen(false)}
-          onNavigate={handleNavigatorSearchTarget}
-          targets={navigatorSearchTargets}
-        />
-      ) : null}
       <TaskActiveTimersTray
         isOpen={isActiveTimersTrayOpen}
         onDiscard={(taskId) => { void persistDiscardedTaskTimer(taskId); }}

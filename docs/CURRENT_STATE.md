@@ -5,13 +5,20 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.88`.
+- Current working app version: `7.11.89`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-28 7.11.89 Navigator Search inline mode
+
+Navigator Search now opens inline inside the expanded Navigator. Search is the
+far-left control; activating it temporarily replaces the Navigator icons with
+a search field and dock-attached results. Existing destination registry,
+ranking, and navigation authorities remain unchanged.
 
 ## 2026-08-28 7.11.88 Navigator Search
 

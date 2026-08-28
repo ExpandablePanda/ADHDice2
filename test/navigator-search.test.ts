@@ -6,7 +6,7 @@ import { createNavigatorSearchTargets, searchNavigatorTargets, type NavigatorSea
 const dockItems = ["Home", "Tasks", "Focus", "Health", "Roll", "Achievements", "Games", "Stats", "Notes", "Settings", "Test"] as const;
 const healthTabs = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards"] as const;
 const targets = createNavigatorSearchTargets(dockItems, healthTabs);
-const modalSource = readFileSync(new URL("../src/components/task-app/navigator-search-modal.tsx", import.meta.url), "utf8");
+const inlineSource = readFileSync(new URL("../src/components/task-app/navigator-search-inline.tsx", import.meta.url), "utf8");
 const dockSource = readFileSync(new URL("../src/components/task-app/bottom-dock.tsx", import.meta.url), "utf8");
 const adapterSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
@@ -70,24 +70,43 @@ test("Settings targets request a mounted section once", () => {
   assert.match(settingsSource, /handledSectionRef\.current === requestedSection/);
 });
 
-test("palette keyboard behavior and compact empty state are wired", () => {
-  assert.match(modalSource, /placeholder="Search pages and sections\.\.\."/);
-  assert.match(modalSource, /event\.key === "ArrowDown"/);
-  assert.match(modalSource, /event\.key === "ArrowUp"/);
-  assert.match(modalSource, /event\.key === "Enter"/);
-  assert.match(modalSource, /event\.key === "Escape"/);
-  assert.match(modalSource, /No destinations found\./);
-  assert.match(modalSource, /inputRef\.current\?\.focus\(\)/);
-  assert.match(modalSource, /onNavigate\(target\)/);
+test("inline search mode enters with an autofocused input and supports keyboard selection", () => {
+  assert.match(inlineSource, /placeholder="Search pages and sections\.\.\."/);
+  assert.match(inlineSource, /event\.key === "ArrowDown"/);
+  assert.match(inlineSource, /event\.key === "ArrowUp"/);
+  assert.match(inlineSource, /event\.key === "Enter"/);
+  assert.match(inlineSource, /event\.key === "Escape"/);
+  assert.match(inlineSource, /No destinations found\./);
+  assert.match(inlineSource, /inputRef\.current\?\.focus\(\)/);
+  assert.match(inlineSource, /onNavigate\(target\);\s*onClose\(\)/);
+  assert.doesNotMatch(inlineSource, /ModalShell/);
 });
 
-test("expanded dock adds search after page icons, while collapsed behavior stays separate", () => {
+test("expanded dock puts search first and swaps normal controls for inline search mode", () => {
   const searchIndex = dockSource.indexOf('aria-label="Search navigation"');
+  const mapIndex = dockSource.indexOf("dockItems.map");
   const collapseIndex = dockSource.indexOf('aria-label="Collapse navigation"');
-  assert.ok(searchIndex > dockSource.indexOf("dockItems.map"));
+  assert.ok(searchIndex < mapIndex);
   assert.ok(searchIndex < collapseIndex);
+  assert.match(dockSource, /const \[isSearchMode, setIsSearchMode\] = useState\(false\)/);
+  assert.match(dockSource, /setIsSearchMode\(true\)/);
+  assert.match(dockSource, /\{isSearchMode \? \(/);
+  assert.match(dockSource, /onClose=\{\(\) => setIsSearchMode\(false\)\}/);
+  assert.match(dockSource, /!isSearchMode && showPlacementMenu/);
   assert.match(dockSource, /onClick=\{\(\) => onNavigate\(item\)\}/);
   assert.match(dockSource, /if \(isCollapsed\) \{/);
-  assert.match(adapterSource, /onOpenSearch/);
-  assert.match(appSource, /<NavigatorSearchModal/);
+  assert.match(dockSource, /onPointerDown=\{startBubbleDrag\}/);
+  assert.match(adapterSource, /onNavigateSearchTarget/);
+  assert.match(appSource, /searchTargets=\{navigatorSearchTargets\}/);
+  assert.match(appSource, /onNavigateSearchTarget=\{handleNavigatorSearchTarget\}/);
+  assert.doesNotMatch(appSource, /NavigatorSearchModal/);
+  assert.doesNotMatch(inlineSource, /fixed inset-0/);
+});
+
+test("inline results remain attached to each supported dock placement", () => {
+  assert.match(inlineSource, /placement === "bottom"/);
+  assert.match(inlineSource, /bottom-full left-0 mb-3/);
+  assert.match(inlineSource, /placement === "left"/);
+  assert.match(inlineSource, /left-full top-0 ml-3/);
+  assert.match(inlineSource, /right-full top-0 mr-3/);
 });
