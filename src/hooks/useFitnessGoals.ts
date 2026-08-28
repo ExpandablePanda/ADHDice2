@@ -23,14 +23,13 @@ import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import {
   isCurrentFitnessReloadRequest,
   isCurrentFitnessScope,
-  type FitnessReloadRequest,
   type FitnessReloadScope,
 } from "@/lib/fitness-reload-guard";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (message: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
 type GoalExercise = Pick<HealthExercise, "id" | "archived_at">;
-type FitnessMutationRequest = FitnessReloadRequest<SupabaseClient>;
+type FitnessMutationScope = FitnessReloadScope<SupabaseClient>;
 
 export function useFitnessGoals(
   client: SupabaseClient,
@@ -121,36 +120,30 @@ export function useFitnessGoals(
 
   const isCurrentScope = stateScope !== null && isCurrentFitnessScope(currentScope, stateScope);
 
-  const captureMutationRequest = (): FitnessMutationRequest => ({
+  const captureMutationScope = (): FitnessMutationScope => ({
     ...currentScope,
-    generation: reloadGenerationRef.current,
   });
 
-  const isCurrentMutationRequest = (request: FitnessMutationRequest) => isCurrentFitnessReloadRequest(
-    request,
+  const isCurrentMutationScope = (mutationScope: FitnessMutationScope) => isCurrentFitnessScope(
+    mutationScope,
     scopeRef.current,
-    reloadGenerationRef.current,
   );
 
-  const reportMutationError = (request: FitnessMutationRequest, message: string) => {
-    if (!isCurrentMutationRequest(request)) return false;
+  const reportMutationError = (mutationScope: FitnessMutationScope, message: string) => {
+    if (!isCurrentMutationScope(mutationScope)) return false;
     reportError(message);
     return true;
   };
 
-  async function reloadForMutation(request: FitnessMutationRequest): Promise<FitnessMutationRequest | null> {
-    if (!isCurrentMutationRequest(request)) return null;
-    const reloadPromise = reload();
-    const reloadRequest = { ...request, generation: reloadGenerationRef.current };
-    await reloadPromise;
-    return isCurrentFitnessReloadRequest(reloadRequest, scopeRef.current, reloadGenerationRef.current)
-      ? reloadRequest
-      : null;
+  async function reloadForMutation(mutationScope: FitnessMutationScope): Promise<boolean> {
+    if (!isCurrentMutationScope(mutationScope)) return false;
+    await reload();
+    return isCurrentMutationScope(mutationScope);
   }
 
-  async function getGoalExercise(exerciseId: string, request: FitnessMutationRequest): Promise<GoalExercise | null> {
-    const mutationClient = request.client;
-    const mutationUserId = request.userId;
+  async function getGoalExercise(exerciseId: string, mutationScope: FitnessMutationScope): Promise<GoalExercise | null> {
+    const mutationClient = mutationScope.client;
+    const mutationUserId = mutationScope.userId;
     if (!mutationClient || !mutationUserId) return null;
     const { data, error: exerciseError } = await mutationClient
       .from("adhdice_health_exercises")
@@ -158,32 +151,32 @@ export function useFitnessGoals(
       .eq("user_id", mutationUserId)
       .eq("id", exerciseId)
       .maybeSingle();
-    if (!isCurrentMutationRequest(request)) return null;
+    if (!isCurrentMutationScope(mutationScope)) return null;
     if (exerciseError) {
-      reportMutationError(request, formatHealthFitnessGoalsError(exerciseError.message));
+      reportMutationError(mutationScope, formatHealthFitnessGoalsError(exerciseError.message));
       return null;
     }
     if (!data) {
-      reportMutationError(request, "Choose a valid Exercise Library exercise for this Goal.");
+      reportMutationError(mutationScope, "Choose a valid Exercise Library exercise for this Goal.");
       return null;
     }
     return data;
   }
 
   async function createGoal(input: Omit<HealthFitnessGoalInsert, "user_id">) {
-    const mutationRequest = captureMutationRequest();
-    const mutationClient = mutationRequest.client;
-    const mutationUserId = mutationRequest.userId;
+    const mutationScope = captureMutationScope();
+    const mutationClient = mutationScope.client;
+    const mutationUserId = mutationScope.userId;
     if (!mutationClient || !mutationUserId) {
-      reportMutationError(mutationRequest, "Fitness Goals are unavailable while Health is offline.");
+      reportMutationError(mutationScope, "Fitness Goals are unavailable while Health is offline.");
       return null;
     }
     const normalizedInput = { ...input, title: input.title.trim() };
-    const exercise = await getGoalExercise(normalizedInput.exercise_id, mutationRequest);
-    if (!exercise) return null;
+    const exercise = await getGoalExercise(normalizedInput.exercise_id, mutationScope);
+    if (!exercise || !isCurrentMutationScope(mutationScope)) return null;
     const validationError = validateHealthFitnessGoalDraft(normalizedInput, [exercise]);
     if (validationError) {
-      reportMutationError(mutationRequest, validationError);
+      reportMutationError(mutationScope, validationError);
       return null;
     }
     const { data, error: insertError } = await mutationClient
@@ -191,27 +184,27 @@ export function useFitnessGoals(
       .insert({ ...normalizedInput, user_id: mutationUserId })
       .select("*")
       .single();
-    if (!isCurrentMutationRequest(mutationRequest)) return null;
+    if (!isCurrentMutationScope(mutationScope)) return null;
     if (insertError || !data) {
-      reportMutationError(mutationRequest, formatHealthFitnessGoalsError(insertError?.message));
+      reportMutationError(mutationScope, formatHealthFitnessGoalsError(insertError?.message));
       return null;
     }
-    setGoals((current) => isCurrentMutationRequest(mutationRequest) ? [...current, data] : current);
-    setError((current) => isCurrentMutationRequest(mutationRequest) ? null : current);
+    setGoals((current) => isCurrentMutationScope(mutationScope) ? [...current, data] : current);
+    setError((current) => isCurrentMutationScope(mutationScope) ? null : current);
     return data;
   }
 
   async function updateGoal(goalId: string, input: HealthFitnessGoalUpdate) {
-    const mutationRequest = captureMutationRequest();
-    const mutationClient = mutationRequest.client;
-    const mutationUserId = mutationRequest.userId;
+    const mutationScope = captureMutationScope();
+    const mutationClient = mutationScope.client;
+    const mutationUserId = mutationScope.userId;
     if (!mutationClient || !mutationUserId) {
-      reportMutationError(mutationRequest, "Fitness Goals are unavailable while Health is offline.");
+      reportMutationError(mutationScope, "Fitness Goals are unavailable while Health is offline.");
       return false;
     }
     const existingGoal = goals.find((goal) => goal.id === goalId);
     if (!existingGoal) {
-      reportMutationError(mutationRequest, "That Fitness Goal is not available in the current user scope.");
+      reportMutationError(mutationScope, "That Fitness Goal is not available in the current user scope.");
       return false;
     }
     const nextDraft = normalizeHealthFitnessGoalDraft({
@@ -220,17 +213,17 @@ export function useFitnessGoals(
       target: input.target ?? existingGoal.target,
       title: input.title ?? existingGoal.title,
     });
-    const exercise = await getGoalExercise(nextDraft.exercise_id, mutationRequest);
-    if (!exercise) return false;
+    const exercise = await getGoalExercise(nextDraft.exercise_id, mutationScope);
+    if (!exercise || !isCurrentMutationScope(mutationScope)) return false;
     const allowArchivedExercise = existingGoal.exercise_id === nextDraft.exercise_id;
     const validationError = validateHealthFitnessGoalDraft(nextDraft, [exercise], { allowArchivedExercise });
     if (validationError) {
-      reportMutationError(mutationRequest, validationError);
+      reportMutationError(mutationScope, validationError);
       return false;
     }
     const targetError = validateHealthFitnessGoalTargetAgainstLevels(goalId, nextDraft.target, levels);
     if (targetError) {
-      reportMutationError(mutationRequest, targetError);
+      reportMutationError(mutationScope, targetError);
       return false;
     }
     const normalizedInput: HealthFitnessGoalUpdate = {
@@ -247,15 +240,15 @@ export function useFitnessGoals(
       .eq("user_id", mutationUserId)
       .select("*")
       .single();
-    if (!isCurrentMutationRequest(mutationRequest)) return false;
+    if (!isCurrentMutationScope(mutationScope)) return false;
     if (updateError || !data) {
-      reportMutationError(mutationRequest, formatHealthFitnessGoalsError(updateError?.message));
+      reportMutationError(mutationScope, formatHealthFitnessGoalsError(updateError?.message));
       return false;
     }
-    setGoals((current) => isCurrentMutationRequest(mutationRequest)
+    setGoals((current) => isCurrentMutationScope(mutationScope)
       ? current.map((goal) => goal.id === goalId ? data : goal)
       : current);
-    setError((current) => isCurrentMutationRequest(mutationRequest) ? null : current);
+    setError((current) => isCurrentMutationScope(mutationScope) ? null : current);
     return true;
   }
 
@@ -268,18 +261,18 @@ export function useFitnessGoals(
   }
 
   async function createLevel(input: Omit<HealthFitnessGoalLevelInsert, "user_id">) {
-    const mutationRequest = captureMutationRequest();
-    const mutationClient = mutationRequest.client;
-    const mutationUserId = mutationRequest.userId;
+    const mutationScope = captureMutationScope();
+    const mutationClient = mutationScope.client;
+    const mutationUserId = mutationScope.userId;
     if (!mutationClient || !mutationUserId) {
-      reportMutationError(mutationRequest, "Fitness Goals are unavailable while Health is offline.");
+      reportMutationError(mutationScope, "Fitness Goals are unavailable while Health is offline.");
       return null;
     }
     const goal = goals.find((candidate) => candidate.id === input.goal_id);
     const normalizedInput = normalizeHealthFitnessGoalLevelDraft({ ...input, label: input.label.trim() });
     const validationError = validateHealthFitnessGoalLevelDraft(normalizedInput, goal ?? null, levels);
     if (validationError) {
-      reportMutationError(mutationRequest, validationError);
+      reportMutationError(mutationScope, validationError);
       return null;
     }
     const { data, error: insertError } = await mutationClient
@@ -287,28 +280,28 @@ export function useFitnessGoals(
       .insert({ ...normalizedInput, user_id: mutationUserId })
       .select("*")
       .single();
-    if (!isCurrentMutationRequest(mutationRequest)) return null;
+    if (!isCurrentMutationScope(mutationScope)) return null;
     if (insertError || !data) {
-      reportMutationError(mutationRequest, formatHealthFitnessGoalsError(insertError?.message));
+      reportMutationError(mutationScope, formatHealthFitnessGoalsError(insertError?.message));
       return null;
     }
-    setLevels((current) => isCurrentMutationRequest(mutationRequest) ? [...current, data] : current);
-    setError((current) => isCurrentMutationRequest(mutationRequest) ? null : current);
+    setLevels((current) => isCurrentMutationScope(mutationScope) ? [...current, data] : current);
+    setError((current) => isCurrentMutationScope(mutationScope) ? null : current);
     return data;
   }
 
   async function updateLevel(levelId: string, input: HealthFitnessGoalLevelUpdate) {
-    const mutationRequest = captureMutationRequest();
-    const mutationClient = mutationRequest.client;
-    const mutationUserId = mutationRequest.userId;
+    const mutationScope = captureMutationScope();
+    const mutationClient = mutationScope.client;
+    const mutationUserId = mutationScope.userId;
     if (!mutationClient || !mutationUserId) {
-      reportMutationError(mutationRequest, "Fitness Goals are unavailable while Health is offline.");
+      reportMutationError(mutationScope, "Fitness Goals are unavailable while Health is offline.");
       return false;
     }
     const existingLevel = levels.find((level) => level.id === levelId);
     const goal = existingLevel ? goals.find((candidate) => candidate.id === existingLevel.goal_id) : undefined;
     if (!existingLevel || !goal) {
-      reportMutationError(mutationRequest, "That Fitness Level is not available in the current user scope.");
+      reportMutationError(mutationScope, "That Fitness Level is not available in the current user scope.");
       return false;
     }
     const normalizedInput = normalizeHealthFitnessGoalLevelDraft({
@@ -319,7 +312,7 @@ export function useFitnessGoals(
     });
     const validationError = validateHealthFitnessGoalLevelDraft(normalizedInput, goal, levels, levelId);
     if (validationError) {
-      reportMutationError(mutationRequest, validationError);
+      reportMutationError(mutationScope, validationError);
       return false;
     }
     const { data, error: updateError } = await mutationClient
@@ -334,24 +327,24 @@ export function useFitnessGoals(
       .eq("goal_id", existingLevel.goal_id)
       .select("*")
       .single();
-    if (!isCurrentMutationRequest(mutationRequest)) return false;
+    if (!isCurrentMutationScope(mutationScope)) return false;
     if (updateError || !data) {
-      reportMutationError(mutationRequest, formatHealthFitnessGoalsError(updateError?.message));
+      reportMutationError(mutationScope, formatHealthFitnessGoalsError(updateError?.message));
       return false;
     }
-    setLevels((current) => isCurrentMutationRequest(mutationRequest)
+    setLevels((current) => isCurrentMutationScope(mutationScope)
       ? current.map((level) => level.id === levelId ? data : level)
       : current);
-    setError((current) => isCurrentMutationRequest(mutationRequest) ? null : current);
+    setError((current) => isCurrentMutationScope(mutationScope) ? null : current);
     return true;
   }
 
   async function deleteLevel(levelId: string) {
-    const mutationRequest = captureMutationRequest();
-    const mutationClient = mutationRequest.client;
-    const mutationUserId = mutationRequest.userId;
+    const mutationScope = captureMutationScope();
+    const mutationClient = mutationScope.client;
+    const mutationUserId = mutationScope.userId;
     if (!mutationClient || !mutationUserId) {
-      reportMutationError(mutationRequest, "Fitness Goals are unavailable while Health is offline.");
+      reportMutationError(mutationScope, "Fitness Goals are unavailable while Health is offline.");
       return false;
     }
     const { error: deleteError } = await mutationClient
@@ -359,24 +352,24 @@ export function useFitnessGoals(
       .delete()
       .eq("id", levelId)
       .eq("user_id", mutationUserId);
-    if (!isCurrentMutationRequest(mutationRequest)) return false;
+    if (!isCurrentMutationScope(mutationScope)) return false;
     if (deleteError) {
-      reportMutationError(mutationRequest, formatHealthFitnessGoalsError(deleteError.message));
+      reportMutationError(mutationScope, formatHealthFitnessGoalsError(deleteError.message));
       return false;
     }
-    setLevels((current) => isCurrentMutationRequest(mutationRequest)
+    setLevels((current) => isCurrentMutationScope(mutationScope)
       ? current.filter((level) => level.id !== levelId)
       : current);
-    setError((current) => isCurrentMutationRequest(mutationRequest) ? null : current);
+    setError((current) => isCurrentMutationScope(mutationScope) ? null : current);
     return true;
   }
 
   async function reorderLevels(goalId: string, orderedLevelIds: readonly string[]) {
-    const mutationRequest = captureMutationRequest();
-    const mutationClient = mutationRequest.client;
-    const mutationUserId = mutationRequest.userId;
+    const mutationScope = captureMutationScope();
+    const mutationClient = mutationScope.client;
+    const mutationUserId = mutationScope.userId;
     if (!mutationClient || !mutationUserId) {
-      reportMutationError(mutationRequest, "Fitness Goals are unavailable while Health is offline.");
+      reportMutationError(mutationScope, "Fitness Goals are unavailable while Health is offline.");
       return false;
     }
     const goalLevels = levels.filter((level) => level.goal_id === goalId);
@@ -387,7 +380,7 @@ export function useFitnessGoals(
       || new Set(receivedIds).size !== receivedIds.length
       || receivedIds.some((levelId) => !expectedIds.includes(levelId))
     ) {
-      reportMutationError(mutationRequest, "Level order could not be saved because the list changed. Reload and try again.");
+      reportMutationError(mutationScope, "Level order could not be saved because the list changed. Reload and try again.");
       return false;
     }
     const results = await Promise.all(receivedIds.map((levelId, sortOrder) => mutationClient
@@ -396,17 +389,15 @@ export function useFitnessGoals(
       .eq("id", levelId)
       .eq("goal_id", goalId)
       .eq("user_id", mutationUserId)));
-    if (!isCurrentMutationRequest(mutationRequest)) return false;
+    if (!isCurrentMutationScope(mutationScope)) return false;
     const writeError = results.find((result) => result.error)?.error;
     if (writeError) {
-      const reloadRequest = await reloadForMutation(mutationRequest);
-      if (!reloadRequest) return false;
-      reportMutationError(reloadRequest, `Level order could not be saved. The canonical order was reloaded. ${writeError.message}`);
+      if (!await reloadForMutation(mutationScope)) return false;
+      reportMutationError(mutationScope, `Level order could not be saved. The canonical order was reloaded. ${writeError.message}`);
       return false;
     }
-    const reloadRequest = await reloadForMutation(mutationRequest);
-    if (!reloadRequest) return false;
-    setError((current) => isCurrentMutationRequest(reloadRequest) ? null : current);
+    if (!await reloadForMutation(mutationScope)) return false;
+    setError((current) => isCurrentMutationScope(mutationScope) ? null : current);
     return true;
   }
 

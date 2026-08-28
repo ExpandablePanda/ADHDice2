@@ -5,13 +5,22 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.93`.
+- Current working app version: `7.11.94`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-28 7.11.94 Fitness mutation scope decoupling
+
+Fitness Goal and Level mutations now use only their captured active
+client/user scope for response validity. Same-scope reloads may still advance
+reload generation without discarding a successful mutation response, while
+reload responses remain protected by the existing scope-plus-generation guard.
+No Fitness Goal behavior or persistence semantics changed; no SQL, migration,
+Edge, browser, or device work was performed.
 
 ## 2026-08-28 7.11.93 Fitness Goals stale-scope mutation guard
 

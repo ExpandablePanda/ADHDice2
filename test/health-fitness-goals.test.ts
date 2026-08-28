@@ -162,27 +162,37 @@ test("useFitnessGoals reload generations reject stale client, user, inactive, an
   assert.match(hook, /setGoals\(\[\]\);\s*setLevels\(\[\]\)/);
 });
 
-test("Goal and Level mutations ignore stale responses before state, errors, or follow-up reloads", () => {
-  assert.match(hook, /type FitnessMutationRequest = FitnessReloadRequest<SupabaseClient>/);
-  assert.match(hook, /const captureMutationRequest = \(\): FitnessMutationRequest/);
-  assert.match(hook, /const isCurrentMutationRequest = \(request: FitnessMutationRequest\) => isCurrentFitnessReloadRequest/);
-  assert.match(hook, /const reportMutationError = \(request: FitnessMutationRequest, message: string\) => \{[\s\S]*if \(!isCurrentMutationRequest\(request\)\) return false;/);
+test("Fitness mutation scope stays current when only reload generation changes", () => {
+  const current = { active: true, client: {}, userId: "user-a" };
+  for (const reloadGeneration of [2, 3]) {
+    assert.equal(isCurrentFitnessScope(current, current), true, `reload generation ${reloadGeneration} must not affect mutation scope`);
+  }
+});
+
+test("Goal and Level mutations use scope-only guards before state, errors, or follow-up reloads", () => {
+  assert.match(hook, /type FitnessMutationScope = FitnessReloadScope<SupabaseClient>/);
+  assert.match(hook, /const captureMutationScope = \(\): FitnessMutationScope/);
+  assert.match(hook, /const isCurrentMutationScope = \(mutationScope: FitnessMutationScope\) => isCurrentFitnessScope/);
+  assert.match(hook, /const reportMutationError = \(mutationScope: FitnessMutationScope, message: string\) => \{[\s\S]*if \(!isCurrentMutationScope\(mutationScope\)\) return false;/);
+  assert.doesNotMatch(hook, /FitnessMutationRequest|isCurrentMutationRequest/);
 
   for (const action of ["createGoal", "updateGoal", "createLevel", "updateLevel", "deleteLevel", "reorderLevels"]) {
     const start = hook.indexOf(`async function ${action}`);
     const end = hook.indexOf("\n  async function", start + 1);
     const section = hook.slice(start, end === -1 ? hook.indexOf("\n  return {", start) : end);
     assert.notEqual(start, -1, `${action} is missing`);
-    assert.match(section, /const mutationRequest = captureMutationRequest\(\)/, `${action} must capture its scope`);
-    assert.match(section, /if \(!isCurrentMutationRequest\(mutationRequest\)\) return (null|false);/, `${action} must ignore stale responses`);
+    assert.match(section, /const mutationScope = captureMutationScope\(\)/, `${action} must capture its scope`);
+    assert.match(section, /if \(!isCurrentMutationScope\(mutationScope\)\) return (null|false);/, `${action} must ignore stale responses`);
+    assert.doesNotMatch(section, /isCurrentFitnessReloadRequest|reloadGenerationRef/, `${action} must not use reload identity`);
   }
 
   const updateGoal = hook.slice(hook.indexOf("async function updateGoal"), hook.indexOf("\n  async function archiveGoal"));
-  assert.match(updateGoal, /await getGoalExercise\(nextDraft\.exercise_id, mutationRequest\)/);
-  assert.match(updateGoal, /await getGoalExercise\(nextDraft\.exercise_id, mutationRequest\)[\s\S]*if \(!exercise\) return false;/);
-  assert.match(hook, /setGoals\(\(current\) => isCurrentMutationRequest\(mutationRequest\)/);
-  assert.match(hook, /setLevels\(\(current\) => isCurrentMutationRequest\(mutationRequest\)/);
-  assert.match(hook, /async function reloadForMutation\(request: FitnessMutationRequest\)/);
+  assert.match(updateGoal, /await getGoalExercise\(nextDraft\.exercise_id, mutationScope\)/);
+  assert.match(updateGoal, /await getGoalExercise\(nextDraft\.exercise_id, mutationScope\)[\s\S]*if \(!exercise \|\| !isCurrentMutationScope\(mutationScope\)\) return false;[\s\S]*const \{ data, error: updateError \}/);
+  assert.match(hook, /setGoals\(\(current\) => isCurrentMutationScope\(mutationScope\)/);
+  assert.match(hook, /setLevels\(\(current\) => isCurrentMutationScope\(mutationScope\)/);
+  assert.match(hook, /async function reloadForMutation\(mutationScope: FitnessMutationScope\)/);
+  assert.match(hook, /async function reloadForMutation[\s\S]*if \(!isCurrentMutationScope\(mutationScope\)\) return false;[\s\S]*await reload\(\);[\s\S]*return isCurrentMutationScope\(mutationScope\)/);
   assert.match(hook, /async function archiveGoal\(goalId: string\) \{[\s\S]*return updateGoal\(goalId, \{ archived_at:/);
   assert.match(hook, /async function restoreGoal\(goalId: string\) \{[\s\S]*return updateGoal\(goalId, \{ archived_at: null \}/);
 });
