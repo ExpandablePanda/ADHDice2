@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.82`.
+- Current working app version: `7.11.83`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -22,6 +22,12 @@ Multi-date History Calendar Done / Did My Best / Missed edits now use the
 existing multi-date canonical sync path, preserving sequential revision-safe
 commands while collapsing repeated History reload/streak reconciliation into
 one final refresh.
+
+## 2026-08-27 7.11.83 History Calendar Realtime containment
+
+Multi-date History mutations now suppress their own Task Realtime echoes for
+the full mutation lifetime, and known-task History Realtime changes use
+targeted History reconciliation rather than whole-account History scans.
 
 ## 2026-08-27 7.11.81 Authoritative Task search selector excludes trashed descendants
 

@@ -6,6 +6,7 @@ import type { Task } from "../src/lib/database.types.ts";
 import { projectTasksWithCanonicalScheduleBoundaries } from "../src/lib/task-state-canonical/schedule-projection.ts";
 import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import { fetchAllPagedRows, loadCanonicalTaskSnapshot } from "../src/hooks/useWorkspaceData.ts";
+import { createPendingTaskMutationTracker } from "../src/lib/task-pending-mutations.ts";
 
 test("fetchAllPagedRows accumulates full pages until the first short page", async () => {
   const pageSize = 1000;
@@ -235,7 +236,7 @@ test("canonical paginated history reload joins an active scan instead of duplica
 
   assert.match(historyLoader, /if \(taskHistoryLoadInFlightRef\.current\)[\s\S]*queuedTaskHistoryReloadRef\.current = true/);
   assert.match(historyLoader, /Rollover history reconciliation joined an in-flight history load/);
-  assert.match(historyLoader, /fetchAllPagedRows<DbTaskHistory>/);
+  assert.match(historyLoader, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
 });
 
 test("manual refresh remains the broad core workspace refresh path", async () => {
@@ -250,7 +251,7 @@ test("streak-summary resolution is rejected after the owning effect unmounts", a
   const summaryLoader = source.slice(source.indexOf("async function loadTaskHistoryStreakSummaries"), source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"));
 
   assert.match(summaryLoader, /if \(!isActive \|\| !canApplyCoreWorkspaceResult\(\)\)/);
-  assert.match(summaryLoader, /await fetchAllPagedRows<TaskHistoryStreakEntry>/);
+  assert.match(summaryLoader, /await fetchAllPagedRows<CanonicalTaskHistoryFact>/);
   assert.match(summaryLoader, /if \(!isActive \|\| !canApplyCoreWorkspaceResult\(\)\)[\s\S]*buildTaskHistoryStreakSummaryMap/);
 });
 
@@ -352,7 +353,7 @@ test("opening Task History refreshes the shared canonical History snapshot", asy
   assert.match(modalLoader, /setTaskHistoryCacheForTask\(taskId, rows\)/);
   assert.match(source, /setTaskHistory\s*\(/);
   assert.doesNotMatch(modalLoader, /mergeTaskHistoryCache/);
-  assert.match(modalLoader, /fetchAllPagedRows<DbTaskHistory>/);
+  assert.match(modalLoader, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
   assert.match(modalLoader, /\.range\(from, to\)/);
 });
 
@@ -378,13 +379,83 @@ test("rollover History acquisition leaves modal cache and load state untouched",
   assert.doesNotMatch(rolloverReader, /taskHistoryByTaskIdRef|taskHistoryLoadStateByTaskIdRef/);
 });
 
-test("History Realtime reloads the shared snapshot only for an owned task", async () => {
-  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
-  const realtime = source.slice(source.indexOf('table: useCanonicalHistory ? "adhdice_task_history_facts"'), source.indexOf('table: useCanonicalHistory ? "adhdice_task_history_facts"') + 2100);
+test("History Calendar owns Task Realtime suppression for the whole multi-date mutation", async () => {
+  const appSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const flowStart = appSource.indexOf("onSetStatuses: async");
+  const flow = appSource.slice(flowStart, appSource.indexOf("onSetDelayedStatus:", flowStart));
 
-  assert.match(realtime, /taskId && Object\.hasOwn\(taskHistoryByTaskIdRef\.current, taskId\)/);
-  assert.match(realtime, /An ephemeral rollover read does not make this Task a modal-cache owner/);
-  assert.match(realtime, /reloadTaskHistoryStreakSummaryForTask\(taskId\)/);
+  assert.match(flow, /beginPendingTaskMutationScope\(pendingTaskIds\)/);
+  assert.match(flow, /beginPendingTaskMutationScope\(pendingTaskIds\)[\s\S]*?try \{/);
+  assert.match(flow, /finally \{\s*endPendingTaskMutationScope\(pendingTaskIds\)/);
+  assert.ok(flow.indexOf("beginPendingTaskMutationScope(pendingTaskIds)") < flow.indexOf("syncTaskHistoryEntries("));
+});
+
+test("explicit pending Task ownership survives the old TTL and releases after final reconciliation", () => {
+  let now = 0;
+  const tracker = createPendingTaskMutationTracker(() => now);
+
+  tracker.beginPendingTaskMutationScope(["task-1"]);
+  now = 30_000;
+  assert.equal(tracker.shouldSkipTaskReload({ eventType: "UPDATE", taskId: "task-1" }), true);
+  assert.equal(tracker.shouldSkipTaskReload({ eventType: "UPDATE", taskId: "task-1" }), true);
+
+  tracker.endPendingTaskMutationScope(["task-1"]);
+  assert.equal(tracker.shouldSkipTaskReload({ eventType: "UPDATE", taskId: "task-1" }), false);
+});
+
+test("nested pending Task ownership cannot be cleared by another local scope", () => {
+  const tracker = createPendingTaskMutationTracker(() => 1_000);
+
+  tracker.beginPendingTaskMutationScope(["task-1"]);
+  tracker.beginPendingTaskMutationScope(["task-1"]);
+  tracker.clearPendingTaskMutations(["task-1"]);
+  tracker.endPendingTaskMutationScope(["task-1"]);
+  assert.equal(tracker.shouldSkipTaskReload({ eventType: "UPDATE", taskId: "task-1" }), true);
+
+  tracker.endPendingTaskMutationScope(["task-1"]);
+  assert.equal(tracker.shouldSkipTaskReload({ eventType: "UPDATE", taskId: "task-1" }), false);
+  tracker.markPendingTaskMutations(["task-1"]);
+  assert.equal(tracker.shouldSkipTaskReload({ eventType: "UPDATE", taskId: "task-1" }), true);
+  assert.equal(tracker.shouldSkipTaskReload({ eventType: "UPDATE", taskId: "task-1" }), false);
+});
+
+test("Task Realtime skips only the locally owned Task echo and resumes after the scope", async () => {
+  const appSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const workspaceSource = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const realtime = workspaceSource.slice(
+    workspaceSource.indexOf('table: "adhdice_clean_tasks"'),
+    workspaceSource.indexOf('table: "adhdice_clean_tasks"') + 1000,
+  );
+
+  assert.match(appSource, /return pendingTaskMutationTrackerRef\.current\.shouldSkipTaskReload\(change\)/);
+  assert.match(realtime, /shouldSkipTaskReloadRef\.current\?\.\(\{ eventType: payload\.eventType, taskId \}\)/);
+  assert.ok(realtime.indexOf("shouldSkipTaskReloadRef.current") < realtime.indexOf("reloadTaskRows({ silent: true })"));
+});
+
+test("known-task History Realtime uses targeted refresh and unknown-ID events keep the full-load fallback", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const realtimeStart = source.indexOf('table: "adhdice_task_history_facts"');
+  const realtime = source.slice(realtimeStart, realtimeStart + 2100);
+
+  assert.match(realtime, /if \(taskId\) \{\s*void loadTaskHistoryForTask\(taskId, \{ force: true, silent: true \}\)\.then\(\(result\) =>/);
+  assert.match(realtime, /result\.status === "ready"[\s\S]*reloadTaskHistoryStreakSummaryForTask\(taskId, result\.history \?\? undefined\)/);
+  const knownTaskBranch = realtime.slice(realtime.indexOf("if (taskId)"), realtime.indexOf("if (hasLoadedFullTaskHistoryRef.current)"));
+  assert.doesNotMatch(knownTaskBranch, /loadTaskHistory\(/);
+  assert.match(realtime, /if \(hasLoadedFullTaskHistoryRef\.current\) \{[\s\S]*loadTaskHistory\(\{ silent: true, source: "secondary" \}\)/);
+  assert.match(realtime, /void loadTaskHistoryStreakSummaries\(\);/);
+});
+
+test("targeted History refresh merges the task into both per-task and full History caches", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const cacheHelper = source.slice(source.indexOf("const setTaskHistoryCacheForTask"), source.indexOf("const updateTaskHistoryForTask"));
+  const targetedLoader = source.slice(source.indexOf("async function loadTaskHistoryForTask"), source.indexOf("async function loadTaskHistoryForTasks"));
+
+  assert.match(targetedLoader, /setTaskHistoryCacheForTask\(taskId, rows\)/);
+  assert.match(cacheHelper, /fullTaskHistoryRowsRef\.current = nextSnapshot/);
+  assert.match(cacheHelper, /taskHistoryByTaskIdRef\.current = nextByTaskId/);
+  assert.match(cacheHelper, /setTaskHistory\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextSnapshot\)\)/);
+  assert.match(cacheHelper, /setTaskHistoryByTaskId\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextByTaskId\)\)/);
+  assert.match(source, /reloadTaskHistoryStreakSummaryForTask\(taskId, result\.history \?\? undefined\)/);
 });
 
 test("a ready modal History cache remains available when the modal reopens", async () => {
@@ -429,7 +500,7 @@ test("History query pages have a stable logical row order and compact summaries 
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const summarySource = await readFile(new URL("../src/lib/task-history-streak-summaries.ts", import.meta.url), "utf8");
 
-  assert.match(source, /\.order\("updated_at", \{ ascending: false \}\)\s*\.order\("created_at", \{ ascending: false \}\)\s*\.order\("id", \{ ascending: true \}\)\s*\.range\(from, to\)/);
+  assert.match(source, /\.order\("logical_date", \{ ascending: false \}\)\s*\.order\("updated_at", \{ ascending: false \}\)\s*\.order\("created_at", \{ ascending: false \}\)\s*\.order\("id", \{ ascending: true \}\)/);
   assert.match(summarySource, /deduplicateTaskHistoryByLogicalDate\(history\)/);
 });
 

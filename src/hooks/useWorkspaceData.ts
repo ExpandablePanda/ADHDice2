@@ -1613,21 +1613,19 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             ?? (payload.new as { entity_id?: string } | null)?.entity_id
             ?? (payload.old as { task_id?: string; entity_id?: string } | null)?.task_id
             ?? (payload.old as { entity_id?: string } | null)?.entity_id);
-          if (hasLoadedFullTaskHistoryRef.current) {
-            void loadTaskHistory({ silent: true, source: "secondary" }).then(() => (
-              taskId ? reloadTaskHistoryStreakSummaryForTask(taskId) : loadTaskHistoryStreakSummaries()
+          if (taskId) {
+            void loadTaskHistoryForTask(taskId, { force: true, silent: true }).then((result) => (
+              result.status === "ready"
+                ? reloadTaskHistoryStreakSummaryForTask(taskId, result.history ?? undefined)
+                : false
             ));
             return;
           }
-          if (taskId && Object.hasOwn(taskHistoryByTaskIdRef.current, taskId)) {
-            void loadTaskHistoryForTask(taskId, { force: true, silent: true });
-            void reloadTaskHistoryStreakSummaryForTask(taskId);
-          } else if (taskId) {
-            // An ephemeral rollover read does not make this Task a modal-cache owner.
-            void reloadTaskHistoryStreakSummaryForTask(taskId);
-          } else {
-            void loadTaskHistoryStreakSummaries();
+          if (hasLoadedFullTaskHistoryRef.current) {
+            void loadTaskHistory({ silent: true, source: "secondary" }).then(() => loadTaskHistoryStreakSummaries());
+            return;
           }
+          void loadTaskHistoryStreakSummaries();
         },
       )
       .subscribe((status) => {

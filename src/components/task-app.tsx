@@ -248,6 +248,7 @@ import {
   type ChildTaskPreviewLookup,
 } from "@/lib/task-app-derived";
 import { buildStableTaskSearchScope, queryTaskSearch, shouldRunTaskSearch } from "@/lib/task-search-selector";
+import { createPendingTaskMutationTracker } from "@/lib/task-pending-mutations";
 import { createStableTaskRowModelCache } from "@/lib/task-table-row";
 import {
   createTaskRolloverReplayIdentity,
@@ -581,7 +582,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.82";
+const APP_VERSION = "7.11.83";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1652,7 +1653,7 @@ export function TaskApp() {
   const focusAlarmHydratedUserIdRef = useRef<string | null>(null);
   const focusAlarmPreviousSettingsRef = useRef<{ enabled: boolean; intervalMinutes: number } | null>(null);
   const focusAlarmSkipNextPersistRef = useRef(false);
-  const pendingTaskMutationExpirationsRef = useRef<Map<string, number>>(new Map());
+  const pendingTaskMutationTrackerRef = useRef(createPendingTaskMutationTracker());
   const canonicalTaskMutationStateRef = useRef<TaskCanonicalMutationState>({
     mutationsInFlight: new Map(),
     taskSnapshots: new Map(),
@@ -1683,36 +1684,23 @@ export function TaskApp() {
   }
 
   const markPendingTaskMutations = useCallback((taskIds: string[]) => {
-    const expiresAt = Date.now() + 10_000;
-    for (const taskId of taskIds) {
-      pendingTaskMutationExpirationsRef.current.set(taskId, expiresAt);
-    }
+    pendingTaskMutationTrackerRef.current.markPendingTaskMutations(taskIds);
   }, []);
 
   const clearPendingTaskMutations = useCallback((taskIds: string[]) => {
-    for (const taskId of taskIds) {
-      pendingTaskMutationExpirationsRef.current.delete(taskId);
-    }
+    pendingTaskMutationTrackerRef.current.clearPendingTaskMutations(taskIds);
+  }, []);
+
+  const beginPendingTaskMutationScope = useCallback((taskIds: string[]) => {
+    pendingTaskMutationTrackerRef.current.beginPendingTaskMutationScope(taskIds);
+  }, []);
+
+  const endPendingTaskMutationScope = useCallback((taskIds: string[]) => {
+    pendingTaskMutationTrackerRef.current.endPendingTaskMutationScope(taskIds);
   }, []);
 
   const shouldSkipTaskReload = useCallback((change: { eventType: string; taskId: string | null }) => {
-    const taskId = change.taskId;
-    if (!taskId) {
-      return false;
-    }
-
-    const expiresAt = pendingTaskMutationExpirationsRef.current.get(taskId);
-    if (!expiresAt) {
-      return false;
-    }
-
-    if (expiresAt < Date.now()) {
-      pendingTaskMutationExpirationsRef.current.delete(taskId);
-      return false;
-    }
-
-    pendingTaskMutationExpirationsRef.current.delete(taskId);
-    return true;
+    return pendingTaskMutationTrackerRef.current.shouldSkipTaskReload(change);
   }, []);
   const listColumnMenuRef = useRef<HTMLDivElement | null>(null);
   const keyboardShortcutsMenuRef = useRef<HTMLDivElement | null>(null);
@@ -6102,33 +6090,39 @@ export function TaskApp() {
         if (entryDates.length !== 1) return false;
         return (await updateTaskStatus(taskHistoryModalTask, "complete")) === true;
       }
-      if (status !== "clear") {
-        const saved = await syncTaskHistoryEntries(
+      const pendingTaskIds = [taskHistoryModalTaskId];
+      beginPendingTaskMutationScope(pendingTaskIds);
+      try {
+        if (status !== "clear") {
+          const saved = await syncTaskHistoryEntries(
+            taskHistoryModalTaskId,
+            status,
+            entryDates,
+            {
+              historicalOverride: true,
+              historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+              syncLiveTask: true,
+            },
+          );
+          if (!saved) {
+            setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${formatTaskStatusLabel(status)} did not finish correctly.` });
+            return false;
+          }
+          return true;
+        }
+        return await syncTaskHistoryEntries(
           taskHistoryModalTaskId,
-          status,
+          "pending",
           entryDates,
           {
-            historicalOverride: true,
+            historicalOverride: status !== "clear",
             historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
             syncLiveTask: true,
           },
         );
-        if (!saved) {
-          setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${formatTaskStatusLabel(status)} did not finish correctly.` });
-          return false;
-        }
-        return true;
+      } finally {
+        endPendingTaskMutationScope(pendingTaskIds);
       }
-      return await syncTaskHistoryEntries(
-        taskHistoryModalTaskId,
-        "pending",
-        entryDates,
-        {
-          historicalOverride: status !== "clear",
-          historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
-          syncLiveTask: true,
-        },
-      );
     },
     onSetDelayedStatus: async (entryDate: string, nextDueOn: string) => {
       if (!taskHistoryModalTaskId) {
