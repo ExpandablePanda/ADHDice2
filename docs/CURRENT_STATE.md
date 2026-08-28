@@ -5,13 +5,24 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.95`.
+- Current working app version: `7.11.96`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-28 7.11.96 Commit-time Fitness scope invalidation
+
+Fitness Goal and Level scope authority now synchronizes in a
+commit-synchronous `useLayoutEffect`, before the passive Fitness reload
+lifecycle effect runs. Scope and epoch changes therefore invalidate old
+mutation responses as soon as the new committed Fitness activation, account,
+or Supabase client is observable. Reload generation remains separate and
+reload-only; ordinary reloads do not change the Fitness scope epoch. No Goal or
+Level behavior or persistence semantics changed; no SQL, migration, Edge,
+browser, or device work was performed.
 
 ## 2026-08-28 7.11.95 Fitness mutation scope epoch
 

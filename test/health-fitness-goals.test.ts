@@ -216,8 +216,27 @@ test("Fitness mutation scope epochs reject inactive, changed, and re-entered sco
   assert.match(hook, /if \(!isSameFitnessScope\(scopeRef\.current, nextScope\)\) \{[\s\S]*scopeEpochRef\.current \+= 1;/);
 });
 
+test("scope authority synchronization is commit-synchronous and separate from passive reload lifecycle", () => {
+  assert.match(hook, /import \{ useCallback, useEffect, useLayoutEffect, useRef, useState \} from "react";/);
+  const scopeEffectStart = hook.indexOf("useLayoutEffect(() =>");
+  const scopeEffectEnd = hook.indexOf("\n\n  useEffect(() =>", scopeEffectStart);
+  const reloadEffectStart = hook.indexOf("useEffect(() =>");
+  const reloadEffectEnd = hook.indexOf("\n\n  const isCurrentScope", reloadEffectStart);
+  assert.notEqual(scopeEffectStart, -1);
+  assert.notEqual(scopeEffectEnd, -1);
+  assert.notEqual(reloadEffectStart, -1);
+  assert.notEqual(reloadEffectEnd, -1);
+  const scopeEffect = hook.slice(scopeEffectStart, scopeEffectEnd);
+  const reloadEffect = hook.slice(reloadEffectStart, reloadEffectEnd);
+  assert.match(scopeEffect, /const nextScope: FitnessReloadScope<SupabaseClient>/);
+  assert.match(scopeEffect, /if \(!isSameFitnessScope\(scopeRef\.current, nextScope\)\) \{[\s\S]*scopeEpochRef\.current \+= 1;[\s\S]*scopeRef\.current = nextScope;/);
+  assert.match(scopeEffect, /\}, \[active, client, userId\]\);/);
+  assert.match(reloadEffect, /const effectGeneration = \+\+reloadGenerationRef\.current/);
+  assert.doesNotMatch(reloadEffect, /scopeEpochRef|isSameFitnessScope|scopeRef\.current/);
+});
+
 test("ordinary reloads change only reload generation, while scope changes advance the mutation epoch", () => {
-  const reload = hook.slice(hook.indexOf("const reload ="), hook.indexOf("useEffect(() =>"));
+  const reload = hook.slice(hook.indexOf("const reload ="), hook.indexOf("useLayoutEffect(() =>"));
   assert.match(reload, /const generation = \+\+reloadGenerationRef\.current/);
   assert.doesNotMatch(reload, /scopeEpochRef|scopeEpoch/);
   assert.match(hook, /const effectGeneration = \+\+reloadGenerationRef\.current/);

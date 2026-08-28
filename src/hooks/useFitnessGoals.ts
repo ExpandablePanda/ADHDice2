@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type {
   HealthExercise,
@@ -96,12 +96,15 @@ export function useFitnessGoals(
     return true;
   }, [active, client, reportError, userId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const nextScope: FitnessReloadScope<SupabaseClient> = { active, client, userId };
     if (!isSameFitnessScope(scopeRef.current, nextScope)) {
       scopeEpochRef.current += 1;
     }
     scopeRef.current = nextScope;
+  }, [active, client, userId]);
+
+  useEffect(() => {
     const effectGeneration = ++reloadGenerationRef.current;
     if (!active || !userId || !client) {
       queueMicrotask(() => {
