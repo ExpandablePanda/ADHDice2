@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.84`.
+- Current working app version: `7.11.85`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -26,6 +26,15 @@ Achievement evaluation runs after the children complete. Partial failures keep
 earlier committed dates; final Achievement failure is reported as a
 post-commit warning. The migration remains authored-only; Edge deployment,
 SQL application, browser QA, and device QA were not performed.
+
+## 2026-08-27 7.11.85 Partial History batch Achievement finalization
+
+Partial History outcome batches now run the same deterministic final
+Achievement evaluation whenever at least one deferred child committed or
+replayed before the batch stopped. The canonical child failure remains the
+primary error, while finalizer failure is reported as a post-commit warning;
+zero-commit failures do not run the finalizer. The outer replay identity and
+deterministic Achievement operation identity remain unchanged for recovery.
 
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.

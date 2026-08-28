@@ -127,7 +127,11 @@ export function useTaskHistoryActions({
           notifyHistoryMutation(taskId, refreshed.history);
         }
       }
-      setMessage({ tone: "warn", text: batchResult.error.message });
+      const warning = batchResult.response.achievement_warning;
+      setMessage({
+        tone: "warn",
+        text: warning ? `${batchResult.error.message} ${warning}` : batchResult.error.message,
+      });
       return false;
     }
 

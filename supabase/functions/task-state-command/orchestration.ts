@@ -311,7 +311,9 @@ function batchOperationId(userId: string, replayIdentity: string) {
   return deterministicUuid(`task-history-outcome-batch-achievement:${userId}:${replayIdentity}`);
 }
 
-function batchFailure(error: TrustedTaskStateCommandResponse["body"], status: number) {
+type BatchFailureKind = "command_rejected" | "malformed_response";
+
+function batchFailure(error: TrustedTaskStateCommandResponse["body"], status: number, kind: BatchFailureKind = "command_rejected") {
   const record = error && typeof error === "object" && !Array.isArray(error)
     ? error as Record<string, unknown>
     : {};
@@ -319,7 +321,7 @@ function batchFailure(error: TrustedTaskStateCommandResponse["body"], status: nu
     ? record.error as Record<string, unknown>
     : record;
   return {
-    kind: "command_rejected" as const,
+    kind,
     message: typeof nested.message === "string" ? nested.message : "Canonical Task State command was rejected.",
     code: typeof nested.code === "string" ? nested.code : null,
     status,
@@ -336,6 +338,131 @@ function recordBatchTiming(input: {
   console.info("[task-state-command] history outcome batch timing", input);
 }
 
+type BatchAchievement = {
+  status: "completed" | "inactive" | "failed" | "not_run";
+  operation_id: string;
+  error_code: string | null;
+};
+
+type BatchAchievementFinalization = {
+  achievement: BatchAchievement;
+  achievementWarning: string | null;
+  durationMs: number;
+};
+
+function batchAchievementNotRun(operationId: string): BatchAchievementFinalization {
+  return {
+    achievement: { status: "not_run", operation_id: operationId, error_code: null },
+    achievementWarning: null,
+    durationMs: 0,
+  };
+}
+
+async function finalizeBatchAchievements(input: {
+  dependencies: OrchestrationDependencies;
+  adminClient: TrustedTaskStateCommandClient;
+  userId: string;
+  operationId: string;
+  partial: boolean;
+}): Promise<BatchAchievementFinalization> {
+  const startedAt = performance.now();
+  let achievement: BatchAchievement = {
+    status: "failed",
+    operation_id: input.operationId,
+    error_code: "ACHIEVEMENT_FINALIZATION_UNAVAILABLE",
+  };
+  let achievementWarning: string | null = input.partial
+    ? "Some History changes committed, but Achievement reconciliation did not complete."
+    : "History committed, but Achievement reconciliation did not complete.";
+  try {
+    const finalizer = await input.dependencies.finalizeAchievements({
+      adminClient: input.adminClient,
+      userId: input.userId,
+      operationId: input.operationId,
+    });
+    const finalizerData = finalizer.data && typeof finalizer.data === "object" && !Array.isArray(finalizer.data)
+      ? finalizer.data as Record<string, unknown>
+      : null;
+    const status = finalizerData?.status;
+    if (finalizer.error) {
+      achievement = {
+        status: "failed",
+        operation_id: input.operationId,
+        error_code: finalizer.error.code ?? "ACHIEVEMENT_FINALIZATION_FAILED",
+      };
+    } else if (status === "completed" || status === "inactive") {
+      achievement = { status, operation_id: input.operationId, error_code: null };
+      achievementWarning = null;
+    } else {
+      achievement = {
+        status: "failed",
+        operation_id: input.operationId,
+        error_code: typeof finalizerData?.error_code === "string" ? finalizerData.error_code : "ACHIEVEMENT_FINALIZATION_FAILED",
+      };
+    }
+  } catch {
+    achievement = {
+      status: "failed",
+      operation_id: input.operationId,
+      error_code: "ACHIEVEMENT_FINALIZATION_FAILED",
+    };
+  }
+  return {
+    achievement,
+    achievementWarning,
+    durationMs: performance.now() - startedAt,
+  };
+}
+
+async function partialBatchResponse(input: {
+  dependencies: OrchestrationDependencies;
+  adminClient: TrustedTaskStateCommandClient;
+  userId: string;
+  intent: HistoryOutcomeBatchIntent;
+  operationId: string;
+  startedAt: number;
+  childResults: Array<Record<string, unknown>>;
+  completedEntries: string[];
+  failedEntryIndex: number;
+  currentRevision: number;
+  failure: ReturnType<typeof batchFailure>;
+}): Promise<TrustedTaskStateCommandResponse> {
+  const childDurationMs = performance.now() - input.startedAt;
+  const hasCommittedChild = input.childResults.some((child) => child.state === "committed");
+  const finalization = hasCommittedChild
+    ? await finalizeBatchAchievements({
+        dependencies: input.dependencies,
+        adminClient: input.adminClient,
+        userId: input.userId,
+        operationId: input.operationId,
+        partial: true,
+      })
+    : batchAchievementNotRun(input.operationId);
+  recordBatchTiming({
+    entryCount: input.intent.entries.length,
+    childDurationMs,
+    achievementDurationMs: finalization.durationMs,
+    totalDurationMs: performance.now() - input.startedAt,
+  });
+  return {
+    status: 200,
+    body: {
+      type: "history_outcome_batch",
+      state: "partial",
+      task_id: input.intent.task_id,
+      batch_replay_identity: input.intent.replay_identity,
+      expected_revision: input.intent.expected_revision,
+      final_committed_revision: input.currentRevision,
+      completed_entries: input.completedEntries,
+      failed_entry_index: input.failedEntryIndex,
+      child_results: input.childResults,
+      achievement: finalization.achievement,
+      achievement_warning: finalization.achievementWarning,
+      error: input.failure,
+    },
+  };
+}
+
 export async function executeHistoryOutcomeBatch(input: {
   userId: string;
   intent: HistoryOutcomeBatchIntent;
@@ -350,7 +477,6 @@ export async function executeHistoryOutcomeBatch(input: {
   let currentRevision = input.intent.expected_revision;
   const childResults: Array<Record<string, unknown>> = [];
   const completedEntries: string[] = [];
-  let childStartedAt = startedAt;
 
   for (const [index, entry] of orderedEntries.entries()) {
     const replayIdentity = childReplayIdentity(input.intent, entry.logical_date);
@@ -385,29 +511,19 @@ export async function executeHistoryOutcomeBatch(input: {
         state: "rejected",
         error: failure,
       });
-      recordBatchTiming({
-        entryCount: orderedEntries.length,
-        childDurationMs: performance.now() - childStartedAt,
-        achievementDurationMs: 0,
-        totalDurationMs: performance.now() - startedAt,
+      return partialBatchResponse({
+        dependencies,
+        adminClient: input.adminClient,
+        userId: input.userId,
+        intent: input.intent,
+        operationId,
+        startedAt,
+        childResults,
+        completedEntries,
+        failedEntryIndex: index,
+        currentRevision,
+        failure,
       });
-      return {
-        status: 200,
-        body: {
-          type: "history_outcome_batch",
-          state: "partial",
-          task_id: input.intent.task_id,
-          batch_replay_identity: input.intent.replay_identity,
-          expected_revision: input.intent.expected_revision,
-          final_committed_revision: currentRevision,
-          completed_entries: completedEntries,
-          failed_entry_index: index,
-          child_results: childResults,
-          achievement: { status: "not_run", operation_id: operationId, error_code: null },
-          achievement_warning: null,
-          error: failure,
-        },
-      };
     }
     childResults.push({
       index,
@@ -419,59 +535,41 @@ export async function executeHistoryOutcomeBatch(input: {
     });
     const nextRevision = (childBody as Record<string, unknown>).next_revision;
     if (!Number.isInteger(nextRevision) || (nextRevision as number) < currentRevision) {
-      const failure = batchFailure({ error: { code: "MALFORMED_CHILD_RESULT", message: "Canonical child result did not return a valid next revision." } }, 502);
-      return {
-        status: 200,
-        body: {
-          type: "history_outcome_batch",
-          state: "partial",
-          task_id: input.intent.task_id,
-          batch_replay_identity: input.intent.replay_identity,
-          expected_revision: input.intent.expected_revision,
-          final_committed_revision: currentRevision,
-          completed_entries: completedEntries,
-          failed_entry_index: index,
-          child_results: childResults,
-          achievement: { status: "not_run", operation_id: operationId, error_code: null },
-          achievement_warning: null,
-          error: failure,
-        },
-      };
+      const failure = batchFailure(
+        { error: { code: "MALFORMED_CHILD_RESULT", message: "Canonical child result did not return a valid next revision." } },
+        502,
+        "malformed_response",
+      );
+      return partialBatchResponse({
+        dependencies,
+        adminClient: input.adminClient,
+        userId: input.userId,
+        intent: input.intent,
+        operationId,
+        startedAt,
+        childResults,
+        completedEntries,
+        failedEntryIndex: index,
+        currentRevision,
+        failure,
+      });
     }
     currentRevision = nextRevision as number;
     completedEntries.push(entry.logical_date);
-    childStartedAt = performance.now();
   }
 
   const childDurationMs = performance.now() - startedAt;
-  const achievementStartedAt = performance.now();
-  let achievement = { status: "failed", operation_id: operationId, error_code: "ACHIEVEMENT_FINALIZATION_UNAVAILABLE" };
-  let achievementWarning: string | null = "History committed, but Achievement reconciliation did not complete.";
-  try {
-    const finalizer = await dependencies.finalizeAchievements({
-      adminClient: input.adminClient,
-      userId: input.userId,
-      operationId,
-    });
-    const finalizerData = finalizer.data && typeof finalizer.data === "object" && !Array.isArray(finalizer.data)
-      ? finalizer.data as Record<string, unknown>
-      : null;
-    const status = finalizerData?.status;
-    if (finalizer.error) {
-      achievement = { status: "failed", operation_id: operationId, error_code: finalizer.error.code ?? "ACHIEVEMENT_FINALIZATION_FAILED" };
-    } else if (status === "completed" || status === "inactive") {
-      achievement = { status, operation_id: operationId, error_code: null };
-      achievementWarning = null;
-    } else {
-      achievement = { status: "failed", operation_id: operationId, error_code: typeof finalizerData?.error_code === "string" ? finalizerData.error_code : "ACHIEVEMENT_FINALIZATION_FAILED" };
-    }
-  } catch {
-    achievement = { status: "failed", operation_id: operationId, error_code: "ACHIEVEMENT_FINALIZATION_FAILED" };
-  }
+  const finalization = await finalizeBatchAchievements({
+    dependencies,
+    adminClient: input.adminClient,
+    userId: input.userId,
+    operationId,
+    partial: false,
+  });
   recordBatchTiming({
     entryCount: orderedEntries.length,
     childDurationMs,
-    achievementDurationMs: performance.now() - achievementStartedAt,
+    achievementDurationMs: finalization.durationMs,
     totalDurationMs: performance.now() - startedAt,
   });
   return {
@@ -486,8 +584,8 @@ export async function executeHistoryOutcomeBatch(input: {
       completed_entries: completedEntries,
       failed_entry_index: null,
       child_results: childResults,
-      achievement,
-      achievement_warning: achievementWarning,
+      achievement: finalization.achievement,
+      achievement_warning: finalization.achievementWarning,
       error: null,
     },
   };

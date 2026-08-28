@@ -57,7 +57,7 @@ const batchIntent: HistoryOutcomeBatchIntent = {
 
 function dependenciesFor(options: {
   invoke: (input: { intent: TaskStateCommandIntent; deferAchievements?: boolean }) => Promise<{ data: unknown; error: null | { code?: string; message?: string } }>;
-  finalize?: () => Promise<{ data: unknown; error: null | { code?: string; message?: string } }>;
+  finalize?: (input: { operationId: string }) => Promise<{ data: unknown; error: null | { code?: string; message?: string } }>;
 }) {
   let revision = batchIntent.expected_revision;
   return {
@@ -150,8 +150,9 @@ test("three-date batch invokes normal canonical children sequentially with threa
   assert.equal(body.final_committed_revision, 13);
 });
 
-test("stale child stops the batch after earlier commits and final Achievement failure remains post-commit metadata", async () => {
+test("stale child stops after a committed prefix and finalizes Achievement before returning", async () => {
   const dates: string[] = [];
+  const operationIds: string[] = [];
   const staleResult = await executeHistoryOutcomeBatch({
     userId,
     intent: batchIntent,
@@ -162,6 +163,10 @@ test("stale child stops the batch after earlier commits and final Achievement fa
         if (dates.length === 2) return { data: null, error: { code: "40001", message: "stale" } };
         return { data: { state: "committed", task_id: taskId, command_id: intent.replay_identity, expected_revision: intent.expected_revision, next_revision: (intent.expected_revision ?? 0) + 1 }, error: null };
       },
+      finalize: async ({ operationId }) => {
+        operationIds.push(operationId);
+        return { data: { status: "inactive" }, error: null };
+      },
     }),
   });
   const staleBody = staleResult.body as Record<string, unknown>;
@@ -170,6 +175,11 @@ test("stale child stops the batch after earlier commits and final Achievement fa
   assert.deepEqual(staleBody.completed_entries, ["2026-08-17"]);
   assert.equal(staleBody.failed_entry_index, 1);
   assert.equal(staleBody.final_committed_revision, 11);
+  assert.deepEqual((staleBody.error as Record<string, unknown>).kind, "command_rejected");
+  assert.equal(operationIds.length, 1);
+  assert.match(operationIds[0] ?? "", /^[0-9a-f-]{36}$/);
+  assert.deepEqual(staleBody.achievement, { status: "inactive", operation_id: operationIds[0], error_code: null });
+  assert.equal(staleBody.achievement_warning, null);
 
   const finalFailure = await executeHistoryOutcomeBatch({
     userId,
@@ -194,12 +204,109 @@ test("stale child stops the batch after earlier commits and final Achievement fa
   assert.match(String(finalFailureBody.achievement_warning), /History committed/);
 });
 
-test("retry replays committed child identities and only executes the unresolved child", async () => {
+test("partial batch preserves the child failure when final Achievement reconciliation fails", async () => {
+  let finalizerCalls = 0;
+  const result = await executeHistoryOutcomeBatch({
+    userId,
+    intent: batchIntent,
+    adminClient: {} as TrustedTaskStateCommandClient,
+    dependencies: dependenciesFor({
+      invoke: async ({ intent }) => {
+        if (intent.logical_date === "2026-08-19") return { data: null, error: { code: "40001", message: "stale revision" } };
+        return { data: { state: "committed", task_id: taskId, command_id: intent.replay_identity, expected_revision: intent.expected_revision, next_revision: (intent.expected_revision ?? 0) + 1 }, error: null };
+      },
+      finalize: async () => {
+        finalizerCalls += 1;
+        return { data: { status: "failed", error_code: "ACHIEVEMENT_FAILED" }, error: null };
+      },
+    }),
+  });
+  const body = result.body as Record<string, unknown>;
+  assert.equal(body.state, "partial");
+  assert.deepEqual(body.completed_entries, ["2026-08-17", "2026-08-18"]);
+  assert.equal((body.error as Record<string, unknown>).kind, "command_rejected");
+  assert.equal((body.error as Record<string, unknown>).message, "Canonical Task State command was rejected.");
+  assert.equal(finalizerCalls, 1);
+  assert.deepEqual(body.achievement && typeof body.achievement === "object" ? body.achievement : null, {
+    status: "failed",
+    operation_id: body.achievement && typeof body.achievement === "object"
+      ? (body.achievement as Record<string, unknown>).operation_id
+      : null,
+    error_code: "ACHIEVEMENT_FAILED",
+  });
+  assert.match(String(body.achievement_warning), /Some History changes committed/);
+});
+
+test("a first-child rejection does not run final Achievement evaluation", async () => {
+  let finalizerCalls = 0;
+  const result = await executeHistoryOutcomeBatch({
+    userId,
+    intent: batchIntent,
+    adminClient: {} as TrustedTaskStateCommandClient,
+    dependencies: dependenciesFor({
+      invoke: async () => ({ data: null, error: { code: "40001", message: "stale revision" } }),
+      finalize: async () => {
+        finalizerCalls += 1;
+        return { data: { status: "completed" }, error: null };
+      },
+    }),
+  });
+  const body = result.body as Record<string, unknown>;
+  assert.equal(body.state, "partial");
+  assert.equal(body.failed_entry_index, 0);
+  assert.equal(finalizerCalls, 0);
+  assert.deepEqual(body.achievement, { status: "not_run", operation_id: body.achievement && typeof body.achievement === "object" ? (body.achievement as Record<string, unknown>).operation_id : null, error_code: null });
+  assert.equal(body.achievement_warning, null);
+});
+
+test("a malformed committed child still finalizes Achievement before returning", async () => {
+  let finalizerCalls = 0;
+  let operationId = "";
+  const result = await executeHistoryOutcomeBatch({
+    userId,
+    intent: { ...batchIntent, entries: [batchIntent.entries[0]!] },
+    adminClient: {} as TrustedTaskStateCommandClient,
+    dependencies: dependenciesFor({
+      invoke: async ({ intent }) => ({
+        data: {
+          state: "committed",
+          task_id: taskId,
+          command_id: intent.replay_identity,
+          expected_revision: intent.expected_revision,
+          canonical_task_patch: {},
+          compatibility_projection: {},
+        },
+        error: null,
+      }),
+      finalize: async ({ operationId: id }) => {
+        finalizerCalls += 1;
+        operationId = id;
+        return { data: { status: "completed" }, error: null };
+      },
+    }),
+  });
+  const body = result.body as Record<string, unknown>;
+  assert.equal(body.state, "partial");
+  assert.equal(body.failed_entry_index, 0);
+  assert.equal(finalizerCalls, 1);
+  assert.deepEqual(body.completed_entries, []);
+  assert.equal((body.error as Record<string, unknown>).kind, "malformed_response");
+  assert.deepEqual(body.achievement, { status: "completed", operation_id: operationId, error_code: null });
+  assert.equal(body.achievement_warning, null);
+});
+
+test("retry replays the committed prefix, preserves rewards, and reuses the finalizer identity", async () => {
   const operations = new Map<string, unknown>();
-  const newChildCalls: string[] = [];
+  const canonicalCalls: string[] = [];
+  const createdRewardIds = new Set<string>();
+  const operationIds: string[] = [];
+  let rejectThirdChild = true;
   const dependencies = dependenciesFor({
     invoke: async ({ intent }) => {
-      newChildCalls.push(intent.replay_identity);
+      canonicalCalls.push(intent.replay_identity);
+      if (intent.logical_date === "2026-08-19" && rejectThirdChild) {
+        return { data: null, error: { code: "40001", message: "stale revision" } };
+      }
       const result = {
         state: "committed",
         task_id: taskId,
@@ -210,8 +317,10 @@ test("retry replays committed child identities and only executes the unresolved 
         conflict_code: null,
         canonical_task_patch: {},
         compatibility_projection: {},
+        side_effect_ids: { reward_entitlement_id: `reward-${intent.logical_date}` },
       };
-      if (newChildCalls.length <= 2) {
+      createdRewardIds.add(`reward-${intent.logical_date}`);
+      if (intent.logical_date !== "2026-08-19") {
         const descriptor = buildTrustedTaskStateCommandReplayDescriptor({ userId, intent });
         operations.set(descriptor.idempotenceIdentity, {
           user_id: userId,
@@ -225,6 +334,12 @@ test("retry replays committed child identities and only executes the unresolved 
       }
       return { data: result, error: null };
     },
+    finalize: async ({ operationId }) => {
+      operationIds.push(operationId);
+      return operationIds.length === 1
+        ? { data: { status: "failed", error_code: "ACHIEVEMENT_RETRY_REQUIRED" }, error: null }
+        : { data: { status: "completed" }, error: null };
+    },
   });
   dependencies.loadReplayOperation = async (_client: unknown, request: { idempotenceIdentity: string }) => ({
     data: operations.get(request.idempotenceIdentity) ?? null,
@@ -232,19 +347,28 @@ test("retry replays committed child identities and only executes the unresolved 
   }) as never;
 
   const first = await executeHistoryOutcomeBatch({ userId, intent: batchIntent, adminClient: {} as TrustedTaskStateCommandClient, dependencies });
-  assert.equal((first.body as Record<string, unknown>).final_committed_revision, 13);
-  assert.equal(newChildCalls.length, 3);
+  const firstBody = first.body as Record<string, unknown>;
+  assert.equal(firstBody.state, "partial");
+  assert.deepEqual(firstBody.completed_entries, ["2026-08-17", "2026-08-18"]);
+  assert.equal(operationIds.length, 1);
+  assert.equal(createdRewardIds.size, 2);
   dependencies.setRevision(12);
+  rejectThirdChild = false;
   const second = await executeHistoryOutcomeBatch({ userId, intent: batchIntent, adminClient: {} as TrustedTaskStateCommandClient, dependencies });
   const secondBody = second.body as Record<string, unknown>;
+  assert.equal(secondBody.state, "committed");
   assert.equal(secondBody.final_committed_revision, 13);
-  assert.deepEqual(newChildCalls, [
+  assert.deepEqual(canonicalCalls, [
     "calendar-batch-attempt-1:history:2026-08-17:done",
     "calendar-batch-attempt-1:history:2026-08-18:done",
     "calendar-batch-attempt-1:history:2026-08-19:done",
     "calendar-batch-attempt-1:history:2026-08-19:done",
   ]);
+  assert.equal(createdRewardIds.size, 3);
+  assert.equal(operationIds.length, 2);
+  assert.equal(operationIds[0], operationIds[1]);
   const childResults = secondBody.child_results as Array<Record<string, unknown>>;
   assert.equal((childResults[0]?.result as Record<string, unknown>)?.was_replayed, true);
   assert.equal((childResults[1]?.result as Record<string, unknown>)?.was_replayed, true);
+  assert.equal((childResults[2]?.result as Record<string, unknown>)?.was_replayed, false);
 });

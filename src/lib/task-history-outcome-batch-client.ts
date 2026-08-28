@@ -74,7 +74,7 @@ export type HistoryOutcomeBatchPartial = HistoryOutcomeBatchBase & {
   success: false;
   state: "partial";
   achievement: HistoryOutcomeBatchAchievement;
-  achievement_warning: null;
+  achievement_warning: string | null;
   error: TaskStateCommandError;
 };
 
@@ -297,8 +297,11 @@ function parseBatchResponse(value: unknown): HistoryOutcomeBatchResponse {
     };
   });
   const achievement = parseAchievement(object.achievement);
+  const achievementWarningValue = object.achievement_warning;
+  if (!hasOwn(object, "achievement_warning") || (achievementWarningValue !== null && typeof achievementWarningValue !== "string")) {
+    throw new Error("Batch achievement warning is invalid.");
+  }
   if (object.state === "committed") {
-    if (object.achievement_warning !== null && typeof object.achievement_warning !== "string") throw new Error("Batch achievement warning is invalid.");
     return {
       success: true,
       state: "committed",
@@ -310,7 +313,7 @@ function parseBatchResponse(value: unknown): HistoryOutcomeBatchResponse {
       failed_entry_index: null,
       child_results: childResults,
       achievement,
-      achievement_warning: object.achievement_warning as string | null,
+      achievement_warning: achievementWarningValue as string | null,
       error: null,
     };
   }
@@ -331,7 +334,7 @@ function parseBatchResponse(value: unknown): HistoryOutcomeBatchResponse {
     failed_entry_index: failedEntryIndex,
     child_results: childResults,
     achievement,
-    achievement_warning: null,
+    achievement_warning: achievementWarningValue as string | null,
     error: {
       kind: kind as TaskStateCommandErrorKind,
       message: requiredString(errorObject, "message"),

@@ -5,6 +5,7 @@ import test from "node:test";
 import { useTaskHistoryActions } from "../src/hooks/useTaskHistoryActions.ts";
 import {
   invokeHistoryOutcomeBatch,
+  type HistoryOutcomeBatchPartial,
   type HistoryOutcomeBatchSuccess,
 } from "../src/lib/task-history-outcome-batch-client.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
@@ -68,6 +69,40 @@ function batchPayload(
   };
 }
 
+function partialPayload(achievementWarning: string | null) {
+  const committed = batchPayload();
+  return {
+    ...committed,
+    state: "partial",
+    final_committed_revision: 12,
+    completed_entries: ["2026-08-17", "2026-08-18"],
+    failed_entry_index: 2,
+    child_results: [
+      ...committed.child_results.slice(0, 2),
+      {
+        index: 2,
+        logical_date: "2026-08-19",
+        replay_identity: "batch:history:2026-08-19:done",
+        expected_revision: 12,
+        state: "rejected",
+        error: {
+          kind: "command_rejected",
+          message: "Canonical Task State command was rejected.",
+          code: "STALE_REVISION",
+          status: 409,
+        },
+      },
+    ],
+    achievement_warning: achievementWarning,
+    error: {
+      kind: "command_rejected",
+      message: "Canonical Task State command was rejected.",
+      code: "STALE_REVISION",
+      status: 409,
+    },
+  };
+}
+
 function fakeClient(data: unknown) {
   const calls: Array<{ functionName: string; body: unknown }> = [];
   return {
@@ -104,6 +139,30 @@ test("History batch client performs one Edge invocation and preserves every chil
   assert.equal(result.success, true);
   if (result.success) {
     assert.deepEqual(result.child_results.map((child) => child.success ? child.side_effect_ids.reward_entitlement_id : null), ["reward-1", "reward-2", "reward-3"]);
+  }
+});
+
+test("History batch client preserves a partial child failure and its Achievement warning", async () => {
+  const result = await invokeHistoryOutcomeBatch({
+    type: "history_outcome_batch",
+    task_id: "task-1",
+    replay_identity: "calendar-batch-partial",
+    expected_revision: 10,
+    outcome: "done",
+    entries: [
+      { logical_date: "2026-08-17" },
+      { logical_date: "2026-08-18" },
+      { logical_date: "2026-08-19" },
+    ],
+  }, { client: fakeClient(partialPayload("Some History changes committed, but Achievement reconciliation did not complete.")).client });
+
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.equal(result.state, "partial");
+    assert.equal(result.child_results.length, 3);
+    assert.equal(result.failed_entry_index, 2);
+    assert.equal(result.error.code, "STALE_REVISION");
+    assert.match(result.achievement_warning ?? "", /Some History changes committed/);
   }
 });
 
@@ -222,6 +281,26 @@ function responseFor(reward: string): TaskHistoryOutcomeBatchExecutionResult["re
   } satisfies HistoryOutcomeBatchSuccess;
 }
 
+function partialResponseFor(reward: string, achievementWarning: string | null): HistoryOutcomeBatchPartial {
+  const committed = responseFor(reward);
+  return {
+    ...committed,
+    success: false,
+    state: "partial",
+    final_committed_revision: 12,
+    completed_entries: ["2026-08-17", "2026-08-18"],
+    failed_entry_index: 2,
+    child_results: committed.child_results.slice(0, 2),
+    achievement_warning: achievementWarning,
+    error: {
+      kind: "command_rejected",
+      message: "Canonical Task State command was rejected.",
+      code: "STALE_REVISION",
+      status: 409,
+    },
+  };
+}
+
 test("multi-date History action invokes the injected batch seam once and forwards all rewards once", async () => {
   const initialTask = task();
   let batchCalls = 0;
@@ -272,4 +351,52 @@ test("multi-date History action invokes the injected batch seam once and forward
   assert.equal(historyRefreshCalls, 1);
   assert.equal(mutationCalls, 1);
   assert.equal(localTasks[0]?.canonical_revision, 13);
+});
+
+test("partial History action keeps committed rewards and combines the child failure with the Achievement warning", async () => {
+  const initialTask = task();
+  const response = partialResponseFor("reward", "Some History changes committed, but Achievement reconciliation did not complete.");
+  let localTasks: Task[] = [initialTask];
+  let rewardCandidates: Array<{ id?: string }> = [];
+  let historyRefreshCalls = 0;
+  let mutationCalls = 0;
+  const messages: string[] = [];
+  const actions = useTaskHistoryActions({
+    client: {} as never,
+    currentUserId: "user-1",
+    currentDayKey: "2026-08-20",
+    historyBatchExecutor: async (): Promise<TaskHistoryOutcomeBatchExecutionResult> => ({
+      success: false,
+      task: { ...initialTask, status: "done", canonical_revision: 12 },
+      response,
+      completedChildren: [0, 1].map((index) => ({
+        logicalDate: `2026-08-${17 + index}`,
+        previousTask: { ...initialTask, canonical_revision: 10 + index },
+        task: { ...initialTask, status: "done", canonical_revision: 11 + index },
+        response: response.child_results[index] as never,
+      })),
+      error: response.error,
+    }),
+    loadTaskHistoryForTasks: async () => {
+      historyRefreshCalls += 1;
+      return { [initialTask.id]: { status: "ready", history: [] } };
+    },
+    onHistoryMutation: async () => { mutationCalls += 1; },
+    onTasksCompleted: async (candidates) => { rewardCandidates = candidates.map((candidate) => ({ id: candidate.canonicalRewardEntitlementId })); },
+    setMessage: (message) => { if (message && typeof message === "object" && "text" in message) messages.push(String(message.text)); },
+    setTaskHistory: () => {},
+    setTasks: (updater) => { localTasks = typeof updater === "function" ? updater(localTasks) : updater; },
+    sortTasksForUi: (nextTasks) => nextTasks,
+    taskHistory: [] as TaskHistory[],
+    tasks: [initialTask],
+    timezone: "UTC",
+  });
+
+  assert.equal(await actions.syncTaskHistoryEntries(initialTask.id, "done", ["2026-08-17", "2026-08-18", "2026-08-19"]), false);
+  assert.deepEqual(rewardCandidates.map((candidate) => candidate.id), ["reward-1", "reward-2"]);
+  assert.equal(historyRefreshCalls, 1);
+  assert.equal(mutationCalls, 1);
+  assert.equal(localTasks[0]?.canonical_revision, 12);
+  assert.match(messages.at(-1) ?? "", /Canonical Task State command was rejected/);
+  assert.match(messages.at(-1) ?? "", /Achievement reconciliation did not complete/);
 });
