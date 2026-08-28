@@ -154,6 +154,7 @@ export type TaskListEvaluationContext = {
   isLater: (date: string | null) => boolean;
   isOpen: (task: Task) => boolean;
   isOverdue: (date: string | null) => boolean;
+  isTaskHistoryLoaded?: boolean;
   historyFactsByTaskId: Record<string, TaskHistoryFacts>;
   manualMembershipsByTaskId: Record<string, TaskListId[]>;
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
@@ -657,6 +658,7 @@ function matchesTaskListRule(
   evaluationCache: Map<string, boolean> = new Map(),
   lookup: TaskListLookup = buildTaskListLookup(lists),
 ): boolean {
+  const canReadTaskHistory = context.isTaskHistoryLoaded !== false;
   const matchesStreakThreshold = (value: TaskListRuleStreakValue) => {
     const currentStreak = context.currentStreakByTaskId[task.id] ?? 0;
     if (value === "0") return currentStreak === 0;
@@ -713,6 +715,7 @@ function matchesTaskListRule(
       return rule.op === "is" ? values.includes(task.energy) : !values.includes(task.energy);
     }
     case "streak":
+      if (!canReadTaskHistory) return false;
       return rule.op === "is" ? matchesStreakThreshold(rule.value) : !matchesStreakThreshold(rule.value);
     case "due":
       if (rule.op === "is_empty") return !task.due_on;
@@ -728,6 +731,7 @@ function matchesTaskListRule(
       return !context.isDueToday(createdDate);
     }
     case "history_status": {
+      if (!canReadTaskHistory) return false;
       const occurrenceFacts = getTaskRuleFocusFacts(task, context);
       const matchesHistoryStatus = rule.value === "handled_today"
         ? occurrenceFacts.handledToday
@@ -738,6 +742,7 @@ function matchesTaskListRule(
       return rule.op === "is" ? matchesHistoryStatus : !matchesHistoryStatus;
     }
     case "completed_history":
+      if (!canReadTaskHistory) return false;
       if (rule.op === "is_today") return historyFacts.completedToday;
       if (rule.op === "has_ever") return historyFacts.hasEverCompleted;
       if (!rule.value) return false;
@@ -745,6 +750,7 @@ function matchesTaskListRule(
         ? historyFacts.completedWithinLast[rule.value]
         : historyFacts.lastCompletedWithinLast[rule.value];
     case "missed_history":
+      if (!canReadTaskHistory) return false;
       if (rule.op === "is_today") return historyFacts.missedToday;
       if (rule.op === "has_ever") return historyFacts.hasEverMissed;
       if (!rule.value) return false;
@@ -752,8 +758,10 @@ function matchesTaskListRule(
         ? historyFacts.missedWithinLast[rule.value]
         : historyFacts.lastMissedWithinLast[rule.value];
     case "completed_streak":
+      if (!canReadTaskHistory) return false;
       return matchesPresetStreak(historyFacts.currentCompletedStreak, rule.op, rule.value);
     case "missed_streak":
+      if (!canReadTaskHistory) return false;
       return matchesPresetStreak(historyFacts.currentMissedStreak, rule.op, rule.value);
     default:
       return false;

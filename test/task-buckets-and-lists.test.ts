@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildTaskHistoryFacts } from "../src/lib/task-history.ts";
-import { buildManualMembershipMap, evaluateTaskListMemberships, getBuiltInTaskLists, parseTaskListRules, taskBelongsToList } from "../src/lib/task-lists.ts";
+import { buildManualMembershipMap, evaluateTaskListMemberships, getBuiltInTaskLists, parseTaskListRules, taskBelongsToList, type TaskListDefinition } from "../src/lib/task-lists.ts";
 import { createTask, getTaskBucket } from "../src/lib/task-buckets.ts";
 
 function createTaskListEvaluationContext(
@@ -839,6 +839,76 @@ test("normal status smart lists use visible current status and keep history-stat
   assert.equal(rolledForwardDoneTodayMemberships.some((membership) => membership.id === "list:history-done-today-only"), true);
   assert.equal(rolledForwardMissedTodayMemberships.some((membership) => membership.id === "missed"), true);
   assert.equal(rolledForwardMissedTodayMemberships.some((membership) => membership.id === "list:history-missed-today-only"), true);
+});
+
+test("History-dependent smart lists do not treat not-ready History as empty", () => {
+  const task = createTask({
+    created_at: "2026-06-01T09:00:00.000Z",
+    due_on: "2026-06-24",
+    id: "task-history-readiness-list",
+    status: "pending",
+    title: "History readiness list task",
+  });
+  const lists: TaskListDefinition[] = [
+    {
+      description: "",
+      id: "list:not-missed-today",
+      isDeletable: true,
+      isEditable: true,
+      isVisible: true,
+      membershipMode: "rules",
+      name: "Not missed today",
+      rules: {
+        rules: [{ rule: { field: "history_status", op: "is_not", value: "missed_today" } }],
+      },
+      sortOrder: 1,
+      type: "custom",
+    },
+    {
+      description: "",
+      id: "list:persisted-done",
+      isDeletable: true,
+      isEditable: true,
+      isVisible: true,
+      membershipMode: "rules",
+      name: "Persisted done",
+      rules: {
+        rules: [{ rule: { field: "status", op: "is", value: "done" } }],
+      },
+      sortOrder: 2,
+      type: "custom",
+    },
+  ];
+  const historyRow = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-06-24T09:00:00.000Z",
+    entry_date: "2026-06-24",
+    event_type: "status" as const,
+    id: "history-readiness-done",
+    status: "done" as const,
+    task_id: task.id,
+    updated_at: "2026-06-24T09:00:00.000Z",
+    user_id: "test-user",
+    was_completed: true,
+  };
+  const loadedHistory = [historyRow];
+  const pendingContext = createTaskListEvaluationContext({
+    isTaskHistoryLoaded: false,
+    taskDisplayStatusByTaskId: { [task.id]: "done" },
+  });
+  const readyContext = createTaskListEvaluationContext({
+    historyFactsByTaskId: { [task.id]: buildTaskHistoryFacts(loadedHistory, "2026-06-24") },
+    isTaskHistoryLoaded: true,
+    taskDisplayStatusByTaskId: { [task.id]: "done" },
+    taskHistoryByTaskId: { [task.id]: loadedHistory },
+  });
+
+  const pendingMemberships = evaluateTaskListMemberships(task, lists, pendingContext);
+  const readyMemberships = evaluateTaskListMemberships(task, lists, readyContext);
+
+  assert.equal(pendingMemberships.some((membership) => membership.id === "list:not-missed-today"), false);
+  assert.equal(pendingMemberships.some((membership) => membership.id === "list:persisted-done"), true);
+  assert.equal(readyMemberships.some((membership) => membership.id === "list:not-missed-today"), true);
 });
 
 test("completed-history smart lists can include closed tasks from saved rows", () => {

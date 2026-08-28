@@ -582,7 +582,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.86";
+const APP_VERSION = "7.11.87";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2704,6 +2704,14 @@ export function TaskApp() {
     () => createProjectionDomainRevision("task-history-streak-summary", taskHistoryStreakSummaries),
     [taskHistoryStreakSummaries],
   );
+  const persistedTaskDisplayStatusByTaskId = useMemo(
+    () => Object.fromEntries(tasks.map((task) => [task.id, task.status])),
+    [tasks],
+  );
+  const taskHistoryReadinessRevision = useMemo(
+    () => createProjectionDomainRevision("task-history-readiness", isTaskHistoryLoaded),
+    [isTaskHistoryLoaded],
+  );
   const taskStatusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("task-status-settings", {
       dayStartTime,
@@ -2717,21 +2725,25 @@ export function TaskApp() {
     taskDomainRevision,
     taskHistoryRevision,
     taskStatusSettingsRevision,
+    taskHistoryReadinessRevision,
   );
   const activeStatusRead = useMemo(
-    () => projectionCache.getOrCreate("active-status", activeStatusInputRevision, () => resolveActiveTaskStatuses({
-      historyByTaskId: taskHistoryByTaskId,
-      logicalDayRollover: dayStartTime,
-      now: new Date(logicalDayNow),
-      tasks,
-      timezone: userTimeZone,
-    })),
+    () => {
+      if (!isTaskHistoryLoaded) return null;
+      return projectionCache.getOrCreate("active-status", activeStatusInputRevision, () => resolveActiveTaskStatuses({
+        historyByTaskId: taskHistoryByTaskId,
+        logicalDayRollover: dayStartTime,
+        now: new Date(logicalDayNow),
+        tasks,
+        timezone: userTimeZone,
+      }));
+    },
     // Status evaluation is logical-day based. The minute clock must not clone
     // or replace the canonical Task collection while the logical day is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeStatusInputRevision, projectionCache],
+    [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache],
   );
-  const taskDisplayStatusByTaskId = activeStatusRead.statusesByTaskId;
+  const taskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId ?? persistedTaskDisplayStatusByTaskId;
   const activeStatusRevision = useMemo(
     () => createProjectionDomainRevision("active-status", taskDisplayStatusByTaskId),
     [taskDisplayStatusByTaskId],
@@ -2748,10 +2760,10 @@ export function TaskApp() {
     [canonicalEntityRevision, projectionCache],
   );
   useEffect(() => {
-    if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+    if (isTaskHistoryLoaded && activeStatusRead && process.env.NODE_ENV === "development" && typeof window !== "undefined") {
       window.__ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__ = activeStatusRead.authority;
     }
-  }, [activeStatusRead.authority]);
+  }, [activeStatusRead, isTaskHistoryLoaded]);
   const client = supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   const runGuardedTaskRowUpdate = useCallback(async (
     taskId: string,
@@ -2847,12 +2859,13 @@ export function TaskApp() {
     isLater: (date) => Boolean(date && date > shiftDateKey(todayKey, 1)),
     isOpen: isTaskOpen,
     isOverdue: (date) => Boolean(date && date < todayKey),
+    isTaskHistoryLoaded,
     historyFactsByTaskId: taskHistoryFactsByTaskId,
     manualMembershipsByTaskId,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
     todayDateKey: todayKey,
-  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
+  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
   const parsedTaskSearch = useMemo(
     () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
     [taskUiState.duplicateTitleMode, taskUiState.search],
@@ -2913,6 +2926,7 @@ export function TaskApp() {
     taskHistoryStreakSummaryRevision,
     statusSettingsRevision,
     activeStatusRevision,
+    taskHistoryReadinessRevision,
   );
   const canonicalIndexRevision = combineProjectionRevisions(
     hierarchyStatusRevision,

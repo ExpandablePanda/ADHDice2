@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-27
+Last reviewed: 2026-08-28
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.86`.
+- Current working app version: `7.11.87`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -46,6 +46,16 @@ not-ready, and preserves the existing warning path.
 
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-28 7.11.87 History readiness boundary for Active Status
+
+Workspace rendering remains non-blocking, but History-dependent Active Status
+authority does not activate until full History readiness. While History is
+pending or failed, persisted canonical compatibility Task status is used for
+presentation rather than treating unloaded History as an empty History
+snapshot. History-dependent smart-list rules likewise remain inactive until
+the full snapshot is ready, while ordinary status filters and buckets use the
+persisted status projection. Rollover remains gated by full History readiness.
 
 ## 2026-08-27 7.11.82 Multi-date History Calendar sync optimization
 

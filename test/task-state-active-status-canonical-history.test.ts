@@ -256,6 +256,45 @@ test("modal canonical hydration invalidates the active-status projection without
   assert.match(taskAppSource, /taskHistoryByTaskId\[task\.id\]/);
 });
 
+test("TaskApp keeps persisted Task status authoritative until full History is ready", async () => {
+  const taskAppSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const activeStatusStart = taskAppSource.indexOf("const activeStatusRead");
+  const activeStatusEnd = taskAppSource.indexOf("const taskDisplayStatusByTaskId", activeStatusStart);
+  const activeStatusRead = taskAppSource.slice(activeStatusStart, activeStatusEnd);
+
+  assert.match(taskAppSource, /const persistedTaskDisplayStatusByTaskId = useMemo\([\s\S]*tasks\.map\(\(task\) => \[task\.id, task\.status\]\)/);
+  assert.match(taskAppSource, /const taskDisplayStatusByTaskId = activeStatusRead\?\.statusesByTaskId \?\? persistedTaskDisplayStatusByTaskId/);
+  assert.match(taskAppSource, /const taskHistoryReadinessRevision = useMemo\([\s\S]*createProjectionDomainRevision\("task-history-readiness", isTaskHistoryLoaded\)/);
+  assert.match(taskAppSource, /taskHistoryReadinessRevision,[\s\S]*activeStatusRead/);
+  assert.match(activeStatusRead, /if \(!isTaskHistoryLoaded\) return null/);
+  assert.match(activeStatusRead, /resolveActiveTaskStatuses\(/);
+});
+
+test("recurring Active Status differs with real History from an empty History map", () => {
+  const recurringTask = task({
+    due_on: TODAY,
+    repeat_frequency: "daily",
+    status: "done",
+  });
+  const emptyHistoryStatus = resolveCompatibilityTaskStatuses({
+    historyByTaskId: {},
+    logicalDayRollover: "06:00",
+    now: "2026-08-17T12:00:00.000Z",
+    tasks: [recurringTask],
+    timezone: "America/New_York",
+  }).statusesByTaskId[recurringTask.id];
+  const hydratedHistoryStatus = resolveCompatibilityTaskStatuses({
+    historyByTaskId: { [recurringTask.id]: [history(TODAY, "done")] },
+    logicalDayRollover: "06:00",
+    now: "2026-08-17T12:00:00.000Z",
+    tasks: [recurringTask],
+    timezone: "America/New_York",
+  }).statusesByTaskId[recurringTask.id];
+
+  assert.notEqual(emptyHistoryStatus, hydratedHistoryStatus);
+  assert.equal(recurringTask.status, "done");
+});
+
 test("child status and Table/List facets remain on the shared display-status map", async () => {
   const [derivedSource, listSource] = await Promise.all([
     readFile(new URL("../src/lib/task-app-derived.ts", import.meta.url), "utf8"),
