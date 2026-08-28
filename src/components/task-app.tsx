@@ -581,7 +581,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.81";
+const APP_VERSION = "7.11.82";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -6103,26 +6103,19 @@ export function TaskApp() {
         return (await updateTaskStatus(taskHistoryModalTask, "complete")) === true;
       }
       if (status !== "clear") {
-        let currentTask: TaskStateRuntimeLocalTask | null = null;
-        for (const entryDate of entryDates) {
-          const saved = await syncTaskHistoryEntries(
-            taskHistoryModalTaskId,
-            status,
-            [entryDate],
-            {
-              historicalOverride: true,
-              historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
-              currentTask,
-              onTaskCommitted: (nextTask) => {
-                currentTask = nextTask;
-              },
-              syncLiveTask: true,
-            },
-          );
-          if (!saved) {
-            setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${formatTaskStatusLabel(status)} did not finish correctly.` });
-            return false;
-          }
+        const saved = await syncTaskHistoryEntries(
+          taskHistoryModalTaskId,
+          status,
+          entryDates,
+          {
+            historicalOverride: true,
+            historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+            syncLiveTask: true,
+          },
+        );
+        if (!saved) {
+          setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${formatTaskStatusLabel(status)} did not finish correctly.` });
+          return false;
         }
         return true;
       }

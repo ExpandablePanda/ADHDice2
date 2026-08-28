@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.81`.
+- Current working app version: `7.11.82`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -15,6 +15,13 @@ Role: active working
 
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-27 7.11.82 Multi-date History Calendar sync optimization
+
+Multi-date History Calendar Done / Did My Best / Missed edits now use the
+existing multi-date canonical sync path, preserving sequential revision-safe
+commands while collapsing repeated History reload/streak reconciliation into
+one final refresh.
 
 ## 2026-08-27 7.11.81 Authoritative Task search selector excludes trashed descendants
 
