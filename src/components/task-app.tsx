@@ -91,6 +91,7 @@ import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-a
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
+import { NavigatorSearchModal } from "./task-app/navigator-search-modal";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
 import { TaskActiveTimersTray } from "./task-app/task-active-timers-tray";
@@ -166,14 +167,20 @@ import {
 } from "@/lib/focus-utils";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { createBrowserSupabaseClient, subscribeToBrowserAuth } from "@/lib/supabase";
-import { readHealthTabPreference, subscribeToHealthTabPreference } from "@/lib/health-tab-preference";
+import { persistHealthTabPreference, readHealthTabPreference, subscribeToHealthTabPreference } from "@/lib/health-tab-preference";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { getLevelProgress } from "@/lib/economy-levels";
-import { buildHealthReminderTemplate, type HealthReminderTemplateKey, type HealthSleepKind } from "@/lib/health-utils";
+import { buildHealthReminderTemplate, HEALTH_TABS, type HealthReminderTemplateKey, type HealthSleepKind } from "@/lib/health-utils";
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { sortTasksForUi } from "@/lib/task-sorting";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "@/lib/task-filter-state";
+import {
+  createNavigatorSearchTargets,
+  type NavigatorSearchAction,
+  type NavigatorSearchTarget,
+  type NavigatorSettingsSection,
+} from "@/lib/navigator-search";
 import { appendTaskListRuleRow, removeTaskListRuleRow, summarizeTaskListRules, updateTaskListRuleRow, updateTaskListRuleRowConnector } from "@/lib/task-list-rule-editor";
 import {
   normalizeTaskGridLayout,
@@ -582,7 +589,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.87";
+const APP_VERSION = "7.11.88";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1070,6 +1077,7 @@ const dockIcons: Record<AppPage, string> = {
   Settings: "Monitor",
   Test: "FlaskConical",
 };
+const navigatorSearchTargets = createNavigatorSearchTargets(dockItems, HEALTH_TABS);
 const TASK_GRID_MAX_COLUMNS = 4;
 const TASK_GRID_TABLET_COLUMNS = 2;
 const TASK_GRID_PHONE_COLUMNS = 1;
@@ -1567,6 +1575,8 @@ export function TaskApp() {
   const [showBackToTop, setShowBackToTop] = useState(false);
   const profile = useProfileStore();
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [isNavigatorSearchOpen, setIsNavigatorSearchOpen] = useState(false);
+  const [requestedSettingsSection, setRequestedSettingsSection] = useState<NavigatorSettingsSection | null>(null);
   const [isListColumnMenuOpen, setIsListColumnMenuOpen] = useState(false);
   const [isKeyboardShortcutsMenuOpen, setIsKeyboardShortcutsMenuOpen] = useState(false);
   const [isTaskListSettingsOpen, setIsTaskListSettingsOpen] = useState(false);
@@ -4061,6 +4071,31 @@ export function TaskApp() {
 
     setTaskUiState((prev) => ({ ...prev, tasksSurface: surface }));
   }, [activeTaskWorkspaceTab, createTaskWorkspaceTab, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.tabs]);
+
+  const handleNavigatorSearchTarget = useCallback((target: NavigatorSearchTarget) => {
+    const action: NavigatorSearchAction = target.action;
+    if (action.kind === "page") {
+      setRequestedSettingsSection(null);
+      setActivePage(action.page);
+    } else if (action.kind === "tasks-surface") {
+      setRequestedSettingsSection(null);
+      setActivePage("Tasks");
+      handleTaskWorkspaceSurfaceChange(action.surface);
+    } else if (action.kind === "tasks-view") {
+      setRequestedSettingsSection(null);
+      setActivePage("Tasks");
+      handleTaskWorkspaceSurfaceChange("tasks");
+      setTaskUiState((prev) => ({ ...prev, view: action.view }));
+    } else if (action.kind === "health-tab") {
+      setRequestedSettingsSection(null);
+      setActivePage("Health");
+      persistHealthTabPreference(action.tab);
+    } else {
+      setActivePage("Settings");
+      setRequestedSettingsSection(action.section);
+    }
+    setIsNavigatorSearchOpen(false);
+  }, [handleTaskWorkspaceSurfaceChange, setActivePage, setTaskUiState]);
 
   const openBlankTaskEditor = useCallback(() => {
     setSuppressDetachedListNoticeTaskId(null);
@@ -7422,8 +7457,10 @@ export function TaskApp() {
             onDayStartTimeChange={setDayStartTime}
             onTimeZoneChange={setUserTimeZone}
             onResetEconomy={resetEconomy}
+            onSectionRequestHandled={(section) => setRequestedSettingsSection((current) => (current === section ? null : current))}
             onWorkspaceRefresh={softRefreshWorkspace}
             onThemeChange={setTheme}
+            requestedSection={requestedSettingsSection}
             tasks={tasks}
             theme={theme}
             userId={currentUser.id}
@@ -7455,9 +7492,17 @@ export function TaskApp() {
           dockIcons={dockIcons}
           dockItems={dockItems}
           onNavigate={setActivePage}
+          onOpenSearch={() => setIsNavigatorSearchOpen(true)}
           renderIcon={(name) => <CategoryIcon className="h-6 w-6" name={name} />}
         />
       </div>
+      {isNavigatorSearchOpen ? (
+        <NavigatorSearchModal
+          onClose={() => setIsNavigatorSearchOpen(false)}
+          onNavigate={handleNavigatorSearchTarget}
+          targets={navigatorSearchTargets}
+        />
+      ) : null}
       <TaskActiveTimersTray
         isOpen={isActiveTimersTrayOpen}
         onDiscard={(taskId) => { void persistDiscardedTaskTimer(taskId); }}

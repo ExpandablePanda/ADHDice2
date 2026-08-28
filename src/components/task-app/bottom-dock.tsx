@@ -10,6 +10,7 @@ type BottomDockProps<TPage extends string> = {
   dockIcons: Record<TPage, string>;
   dockItems: TPage[];
   onNavigate: (page: TPage) => void;
+  onOpenSearch: () => void;
   renderIcon: (name: string) => ReactNode;
 };
 
@@ -18,6 +19,7 @@ export function BottomDockComponent<TPage extends string>({
   dockIcons,
   dockItems,
   onNavigate,
+  onOpenSearch,
   renderIcon,
 }: BottomDockProps<TPage>) {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -252,6 +254,14 @@ export function BottomDockComponent<TPage extends string>({
             {renderIcon(dockIcons[item])}
           </button>
         ))}
+        <button
+          aria-label="Search navigation"
+          className={`flex ${isVertical ? "w-full" : "h-10 w-10 shrink-0"} items-center justify-center rounded-xl transition duration-300 hover:scale-105 ${isVertical ? "" : "ml-[3px]"} ${isDockCollapsing ? "scale-90 rounded-full" : ""} text-[#8d94ac] hover:bg-[#f7f5ff] hover:text-[#6f57f6] dark:text-white/50 dark:hover:bg-white/8 dark:hover:text-[#cabfff]`}
+          onClick={onOpenSearch}
+          type="button"
+        >
+          {renderIcon("Search")}
+        </button>
         <button
           aria-label="Collapse navigation"
           className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition duration-300 hover:scale-105 ${isVertical ? "" : "ml-[3px]"} ${isDockCollapsing ? "scale-90 rounded-full" : ""} text-[#8d94ac] hover:bg-[#f7f5ff] hover:text-[#6f57f6] dark:text-white/50 dark:hover:bg-white/8 dark:hover:text-[#cabfff]`}

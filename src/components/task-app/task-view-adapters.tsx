@@ -1061,12 +1061,14 @@ export function BottomDockAdapter({
   dockIcons,
   dockItems,
   onNavigate,
+  onOpenSearch,
   renderIcon,
 }: {
   activePage: AppPage;
   dockIcons: Record<AppPage, string>;
   dockItems: AppPage[];
   onNavigate: (page: AppPage) => void;
+  onOpenSearch: () => void;
   renderIcon: (name: string) => ReactNode;
 }) {
   return (
@@ -1075,6 +1077,7 @@ export function BottomDockAdapter({
       dockIcons={dockIcons}
       dockItems={dockItems}
       onNavigate={onNavigate}
+      onOpenSearch={onOpenSearch}
       renderIcon={renderIcon}
     />
   );

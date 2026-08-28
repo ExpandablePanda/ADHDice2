@@ -5,13 +5,23 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.87`.
+- Current working app version: `7.11.88`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-28 7.11.88 Navigator Search
+
+The expanded Navigator now includes a compact `Go To` search palette for direct
+navigation to visible top-level pages, Tasks surfaces and views, canonical
+Health tabs, and selected Settings sections and controls. Search uses a local
+destination registry with simple title/breadcrumb/keyword ranking; it does not
+search user content, query Supabase, or introduce another navigation authority.
+Tasks reuse the existing surface and view state seams, Health reuses the shared
+tab preference, and Settings uses a one-shot mount-aware section scroll request.
 
 ## 2026-08-27 7.11.84 Trusted History outcome batch
 
