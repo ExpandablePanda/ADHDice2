@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.85`.
+- Current working app version: `7.11.86`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -35,6 +35,14 @@ replayed before the batch stopped. The canonical child failure remains the
 primary error, while finalizer failure is reported as a post-commit warning;
 zero-commit failures do not run the finalizer. The outer replay identity and
 deterministic Achievement operation identity remain unchanged for recovery.
+
+## 2026-08-27 7.11.86 Non-blocking startup History hydration
+
+Initial workspace rendering no longer waits for the full canonical Task History
+table. Tasks/profile render after critical startup data is ready; full History
+hydrates asynchronously, and rollover remains gated until History hydration
+completes. A History failure leaves the workspace visible, keeps History
+not-ready, and preserves the existing warning path.
 
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.

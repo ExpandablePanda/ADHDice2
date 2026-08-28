@@ -122,6 +122,25 @@ type PagedFetchResult<T> = {
   error: { code?: string; message?: string } | null;
 };
 
+export function startBackgroundTaskHistoryHydration(
+  load: () => Promise<boolean>,
+  {
+    onFailure,
+    onLoaded,
+  }: {
+    onFailure: (error?: unknown) => void;
+    onLoaded?: () => void;
+  },
+) {
+  void load().then((loaded) => {
+    if (loaded) {
+      onLoaded?.();
+      return;
+    }
+    onFailure();
+  }, onFailure);
+}
+
 type CanonicalTaskSnapshotRow = {
   id: string;
   canonicalization_status?: string | null;
@@ -877,7 +896,12 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         try {
           const fullHistoryLoad = taskHistoryLoadPromiseRef.current;
           if (fullHistoryLoad?.generation === workspaceGeneration && !hasLoadedFullTaskHistoryRef.current) {
-            await fullHistoryLoad.promise;
+            try {
+              const fullHistoryLoaded = await fullHistoryLoad.promise;
+              if (!fullHistoryLoaded) return false;
+            } catch {
+              return false;
+            }
           }
           if (!isActive || !canApplyCoreWorkspaceResult()) {
             return false;
@@ -1139,12 +1163,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         (taskScheduleBoundariesResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
       );
       tasksRef.current = nextTasks;
-      const historyLoaded = await loadTaskHistory({ silent, source: "startup" });
-      if (!historyLoaded) {
-        setMessage((current) => current ?? { tone: "warn", text: "Could not load canonical task history." });
-        setIsWorkspaceLoading(false);
-        return;
-      }
       startTransition(() => {
         setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
         onProfileLoaded(profileResult.data ?? null, user);
@@ -1159,6 +1177,20 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         }
         setIsWorkspaceLoading(false);
       });
+      startBackgroundTaskHistoryHydration(
+        () => loadTaskHistory({ silent, source: "startup" }),
+        {
+          onFailure: (error: unknown) => {
+            if (silent || !canApplyCoreWorkspaceResult()) return;
+            const errorMessage = error instanceof Error
+              ? error.message
+              : typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
+                ? error.message
+                : "Could not load canonical task history.";
+            setMessage((current) => current ?? { tone: "warn", text: errorMessage });
+          },
+        },
+      );
       if (isWorkspacePerformanceDiagnosticsEnabled() && source === "initial") {
         console.info(`[workspace] Live owner applied shared initial result userId=${userId}.`);
       }
