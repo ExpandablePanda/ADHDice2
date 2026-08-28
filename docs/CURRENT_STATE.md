@@ -5,13 +5,20 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.89`.
+- Current working app version: `7.11.90`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-28 7.11.90 Fitness Goals UI
+
+Health → Fitness now exposes the existing canonical Fitness Goals system.
+Goals and Levels persist only their definitions; current PR, Goal progress,
+Level progress, and reached state remain derived from canonical Workout →
+Workout Exercise → Set observations so corrections and deletions self-heal.
 
 ## 2026-08-28 7.11.89 Navigator Search inline mode
 

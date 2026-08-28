@@ -9,6 +9,12 @@ import type {
   HealthExercise,
   HealthExerciseInsert,
   HealthExerciseUpdate,
+  HealthFitnessGoal,
+  HealthFitnessGoalInsert,
+  HealthFitnessGoalLevel,
+  HealthFitnessGoalLevelInsert,
+  HealthFitnessGoalLevelUpdate,
+  HealthFitnessGoalUpdate,
   HealthFitnessPlan,
   HealthFitnessPlanInsert,
   HealthFitnessPlanItem,
@@ -254,17 +260,26 @@ type HealthPageProps = {
     unit: HealthWaterUnit;
   }) => Promise<boolean>;
   addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<HealthWorkout | null>;
+  archiveGoal: (goalId: string) => Promise<boolean>;
   archivePlan: (planId: string) => Promise<boolean>;
   archivePlanItem: (itemId: string) => Promise<boolean>;
+  createGoal: (input: Omit<HealthFitnessGoalInsert, "user_id">) => Promise<HealthFitnessGoal | null>;
+  createLevel: (input: Omit<HealthFitnessGoalLevelInsert, "user_id">) => Promise<HealthFitnessGoalLevel | null>;
   createPlan: (input: Omit<HealthFitnessPlanInsert, "user_id">) => Promise<HealthFitnessPlan | null>;
   createPlanItem: (input: Omit<HealthFitnessPlanItemInsert, "user_id">) => Promise<HealthFitnessPlanItem | null>;
+  deleteLevel: (levelId: string) => Promise<boolean>;
   fitnessPlanError: string | null;
   fitnessPlansLoading: boolean;
+  fitnessGoalsError: string | null;
+  fitnessGoalsLoading: boolean;
+  fitnessGoals: HealthFitnessGoal[];
+  fitnessGoalLevels: HealthFitnessGoalLevel[];
   planItems: HealthFitnessPlanItem[];
   plans: HealthFitnessPlan[];
   saveWorkoutPlanItemLinks: (workoutId: string, planItemIds: readonly string[]) => Promise<boolean>;
   updatePlan: (planId: string, input: HealthFitnessPlanUpdate) => Promise<boolean>;
   updatePlanItem: (itemId: string, input: HealthFitnessPlanItemUpdate) => Promise<boolean>;
+  restoreGoal: (goalId: string) => Promise<boolean>;
   updateWaterEntry: (entryId: string, input: {
     amount: number;
     amount_ml: number;
@@ -274,6 +289,8 @@ type HealthPageProps = {
   }) => Promise<boolean>;
   updateMealEntry: (entryId: string, input: HealthMealEntryUpdate) => Promise<boolean>;
   updateWorkout: (workoutId: string, input: HealthWorkoutUpdate) => Promise<boolean>;
+  updateGoal: (goalId: string, input: HealthFitnessGoalUpdate) => Promise<boolean>;
+  updateLevel: (levelId: string, input: HealthFitnessGoalLevelUpdate) => Promise<boolean>;
   saveWorkoutSessionDetails: (workoutId: string, draft: HealthWorkoutStructuredDraft) => Promise<HealthWorkoutSessionSaveResult>;
   updateExercise: (exerciseId: string, input: HealthExerciseUpdate) => Promise<boolean>;
   workoutPlanItemLinks: HealthWorkoutPlanItemLink[];
@@ -373,14 +390,22 @@ export function HealthPage({
   addWeightEntry,
   addWaterEntry,
   addWorkout,
+  archiveGoal,
   archiveExercise,
   archivePlan,
   archivePlanItem,
   createExercise,
+  createGoal,
+  createLevel,
   createPlan,
   createPlanItem,
+  deleteLevel,
   fitnessPlanError,
   fitnessPlansLoading,
+  fitnessGoalsError,
+  fitnessGoalsLoading,
+  fitnessGoals,
+  fitnessGoalLevels,
   fitnessSessionError,
   fitnessSessionLoaded,
   fitnessSessionLoading,
@@ -392,9 +417,12 @@ export function HealthPage({
   updateMealEntry,
   saveWorkoutSessionDetails,
   updateExercise,
+  updateGoal,
+  updateLevel,
   saveWorkoutPlanItemLinks,
   updatePlan,
   updatePlanItem,
+  restoreGoal,
   sleepCategory,
   sleepActiveSession,
   onToggleSleepClock,
@@ -1598,17 +1626,25 @@ export function HealthPage({
       {activeTab === "Fitness" ? (
         <HealthFitnessTab
           addWorkout={addWorkout}
+          archiveGoal={archiveGoal}
           archiveExercise={archiveExercise}
           archivePlan={archivePlan}
           archivePlanItem={archivePlanItem}
           createExercise={createExercise}
+          createGoal={createGoal}
+          createLevel={createLevel}
           reorderExercises={reorderExercises}
           createPlan={createPlan}
           createPlanItem={createPlanItem}
           deleteWorkout={deleteWorkout}
+          deleteLevel={deleteLevel}
           exerciseLibrary={exerciseLibrary}
           fitnessPlanError={fitnessPlanError}
           fitnessPlansLoading={fitnessPlansLoading}
+          fitnessGoalsError={fitnessGoalsError}
+          fitnessGoalsLoading={fitnessGoalsLoading}
+          fitnessGoals={fitnessGoals}
+          fitnessGoalLevels={fitnessGoalLevels}
           fitnessSessionError={fitnessSessionError}
           fitnessSessionLoaded={fitnessSessionLoaded}
           fitnessSessionLoading={fitnessSessionLoading}
@@ -1622,7 +1658,10 @@ export function HealthPage({
           updatePlan={updatePlan}
           updatePlanItem={updatePlanItem}
           updateExercise={updateExercise}
+          updateGoal={updateGoal}
+          updateLevel={updateLevel}
           updateWorkout={updateWorkout}
+          restoreGoal={restoreGoal}
           saveWorkoutSessionDetails={saveWorkoutSessionDetails}
           workoutPlanItemLinks={workoutPlanItemLinks}
           workoutExercises={workoutExercises}

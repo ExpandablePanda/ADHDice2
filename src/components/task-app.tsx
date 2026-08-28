@@ -127,6 +127,7 @@ import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievementNotifications, useAchievementProgress } from "@/hooks/useAchievementProgress";
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { useHealth } from "@/hooks/useHealth";
+import { useFitnessGoals } from "@/hooks/useFitnessGoals";
 import { useFitnessPlans } from "@/hooks/useFitnessPlans";
 import { useFitnessSessionDetails } from "@/hooks/useFitnessSessionDetails";
 import { useScratchNotes } from "@/hooks/useScratchNotes";
@@ -588,7 +589,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.89";
+const APP_VERSION = "7.11.90";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1308,6 +1309,19 @@ export function TaskApp() {
   } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health");
   const activeHealthTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const fitnessHooksActive = activePage === "Health" && activeHealthTab === "Fitness";
+  const {
+    archiveGoal: archiveFitnessGoal,
+    createGoal: createFitnessGoal,
+    createLevel: createFitnessGoalLevel,
+    deleteLevel: deleteFitnessGoalLevel,
+    error: fitnessGoalsError,
+    goals: fitnessGoals,
+    isLoading: fitnessGoalsLoading,
+    levels: fitnessGoalLevels,
+    restoreGoal: restoreFitnessGoal,
+    updateGoal: updateFitnessGoal,
+    updateLevel: updateFitnessGoalLevel,
+  } = useFitnessGoals(supabase, session?.user?.id ?? null, setMessage, fitnessHooksActive);
   const {
     archivePlan: archiveFitnessPlan,
     archivePlanItem: archiveFitnessPlanItem,
@@ -7347,17 +7361,21 @@ export function TaskApp() {
         ) : activePage === "Health" ? (
           <TaskHealthPage
             awards={healthAwards}
+            archiveGoal={archiveFitnessGoal}
             archivePlan={archiveFitnessPlan}
             archivePlanItem={archiveFitnessPlanItem}
             checkIns={healthCheckIns}
             createPlan={createFitnessPlan}
             createPlanItem={createFitnessPlanItem}
+            createGoal={createFitnessGoal}
+            createLevel={createFitnessGoalLevel}
             deleteFavoriteFood={deleteFavoriteFood}
             deleteMealEntry={deleteMealEntry}
             deleteRecipe={deleteHealthRecipe}
             deleteSavedMeal={deleteHealthSavedMeal}
             deleteWaterEntry={deleteHealthWaterEntry}
             deleteWorkout={deleteHealthWorkoutWithStructuredDetails}
+            deleteLevel={deleteFitnessGoalLevel}
             archiveExercise={archiveExercise}
             createExercise={createExercise}
             reorderExercises={reorderExercises}
@@ -7368,12 +7386,18 @@ export function TaskApp() {
             getWorkoutSessionDetails={getWorkoutSessionDetails}
             saveWorkoutSessionDetails={saveWorkoutSessionDetails}
             updateExercise={updateExercise}
+            updateGoal={updateFitnessGoal}
+            updateLevel={updateFitnessGoalLevel}
             workoutExercises={workoutExercises}
             workoutSets={workoutSets}
             deleteWeightEntry={deleteWeightEntry}
             favorites={healthFavorites}
             fitnessPlanError={fitnessPlanError}
             fitnessPlansLoading={fitnessPlansLoading}
+            fitnessGoalsError={fitnessGoalsError}
+            fitnessGoalsLoading={fitnessGoalsLoading}
+            fitnessGoals={fitnessGoals}
+            fitnessGoalLevels={fitnessGoalLevels}
             planItems={fitnessPlanItems}
             plans={fitnessPlans}
             focusCategories={focusCategories}
@@ -7415,6 +7439,7 @@ export function TaskApp() {
             updateWorkout={updateHealthWorkout}
             updatePlan={updateFitnessPlan}
             updatePlanItem={updateFitnessPlanItem}
+            restoreGoal={restoreFitnessGoal}
             weightEntries={healthWeightEntries}
             waterEntries={healthWaterEntries}
             workouts={healthWorkouts}
