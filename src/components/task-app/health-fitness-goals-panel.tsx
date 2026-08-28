@@ -13,7 +13,6 @@ import type {
   HealthFitnessGoalLevelInsert,
   HealthFitnessGoalLevelUpdate,
   HealthFitnessGoalUpdate,
-  HealthFitnessMeasurement,
   HealthFitnessPerformanceMetric,
   HealthWorkout,
   HealthWorkoutExercise,
@@ -36,12 +35,8 @@ const HEALTH_FITNESS_GOAL_METRIC_LABELS: Record<HealthFitnessPerformanceMetric, 
   session_total_duration: "Session Total Duration",
 };
 
-export function getHealthFitnessGoalMetricOptions(measurement: HealthFitnessMeasurement | null | undefined) {
-  return HEALTH_FITNESS_PERFORMANCE_METRICS.filter((metric) => measurement === "reps"
-    ? metric === "single_set_reps" || metric === "session_total_reps"
-    : measurement === "duration"
-      ? metric === "longest_set_duration" || metric === "session_total_duration"
-      : false);
+export function getHealthFitnessGoalMetricOptions() {
+  return HEALTH_FITNESS_PERFORMANCE_METRICS;
 }
 
 export function getHealthFitnessGoalMetricLabel(metric: HealthFitnessPerformanceMetric) {
@@ -115,10 +110,7 @@ function getDefaultGoalTitle(exerciseName: string, metric: HealthFitnessPerforma
 function createGoalEditor(exerciseLibrary: readonly HealthExercise[], goal?: HealthFitnessGoal): GoalEditorState {
   const exercise = exerciseLibrary.find((candidate) => candidate.id === goal?.exercise_id)
     ?? getActiveHealthFitnessGoalExercises(exerciseLibrary)[0];
-  const metricOptions = getHealthFitnessGoalMetricOptions(exercise?.default_measurement);
-  const metric = goal && metricOptions.includes(goal.metric)
-    ? goal.metric
-    : metricOptions[0] ?? "single_set_reps";
+  const metric = goal?.metric ?? getHealthFitnessGoalMetricOptions()[0] ?? "single_set_reps";
   return {
     exerciseId: goal?.exercise_id ?? exercise?.id ?? "",
     exerciseName: exercise?.name ?? "",
@@ -198,16 +190,13 @@ export function HealthFitnessGoalsPanel({
     if (!exercise) return;
     setEditor((current) => {
       if (!current) return current;
-      const options = getHealthFitnessGoalMetricOptions(exercise.default_measurement);
-      const nextMetric = options.includes(current.metric) ? current.metric : options[0] ?? current.metric;
       const shouldRefreshDefaultTitle = !current.id
         && (!current.title.trim() || current.title === getDefaultGoalTitle(current.exerciseName, current.metric));
       return {
         ...current,
         exerciseId,
         exerciseName: exercise.name,
-        metric: nextMetric,
-        title: shouldRefreshDefaultTitle ? getDefaultGoalTitle(exercise.name, nextMetric) : current.title,
+        title: shouldRefreshDefaultTitle ? getDefaultGoalTitle(exercise.name, current.metric) : current.title,
       };
     });
   }
@@ -218,8 +207,7 @@ export function HealthFitnessGoalsPanel({
       label: exercise.archived_at === null ? exercise.name : `${exercise.name} (Archived exercise)`,
       value: exercise.id,
     }));
-  const selectedExercise = exerciseLibrary.find((exercise) => exercise.id === editor?.exerciseId);
-  const metricOptions = getHealthFitnessGoalMetricOptions(selectedExercise?.default_measurement);
+  const metricOptions = getHealthFitnessGoalMetricOptions();
 
   return (
     <HealthCollapsiblePanel
@@ -261,13 +249,13 @@ export function HealthFitnessGoalsPanel({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-base font-bold text-[#26324f] dark:text-white">{editor.id ? "Edit Fitness Goal" : "Create Fitness Goal"}</h3>
-                <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">Choose a metric that matches the Exercise Library measurement type.</p>
+                <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">Choose how you want to measure this goal.</p>
               </div>
               <AdhdIconButton aria-label="Close Fitness Goal editor" disabled={isSaving} onClick={closeEditor} size="sm" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="grid gap-2 sm:col-span-2"><span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Exercise</span><HealthAutocomplete ariaLabel="Fitness Goal Exercise" onChange={(value) => setEditor((current) => current ? { ...current, exerciseId: "", exerciseName: value } : current)} onSelect={(suggestion) => selectExercise(suggestion.value)} placeholder="Search active exercises" suggestions={activeExerciseSuggestions} value={editor.exerciseName} /></label>
-              <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Metric</span><HealthGoalMetricDropdown disabled={metricOptions.length === 0} metric={editor.metric} onChange={(metric) => setEditor((current) => current ? { ...current, metric, title: !current.id && current.title === getDefaultGoalTitle(current.exerciseName, current.metric) ? getDefaultGoalTitle(current.exerciseName, metric) : current.title } : current)} options={metricOptions} /></label>
+              <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Metric</span><HealthGoalMetricDropdown metric={editor.metric} onChange={(metric) => setEditor((current) => current ? { ...current, metric, title: !current.id && current.title === getDefaultGoalTitle(current.exerciseName, current.metric) ? getDefaultGoalTitle(current.exerciseName, metric) : current.title } : current)} options={metricOptions} /></label>
               <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Goal title</span><input aria-label="Fitness Goal title" className={HEALTH_COMPACT_INPUT_CLASS} disabled={isSaving} onChange={(event) => setEditor((current) => current ? { ...current, title: event.target.value } : current)} type="text" value={editor.title} /></label>
               <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Target</span><input aria-label="Fitness Goal target" className={HEALTH_COMPACT_INPUT_CLASS} disabled={isSaving} min="1" step="1" type="number" onChange={(event) => setEditor((current) => current ? { ...current, target: event.target.value } : current)} value={editor.target} /></label>
             </div>
@@ -304,18 +292,16 @@ export function HealthFitnessGoalsPanel({
 }
 
 function HealthGoalMetricDropdown({
-  disabled,
   metric,
   onChange,
   options,
 }: {
-  disabled: boolean;
   metric: HealthFitnessPerformanceMetric;
   onChange: (metric: HealthFitnessPerformanceMetric) => void;
   options: readonly HealthFitnessPerformanceMetric[];
 }) {
   const selectedOption = options.includes(metric) ? metric : options[0];
-  return <HealthDropdown ariaLabel="Fitness Goal metric" disabled={disabled} onChange={(value) => onChange(value as HealthFitnessPerformanceMetric)} options={options.map((option) => ({ label: getHealthFitnessGoalMetricLabel(option), value: option }))} value={selectedOption ?? ""} />;
+  return <HealthDropdown ariaLabel="Fitness Goal metric" onChange={(value) => onChange(value as HealthFitnessPerformanceMetric)} options={options.map((option) => ({ label: getHealthFitnessGoalMetricLabel(option), value: option }))} value={selectedOption ?? ""} />;
 }
 
 function HealthFitnessGoalCard({

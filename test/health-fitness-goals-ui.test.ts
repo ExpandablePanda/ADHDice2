@@ -116,12 +116,31 @@ function level(id: string, target: number): HealthFitnessGoalLevel {
   };
 }
 
-test("Goal metric choices follow the Exercise Library measurement type", () => {
-  assert.match(panel, /measurement === "reps"/);
-  assert.match(panel, /metric === "single_set_reps" \|\| metric === "session_total_reps"/);
-  assert.match(panel, /measurement === "duration"/);
-  assert.match(panel, /metric === "longest_set_duration" \|\| metric === "session_total_duration"/);
+test("Every active Exercise Library identity offers all four Goal metrics", () => {
+  assert.match(panel, /export function getHealthFitnessGoalMetricOptions\(\)/);
+  assert.match(panel, /return HEALTH_FITNESS_PERFORMANCE_METRICS;/);
+  assert.doesNotMatch(panel, /getHealthFitnessGoalMetricOptions\([^)]/);
+  assert.doesNotMatch(panel, /default_measurement/);
+  for (const metric of ["single_set_reps", "session_total_reps", "longest_set_duration", "session_total_duration"]) {
+    assert.match(panel, new RegExp(metric));
+  }
   assert.match(panel, /options=\{metricOptions\}/);
+});
+
+test("Goal editor preserves duration metrics and identity changes never rewrite the selected metric", () => {
+  assert.match(panel, /const metric = goal\?\.metric \?\? getHealthFitnessGoalMetricOptions\(\)\[0\]/);
+  assert.doesNotMatch(panel, /const nextMetric/);
+  assert.doesNotMatch(panel, /metric: nextMetric/);
+  assert.match(panel, /title: shouldRefreshDefaultTitle \? getDefaultGoalTitle\(exercise\.name, current\.metric\)/);
+});
+
+test("A duration Goal ignores reps-family observations", () => {
+  const durationGoal = { ...goal, metric: "longest_set_duration" as const, target: 90 };
+  const repsObservations = deriveHealthFitnessPerformanceObservations([workout], [workoutExercise], [makeSet(90)]);
+  const status = getHealthFitnessGoalStatus(durationGoal, repsObservations);
+  assert.equal(status.currentValue, 0);
+  assert.equal(status.reached, false);
+  assert.equal(status.progressRatio, 0);
 });
 
 test("Goals activate only on Health Fitness and stay inside the existing Fitness path", () => {
