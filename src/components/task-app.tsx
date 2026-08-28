@@ -589,7 +589,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.99";
+const APP_VERSION = "7.12.0";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -7406,6 +7406,7 @@ export function TaskApp() {
             importAudits={healthImportAudits}
             isLoading={isHealthLoading}
             importAppleHealthData={importAppleHealthData}
+            healthKitScopeKey={session?.user?.id ?? null}
             syncAppleHealthData={syncAppleHealthData}
             mealEntries={healthMealEntries}
             mealPlanEntries={healthMealPlanEntries}

@@ -41,6 +41,27 @@ export type HealthKitSnapshot = {
   workouts: HealthKitWorkout[];
 };
 
+export type HealthKitIncrementalTypeResult = {
+  added: number;
+  deleted: number;
+};
+
+export type HealthKitIncrementalResult = {
+  initialized: boolean;
+  baselineStartDate: string;
+  types: {
+    steps: HealthKitIncrementalTypeResult;
+    activeEnergy: HealthKitIncrementalTypeResult;
+    exerciseTime: HealthKitIncrementalTypeResult;
+    sleep: HealthKitIncrementalTypeResult;
+    bodyMass: HealthKitIncrementalTypeResult;
+    workouts: HealthKitIncrementalTypeResult;
+  };
+  totalAdded: number;
+  totalDeleted: number;
+  failedTypes: Record<string, string>;
+};
+
 export type HealthKitDateRange = {
   startDate: string;
   endDate: string;
@@ -60,6 +81,7 @@ type NativeHealthKitPlugin = {
   isAvailable(): Promise<HealthKitAvailability>;
   requestReadAuthorization(): Promise<HealthKitAuthorizationResult>;
   readHealthSnapshot(options: HealthKitDateRange): Promise<HealthKitSnapshot>;
+  readIncrementalHealthChanges(options: { scopeKey: string }): Promise<unknown>;
 };
 
 export const NativeHealthKit = registerPlugin<NativeHealthKitPlugin>("ADHDiceHealthKit");
@@ -70,6 +92,13 @@ export class HealthKitNormalizationError extends Error {
 
 export function isHealthKitNativePlatform(platform = typeof window === "undefined" ? "web" : Capacitor.getPlatform()) {
   return platform === "ios";
+}
+
+export function normalizeHealthKitScopeKey(scopeKey: unknown) {
+  if (typeof scopeKey !== "string" || !scopeKey.trim()) {
+    throw new HealthKitNormalizationError("An ADHDice account scope key is required for incremental Apple Health reads.");
+  }
+  return scopeKey.trim();
 }
 
 export function getHealthKitDateKey(date: Date) {
@@ -94,6 +123,13 @@ function toIsoDate(value: unknown, label: string) {
 
 function nonNegativeNumber(value: unknown, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function nonNegativeInteger(value: unknown, label: string) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new HealthKitNormalizationError(`${label} must be a non-negative integer.`);
+  }
+  return value;
 }
 
 export function getDefaultHealthKitDateRange(now = new Date()): HealthKitDateRange {
@@ -217,6 +253,66 @@ export function normalizeHealthKitSnapshot(value: unknown): HealthKitSnapshot {
   };
 }
 
+function normalizeHealthKitIncrementalTypeResult(value: unknown, label: string): HealthKitIncrementalTypeResult {
+  if (!value || typeof value !== "object") {
+    throw new HealthKitNormalizationError(`${label} is missing.`);
+  }
+  const candidate = value as Record<string, unknown>;
+  return {
+    added: nonNegativeInteger(candidate.added, `${label} added`),
+    deleted: nonNegativeInteger(candidate.deleted, `${label} deleted`),
+  };
+}
+
+export function normalizeHealthKitIncrementalResult(value: unknown): HealthKitIncrementalResult {
+  if (!value || typeof value !== "object") {
+    throw new HealthKitNormalizationError("HealthKit returned no incremental result.");
+  }
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.initialized !== "boolean") {
+    throw new HealthKitNormalizationError("HealthKit incremental initialized status is missing.");
+  }
+  if (!candidate.types || typeof candidate.types !== "object") {
+    throw new HealthKitNormalizationError("HealthKit incremental type counts are missing.");
+  }
+  const rawTypes = candidate.types as Record<string, unknown>;
+  const types = {
+    steps: normalizeHealthKitIncrementalTypeResult(rawTypes.steps, "HealthKit incremental steps"),
+    activeEnergy: normalizeHealthKitIncrementalTypeResult(rawTypes.activeEnergy, "HealthKit incremental active energy"),
+    exerciseTime: normalizeHealthKitIncrementalTypeResult(rawTypes.exerciseTime, "HealthKit incremental exercise time"),
+    sleep: normalizeHealthKitIncrementalTypeResult(rawTypes.sleep, "HealthKit incremental sleep"),
+    bodyMass: normalizeHealthKitIncrementalTypeResult(rawTypes.bodyMass, "HealthKit incremental body mass"),
+    workouts: normalizeHealthKitIncrementalTypeResult(rawTypes.workouts, "HealthKit incremental workouts"),
+  } satisfies HealthKitIncrementalResult["types"];
+  const totalAdded = nonNegativeInteger(candidate.totalAdded, "HealthKit incremental total added");
+  const totalDeleted = nonNegativeInteger(candidate.totalDeleted, "HealthKit incremental total deleted");
+  const calculatedAdded = Object.values(types).reduce((total, result) => total + result.added, 0);
+  const calculatedDeleted = Object.values(types).reduce((total, result) => total + result.deleted, 0);
+  if (totalAdded !== calculatedAdded || totalDeleted !== calculatedDeleted) {
+    throw new HealthKitNormalizationError("HealthKit incremental totals do not match the per-type counts.");
+  }
+  const failedTypes: Record<string, string> = {};
+  if (candidate.failedTypes !== undefined) {
+    if (!candidate.failedTypes || typeof candidate.failedTypes !== "object" || Array.isArray(candidate.failedTypes)) {
+      throw new HealthKitNormalizationError("HealthKit incremental failures are invalid.");
+    }
+    Object.entries(candidate.failedTypes as Record<string, unknown>).forEach(([type, message]) => {
+      if (typeof message !== "string" || !message.trim()) {
+        throw new HealthKitNormalizationError(`HealthKit incremental failure for ${type} is invalid.`);
+      }
+      failedTypes[type] = message;
+    });
+  }
+  return {
+    initialized: candidate.initialized,
+    baselineStartDate: toIsoDate(candidate.baselineStartDate, "HealthKit incremental baselineStartDate"),
+    types,
+    totalAdded,
+    totalDeleted,
+    failedTypes,
+  };
+}
+
 type HealthKitSleepInterval = {
   startDate: string;
   endDate: string;
@@ -313,5 +409,18 @@ export async function readHealthKitSnapshot(range?: Partial<HealthKitDateRange> 
   } catch (error) {
     if (error instanceof HealthKitNormalizationError) throw error;
     throw new HealthKitNormalizationError(nativeHealthKitError(error, "Apple Health data could not be read."));
+  }
+}
+
+export async function readHealthKitIncrementalChanges(scopeKey: string) {
+  if (!isHealthKitNativePlatform() || !Capacitor.isPluginAvailable("ADHDiceHealthKit")) {
+    throw new HealthKitNormalizationError("Apple Health is available only in the native iOS app.");
+  }
+  const normalizedScopeKey = normalizeHealthKitScopeKey(scopeKey);
+  try {
+    return normalizeHealthKitIncrementalResult(await NativeHealthKit.readIncrementalHealthChanges({ scopeKey: normalizedScopeKey }));
+  } catch (error) {
+    if (error instanceof HealthKitNormalizationError) throw error;
+    throw new HealthKitNormalizationError(nativeHealthKitError(error, "Apple Health incremental data could not be read."));
   }
 }

@@ -9,30 +9,39 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "isAvailable", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestReadAuthorization", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "readHealthSnapshot", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "readHealthSnapshot", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "readIncrementalHealthChanges", returnType: CAPPluginReturnPromise)
     ]
 
     private let healthStore = HKHealthStore()
+    private let incrementalQueue = DispatchQueue(label: "com.andrewschaffer.adhdice.healthkit.incremental", qos: .userInitiated)
+    private let incrementalDefaults = UserDefaults.standard
+    private let incrementalStorageVersion = "v1"
 
     private enum BridgeError: LocalizedError {
         case unavailable
         case invalidRange(String)
+        case invalidScope
         case authorizationFailed(String)
         case queryFailed(String)
+        case storageFailed(String)
 
         var code: String {
             switch self {
             case .unavailable: return "HEALTHKIT_UNAVAILABLE"
             case .invalidRange: return "HEALTHKIT_INVALID_RANGE"
+            case .invalidScope: return "HEALTHKIT_INVALID_SCOPE"
             case .authorizationFailed: return "HEALTHKIT_AUTHORIZATION_FAILED"
             case .queryFailed: return "HEALTHKIT_QUERY_FAILED"
+            case .storageFailed: return "HEALTHKIT_STORAGE_FAILED"
             }
         }
 
         var errorDescription: String? {
             switch self {
             case .unavailable: return "Apple Health is unavailable on this device."
-            case .invalidRange(let message), .authorizationFailed(let message), .queryFailed(let message): return message
+            case .invalidScope: return "An ADHDice account scope key is required for incremental Apple Health reads."
+            case .invalidRange(let message), .authorizationFailed(let message), .queryFailed(let message), .storageFailed(let message): return message
             }
         }
     }
@@ -46,6 +55,32 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
     private struct SleepInterval {
         let start: Date
         let end: Date
+    }
+
+    private enum IncrementalHealthType: String, CaseIterable {
+        case steps
+        case activeEnergy
+        case exerciseTime
+        case sleep
+        case bodyMass
+        case workouts
+
+        var sampleType: HKSampleType? {
+            switch self {
+            case .steps: return HKObjectType.quantityType(forIdentifier: .stepCount)
+            case .activeEnergy: return HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)
+            case .exerciseTime: return HKObjectType.quantityType(forIdentifier: .appleExerciseTime)
+            case .sleep: return HKObjectType.categoryType(forIdentifier: .sleepAnalysis)
+            case .bodyMass: return HKObjectType.quantityType(forIdentifier: .bodyMass)
+            case .workouts: return HKObjectType.workoutType()
+            }
+        }
+    }
+
+    private struct IncrementalTypeRead {
+        let added: Int
+        let deleted: Int
+        let anchor: HKQueryAnchor
     }
 
     private var readTypes: Set<HKObjectType> {
@@ -117,6 +152,197 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
         } catch {
             reject(call, .invalidRange("Apple Health date range is invalid."))
         }
+    }
+
+    @objc func readIncrementalHealthChanges(_ call: CAPPluginCall) {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            reject(call, BridgeError.unavailable)
+            return
+        }
+        guard let rawScopeKey = call.getString("scopeKey") else {
+            reject(call, BridgeError.invalidScope)
+            return
+        }
+        let scopeKey = rawScopeKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !scopeKey.isEmpty else {
+            reject(call, BridgeError.invalidScope)
+            return
+        }
+
+        incrementalQueue.async { [weak self] in
+            guard let self else { return }
+            self.queryIncrementalHealthChanges(scopeKey: scopeKey) { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let payload): call.resolve(payload)
+                    case .failure(let error): self.reject(call, error)
+                    }
+                }
+            }
+        }
+    }
+
+    private func queryIncrementalHealthChanges(
+        scopeKey: String,
+        completion: @escaping (Result<[String: Any], BridgeError>) -> Void
+    ) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        let baselineStartDate = incrementalBaselineStartDate(scopeKey: scopeKey, calendar: calendar)
+        var anchors: [IncrementalHealthType: HKQueryAnchor] = [:]
+        var initialized = false
+
+        IncrementalHealthType.allCases.forEach { type in
+            switch loadIncrementalAnchor(scopeKey: scopeKey, type: type) {
+            case .valid(let anchor): anchors[type] = anchor
+            case .missing, .corrupt:
+                initialized = true
+            }
+        }
+
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var typeResults: [String: [String: Any]] = [:]
+        var failedTypes: [String: String] = [:]
+
+        func recordFailure(_ type: IncrementalHealthType, _ message: String) {
+            lock.lock()
+            failedTypes[type.rawValue] = message
+            lock.unlock()
+        }
+
+        IncrementalHealthType.allCases.forEach { type in
+            guard let sampleType = type.sampleType else {
+                recordFailure(type, "Apple Health does not support \(type.rawValue).")
+                return
+            }
+            group.enter()
+            queryIncrementalType(sampleType: sampleType, anchor: anchors[type], baselineStartDate: baselineStartDate) { result in
+                switch result {
+                case .success(let read):
+                    lock.lock()
+                    typeResults[type.rawValue] = ["added": read.added, "deleted": read.deleted]
+                    lock.unlock()
+                    do {
+                        try self.saveIncrementalAnchor(read.anchor, scopeKey: scopeKey, type: type)
+                    } catch {
+                        recordFailure(type, "Apple Health \(type.rawValue) anchor could not be saved.")
+                    }
+                case .failure(let error):
+                    recordFailure(type, error.localizedDescription ?? "Apple Health \(type.rawValue) query failed.")
+                }
+                group.leave()
+            }
+        }
+
+        group.notify(queue: incrementalQueue) {
+            lock.lock()
+            let results = typeResults
+            let failures = failedTypes
+            lock.unlock()
+
+            var types: [String: Any] = [:]
+            var totalAdded = 0
+            var totalDeleted = 0
+            IncrementalHealthType.allCases.forEach { type in
+                let result = results[type.rawValue] ?? ["added": 0, "deleted": 0]
+                types[type.rawValue] = result
+                totalAdded += result["added"] as? Int ?? 0
+                totalDeleted += result["deleted"] as? Int ?? 0
+            }
+            completion(.success([
+                "initialized": initialized,
+                "baselineStartDate": self.iso8601String(from: baselineStartDate),
+                "types": types,
+                "totalAdded": totalAdded,
+                "totalDeleted": totalDeleted,
+                "failedTypes": failures
+            ]))
+        }
+    }
+
+    private func queryIncrementalType(
+        sampleType: HKSampleType,
+        anchor: HKQueryAnchor?,
+        baselineStartDate: Date,
+        completion: @escaping (Result<IncrementalTypeRead, BridgeError>) -> Void
+    ) {
+        let predicate = HKQuery.predicateForSamples(withStart: baselineStartDate, end: nil, options: .strictStartDate)
+        let query = HKAnchoredObjectQuery(
+            type: sampleType,
+            predicate: predicate,
+            anchor: anchor,
+            limit: HKObjectQueryNoLimit
+        ) { _, samples, deletedObjects, newAnchor, error in
+            if let error {
+                completion(.failure(.queryFailed(error.localizedDescription)))
+                return
+            }
+            guard let newAnchor else {
+                completion(.failure(.queryFailed("Apple Health returned no replacement anchor.")))
+                return
+            }
+            completion(.success(IncrementalTypeRead(
+                added: samples?.count ?? 0,
+                deleted: deletedObjects?.count ?? 0,
+                anchor: newAnchor
+            )))
+        }
+        healthStore.execute(query)
+    }
+
+    private enum StoredIncrementalAnchor {
+        case missing
+        case valid(HKQueryAnchor)
+        case corrupt
+    }
+
+    private func loadIncrementalAnchor(scopeKey: String, type: IncrementalHealthType) -> StoredIncrementalAnchor {
+        let key = incrementalAnchorKey(scopeKey: scopeKey, type: type)
+        guard let data = incrementalDefaults.data(forKey: key) else { return .missing }
+        do {
+            guard let anchor = try NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data) else {
+                incrementalDefaults.removeObject(forKey: key)
+                return .corrupt
+            }
+            return .valid(anchor)
+        } catch {
+            incrementalDefaults.removeObject(forKey: key)
+            return .corrupt
+        }
+    }
+
+    private func saveIncrementalAnchor(_ anchor: HKQueryAnchor, scopeKey: String, type: IncrementalHealthType) throws {
+        let data = try NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true)
+        incrementalDefaults.set(data, forKey: incrementalAnchorKey(scopeKey: scopeKey, type: type))
+    }
+
+    private func incrementalBaselineStartDate(scopeKey: String, calendar: Calendar) -> Date {
+        let key = incrementalBaselineKey(scopeKey: scopeKey)
+        if let stored = incrementalDefaults.string(forKey: key), let date = parseDate(stored) {
+            return date
+        }
+        let today = calendar.startOfDay(for: Date())
+        let baseline = calendar.date(byAdding: .day, value: -6, to: today) ?? today
+        incrementalDefaults.set(iso8601String(from: baseline), forKey: key)
+        return baseline
+    }
+
+    private func incrementalStoragePrefix(scopeKey: String) -> String {
+        let encodedScope = scopeKey.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "scope"
+        return "adhdice.healthkit.anchor.\(incrementalStorageVersion).\(encodedScope)"
+    }
+
+    private func incrementalAnchorKey(scopeKey: String, type: IncrementalHealthType) -> String {
+        "\(incrementalStoragePrefix(scopeKey: scopeKey)).\(type.rawValue)"
+    }
+
+    private func incrementalBaselineKey(scopeKey: String) -> String {
+        "\(incrementalStoragePrefix(scopeKey: scopeKey)).baselineStartDate"
+    }
+
+    private func iso8601String(from date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
     }
 
     private func dateRange(from call: CAPPluginCall) throws -> DateRange {
