@@ -37,13 +37,23 @@ import type {
   HealthWeightEntryInsert,
 } from "@/lib/database.types";
 import type { AppleHealthImportPreview } from "@/lib/health-apple-import";
-import type { HealthKitSnapshot } from "@/lib/healthkit";
+import {
+  commitIncrementalHealthChanges,
+  discardIncrementalHealthChanges,
+  prepareIncrementalHealthChanges,
+  type HealthKitIncrementalResult,
+  type HealthKitSnapshot,
+} from "@/lib/healthkit";
 import {
   APPLE_HEALTH_SOURCE,
+  buildHealthKitIncrementalMetricInputs,
+  buildHealthKitIncrementalWeightInputs,
+  buildHealthKitIncrementalWorkoutInputs,
   buildHealthKitMetricInputs,
   buildHealthKitWeightInputs,
   buildHealthKitWorkoutInputs,
   findLegacyWeightAdoptionCandidate,
+  type HealthKitIncrementalSyncResult,
   type HealthKitSyncResult,
 } from "@/lib/healthkit-sync";
 import {
@@ -2236,6 +2246,193 @@ export function useHealth(
     }
   }
 
+  async function syncIncrementalAppleHealthData(): Promise<HealthKitIncrementalSyncResult | null> {
+    if (!userId || !profile || !client || storageMode !== "remote" || !workoutRemoteEnabledRef.current) {
+      setMessage({
+        tone: "warn",
+        text: "Incremental Apple Health sync requires a signed-in account and migrated remote Health storage.",
+      });
+      return null;
+    }
+
+    const syncUserId = userId;
+    const syncClient = client;
+    const syncStorageMode = storageMode;
+    const syncScopeRevision = healthScopeRevisionRef.current;
+    const isCurrentScope = () => healthScopeRevisionRef.current === syncScopeRevision
+      && userId === syncUserId
+      && client === syncClient
+      && storageMode === syncStorageMode;
+    let prepared: HealthKitIncrementalResult | null = null;
+
+    try {
+      prepared = await prepareIncrementalHealthChanges(syncUserId);
+      if (!isCurrentScope()) {
+        await discardIncrementalHealthChanges(syncUserId, prepared.syncToken);
+        return null;
+      }
+
+      const metricInputs = buildHealthKitIncrementalMetricInputs(prepared.metricChanges);
+      const weightInputs = buildHealthKitIncrementalWeightInputs(prepared);
+      const workoutInputs = buildHealthKitIncrementalWorkoutInputs(prepared);
+      const syncedMetrics: HealthMetricEntry[] = [];
+      const syncedWeights: HealthWeightEntry[] = [];
+      const syncedWorkouts: HealthWorkout[] = [];
+
+      if (metricInputs.length > 0) {
+        const { data, error } = await syncClient
+          .from("adhdice_health_metric_entries")
+          .upsert(
+            metricInputs.map((input) => ({ ...input, user_id: syncUserId })),
+            { onConflict: "user_id,source_fingerprint" },
+          )
+          .select("*");
+        if (error) throw error;
+        if (!data || data.length !== metricInputs.length) {
+          throw new Error("Incremental Apple Health metric sync did not return every saved metric.");
+        }
+        syncedMetrics.push(...data);
+      }
+
+      if (!isCurrentScope()) throw new Error("Health scope changed during incremental Apple Health persistence.");
+      let workingWeights = [...(healthSnapshotRef.current?.weightEntries ?? weightEntries)];
+      for (const input of weightInputs) {
+        if (!isCurrentScope()) throw new Error("Health scope changed during incremental Apple Health persistence.");
+        const existingLive = workingWeights.find((entry) => entry.source === APPLE_HEALTH_SOURCE && entry.source_external_id === input.source_external_id);
+        const legacyMatch = existingLive ? null : findLegacyWeightAdoptionCandidate(workingWeights, {
+          id: input.source_external_id,
+          timestamp: input.logged_at,
+          weightKg: input.weight_kg,
+        });
+        const result = legacyMatch
+          ? await syncClient
+            .from("adhdice_health_weight_entries")
+            .update({
+              entry_date: input.entry_date,
+              logged_at: input.logged_at,
+              source: APPLE_HEALTH_SOURCE,
+              source_external_id: input.source_external_id,
+              weight_kg: input.weight_kg,
+            })
+            .eq("id", legacyMatch.id)
+            .eq("user_id", syncUserId)
+            .select("*")
+            .single()
+          : await syncClient
+            .from("adhdice_health_weight_entries")
+            .upsert({ ...input, user_id: syncUserId }, { onConflict: "user_id,source,source_external_id" })
+            .select("*")
+            .single();
+        if (result.error) throw result.error;
+        if (!result.data) throw new Error("Incremental Apple Health weight sync did not return the saved weigh-in.");
+        syncedWeights.push(result.data);
+        workingWeights = [result.data, ...workingWeights.filter((entry) => entry.id !== result.data.id)];
+      }
+
+      for (const externalId of prepared.deletedBodyMassIds) {
+        if (!isCurrentScope()) throw new Error("Health scope changed during incremental Apple Health persistence.");
+        const { error } = await syncClient
+          .from("adhdice_health_weight_entries")
+          .delete()
+          .eq("user_id", syncUserId)
+          .eq("source", APPLE_HEALTH_SOURCE)
+          .eq("source_external_id", externalId);
+        if (error) throw error;
+      }
+
+      if (!isCurrentScope()) throw new Error("Health scope changed during incremental Apple Health persistence.");
+      if (workoutInputs.length > 0) {
+        const { data, error } = await syncClient
+          .from("adhdice_health_workouts")
+          .upsert(
+            workoutInputs.map((input) => ({ ...input, user_id: syncUserId })),
+            { onConflict: "user_id,source,source_external_id" },
+          )
+          .select("*");
+        if (error) throw error;
+        if (!data || data.length !== workoutInputs.length) {
+          throw new Error("Incremental Apple Health workout sync did not return every saved workout.");
+        }
+        syncedWorkouts.push(...data);
+      }
+
+      for (const externalId of prepared.deletedWorkoutIds) {
+        if (!isCurrentScope()) throw new Error("Health scope changed during incremental Apple Health persistence.");
+        const { error } = await syncClient
+          .from("adhdice_health_workouts")
+          .delete()
+          .eq("user_id", syncUserId)
+          .eq("source", APPLE_HEALTH_SOURCE)
+          .eq("source_external_id", externalId);
+        if (error) throw error;
+      }
+
+      if (!isCurrentScope()) throw new Error("Health scope changed during incremental Apple Health persistence.");
+      const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
+        awards,
+        checkIns,
+        favorites,
+        importAudits,
+        mealEntries,
+        metricEntries,
+        profile,
+        recipes,
+        savedMeals,
+        waterEntries,
+        weightEntries,
+      });
+      const deletedWeightIds = new Set(prepared.deletedBodyMassIds);
+      const deletedWorkoutIds = new Set(prepared.deletedWorkoutIds);
+      const nextSnapshot = buildHealthSnapshot({
+        ...currentSnapshot,
+        metricEntries: [...new Map([...currentSnapshot.metricEntries, ...syncedMetrics].map((entry) => [entry.id, entry])).values()]
+          .sort((left, right) => right.metric_date.localeCompare(left.metric_date)),
+        weightEntries: [...new Map([
+          ...currentSnapshot.weightEntries.filter((entry) => !(entry.source === APPLE_HEALTH_SOURCE && entry.source_external_id && deletedWeightIds.has(entry.source_external_id))),
+          ...syncedWeights,
+        ].map((entry) => [entry.id, entry])).values()]
+          .sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
+        workouts: sortHealthWorkouts([...new Map([
+          ...currentSnapshot.workouts.filter((entry) => !(entry.source === APPLE_HEALTH_SOURCE && entry.source_external_id && deletedWorkoutIds.has(entry.source_external_id))),
+          ...syncedWorkouts,
+        ].map((entry) => [entry.id, entry])).values()]),
+      });
+      applySnapshot(nextSnapshot);
+      await claimEligibleAwards(nextSnapshot, { persistRemotely: true, silent: true });
+      if (!isCurrentScope()) throw new Error("Health scope changed before incremental Apple Health commit.");
+      await commitIncrementalHealthChanges(syncUserId, prepared.syncToken);
+
+      const result = {
+        metrics: metricInputs.length,
+        weightsAdded: weightInputs.length,
+        weightsDeleted: prepared.deletedBodyMassIds.length,
+        workoutsAdded: workoutInputs.length,
+        workoutsDeleted: prepared.deletedWorkoutIds.length,
+        failedTypes: prepared.failedTypes,
+        totalChanges: metricInputs.length + weightInputs.length + prepared.deletedBodyMassIds.length + workoutInputs.length + prepared.deletedWorkoutIds.length,
+      } satisfies HealthKitIncrementalSyncResult;
+      setMessage({
+        tone: "good",
+        text: `Incremental sync: ${result.totalChanges} changes saved${Object.keys(result.failedTypes).length > 0 ? ` · failed: ${Object.keys(result.failedTypes).join(", ")}` : ""}.`,
+      });
+      return result;
+    } catch (error) {
+      if (prepared) {
+        try {
+          await discardIncrementalHealthChanges(syncUserId, prepared.syncToken);
+        } catch {
+          // The committed native anchor remains unchanged even if cleanup cannot complete.
+        }
+      }
+      if (!isCurrentScope()) return null;
+      const message = error && typeof error === "object" && "message" in error && typeof error.message === "string"
+        ? error.message
+        : "Remote Health storage rejected the incremental Apple Health sync.";
+      setMessage({ tone: "warn", text: `Incremental Apple Health sync could not be saved: ${message}` });
+      return null;
+    }
+  }
+
   async function deleteWeightEntry(entryId: string) {
     if (!profile) {
       return false;
@@ -2280,6 +2477,7 @@ export function useHealth(
     isLoading,
     importAppleHealthData,
     syncAppleHealthData,
+    syncIncrementalAppleHealthData,
     mealEntries,
     mealPlanEntries,
     addMealPlanEntry,

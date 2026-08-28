@@ -5,6 +5,8 @@ import type {
 } from "@/lib/database.types";
 import {
   getHealthKitDateKey,
+  type HealthKitIncrementalMetricChange,
+  type HealthKitIncrementalResult,
   type HealthKitBodyMassSample,
   type HealthKitSnapshot,
 } from "@/lib/healthkit";
@@ -40,6 +42,16 @@ export type HealthKitSyncResult = {
   workouts: number;
 };
 
+export type HealthKitIncrementalSyncResult = {
+  metrics: number;
+  weightsAdded: number;
+  weightsDeleted: number;
+  workoutsAdded: number;
+  workoutsDeleted: number;
+  failedTypes: Record<string, string>;
+  totalChanges: number;
+};
+
 export function healthKitMetricFingerprint(metricType: HealthKitSyncMetricInput["metric_type"], date: string) {
   return `${APPLE_HEALTH_SOURCE}:v1:daily:${metricType}:${date}`;
 }
@@ -56,6 +68,38 @@ export function buildHealthKitMetricInputs(snapshot: HealthKitSnapshot): HealthK
       source_fingerprint: healthKitMetricFingerprint(metricType, dailyMetric.date),
     }];
   }));
+}
+
+export function buildHealthKitIncrementalMetricInputs(
+  changes: readonly HealthKitIncrementalMetricChange[],
+): HealthKitSyncMetricInput[] {
+  return changes.map((change) => ({
+    metric_date: change.date,
+    metric_type: change.metricType,
+    metric_value: change.value,
+    source: APPLE_HEALTH_SOURCE,
+    source_fingerprint: healthKitMetricFingerprint(change.metricType, change.date),
+  }));
+}
+
+export function buildHealthKitIncrementalWeightInputs(result: HealthKitIncrementalResult) {
+  return buildHealthKitWeightInputs({
+    startDate: result.baselineStartDate,
+    endDate: result.baselineStartDate,
+    dailyMetrics: [],
+    bodyMass: result.bodyMass,
+    workouts: [],
+  });
+}
+
+export function buildHealthKitIncrementalWorkoutInputs(result: HealthKitIncrementalResult) {
+  return buildHealthKitWorkoutInputs({
+    startDate: result.baselineStartDate,
+    endDate: result.baselineStartDate,
+    dailyMetrics: [],
+    bodyMass: [],
+    workouts: result.workouts,
+  });
 }
 
 export function buildHealthKitWeightInputs(snapshot: HealthKitSnapshot): HealthKitSyncWeightInput[] {

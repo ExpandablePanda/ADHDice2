@@ -46,7 +46,14 @@ export type HealthKitIncrementalTypeResult = {
   deleted: number;
 };
 
+export type HealthKitIncrementalMetricChange = {
+  date: string;
+  metricType: "steps" | "active_energy_kcal" | "exercise_minutes" | "sleep_minutes";
+  value: number;
+};
+
 export type HealthKitIncrementalResult = {
+  syncToken: string;
   initialized: boolean;
   baselineStartDate: string;
   types: {
@@ -60,6 +67,11 @@ export type HealthKitIncrementalResult = {
   totalAdded: number;
   totalDeleted: number;
   failedTypes: Record<string, string>;
+  metricChanges: HealthKitIncrementalMetricChange[];
+  bodyMass: HealthKitBodyMassSample[];
+  deletedBodyMassIds: string[];
+  workouts: HealthKitWorkout[];
+  deletedWorkoutIds: string[];
 };
 
 export type HealthKitDateRange = {
@@ -81,7 +93,9 @@ type NativeHealthKitPlugin = {
   isAvailable(): Promise<HealthKitAvailability>;
   requestReadAuthorization(): Promise<HealthKitAuthorizationResult>;
   readHealthSnapshot(options: HealthKitDateRange): Promise<HealthKitSnapshot>;
-  readIncrementalHealthChanges(options: { scopeKey: string }): Promise<unknown>;
+  prepareIncrementalHealthChanges(options: { scopeKey: string }): Promise<unknown>;
+  commitIncrementalHealthChanges(options: { scopeKey: string; syncToken: string }): Promise<unknown>;
+  discardIncrementalHealthChanges(options: { scopeKey: string; syncToken: string }): Promise<unknown>;
 };
 
 export const NativeHealthKit = registerPlugin<NativeHealthKitPlugin>("ADHDiceHealthKit");
@@ -264,11 +278,88 @@ function normalizeHealthKitIncrementalTypeResult(value: unknown, label: string):
   };
 }
 
+function normalizeHealthKitIncrementalMetricChanges(value: unknown) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new HealthKitNormalizationError("HealthKit incremental metric changes are invalid.");
+  }
+  const metricTypes = new Set(["steps", "active_energy_kcal", "exercise_minutes", "sleep_minutes"]);
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const raw = entry as Record<string, unknown>;
+    if (typeof raw.metricType !== "string" || !metricTypes.has(raw.metricType)) {
+      throw new HealthKitNormalizationError("HealthKit incremental metric type is invalid.");
+    }
+    const date = normalizeDateKey(raw.date);
+    const value = raw.value;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new HealthKitNormalizationError("HealthKit incremental metric value is invalid.");
+    }
+    return [{ date, metricType: raw.metricType as HealthKitIncrementalMetricChange["metricType"], value } satisfies HealthKitIncrementalMetricChange];
+  });
+}
+
+function normalizeHealthKitIdentifierList(value: unknown, label: string) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new HealthKitNormalizationError(`${label} is invalid.`);
+  }
+  return value.map((entry) => {
+    if (typeof entry !== "string" || !entry.trim()) {
+      throw new HealthKitNormalizationError(`${label} contains an invalid UUID.`);
+    }
+    return entry;
+  });
+}
+
+function normalizeHealthKitIncrementalBodyMass(value: unknown) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new HealthKitNormalizationError("HealthKit incremental body mass changes are invalid.");
+  }
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const raw = entry as Record<string, unknown>;
+    if (typeof raw.id !== "string" || !raw.id.trim() || typeof raw.weightKg !== "number" || !Number.isFinite(raw.weightKg) || raw.weightKg <= 0) {
+      throw new HealthKitNormalizationError("HealthKit incremental body mass change is invalid.");
+    }
+    return [{ id: raw.id, timestamp: toIsoDate(raw.timestamp, "HealthKit incremental body mass timestamp"), weightKg: raw.weightKg }];
+  });
+}
+
+function normalizeHealthKitIncrementalWorkouts(value: unknown) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new HealthKitNormalizationError("HealthKit incremental workout changes are invalid.");
+  }
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const raw = entry as Record<string, unknown>;
+    if (typeof raw.id !== "string" || !raw.id.trim() || typeof raw.activityType !== "number" || !Number.isFinite(raw.activityType)) {
+      throw new HealthKitNormalizationError("HealthKit incremental workout change is invalid.");
+    }
+    const startDate = toIsoDate(raw.startDate, "HealthKit incremental workout startDate");
+    const endDate = toIsoDate(raw.endDate, "HealthKit incremental workout endDate");
+    return [{
+      id: raw.id,
+      activityType: raw.activityType,
+      activityLabel: typeof raw.activityLabel === "string" && raw.activityLabel.trim() ? raw.activityLabel : `Activity ${raw.activityType}`,
+      startDate,
+      endDate,
+      durationSeconds: nonNegativeNumber(raw.durationSeconds),
+      activeCaloriesKcal: typeof raw.activeCaloriesKcal === "number" && Number.isFinite(raw.activeCaloriesKcal) && raw.activeCaloriesKcal >= 0 ? raw.activeCaloriesKcal : null,
+    } satisfies HealthKitWorkout];
+  });
+}
+
 export function normalizeHealthKitIncrementalResult(value: unknown): HealthKitIncrementalResult {
   if (!value || typeof value !== "object") {
     throw new HealthKitNormalizationError("HealthKit returned no incremental result.");
   }
   const candidate = value as Record<string, unknown>;
+  if (typeof candidate.syncToken !== "string" || !candidate.syncToken.trim()) {
+    throw new HealthKitNormalizationError("HealthKit incremental sync token is missing.");
+  }
   if (typeof candidate.initialized !== "boolean") {
     throw new HealthKitNormalizationError("HealthKit incremental initialized status is missing.");
   }
@@ -304,12 +395,18 @@ export function normalizeHealthKitIncrementalResult(value: unknown): HealthKitIn
     });
   }
   return {
+    syncToken: candidate.syncToken,
     initialized: candidate.initialized,
     baselineStartDate: toIsoDate(candidate.baselineStartDate, "HealthKit incremental baselineStartDate"),
     types,
     totalAdded,
     totalDeleted,
     failedTypes,
+    metricChanges: normalizeHealthKitIncrementalMetricChanges(candidate.metricChanges),
+    bodyMass: normalizeHealthKitIncrementalBodyMass(candidate.bodyMass),
+    deletedBodyMassIds: normalizeHealthKitIdentifierList(candidate.deletedBodyMassIds, "HealthKit deleted body mass IDs"),
+    workouts: normalizeHealthKitIncrementalWorkouts(candidate.workouts),
+    deletedWorkoutIds: normalizeHealthKitIdentifierList(candidate.deletedWorkoutIds, "HealthKit deleted workout IDs"),
   };
 }
 
@@ -412,15 +509,45 @@ export async function readHealthKitSnapshot(range?: Partial<HealthKitDateRange> 
   }
 }
 
-export async function readHealthKitIncrementalChanges(scopeKey: string) {
+export async function prepareIncrementalHealthChanges(scopeKey: string) {
   if (!isHealthKitNativePlatform() || !Capacitor.isPluginAvailable("ADHDiceHealthKit")) {
     throw new HealthKitNormalizationError("Apple Health is available only in the native iOS app.");
   }
   const normalizedScopeKey = normalizeHealthKitScopeKey(scopeKey);
   try {
-    return normalizeHealthKitIncrementalResult(await NativeHealthKit.readIncrementalHealthChanges({ scopeKey: normalizedScopeKey }));
+    return normalizeHealthKitIncrementalResult(await NativeHealthKit.prepareIncrementalHealthChanges({ scopeKey: normalizedScopeKey }));
   } catch (error) {
     if (error instanceof HealthKitNormalizationError) throw error;
     throw new HealthKitNormalizationError(nativeHealthKitError(error, "Apple Health incremental data could not be read."));
+  }
+}
+
+export async function commitIncrementalHealthChanges(scopeKey: string, syncToken: string) {
+  if (!isHealthKitNativePlatform() || !Capacitor.isPluginAvailable("ADHDiceHealthKit")) {
+    throw new HealthKitNormalizationError("Apple Health is available only in the native iOS app.");
+  }
+  const normalizedScopeKey = normalizeHealthKitScopeKey(scopeKey);
+  if (typeof syncToken !== "string" || !syncToken.trim()) {
+    throw new HealthKitNormalizationError("An Apple Health incremental sync token is required.");
+  }
+  try {
+    return await NativeHealthKit.commitIncrementalHealthChanges({ scopeKey: normalizedScopeKey, syncToken: syncToken.trim() });
+  } catch (error) {
+    throw new HealthKitNormalizationError(nativeHealthKitError(error, "Apple Health incremental changes could not be committed."));
+  }
+}
+
+export async function discardIncrementalHealthChanges(scopeKey: string, syncToken: string) {
+  if (!isHealthKitNativePlatform() || !Capacitor.isPluginAvailable("ADHDiceHealthKit")) {
+    throw new HealthKitNormalizationError("Apple Health is available only in the native iOS app.");
+  }
+  const normalizedScopeKey = normalizeHealthKitScopeKey(scopeKey);
+  if (typeof syncToken !== "string" || !syncToken.trim()) {
+    throw new HealthKitNormalizationError("An Apple Health incremental sync token is required.");
+  }
+  try {
+    return await NativeHealthKit.discardIncrementalHealthChanges({ scopeKey: normalizedScopeKey, syncToken: syncToken.trim() });
+  } catch (error) {
+    throw new HealthKitNormalizationError(nativeHealthKitError(error, "Apple Health incremental changes could not be discarded."));
   }
 }

@@ -4,12 +4,13 @@ import { readFileSync } from "node:fs";
 
 import {
   HealthKitNormalizationError,
+  prepareIncrementalHealthChanges,
   normalizeHealthKitIncrementalResult,
   normalizeHealthKitScopeKey,
-  readHealthKitIncrementalChanges,
 } from "../src/lib/healthkit.ts";
 
 const validResult = {
+  syncToken: "sync-token-1",
   initialized: true,
   baselineStartDate: "2026-08-22T04:00:00.000Z",
   types: {
@@ -23,6 +24,11 @@ const validResult = {
   totalAdded: 13,
   totalDeleted: 2,
   failedTypes: {},
+  metricChanges: [],
+  bodyMass: [],
+  deletedBodyMassIds: [],
+  workouts: [],
+  deletedWorkoutIds: [],
 };
 
 test("HealthKit incremental scope keys are required and trimmed", () => {
@@ -53,16 +59,33 @@ test("HealthKit incremental payload rejects malformed counts and totals", () => 
 });
 
 test("HealthKit incremental bridge remains guarded off native iOS", async () => {
-  await assert.rejects(() => readHealthKitIncrementalChanges("user-a"), /native iOS app/);
+  await assert.rejects(() => prepareIncrementalHealthChanges("user-a"), /native iOS app/);
 });
 
-test("native incremental bridge uses anchored queries and secure scoped archives", () => {
+test("native incremental bridge stages opaque batches and commits anchors only explicitly", () => {
   const source = readFileSync(new URL("../ios/App/App/ADHDiceHealthKitPlugin.swift", import.meta.url), "utf8");
-  assert.match(source, /readIncrementalHealthChanges/);
+  assert.match(source, /prepareIncrementalHealthChanges/);
+  assert.match(source, /commitIncrementalHealthChanges/);
+  assert.match(source, /discardIncrementalHealthChanges/);
   assert.match(source, /HKAnchoredObjectQuery/);
   assert.match(source, /NSKeyedArchiver\.archivedData\(withRootObject: anchor, requiringSecureCoding: true\)/);
   assert.match(source, /NSKeyedUnarchiver\.unarchivedObject\(ofClass: HKQueryAnchor\.self/);
+  assert.match(source, /pendingIncrementalBatches/);
+  assert.match(source, /sample-index/);
+  assert.doesNotMatch(source, /saveIncrementalAnchor\(read\.anchor/);
   for (const type of ["steps", "activeEnergy", "exerciseTime", "sleep", "bodyMass", "workouts"]) {
     assert.match(source, new RegExp(`case ${type}`));
   }
+});
+
+test("incremental payload carries authoritative zero metrics and exact deletion identities", () => {
+  const result = normalizeHealthKitIncrementalResult({
+    ...validResult,
+    metricChanges: [{ date: "2026-08-28", metricType: "steps", value: 0 }],
+    deletedBodyMassIds: ["weight-1"],
+    deletedWorkoutIds: ["workout-1"],
+  });
+  assert.deepEqual(result.metricChanges, [{ date: "2026-08-28", metricType: "steps", value: 0 }]);
+  assert.deepEqual(result.deletedBodyMassIds, ["weight-1"]);
+  assert.deepEqual(result.deletedWorkoutIds, ["workout-1"]);
 });

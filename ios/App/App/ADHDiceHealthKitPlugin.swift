@@ -10,7 +10,9 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "isAvailable", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestReadAuthorization", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "readHealthSnapshot", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "readIncrementalHealthChanges", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "prepareIncrementalHealthChanges", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "commitIncrementalHealthChanges", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "discardIncrementalHealthChanges", returnType: CAPPluginReturnPromise)
     ]
 
     private let healthStore = HKHealthStore()
@@ -22,6 +24,8 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
         case unavailable
         case invalidRange(String)
         case invalidScope
+        case invalidSyncToken
+        case conflictingBatch
         case authorizationFailed(String)
         case queryFailed(String)
         case storageFailed(String)
@@ -31,6 +35,8 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
             case .unavailable: return "HEALTHKIT_UNAVAILABLE"
             case .invalidRange: return "HEALTHKIT_INVALID_RANGE"
             case .invalidScope: return "HEALTHKIT_INVALID_SCOPE"
+            case .invalidSyncToken: return "HEALTHKIT_INVALID_SYNC_TOKEN"
+            case .conflictingBatch: return "HEALTHKIT_INCREMENTAL_CONFLICT"
             case .authorizationFailed: return "HEALTHKIT_AUTHORIZATION_FAILED"
             case .queryFailed: return "HEALTHKIT_QUERY_FAILED"
             case .storageFailed: return "HEALTHKIT_STORAGE_FAILED"
@@ -41,6 +47,8 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
             switch self {
             case .unavailable: return "Apple Health is unavailable on this device."
             case .invalidScope: return "An ADHDice account scope key is required for incremental Apple Health reads."
+            case .invalidSyncToken: return "An Apple Health incremental sync token is required."
+            case .conflictingBatch: return "An Apple Health incremental sync is already prepared for this account."
             case .invalidRange(let message), .authorizationFailed(let message), .queryFailed(let message), .storageFailed(let message): return message
             }
         }
@@ -78,10 +86,45 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     private struct IncrementalTypeRead {
-        let added: Int
-        let deleted: Int
+        let addedSamples: [[String: Any]]
+        let deletedObjectIds: [String]
         let anchor: HKQueryAnchor
     }
+
+    private struct StagedIncrementalType {
+        let addedSamples: [[String: Any]]
+        let deletedObjectIds: [String]
+        let anchor: HKQueryAnchor
+        let affectedDates: Set<String>
+        let sampleIndex: [String: [String]]?
+    }
+
+    private struct PendingIncrementalBatch {
+        let scopeKey: String
+        let syncToken: String
+        let anchors: [IncrementalHealthType: HKQueryAnchor]
+        let sampleIndexes: [IncrementalHealthType: [String: [String]]]
+        let payload: [String: Any]
+    }
+
+    private struct IncrementalMetricPayload {
+        let changes: [[String: Any]]
+        let failedTypes: [String: String]
+    }
+
+    private enum StoredIncrementalSampleIndex {
+        case missing
+        case valid([String: [String]])
+        case corrupt
+    }
+
+    private struct CommittedIncrementalState: Codable {
+        var anchors: [String: Data]
+        var sampleIndexes: [String: [String: [String]]]
+    }
+
+    private var pendingIncrementalBatches: [String: PendingIncrementalBatch] = [:]
+    private var preparingIncrementalScopes = Set<String>()
 
     private var readTypes: Set<HKObjectType> {
         var types = Set<HKObjectType>()
@@ -154,7 +197,7 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    @objc func readIncrementalHealthChanges(_ call: CAPPluginCall) {
+    @objc func prepareIncrementalHealthChanges(_ call: CAPPluginCall) {
         guard HKHealthStore.isHealthDataAvailable() else {
             reject(call, BridgeError.unavailable)
             return
@@ -171,20 +214,97 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
 
         incrementalQueue.async { [weak self] in
             guard let self else { return }
+            guard self.pendingIncrementalBatches[scopeKey] == nil,
+                  !self.preparingIncrementalScopes.contains(scopeKey) else {
+                DispatchQueue.main.async { self.reject(call, BridgeError.conflictingBatch) }
+                return
+            }
+            self.preparingIncrementalScopes.insert(scopeKey)
             self.queryIncrementalHealthChanges(scopeKey: scopeKey) { result in
-                DispatchQueue.main.async {
+                self.incrementalQueue.async {
+                    self.preparingIncrementalScopes.remove(scopeKey)
                     switch result {
-                    case .success(let payload): call.resolve(payload)
-                    case .failure(let error): self.reject(call, error)
+                    case .success(let batch):
+                        self.pendingIncrementalBatches[scopeKey] = batch
+                        DispatchQueue.main.async { call.resolve(batch.payload) }
+                    case .failure(let error):
+                        DispatchQueue.main.async { self.reject(call, error) }
                     }
                 }
             }
         }
     }
 
+    @objc func commitIncrementalHealthChanges(_ call: CAPPluginCall) {
+        guard let rawScopeKey = call.getString("scopeKey"),
+              let rawSyncToken = call.getString("syncToken") else {
+            reject(call, BridgeError.invalidSyncToken)
+            return
+        }
+        let scopeKey = rawScopeKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let syncToken = rawSyncToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !scopeKey.isEmpty else {
+            reject(call, BridgeError.invalidScope)
+            return
+        }
+        guard !syncToken.isEmpty else {
+            reject(call, BridgeError.invalidSyncToken)
+            return
+        }
+
+        incrementalQueue.async { [weak self] in
+            guard let self else { return }
+            guard let batch = self.pendingIncrementalBatches[scopeKey], batch.syncToken == syncToken else {
+                DispatchQueue.main.async { self.reject(call, BridgeError.invalidSyncToken) }
+                return
+            }
+            do {
+                var state = self.committedIncrementalState(scopeKey: scopeKey)
+                for (type, anchor) in batch.anchors {
+                    state.anchors[type.rawValue] = try self.archivedAnchorData(anchor)
+                }
+                for (type, index) in batch.sampleIndexes {
+                    state.sampleIndexes[type.rawValue] = index
+                }
+                self.incrementalDefaults.set(try JSONEncoder().encode(state), forKey: self.incrementalStateKey(scopeKey: scopeKey))
+                self.pendingIncrementalBatches.removeValue(forKey: scopeKey)
+                DispatchQueue.main.async { call.resolve(["committed": true, "syncToken": syncToken]) }
+            } catch {
+                DispatchQueue.main.async { self.reject(call, .storageFailed("Apple Health incremental state could not be committed.")) }
+            }
+        }
+    }
+
+    @objc func discardIncrementalHealthChanges(_ call: CAPPluginCall) {
+        guard let rawScopeKey = call.getString("scopeKey"),
+              let rawSyncToken = call.getString("syncToken") else {
+            reject(call, BridgeError.invalidSyncToken)
+            return
+        }
+        let scopeKey = rawScopeKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let syncToken = rawSyncToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !scopeKey.isEmpty else {
+            reject(call, BridgeError.invalidScope)
+            return
+        }
+        guard !syncToken.isEmpty else {
+            reject(call, BridgeError.invalidSyncToken)
+            return
+        }
+        incrementalQueue.async { [weak self] in
+            guard let self else { return }
+            guard let batch = self.pendingIncrementalBatches[scopeKey], batch.syncToken == syncToken else {
+                DispatchQueue.main.async { self.reject(call, BridgeError.invalidSyncToken) }
+                return
+            }
+            self.pendingIncrementalBatches.removeValue(forKey: scopeKey)
+            DispatchQueue.main.async { call.resolve(["discarded": true, "syncToken": syncToken]) }
+        }
+    }
+
     private func queryIncrementalHealthChanges(
         scopeKey: String,
-        completion: @escaping (Result<[String: Any], BridgeError>) -> Void
+        completion: @escaping (Result<PendingIncrementalBatch, BridgeError>) -> Void
     ) {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .autoupdatingCurrent
@@ -200,9 +320,10 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
             }
         }
 
+        let syncToken = UUID().uuidString
         let group = DispatchGroup()
         let lock = NSLock()
-        var typeResults: [String: [String: Any]] = [:]
+        var stagedTypes: [IncrementalHealthType: StagedIncrementalType] = [:]
         var failedTypes: [String: String] = [:]
 
         func recordFailure(_ type: IncrementalHealthType, _ message: String) {
@@ -217,51 +338,96 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
                 return
             }
             group.enter()
-            queryIncrementalType(sampleType: sampleType, anchor: anchors[type], baselineStartDate: baselineStartDate) { result in
+            queryIncrementalType(type: type, sampleType: sampleType, anchor: anchors[type], baselineStartDate: baselineStartDate) { result in
                 switch result {
                 case .success(let read):
-                    lock.lock()
-                    typeResults[type.rawValue] = ["added": read.added, "deleted": read.deleted]
-                    lock.unlock()
-                    do {
-                        try self.saveIncrementalAnchor(read.anchor, scopeKey: scopeKey, type: type)
-                    } catch {
-                        recordFailure(type, "Apple Health \(type.rawValue) anchor could not be saved.")
+                    let indexState = self.indexedType(type) ? self.loadIncrementalSampleIndex(scopeKey: scopeKey, type: type) : .valid([:])
+                    self.stageIncrementalTypeRead(type: type, read: read, indexState: indexState, baselineStartDate: baselineStartDate, calendar: calendar) { stagedResult in
+                        switch stagedResult {
+                        case .success(let staged):
+                            lock.lock()
+                            stagedTypes[type] = staged
+                            lock.unlock()
+                        case .failure(let error):
+                            recordFailure(type, error.localizedDescription)
+                        }
+                        group.leave()
                     }
                 case .failure(let error):
-                    recordFailure(type, error.localizedDescription ?? "Apple Health \(type.rawValue) query failed.")
+                    recordFailure(type, error.localizedDescription)
+                    group.leave()
                 }
-                group.leave()
             }
         }
 
         group.notify(queue: incrementalQueue) {
             lock.lock()
-            let results = typeResults
+            let reads = stagedTypes
             let failures = failedTypes
             lock.unlock()
 
-            var types: [String: Any] = [:]
-            var totalAdded = 0
-            var totalDeleted = 0
-            IncrementalHealthType.allCases.forEach { type in
-                let result = results[type.rawValue] ?? ["added": 0, "deleted": 0]
-                types[type.rawValue] = result
-                totalAdded += result["added"] as? Int ?? 0
-                totalDeleted += result["deleted"] as? Int ?? 0
+            self.queryIncrementalMetricChanges(stagedTypes: reads, baselineStartDate: baselineStartDate, calendar: calendar) { metricResult in
+                switch metricResult {
+                case .failure(let error): completion(.failure(error))
+                case .success(let metricPayload):
+                    var successfulReads = reads
+                    var allFailures = failures
+                    metricPayload.failedTypes.forEach { type, message in
+                        allFailures[type] = message
+                        if let healthType = self.healthType(forMetricType: type) {
+                            successfulReads.removeValue(forKey: healthType)
+                        }
+                    }
+                    var types: [String: Any] = [:]
+                    var totalAdded = 0
+                    var totalDeleted = 0
+                    var anchors: [IncrementalHealthType: HKQueryAnchor] = [:]
+                    var sampleIndexes: [IncrementalHealthType: [String: [String]]] = [:]
+                    var bodyMass: [[String: Any]] = []
+                    var workouts: [[String: Any]] = []
+                    var deletedBodyMassIds: [String] = []
+                    var deletedWorkoutIds: [String] = []
+                    IncrementalHealthType.allCases.forEach { type in
+                        types[type.rawValue] = ["added": 0, "deleted": 0]
+                    }
+                    successfulReads.forEach { type, staged in
+                        let added = staged.addedSamples.count
+                        let deleted = staged.deletedObjectIds.count
+                        types[type.rawValue] = ["added": added, "deleted": deleted]
+                        totalAdded += added
+                        totalDeleted += deleted
+                        anchors[type] = staged.anchor
+                        if let index = staged.sampleIndex { sampleIndexes[type] = index }
+                        if type == .bodyMass {
+                            bodyMass.append(contentsOf: staged.addedSamples)
+                            deletedBodyMassIds.append(contentsOf: staged.deletedObjectIds)
+                        } else if type == .workouts {
+                            workouts.append(contentsOf: staged.addedSamples)
+                            deletedWorkoutIds.append(contentsOf: staged.deletedObjectIds)
+                        }
+                    }
+                    let payload: [String: Any] = [
+                        "syncToken": syncToken,
+                        "initialized": initialized,
+                        "baselineStartDate": self.iso8601String(from: baselineStartDate),
+                        "types": types,
+                        "totalAdded": totalAdded,
+                        "totalDeleted": totalDeleted,
+                        "failedTypes": allFailures,
+                        "metricChanges": metricPayload.changes,
+                        "bodyMass": bodyMass,
+                        "deletedBodyMassIds": deletedBodyMassIds,
+                        "workouts": workouts,
+                        "deletedWorkoutIds": deletedWorkoutIds
+                    ]
+                    completion(.success(PendingIncrementalBatch(scopeKey: scopeKey, syncToken: syncToken, anchors: anchors, sampleIndexes: sampleIndexes, payload: payload)))
+                }
             }
-            completion(.success([
-                "initialized": initialized,
-                "baselineStartDate": self.iso8601String(from: baselineStartDate),
-                "types": types,
-                "totalAdded": totalAdded,
-                "totalDeleted": totalDeleted,
-                "failedTypes": failures
-            ]))
         }
     }
 
     private func queryIncrementalType(
+        type: IncrementalHealthType,
         sampleType: HKSampleType,
         anchor: HKQueryAnchor?,
         baselineStartDate: Date,
@@ -282,13 +448,212 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
                 completion(.failure(.queryFailed("Apple Health returned no replacement anchor.")))
                 return
             }
+            let rawSamples = samples ?? []
+            let addedSamples = rawSamples.compactMap { self.serializeIncrementalSample($0, type: type) }
+            guard addedSamples.count == rawSamples.count else {
+                completion(.failure(.queryFailed("Apple Health returned an invalid \(type.rawValue) sample.")))
+                return
+            }
             completion(.success(IncrementalTypeRead(
-                added: samples?.count ?? 0,
-                deleted: deletedObjects?.count ?? 0,
+                addedSamples: addedSamples,
+                deletedObjectIds: (deletedObjects ?? []).map { $0.uuid.uuidString },
                 anchor: newAnchor
             )))
         }
         healthStore.execute(query)
+    }
+
+    private func stageIncrementalTypeRead(
+        type: IncrementalHealthType,
+        read: IncrementalTypeRead,
+        indexState: StoredIncrementalSampleIndex,
+        baselineStartDate: Date,
+        calendar: Calendar,
+        completion: @escaping (Result<StagedIncrementalType, BridgeError>) -> Void
+    ) {
+        let finish: ([String: [String]]) -> Void = { baseIndex in
+            var sampleIndex = baseIndex
+            var affectedDates = Set<String>()
+            if self.indexedType(type) {
+                for sample in read.addedSamples {
+                    guard let id = sample["id"] as? String,
+                          let startString = sample["startDate"] as? String,
+                          let start = self.parseDate(startString) else {
+                        completion(.failure(.queryFailed("Apple Health \(type.rawValue) sample dates could not be indexed.")))
+                        return
+                    }
+                    let end = (sample["endDate"] as? String).flatMap(self.parseDate) ?? start
+                    let dates = self.localDateKeys(start: start, end: end, calendar: calendar)
+                    sampleIndex[id] = dates
+                    affectedDates.formUnion(dates)
+                }
+                for deletedId in read.deletedObjectIds {
+                    guard let dates = sampleIndex[deletedId] else {
+                        completion(.failure(.queryFailed("Apple Health \(type.rawValue) deletion \(deletedId) is not mapped to a local date.")))
+                        return
+                    }
+                    affectedDates.formUnion(dates)
+                    sampleIndex.removeValue(forKey: deletedId)
+                }
+            }
+            completion(.success(StagedIncrementalType(
+                addedSamples: read.addedSamples,
+                deletedObjectIds: read.deletedObjectIds,
+                anchor: read.anchor,
+                affectedDates: affectedDates,
+                sampleIndex: self.indexedType(type) ? sampleIndex : nil
+            )))
+        }
+        switch indexState {
+        case .valid(let index): finish(index)
+        case .missing, .corrupt:
+            guard self.indexedType(type) else { finish([:]); return }
+            let predicate = HKQuery.predicateForSamples(withStart: baselineStartDate, end: nil, options: .strictStartDate)
+            self.queryIncrementalSampleIndex(type: type, predicate: predicate) { result in
+                switch result {
+                case .success(let index): finish(index)
+                case .failure(let error): completion(.failure(error))
+                }
+            }
+        }
+    }
+
+    private func indexedType(_ type: IncrementalHealthType) -> Bool {
+        type == .steps || type == .activeEnergy || type == .exerciseTime || type == .sleep
+    }
+
+    private func healthType(forMetricType metricType: String) -> IncrementalHealthType? {
+        switch metricType {
+        case "steps": return .steps
+        case "active_energy_kcal": return .activeEnergy
+        case "exercise_minutes": return .exerciseTime
+        case "sleep_minutes": return .sleep
+        default: return nil
+        }
+    }
+
+    private func localDateKeys(start: Date, end: Date, calendar: Calendar) -> [String] {
+        let effectiveEnd = max(start, end)
+        var dates: [String] = []
+        var cursor = start
+        repeat {
+            dates.append(calendar.dateKey(for: cursor))
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: cursor)) else { break }
+            cursor = nextDay
+        } while cursor < effectiveEnd
+        return dates
+    }
+
+    private func serializeIncrementalSample(_ sample: HKSample, type: IncrementalHealthType) -> [String: Any]? {
+        var payload: [String: Any] = [
+            "id": sample.uuid.uuidString,
+            "startDate": iso8601String(from: sample.startDate),
+            "endDate": iso8601String(from: sample.endDate)
+        ]
+        switch type {
+        case .bodyMass:
+            guard let quantitySample = sample as? HKQuantitySample else { return nil }
+            let weightKg = quantitySample.quantity.doubleValue(for: .gramUnit(with: .kilo))
+            guard weightKg > 0, weightKg.isFinite else { return nil }
+            payload["timestamp"] = iso8601String(from: sample.startDate)
+            payload["weightKg"] = weightKg
+        case .workouts:
+            guard let workout = sample as? HKWorkout, workout.duration > 0 else { return nil }
+            payload["activityType"] = workout.workoutActivityType.rawValue
+            payload["activityLabel"] = activityLabel(for: workout.workoutActivityType)
+            payload["durationSeconds"] = workout.duration
+            if let calories = workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()) {
+                payload["activeCaloriesKcal"] = calories
+            } else {
+                payload["activeCaloriesKcal"] = NSNull()
+            }
+        case .sleep:
+            guard let categorySample = sample as? HKCategorySample else { return nil }
+            payload["value"] = categorySample.value
+        case .steps, .activeEnergy, .exerciseTime:
+            break
+        }
+        return payload
+    }
+
+    private func queryIncrementalSampleIndex(
+        type: IncrementalHealthType,
+        predicate: NSPredicate,
+        completion: @escaping (Result<[String: [String]], BridgeError>) -> Void
+    ) {
+        guard let sampleType = type.sampleType else {
+            completion(.failure(.queryFailed("Apple Health does not support \(type.rawValue).")))
+            return
+        }
+        let query = HKSampleQuery(sampleType: sampleType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+            if let error {
+                completion(.failure(.queryFailed(error.localizedDescription)))
+                return
+            }
+            var index: [String: [String]] = [:]
+            for sample in samples ?? [] {
+                let dates = self.localDateKeys(start: sample.startDate, end: sample.endDate, calendar: Calendar.autoupdatingCurrent)
+                index[sample.uuid.uuidString] = dates
+            }
+            completion(.success(index))
+        }
+        healthStore.execute(query)
+    }
+
+    private func queryIncrementalMetricChanges(
+        stagedTypes: [IncrementalHealthType: StagedIncrementalType],
+        baselineStartDate: Date,
+        calendar: Calendar,
+        completion: @escaping (Result<IncrementalMetricPayload, BridgeError>) -> Void
+    ) {
+        let endDate = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
+        let range = DateRange(start: baselineStartDate, end: endDate, calendar: calendar)
+        let metricTypes: [(IncrementalHealthType, String)] = [
+            (.steps, "steps"),
+            (.activeEnergy, "active_energy_kcal"),
+            (.exerciseTime, "exercise_minutes"),
+            (.sleep, "sleep_minutes")
+        ]
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var valuesByMetricType: [String: [String: Double]] = [:]
+        var failedTypes: [String: String] = [:]
+
+        metricTypes.forEach { healthType, metricType in
+            guard let affectedDates = stagedTypes[healthType]?.affectedDates, !affectedDates.isEmpty else { return }
+            group.enter()
+            let resultHandler: (Result<[String: Double], BridgeError>) -> Void = { result in
+                lock.lock()
+                switch result {
+                case .success(let values): valuesByMetricType[metricType] = values
+                case .failure(let error): failedTypes[healthType.rawValue] = error.localizedDescription
+                }
+                lock.unlock()
+                group.leave()
+            }
+            switch healthType {
+            case .steps: queryDailyQuantity(.stepCount, unit: .count(), predicate: HKQuery.predicateForSamples(withStart: baselineStartDate, end: nil, options: .strictStartDate), range: range, completion: resultHandler)
+            case .activeEnergy: queryDailyQuantity(.activeEnergyBurned, unit: .kilocalorie(), predicate: HKQuery.predicateForSamples(withStart: baselineStartDate, end: nil, options: .strictStartDate), range: range, completion: resultHandler)
+            case .exerciseTime: queryDailyQuantity(.appleExerciseTime, unit: .minute(), predicate: HKQuery.predicateForSamples(withStart: baselineStartDate, end: nil, options: .strictStartDate), range: range, completion: resultHandler)
+            case .sleep: querySleep(range: range, completion: resultHandler)
+            case .bodyMass, .workouts: group.leave()
+            }
+        }
+        group.notify(queue: incrementalQueue) {
+            lock.lock()
+            let values = valuesByMetricType
+            let failures = failedTypes
+            lock.unlock()
+            var changes: [[String: Any]] = []
+            metricTypes.forEach { healthType, metricType in
+                guard let dates = stagedTypes[healthType]?.affectedDates, failures[healthType.rawValue] == nil else { return }
+                let dailyValues = values[metricType] ?? [:]
+                dates.sorted().forEach { date in
+                    changes.append(["date": date, "metricType": metricType, "value": dailyValues[date] ?? 0])
+                }
+            }
+            completion(.success(IncrementalMetricPayload(changes: changes, failedTypes: failures)))
+        }
     }
 
     private enum StoredIncrementalAnchor {
@@ -298,6 +663,17 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     private func loadIncrementalAnchor(scopeKey: String, type: IncrementalHealthType) -> StoredIncrementalAnchor {
+        if let state = loadCommittedIncrementalState(scopeKey: scopeKey),
+           let data = state.anchors[type.rawValue] {
+            do {
+                guard let anchor = try NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data) else {
+                    return .corrupt
+                }
+                return .valid(anchor)
+            } catch {
+                return .corrupt
+            }
+        }
         let key = incrementalAnchorKey(scopeKey: scopeKey, type: type)
         guard let data = incrementalDefaults.data(forKey: key) else { return .missing }
         do {
@@ -312,9 +688,43 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func saveIncrementalAnchor(_ anchor: HKQueryAnchor, scopeKey: String, type: IncrementalHealthType) throws {
-        let data = try NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true)
-        incrementalDefaults.set(data, forKey: incrementalAnchorKey(scopeKey: scopeKey, type: type))
+    private func loadIncrementalSampleIndex(scopeKey: String, type: IncrementalHealthType) -> StoredIncrementalSampleIndex {
+        if let state = loadCommittedIncrementalState(scopeKey: scopeKey),
+           let index = state.sampleIndexes[type.rawValue] {
+            return .valid(index)
+        }
+        guard let data = incrementalDefaults.data(forKey: incrementalSampleIndexKey(scopeKey: scopeKey, type: type)) else { return .missing }
+        do {
+            return .valid(try JSONDecoder().decode([String: [String]].self, from: data))
+        } catch {
+            return .corrupt
+        }
+    }
+
+    private func archivedAnchorData(_ anchor: HKQueryAnchor) throws -> Data {
+        try NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true)
+    }
+
+    private func loadCommittedIncrementalState(scopeKey: String) -> CommittedIncrementalState? {
+        guard let data = incrementalDefaults.data(forKey: incrementalStateKey(scopeKey: scopeKey)) else { return nil }
+        return try? JSONDecoder().decode(CommittedIncrementalState.self, from: data)
+    }
+
+    private func committedIncrementalState(scopeKey: String) -> CommittedIncrementalState {
+        if let state = loadCommittedIncrementalState(scopeKey: scopeKey) {
+            return state
+        }
+        var state = CommittedIncrementalState(anchors: [:], sampleIndexes: [:])
+        IncrementalHealthType.allCases.forEach { type in
+            if let data = incrementalDefaults.data(forKey: incrementalAnchorKey(scopeKey: scopeKey, type: type)) {
+                state.anchors[type.rawValue] = data
+            }
+            if let data = incrementalDefaults.data(forKey: incrementalSampleIndexKey(scopeKey: scopeKey, type: type)),
+               let index = try? JSONDecoder().decode([String: [String]].self, from: data) {
+                state.sampleIndexes[type.rawValue] = index
+            }
+        }
+        return state
     }
 
     private func incrementalBaselineStartDate(scopeKey: String, calendar: Calendar) -> Date {
@@ -339,6 +749,14 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func incrementalBaselineKey(scopeKey: String) -> String {
         "\(incrementalStoragePrefix(scopeKey: scopeKey)).baselineStartDate"
+    }
+
+    private func incrementalSampleIndexKey(scopeKey: String, type: IncrementalHealthType) -> String {
+        "\(incrementalStoragePrefix(scopeKey: scopeKey)).sample-index.\(type.rawValue)"
+    }
+
+    private func incrementalStateKey(scopeKey: String) -> String {
+        "\(incrementalStoragePrefix(scopeKey: scopeKey)).state"
     }
 
     private func iso8601String(from date: Date) -> String {
@@ -638,7 +1056,7 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     private func reject(_ call: CAPPluginCall, _ error: BridgeError) {
-        call.reject(error.localizedDescription ?? "Apple Health operation failed.", error.code)
+        call.reject(error.localizedDescription, error.code)
     }
 }
 

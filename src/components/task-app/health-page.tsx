@@ -58,7 +58,7 @@ import {
 } from "@/lib/health-apple-import";
 import type { HealthImportSaveProgress } from "@/hooks/useHealth";
 import type { HealthKitSnapshot } from "@/lib/healthkit";
-import type { HealthKitSyncResult } from "@/lib/healthkit-sync";
+import type { HealthKitIncrementalSyncResult, HealthKitSyncResult } from "@/lib/healthkit-sync";
 import type { HealthWorkoutSessionDetails, HealthWorkoutSessionSaveResult } from "@/hooks/useFitnessSessionDetails";
 import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
 import {
@@ -184,6 +184,7 @@ type HealthPageProps = {
   ) => Promise<boolean>;
   healthKitScopeKey: string | null;
   syncAppleHealthData: (snapshot: HealthKitSnapshot) => Promise<HealthKitSyncResult | null>;
+  syncIncrementalAppleHealthData: () => Promise<HealthKitIncrementalSyncResult | null>;
   isLoading: boolean;
   focusCategories: FocusCategory[];
   focusHistory: HistoricalFocusSession[];
@@ -374,6 +375,7 @@ export function HealthPage({
   importAppleHealthData,
   healthKitScopeKey,
   syncAppleHealthData,
+  syncIncrementalAppleHealthData,
   isLoading,
   focusCategories,
   focusHistory,
@@ -2312,7 +2314,7 @@ export function HealthPage({
 
       {activeTab === "Insights" ? (
         <div aria-labelledby="health-tab-insights" className="mt-6 grid gap-5 xl:grid-cols-[1.05fr_0.95fr]" id={getHealthTabPanelId("Insights")} role="tabpanel">
-          <AppleHealthNativeSection key={healthKitScopeKey ?? "signed-out"} healthKitScopeKey={healthKitScopeKey} syncAppleHealthData={syncAppleHealthData} />
+          <AppleHealthNativeSection key={healthKitScopeKey ?? "signed-out"} healthKitScopeKey={healthKitScopeKey} syncAppleHealthData={syncAppleHealthData} syncIncrementalAppleHealthData={syncIncrementalAppleHealthData} />
           <HealthPanel icon={<Apple />} subtitle="Import pathway" title="Apple Health groundwork">
             <div className="rounded-[1.5rem] border border-dashed border-[#d6def4] bg-[#fbfcff] p-5 dark:border-white/10 dark:bg-white/[0.03]">
               <p className="text-sm font-semibold text-[#22304b] dark:text-white">Upload an Apple Health export to preview what Health can import.</p>

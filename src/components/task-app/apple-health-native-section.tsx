@@ -9,21 +9,20 @@ import {
   checkHealthKitAvailability,
   getDefaultHealthKitDateRange,
   getHealthKitDateKey,
-  readHealthKitIncrementalChanges,
   readHealthKitSnapshot,
   requestHealthKitReadAuthorization,
   type HealthKitAvailability,
   type HealthKitAuthorizationResult,
-  type HealthKitIncrementalResult,
   type HealthKitSnapshot,
 } from "@/lib/healthkit";
-import type { HealthKitSyncResult } from "@/lib/healthkit-sync";
+import type { HealthKitIncrementalSyncResult, HealthKitSyncResult } from "@/lib/healthkit-sync";
 
 type DiagnosticState = "checking" | "ready" | "requesting" | "reading" | "unavailable" | "error";
 
 type AppleHealthNativeSectionProps = {
   healthKitScopeKey: string | null;
   syncAppleHealthData: (snapshot: HealthKitSnapshot) => Promise<HealthKitSyncResult | null>;
+  syncIncrementalAppleHealthData: () => Promise<HealthKitIncrementalSyncResult | null>;
 };
 
 function formatNumber(value: number | null | undefined, suffix = "") {
@@ -34,13 +33,13 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Apple Health is not available right now.";
 }
 
-export function AppleHealthNativeSection({ healthKitScopeKey, syncAppleHealthData }: AppleHealthNativeSectionProps) {
+export function AppleHealthNativeSection({ healthKitScopeKey, syncAppleHealthData, syncIncrementalAppleHealthData }: AppleHealthNativeSectionProps) {
   const [availability, setAvailability] = useState<HealthKitAvailability | null>(null);
   const [diagnosticState, setDiagnosticState] = useState<DiagnosticState>("checking");
   const [authorization, setAuthorization] = useState<HealthKitAuthorizationResult | null>(null);
   const [snapshot, setSnapshot] = useState<HealthKitSnapshot | null>(null);
   const [syncResult, setSyncResult] = useState<HealthKitSyncResult | null>(null);
-  const [incrementalResult, setIncrementalResult] = useState<HealthKitIncrementalResult | null>(null);
+  const [incrementalResult, setIncrementalResult] = useState<HealthKitIncrementalSyncResult | null>(null);
   const [incrementalError, setIncrementalError] = useState<string | null>(null);
   const [incrementalReading, setIncrementalReading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,7 +104,12 @@ export function AppleHealthNativeSection({ healthKitScopeKey, syncAppleHealthDat
     setIncrementalReading(true);
     setIncrementalError(null);
     try {
-      setIncrementalResult(await readHealthKitIncrementalChanges(healthKitScopeKey));
+      const result = await syncIncrementalAppleHealthData();
+      if (!result) {
+        setIncrementalError("Incremental Apple Health sync did not complete.");
+        return;
+      }
+      setIncrementalResult(result);
     } catch (caughtError) {
       setIncrementalError(errorMessage(caughtError));
     } finally {
@@ -157,16 +161,16 @@ export function AppleHealthNativeSection({ healthKitScopeKey, syncAppleHealthDat
       <div className="mt-4 flex flex-wrap gap-2">
         <AdhdChip disabled={!availability?.available || diagnosticState === "checking" || diagnosticState === "requesting" || diagnosticState === "reading"} onClick={() => { void connectAppleHealth(); }} tone="purple">Connect Apple Health</AdhdChip>
         <AdhdChip disabled={!availability?.available || diagnosticState === "checking" || diagnosticState === "requesting" || diagnosticState === "reading"} onClick={() => { void readAppleHealth(); }}>Sync Apple Health</AdhdChip>
-        <AdhdChip disabled={!availability?.available || !healthKitScopeKey || incrementalReading || diagnosticState === "checking" || diagnosticState === "requesting" || diagnosticState === "reading"} onClick={() => { void readIncrementalAppleHealth(); }}>Test Incremental Read</AdhdChip>
+        <AdhdChip disabled={!availability?.available || !healthKitScopeKey || incrementalReading || diagnosticState === "checking" || diagnosticState === "requesting" || diagnosticState === "reading"} onClick={() => { void readIncrementalAppleHealth(); }}>Sync Incremental Apple Health</AdhdChip>
       </div>
       {incrementalError ? <p className="mt-2 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{incrementalError}</p> : null}
       {incrementalResult ? (
         <div className="mt-3 rounded-[1rem] border border-[#edf0fb] bg-white/80 px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]">
           <p className="text-xs font-black text-[#1e2744] dark:text-white">
-            Incremental: {incrementalResult.totalAdded} added · {incrementalResult.totalDeleted} deleted
+            Incremental sync: {incrementalResult.totalChanges} changes saved
           </p>
           <p className="mt-1 text-[10px] font-semibold text-[#8d87a7] dark:text-white/45">
-            {incrementalResult.initialized ? "Initial anchors established" : "Existing anchors advanced"} · {Object.entries(incrementalResult.types).map(([type, result]) => `${type} +${result.added}/-${result.deleted}`).join(" · ")}
+            {incrementalResult.metrics} metrics · {incrementalResult.weightsAdded} weights added · {incrementalResult.weightsDeleted} weights deleted · {incrementalResult.workoutsAdded} workouts added · {incrementalResult.workoutsDeleted} workouts deleted
           </p>
           {Object.entries(incrementalResult.failedTypes).length > 0 ? (
             <p className="mt-1 text-[10px] font-semibold text-[#c54c68] dark:text-[#ffb0c1]">
