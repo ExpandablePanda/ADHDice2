@@ -153,6 +153,7 @@ import { HealthCalorieLineChart } from "./health-calorie-line-chart";
 import { HealthSleepLineChart } from "./health-sleep-line-chart";
 import { HealthWaterPanel } from "./health-water-panel";
 import { HealthFitnessTab } from "./health-fitness-tab";
+import { AppleHealthNativeSection } from "./apple-health-native-section";
 import { PageShellHeader } from "./page-shell-header";
 
 type HealthPageProps = {
@@ -2305,6 +2306,7 @@ export function HealthPage({
 
       {activeTab === "Insights" ? (
         <div aria-labelledby="health-tab-insights" className="mt-6 grid gap-5 xl:grid-cols-[1.05fr_0.95fr]" id={getHealthTabPanelId("Insights")} role="tabpanel">
+          <AppleHealthNativeSection />
           <HealthPanel icon={<Apple />} subtitle="Import pathway" title="Apple Health groundwork">
             <div className="rounded-[1.5rem] border border-dashed border-[#d6def4] bg-[#fbfcff] p-5 dark:border-white/10 dark:bg-white/[0.03]">
               <p className="text-sm font-semibold text-[#22304b] dark:text-white">Upload an Apple Health export to preview what Health can import.</p>

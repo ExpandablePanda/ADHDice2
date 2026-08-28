@@ -20,6 +20,8 @@
 	<string>APPL</string>
 	<key>NSCameraUsageDescription</key>
 	<string>ADHDice uses the camera to scan food barcodes.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>ADHDice reads Apple Health activity, fitness, sleep, and body measurements to display them in your ADHDice Health and Fitness experience.</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
