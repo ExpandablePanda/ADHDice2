@@ -352,7 +352,7 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
                 var value: [String: Any] = [
                     "id": workout.uuid.uuidString,
                     "activityType": workout.workoutActivityType.rawValue,
-                    "activityLabel": self.activityLabel(for: workout.workoutActivityType.rawValue),
+                    "activityLabel": self.activityLabel(for: workout.workoutActivityType),
                     "startDate": ISO8601DateFormatter().string(from: workout.startDate),
                     "endDate": ISO8601DateFormatter().string(from: workout.endDate),
                     "durationSeconds": workout.duration
@@ -369,15 +369,46 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
         healthStore.execute(query)
     }
 
-    private func isAsleepStage(_ value: Int) -> Bool {
-        [1, 3, 4, 5, 6].contains(value)
+    private func isAsleepStage(_ rawValue: Int) -> Bool {
+        guard let value = HKCategoryValueSleepAnalysis(rawValue: rawValue) else { return false }
+        if value == .inBed || value == .awake {
+            return false
+        }
+        if value == .asleep {
+            return true
+        }
+        if #available(iOS 16.0, *) {
+            return value == .asleepUnspecified
+                || value == .asleepCore
+                || value == .asleepDeep
+                || value == .asleepREM
+        }
+        return false
     }
 
-    private func activityLabel(for rawValue: UInt) -> String {
-        let labels: [UInt: String] = [
-            13: "Cycling", 24: "Hiking", 37: "Running", 49: "Swimming", 51: "Tennis", 55: "Walking", 59: "Yoga"
-        ]
-        return labels[rawValue] ?? "Activity \(rawValue)"
+    private func activityLabel(for activityType: HKWorkoutActivityType) -> String {
+        switch activityType {
+        case .walking: return "Walking"
+        case .running: return "Running"
+        case .cycling: return "Cycling"
+        case .hiking: return "Hiking"
+        case .swimming: return "Swimming"
+        case .yoga: return "Yoga"
+        case .traditionalStrengthTraining: return "Traditional Strength Training"
+        case .functionalStrengthTraining: return "Functional Strength Training"
+        case .coreTraining: return "Core Training"
+        case .highIntensityIntervalTraining: return "High-Intensity Interval Training"
+        case .elliptical: return "Elliptical"
+        case .stairClimbing, .stairs: return "Stair Climbing"
+        case .rowing: return "Rowing"
+        case .flexibility: return "Flexibility"
+        case .cooldown: return "Cooldown"
+        case .mixedCardio: return "Mixed Cardio"
+        case .crossTraining: return "Cross Training"
+        case .pilates: return "Pilates"
+        case .other: return "Other"
+        @unknown default: return "Activity \(activityType.rawValue)"
+        }
     }
 
     private func reject(_ call: CAPPluginCall, _ error: BridgeError) {
