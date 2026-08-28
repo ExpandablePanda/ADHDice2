@@ -127,6 +127,7 @@ import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievementNotifications, useAchievementProgress } from "@/hooks/useAchievementProgress";
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { useHealth } from "@/hooks/useHealth";
+import { useFitnessGoals } from "@/hooks/useFitnessGoals";
 import { useFitnessPlans } from "@/hooks/useFitnessPlans";
 import { useFitnessSessionDetails } from "@/hooks/useFitnessSessionDetails";
 import { useScratchNotes } from "@/hooks/useScratchNotes";
@@ -166,14 +167,20 @@ import {
 } from "@/lib/focus-utils";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { createBrowserSupabaseClient, subscribeToBrowserAuth } from "@/lib/supabase";
-import { readHealthTabPreference, subscribeToHealthTabPreference } from "@/lib/health-tab-preference";
+import { persistHealthTabPreference, readHealthTabPreference, subscribeToHealthTabPreference } from "@/lib/health-tab-preference";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { getLevelProgress } from "@/lib/economy-levels";
-import { buildHealthReminderTemplate, type HealthReminderTemplateKey, type HealthSleepKind } from "@/lib/health-utils";
+import { buildHealthReminderTemplate, HEALTH_TABS, type HealthReminderTemplateKey, type HealthSleepKind } from "@/lib/health-utils";
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { sortTasksForUi } from "@/lib/task-sorting";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "@/lib/task-filter-state";
+import {
+  createNavigatorSearchTargets,
+  type NavigatorSearchAction,
+  type NavigatorSearchTarget,
+  type NavigatorSettingsSection,
+} from "@/lib/navigator-search";
 import { appendTaskListRuleRow, removeTaskListRuleRow, summarizeTaskListRules, updateTaskListRuleRow, updateTaskListRuleRowConnector } from "@/lib/task-list-rule-editor";
 import {
   normalizeTaskGridLayout,
@@ -248,6 +255,7 @@ import {
   type ChildTaskPreviewLookup,
 } from "@/lib/task-app-derived";
 import { buildStableTaskSearchScope, queryTaskSearch, shouldRunTaskSearch } from "@/lib/task-search-selector";
+import { createPendingTaskMutationTracker } from "@/lib/task-pending-mutations";
 import { createStableTaskRowModelCache } from "@/lib/task-table-row";
 import {
   createTaskRolloverReplayIdentity,
@@ -267,6 +275,7 @@ import {
 } from "@/lib/stable-task-projection";
 import {
   buildCompleteHistoryPayload,
+  canTaskDelay,
   canTaskBeMarkedComplete,
   COMPLETE_BLOCKED_MESSAGE,
   getTaskCompleteConfirmationDescription,
@@ -580,7 +589,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.11.72";
+const APP_VERSION = "7.11.92";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1068,6 +1077,7 @@ const dockIcons: Record<AppPage, string> = {
   Settings: "Monitor",
   Test: "FlaskConical",
 };
+const navigatorSearchTargets = createNavigatorSearchTargets(dockItems, HEALTH_TABS);
 const TASK_GRID_MAX_COLUMNS = 4;
 const TASK_GRID_TABLET_COLUMNS = 2;
 const TASK_GRID_PHONE_COLUMNS = 1;
@@ -1299,6 +1309,19 @@ export function TaskApp() {
   } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health");
   const activeHealthTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const fitnessHooksActive = activePage === "Health" && activeHealthTab === "Fitness";
+  const {
+    archiveGoal: archiveFitnessGoal,
+    createGoal: createFitnessGoal,
+    createLevel: createFitnessGoalLevel,
+    deleteLevel: deleteFitnessGoalLevel,
+    error: fitnessGoalsError,
+    goals: fitnessGoals,
+    isLoading: fitnessGoalsLoading,
+    levels: fitnessGoalLevels,
+    restoreGoal: restoreFitnessGoal,
+    updateGoal: updateFitnessGoal,
+    updateLevel: updateFitnessGoalLevel,
+  } = useFitnessGoals(supabase, session?.user?.id ?? null, setMessage, fitnessHooksActive);
   const {
     archivePlan: archiveFitnessPlan,
     archivePlanItem: archiveFitnessPlanItem,
@@ -1565,6 +1588,7 @@ export function TaskApp() {
   const [showBackToTop, setShowBackToTop] = useState(false);
   const profile = useProfileStore();
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [requestedSettingsSection, setRequestedSettingsSection] = useState<NavigatorSettingsSection | null>(null);
   const [isListColumnMenuOpen, setIsListColumnMenuOpen] = useState(false);
   const [isKeyboardShortcutsMenuOpen, setIsKeyboardShortcutsMenuOpen] = useState(false);
   const [isTaskListSettingsOpen, setIsTaskListSettingsOpen] = useState(false);
@@ -1651,7 +1675,7 @@ export function TaskApp() {
   const focusAlarmHydratedUserIdRef = useRef<string | null>(null);
   const focusAlarmPreviousSettingsRef = useRef<{ enabled: boolean; intervalMinutes: number } | null>(null);
   const focusAlarmSkipNextPersistRef = useRef(false);
-  const pendingTaskMutationExpirationsRef = useRef<Map<string, number>>(new Map());
+  const pendingTaskMutationTrackerRef = useRef(createPendingTaskMutationTracker());
   const canonicalTaskMutationStateRef = useRef<TaskCanonicalMutationState>({
     mutationsInFlight: new Map(),
     taskSnapshots: new Map(),
@@ -1682,36 +1706,23 @@ export function TaskApp() {
   }
 
   const markPendingTaskMutations = useCallback((taskIds: string[]) => {
-    const expiresAt = Date.now() + 10_000;
-    for (const taskId of taskIds) {
-      pendingTaskMutationExpirationsRef.current.set(taskId, expiresAt);
-    }
+    pendingTaskMutationTrackerRef.current.markPendingTaskMutations(taskIds);
   }, []);
 
   const clearPendingTaskMutations = useCallback((taskIds: string[]) => {
-    for (const taskId of taskIds) {
-      pendingTaskMutationExpirationsRef.current.delete(taskId);
-    }
+    pendingTaskMutationTrackerRef.current.clearPendingTaskMutations(taskIds);
+  }, []);
+
+  const beginPendingTaskMutationScope = useCallback((taskIds: string[]) => {
+    pendingTaskMutationTrackerRef.current.beginPendingTaskMutationScope(taskIds);
+  }, []);
+
+  const endPendingTaskMutationScope = useCallback((taskIds: string[]) => {
+    pendingTaskMutationTrackerRef.current.endPendingTaskMutationScope(taskIds);
   }, []);
 
   const shouldSkipTaskReload = useCallback((change: { eventType: string; taskId: string | null }) => {
-    const taskId = change.taskId;
-    if (!taskId) {
-      return false;
-    }
-
-    const expiresAt = pendingTaskMutationExpirationsRef.current.get(taskId);
-    if (!expiresAt) {
-      return false;
-    }
-
-    if (expiresAt < Date.now()) {
-      pendingTaskMutationExpirationsRef.current.delete(taskId);
-      return false;
-    }
-
-    pendingTaskMutationExpirationsRef.current.delete(taskId);
-    return true;
+    return pendingTaskMutationTrackerRef.current.shouldSkipTaskReload(change);
   }, []);
   const listColumnMenuRef = useRef<HTMLDivElement | null>(null);
   const keyboardShortcutsMenuRef = useRef<HTMLDivElement | null>(null);
@@ -2715,6 +2726,14 @@ export function TaskApp() {
     () => createProjectionDomainRevision("task-history-streak-summary", taskHistoryStreakSummaries),
     [taskHistoryStreakSummaries],
   );
+  const persistedTaskDisplayStatusByTaskId = useMemo(
+    () => Object.fromEntries(tasks.map((task) => [task.id, task.status])),
+    [tasks],
+  );
+  const taskHistoryReadinessRevision = useMemo(
+    () => createProjectionDomainRevision("task-history-readiness", isTaskHistoryLoaded),
+    [isTaskHistoryLoaded],
+  );
   const taskStatusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("task-status-settings", {
       dayStartTime,
@@ -2728,21 +2747,25 @@ export function TaskApp() {
     taskDomainRevision,
     taskHistoryRevision,
     taskStatusSettingsRevision,
+    taskHistoryReadinessRevision,
   );
   const activeStatusRead = useMemo(
-    () => projectionCache.getOrCreate("active-status", activeStatusInputRevision, () => resolveActiveTaskStatuses({
-      historyByTaskId: taskHistoryByTaskId,
-      logicalDayRollover: dayStartTime,
-      now: new Date(logicalDayNow),
-      tasks,
-      timezone: userTimeZone,
-    })),
+    () => {
+      if (!isTaskHistoryLoaded) return null;
+      return projectionCache.getOrCreate("active-status", activeStatusInputRevision, () => resolveActiveTaskStatuses({
+        historyByTaskId: taskHistoryByTaskId,
+        logicalDayRollover: dayStartTime,
+        now: new Date(logicalDayNow),
+        tasks,
+        timezone: userTimeZone,
+      }));
+    },
     // Status evaluation is logical-day based. The minute clock must not clone
     // or replace the canonical Task collection while the logical day is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeStatusInputRevision, projectionCache],
+    [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache],
   );
-  const taskDisplayStatusByTaskId = activeStatusRead.statusesByTaskId;
+  const taskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId ?? persistedTaskDisplayStatusByTaskId;
   const activeStatusRevision = useMemo(
     () => createProjectionDomainRevision("active-status", taskDisplayStatusByTaskId),
     [taskDisplayStatusByTaskId],
@@ -2759,10 +2782,10 @@ export function TaskApp() {
     [canonicalEntityRevision, projectionCache],
   );
   useEffect(() => {
-    if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+    if (isTaskHistoryLoaded && activeStatusRead && process.env.NODE_ENV === "development" && typeof window !== "undefined") {
       window.__ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__ = activeStatusRead.authority;
     }
-  }, [activeStatusRead.authority]);
+  }, [activeStatusRead, isTaskHistoryLoaded]);
   const client = supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   const runGuardedTaskRowUpdate = useCallback(async (
     taskId: string,
@@ -2858,12 +2881,13 @@ export function TaskApp() {
     isLater: (date) => Boolean(date && date > shiftDateKey(todayKey, 1)),
     isOpen: isTaskOpen,
     isOverdue: (date) => Boolean(date && date < todayKey),
+    isTaskHistoryLoaded,
     historyFactsByTaskId: taskHistoryFactsByTaskId,
     manualMembershipsByTaskId,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
     todayDateKey: todayKey,
-  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
+  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
   const parsedTaskSearch = useMemo(
     () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
     [taskUiState.duplicateTitleMode, taskUiState.search],
@@ -2924,6 +2948,7 @@ export function TaskApp() {
     taskHistoryStreakSummaryRevision,
     statusSettingsRevision,
     activeStatusRevision,
+    taskHistoryReadinessRevision,
   );
   const canonicalIndexRevision = combineProjectionRevisions(
     hierarchyStatusRevision,
@@ -4059,6 +4084,30 @@ export function TaskApp() {
     setTaskUiState((prev) => ({ ...prev, tasksSurface: surface }));
   }, [activeTaskWorkspaceTab, createTaskWorkspaceTab, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.tabs]);
 
+  const handleNavigatorSearchTarget = useCallback((target: NavigatorSearchTarget) => {
+    const action: NavigatorSearchAction = target.action;
+    if (action.kind === "page") {
+      setRequestedSettingsSection(null);
+      setActivePage(action.page);
+    } else if (action.kind === "tasks-surface") {
+      setRequestedSettingsSection(null);
+      setActivePage("Tasks");
+      handleTaskWorkspaceSurfaceChange(action.surface);
+    } else if (action.kind === "tasks-view") {
+      setRequestedSettingsSection(null);
+      setActivePage("Tasks");
+      handleTaskWorkspaceSurfaceChange("tasks");
+      setTaskUiState((prev) => ({ ...prev, view: action.view }));
+    } else if (action.kind === "health-tab") {
+      setRequestedSettingsSection(null);
+      setActivePage("Health");
+      persistHealthTabPreference(action.tab);
+    } else {
+      setActivePage("Settings");
+      setRequestedSettingsSection(action.section);
+    }
+  }, [handleTaskWorkspaceSurfaceChange, setActivePage, setTaskUiState]);
+
   const openBlankTaskEditor = useCallback(() => {
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorInitialDraft(null);
@@ -4533,14 +4582,7 @@ export function TaskApp() {
 
   const delayTaskToDate = useCallback(async (taskId: string, nextDueOn: string | null) => {
     const task = tasks.find((entry) => entry.id === taskId);
-    if (
-      !task
-      || task.status === "archived"
-      || task.status === "complete"
-      || task.status === "did_my_best"
-      || task.status === "done"
-      || task.status === "trashed"
-    ) {
+    if (!task || !canTaskDelay({ dueOn: task.due_on, status: task.status })) {
       return false;
     }
 
@@ -6108,28 +6150,17 @@ export function TaskApp() {
         if (entryDates.length !== 1) return false;
         return (await updateTaskStatus(taskHistoryModalTask, "complete")) === true;
       }
-      if (status !== "clear") {
-        let currentTask: TaskStateRuntimeLocalTask | null = null;
-        for (const entryDate of entryDates) {
-          const clearedHistory = await clearTaskHistoryCalendarDate(
-            taskHistoryModalTaskId,
-            entryDate,
-            formatTaskStatusLabel(status),
-            { clearReplaceableOutcome: true, currentTask },
-          );
-          if (!clearedHistory) return false;
-          currentTask = clearedHistory.task ?? currentTask;
+      const pendingTaskIds = [taskHistoryModalTaskId];
+      beginPendingTaskMutationScope(pendingTaskIds);
+      try {
+        if (status !== "clear") {
           const saved = await syncTaskHistoryEntries(
             taskHistoryModalTaskId,
             status,
-            [entryDate],
+            entryDates,
             {
               historicalOverride: true,
-              historySnapshot: clearedHistory.history,
-              currentTask,
-              onTaskCommitted: (nextTask) => {
-                currentTask = nextTask;
-              },
+              historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
               syncLiveTask: true,
             },
           );
@@ -6137,19 +6168,21 @@ export function TaskApp() {
             setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${formatTaskStatusLabel(status)} did not finish correctly.` });
             return false;
           }
+          return true;
         }
-        return true;
+        return await syncTaskHistoryEntries(
+          taskHistoryModalTaskId,
+          "pending",
+          entryDates,
+          {
+            historicalOverride: status !== "clear",
+            historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+            syncLiveTask: true,
+          },
+        );
+      } finally {
+        endPendingTaskMutationScope(pendingTaskIds);
       }
-      return await syncTaskHistoryEntries(
-        taskHistoryModalTaskId,
-        "pending",
-        entryDates,
-        {
-          historicalOverride: status !== "clear",
-          historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
-          syncLiveTask: true,
-        },
-      );
     },
     onSetDelayedStatus: async (entryDate: string, nextDueOn: string) => {
       if (!taskHistoryModalTaskId) {
@@ -7328,17 +7361,21 @@ export function TaskApp() {
         ) : activePage === "Health" ? (
           <TaskHealthPage
             awards={healthAwards}
+            archiveGoal={archiveFitnessGoal}
             archivePlan={archiveFitnessPlan}
             archivePlanItem={archiveFitnessPlanItem}
             checkIns={healthCheckIns}
             createPlan={createFitnessPlan}
             createPlanItem={createFitnessPlanItem}
+            createGoal={createFitnessGoal}
+            createLevel={createFitnessGoalLevel}
             deleteFavoriteFood={deleteFavoriteFood}
             deleteMealEntry={deleteMealEntry}
             deleteRecipe={deleteHealthRecipe}
             deleteSavedMeal={deleteHealthSavedMeal}
             deleteWaterEntry={deleteHealthWaterEntry}
             deleteWorkout={deleteHealthWorkoutWithStructuredDetails}
+            deleteLevel={deleteFitnessGoalLevel}
             archiveExercise={archiveExercise}
             createExercise={createExercise}
             reorderExercises={reorderExercises}
@@ -7349,12 +7386,18 @@ export function TaskApp() {
             getWorkoutSessionDetails={getWorkoutSessionDetails}
             saveWorkoutSessionDetails={saveWorkoutSessionDetails}
             updateExercise={updateExercise}
+            updateGoal={updateFitnessGoal}
+            updateLevel={updateFitnessGoalLevel}
             workoutExercises={workoutExercises}
             workoutSets={workoutSets}
             deleteWeightEntry={deleteWeightEntry}
             favorites={healthFavorites}
             fitnessPlanError={fitnessPlanError}
             fitnessPlansLoading={fitnessPlansLoading}
+            fitnessGoalsError={fitnessGoalsError}
+            fitnessGoalsLoading={fitnessGoalsLoading}
+            fitnessGoals={fitnessGoals}
+            fitnessGoalLevels={fitnessGoalLevels}
             planItems={fitnessPlanItems}
             plans={fitnessPlans}
             focusCategories={focusCategories}
@@ -7396,6 +7439,7 @@ export function TaskApp() {
             updateWorkout={updateHealthWorkout}
             updatePlan={updateFitnessPlan}
             updatePlanItem={updateFitnessPlanItem}
+            restoreGoal={restoreFitnessGoal}
             weightEntries={healthWeightEntries}
             waterEntries={healthWaterEntries}
             workouts={healthWorkouts}
@@ -7435,8 +7479,10 @@ export function TaskApp() {
             onDayStartTimeChange={setDayStartTime}
             onTimeZoneChange={setUserTimeZone}
             onResetEconomy={resetEconomy}
+            onSectionRequestHandled={(section) => setRequestedSettingsSection((current) => (current === section ? null : current))}
             onWorkspaceRefresh={softRefreshWorkspace}
             onThemeChange={setTheme}
+            requestedSection={requestedSettingsSection}
             tasks={tasks}
             theme={theme}
             userId={currentUser.id}
@@ -7468,7 +7514,9 @@ export function TaskApp() {
           dockIcons={dockIcons}
           dockItems={dockItems}
           onNavigate={setActivePage}
+          onNavigateSearchTarget={handleNavigatorSearchTarget}
           renderIcon={(name) => <CategoryIcon className="h-6 w-6" name={name} />}
+          searchTargets={navigatorSearchTargets}
         />
       </div>
       <TaskActiveTimersTray

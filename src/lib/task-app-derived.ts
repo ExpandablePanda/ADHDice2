@@ -653,7 +653,9 @@ export function buildStableCanonicalTaskIndex({
       task.title,
       ...(task.tags ?? []),
       ...(milestoneSearchTokensByTaskId?.get(task.id) ?? []),
-      ...(taskSubtasksByTaskId[task.id] ?? []).map((subtask) => subtask.title),
+      ...(taskSubtasksByTaskId[task.id] ?? [])
+        .filter((subtask) => subtask.status !== "trashed")
+        .map((subtask) => subtask.title),
     ].join("\n").toLowerCase();
     entityFactsById.set(task.id, {
       ancestorIds: ancestorIdsByTaskId.get(task.id) ?? [],
@@ -1288,14 +1290,17 @@ export function computeTaskAppDerivedData({
     const ownSearchMatch = !searchIsActive || matchesNormalizedSearchValue(task.title, normalizedSearchQuery)
       || matchesNormalizedSearchValues(task.tags, normalizedSearchQuery)
       || matchesNormalizedSearchValues(milestoneSearchTokensByTaskId?.get(task.id), normalizedSearchQuery);
-    const sourceSubtaskTitleMatch = (taskSubtasksByTaskId[task.id] ?? []).some((subtask) => (
-      matchesNormalizedSearchValue(subtask.title, normalizedSearchQuery)
-    ));
+    const sourceSubtaskTitleMatch = (taskSubtasksByTaskId[task.id] ?? [])
+      .filter((subtask) => subtask.status !== "trashed")
+      .some((subtask) => matchesNormalizedSearchValue(subtask.title, normalizedSearchQuery));
     const childItems = childTaskPreviewByParentTaskId[task.id]?.items ?? [];
     const matchingChildSearchItems = searchIsActive
       ? childItems.filter((item) => (
-        matchesNormalizedSearchValue(item.title, normalizedSearchQuery)
-        || matchesNormalizedSearchValues(item.tags, normalizedSearchQuery)
+        (taskUiState.selectedBucket === "trash" || item.storedStatus !== "trashed")
+        && (
+          matchesNormalizedSearchValue(item.title, normalizedSearchQuery)
+          || matchesNormalizedSearchValues(item.tags, normalizedSearchQuery)
+        )
       ))
       : childItems;
 

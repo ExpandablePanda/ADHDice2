@@ -37,6 +37,7 @@ import {
   getTaskHistoryInitialFocusDateKey,
 } from "@/lib/task-history-calendar-focus";
 import type { AppPage } from "@/lib/task-ui-state";
+import type { NavigatorSearchTarget } from "@/lib/navigator-search";
 import type { ImportTasksResult } from "@/hooks/useTaskCrudActions";
 import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleActionStatuses } from "@/lib/task-complete";
 import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
@@ -1061,13 +1062,17 @@ export function BottomDockAdapter({
   dockIcons,
   dockItems,
   onNavigate,
+  onNavigateSearchTarget,
   renderIcon,
+  searchTargets,
 }: {
   activePage: AppPage;
   dockIcons: Record<AppPage, string>;
   dockItems: AppPage[];
   onNavigate: (page: AppPage) => void;
+  onNavigateSearchTarget: (target: NavigatorSearchTarget) => void;
   renderIcon: (name: string) => ReactNode;
+  searchTargets: readonly NavigatorSearchTarget[];
 }) {
   return (
     <BottomDockComponent
@@ -1075,7 +1080,9 @@ export function BottomDockAdapter({
       dockIcons={dockIcons}
       dockItems={dockItems}
       onNavigate={onNavigate}
+      onNavigateSearchTarget={onNavigateSearchTarget}
       renderIcon={renderIcon}
+      searchTargets={searchTargets}
     />
   );
 }

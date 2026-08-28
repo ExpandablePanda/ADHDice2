@@ -278,7 +278,14 @@ export function useTaskUpdateAction({
         // A canonical command may commit its History fact or Calendar/schedule
         // side effect before the browser read cache is refreshed. Refresh only
         // the read state; never recreate a legacy History fact here.
-        if (canonicalResult.response.side_effect_ids.history_fact_id && loadTaskHistoryForTasks) {
+        const requiresFreshTaskHistory = runtimeAction.actionType === "set_due_date"
+          || runtimeAction.actionType === "set_repeat"
+          || Boolean(canonicalResult.response.side_effect_ids.history_fact_id);
+        if (requiresFreshTaskHistory) {
+          if (!loadTaskHistoryForTasks) {
+            setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage("Task History could not be refreshed.") });
+            return false;
+          }
           try {
             const refresh = await loadTaskHistoryForTasks([taskId]);
             const refreshed = refresh[taskId];

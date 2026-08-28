@@ -144,6 +144,8 @@ export type TaskEffectiveTimeline = {
   recurrenceAnchor: string | null;
   replayCheckpoint: TaskTimelineCheckpoint | null;
   unresolvedDueOn: string | null;
+  /** Present only for an explicitly requested trusted schedule replay. */
+  automaticHistoryRows?: TaskStateHistoryRow[];
 };
 
 export type TaskTimelineReplayKind = "outcome" | "due_date" | "recurrence" | "recompute";
@@ -154,6 +156,8 @@ export type TaskTimelineReplayRequest = {
   manualDueOn?: string | null;
   /** Effective cursor selected by a canonical Delay command. */
   effectiveDueOn?: string | null;
+  /** Trusted schedule replay may return past facts for one canonical command. */
+  materializeAutomaticMissed?: boolean;
 };
 
 export type TaskTimelineCheckpoint = {

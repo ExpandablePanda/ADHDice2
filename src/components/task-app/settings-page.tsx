@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Task } from "@/lib/database.types";
+import type { NavigatorSettingsSection } from "@/lib/navigator-search";
 import { PageShellHeader } from "./page-shell-header";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -16,8 +17,10 @@ type SettingsPageProps = {
   onTimeZoneChange: (timezone: string) => void;
   onLowStimChange: (value: boolean) => void;
   onResetEconomy: () => Promise<boolean>;
+  onSectionRequestHandled?: (section: NavigatorSettingsSection) => void;
   onThemeChange: (theme: ThemeMode) => void;
   onWorkspaceRefresh?: () => Promise<void>;
+  requestedSection?: NavigatorSettingsSection | null;
   tasks: Task[];
   theme: ThemeMode;
   timeZone: string;
@@ -35,20 +38,46 @@ export function SettingsPage({
   onTimeZoneChange,
   onLowStimChange,
   onResetEconomy,
+  onSectionRequestHandled,
   onThemeChange,
   tasks,
   theme,
   timeZone,
+  requestedSection = null,
 }: SettingsPageProps) {
   const [importText, setImportText] = useState("");
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [isResettingEconomy, setIsResettingEconomy] = useState(false);
   const [economyStatus, setEconomyStatus] = useState<string | null>(null);
+  const sectionRefs = useRef<Record<NavigatorSettingsSection, HTMLParagraphElement | null>>({
+    appearance: null,
+    "day-reset": null,
+    economy: null,
+    "import-export": null,
+  });
+  const handledSectionRef = useRef<NavigatorSettingsSection | null>(null);
   const timezoneOptions = useMemo(() => {
     if (typeof Intl === "undefined" || typeof Intl.supportedValuesOf !== "function") return [timeZone];
     const supported = Intl.supportedValuesOf("timeZone");
     return supported.includes(timeZone) ? supported : [timeZone, ...supported];
   }, [timeZone]);
+
+  useEffect(() => {
+    if (!requestedSection) {
+      handledSectionRef.current = null;
+      return;
+    }
+    if (handledSectionRef.current === requestedSection) {
+      return;
+    }
+    const section = sectionRefs.current[requestedSection];
+    if (!section) {
+      return;
+    }
+    section.scrollIntoView({ block: "start" });
+    handledSectionRef.current = requestedSection;
+    onSectionRequestHandled?.(requestedSection);
+  }, [onSectionRequestHandled, requestedSection]);
 
   function handleExportJSON() {
     const exportable = tasks.map((task) => {
@@ -96,7 +125,7 @@ export function SettingsPage({
   return (
     <section className="mx-auto max-w-lg px-4 pb-32">
       <PageShellHeader title="Settings" subtitle="Configuration" />
-      <p className={sectionTitle}>Appearance</p>
+      <p className={sectionTitle} data-settings-section="appearance" id="settings-section-appearance" ref={(element) => { sectionRefs.current.appearance = element; }}>Appearance</p>
       <div className={sectionClass}>
         <div className={row}>
           <span className={label}>Theme</span>
@@ -111,17 +140,17 @@ export function SettingsPage({
           </div>
         </div>
       </div>
-      <p className={sectionTitle}>Day reset</p>
+      <p className={sectionTitle} data-settings-section="day-reset" id="settings-section-day-reset" ref={(element) => { sectionRefs.current["day-reset"] = element; }}>Day reset</p>
       <div className={sectionClass}>
         <div className={row}><span className={label}>Day starts at</span><input className="rounded-full bg-white px-3 py-2 text-sm font-semibold text-[#27304c] outline-none dark:bg-white/8 dark:text-white" onChange={(event) => onDayStartTimeChange(event.target.value)} type="time" value={dayStartTime} /></div>
         <div className={row}><span className={label}>Time zone</span><select className="max-w-[14rem] rounded-full bg-white px-3 py-2 text-sm font-semibold text-[#27304c] outline-none dark:bg-white/8 dark:text-white" onChange={(event) => onTimeZoneChange(event.target.value)} value={timeZone}>{timezoneOptions.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}</select></div>
       </div>
-      <p className={sectionTitle}>Economy</p>
+      <p className={sectionTitle} data-settings-section="economy" id="settings-section-economy" ref={(element) => { sectionRefs.current.economy = element; }}>Economy</p>
       <div className={sectionClass}>
         <div className={`${row} gap-4`}><div><p className={label}>Reset XP, points, tokens, and free-roll bank</p><p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">Leaves task history in place and sets level back to 1.</p></div><button className="ui-pill-button-danger-light shrink-0 transition disabled:cursor-not-allowed disabled:opacity-60" disabled={isResettingEconomy} onClick={() => { void handleResetEconomy(); }} type="button">{isResettingEconomy ? "Resetting..." : "Reset economy"}</button></div>
         {economyStatus ? <div className="px-5 pb-4 text-xs text-[#7d88a1] dark:text-white/55">{economyStatus}</div> : null}
       </div>
-      <p className={sectionTitle}>Import / export</p>
+      <p className={sectionTitle} data-settings-section="import-export" id="settings-section-import-export" ref={(element) => { sectionRefs.current["import-export"] = element; }}>Import / export</p>
       <div className={`${sectionClass} overflow-hidden`}>
         <div className="px-5 py-4"><button className="ui-pill-button-strong-light" onClick={handleExportJSON} type="button">Export tasks JSON</button><textarea className="mt-4 min-h-40 w-full rounded-[1.2rem] bg-white px-4 py-3 text-sm text-[#27304c] outline-none dark:bg-white/8 dark:text-white" onChange={(event) => setImportText(event.target.value)} placeholder="Paste exported tasks JSON here..." value={importText} /><div className="mt-3 flex items-center justify-between gap-3"><button className="ui-pill-button-strong-light" onClick={() => { void handleImportJSON(); }} type="button">Import JSON</button>{importStatus ? <p className="text-right text-xs text-[#7d88a1] dark:text-white/55">{importStatus}</p> : null}</div></div>
       </div>

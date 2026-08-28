@@ -10,6 +10,12 @@ import type {
   HealthExercise,
   HealthExerciseInsert,
   HealthExerciseUpdate,
+  HealthFitnessGoal,
+  HealthFitnessGoalInsert,
+  HealthFitnessGoalLevel,
+  HealthFitnessGoalLevelInsert,
+  HealthFitnessGoalLevelUpdate,
+  HealthFitnessGoalUpdate,
   HealthFitnessPlan,
   HealthFitnessPlanInsert,
   HealthFitnessPlanItem,
@@ -57,6 +63,7 @@ import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { FitnessPlanAssociationPicker, HealthFitnessPlansPanel } from "./health-fitness-plans-panel";
 import { HealthFitnessExerciseLibrary } from "./health-fitness-exercise-library";
+import { HealthFitnessGoalsPanel } from "./health-fitness-goals-panel";
 import { HealthFitnessReorderList } from "./health-fitness-reorder-list";
 import { HealthFitnessSessionEditor } from "./health-fitness-session-editor";
 import { HealthActiveWorkout } from "./health-active-workout";
@@ -67,8 +74,12 @@ type HealthFitnessTabProps = {
   archivePlan: (planId: string) => Promise<boolean>;
   archivePlanItem: (itemId: string) => Promise<boolean>;
   createExercise: (input: Omit<HealthExerciseInsert, "user_id" | "default_measurement">) => Promise<HealthExercise | null>;
+  archiveGoal: (goalId: string) => Promise<boolean>;
   createPlan: (input: Omit<HealthFitnessPlanInsert, "user_id">) => Promise<HealthFitnessPlan | null>;
   createPlanItem: (input: Omit<HealthFitnessPlanItemInsert, "user_id">) => Promise<HealthFitnessPlanItem | null>;
+  createGoal: (input: Omit<HealthFitnessGoalInsert, "user_id">) => Promise<HealthFitnessGoal | null>;
+  createLevel: (input: Omit<HealthFitnessGoalLevelInsert, "user_id">) => Promise<HealthFitnessGoalLevel | null>;
+  deleteLevel: (levelId: string) => Promise<boolean>;
   deleteWorkout: (workoutId: string) => Promise<boolean>;
   exerciseLibrary: HealthExercise[];
   metricEntries: HealthMetricEntry[];
@@ -77,9 +88,14 @@ type HealthFitnessTabProps = {
   fitnessSessionError: string | null;
   fitnessSessionLoaded: boolean;
   fitnessSessionLoading: boolean;
+  fitnessGoalsError: string | null;
+  fitnessGoalsLoading: boolean;
   getWorkoutSessionDetails: (workoutId: string) => HealthWorkoutSessionDetails;
   planItems: HealthFitnessPlanItem[];
   plans: HealthFitnessPlan[];
+  fitnessGoals: HealthFitnessGoal[];
+  fitnessGoalLevels: HealthFitnessGoalLevel[];
+  restoreGoal: (goalId: string) => Promise<boolean>;
   profile: HealthProfile;
   saveProfile: (updates: HealthProfileUpdate) => Promise<boolean>;
   saveWorkoutPlanItemLinks: (workoutId: string, planItemIds: readonly string[]) => Promise<boolean>;
@@ -87,6 +103,8 @@ type HealthFitnessTabProps = {
   updatePlan: (planId: string, input: HealthFitnessPlanUpdate) => Promise<boolean>;
   updatePlanItem: (itemId: string, input: HealthFitnessPlanItemUpdate) => Promise<boolean>;
   updateExercise: (exerciseId: string, input: HealthExerciseUpdate) => Promise<boolean>;
+  updateGoal: (goalId: string, input: HealthFitnessGoalUpdate) => Promise<boolean>;
+  updateLevel: (levelId: string, input: HealthFitnessGoalLevelUpdate) => Promise<boolean>;
   updateWorkout: (workoutId: string, input: HealthWorkoutUpdate) => Promise<boolean>;
   saveWorkoutSessionDetails: (workoutId: string, draft: HealthWorkoutStructuredDraft) => Promise<HealthWorkoutSessionSaveResult>;
   workoutPlanItemLinks: HealthWorkoutPlanItemLink[];
@@ -111,22 +129,31 @@ function createDefaultWorkoutDraft(workoutTypes: readonly string[] = HEALTH_WORK
 export function HealthFitnessTab({
   addWorkout,
   archiveExercise,
+  archiveGoal,
   archivePlan,
   archivePlanItem,
   createExercise,
+  createGoal,
+  createLevel,
   createPlan,
   createPlanItem,
   deleteWorkout,
+  deleteLevel,
   exerciseLibrary,
   fitnessPlanError,
   fitnessPlansLoading,
   fitnessSessionError,
   fitnessSessionLoaded,
   fitnessSessionLoading,
+  fitnessGoalsError,
+  fitnessGoalsLoading,
   getWorkoutSessionDetails,
   metricEntries,
   planItems,
   plans,
+  fitnessGoals,
+  fitnessGoalLevels,
+  restoreGoal,
   profile,
   reorderExercises,
   saveProfile,
@@ -134,6 +161,8 @@ export function HealthFitnessTab({
   updatePlan,
   updatePlanItem,
   updateExercise,
+  updateGoal,
+  updateLevel,
   updateWorkout,
   saveWorkoutSessionDetails,
   workoutPlanItemLinks,
@@ -648,6 +677,24 @@ export function HealthFitnessTab({
           </div>
         </HealthCollapsiblePanel>
       </div>
+
+      <HealthFitnessGoalsPanel
+        archiveGoal={archiveGoal}
+        createGoal={createGoal}
+        createLevel={createLevel}
+        deleteLevel={deleteLevel}
+        error={fitnessGoalsError}
+        exerciseLibrary={exerciseLibrary}
+        goals={fitnessGoals}
+        isLoading={fitnessGoalsLoading}
+        levels={fitnessGoalLevels}
+        restoreGoal={restoreGoal}
+        updateGoal={updateGoal}
+        updateLevel={updateLevel}
+        workoutExercises={workoutExercises}
+        workoutSets={workoutSets}
+        workouts={workouts}
+      />
 
       <HealthFitnessPlansPanel
         archivePlan={archivePlan}

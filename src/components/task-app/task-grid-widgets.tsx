@@ -4,7 +4,7 @@ import { ChevronDown, ChevronUp, GripVertical, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { renderTaskStatusCircle } from "./task-status-ui";
 import { formatDueLabel } from "@/lib/task-cockpit";
-import { getSelectableTaskStatuses } from "@/lib/task-complete";
+import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import type { Task, TaskStatus } from "@/lib/database.types";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { formatRepeatSummary } from "@/lib/task-formatting";
@@ -242,7 +242,7 @@ export function UrgentTasksPanelComponent({
                   <TaskMetaChip tone="neutral">{formatDueLabel(task.due_on)}</TaskMetaChip>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {getSelectableTaskStatuses(task).map((status) => {
+                  {getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }).map((status) => {
                     const isActive = task.status === status;
                     return (
                       <button aria-label={`Set status to ${formatOptionLabel(status)}`} className={`h-8 w-8 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button"><span className="flex h-full w-full items-center justify-center">{renderTaskStatusCircle(status, "md")}</span></button>

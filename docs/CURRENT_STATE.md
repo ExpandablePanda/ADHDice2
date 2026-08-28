@@ -1,19 +1,215 @@
 # Current State
 
-Last reviewed: 2026-08-26
+Last reviewed: 2026-08-28
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.72`.
+- Current working app version: `7.11.92`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-28 7.11.92 Water History entry editing
+
+Health → Water → Water History now exposes individual historical water entries
+inside an ephemeral per-day `Entries` expansion. Historical rows reuse the same
+canonical `WaterEntryCard` editor and `updateWaterEntry` save path as Today’s
+Water, including amount/unit conversion and date/time recalculation. Successful
+date edits re-group entries immediately; moving an entry to today removes it
+from History and shows it in Today’s Water, while empty historical groups
+disappear naturally. The existing 14-day History window remains unchanged. No
+water schema, SQL, migration, persistence hook, deployment, or iOS behavior
+changed.
+
+## 2026-08-28 7.11.91 Fitness Goals UI metric authority
+
+Health → Fitness exposes the existing canonical Fitness Goals system. Goal
+metric selection is independent of the Exercise Library compatibility
+`default_measurement` field; current PR, Goal progress, Level progress, and
+reached state are derived from matching canonical Workout Exercise
+observations and self-heal after corrections or deletions.
+
+## 2026-08-28 7.11.89 Navigator Search inline mode
+
+Navigator Search now opens inline inside the expanded Navigator. Search is the
+far-left control; activating it temporarily replaces the Navigator icons with
+a search field and dock-attached results. Existing destination registry,
+ranking, and navigation authorities remain unchanged.
+
+## 2026-08-28 7.11.88 Navigator Search
+
+The expanded Navigator now includes a compact `Go To` search palette for direct
+navigation to visible top-level pages, Tasks surfaces and views, canonical
+Health tabs, and selected Settings sections and controls. Search uses a local
+destination registry with simple title/breadcrumb/keyword ranking; it does not
+search user content, query Supabase, or introduce another navigation authority.
+Tasks reuse the existing surface and view state seams, Health reuses the shared
+tab preference, and Settings uses a one-shot mount-aware section scroll request.
+
+## 2026-08-27 7.11.84 Trusted History outcome batch
+
+Multi-date History Calendar Done / Did My Best / Missed edits now use one
+trusted browser-to-Edge `history_outcome_batch` request. The Edge branch
+validates and deterministically orders the dates, then sequentially executes
+ordinary canonical `set_outcome` children with threaded revisions and stable
+child replay identities. Each child retains its own History fact, canonical
+revision, and reward entitlement decision. Child Achievement evaluation is
+deferred through a backend-only SQL wrapper and one deterministic final
+Achievement evaluation runs after the children complete. Partial failures keep
+earlier committed dates; final Achievement failure is reported as a
+post-commit warning. The migration remains authored-only; Edge deployment,
+SQL application, browser QA, and device QA were not performed.
+
+## 2026-08-27 7.11.85 Partial History batch Achievement finalization
+
+Partial History outcome batches now run the same deterministic final
+Achievement evaluation whenever at least one deferred child committed or
+replayed before the batch stopped. The canonical child failure remains the
+primary error, while finalizer failure is reported as a post-commit warning;
+zero-commit failures do not run the finalizer. The outer replay identity and
+deterministic Achievement operation identity remain unchanged for recovery.
+
+## 2026-08-27 7.11.86 Non-blocking startup History hydration
+
+Initial workspace rendering no longer waits for the full canonical Task History
+table. Tasks/profile render after critical startup data is ready; full History
+hydrates asynchronously, and rollover remains gated until History hydration
+completes. A History failure leaves the workspace visible, keeps History
+not-ready, and preserves the existing warning path.
+
 - Active Workout Sandbox MVP is implemented as a temporary local runtime using the existing canonical Workout → Workout Exercise → Set system rather than introducing another permanent session authority.
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
+
+## 2026-08-28 7.11.87 History readiness boundary for Active Status
+
+Workspace rendering remains non-blocking, but History-dependent Active Status
+authority does not activate until full History readiness. While History is
+pending or failed, persisted canonical compatibility Task status is used for
+presentation rather than treating unloaded History as an empty History
+snapshot. History-dependent smart-list rules likewise remain inactive until
+the full snapshot is ready, while ordinary status filters and buckets use the
+persisted status projection. Rollover remains gated by full History readiness.
+
+## 2026-08-27 7.11.82 Multi-date History Calendar sync optimization
+
+Multi-date History Calendar Done / Did My Best / Missed edits now use the
+existing multi-date canonical sync path, preserving sequential revision-safe
+commands while collapsing repeated History reload/streak reconciliation into
+one final refresh.
+
+## 2026-08-27 7.11.83 History Calendar Realtime containment
+
+Multi-date History mutations now suppress their own Task Realtime echoes for
+the full mutation lifetime, and known-task History Realtime changes use
+targeted History reconciliation rather than whole-account History scans.
+
+## 2026-08-27 7.11.81 Authoritative Task search selector excludes trashed descendants
+
+Versions 7.11.79 and 7.11.80 corrected parallel derived search evidence, but
+browser QA showed the authoritative Task search selector re-added trashed
+descendants during selected-root hierarchy expansion. Version 7.11.81 fixes
+that selector eligibility while preserving active descendant search,
+manual/smart list descendant behavior, and Trash search.
+
+## 2026-08-27 7.11.79 Active Task search excludes trashed child evidence
+
+Normal active Task search no longer lets stored-trashed Step/Substep titles
+pollute an active parent result. Active child title and tag ancestor-context
+search remains supported, and direct Trash search remains findable through the
+existing Trash scope and hierarchy behavior. No hierarchy, Task State,
+recurrence, History, SQL, Edge, or iOS behavior changed.
+
+## 2026-08-27 7.11.80 Real child-preview search filtering
+
+The 7.11.79 source-child search filters did not cover the parallel child-preview
+search path exposed by browser QA. Version 7.11.80 filters stored-trashed child
+preview evidence outside Trash while preserving active child title/tag search
+and existing Trash hierarchy behavior. No global child-preview construction,
+hierarchy, delete, Task State, recurrence, History, SQL, Edge, or iOS behavior
+changed.
+
+## 2026-08-27 7.11.78 Task State Achievement-deferral RPC compatibility
+
+The 7.11.77 Achievement-deferral architecture passed source review, but
+production `pg_get_functiondef` compact formatting caused the two literal
+loop/finalization migration anchors to miss. Version 7.11.78 makes only those
+anchors whitespace-tolerant and fail-closed. Task State and Achievement
+semantics are unchanged; SQL remains unapplied and no Edge source changed.
+
+## 2026-08-27 7.11.77 Task State schedule-backfill Achievement deferral
+
+Live QA task AB3 confirmed that Daily schedule backdating could return Edge
+422 after roughly 9–10 seconds because the canonical Task State RPC inserted
+each automatic Missed fact separately while the History trigger performed a
+full Achievement evaluation for every row. The transaction rolled back
+cleanly; this was a performance timeout, not a recurrence or business-rule
+rejection. The authored-only
+`supabase/patch_task_state_achievement_deferral_7_11_77.sql` reuses the
+established `defer_rollover_achievement_evaluation_7_1_0.sql` architecture:
+it keeps per-row Achievement source capture and Step-set refresh active,
+defers only repeated full evaluation with a transaction-local setting, clears
+that setting, then runs one deterministic command-scoped strict final
+evaluation and raises on any non-success status. Automatic Missed generation,
+History, Calendar, recurrence, streaks, rewards, and `statement_timeout` are
+unchanged. The migration remains authored-only pending source review; no SQL
+was applied and no Edge source or deployment changed.
+
+## 2026-08-27 7.11.76 Task State client reconciliation
+
+Canonical Due and Repeat commits now force a fresh task-scoped History read
+before the existing local History and streak-summary reconciliation callback,
+including schedule replays that generate automatic Missed facts without a
+normal History side-effect ID. The committed canonical Task and fresh History
+therefore update current streak, missed streak, Last Done, and related fields
+without a page reload. Table, List, Step, and Substep Delay status surfaces now
+share an eligibility rule requiring a real due date and an allowed lifecycle;
+the direct Task-app Delay handler also fails closed for unscheduled Tasks.
+Canonical occurrence validation remains authoritative. No SQL or Edge source
+changed; no SQL application, Edge deployment, browser QA, or device QA was
+performed.
+
+## 2026-08-27 7.11.75 Task History Calendar correctness
+
+Ordinary canonical Calendar projection now consumes a proven non-null
+`effective_due_on` from a canonical Delay row, so the original obligation is
+Not Due until the effective occurrence date; legacy identity-less Delay
+fallback remains unchanged. History Calendar outcome replacements now send one
+canonical `set_outcome` command, allowing the existing trusted planner and RPC
+contract to atomically replace an automatic Missed outcome, remove dependent
+automatic Missed facts, and replay the rolling recurrence. Not Due and explicit
+Clear retain their `clear_outcome` plus Calendar-override semantics. No Edge
+source or SQL changed; no Edge deployment, SQL application, browser QA, or
+device QA was performed.
+
+## 2026-08-27 7.11.74 Task State forward patch correction
+
+The 7.11.73 TypeScript/source behavior passed architecture review. Review of
+the installed production RPC formatting exposed an authored SQL anchor mismatch:
+the forward patch assumed a pretty-printed automatic History guard while
+production used the same guard in compact form. Version 7.11.74 corrected the
+forward patch with an exact, whitespace-tolerant, fail-closed anchor check.
+SQL and Edge deployment remain pending; browser QA and device QA were not
+performed for this source correction.
+
+## 2026-08-27 7.11.73 Canonical Task State correctness
+
+Status-circle Delayed actions on Table/List task, Step, and Substep surfaces now
+open the existing Delay date-selection flow; the selected date is committed
+through canonical `delay_occurrence`, preserving the original occurrence and
+updating the compatibility `due_on` projection to the effective delayed date.
+Canonical schedule replay now materializes only past unresolved automatic
+Missed facts for a backdated schedule change in the same command transaction.
+Manual History and Calendar overrides remain authoritative, Not Due stays
+derived, current logical day remains live, and automatic Missed facts carry no
+positive completion or reward side effects. Fitness Goals migration is live and
+verified; Goals UI remains explicitly parked. Focused source tests cover the
+7.11.73 regressions. An authored-only forward RPC patch extends the existing
+automatic History contract for schedule replay; no SQL was applied. Edge
+deployment, browser QA, and device QA were not performed by this source change.
 
 ## 2026-08-26 7.11.72 Fitness Goals source-review corrections
 
@@ -22,10 +218,10 @@ Goals reload failures now use the shared error formatter: missing-table,
 schema-cache, `42P01`, and `PGRST205` failures return only the friendly
 7.11.69 migration message, while unrelated errors remain unchanged. The
 consolidated `supabase/schema.sql` Goal and Level policies now mirror the
-authored migration's authenticated owner predicates. The authored
-`supabase/add_health_fitness_goals_7_11_69.sql` migration remains unchanged and
-has NOT been applied. No Goals UI, performance/PR engine, or generic Records or
-Achievements integration was added.
+authored migration's authenticated owner predicates. The
+`supabase/add_health_fitness_goals_7_11_69.sql` migration is now live and
+verified. Goals UI remains parked; no performance/PR engine or generic Records
+or Achievements integration was added.
 
 ## 2026-08-26 7.11.71 Explicit Meal Plan pending mutation recovery
 
@@ -59,8 +255,8 @@ threshold reached state, and reached dates are derived from current canonical
 rows, so corrections and deletions self-heal; no PR, record-history, or
 achievement rows are persisted. Goals and Levels persist configuration only,
 with owner-scoped relationships and explicit Level ordering. The
-`supabase/add_health_fitness_goals_7_11_69.sql` migration is authored only and
-has not been applied. No Goals/Records UI, generic Records integration, or
+`supabase/add_health_fitness_goals_7_11_69.sql` migration is live and verified.
+Goals UI remains parked; no Goals/Records UI, generic Records integration, or
 Achievement integration was added.
 
 ## 2026-08-26 7.11.68 Preserve On-Time Stop & Save Progress

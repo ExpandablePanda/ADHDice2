@@ -64,6 +64,7 @@ function buildTaskTableSubtasks(subtasks: Task[], parentId: string | null = null
     .sort((left, right) => left.sort_order - right.sort_order)
     .map((subtask) => ({
       children: buildTaskTableSubtasks(subtasks, subtask.id),
+      dueOn: subtask.due_on,
       id: subtask.id,
       status: subtask.status,
       title: subtask.title,

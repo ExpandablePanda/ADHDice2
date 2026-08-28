@@ -27,7 +27,7 @@ export const TASK_DISPLAY_STATUS_OPTIONS: Array<{ label: string; value: UiTaskDi
 ];
 
 export const TASK_SUBTASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = TASK_STATUS_OPTIONS.filter(
-  (option) => option.value !== "delayed" && option.value !== "complete" && option.value !== "archived",
+  (option) => option.value !== "complete" && option.value !== "archived",
 );
 
 export const TASK_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {

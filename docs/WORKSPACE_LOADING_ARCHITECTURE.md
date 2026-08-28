@@ -1,6 +1,6 @@
 # Workspace Loading Architecture
 
-Last reviewed: 2026-08-18
+Last reviewed: 2026-08-27
 Role: qualified source diagnostic; converged Task loading contract
 
 ## Purpose and evidence boundary
@@ -13,17 +13,25 @@ Supabase deployment parity.
 
 ## Required startup boundary
 
-The converged Task system requires a full canonical Task History load for all
-Tasks during workspace startup, alongside canonical Task rows, schedule state,
-hierarchy data, and profile facts needed by the workspace. “Full” means all
-saved canonical History for the authenticated workspace, not only rows near the
-current logical day, current due date, or active occurrence.
+Initial workspace rendering requires only the canonical Task rows, their
+schedule boundaries, and the profile facts needed by the workspace. The loader
+projects and commits Tasks, applies profile/economy state, and clears the
+workspace loading state as soon as those critical inputs succeed.
 
-The full startup History snapshot is the input to the one Active Status result,
-Calendar past-date projection, recurrence replay, streak derivation, counts,
-filters, smart lists, and Task surfaces. A failed or incomplete canonical
-History load is not a successful empty History result for occurrence-sensitive
-work.
+The full canonical Task History load for all Tasks continues as secondary
+startup work. “Full” means all saved canonical History for the authenticated
+workspace, not only rows near the current logical day, current due date, or
+active occurrence. The full History snapshot remains the input to the one
+Active Status result, Calendar past-date projection, recurrence replay, streak
+derivation, counts, filters, smart lists, and Task surfaces that consume it.
+
+While that load is pending or failed, History readiness remains false. A failed
+or incomplete canonical History load is not a successful empty History result
+for occurrence-sensitive work.
+
+TaskApp rollover remains gated by both Tasks readiness and full History
+readiness, so showing the workspace early cannot run rollover against an
+incomplete History snapshot.
 
 There is no semantic distinction between “bounded/critical startup History” and
 “full modal History” in the converged Task system. Opening History must not load
@@ -56,10 +64,12 @@ read or write paths.
 
 ## Readiness, failure, and cache ownership
 
-Workspace readiness is not satisfied until the canonical History snapshot is
-ready or the workspace exposes a real error/retry state. A query failure must
+Workspace visibility is satisfied by the critical Task, schedule-boundary, and
+profile inputs. Canonical History readiness is tracked separately and becomes
+true only after the full paged snapshot succeeds. A History query failure must
 not be coerced to `[]`, because that can make canonical-only actions disappear
-and can cause a missing canonical state to decide current status.
+and can cause a missing canonical state to decide current status. The existing
+warning path may surface the failure while the workspace remains visible.
 
 The shared cache must be user- and workspace-generation scoped. A stale request
 cannot apply to a newer user or workspace generation. Realtime and successful

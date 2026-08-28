@@ -378,6 +378,7 @@ test("structured retry reuses reconciled Exercise and Set IDs and the canonical 
 
 test("Fitness hooks are gated by the existing Health Fitness tab signal", () => {
   assert.match(taskApp, /const fitnessHooksActive = activePage === "Health" && activeHealthTab === "Fitness"/);
+  assert.match(taskApp, /useFitnessGoals\([^\n]*fitnessHooksActive\)/);
   assert.match(taskApp, /useFitnessPlans\([^\n]*fitnessHooksActive\)/);
   assert.match(taskApp, /useFitnessSessionDetails\([^\n]*fitnessHooksActive\)/);
 });

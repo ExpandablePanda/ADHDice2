@@ -133,6 +133,15 @@ function doneHistory(logicalDate: string, occurrenceDueOn = logicalDate): TaskSt
   };
 }
 
+function automaticMissedHistory(logicalDate: string, occurrenceDueOn: string): TaskStateHistoryRow {
+  return {
+    ...missedHistory(logicalDate, occurrenceDueOn),
+    id: `automatic-missed-${logicalDate}`,
+    provenance: "rollover",
+    recurrenceAuthoritative: true,
+  };
+}
+
 function command(overrides: Partial<CanonicalTaskStateCommand> = {}): CanonicalTaskStateCommand {
   const result = {
     type: "handled_outcome",
@@ -902,6 +911,48 @@ test("trusted historical replacement derives replaceExisting and previous outcom
   assert.equal(plan.command.payload.occurrenceKey, null);
 });
 
+test("trusted Every-3-Days success replacement atomically removes dependent automatic Missed facts", () => {
+  for (const outcome of ["done", "did_my_best"] as const) {
+    const planningState = state({ due_on: "2026-08-17", repeat_frequency: "daily", repeat_interval: 3 });
+    planningState.engineInput = {
+      ...planningState.engineInput!,
+      now: "2026-08-20T12:00:00.000Z",
+      task: {
+        ...planningState.engineInput!.task,
+        dueOn: "2026-08-17",
+        recurrence: { kind: "rolling", intervalDays: 3 },
+      },
+      history: [
+        automaticMissedHistory("2026-08-17", "2026-08-17"),
+        automaticMissedHistory("2026-08-18", "2026-08-17"),
+        automaticMissedHistory("2026-08-19", "2026-08-17"),
+      ],
+    };
+    const commandLogicalDay = { ...logicalDay, logicalDate: "2026-08-20" };
+    const plan = planTaskStateCommand(planningState, trustedCommand({
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: `calendar:every-3-days:${outcome}`,
+      outcome,
+      logical_date: "2026-08-17",
+    }, planningState.task, { ...boundary("rolling"), repeat_interval: 3, anchor_date: "2026-08-17" }, commandLogicalDay));
+    const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
+
+    assert.equal(plan.normalizedResult.historyFact?.outcome, outcome);
+    assert.deepEqual([...plan.normalizedResult.automaticHistoryDeleteIds].sort(), [
+      "automatic-missed-2026-08-18",
+      "automatic-missed-2026-08-19",
+    ].sort(), outcome);
+    assert.deepEqual(
+      [...(payload.automatic_history_delete_ids as string[])].sort(),
+      [...plan.normalizedResult.automaticHistoryDeleteIds].sort(),
+      outcome,
+    );
+    assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-20", outcome);
+    assert.equal(plan.normalizedResult.rewardEntitlement?.logicalDate, "2026-08-17", outcome);
+  }
+});
+
 test("canonical Daily success projection derives its own date after ambiguous old Missed rows", () => {
   for (const outcome of ["done", "did_my_best"] as const) {
     const planningState = state({ due_on: "2026-08-24", repeat_frequency: "daily", status: "missed" });
@@ -1040,6 +1091,124 @@ test("trusted due-date planner replays with the proposed due date", () => {
 
   assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-20");
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
+});
+
+test("trusted backdated schedule planner carries one automatic Missed batch without rewards", () => {
+  const planningState = state({ due_on: "2026-08-27", repeat_frequency: "daily", repeat_interval: 4 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-08-27T12:00:00.000Z",
+    timezone: "UTC",
+    logicalDayRollover: "00:00",
+    task: {
+      ...planningState.engineInput!.task,
+      dueOn: "2026-08-27",
+      historicalScheduleAnchor: "2026-08-27",
+      historicalScheduleAnchorProven: true,
+      recurrence: { kind: "rolling", intervalDays: 4 },
+    },
+    history: [],
+  };
+  const currentBoundary = {
+    ...boundary("rolling"),
+    id: "boundary-backdated",
+    effective_from_logical_date: "2026-08-27",
+    repeat_interval: 4,
+    anchor_date: "2026-08-17",
+  };
+  const command = trustedCommand({
+    type: "set_due_date",
+    task_id: "task-1",
+    replay_identity: "table:due:backdated-rolling-four",
+    logical_date: "2026-08-27",
+    schedule: { schedule_model: "rolling", repeat_frequency: "daily", repeat_interval: 4, anchor_date: "2026-08-17" },
+  }, planningState.task, currentBoundary, {
+    ...logicalDay,
+    identity: "user-1:2026-08-27:UTC:00:00:3",
+    logicalDate: "2026-08-27",
+    timezone: "UTC",
+    dayStartTime: "00:00",
+  });
+  const plan = planTaskStateCommand(planningState, command);
+  const serialized = serializeCanonicalTaskStateCommandForRpc(plan);
+  const payload = serialized.payload as Record<string, unknown>;
+  const automaticFacts = payload.automatic_history_facts as Array<Record<string, unknown>>;
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "missed");
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-17");
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryFacts.map((fact) => fact.logical_date), [
+    "2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21",
+    "2026-08-22", "2026-08-23", "2026-08-24", "2026-08-25", "2026-08-26",
+  ]);
+  assert.equal(automaticFacts.every((fact) => (
+    fact.provenance_kind === "authorized_automation"
+      && fact.actor_kind === "authorized_automation"
+      && fact.outcome === "missed"
+      && fact.schedule_boundary_id === command.scheduleBoundary?.id
+  )), true);
+  assert.equal("reward_program_version" in payload, false);
+});
+
+test("trusted Daily backdate from 2026-08-17 to logical day 2026-08-27 preserves the exact automatic Missed facts", () => {
+  const planningState = state({ due_on: "2026-08-27", repeat_frequency: "daily", repeat_interval: 1 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-08-27T12:00:00.000Z",
+    task: {
+      ...planningState.engineInput!.task,
+      dueOn: "2026-08-27",
+      historicalScheduleAnchor: "2026-08-27",
+      historicalScheduleAnchorProven: true,
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    history: [],
+  };
+  const currentBoundary = {
+    ...boundary("rolling"),
+    id: "boundary-ab3-daily-backdate",
+    effective_from_logical_date: "2026-08-27",
+    repeat_interval: 1,
+    anchor_date: "2026-08-17",
+  };
+  const command = trustedCommand({
+    type: "set_due_date",
+    task_id: "task-1",
+    replay_identity: "table:due:ab3-daily-backdate",
+    logical_date: "2026-08-27",
+    schedule: { schedule_model: "rolling", repeat_frequency: "daily", repeat_interval: 1, anchor_date: "2026-08-17" },
+  }, planningState.task, currentBoundary, {
+    ...logicalDay,
+    identity: "user-1:2026-08-27:America/New_York:06:00:3",
+    logicalDate: "2026-08-27",
+  });
+  const plan = planTaskStateCommand(planningState, command);
+  const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
+  const automaticFacts = payload.automatic_history_facts as Array<Record<string, unknown>>;
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "missed");
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-17");
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryFacts.map((fact) => [fact.logical_date, fact.outcome, fact.scheduled_due_on]), [
+    ["2026-08-17", "missed", "2026-08-17"],
+    ["2026-08-18", "missed", "2026-08-18"],
+    ["2026-08-19", "missed", "2026-08-19"],
+    ["2026-08-20", "missed", "2026-08-20"],
+    ["2026-08-21", "missed", "2026-08-21"],
+    ["2026-08-22", "missed", "2026-08-22"],
+    ["2026-08-23", "missed", "2026-08-23"],
+    ["2026-08-24", "missed", "2026-08-24"],
+    ["2026-08-25", "missed", "2026-08-25"],
+    ["2026-08-26", "missed", "2026-08-26"],
+  ]);
+  assert.equal(automaticFacts.length, 10);
+  assert.equal(automaticFacts.every((fact) => (
+    fact.provenance_kind === "authorized_automation"
+      && fact.actor_kind === "authorized_automation"
+      && fact.outcome === "missed"
+      && fact.schedule_boundary_id === command.scheduleBoundary?.id
+  )), true);
+  assert.equal("reward_program_version" in payload, false);
 });
 
 test("trusted repeat planner replays from the last success with the proposed cadence", () => {

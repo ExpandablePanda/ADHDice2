@@ -5,7 +5,7 @@ import { useState, type ReactNode } from "react";
 import type { TaskDraft } from "./task-editor-model";
 import { renderTaskStatusCircle } from "./task-status-ui";
 import { formatActualSecondsLabel, formatRepeatSummary, formatTaskMetaLine } from "@/lib/task-formatting";
-import { getSelectableTaskStatuses } from "@/lib/task-complete";
+import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { buildTaskPriorityUpdate, formatTaskPriorityLevel, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import { getNextPendingSubtask } from "@/lib/task-subtasks";
@@ -258,7 +258,7 @@ export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStat
               </TaskMetaChip>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              {getSelectableTaskStatuses(task).map((status) => {
+              {getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }).map((status) => {
                 const isActive = task.status === status;
                 return (
                   <button aria-label={`Set status to ${formatOptionLabel(status)}`} className={`h-7 w-7 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">
@@ -304,7 +304,7 @@ export function TaskMatrixViewComponent({ onEditTask, onSetStatus, subtasksByTas
                   {task.one_step_at_a_time && getNextPendingSubtask(task.id, subtasksByTaskId) ? <p className="mt-1 text-xs font-semibold text-[#6f57f6] dark:text-[#cabfff]">Next: {getNextPendingSubtask(task.id, subtasksByTaskId)?.title}</p> : null}
                 </div>
                 <div className="flex items-center gap-2">
-                  {getSelectableTaskStatuses(task).map((status) => {
+                  {getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }).map((status) => {
                     const isActive = task.status === status;
                     return (
                       <button aria-label={`Set status to ${formatOptionLabel(status)}`} className={`h-6 w-6 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">
