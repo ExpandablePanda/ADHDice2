@@ -5,13 +5,55 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.92`.
+- Current working app version: `7.11.96`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-28 7.11.96 Commit-time Fitness scope invalidation
+
+Fitness Goal and Level scope authority now synchronizes in a
+commit-synchronous `useLayoutEffect`, before the passive Fitness reload
+lifecycle effect runs. Scope and epoch changes therefore invalidate old
+mutation responses as soon as the new committed Fitness activation, account,
+or Supabase client is observable. Reload generation remains separate and
+reload-only; ordinary reloads do not change the Fitness scope epoch. No Goal or
+Level behavior or persistence semantics changed; no SQL, migration, Edge,
+browser, or device work was performed.
+
+## 2026-08-28 7.11.95 Fitness mutation scope epoch
+
+Fitness Goal and Level mutations now capture both the active Fitness
+client/user scope and a per-hook Fitness scope epoch. The epoch advances when
+Fitness activation, account, or Supabase client scope changes, including leave
+and re-entry with the same account/client; ordinary reloads advance only the
+reload generation. Reload responses remain protected by scope plus reload
+generation, while Goal/Level mutation responses remain protected by scope plus
+scope epoch. No Fitness Goal behavior or persistence semantics changed; no SQL,
+migration, Edge, browser, or device work was performed.
+
+## 2026-08-28 7.11.94 Fitness mutation scope decoupling
+
+Fitness Goal and Level mutations now use only their captured active
+client/user scope for response validity. Same-scope reloads may still advance
+reload generation without discarding a successful mutation response, while
+reload responses remain protected by the existing scope-plus-generation guard.
+No Fitness Goal behavior or persistence semantics changed; no SQL, migration,
+Edge, browser, or device work was performed.
+
+## 2026-08-28 7.11.93 Fitness Goals stale-scope mutation guard
+
+Fitness Goal and Level mutations now capture the existing Fitness client/user
+scope and reload generation before asynchronous work. Stale responses are
+quietly ignored before Goal/Level state or hook errors are changed, and an
+`updateGoal` Exercise Library lookup cannot continue into a Goal write after a
+scope change. Reorder reload follow-ups retain the same guard while accepting
+their own fresh reload generation. No Fitness Goal behavior or persistence
+semantics changed; no SQL, migration, Edge, browser, or device work was
+performed.
 
 ## 2026-08-28 7.11.92 Water History entry editing
 
@@ -61,8 +103,13 @@ revision, and reward entitlement decision. Child Achievement evaluation is
 deferred through a backend-only SQL wrapper and one deterministic final
 Achievement evaluation runs after the children complete. Partial failures keep
 earlier committed dates; final Achievement failure is reported as a
-post-commit warning. The migration remains authored-only; Edge deployment,
-SQL application, browser QA, and device QA were not performed.
+post-commit warning. Production has been verified with migration
+`20260828033531 patch_task_state_history_batch_achievement_boundary_7_11_84`,
+`adhdice_execute_task_state_command_deferred_achievements(uuid,jsonb)`,
+`adhdice_finalize_task_history_batch_achievements(uuid,uuid)`, Task State
+ACTIVE v27, and the Edge deployment pinned to reviewed 7.11.85 commit
+`5b47fcf4ab03802ad57d6ef7cc0c0d006dc7c73e`. This is a documentation
+correction; no SQL was reapplied and the Edge Function was not redeployed.
 
 ## 2026-08-27 7.11.85 Partial History batch Achievement finalization
 

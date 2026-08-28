@@ -16,7 +16,11 @@ import {
   validateHealthFitnessGoalLevelDraft,
   validateHealthFitnessGoalTargetAgainstLevels,
 } from "@/lib/health-fitness-goals";
-import { isCurrentFitnessReloadRequest } from "@/lib/fitness-reload-guard";
+import {
+  isCurrentFitnessMutationScope,
+  isCurrentFitnessReloadRequest,
+  isCurrentFitnessScope,
+} from "@/lib/fitness-reload-guard";
 
 const migration = readFileSync(new URL("../supabase/add_health_fitness_goals_7_11_69.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
@@ -137,17 +141,114 @@ test("useFitnessGoals exposes narrow Goal and Level actions", () => {
   assert.match(hook, /\.eq\("user_id", userId\)/);
 });
 
-test("useFitnessGoals reload generations reject stale client, user, and inactive results", () => {
+test("Fitness scope guard accepts only the active current client and user", () => {
+  const clientA = {};
+  const clientB = {};
+  const current = { active: true, client: clientB, userId: "user-b" };
+  assert.equal(isCurrentFitnessScope(current, current), true);
+  assert.equal(isCurrentFitnessScope({ active: false, client: clientB, userId: "user-b" }, current), false);
+  assert.equal(isCurrentFitnessScope(current, { active: false, client: clientB, userId: "user-b" }), false);
+  assert.equal(isCurrentFitnessScope({ active: true, client: clientA, userId: "user-b" }, current), false);
+  assert.equal(isCurrentFitnessScope({ active: true, client: clientB, userId: "user-a" }, current), false);
+});
+
+test("useFitnessGoals reload generations reject stale client, user, inactive, and re-entered results", () => {
   const clientA = {};
   const clientB = {};
   const current = { active: true, client: clientB, userId: "user-b" };
   assert.equal(isCurrentFitnessReloadRequest({ ...current, generation: 2 }, current, 2), true);
+  assert.equal(isCurrentFitnessReloadRequest({ ...current, generation: 1 }, current, 2), false);
   assert.equal(isCurrentFitnessReloadRequest({ active: true, client: clientA, generation: 1, userId: "user-a" }, current, 2), false);
   assert.equal(isCurrentFitnessReloadRequest({ active: true, client: clientB, generation: 2, userId: "user-a" }, current, 2), false);
   assert.equal(isCurrentFitnessReloadRequest({ active: false, client: clientB, generation: 2, userId: "user-b" }, current, 2), false);
   assert.match(hook, /const reloadGenerationRef = useRef\(0\)/);
   assert.match(hook, /if \(!isCurrent\(\)\) return false;/);
   assert.match(hook, /setGoals\(\[\]\);\s*setLevels\(\[\]\)/);
+});
+
+test("Fitness mutation scope stays current when only reload generation changes", () => {
+  const current = { active: true, client: {}, userId: "user-a" };
+  const mutation = { ...current, scopeEpoch: 4 };
+  assert.equal(isCurrentFitnessMutationScope(mutation, current, 4), true);
+  assert.equal(isCurrentFitnessReloadRequest({ ...current, generation: 1 }, current, 2), false);
+  assert.equal(isCurrentFitnessMutationScope(mutation, current, 4), true, "reload generation must not affect mutation scope");
+});
+
+test("Goal and Level mutations use scope and scope-epoch guards before state, errors, or follow-up reloads", () => {
+  assert.match(hook, /FitnessMutationScope<SupabaseClient>/);
+  assert.match(hook, /const captureMutationScope = \(\): FitnessMutationScope<SupabaseClient>/);
+  assert.match(hook, /scopeEpoch: scopeEpochRef\.current/);
+  assert.match(hook, /const isCurrentMutationScope = \(mutationScope: FitnessMutationScope<SupabaseClient>\) => isCurrentFitnessMutationScope\([\s\S]*scopeEpochRef\.current/);
+  assert.match(hook, /const reportMutationError = \(mutationScope: FitnessMutationScope<SupabaseClient>, message: string\) => \{[\s\S]*if \(!isCurrentMutationScope\(mutationScope\)\) return false;/);
+  assert.doesNotMatch(hook, /FitnessMutationRequest|isCurrentMutationRequest/);
+
+  for (const action of ["createGoal", "updateGoal", "createLevel", "updateLevel", "deleteLevel", "reorderLevels"]) {
+    const start = hook.indexOf(`async function ${action}`);
+    const end = hook.indexOf("\n  async function", start + 1);
+    const section = hook.slice(start, end === -1 ? hook.indexOf("\n  return {", start) : end);
+    assert.notEqual(start, -1, `${action} is missing`);
+    assert.match(section, /const mutationScope = captureMutationScope\(\)/, `${action} must capture its scope`);
+    assert.match(section, /if \(!isCurrentMutationScope\(mutationScope\)\) return (null|false);/, `${action} must ignore stale responses`);
+    assert.doesNotMatch(section, /isCurrentFitnessReloadRequest|reloadGenerationRef/, `${action} must not use reload identity`);
+  }
+
+  const updateGoal = hook.slice(hook.indexOf("async function updateGoal"), hook.indexOf("\n  async function archiveGoal"));
+  assert.match(updateGoal, /await getGoalExercise\(nextDraft\.exercise_id, mutationScope\)/);
+  assert.match(updateGoal, /await getGoalExercise\(nextDraft\.exercise_id, mutationScope\)[\s\S]*if \(!exercise \|\| !isCurrentMutationScope\(mutationScope\)\) return false;[\s\S]*const \{ data, error: updateError \}/);
+  assert.match(hook, /setGoals\(\(current\) => isCurrentMutationScope\(mutationScope\)/);
+  assert.match(hook, /setLevels\(\(current\) => isCurrentMutationScope\(mutationScope\)/);
+  assert.match(hook, /async function reloadForMutation\(mutationScope: FitnessMutationScope<SupabaseClient>\)/);
+  assert.match(hook, /async function reloadForMutation[\s\S]*if \(!isCurrentMutationScope\(mutationScope\)\) return false;[\s\S]*await reload\(\);[\s\S]*return isCurrentMutationScope\(mutationScope\)/);
+  assert.match(hook, /async function archiveGoal\(goalId: string\) \{[\s\S]*return updateGoal\(goalId, \{ archived_at:/);
+  assert.match(hook, /async function restoreGoal\(goalId: string\) \{[\s\S]*return updateGoal\(goalId, \{ archived_at: null \}/);
+});
+
+test("Fitness mutation scope epochs reject inactive, changed, and re-entered scopes", () => {
+  const clientA = {};
+  const clientB = {};
+  const current = { active: true, client: clientB, userId: "user-b" };
+  assert.equal(isCurrentFitnessMutationScope({ ...current, scopeEpoch: 3 }, current, 3), true);
+  assert.equal(isCurrentFitnessMutationScope({ active: false, client: clientB, scopeEpoch: 3, userId: "user-b" }, current, 3), false);
+  assert.equal(isCurrentFitnessMutationScope({ active: true, client: clientA, scopeEpoch: 3, userId: "user-b" }, current, 3), false);
+  assert.equal(isCurrentFitnessMutationScope({ active: true, client: clientB, scopeEpoch: 3, userId: "user-a" }, current, 3), false);
+  assert.equal(isCurrentFitnessMutationScope({ ...current, scopeEpoch: 2 }, current, 3), false, "leave and re-enter must create a new scope epoch");
+  assert.match(hook, /const scopeEpochRef = useRef\(0\)/);
+  assert.match(hook, /if \(!isSameFitnessScope\(scopeRef\.current, nextScope\)\) \{[\s\S]*scopeEpochRef\.current \+= 1;/);
+});
+
+test("scope authority synchronization is commit-synchronous and separate from passive reload lifecycle", () => {
+  assert.match(hook, /import \{ useCallback, useEffect, useLayoutEffect, useRef, useState \} from "react";/);
+  const scopeEffectStart = hook.indexOf("useLayoutEffect(() =>");
+  const scopeEffectEnd = hook.indexOf("\n\n  useEffect(() =>", scopeEffectStart);
+  const reloadEffectStart = hook.indexOf("useEffect(() =>");
+  const reloadEffectEnd = hook.indexOf("\n\n  const isCurrentScope", reloadEffectStart);
+  assert.notEqual(scopeEffectStart, -1);
+  assert.notEqual(scopeEffectEnd, -1);
+  assert.notEqual(reloadEffectStart, -1);
+  assert.notEqual(reloadEffectEnd, -1);
+  const scopeEffect = hook.slice(scopeEffectStart, scopeEffectEnd);
+  const reloadEffect = hook.slice(reloadEffectStart, reloadEffectEnd);
+  assert.match(scopeEffect, /const nextScope: FitnessReloadScope<SupabaseClient>/);
+  assert.match(scopeEffect, /if \(!isSameFitnessScope\(scopeRef\.current, nextScope\)\) \{[\s\S]*scopeEpochRef\.current \+= 1;[\s\S]*scopeRef\.current = nextScope;/);
+  assert.match(scopeEffect, /\}, \[active, client, userId\]\);/);
+  assert.match(reloadEffect, /const effectGeneration = \+\+reloadGenerationRef\.current/);
+  assert.doesNotMatch(reloadEffect, /scopeEpochRef|isSameFitnessScope|scopeRef\.current/);
+});
+
+test("ordinary reloads change only reload generation, while scope changes advance the mutation epoch", () => {
+  const reload = hook.slice(hook.indexOf("const reload ="), hook.indexOf("useLayoutEffect(() =>"));
+  assert.match(reload, /const generation = \+\+reloadGenerationRef\.current/);
+  assert.doesNotMatch(reload, /scopeEpochRef|scopeEpoch/);
+  assert.match(hook, /const effectGeneration = \+\+reloadGenerationRef\.current/);
+});
+
+test("Exercise Library validation rechecks the mutation epoch before a Goal write", () => {
+  const getExercise = hook.slice(hook.indexOf("async function getGoalExercise"), hook.indexOf("\n  async function createGoal"));
+  const createGoal = hook.slice(hook.indexOf("async function createGoal"), hook.indexOf("\n  async function updateGoal"));
+  const updateGoal = hook.slice(hook.indexOf("async function updateGoal"), hook.indexOf("\n  async function archiveGoal"));
+  assert.match(getExercise, /await mutationClient[\s\S]*if \(!isCurrentMutationScope\(mutationScope\)\) return null;/);
+  assert.match(createGoal, /await getGoalExercise\(normalizedInput\.exercise_id, mutationScope\)[\s\S]*if \(!exercise \|\| !isCurrentMutationScope\(mutationScope\)\) return null;[\s\S]*\.from\("adhdice_health_fitness_goals"\)/);
+  assert.match(updateGoal, /await getGoalExercise\(nextDraft\.exercise_id, mutationScope\)[\s\S]*if \(!exercise \|\| !isCurrentMutationScope\(mutationScope\)\) return false;[\s\S]*\.from\("adhdice_health_fitness_goals"\)/);
 });
 
 test("Goals migration defines configuration-only persistence and owner-safe relationships", () => {
