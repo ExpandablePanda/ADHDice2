@@ -5,13 +5,24 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.94`.
+- Current working app version: `7.11.95`.
 - Current release group: `7.11.x` Meal Planning + Done to Actual.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-28 7.11.95 Fitness mutation scope epoch
+
+Fitness Goal and Level mutations now capture both the active Fitness
+client/user scope and a per-hook Fitness scope epoch. The epoch advances when
+Fitness activation, account, or Supabase client scope changes, including leave
+and re-entry with the same account/client; ordinary reloads advance only the
+reload generation. Reload responses remain protected by scope plus reload
+generation, while Goal/Level mutation responses remain protected by scope plus
+scope epoch. No Fitness Goal behavior or persistence semantics changed; no SQL,
+migration, Edge, browser, or device work was performed.
 
 ## 2026-08-28 7.11.94 Fitness mutation scope decoupling
 

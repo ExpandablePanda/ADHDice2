@@ -16,7 +16,11 @@ import {
   validateHealthFitnessGoalLevelDraft,
   validateHealthFitnessGoalTargetAgainstLevels,
 } from "@/lib/health-fitness-goals";
-import { isCurrentFitnessReloadRequest, isCurrentFitnessScope } from "@/lib/fitness-reload-guard";
+import {
+  isCurrentFitnessMutationScope,
+  isCurrentFitnessReloadRequest,
+  isCurrentFitnessScope,
+} from "@/lib/fitness-reload-guard";
 
 const migration = readFileSync(new URL("../supabase/add_health_fitness_goals_7_11_69.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
@@ -164,16 +168,18 @@ test("useFitnessGoals reload generations reject stale client, user, inactive, an
 
 test("Fitness mutation scope stays current when only reload generation changes", () => {
   const current = { active: true, client: {}, userId: "user-a" };
-  for (const reloadGeneration of [2, 3]) {
-    assert.equal(isCurrentFitnessScope(current, current), true, `reload generation ${reloadGeneration} must not affect mutation scope`);
-  }
+  const mutation = { ...current, scopeEpoch: 4 };
+  assert.equal(isCurrentFitnessMutationScope(mutation, current, 4), true);
+  assert.equal(isCurrentFitnessReloadRequest({ ...current, generation: 1 }, current, 2), false);
+  assert.equal(isCurrentFitnessMutationScope(mutation, current, 4), true, "reload generation must not affect mutation scope");
 });
 
-test("Goal and Level mutations use scope-only guards before state, errors, or follow-up reloads", () => {
-  assert.match(hook, /type FitnessMutationScope = FitnessReloadScope<SupabaseClient>/);
-  assert.match(hook, /const captureMutationScope = \(\): FitnessMutationScope/);
-  assert.match(hook, /const isCurrentMutationScope = \(mutationScope: FitnessMutationScope\) => isCurrentFitnessScope/);
-  assert.match(hook, /const reportMutationError = \(mutationScope: FitnessMutationScope, message: string\) => \{[\s\S]*if \(!isCurrentMutationScope\(mutationScope\)\) return false;/);
+test("Goal and Level mutations use scope and scope-epoch guards before state, errors, or follow-up reloads", () => {
+  assert.match(hook, /FitnessMutationScope<SupabaseClient>/);
+  assert.match(hook, /const captureMutationScope = \(\): FitnessMutationScope<SupabaseClient>/);
+  assert.match(hook, /scopeEpoch: scopeEpochRef\.current/);
+  assert.match(hook, /const isCurrentMutationScope = \(mutationScope: FitnessMutationScope<SupabaseClient>\) => isCurrentFitnessMutationScope\([\s\S]*scopeEpochRef\.current/);
+  assert.match(hook, /const reportMutationError = \(mutationScope: FitnessMutationScope<SupabaseClient>, message: string\) => \{[\s\S]*if \(!isCurrentMutationScope\(mutationScope\)\) return false;/);
   assert.doesNotMatch(hook, /FitnessMutationRequest|isCurrentMutationRequest/);
 
   for (const action of ["createGoal", "updateGoal", "createLevel", "updateLevel", "deleteLevel", "reorderLevels"]) {
@@ -191,10 +197,39 @@ test("Goal and Level mutations use scope-only guards before state, errors, or fo
   assert.match(updateGoal, /await getGoalExercise\(nextDraft\.exercise_id, mutationScope\)[\s\S]*if \(!exercise \|\| !isCurrentMutationScope\(mutationScope\)\) return false;[\s\S]*const \{ data, error: updateError \}/);
   assert.match(hook, /setGoals\(\(current\) => isCurrentMutationScope\(mutationScope\)/);
   assert.match(hook, /setLevels\(\(current\) => isCurrentMutationScope\(mutationScope\)/);
-  assert.match(hook, /async function reloadForMutation\(mutationScope: FitnessMutationScope\)/);
+  assert.match(hook, /async function reloadForMutation\(mutationScope: FitnessMutationScope<SupabaseClient>\)/);
   assert.match(hook, /async function reloadForMutation[\s\S]*if \(!isCurrentMutationScope\(mutationScope\)\) return false;[\s\S]*await reload\(\);[\s\S]*return isCurrentMutationScope\(mutationScope\)/);
   assert.match(hook, /async function archiveGoal\(goalId: string\) \{[\s\S]*return updateGoal\(goalId, \{ archived_at:/);
   assert.match(hook, /async function restoreGoal\(goalId: string\) \{[\s\S]*return updateGoal\(goalId, \{ archived_at: null \}/);
+});
+
+test("Fitness mutation scope epochs reject inactive, changed, and re-entered scopes", () => {
+  const clientA = {};
+  const clientB = {};
+  const current = { active: true, client: clientB, userId: "user-b" };
+  assert.equal(isCurrentFitnessMutationScope({ ...current, scopeEpoch: 3 }, current, 3), true);
+  assert.equal(isCurrentFitnessMutationScope({ active: false, client: clientB, scopeEpoch: 3, userId: "user-b" }, current, 3), false);
+  assert.equal(isCurrentFitnessMutationScope({ active: true, client: clientA, scopeEpoch: 3, userId: "user-b" }, current, 3), false);
+  assert.equal(isCurrentFitnessMutationScope({ active: true, client: clientB, scopeEpoch: 3, userId: "user-a" }, current, 3), false);
+  assert.equal(isCurrentFitnessMutationScope({ ...current, scopeEpoch: 2 }, current, 3), false, "leave and re-enter must create a new scope epoch");
+  assert.match(hook, /const scopeEpochRef = useRef\(0\)/);
+  assert.match(hook, /if \(!isSameFitnessScope\(scopeRef\.current, nextScope\)\) \{[\s\S]*scopeEpochRef\.current \+= 1;/);
+});
+
+test("ordinary reloads change only reload generation, while scope changes advance the mutation epoch", () => {
+  const reload = hook.slice(hook.indexOf("const reload ="), hook.indexOf("useEffect(() =>"));
+  assert.match(reload, /const generation = \+\+reloadGenerationRef\.current/);
+  assert.doesNotMatch(reload, /scopeEpochRef|scopeEpoch/);
+  assert.match(hook, /const effectGeneration = \+\+reloadGenerationRef\.current/);
+});
+
+test("Exercise Library validation rechecks the mutation epoch before a Goal write", () => {
+  const getExercise = hook.slice(hook.indexOf("async function getGoalExercise"), hook.indexOf("\n  async function createGoal"));
+  const createGoal = hook.slice(hook.indexOf("async function createGoal"), hook.indexOf("\n  async function updateGoal"));
+  const updateGoal = hook.slice(hook.indexOf("async function updateGoal"), hook.indexOf("\n  async function archiveGoal"));
+  assert.match(getExercise, /await mutationClient[\s\S]*if \(!isCurrentMutationScope\(mutationScope\)\) return null;/);
+  assert.match(createGoal, /await getGoalExercise\(normalizedInput\.exercise_id, mutationScope\)[\s\S]*if \(!exercise \|\| !isCurrentMutationScope\(mutationScope\)\) return null;[\s\S]*\.from\("adhdice_health_fitness_goals"\)/);
+  assert.match(updateGoal, /await getGoalExercise\(nextDraft\.exercise_id, mutationScope\)[\s\S]*if \(!exercise \|\| !isCurrentMutationScope\(mutationScope\)\) return false;[\s\S]*\.from\("adhdice_health_fitness_goals"\)/);
 });
 
 test("Goals migration defines configuration-only persistence and owner-safe relationships", () => {

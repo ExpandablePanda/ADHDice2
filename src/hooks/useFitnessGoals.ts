@@ -21,15 +21,17 @@ import {
 } from "@/lib/health-fitness-goals";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import {
+  isCurrentFitnessMutationScope,
   isCurrentFitnessReloadRequest,
   isCurrentFitnessScope,
+  isSameFitnessScope,
   type FitnessReloadScope,
+  type FitnessMutationScope,
 } from "@/lib/fitness-reload-guard";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (message: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
 type GoalExercise = Pick<HealthExercise, "id" | "archived_at">;
-type FitnessMutationScope = FitnessReloadScope<SupabaseClient>;
 
 export function useFitnessGoals(
   client: SupabaseClient,
@@ -44,7 +46,8 @@ export function useFitnessGoals(
   const [stateScope, setStateScope] = useState<FitnessReloadScope<SupabaseClient> | null>(null);
   const reloadGenerationRef = useRef(0);
   const scopeRef = useRef<FitnessReloadScope<SupabaseClient>>({ active, client, userId });
-  const currentScope = { active, client, userId };
+  const scopeEpochRef = useRef(0);
+  const currentScope: FitnessReloadScope<SupabaseClient> = { active, client, userId };
 
   const reportError = useCallback((message: string) => {
     setError(message);
@@ -94,7 +97,11 @@ export function useFitnessGoals(
   }, [active, client, reportError, userId]);
 
   useEffect(() => {
-    scopeRef.current = { active, client, userId };
+    const nextScope: FitnessReloadScope<SupabaseClient> = { active, client, userId };
+    if (!isSameFitnessScope(scopeRef.current, nextScope)) {
+      scopeEpochRef.current += 1;
+    }
+    scopeRef.current = nextScope;
     const effectGeneration = ++reloadGenerationRef.current;
     if (!active || !userId || !client) {
       queueMicrotask(() => {
@@ -120,28 +127,30 @@ export function useFitnessGoals(
 
   const isCurrentScope = stateScope !== null && isCurrentFitnessScope(currentScope, stateScope);
 
-  const captureMutationScope = (): FitnessMutationScope => ({
+  const captureMutationScope = (): FitnessMutationScope<SupabaseClient> => ({
     ...currentScope,
+    scopeEpoch: scopeEpochRef.current,
   });
 
-  const isCurrentMutationScope = (mutationScope: FitnessMutationScope) => isCurrentFitnessScope(
+  const isCurrentMutationScope = (mutationScope: FitnessMutationScope<SupabaseClient>) => isCurrentFitnessMutationScope(
     mutationScope,
     scopeRef.current,
+    scopeEpochRef.current,
   );
 
-  const reportMutationError = (mutationScope: FitnessMutationScope, message: string) => {
+  const reportMutationError = (mutationScope: FitnessMutationScope<SupabaseClient>, message: string) => {
     if (!isCurrentMutationScope(mutationScope)) return false;
     reportError(message);
     return true;
   };
 
-  async function reloadForMutation(mutationScope: FitnessMutationScope): Promise<boolean> {
+  async function reloadForMutation(mutationScope: FitnessMutationScope<SupabaseClient>): Promise<boolean> {
     if (!isCurrentMutationScope(mutationScope)) return false;
     await reload();
     return isCurrentMutationScope(mutationScope);
   }
 
-  async function getGoalExercise(exerciseId: string, mutationScope: FitnessMutationScope): Promise<GoalExercise | null> {
+  async function getGoalExercise(exerciseId: string, mutationScope: FitnessMutationScope<SupabaseClient>): Promise<GoalExercise | null> {
     const mutationClient = mutationScope.client;
     const mutationUserId = mutationScope.userId;
     if (!mutationClient || !mutationUserId) return null;
