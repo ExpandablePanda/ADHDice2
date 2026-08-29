@@ -19,6 +19,7 @@ import {
 import { getLogicalDayKey } from "@/lib/logical-day";
 import { todayISO } from "@/lib/utils";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
+import { upsertFocusHistoryEntry } from "@/lib/focus-activity";
 import {
   applyFocusRuntimeRealtimeRow,
   isCurrentFocusRuntimeSnapshotRequest,
@@ -524,7 +525,7 @@ export function useFocus(
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "adhdice_focus_sessions", filter: `user_id=eq.${userId}` }, (payload) => {
           const entry = mapFocusSessionRow(payload.new as DbFocusSession);
           setFocusHistory((current) => {
-            const next = [entry, ...current.filter((candidate) => candidate.id !== entry.id)];
+            const next = upsertFocusHistoryEntry(current, entry);
             saveFocusHistory(next);
             return next;
           });
@@ -905,9 +906,9 @@ export function useFocus(
     ])[0];
 
     const previousHistorySnapshot = focusHistory;
-    const nextHistorySnapshot = [nextEntry, ...focusHistory.filter((entry) => entry.id !== nextEntry.id)];
+    const nextHistorySnapshot = upsertFocusHistoryEntry(focusHistory, nextEntry);
     setFocusHistory((prev) => {
-      const nextHistory = [nextEntry, ...prev.filter((entry) => entry.id !== nextEntry.id)];
+      const nextHistory = upsertFocusHistoryEntry(prev, nextEntry);
       saveFocusHistory(nextHistory);
       return nextHistory;
     });
@@ -1004,9 +1005,9 @@ export function useFocus(
       },
     ])[0];
     const previousHistorySnapshot = focusHistory;
-    const nextHistorySnapshot = [nextEntry, ...focusHistory];
+    const nextHistorySnapshot = upsertFocusHistoryEntry(focusHistory, nextEntry);
     setFocusHistory((prev) => {
-      const nextHistory = [nextEntry, ...prev];
+      const nextHistory = upsertFocusHistoryEntry(prev, nextEntry);
       saveFocusHistory(nextHistory);
       return nextHistory;
     });

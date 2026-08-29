@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { attachDailyOverallGoalSeconds } from "../src/lib/focus-activity.ts";
+import { attachDailyOverallGoalSeconds, upsertFocusHistoryEntry } from "../src/lib/focus-activity.ts";
 import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "../src/lib/focus-activity-scroll.ts";
 import { ALL_FOCUS_ACTIVITY_FILTER, filterFocusActivityHistory, getFocusActivitySubtypeOptions, getFocusActivityTypeOptions } from "../src/lib/focus-activity-filters.ts";
 
@@ -35,6 +35,27 @@ const activityHistory = [
   { id: "work-study", date: "2026-08-19", durationSeconds: 1800, focusType: "Productive", focusSubtype: "Study" },
   { id: "personal", date: "2026-08-19", durationSeconds: 900, focusType: "Personal", focusSubtype: "Errands" },
 ] as const;
+
+test("Focus history upserts keep chart identities unique without removing separate sessions", () => {
+  const replacement = { id: "session-1", title: "Updated session" };
+  const result = upsertFocusHistoryEntry(
+    [
+      { id: "session-1", title: "Realtime session" },
+      { id: "session-1", title: "Stale duplicate" },
+      { id: "session-2", title: "Separate session" },
+    ],
+    replacement,
+  );
+
+  assert.deepEqual(result, [replacement, { id: "session-2", title: "Separate session" }]);
+  assert.equal(result.filter((entry) => entry.id === replacement.id).length, 1);
+
+  const renderedPointKeys = result.map((entry) => `focus-category:${entry.id}`);
+  const accessiblePointKeys = renderedPointKeys.map((key) => `accessible-${key}`);
+  assert.equal(new Set(renderedPointKeys).size, renderedPointKeys.length);
+  assert.equal(new Set(accessiblePointKeys).size, accessiblePointKeys.length);
+  assert.equal(result.some((entry) => entry.id === "session-2"), true);
+});
 
 test("Activity Summary filters sessions and subtype choices by Focus Type", () => {
   assert.deepEqual(getFocusActivityTypeOptions([...activityHistory] as never[]), ["Personal", "Productive"]);
