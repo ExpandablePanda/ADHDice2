@@ -210,6 +210,7 @@ export const HEALTH_REMINDER_TEMPLATES: HealthReminderTemplate[] = [
 ];
 
 export const DEFAULT_HEALTH_PROFILE: Omit<HealthProfile, "created_at" | "updated_at"> = {
+  add_active_energy_to_calorie_goal: false,
   calorie_goal: 2200,
   carbs_goal_grams: 250,
   movement_goal: 8000,
@@ -244,6 +245,7 @@ export function normalizeHealthProfile(profile: Partial<HealthProfile> | null | 
   return {
     ...fallback,
     ...profile,
+    add_active_energy_to_calorie_goal: profile?.add_active_energy_to_calorie_goal === true,
     user_id: userId,
     workout_type_options: workoutTypeOptions.length > 0 ? workoutTypeOptions : [...HEALTH_WORKOUT_TYPES],
     workout_title_options: workoutTitleOptions,
@@ -479,6 +481,27 @@ export function formatHealthNutritionNumber(value: number | null | undefined) {
     return "—";
   }
   return String(Number(value.toFixed(2)));
+}
+
+export function calculateHealthDailyCalorieAllowance({
+  activeEnergyKcal,
+  addActiveEnergy,
+  baseCalorieGoal,
+}: {
+  activeEnergyKcal: number | null | undefined;
+  addActiveEnergy: boolean;
+  baseCalorieGoal: number | null;
+}) {
+  if (baseCalorieGoal === null) {
+    return null;
+  }
+  if (!addActiveEnergy) {
+    return baseCalorieGoal;
+  }
+  const safeActiveEnergy = typeof activeEnergyKcal === "number" && Number.isFinite(activeEnergyKcal)
+    ? activeEnergyKcal
+    : 0;
+  return baseCalorieGoal + Math.max(0, safeActiveEnergy);
 }
 
 export function formatHealthMealSummary(entry: HealthMealEntry, locale?: string) {

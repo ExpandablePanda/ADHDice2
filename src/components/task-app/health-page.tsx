@@ -70,6 +70,7 @@ import {
 } from "@/lib/health-meal-draft";
 import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
+  calculateHealthDailyCalorieAllowance,
   clampPercent,
   buildHealthMealLoggedAt,
   buildWeightGoalForecast,
@@ -111,6 +112,7 @@ import {
   type HealthTab,
 } from "@/lib/health-utils";
 import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
+import { ToggleField } from "./task-editor-fields";
 import {
   calculateHealthFoodNutrition,
   HEALTH_NUTRITION_FIELD_REGISTRY,
@@ -521,6 +523,7 @@ export function HealthPage({
     }
     setProfileDraft({
       calorie_goal: profile.calorie_goal,
+      add_active_energy_to_calorie_goal: profile.add_active_energy_to_calorie_goal,
       carbs_goal_grams: profile.carbs_goal_grams,
       fat_goal_grams: profile.fat_goal_grams,
       movement_goal: profile.movement_goal,
@@ -582,6 +585,10 @@ export function HealthPage({
   const todayMovement = useMemo(
     () => sumMetricValueForDate(metricEntries, today, ["steps", "active_energy_kcal", "exercise_minutes"]),
     [metricEntries, today],
+  );
+  const selectedActiveEnergyKcal = useMemo(
+    () => sumMetricValueForDate(metricEntries, foodHistoryDate, ["active_energy_kcal"]),
+    [foodHistoryDate, metricEntries],
   );
   const todaySleepTotal = useMemo(
     () => getHealthSleepDayTotal({ date: today, focusCategories, focusHistory, metricEntries }),
@@ -775,6 +782,11 @@ export function HealthPage({
   }
 
   const activeProfile = profile;
+  const selectedCalorieAllowance = calculateHealthDailyCalorieAllowance({
+    activeEnergyKcal: selectedActiveEnergyKcal,
+    addActiveEnergy: activeProfile.add_active_energy_to_calorie_goal,
+    baseCalorieGoal: activeProfile.calorie_goal,
+  });
   const effectiveSleepGoalMinutes = parseNullableInteger(profileDraft.sleep_goal_minutes ?? activeProfile.sleep_goal_minutes);
   const sleepGoalHours = effectiveSleepGoalMinutes === null ? "" : String(Math.floor(effectiveSleepGoalMinutes / 60));
   const sleepGoalRemainingMinutes = effectiveSleepGoalMinutes === null ? "" : String(effectiveSleepGoalMinutes % 60);
@@ -1989,7 +2001,18 @@ export function HealthPage({
             subtitle="Daily totals"
           >
             <div className="grid gap-3 sm:grid-cols-2">
-              <CompactStat detail={profile.calorie_goal ? `goal ${profile.calorie_goal}` : "set in goals"} label="Calories" progressPercent={profile.calorie_goal ? clampPercent((selectedNutrition.calories / profile.calorie_goal) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
+              <CompactStat
+                detail={selectedCalorieAllowance === null
+                  ? "set in goals"
+                  : activeProfile.add_active_energy_to_calorie_goal
+                    ? `Base ${formatHealthNutritionNumber(activeProfile.calorie_goal)} + ${formatHealthNutritionNumber(selectedActiveEnergyKcal)} active`
+                    : `goal ${formatHealthNutritionNumber(selectedCalorieAllowance)}`}
+                label="Calories"
+                progressPercent={selectedCalorieAllowance === null ? null : clampPercent((selectedNutrition.calories / selectedCalorieAllowance) * 100)}
+                value={activeProfile.add_active_energy_to_calorie_goal && selectedCalorieAllowance !== null
+                  ? `${formatHealthNutritionNumber(selectedNutrition.calories)} / ${formatHealthNutritionNumber(selectedCalorieAllowance)}`
+                  : formatHealthNutritionNumber(selectedNutrition.calories)}
+              />
               <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" progressPercent={profile.protein_goal_grams ? clampPercent((selectedNutrition.protein / profile.protein_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.protein)}g`} />
               <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.carbs)}g`} />
               <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.fat)}g`} />
@@ -2465,6 +2488,15 @@ export function HealthPage({
               value={targetWeightDraft}
             />
           </Field>
+          <div className="sm:col-span-2">
+            <ToggleField
+              checked={profileDraft.add_active_energy_to_calorie_goal ?? profile.add_active_energy_to_calorie_goal}
+              compact
+              label="Add Active Energy to calorie allowance"
+              onChange={(checked) => setProfileDraft((current) => ({ ...current, add_active_energy_to_calorie_goal: checked }))}
+            />
+            <p className="mt-2 text-xs text-[#73809c] dark:text-white/50">Daily allowance = calorie goal + Active Energy.</p>
+          </div>
           </div>
           <div className="mt-4 flex justify-end">
             <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveProfile(); }} type="button">

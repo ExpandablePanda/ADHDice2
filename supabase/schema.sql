@@ -343,6 +343,7 @@ create table public.adhdice_health_profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   preferred_weight_unit text not null default 'lb' check (preferred_weight_unit in ('lb', 'kg')),
   calorie_goal integer check (calorie_goal is null or calorie_goal >= 0),
+  add_active_energy_to_calorie_goal boolean not null default false,
   protein_goal_grams integer check (protein_goal_grams is null or protein_goal_grams >= 0),
   carbs_goal_grams integer check (carbs_goal_grams is null or carbs_goal_grams >= 0),
   fat_goal_grams integer check (fat_goal_grams is null or fat_goal_grams >= 0),

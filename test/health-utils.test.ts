@@ -15,6 +15,7 @@ import {
   formatMealLoggedTime,
   buildHealthSleepTimestamps,
   buildHealthDailySleepSeries,
+  calculateHealthDailyCalorieAllowance,
   getHealthSleepElapsedSeconds,
   getHealthSleepStartTimestamp,
   getCurrentHealthDateTimeInputs,
@@ -24,6 +25,7 @@ import {
   sortHealthSleepSessionsByStart,
   HEALTH_SLEEP_KINDS,
   normalizeHealthMealTime,
+  normalizeHealthProfile,
   normalizeHealthSleepKind,
   resolveHealthSleepKind,
   parseHealthSleepDuration,
@@ -31,6 +33,23 @@ import {
   isHealthMealTimestampFuture,
   sumMealNutritionForDate,
 } from "../src/lib/health-utils.ts";
+
+test("daily calorie allowance adds only non-negative finite Active Energy when enabled", () => {
+  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: 350, addActiveEnergy: true, baseCalorieGoal: 1800 }), 2150);
+  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: 350, addActiveEnergy: false, baseCalorieGoal: 1800 }), 1800);
+  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: 350, addActiveEnergy: true, baseCalorieGoal: null }), null);
+  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: 0, addActiveEnergy: true, baseCalorieGoal: 1800 }), 1800);
+  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: -50, addActiveEnergy: true, baseCalorieGoal: 1800 }), 1800);
+  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: Number.NaN, addActiveEnergy: true, baseCalorieGoal: 1800 }), 1800);
+  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: Number.POSITIVE_INFINITY, addActiveEnergy: true, baseCalorieGoal: 1800 }), 1800);
+});
+
+test("Health profile normalization defaults the Active Energy allowance setting safely", () => {
+  assert.equal(normalizeHealthProfile({ user_id: "user-1" }, "user-1").add_active_energy_to_calorie_goal, false);
+  assert.equal(normalizeHealthProfile({ add_active_energy_to_calorie_goal: true, user_id: "user-1" }, "user-1").add_active_energy_to_calorie_goal, true);
+  assert.equal(normalizeHealthProfile({ add_active_energy_to_calorie_goal: false, user_id: "user-1" }, "user-1").add_active_energy_to_calorie_goal, false);
+  assert.equal(buildDefaultHealthProfile("user-1").add_active_energy_to_calorie_goal, false);
+});
 
 test("health weight conversion helpers round-trip between pounds and kilograms", () => {
   const kilograms = displayWeightToKilograms(180, "lb");

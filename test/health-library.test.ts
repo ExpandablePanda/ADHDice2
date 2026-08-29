@@ -525,7 +525,11 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(chart, /No calories logged in this 7-day range/);
   assert.match(chart, /series\.map/);
   assert.doesNotMatch(source, /Recent Foods[\s\S]{0,2500}FavoriteFoodHistoryInlay/);
-  assert.match(source, /progressPercent=\{profile\.calorie_goal/);
+  assert.match(source, /calculateHealthDailyCalorieAllowance/);
+  assert.match(source, /sumMetricValueForDate\(metricEntries, foodHistoryDate, \["active_energy_kcal"\]\)/);
+  assert.match(source, /progressPercent=\{selectedCalorieAllowance === null/);
+  assert.match(source, /Add Active Energy to calorie allowance/);
+  assert.match(source, /profileDraft\.add_active_energy_to_calorie_goal/);
   assert.match(source, /setFavoriteFoodStatus\(item\.id, false\)/);
   assert.match(source, /getHealthFoodMeasurementOptions/);
   assert.match(source, /calculateHealthFoodNutrition/);

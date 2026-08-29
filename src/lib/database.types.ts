@@ -1301,6 +1301,7 @@ export type HealthProfile = {
   user_id: string;
   preferred_weight_unit: HealthWeightUnit;
   calorie_goal: number | null;
+  add_active_energy_to_calorie_goal: boolean;
   protein_goal_grams: number | null;
   carbs_goal_grams: number | null;
   fat_goal_grams: number | null;
@@ -1319,6 +1320,7 @@ export type HealthProfileInsert = {
   user_id: string;
   preferred_weight_unit?: HealthWeightUnit;
   calorie_goal?: number | null;
+  add_active_energy_to_calorie_goal?: boolean;
   protein_goal_grams?: number | null;
   carbs_goal_grams?: number | null;
   fat_goal_grams?: number | null;
@@ -1336,6 +1338,7 @@ export type HealthProfileUpdate = Partial<
     HealthProfile,
     | "preferred_weight_unit"
     | "calorie_goal"
+    | "add_active_energy_to_calorie_goal"
     | "protein_goal_grams"
     | "carbs_goal_grams"
     | "fat_goal_grams"

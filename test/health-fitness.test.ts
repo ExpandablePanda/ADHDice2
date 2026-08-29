@@ -31,6 +31,8 @@ const titleOptionsMigrationSource = readFileSync(new URL("../supabase/add_health
 const typeOptionsMigrationSource = readFileSync(new URL("../supabase/add_health_workout_type_options_7_11_35.sql", import.meta.url), "utf8");
 const healthTablesSource = readFileSync(new URL("../supabase/add_health_tables.sql", import.meta.url), "utf8");
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+const databaseTypesSource = readFileSync(new URL("../src/lib/database.types.ts", import.meta.url), "utf8");
+const activeEnergyCalorieGoalMigrationSource = readFileSync(new URL("../supabase/add_health_active_energy_calorie_goal_7_12_3.sql", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const packageLock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8")) as { version: string; packages: { "": { version: string } } };
 const appVersionSource = readFileSync(new URL("../public/app-version.json", import.meta.url), "utf8");
@@ -83,6 +85,17 @@ test("existing Health profiles safely receive the default workout type list", ()
   assert.match(typeOptionsMigrationSource, /add column if not exists workout_type_options text\[\]/);
   assert.match(typeOptionsMigrationSource, /where workout_type_options is null or cardinality\(workout_type_options\) = 0/);
   assert.match(typeOptionsMigrationSource, /alter column workout_type_options set not null/);
+});
+
+test("Active Energy calorie allowance profile field stays in schema, migration, and database types", () => {
+  assert.match(healthTablesSource, /add_active_energy_to_calorie_goal boolean not null default false/);
+  assert.match(schemaSource, /add_active_energy_to_calorie_goal boolean not null default false/);
+  assert.match(activeEnergyCalorieGoalMigrationSource, /add column if not exists add_active_energy_to_calorie_goal boolean default false/);
+  assert.match(activeEnergyCalorieGoalMigrationSource, /where add_active_energy_to_calorie_goal is null/);
+  assert.match(activeEnergyCalorieGoalMigrationSource, /alter column add_active_energy_to_calorie_goal set not null/);
+  assert.match(databaseTypesSource, /add_active_energy_to_calorie_goal: boolean/);
+  assert.match(databaseTypesSource, /add_active_energy_to_calorie_goal\?: boolean/);
+  assert.match(databaseTypesSource, /\| "add_active_energy_to_calorie_goal"/);
 });
 
 test("workout type options trim, reject empty and duplicates, rename, remove, and protect the final option", () => {
@@ -535,12 +548,12 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.11.91 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.11.91");
-  assert.equal(packageLock.version, "7.11.91");
-  assert.equal(packageLock.packages[""].version, "7.11.91");
-  assert.match(appVersionSource, /"version":\s*"7\.11\.91"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.11\.91"/);
+test("all 7.12.3 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.12.3");
+  assert.equal(packageLock.version, "7.12.3");
+  assert.equal(packageLock.packages[""].version, "7.12.3");
+  assert.match(appVersionSource, /"version":\s*"7\.12\.3"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.3"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
-  assert.match(currentStateSource, /Current working app version: `7\.11\.91`/);
+  assert.match(currentStateSource, /Current working app version: `7\.12\.3`/);
 });
