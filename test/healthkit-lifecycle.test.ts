@@ -123,5 +123,9 @@ test("production wiring uses Capacitor active-state events and the existing incr
   assert.match(taskAppSource, /onSync: \(trigger\) => syncIncrementalAppleHealthData\(trigger === "automatic" \? \{ silent: true \} : undefined\)/);
   assert.match(taskAppSource, /healthProfile\.user_id === healthSyncUserId/);
   assert.match(taskAppSource, /healthStorageMode === "remote"/);
+  assert.match(taskAppSource, /isHealthKitConnectionEstablished\(healthSyncUserId \?\? "", \{/);
+  assert.match(taskAppSource, /metricEntries: healthMetricEntries/);
+  assert.match(taskAppSource, /weightEntries: healthWeightEntries/);
+  assert.match(taskAppSource, /workouts: healthWorkouts/);
   assert.match(healthSource, /async function syncIncrementalAppleHealthData\(options\?: HealthKitIncrementalSyncOptions\)/);
 });

@@ -15,6 +15,7 @@ import {
   type HealthKitAuthorizationResult,
   type HealthKitSnapshot,
 } from "@/lib/healthkit";
+import { markHealthKitConnected } from "@/lib/healthkit-connection";
 import type { HealthKitIncrementalSyncResult, HealthKitSyncResult } from "@/lib/healthkit-sync";
 
 type DiagnosticState = "checking" | "ready" | "requesting" | "reading" | "unavailable" | "error";
@@ -68,6 +69,9 @@ export function AppleHealthNativeSection({ healthKitScopeKey, syncAppleHealthDat
     setError(null);
     try {
       const result = await requestHealthKitReadAuthorization();
+      if (result.authorizationCompleted === true && healthKitScopeKey) {
+        markHealthKitConnected(healthKitScopeKey);
+      }
       setAuthorization(result);
       setDiagnosticState("ready");
     } catch (caughtError) {

@@ -129,6 +129,7 @@ import { useAchievementNotifications, useAchievementProgress } from "@/hooks/use
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { useHealth } from "@/hooks/useHealth";
 import { checkHealthKitAvailability } from "@/lib/healthkit";
+import { isHealthKitConnectionEstablished } from "@/lib/healthkit-connection";
 import type { HealthKitIncrementalSyncResult } from "@/lib/healthkit-sync";
 import { createHealthKitLifecycleCoordinator, type HealthKitSyncTrigger } from "@/lib/healthkit-lifecycle-coordinator";
 import { useFitnessGoals } from "@/hooks/useFitnessGoals";
@@ -593,7 +594,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.12.5";
+const APP_VERSION = "7.12.6";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1331,7 +1332,13 @@ export function TaskApp() {
     isEligible: async () => {
       if (!healthSyncReady) return false;
       const availability = await checkHealthKitAvailability();
-      return availability.platform === "ios" && availability.available;
+      return availability.platform === "ios"
+        && availability.available
+        && isHealthKitConnectionEstablished(healthSyncUserId ?? "", {
+          metricEntries: healthMetricEntries,
+          weightEntries: healthWeightEntries,
+          workouts: healthWorkouts,
+        });
     },
     onSync: (trigger) => syncIncrementalAppleHealthData(trigger === "automatic" ? { silent: true } : undefined),
   };
