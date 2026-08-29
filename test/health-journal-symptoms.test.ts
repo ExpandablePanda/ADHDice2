@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import type { HealthSymptom, HealthSymptomEntry } from "../src/lib/database.types.ts";
 import {
   groupHealthSymptomEntriesByDate,
   HEALTH_MOOD_OPTIONS,
@@ -9,6 +10,7 @@ import {
   HEALTH_SEVERITY_OPTIONS,
   normalizeHealthSymptomName,
   normalizeHealthSymptomNote,
+  reconcileHealthSymptoms,
 } from "../src/lib/health-utils.ts";
 
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
@@ -39,6 +41,22 @@ function symptomEntry(
   };
 }
 
+function symptomDefinition(
+  id: string,
+  name: string,
+  archivedAt: string | null = null,
+): HealthSymptom {
+  const timestamp = `${id}-timestamp`;
+  return {
+    archived_at: archivedAt,
+    created_at: timestamp,
+    id,
+    name,
+    updated_at: timestamp,
+    user_id: "user-1",
+  };
+}
+
 test("Journal scales use 1 through 10 and normalize symptom input", () => {
   assert.deepEqual([...HEALTH_SCALE_OPTIONS], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.deepEqual([...HEALTH_MOOD_OPTIONS], [...HEALTH_SCALE_OPTIONS]);
@@ -61,6 +79,80 @@ test("same symptom entries coexist and remain individually grouped by day and ti
     ["morning", 3],
   ]);
   assert.equal(groups[0]?.entries.length, 2);
+});
+
+test("local symptom recovery keeps an empty remote response visible and recovers definitions before entries", () => {
+  const localDefinition = symptomDefinition("local-back-pain", "Back Pain");
+  const archivedDefinition = symptomDefinition("local-archived", "Old Pain", "2026-08-28T12:00:00.000Z");
+  const existingRemoteDefinition = symptomDefinition("remote-headache", "Headache");
+  const localEntry = {
+    ...symptomEntry("local-entry", "2026-08-29", "2026-08-29T09:00:00.000Z", 3, localDefinition.id),
+    note: "after walking",
+  };
+  const archivedEntry = symptomEntry("archived-entry", "2026-08-28", "2026-08-28T12:00:00.000Z", 8, archivedDefinition.id);
+  const existingRemoteEntry = symptomEntry("remote-entry", "2026-08-29", "2026-08-29T08:00:00.000Z", 2, existingRemoteDefinition.id);
+  const localDefinitions = [localDefinition, archivedDefinition];
+  const localEntries: HealthSymptomEntry[] = [localEntry, archivedEntry];
+
+  let remoteDefinitions: HealthSymptom[] = [];
+  let remoteEntries: HealthSymptomEntry[] = [];
+  const recoveryCalls: string[] = [];
+  let plan = reconcileHealthSymptoms(localDefinitions, remoteDefinitions, localEntries, remoteEntries);
+
+  assert.deepEqual(plan.mergedSymptoms.map((symptom) => symptom.id).sort(), localDefinitions.map((symptom) => symptom.id).sort());
+  assert.deepEqual(plan.mergedEntries.map((entry) => entry.id).sort(), localEntries.map((entry) => entry.id).sort());
+  assert.deepEqual(plan.unreconciledLocalSymptoms.map((symptom) => symptom.id).sort(), [archivedDefinition.id, localDefinition.id].sort());
+  assert.deepEqual(plan.unreconciledLocalEntries, []);
+
+  recoveryCalls.push("definitions");
+  remoteDefinitions = [localDefinition, archivedDefinition];
+  plan = reconcileHealthSymptoms(localDefinitions, remoteDefinitions, localEntries, remoteEntries);
+  assert.deepEqual(plan.unreconciledLocalEntries.map((entry) => entry.id).sort(), [archivedEntry.id, localEntry.id].sort());
+
+  assert.ok(remoteDefinitions.some((symptom) => symptom.id === localDefinition.id));
+  recoveryCalls.push("entries");
+  remoteEntries = [localEntry, archivedEntry];
+  plan = reconcileHealthSymptoms(localDefinitions, remoteDefinitions, localEntries, remoteEntries);
+
+  assert.deepEqual(recoveryCalls, ["definitions", "entries"]);
+  assert.deepEqual(plan.unreconciledLocalSymptoms, []);
+  assert.deepEqual(plan.unreconciledLocalEntries, []);
+  assert.equal(plan.mergedSymptoms.filter((symptom) => symptom.id === localDefinition.id).length, 1);
+  assert.equal(plan.mergedEntries.filter((entry) => entry.id === localEntry.id).length, 1);
+  assert.equal(plan.mergedSymptoms.find((symptom) => symptom.id === archivedDefinition.id)?.archived_at, archivedDefinition.archived_at);
+  assert.deepEqual(plan.mergedEntries.find((entry) => entry.id === localEntry.id), localEntry);
+  assert.equal(plan.mergedEntries.find((entry) => entry.id === archivedEntry.id)?.symptom_id, archivedDefinition.id);
+
+  const existingRemotePlan = reconcileHealthSymptoms(
+    [existingRemoteDefinition],
+    [existingRemoteDefinition],
+    [existingRemoteEntry],
+    [existingRemoteEntry],
+  );
+  assert.deepEqual(existingRemotePlan.unreconciledLocalSymptoms, []);
+  assert.deepEqual(existingRemotePlan.unreconciledLocalEntries, []);
+  assert.equal(existingRemotePlan.mergedSymptoms.length, 1);
+  assert.equal(existingRemotePlan.mergedEntries.length, 1);
+
+  const staleLocalDefinition = symptomDefinition(existingRemoteDefinition.id, "Stale Headache");
+  const remoteWinsPlan = reconcileHealthSymptoms(
+    [staleLocalDefinition],
+    [existingRemoteDefinition],
+    [],
+    [],
+  );
+  assert.equal(remoteWinsPlan.mergedSymptoms[0]?.name, existingRemoteDefinition.name);
+
+  const repeated = reconcileHealthSymptoms(
+    [...localDefinitions],
+    [...remoteDefinitions],
+    [...localEntries],
+    [...remoteEntries],
+  );
+  assert.deepEqual(repeated.unreconciledLocalSymptoms, []);
+  assert.deepEqual(repeated.unreconciledLocalEntries, []);
+  assert.equal(new Set(repeated.mergedSymptoms.map((symptom) => symptom.id)).size, 2);
+  assert.equal(new Set(repeated.mergedEntries.map((entry) => entry.id)).size, 2);
 });
 
 test("the migration expands daily scores without rewriting existing values", () => {
@@ -111,6 +203,23 @@ test("symptom persistence has its own optional fallback and CRUD paths", () => {
   assert.match(healthHookSource, /async function updateSymptomEntry/);
   assert.match(healthHookSource, /async function deleteSymptomEntry/);
   assert.match(healthHookSource, /\.eq\("id", entryId\)\n\s+\.eq\("user_id", userId\)/);
+  const recoverySectionStart = healthHookSource.indexOf("let remoteSymptoms =");
+  const recoverySectionEnd = healthHookSource.indexOf("const remoteWorkouts =", recoverySectionStart);
+  const recoverySection = healthHookSource.slice(recoverySectionStart, recoverySectionEnd);
+  const definitionUpsert = recoverySection.indexOf('.from("adhdice_health_symptoms")');
+  const entryUpsert = recoverySection.indexOf('.from("adhdice_health_symptom_entries")');
+  assert.ok(definitionUpsert >= 0 && entryUpsert > definitionUpsert);
+  assert.match(recoverySection, /symptomRecovery\.unreconciledLocalSymptoms/);
+  assert.match(recoverySection, /symptomRecovery\.unreconciledLocalEntries/);
+  assert.match(healthHookSource, /symptoms: symptomsResult\.error \? currentLocalSymptoms : symptomRecovery\.mergedSymptoms/);
+  assert.match(healthHookSource, /symptomEntries: symptomEntriesResult\.error \? currentLocalSymptomEntries : symptomRecovery\.mergedEntries/);
+  const baseHealthErrorsStart = healthHookSource.indexOf("const errors = [");
+  const baseHealthErrorsEnd = healthHookSource.indexOf("].filter(Boolean);", baseHealthErrorsStart);
+  assert.doesNotMatch(healthHookSource.slice(baseHealthErrorsStart, baseHealthErrorsEnd), /symptom/i);
+  assert.doesNotMatch(schemaSource, /alter publication supabase_realtime add table public\.adhdice_health_symptoms/);
+  assert.doesNotMatch(schemaSource, /alter publication supabase_realtime add table public\.adhdice_health_symptom_entries/);
+  assert.doesNotMatch(migrationSource, /alter publication supabase_realtime add table public\.adhdice_health_symptoms/);
+  assert.doesNotMatch(migrationSource, /alter publication supabase_realtime add table public\.adhdice_health_symptom_entries/);
   assert.match(healthPageSource, /HEALTH_SEVERITY_OPTIONS\.map/);
   assert.match(healthPageSource, /title="Recent symptoms"/);
   assert.match(healthPageSource, /entry\.severity}\/10/);

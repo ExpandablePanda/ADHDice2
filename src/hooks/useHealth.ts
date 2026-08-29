@@ -49,6 +49,7 @@ import {
   normalizeHealthSymptomName,
   normalizeHealthSymptomNote,
   normalizeHealthProfile,
+  reconcileHealthSymptoms,
   sortHealthSymptomEntries,
   sortHealthSymptoms,
   todayHealthDate,
@@ -625,6 +626,102 @@ export function useHealth(
         });
       }
 
+      const latestLocalSymptoms = healthSnapshotRef.current?.symptoms ?? localState.snapshot.symptoms;
+      const latestLocalSymptomEntries = healthSnapshotRef.current?.symptomEntries ?? localState.snapshot.symptomEntries;
+      let remoteSymptoms = symptomsResult.data ?? [];
+      let remoteSymptomEntries = symptomEntriesResult.data ?? [];
+      let symptomRecovery = reconcileHealthSymptoms(
+        latestLocalSymptoms,
+        remoteSymptoms,
+        latestLocalSymptomEntries,
+        remoteSymptomEntries,
+      );
+      let symptomDefinitionRecoveryError: { message: string } | null = null;
+      let symptomEntryRecoveryError: { message: string } | null = null;
+
+      if (!symptomsResult.error && symptomRecovery.unreconciledLocalSymptoms.length > 0) {
+        const { data, error } = await client
+          .from("adhdice_health_symptoms")
+          .upsert(
+            symptomRecovery.unreconciledLocalSymptoms.map((symptom) => ({
+              archived_at: symptom.archived_at,
+              created_at: symptom.created_at,
+              id: symptom.id,
+              name: symptom.name,
+              updated_at: symptom.updated_at,
+              user_id: userId,
+            })),
+            { onConflict: "id" },
+          )
+          .select("*");
+        if (error) {
+          symptomDefinitionRecoveryError = error;
+          symptomDefinitionsRemoteEnabledRef.current = false;
+          symptomEntriesRemoteEnabledRef.current = false;
+        } else {
+          remoteSymptoms = [...remoteSymptoms, ...(data && data.length > 0 ? data : symptomRecovery.unreconciledLocalSymptoms)];
+          symptomRecovery = reconcileHealthSymptoms(
+            latestLocalSymptoms,
+            remoteSymptoms,
+            latestLocalSymptomEntries,
+            remoteSymptomEntries,
+          );
+        }
+      }
+
+      if (!symptomsResult.error && !symptomDefinitionRecoveryError && !symptomEntriesResult.error) {
+        if (symptomRecovery.unreconciledLocalEntries.length > 0) {
+          const { data, error } = await client
+            .from("adhdice_health_symptom_entries")
+            .upsert(
+              symptomRecovery.unreconciledLocalEntries.map((entry) => ({
+                created_at: entry.created_at,
+                entry_date: entry.entry_date,
+                id: entry.id,
+                logged_at: entry.logged_at,
+                note: entry.note,
+                severity: entry.severity,
+                symptom_id: entry.symptom_id,
+                updated_at: entry.updated_at,
+                user_id: userId,
+              })),
+              { onConflict: "id" },
+            )
+            .select("*");
+          if (error) {
+            symptomEntryRecoveryError = error;
+            symptomEntriesRemoteEnabledRef.current = false;
+          } else {
+            remoteSymptomEntries = [...remoteSymptomEntries, ...(data && data.length > 0 ? data : symptomRecovery.unreconciledLocalEntries)];
+          }
+        }
+      }
+
+      if (symptomDefinitionRecoveryError) {
+        setMessage({
+          tone: "warn",
+          text: `Local symptom definitions remain visible; remote recovery will retry on the next Health hydration: ${symptomDefinitionRecoveryError.message}`,
+        });
+      } else if (symptomEntryRecoveryError) {
+        setMessage({
+          tone: "warn",
+          text: `Local symptom entries remain visible; remote recovery will retry on the next Health hydration: ${symptomEntryRecoveryError.message}`,
+        });
+      }
+
+      const currentLocalSymptoms = healthSnapshotRef.current?.symptoms ?? latestLocalSymptoms;
+      const currentLocalSymptomEntries = healthSnapshotRef.current?.symptomEntries ?? latestLocalSymptomEntries;
+      symptomRecovery = reconcileHealthSymptoms(
+        currentLocalSymptoms,
+        remoteSymptoms,
+        currentLocalSymptomEntries,
+        remoteSymptomEntries,
+      );
+
+      if (!isActive) {
+        return;
+      }
+
       const remoteWorkouts = sortHealthWorkouts(workoutsResult.data ?? []);
       const latestLocalWorkouts = healthSnapshotRef.current?.workouts ?? localState.snapshot.workouts;
       const workoutRecovery = workoutsResult.error
@@ -709,8 +806,8 @@ export function useHealth(
         profile: normalizeHealthProfile(profileResult.data, userId),
         recipes: recipesResult.data ?? [],
         savedMeals: savedMealsResult.data ?? [],
-        symptomEntries: symptomEntriesResult.error ? localState.snapshot.symptomEntries : symptomEntriesResult.data ?? [],
-        symptoms: symptomsResult.error ? localState.snapshot.symptoms : symptomsResult.data ?? [],
+        symptomEntries: symptomEntriesResult.error ? currentLocalSymptomEntries : symptomRecovery.mergedEntries,
+        symptoms: symptomsResult.error ? currentLocalSymptoms : symptomRecovery.mergedSymptoms,
         waterEntries: waterEntriesResult.data ?? [],
         workouts: workoutRecovery.mergedWorkouts,
         weightEntries: weightEntriesResult.data ?? [],

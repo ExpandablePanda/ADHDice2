@@ -1389,6 +1389,8 @@ export type HealthSymptomInsert = {
   user_id: string;
   name: string;
   archived_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type HealthSymptomUpdate = Partial<Pick<HealthSymptom, "name" | "archived_at">>;
@@ -1413,6 +1415,8 @@ export type HealthSymptomEntryInsert = {
   logged_at?: string;
   severity: number;
   note?: string | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type HealthSymptomEntryUpdate = Partial<

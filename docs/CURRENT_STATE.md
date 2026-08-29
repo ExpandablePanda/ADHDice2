@@ -1,17 +1,28 @@
 # Current State
 
-Last reviewed: 2026-08-28
+Last reviewed: 2026-08-29
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.7`.
-- Current release group: `7.12.x` Health Journal symptom tracking foundation.
+- Current working app version: `7.12.8`.
+- Current release group: `7.12.x` Health Journal symptom recovery.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-29 7.12.8 Health Journal symptom recovery
+
+Health symptom definitions and timestamped entries now reconcile local-only
+rows into Supabase before successful remote hydration replaces the visible
+snapshot. Definitions are recovered before dependent entries, recovery is
+stable-ID based and idempotent, and local rows remain visible if either
+recovery step fails. The existing 7.12.7 migration filename is unchanged;
+symptom tables are not added to Realtime because no subscriber exists. No
+production SQL, browser, native, or iOS verification was performed.
+Journal Trends/Graphs remain deferred to 7.12.9.
 
 ## 2026-08-28 7.12.7 Health Journal symptom tracking foundation
 

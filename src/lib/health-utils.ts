@@ -293,6 +293,27 @@ export function sortHealthSymptomEntries(entries: HealthSymptomEntry[]) {
     || right.id.localeCompare(left.id));
 }
 
+export function reconcileHealthSymptoms(
+  localSymptoms: HealthSymptom[],
+  remoteSymptoms: HealthSymptom[],
+  localEntries: HealthSymptomEntry[],
+  remoteEntries: HealthSymptomEntry[],
+) {
+  const remoteSymptomIds = new Set(remoteSymptoms.map((symptom) => symptom.id));
+  const unreconciledLocalSymptoms = localSymptoms.filter((symptom) => !remoteSymptomIds.has(symptom.id));
+  const mergedSymptoms = sortHealthSymptoms([...remoteSymptoms, ...unreconciledLocalSymptoms]);
+  const remoteEntryIds = new Set(remoteEntries.map((entry) => entry.id));
+  const localOnlyEntries = localEntries.filter((entry) => !remoteEntryIds.has(entry.id));
+  const unreconciledLocalEntries = localOnlyEntries.filter((entry) => remoteSymptomIds.has(entry.symptom_id));
+
+  return {
+    mergedEntries: sortHealthSymptomEntries([...remoteEntries, ...localOnlyEntries]),
+    mergedSymptoms,
+    unreconciledLocalEntries,
+    unreconciledLocalSymptoms,
+  };
+}
+
 export function groupHealthSymptomEntriesByDate(entries: HealthSymptomEntry[]) {
   const groups = new Map<string, HealthSymptomEntry[]>();
   sortHealthSymptomEntries(entries).forEach((entry) => {

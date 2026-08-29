@@ -132,9 +132,6 @@ create trigger adhdice_health_symptom_entries_set_updated_at
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
-alter publication supabase_realtime add table public.adhdice_health_symptoms;
-alter publication supabase_realtime add table public.adhdice_health_symptom_entries;
-
 notify pgrst, 'reload schema';
 
 commit;

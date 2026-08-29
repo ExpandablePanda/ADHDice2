@@ -1541,8 +1541,6 @@ alter publication supabase_realtime add table public.adhdice_home_todo_state;
 alter publication supabase_realtime add table public.adhdice_brainstorm_state;
 alter publication supabase_realtime add table public.adhdice_health_profiles;
 alter publication supabase_realtime add table public.adhdice_health_checkins;
-alter publication supabase_realtime add table public.adhdice_health_symptoms;
-alter publication supabase_realtime add table public.adhdice_health_symptom_entries;
 alter publication supabase_realtime add table public.adhdice_health_food_library;
 alter publication supabase_realtime add table public.adhdice_health_recipes;
 alter publication supabase_realtime add table public.adhdice_health_saved_meals;
