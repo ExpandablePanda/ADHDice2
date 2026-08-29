@@ -7,6 +7,8 @@ import type {
   HealthMetricEntry,
   HealthNutritionDetails,
   HealthProfile,
+  HealthSymptom,
+  HealthSymptomEntry,
   Task,
   HealthWeightEntry,
 } from "@/lib/database.types";
@@ -26,7 +28,9 @@ export type HealthSleepKind = "CPAP Sleep" | "CPAP Nap" | "Sleep" | "Nap";
 export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards"];
 export const HEALTH_MEAL_SLOTS: HealthMealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
 export const HEALTH_SLEEP_KINDS: readonly HealthSleepKind[] = ["CPAP Sleep", "CPAP Nap", "Sleep", "Nap"];
-export const HEALTH_MOOD_OPTIONS = [1, 2, 3, 4, 5] as const;
+export const HEALTH_SCALE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+export const HEALTH_MOOD_OPTIONS = HEALTH_SCALE_OPTIONS;
+export const HEALTH_SEVERITY_OPTIONS = HEALTH_SCALE_OPTIONS;
 export const HEALTH_SYMPTOM_TAGS = [
   "Calm",
   "Stressed",
@@ -262,6 +266,41 @@ export function getCurrentHealthDateTimeInputs(now = new Date()) {
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   return { date, time };
+}
+
+export function normalizeHealthSymptomName(name: string) {
+  return name.trim().replace(/\s+/g, " ");
+}
+
+export function normalizeHealthSymptomNote(note: string | null | undefined) {
+  const normalized = note?.trim() ?? "";
+  return normalized.length > 0 ? normalized : null;
+}
+
+export function sortHealthSymptoms(symptoms: HealthSymptom[]) {
+  return [...symptoms].sort((left, right) => {
+    if ((left.archived_at === null) !== (right.archived_at === null)) {
+      return left.archived_at === null ? -1 : 1;
+    }
+    return left.name.localeCompare(right.name) || left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id);
+  });
+}
+
+export function sortHealthSymptomEntries(entries: HealthSymptomEntry[]) {
+  return [...entries].sort((left, right) =>
+    right.logged_at.localeCompare(left.logged_at)
+    || right.created_at.localeCompare(left.created_at)
+    || right.id.localeCompare(left.id));
+}
+
+export function groupHealthSymptomEntriesByDate(entries: HealthSymptomEntry[]) {
+  const groups = new Map<string, HealthSymptomEntry[]>();
+  sortHealthSymptomEntries(entries).forEach((entry) => {
+    const group = groups.get(entry.entry_date) ?? [];
+    group.push(entry);
+    groups.set(entry.entry_date, group);
+  });
+  return [...groups.entries()].map(([date, groupedEntries]) => ({ date, entries: groupedEntries }));
 }
 
 export function normalizeHealthSleepKind(value: string | null | undefined): HealthSleepKind {

@@ -1375,6 +1375,50 @@ export type HealthCheckInUpdate = Partial<
   Pick<HealthCheckIn, "mood_score" | "energy_score" | "symptom_tags" | "reflection">
 >;
 
+export type HealthSymptom = {
+  id: string;
+  user_id: string;
+  name: string;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthSymptomInsert = {
+  id?: string;
+  user_id: string;
+  name: string;
+  archived_at?: string | null;
+};
+
+export type HealthSymptomUpdate = Partial<Pick<HealthSymptom, "name" | "archived_at">>;
+
+export type HealthSymptomEntry = {
+  id: string;
+  user_id: string;
+  symptom_id: string;
+  entry_date: string;
+  logged_at: string;
+  severity: number;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthSymptomEntryInsert = {
+  id?: string;
+  user_id: string;
+  symptom_id: string;
+  entry_date: string;
+  logged_at?: string;
+  severity: number;
+  note?: string | null;
+};
+
+export type HealthSymptomEntryUpdate = Partial<
+  Pick<HealthSymptomEntry, "symptom_id" | "entry_date" | "logged_at" | "severity" | "note">
+>;
+
 export type HealthFoodLibraryItem = {
   id: string;
   user_id: string;
@@ -2603,6 +2647,18 @@ export type Database = {
         Row: HealthCheckIn;
         Insert: HealthCheckInInsert;
         Update: HealthCheckInUpdate;
+        Relationships: [];
+      };
+      adhdice_health_symptoms: {
+        Row: HealthSymptom;
+        Insert: HealthSymptomInsert;
+        Update: HealthSymptomUpdate;
+        Relationships: [];
+      };
+      adhdice_health_symptom_entries: {
+        Row: HealthSymptomEntry;
+        Insert: HealthSymptomEntryInsert;
+        Update: HealthSymptomEntryUpdate;
         Relationships: [];
       };
       adhdice_health_food_library: {

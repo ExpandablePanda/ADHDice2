@@ -191,7 +191,10 @@ create table public.adhdice_task_lists (
   user_id uuid not null references auth.users(id) on delete cascade,
   built_in_key text,
   folder_id uuid,
-  name text not null check (char_length(trim(name)) > 0),
+  name text not null check (
+    char_length(trim(name)) > 0
+    and name = regexp_replace(trim(name), '\\s+', ' ', 'g')
+  ),
   list_type text not null default 'custom' check (list_type in ('system', 'smart', 'custom')),
   membership_mode text not null default 'manual' check (membership_mode in ('manual', 'rules', 'hybrid')),
   is_deletable boolean not null default true,
@@ -361,13 +364,46 @@ create table public.adhdice_health_checkins (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   entry_date date not null,
-  mood_score integer check (mood_score is null or (mood_score >= 1 and mood_score <= 5)),
-  energy_score integer check (energy_score is null or (energy_score >= 1 and energy_score <= 5)),
+  mood_score integer,
+  energy_score integer,
   symptom_tags text[] not null default '{}',
   reflection text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  constraint adhdice_health_checkins_mood_score_range_check
+    check (mood_score is null or (mood_score >= 1 and mood_score <= 10)),
+  constraint adhdice_health_checkins_energy_score_range_check
+    check (energy_score is null or (energy_score >= 1 and energy_score <= 10)),
   unique (user_id, entry_date)
+);
+
+create table public.adhdice_health_symptoms (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null check (
+    char_length(trim(name)) > 0
+    and name = regexp_replace(trim(name), '\s+', ' ', 'g')
+  ),
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, id)
+);
+
+create table public.adhdice_health_symptom_entries (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  symptom_id uuid not null,
+  entry_date date not null,
+  logged_at timestamptz not null default now(),
+  severity integer not null check (severity >= 1 and severity <= 10),
+  note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, id),
+  foreign key (user_id, symptom_id)
+    references public.adhdice_health_symptoms (user_id, id)
+    on delete restrict
 );
 
 create table public.adhdice_health_food_library (
@@ -720,6 +756,13 @@ create index adhdice_task_grid_layouts_updated_at_idx
   on public.adhdice_task_grid_layouts (updated_at desc);
 create index adhdice_health_checkins_user_date_idx
   on public.adhdice_health_checkins (user_id, entry_date desc, updated_at desc);
+create unique index adhdice_health_symptoms_user_active_name_uidx
+  on public.adhdice_health_symptoms (user_id, lower(regexp_replace(trim(name), '\s+', ' ', 'g')))
+  where archived_at is null;
+create index adhdice_health_symptoms_user_active_name_idx
+  on public.adhdice_health_symptoms (user_id, archived_at, name, created_at);
+create index adhdice_health_symptom_entries_user_date_idx
+  on public.adhdice_health_symptom_entries (user_id, entry_date desc, logged_at desc, created_at desc);
 create index adhdice_health_food_library_user_updated_idx
   on public.adhdice_health_food_library (user_id, updated_at desc, created_at desc);
 create index adhdice_health_recipes_user_updated_idx
@@ -786,6 +829,8 @@ alter table public.adhdice_home_todo_state enable row level security;
 alter table public.adhdice_brainstorm_state enable row level security;
 alter table public.adhdice_health_profiles enable row level security;
 alter table public.adhdice_health_checkins enable row level security;
+alter table public.adhdice_health_symptoms enable row level security;
+alter table public.adhdice_health_symptom_entries enable row level security;
 alter table public.adhdice_health_food_library enable row level security;
 alter table public.adhdice_health_recipes enable row level security;
 alter table public.adhdice_health_saved_meals enable row level security;
@@ -809,6 +854,10 @@ revoke all on table public.adhdice_health_fitness_goals from anon, authenticated
 revoke all on table public.adhdice_health_fitness_goal_levels from anon, authenticated;
 grant select, insert, update, delete on table public.adhdice_health_fitness_goals to authenticated;
 grant select, insert, update, delete on table public.adhdice_health_fitness_goal_levels to authenticated;
+revoke all on table public.adhdice_health_symptoms from anon, authenticated;
+revoke all on table public.adhdice_health_symptom_entries from anon, authenticated;
+grant select, insert, update on table public.adhdice_health_symptoms to authenticated;
+grant select, insert, update, delete on table public.adhdice_health_symptom_entries to authenticated;
 
 create policy "Users can read their own clean tasks"
   on public.adhdice_clean_tasks
@@ -1132,6 +1181,50 @@ create policy "Users can manage their own health check-ins"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+create policy "Users can read their own health symptoms"
+  on public.adhdice_health_symptoms
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+create policy "Users can create their own health symptoms"
+  on public.adhdice_health_symptoms
+  for insert
+  to authenticated
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can update their own health symptoms"
+  on public.adhdice_health_symptoms
+  for update
+  to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can read their own health symptom entries"
+  on public.adhdice_health_symptom_entries
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+create policy "Users can create their own health symptom entries"
+  on public.adhdice_health_symptom_entries
+  for insert
+  to authenticated
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can update their own health symptom entries"
+  on public.adhdice_health_symptom_entries
+  for update
+  to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can delete their own health symptom entries"
+  on public.adhdice_health_symptom_entries
+  for delete
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
 create policy "Users can manage their own health food library"
   on public.adhdice_health_food_library
   for all
@@ -1349,6 +1442,16 @@ create trigger adhdice_health_checkins_set_updated_at
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
+create trigger adhdice_health_symptoms_set_updated_at
+  before update on public.adhdice_health_symptoms
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_symptom_entries_set_updated_at
+  before update on public.adhdice_health_symptom_entries
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
 create trigger adhdice_health_food_library_set_updated_at
   before update on public.adhdice_health_food_library
   for each row
@@ -1438,6 +1541,8 @@ alter publication supabase_realtime add table public.adhdice_home_todo_state;
 alter publication supabase_realtime add table public.adhdice_brainstorm_state;
 alter publication supabase_realtime add table public.adhdice_health_profiles;
 alter publication supabase_realtime add table public.adhdice_health_checkins;
+alter publication supabase_realtime add table public.adhdice_health_symptoms;
+alter publication supabase_realtime add table public.adhdice_health_symptom_entries;
 alter publication supabase_realtime add table public.adhdice_health_food_library;
 alter publication supabase_realtime add table public.adhdice_health_recipes;
 alter publication supabase_realtime add table public.adhdice_health_saved_meals;

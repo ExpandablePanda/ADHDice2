@@ -35,12 +35,22 @@ import type {
   HealthWorkoutUpdate,
   HealthWeightEntry,
   HealthWeightEntryInsert,
+  HealthSymptom,
+  HealthSymptomEntry,
+  HealthSymptomEntryInsert,
+  HealthSymptomEntryUpdate,
+  HealthSymptomInsert,
+  HealthSymptomUpdate,
 } from "@/lib/database.types";
 import type { AppleHealthImportPreview } from "@/lib/health-apple-import";
 import {
   buildDefaultHealthProfile,
   getEligibleHealthAchievements,
+  normalizeHealthSymptomName,
+  normalizeHealthSymptomNote,
   normalizeHealthProfile,
+  sortHealthSymptomEntries,
+  sortHealthSymptoms,
   todayHealthDate,
   type HealthAchievementCode,
 } from "@/lib/health-utils";
@@ -90,6 +100,8 @@ type HealthStateSnapshot = {
   profile: HealthProfile;
   recipes: HealthRecipe[];
   savedMeals: HealthSavedMeal[];
+  symptomEntries: HealthSymptomEntry[];
+  symptoms: HealthSymptom[];
   waterEntries: HealthWaterEntry[];
   workouts: HealthWorkout[];
   weightEntries: HealthWeightEntry[];
@@ -112,6 +124,8 @@ function buildEmptyState(userId: string): HealthStateSnapshot {
     profile: buildDefaultHealthProfile(userId),
     recipes: [],
     savedMeals: [],
+    symptomEntries: [],
+    symptoms: [],
     waterEntries: [],
     workouts: [],
     weightEntries: [],
@@ -121,6 +135,12 @@ function buildEmptyState(userId: string): HealthStateSnapshot {
 function isMissingHealthPersistence(message: string) {
   return message.includes("adhdice_health_")
     || message.includes("Could not find the table")
+    || message.includes("does not exist")
+    || message.includes("schema cache");
+}
+
+function isMissingHealthSymptomPersistence(message: string) {
+  return message.includes("Could not find the table")
     || message.includes("does not exist")
     || message.includes("schema cache");
 }
@@ -164,6 +184,8 @@ function readLocalHealthState(userId: string): LocalHealthState {
     ),
     recipes: readStoredJson(storageKey(userId, "recipes"), emptyState.recipes),
     savedMeals: readStoredJson(storageKey(userId, "saved-meals"), emptyState.savedMeals),
+    symptomEntries: sortHealthSymptomEntries(readStoredJson(storageKey(userId, "symptom-entries"), emptyState.symptomEntries)),
+    symptoms: sortHealthSymptoms(readStoredJson(storageKey(userId, "symptoms"), emptyState.symptoms)),
     waterEntries: readStoredJson(storageKey(userId, "water"), emptyState.waterEntries),
     workouts: sortHealthWorkouts(readStoredJson(storageKey(userId, "workouts"), emptyState.workouts)),
     weightEntries: readStoredJson(storageKey(userId, "weights"), emptyState.weightEntries),
@@ -199,6 +221,8 @@ function persistLocalHealthState(state: HealthStateSnapshot) {
     importAudits,
     awards,
     workouts,
+    symptoms,
+    symptomEntries,
   } = state;
   window.localStorage.setItem(storageKey(profile.user_id, "profile"), JSON.stringify(profile));
   window.localStorage.setItem(storageKey(profile.user_id, "checkins"), JSON.stringify(checkIns));
@@ -213,6 +237,8 @@ function persistLocalHealthState(state: HealthStateSnapshot) {
   window.localStorage.setItem(storageKey(profile.user_id, "imports"), JSON.stringify(importAudits));
   window.localStorage.setItem(storageKey(profile.user_id, "awards"), JSON.stringify(awards));
   window.localStorage.setItem(storageKey(profile.user_id, "workouts"), JSON.stringify(workouts));
+  window.localStorage.setItem(storageKey(profile.user_id, "symptoms"), JSON.stringify(symptoms));
+  window.localStorage.setItem(storageKey(profile.user_id, "symptom-entries"), JSON.stringify(symptomEntries));
 }
 
 function persistHealthMealPlanPendingMutations(userId: string, journal: HealthMealPlanPendingMutationJournal) {
@@ -245,6 +271,8 @@ export function useHealth(
   const [metricEntries, setMetricEntries] = useState<HealthMetricEntry[]>([]);
   const [recipes, setRecipes] = useState<HealthRecipe[]>([]);
   const [savedMeals, setSavedMeals] = useState<HealthSavedMeal[]>([]);
+  const [symptoms, setSymptoms] = useState<HealthSymptom[]>([]);
+  const [symptomEntries, setSymptomEntries] = useState<HealthSymptomEntry[]>([]);
   const [waterEntries, setWaterEntries] = useState<HealthWaterEntry[]>([]);
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [importAudits, setImportAudits] = useState<HealthImportAudit[]>([]);
@@ -255,6 +283,8 @@ export function useHealth(
   const healthFoodMutationRevisionRef = useRef(0);
   const workoutRemoteEnabledRef = useRef(true);
   const mealPlanRemoteEnabledRef = useRef(true);
+  const symptomDefinitionsRemoteEnabledRef = useRef(true);
+  const symptomEntriesRemoteEnabledRef = useRef(true);
   const mealPlanPendingMutationsRef = useRef<HealthMealPlanPendingMutationJournal>({});
 
   function recordMealPlanPendingMutation(mutation: HealthMealPlanPendingMutation) {
@@ -280,11 +310,18 @@ export function useHealth(
   }
 
   function buildHealthSnapshot(
-    snapshot: Omit<HealthStateSnapshot, "workouts" | "mealPlanEntries"> & { mealPlanEntries?: HealthMealPlanEntry[]; workouts?: HealthWorkout[] },
+    snapshot: Omit<HealthStateSnapshot, "workouts" | "mealPlanEntries" | "symptoms" | "symptomEntries"> & {
+      mealPlanEntries?: HealthMealPlanEntry[];
+      symptomEntries?: HealthSymptomEntry[];
+      symptoms?: HealthSymptom[];
+      workouts?: HealthWorkout[];
+    },
   ) {
     return {
       ...snapshot,
       mealPlanEntries: snapshot.mealPlanEntries ?? healthSnapshotRef.current?.mealPlanEntries ?? [],
+      symptomEntries: snapshot.symptomEntries ?? healthSnapshotRef.current?.symptomEntries ?? [],
+      symptoms: snapshot.symptoms ?? healthSnapshotRef.current?.symptoms ?? [],
       workouts: snapshot.workouts ?? healthSnapshotRef.current?.workouts ?? [],
     } satisfies HealthStateSnapshot;
   }
@@ -300,6 +337,8 @@ export function useHealth(
     setMetricEntries(snapshot.metricEntries);
     setRecipes(snapshot.recipes);
     setSavedMeals(snapshot.savedMeals);
+    setSymptoms(sortHealthSymptoms(snapshot.symptoms));
+    setSymptomEntries(sortHealthSymptomEntries(snapshot.symptomEntries));
     setWaterEntries(snapshot.waterEntries);
     setWorkouts(sortHealthWorkouts(snapshot.workouts));
     setImportAudits(snapshot.importAudits);
@@ -453,6 +492,8 @@ export function useHealth(
       setMetricEntries([]);
       setRecipes([]);
       setSavedMeals([]);
+      setSymptoms([]);
+      setSymptomEntries([]);
       setWaterEntries([]);
       setWorkouts([]);
       setImportAudits([]);
@@ -460,12 +501,16 @@ export function useHealth(
       setStorageMode("local");
       workoutRemoteEnabledRef.current = true;
       mealPlanRemoteEnabledRef.current = true;
+      symptomDefinitionsRemoteEnabledRef.current = true;
+      symptomEntriesRemoteEnabledRef.current = true;
       mealPlanPendingMutationsRef.current = {};
       return;
     }
 
     if (!active) return;
 
+    symptomDefinitionsRemoteEnabledRef.current = true;
+    symptomEntriesRemoteEnabledRef.current = true;
     const localState = readLocalHealthState(userId);
     mealPlanPendingMutationsRef.current = localState.mealPlanPendingMutations;
     applySnapshot(localState.snapshot);
@@ -488,6 +533,8 @@ export function useHealth(
         favoritesResult,
         recipesResult,
         savedMealsResult,
+        symptomsResult,
+        symptomEntriesResult,
         waterEntriesResult,
         weightEntriesResult,
         metricEntriesResult,
@@ -502,6 +549,8 @@ export function useHealth(
         client.from("adhdice_health_food_library").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
         client.from("adhdice_health_recipes").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
         client.from("adhdice_health_saved_meals").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
+        client.from("adhdice_health_symptoms").select("*").eq("user_id", userId).order("archived_at", { ascending: true, nullsFirst: true }).order("name", { ascending: true }),
+        client.from("adhdice_health_symptom_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
         client.from("adhdice_health_water_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
         client.from("adhdice_health_weight_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
         client.from("adhdice_health_metric_entries").select("*").eq("user_id", userId).order("metric_date", { ascending: false }),
@@ -527,6 +576,10 @@ export function useHealth(
         importAuditsResult.error,
         awardsResult.error,
       ].filter(Boolean);
+
+      const symptomPersistenceErrors = [symptomsResult.error, symptomEntriesResult.error].filter(Boolean);
+      symptomDefinitionsRemoteEnabledRef.current = !symptomsResult.error;
+      symptomEntriesRemoteEnabledRef.current = !symptomEntriesResult.error;
 
       if (errors.length > 0) {
         const firstError = errors[0];
@@ -559,6 +612,16 @@ export function useHealth(
         setMessage({
           text: "Fitness workouts are running in local mode until the 7.11.33 Fitness migration is applied. Existing Health data remains connected.",
           tone: "neutral",
+        });
+      }
+
+      if (symptomPersistenceErrors.length > 0) {
+        const hasMissingSymptomPersistence = symptomPersistenceErrors.some((error) => error && isMissingHealthSymptomPersistence(error.message));
+        setMessage({
+          text: hasMissingSymptomPersistence
+            ? "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied. Existing Health data remains connected."
+            : symptomPersistenceErrors[0]?.message ?? "Symptom tracking could not connect and is using local storage.",
+          tone: hasMissingSymptomPersistence ? "neutral" : "warn",
         });
       }
 
@@ -646,6 +709,8 @@ export function useHealth(
         profile: normalizeHealthProfile(profileResult.data, userId),
         recipes: recipesResult.data ?? [],
         savedMeals: savedMealsResult.data ?? [],
+        symptomEntries: symptomEntriesResult.error ? localState.snapshot.symptomEntries : symptomEntriesResult.data ?? [],
+        symptoms: symptomsResult.error ? localState.snapshot.symptoms : symptomsResult.data ?? [],
         waterEntries: waterEntriesResult.data ?? [],
         workouts: workoutRecovery.mergedWorkouts,
         weightEntries: weightEntriesResult.data ?? [],
@@ -768,6 +833,359 @@ export function useHealth(
     applySnapshot(nextSnapshot);
     await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
     setMessage({ tone: "good", text: "Daily check-in saved." });
+    return true;
+  }
+
+  async function updateSymptomDefinition(
+    symptomId: string,
+    input: HealthSymptomUpdate,
+    successText: string,
+  ) {
+    if (!userId || !profile) {
+      return false;
+    }
+
+    const currentSymptom = symptoms.find((symptom) => symptom.id === symptomId);
+    if (!currentSymptom) {
+      return false;
+    }
+
+    const normalizedInput: HealthSymptomUpdate = {
+      ...input,
+      ...(input.name === undefined ? {} : { name: normalizeHealthSymptomName(input.name) }),
+    };
+    if (normalizedInput.name !== undefined && normalizedInput.name.length === 0) {
+      setMessage({ tone: "warn", text: "Enter a symptom name." });
+      return false;
+    }
+    if (
+      normalizedInput.name !== undefined
+      && currentSymptom.archived_at === null
+      && symptoms.some((symptom) =>
+        symptom.id !== symptomId
+        && symptom.archived_at === null
+        && normalizeHealthSymptomName(symptom.name).toLocaleLowerCase() === normalizedInput.name?.toLocaleLowerCase())
+    ) {
+      setMessage({ tone: "warn", text: "That symptom is already in your active library." });
+      return false;
+    }
+
+    const now = new Date().toISOString();
+    const localRow: HealthSymptom = {
+      ...currentSymptom,
+      ...normalizedInput,
+      updated_at: now,
+    };
+    let nextRow = localRow;
+    if (client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current) {
+      const { data, error } = await client
+        .from("adhdice_health_symptoms")
+        .update(normalizedInput)
+        .eq("id", symptomId)
+        .eq("user_id", userId)
+        .select("*")
+        .single();
+      if (error) {
+        if (isMissingHealthSymptomPersistence(error.message)) {
+          symptomDefinitionsRemoteEnabledRef.current = false;
+          setMessage({
+            tone: "neutral",
+            text: "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied.",
+          });
+        } else {
+          setMessage({ tone: "warn", text: error.message });
+          return false;
+        }
+      } else {
+        nextRow = data ?? localRow;
+      }
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      symptoms: sortHealthSymptoms(symptoms.map((symptom) => symptom.id === symptomId ? nextRow : symptom)),
+      symptomEntries,
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: successText });
+    return true;
+  }
+
+  async function createSymptom(input: Omit<HealthSymptomInsert, "user_id">) {
+    if (!userId || !profile) {
+      return null;
+    }
+
+    const name = normalizeHealthSymptomName(input.name);
+    if (!name) {
+      setMessage({ tone: "warn", text: "Enter a symptom name." });
+      return null;
+    }
+    if (symptoms.some((symptom) =>
+      symptom.archived_at === null
+      && normalizeHealthSymptomName(symptom.name).toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      setMessage({ tone: "warn", text: "That symptom is already in your active library." });
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const localRow: HealthSymptom = {
+      archived_at: null,
+      created_at: now,
+      id: input.id ?? createLocalId("health-symptom"),
+      name,
+      updated_at: now,
+      user_id: userId,
+    };
+    let nextRow = localRow;
+    if (client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current) {
+      const { data, error } = await client
+        .from("adhdice_health_symptoms")
+        .insert({ ...input, archived_at: null, name, user_id: userId })
+        .select("*")
+        .single();
+      if (error) {
+        if (isMissingHealthSymptomPersistence(error.message)) {
+          symptomDefinitionsRemoteEnabledRef.current = false;
+          setMessage({
+            tone: "neutral",
+            text: "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied.",
+          });
+        } else {
+          setMessage({ tone: "warn", text: error.message });
+          return null;
+        }
+      } else {
+        nextRow = data ?? localRow;
+      }
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      symptoms: sortHealthSymptoms([nextRow, ...symptoms]),
+      symptomEntries,
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Symptom added." });
+    return nextRow;
+  }
+
+  async function renameSymptom(symptomId: string, name: string) {
+    return updateSymptomDefinition(symptomId, { name }, "Symptom renamed.");
+  }
+
+  async function archiveSymptom(symptomId: string) {
+    return updateSymptomDefinition(symptomId, { archived_at: new Date().toISOString() }, "Symptom archived.");
+  }
+
+  async function addSymptomEntry(input: Omit<HealthSymptomEntryInsert, "user_id">) {
+    if (!userId || !profile) {
+      return false;
+    }
+    const currentSymptoms = healthSnapshotRef.current?.symptoms ?? symptoms;
+    const currentSymptomEntries = healthSnapshotRef.current?.symptomEntries ?? symptomEntries;
+    const symptom = currentSymptoms.find((candidate) => candidate.id === input.symptom_id);
+    if (!symptom || symptom.archived_at !== null) {
+      setMessage({ tone: "warn", text: "Choose an active symptom." });
+      return false;
+    }
+    if (!Number.isInteger(input.severity) || input.severity < 1 || input.severity > 10) {
+      setMessage({ tone: "warn", text: "Choose a severity from 1 to 10." });
+      return false;
+    }
+
+    const now = new Date().toISOString();
+    const localRow: HealthSymptomEntry = {
+      created_at: now,
+      entry_date: input.entry_date,
+      id: input.id ?? createLocalId("health-symptom-entry"),
+      logged_at: input.logged_at ?? now,
+      note: normalizeHealthSymptomNote(input.note),
+      severity: input.severity,
+      symptom_id: input.symptom_id,
+      updated_at: now,
+      user_id: userId,
+    };
+    let nextRow = localRow;
+    const normalizedInput: Omit<HealthSymptomEntryInsert, "user_id"> = {
+      ...input,
+      note: normalizeHealthSymptomNote(input.note),
+    };
+    if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
+      const { data, error } = await client
+        .from("adhdice_health_symptom_entries")
+        .insert({ ...normalizedInput, user_id: userId })
+        .select("*")
+        .single();
+      if (error) {
+        if (isMissingHealthSymptomPersistence(error.message)) {
+          symptomEntriesRemoteEnabledRef.current = false;
+          setMessage({
+            tone: "neutral",
+            text: "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied.",
+          });
+        } else {
+          setMessage({ tone: "warn", text: error.message });
+          return false;
+        }
+      } else {
+        nextRow = data ?? localRow;
+      }
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      symptoms: currentSymptoms,
+      symptomEntries: sortHealthSymptomEntries([nextRow, ...currentSymptomEntries]),
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Symptom entry saved." });
+    return true;
+  }
+
+  async function updateSymptomEntry(entryId: string, input: HealthSymptomEntryUpdate) {
+    if (!userId || !profile) {
+      return false;
+    }
+    const currentEntry = symptomEntries.find((entry) => entry.id === entryId);
+    if (!currentEntry) {
+      return false;
+    }
+    const nextSymptomId = input.symptom_id ?? currentEntry.symptom_id;
+    const symptom = symptoms.find((candidate) => candidate.id === nextSymptomId);
+    if (!symptom) {
+      setMessage({ tone: "warn", text: "Choose a valid symptom." });
+      return false;
+    }
+    const nextSeverity = input.severity ?? currentEntry.severity;
+    if (!Number.isInteger(nextSeverity) || nextSeverity < 1 || nextSeverity > 10) {
+      setMessage({ tone: "warn", text: "Choose a severity from 1 to 10." });
+      return false;
+    }
+
+    const normalizedInput: HealthSymptomEntryUpdate = {
+      ...input,
+      ...(input.note === undefined ? {} : { note: normalizeHealthSymptomNote(input.note) }),
+    };
+    const now = new Date().toISOString();
+    const localRow: HealthSymptomEntry = {
+      ...currentEntry,
+      ...normalizedInput,
+      severity: nextSeverity,
+      symptom_id: nextSymptomId,
+      updated_at: now,
+    };
+    let nextRow = localRow;
+    if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
+      const { data, error } = await client
+        .from("adhdice_health_symptom_entries")
+        .update(normalizedInput)
+        .eq("id", entryId)
+        .eq("user_id", userId)
+        .select("*")
+        .single();
+      if (error) {
+        if (isMissingHealthSymptomPersistence(error.message)) {
+          symptomEntriesRemoteEnabledRef.current = false;
+          setMessage({
+            tone: "neutral",
+            text: "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied.",
+          });
+        } else {
+          setMessage({ tone: "warn", text: error.message });
+          return false;
+        }
+      } else {
+        nextRow = data ?? localRow;
+      }
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      symptoms,
+      symptomEntries: sortHealthSymptomEntries(symptomEntries.map((entry) => entry.id === entryId ? nextRow : entry)),
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Symptom entry updated." });
+    return true;
+  }
+
+  async function deleteSymptomEntry(entryId: string) {
+    if (!userId || !profile) {
+      return false;
+    }
+    if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
+      const { error } = await client
+        .from("adhdice_health_symptom_entries")
+        .delete()
+        .eq("id", entryId)
+        .eq("user_id", userId);
+      if (error) {
+        if (isMissingHealthSymptomPersistence(error.message)) {
+          symptomEntriesRemoteEnabledRef.current = false;
+          setMessage({
+            tone: "neutral",
+            text: "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied.",
+          });
+        } else {
+          setMessage({ tone: "warn", text: error.message });
+          return false;
+        }
+      }
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      symptoms,
+      symptomEntries: symptomEntries.filter((entry) => entry.id !== entryId),
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Symptom entry removed." });
     return true;
   }
 
@@ -2144,6 +2562,14 @@ export function useHealth(
     savedMeals,
     saveSavedMeal,
     saveProfile,
+    symptoms,
+    createSymptom,
+    renameSymptom,
+    archiveSymptom,
+    symptomEntries,
+    addSymptomEntry,
+    updateSymptomEntry,
+    deleteSymptomEntry,
     addMealEntry,
     addWaterEntry,
     addWeightEntry,

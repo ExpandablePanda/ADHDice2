@@ -5,13 +5,25 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.11.96`.
-- Current release group: `7.11.x` Meal Planning + Done to Actual.
+- Current working app version: `7.12.7`.
+- Current release group: `7.12.x` Health Journal symptom tracking foundation.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-28 7.12.7 Health Journal symptom tracking foundation
+
+Health → Journal now keeps the existing daily check-in authority for Mood,
+Energy, Signals, and Reflection, with Mood and Energy expanded to 1–10. A
+separate user-owned symptom library and timestamped severity ledger support
+multiple measurements of the same symptom on one day, including notes and
+edit/delete controls. Definitions archive rather than being removed, so
+historical entries continue to resolve their names. Symptom persistence has a
+narrow local fallback boundary while the authored-only
+`supabase/add_health_journal_symptom_tracking_7_12_7.sql` migration is pending;
+no production SQL, browser, native, or iOS verification was performed.
 
 ## 2026-08-28 7.11.96 Commit-time Fitness scope invalidation
 

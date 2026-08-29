@@ -40,6 +40,11 @@ import type {
   HealthSavedMealItem,
   HealthServingMeasureUnit,
   HealthServingWeightUnit,
+  HealthSymptom,
+  HealthSymptomEntry,
+  HealthSymptomEntryInsert,
+  HealthSymptomEntryUpdate,
+  HealthSymptomInsert,
   HealthWaterEntry,
   HealthWaterUnit,
   HealthWorkout,
@@ -80,6 +85,7 @@ import {
   formatHealthSleepDuration,
   formatWeight,
   getCurrentHealthDateTimeInputs,
+  groupHealthSymptomEntriesByDate,
   getHealthSleepElapsedSeconds,
   getHealthSleepStartTimestamp,
   getHealthSleepDayTotal,
@@ -91,12 +97,14 @@ import {
   getWeightTrend,
   HEALTH_MEAL_SLOTS,
   HEALTH_SLEEP_KINDS,
-  HEALTH_MOOD_OPTIONS,
+  HEALTH_SCALE_OPTIONS,
+  HEALTH_SEVERITY_OPTIONS,
   type HealthReminderTemplateKey,
   HEALTH_SYMPTOM_TAGS,
   HEALTH_TABS,
   kilogramsToDisplayValue,
   normalizeHealthMealTime,
+  normalizeHealthSymptomName,
   sumMealNutritionForDate,
   sumMetricValueForDate,
   shiftHealthDate,
@@ -158,6 +166,14 @@ import { PageShellHeader } from "./page-shell-header";
 type HealthPageProps = {
   awards: HealthAchievementAward[];
   checkIns: HealthCheckIn[];
+  symptoms: HealthSymptom[];
+  symptomEntries: HealthSymptomEntry[];
+  createSymptom: (input: Omit<HealthSymptomInsert, "user_id">) => Promise<HealthSymptom | null>;
+  renameSymptom: (symptomId: string, name: string) => Promise<boolean>;
+  archiveSymptom: (symptomId: string) => Promise<boolean>;
+  addSymptomEntry: (input: Omit<HealthSymptomEntryInsert, "user_id">) => Promise<boolean>;
+  updateSymptomEntry: (entryId: string, input: HealthSymptomEntryUpdate) => Promise<boolean>;
+  deleteSymptomEntry: (entryId: string) => Promise<boolean>;
   deleteFavoriteFood: (itemId: string) => Promise<boolean>;
   deleteMealEntry: (entryId: string) => Promise<boolean>;
   deleteRecipe: (recipeId: string) => Promise<boolean>;
@@ -311,6 +327,15 @@ type SleepDraft = {
   time: string;
 };
 
+type SymptomDraft = {
+  date: string;
+  newName: string;
+  note: string;
+  severity: number | null;
+  symptomId: string;
+  time: string;
+};
+
 type MealEditDraft = {
   mode: "legacy" | "structured";
   calories: string;
@@ -354,9 +379,18 @@ function createQuickFoodId() {
 }
 
 const DEFAULT_IMPORT_STATUS = "Waiting for an Apple Health export.";
+const NEW_SYMPTOM_VALUE = "__new_symptom__";
 
 export function HealthPage({
   checkIns,
+  symptoms,
+  symptomEntries,
+  createSymptom,
+  renameSymptom,
+  archiveSymptom,
+  addSymptomEntry,
+  updateSymptomEntry,
+  deleteSymptomEntry,
   deleteFavoriteFood,
   deleteMealEntry,
   deleteRecipe,
@@ -482,6 +516,19 @@ export function HealthPage({
   const [journalMood, setJournalMood] = useState<number | null>(null);
   const [journalEnergy, setJournalEnergy] = useState<number | null>(null);
   const [journalTags, setJournalTags] = useState<string[]>([]);
+  const initialSymptomInputs = useMemo(() => getCurrentHealthDateTimeInputs(), []);
+  const [symptomDraft, setSymptomDraft] = useState<SymptomDraft>(() => ({
+    date: initialSymptomInputs.date,
+    newName: "",
+    note: "",
+    severity: null,
+    symptomId: "",
+    time: initialSymptomInputs.time,
+  }));
+  const [editingSymptomEntryId, setEditingSymptomEntryId] = useState<string | null>(null);
+  const [editingSymptomId, setEditingSymptomId] = useState<string | null>(null);
+  const [editingSymptomName, setEditingSymptomName] = useState("");
+  const [symptomFormError, setSymptomFormError] = useState<string | null>(null);
   const initialSleepInputs = useMemo(() => getCurrentHealthDateTimeInputs(), []);
   const [sleepKind, setSleepKind] = useState<HealthSleepKind>("Sleep");
   const [manualSleepDraft, setManualSleepDraft] = useState<SleepDraft>(() => ({
@@ -545,6 +592,23 @@ export function HealthPage({
     setJournalEnergy(todayCheckIn?.energy_score ?? null);
     setJournalTags(todayCheckIn?.symptom_tags ?? []);
   }, [todayCheckIn]);
+
+  const activeSymptoms = useMemo(
+    () => symptoms.filter((symptom) => symptom.archived_at === null),
+    [symptoms],
+  );
+  const symptomOptions = useMemo(
+    () => [
+      { label: "Choose a symptom", value: "" },
+      ...activeSymptoms.map((symptom) => ({ label: symptom.name, value: symptom.id })),
+      { label: "+ Add a new symptom", value: NEW_SYMPTOM_VALUE },
+    ],
+    [activeSymptoms],
+  );
+  const symptomHistoryGroups = useMemo(
+    () => groupHealthSymptomEntriesByDate(symptomEntries).slice(0, 14),
+    [symptomEntries],
+  );
 
   const selectedMeals = useMemo(
     () => mealEntries.filter((entry) => entry.entry_date === foodHistoryDate),
@@ -821,6 +885,89 @@ export function HealthPage({
       reflection: journalReflection.trim(),
       symptom_tags: journalTags,
     });
+  }
+
+  function resetSymptomDraft() {
+    const nextInputs = getCurrentHealthDateTimeInputs();
+    setSymptomDraft({
+      date: nextInputs.date,
+      newName: "",
+      note: "",
+      severity: null,
+      symptomId: "",
+      time: nextInputs.time,
+    });
+    setEditingSymptomEntryId(null);
+    setSymptomFormError(null);
+  }
+
+  function openSymptomEntryEdit(entry: HealthSymptomEntry) {
+    const loggedAt = new Date(entry.logged_at);
+    setEditingSymptomEntryId(entry.id);
+    setSymptomDraft({
+      date: entry.entry_date,
+      newName: "",
+      note: entry.note ?? "",
+      severity: entry.severity,
+      symptomId: entry.symptom_id,
+      time: Number.isFinite(loggedAt.getTime())
+        ? `${String(loggedAt.getHours()).padStart(2, "0")}:${String(loggedAt.getMinutes()).padStart(2, "0")}`
+        : "",
+    });
+    setSymptomFormError(null);
+  }
+
+  async function handleSaveSymptomEntry() {
+    const loggedAt = buildHealthMealLoggedAt(symptomDraft.date, symptomDraft.time);
+    if (!loggedAt) {
+      setSymptomFormError("Choose a valid symptom date and time.");
+      return;
+    }
+    if (symptomDraft.severity === null) {
+      setSymptomFormError("Choose a severity from 1 to 10.");
+      return;
+    }
+
+    let symptomId = symptomDraft.symptomId;
+    if (!editingSymptomEntryId && symptomId === NEW_SYMPTOM_VALUE) {
+      const created = await createSymptom({ name: symptomDraft.newName });
+      if (!created) {
+        setSymptomFormError("Enter a unique symptom name.");
+        return;
+      }
+      symptomId = created.id;
+    }
+    if (!symptomId) {
+      setSymptomFormError("Choose a symptom.");
+      return;
+    }
+
+    const saved = editingSymptomEntryId
+      ? await updateSymptomEntry(editingSymptomEntryId, {
+        entry_date: symptomDraft.date,
+        logged_at: loggedAt,
+        note: symptomDraft.note,
+        severity: symptomDraft.severity,
+        symptom_id: symptomId,
+      })
+      : await addSymptomEntry({
+        entry_date: symptomDraft.date,
+        logged_at: loggedAt,
+        note: symptomDraft.note,
+        severity: symptomDraft.severity,
+        symptom_id: symptomId,
+      });
+    if (saved) {
+      resetSymptomDraft();
+    }
+  }
+
+  async function handleRenameSymptom(symptomId: string) {
+    const saved = await renameSymptom(symptomId, normalizeHealthSymptomName(editingSymptomName));
+    if (saved) {
+      setEditingSymptomId(null);
+      setEditingSymptomName("");
+    }
   }
 
   async function handleSaveMeal() {
@@ -1671,79 +1818,222 @@ export function HealthPage({
       ) : null}
 
       {activeTab === "Journal" ? (
-        <div aria-labelledby="health-tab-journal" className="mt-6 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]" id={getHealthTabPanelId("Journal")} role="tabpanel">
-          <HealthPanel icon={<HeartPulse />} subtitle="Daily check-in" title="How are you actually doing?">
-            <div className="grid gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <ScorePicker label="Mood" value={journalMood} onSelect={setJournalMood} />
-                <ScorePicker label="Energy" value={journalEnergy} onSelect={setJournalEnergy} />
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Signals</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {HEALTH_SYMPTOM_TAGS.map((tag) => {
-                    const selected = journalTags.includes(tag);
-                    return (
-                      <button
-                        aria-pressed={selected}
-                        className={`ui-chip-button-base transition ${
-                          selected
-                            ? "bg-[#efe9ff] text-[#6f57f6] dark:bg-[#2b214d] dark:text-[#cabfff]"
-                            : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"
-                        }`}
-                        key={tag}
-                        onClick={() =>
-                          setJournalTags((current) =>
-                            current.includes(tag) ? current.filter((entry) => entry !== tag) : [...current, tag],
-                          )
-                        }
-                        type="button"
-                      >
-                        {tag}
-                      </button>
-                    );
-                  })}
+        <>
+          <div aria-labelledby="health-tab-journal" className="mt-6 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]" id={getHealthTabPanelId("Journal")} role="tabpanel">
+            <HealthPanel icon={<HeartPulse />} subtitle="Daily check-in" title="How are you actually doing?">
+              <div className="grid gap-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <ScorePicker hint="1 very bad · 10 excellent" label="Mood" value={journalMood} onSelect={setJournalMood} />
+                  <ScorePicker hint="1 exhausted · 10 high energy" label="Energy" value={journalEnergy} onSelect={setJournalEnergy} />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Signals</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {HEALTH_SYMPTOM_TAGS.map((tag) => {
+                      const selected = journalTags.includes(tag);
+                      return (
+                        <button
+                          aria-pressed={selected}
+                          className={`ui-chip-button-base transition ${
+                            selected
+                              ? "bg-[#efe9ff] text-[#6f57f6] dark:bg-[#2b214d] dark:text-[#cabfff]"
+                              : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"
+                          }`}
+                          key={tag}
+                          onClick={() =>
+                            setJournalTags((current) =>
+                              current.includes(tag) ? current.filter((entry) => entry !== tag) : [...current, tag],
+                            )
+                          }
+                          type="button"
+                        >
+                          {tag}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <label className="grid gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Reflection</span>
+                  <textarea
+                    className="min-h-40 rounded-[1.5rem] border border-[#e6e8f5] bg-white px-4 py-4 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
+                    onChange={(event) => setJournalReflection(event.target.value)}
+                    placeholder="What helped, what felt noisy, and what your body or mind might need next."
+                    value={journalReflection}
+                  />
+                </label>
+                <div className="flex justify-end">
+                  <button
+                    className="ui-pill-button-strong-light"
+                    onClick={() => { void handleSaveJournal(); }}
+                    type="button"
+                  >
+                    Save Check-In
+                  </button>
                 </div>
               </div>
-              <label className="grid gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Reflection</span>
-                <textarea
-                  className="min-h-40 rounded-[1.5rem] border border-[#e6e8f5] bg-white px-4 py-4 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
-                  onChange={(event) => setJournalReflection(event.target.value)}
-                  placeholder="What helped, what felt noisy, and what your body or mind might need next."
-                  value={journalReflection}
-                />
-              </label>
-              <div className="flex justify-end">
-                <button
-                  className="ui-pill-button-strong-light"
-                  onClick={() => { void handleSaveJournal(); }}
-                  type="button"
-                >
-                  Save Check-In
-                </button>
-              </div>
-            </div>
-          </HealthPanel>
+            </HealthPanel>
 
-          <HealthPanel icon={<Sparkles />} subtitle="History" title="Recent check-ins">
-            <div className="space-y-3">
-              {checkIns.length === 0 ? (
-                <EmptyCopy text="Your first check-in will start the journal history here." />
-              ) : (
-                checkIns.slice(0, 8).map((entry) => (
-                  <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthDateLabel(entry.entry_date)}</p>
-                      <span className="text-xs text-[#7d88a3] dark:text-white/45">Mood {entry.mood_score ?? "?"} / Energy {entry.energy_score ?? "?"}</span>
+            <HealthPanel icon={<Sparkles />} subtitle="History" title="Recent check-ins">
+              <div className="space-y-3">
+                {checkIns.length === 0 ? (
+                  <EmptyCopy text="Your first check-in will start the journal history here." />
+                ) : (
+                  checkIns.slice(0, 8).map((entry) => (
+                    <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthDateLabel(entry.entry_date)}</p>
+                        <span className="text-xs text-[#7d88a3] dark:text-white/45">Mood {entry.mood_score ?? "?"} / Energy {entry.energy_score ?? "?"}</span>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-[#66718f] dark:text-white/60">{entry.reflection || "No reflection saved."}</p>
                     </div>
-                    <p className="mt-2 text-sm leading-6 text-[#66718f] dark:text-white/60">{entry.reflection || "No reflection saved."}</p>
+                  ))
+                )}
+              </div>
+            </HealthPanel>
+          </div>
+
+          <div className="mt-5 grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+            <HealthPanel icon={<Activity />} subtitle="Symptoms" title={editingSymptomEntryId ? "Edit symptom entry" : "Log a symptom"}>
+              <div className="grid gap-3">
+                <Field label="Symptom">
+                  <HealthDropdown
+                    ariaLabel="Symptom"
+                    onChange={(value) => setSymptomDraft((current) => ({ ...current, newName: value === NEW_SYMPTOM_VALUE ? current.newName : "", symptomId: value }))}
+                    options={editingSymptomEntryId
+                      ? [
+                        ...symptomOptions.filter((option) => option.value !== NEW_SYMPTOM_VALUE),
+                        ...(symptoms.find((symptom) => symptom.id === symptomDraft.symptomId && symptom.archived_at !== null)
+                          ? [{ label: `${symptoms.find((symptom) => symptom.id === symptomDraft.symptomId)?.name ?? "Archived symptom"} (archived)`, value: symptomDraft.symptomId }]
+                          : []),
+                      ]
+                      : symptomOptions}
+                    value={symptomDraft.symptomId}
+                  />
+                </Field>
+                {!editingSymptomEntryId && symptomDraft.symptomId === NEW_SYMPTOM_VALUE ? (
+                  <Field label="New symptom name">
+                    <input
+                      aria-label="New symptom name"
+                      className={HEALTH_COMPACT_INPUT_CLASS}
+                      onChange={(event) => setSymptomDraft((current) => ({ ...current, newName: event.target.value }))}
+                      placeholder="e.g. Back Pain"
+                      value={symptomDraft.newName}
+                    />
+                  </Field>
+                ) : null}
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Severity</p>
+                  <div className="mt-2 grid grid-cols-5 gap-2 sm:flex sm:flex-wrap">
+                    {HEALTH_SEVERITY_OPTIONS.map((severity) => (
+                      <button
+                        aria-label={`Severity ${severity} out of 10`}
+                        aria-pressed={symptomDraft.severity === severity}
+                        className={`flex h-9 w-full items-center justify-center rounded-full text-sm font-semibold transition sm:w-9 ${symptomDraft.severity === severity ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`}
+                        key={severity}
+                        onClick={() => setSymptomDraft((current) => ({ ...current, severity }))}
+                        type="button"
+                      >
+                        {severity}
+                      </button>
+                    ))}
                   </div>
-                ))
-              )}
-            </div>
-          </HealthPanel>
-        </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Date">
+                    <HealthMealDateTimeInput onChange={(date) => setSymptomDraft((current) => ({ ...current, date }))} type="date" value={symptomDraft.date} />
+                  </Field>
+                  <Field label="Time">
+                    <HealthMealDateTimeInput onChange={(time) => setSymptomDraft((current) => ({ ...current, time }))} type="time" value={symptomDraft.time} />
+                  </Field>
+                </div>
+                <Field label="Note (optional)">
+                  <textarea
+                    aria-label="Symptom note"
+                    className="min-h-20 rounded-[1.25rem] border border-[#e6e8f5] bg-white px-3 py-3 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
+                    onChange={(event) => setSymptomDraft((current) => ({ ...current, note: event.target.value }))}
+                    placeholder="Context, trigger, or what helped"
+                    value={symptomDraft.note}
+                  />
+                </Field>
+                {symptomFormError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{symptomFormError}</p> : null}
+                <div className="flex flex-wrap justify-end gap-2">
+                  {editingSymptomEntryId ? <button className="ui-pill-button-light" onClick={resetSymptomDraft} type="button">Cancel</button> : null}
+                  <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveSymptomEntry(); }} type="button">
+                    {editingSymptomEntryId ? "Update Entry" : "Save Symptom"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-[1.25rem] border border-[#eeeaf8] bg-[#fbfaff] px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Symptom library</p>
+                {activeSymptoms.length === 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Add your first custom symptom above.</p> : (
+                  <div className="mt-2 grid gap-1.5">
+                    {activeSymptoms.map((symptom) => (
+                      <div className="flex min-h-8 items-center gap-2 rounded-[0.8rem] px-2 py-1 text-sm text-[#5d6783] dark:text-white/70" key={symptom.id}>
+                        {editingSymptomId === symptom.id ? (
+                          <input
+                            aria-label={`Rename ${symptom.name}`}
+                            className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 flex-1`}
+                            onChange={(event) => setEditingSymptomName(event.target.value)}
+                            onKeyDown={(event) => { if (event.key === "Enter") void handleRenameSymptom(symptom.id); }}
+                            value={editingSymptomName}
+                          />
+                        ) : <span className="min-w-0 flex-1 truncate">{symptom.name}</span>}
+                        {editingSymptomId === symptom.id ? (
+                          <>
+                            <AdhdChip onClick={() => { void handleRenameSymptom(symptom.id); }} tone="purple" type="button">Save</AdhdChip>
+                            <AdhdChip onClick={() => { setEditingSymptomId(null); setEditingSymptomName(""); }} type="button">Cancel</AdhdChip>
+                          </>
+                        ) : (
+                          <>
+                            <AdhdIconButton aria-label={`Rename ${symptom.name}`} onClick={() => { setEditingSymptomId(symptom.id); setEditingSymptomName(symptom.name); }} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
+                            <AdhdIconButton aria-label={`Archive ${symptom.name}`} onClick={() => { void archiveSymptom(symptom.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </HealthPanel>
+
+            <HealthPanel icon={<Sparkles />} subtitle="History" title="Recent symptoms">
+              <div className="space-y-3">
+                {symptomHistoryGroups.length === 0 ? <EmptyCopy text="Logged symptoms will appear here grouped by day." /> : symptomHistoryGroups.map((group) => (
+                  <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-3 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={group.date}>
+                    <p className="text-xs font-semibold text-[#68738c] dark:text-white/55">{formatHealthDateLabel(group.date)}</p>
+                    <div className="mt-2 grid gap-2">
+                      {group.entries.map((entry) => {
+                        const symptom = symptoms.find((candidate) => candidate.id === entry.symptom_id);
+                        const loggedAt = new Date(entry.logged_at);
+                        const time = Number.isFinite(loggedAt.getTime())
+                          ? loggedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+                          : "Time unavailable";
+                        return (
+                          <div className="flex items-start gap-2 border-t border-[#eeeaf8] pt-2 first:border-t-0 first:pt-0 dark:border-white/10" key={entry.id}>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                <span className="font-semibold text-[#26324f] dark:text-white">{symptom?.name ?? "Archived symptom"}</span>
+                                <span className="text-sm font-black text-[#6f57f6] dark:text-[#cabfff]">{entry.severity}/10</span>
+                                <span className="text-xs text-[#7d88a3] dark:text-white/45">{time}</span>
+                              </div>
+                              {entry.note ? <p className="mt-1 text-xs leading-5 text-[#73809c] dark:text-white/50">{entry.note}</p> : null}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-0.5">
+                              <AdhdIconButton aria-label={`Edit ${symptom?.name ?? "symptom"} entry`} onClick={() => openSymptomEntryEdit(entry)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
+                              <AdhdIconButton aria-label={`Delete ${symptom?.name ?? "symptom"} entry`} onClick={() => { void deleteSymptomEntry(entry.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </HealthPanel>
+          </div>
+        </>
       ) : null}
 
       {activeTab === "Food" ? (
@@ -2644,23 +2934,28 @@ function SleepDraftFields({ draft, onChange }: { draft: SleepDraft; onChange: (d
 }
 
 function ScorePicker({
+  hint,
   label,
   onSelect,
   value,
 }: {
+  hint?: string;
   label: string;
   onSelect: (value: number) => void;
   value: number | null;
 }) {
   return (
     <div>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</p>
-      <div className="mt-2 flex gap-2">
-        {HEALTH_MOOD_OPTIONS.map((score) => (
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</p>
+        {hint ? <span className="text-[11px] text-[#8d87a3] dark:text-white/40">{hint}</span> : null}
+      </div>
+      <div className="mt-2 grid grid-cols-5 gap-2 sm:flex sm:flex-wrap">
+        {HEALTH_SCALE_OPTIONS.map((score) => (
           <button
-            aria-label={`${label} ${score} out of 5`}
+            aria-label={`${label} ${score} out of 10`}
             aria-pressed={value === score}
-            className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold transition ${
+            className={`flex h-9 w-full items-center justify-center rounded-full text-sm font-semibold transition sm:h-10 sm:w-10 ${
               value === score
                 ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
                 : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"
