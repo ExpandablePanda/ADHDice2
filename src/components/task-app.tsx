@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { Capacitor } from "@capacitor/core";
+import { App } from "@capacitor/app";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import {
   AlertCircle,
@@ -127,6 +128,9 @@ import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievementNotifications, useAchievementProgress } from "@/hooks/useAchievementProgress";
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { useHealth } from "@/hooks/useHealth";
+import { checkHealthKitAvailability } from "@/lib/healthkit";
+import type { HealthKitIncrementalSyncResult } from "@/lib/healthkit-sync";
+import { createHealthKitLifecycleCoordinator, type HealthKitSyncTrigger } from "@/lib/healthkit-lifecycle-coordinator";
 import { useFitnessGoals } from "@/hooks/useFitnessGoals";
 import { useFitnessPlans } from "@/hooks/useFitnessPlans";
 import { useFitnessSessionDetails } from "@/hooks/useFitnessSessionDetails";
@@ -589,7 +593,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.12.4";
+const APP_VERSION = "7.12.5";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1308,7 +1312,73 @@ export function TaskApp() {
     weightEntries: healthWeightEntries,
     waterEntries: healthWaterEntries,
     workouts: healthWorkouts,
-  } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health");
+  } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, isNativeIosPlatform || activePage === "Health");
+  const healthSyncUserId = session?.user?.id ?? null;
+  const healthSyncReady = Boolean(
+    isNativeIosPlatform
+      && isAuthResolved
+      && healthSyncUserId
+      && healthProfile
+      && healthProfile.user_id === healthSyncUserId
+      && !isHealthLoading
+      && healthStorageMode === "remote",
+  );
+  const healthLifecycleSyncStateRef = useRef<{
+    isEligible: () => Promise<boolean>;
+    onSync: (trigger: HealthKitSyncTrigger) => Promise<HealthKitIncrementalSyncResult | null>;
+  } | null>(null);
+  healthLifecycleSyncStateRef.current = {
+    isEligible: async () => {
+      if (!healthSyncReady) return false;
+      const availability = await checkHealthKitAvailability();
+      return availability.platform === "ios" && availability.available;
+    },
+    onSync: (trigger) => syncIncrementalAppleHealthData(trigger === "automatic" ? { silent: true } : undefined),
+  };
+  const [healthKitLifecycleCoordinator] = useState(() => createHealthKitLifecycleCoordinator<HealthKitIncrementalSyncResult | null>({
+    isEligible: () => healthLifecycleSyncStateRef.current?.isEligible() ?? false,
+    onSync: (trigger) => healthLifecycleSyncStateRef.current?.onSync(trigger) ?? Promise.resolve(null),
+  }));
+  const healthSyncLaunchUserIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!healthSyncUserId) {
+      healthSyncLaunchUserIdRef.current = null;
+      return;
+    }
+    if (!healthSyncReady || healthSyncLaunchUserIdRef.current === healthSyncUserId) {
+      return;
+    }
+    healthSyncLaunchUserIdRef.current = healthSyncUserId;
+    void healthKitLifecycleCoordinator.requestAutomaticSync();
+  }, [healthKitLifecycleCoordinator, healthSyncReady, healthSyncUserId]);
+
+  useEffect(() => {
+    if (!isNativeIosPlatform) {
+      return;
+    }
+
+    let cancelled = false;
+    let listener: { remove: () => Promise<void> } | null = null;
+    void App.addListener("appStateChange", ({ isActive }) => {
+      if (isActive) {
+        void healthKitLifecycleCoordinator.requestAutomaticSync();
+      }
+    }).then((nextListener) => {
+      if (cancelled) {
+        void nextListener.remove();
+        return;
+      }
+      listener = nextListener;
+    }).catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      if (listener) {
+        void listener.remove();
+      }
+    };
+  }, [healthKitLifecycleCoordinator, isNativeIosPlatform]);
   const activeHealthTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const fitnessHooksActive = activePage === "Health" && activeHealthTab === "Fitness";
   const {
@@ -7409,7 +7479,7 @@ export function TaskApp() {
             importAppleHealthData={importAppleHealthData}
             healthKitScopeKey={session?.user?.id ?? null}
             syncAppleHealthData={syncAppleHealthData}
-            syncIncrementalAppleHealthData={syncIncrementalAppleHealthData}
+            syncIncrementalAppleHealthData={healthKitLifecycleCoordinator.runManualSync}
             mealEntries={healthMealEntries}
             mealPlanEntries={healthMealPlanEntries}
             metricEntries={healthMetricEntries}

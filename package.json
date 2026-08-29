@@ -1,6 +1,6 @@
 {
   "name": "adhdice-clean-prototype",
-  "version": "7.12.4",
+  "version": "7.12.5",
   "private": true,
   "scripts": {
     "dev": "node --experimental-strip-types ./scripts/dev-server.mjs",
@@ -23,6 +23,7 @@
     "test:taskapp-wave": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/task-helper-modules.test.ts test/task-refactor-helpers.test.ts test/task-action-hooks-smoke.test.ts"
   },
   "dependencies": {
+    "@capacitor/app": "^8.0.0",
     "@capacitor/barcode-scanner": "^3.1.1",
     "@capacitor/core": "^8.5.0",
     "@capacitor/ios": "^8.5.0",

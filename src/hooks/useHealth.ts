@@ -98,6 +98,10 @@ export type HealthImportSaveProgress = {
   total: number;
 };
 
+export type HealthKitIncrementalSyncOptions = {
+  silent?: boolean;
+};
+
 type HealthStateSnapshot = {
   awards: HealthAchievementAward[];
   checkIns: HealthCheckIn[];
@@ -2246,12 +2250,14 @@ export function useHealth(
     }
   }
 
-  async function syncIncrementalAppleHealthData(): Promise<HealthKitIncrementalSyncResult | null> {
+  async function syncIncrementalAppleHealthData(options?: HealthKitIncrementalSyncOptions): Promise<HealthKitIncrementalSyncResult | null> {
     if (!userId || !profile || !client || storageMode !== "remote" || !workoutRemoteEnabledRef.current) {
-      setMessage({
-        tone: "warn",
-        text: "Incremental Apple Health sync requires a signed-in account and migrated remote Health storage.",
-      });
+      if (!options?.silent) {
+        setMessage({
+          tone: "warn",
+          text: "Incremental Apple Health sync requires a signed-in account and migrated remote Health storage.",
+        });
+      }
       return null;
     }
 
@@ -2411,10 +2417,12 @@ export function useHealth(
         failedTypes: prepared.failedTypes,
         totalChanges: metricInputs.length + weightInputs.length + prepared.deletedBodyMassIds.length + workoutInputs.length + prepared.deletedWorkoutIds.length,
       } satisfies HealthKitIncrementalSyncResult;
-      setMessage({
-        tone: "good",
-        text: `Incremental sync: ${result.totalChanges} changes saved${Object.keys(result.failedTypes).length > 0 ? ` · failed: ${Object.keys(result.failedTypes).join(", ")}` : ""}.`,
-      });
+      if (!options?.silent) {
+        setMessage({
+          tone: "good",
+          text: `Incremental sync: ${result.totalChanges} changes saved${Object.keys(result.failedTypes).length > 0 ? ` · failed: ${Object.keys(result.failedTypes).join(", ")}` : ""}.`,
+        });
+      }
       return result;
     } catch (error) {
       if (prepared) {
@@ -2428,7 +2436,9 @@ export function useHealth(
       const message = error && typeof error === "object" && "message" in error && typeof error.message === "string"
         ? error.message
         : "Remote Health storage rejected the incremental Apple Health sync.";
-      setMessage({ tone: "warn", text: `Incremental Apple Health sync could not be saved: ${message}` });
+      if (!options?.silent) {
+        setMessage({ tone: "warn", text: `Incremental Apple Health sync could not be saved: ${message}` });
+      }
       return null;
     }
   }
