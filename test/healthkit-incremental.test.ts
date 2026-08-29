@@ -78,6 +78,20 @@ test("native incremental bridge stages opaque batches and commits anchors only e
   }
 });
 
+test("daily metric failures exclude each matching HealthKit type before anchor staging", () => {
+  const source = readFileSync(new URL("../ios/App/App/ADHDiceHealthKitPlugin.swift", import.meta.url), "utf8");
+  const exclusionStart = source.indexOf("metricPayload.failedTypes.forEach");
+  const exclusionEnd = source.indexOf("var types:", exclusionStart);
+  assert.ok(exclusionStart >= 0 && exclusionEnd > exclusionStart);
+  const exclusion = source.slice(exclusionStart, exclusionEnd);
+  assert.match(exclusion, /IncrementalHealthType\(rawValue: type\)/);
+  assert.match(exclusion, /successfulReads\.removeValue\(forKey: healthType\)/);
+  assert.doesNotMatch(exclusion, /healthType\(forMetricType:/);
+  for (const type of ["steps", "activeEnergy", "exerciseTime", "sleep"]) {
+    assert.ok(source.includes("case ." + type + ":"));
+  }
+});
+
 test("incremental payload carries authoritative zero metrics and exact deletion identities", () => {
   const result = normalizeHealthKitIncrementalResult({
     ...validResult,

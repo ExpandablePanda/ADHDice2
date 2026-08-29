@@ -374,7 +374,7 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
                     var allFailures = failures
                     metricPayload.failedTypes.forEach { type, message in
                         allFailures[type] = message
-                        if let healthType = self.healthType(forMetricType: type) {
+                        if let healthType = IncrementalHealthType(rawValue: type) {
                             successfulReads.removeValue(forKey: healthType)
                         }
                     }
@@ -520,16 +520,6 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func indexedType(_ type: IncrementalHealthType) -> Bool {
         type == .steps || type == .activeEnergy || type == .exerciseTime || type == .sleep
-    }
-
-    private func healthType(forMetricType metricType: String) -> IncrementalHealthType? {
-        switch metricType {
-        case "steps": return .steps
-        case "active_energy_kcal": return .activeEnergy
-        case "exercise_minutes": return .exerciseTime
-        case "sleep_minutes": return .sleep
-        default: return nil
-        }
     }
 
     private func localDateKeys(start: Date, end: Date, calendar: Calendar) -> [String] {
