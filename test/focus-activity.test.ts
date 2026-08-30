@@ -157,6 +157,21 @@ test("shared line chart uses one collision-adjusted X map for paths, circles, an
   assert.match(sharedChart, /getNearestNumericLineChartPoint\(interactivePoints/);
 });
 
+test("shared line chart reference lines scale with the data plot and stay non-interactive", () => {
+  assert.match(sharedChart, /export type NumericLineChartReferenceLine/);
+  assert.match(sharedChart, /referenceLines\?: NumericLineChartReferenceLine\[\]/);
+  assert.match(sharedChart, /const numericReferenceLines = referenceLines\.filter/);
+  assert.match(sharedChart, /numericReferenceLines\.map\(\(line\) => line\.value\)/);
+  assert.match(sharedChart, /data-reference-line=\{referenceLine\.key\}/);
+  assert.match(sharedChart, /strokeDasharray="6 5"/);
+  assert.match(sharedChart, /referenceLine\.label\} \{formatValue\(referenceLine\.value\)\}/);
+  const referenceLineMarkup = sharedChart.slice(
+    sharedChart.indexOf("{numericReferenceLines.map"),
+    sharedChart.indexOf("{series.map", sharedChart.indexOf("{numericReferenceLines.map")),
+  );
+  assert.doesNotMatch(referenceLineMarkup, /onClick|role="button"|tabIndex/);
+});
+
 test("Focus config preserves a plain zero axis label and duration values", () => {
   assert.match(source, /formatAxisValue=\{\(value\) => value === 0 \? "0" : formatRoundedMinuteDuration\(value\)\}/);
   assert.match(sharedChart, /axisValueFormatter = formatAxisValue \?\? formatValue/);

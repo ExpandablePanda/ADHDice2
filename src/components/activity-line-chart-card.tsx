@@ -20,6 +20,12 @@ export type NumericLineChartSeries = {
   totalValue: number;
 };
 
+export type NumericLineChartReferenceLine = {
+  key: string;
+  label: string;
+  value: number;
+};
+
 type ActivityLineChartCardProps = {
   activePointContext?: string;
   ariaLabel: string;
@@ -30,6 +36,7 @@ type ActivityLineChartCardProps = {
   formatAxisValue?: (value: number) => string;
   formatValue: (value: number) => string;
   maxValue?: number;
+  referenceLines?: NumericLineChartReferenceLine[];
   series: NumericLineChartSeries[];
   subtitle: string;
   title: string;
@@ -174,6 +181,7 @@ export function ActivityLineChartCard({
   formatAxisValue,
   formatValue,
   maxValue: maxValueOverride,
+  referenceLines = [],
   series,
   subtitle,
   title,
@@ -183,7 +191,13 @@ export function ActivityLineChartCard({
   const [hoveredPointKey, setHoveredPointKey] = useState<string | null>(null);
   const [pinnedPointKey, setPinnedPointKey] = useState<string | null>(null);
   const axisValueFormatter = formatAxisValue ?? formatValue;
-  const maxValue = Math.max(1, maxValueOverride ?? 0, ...series.flatMap((item) => item.points.map((point) => point.value)));
+  const numericReferenceLines = referenceLines.filter((line) => Number.isFinite(line.value));
+  const maxValue = Math.max(
+    1,
+    maxValueOverride ?? 0,
+    ...series.flatMap((item) => item.points.map((point) => point.value)),
+    ...numericReferenceLines.map((line) => line.value),
+  );
   const chartDomainPoints = series.flatMap((item) => item.points);
   const axisPoints = series[0]?.points ?? [];
   const axisDomainKeys = getNumericLineChartDomainKeys(chartDomainPoints);
@@ -300,6 +314,15 @@ export function ActivityLineChartCard({
                     <g key={ratio}>
                       <line stroke="var(--border-soft)" strokeDasharray={ratio === 0 ? undefined : "4 8"} strokeWidth="1" x1={PADDING.left} x2={PADDING.left + PLOT_WIDTH} y1={y} y2={y} />
                       <text fill="var(--text-muted)" fontSize="10" fontWeight="600" textAnchor="end" x={PADDING.left - 8} y={y + 3}>{axisValueFormatter(maxValue * ratio)}</text>
+                    </g>
+                  );
+                })}
+                {numericReferenceLines.map((referenceLine) => {
+                  const y = PADDING.top + PLOT_HEIGHT - (referenceLine.value / maxValue) * PLOT_HEIGHT;
+                  return (
+                    <g data-reference-line={referenceLine.key} key={referenceLine.key}>
+                      <line stroke="var(--text-muted)" strokeDasharray="6 5" strokeWidth="1.5" x1={PADDING.left} x2={PADDING.left + PLOT_WIDTH} y1={y} y2={y} />
+                      <text fill="var(--text-muted)" fontSize="10" fontWeight="600" textAnchor="end" x={PADDING.left + PLOT_WIDTH - 4} y={Math.max(PADDING.top + 11, y - 5)}>{referenceLine.label} {formatValue(referenceLine.value)}</text>
                     </g>
                   );
                 })}

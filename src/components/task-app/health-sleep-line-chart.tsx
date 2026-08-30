@@ -10,7 +10,7 @@ function formatSleepDate(dateKey: string) {
     : date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
-export function HealthSleepLineChart({ series }: { series: HealthDailySleepPoint[] }) {
+export function HealthSleepLineChart({ series, sleepGoalMinutes }: { series: HealthDailySleepPoint[]; sleepGoalMinutes?: number | null }) {
   const firstDate = series[0]?.date ?? "";
   const lastDate = series.at(-1)?.date ?? firstDate;
   const chartSeries: NumericLineChartSeries[] = [{
@@ -38,6 +38,7 @@ export function HealthSleepLineChart({ series }: { series: HealthDailySleepPoint
       series={chartSeries}
       subtitle={`${formatSleepDate(firstDate)} – ${formatSleepDate(lastDate)} • daily totals`}
       title="Sleep Activity"
+      referenceLines={sleepGoalMinutes && sleepGoalMinutes > 0 ? [{ key: "sleep-goal", label: "Goal", value: sleepGoalMinutes }] : undefined}
       variant="embedded"
     />
   );

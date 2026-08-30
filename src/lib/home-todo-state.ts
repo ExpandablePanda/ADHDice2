@@ -304,6 +304,19 @@ export function moveHomeTodoTaskIdToEdge(
   return next;
 }
 
+export function moveHomeTodoTaskIdToVisibleEdge(
+  taskIds: readonly string[],
+  visibleTaskIds: readonly string[],
+  taskId: string,
+  edge: "bottom" | "top",
+) {
+  return mergeHomeTodoVisibleTaskIds(
+    taskIds,
+    visibleTaskIds,
+    moveHomeTodoTaskIdToEdge(visibleTaskIds, taskId, edge),
+  );
+}
+
 export function sortHomeTodoSearchResults<T extends {
   hierarchy: readonly string[];
   task: Pick<Task, "id" | "title">;

@@ -3,7 +3,7 @@
 import { ActivityLineChartCard, type NumericLineChartSeries } from "../activity-line-chart-card";
 import type { HealthDailyCaloriePoint } from "@/lib/health-library";
 
-export function HealthCalorieLineChart({ series }: { series: HealthDailyCaloriePoint[] }) {
+export function HealthCalorieLineChart({ calorieGoal, series }: { calorieGoal?: number | null; series: HealthDailyCaloriePoint[] }) {
   const firstDate = series[0]?.date ?? "";
   const lastDate = series.at(-1)?.date ?? firstDate;
   const formatDate = (dateKey: string) => {
@@ -33,6 +33,7 @@ export function HealthCalorieLineChart({ series }: { series: HealthDailyCalorieP
       series={chartSeries}
       subtitle={`${formatDate(firstDate)} – ${formatDate(lastDate)} • daily points`}
       title="Calorie Activity"
+      referenceLines={calorieGoal && calorieGoal > 0 ? [{ key: "calorie-goal", label: "Goal", value: calorieGoal }] : undefined}
       variant="embedded"
     />
   );

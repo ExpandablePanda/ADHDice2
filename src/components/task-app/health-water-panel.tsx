@@ -15,6 +15,7 @@ import {
 } from "@/lib/health-library";
 import { formatHealthDateLabel } from "@/lib/health-utils";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
+import { HealthWaterLineChart } from "./health-water-line-chart";
 
 type HealthWaterPanelProps = {
   addWaterEntry: (input: {
@@ -167,6 +168,7 @@ export function HealthWaterPanel({
             </div>
           </div>
         </HealthCollapsiblePanel>
+        <HealthWaterLineChart history={waterHistory} />
       </div>
 
       <div className="grid content-start gap-5">

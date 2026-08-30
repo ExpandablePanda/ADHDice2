@@ -5154,6 +5154,12 @@ export function TaskManagementTableV2({
   }
 
   function openTaskInCurrentEditor(taskId: string) {
+    if (selectedTaskId && overlayMode === "full" && childTaskParentInfoByTaskId.has(taskId)) {
+      if (revealChildTaskInParentEditor(taskId)) {
+        return;
+      }
+    }
+
     if (onOpenTaskEditor) {
       onOpenTaskEditor(taskId);
       return;

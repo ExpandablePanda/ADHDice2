@@ -2680,7 +2680,7 @@ export function HealthPage({
                 />
               </div>
             ) : null}
-            <HealthCalorieLineChart series={dailyCalorieSeries} />
+            <HealthCalorieLineChart calorieGoal={profile.calorie_goal} series={dailyCalorieSeries} />
           </HealthPanel>
 
           <HealthPanel className="min-w-0" icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
@@ -2866,7 +2866,7 @@ export function HealthPage({
               <CompactStat detail={formatHealthDateLabel(sleepLedgerDate)} label="Focus Clock" value={formatHealthSleepDuration(selectedSleepTotal.focusMinutes)} />
               <CompactStat detail={formatHealthDateLabel(sleepLedgerDate)} label="Imported" value={formatHealthSleepDuration(selectedSleepTotal.importedMinutes)} />
             </div>
-            <HealthSleepLineChart series={sleepActivitySeries} />
+            <HealthSleepLineChart series={sleepActivitySeries} sleepGoalMinutes={profile.sleep_goal_minutes} />
             <div className="mt-4 rounded-[1.25rem] border border-[#e6ebfb] bg-white/80 px-4 py-4 dark:border-white/10 dark:bg-white/[0.04]">
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">

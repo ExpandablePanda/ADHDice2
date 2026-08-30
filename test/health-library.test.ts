@@ -518,14 +518,16 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(sharedChart, /<svg/);
   assert.match(sharedChart, /emptyText/);
   assert.match(sharedChart, /Clear pin/);
-  assert.match(source, /<HealthCalorieLineChart series=\{dailyCalorieSeries\} \/>/);
-  assert.match(source, /subtitle="Daily totals"[\s\S]*?<HealthCalorieLineChart series=\{dailyCalorieSeries\} \/>[\s\S]*?<\/HealthPanel>/);
+  assert.match(source, /<HealthCalorieLineChart calorieGoal=\{profile\.calorie_goal\} series=\{dailyCalorieSeries\} \/>/);
+  assert.match(source, /subtitle="Daily totals"[\s\S]*?<HealthCalorieLineChart calorieGoal=\{profile\.calorie_goal\} series=\{dailyCalorieSeries\} \/>[\s\S]*?<\/HealthPanel>/);
   assert.doesNotMatch(source, /<div className="xl:col-span-2">\s*<HealthCalorieLineChart/);
   assert.match(chart, /variant="embedded"/);
   assert.match(sharedChart, /variant\?: "standalone" \| "embedded"/);
   assert.match(sharedChart, /variant = "standalone"/);
   assert.match(chart, /No calories logged in this 7-day range/);
   assert.match(chart, /series\.map/);
+  assert.match(chart, /referenceLines=\{calorieGoal && calorieGoal > 0/);
+  assert.match(chart, /key: "calorie-goal", label: "Goal", value: calorieGoal/);
   assert.doesNotMatch(source, /Recent Foods[\s\S]{0,2500}FavoriteFoodHistoryInlay/);
   assert.match(source, /progressPercent=\{profile\.calorie_goal/);
   assert.match(source, /setFavoriteFoodStatus\(item\.id, false\)/);

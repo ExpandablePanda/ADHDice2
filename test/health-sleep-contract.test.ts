@@ -49,7 +49,7 @@ test("Health Sleep selected date controls the ledger totals and graph range", as
     readFile(new URL("../src/lib/health-utils.ts", import.meta.url), "utf8"),
   ]);
   assert.match(health, /const \[sleepLedgerDate, setSleepLedgerDate\] = useState\(todayHealthDate\(\)\)/);
-  assert.match(health, /ariaLabel="Sleep ledger date"[\s\S]*?max=\{today\}/);
+  assert.match(health, /ariaLabel="Sleep ledger date"[\s\S]*?today=\{today\}/);
   assert.match(health, /onChange=\{setSleepLedgerDate\}/);
   assert.match(health, /dayStepper/);
   assert.match(health, /aria-label="Previous sleep date"[\s\S]*?shiftHealthDate\(date, -1\)/);
@@ -67,11 +67,13 @@ test("Health Sleep selected date controls the ledger totals and graph range", as
   assert.match(health, /kind: resolveHealthSleepKind\(session, session\.categoryId \? focusCategories\.find/);
   assert.doesNotMatch(health, /normalizeHealthSleepKind\(session\.focusSubtype\)/);
   assert.doesNotMatch(health, /selectedSleepFocusSessions\.slice\(/);
-  assert.match(health, /<HealthSleepLineChart series=\{sleepActivitySeries\} \/>/);
+  assert.match(health, /<HealthSleepLineChart series=\{sleepActivitySeries\} sleepGoalMinutes=\{profile\.sleep_goal_minutes\} \/>/);
   assert.match(utils, /buildHealthDailySleepSeries\([\s\S]*?getHealthSleepDayTotal/);
   assert.match(chart, /ActivityLineChartCard/);
   assert.match(chart, /variant="embedded"/);
   assert.match(chart, /value: point\.totalMinutes/);
+  assert.match(chart, /referenceLines=\{sleepGoalMinutes && sleepGoalMinutes > 0/);
+  assert.match(chart, /key: "sleep-goal", label: "Goal", value: sleepGoalMinutes/);
   assert.doesNotMatch(chart, /<svg/);
 });
 

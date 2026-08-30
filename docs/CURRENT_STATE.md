@@ -5,8 +5,8 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.25`.
-- Current release group: `7.12.x` Health Journal symptom recovery.
+- Current working app version: `7.12.26`.
+- Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
@@ -41,6 +41,18 @@ available desktop/tablet width while keeping Cancel and Save compact at the
 right edge. The row still wraps naturally on narrow mobile screens. Journal
 trend, chart collision, symptom color, and persistence behavior are unchanged;
 browser verification remains outstanding.
+
+## 2026-08-30 7.12.26 overnight Quick Fix bundle
+
+The Task Table Edit Task surface now selects visible Steps and Substeps as
+metadata targets while retaining the parent editor root. HUD and Task Table
+layout cloud freshness now arbitrate independently inside the existing account
+settings envelope, including legacy timestamp fallback. Home Todo edge arrows
+move within the current visible day or Later section. Water now supplements
+its existing controls and history with the shared daily fl oz line chart, and
+Nutrition calorie plus Sleep charts show their existing persisted goals as
+optional shared reference lines. No SQL, schema, native, or iOS changes were
+made; browser and cross-device verification remain outstanding.
 
 ## 2026-08-30 7.12.22 Health Journal color picker Safari correction
 

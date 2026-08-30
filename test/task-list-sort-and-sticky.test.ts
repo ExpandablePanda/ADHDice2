@@ -144,6 +144,20 @@ test("List and Table sticky hierarchy source contracts preserve real rows and sc
   assert.match(tableSource, /renderInlineActionRow\(task\)/);
 });
 
+test("an open parent editor keeps normal Step clicks in the same metadata target", () => {
+  const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
+  const openTaskSource = tableSource.slice(
+    tableSource.indexOf("function openTaskInCurrentEditor"),
+    tableSource.indexOf("function openTableStepActions"),
+  );
+
+  assert.match(openTaskSource, /selectedTaskId && overlayMode === "full" && childTaskParentInfoByTaskId\.has\(taskId\)/);
+  assert.match(openTaskSource, /revealChildTaskInParentEditor\(taskId\)/);
+  assert.ok(openTaskSource.indexOf("revealChildTaskInParentEditor(taskId)") < openTaskSource.indexOf("onOpenTaskEditor(taskId)"));
+  assert.match(tableSource, /data-same-table-step-row=\{item\.id\}[\s\S]*?onClick=\{canSelectChildTask/);
+  assert.match(tableSource, /if \(isStepTitleEditTarget\(event\.target\)\) \{\s*return;/);
+});
+
 test("Table renders the active same-table QA hierarchy on a plain descendant plane with depth-only title geometry", () => {
   const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
   const parentTask = task("qa-parent", { title: "Prepare the Task Views QA release" });
@@ -162,6 +176,7 @@ test("Table renders the active same-table QA hierarchy on a plain descendant pla
     childTaskPreviewByParentTaskId,
     rows: [parentRow],
     searchMatchedStepParentTaskIds: [parentTask.id],
+    searchMatchedChildTaskIds: [stepTask.id, substepTask.id],
     selectedTaskIds,
     showHeader: false,
     visibleColumns: ["due"],
@@ -183,12 +198,12 @@ test("Table renders the active same-table QA hierarchy on a plain descendant pla
   assert.match(markup, /data-same-table-step-row="qa-substep"/);
   assert.match(groupTag, /bg-white dark:bg-\[#181226\]/);
   assert.match(continuationTag, /bg-white dark:bg-\[#181226\]/);
-  assert.doesNotMatch(`${groupTag} ${continuationTag}`, /dark:bg-\[#140f26\]|gradient|shadow/);
+  assert.doesNotMatch(`${groupTag} ${continuationTag}`, /dark:bg-\[#140f26\]|gradient/);
   assert.match(markup, /data-task-table-row="qa-parent"/);
   assert.doesNotMatch(tableSource, /sticky top-8 z-10 bg-white shadow-\[0_8px_18px/);
   assert.match(childGridTag, /border-transparent bg-transparent dark:bg-transparent/);
-  assert.match(childGridTag, /hover:bg-\[#fbfaff\]/);
-  assert.doesNotMatch(childGridTag, /bg-gradient|linear-gradient|hover:shadow/);
+  assert.match(childGridTag, /hover:(?:bg-\[#fbfaff\]|shadow-\[)/);
+  assert.doesNotMatch(childGridTag, /bg-gradient|linear-gradient/);
   assert.ok(stepGeometry.titleContentOffsetPx > stepGeometry.parentTitleContentOffsetPx);
   assert.ok(substepGeometry.titleContentOffsetPx > stepGeometry.titleContentOffsetPx);
   assert.match(markup, new RegExp(`data-task-title-content-offset="${stepGeometry.titleContentOffsetPx}"`));

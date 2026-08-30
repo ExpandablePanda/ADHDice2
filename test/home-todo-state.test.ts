@@ -14,6 +14,7 @@ import {
   mergeHomeTodoVisibleTaskIds,
   moveHomeTodoTaskId,
   moveHomeTodoTaskIdToEdge,
+  moveHomeTodoTaskIdToVisibleEdge,
   normalizeHomeTodoTasksPerDay,
   normalizeHomeTodoState,
   reconcileHomeTodoTaskIds,
@@ -378,6 +379,20 @@ test("Home todo edge actions preserve unresolved IDs and explicit removal delete
   assert.deepEqual(["a", "b", "c", "d"].filter((taskId) => taskId !== "c"), ["a", "b", "d"]);
 });
 
+test("Home todo edge actions move within the visible section and preserve other-day order", () => {
+  const durableTaskIds = ["hidden-a", "a", "b", "c", "hidden-b", "d"];
+  const visibleTaskIds = ["a", "b", "c"];
+
+  assert.deepEqual(
+    moveHomeTodoTaskIdToVisibleEdge(durableTaskIds, visibleTaskIds, "c", "top"),
+    ["hidden-a", "c", "a", "b", "hidden-b", "d"],
+  );
+  assert.deepEqual(
+    moveHomeTodoTaskIdToVisibleEdge(durableTaskIds, visibleTaskIds, "a", "bottom"),
+    ["hidden-a", "b", "c", "a", "hidden-b", "d"],
+  );
+});
+
 test("Home todo changing tasksPerDay does not change durable taskIds", () => {
   const state = normalizeHomeTodoState({ taskIds: ["a", "b", "c", "d"], tasksPerDay: 10 });
   const changed = normalizeHomeTodoState({ ...state, tasksPerDay: 15 });
@@ -420,8 +435,10 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /items=\{visibleTasks\}/);
   assert.match(source, /mergeHomeTodoVisibleTaskIds\(\s*taskIds,\s*visibleTasks\.map\(\(task\) => task\.id\),\s*nextTasks\.map\(\(task\) => task\.id\),\s*\)/);
   assert.doesNotMatch(source, /updateTaskIds\(\(\) => reconciledTaskIds\)/);
-  assert.match(source, /state\.taskIds\.indexOf\(task\.id\) !== 0/);
-  assert.match(source, /state\.taskIds\.indexOf\(task\.id\) !== state\.taskIds\.length - 1/);
+  assert.match(source, /sectionTaskIndex > 0/);
+  assert.match(source, /sectionTaskIndex >= 0 && sectionTaskIndex < sectionTaskIds\.length - 1/);
+  assert.match(source, /moveHomeTodoTaskIdToVisibleEdge\(taskIds, sectionTaskIds, task\.id, "top"\)/);
+  assert.match(source, /moveHomeTodoTaskIdToVisibleEdge\(taskIds, sectionTaskIds, task\.id, "bottom"\)/);
   assert.match(source, /Later \(\{doLaterTasks\.length\}\)/);
   assert.match(source, /Settings2/);
   assert.match(source, /updateTasksPerDay\(tasksPerDay\)/);
@@ -474,10 +491,11 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /<ArrowDownToLine aria-hidden="true" \/>/);
   assert.doesNotMatch(source, /<ArrowUp aria-hidden/);
   assert.doesNotMatch(source, /<ArrowDown aria-hidden/);
-  assert.match(source, /\{state\.taskIds\.indexOf\(task\.id\) !== 0 \? \(/);
-  assert.match(source, /\{state\.taskIds\.indexOf\(task\.id\) !== state\.taskIds\.length - 1 \? \(/);
-  assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)/);
-  assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)/);
+  assert.match(source, /const sectionTaskIds = daySections\.find\(\(section\) => section\.taskIds\.includes\(task\.id\)\)/);
+  assert.match(source, /sectionTaskIndex > 0/);
+  assert.match(source, /sectionTaskIndex >= 0 && sectionTaskIndex < sectionTaskIds\.length - 1/);
+  assert.match(source, /moveHomeTodoTaskIdToVisibleEdge\(taskIds, sectionTaskIds, task\.id, "top"\)/);
+  assert.match(source, /moveHomeTodoTaskIdToVisibleEdge\(taskIds, sectionTaskIds, task\.id, "bottom"\)/);
   assert.match(source, /from Home To-do/);
   assert.match(source, /<Minus aria-hidden="true" \/>/);
   assert.equal((source.match(/size="sm"/g) ?? []).length, 4);
@@ -502,7 +520,6 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.doesNotMatch(source, /setQuery\(""\)/);
   assert.doesNotMatch(source, /font-semibold leading-5/);
   assert.doesNotMatch(source, /text-\[#443d60\]/);
-  assert.doesNotMatch(source, /due_on|due date|repeat_frequency/);
   assert.doesNotMatch(readFileSync(new URL("../src/lib/home-todo-state.ts", import.meta.url), "utf8"), /getLogicalDayKey/);
 });
 

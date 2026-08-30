@@ -9,6 +9,10 @@ const waterPanelSource = readFileSync(
   new URL("../src/components/task-app/health-water-panel.tsx", import.meta.url),
   "utf8",
 );
+const waterChartSource = readFileSync(
+  new URL("../src/components/task-app/health-water-line-chart.tsx", import.meta.url),
+  "utf8",
+);
 
 function waterEntry(
   id: string,
@@ -97,4 +101,14 @@ test("Water History keeps the existing 14-day limit", () => {
   assert.equal(history[0]?.dateKey, "2026-08-27");
   assert.equal(history.at(-1)?.dateKey, "2026-08-14");
   assert.doesNotMatch(waterPanelSource, /\.slice\(0, 15\)/);
+});
+
+test("Water adds the shared daily fl oz line graph without synthetic days or a goal", () => {
+  assert.match(waterPanelSource, /<HealthWaterLineChart history=\{waterHistory\} \/>/);
+  assert.match(waterChartSource, /ActivityLineChartCard/);
+  assert.match(waterChartSource, /points: chronologicalHistory\.map\(\(day\) =>/);
+  assert.match(waterChartSource, /value: day\.totals\.fluidOunces/);
+  assert.match(waterChartSource, /formatQuantity\(value\)\} fl oz/);
+  assert.doesNotMatch(waterChartSource, /referenceLines|Array\.from|fill\(0\)/);
+  assert.doesNotMatch(waterChartSource, /<svg/);
 });

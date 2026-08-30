@@ -22,7 +22,7 @@ import {
   getHomeTodoSearchText,
   isHomeTodoTaskEligible,
   mergeHomeTodoVisibleTaskIds,
-  moveHomeTodoTaskIdToEdge,
+  moveHomeTodoTaskIdToVisibleEdge,
   reconcileHomeTodoTaskIds,
   sortHomeTodoSearchResults,
 } from "@/lib/home-todo-state";
@@ -198,6 +198,9 @@ export function HomePage({
     const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
+    const sectionTaskIds = daySections.find((section) => section.taskIds.includes(task.id))?.taskIds
+      ?? (laterTaskIds.includes(task.id) ? laterTaskIds : [task.id]);
+    const sectionTaskIndex = sectionTaskIds.indexOf(task.id);
     return (
       <AdhdCard className="grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0" padding="sm">
         <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">{handle}</span>
@@ -240,24 +243,24 @@ export function HomePage({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          {state.taskIds.indexOf(task.id) !== 0 ? (
+          {sectionTaskIndex > 0 ? (
             <AdhdIconButton
               aria-label={`Move ${task.title || "Untitled task"} to Top`}
               className={HOME_TODO_ACTION_CLASS}
               iconClassName={HOME_TODO_ACTION_ICON_CLASS}
-              onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"))}
+              onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToVisibleEdge(taskIds, sectionTaskIds, task.id, "top"))}
               size="sm"
               title="Move task to Top"
             >
               <ArrowUpToLine aria-hidden="true" />
             </AdhdIconButton>
           ) : null}
-          {state.taskIds.indexOf(task.id) !== state.taskIds.length - 1 ? (
+          {sectionTaskIndex >= 0 && sectionTaskIndex < sectionTaskIds.length - 1 ? (
             <AdhdIconButton
               aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
               className={HOME_TODO_ACTION_CLASS}
               iconClassName={HOME_TODO_ACTION_ICON_CLASS}
-              onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"))}
+              onClick={() => updateTaskIds((taskIds) => moveHomeTodoTaskIdToVisibleEdge(taskIds, sectionTaskIds, task.id, "bottom"))}
               size="sm"
               title="Move task to Bottom"
             >
