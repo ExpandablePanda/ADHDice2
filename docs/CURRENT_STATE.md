@@ -1,17 +1,28 @@
 # Current State
 
-Last reviewed: 2026-08-29
+Last reviewed: 2026-08-30
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.20`.
+- Current working app version: `7.12.21`.
 - Current release group: `7.12.x` Health Journal symptom recovery.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-30 7.12.21 Health Journal symptom colors
+
+Health Journal symptom definitions now persist an approved accent color with a
+purple fallback for legacy rows. Both Journal symptom dropdowns expose a
+compact per-symptom palette action without nesting controls inside a label or
+selecting the symptom. Symptom Trends passes the selected definition color to
+the existing shared chart. The authored-only
+`supabase/add_health_journal_symptom_colors_7_12_21.sql` migration must be
+applied manually; no production SQL, browser, native, or iOS verification was
+performed.
 
 ## 2026-08-30 7.12.20 Health Journal dropdown structure correction
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
@@ -11,7 +11,15 @@ export const HEALTH_COMPACT_INPUT_CLASS = `${HEALTH_COMPACT_CONTROL_CLASS} max-s
 
 export type HealthDropdownOption = {
   label: string;
+  trailingAction?: HealthDropdownTrailingAction;
   value: string;
+};
+
+export type HealthDropdownTrailingAction = {
+  ariaLabel: string;
+  content: ReactNode;
+  expandedContent?: ReactNode;
+  onClick: () => void;
 };
 
 export type HealthAutocompleteSuggestion = {
@@ -307,23 +315,49 @@ export function HealthDropdown({
           ref={panelRef}
           widthClassName="w-full"
         >
-          {options.map((option, index) => (
-            <button
-              aria-selected={option.value === value}
-              className={`flex w-full items-center rounded-[0.8rem] px-2 py-1.5 text-left text-[13px] leading-5 transition ${index === highlightedIndex ? "bg-[#f1ecff] text-[#5f4bd7] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : "text-[#5f5876] hover:bg-[#f7f5fb] dark:text-white/75 dark:hover:bg-white/8"}`}
-              id={`${listboxId}-option-${index}`}
-              key={option.value}
-              onClick={() => chooseOption(index)}
-              onMouseDown={(event) => event.preventDefault()}
-              onMouseEnter={() => setHighlightedIndex(index)}
-              ref={index === highlightedIndex ? highlightedOptionRef : undefined}
-              role="option"
-              tabIndex={-1}
-              type="button"
-            >
-              {option.label}
-            </button>
-          ))}
+          {options.map((option, index) => {
+            const optionClassName = `flex items-center rounded-[0.8rem] px-2 py-1.5 text-left text-[13px] leading-5 transition ${index === highlightedIndex ? "bg-[#f1ecff] text-[#5f4bd7] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : "text-[#5f5876] hover:bg-[#f7f5fb] dark:text-white/75 dark:hover:bg-white/8"}`;
+            const optionButton = (
+              <button
+                aria-selected={option.value === value}
+                className={`${optionClassName} ${option.trailingAction ? "min-w-0 flex-1" : "w-full"}`}
+                id={`${listboxId}-option-${index}`}
+                key={option.value}
+                onClick={() => chooseOption(index)}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setHighlightedIndex(index)}
+                ref={index === highlightedIndex ? highlightedOptionRef : undefined}
+                role="option"
+                tabIndex={-1}
+                type="button"
+              >
+                {option.label}
+              </button>
+            );
+            if (!option.trailingAction) {
+              return optionButton;
+            }
+            return (
+              <div className="w-full" key={option.value} role="none">
+                <div className="flex w-full items-center gap-1">
+                  {optionButton}
+                  <button
+                    aria-expanded={Boolean(option.trailingAction.expandedContent)}
+                    aria-label={option.trailingAction.ariaLabel}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[#e4deef] bg-white/80 transition hover:border-[#b9abff] dark:border-white/10 dark:bg-white/[0.05]"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      option.trailingAction?.onClick();
+                    }}
+                    type="button"
+                  >
+                    {option.trailingAction.content}
+                  </button>
+                </div>
+                {option.trailingAction.expandedContent}
+              </div>
+            );
+          })}
         </AdhdDropdownPanel>
       ) : null}
     </div>

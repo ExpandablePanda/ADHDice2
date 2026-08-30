@@ -17,6 +17,7 @@ import { formatHealthFoodQuantityUnit } from "@/lib/health-library";
 import { aggregateHealthNutritionDetails, type HealthNutritionCoverage } from "@/lib/health-nutrition";
 import { HEALTH_WORKOUT_TYPES, normalizeHealthWorkoutOptionValues } from "@/lib/health-workout-options";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
+import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
 
 export type HealthTab = "Today" | "Food" | "Water" | "Fitness" | "Journal" | "Weight" | "Sleep" | "Insights" | "Awards";
 export type HealthMealSlot = HealthMealEntry["meal_slot"];
@@ -33,6 +34,7 @@ export const HEALTH_MOOD_OPTIONS = HEALTH_SCALE_OPTIONS;
 export const HEALTH_SEVERITY_OPTIONS = HEALTH_SCALE_OPTIONS;
 export const HEALTH_SYMPTOM_TREND_RANGES = ["7D", "30D", "90D", "All"] as const;
 export type HealthSymptomTrendRange = (typeof HEALTH_SYMPTOM_TREND_RANGES)[number];
+export const DEFAULT_HEALTH_SYMPTOM_COLOR = ADHDICE_ACCENT_COLORS[0];
 export const HEALTH_SYMPTOM_TAGS = [
   "Calm",
   "Stressed",
@@ -274,6 +276,18 @@ export function normalizeHealthSymptomName(name: string) {
   return name.trim().replace(/\s+/g, " ");
 }
 
+export function normalizeHealthSymptomColor(color: string | null | undefined) {
+  const normalized = color?.trim().toLowerCase() ?? "";
+  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : DEFAULT_HEALTH_SYMPTOM_COLOR;
+}
+
+export function normalizeHealthSymptom(symptom: HealthSymptom): HealthSymptom {
+  return {
+    ...symptom,
+    color: normalizeHealthSymptomColor(symptom.color),
+  };
+}
+
 export function normalizeHealthSymptomNote(note: string | null | undefined) {
   const normalized = note?.trim() ?? "";
   return normalized.length > 0 ? normalized : null;
@@ -362,9 +376,11 @@ export function reconcileHealthSymptoms(
   localEntries: HealthSymptomEntry[],
   remoteEntries: HealthSymptomEntry[],
 ) {
-  const remoteSymptomIds = new Set(remoteSymptoms.map((symptom) => symptom.id));
+  const normalizedLocalSymptoms = localSymptoms.map(normalizeHealthSymptom);
+  const normalizedRemoteSymptoms = remoteSymptoms.map(normalizeHealthSymptom);
+  const remoteSymptomIds = new Set(normalizedRemoteSymptoms.map((symptom) => symptom.id));
   const remoteActiveSymptomsByName = new Map<string, HealthSymptom>();
-  remoteSymptoms.forEach((symptom) => {
+  normalizedRemoteSymptoms.forEach((symptom) => {
     if (symptom.archived_at === null) {
       const normalizedName = normalizeHealthSymptomName(symptom.name).toLowerCase();
       if (!remoteActiveSymptomsByName.has(normalizedName)) {
@@ -373,7 +389,7 @@ export function reconcileHealthSymptoms(
     }
   });
   const canonicalSymptomIdByLocalId = new Map<string, string>();
-  localSymptoms.forEach((symptom) => {
+  normalizedLocalSymptoms.forEach((symptom) => {
     if (symptom.archived_at !== null) {
       return;
     }
@@ -382,9 +398,9 @@ export function reconcileHealthSymptoms(
       canonicalSymptomIdByLocalId.set(symptom.id, remoteSymptom.id);
     }
   });
-  const unreconciledLocalSymptoms = localSymptoms.filter((symptom) =>
+  const unreconciledLocalSymptoms = normalizedLocalSymptoms.filter((symptom) =>
     !remoteSymptomIds.has(symptom.id) && !canonicalSymptomIdByLocalId.has(symptom.id));
-  const mergedSymptoms = sortHealthSymptoms([...remoteSymptoms, ...unreconciledLocalSymptoms]);
+  const mergedSymptoms = sortHealthSymptoms([...normalizedRemoteSymptoms, ...unreconciledLocalSymptoms]);
   const remoteEntryIds = new Set(remoteEntries.map((entry) => entry.id));
   const localOnlyEntries = localEntries.filter((entry) => !remoteEntryIds.has(entry.id));
   const remappedLocalOnlyEntries = localOnlyEntries.map((entry) => {

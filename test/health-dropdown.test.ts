@@ -44,6 +44,21 @@ test("HealthDropdown pointer option selection prevents focus transfer and closes
   assert.match(chooseOptionSource, /onChange\(option\.value\);\s+setHighlightedIndex\(index\);\s+setIsOpen\(false\);/);
 });
 
+test("HealthDropdown trailing actions are generic sibling controls that cannot select an option", () => {
+  assert.match(dropdownSource, /trailingAction\?: HealthDropdownTrailingAction/);
+  assert.match(dropdownSource, /export type HealthDropdownTrailingAction/);
+  assert.match(dropdownSource, /ariaLabel: string;[\s\S]*content: ReactNode;[\s\S]*onClick: \(\) => void;/);
+
+  const actionRowStart = dropdownSource.indexOf('<div className="w-full" key={option.value} role="none">');
+  assert.ok(actionRowStart >= 0);
+  const actionRow = dropdownSource.slice(actionRowStart, dropdownSource.indexOf("</div>", actionRowStart) + 6);
+  assert.match(actionRow, /\{optionButton\}/);
+  assert.match(actionRow, /aria-label=\{option\.trailingAction\.ariaLabel\}/);
+  assert.match(actionRow, /event\.stopPropagation\(\);\s+option\.trailingAction\?\.onClick\(\);/);
+  assert.doesNotMatch(actionRow, /chooseOption\(index\)/);
+  assert.match(dropdownSource, /if \(!option\.trailingAction\) \{\s+return optionButton;\s+\}/);
+});
+
 test("HealthPage uses neutral composite fields for every HealthDropdown", () => {
   const healthDropdownCount = (healthPageSource.match(/<HealthDropdown/g) ?? []).length;
   const compositeFieldCount = (healthPageSource.match(/<Field composite label=/g) ?? []).length;

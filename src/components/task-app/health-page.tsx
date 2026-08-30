@@ -110,6 +110,7 @@ import {
   HEALTH_TABS,
   kilogramsToDisplayValue,
   normalizeHealthMealTime,
+  normalizeHealthSymptomColor,
   normalizeHealthSymptomName,
   sumMealNutritionForDate,
   sumMetricValueForDate,
@@ -124,6 +125,7 @@ import {
   type HealthSymptomTrendRange,
 } from "@/lib/health-utils";
 import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
+import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
 import {
   calculateHealthFoodNutrition,
   HEALTH_NUTRITION_FIELD_REGISTRY,
@@ -177,6 +179,7 @@ type HealthPageProps = {
   symptomEntries: HealthSymptomEntry[];
   createSymptom: (input: Omit<HealthSymptomInsert, "user_id">) => Promise<HealthSymptom | null>;
   renameSymptom: (symptomId: string, name: string) => Promise<boolean>;
+  setSymptomColor: (symptomId: string, color: string) => Promise<boolean>;
   archiveSymptom: (symptomId: string) => Promise<boolean>;
   addSymptomEntry: (input: Omit<HealthSymptomEntryInsert, "user_id">) => Promise<boolean>;
   updateSymptomEntry: (entryId: string, input: HealthSymptomEntryUpdate) => Promise<boolean>;
@@ -401,12 +404,48 @@ function formatHealthSymptomTrendTimestamp(entry: HealthSymptomEntry) {
   }).format(timestamp);
 }
 
+function buildHealthSymptomDropdownOption(
+  symptom: HealthSymptom,
+  pickerKey: string,
+  openPickerKey: string | null,
+  onTogglePicker: (pickerKey: string) => void,
+  onSetColor: (symptomId: string, color: string) => void,
+) {
+  const color = normalizeHealthSymptomColor(symptom.color);
+  return {
+    label: symptom.archived_at === null ? symptom.name : `${symptom.name} (archived)`,
+    trailingAction: {
+      ariaLabel: `Change color for ${symptom.name}`,
+      content: <span aria-hidden="true" className="h-3.5 w-3.5 rounded-full border border-black/10 dark:border-white/20" style={{ backgroundColor: color }} />,
+      expandedContent: openPickerKey === pickerKey ? (
+        <div aria-label={`Choose a color for ${symptom.name}`} className="mt-1 grid grid-cols-8 gap-1 rounded-[0.8rem] border border-[#e4deef] bg-white/80 p-1 dark:border-white/10 dark:bg-white/[0.05]" role="group">
+          {ADHDICE_ACCENT_COLORS.map((paletteColor) => (
+            <button
+              aria-label={`Set ${symptom.name} color to ${paletteColor}`}
+              aria-pressed={color === paletteColor}
+              className={`h-5 w-5 rounded-full border-2 transition ${color === paletteColor ? "scale-110 border-[#2f294a] dark:border-white" : "border-transparent"}`}
+              key={paletteColor}
+              onClick={() => onSetColor(symptom.id, paletteColor)}
+              style={{ backgroundColor: paletteColor }}
+              title={`Set ${symptom.name} color to ${paletteColor}`}
+              type="button"
+            />
+          ))}
+        </div>
+      ) : null,
+      onClick: () => onTogglePicker(pickerKey),
+    },
+    value: symptom.id,
+  };
+}
+
 export function HealthPage({
   checkIns,
   symptoms,
   symptomEntries,
   createSymptom,
   renameSymptom,
+  setSymptomColor,
   archiveSymptom,
   addSymptomEntry,
   updateSymptomEntry,
@@ -537,6 +576,7 @@ export function HealthPage({
   const [journalEnergy, setJournalEnergy] = useState<number | null>(null);
   const [journalTags, setJournalTags] = useState<string[]>([]);
   const [selectedSymptomTrendId, setSelectedSymptomTrendId] = useState("");
+  const [openSymptomColorPickerKey, setOpenSymptomColorPickerKey] = useState<string | null>(null);
   const [symptomTrendRange, setSymptomTrendRange] = useState<HealthSymptomTrendRange>("30D");
   const initialSymptomInputs = useMemo(() => getCurrentHealthDateTimeInputs(), []);
   const [symptomDraft, setSymptomDraft] = useState<SymptomDraft>(() => ({
@@ -619,14 +659,23 @@ export function HealthPage({
     () => symptoms.filter((symptom) => symptom.archived_at === null),
     [symptoms],
   );
-  const symptomOptions = useMemo(
-    () => [
-      { label: "Choose a symptom", value: "" },
-      ...activeSymptoms.map((symptom) => ({ label: symptom.name, value: symptom.id })),
-      { label: "+ Add a new symptom", value: NEW_SYMPTOM_VALUE },
-    ],
-    [activeSymptoms],
-  );
+  const editingArchivedSymptom = editingSymptomEntryId
+    ? symptoms.find((symptom) => symptom.id === symptomDraft.symptomId && symptom.archived_at !== null) ?? null
+    : null;
+  const symptomOptions = [
+    { label: "Choose a symptom", value: "" },
+    ...activeSymptoms.map((symptom) => buildHealthSymptomDropdownOption(
+      symptom,
+      `log:${symptom.id}`,
+      openSymptomColorPickerKey,
+      setOpenSymptomColorPickerKey,
+      (symptomId, color) => {
+        setOpenSymptomColorPickerKey(null);
+        void setSymptomColor(symptomId, color);
+      },
+    )),
+    { label: "+ Add a new symptom", value: NEW_SYMPTOM_VALUE },
+  ];
   const symptomHistoryGroups = useMemo(
     () => groupHealthSymptomEntriesByDate(symptomEntries).slice(0, 14),
     [symptomEntries],
@@ -635,6 +684,18 @@ export function HealthPage({
     () => getSelectableHealthSymptoms(symptoms, symptomEntries),
     [symptomEntries, symptoms],
   );
+  const symptomTrendOptions = selectableSymptomTrendSymptoms.length > 0
+    ? selectableSymptomTrendSymptoms.map((symptom) => buildHealthSymptomDropdownOption(
+      symptom,
+      `trend:${symptom.id}`,
+      openSymptomColorPickerKey,
+      setOpenSymptomColorPickerKey,
+      (symptomId, color) => {
+        setOpenSymptomColorPickerKey(null);
+        void setSymptomColor(symptomId, color);
+      },
+    ))
+    : [{ label: "No symptoms available", value: "" }];
   const defaultSymptomTrendId = useMemo(
     () => isLoading ? "" : getDefaultHealthSymptomId(symptoms, symptomEntries),
     [isLoading, symptomEntries, symptoms],
@@ -669,7 +730,7 @@ export function HealthPage({
       return [];
     }
     return [{
-      color: "#7c5cff",
+      color: normalizeHealthSymptomColor(selectedSymptomTrend.color),
       key: selectedSymptomTrend.id,
       label: selectedSymptomTrend.name,
       points: selectedSymptomTrendEntries.map((entry) => {
@@ -1976,12 +2037,24 @@ export function HealthPage({
                 <Field composite label="Symptom">
                   <HealthDropdown
                     ariaLabel="Symptom"
-                    onChange={(value) => setSymptomDraft((current) => ({ ...current, newName: value === NEW_SYMPTOM_VALUE ? current.newName : "", symptomId: value }))}
+                    onChange={(value) => {
+                      setOpenSymptomColorPickerKey(null);
+                      setSymptomDraft((current) => ({ ...current, newName: value === NEW_SYMPTOM_VALUE ? current.newName : "", symptomId: value }));
+                    }}
                     options={editingSymptomEntryId
                       ? [
                         ...symptomOptions.filter((option) => option.value !== NEW_SYMPTOM_VALUE),
-                        ...(symptoms.find((symptom) => symptom.id === symptomDraft.symptomId && symptom.archived_at !== null)
-                          ? [{ label: `${symptoms.find((symptom) => symptom.id === symptomDraft.symptomId)?.name ?? "Archived symptom"} (archived)`, value: symptomDraft.symptomId }]
+                        ...(editingArchivedSymptom
+                          ? [buildHealthSymptomDropdownOption(
+                            editingArchivedSymptom,
+                            `log:${editingArchivedSymptom.id}`,
+                            openSymptomColorPickerKey,
+                            setOpenSymptomColorPickerKey,
+                            (symptomId, color) => {
+                              setOpenSymptomColorPickerKey(null);
+                              void setSymptomColor(symptomId, color);
+                            },
+                          )]
                           : []),
                       ]
                       : symptomOptions}
@@ -2118,13 +2191,11 @@ export function HealthPage({
                   <HealthDropdown
                     ariaLabel="Trend symptom"
                     disabled={selectableSymptomTrendSymptoms.length === 0}
-                    onChange={setSelectedSymptomTrendId}
-                    options={selectableSymptomTrendSymptoms.length > 0
-                      ? selectableSymptomTrendSymptoms.map((symptom) => ({
-                        label: symptom.archived_at === null ? symptom.name : `${symptom.name} (archived)`,
-                        value: symptom.id,
-                      }))
-                      : [{ label: "No symptoms available", value: "" }]}
+                    onChange={(value) => {
+                      setOpenSymptomColorPickerKey(null);
+                      setSelectedSymptomTrendId(value);
+                    }}
+                    options={symptomTrendOptions}
                     value={selectedSymptomTrendIdForView}
                   />
                 </Field>

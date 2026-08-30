@@ -3,25 +3,7 @@ import { type FocusCategory, type FocusType, type FocusSubtype, type FocusLabelO
 import { CategoryIcon } from "./task-app";
 import { ModalShell } from "./modal-shell";
 import { FocusPillSelect, FocusSuggestionInput } from "./focus-form-controls";
-
-const ACCENT_COLORS = [
-  "#6f57f6",
-  "#3b82f6",
-  "#06b6d4",
-  "#14b8a6",
-  "#12a876",
-  "#84cc16",
-  "#f59e0b",
-  "#ea580c",
-  "#f97316",
-  "#ef4444",
-  "#f05566",
-  "#ec4899",
-  "#d946ef",
-  "#8b5cf6",
-  "#6366f1",
-  "#64748b",
-];
+import { ADHDICE_ACCENT_COLORS as ACCENT_COLORS } from "@/lib/accent-colors";
 const AVAILABLE_ICONS = [
   { name: "Code", label: "Code" },
   { name: "Briefcase", label: "Work" },

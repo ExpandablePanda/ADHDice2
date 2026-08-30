@@ -4,7 +4,9 @@ import test from "node:test";
 
 import type { HealthSymptom, HealthSymptomEntry } from "../src/lib/database.types.ts";
 import { getNumericLineChartXPositions } from "../src/components/activity-line-chart-card.tsx";
+import { ADHDICE_ACCENT_COLORS } from "../src/lib/accent-colors.ts";
 import {
+  DEFAULT_HEALTH_SYMPTOM_COLOR,
   groupHealthSymptomEntriesByDate,
   getDefaultHealthSymptomId,
   getHealthSymptomTrendEntries,
@@ -14,6 +16,8 @@ import {
   HEALTH_SCALE_OPTIONS,
   HEALTH_SEVERITY_OPTIONS,
   HEALTH_SYMPTOM_TREND_RANGES,
+  normalizeHealthSymptom,
+  normalizeHealthSymptomColor,
   normalizeHealthSymptomName,
   normalizeHealthSymptomNote,
   reconcileHealthSymptoms,
@@ -22,6 +26,10 @@ import {
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 const migrationSource = readFileSync(
   new URL("../supabase/add_health_journal_symptom_tracking_7_12_7.sql", import.meta.url),
+  "utf8",
+);
+const colorMigrationSource = readFileSync(
+  new URL("../supabase/add_health_journal_symptom_colors_7_12_21.sql", import.meta.url),
   "utf8",
 );
 const healthHookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
@@ -52,10 +60,12 @@ function symptomDefinition(
   id: string,
   name: string,
   archivedAt: string | null = null,
+  color = DEFAULT_HEALTH_SYMPTOM_COLOR,
 ): HealthSymptom {
   const timestamp = `${id}-timestamp`;
   return {
     archived_at: archivedAt,
+    color,
     created_at: timestamp,
     id,
     name,
@@ -63,6 +73,33 @@ function symptomDefinition(
     user_id: "user-1",
   };
 }
+
+test("symptom colors use the approved palette and safely normalize legacy values", () => {
+  assert.deepEqual([...ADHDICE_ACCENT_COLORS], [
+    "#6f57f6",
+    "#3b82f6",
+    "#06b6d4",
+    "#14b8a6",
+    "#12a876",
+    "#84cc16",
+    "#f59e0b",
+    "#ea580c",
+    "#f97316",
+    "#ef4444",
+    "#f05566",
+    "#ec4899",
+    "#d946ef",
+    "#8b5cf6",
+    "#6366f1",
+    "#64748b",
+  ]);
+  assert.equal(DEFAULT_HEALTH_SYMPTOM_COLOR, "#6f57f6");
+  assert.equal(normalizeHealthSymptomColor(undefined), DEFAULT_HEALTH_SYMPTOM_COLOR);
+  assert.equal(normalizeHealthSymptomColor("not-a-color"), DEFAULT_HEALTH_SYMPTOM_COLOR);
+  assert.equal(normalizeHealthSymptomColor(" #EC4899 "), "#ec4899");
+  const legacySymptom = { ...symptomDefinition("legacy", "Legacy"), color: undefined } as unknown as HealthSymptom;
+  assert.equal(normalizeHealthSymptom(legacySymptom).color, DEFAULT_HEALTH_SYMPTOM_COLOR);
+});
 
 test("Journal scales use 1 through 10 and normalize symptom input", () => {
   assert.deepEqual([...HEALTH_SCALE_OPTIONS], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
@@ -181,6 +218,22 @@ test("symptom trends keep archived symptoms selectable when they have ledger his
 
   assert.deepEqual(getSelectableHealthSymptoms([archivedWithoutHistory, archivedWithHistory, activeSymptom], entries).map((symptom) => symptom.id), [activeSymptom.id, archivedWithHistory.id]);
   assert.equal(getDefaultHealthSymptomId([archivedWithoutHistory, archivedWithHistory, activeSymptom], entries), archivedWithHistory.id);
+});
+
+test("symptom colors survive reconciliation and archived definitions retain their assigned color", () => {
+  const localRemoteDefinition = symptomDefinition("same-id", "Headache", null, "#ef4444");
+  const remoteDefinition = symptomDefinition("same-id", "Headache", null, "#3b82f6");
+  const archivedDefinition = symptomDefinition("archived", "Old Pain", "2026-08-28T12:00:00.000Z", "#06b6d4");
+  const recovery = reconcileHealthSymptoms(
+    [localRemoteDefinition, archivedDefinition],
+    [remoteDefinition],
+    [],
+    [],
+  );
+
+  assert.equal(recovery.mergedSymptoms.find((symptom) => symptom.id === remoteDefinition.id)?.color, remoteDefinition.color);
+  assert.equal(recovery.mergedSymptoms.find((symptom) => symptom.id === archivedDefinition.id)?.color, archivedDefinition.color);
+  assert.equal(getSelectableHealthSymptoms(recovery.mergedSymptoms, [symptomEntry("archived-entry", "2026-08-29", "2026-08-29T09:00:00.000Z", 5, archivedDefinition.id)])[1]?.color, archivedDefinition.color);
 });
 
 test("Journal symptom trends adapt into the shared chart with a fixed 1 to 10 severity scale", () => {
@@ -373,6 +426,19 @@ test("symptom storage is normalized, unlimited per day, and preserves history on
   }
 });
 
+test("symptom definition colors are persisted with a safe default and never added to entries", () => {
+  assert.match(schemaSource, /color text not null default '#6f57f6'[\s\S]*?constraint adhdice_health_symptoms_color_hex_check check \(color ~ '\^#\[0-9A-Fa-f\]\{6\}\$'\)/i);
+  assert.match(colorMigrationSource, /add column if not exists color text/i);
+  assert.match(colorMigrationSource, /set color = '#6f57f6'/i);
+  assert.match(colorMigrationSource, /alter column color set default '#6f57f6'/i);
+  assert.match(colorMigrationSource, /alter column color set not null/i);
+  assert.match(colorMigrationSource, /add constraint adhdice_health_symptoms_color_hex_check/i);
+  assert.doesNotMatch(colorMigrationSource, /adhdice_health_symptom_entries[\s\S]*color/i);
+  assert.match(healthHookSource, /color: symptom\.color/);
+  assert.match(healthHookSource, /color: normalizeHealthSymptomColor\(input\.color\)/);
+  assert.match(healthHookSource, /insert\(\{ \.\.\.input, archived_at: null, color: localRow\.color/);
+});
+
 test("new symptom tables use authenticated owner-scoped Data API access", () => {
   for (const source of [schemaSource, migrationSource]) {
     assert.match(source, /enable row level security[\s\S]*adhdice_health_symptoms/i);
@@ -395,6 +461,14 @@ test("symptom persistence has its own optional fallback and CRUD paths", () => {
   assert.match(healthHookSource, /storageKey\(userId, "symptom-entries"\)/);
   assert.match(healthHookSource, /async function createSymptom/);
   assert.match(healthHookSource, /async function renameSymptom/);
+  assert.match(healthHookSource, /async function setSymptomColor\(symptomId: string, color: string\)/);
+  assert.match(healthHookSource, /return updateSymptomDefinition\(symptomId, \{ color: normalizeHealthSymptomColor\(color\) \}/);
+  assert.match(healthHookSource, /\.\.\.\(input\.color === undefined \? \{\} : \{ color: normalizeHealthSymptomColor\(input\.color\) \}\)/);
+  const symptomDefinitionUpdate = healthHookSource.slice(
+    healthHookSource.indexOf("async function updateSymptomDefinition"),
+    healthHookSource.indexOf("async function createSymptom"),
+  );
+  assert.match(symptomDefinitionUpdate, /\.update\(normalizedInput\)[\s\S]*?\.eq\("id", symptomId\)[\s\S]*?\.eq\("user_id", userId\)/);
   assert.match(healthHookSource, /async function archiveSymptom/);
   assert.match(healthHookSource, /async function addSymptomEntry/);
   assert.match(healthHookSource, /async function updateSymptomEntry/);
@@ -422,6 +496,18 @@ test("symptom persistence has its own optional fallback and CRUD paths", () => {
   assert.match(healthPageSource, /entry\.severity}\/10/);
   assert.match(healthPageSource, /Save Symptom/);
   assert.match(healthPageSource, /deleteSymptomEntry\(entry\.id\)/);
+});
+
+test("Journal symptom pickers expose palette actions and the trend series uses the selected symptom color", () => {
+  assert.equal((healthPageSource.match(/buildHealthSymptomDropdownOption\(/g) ?? []).length >= 3, true);
+  assert.match(healthPageSource, /ADHDICE_ACCENT_COLORS\.map/);
+  assert.match(healthPageSource, /ariaLabel="Symptom"[\s\S]*?options=\{editingSymptomEntryId/);
+  assert.match(healthPageSource, /ariaLabel="Trend symptom"[\s\S]*?options=\{symptomTrendOptions}/);
+  assert.match(healthPageSource, /color: normalizeHealthSymptomColor\(selectedSymptomTrend\.color\)/);
+  assert.doesNotMatch(healthPageSource, /color: "#7c5cff"/);
+  assert.match(healthPageSource, /label: "\+ Add a new symptom", value: NEW_SYMPTOM_VALUE/);
+  const syntheticOptionSource = healthPageSource.slice(healthPageSource.indexOf('label: "+ Add a new symptom"'), healthPageSource.indexOf('label: "+ Add a new symptom"') + 90);
+  assert.doesNotMatch(syntheticOptionSource, /trailingAction/);
 });
 
 test("Health hydration checks lifecycle before and after each recovery mutation phase", () => {

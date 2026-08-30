@@ -1379,6 +1379,7 @@ export type HealthSymptom = {
   id: string;
   user_id: string;
   name: string;
+  color: string;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
@@ -1388,12 +1389,13 @@ export type HealthSymptomInsert = {
   id?: string;
   user_id: string;
   name: string;
+  color?: string;
   archived_at?: string | null;
   created_at?: string;
   updated_at?: string;
 };
 
-export type HealthSymptomUpdate = Partial<Pick<HealthSymptom, "name" | "archived_at">>;
+export type HealthSymptomUpdate = Partial<Pick<HealthSymptom, "name" | "color" | "archived_at">>;
 
 export type HealthSymptomEntry = {
   id: string;

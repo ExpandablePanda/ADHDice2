@@ -46,6 +46,8 @@ import type { AppleHealthImportPreview } from "@/lib/health-apple-import";
 import {
   buildDefaultHealthProfile,
   getEligibleHealthAchievements,
+  normalizeHealthSymptom,
+  normalizeHealthSymptomColor,
   normalizeHealthSymptomName,
   normalizeHealthSymptomNote,
   normalizeHealthProfile,
@@ -186,7 +188,7 @@ function readLocalHealthState(userId: string): LocalHealthState {
     recipes: readStoredJson(storageKey(userId, "recipes"), emptyState.recipes),
     savedMeals: readStoredJson(storageKey(userId, "saved-meals"), emptyState.savedMeals),
     symptomEntries: sortHealthSymptomEntries(readStoredJson(storageKey(userId, "symptom-entries"), emptyState.symptomEntries)),
-    symptoms: sortHealthSymptoms(readStoredJson(storageKey(userId, "symptoms"), emptyState.symptoms)),
+    symptoms: sortHealthSymptoms(readStoredJson<HealthSymptom[]>(storageKey(userId, "symptoms"), emptyState.symptoms).map(normalizeHealthSymptom)),
     waterEntries: readStoredJson(storageKey(userId, "water"), emptyState.waterEntries),
     workouts: sortHealthWorkouts(readStoredJson(storageKey(userId, "workouts"), emptyState.workouts)),
     weightEntries: readStoredJson(storageKey(userId, "weights"), emptyState.weightEntries),
@@ -620,7 +622,7 @@ export function useHealth(
         const hasMissingSymptomPersistence = symptomPersistenceErrors.some((error) => error && isMissingHealthSymptomPersistence(error.message));
         setMessage({
           text: hasMissingSymptomPersistence
-            ? "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied. Existing Health data remains connected."
+            ? "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied. Existing Health data remains connected."
             : symptomPersistenceErrors[0]?.message ?? "Symptom tracking could not connect and is using local storage.",
           tone: hasMissingSymptomPersistence ? "neutral" : "warn",
         });
@@ -648,6 +650,7 @@ export function useHealth(
           .upsert(
             symptomRecovery.unreconciledLocalSymptoms.map((symptom) => ({
               archived_at: symptom.archived_at,
+              color: symptom.color,
               created_at: symptom.created_at,
               id: symptom.id,
               name: symptom.name,
@@ -974,6 +977,7 @@ export function useHealth(
     const normalizedInput: HealthSymptomUpdate = {
       ...input,
       ...(input.name === undefined ? {} : { name: normalizeHealthSymptomName(input.name) }),
+      ...(input.color === undefined ? {} : { color: normalizeHealthSymptomColor(input.color) }),
     };
     if (normalizedInput.name !== undefined && normalizedInput.name.length === 0) {
       setMessage({ tone: "warn", text: "Enter a symptom name." });
@@ -995,6 +999,7 @@ export function useHealth(
     const localRow: HealthSymptom = {
       ...currentSymptom,
       ...normalizedInput,
+      color: normalizeHealthSymptomColor(normalizedInput.color ?? currentSymptom.color),
       updated_at: now,
     };
     let nextRow = localRow;
@@ -1011,14 +1016,14 @@ export function useHealth(
           symptomDefinitionsRemoteEnabledRef.current = false;
           setMessage({
             tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied.",
+            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
           });
         } else {
           setMessage({ tone: "warn", text: error.message });
           return false;
         }
       } else {
-        nextRow = data ?? localRow;
+        nextRow = data ? normalizeHealthSymptom(data) : localRow;
       }
     }
 
@@ -1061,6 +1066,7 @@ export function useHealth(
     const now = new Date().toISOString();
     const localRow: HealthSymptom = {
       archived_at: null,
+      color: normalizeHealthSymptomColor(input.color),
       created_at: now,
       id: input.id ?? createLocalId("health-symptom"),
       name,
@@ -1071,7 +1077,7 @@ export function useHealth(
     if (client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current) {
       const { data, error } = await client
         .from("adhdice_health_symptoms")
-        .insert({ ...input, archived_at: null, name, user_id: userId })
+        .insert({ ...input, archived_at: null, color: localRow.color, name, user_id: userId })
         .select("*")
         .single();
       if (error) {
@@ -1079,14 +1085,14 @@ export function useHealth(
           symptomDefinitionsRemoteEnabledRef.current = false;
           setMessage({
             tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied.",
+            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
           });
         } else {
           setMessage({ tone: "warn", text: error.message });
           return null;
         }
       } else {
-        nextRow = data ?? localRow;
+        nextRow = data ? normalizeHealthSymptom(data) : localRow;
       }
     }
 
@@ -1111,6 +1117,10 @@ export function useHealth(
 
   async function renameSymptom(symptomId: string, name: string) {
     return updateSymptomDefinition(symptomId, { name }, "Symptom renamed.");
+  }
+
+  async function setSymptomColor(symptomId: string, color: string) {
+    return updateSymptomDefinition(symptomId, { color: normalizeHealthSymptomColor(color) }, "Symptom color saved.");
   }
 
   async function archiveSymptom(symptomId: string) {
@@ -1161,7 +1171,7 @@ export function useHealth(
           symptomEntriesRemoteEnabledRef.current = false;
           setMessage({
             tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied.",
+            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
           });
         } else {
           setMessage({ tone: "warn", text: error.message });
@@ -1237,7 +1247,7 @@ export function useHealth(
           symptomEntriesRemoteEnabledRef.current = false;
           setMessage({
             tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied.",
+            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
           });
         } else {
           setMessage({ tone: "warn", text: error.message });
@@ -1282,7 +1292,7 @@ export function useHealth(
           symptomEntriesRemoteEnabledRef.current = false;
           setMessage({
             tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 Health Journal migration is applied.",
+            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
           });
         } else {
           setMessage({ tone: "warn", text: error.message });
@@ -2686,6 +2696,7 @@ export function useHealth(
     symptoms,
     createSymptom,
     renameSymptom,
+    setSymptomColor,
     archiveSymptom,
     symptomEntries,
     addSymptomEntry,

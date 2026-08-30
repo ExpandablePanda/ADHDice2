@@ -384,10 +384,12 @@ create table public.adhdice_health_symptoms (
     char_length(trim(name)) > 0
     and name = regexp_replace(trim(name), '\s+', ' ', 'g')
   ),
+  color text not null default '#6f57f6',
   archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (user_id, id)
+  unique (user_id, id),
+  constraint adhdice_health_symptoms_color_hex_check check (color ~ '^#[0-9A-Fa-f]{6}$')
 );
 
 create table public.adhdice_health_symptom_entries (
