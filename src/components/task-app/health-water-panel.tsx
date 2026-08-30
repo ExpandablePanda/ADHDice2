@@ -9,6 +9,7 @@ import type { HealthWaterEntry, HealthWaterUnit } from "@/lib/database.types";
 import {
   buildHealthWaterHistory,
   formatQuantity,
+  isHealthWaterEntryConfirmed,
   millilitersToWaterAmount,
   sumWaterForDate,
   waterAmountToMilliliters,
@@ -21,10 +22,13 @@ type HealthWaterPanelProps = {
   addWaterEntry: (input: {
     amount: number;
     amount_ml: number;
+    confirmed_at: string | null;
     entry_date: string;
     unit: HealthWaterUnit;
   }) => Promise<boolean>;
+  confirmWaterEntry: (id: string) => Promise<boolean>;
   deleteWaterEntry: (id: string) => Promise<boolean>;
+  saveWaterGoal: (waterGoalMl: number | null) => Promise<boolean>;
   today: string;
   updateWaterEntry: (entryId: string, input: {
     amount: number;
@@ -33,18 +37,25 @@ type HealthWaterPanelProps = {
     logged_at: string;
     unit: HealthWaterUnit;
   }) => Promise<boolean>;
+  waterGoalMl: number | null;
   waterEntries: HealthWaterEntry[];
 };
 
 export function HealthWaterPanel({
   addWaterEntry,
+  confirmWaterEntry,
   deleteWaterEntry,
+  saveWaterGoal,
   today,
   updateWaterEntry,
+  waterGoalMl,
   waterEntries,
 }: HealthWaterPanelProps) {
   const [amount, setAmount] = useState("1");
   const [unit, setUnit] = useState<HealthWaterUnit>("cup");
+  const [entryMode, setEntryMode] = useState<"confirmed" | "pending">("confirmed");
+  const [goalAmount, setGoalAmount] = useState(() => waterGoalMl ? formatQuantity(millilitersToWaterAmount(waterGoalMl, "fl_oz")) : "");
+  const [goalUnit, setGoalUnit] = useState<HealthWaterUnit>("fl_oz");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedHistoryDates, setExpandedHistoryDates] = useState<Set<string>>(() => new Set());
   const [editDraft, setEditDraft] = useState({
@@ -54,11 +65,18 @@ export function HealthWaterPanel({
     unit: "cup" as HealthWaterUnit,
   });
   const todayEntries = useMemo(
-    () => waterEntries.filter((entry) => entry.entry_date === today),
+    () => waterEntries.filter((entry) => entry.entry_date === today && isHealthWaterEntryConfirmed(entry)),
     [today, waterEntries],
+  );
+  const pendingEntries = useMemo(
+    () => waterEntries
+      .filter((entry) => !isHealthWaterEntryConfirmed(entry))
+      .sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
+    [waterEntries],
   );
   const totals = useMemo(() => sumWaterForDate(waterEntries, today), [today, waterEntries]);
   const waterHistory = useMemo(() => buildHealthWaterHistory(waterEntries, today), [today, waterEntries]);
+  const goalFlOz = waterGoalMl && waterGoalMl > 0 ? millilitersToWaterAmount(waterGoalMl, "fl_oz") : null;
 
   async function addAmount(nextAmount: number, nextUnit: HealthWaterUnit) {
     if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
@@ -67,6 +85,7 @@ export function HealthWaterPanel({
     const saved = await addWaterEntry({
       amount: nextAmount,
       amount_ml: waterAmountToMilliliters(nextAmount, nextUnit),
+      confirmed_at: entryMode === "pending" ? null : new Date().toISOString(),
       entry_date: today,
       unit: nextUnit,
     });
@@ -74,6 +93,25 @@ export function HealthWaterPanel({
       setAmount(nextUnit === "cup" ? "1" : "8");
       setUnit(nextUnit);
     }
+  }
+
+  async function saveGoal() {
+    const nextAmount = Number.parseFloat(goalAmount);
+    if (!Number.isFinite(nextAmount) || nextAmount <= 0) return;
+    const saved = await saveWaterGoal(waterAmountToMilliliters(nextAmount, goalUnit));
+    if (saved) setGoalAmount(formatQuantity(nextAmount));
+  }
+
+  async function clearGoal() {
+    if (await saveWaterGoal(null)) setGoalAmount("");
+  }
+
+  function changeGoalUnit(nextUnit: HealthWaterUnit) {
+    const currentAmount = Number.parseFloat(goalAmount);
+    if (Number.isFinite(currentAmount) && currentAmount > 0) {
+      setGoalAmount(formatQuantity(millilitersToWaterAmount(waterAmountToMilliliters(currentAmount, goalUnit), nextUnit)));
+    }
+    setGoalUnit(nextUnit);
   }
 
   function startEditing(entry: HealthWaterEntry) {
@@ -141,7 +179,34 @@ export function HealthWaterPanel({
             </AdhdCard>
           </div>
 
+          <div className="mt-4 rounded-[1rem] border border-[#e4def2] bg-[#fcfbff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold text-[#4d466d] dark:text-white/80">Daily goal</p>
+                <p className="mt-1 text-xs text-[#8a82a3] dark:text-white/45">Optional and saved to your Health profile.</p>
+              </div>
+              {goalFlOz !== null ? <span className="text-xs font-medium text-[#4f73b8] dark:text-[#b7cdfd]">{formatQuantity(totals.fluidOunces)} / {formatQuantity(goalFlOz)} fl oz</span> : null}
+            </div>
+            <div className="mt-2 flex flex-wrap items-end gap-2">
+              <label className="grid min-w-24 flex-1 gap-1">
+                <span className="sr-only">Daily water goal amount</span>
+                <input className="health-input" inputMode="decimal" onChange={(event) => setGoalAmount(event.target.value)} placeholder="80" value={goalAmount} />
+              </label>
+              <div className="flex gap-1.5">
+                <AdhdChip onClick={() => changeGoalUnit("cup")} selected={goalUnit === "cup"}>Cups</AdhdChip>
+                <AdhdChip onClick={() => changeGoalUnit("fl_oz")} selected={goalUnit === "fl_oz"}>Fl oz</AdhdChip>
+              </div>
+              <AdhdChip contentClassName="gap-1" icon={<Check aria-hidden="true" className="h-3 w-3" />} onClick={() => { void saveGoal(); }} selected>Save</AdhdChip>
+              {waterGoalMl !== null ? <AdhdChip onClick={() => { void clearGoal(); }}>Clear</AdhdChip> : null}
+            </div>
+          </div>
+
           <div className="mt-5 flex flex-wrap gap-2">
+            <div className="flex basis-full items-center gap-2 text-xs text-[#7d7598] dark:text-white/55">
+              <span>Entry mode</span>
+              <AdhdChip onClick={() => setEntryMode("confirmed")} selected={entryMode === "confirmed"}>Confirmed</AdhdChip>
+              <AdhdChip onClick={() => setEntryMode("pending")} selected={entryMode === "pending"}>Pending</AdhdChip>
+            </div>
             <AdhdChip contentClassName="gap-0.5" icon={<Plus aria-hidden="true" className="h-3 w-3" />} onClick={() => { void addAmount(1, "cup"); }} selected>
               1 cup
             </AdhdChip>
@@ -168,10 +233,30 @@ export function HealthWaterPanel({
             </div>
           </div>
         </HealthCollapsiblePanel>
-        <HealthWaterLineChart history={waterHistory} />
+        <HealthWaterLineChart history={waterHistory} waterGoalMl={waterGoalMl} />
       </div>
 
       <div className="grid content-start gap-5">
+        {pendingEntries.length > 0 ? (
+          <HealthCollapsiblePanel subtitle="These entries do not count toward totals until confirmed." title="Pending water">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {pendingEntries.map((entry) => (
+                <WaterEntryCard
+                  confirmWaterEntry={confirmWaterEntry}
+                  deleteWaterEntry={deleteWaterEntry}
+                  editDraft={editDraft}
+                  editingId={editingId}
+                  entry={entry}
+                  key={entry.id}
+                  onCancelEdit={() => setEditingId(null)}
+                  onChangeDraft={setEditDraft}
+                  onSaveEdit={saveEditing}
+                  onStartEdit={startEditing}
+                />
+              ))}
+            </div>
+          </HealthCollapsiblePanel>
+        ) : null}
         <HealthCollapsiblePanel subtitle={`${todayEntries.length} ${todayEntries.length === 1 ? "entry" : "entries"} today`} title="Today’s water">
           {todayEntries.length === 0 ? (
             <p className="text-sm text-[#7d7598] dark:text-white/55">Water entries will appear here as you add them.</p>
@@ -259,6 +344,7 @@ type WaterEditDraft = {
 };
 
 type WaterEntryCardProps = {
+  confirmWaterEntry?: (id: string) => Promise<boolean>;
   deleteWaterEntry: (id: string) => Promise<boolean>;
   editDraft: WaterEditDraft;
   editingId: string | null;
@@ -271,6 +357,7 @@ type WaterEntryCardProps = {
 };
 
 function WaterEntryCard({
+  confirmWaterEntry,
   deleteWaterEntry,
   editDraft,
   editingId,
@@ -282,6 +369,7 @@ function WaterEntryCard({
   showRemove = true,
 }: WaterEntryCardProps) {
   const isEditing = editingId === entry.id;
+  const isPending = !isHealthWaterEntryConfirmed(entry);
   if (isEditing) {
     return (
       <AdhdCard>
@@ -342,6 +430,7 @@ function WaterEntryCard({
           <p className="text-sm font-semibold text-[#26324f] dark:text-white">
             {formatQuantity(entry.amount)} {entry.unit === "cup" ? (entry.amount === 1 ? "cup" : "cups") : "fl oz"}
           </p>
+          {isPending ? <span className="mt-1 inline-flex rounded-full border border-[#e6c97e] bg-[#fff8df] px-2 py-0.5 text-[11px] font-semibold text-[#96701d] dark:border-[#6b5317] dark:bg-[#44350d]/55 dark:text-[#f3d38a]">Pending</span> : null}
           <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">
             {formatWaterTimestamp(entry)}
           </p>
@@ -350,6 +439,11 @@ function WaterEntryCard({
           </p>
         </div>
         <div className="flex shrink-0 flex-nowrap justify-end gap-2">
+          {isPending && confirmWaterEntry ? (
+            <AdhdChip className="shrink-0" contentClassName="gap-1" icon={<Check aria-hidden="true" className="h-3 w-3" />} onClick={() => { void confirmWaterEntry(entry.id); }} selected>
+              Confirm
+            </AdhdChip>
+          ) : null}
           <AdhdChip
             className="shrink-0"
             contentClassName="gap-1"
@@ -366,7 +460,7 @@ function WaterEntryCard({
               onClick={() => { void deleteWaterEntry(entry.id); }}
               tone="danger"
             >
-              Remove
+              {isPending ? "Delete" : "Remove"}
             </AdhdChip>
           ) : null}
         </div>

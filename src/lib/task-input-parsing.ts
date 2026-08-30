@@ -49,6 +49,14 @@ export type ImportedTaskDraft = {
   priority: TaskPriority;
 };
 
+export function countImportedTaskNodes(tasks: readonly ImportedTaskDraft[]) {
+  function countSubtasks(subtasks: readonly ImportedTaskSubtask[]): number {
+    return subtasks.reduce((total, subtask) => total + 1 + countSubtasks(subtask.children), 0);
+  }
+
+  return tasks.reduce((total, task) => total + 1 + countSubtasks(task.subtasks), 0);
+}
+
 export function parseTagList(value: string) {
   return Array.from(
     new Set(

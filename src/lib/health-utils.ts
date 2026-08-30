@@ -227,6 +227,7 @@ export const DEFAULT_HEALTH_PROFILE: Omit<HealthProfile, "created_at" | "updated
   preferred_weight_unit: "lb",
   protein_goal_grams: 140,
   sleep_goal_minutes: 480,
+  water_goal_ml: null,
   target_weight_kg: null,
   workout_type_options: [...HEALTH_WORKOUT_TYPES],
   workout_title_options: [],
@@ -250,10 +251,16 @@ export function normalizeHealthProfile(profile: Partial<HealthProfile> | null | 
     ? profile.workout_title_options.filter((title): title is string => typeof title === "string")
     : [];
   const workoutTypeOptions = normalizeHealthWorkoutOptionValues(profile?.workout_type_options);
+  const waterGoalMl = Number(profile?.water_goal_ml);
   return {
     ...fallback,
     ...profile,
     user_id: userId,
+    water_goal_ml: profile?.water_goal_ml === null
+      ? null
+      : Number.isFinite(waterGoalMl) && waterGoalMl > 0
+        ? waterGoalMl
+        : null,
     workout_type_options: workoutTypeOptions.length > 0 ? workoutTypeOptions : [...HEALTH_WORKOUT_TYPES],
     workout_title_options: workoutTitleOptions,
   };

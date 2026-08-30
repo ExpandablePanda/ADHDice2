@@ -660,9 +660,22 @@ export function millilitersToWaterAmount(amountMl: number, unit: HealthWaterUnit
   return roundNutrition(Math.max(0, amountMl) / divisor);
 }
 
+export function normalizeHealthWaterEntry(entry: HealthWaterEntry): HealthWaterEntry {
+  return {
+    ...entry,
+    confirmed_at: entry.confirmed_at === undefined
+      ? entry.logged_at ?? entry.created_at
+      : entry.confirmed_at,
+  };
+}
+
+export function isHealthWaterEntryConfirmed(entry: Pick<HealthWaterEntry, "confirmed_at" | "logged_at" | "created_at">) {
+  return entry.confirmed_at === undefined || entry.confirmed_at !== null;
+}
+
 export function sumWaterForDate(entries: HealthWaterEntry[], dateKey: string) {
   const amountMl = entries
-    .filter((entry) => entry.entry_date === dateKey)
+    .filter((entry) => entry.entry_date === dateKey && isHealthWaterEntryConfirmed(entry))
     .reduce((sum, entry) => sum + entry.amount_ml, 0);
   return {
     amountMl: roundNutrition(amountMl),
@@ -672,20 +685,21 @@ export function sumWaterForDate(entries: HealthWaterEntry[], dateKey: string) {
 }
 
 export function buildHealthWaterHistory(entries: HealthWaterEntry[], today: string) {
-  const dateKeys = Array.from(new Set(entries.map((entry) => entry.entry_date)))
+  const confirmedEntries = entries.filter(isHealthWaterEntryConfirmed);
+  const dateKeys = Array.from(new Set(confirmedEntries.map((entry) => entry.entry_date)))
     .filter((dateKey) => dateKey !== today)
     .sort((left, right) => right.localeCompare(left))
     .slice(0, 14);
 
   return dateKeys.map((dateKey) => {
-    const dayEntries = entries
+    const dayEntries = confirmedEntries
       .filter((entry) => entry.entry_date === dateKey)
       .sort((left, right) => right.logged_at.localeCompare(left.logged_at));
     return {
       dateKey,
       entries: dayEntries,
       entryCount: dayEntries.length,
-      totals: sumWaterForDate(entries, dateKey),
+      totals: sumWaterForDate(confirmedEntries, dateKey),
     };
   });
 }

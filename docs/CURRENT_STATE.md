@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.26`.
+- Current working app version: `7.12.27`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -53,6 +53,19 @@ its existing controls and history with the shared daily fl oz line chart, and
 Nutrition calorie plus Sleep charts show their existing persisted goals as
 optional shared reference lines. No SQL, schema, native, or iOS changes were
 made; browser and cross-device verification remain outstanding.
+
+## 2026-08-30 7.12.27 QA corrections and Water/import workflow
+
+Edit Task source Step/Substep rows now use the existing current-editor routing
+for neutral row clicks while preserving nested controls. Home Todo arrows now
+move tasks to the absolute durable first/last positions and assign Today/Later
+edge offsets. Water adds a persisted positive `water_goal_ml`, a shared-chart
+goal line, and nullable `confirmed_at` Pending/Confirm semantics with
+confirmed-only totals and history. The shared Import Tasks adapter now reports
+real recursive persistence progress, including failed or skipped descendants.
+The authored-only `supabase/add_health_water_goal_and_confirmation_7_12_27.sql`
+migration must be applied manually; browser, cross-device, and live SQL
+verification remain outstanding.
 
 ## 2026-08-30 7.12.22 Health Journal color picker Safari correction
 

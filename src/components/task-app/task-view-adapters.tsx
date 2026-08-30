@@ -38,7 +38,7 @@ import {
 } from "@/lib/task-history-calendar-focus";
 import type { AppPage } from "@/lib/task-ui-state";
 import type { NavigatorSearchTarget } from "@/lib/navigator-search";
-import type { ImportTasksResult } from "@/hooks/useTaskCrudActions";
+import type { ImportTasksResult, TaskImportOptions, TaskImportProgress } from "@/hooks/useTaskCrudActions";
 import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleActionStatuses } from "@/lib/task-complete";
 import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
@@ -202,10 +202,11 @@ export function ImportWidgetCardAdapter({
 }: {
   embeddedInModal?: boolean;
   message: Message | null;
-  onImport: (lines: string[]) => Promise<ImportTasksResult | void>;
+  onImport: (lines: string[], options?: TaskImportOptions) => Promise<ImportTasksResult | void>;
 }) {
   const [text, setText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [importProgress, setImportProgress] = useState<TaskImportProgress | null>(null);
   const lines = text.split("\n");
   const nonEmptyLineCount = lines.filter((line) => line.trim().length > 0).length;
   const messageToneClassName = message?.tone === "warn"
@@ -234,12 +235,20 @@ export function ImportWidgetCardAdapter({
         className={`${embeddedInModal ? "space-y-3" : "mt-4 space-y-3"}`}
         onSubmit={async (event) => {
           event.preventDefault();
+          if (isSubmitting) return;
           setIsSubmitting(true);
-          const result = await onImport(lines);
-          if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
-            setText("");
+          setImportProgress(null);
+          try {
+            const result = await onImport(lines, {
+              onProgress: (progress) => setImportProgress(progress),
+            });
+            if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
+              setText("");
+            }
+          } finally {
+            setImportProgress(null);
+            setIsSubmitting(false);
           }
-          setIsSubmitting(false);
         }}
       >
         <textarea
@@ -284,6 +293,21 @@ export function ImportWidgetCardAdapter({
         >
           Import {nonEmptyLineCount || ""}
         </button>
+        {isSubmitting ? (
+          importProgress ? (
+            <div aria-live="polite" className="rounded-[1rem] border border-[#e4def2] bg-[#faf8ff] px-3 py-2.5 text-xs text-[#5d6784] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/65">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-semibold">Importing tasks</span>
+                <span>{importProgress.processed} of {importProgress.total} · {Math.round((importProgress.processed / Math.max(importProgress.total, 1)) * 100)}%</span>
+              </div>
+              <div aria-label={`Import progress: ${importProgress.processed} of ${importProgress.total}`} aria-valuemax={importProgress.total} aria-valuemin={0} aria-valuenow={importProgress.processed} className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#e8e1f4] dark:bg-white/10" role="progressbar">
+                <div className="h-full rounded-full bg-[#6f57f6] transition-[width] duration-150" style={{ width: `${Math.min(100, (importProgress.processed / Math.max(importProgress.total, 1)) * 100)}%` }} />
+              </div>
+            </div>
+          ) : (
+            <p aria-live="polite" className="text-xs text-[#7d7598] dark:text-white/50">Preparing import…</p>
+          )
+        ) : null}
       </form>
 
       <div className={`mt-3 whitespace-pre-wrap text-sm ${messageToneClassName}`}>
@@ -388,7 +412,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
   onSetStatus: (task: Task, status: TaskStatus) => void;
   onSetSubtaskStatus: (subtaskId: string, status: TaskStatus) => void;
   onAddWidget: (widgetType: TWidgetType) => void;
-  onImportTasks: (lines: string[]) => Promise<ImportTasksResult | void>;
+  onImportTasks: (lines: string[], options?: TaskImportOptions) => Promise<ImportTasksResult | void>;
   onMoveWidget: (widgetId: string, direction: "up" | "down") => void;
   onRemoveWidget: (widgetId: string) => void;
   onReorderWidget: (targetWidgetId: string) => void;

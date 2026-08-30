@@ -1308,6 +1308,7 @@ export type HealthProfile = {
   movement_goal_calories: number | null;
   movement_goal_minutes: number | null;
   sleep_goal_minutes: number | null;
+  water_goal_ml: number | null;
   target_weight_kg: number | null;
   workout_type_options: string[];
   workout_title_options: string[];
@@ -1326,6 +1327,7 @@ export type HealthProfileInsert = {
   movement_goal_calories?: number | null;
   movement_goal_minutes?: number | null;
   sleep_goal_minutes?: number | null;
+  water_goal_ml?: number | null;
   target_weight_kg?: number | null;
   workout_type_options?: string[];
   workout_title_options?: string[];
@@ -1343,6 +1345,7 @@ export type HealthProfileUpdate = Partial<
     | "movement_goal_calories"
     | "movement_goal_minutes"
     | "sleep_goal_minutes"
+    | "water_goal_ml"
     | "target_weight_kg"
     | "workout_type_options"
     | "workout_title_options"
@@ -1592,6 +1595,7 @@ export type HealthWaterEntry = {
   amount: number;
   unit: HealthWaterUnit;
   amount_ml: number;
+  confirmed_at: string | null;
   created_at: string;
 };
 
@@ -1603,10 +1607,11 @@ export type HealthWaterEntryInsert = {
   amount: number;
   unit: HealthWaterUnit;
   amount_ml: number;
+  confirmed_at?: string | null;
 };
 
 export type HealthWaterEntryUpdate = Partial<
-  Pick<HealthWaterEntry, "entry_date" | "logged_at" | "amount" | "unit" | "amount_ml">
+  Pick<HealthWaterEntry, "entry_date" | "logged_at" | "amount" | "unit" | "amount_ml" | "confirmed_at">
 >;
 
 export type HealthMealEntry = {

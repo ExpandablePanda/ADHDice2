@@ -2,11 +2,11 @@
 
 import { ActivityLineChartCard, type NumericLineChartSeries } from "../activity-line-chart-card";
 import { formatHealthDateLabel } from "@/lib/health-utils";
-import { buildHealthWaterHistory, formatQuantity } from "@/lib/health-library";
+import { buildHealthWaterHistory, formatQuantity, millilitersToWaterAmount } from "@/lib/health-library";
 
 type HealthWaterHistoryDay = ReturnType<typeof buildHealthWaterHistory>[number];
 
-export function HealthWaterLineChart({ history }: { history: HealthWaterHistoryDay[] }) {
+export function HealthWaterLineChart({ history, waterGoalMl }: { history: HealthWaterHistoryDay[]; waterGoalMl: number | null }) {
   const chronologicalHistory = [...history].reverse();
   const firstDate = chronologicalHistory[0]?.dateKey ?? "";
   const lastDate = chronologicalHistory.at(-1)?.dateKey ?? firstDate;
@@ -35,6 +35,11 @@ export function HealthWaterLineChart({ history }: { history: HealthWaterHistoryD
       series={chartSeries}
       subtitle={`${formatDate(firstDate)} – ${formatDate(lastDate)} • daily totals`}
       title="Water Activity"
+      referenceLines={waterGoalMl && waterGoalMl > 0 ? [{
+        key: "water-goal",
+        label: "Goal",
+        value: millilitersToWaterAmount(waterGoalMl, "fl_oz"),
+      }] : undefined}
       variant="embedded"
     />
   );

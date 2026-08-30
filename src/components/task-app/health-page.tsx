@@ -284,9 +284,11 @@ type HealthPageProps = {
   addWaterEntry: (input: {
     amount: number;
     amount_ml: number;
+    confirmed_at: string | null;
     entry_date: string;
     unit: HealthWaterUnit;
   }) => Promise<boolean>;
+  confirmWaterEntry: (entryId: string) => Promise<boolean>;
   addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<HealthWorkout | null>;
   archiveGoal: (goalId: string) => Promise<boolean>;
   archivePlan: (planId: string) => Promise<boolean>;
@@ -2785,9 +2787,12 @@ export function HealthPage({
       {activeTab === "Water" ? (
         <HealthWaterPanel
           addWaterEntry={addWaterEntry}
+          confirmWaterEntry={confirmWaterEntry}
           deleteWaterEntry={deleteWaterEntry}
+          saveWaterGoal={(waterGoalMl) => saveProfile({ water_goal_ml: waterGoalMl })}
           today={today}
           updateWaterEntry={updateWaterEntry}
+          waterGoalMl={profile.water_goal_ml}
           waterEntries={waterEntries}
         />
       ) : null}

@@ -30,7 +30,7 @@ import {
   shiftDateKey,
 } from "../src/lib/task-grid-layout.ts";
 import { todayISO } from "../src/lib/utils.ts";
-import { parseImportedTaskLines } from "../src/lib/task-input-parsing.ts";
+import { countImportedTaskNodes, parseImportedTaskLines } from "../src/lib/task-input-parsing.ts";
 import {
   analyzeTaskUpdateReapplySafety,
   buildTaskUpdateConflictMessage,
@@ -778,6 +778,22 @@ test("import parser captures parent metadata and nested steps", () => {
   assert.equal(parsed.tasks[1]?.subtasks[0]?.children[0]?.title, "Face");
   assert.equal(parsed.tasks[1]?.subtasks[0]?.children[1]?.title, "Feet");
   assert.equal(parsed.tasks[1]?.subtasks[1]?.title, "PM");
+});
+
+test("import progress counts parsed parents and every supported descendant", () => {
+  const parsed = parseImportedTaskLines([
+    "Task A",
+    "- Step A",
+    "-- Substep A",
+    "Task B",
+    "- Step B",
+    "",
+    "--",
+    "- *status-Pending",
+  ], { todayDateKey: "2026-06-10" });
+  assert.equal(parsed.tasks.length, 2);
+  assert.equal(countImportedTaskNodes(parsed.tasks), 5);
+  assert.ok(parsed.warnings.length >= 2);
 });
 
 test("import parser preserves modern same-table step metadata", () => {

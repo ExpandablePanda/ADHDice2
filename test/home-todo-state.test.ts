@@ -379,6 +379,23 @@ test("Home todo edge actions preserve unresolved IDs and explicit removal delete
   assert.deepEqual(["a", "b", "c", "d"].filter((taskId) => taskId !== "c"), ["a", "b", "d"]);
 });
 
+test("Home todo arrows move the task globally and assign the matching edge day", () => {
+  const state = {
+    taskDayOffsets: { a: 0, b: 0, c: 1, d: 1, e: 7, f: 7 },
+    taskIds: ["a", "b", "c", "d", "e", "f"],
+  };
+  const movedUpIds = moveHomeTodoTaskIdToEdge(state.taskIds, "d", "top");
+  const movedUpOffsets = { ...state.taskDayOffsets, d: 0 };
+  assert.deepEqual(movedUpIds, ["d", "a", "b", "c", "e", "f"]);
+  assert.equal(movedUpOffsets.d, 0);
+
+  const movedDownIds = moveHomeTodoTaskIdToEdge(state.taskIds, "b", "bottom");
+  const movedDownOffsets = { ...state.taskDayOffsets, b: 7 };
+  assert.deepEqual(movedDownIds, ["a", "c", "d", "e", "f", "b"]);
+  assert.equal(movedDownOffsets.b, 7);
+  assert.deepEqual(state.taskIds, ["a", "b", "c", "d", "e", "f"]);
+});
+
 test("Home todo edge actions move within the visible section and preserve other-day order", () => {
   const durableTaskIds = ["hidden-a", "a", "b", "c", "hidden-b", "d"];
   const visibleTaskIds = ["a", "b", "c"];
@@ -435,10 +452,14 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /items=\{visibleTasks\}/);
   assert.match(source, /mergeHomeTodoVisibleTaskIds\(\s*taskIds,\s*visibleTasks\.map\(\(task\) => task\.id\),\s*nextTasks\.map\(\(task\) => task\.id\),\s*\)/);
   assert.doesNotMatch(source, /updateTaskIds\(\(\) => reconciledTaskIds\)/);
-  assert.match(source, /sectionTaskIndex > 0/);
-  assert.match(source, /sectionTaskIndex >= 0 && sectionTaskIndex < sectionTaskIds\.length - 1/);
-  assert.match(source, /moveHomeTodoTaskIdToVisibleEdge\(taskIds, sectionTaskIds, task\.id, "top"\)/);
-  assert.match(source, /moveHomeTodoTaskIdToVisibleEdge\(taskIds, sectionTaskIds, task\.id, "bottom"\)/);
+  assert.match(source, /const durableTaskIndex = state\.taskIds\.indexOf\(task\.id\)/);
+  assert.match(source, /const renderedDayOffset = daySections\.find\(\(section\) => section\.taskIds\.includes\(task\.id\)\)/);
+  assert.match(source, /const isAtAbsoluteTop = durableTaskIndex === 0 && renderedDayOffset === 0/);
+  assert.match(source, /const isAtAbsoluteBottom = durableTaskIndex === state\.taskIds\.length - 1 && renderedDayOffset === 7/);
+  assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)/);
+  assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)/);
+  assert.match(source, /updateTaskDayOffset\(task\.id, 0\)/);
+  assert.match(source, /updateTaskDayOffset\(task\.id, 7\)/);
   assert.match(source, /Later \(\{doLaterTasks\.length\}\)/);
   assert.match(source, /Settings2/);
   assert.match(source, /updateTasksPerDay\(tasksPerDay\)/);
@@ -491,11 +512,14 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /<ArrowDownToLine aria-hidden="true" \/>/);
   assert.doesNotMatch(source, /<ArrowUp aria-hidden/);
   assert.doesNotMatch(source, /<ArrowDown aria-hidden/);
-  assert.match(source, /const sectionTaskIds = daySections\.find\(\(section\) => section\.taskIds\.includes\(task\.id\)\)/);
-  assert.match(source, /sectionTaskIndex > 0/);
-  assert.match(source, /sectionTaskIndex >= 0 && sectionTaskIndex < sectionTaskIds\.length - 1/);
-  assert.match(source, /moveHomeTodoTaskIdToVisibleEdge\(taskIds, sectionTaskIds, task\.id, "top"\)/);
-  assert.match(source, /moveHomeTodoTaskIdToVisibleEdge\(taskIds, sectionTaskIds, task\.id, "bottom"\)/);
+  assert.match(source, /const durableTaskIndex = state\.taskIds\.indexOf\(task\.id\)/);
+  assert.match(source, /const renderedDayOffset = daySections\.find\(\(section\) => section\.taskIds\.includes\(task\.id\)\)/);
+  assert.match(source, /const isAtAbsoluteTop = durableTaskIndex === 0 && renderedDayOffset === 0/);
+  assert.match(source, /const isAtAbsoluteBottom = durableTaskIndex === state\.taskIds\.length - 1 && renderedDayOffset === 7/);
+  assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)/);
+  assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)/);
+  assert.match(source, /updateTaskDayOffset\(task\.id, 0\)/);
+  assert.match(source, /updateTaskDayOffset\(task\.id, 7\)/);
   assert.match(source, /from Home To-do/);
   assert.match(source, /<Minus aria-hidden="true" \/>/);
   assert.equal((source.match(/size="sm"/g) ?? []).length, 4);

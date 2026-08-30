@@ -589,7 +589,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.12.26";
+const APP_VERSION = "7.12.27";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1306,6 +1306,7 @@ export function TaskApp() {
     saveProfile: saveHealthProfile,
     addMealEntry: addHealthMealEntry,
     addWaterEntry: addHealthWaterEntry,
+    confirmWaterEntry: confirmHealthWaterEntry,
     addWeightEntry: addHealthWeightEntry,
     addWorkout: addHealthWorkout,
     updateMealEntry: updateHealthMealEntry,
@@ -6711,8 +6712,8 @@ export function TaskApp() {
               <ImportWidgetCard
                 embeddedInModal
                 message={message}
-                onImport={async (lines) => {
-                  const result = await importTasks(lines);
+                onImport={async (lines, options) => {
+                  const result = await importTasks(lines, options);
                   if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
                     setIsImportWidgetMenuOpen(false);
                   }
@@ -7449,6 +7450,7 @@ export function TaskApp() {
             deleteMealPlanEntry={deleteHealthMealPlanEntry}
             confirmMealPlanEntry={confirmHealthMealPlanEntry}
             addWaterEntry={addHealthWaterEntry}
+            confirmWaterEntry={confirmHealthWaterEntry}
             addWeightEntry={addHealthWeightEntry}
             addWorkout={addHealthWorkout}
             storageMode={healthStorageMode}

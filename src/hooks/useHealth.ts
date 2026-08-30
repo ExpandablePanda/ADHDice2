@@ -59,6 +59,7 @@ import {
 } from "@/lib/health-utils";
 import {
   getHealthFoodIdentityKey,
+  normalizeHealthWaterEntry,
   normalizeHealthFoodLibraryInput,
   normalizeHealthFoodLibraryItem,
   setHealthFoodFavoriteStatus,
@@ -189,7 +190,8 @@ function readLocalHealthState(userId: string): LocalHealthState {
     savedMeals: readStoredJson(storageKey(userId, "saved-meals"), emptyState.savedMeals),
     symptomEntries: sortHealthSymptomEntries(readStoredJson(storageKey(userId, "symptom-entries"), emptyState.symptomEntries)),
     symptoms: sortHealthSymptoms(readStoredJson<HealthSymptom[]>(storageKey(userId, "symptoms"), emptyState.symptoms).map(normalizeHealthSymptom)),
-    waterEntries: readStoredJson(storageKey(userId, "water"), emptyState.waterEntries),
+    waterEntries: readStoredJson<HealthWaterEntry[]>(storageKey(userId, "water"), emptyState.waterEntries)
+      .map(normalizeHealthWaterEntry),
     workouts: sortHealthWorkouts(readStoredJson(storageKey(userId, "workouts"), emptyState.workouts)),
     weightEntries: readStoredJson(storageKey(userId, "weights"), emptyState.weightEntries),
   };
@@ -835,7 +837,7 @@ export function useHealth(
         savedMeals: savedMealsResult.data ?? [],
         symptomEntries: symptomEntriesResult.error ? currentLocalSymptomEntries : symptomRecovery.mergedEntries,
         symptoms: symptomsResult.error ? currentLocalSymptoms : symptomRecovery.mergedSymptoms,
-        waterEntries: waterEntriesResult.data ?? [],
+        waterEntries: (waterEntriesResult.data ?? []).map(normalizeHealthWaterEntry),
         workouts: workoutRecovery.mergedWorkouts,
         weightEntries: weightEntriesResult.data ?? [],
       });
@@ -2098,6 +2100,7 @@ export function useHealth(
       logged_at: input.logged_at ?? now,
       unit: input.unit,
       user_id: userId,
+      confirmed_at: input.confirmed_at === undefined ? now : input.confirmed_at,
     };
     let nextRow = localRow;
     if (client && storageMode === "remote") {
@@ -2110,7 +2113,7 @@ export function useHealth(
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
-      nextRow = data ?? localRow;
+      nextRow = data ? normalizeHealthWaterEntry(data) : localRow;
     }
     applySnapshot(buildHealthSnapshot({
       awards,
@@ -2181,7 +2184,7 @@ export function useHealth(
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
-      nextEntry = data ?? nextEntry;
+      nextEntry = data ? normalizeHealthWaterEntry(data) : nextEntry;
     }
     applySnapshot(buildHealthSnapshot({
       awards,
@@ -2199,6 +2202,66 @@ export function useHealth(
       weightEntries,
     }));
     setMessage({ tone: "good", text: "Water entry updated." });
+    return true;
+  }
+
+  async function confirmWaterEntry(entryId: string) {
+    if (!profile) {
+      return false;
+    }
+    const existingEntry = waterEntries.find((entry) => entry.id === entryId);
+    if (!existingEntry || existingEntry.confirmed_at !== null) {
+      return Boolean(existingEntry);
+    }
+
+    const confirmedAt = new Date().toISOString();
+    let nextEntry: HealthWaterEntry = {
+      ...existingEntry,
+      confirmed_at: confirmedAt,
+    };
+    if (client && storageMode === "remote") {
+      const { data, error } = await client
+        .from("adhdice_health_water_entries")
+        .update({ confirmed_at: confirmedAt })
+        .eq("id", entryId)
+        .is("confirmed_at", null)
+        .select("*")
+        .maybeSingle();
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+      if (!data) {
+        const { data: currentRow, error: currentRowError } = await client
+          .from("adhdice_health_water_entries")
+          .select("confirmed_at")
+          .eq("id", entryId)
+          .maybeSingle();
+        if (currentRowError) {
+          setMessage({ tone: "warn", text: currentRowError.message });
+          return false;
+        }
+        return Boolean(currentRow && currentRow.confirmed_at !== null);
+      }
+      nextEntry = normalizeHealthWaterEntry(data);
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries: waterEntries
+        .map((entry) => (entry.id === entryId ? nextEntry : entry))
+        .sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Water entry confirmed." });
     return true;
   }
 
@@ -2704,6 +2767,7 @@ export function useHealth(
     deleteSymptomEntry,
     addMealEntry,
     addWaterEntry,
+    confirmWaterEntry,
     addWeightEntry,
     updateWaterEntry,
     updateMealEntry,

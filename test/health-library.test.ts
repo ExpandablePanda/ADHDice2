@@ -19,6 +19,7 @@ import {
   getHealthFoodIdentityKey,
   buildHealthDailyCalorieSeries,
   buildHealthFoodLogHistoryIndex,
+  buildHealthWaterHistory,
   normalizeHealthFoodLibraryInput,
   normalizeHealthFoodLibraryItem,
   searchHealthFoodLibrary,
@@ -233,6 +234,7 @@ test("water totals preserve cup and fluid-ounce conversions", () => {
     {
       amount: 1,
       amount_ml: cupMl,
+      confirmed_at: "",
       created_at: "",
       entry_date: "2026-07-27",
       id: "water-1",
@@ -243,6 +245,7 @@ test("water totals preserve cup and fluid-ounce conversions", () => {
     {
       amount: 8,
       amount_ml: ounceMl,
+      confirmed_at: "",
       created_at: "",
       entry_date: "2026-07-27",
       id: "water-2",
@@ -255,6 +258,16 @@ test("water totals preserve cup and fluid-ounce conversions", () => {
   const totals = sumWaterForDate(entries, "2026-07-27");
   assert.equal(totals.cups, 2);
   assert.equal(totals.fluidOunces, 16);
+});
+
+test("pending Water stays out of totals and history until confirmed", () => {
+  const entries = [
+    { amount: 8, amount_ml: waterAmountToMilliliters(8, "fl_oz"), confirmed_at: null, created_at: "2026-08-28T09:00:00.000Z", entry_date: "2026-08-28", id: "pending", logged_at: "2026-08-28T09:00:00.000Z", unit: "fl_oz" as const, user_id: "user-1" },
+    { amount: 1, amount_ml: waterAmountToMilliliters(1, "cup"), confirmed_at: "2026-08-28T10:00:00.000Z", created_at: "2026-08-28T10:00:00.000Z", entry_date: "2026-08-28", id: "confirmed", logged_at: "2026-08-28T10:00:00.000Z", unit: "cup" as const, user_id: "user-1" },
+  ];
+  assert.equal(sumWaterForDate(entries, "2026-08-28").fluidOunces, 8);
+  assert.deepEqual(buildHealthWaterHistory(entries, "2026-08-29")[0]?.entries.map((entry) => entry.id), ["confirmed"]);
+  assert.equal(buildHealthWaterHistory([entries[0]!], "2026-08-29").length, 0);
 });
 
 test("food library identity prefers provider ids and dedupes exact manual foods", () => {

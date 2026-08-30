@@ -4,7 +4,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { getTableHierarchyTitleGeometry, TaskManagementTableV2, type PrototypeTaskRow } from "../src/components/ui/task-management-table-v2.tsx";
+import { getTableHierarchyTitleGeometry, TaskManagementTableV2, type PrototypeTaskRow, type PrototypeTaskSubtask } from "../src/components/ui/task-management-table-v2.tsx";
 import { buildChildTaskPreviewLookup } from "../src/lib/task-app-derived.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import type { Task, TaskHistory, TaskStatus } from "../src/lib/database.types.ts";
@@ -28,6 +28,16 @@ function task(id: string, overrides: Partial<Task> = {}) {
     title: id,
     ...overrides,
   });
+}
+
+function row(source: Task): PrototypeTaskRow {
+  return {
+    actualSeconds: 0, completedAt: null, createdAt: source.created_at, dueOn: "", dueTime: "", energy: "medium",
+    estimatedMinutes: 20, id: source.id, lastDoneAt: null, lastDoneDate: null, lastHandledAt: null, lastHandledDate: null, linkLabel: "", linkUrl: "", linkedNotes: [], lists: [],
+    missedStreak: 0, notes: "", pinOrder: null, pinnedAt: null, priorities: ["3"], repeat: "none", repeatDayOfMonth: null,
+    repeatDaysOfWeek: [], repeatInterval: 1, repeatMonthlyMode: "day_of_month", repeatMonthlyOrdinal: null, repeatMonthlyWeekday: null,
+    status: "pending", subtasks: [], subtasksAutoReset: false, tags: [], title: source.title, trashedAt: null, updatedAt: source.updated_at,
+  };
 }
 
 function history(taskId: string, entryDate: string, status: TaskStatus = "done"): TaskHistory {
@@ -155,7 +165,30 @@ test("an open parent editor keeps normal Step clicks in the same metadata target
   assert.match(openTaskSource, /revealChildTaskInParentEditor\(taskId\)/);
   assert.ok(openTaskSource.indexOf("revealChildTaskInParentEditor(taskId)") < openTaskSource.indexOf("onOpenTaskEditor(taskId)"));
   assert.match(tableSource, /data-same-table-step-row=\{item\.id\}[\s\S]*?onClick=\{canSelectChildTask/);
-  assert.match(tableSource, /if \(isStepTitleEditTarget\(event\.target\)\) \{\s*return;/);
+  assert.match(tableSource, /isTaskTableChildRowInteractiveTarget\(event\.target/);
+  assert.match(tableSource, /data-task-table-source-step-rows=\{task\.id\}[\s\S]*?onClick=\{\(event\) => \{/);
+  assert.match(tableSource, /openTaskInCurrentEditor\(row\.subtask\.id\)/);
+  assert.match(tableSource, /data-task-table-source-step-rows=\{task\.id\}[\s\S]*?onKeyDown=\{\(event\) => \{/);
+});
+
+test("Table renders source Step and Substep rows on the active source-step path", () => {
+  const parentTask = task("source-parent", { title: "Parent" });
+  const previewStep = task("preview-step", { parent_task_id: parentTask.id, title: "Preview step" });
+  const sourceSubstep: PrototypeTaskSubtask = { children: [], dueOn: null, id: "source-substep", status: "pending", title: "Source substep" };
+  const sourceStep: PrototypeTaskSubtask = { children: [sourceSubstep], dueOn: null, id: "source-step", status: "pending", title: "Source step" };
+  const parentRow = { ...row(parentTask), subtasks: [sourceStep] };
+  const markup = renderToStaticMarkup(createElement(TaskManagementTableV2, {
+    childTaskPreviewByParentTaskId: buildChildTaskPreviewLookup([parentTask, previewStep]),
+    rows: [parentRow],
+    searchMatchedStepParentTaskIds: [parentTask.id],
+    showHeader: false,
+    visibleColumns: ["title", "status"],
+  }));
+  assert.match(markup, /data-task-table-source-step-mini-rows="source-parent"/);
+  assert.match(markup, /data-same-table-step-row="source-step"/);
+  assert.match(markup, /data-same-table-step-row="source-substep"/);
+  assert.match(markup, /data-task-table-source-step-grid="source-step"/);
+  assert.match(markup, /data-task-table-source-step-grid="source-substep"/);
 });
 
 test("Table renders the active same-table QA hierarchy on a plain descendant plane with depth-only title geometry", () => {

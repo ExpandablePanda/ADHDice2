@@ -1107,6 +1107,22 @@ function isKeyboardEventFromEditableTarget(
   return false;
 }
 
+export function isTaskTableChildRowInteractiveTarget(
+  target: EventTarget | null,
+  options?: { isTextEditingActive?: boolean },
+) {
+  if (isKeyboardEventFromEditableTarget(target, options)) {
+    return true;
+  }
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return Boolean(target.closest(
+    "a, button, input, textarea, select, summary, [role=menuitem], [role=option], [aria-haspopup=true], [draggable=true], [data-drag-handle], [data-task-table-action]",
+  ));
+}
+
 type TaskManagementTableV2Props = {
   allowInlineInspector?: boolean;
   allRows?: PrototypeTaskRow[];
@@ -6064,10 +6080,6 @@ export function TaskManagementTableV2({
     }, { ...current }));
   }
 
-  function isStepTitleEditTarget(target: EventTarget | null) {
-    return target instanceof HTMLElement && Boolean(target.closest("[data-step-title-edit]"));
-  }
-
   function beginInlineTaskTitleRename(taskId: string, title: string) {
     setEditingTaskTitleId(taskId);
     setTitleDraft(taskId, title);
@@ -7348,17 +7360,14 @@ export function TaskManagementTableV2({
               onDragOver={(event) => updateChildTaskDropTarget(event, item)}
               onDrop={(event) => dropChildTaskOnItem(event, item)}
               onClick={canSelectChildTask ? (event) => {
-                if (isStepTitleEditTarget(event.target)) {
+                if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
                   return;
                 }
                 event.stopPropagation();
                 openTaskInCurrentEditor(item.id);
               } : undefined}
               onKeyDown={canSelectChildTask ? (event) => {
-                if (isStepTitleEditTarget(event.target)) {
-                  return;
-                }
-                if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
                   return;
                 }
                 if (event.key === "Enter" || event.key === " ") {
@@ -8324,7 +8333,7 @@ export function TaskManagementTableV2({
                   onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                   onDrop={(event) => dropChildTaskOnItem(event, item)}
                   onClick={canOpenStepActions ? (event) => {
-                    if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                    if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
                       return;
                     }
                     event.stopPropagation();
@@ -8348,7 +8357,7 @@ export function TaskManagementTableV2({
                     openRowContextMenu(item.id, event.clientX, event.clientY);
                   }}
                   onKeyDown={canOpenStepActions ? (event) => {
-                    if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                    if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
                       return;
                     }
                     if (event.key === "Enter" || event.key === " ") {
@@ -8453,7 +8462,25 @@ export function TaskManagementTableV2({
             className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${getHighlightedRowClassName(row.subtask.id)}`}
             data-same-table-step-row={row.subtask.id}
             key={row.subtask.id}
-            onClick={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                return;
+              }
+              event.stopPropagation();
+              openTaskInCurrentEditor(row.subtask.id);
+            }}
+            onKeyDown={(event) => {
+              if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                return;
+              }
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                event.stopPropagation();
+                openTaskInCurrentEditor(row.subtask.id);
+              }
+            }}
+            role="button"
+            tabIndex={0}
           >
             <div
               className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-transparent py-0.5 pl-[3px] pr-0 text-center transition dark:bg-transparent`}

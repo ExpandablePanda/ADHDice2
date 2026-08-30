@@ -11,7 +11,7 @@ import {
   type DeleteTaskRowResult,
 } from "@/lib/task-db-mutations";
 import type { ImportedTaskSubtask, ImportedTaskWarning } from "@/lib/task-input-parsing";
-import { parseImportedTaskLines } from "@/lib/task-input-parsing";
+import { countImportedTaskNodes, parseImportedTaskLines } from "@/lib/task-input-parsing";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity } from "@/lib/task-state-runtime-actions";
@@ -31,6 +31,15 @@ export type ImportTasksResult = {
   errorCount: number;
   importedCount: number;
   warningCount: number;
+};
+
+export type TaskImportProgress = {
+  processed: number;
+  total: number;
+};
+
+export type TaskImportOptions = {
+  onProgress?: (progress: TaskImportProgress) => void;
 };
 
 type DeleteTasksOptions = {
@@ -77,7 +86,7 @@ export function useTaskCrudActions({
 }: UseTaskCrudActionsOptions) {
   const createTask = canonicalTaskCreator ?? ((payload: TaskInsert, source?: "task_creation" | "task_import") => insertTaskRowWithCanonicalCreation(client, payload, source));
 
-  async function importTasks(lines: string[]) {
+  async function importTasks(lines: string[], options?: TaskImportOptions) {
     if (lines.every((line) => !line.trim())) {
       return { errorCount: 0, importedCount: 0, warningCount: 0 } satisfies ImportTasksResult;
     }
@@ -100,6 +109,19 @@ export function useTaskCrudActions({
     const importedRootTasks: Task[] = [];
     const warnings: ImportedTaskWarning[] = [...parsed.warnings];
     const importErrors: ImportedTaskWarning[] = [];
+    const total = countImportedTaskNodes(parsed.tasks);
+    let processed = 0;
+    const markProcessed = () => {
+      processed = Math.min(total, processed + 1);
+      options?.onProgress?.({ processed, total });
+    };
+    const markSkippedDescendants = (children: ImportedTaskSubtask[]) => {
+      for (const child of children) {
+        markProcessed();
+        markSkippedDescendants(child.children);
+      }
+    };
+    options?.onProgress?.({ processed, total });
 
     for (const [index, parsedTask] of parsed.tasks.entries()) {
       const payload: TaskInsert = normalizeTaskPriorityFields({
@@ -120,19 +142,36 @@ export function useTaskCrudActions({
         user_id: currentUserId,
       });
 
-      const insertResult = await insertImportedTaskRow({
-        canonicalTaskCreator: createTask,
-        payload,
-      });
+      let insertResult: ImportedTaskInsertResult;
+      try {
+        insertResult = await insertImportedTaskRow({
+          canonicalTaskCreator: createTask,
+          payload,
+        });
+      } catch (error) {
+        importErrors.push({
+          line: parsedTask.line,
+          message: error instanceof Error ? error.message : "Task insert failed.",
+        });
+        markProcessed();
+        markSkippedDescendants(parsedTask.subtasks);
+        continue;
+      }
       if (insertResult.error) {
         importErrors.push({ line: parsedTask.line, message: insertResult.error.message });
+        markProcessed();
+        markSkippedDescendants(parsedTask.subtasks);
         continue;
       }
 
       if (!insertResult.data) {
         importErrors.push({ line: parsedTask.line, message: "Task insert returned no row." });
+        markProcessed();
+        markSkippedDescendants(parsedTask.subtasks);
         continue;
       }
+
+      markProcessed();
 
       if (insertResult.usedEnergyFallback) {
         warnings.push({
@@ -152,6 +191,8 @@ export function useTaskCrudActions({
           importErrors,
           parentTaskId: insertResult.data.id,
           warnings,
+          onTaskSettled: markProcessed,
+          markSkippedDescendants,
         });
         importedAllTasks.push(...childImport.insertedTasks);
       }
@@ -413,6 +454,8 @@ async function insertImportedChildTaskTree({
   importErrors,
   parentTaskId,
   warnings,
+  onTaskSettled,
+  markSkippedDescendants,
 }: {
   children: ImportedTaskSubtask[];
   canonicalTaskCreator: CanonicalTaskCreator;
@@ -420,6 +463,8 @@ async function insertImportedChildTaskTree({
   importErrors: ImportedTaskWarning[];
   parentTaskId: string;
   warnings: ImportedTaskWarning[];
+  onTaskSettled: () => void;
+  markSkippedDescendants: (children: ImportedTaskSubtask[]) => void;
 }): Promise<{ insertedTasks: Task[] }> {
   const insertedTasks: Task[] = [];
 
@@ -433,6 +478,8 @@ async function insertImportedChildTaskTree({
         line: child.line,
         message: "Step could not be created because the imported parent link was invalid.",
       });
+      onTaskSettled();
+      markSkippedDescendants(child.children);
       continue;
     }
 
@@ -455,19 +502,36 @@ async function insertImportedChildTaskTree({
       user_id: currentUserId,
     });
 
-    const insertResult = await insertImportedTaskRow({
-      canonicalTaskCreator,
-      payload,
-    });
+    let insertResult: ImportedTaskInsertResult;
+    try {
+      insertResult = await insertImportedTaskRow({
+        canonicalTaskCreator,
+        payload,
+      });
+    } catch (error) {
+      importErrors.push({
+        line: child.line,
+        message: error instanceof Error ? error.message : "Step insert failed.",
+      });
+      onTaskSettled();
+      markSkippedDescendants(child.children);
+      continue;
+    }
     if (insertResult.error) {
       importErrors.push({ line: child.line, message: insertResult.error.message });
+      onTaskSettled();
+      markSkippedDescendants(child.children);
       continue;
     }
 
     if (!insertResult.data) {
       importErrors.push({ line: child.line, message: "Step insert returned no row." });
+      onTaskSettled();
+      markSkippedDescendants(child.children);
       continue;
     }
+
+    onTaskSettled();
 
     if (insertResult.usedEnergyFallback) {
       warnings.push({
@@ -486,6 +550,8 @@ async function insertImportedChildTaskTree({
         importErrors,
         parentTaskId: insertResult.data.id,
         warnings,
+        onTaskSettled,
+        markSkippedDescendants,
       });
       insertedTasks.push(...descendantImport.insertedTasks);
     }
