@@ -41,8 +41,25 @@ test("HealthDropdown pointer option selection prevents focus transfer and closes
 
   assert.match(optionSource, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(optionSource, /onClick=\{\(\) => chooseOption\(index\)\}/);
-  assert.match(chooseOptionSource, /onChange\(option\.value\)/);
-  assert.match(chooseOptionSource, /setIsOpen\(false\)/);
+  assert.match(chooseOptionSource, /onChange\(option\.value\);\s+setHighlightedIndex\(index\);\s+setIsOpen\(false\);/);
+});
+
+test("HealthPage uses neutral composite fields for every HealthDropdown", () => {
+  const healthDropdownCount = (healthPageSource.match(/<HealthDropdown/g) ?? []).length;
+  const compositeFieldCount = (healthPageSource.match(/<Field composite label=/g) ?? []).length;
+
+  assert.equal(healthDropdownCount, 7);
+  assert.equal(compositeFieldCount, healthDropdownCount);
+  assert.doesNotMatch(healthPageSource, /<Field(?! composite) label="[^"]+">(?:(?!<Field\b|<\/Field>)[\s\S])*<HealthDropdown/);
+});
+
+test("Journal symptom dropdowns use the composite field mode while ordinary fields keep implicit labels", () => {
+  assert.match(healthPageSource, /<Field composite label="Symptom">\s+<HealthDropdown[\s\S]*?ariaLabel="Symptom"/);
+  assert.match(healthPageSource, /<Field composite label="Symptom">\s+<HealthDropdown[\s\S]*?ariaLabel="Trend symptom"/);
+
+  const fieldSource = healthPageSource.slice(healthPageSource.indexOf("function Field("), healthPageSource.indexOf("function HealthMealDateTimeInput"));
+  assert.match(fieldSource, /composite = false/);
+  assert.match(fieldSource, /return composite \? <div className="grid gap-2">\{content\}<\/div> : <label className="grid gap-2">\{content\}<\/label>/);
 });
 
 test("HealthDropdown keeps current Arrow, Enter, Space, and Escape behavior", () => {

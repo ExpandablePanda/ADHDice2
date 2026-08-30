@@ -1713,7 +1713,7 @@ export function HealthPage({
           {isQuickEntryOpen ? (
             <div className="rounded-[1rem] border border-[#e8e2f7] bg-white px-3 py-2 text-xs text-[#6d7894] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/55">One-off entry</div>
           ) : (
-            <Field label="Measurement">
+            <Field composite label="Measurement">
               <HealthDropdown
                 ariaLabel="Measurement"
                 disabled={!mealDraft.foodName}
@@ -1762,7 +1762,7 @@ export function HealthPage({
             <Field label="Planned date">
               <HealthMealDateTimeInput onChange={(value) => { setFoodHistoryDate(value); setMealDraft((current) => ({ ...current, date: value })); }} type="date" value={mealDraft.date} />
             </Field>
-            <Field label="Meal">
+            <Field composite label="Meal">
               <HealthDropdown
                 ariaLabel="Planned meal"
                 onChange={(value) => { const nextSlot = value as HealthMealEntry["meal_slot"]; setActiveMealEntrySlot(nextSlot); setMealDraft((current) => ({ ...current, mealSlot: nextSlot })); }}
@@ -1973,7 +1973,7 @@ export function HealthPage({
           <div className="mt-5 grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
             <HealthPanel icon={<Activity />} subtitle="Symptoms" title={editingSymptomEntryId ? "Edit symptom entry" : "Log a symptom"}>
               <div className="grid gap-3">
-                <Field label="Symptom">
+                <Field composite label="Symptom">
                   <HealthDropdown
                     ariaLabel="Symptom"
                     onChange={(value) => setSymptomDraft((current) => ({ ...current, newName: value === NEW_SYMPTOM_VALUE ? current.newName : "", symptomId: value }))}
@@ -2114,7 +2114,7 @@ export function HealthPage({
           <HealthPanel className="mt-5 min-w-0" icon={<Activity />} subtitle="Symptoms" title="Symptom Trends">
             <div className="grid gap-4">
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                <Field label="Symptom">
+                <Field composite label="Symptom">
                   <HealthDropdown
                     ariaLabel="Trend symptom"
                     disabled={selectableSymptomTrendSymptoms.length === 0}
@@ -2293,7 +2293,7 @@ export function HealthPage({
                           <Field label="Amount">
                             <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, quantity: event.target.value }))} value={mealEditDraft.quantity} />
                           </Field>
-                          <Field label="Measurement">
+                          <Field composite label="Measurement">
                             <HealthDropdown
                               ariaLabel="Measurement"
                               onChange={(value) => setMealEditDraft((current) => ({ ...current, measurement: value }))}
@@ -2310,7 +2310,7 @@ export function HealthPage({
                           <Field label="Time">
                             <HealthMealDateTimeInput onChange={(value) => setMealEditDraft((current) => ({ ...current, time: value }))} type="time" value={mealEditDraft.time} />
                           </Field>
-                          <Field label="Meal">
+                          <Field composite label="Meal">
                             <HealthDropdown
                               ariaLabel="Meal"
                               onChange={(value) => setMealEditDraft((current) => ({ ...current, mealSlot: value as HealthMealEntry["meal_slot"] }))}
@@ -2351,7 +2351,7 @@ export function HealthPage({
                           <Field label="Time">
                             <HealthMealDateTimeInput onChange={(value) => setMealEditDraft((current) => ({ ...current, time: value }))} type="time" value={mealEditDraft.time} />
                           </Field>
-                          <Field label="Meal">
+                          <Field composite label="Meal">
                             <HealthDropdown
                               ariaLabel="Meal"
                               onChange={(value) => setMealEditDraft((current) => ({ ...current, mealSlot: value as HealthMealEntry["meal_slot"] }))}
@@ -3164,18 +3164,21 @@ function formatFavoriteMealServing(entry: HealthMealEntry) {
 }
 
 function Field({
+  composite = false,
   children,
   label,
 }: {
+  composite?: boolean;
   children: ReactNode;
   label: string;
 }) {
-  return (
-    <label className="grid gap-2">
+  const content = (
+    <>
       <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</span>
       {children}
-    </label>
+    </>
   );
+  return composite ? <div className="grid gap-2">{content}</div> : <label className="grid gap-2">{content}</label>;
 }
 
 function HealthMealDateTimeInput({

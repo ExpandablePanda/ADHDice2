@@ -5,13 +5,20 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.19`.
+- Current working app version: `7.12.20`.
 - Current release group: `7.12.x` Health Journal symptom recovery.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-30 7.12.20 Health Journal dropdown structure correction
+
+Health Journal `HealthDropdown` controls now use neutral composite field wrappers
+so Safari label activation cannot reopen a closed option panel after a pointer
+selection. Focus and Nutrition chart defaults, symptom trends, symptom
+persistence, and other Health UI behavior are unchanged.
 
 ## 2026-08-30 7.12.19 Health Journal trend QA corrections
 
