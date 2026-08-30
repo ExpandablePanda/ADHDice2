@@ -56,6 +56,7 @@ import type {
   HealthWeightEntry,
 } from "@/lib/database.types";
 import type { WeightGoalForecast } from "@/lib/health-utils";
+import { ActivityLineChartCard, type NumericLineChartSeries } from "@/components/activity-line-chart-card";
 import {
   parseAppleHealthFileInWorker,
   type AppleHealthImportParseProgress,
@@ -85,7 +86,10 @@ import {
   formatHealthSleepDuration,
   formatWeight,
   getCurrentHealthDateTimeInputs,
+  getDefaultHealthSymptomId,
   groupHealthSymptomEntriesByDate,
+  getHealthSymptomTrendEntries,
+  getSelectableHealthSymptoms,
   getHealthSleepElapsedSeconds,
   getHealthSleepStartTimestamp,
   getHealthSleepDayTotal,
@@ -99,6 +103,7 @@ import {
   HEALTH_SLEEP_KINDS,
   HEALTH_SCALE_OPTIONS,
   HEALTH_SEVERITY_OPTIONS,
+  HEALTH_SYMPTOM_TREND_RANGES,
   type HealthReminderTemplateKey,
   HEALTH_SYMPTOM_TAGS,
   HEALTH_TABS,
@@ -115,6 +120,7 @@ import {
   isHealthMealTimestampFuture,
   type HealthSleepKind,
   type HealthTab,
+  type HealthSymptomTrendRange,
 } from "@/lib/health-utils";
 import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import {
@@ -381,6 +387,19 @@ function createQuickFoodId() {
 const DEFAULT_IMPORT_STATUS = "Waiting for an Apple Health export.";
 const NEW_SYMPTOM_VALUE = "__new_symptom__";
 
+function formatHealthSymptomTrendTimestamp(entry: HealthSymptomEntry) {
+  const timestamp = Date.parse(entry.logged_at);
+  if (!Number.isFinite(timestamp)) {
+    return formatHealthDateLabel(entry.entry_date);
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+  }).format(timestamp);
+}
+
 export function HealthPage({
   checkIns,
   symptoms,
@@ -516,6 +535,8 @@ export function HealthPage({
   const [journalMood, setJournalMood] = useState<number | null>(null);
   const [journalEnergy, setJournalEnergy] = useState<number | null>(null);
   const [journalTags, setJournalTags] = useState<string[]>([]);
+  const [selectedSymptomTrendId, setSelectedSymptomTrendId] = useState("");
+  const [symptomTrendRange, setSymptomTrendRange] = useState<HealthSymptomTrendRange>("30D");
   const initialSymptomInputs = useMemo(() => getCurrentHealthDateTimeInputs(), []);
   const [symptomDraft, setSymptomDraft] = useState<SymptomDraft>(() => ({
     date: initialSymptomInputs.date,
@@ -609,6 +630,59 @@ export function HealthPage({
     () => groupHealthSymptomEntriesByDate(symptomEntries).slice(0, 14),
     [symptomEntries],
   );
+  const selectableSymptomTrendSymptoms = useMemo(
+    () => getSelectableHealthSymptoms(symptoms, symptomEntries),
+    [symptomEntries, symptoms],
+  );
+  const defaultSymptomTrendId = useMemo(
+    () => isLoading ? "" : getDefaultHealthSymptomId(symptoms, symptomEntries),
+    [isLoading, symptomEntries, symptoms],
+  );
+  const selectedSymptomTrendIdForView = useMemo(
+    () => selectableSymptomTrendSymptoms.some((symptom) => symptom.id === selectedSymptomTrendId)
+      ? selectedSymptomTrendId
+      : defaultSymptomTrendId,
+    [defaultSymptomTrendId, selectableSymptomTrendSymptoms, selectedSymptomTrendId],
+  );
+  const selectedSymptomTrend = useMemo(
+    () => selectableSymptomTrendSymptoms.find((symptom) => symptom.id === selectedSymptomTrendIdForView) ?? null,
+    [selectableSymptomTrendSymptoms, selectedSymptomTrendIdForView],
+  );
+  const selectedSymptomTrendEntries = useMemo(
+    () => getHealthSymptomTrendEntries({
+      asOfDate: today,
+      entries: symptomEntries,
+      range: symptomTrendRange,
+      symptomId: selectedSymptomTrendIdForView,
+    }),
+    [selectedSymptomTrendIdForView, symptomEntries, symptomTrendRange, today],
+  );
+  const selectedSymptomAllTrendEntries = useMemo(
+    () => selectedSymptomTrendIdForView
+      ? getHealthSymptomTrendEntries({ asOfDate: today, entries: symptomEntries, range: "All", symptomId: selectedSymptomTrendIdForView })
+      : [],
+    [selectedSymptomTrendIdForView, symptomEntries, today],
+  );
+  const symptomTrendChartSeries = useMemo<NumericLineChartSeries[]>(() => {
+    if (!selectedSymptomTrend) {
+      return [];
+    }
+    return [{
+      color: "#7c5cff",
+      key: selectedSymptomTrend.id,
+      label: selectedSymptomTrend.name,
+      points: selectedSymptomTrendEntries.map((entry) => {
+        const timestampLabel = formatHealthSymptomTrendTimestamp(entry);
+        return {
+          detailLabel: entry.note ? `${timestampLabel} · ${entry.note}` : timestampLabel,
+          key: entry.id,
+          label: timestampLabel,
+          value: entry.severity,
+        };
+      }),
+      totalValue: selectedSymptomTrendEntries.reduce((total, entry) => total + entry.severity, 0),
+    }];
+  }, [selectedSymptomTrend, selectedSymptomTrendEntries]);
 
   const selectedMeals = useMemo(
     () => mealEntries.filter((entry) => entry.entry_date === foodHistoryDate),
@@ -2033,6 +2107,67 @@ export function HealthPage({
               </div>
             </HealthPanel>
           </div>
+
+          <HealthPanel className="mt-5 min-w-0" icon={<Activity />} subtitle="Symptoms" title="Symptom Trends">
+            <div className="grid gap-4">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                <Field label="Symptom">
+                  <HealthDropdown
+                    ariaLabel="Trend symptom"
+                    disabled={selectableSymptomTrendSymptoms.length === 0}
+                    onChange={setSelectedSymptomTrendId}
+                    options={selectableSymptomTrendSymptoms.length > 0
+                      ? selectableSymptomTrendSymptoms.map((symptom) => ({
+                        label: symptom.archived_at === null ? symptom.name : `${symptom.name} (archived)`,
+                        value: symptom.id,
+                      }))
+                      : [{ label: "No symptoms available", value: "" }]}
+                    value={selectedSymptomTrendIdForView}
+                  />
+                </Field>
+                <div>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Range</span>
+                  <div aria-label="Symptom trend date range" className="mt-2 flex flex-wrap gap-2" role="group">
+                    {HEALTH_SYMPTOM_TREND_RANGES.map((range) => (
+                      <button
+                        aria-pressed={symptomTrendRange === range}
+                        className={`ui-chip-button-base transition ${symptomTrendRange === range ? "bg-[#efe9ff] text-[#6f57f6] dark:bg-[#2b214d] dark:text-[#cabfff]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`}
+                        key={range}
+                        onClick={() => setSymptomTrendRange(range)}
+                        type="button"
+                      >
+                        {range}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {selectedSymptomTrend ? (
+                <ActivityLineChartCard
+                  activePointContext={`${symptomTrendRange} • severity scale 1–10`}
+                  ariaLabel={`${selectedSymptomTrend.name} severity trend line graph`}
+                  emptyText={selectedSymptomAllTrendEntries.length === 0
+                    ? `No history for ${selectedSymptomTrend.name} yet.`
+                    : `No ${selectedSymptomTrend.name} entries in the selected range.`}
+                  eyebrow="SYMPTOM TRENDS"
+                  formatAxisValue={(value) => String(Math.round(value))}
+                  formatValue={(value) => `${Math.round(value)}/10`}
+                  maxValue={10}
+                  series={symptomTrendChartSeries}
+                  subtitle={`${symptomTrendRange} • timestamped severity entries`}
+                  title={`${selectedSymptomTrend.name} severity`}
+                  variant="embedded"
+                />
+              ) : (
+                <EmptyCopy
+                  text={symptoms.length === 0
+                    ? "Log a symptom to see symptom trends here."
+                    : "No symptom history is available to graph yet."}
+                />
+              )}
+            </div>
+          </HealthPanel>
         </>
       ) : null}
 

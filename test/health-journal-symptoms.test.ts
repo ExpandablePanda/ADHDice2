@@ -5,9 +5,13 @@ import test from "node:test";
 import type { HealthSymptom, HealthSymptomEntry } from "../src/lib/database.types.ts";
 import {
   groupHealthSymptomEntriesByDate,
+  getDefaultHealthSymptomId,
+  getHealthSymptomTrendEntries,
+  getSelectableHealthSymptoms,
   HEALTH_MOOD_OPTIONS,
   HEALTH_SCALE_OPTIONS,
   HEALTH_SEVERITY_OPTIONS,
+  HEALTH_SYMPTOM_TREND_RANGES,
   normalizeHealthSymptomName,
   normalizeHealthSymptomNote,
   reconcileHealthSymptoms,
@@ -20,6 +24,7 @@ const migrationSource = readFileSync(
 );
 const healthHookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
+const activityChartSource = readFileSync(new URL("../src/components/activity-line-chart-card.tsx", import.meta.url), "utf8");
 
 function symptomEntry(
   id: string,
@@ -79,6 +84,68 @@ test("same symptom entries coexist and remain individually grouped by day and ti
     ["morning", 3],
   ]);
   assert.equal(groups[0]?.entries.length, 2);
+});
+
+test("symptom trends order timestamped entries and preserve multiple same-day points", () => {
+  const entries = [
+    symptomEntry("afternoon", "2026-08-29", "2026-08-29T13:30:00.000Z", 6),
+    symptomEntry("prior-day", "2026-08-28", "2026-08-28T19:30:00.000Z", 4),
+    symptomEntry("morning", "2026-08-29", "2026-08-29T09:00:00.000Z", 3),
+    symptomEntry("other-symptom", "2026-08-29", "2026-08-29T15:00:00.000Z", 9, "symptom-2"),
+  ];
+  const trendEntries = getHealthSymptomTrendEntries({
+    asOfDate: "2026-08-29",
+    entries,
+    range: "All",
+    symptomId: "symptom-1",
+  });
+
+  assert.deepEqual(trendEntries.map((entry) => [entry.id, entry.severity]), [
+    ["prior-day", 4],
+    ["morning", 3],
+    ["afternoon", 6],
+  ]);
+  assert.equal(trendEntries.filter((entry) => entry.entry_date === "2026-08-29").length, 2);
+});
+
+test("symptom trends filter calendar ranges without synthesizing or aggregating points", () => {
+  const entries = [
+    symptomEntry("older", "2026-07-01", "2026-07-01T09:00:00.000Z", 2),
+    symptomEntry("month", "2026-08-01", "2026-08-01T09:00:00.000Z", 4),
+    symptomEntry("seven", "2026-08-23", "2026-08-23T09:00:00.000Z", 7),
+    symptomEntry("today", "2026-08-29", "2026-08-29T09:00:00.000Z", 5),
+    symptomEntry("future", "2026-08-30", "2026-08-30T09:00:00.000Z", 10),
+  ];
+
+  assert.deepEqual(getHealthSymptomTrendEntries({ asOfDate: "2026-08-29", entries, range: "7D", symptomId: "symptom-1" }).map((entry) => entry.id), ["seven", "today"]);
+  assert.deepEqual(getHealthSymptomTrendEntries({ asOfDate: "2026-08-29", entries, range: "30D", symptomId: "symptom-1" }).map((entry) => entry.id), ["month", "seven", "today"]);
+  assert.deepEqual(getHealthSymptomTrendEntries({ asOfDate: "2026-08-29", entries, range: "90D", symptomId: "symptom-1" }).map((entry) => entry.id), ["older", "month", "seven", "today"]);
+  assert.deepEqual(getHealthSymptomTrendEntries({ asOfDate: "2026-08-29", entries, range: "All", symptomId: "symptom-1" }).map((entry) => entry.id), ["older", "month", "seven", "today", "future"]);
+});
+
+test("symptom trends keep archived symptoms selectable when they have ledger history and choose the latest logged symptom", () => {
+  const activeSymptom = symptomDefinition("active", "Active Symptom");
+  const archivedWithHistory = symptomDefinition("archived-with-history", "Old Symptom", "2026-08-28T12:00:00.000Z");
+  const archivedWithoutHistory = symptomDefinition("archived-without-history", "Unused Symptom", "2026-08-28T12:00:00.000Z");
+  const entries = [
+    symptomEntry("active-entry", "2026-08-29", "2026-08-29T09:00:00.000Z", 3, activeSymptom.id),
+    symptomEntry("archived-entry", "2026-08-29", "2026-08-29T13:00:00.000Z", 8, archivedWithHistory.id),
+  ];
+
+  assert.deepEqual(getSelectableHealthSymptoms([archivedWithoutHistory, archivedWithHistory, activeSymptom], entries).map((symptom) => symptom.id), [activeSymptom.id, archivedWithHistory.id]);
+  assert.equal(getDefaultHealthSymptomId([archivedWithoutHistory, archivedWithHistory, activeSymptom], entries), archivedWithHistory.id);
+});
+
+test("Journal symptom trends adapt into the shared chart with a fixed 1 to 10 severity scale", () => {
+  assert.deepEqual([...HEALTH_SYMPTOM_TREND_RANGES], ["7D", "30D", "90D", "All"]);
+  assert.match(healthPageSource, /ActivityLineChartCard/);
+  assert.match(healthPageSource, /getHealthSymptomTrendEntries/);
+  assert.match(healthPageSource, /HEALTH_SYMPTOM_TREND_RANGES/);
+  assert.match(healthPageSource, /title="Symptom Trends"/);
+  assert.match(healthPageSource, /key: entry\.id/);
+  assert.match(healthPageSource, /maxValue=\{10\}/);
+  assert.match(activityChartSource, /maxValue\?: number/);
+  assert.match(activityChartSource, /maxValueOverride/);
 });
 
 test("local symptom recovery keeps an empty remote response visible and recovers definitions before entries", () => {

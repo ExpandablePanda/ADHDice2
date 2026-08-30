@@ -5,13 +5,23 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.8`.
+- Current working app version: `7.12.17`.
 - Current release group: `7.12.x` Health Journal symptom recovery.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-30 7.12.17 Health Journal symptom trends
+
+Health → Journal now includes a read-only Symptom Trends section backed by the
+timestamped symptom-entry ledger. Users can select active symptoms or archived
+symptoms with history, view 7D/30D/90D/All ranges (30D by default), and inspect
+each severity 1–10 entry as its own chronological graph point, including
+multiple entries on the same day. The graph reuses `ActivityLineChartCard`,
+including its existing responsive, hover, keyboard, and pinning behavior. No
+schema, SQL, persistence, mutation, native, Realtime, or browser work changed.
 
 ## 2026-08-29 7.12.8 Health Journal symptom recovery
 
@@ -22,7 +32,7 @@ stable-ID based and idempotent, and local rows remain visible if either
 recovery step fails. The existing 7.12.7 migration filename is unchanged;
 symptom tables are not added to Realtime because no subscriber exists. No
 production SQL, browser, native, or iOS verification was performed.
-Journal Trends/Graphs remain deferred to 7.12.9.
+Journal Trends/Graphs were deferred here and are delivered in 7.12.17.
 
 ## 2026-08-28 7.12.7 Health Journal symptom tracking foundation
 

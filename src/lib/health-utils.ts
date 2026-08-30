@@ -31,6 +31,8 @@ export const HEALTH_SLEEP_KINDS: readonly HealthSleepKind[] = ["CPAP Sleep", "CP
 export const HEALTH_SCALE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 export const HEALTH_MOOD_OPTIONS = HEALTH_SCALE_OPTIONS;
 export const HEALTH_SEVERITY_OPTIONS = HEALTH_SCALE_OPTIONS;
+export const HEALTH_SYMPTOM_TREND_RANGES = ["7D", "30D", "90D", "All"] as const;
+export type HealthSymptomTrendRange = (typeof HEALTH_SYMPTOM_TREND_RANGES)[number];
 export const HEALTH_SYMPTOM_TAGS = [
   "Calm",
   "Stressed",
@@ -291,6 +293,63 @@ export function sortHealthSymptomEntries(entries: HealthSymptomEntry[]) {
     right.logged_at.localeCompare(left.logged_at)
     || right.created_at.localeCompare(left.created_at)
     || right.id.localeCompare(left.id));
+}
+
+function compareHealthSymptomEntriesChronologically(left: HealthSymptomEntry, right: HealthSymptomEntry) {
+  const leftTimestamp = Date.parse(left.logged_at);
+  const rightTimestamp = Date.parse(right.logged_at);
+  if (Number.isFinite(leftTimestamp) && Number.isFinite(rightTimestamp) && leftTimestamp !== rightTimestamp) {
+    return leftTimestamp - rightTimestamp;
+  }
+  return left.logged_at.localeCompare(right.logged_at)
+    || left.created_at.localeCompare(right.created_at)
+    || left.id.localeCompare(right.id);
+}
+
+export function getSelectableHealthSymptoms(symptoms: HealthSymptom[], entries: HealthSymptomEntry[]) {
+  const symptomIdsWithHistory = new Set(entries.map((entry) => entry.symptom_id));
+  return sortHealthSymptoms(symptoms.filter((symptom) => symptom.archived_at === null || symptomIdsWithHistory.has(symptom.id)));
+}
+
+export function getDefaultHealthSymptomId(symptoms: HealthSymptom[], entries: HealthSymptomEntry[]) {
+  const selectableSymptoms = getSelectableHealthSymptoms(symptoms, entries);
+  const selectableSymptomIds = new Set(selectableSymptoms.map((symptom) => symptom.id));
+  const latestEntry = [...entries]
+    .filter((entry) => selectableSymptomIds.has(entry.symptom_id))
+    .sort(compareHealthSymptomEntriesChronologically)
+    .at(-1);
+  return latestEntry?.symptom_id ?? selectableSymptoms[0]?.id ?? "";
+}
+
+export function getHealthSymptomTrendRangeStartDate(range: HealthSymptomTrendRange, asOfDate: string) {
+  if (range === "All") {
+    return null;
+  }
+  const days = range === "7D" ? 7 : range === "30D" ? 30 : 90;
+  return shiftHealthDate(asOfDate, -(days - 1));
+}
+
+export function getHealthSymptomTrendEntries({
+  asOfDate,
+  entries,
+  range,
+  symptomId,
+}: {
+  asOfDate: string;
+  entries: HealthSymptomEntry[];
+  range: HealthSymptomTrendRange;
+  symptomId: string;
+}) {
+  if (!symptomId) {
+    return [];
+  }
+  const rangeStartDate = getHealthSymptomTrendRangeStartDate(range, asOfDate);
+  return entries
+    .filter((entry) => (
+      entry.symptom_id === symptomId
+      && (rangeStartDate === null || (entry.entry_date >= rangeStartDate && entry.entry_date <= asOfDate))
+    ))
+    .sort(compareHealthSymptomEntriesChronologically);
 }
 
 export function reconcileHealthSymptoms(

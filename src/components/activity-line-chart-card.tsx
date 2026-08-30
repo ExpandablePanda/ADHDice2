@@ -25,6 +25,7 @@ type ActivityLineChartCardProps = {
   eyebrow: string;
   formatAxisValue?: (value: number) => string;
   formatValue: (value: number) => string;
+  maxValue?: number;
   series: NumericLineChartSeries[];
   subtitle: string;
   title: string;
@@ -82,6 +83,7 @@ export function ActivityLineChartCard({
   eyebrow,
   formatAxisValue,
   formatValue,
+  maxValue: maxValueOverride,
   series,
   subtitle,
   title,
@@ -91,7 +93,7 @@ export function ActivityLineChartCard({
   const [hoveredPointKey, setHoveredPointKey] = useState<string | null>(null);
   const [pinnedPointKey, setPinnedPointKey] = useState<string | null>(null);
   const axisValueFormatter = formatAxisValue ?? formatValue;
-  const maxValue = Math.max(1, ...series.flatMap((item) => item.points.map((point) => point.value)));
+  const maxValue = Math.max(1, maxValueOverride ?? 0, ...series.flatMap((item) => item.points.map((point) => point.value)));
   const axisPoints = series[0]?.points ?? [];
   const labelStep = Math.max(1, Math.ceil(axisPoints.length / 6));
   const interactivePoints = useMemo(() => (
