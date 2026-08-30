@@ -10,7 +10,15 @@ const jiti = createJiti(import.meta.url, {
   alias: { "@": path.resolve(process.cwd(), "src") },
   jsx: { runtime: "automatic" },
 });
-const { getFullEditorChildSectionLabels } = await jiti.import<{ getFullEditorChildSectionLabels: (depth: number) => { action: string; heading: string } }>(
+const { getFullEditorChildSectionLabels, performEditorChildTitleRenameHandoff } = await jiti.import<{
+  getFullEditorChildSectionLabels: (depth: number) => { action: string; heading: string };
+  performEditorChildTitleRenameHandoff: (
+    taskId: string,
+    title: string,
+    openTaskInCurrentEditor: (taskId: string) => void,
+    beginInlineTaskTitleRename: (taskId: string, title: string) => void,
+  ) => void;
+}>(
   "../src/components/ui/task-management-table-v2.tsx",
 );
 
@@ -60,13 +68,47 @@ test("Step and Substep title activation targets metadata and starts inline renam
   );
 
   assert.ok(titleButtonStart >= 0, "Step/Substep title button should be discoverable");
-  assert.match(titleButtonSource, /onClick=\{\(event\) => \{[\s\S]*event\.stopPropagation\(\);[\s\S]*openTaskInCurrentEditor\(item\.id\);[\s\S]*handoffEditorChildTitleRename\(item\.id, item\.title\);/);
+  assert.match(titleButtonSource, /onClick=\{\(event\) => \{[\s\S]*event\.stopPropagation\(\);[\s\S]*handoffEditorChildTitleRename\(item\.id, item\.title\);/);
+  assert.doesNotMatch(titleButtonSource, /openTaskInCurrentEditor\(item\.id\)/);
+  assert.match(tableSource, /function handoffEditorChildTitleRename\(taskId: string, title: string\)[\s\S]*performEditorChildTitleRenameHandoff\(taskId, title, openTaskInCurrentEditor, beginInlineTaskTitleRename\)/);
   assert.match(editorChildRowsSource, /displayedItems\.map\(\(item, itemIndex\) =>/);
   assert.match(editorChildRowsSource, /item\.depth > 1 \? "Untitled substep" : "Untitled step"/);
   assert.match(childRoutingSource, /openInspector\(parentTask\.id, "full"\)/);
   assert.match(childRoutingSource, /setMetadataTargetTaskId\(taskId\)/);
   assert.match(editorChildRowsSource, /aria-label=\{`Change status for \$\{item\.title[\s\S]*event\.stopPropagation\(\);[\s\S]*setActiveMetadataPanelByTaskId/);
   assert.match(editorChildRowsSource, /aria-label=\{`\$\{isCollapsed \? "Expand" : "Collapse"[\s\S]*event\.stopPropagation\(\);[\s\S]*setCollapsedChildTaskIds/);
+});
+
+test("Step and Substep title handoff remains atomic when the prior rename blurs", () => {
+  const events: string[] = [];
+  const handoff = (taskId: string, title: string) => performEditorChildTitleRenameHandoff(
+    taskId,
+    title,
+    (targetTaskId) => events.push(`target:${targetTaskId}`),
+    (targetTaskId, targetTitle) => events.push(`rename:${targetTaskId}:${targetTitle}`),
+  );
+
+  handoff("step-a", "Step A");
+  assert.deepEqual(events, ["target:step-a", "rename:step-a:Step A"]);
+
+  events.length = 0;
+  let pendingRename: { taskId: string; title: string } | null = { taskId: "step-b", title: "Step B" };
+  const finishPriorRename = (currentTaskId: string) => {
+    if (pendingRename && pendingRename.taskId !== currentTaskId) {
+      const nextRename = pendingRename;
+      pendingRename = null;
+      handoff(nextRename.taskId, nextRename.title);
+    }
+  };
+  finishPriorRename("step-a");
+  assert.deepEqual(events, ["target:step-b", "rename:step-b:Step B"]);
+
+  events.length = 0;
+  pendingRename = { taskId: "substep-b", title: "Substep B" };
+  finishPriorRename("substep-a");
+  assert.deepEqual(events, ["target:substep-b", "rename:substep-b:Substep B"]);
+  assert.match(tableSource, /openInspector\(parentTask\.id, "full"\)/);
+  assert.match(tableSource, /setMetadataTargetTaskId\(taskId\)/);
 });
 
 test("row child creation uses the clicked row ID and renders its form beneath that row", () => {

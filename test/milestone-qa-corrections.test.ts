@@ -114,7 +114,7 @@ test("desktop full inspector uses wider responsive bounds and viewport-safe scro
   assert.match(tableSource, /fullDesktopEditorNode = \(\s*<div[\s\S]*<div className="p-4">\s*\{fullDesktopEditorContent\}/);
   assert.match(tableSource, /overlayMode === "full" \? "left-1\/2 max-w-\[80rem\] -translate-x-1\/2"/);
   assert.match(tableSource, /: "grid min-w-0 min-h-\[70vh\] gap-3 lg:grid-cols-\[minmax\(0,1\.05fr\)_minmax\(0,0\.95fr\)\]"/);
-  assert.doesNotMatch(tableSource, /fullMetadataCardClass[\s\S]*lg:self-start/);
+  assert.match(tableSource, /fullMetadataCardClass[\s\S]*lg:self-start/);
   assert.match(tableSource, /className="w-full max-w-\[60rem\]"/);
 });
 

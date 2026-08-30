@@ -1,10 +1,23 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import path from "node:path";
+import { createJiti } from "jiti";
 
 import type { HealthWaterEntry, HealthWaterUnit } from "../src/lib/database.types.ts";
 import { buildHealthWaterHistory, normalizeHealthWaterEntry, waterAmountToMilliliters } from "../src/lib/health-library.ts";
 import { normalizeHealthProfile } from "../src/lib/health-utils.ts";
+
+const jiti = createJiti(import.meta.url, {
+  alias: { "@": path.resolve(process.cwd(), "src") },
+  jsx: { runtime: "automatic" },
+});
+const { getHealthWaterGoalPointContext } = await jiti.import<{
+  getHealthWaterGoalPointContext: (value: number, waterGoalMl: number | null) => {
+    contextLabel: string;
+    contextTone: "negative" | "positive" | "neutral";
+  } | null;
+}>("../src/components/task-app/health-water-line-chart.tsx");
 
 const waterPanelSource = readFileSync(
   new URL("../src/components/task-app/health-water-panel.tsx", import.meta.url),
@@ -12,6 +25,10 @@ const waterPanelSource = readFileSync(
 );
 const waterChartSource = readFileSync(
   new URL("../src/components/task-app/health-water-line-chart.tsx", import.meta.url),
+  "utf8",
+);
+const activityChartSource = readFileSync(
+  new URL("../src/components/activity-line-chart-card.tsx", import.meta.url),
   "utf8",
 );
 const healthHookSource = readFileSync(
@@ -68,6 +85,46 @@ test("legacy local water rows normalize as confirmed and invalid water goals cle
   assert.equal(legacy.confirmed_at, legacy.logged_at);
   assert.equal(normalizeHealthProfile({ water_goal_ml: -1 }, "user-1").water_goal_ml, null);
   assert.equal(normalizeHealthProfile({ water_goal_ml: 2365.88 }, "user-1").water_goal_ml, 2365.88);
+});
+
+test("Water entry mode uses fl oz defaults, requested presets, custom mode, and selected date/time", () => {
+  assert.match(waterPanelSource, /useState<HealthWaterUnit>\("fl_oz"\)/);
+  assert.match(waterPanelSource, /const \[entryStatus, setEntryStatus\] = useState<"confirmed" \| "pending">\("confirmed"\)/);
+  assert.match(waterPanelSource, /Entry status/);
+  assert.match(waterPanelSource, /Entry mode/);
+  assert.match(waterPanelSource, /const WATER_FL_OZ_PRESETS = \[5, 10, 20\]/);
+  assert.match(waterPanelSource, /const WATER_CUP_PRESETS = \[1\]/);
+  assert.doesNotMatch(waterPanelSource, /addAmount\((?:8|12|16), "fl_oz"\)/);
+  assert.match(waterPanelSource, /isCustomAmountSelected/);
+  assert.match(waterPanelSource, /getCurrentHealthDateTimeInputs\(\)/);
+  assert.match(waterPanelSource, /entry_date: entryDateTime\.date/);
+  assert.match(waterPanelSource, /logged_at: buildLoggedAt\(entryDateTime\.date, entryDateTime\.time\)/);
+  assert.match(waterPanelSource, /logged_at: string/);
+  assert.match(healthHookSource, /logged_at: input\.logged_at \?\? now/);
+});
+
+test("Daily Water Goal starts compact when saved and keeps a compact editor", () => {
+  assert.match(waterPanelSource, /goalEditorOpenOverride/);
+  assert.match(waterPanelSource, /const isGoalEditorOpen = goalEditorOpenOverride \?\? waterGoalMl === null/);
+  assert.match(waterPanelSource, /No active goal/);
+  assert.match(waterPanelSource, /aria-label="Edit daily water goal"/);
+  assert.match(waterPanelSource, /w-24/);
+  assert.match(waterPanelSource, /setGoalEditorOpenOverride\(false\)/);
+  assert.match(waterPanelSource, /setGoalAmountOverride\(""\)/);
+});
+
+test("Water graph points expose current-goal over, under, at-goal, and no-goal context", () => {
+  const goalMl = waterAmountToMilliliters(80, "fl_oz");
+  assert.deepEqual(getHealthWaterGoalPointContext(60, goalMl), { contextLabel: "20 fl oz under goal", contextTone: "negative" });
+  assert.deepEqual(getHealthWaterGoalPointContext(95, goalMl), { contextLabel: "15 fl oz over goal", contextTone: "positive" });
+  assert.deepEqual(getHealthWaterGoalPointContext(80, goalMl), { contextLabel: "At goal", contextTone: "positive" });
+  assert.equal(getHealthWaterGoalPointContext(80, null), null);
+  assert.match(waterChartSource, /getHealthWaterGoalPointContext/);
+  assert.match(waterChartSource, /contextLabel/);
+  assert.match(activityChartSource, /contextLabel\?: string/);
+  assert.match(activityChartSource, /contextTone\?: "negative" \| "positive" \| "neutral"/);
+  assert.match(activityChartSource, /point\.contextLabel/);
+  assert.match(activityChartSource, /activePoint\.contextLabel/);
 });
 
 test("historical entry editing uses the existing startEditing, saveEditing, and updateWaterEntry path", () => {
@@ -158,7 +215,7 @@ test("Water exposes the persisted goal and Pending to Confirm row workflow", () 
   assert.match(migration, /add column confirmed_at timestamptz null/i);
   assert.match(migration, /coalesce\(logged_at, created_at\)/i);
   assert.match(migration, /alter column confirmed_at set default now\(\)/i);
-  assert.match(waterPanelSource, /confirmed_at: entryMode === "pending" \? null : new Date\(\)\.toISOString\(\)/);
+  assert.match(waterPanelSource, /confirmed_at: entryStatus === "pending" \? null : new Date\(\)\.toISOString\(\)/);
   assert.match(waterPanelSource, /title="Pending water"/);
   assert.match(waterPanelSource, /confirmWaterEntry=\{confirmWaterEntry\}/);
   assert.match(waterPanelSource, /<span[^>]*>Pending<\/span>/);

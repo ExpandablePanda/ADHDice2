@@ -6,6 +6,20 @@ import { buildHealthWaterHistory, formatQuantity, millilitersToWaterAmount } fro
 
 type HealthWaterHistoryDay = ReturnType<typeof buildHealthWaterHistory>[number];
 
+export function getHealthWaterGoalPointContext(value: number, waterGoalMl: number | null) {
+  if (waterGoalMl === null || waterGoalMl <= 0) {
+    return null;
+  }
+  const goalFlOz = millilitersToWaterAmount(waterGoalMl, "fl_oz");
+  const delta = value - goalFlOz;
+  if (Math.abs(delta) < 0.01) {
+    return { contextLabel: "At goal", contextTone: "positive" as const };
+  }
+  return delta > 0
+    ? { contextLabel: `${formatQuantity(delta)} fl oz over goal`, contextTone: "positive" as const }
+    : { contextLabel: `${formatQuantity(Math.abs(delta))} fl oz under goal`, contextTone: "negative" as const };
+}
+
 export function HealthWaterLineChart({ history, waterGoalMl }: { history: HealthWaterHistoryDay[]; waterGoalMl: number | null }) {
   const chronologicalHistory = [...history].reverse();
   const firstDate = chronologicalHistory[0]?.dateKey ?? "";
@@ -15,12 +29,16 @@ export function HealthWaterLineChart({ history, waterGoalMl }: { history: Health
     color: "#4f9fbb",
     key: "water",
     label: "Water",
-    points: chronologicalHistory.map((day) => ({
-      detailLabel: formatDate(day.dateKey),
-      key: day.dateKey,
-      label: formatDate(day.dateKey),
-      value: day.totals.fluidOunces,
-    })),
+    points: chronologicalHistory.map((day) => {
+      const context = getHealthWaterGoalPointContext(day.totals.fluidOunces, waterGoalMl);
+      return {
+        ...(context ?? {}),
+        detailLabel: formatDate(day.dateKey),
+        key: day.dateKey,
+        label: formatDate(day.dateKey),
+        value: day.totals.fluidOunces,
+      };
+    }),
     totalValue: chronologicalHistory.reduce((total, day) => total + day.totals.fluidOunces, 0),
   }];
 

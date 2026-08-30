@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
+import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import type { HealthWaterEntry, HealthWaterUnit } from "@/lib/database.types";
 import {
   buildHealthWaterHistory,
@@ -14,7 +15,7 @@ import {
   sumWaterForDate,
   waterAmountToMilliliters,
 } from "@/lib/health-library";
-import { formatHealthDateLabel } from "@/lib/health-utils";
+import { formatHealthDateLabel, getCurrentHealthDateTimeInputs } from "@/lib/health-utils";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthWaterLineChart } from "./health-water-line-chart";
 
@@ -24,6 +25,7 @@ type HealthWaterPanelProps = {
     amount_ml: number;
     confirmed_at: string | null;
     entry_date: string;
+    logged_at: string;
     unit: HealthWaterUnit;
   }) => Promise<boolean>;
   confirmWaterEntry: (id: string) => Promise<boolean>;
@@ -41,6 +43,9 @@ type HealthWaterPanelProps = {
   waterEntries: HealthWaterEntry[];
 };
 
+const WATER_FL_OZ_PRESETS = [5, 10, 20] as const;
+const WATER_CUP_PRESETS = [1] as const;
+
 export function HealthWaterPanel({
   addWaterEntry,
   confirmWaterEntry,
@@ -51,10 +56,13 @@ export function HealthWaterPanel({
   waterGoalMl,
   waterEntries,
 }: HealthWaterPanelProps) {
-  const [amount, setAmount] = useState("1");
-  const [unit, setUnit] = useState<HealthWaterUnit>("cup");
-  const [entryMode, setEntryMode] = useState<"confirmed" | "pending">("confirmed");
-  const [goalAmount, setGoalAmount] = useState(() => waterGoalMl ? formatQuantity(millilitersToWaterAmount(waterGoalMl, "fl_oz")) : "");
+  const [amount, setAmount] = useState("10");
+  const [unit, setUnit] = useState<HealthWaterUnit>("fl_oz");
+  const [entryStatus, setEntryStatus] = useState<"confirmed" | "pending">("confirmed");
+  const [entryDateTime, setEntryDateTime] = useState(() => getCurrentHealthDateTimeInputs());
+  const [isCustomAmountSelected, setIsCustomAmountSelected] = useState(false);
+  const [goalAmountOverride, setGoalAmountOverride] = useState<string | null>(null);
+  const [goalEditorOpenOverride, setGoalEditorOpenOverride] = useState<boolean | null>(null);
   const [goalUnit, setGoalUnit] = useState<HealthWaterUnit>("fl_oz");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedHistoryDates, setExpandedHistoryDates] = useState<Set<string>>(() => new Set());
@@ -77,6 +85,13 @@ export function HealthWaterPanel({
   const totals = useMemo(() => sumWaterForDate(waterEntries, today), [today, waterEntries]);
   const waterHistory = useMemo(() => buildHealthWaterHistory(waterEntries, today), [today, waterEntries]);
   const goalFlOz = waterGoalMl && waterGoalMl > 0 ? millilitersToWaterAmount(waterGoalMl, "fl_oz") : null;
+  const goalAmount = goalAmountOverride ?? (goalFlOz === null ? "" : formatQuantity(millilitersToWaterAmount(waterGoalMl!, goalUnit)));
+  const goalSummaryFlOz = goalAmountOverride === ""
+    ? null
+    : goalAmountOverride !== null && Number.isFinite(Number.parseFloat(goalAmountOverride))
+      ? millilitersToWaterAmount(waterAmountToMilliliters(Number.parseFloat(goalAmountOverride), goalUnit), "fl_oz")
+      : goalFlOz;
+  const isGoalEditorOpen = goalEditorOpenOverride ?? waterGoalMl === null;
 
   async function addAmount(nextAmount: number, nextUnit: HealthWaterUnit) {
     if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
@@ -85,31 +100,45 @@ export function HealthWaterPanel({
     const saved = await addWaterEntry({
       amount: nextAmount,
       amount_ml: waterAmountToMilliliters(nextAmount, nextUnit),
-      confirmed_at: entryMode === "pending" ? null : new Date().toISOString(),
-      entry_date: today,
+      confirmed_at: entryStatus === "pending" ? null : new Date().toISOString(),
+      entry_date: entryDateTime.date,
+      logged_at: buildLoggedAt(entryDateTime.date, entryDateTime.time),
       unit: nextUnit,
     });
     if (saved) {
-      setAmount(nextUnit === "cup" ? "1" : "8");
+      setAmount(nextUnit === "cup" ? "1" : "10");
       setUnit(nextUnit);
+      setIsCustomAmountSelected(false);
     }
+  }
+
+  function selectEntryUnit(nextUnit: HealthWaterUnit) {
+    setUnit(nextUnit);
+    setAmount(nextUnit === "cup" ? "1" : "10");
+    setIsCustomAmountSelected(false);
   }
 
   async function saveGoal() {
     const nextAmount = Number.parseFloat(goalAmount);
     if (!Number.isFinite(nextAmount) || nextAmount <= 0) return;
     const saved = await saveWaterGoal(waterAmountToMilliliters(nextAmount, goalUnit));
-    if (saved) setGoalAmount(formatQuantity(nextAmount));
+    if (saved) {
+      setGoalAmountOverride(formatQuantity(nextAmount));
+      setGoalEditorOpenOverride(false);
+    }
   }
 
   async function clearGoal() {
-    if (await saveWaterGoal(null)) setGoalAmount("");
+    if (await saveWaterGoal(null)) {
+      setGoalAmountOverride("");
+      setGoalEditorOpenOverride(false);
+    }
   }
 
   function changeGoalUnit(nextUnit: HealthWaterUnit) {
     const currentAmount = Number.parseFloat(goalAmount);
     if (Number.isFinite(currentAmount) && currentAmount > 0) {
-      setGoalAmount(formatQuantity(millilitersToWaterAmount(waterAmountToMilliliters(currentAmount, goalUnit), nextUnit)));
+      setGoalAmountOverride(formatQuantity(millilitersToWaterAmount(waterAmountToMilliliters(currentAmount, goalUnit), nextUnit)));
     }
     setGoalUnit(nextUnit);
   }
@@ -183,53 +212,71 @@ export function HealthWaterPanel({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-semibold text-[#4d466d] dark:text-white/80">Daily goal</p>
-                <p className="mt-1 text-xs text-[#8a82a3] dark:text-white/45">Optional and saved to your Health profile.</p>
+                <p className="mt-1 text-xs text-[#8a82a3] dark:text-white/45">{goalSummaryFlOz !== null ? `${formatQuantity(totals.fluidOunces)} / ${formatQuantity(goalSummaryFlOz)} fl oz` : "No active goal"}</p>
               </div>
-              {goalFlOz !== null ? <span className="text-xs font-medium text-[#4f73b8] dark:text-[#b7cdfd]">{formatQuantity(totals.fluidOunces)} / {formatQuantity(goalFlOz)} fl oz</span> : null}
+              {!isGoalEditorOpen ? (
+                <AdhdIconButton aria-label="Edit daily water goal" onClick={() => setGoalEditorOpenOverride(true)} size="sm" tone="ghost" variant="rowToolbar">
+                  <Pencil aria-hidden="true" />
+                </AdhdIconButton>
+              ) : null}
             </div>
-            <div className="mt-2 flex flex-wrap items-end gap-2">
-              <label className="grid min-w-24 flex-1 gap-1">
-                <span className="sr-only">Daily water goal amount</span>
-                <input className="health-input" inputMode="decimal" onChange={(event) => setGoalAmount(event.target.value)} placeholder="80" value={goalAmount} />
-              </label>
-              <div className="flex gap-1.5">
-                <AdhdChip onClick={() => changeGoalUnit("cup")} selected={goalUnit === "cup"}>Cups</AdhdChip>
-                <AdhdChip onClick={() => changeGoalUnit("fl_oz")} selected={goalUnit === "fl_oz"}>Fl oz</AdhdChip>
+            {isGoalEditorOpen ? (
+              <div className="mt-2 flex flex-wrap items-end gap-2">
+                <label className="grid w-24 max-w-24 gap-1">
+                  <span className="sr-only">Daily water goal amount</span>
+                  <input className="health-input w-24" inputMode="decimal" onChange={(event) => setGoalAmountOverride(event.target.value)} placeholder="80" value={goalAmount} />
+                </label>
+                <div className="flex gap-1.5">
+                  <AdhdChip onClick={() => changeGoalUnit("cup")} selected={goalUnit === "cup"}>Cups</AdhdChip>
+                  <AdhdChip onClick={() => changeGoalUnit("fl_oz")} selected={goalUnit === "fl_oz"}>Fl oz</AdhdChip>
+                </div>
+                <AdhdChip contentClassName="gap-1" icon={<Check aria-hidden="true" className="h-3 w-3" />} onClick={() => { void saveGoal(); }} selected>Save</AdhdChip>
+                {waterGoalMl !== null ? <AdhdChip onClick={() => { void clearGoal(); }}>Clear</AdhdChip> : null}
               </div>
-              <AdhdChip contentClassName="gap-1" icon={<Check aria-hidden="true" className="h-3 w-3" />} onClick={() => { void saveGoal(); }} selected>Save</AdhdChip>
-              {waterGoalMl !== null ? <AdhdChip onClick={() => { void clearGoal(); }}>Clear</AdhdChip> : null}
-            </div>
+            ) : null}
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-2">
-            <div className="flex basis-full items-center gap-2 text-xs text-[#7d7598] dark:text-white/55">
-              <span>Entry mode</span>
-              <AdhdChip onClick={() => setEntryMode("confirmed")} selected={entryMode === "confirmed"}>Confirmed</AdhdChip>
-              <AdhdChip onClick={() => setEntryMode("pending")} selected={entryMode === "pending"}>Pending</AdhdChip>
+          <div className="mt-5 rounded-[1rem] border border-[#e4def2] bg-[#fcfbff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-[#7d7598] dark:text-white/55">
+              <span className="font-semibold text-[#4d466d] dark:text-white/80">Entry status</span>
+              <AdhdChip onClick={() => setEntryStatus("confirmed")} selected={entryStatus === "confirmed"}>Confirmed</AdhdChip>
+              <AdhdChip onClick={() => setEntryStatus("pending")} selected={entryStatus === "pending"}>Pending</AdhdChip>
             </div>
-            <AdhdChip contentClassName="gap-0.5" icon={<Plus aria-hidden="true" className="h-3 w-3" />} onClick={() => { void addAmount(1, "cup"); }} selected>
-              1 cup
-            </AdhdChip>
-            <AdhdChip contentClassName="gap-0.5" icon={<Plus aria-hidden="true" className="h-3 w-3" />} onClick={() => { void addAmount(8, "fl_oz"); }}>
-              8 fl oz
-            </AdhdChip>
-            <AdhdChip contentClassName="gap-0.5" icon={<Plus aria-hidden="true" className="h-3 w-3" />} onClick={() => { void addAmount(12, "fl_oz"); }}>
-              12 fl oz
-            </AdhdChip>
-            <AdhdChip contentClassName="gap-0.5" icon={<Plus aria-hidden="true" className="h-3 w-3" />} onClick={() => { void addAmount(16, "fl_oz"); }}>
-              16 fl oz
-            </AdhdChip>
-          </div>
-
-          <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
-            <label className="grid gap-1.5">
-              <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Custom amount</span>
-              <input className="health-input" inputMode="decimal" onChange={(event) => setAmount(event.target.value)} value={amount} />
-            </label>
-            <div className="flex flex-wrap items-end gap-2">
-              <AdhdChip onClick={() => setUnit("cup")} selected={unit === "cup"}>Cups</AdhdChip>
-              <AdhdChip onClick={() => setUnit("fl_oz")} selected={unit === "fl_oz"}>Fl oz</AdhdChip>
-              <AdhdChip onClick={() => { void addAmount(Number.parseFloat(amount), unit); }} selected>Add water</AdhdChip>
+            <div className="mt-3 grid gap-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-[#7d7598] dark:text-white/55">
+                <span className="font-semibold text-[#4d466d] dark:text-white/80">Entry mode</span>
+                <AdhdChip onClick={() => selectEntryUnit("fl_oz")} selected={unit === "fl_oz"}>Fl oz</AdhdChip>
+                <AdhdChip onClick={() => selectEntryUnit("cup")} selected={unit === "cup"}>Cups</AdhdChip>
+              </div>
+              {!isCustomAmountSelected ? (
+                <div className="flex flex-wrap gap-2">
+                  {(unit === "fl_oz" ? WATER_FL_OZ_PRESETS : WATER_CUP_PRESETS).map((preset) => (
+                    <AdhdChip contentClassName="gap-0.5" icon={<Plus aria-hidden="true" className="h-3 w-3" />} key={preset} onClick={() => { void addAmount(preset, unit); }} selected>
+                      {preset} {unit === "cup" ? (preset === 1 ? "cup" : "cups") : "fl oz"}
+                    </AdhdChip>
+                  ))}
+                  <AdhdChip onClick={() => setIsCustomAmountSelected(true)}>Custom</AdhdChip>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="grid w-24 max-w-24 gap-1">
+                    <span className="sr-only">Custom water amount</span>
+                    <input className="health-input w-24" inputMode="decimal" onChange={(event) => setAmount(event.target.value)} value={amount} />
+                  </label>
+                  <span className="pb-2 text-xs font-semibold text-[#7d7598] dark:text-white/55">{unit === "cup" ? "cups" : "fl oz"}</span>
+                  <AdhdChip onClick={() => { void addAmount(Number.parseFloat(amount), unit); }} selected>Add</AdhdChip>
+                </div>
+              )}
+              <div className="flex flex-wrap items-end gap-2 border-t border-[#ece8f8] pt-3 dark:border-white/10">
+                <label className="grid gap-1">
+                  <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Date</span>
+                  <input className="health-input" onChange={(event) => setEntryDateTime((current) => ({ ...current, date: event.target.value }))} type="date" value={entryDateTime.date} />
+                </label>
+                <label className="grid gap-1">
+                  <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Time</span>
+                  <input className="health-input" onChange={(event) => setEntryDateTime((current) => ({ ...current, time: event.target.value }))} type="time" value={entryDateTime.time} />
+                </label>
+              </div>
             </div>
           </div>
         </HealthCollapsiblePanel>

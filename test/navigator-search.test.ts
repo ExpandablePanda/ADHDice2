@@ -96,6 +96,10 @@ test("expanded dock puts search first and swaps normal controls for inline searc
   assert.match(dockSource, /onClick=\{\(\) => onNavigate\(item\)\}/);
   assert.match(dockSource, /if \(isCollapsed\) \{/);
   assert.match(dockSource, /onPointerDown=\{startBubbleDrag\}/);
+  assert.match(dockSource, /const dockZIndexClass = isSearchMode \? "z-40" : "z-10";/);
+  assert.match(dockSource, /fixed inset-x-0 \$\{dockZIndexClass\} min-w-0 px-4/);
+  assert.match(dockSource, /fixed left-4 top-4 bottom-4 \$\{dockZIndexClass\}/);
+  assert.match(dockSource, /fixed right-4 top-4 bottom-4 \$\{dockZIndexClass\}/);
   assert.match(adapterSource, /onNavigateSearchTarget/);
   assert.match(appSource, /searchTargets=\{navigatorSearchTargets\}/);
   assert.match(appSource, /onNavigateSearchTarget=\{handleNavigatorSearchTarget\}/);

@@ -3,6 +3,8 @@
 import { useId, useMemo, useState } from "react";
 
 export type NumericLineChartPoint = {
+  contextLabel?: string;
+  contextTone?: "negative" | "positive" | "neutral";
   detailLabel?: string;
   key: string;
   label: string;
@@ -56,6 +58,16 @@ const CHART_HEIGHT = 220;
 const PADDING = { top: 24, right: 24, bottom: 42, left: 68 };
 const PLOT_WIDTH = CHART_WIDTH - PADDING.left - PADDING.right;
 const PLOT_HEIGHT = CHART_HEIGHT - PADDING.top - PADDING.bottom;
+
+const NUMERIC_LINE_CHART_CONTEXT_TONE_CLASS = {
+  negative: "text-[#d94e67] dark:text-[#ff9eaf]",
+  neutral: "text-[var(--text-muted)]",
+  positive: "text-[#3b8a5a] dark:text-[#9fddb3]",
+} as const;
+
+function getNumericLineChartContextToneClass(tone: NumericLineChartPoint["contextTone"]) {
+  return NUMERIC_LINE_CHART_CONTEXT_TONE_CLASS[tone ?? "neutral"];
+}
 
 type NumericLineChartDomainPoint = Pick<NumericLineChartPoint, "key" | "xDomainKey">;
 
@@ -292,7 +304,7 @@ export function ActivityLineChartCard({
               <ul className="sr-only">
                 {interactivePoints.map((point) => (
                   <li key={`accessible-${point.pointKey}`}>
-                    {point.seriesLabel}: {point.detailLabel ?? point.label}: {formatValue(point.value)}
+                    {point.seriesLabel}: {point.detailLabel ?? point.label}: {formatValue(point.value)}{point.contextLabel ? `, ${point.contextLabel}` : ""}
                   </li>
                 ))}
               </ul>
@@ -341,7 +353,8 @@ export function ActivityLineChartCard({
                       {points.map((point, index) => {
                         const pointKey = `${item.key}:${item.points[index]?.key ?? index}`;
                         const pointLabel = item.points[index]?.detailLabel ?? item.points[index]?.label ?? "Point";
-                        return <circle aria-label={`${item.label}: ${pointLabel}: ${formatValue(item.points[index]?.value ?? 0)}`} cx={PADDING.left + point.x} cy={PADDING.top + point.y} fill="var(--surface-elevated)" key={pointKey} onClick={() => setPinnedPointKey(pointKey)} onFocus={() => setHoveredPointKey(pointKey)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setPinnedPointKey(pointKey); } }} r={hoveredPointKey === pointKey || pinnedPointKey === pointKey ? 6 : item.points[index]?.value ? 4 : 2.5} role="button" stroke={item.color} strokeWidth="2" tabIndex={0} />;
+                        const pointContext = item.points[index]?.contextLabel;
+                        return <circle aria-label={`${item.label}: ${pointLabel}: ${formatValue(item.points[index]?.value ?? 0)}${pointContext ? `, ${pointContext}` : ""}`} cx={PADDING.left + point.x} cy={PADDING.top + point.y} fill="var(--surface-elevated)" key={pointKey} onClick={() => setPinnedPointKey(pointKey)} onFocus={() => setHoveredPointKey(pointKey)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setPinnedPointKey(pointKey); } }} r={hoveredPointKey === pointKey || pinnedPointKey === pointKey ? 6 : item.points[index]?.value ? 4 : 2.5} role="button" stroke={item.color} strokeWidth="2" tabIndex={0} />;
                       })}
                     </g>
                   );
@@ -368,6 +381,7 @@ export function ActivityLineChartCard({
                         <span className="font-semibold text-[var(--text-primary)]">{point.seriesLabel}</span>
                         <span className="text-[var(--text-secondary)]">{point.detailLabel ?? point.label}</span>
                         <span className="font-black text-[var(--text-primary)]">{formatValue(point.value)}</span>
+                        {point.contextLabel ? <span className={`font-semibold ${getNumericLineChartContextToneClass(point.contextTone)}`}>{point.contextLabel}</span> : null}
                       </div>
                     ))}
                   </div>
@@ -383,6 +397,7 @@ export function ActivityLineChartCard({
                 <span className="text-sm font-semibold text-[var(--text-primary)]">{activePoint.detailLabel ?? activePoint.label}</span>
                 <span className="text-sm text-[var(--text-secondary)]">{activePoint.seriesLabel}</span>
                 <span className="text-sm font-black text-[var(--text-primary)]">{formatValue(activePoint.value)}</span>
+                {activePoint.contextLabel ? <span className={`text-xs font-semibold ${getNumericLineChartContextToneClass(activePoint.contextTone)}`}>{activePoint.contextLabel}</span> : null}
                 {activePointContext ? <span className="text-xs text-[var(--text-muted)]">{activePointContext}</span> : null}
                 {pinnedPointKey ? <button className="ml-auto rounded-full border border-[#e4deef] px-3 py-1 text-xs font-semibold text-[#68738c] dark:border-white/10 dark:text-white/70" onClick={() => setPinnedPointKey(null)} type="button">Clear pin</button> : null}
                 </>

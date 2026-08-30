@@ -229,11 +229,12 @@ export function BottomDockComponent<TPage extends string>({
   }
 
   const isVertical = renderedDockPlacement !== "bottom";
+  const dockZIndexClass = isSearchMode ? "z-40" : "z-10";
   const dockPositionClass = renderedDockPlacement === "bottom"
-    ? "fixed inset-x-0 z-10 min-w-0 px-4"
+    ? `fixed inset-x-0 ${dockZIndexClass} min-w-0 px-4`
     : renderedDockPlacement === "left"
-      ? "fixed left-4 top-4 bottom-4 z-10 flex items-center"
-      : "fixed right-4 top-4 bottom-4 z-10 flex items-center";
+      ? `fixed left-4 top-4 bottom-4 ${dockZIndexClass} flex items-center`
+      : `fixed right-4 top-4 bottom-4 ${dockZIndexClass} flex items-center`;
   const dockPositionStyle = renderedDockPlacement === "bottom"
     ? { bottom: "calc(1.25rem + env(safe-area-inset-bottom))" }
     : undefined;

@@ -2159,6 +2159,16 @@ export function stopRowActionPointerEvent(event: ReactPointerEvent<HTMLElement>)
   event.stopPropagation();
 }
 
+export function performEditorChildTitleRenameHandoff(
+  taskId: string,
+  title: string,
+  openTaskInCurrentEditor: (taskId: string) => void,
+  beginInlineTaskTitleRename: (taskId: string, title: string) => void,
+) {
+  openTaskInCurrentEditor(taskId);
+  beginInlineTaskTitleRename(taskId, title);
+}
+
 export function TaskTitleDraftInput({
   autoFocus = false,
   className,
@@ -6087,7 +6097,7 @@ export function TaskManagementTableV2({
 
   function handoffEditorChildTitleRename(taskId: string, title: string) {
     pendingEditorChildTitleRenameRef.current = null;
-    beginInlineTaskTitleRename(taskId, title);
+    performEditorChildTitleRenameHandoff(taskId, title, openTaskInCurrentEditor, beginInlineTaskTitleRename);
   }
 
   useEffect(() => {
@@ -7432,7 +7442,6 @@ export function TaskManagementTableV2({
                           className="block min-w-0 max-w-full flex-[0_1_auto] appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                           onClick={(event) => {
                             event.stopPropagation();
-                            openTaskInCurrentEditor(item.id);
                             handoffEditorChildTitleRename(item.id, item.title);
                           }}
                           onPointerDown={(event) => {
@@ -9664,7 +9673,7 @@ export function TaskManagementTableV2({
                   : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530]";
                 const fullMetadataCardClass = useMobileFullOverlay
                   ? "min-w-0 w-full max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
-                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4";
+                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4 lg:self-start";
                 const titleInputClass = `${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] ${useMobileFullOverlay ? "text-[17px]" : "text-[18px]"}`;
                 const metadataTabRowClass = useMobileFullOverlay
                   ? "mt-3 flex min-w-0 flex-wrap gap-x-3 gap-y-2 text-[13px] leading-5"

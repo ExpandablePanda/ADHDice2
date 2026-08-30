@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.28`.
+- Current working app version: `7.12.29`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -53,6 +53,19 @@ its existing controls and history with the shared daily fl oz line chart, and
 Nutrition calorie plus Sleep charts show their existing persisted goals as
 optional shared reference lines. No SQL, schema, native, or iOS changes were
 made; browser and cross-device verification remain outstanding.
+
+## 2026-08-30 7.12.29 QA corrections and UI polish
+
+Step/Substep title handoff now targets the active metadata child and starts
+inline rename as one interaction, including when an earlier child rename
+blurs. The desktop Edit Task metadata card keeps its natural height while
+staying sticky in the existing editor scroller. Water entry controls now
+separate Confirmed/Pending status from Fl oz/Cups/Custom mode, use 5/10/20 fl
+oz or 1-cup presets, and pass the selected local date and time into new
+entries. The Daily Water Goal editor is compact and collapsible, and Water
+point details show current-goal over/under context. Navigator Search raises
+only the active dock layer above sticky Table headers. No SQL, migration,
+schema, native, or iOS changes were made; browser QA remains outstanding.
 
 ## 2026-08-30 7.12.28 QA failure corrections
 

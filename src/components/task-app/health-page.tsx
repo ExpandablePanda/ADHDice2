@@ -286,6 +286,7 @@ type HealthPageProps = {
     amount_ml: number;
     confirmed_at: string | null;
     entry_date: string;
+    logged_at: string;
     unit: HealthWaterUnit;
   }) => Promise<boolean>;
   confirmWaterEntry: (entryId: string) => Promise<boolean>;
