@@ -178,6 +178,14 @@
     -webkit-focus-ring-color: transparent;
   }
 
+  input.health-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible,
+  textarea.health-input:focus-visible,
+  textarea.health-journal-textarea:focus-visible {
+    border-color: var(--accent) !important;
+    outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent) !important;
+    outline-offset: 2px;
+  }
+
   .ui-pill-button-light {
     border-radius: var(--radius-pill);
     background: var(--surface-muted);

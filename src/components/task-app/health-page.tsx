@@ -1856,7 +1856,7 @@ export function HealthPage({
                 <label className="grid gap-2">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Reflection</span>
                   <textarea
-                    className="min-h-40 rounded-[1.5rem] border border-[#e6e8f5] bg-white px-4 py-4 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
+                    className="health-journal-textarea min-h-40 rounded-[1.5rem] border border-[#e6e8f5] bg-white px-4 py-4 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
                     onChange={(event) => setJournalReflection(event.target.value)}
                     placeholder="What helped, what felt noisy, and what your body or mind might need next."
                     value={journalReflection}
@@ -1950,7 +1950,7 @@ export function HealthPage({
                 <Field label="Note (optional)">
                   <textarea
                     aria-label="Symptom note"
-                    className="min-h-20 rounded-[1.25rem] border border-[#e6e8f5] bg-white px-3 py-3 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
+                    className="health-journal-textarea min-h-20 rounded-[1.25rem] border border-[#e6e8f5] bg-white px-3 py-3 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
                     onChange={(event) => setSymptomDraft((current) => ({ ...current, note: event.target.value }))}
                     placeholder="Context, trigger, or what helped"
                     value={symptomDraft.note}
