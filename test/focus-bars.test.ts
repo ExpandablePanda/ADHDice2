@@ -10,6 +10,7 @@ import {
   hasRunningFocusBarRuntime,
 } from "../src/lib/focus-bars.ts";
 import { SYSTEM_COUNTDOWN_CATEGORY_ID } from "../src/lib/focus-utils.ts";
+import { resolveFocusTimerPickerChevronAction } from "../src/lib/focus-timer-picker.ts";
 import type {
   ActiveFocusSession,
   FocusCategory,
@@ -511,8 +512,22 @@ test("Focus Timer picker chevron explicitly opens and closes the list with acces
   assert.match(chevronSource, /aria-label="Toggle focus timer options"/);
   assert.match(chevronSource, /aria-expanded=\{isOpen\}/);
   assert.match(chevronSource, /aria-controls=\{listboxId\}/);
-  assert.match(chevronSource, /if \(isOpen\) \{[\s\S]*?setIsOpen\(false\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?focusDropdownControl\(inputRef\.current\);[\s\S]*?setIsOpen\(true\);/);
+  assert.match(focusTimerPickerSource, /pointerActivationRef = useRef\(false\)/);
+  assert.match(focusTimerPickerSource, /pointerOpenStateRef = useRef\(false\)/);
+  assert.match(focusTimerPickerSource, /onPointerDown=\{\(\) => \{[\s\S]*?pointerActivationRef\.current = true;[\s\S]*?pointerOpenStateRef\.current = isOpen;/);
+  assert.match(chevronSource, /resolveFocusTimerPickerChevronAction[\s\S]*?pointerActivationRef\.current = false[\s\S]*?action === "close"[\s\S]*?setIsOpen\(false\);[\s\S]*?focusDropdownControl\(inputRef\.current\);[\s\S]*?setIsOpen\(true\);/);
   assert.doesNotMatch(chevronSource, /setIsOpen\(\(current\) => !current\)/);
+});
+
+test("Focus Timer picker chevron consumes the pointer-down snapshot before blur can reinterpret the click", () => {
+  let currentIsOpen = true;
+  const pointerOpenState = currentIsOpen;
+
+  currentIsOpen = false;
+  assert.equal(resolveFocusTimerPickerChevronAction({ currentIsOpen, pointerOpenState }), "close");
+  assert.equal(resolveFocusTimerPickerChevronAction({ currentIsOpen: false, pointerOpenState: false }), "open");
+  assert.equal(resolveFocusTimerPickerChevronAction({ currentIsOpen: true, pointerOpenState: null }), "close");
+  assert.equal(resolveFocusTimerPickerChevronAction({ currentIsOpen: false, pointerOpenState: null }), "open");
 });
 
 test("Focus Timer picker keeps input focus-open and panel-local Arrow behavior", () => {

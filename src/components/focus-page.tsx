@@ -41,6 +41,7 @@ import {
 import { getDisplayFocusCategories, isSystemCountdownCategoryId, SYSTEM_COUNTDOWN_CATEGORY_ID } from "@/lib/focus-utils";
 import { classifyFocusSandboxSwipe, getBoundedFocusSandboxPage } from "@/lib/focus-bars";
 import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
+import { resolveFocusTimerPickerChevronAction } from "@/lib/focus-timer-picker";
 import { FocusGoalsPanel } from "./focus-goals-panel";
 import { FocusBars, FocusBarsErrorBoundary } from "./focus-bars";
 import { FocusClockRow, FocusClockRowDesktop } from "./focus-clocks";
@@ -137,6 +138,8 @@ function FocusTimerPicker({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const listboxId = useId();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const pointerActivationRef = useRef(false);
+  const pointerOpenStateRef = useRef(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const highlightedOptionRef = useRef<HTMLDivElement | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
@@ -245,8 +248,18 @@ function FocusTimerPicker({
           aria-expanded={isOpen}
           aria-label="Toggle focus timer options"
           className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/40"
+          onPointerDown={() => {
+            pointerActivationRef.current = true;
+            pointerOpenStateRef.current = isOpen;
+          }}
           onClick={() => {
-            if (isOpen) {
+            const action = resolveFocusTimerPickerChevronAction({
+              currentIsOpen: isOpen,
+              pointerOpenState: pointerActivationRef.current ? pointerOpenStateRef.current : null,
+            });
+            pointerActivationRef.current = false;
+
+            if (action === "close") {
               setIsOpen(false);
               return;
             }
