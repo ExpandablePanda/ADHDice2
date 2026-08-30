@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.32`.
+- Current working app version: `7.12.33`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -32,6 +32,18 @@ section before the boot and authentication render guards. This preserves the
 React Rules-of-Hooks ordering across loading, signed-out, and ready renders.
 Calendar UI, filtering, metadata authority, recurrence behavior, and persistence
 are unchanged; browser QA remains outstanding.
+
+## 2026-08-30 7.12.33 shared Task editor retirement
+
+The obsolete `TaskEditorModal` and its modal-only state, flow contract, and
+restore path are retired. `TaskManagementTableV2` is now the sole active Task
+editor. Calendar Add, normal New Task, Scratch-created Tasks, and Health
+reminder templates use canonical Task creation and immediately open the
+persisted row in the shared editor; Calendar dates are stored as the real
+`due_on` value. Existing Calendar metadata authority, filters, Include Steps,
+No Due Date, and recurrence behavior are unchanged. Future recurrence
+projection and drag-to-reschedule remain deferred. No SQL or schema change was
+made; browser QA remains outstanding.
 
 ## 2026-08-30 7.12.23 Health Journal symptom management
 

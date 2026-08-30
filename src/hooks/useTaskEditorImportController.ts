@@ -10,11 +10,8 @@ type UseTaskEditorImportControllerInput = {
   selectedListTaskIds: string[];
   setIsBatchDeleteModalOpen: Dispatch<SetStateAction<boolean>>;
   setIsImportWidgetMenuOpen: Dispatch<SetStateAction<boolean>>;
-  setIsTaskEditorOpen: Dispatch<SetStateAction<boolean>>;
   setMessage: Dispatch<SetStateAction<{ tone: "neutral" | "good" | "warn"; text: string } | null>>;
   setSelectedGridWidgetId: Dispatch<SetStateAction<string | null>>;
-  setTaskEditorMode: Dispatch<SetStateAction<"create" | "edit">>;
-  setTaskEditorTaskId: Dispatch<SetStateAction<string | null>>;
   setTaskUiState: Dispatch<SetStateAction<TaskUiState>>;
   taskGridLayout: Array<{ id: string; type: string }>;
   taskUiView: TaskUiState["view"];
@@ -30,11 +27,8 @@ export function useTaskEditorImportController({
   selectedListTaskIds,
   setIsBatchDeleteModalOpen,
   setIsImportWidgetMenuOpen,
-  setIsTaskEditorOpen,
   setMessage,
   setSelectedGridWidgetId,
-  setTaskEditorMode,
-  setTaskEditorTaskId,
   setTaskUiState,
   taskGridLayout,
   taskUiView,
@@ -42,25 +36,6 @@ export function useTaskEditorImportController({
   todayDateKey,
   updateTask,
 }: UseTaskEditorImportControllerInput) {
-  function openNewTaskEditor() {
-    setIsImportWidgetMenuOpen(false);
-    setTaskEditorMode("create");
-    setTaskEditorTaskId(null);
-    setIsTaskEditorOpen(true);
-  }
-
-  function openEditTaskEditor(task: Task) {
-    setIsImportWidgetMenuOpen(false);
-    setTaskEditorMode("edit");
-    setTaskEditorTaskId(task.id);
-    setIsTaskEditorOpen(true);
-  }
-
-  function closeTaskEditor() {
-    setIsTaskEditorOpen(false);
-    setTaskEditorTaskId(null);
-  }
-
   function setTaskDuePreset(taskId: string, preset: "next_week" | "none" | "today" | "tomorrow") {
     const nextDueOn = preset === "none"
       ? null
@@ -138,10 +113,7 @@ export function useTaskEditorImportController({
   }
 
   return {
-    closeTaskEditor,
     deleteSelectedListTasks,
-    openEditTaskEditor,
-    openNewTaskEditor,
     openTaskImportPanel,
     setTaskDuePreset,
     setTaskEnergy,

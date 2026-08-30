@@ -4,7 +4,6 @@ import type { ComponentProps } from "react";
 import { ModalShell } from "../modal-shell";
 import { FocusPlannerModalAdapter as FocusPlannerModal, MomentumTaskModal, TaskHistoryModal } from "./task-view-adapters";
 import { TaskBatchEditModal } from "./task-batch-edit-modal";
-import { TaskEditorModal } from "./task-editor-modal";
 
 type TaskEditFlowsProps = {
   batchDeleteFlow: {
@@ -26,7 +25,6 @@ type TaskEditFlowsProps = {
   } | null;
   focusPlannerFlow: ComponentProps<typeof FocusPlannerModal> | null;
   momentumFlow: ComponentProps<typeof MomentumTaskModal> | null;
-  taskEditorFlow: ComponentProps<typeof TaskEditorModal> | null;
   taskHistoryFlow: ComponentProps<typeof TaskHistoryModal> | null;
 };
 
@@ -36,13 +34,11 @@ export function TaskEditFlows({
   completeFlow,
   focusPlannerFlow,
   momentumFlow,
-  taskEditorFlow,
   taskHistoryFlow,
 }: TaskEditFlowsProps) {
   return (
     <>
       {focusPlannerFlow ? <FocusPlannerModal {...focusPlannerFlow} /> : null}
-      {taskEditorFlow ? <TaskEditorModal {...taskEditorFlow} /> : null}
       {batchEditFlow ? <TaskBatchEditModal {...batchEditFlow} /> : null}
       {batchDeleteFlow ? (
         <ModalShell className="w-full max-w-lg rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Delete selected tasks" onClose={batchDeleteFlow.onClose}>

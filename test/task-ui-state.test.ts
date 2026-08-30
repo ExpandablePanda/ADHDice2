@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_TASK_UI_STATE, DEFAULT_TASK_WORKSPACE_TAB_ID, isReportTaskWorkspaceTab, migrateLegacyTaskUiState, normalizePersistedTaskEditorUiState, normalizeTaskWorkspaceTabsState, reorderTaskWorkspaceTabToIndex, reorderTaskWorkspaceTabs, VALID_TASK_VIEWS } from "../src/lib/task-ui-state.ts";
+import { DEFAULT_TASK_UI_STATE, DEFAULT_TASK_WORKSPACE_TAB_ID, isReportTaskWorkspaceTab, migrateLegacyTaskUiState, normalizeTaskWorkspaceTabsState, reorderTaskWorkspaceTabToIndex, reorderTaskWorkspaceTabs, VALID_TASK_VIEWS } from "../src/lib/task-ui-state.ts";
 
 test("calendar is a valid task view with independent include-steps defaults", () => {
   assert.deepEqual(VALID_TASK_VIEWS, ["table", "list", "cards", "matrix", "grid", "calendar"]);
@@ -151,24 +151,6 @@ test("default task ui state includes streak only for new table layouts", () => {
   assert.equal(DEFAULT_TASK_UI_STATE.visibleColumnsByView.table.includes("streak"), true);
   assert.equal(DEFAULT_TASK_UI_STATE.visibleColumnsByView.list.includes("streak"), false);
   assert.equal(DEFAULT_TASK_UI_STATE.visibleColumnsByView.cards.includes("streak"), false);
-});
-
-test("persisted editor state normalization rejects invalid data", () => {
-  assert.deepEqual(normalizePersistedTaskEditorUiState(null), {
-    isOpen: false,
-    mode: "create",
-    taskId: null,
-  });
-
-  assert.deepEqual(normalizePersistedTaskEditorUiState({
-    isOpen: true,
-    mode: "edit",
-    taskId: "task-123",
-  }), {
-    isOpen: true,
-    mode: "edit",
-    taskId: "task-123",
-  });
 });
 
 test("task workspace migration drops the legacy report tab and preserves report as the active surface", () => {

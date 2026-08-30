@@ -1067,7 +1067,6 @@ type ComputeTaskAppDerivedDataInput = {
   listVisibleColumns: string[];
   milestoneSearchTokensByTaskId?: ReadonlyMap<string, readonly string[]>;
   milestoneTaskIds?: ReadonlySet<string>;
-  taskEditorTaskId: string | null;
   taskGridLayout: TaskGridItem[];
   taskGridWidgetTypes: string[];
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
@@ -1095,7 +1094,6 @@ export function computeTaskAppDerivedData({
   listVisibleColumns,
   milestoneSearchTokensByTaskId,
   milestoneTaskIds,
-  taskEditorTaskId,
   taskGridLayout,
   taskGridWidgetTypes,
   taskHistoryByTaskId,
@@ -1171,7 +1169,6 @@ export function computeTaskAppDerivedData({
       searchMatchedChildTaskIds: new Set<string>(),
       searchMatchedParentTaskIds: [],
       searchMatchedStepParentTaskIds: new Set<string>(),
-      selectedTaskForEditor: null,
       statusCountScopeArchiveTasksSorted: emptyTasks,
       statusCountScopeTasksSorted: emptyTasks,
       statusCountScopeTrashTasksSorted: emptyTasks,
@@ -1541,9 +1538,6 @@ export function computeTaskAppDerivedData({
   const momentumPercent = activeTasks.length === 0
     ? 0
     : Math.min(100, Math.round((doneTasks.length / (doneTasks.length + activeTasks.length)) * 100));
-  const selectedTaskForEditor = taskEditorTaskId
-    ? tasks.find((task) => task.id === taskEditorTaskId) ?? null
-    : null;
   const listColumnPickerColumns = [
     ...listVisibleColumns,
     ...listColumnPickerOrder.filter((columnId) => !listVisibleColumns.includes(columnId)),
@@ -1646,7 +1640,6 @@ export function computeTaskAppDerivedData({
     statusMatchedStepParentTaskIds: canonicalMatchingBranchRootParentIds,
     archiveFilteredTasksSorted,
     trashFilteredTasksSorted,
-    selectedTaskForEditor,
     taskHierarchyDiagnostics,
     taskPrimaryVisibility,
     taskLinkedNotesByTaskId,

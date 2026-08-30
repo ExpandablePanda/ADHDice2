@@ -19,8 +19,8 @@ Use it to locate the production seam before editing.
 | List adapter | `src/components/task-app/tasks-list-adapter.tsx` — `TasksListAdapter` | List entry point and adapter boundary | Delegates to `TasksSimpleList`; List retains local card/list presentation |
 | List surface | `src/components/task-app/tasks-list-adapter.tsx` — `TasksSimpleList` | List rows/cards, local row window, inline actions, shared overlay entry | Separate presentation path with shared behavior; contains the known status-read seam |
 | Shared table | `src/components/ui/task-management-table-v2.tsx` — `TaskManagementTableV2` | Table display/filter/sort state, row actions, hierarchy rows, inspector, overlay | Shared downstream consumer for Table, List overlays, and Edit Task behavior |
-| Flow layer | `src/components/task-app/task-edit-flows.tsx` — `TaskEditFlows` | Task creation and secondary modal/flow assembly | Rendered by the TaskApp flow layer; not the sole editor owner |
-| Legacy editor surface | `src/components/task-app/task-editor-modal.tsx` — `TaskEditorModal` | Creation and remaining flow-layer editor behavior | Compatibility/flow path; existing-task editing generally uses the shared inspector |
+| Flow layer | `src/components/task-app/task-edit-flows.tsx` — `TaskEditFlows` | Secondary modal/flow assembly | Rendered by the TaskApp flow layer; Task editing is owned by the shared inspector |
+| Task editor authority | `src/components/ui/task-management-table-v2.tsx` — `TaskManagementTableV2` | Existing-task inspector and shared overlay editing | Sole active Task editor for existing and newly created Tasks |
 | Hierarchy adapter | `src/lib/task-hierarchy.ts` — `buildTaskHierarchyAdapter` | Parent/child maps, depth, invalid-link diagnostics, safe lookups | Pure structural helper consumed by derived data and reorder planning |
 | Structural projection | `src/lib/task-app-derived.ts` — `buildTaskAppStructuralData` | Hierarchy diagnostics, primary visibility, child previews | Feeds canonical/search/view derivation; child preview status is a qualified seam |
 | Child previews | `src/lib/task-app-derived.ts` — `buildChildTaskPreviewLookup` | Descendant metadata and History/streak preview data | Consumed by Table/List/Edit Task rendering; not a persistence authority |
@@ -58,8 +58,8 @@ List-specific renderer. The adapter and shared table may each own a different
 window or presentation decision.
 
 For an existing-task edit, trace the opening callback to the shared inspector
-overlay. Trace creation and secondary flows separately through `TaskEditFlows`
-and `TaskEditorModal`.
+overlay. Trace creation through the canonical Task create action followed by
+`openExistingTaskEditor`.
 
 ## Mutation Trace
 

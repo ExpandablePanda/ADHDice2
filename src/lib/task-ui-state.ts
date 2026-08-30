@@ -27,11 +27,6 @@ export type AppPage =
   | "Notes"
   | "Settings"
   | "Test";
-export type PersistedTaskEditorUiState = {
-  isOpen: boolean;
-  mode: "create" | "edit";
-  taskId: string | null;
-};
 export type TaskUiState = {
   duplicateTitleMode: boolean;
   includeStepsByView: Record<TaskViewMode, boolean>;
@@ -69,7 +64,6 @@ export const TASK_ROUTING_STORAGE_KEY = "adhdice-task-routing";
 export const TASK_FOCUS_STORAGE_KEY = "adhdice-task-focus";
 export const DAILY_PLANNING_COLLAPSED_STORAGE_KEY = "adhdice-daily-planning-collapsed";
 export const TASK_FILTERS_OPEN_STORAGE_KEY = "adhdice-task-filters-open";
-export const TASK_EDITOR_UI_STORAGE_KEY = "adhdice-task-editor-ui";
 export const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
 export const HUD_UI_STORAGE_KEY = "adhdice-hud-ui";
 
@@ -183,23 +177,6 @@ export function isAppPage(value: unknown): value is AppPage {
     || value === "Notes"
     || value === "Settings"
     || value === "Test";
-}
-
-function isTaskEditorMode(value: unknown): value is PersistedTaskEditorUiState["mode"] {
-  return value === "create" || value === "edit";
-}
-
-export function normalizePersistedTaskEditorUiState(value: unknown): PersistedTaskEditorUiState {
-  if (!value || typeof value !== "object") {
-    return { isOpen: false, mode: "create", taskId: null };
-  }
-
-  const candidate = value as Partial<PersistedTaskEditorUiState>;
-  return {
-    isOpen: candidate.isOpen === true,
-    mode: isTaskEditorMode(candidate.mode) ? candidate.mode : "create",
-    taskId: typeof candidate.taskId === "string" ? candidate.taskId : null,
-  };
 }
 
 export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiState {

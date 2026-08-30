@@ -19,7 +19,9 @@ test("Calendar is wired through the existing Tasks view shell and editor flows",
   assert.match(app, /calendarNode=\{calendarContentNode\}/);
   assert.match(app, /onAddTask=\{openCalendarDateTaskEditor\}/);
   assert.match(app, /onOpenTask=\{openExistingTaskEditor\}/);
-  assert.match(app, /setTaskEditorInitialDraft\(\{ dueOn \}\)/);
+  assert.match(app, /createTaskAndOpenSharedEditor/);
+  assert.match(app, /\{ \.\.\.buildNewTaskDraft\("New Task"\), due_on: dueOn \}/);
+  assert.match(app, /openExistingTaskEditor\(createdTask\)/);
   assert.match(app, /childTaskPreviewByParentTaskId/);
   assert.match(calendar, /groupTasksByCalendarDate\(tasks\)/);
   assert.match(calendar, /aria-label=\{`Add task due \$\{formatTaskCalendarDate\(day\.date\)\}`\}/);

@@ -25,11 +25,9 @@ import {
   isAppPage,
   normalizeHudUiState,
   normalizeTaskWorkspaceTabsState,
-  normalizePersistedTaskEditorUiState,
   parseStoredJson,
   reorderTaskWorkspaceTabToIndex,
   reorderTaskWorkspaceTabs,
-  TASK_EDITOR_UI_STORAGE_KEY,
   TASK_FILTERS_OPEN_STORAGE_KEY,
   TASK_FOCUS_STORAGE_KEY,
   TASK_GRID_STORAGE_KEY,
@@ -37,7 +35,6 @@ import {
   TASK_UI_STORAGE_KEY,
   type AppPage,
   type HudUiState,
-  type PersistedTaskEditorUiState,
   type TaskWorkspaceTab,
   type TaskWorkspaceTabsState,
   type TaskUiState,
@@ -65,9 +62,6 @@ const TASK_TABLE_LAYOUT_UPDATED_AT_STORAGE_KEY = "adhdice-task-table-layout-upda
 const HUD_CLOUD_WRITE_DEBOUNCE_MS = 900;
 
 type UseTaskUiStateOptions<TTaskGridItem> = {
-  isTaskEditorOpen: boolean;
-  taskEditorMode: PersistedTaskEditorUiState["mode"];
-  taskEditorTaskId: string | null;
   normalizeTaskGridLayout: (layout: TTaskGridItem[]) => TTaskGridItem[];
   supabase?: SupabaseClient;
   taskGridStarterLayout: TTaskGridItem[];
@@ -139,9 +133,6 @@ function latestSyncTimestamp(...timestamps: Array<string | null>) {
 }
 
 export function useTaskUiState<TTaskGridItem>({
-  isTaskEditorOpen,
-  taskEditorMode,
-  taskEditorTaskId,
   normalizeTaskGridLayout,
   supabase,
   taskGridStarterLayout,
@@ -165,7 +156,6 @@ export function useTaskUiState<TTaskGridItem>({
   ));
   const [isTaskFiltersOpen, setIsTaskFiltersOpen] = useState(false);
   const [isDailyPlanningCollapsed, setIsDailyPlanningCollapsed] = useState(false);
-  const [pendingTaskEditorRestore, setPendingTaskEditorRestore] = useState<PersistedTaskEditorUiState | null>(null);
   const [restoredUserId, setRestoredUserId] = useState<string | null>(null);
   const hudUiStateRef = useRef(hudUiState);
   const taskTableLayoutPreferencesRef = useRef(taskTableLayoutPreferences);
@@ -214,7 +204,6 @@ export function useTaskUiState<TTaskGridItem>({
       hudCloudSignatureRef.current = null;
       setIsTaskFiltersOpen(false);
       setIsDailyPlanningCollapsed(false);
-      setPendingTaskEditorRestore(null);
       setRestoredUserId(null);
       return;
     }
@@ -275,15 +264,6 @@ export function useTaskUiState<TTaskGridItem>({
       ),
     );
 
-    setPendingTaskEditorRestore(
-      normalizePersistedTaskEditorUiState(
-        parseStoredJson<unknown>(
-          getUserScopedStorageKey(TASK_EDITOR_UI_STORAGE_KEY, userId),
-          { isOpen: false, mode: "create", taskId: null },
-        ),
-      ),
-    );
-
     setIsDailyPlanningCollapsed(
       parseStoredJson<boolean>(
         getUserScopedStorageKey(DAILY_PLANNING_COLLAPSED_STORAGE_KEY, userId),
@@ -314,20 +294,6 @@ export function useTaskUiState<TTaskGridItem>({
       JSON.stringify(isTaskFiltersOpen),
     );
   }, [isTaskFiltersOpen, userId]);
-
-  useEffect(() => {
-    if (!userId || typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(
-      getUserScopedStorageKey(TASK_EDITOR_UI_STORAGE_KEY, userId),
-      JSON.stringify({
-        isOpen: isTaskEditorOpen,
-        mode: taskEditorMode,
-        taskId: taskEditorTaskId,
-      } satisfies PersistedTaskEditorUiState),
-    );
-  }, [isTaskEditorOpen, taskEditorMode, taskEditorTaskId, userId]);
 
   useEffect(() => {
     if (!userId || typeof window === "undefined") {
@@ -814,7 +780,6 @@ export function useTaskUiState<TTaskGridItem>({
     isDailyPlanningCollapsed,
     isRestoringPersistedUiState,
     isTaskFiltersOpen,
-    pendingTaskEditorRestore,
     activeTaskWorkspaceTab,
     closeTaskWorkspaceTab,
     createTaskWorkspaceTab,
@@ -827,9 +792,7 @@ export function useTaskUiState<TTaskGridItem>({
     setHudUiState,
     setTaskWorkspaceRailHidden,
     setTaskTableLayoutPreferences,
-    setIsDailyPlanningCollapsed,
     setIsTaskFiltersOpen,
-    setPendingTaskEditorRestore,
     setTaskGridLayout,
     setTaskRouting,
     taskWorkspaceTabsState,

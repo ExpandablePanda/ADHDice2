@@ -73,7 +73,6 @@ function computeDerivedForHierarchyDiagnostics(
     deferredSearchQuery: string;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
     taskSubtasksByTaskId: Record<string, ReturnType<typeof createTask>[]>;
-    taskEditorTaskId: string | null;
     taskUiState: TaskUiState;
   }> = {},
 ) {
@@ -89,7 +88,6 @@ function computeDerivedForHierarchyDiagnostics(
     focusedTaskIds: [],
     listColumnPickerOrder: [],
     listVisibleColumns: [],
-    taskEditorTaskId: overrides.taskEditorTaskId ?? null,
     taskGridLayout: [],
     taskGridWidgetTypes: [],
     taskHistoryByTaskId: overrides.taskHistoryByTaskId ?? {},
@@ -223,7 +221,6 @@ function computeDerivedForQueueCount(tasks: ReturnType<typeof createTask>[], foc
     focusedTaskIds,
     listColumnPickerOrder: [],
     listVisibleColumns: [],
-    taskEditorTaskId: null,
     taskGridLayout: [],
     taskGridWidgetTypes: [],
     taskHistoryByTaskId: {},
@@ -294,10 +291,9 @@ test("normal task UI keeps Steps unified without migration-source labels", async
   const taskUiSources = await Promise.all([
     readFile(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../src/components/task-app/task-editor-modal.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8"),
   ]);
-  const [tableSource, listSource, , taskAppSource] = taskUiSources;
+  const [tableSource, listSource, taskAppSource] = taskUiSources;
   const combinedTaskUiSource = taskUiSources.join("\n");
   const getSourceSlice = (source: string, start: string, end: string) => {
     const startIndex = source.indexOf(start);
@@ -1651,29 +1647,6 @@ test("primary derived search matches task and child tags case-insensitively", ()
 
   assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), ["tagged-parent", "tagged-child-parent"]);
   assert.deepEqual(derived.searchMatchedStepParentTaskIds, ["tagged-child-parent"]);
-});
-
-test("task editor and actual-time lookup still find primary-hidden child tasks from full task data", () => {
-  const parent = createTask({
-    id: "parent",
-    sort_order: 1,
-    status: "pending",
-    title: "Parent",
-  });
-  const child = createTask({
-    id: "child",
-    parent_task_id: "parent",
-    sort_order: 1,
-    status: "pending",
-    title: "Child",
-  });
-
-  const derived = computeDerivedForHierarchyDiagnostics([parent, child], {
-    taskEditorTaskId: "child",
-  });
-
-  assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), ["parent"]);
-  assert.equal(derived.selectedTaskForEditor?.id, "child");
 });
 
 test("archive and trash primary arrays hide valid child tasks while keeping invalid rows findable", () => {
