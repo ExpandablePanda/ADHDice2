@@ -39,6 +39,7 @@ const TASK_VIEW_TARGETS: Array<{ title: string; view: TaskViewMode }> = [
   { title: "Cards View", view: "cards" },
   { title: "Matrix View", view: "matrix" },
   { title: "Grid View", view: "grid" },
+  { title: "Calendar View", view: "calendar" },
 ];
 
 const SETTINGS_SECTION_TARGETS: Array<{ id: NavigatorSettingsSection; title: string; keywords?: string[] }> = [

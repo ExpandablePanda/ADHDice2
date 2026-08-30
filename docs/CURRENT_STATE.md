@@ -5,13 +5,25 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.30`.
+- Current working app version: `7.12.31`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
-- `public/app-version.json`
+  - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-30 7.12.31 Tasks Calendar Month View
+
+Tasks now includes a first-class Calendar Month View with a Monday-through-Sunday
+grid, compact timed and untimed task rows, and a collapsed No Due Date section.
+Calendar placement is a live projection of each visible Task's `due_on` and
+`due_time`, including the current resolved metadata for recurring Tasks; future
+recurrence projection and drag-to-reschedule remain intentionally deferred.
+Calendar uses the existing Tasks workspace scope, filters, hierarchy visibility,
+Include Steps preference, Task editor, and Add Task flow. No SQL, schema,
+Calendar-specific persistence, or independent recurrence behavior was added;
+browser QA remains outstanding.
 
 ## 2026-08-30 7.12.23 Health Journal symptom management
 

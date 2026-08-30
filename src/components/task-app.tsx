@@ -91,6 +91,7 @@ import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-a
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
+import { TaskCalendarView } from "./task-app/task-calendar-view";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
 import { TaskActiveTimersTray } from "./task-app/task-active-timers-tray";
@@ -589,7 +590,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.12.30";
+const APP_VERSION = "7.12.31";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -4130,6 +4131,12 @@ export function TaskApp() {
     setTaskEditorFocusRequest(null);
   }, []);
 
+  const openCalendarDateTaskEditor = useCallback((dueOn: string) => {
+    setSuppressDetachedListNoticeTaskId(null);
+    setTaskEditorInitialDraft({ dueOn });
+    openNewTaskEditor();
+  }, [openNewTaskEditor]);
+
   const openInlineNewListTaskComposer = useCallback(async () => {
     const createdTask = await addTask(buildNewTaskDraft("New Task"));
 
@@ -4877,6 +4884,24 @@ export function TaskApp() {
     });
   }
 
+  const calendarTasks = useMemo(() => {
+    const tasksById = new Map(tasksForActiveStatusRead.map((task) => [task.id, task] as const));
+    const selectedTasksById = new Map(selectedBucketTasks.map((task) => [task.id, task] as const));
+
+    if (taskUiState.includeStepsByView.calendar) {
+      for (const group of Object.values(childTaskPreviewByParentTaskId)) {
+        for (const item of group.items) {
+          const task = tasksById.get(item.id);
+          if (task) {
+            selectedTasksById.set(task.id, task);
+          }
+        }
+      }
+    }
+
+    return Array.from(selectedTasksById.values());
+  }, [childTaskPreviewByParentTaskId, selectedBucketTasks, taskUiState.includeStepsByView.calendar, tasksForActiveStatusRead]);
+
   const gridContentNode = (
     <TaskGridView
       activeCount={filteredActiveTasks.length}
@@ -4951,6 +4976,14 @@ export function TaskApp() {
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       subtasksByTaskId={taskSubtasksByTaskId}
       tasks={selectedBucketTasks}
+    />
+  );
+  const calendarContentNode = (
+    <TaskCalendarView
+      onAddTask={openCalendarDateTaskEditor}
+      onOpenTask={openExistingTaskEditor}
+      taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
+      tasks={calendarTasks}
     />
   );
   const requestedOpenListTask = requestedListOverlayTaskId
@@ -7314,6 +7347,7 @@ export function TaskApp() {
             )}
             alternateViewPanel={(
               <TasksNonListShell
+                calendarNode={calendarContentNode}
                 cardsNode={cardsContentNode}
                 dailyPlanningNode={nonListDailyPlanningNode}
                 filterRowsNode={nonListFilterRowsNode}

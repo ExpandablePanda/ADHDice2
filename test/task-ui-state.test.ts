@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_TASK_UI_STATE, DEFAULT_TASK_WORKSPACE_TAB_ID, isReportTaskWorkspaceTab, migrateLegacyTaskUiState, normalizePersistedTaskEditorUiState, normalizeTaskWorkspaceTabsState, reorderTaskWorkspaceTabToIndex, reorderTaskWorkspaceTabs } from "../src/lib/task-ui-state.ts";
+import { DEFAULT_TASK_UI_STATE, DEFAULT_TASK_WORKSPACE_TAB_ID, isReportTaskWorkspaceTab, migrateLegacyTaskUiState, normalizePersistedTaskEditorUiState, normalizeTaskWorkspaceTabsState, reorderTaskWorkspaceTabToIndex, reorderTaskWorkspaceTabs, VALID_TASK_VIEWS } from "../src/lib/task-ui-state.ts";
+
+test("calendar is a valid task view with independent include-steps defaults", () => {
+  assert.deepEqual(VALID_TASK_VIEWS, ["table", "list", "cards", "matrix", "grid", "calendar"]);
+  assert.equal(DEFAULT_TASK_UI_STATE.includeStepsByView.calendar, false);
+  assert.ok(DEFAULT_TASK_UI_STATE.visibleColumnsByView.calendar.length > 0);
+});
 
 test("task ui state migration repairs missing newer columns", () => {
   const migrated = migrateLegacyTaskUiState({
@@ -14,7 +20,7 @@ test("task ui state migration repairs missing newer columns", () => {
     },
   });
 
-  for (const view of ["table", "list", "cards", "matrix", "grid"] as const) {
+  for (const view of ["table", "list", "cards", "matrix", "grid", "calendar"] as const) {
     assert.equal(migrated.visibleColumnsByView[view].includes("estimated_time"), true);
     assert.equal(migrated.visibleColumnsByView[view].includes("actual_time"), true);
     assert.equal(migrated.visibleColumnsByView[view].includes("tags"), true);
@@ -25,6 +31,45 @@ test("task ui state migration repairs missing newer columns", () => {
   assert.equal(migrated.visibleColumnsByView.table.includes("streak"), false);
   assert.equal(migrated.visibleColumnsByView.list.includes("date_completed"), false);
   assert.equal(migrated.visibleColumnsByView.list.includes("streak"), false);
+  assert.equal(migrated.includeStepsByView.calendar, false);
+});
+
+test("legacy task workspace tabs preserve existing state while adding calendar defaults", () => {
+  const normalized = normalizeTaskWorkspaceTabsState({
+    activeTabId: "workspace-2",
+    tabs: [
+      {
+        id: "workspace-1",
+        isRailHidden: true,
+        label: "Planning",
+        taskUiState: {
+          ...DEFAULT_TASK_UI_STATE,
+          includeStepsByView: { ...DEFAULT_TASK_UI_STATE.includeStepsByView, list: true },
+          search: "Vera",
+          selectedBucket: "list:planning",
+          view: "list",
+        },
+      },
+      {
+        id: "workspace-2",
+        isRailHidden: false,
+        label: "Calendar",
+        taskUiState: {
+          ...DEFAULT_TASK_UI_STATE,
+          includeStepsByView: { ...DEFAULT_TASK_UI_STATE.includeStepsByView, calendar: true },
+          view: "calendar",
+        },
+      },
+    ],
+  });
+
+  assert.equal(normalized.tabs.length, 2);
+  assert.equal(normalized.activeTabId, "workspace-2");
+  assert.equal(normalized.tabs[0]?.taskUiState.search, "Vera");
+  assert.equal(normalized.tabs[0]?.taskUiState.selectedBucket, "list:planning");
+  assert.equal(normalized.tabs[0]?.taskUiState.includeStepsByView.list, true);
+  assert.equal(normalized.tabs[1]?.taskUiState.view, "calendar");
+  assert.equal(normalized.tabs[1]?.taskUiState.includeStepsByView.calendar, true);
 });
 
 test("task ui state migration drops invalid columns and repairs bucket/view/status filters", () => {

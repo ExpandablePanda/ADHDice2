@@ -6,6 +6,7 @@ import { TasksNonListViewPanel } from "./tasks-page";
 import type { TaskViewMode } from "@/lib/task-ui-state";
 
 type TasksNonListShellProps = {
+  calendarNode: ReactNode;
   cardsNode: ReactNode;
   dailyPlanningNode: ReactNode;
   filterRowsNode: ReactNode;
@@ -16,6 +17,7 @@ type TasksNonListShellProps = {
 };
 
 export function TasksNonListShell({
+  calendarNode,
   cardsNode,
   dailyPlanningNode,
   filterRowsNode,
@@ -29,6 +31,7 @@ export function TasksNonListShell({
       contentNode={(
         <TasksNonListContent
           cardsNode={cardsNode}
+          calendarNode={calendarNode}
           gridNode={gridNode}
           listNode={listNode}
           matrixNode={matrixNode}
