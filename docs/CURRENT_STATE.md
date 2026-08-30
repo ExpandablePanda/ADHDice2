@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.24`.
+- Current working app version: `7.12.25`.
 - Current release group: `7.12.x` Health Journal symptom recovery.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -33,6 +33,14 @@ show every collided symptom entry together; Focus and Nutrition retain their
 existing detail behavior. Symptom Library creation controls now share a compact
 wrapping row on wider screens. No SQL, schema, persistence, native, or iOS
 behavior changed; browser verification remains outstanding.
+
+## 2026-08-30 7.12.25 Symptom Library create row sizing
+
+The Symptom Library definition-creation row now lets its input fill the
+available desktop/tablet width while keeping Cancel and Save compact at the
+right edge. The row still wraps naturally on narrow mobile screens. Journal
+trend, chart collision, symptom color, and persistence behavior are unchanged;
+browser verification remains outstanding.
 
 ## 2026-08-30 7.12.22 Health Journal color picker Safari correction
 

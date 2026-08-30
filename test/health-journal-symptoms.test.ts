@@ -635,8 +635,9 @@ test("Symptom Library supports definition-only creation and shared color editing
   const symptomCreateFormStart = healthPageSource.indexOf("{isSymptomCreateOpen ? (");
   const symptomCreateFormSource = healthPageSource.slice(symptomCreateFormStart, healthPageSource.indexOf("{activeSymptoms.length", symptomCreateFormStart));
   assert.match(symptomCreateFormSource, /flex min-w-0 flex-wrap items-center gap-2/);
-  assert.match(symptomCreateFormSource, /max-w-\[260px\]/);
-  assert.match(symptomCreateFormSource, /flex shrink-0 gap-2/);
+  assert.match(symptomCreateFormSource, /min-w-0 w-full sm:min-w-\[12rem\] sm:flex-1 sm:w-auto/);
+  assert.doesNotMatch(symptomCreateFormSource, /max-w-\[260px\]|flex-\[0_1_260px\]/);
+  assert.match(symptomCreateFormSource, /flex shrink-0 gap-2 sm:ml-auto/);
   const createHandlerStart = healthPageSource.indexOf("async function handleCreateSymptom");
   const createHandlerEnd = healthPageSource.indexOf("async function handleSaveMeal", createHandlerStart);
   const createHandlerSource = healthPageSource.slice(createHandlerStart, createHandlerEnd);

@@ -2247,7 +2247,7 @@ export function HealthPage({
                   <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 rounded-[0.8rem] border border-[#e4deef] bg-white/70 p-2 dark:border-white/10 dark:bg-white/[0.04]">
                     <input
                       aria-label="New symptom name"
-                      className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 w-full max-w-[260px] sm:flex-[0_1_260px] sm:w-auto`}
+                      className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 w-full sm:min-w-[12rem] sm:flex-1 sm:w-auto`}
                       disabled={isCreatingSymptom}
                       onChange={(event) => setSymptomCreateName(event.target.value)}
                       onKeyDown={(event) => {
@@ -2259,7 +2259,7 @@ export function HealthPage({
                       placeholder="e.g. Back Pain"
                       value={symptomCreateName}
                     />
-                    <div className="flex shrink-0 gap-2">
+                    <div className="flex shrink-0 gap-2 sm:ml-auto">
                       <AdhdChip disabled={isCreatingSymptom} onClick={closeSymptomCreateForm} type="button">Cancel</AdhdChip>
                       <AdhdChip disabled={isCreatingSymptom} onClick={() => { void handleCreateSymptom(); }} tone="purple" type="button">Save</AdhdChip>
                     </div>
