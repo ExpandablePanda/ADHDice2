@@ -89,6 +89,7 @@ import {
   getDefaultHealthSymptomId,
   groupHealthSymptomEntriesByDate,
   getHealthSymptomTrendEntries,
+  getLatestHealthSymptomTrendSeverity,
   getSelectableHealthSymptoms,
   getHealthSleepElapsedSeconds,
   getHealthSleepStartTimestamp,
@@ -680,7 +681,8 @@ export function HealthPage({
           value: entry.severity,
         };
       }),
-      totalValue: selectedSymptomTrendEntries.reduce((total, entry) => total + entry.severity, 0),
+      summaryLabel: "Latest",
+      totalValue: getLatestHealthSymptomTrendSeverity(selectedSymptomTrendEntries) ?? 0,
     }];
   }, [selectedSymptomTrend, selectedSymptomTrendEntries]);
 

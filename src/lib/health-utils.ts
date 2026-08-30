@@ -352,6 +352,10 @@ export function getHealthSymptomTrendEntries({
     .sort(compareHealthSymptomEntriesChronologically);
 }
 
+export function getLatestHealthSymptomTrendSeverity(entries: HealthSymptomEntry[]) {
+  return entries.at(-1)?.severity ?? null;
+}
+
 export function reconcileHealthSymptoms(
   localSymptoms: HealthSymptom[],
   remoteSymptoms: HealthSymptom[],

@@ -14,6 +14,7 @@ export type NumericLineChartSeries = {
   key: string;
   label: string;
   points: NumericLineChartPoint[];
+  summaryLabel?: string;
   totalValue: number;
 };
 
@@ -138,7 +139,7 @@ export function ActivityLineChartCard({
                 {series.map((item) => (
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-[#e4deef] bg-[var(--surface-elevated)] px-2.5 py-1 text-[11px] font-semibold leading-none text-[#68738c] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/60" key={item.key}>
                     <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
-                    {item.label}
+                    {item.summaryLabel ?? item.label}
                     <span className="text-[var(--text-muted)]">{formatValue(item.totalValue)}</span>
                   </span>
                 ))}

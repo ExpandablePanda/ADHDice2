@@ -7,6 +7,7 @@ import {
   groupHealthSymptomEntriesByDate,
   getDefaultHealthSymptomId,
   getHealthSymptomTrendEntries,
+  getLatestHealthSymptomTrendSeverity,
   getSelectableHealthSymptoms,
   HEALTH_MOOD_OPTIONS,
   HEALTH_SCALE_OPTIONS,
@@ -106,6 +107,34 @@ test("symptom trends order timestamped entries and preserve multiple same-day po
     ["afternoon", 6],
   ]);
   assert.equal(trendEntries.filter((entry) => entry.entry_date === "2026-08-29").length, 2);
+  assert.equal(getLatestHealthSymptomTrendSeverity(trendEntries), 6);
+});
+
+test("symptom trend summary uses the latest visible severity, never a sum, and follows range-filtered points", () => {
+  const entries = [
+    symptomEntry("older", "2026-08-01", "2026-08-01T09:00:00.000Z", 3),
+    symptomEntry("visible", "2026-08-23", "2026-08-23T09:00:00.000Z", 7),
+    symptomEntry("future", "2026-08-30", "2026-08-30T09:00:00.000Z", 4),
+  ];
+  const visibleEntries = getHealthSymptomTrendEntries({
+    asOfDate: "2026-08-29",
+    entries,
+    range: "7D",
+    symptomId: "symptom-1",
+  });
+  const allEntries = getHealthSymptomTrendEntries({
+    asOfDate: "2026-08-29",
+    entries,
+    range: "All",
+    symptomId: "symptom-1",
+  });
+
+  assert.deepEqual(visibleEntries.map((entry) => entry.severity), [7]);
+  assert.deepEqual(allEntries.map((entry) => entry.severity), [3, 7, 4]);
+  assert.equal(getLatestHealthSymptomTrendSeverity(visibleEntries), 7);
+  assert.equal(getLatestHealthSymptomTrendSeverity(allEntries), 4);
+  assert.notEqual(getLatestHealthSymptomTrendSeverity(allEntries), 14);
+  assert.equal(getLatestHealthSymptomTrendSeverity([]), null);
 });
 
 test("symptom trends filter calendar ranges without synthesizing or aggregating points", () => {
@@ -143,9 +172,13 @@ test("Journal symptom trends adapt into the shared chart with a fixed 1 to 10 se
   assert.match(healthPageSource, /HEALTH_SYMPTOM_TREND_RANGES/);
   assert.match(healthPageSource, /title="Symptom Trends"/);
   assert.match(healthPageSource, /key: entry\.id/);
+  assert.match(healthPageSource, /summaryLabel: "Latest"/);
+  assert.match(healthPageSource, /getLatestHealthSymptomTrendSeverity\(selectedSymptomTrendEntries\)/);
+  assert.doesNotMatch(healthPageSource, /totalValue: selectedSymptomTrendEntries\.reduce/);
   assert.match(healthPageSource, /maxValue=\{10\}/);
   assert.match(activityChartSource, /maxValue\?: number/);
   assert.match(activityChartSource, /maxValueOverride/);
+  assert.match(activityChartSource, /item\.summaryLabel \?\? item\.label/);
 });
 
 test("local symptom recovery keeps an empty remote response visible and recovers definitions before entries", () => {

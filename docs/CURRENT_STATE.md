@@ -5,13 +5,21 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.17`.
+- Current working app version: `7.12.18`.
 - Current release group: `7.12.x` Health Journal symptom recovery.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-30 7.12.18 Health Journal trend summary correction
+
+Health → Journal Symptom Trends now labels the graph summary `Latest` and
+shows the severity from the last plotted timestamped entry in the selected
+range. Raw entries remain separate points; symptom severities are not summed,
+averaged, or otherwise aggregated. No persistence, schema, SQL, recovery,
+dropdown, Focus, Nutrition, or browser behavior changed.
 
 ## 2026-08-30 7.12.17 Health Journal symptom trends
 
