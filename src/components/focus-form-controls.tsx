@@ -158,8 +158,13 @@ export function FocusSuggestionInput({
           aria-expanded={isOpen}
           className="absolute right-4 top-1/2 flex -translate-y-1/2 items-center justify-center text-[#6f57f6] dark:text-[#cabfff]"
           onClick={() => {
+            if (isOpen) {
+              setIsOpen(false);
+              return;
+            }
+
             focusDropdownControl(inputRef.current);
-            setIsOpen((current) => !current);
+            setIsOpen(true);
           }}
           type="button"
         >
