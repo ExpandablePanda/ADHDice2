@@ -33,3 +33,19 @@ test("Calendar remains a metadata projection without its own scheduling authorit
   assert.doesNotMatch(calendar, /localStorage|supabase|from\(|scheduled_on|repeat_frequency|repeat_interval|calendar_date|calendar_time/);
   assert.doesNotMatch(calendar, /onDrop|draggable|drag-to-reschedule/i);
 });
+
+test("Calendar TaskApp derivation stays before boot and auth render guards", () => {
+  const app = read("../src/components/task-app.tsx");
+  const taskApp = app.slice(app.indexOf("export function TaskApp()"));
+  const calendarTasksIndex = taskApp.indexOf("const calendarTasks = useMemo");
+  const earlyReturnIndexes = [
+    taskApp.indexOf("if (!supabase) {\n    return <ConfigSplash />;"),
+    taskApp.indexOf("if (!isAuthResolved) {\n    return <WorkspaceLoadingScreen theme={theme} />;"),
+    taskApp.indexOf("if (!session?.user) {\n    return (\n      <AuthSplash"),
+    taskApp.indexOf("if (shouldBlockAuthenticatedAppBody) {\n    return <WorkspaceLoadingScreen theme={theme} />;"),
+  ];
+
+  assert.notEqual(calendarTasksIndex, -1);
+  assert.ok(earlyReturnIndexes.every((index) => index !== -1));
+  assert.ok(calendarTasksIndex < Math.min(...earlyReturnIndexes));
+});

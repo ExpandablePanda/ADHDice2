@@ -590,7 +590,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.12.31";
+const APP_VERSION = "7.12.32";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3379,6 +3379,23 @@ export function TaskApp() {
     urgentTasks,
   }, momentumView);
   const selectedBucketTasks = taskSearchSelection?.visibleTasks ?? canonicalVisibleRootTasksSorted;
+  const calendarTasks = useMemo(() => {
+    const tasksById = new Map(tasksForActiveStatusRead.map((task) => [task.id, task] as const));
+    const selectedTasksById = new Map(selectedBucketTasks.map((task) => [task.id, task] as const));
+
+    if (taskUiState.includeStepsByView.calendar) {
+      for (const group of Object.values(childTaskPreviewByParentTaskId)) {
+        for (const item of group.items) {
+          const task = tasksById.get(item.id);
+          if (task) {
+            selectedTasksById.set(task.id, task);
+          }
+        }
+      }
+    }
+
+    return Array.from(selectedTasksById.values());
+  }, [childTaskPreviewByParentTaskId, selectedBucketTasks, taskUiState.includeStepsByView.calendar, tasksForActiveStatusRead]);
   const searchMatchedChildTaskIds = taskSearchSelection
     ? Array.from(taskSearchSelection.matchingDescendantIdsByRootParentId.values())
       .flatMap((descendantIds) => Array.from(descendantIds))
@@ -4883,24 +4900,6 @@ export function TaskApp() {
         : (current - 1 + runningTaskTimers.length) % runningTaskTimers.length;
     });
   }
-
-  const calendarTasks = useMemo(() => {
-    const tasksById = new Map(tasksForActiveStatusRead.map((task) => [task.id, task] as const));
-    const selectedTasksById = new Map(selectedBucketTasks.map((task) => [task.id, task] as const));
-
-    if (taskUiState.includeStepsByView.calendar) {
-      for (const group of Object.values(childTaskPreviewByParentTaskId)) {
-        for (const item of group.items) {
-          const task = tasksById.get(item.id);
-          if (task) {
-            selectedTasksById.set(task.id, task);
-          }
-        }
-      }
-    }
-
-    return Array.from(selectedTasksById.values());
-  }, [childTaskPreviewByParentTaskId, selectedBucketTasks, taskUiState.includeStepsByView.calendar, tasksForActiveStatusRead]);
 
   const gridContentNode = (
     <TaskGridView

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.31`.
+- Current working app version: `7.12.32`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -24,6 +24,14 @@ Calendar uses the existing Tasks workspace scope, filters, hierarchy visibility,
 Include Steps preference, Task editor, and Add Task flow. No SQL, schema,
 Calendar-specific persistence, or independent recurrence behavior was added;
 browser QA remains outstanding.
+
+## 2026-08-30 7.12.32 Calendar TaskApp hook-order correction
+
+The Calendar Tasks derivation now runs in TaskApp's unconditional derived-data
+section before the boot and authentication render guards. This preserves the
+React Rules-of-Hooks ordering across loading, signed-out, and ready renders.
+Calendar UI, filtering, metadata authority, recurrence behavior, and persistence
+are unchanged; browser QA remains outstanding.
 
 ## 2026-08-30 7.12.23 Health Journal symptom management
 
