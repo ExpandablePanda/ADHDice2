@@ -68,7 +68,8 @@ test("Water History exposes historical individual entries through WaterEntryCard
   assert.deepEqual(history[0]?.entries.map((entry) => entry.id), ["water-1"]);
   assert.match(waterPanelSource, /aria-expanded=\{expandedHistoryDates\.has\(day\.dateKey\)\}/);
   assert.match(waterPanelSource, /day\.entries\.map\(\(entry\) => \(/);
-  assert.match(waterPanelSource, /entry=\{entry\}[\s\S]*?showRemove=\{false\}/);
+  assert.doesNotMatch(waterPanelSource, /water-history-entries-\$\{day\.dateKey\}"[^>]*sm:grid-cols-2/);
+  assert.doesNotMatch(waterPanelSource, /showRemove=\{false\}/);
 });
 
 test("legacy local water rows normalize as confirmed and invalid water goals clear safely", () => {
@@ -96,6 +97,8 @@ test("Water entry mode uses fl oz defaults, requested presets, custom mode, and 
   assert.match(waterPanelSource, /const WATER_CUP_PRESETS = \[1\]/);
   assert.doesNotMatch(waterPanelSource, /addAmount\((?:8|12|16), "fl_oz"\)/);
   assert.match(waterPanelSource, /isCustomAmountSelected/);
+  const customAmountSource = waterPanelSource.slice(waterPanelSource.indexOf("Custom water amount"));
+  assert.match(customAmountSource, /className=\{`\$\{HEALTH_COMPACT_INPUT_CLASS\} w-20`\} inputMode="decimal"/);
   assert.match(waterPanelSource, /getCurrentHealthDateTimeInputs\(\)/);
   assert.match(waterPanelSource, /entry_date: entryDateTime\.date/);
   assert.match(waterPanelSource, /logged_at: buildLoggedAt\(entryDateTime\.date, entryDateTime\.time\)/);
@@ -103,12 +106,21 @@ test("Water entry mode uses fl oz defaults, requested presets, custom mode, and 
   assert.match(healthHookSource, /logged_at: input\.logged_at \?\? now/);
 });
 
+test("new Water entry Date and Time use compact inline controls that wrap on mobile", () => {
+  assert.match(waterPanelSource, /flex flex-wrap items-center gap-x-3 gap-y-2 border-t border/);
+  assert.match(waterPanelSource, /<span className="shrink-0 font-medium">Date<\/span>/);
+  assert.match(waterPanelSource, /\$\{HEALTH_COMPACT_INPUT_CLASS\} w-40 max-w-full`\}[^\n]*type="date"/);
+  assert.match(waterPanelSource, /<span className="shrink-0 font-medium">Time<\/span>/);
+  assert.match(waterPanelSource, /\$\{HEALTH_COMPACT_INPUT_CLASS\} w-28 max-w-full`\}[^\n]*type="time"/);
+});
+
 test("Daily Water Goal starts compact when saved and keeps a compact editor", () => {
   assert.match(waterPanelSource, /goalEditorOpenOverride/);
   assert.match(waterPanelSource, /const isGoalEditorOpen = goalEditorOpenOverride \?\? waterGoalMl === null/);
   assert.match(waterPanelSource, /No active goal/);
   assert.match(waterPanelSource, /aria-label="Edit daily water goal"/);
-  assert.match(waterPanelSource, /w-24/);
+  assert.match(waterPanelSource, /mt-2 flex flex-wrap items-end gap-2 sm:flex-nowrap/);
+  assert.match(waterPanelSource, /label className="grid w-20 max-w-20 shrink-0/);
   assert.match(waterPanelSource, /setGoalEditorOpenOverride\(false\)/);
   assert.match(waterPanelSource, /setGoalAmountOverride\(""\)/);
 });
@@ -135,6 +147,27 @@ test("historical entry editing uses the existing startEditing, saveEditing, and 
   assert.match(waterPanelSource, /const saved = await updateWaterEntry\(entryId, \{/);
   assert.equal((waterPanelSource.match(/onStartEdit=\{startEditing\}/g) ?? []).length, 3);
   assert.equal((waterPanelSource.match(/onSaveEdit=\{saveEditing\}/g) ?? []).length, 3);
+});
+
+test("historical Water edit controls use one full-width row with compact usable sizing", () => {
+  const editingSource = waterPanelSource.slice(
+    waterPanelSource.indexOf("if (isEditing)"),
+    waterPanelSource.indexOf("\n  return (\n    <AdhdCard>", waterPanelSource.indexOf("if (isEditing)")),
+  );
+
+  assert.match(editingSource, /flex flex-wrap items-end gap-x-3 gap-y-2/);
+  assert.doesNotMatch(editingSource, /sm:grid-cols-2/);
+  assert.match(editingSource, /HEALTH_COMPACT_INPUT_CLASS\} w-20 max-w-full/);
+  assert.match(editingSource, /HEALTH_COMPACT_INPUT_CLASS\} w-28 max-w-full/);
+  assert.match(editingSource, /HEALTH_COMPACT_INPUT_CLASS\} w-40 max-w-full/);
+  assert.match(editingSource, /text-\[13px\]/);
+});
+
+test("Water History exposes Delete through the existing deleteWaterEntry authority", () => {
+  assert.equal((waterPanelSource.match(/deleteWaterEntry=\{deleteWaterEntry\}/g) ?? []).length, 3);
+  assert.match(waterPanelSource, /onClick=\{\(\) => \{ void deleteWaterEntry\(entry\.id\); \}\}/);
+  assert.match(waterPanelSource, />\s*Delete\s*<\/AdhdChip>/);
+  assert.doesNotMatch(waterPanelSource, />\s*Remove\s*<\/AdhdChip>/);
 });
 
 test("editing amount and unit recalculates displayed historical totals", () => {
@@ -220,7 +253,7 @@ test("Water exposes the persisted goal and Pending to Confirm row workflow", () 
   assert.match(waterPanelSource, /confirmWaterEntry=\{confirmWaterEntry\}/);
   assert.match(waterPanelSource, /<span[^>]*>Pending<\/span>/);
   assert.match(waterPanelSource, /Confirm/);
-  assert.match(waterPanelSource, /\{isPending \? "Delete" : "Remove"\}/);
+  assert.match(waterPanelSource, />\s*Delete\s*<\/AdhdChip>/);
   assert.match(waterPanelSource, /saveWaterGoal\(/);
   const confirmationSource = healthHookSource.slice(
     healthHookSource.indexOf("async function confirmWaterEntry"),

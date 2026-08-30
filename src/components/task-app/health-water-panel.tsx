@@ -17,6 +17,7 @@ import {
 } from "@/lib/health-library";
 import { formatHealthDateLabel, getCurrentHealthDateTimeInputs } from "@/lib/health-utils";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
+import { HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { HealthWaterLineChart } from "./health-water-line-chart";
 
 type HealthWaterPanelProps = {
@@ -221,12 +222,12 @@ export function HealthWaterPanel({
               ) : null}
             </div>
             {isGoalEditorOpen ? (
-              <div className="mt-2 flex flex-wrap items-end gap-2">
-                <label className="grid w-24 max-w-24 gap-1">
+              <div className="mt-2 flex flex-wrap items-end gap-2 sm:flex-nowrap">
+                <label className="grid w-20 max-w-20 shrink-0 gap-1">
                   <span className="sr-only">Daily water goal amount</span>
-                  <input className="health-input w-24" inputMode="decimal" onChange={(event) => setGoalAmountOverride(event.target.value)} placeholder="80" value={goalAmount} />
+                  <input className={`${HEALTH_COMPACT_INPUT_CLASS} w-20`} inputMode="decimal" onChange={(event) => setGoalAmountOverride(event.target.value)} placeholder="80" value={goalAmount} />
                 </label>
-                <div className="flex gap-1.5">
+                <div className="flex shrink-0 gap-1.5">
                   <AdhdChip onClick={() => changeGoalUnit("cup")} selected={goalUnit === "cup"}>Cups</AdhdChip>
                   <AdhdChip onClick={() => changeGoalUnit("fl_oz")} selected={goalUnit === "fl_oz"}>Fl oz</AdhdChip>
                 </div>
@@ -259,22 +260,22 @@ export function HealthWaterPanel({
                 </div>
               ) : (
                 <div className="flex flex-wrap items-end gap-2">
-                  <label className="grid w-24 max-w-24 gap-1">
+                  <label className="grid w-20 max-w-20 shrink-0 gap-1">
                     <span className="sr-only">Custom water amount</span>
-                    <input className="health-input w-24" inputMode="decimal" onChange={(event) => setAmount(event.target.value)} value={amount} />
+                    <input className={`${HEALTH_COMPACT_INPUT_CLASS} w-20`} inputMode="decimal" onChange={(event) => setAmount(event.target.value)} value={amount} />
                   </label>
                   <span className="pb-2 text-xs font-semibold text-[#7d7598] dark:text-white/55">{unit === "cup" ? "cups" : "fl oz"}</span>
                   <AdhdChip onClick={() => { void addAmount(Number.parseFloat(amount), unit); }} selected>Add</AdhdChip>
                 </div>
               )}
-              <div className="flex flex-wrap items-end gap-2 border-t border-[#ece8f8] pt-3 dark:border-white/10">
-                <label className="grid gap-1">
-                  <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Date</span>
-                  <input className="health-input" onChange={(event) => setEntryDateTime((current) => ({ ...current, date: event.target.value }))} type="date" value={entryDateTime.date} />
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-[#ece8f8] pt-3 text-xs dark:border-white/10">
+                <label className="flex min-w-0 items-center gap-1.5 text-[#7d7598] dark:text-white/55">
+                  <span className="shrink-0 font-medium">Date</span>
+                  <input className={`${HEALTH_COMPACT_INPUT_CLASS} w-40 max-w-full`} onChange={(event) => setEntryDateTime((current) => ({ ...current, date: event.target.value }))} type="date" value={entryDateTime.date} />
                 </label>
-                <label className="grid gap-1">
-                  <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Time</span>
-                  <input className="health-input" onChange={(event) => setEntryDateTime((current) => ({ ...current, time: event.target.value }))} type="time" value={entryDateTime.time} />
+                <label className="flex min-w-0 items-center gap-1.5 text-[#7d7598] dark:text-white/55">
+                  <span className="shrink-0 font-medium">Time</span>
+                  <input className={`${HEALTH_COMPACT_INPUT_CLASS} w-28 max-w-full`} onChange={(event) => setEntryDateTime((current) => ({ ...current, time: event.target.value }))} type="time" value={entryDateTime.time} />
                 </label>
               </div>
             </div>
@@ -356,7 +357,7 @@ export function HealthWaterPanel({
                     </div>
                   </div>
                   {expandedHistoryDates.has(day.dateKey) ? (
-                    <div className="mt-4 grid gap-3 border-t border-[#ece8f8] pt-4 dark:border-white/10 sm:grid-cols-2" id={`water-history-entries-${day.dateKey}`}>
+                    <div className="mt-4 grid gap-3 border-t border-[#ece8f8] pt-4 dark:border-white/10" id={`water-history-entries-${day.dateKey}`}>
                       {day.entries.map((entry) => (
                         <WaterEntryCard
                           deleteWaterEntry={deleteWaterEntry}
@@ -368,7 +369,6 @@ export function HealthWaterPanel({
                           onChangeDraft={setEditDraft}
                           onSaveEdit={saveEditing}
                           onStartEdit={startEditing}
-                          showRemove={false}
                         />
                       ))}
                     </div>
@@ -400,7 +400,6 @@ type WaterEntryCardProps = {
   onChangeDraft: (draft: WaterEditDraft) => void;
   onSaveEdit: (entryId: string) => Promise<void>;
   onStartEdit: (entry: HealthWaterEntry) => void;
-  showRemove?: boolean;
 };
 
 function WaterEntryCard({
@@ -413,7 +412,6 @@ function WaterEntryCard({
   onChangeDraft,
   onSaveEdit,
   onStartEdit,
-  showRemove = true,
 }: WaterEntryCardProps) {
   const isEditing = editingId === entry.id;
   const isPending = !isHealthWaterEntryConfirmed(entry);
@@ -421,20 +419,20 @@ function WaterEntryCard({
     return (
       <AdhdCard>
         <div className="grid gap-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="grid gap-1.5">
+          <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+            <label className="grid w-20 max-w-full gap-1.5">
               <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Amount</span>
               <input
-                className="health-input"
+                className={`${HEALTH_COMPACT_INPUT_CLASS} w-20 max-w-full text-[13px]`}
                 inputMode="decimal"
                 onChange={(event) => onChangeDraft({ ...editDraft, amount: event.target.value })}
                 value={editDraft.amount}
               />
             </label>
-            <label className="grid gap-1.5">
+            <label className="grid w-28 max-w-full gap-1.5">
               <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Unit</span>
               <select
-                className="health-input"
+                className={`${HEALTH_COMPACT_INPUT_CLASS} w-28 max-w-full text-[13px]`}
                 onChange={(event) => onChangeDraft({ ...editDraft, unit: event.target.value as HealthWaterUnit })}
                 value={editDraft.unit}
               >
@@ -442,19 +440,19 @@ function WaterEntryCard({
                 <option value="fl_oz">Fl oz</option>
               </select>
             </label>
-            <label className="grid gap-1.5">
+            <label className="grid w-40 max-w-full gap-1.5">
               <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Date</span>
               <input
-                className="health-input"
+                className={`${HEALTH_COMPACT_INPUT_CLASS} w-40 max-w-full text-[13px]`}
                 onChange={(event) => onChangeDraft({ ...editDraft, date: event.target.value })}
                 type="date"
                 value={editDraft.date}
               />
             </label>
-            <label className="grid gap-1.5">
+            <label className="grid w-28 max-w-full gap-1.5">
               <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Time</span>
               <input
-                className="health-input"
+                className={`${HEALTH_COMPACT_INPUT_CLASS} w-28 max-w-full text-[13px]`}
                 onChange={(event) => onChangeDraft({ ...editDraft, time: event.target.value })}
                 type="time"
                 value={editDraft.time}
@@ -499,17 +497,15 @@ function WaterEntryCard({
           >
             Edit
           </AdhdChip>
-          {showRemove ? (
-            <AdhdChip
-              className="shrink-0"
-              contentClassName="gap-1"
-              icon={<Trash2 aria-hidden="true" className="h-3 w-3" />}
-              onClick={() => { void deleteWaterEntry(entry.id); }}
-              tone="danger"
-            >
-              {isPending ? "Delete" : "Remove"}
-            </AdhdChip>
-          ) : null}
+          <AdhdChip
+            className="shrink-0"
+            contentClassName="gap-1"
+            icon={<Trash2 aria-hidden="true" className="h-3 w-3" />}
+            onClick={() => { void deleteWaterEntry(entry.id); }}
+            tone="danger"
+          >
+            Delete
+          </AdhdChip>
         </div>
       </div>
     </AdhdCard>

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.29`.
+- Current working app version: `7.12.30`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -53,6 +53,17 @@ its existing controls and history with the shared daily fl oz line chart, and
 Nutrition calorie plus Sleep charts show their existing persisted goals as
 optional shared reference lines. No SQL, schema, native, or iOS changes were
 made; browser and cross-device verification remain outstanding.
+
+## 2026-08-30 7.12.30 Water UI polish
+
+Water new-entry amount and Daily Water Goal controls now use compact Health
+input sizing. New-entry Date and Time share a compact wrapping row, while
+historical Water entries use full-width expanded rows with readable compact
+Amount, Unit, Date, and Time edit controls. Historical confirmed entries now
+reuse the existing Delete action. Water goal controls stay on one row at
+desktop/tablet widths and wrap on narrow mobile. Water persistence, Pending /
+Confirm semantics, calculations, analytics, graphs, SQL, schema, native, and
+iOS behavior are unchanged; browser QA remains outstanding.
 
 ## 2026-08-30 7.12.29 QA corrections and UI polish
 
