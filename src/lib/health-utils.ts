@@ -300,14 +300,38 @@ export function reconcileHealthSymptoms(
   remoteEntries: HealthSymptomEntry[],
 ) {
   const remoteSymptomIds = new Set(remoteSymptoms.map((symptom) => symptom.id));
-  const unreconciledLocalSymptoms = localSymptoms.filter((symptom) => !remoteSymptomIds.has(symptom.id));
+  const remoteActiveSymptomsByName = new Map<string, HealthSymptom>();
+  remoteSymptoms.forEach((symptom) => {
+    if (symptom.archived_at === null) {
+      const normalizedName = normalizeHealthSymptomName(symptom.name).toLowerCase();
+      if (!remoteActiveSymptomsByName.has(normalizedName)) {
+        remoteActiveSymptomsByName.set(normalizedName, symptom);
+      }
+    }
+  });
+  const canonicalSymptomIdByLocalId = new Map<string, string>();
+  localSymptoms.forEach((symptom) => {
+    if (symptom.archived_at !== null) {
+      return;
+    }
+    const remoteSymptom = remoteActiveSymptomsByName.get(normalizeHealthSymptomName(symptom.name).toLowerCase());
+    if (remoteSymptom && remoteSymptom.id !== symptom.id) {
+      canonicalSymptomIdByLocalId.set(symptom.id, remoteSymptom.id);
+    }
+  });
+  const unreconciledLocalSymptoms = localSymptoms.filter((symptom) =>
+    !remoteSymptomIds.has(symptom.id) && !canonicalSymptomIdByLocalId.has(symptom.id));
   const mergedSymptoms = sortHealthSymptoms([...remoteSymptoms, ...unreconciledLocalSymptoms]);
   const remoteEntryIds = new Set(remoteEntries.map((entry) => entry.id));
   const localOnlyEntries = localEntries.filter((entry) => !remoteEntryIds.has(entry.id));
-  const unreconciledLocalEntries = localOnlyEntries.filter((entry) => remoteSymptomIds.has(entry.symptom_id));
+  const remappedLocalOnlyEntries = localOnlyEntries.map((entry) => {
+    const canonicalSymptomId = canonicalSymptomIdByLocalId.get(entry.symptom_id);
+    return canonicalSymptomId ? { ...entry, symptom_id: canonicalSymptomId } : entry;
+  });
+  const unreconciledLocalEntries = remappedLocalOnlyEntries.filter((entry) => remoteSymptomIds.has(entry.symptom_id));
 
   return {
-    mergedEntries: sortHealthSymptomEntries([...remoteEntries, ...localOnlyEntries]),
+    mergedEntries: sortHealthSymptomEntries([...remoteEntries, ...remappedLocalOnlyEntries]),
     mergedSymptoms,
     unreconciledLocalEntries,
     unreconciledLocalSymptoms,

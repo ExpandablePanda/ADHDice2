@@ -155,6 +155,78 @@ test("local symptom recovery keeps an empty remote response visible and recovers
   assert.equal(new Set(repeated.mergedEntries.map((entry) => entry.id)).size, 2);
 });
 
+test("remote active symptom names canonicalize local IDs and remap dependent entries", () => {
+  const localDefinition = symptomDefinition("local-headache", "headache");
+  const remoteDefinition = symptomDefinition("remote-headache", "Headache");
+  const localEntry = {
+    ...symptomEntry("local-headache-entry", "2026-08-29", "2026-08-29T09:00:00.000Z", 7, localDefinition.id),
+    note: "still present",
+  };
+
+  const recovery = reconcileHealthSymptoms(
+    [localDefinition],
+    [remoteDefinition],
+    [localEntry],
+    [],
+  );
+
+  assert.deepEqual(recovery.unreconciledLocalSymptoms, []);
+  assert.deepEqual(recovery.mergedSymptoms.map((symptom) => symptom.id), [remoteDefinition.id]);
+  assert.deepEqual(recovery.unreconciledLocalEntries, [{ ...localEntry, symptom_id: remoteDefinition.id }]);
+  assert.deepEqual(recovery.mergedEntries, [{ ...localEntry, symptom_id: remoteDefinition.id }]);
+  assert.equal(recovery.mergedEntries[0]?.id, localEntry.id);
+  assert.equal(recovery.mergedEntries[0]?.entry_date, localEntry.entry_date);
+  assert.equal(recovery.mergedEntries[0]?.logged_at, localEntry.logged_at);
+  assert.equal(recovery.mergedEntries[0]?.severity, localEntry.severity);
+  assert.equal(recovery.mergedEntries[0]?.note, localEntry.note);
+});
+
+test("multiple active name collisions are canonicalized while archived definitions remain ID-based", () => {
+  const localHeadache = symptomDefinition("local-headache", "HEADACHE");
+  const localFatigue = symptomDefinition("local-fatigue", "  fatigue  ");
+  const localArchivedHeadache = symptomDefinition("local-archived-headache", "Headache", "2026-08-28T12:00:00.000Z");
+  const remoteHeadache = symptomDefinition("remote-headache", "Headache");
+  const remoteFatigue = symptomDefinition("remote-fatigue", "Fatigue");
+  const localEntries = [
+    symptomEntry("headache-entry", "2026-08-29", "2026-08-29T09:00:00.000Z", 3, localHeadache.id),
+    symptomEntry("fatigue-entry", "2026-08-29", "2026-08-29T10:00:00.000Z", 4, localFatigue.id),
+    symptomEntry("archived-entry", "2026-08-28", "2026-08-28T10:00:00.000Z", 5, localArchivedHeadache.id),
+  ];
+
+  const recovery = reconcileHealthSymptoms(
+    [localHeadache, localFatigue, localArchivedHeadache],
+    [remoteHeadache, remoteFatigue],
+    localEntries,
+    [],
+  );
+
+  assert.deepEqual(recovery.unreconciledLocalSymptoms.map((symptom) => symptom.id), [localArchivedHeadache.id]);
+  assert.deepEqual(recovery.mergedSymptoms.map((symptom) => symptom.id).sort(), [
+    localArchivedHeadache.id,
+    remoteFatigue.id,
+    remoteHeadache.id,
+  ].sort());
+  assert.deepEqual(
+    recovery.unreconciledLocalEntries.map((entry) => [entry.id, entry.symptom_id]).sort(),
+    [
+      ["fatigue-entry", remoteFatigue.id],
+      ["headache-entry", remoteHeadache.id],
+    ].sort(),
+  );
+  assert.equal(recovery.mergedEntries.find((entry) => entry.id === "archived-entry")?.symptom_id, localArchivedHeadache.id);
+});
+
+test("genuinely new local symptoms remain eligible for definition recovery", () => {
+  const localDefinition = symptomDefinition("local-nausea", "Nausea");
+  const localEntry = symptomEntry("local-nausea-entry", "2026-08-29", "2026-08-29T11:00:00.000Z", 2, localDefinition.id);
+  const recovery = reconcileHealthSymptoms([localDefinition], [], [localEntry], []);
+
+  assert.deepEqual(recovery.unreconciledLocalSymptoms, [localDefinition]);
+  assert.deepEqual(recovery.mergedSymptoms, [localDefinition]);
+  assert.deepEqual(recovery.unreconciledLocalEntries, []);
+  assert.deepEqual(recovery.mergedEntries, [localEntry]);
+});
+
 test("the migration expands daily scores without rewriting existing values", () => {
   assert.match(migrationSource, /mood_score_range_check[\s\S]*?mood_score >= 1 and mood_score <= 10/i);
   assert.match(migrationSource, /energy_score_range_check[\s\S]*?energy_score >= 1 and energy_score <= 10/i);
@@ -225,4 +297,28 @@ test("symptom persistence has its own optional fallback and CRUD paths", () => {
   assert.match(healthPageSource, /entry\.severity}\/10/);
   assert.match(healthPageSource, /Save Symptom/);
   assert.match(healthPageSource, /deleteSymptomEntry\(entry\.id\)/);
+});
+
+test("Health hydration checks lifecycle before and after each recovery mutation phase", () => {
+  const recoveryStart = healthHookSource.indexOf("let remoteSymptoms =");
+  const recoveryEnd = healthHookSource.indexOf("const remoteSnapshot =", recoveryStart);
+  const recoverySection = healthHookSource.slice(recoveryStart, recoveryEnd);
+  const phaseWrites = [
+    '.from("adhdice_health_symptoms")',
+    '.from("adhdice_health_symptom_entries")',
+    '.from("adhdice_health_workouts")',
+    '.from("adhdice_health_meal_plan_entries")',
+  ];
+
+  for (const phaseWrite of phaseWrites) {
+    const writeIndex = recoverySection.indexOf(phaseWrite);
+    assert.ok(writeIndex >= 0, `expected ${phaseWrite} recovery write`);
+    assert.ok(recoverySection.lastIndexOf("if (!isActive) {", writeIndex) >= 0, `expected lifecycle guard before ${phaseWrite}`);
+  }
+
+  assert.match(recoverySection, /\.from\("adhdice_health_symptoms"\)[\s\S]*?\.select\("\*"\);\s*if \(!isActive\) \{\s*return;\s*\}/);
+  assert.match(recoverySection, /\.from\("adhdice_health_symptom_entries"\)[\s\S]*?\.select\("\*"\);\s*if \(!isActive\) \{\s*return;\s*\}/);
+  assert.match(recoverySection, /\.from\("adhdice_health_workouts"\)[\s\S]*?\);\s*if \(!isActive\) \{\s*return;\s*\}/);
+  assert.match(recoverySection, /await client[\s\S]*?adhdice_health_meal_plan_entries[\s\S]*?\.eq\("user_id", userId\);\s*if \(!isActive\) \{\s*return;\s*\}/);
+  assert.match(recoverySection, /for \(const \[planId, mutation\] of Object\.entries\(pendingMealPlanMutations\)\) \{\s*if \(!isActive\) \{\s*return;/);
 });

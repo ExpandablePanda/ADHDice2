@@ -639,6 +639,9 @@ export function useHealth(
       let symptomDefinitionRecoveryError: { message: string } | null = null;
       let symptomEntryRecoveryError: { message: string } | null = null;
 
+      if (!isActive) {
+        return;
+      }
       if (!symptomsResult.error && symptomRecovery.unreconciledLocalSymptoms.length > 0) {
         const { data, error } = await client
           .from("adhdice_health_symptoms")
@@ -654,6 +657,9 @@ export function useHealth(
             { onConflict: "id" },
           )
           .select("*");
+        if (!isActive) {
+          return;
+        }
         if (error) {
           symptomDefinitionRecoveryError = error;
           symptomDefinitionsRemoteEnabledRef.current = false;
@@ -669,6 +675,9 @@ export function useHealth(
         }
       }
 
+      if (!isActive) {
+        return;
+      }
       if (!symptomsResult.error && !symptomDefinitionRecoveryError && !symptomEntriesResult.error) {
         if (symptomRecovery.unreconciledLocalEntries.length > 0) {
           const { data, error } = await client
@@ -688,6 +697,9 @@ export function useHealth(
               { onConflict: "id" },
             )
             .select("*");
+          if (!isActive) {
+            return;
+          }
           if (error) {
             symptomEntryRecoveryError = error;
             symptomEntriesRemoteEnabledRef.current = false;
@@ -728,6 +740,9 @@ export function useHealth(
         ? { mergedWorkouts: latestLocalWorkouts, unreconciledLocalWorkouts: [] }
         : reconcileHealthWorkouts(latestLocalWorkouts, remoteWorkouts);
 
+      if (!isActive) {
+        return;
+      }
       if (!workoutsResult.error && workoutRecovery.unreconciledLocalWorkouts.length > 0) {
         const { error: recoveryError } = await client
           .from("adhdice_health_workouts")
@@ -735,6 +750,9 @@ export function useHealth(
             workoutRecovery.unreconciledLocalWorkouts.map((workout) => ({ ...workout, user_id: userId })),
             { ignoreDuplicates: true, onConflict: "id" },
           );
+        if (!isActive) {
+          return;
+        }
         if (recoveryError) {
           workoutRemoteEnabledRef.current = false;
           setMessage({
@@ -749,6 +767,9 @@ export function useHealth(
       let mealPlanRecoveryError: { message: string } | null = null;
       if (!mealPlanEntriesResult.error) {
         for (const [planId, mutation] of Object.entries(pendingMealPlanMutations)) {
+          if (!isActive) {
+            return;
+          }
           const result = mutation.operation === "upsert"
             ? await client
               .from("adhdice_health_meal_plan_entries")
@@ -758,6 +779,9 @@ export function useHealth(
               .delete()
               .eq("id", mutation.planId)
               .eq("user_id", userId);
+          if (!isActive) {
+            return;
+          }
           if (result.error) {
             mealPlanRecoveryError ??= result.error;
           } else {
