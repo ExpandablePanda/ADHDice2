@@ -34,6 +34,7 @@ export const HEALTH_MOOD_OPTIONS = HEALTH_SCALE_OPTIONS;
 export const HEALTH_SEVERITY_OPTIONS = HEALTH_SCALE_OPTIONS;
 export const HEALTH_SYMPTOM_TREND_RANGES = ["7D", "30D", "90D", "All"] as const;
 export type HealthSymptomTrendRange = (typeof HEALTH_SYMPTOM_TREND_RANGES)[number];
+export const ALL_HEALTH_SYMPTOMS_VALUE = "__all_symptoms__";
 export const DEFAULT_HEALTH_SYMPTOM_COLOR = ADHDICE_ACCENT_COLORS[0];
 export const HEALTH_SYMPTOM_TAGS = [
   "Calm",
@@ -364,6 +365,25 @@ export function getHealthSymptomTrendEntries({
       && (rangeStartDate === null || (entry.entry_date >= rangeStartDate && entry.entry_date <= asOfDate))
     ))
     .sort(compareHealthSymptomEntriesChronologically);
+}
+
+export function getHealthSymptomTrendEntriesBySymptom({
+  asOfDate,
+  entries,
+  range,
+  symptoms,
+}: {
+  asOfDate: string;
+  entries: HealthSymptomEntry[];
+  range: HealthSymptomTrendRange;
+  symptoms: HealthSymptom[];
+}) {
+  return symptoms
+    .map((symptom) => ({
+      entries: getHealthSymptomTrendEntries({ asOfDate, entries, range, symptomId: symptom.id }),
+      symptom,
+    }))
+    .filter(({ entries: symptomEntries }) => symptomEntries.length > 0);
 }
 
 export function getLatestHealthSymptomTrendSeverity(entries: HealthSymptomEntry[]) {

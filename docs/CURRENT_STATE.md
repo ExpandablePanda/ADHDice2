@@ -5,13 +5,23 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.22`.
+- Current working app version: `7.12.23`.
 - Current release group: `7.12.x` Health Journal symptom recovery.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-30 7.12.23 Health Journal symptom management
+
+Symptom Trends now supports an `All Symptoms` view with one persisted-color
+series per symptom that has visible timestamped entries, including archived
+symptoms with history. The shared activity chart derives date-axis labels from
+the combined date domain, while preserving raw points and same-day positions.
+Symptom Library now supports definition-only creation and reuses the approved
+symptom color palette for persistent color editing. No schema, SQL, Supabase,
+native, or iOS behavior changed; browser verification remains outstanding.
 
 ## 2026-08-30 7.12.22 Health Journal color picker Safari correction
 

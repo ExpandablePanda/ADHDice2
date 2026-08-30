@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Apple, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, MoonStar, Pencil, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
+import { Activity, Apple, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, MoonStar, Pencil, Plus, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import type {
@@ -75,6 +75,7 @@ import {
 import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
   clampPercent,
+  ALL_HEALTH_SYMPTOMS_VALUE,
   buildHealthMealLoggedAt,
   buildWeightGoalForecast,
   displayWeightToKilograms,
@@ -89,6 +90,7 @@ import {
   getDefaultHealthSymptomId,
   groupHealthSymptomEntriesByDate,
   getHealthSymptomTrendEntries,
+  getHealthSymptomTrendEntriesBySymptom,
   getLatestHealthSymptomTrendSeverity,
   getSelectableHealthSymptoms,
   getHealthSleepElapsedSeconds,
@@ -404,6 +406,96 @@ function formatHealthSymptomTrendTimestamp(entry: HealthSymptomEntry) {
   }).format(timestamp);
 }
 
+function buildHealthSymptomTrendSeries(
+  symptom: HealthSymptom,
+  entries: HealthSymptomEntry[],
+  summaryLabel: string,
+): NumericLineChartSeries {
+  return {
+    color: normalizeHealthSymptomColor(symptom.color),
+    key: symptom.id,
+    label: symptom.name,
+    points: entries.map((entry) => {
+      const timestampLabel = formatHealthSymptomTrendTimestamp(entry);
+      return {
+        detailLabel: entry.note ? `${timestampLabel} · ${entry.note}` : timestampLabel,
+        key: entry.id,
+        label: formatHealthDateLabel(entry.entry_date),
+        value: entry.severity,
+        xDomainKey: entry.entry_date,
+      };
+    }),
+    summaryLabel,
+    totalValue: getLatestHealthSymptomTrendSeverity(entries) ?? 0,
+  };
+}
+
+function HealthSymptomColorPalette({
+  className,
+  onSetColor,
+  symptom,
+}: {
+  className?: string;
+  onSetColor: (color: string) => void;
+  symptom: HealthSymptom;
+}) {
+  const color = normalizeHealthSymptomColor(symptom.color);
+  return (
+    <div aria-label={`Choose a color for ${symptom.name}`} className={`grid grid-cols-8 gap-1 rounded-[0.8rem] border border-[#e4deef] bg-white/80 p-1 dark:border-white/10 dark:bg-white/[0.05] ${className ?? ""}`} role="group">
+      {ADHDICE_ACCENT_COLORS.map((paletteColor) => (
+        <button
+          aria-label={`Set ${symptom.name} color to ${paletteColor}`}
+          aria-pressed={color === paletteColor}
+          className={`h-5 w-5 rounded-full border-2 transition ${color === paletteColor ? "scale-110 border-[#2f294a] dark:border-white" : "border-transparent"}`}
+          key={paletteColor}
+          onClick={() => onSetColor(paletteColor)}
+          onMouseDown={(event) => event.preventDefault()}
+          style={{ backgroundColor: paletteColor }}
+          title={`Set ${symptom.name} color to ${paletteColor}`}
+          type="button"
+        />
+      ))}
+    </div>
+  );
+}
+
+function HealthSymptomColorControl({
+  isOpen,
+  onSetColor,
+  onToggle,
+  symptom,
+}: {
+  isOpen: boolean;
+  onSetColor: (color: string) => void;
+  onToggle: () => void;
+  symptom: HealthSymptom;
+}) {
+  const color = normalizeHealthSymptomColor(symptom.color);
+  return (
+    <div className="relative shrink-0">
+      <AdhdIconButton
+        aria-expanded={isOpen}
+        aria-haspopup="true"
+        aria-label={`Change color for ${symptom.name}`}
+        onClick={onToggle}
+        onMouseDown={(event) => event.preventDefault()}
+        size="sm"
+        tone="ghost"
+        variant="rowToolbar"
+      >
+        <span aria-hidden="true" className="h-3.5 w-3.5 rounded-full border border-black/10 dark:border-white/20" style={{ backgroundColor: color }} />
+      </AdhdIconButton>
+      {isOpen ? (
+        <HealthSymptomColorPalette
+          className="absolute right-0 top-full z-20 mt-1"
+          onSetColor={onSetColor}
+          symptom={symptom}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function buildHealthSymptomDropdownOption(
   symptom: HealthSymptom,
   pickerKey: string,
@@ -417,23 +509,9 @@ function buildHealthSymptomDropdownOption(
     trailingAction: {
       ariaLabel: `Change color for ${symptom.name}`,
       content: <span aria-hidden="true" className="h-3.5 w-3.5 rounded-full border border-black/10 dark:border-white/20" style={{ backgroundColor: color }} />,
-      expandedContent: openPickerKey === pickerKey ? (
-        <div aria-label={`Choose a color for ${symptom.name}`} className="mt-1 grid grid-cols-8 gap-1 rounded-[0.8rem] border border-[#e4deef] bg-white/80 p-1 dark:border-white/10 dark:bg-white/[0.05]" role="group">
-          {ADHDICE_ACCENT_COLORS.map((paletteColor) => (
-            <button
-              aria-label={`Set ${symptom.name} color to ${paletteColor}`}
-              aria-pressed={color === paletteColor}
-              className={`h-5 w-5 rounded-full border-2 transition ${color === paletteColor ? "scale-110 border-[#2f294a] dark:border-white" : "border-transparent"}`}
-              key={paletteColor}
-              onClick={() => onSetColor(symptom.id, paletteColor)}
-              onMouseDown={(event) => event.preventDefault()}
-              style={{ backgroundColor: paletteColor }}
-              title={`Set ${symptom.name} color to ${paletteColor}`}
-              type="button"
-            />
-          ))}
-        </div>
-      ) : null,
+      expandedContent: openPickerKey === pickerKey
+        ? <HealthSymptomColorPalette onSetColor={(nextColor) => onSetColor(symptom.id, nextColor)} symptom={symptom} />
+        : null,
       onClick: () => onTogglePicker(pickerKey),
     },
     value: symptom.id,
@@ -578,6 +656,9 @@ export function HealthPage({
   const [journalTags, setJournalTags] = useState<string[]>([]);
   const [selectedSymptomTrendId, setSelectedSymptomTrendId] = useState("");
   const [openSymptomColorPickerKey, setOpenSymptomColorPickerKey] = useState<string | null>(null);
+  const [isSymptomCreateOpen, setIsSymptomCreateOpen] = useState(false);
+  const [isCreatingSymptom, setIsCreatingSymptom] = useState(false);
+  const [symptomCreateName, setSymptomCreateName] = useState("");
   const [symptomTrendRange, setSymptomTrendRange] = useState<HealthSymptomTrendRange>("30D");
   const initialSymptomInputs = useMemo(() => getCurrentHealthDateTimeInputs(), []);
   const [symptomDraft, setSymptomDraft] = useState<SymptomDraft>(() => ({
@@ -669,11 +750,8 @@ export function HealthPage({
       symptom,
       `log:${symptom.id}`,
       openSymptomColorPickerKey,
-      setOpenSymptomColorPickerKey,
-      (symptomId, color) => {
-        setOpenSymptomColorPickerKey(null);
-        void setSymptomColor(symptomId, color);
-      },
+      toggleSymptomColorPicker,
+      handleSetSymptomColor,
     )),
     { label: "+ Add a new symptom", value: NEW_SYMPTOM_VALUE },
   ];
@@ -685,69 +763,80 @@ export function HealthPage({
     () => getSelectableHealthSymptoms(symptoms, symptomEntries),
     [symptomEntries, symptoms],
   );
-  const symptomTrendOptions = selectableSymptomTrendSymptoms.length > 0
-    ? selectableSymptomTrendSymptoms.map((symptom) => buildHealthSymptomDropdownOption(
-      symptom,
-      `trend:${symptom.id}`,
-      openSymptomColorPickerKey,
-      setOpenSymptomColorPickerKey,
-      (symptomId, color) => {
-        setOpenSymptomColorPickerKey(null);
-        void setSymptomColor(symptomId, color);
-      },
-    ))
-    : [{ label: "No symptoms available", value: "" }];
+  const symptomTrendOptions = [
+    { label: "All Symptoms", value: ALL_HEALTH_SYMPTOMS_VALUE },
+    ...(selectableSymptomTrendSymptoms.length > 0
+      ? selectableSymptomTrendSymptoms.map((symptom) => buildHealthSymptomDropdownOption(
+        symptom,
+        `trend:${symptom.id}`,
+        openSymptomColorPickerKey,
+        toggleSymptomColorPicker,
+        handleSetSymptomColor,
+      ))
+      : [{ label: "No symptoms available", value: "" }]),
+  ];
   const defaultSymptomTrendId = useMemo(
     () => isLoading ? "" : getDefaultHealthSymptomId(symptoms, symptomEntries),
     [isLoading, symptomEntries, symptoms],
   );
+  const isAllSymptomsTrendSelected = selectedSymptomTrendId === ALL_HEALTH_SYMPTOMS_VALUE;
   const selectedSymptomTrendIdForView = useMemo(
-    () => selectableSymptomTrendSymptoms.some((symptom) => symptom.id === selectedSymptomTrendId)
+    () => isAllSymptomsTrendSelected
+      ? ALL_HEALTH_SYMPTOMS_VALUE
+      : selectableSymptomTrendSymptoms.some((symptom) => symptom.id === selectedSymptomTrendId)
       ? selectedSymptomTrendId
       : defaultSymptomTrendId,
-    [defaultSymptomTrendId, selectableSymptomTrendSymptoms, selectedSymptomTrendId],
+    [defaultSymptomTrendId, isAllSymptomsTrendSelected, selectableSymptomTrendSymptoms, selectedSymptomTrendId],
   );
   const selectedSymptomTrend = useMemo(
     () => selectableSymptomTrendSymptoms.find((symptom) => symptom.id === selectedSymptomTrendIdForView) ?? null,
     [selectableSymptomTrendSymptoms, selectedSymptomTrendIdForView],
   );
   const selectedSymptomTrendEntries = useMemo(
-    () => getHealthSymptomTrendEntries({
+    () => isAllSymptomsTrendSelected ? [] : getHealthSymptomTrendEntries({
       asOfDate: today,
       entries: symptomEntries,
       range: symptomTrendRange,
       symptomId: selectedSymptomTrendIdForView,
     }),
-    [selectedSymptomTrendIdForView, symptomEntries, symptomTrendRange, today],
+    [isAllSymptomsTrendSelected, selectedSymptomTrendIdForView, symptomEntries, symptomTrendRange, today],
   );
   const selectedSymptomAllTrendEntries = useMemo(
-    () => selectedSymptomTrendIdForView
+    () => !isAllSymptomsTrendSelected && selectedSymptomTrendIdForView
       ? getHealthSymptomTrendEntries({ asOfDate: today, entries: symptomEntries, range: "All", symptomId: selectedSymptomTrendIdForView })
       : [],
-    [selectedSymptomTrendIdForView, symptomEntries, today],
+    [isAllSymptomsTrendSelected, selectedSymptomTrendIdForView, symptomEntries, today],
+  );
+  const allSymptomTrendEntriesBySymptom = useMemo(
+    () => isAllSymptomsTrendSelected
+      ? getHealthSymptomTrendEntriesBySymptom({
+        asOfDate: today,
+        entries: symptomEntries,
+        range: symptomTrendRange,
+        symptoms: selectableSymptomTrendSymptoms,
+      })
+      : [],
+    [isAllSymptomsTrendSelected, selectableSymptomTrendSymptoms, symptomEntries, symptomTrendRange, today],
+  );
+  const allSymptomTrendHistoryExists = useMemo(
+    () => getHealthSymptomTrendEntriesBySymptom({
+      asOfDate: today,
+      entries: symptomEntries,
+      range: "All",
+      symptoms: selectableSymptomTrendSymptoms,
+    }).length > 0,
+    [selectableSymptomTrendSymptoms, symptomEntries, today],
   );
   const symptomTrendChartSeries = useMemo<NumericLineChartSeries[]>(() => {
+    if (isAllSymptomsTrendSelected) {
+      return allSymptomTrendEntriesBySymptom.map(({ entries, symptom }) =>
+        buildHealthSymptomTrendSeries(symptom, entries, symptom.name));
+    }
     if (!selectedSymptomTrend) {
       return [];
     }
-    return [{
-      color: normalizeHealthSymptomColor(selectedSymptomTrend.color),
-      key: selectedSymptomTrend.id,
-      label: selectedSymptomTrend.name,
-      points: selectedSymptomTrendEntries.map((entry) => {
-        const timestampLabel = formatHealthSymptomTrendTimestamp(entry);
-        return {
-          detailLabel: entry.note ? `${timestampLabel} · ${entry.note}` : timestampLabel,
-          key: entry.id,
-          label: formatHealthDateLabel(entry.entry_date),
-          value: entry.severity,
-          xDomainKey: entry.entry_date,
-        };
-      }),
-      summaryLabel: "Latest",
-      totalValue: getLatestHealthSymptomTrendSeverity(selectedSymptomTrendEntries) ?? 0,
-    }];
-  }, [selectedSymptomTrend, selectedSymptomTrendEntries]);
+    return [buildHealthSymptomTrendSeries(selectedSymptomTrend, selectedSymptomTrendEntries, "Latest")];
+  }, [allSymptomTrendEntriesBySymptom, isAllSymptomsTrendSelected, selectedSymptomTrend, selectedSymptomTrendEntries]);
 
   const selectedMeals = useMemo(
     () => mealEntries.filter((entry) => entry.entry_date === foodHistoryDate),
@@ -1106,6 +1195,41 @@ export function HealthPage({
     if (saved) {
       setEditingSymptomId(null);
       setEditingSymptomName("");
+    }
+  }
+
+  function handleSetSymptomColor(symptomId: string, color: string) {
+    setOpenSymptomColorPickerKey(null);
+    void setSymptomColor(symptomId, color);
+  }
+
+  function toggleSymptomColorPicker(pickerKey: string) {
+    setOpenSymptomColorPickerKey((current) => current === pickerKey ? null : pickerKey);
+  }
+
+  function openSymptomCreateForm() {
+    setOpenSymptomColorPickerKey(null);
+    setSymptomCreateName("");
+    setIsSymptomCreateOpen(true);
+  }
+
+  function closeSymptomCreateForm() {
+    setSymptomCreateName("");
+    setIsSymptomCreateOpen(false);
+  }
+
+  async function handleCreateSymptom() {
+    if (isCreatingSymptom) {
+      return;
+    }
+    setIsCreatingSymptom(true);
+    try {
+      const created = await createSymptom({ name: symptomCreateName });
+      if (created) {
+        closeSymptomCreateForm();
+      }
+    } finally {
+      setIsCreatingSymptom(false);
     }
   }
 
@@ -2050,11 +2174,8 @@ export function HealthPage({
                             editingArchivedSymptom,
                             `log:${editingArchivedSymptom.id}`,
                             openSymptomColorPickerKey,
-                            setOpenSymptomColorPickerKey,
-                            (symptomId, color) => {
-                              setOpenSymptomColorPickerKey(null);
-                              void setSymptomColor(symptomId, color);
-                            },
+                            toggleSymptomColorPicker,
+                            handleSetSymptomColor,
                           )]
                           : []),
                       ]
@@ -2117,11 +2238,42 @@ export function HealthPage({
               </div>
 
               <div className="mt-5 rounded-[1.25rem] border border-[#eeeaf8] bg-[#fbfaff] px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Symptom library</p>
-                {activeSymptoms.length === 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Add your first custom symptom above.</p> : (
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Symptom library</p>
+                  <AdhdIconButton aria-label="Add symptom" onClick={openSymptomCreateForm} size="sm" tone="ghost" variant="rowToolbar"><Plus aria-hidden="true" /></AdhdIconButton>
+                </div>
+                {isSymptomCreateOpen ? (
+                  <div className="mt-2 grid gap-2 rounded-[0.8rem] border border-[#e4deef] bg-white/70 p-2 dark:border-white/10 dark:bg-white/[0.04]">
+                    <input
+                      aria-label="New symptom name"
+                      className={`${HEALTH_COMPACT_INPUT_CLASS} w-full`}
+                      disabled={isCreatingSymptom}
+                      onChange={(event) => setSymptomCreateName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void handleCreateSymptom();
+                        }
+                      }}
+                      placeholder="e.g. Back Pain"
+                      value={symptomCreateName}
+                    />
+                    <div className="flex justify-end gap-2">
+                      <AdhdChip disabled={isCreatingSymptom} onClick={closeSymptomCreateForm} type="button">Cancel</AdhdChip>
+                      <AdhdChip disabled={isCreatingSymptom} onClick={() => { void handleCreateSymptom(); }} tone="purple" type="button">Save</AdhdChip>
+                    </div>
+                  </div>
+                ) : null}
+                {activeSymptoms.length === 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Add your first custom symptom with + above.</p> : (
                   <div className="mt-2 grid gap-1.5">
                     {activeSymptoms.map((symptom) => (
                       <div className="flex min-h-8 items-center gap-2 rounded-[0.8rem] px-2 py-1 text-sm text-[#5d6783] dark:text-white/70" key={symptom.id}>
+                        <HealthSymptomColorControl
+                          isOpen={openSymptomColorPickerKey === `library:${symptom.id}`}
+                          onSetColor={(color) => handleSetSymptomColor(symptom.id, color)}
+                          onToggle={() => toggleSymptomColorPicker(`library:${symptom.id}`)}
+                          symptom={symptom}
+                        />
                         {editingSymptomId === symptom.id ? (
                           <input
                             aria-label={`Rename ${symptom.name}`}
@@ -2218,13 +2370,19 @@ export function HealthPage({
                 </div>
               </div>
 
-              {selectedSymptomTrend ? (
+              {isAllSymptomsTrendSelected || selectedSymptomTrend ? (
                 <ActivityLineChartCard
                   activePointContext={`${symptomTrendRange} • severity scale 1–10`}
-                  ariaLabel={`${selectedSymptomTrend.name} severity trend line graph`}
-                  emptyText={selectedSymptomAllTrendEntries.length === 0
-                    ? `No history for ${selectedSymptomTrend.name} yet.`
-                    : `No ${selectedSymptomTrend.name} entries in the selected range.`}
+                  ariaLabel={isAllSymptomsTrendSelected
+                    ? "All symptom severity trend line graph"
+                    : `${selectedSymptomTrend?.name ?? "Symptom"} severity trend line graph`}
+                  emptyText={isAllSymptomsTrendSelected
+                    ? allSymptomTrendHistoryExists
+                      ? "No symptom entries in the selected range."
+                      : "No symptom history is available to graph yet."
+                    : selectedSymptomAllTrendEntries.length === 0
+                      ? `No history for ${selectedSymptomTrend?.name ?? "symptom"} yet.`
+                      : `No ${selectedSymptomTrend?.name ?? "symptom"} entries in the selected range.`}
                   eyebrow="SYMPTOM TRENDS"
                   formatAxisValue={(value) => String(Math.round(value))}
                   formatValue={(value) => `${Math.round(value)}/10`}
@@ -2232,7 +2390,7 @@ export function HealthPage({
                   maxValue={10}
                   series={symptomTrendChartSeries}
                   subtitle={`${symptomTrendRange} • timestamped severity entries`}
-                  title={`${selectedSymptomTrend.name} severity`}
+                  title={isAllSymptomsTrendSelected ? "All symptom severity" : `${selectedSymptomTrend?.name ?? "Symptom"} severity`}
                   variant="embedded"
                 />
               ) : (

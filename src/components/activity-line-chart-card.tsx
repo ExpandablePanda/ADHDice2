@@ -55,11 +55,14 @@ function getNumericLineChartDomainKey(point: NumericLineChartDomainPoint) {
   return point.xDomainKey ?? point.key;
 }
 
-function getNumericLineChartDomainKeys(points: ReadonlyArray<NumericLineChartDomainPoint>) {
+export function getNumericLineChartDomainKeys(points: ReadonlyArray<NumericLineChartDomainPoint>) {
   if (!points.some((point) => point.xDomainKey !== undefined)) {
     return null;
   }
-  return [...new Set(points.map(getNumericLineChartDomainKey))];
+  const domainKeys = [...new Set(points.map(getNumericLineChartDomainKey))];
+  return domainKeys.every((domainKey) => /^\d{4}-\d{2}-\d{2}$/.test(domainKey))
+    ? domainKeys.sort()
+    : domainKeys;
 }
 
 export function getNumericLineChartXPositions(
@@ -125,10 +128,11 @@ export function ActivityLineChartCard({
   const [pinnedPointKey, setPinnedPointKey] = useState<string | null>(null);
   const axisValueFormatter = formatAxisValue ?? formatValue;
   const maxValue = Math.max(1, maxValueOverride ?? 0, ...series.flatMap((item) => item.points.map((point) => point.value)));
+  const chartDomainPoints = series.flatMap((item) => item.points);
   const axisPoints = series[0]?.points ?? [];
-  const axisDomainKeys = getNumericLineChartDomainKeys(axisPoints);
+  const axisDomainKeys = getNumericLineChartDomainKeys(chartDomainPoints);
   const axisLabelPoints = axisDomainKeys
-    ? axisDomainKeys.map((domainKey) => axisPoints.find((point) => getNumericLineChartDomainKey(point) === domainKey)).filter((point): point is NumericLineChartPoint => Boolean(point))
+    ? axisDomainKeys.map((domainKey) => chartDomainPoints.find((point) => getNumericLineChartDomainKey(point) === domainKey)).filter((point): point is NumericLineChartPoint => Boolean(point))
     : axisPoints;
   const axisLabelXPositions = getNumericLineChartXPositions(axisLabelPoints, axisDomainKeys);
   const labelStep = Math.max(1, Math.ceil(axisLabelPoints.length / 6));

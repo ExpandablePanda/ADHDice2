@@ -3,13 +3,15 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { HealthSymptom, HealthSymptomEntry } from "../src/lib/database.types.ts";
-import { getNumericLineChartXPositions } from "../src/components/activity-line-chart-card.tsx";
+import { getNumericLineChartDomainKeys, getNumericLineChartXPositions } from "../src/components/activity-line-chart-card.tsx";
 import { ADHDICE_ACCENT_COLORS } from "../src/lib/accent-colors.ts";
 import {
+  ALL_HEALTH_SYMPTOMS_VALUE,
   DEFAULT_HEALTH_SYMPTOM_COLOR,
   groupHealthSymptomEntriesByDate,
   getDefaultHealthSymptomId,
   getHealthSymptomTrendEntries,
+  getHealthSymptomTrendEntriesBySymptom,
   getLatestHealthSymptomTrendSeverity,
   getSelectableHealthSymptoms,
   HEALTH_MOOD_OPTIONS,
@@ -220,6 +222,57 @@ test("symptom trends keep archived symptoms selectable when they have ledger his
   assert.equal(getDefaultHealthSymptomId([archivedWithoutHistory, archivedWithHistory, activeSymptom], entries), archivedWithHistory.id);
 });
 
+test("all symptom trends keep selectable order, raw entries, independent latest values, and archived history", () => {
+  const backPain = symptomDefinition("back", "Back Pain", null, "#ef4444");
+  const archivedHeadache = symptomDefinition("headache", "Headache", "2026-08-28T12:00:00.000Z", "#3b82f6");
+  const reflux = symptomDefinition("reflux", "Reflux", null, "#14b8a6");
+  const entries = [
+    symptomEntry("back-30", "2026-08-30", "2026-08-30T13:00:00.000Z", 4, backPain.id),
+    symptomEntry("back-28", "2026-08-28", "2026-08-28T09:00:00.000Z", 3, backPain.id),
+    symptomEntry("headache-29", "2026-08-29", "2026-08-29T11:00:00.000Z", 7, archivedHeadache.id),
+    symptomEntry("reflux-old", "2026-07-01", "2026-07-01T11:00:00.000Z", 2, reflux.id),
+  ];
+  const selectableSymptoms = getSelectableHealthSymptoms([archivedHeadache, reflux, backPain], entries);
+  const visibleSeries = getHealthSymptomTrendEntriesBySymptom({
+    asOfDate: "2026-08-30",
+    entries,
+    range: "7D",
+    symptoms: selectableSymptoms,
+  });
+
+  assert.equal(ALL_HEALTH_SYMPTOMS_VALUE, "__all_symptoms__");
+  assert.deepEqual(selectableSymptoms.map((symptom) => symptom.id), [backPain.id, reflux.id, archivedHeadache.id]);
+  assert.deepEqual(visibleSeries.map(({ symptom }) => symptom.id), [backPain.id, archivedHeadache.id]);
+  assert.deepEqual(visibleSeries[0]?.entries.map((entry) => entry.id), ["back-28", "back-30"]);
+  assert.equal(getLatestHealthSymptomTrendSeverity(visibleSeries[0]?.entries ?? []), 4);
+  assert.equal(getLatestHealthSymptomTrendSeverity(visibleSeries[1]?.entries ?? []), 7);
+  assert.equal(visibleSeries.find(({ symptom }) => symptom.id === reflux.id), undefined);
+  assert.equal(getDefaultHealthSymptomId(selectableSymptoms, entries), backPain.id);
+  assert.notEqual(getDefaultHealthSymptomId(selectableSymptoms, entries), ALL_HEALTH_SYMPTOMS_VALUE);
+});
+
+test("shared chart unions chronological date domains across series while preserving same-day and legacy positions", () => {
+  const backPainPoints = [
+    { key: "back-28", xDomainKey: "2026-08-28" },
+    { key: "back-30", xDomainKey: "2026-08-30" },
+  ];
+  const headachePoints = [
+    { key: "headache-29", xDomainKey: "2026-08-29" },
+    { key: "headache-30", xDomainKey: "2026-08-30" },
+    { key: "headache-31", xDomainKey: "2026-08-31" },
+  ];
+  const domainKeys = getNumericLineChartDomainKeys([...backPainPoints, ...headachePoints]);
+  const backPainPositions = getNumericLineChartXPositions(backPainPoints, domainKeys);
+  const headachePositions = getNumericLineChartXPositions(headachePoints, domainKeys);
+  const legacyPositions = getNumericLineChartXPositions([{ key: "first" }, { key: "second" }, { key: "third" }]);
+
+  assert.deepEqual(domainKeys, ["2026-08-28", "2026-08-29", "2026-08-30", "2026-08-31"]);
+  assert.equal(backPainPositions[1]?.x, headachePositions[1]?.x);
+  assert.ok((backPainPositions[1]?.x ?? 0) > (backPainPositions[0]?.x ?? 0));
+  assert.notEqual(legacyPositions[0]?.x, legacyPositions[1]?.x);
+  assert.notEqual(legacyPositions[1]?.x, legacyPositions[2]?.x);
+});
+
 test("symptom colors survive reconciliation and archived definitions retain their assigned color", () => {
   const localRemoteDefinition = symptomDefinition("same-id", "Headache", null, "#ef4444");
   const remoteDefinition = symptomDefinition("same-id", "Headache", null, "#3b82f6");
@@ -243,8 +296,19 @@ test("Journal symptom trends adapt into the shared chart with a fixed 1 to 10 se
   assert.match(healthPageSource, /HEALTH_SYMPTOM_TREND_RANGES/);
   assert.match(healthPageSource, /title="Symptom Trends"/);
   assert.match(healthPageSource, /key: entry\.id/);
-  assert.match(healthPageSource, /summaryLabel: "Latest"/);
-  assert.match(healthPageSource, /getLatestHealthSymptomTrendSeverity\(selectedSymptomTrendEntries\)/);
+  assert.match(healthPageSource, /summaryLabel,/);
+  assert.match(healthPageSource, /buildHealthSymptomTrendSeries\(selectedSymptomTrend, selectedSymptomTrendEntries, "Latest"\)/);
+  assert.match(healthPageSource, /buildHealthSymptomTrendSeries\(symptom, entries, symptom\.name\)/);
+  assert.match(healthPageSource, /label: "All Symptoms", value: ALL_HEALTH_SYMPTOMS_VALUE/);
+  const allSymptomsOptionStart = healthPageSource.indexOf('label: "All Symptoms"');
+  const allSymptomsOptionSource = healthPageSource.slice(allSymptomsOptionStart, allSymptomsOptionStart + 90);
+  assert.doesNotMatch(allSymptomsOptionSource, /trailingAction/);
+  assert.match(healthPageSource, /getHealthSymptomTrendEntriesBySymptom/);
+  assert.match(healthPageSource, /title=\{isAllSymptomsTrendSelected \? "All symptom severity"/);
+  assert.match(healthPageSource, /No symptom history is available to graph yet\./);
+  assert.match(healthPageSource, /No symptom entries in the selected range\./);
+  assert.match(healthPageSource, /ariaLabel=\{isAllSymptomsTrendSelected/);
+  assert.match(healthPageSource, /color: normalizeHealthSymptomColor\(symptom\.color\)/);
   assert.doesNotMatch(healthPageSource, /totalValue: selectedSymptomTrendEntries\.reduce/);
   assert.match(healthPageSource, /xDomainKey: entry\.entry_date/);
   assert.match(healthPageSource, /label: formatHealthDateLabel\(entry\.entry_date\)/);
@@ -254,6 +318,9 @@ test("Journal symptom trends adapt into the shared chart with a fixed 1 to 10 se
   assert.match(activityChartSource, /compactPlot\?: boolean/);
   assert.match(activityChartSource, /const plotClassName = compactPlot\s+\? "min-w-\[42rem\]"/);
   assert.match(activityChartSource, /axisLabelPoints/);
+  assert.match(activityChartSource, /const chartDomainPoints = series\.flatMap\(\(item\) => item\.points\)/);
+  assert.match(activityChartSource, /const axisDomainKeys = getNumericLineChartDomainKeys\(chartDomainPoints\)/);
+  assert.doesNotMatch(activityChartSource, /const axisDomainKeys = getNumericLineChartDomainKeys\(axisPoints\)/);
   assert.match(activityChartSource, /maxValue\?: number/);
   assert.match(activityChartSource, /maxValueOverride/);
   assert.match(activityChartSource, /item\.summaryLabel \?\? item\.label/);
@@ -504,15 +571,32 @@ test("Journal symptom pickers expose palette actions and the trend series uses t
   const paletteSourceStart = healthPageSource.indexOf("ADHDICE_ACCENT_COLORS.map");
   const paletteSource = healthPageSource.slice(paletteSourceStart, healthPageSource.indexOf("</div>", paletteSourceStart));
   assert.match(paletteSource, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\}/);
-  assert.match(paletteSource, /onClick=\{\(\) => onSetColor\(symptom\.id, paletteColor\)\}/);
+  assert.match(paletteSource, /onClick=\{\(\) => onSetColor\(paletteColor\)\}/);
   assert.doesNotMatch(paletteSource, /chooseOption\(|setSymptomDraft|setSelectedSymptomTrendId/);
   assert.match(healthPageSource, /ariaLabel="Symptom"[\s\S]*?options=\{editingSymptomEntryId/);
   assert.match(healthPageSource, /ariaLabel="Trend symptom"[\s\S]*?options=\{symptomTrendOptions}/);
-  assert.match(healthPageSource, /color: normalizeHealthSymptomColor\(selectedSymptomTrend\.color\)/);
   assert.doesNotMatch(healthPageSource, /color: "#7c5cff"/);
   assert.match(healthPageSource, /label: "\+ Add a new symptom", value: NEW_SYMPTOM_VALUE/);
   const syntheticOptionSource = healthPageSource.slice(healthPageSource.indexOf('label: "+ Add a new symptom"'), healthPageSource.indexOf('label: "+ Add a new symptom"') + 90);
   assert.doesNotMatch(syntheticOptionSource, /trailingAction/);
+});
+
+test("Symptom Library supports definition-only creation and shared color editing", () => {
+  assert.match(healthPageSource, /aria-label="Add symptom"/);
+  assert.match(healthPageSource, /isSymptomCreateOpen/);
+  assert.match(healthPageSource, /aria-label="New symptom name"/);
+  assert.match(healthPageSource, /createSymptom\(\{ name: symptomCreateName \}\)/);
+  const createHandlerStart = healthPageSource.indexOf("async function handleCreateSymptom");
+  const createHandlerEnd = healthPageSource.indexOf("async function handleSaveMeal", createHandlerStart);
+  const createHandlerSource = healthPageSource.slice(createHandlerStart, createHandlerEnd);
+  assert.doesNotMatch(createHandlerSource, /addSymptomEntry|setSymptomDraft|severity|entry_date|logged_at/);
+  assert.match(healthPageSource, /Cancel/);
+  assert.match(healthPageSource, /HealthSymptomColorControl/);
+  assert.match(healthPageSource, /library:\$\{symptom\.id\}/);
+  assert.match(healthPageSource, /handleSetSymptomColor\(symptom\.id, color\)/);
+  assert.match(healthPageSource, /setOpenSymptomColorPickerKey\(null\)/);
+  assert.match(healthPageSource, /onClick=\{onToggle\}/);
+  assert.match(healthPageSource, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\}/);
 });
 
 test("Health hydration checks lifecycle before and after each recovery mutation phase", () => {
