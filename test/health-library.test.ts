@@ -512,6 +512,7 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(source, /expandedFavoriteId/);
   assert.match(chart, /ActivityLineChartCard/);
   assert.match(chart, /buildHealthDailyCalorieSeries|HealthDailyCaloriePoint/);
+  assert.doesNotMatch(chart, /xSubpositionKey/);
   assert.doesNotMatch(chart, /<svg/);
   assert.match(sharedChart, /aria-label=\{ariaLabel\}/);
   assert.match(sharedChart, /<svg/);

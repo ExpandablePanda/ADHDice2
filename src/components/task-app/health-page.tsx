@@ -423,6 +423,7 @@ function buildHealthSymptomTrendSeries(
         label: formatHealthDateLabel(entry.entry_date),
         value: entry.severity,
         xDomainKey: entry.entry_date,
+        xSubpositionKey: entry.logged_at,
       };
     }),
     summaryLabel,
@@ -2243,10 +2244,10 @@ export function HealthPage({
                   <AdhdIconButton aria-label="Add symptom" onClick={openSymptomCreateForm} size="sm" tone="ghost" variant="rowToolbar"><Plus aria-hidden="true" /></AdhdIconButton>
                 </div>
                 {isSymptomCreateOpen ? (
-                  <div className="mt-2 grid gap-2 rounded-[0.8rem] border border-[#e4deef] bg-white/70 p-2 dark:border-white/10 dark:bg-white/[0.04]">
+                  <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 rounded-[0.8rem] border border-[#e4deef] bg-white/70 p-2 dark:border-white/10 dark:bg-white/[0.04]">
                     <input
                       aria-label="New symptom name"
-                      className={`${HEALTH_COMPACT_INPUT_CLASS} w-full`}
+                      className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 w-full max-w-[260px] sm:flex-[0_1_260px] sm:w-auto`}
                       disabled={isCreatingSymptom}
                       onChange={(event) => setSymptomCreateName(event.target.value)}
                       onKeyDown={(event) => {
@@ -2258,7 +2259,7 @@ export function HealthPage({
                       placeholder="e.g. Back Pain"
                       value={symptomCreateName}
                     />
-                    <div className="flex justify-end gap-2">
+                    <div className="flex shrink-0 gap-2">
                       <AdhdChip disabled={isCreatingSymptom} onClick={closeSymptomCreateForm} type="button">Cancel</AdhdChip>
                       <AdhdChip disabled={isCreatingSymptom} onClick={() => { void handleCreateSymptom(); }} tone="purple" type="button">Save</AdhdChip>
                     </div>

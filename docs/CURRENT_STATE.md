@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.23`.
+- Current working app version: `7.12.24`.
 - Current release group: `7.12.x` Health Journal symptom recovery.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -22,6 +22,17 @@ the combined date domain, while preserving raw points and same-day positions.
 Symptom Library now supports definition-only creation and reuses the approved
 symptom color palette for persistent color editing. No schema, SQL, Supabase,
 native, or iOS behavior changed; browser verification remains outstanding.
+
+## 2026-08-30 7.12.24 Health Journal trend collision and Library row polish
+
+Journal trend points that share a calendar date and severity now receive a small
+timestamp-ordered visual micro-spread around the canonical date position, while
+axis labels remain calendar dates and paths, circles, pointer selection, and
+active markers share the adjusted coordinates. Opt-in Journal collision details
+show every collided symptom entry together; Focus and Nutrition retain their
+existing detail behavior. Symptom Library creation controls now share a compact
+wrapping row on wider screens. No SQL, schema, persistence, native, or iOS
+behavior changed; browser verification remains outstanding.
 
 ## 2026-08-30 7.12.22 Health Journal color picker Safari correction
 

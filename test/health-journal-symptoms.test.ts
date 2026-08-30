@@ -3,7 +3,12 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { HealthSymptom, HealthSymptomEntry } from "../src/lib/database.types.ts";
-import { getNumericLineChartDomainKeys, getNumericLineChartXPositions } from "../src/components/activity-line-chart-card.tsx";
+import {
+  getNumericLineChartCollisionGroupKey,
+  getNumericLineChartCollisionOffsets,
+  getNumericLineChartDomainKeys,
+  getNumericLineChartXPositions,
+} from "../src/components/activity-line-chart-card.tsx";
 import { ADHDICE_ACCENT_COLORS } from "../src/lib/accent-colors.ts";
 import {
   ALL_HEALTH_SYMPTOMS_VALUE,
@@ -167,6 +172,43 @@ test("symptom trend calendar domains align same-day points without changing lega
   assert.notEqual(legacyPositions[1]?.x, legacyPositions[2]?.x);
 });
 
+test("Journal collision groups spread same-date equal-severity points by timestamp around canonical X", () => {
+  const points = [
+    { canonicalX: 240, point: { key: "thigh-early", label: "Thigh Falling Asleep", value: 1, xDomainKey: "2026-08-30", xSubpositionKey: "2026-08-30T03:05:00.000Z" }, pointKey: "thigh:thigh-early" },
+    { canonicalX: 240, point: { key: "anxiety", label: "Anxiety", value: 1, xDomainKey: "2026-08-30", xSubpositionKey: "2026-08-30T02:50:00.000Z" }, pointKey: "anxiety:anxiety" },
+    { canonicalX: 240, point: { key: "back-pain", label: "Back Pain", value: 4, xDomainKey: "2026-08-30", xSubpositionKey: "2026-08-30T03:10:00.000Z" }, pointKey: "back:back-pain" },
+  ];
+  const offsets = getNumericLineChartCollisionOffsets(points);
+
+  assert.equal(getNumericLineChartCollisionGroupKey(points[0]!.point), getNumericLineChartCollisionGroupKey(points[1]!.point));
+  assert.notEqual(getNumericLineChartCollisionGroupKey(points[0]!.point), getNumericLineChartCollisionGroupKey(points[2]!.point));
+  assert.equal(getNumericLineChartCollisionOffsets([points[0]!, points[2]!]).size, 0);
+  assert.equal(offsets.get("anxiety:anxiety"), -4);
+  assert.equal(offsets.get("thigh:thigh-early"), 4);
+  assert.equal(offsets.has("back:back-pain"), false);
+  assert.equal(240 + (offsets.get("anxiety:anxiety") ?? 0), 236);
+  assert.equal(240 + (offsets.get("thigh:thigh-early") ?? 0), 244);
+});
+
+test("larger Journal collision groups stay centered and capped while repeated same-symptom entries remain distinct", () => {
+  const points = [0, 1, 2, 3, 4].map((index) => ({
+    canonicalX: 320,
+    point: {
+      key: `entry-${index}`,
+      label: "Anxiety",
+      value: 7,
+      xDomainKey: "2026-08-30",
+      xSubpositionKey: `2026-08-30T0${index}:00:00.000Z`,
+    },
+    pointKey: `anxiety:entry-${index}`,
+  })).reverse();
+  const offsets = getNumericLineChartCollisionOffsets(points);
+
+  assert.deepEqual([0, 1, 2, 3, 4].map((index) => offsets.get(`anxiety:entry-${index}`)), [-16, -8, 0, 8, 16]);
+  assert.equal(Math.min(...[...offsets.values()]), -16);
+  assert.equal(Math.max(...[...offsets.values()]), 16);
+});
+
 test("symptom trend summary uses the latest visible severity, never a sum, and follows range-filtered points", () => {
   const entries = [
     symptomEntry("older", "2026-08-01", "2026-08-01T09:00:00.000Z", 3),
@@ -311,6 +353,7 @@ test("Journal symptom trends adapt into the shared chart with a fixed 1 to 10 se
   assert.match(healthPageSource, /color: normalizeHealthSymptomColor\(symptom\.color\)/);
   assert.doesNotMatch(healthPageSource, /totalValue: selectedSymptomTrendEntries\.reduce/);
   assert.match(healthPageSource, /xDomainKey: entry\.entry_date/);
+  assert.match(healthPageSource, /xSubpositionKey: entry\.logged_at/);
   assert.match(healthPageSource, /label: formatHealthDateLabel\(entry\.entry_date\)/);
   assert.match(healthPageSource, /compactPlot/);
   assert.match(healthPageSource, /maxValue=\{10\}/);
@@ -321,6 +364,9 @@ test("Journal symptom trends adapt into the shared chart with a fixed 1 to 10 se
   assert.match(activityChartSource, /const chartDomainPoints = series\.flatMap\(\(item\) => item\.points\)/);
   assert.match(activityChartSource, /const axisDomainKeys = getNumericLineChartDomainKeys\(chartDomainPoints\)/);
   assert.doesNotMatch(activityChartSource, /const axisDomainKeys = getNumericLineChartDomainKeys\(axisPoints\)/);
+  assert.match(activityChartSource, /getNumericLineChartCollisionOffsets\(chartPoints\)/);
+  assert.match(activityChartSource, /activePointCollisionGroup\.length > 1/);
+  assert.match(activityChartSource, /activePointCollisionGroup\.map\(\(point\)/);
   assert.match(activityChartSource, /maxValue\?: number/);
   assert.match(activityChartSource, /maxValueOverride/);
   assert.match(activityChartSource, /item\.summaryLabel \?\? item\.label/);
@@ -586,6 +632,11 @@ test("Symptom Library supports definition-only creation and shared color editing
   assert.match(healthPageSource, /isSymptomCreateOpen/);
   assert.match(healthPageSource, /aria-label="New symptom name"/);
   assert.match(healthPageSource, /createSymptom\(\{ name: symptomCreateName \}\)/);
+  const symptomCreateFormStart = healthPageSource.indexOf("{isSymptomCreateOpen ? (");
+  const symptomCreateFormSource = healthPageSource.slice(symptomCreateFormStart, healthPageSource.indexOf("{activeSymptoms.length", symptomCreateFormStart));
+  assert.match(symptomCreateFormSource, /flex min-w-0 flex-wrap items-center gap-2/);
+  assert.match(symptomCreateFormSource, /max-w-\[260px\]/);
+  assert.match(symptomCreateFormSource, /flex shrink-0 gap-2/);
   const createHandlerStart = healthPageSource.indexOf("async function handleCreateSymptom");
   const createHandlerEnd = healthPageSource.indexOf("async function handleSaveMeal", createHandlerStart);
   const createHandlerSource = healthPageSource.slice(createHandlerStart, createHandlerEnd);

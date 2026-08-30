@@ -132,6 +132,7 @@ test("Focus Activity Lines adapts its existing series into the shared chart card
   assert.match(source, /NumericLineChartSeries/);
   assert.match(source, /activityLineSeries/);
   assert.match(source, /formatRoundedMinuteDuration/);
+  assert.doesNotMatch(source, /xSubpositionKey/);
   assert.doesNotMatch(source, /variant="embedded"/);
   assert.match(sharedChart, /NumericLineChartSeries/);
   assert.match(sharedChart, /onPointerMove/);
@@ -145,6 +146,15 @@ test("shared line chart hover uses scaled X/Y distance for the nearest point", (
   assert.match(sharedChart, /left: 68/);
   assert.match(sharedChart, /min-h-\[3\.5rem\]/);
   assert.match(sharedChart, /Hover over a point to see its details/);
+});
+
+test("shared line chart uses one collision-adjusted X map for paths, circles, and active markers", () => {
+  assert.match(sharedChart, /const pointXPositions = useMemo/);
+  assert.match(sharedChart, /pointXPositions\.get\(pointKey\)/);
+  assert.match(sharedChart, /pointXPositions\.get\(`\$\{item\.key\}:\$\{point\.key\}`\)/);
+  assert.match(sharedChart, /x: PADDING\.left \+ position\.x/);
+  assert.match(sharedChart, /x1=\{activePoint\.x\} x2=\{activePoint\.x\}/);
+  assert.match(sharedChart, /getNearestNumericLineChartPoint\(interactivePoints/);
 });
 
 test("Focus config preserves a plain zero axis label and duration values", () => {

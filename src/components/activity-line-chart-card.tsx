@@ -6,6 +6,7 @@ export type NumericLineChartPoint = {
   detailLabel?: string;
   key: string;
   label: string;
+  xSubpositionKey?: string;
   xDomainKey?: string;
   value: number;
 };
@@ -51,6 +52,12 @@ const PLOT_HEIGHT = CHART_HEIGHT - PADDING.top - PADDING.bottom;
 
 type NumericLineChartDomainPoint = Pick<NumericLineChartPoint, "key" | "xDomainKey">;
 
+type NumericLineChartCollisionPoint = {
+  canonicalX: number;
+  point: NumericLineChartPoint;
+  pointKey: string;
+};
+
 function getNumericLineChartDomainKey(point: NumericLineChartDomainPoint) {
   return point.xDomainKey ?? point.key;
 }
@@ -77,6 +84,55 @@ export function getNumericLineChartXPositions(
       x: pointCount <= 1 ? PLOT_WIDTH / 2 : (xIndex / (pointCount - 1)) * PLOT_WIDTH,
     };
   });
+}
+
+export function getNumericLineChartCollisionGroupKey(point: Pick<NumericLineChartPoint, "value" | "xDomainKey">) {
+  return point.xDomainKey === undefined ? null : JSON.stringify([point.xDomainKey, point.value]);
+}
+
+function compareNumericLineChartCollisionPoints(
+  left: Pick<NumericLineChartPoint, "xSubpositionKey"> & { pointKey: string },
+  right: Pick<NumericLineChartPoint, "xSubpositionKey"> & { pointKey: string },
+) {
+  const subpositionOrder = left.xSubpositionKey!.localeCompare(right.xSubpositionKey!);
+  return subpositionOrder || left.pointKey.localeCompare(right.pointKey);
+}
+
+export function getNumericLineChartCollisionOffsets(
+  points: ReadonlyArray<NumericLineChartCollisionPoint>,
+) {
+  const offsets = new Map<string, number>();
+  const collisionGroups = new Map<string, NumericLineChartCollisionPoint[]>();
+
+  for (const point of points) {
+    if (point.point.xSubpositionKey === undefined) {
+      continue;
+    }
+    const groupKey = getNumericLineChartCollisionGroupKey(point.point);
+    if (!groupKey) {
+      continue;
+    }
+    const group = collisionGroups.get(groupKey) ?? [];
+    group.push(point);
+    collisionGroups.set(groupKey, group);
+  }
+
+  for (const group of collisionGroups.values()) {
+    if (group.length < 2) {
+      continue;
+    }
+    const orderedGroup = [...group].sort((left, right) => compareNumericLineChartCollisionPoints(
+      { pointKey: left.pointKey, xSubpositionKey: left.point.xSubpositionKey },
+      { pointKey: right.pointKey, xSubpositionKey: right.point.xSubpositionKey },
+    ));
+    const spacing = Math.min(8, 32 / (orderedGroup.length - 1));
+    const centerIndex = (orderedGroup.length - 1) / 2;
+    orderedGroup.forEach((point, index) => {
+      offsets.set(point.pointKey, (index - centerIndex) * spacing);
+    });
+  }
+
+  return offsets;
 }
 
 function getLinePointPosition(index: number, pointCount: number, value: number, maxValue: number, xOverride?: number) {
@@ -136,26 +192,48 @@ export function ActivityLineChartCard({
     : axisPoints;
   const axisLabelXPositions = getNumericLineChartXPositions(axisLabelPoints, axisDomainKeys);
   const labelStep = Math.max(1, Math.ceil(axisLabelPoints.length / 6));
+  const pointXPositions = useMemo(() => {
+    const chartPoints = series.flatMap((item) => {
+      const xPositions = getNumericLineChartXPositions(item.points, axisDomainKeys);
+      return item.points.map((point, index) => ({
+        canonicalX: xPositions[index]?.x ?? 0,
+        point,
+        pointKey: `${item.key}:${point.key}`,
+      }));
+    });
+    const collisionOffsets = getNumericLineChartCollisionOffsets(chartPoints);
+    return new Map(chartPoints.map((chartPoint) => [
+      chartPoint.pointKey,
+      chartPoint.canonicalX + (collisionOffsets.get(chartPoint.pointKey) ?? 0),
+    ]));
+  }, [axisDomainKeys, series]);
   const interactivePoints = useMemo(() => {
-    const xDomainKeys = getNumericLineChartDomainKeys(series.flatMap((item) => item.points));
     return series.flatMap((item) => {
-      const xPositions = getNumericLineChartXPositions(item.points, xDomainKeys);
       return item.points.map((point, index) => {
-        const position = getLinePointPosition(index, item.points.length, point.value, maxValue, xPositions[index]?.x);
+        const pointKey = `${item.key}:${point.key}`;
+        const position = getLinePointPosition(index, item.points.length, point.value, maxValue, pointXPositions.get(pointKey));
         return {
           ...point,
           color: item.color,
-          pointKey: `${item.key}:${point.key}`,
+          pointKey,
           seriesLabel: item.label,
           x: PADDING.left + position.x,
           y: PADDING.top + position.y,
         } satisfies InteractivePoint;
       });
     });
-  }, [maxValue, series]);
+  }, [maxValue, pointXPositions, series]);
   const activePoint = interactivePoints.find((point) => point.pointKey === (hoveredPointKey ?? pinnedPointKey))
     ?? interactivePoints.find((point) => point.pointKey === pinnedPointKey)
     ?? null;
+  const activePointCollisionGroupKey = activePoint?.xSubpositionKey === undefined
+    ? null
+    : getNumericLineChartCollisionGroupKey(activePoint);
+  const activePointCollisionGroup = activePointCollisionGroupKey
+    ? interactivePoints
+      .filter((point) => point.xSubpositionKey !== undefined && getNumericLineChartCollisionGroupKey(point) === activePointCollisionGroupKey)
+      .sort(compareNumericLineChartCollisionPoints)
+    : [];
   const hasData = series.length > 0 && axisPoints.length > 0 && !(emptyWhenAllZero && series.every((item) => item.points.every((point) => point.value === 0)));
   const isEmbedded = variant === "embedded";
   const plotClassName = compactPlot
@@ -226,9 +304,13 @@ export function ActivityLineChartCard({
                   );
                 })}
                 {series.map((item) => {
-                  const xDomainKeys = getNumericLineChartDomainKeys(series.flatMap((seriesItem) => seriesItem.points));
-                  const xPositions = getNumericLineChartXPositions(item.points, xDomainKeys);
-                  const points = item.points.map((point, index) => getLinePointPosition(index, item.points.length, point.value, maxValue, xPositions[index]?.x));
+                  const points = item.points.map((point, index) => getLinePointPosition(
+                    index,
+                    item.points.length,
+                    point.value,
+                    maxValue,
+                    pointXPositions.get(`${item.key}:${point.key}`),
+                  ));
                   const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${PADDING.left + point.x} ${PADDING.top + point.y}`).join(" ");
                   return (
                     <g key={item.key}>
@@ -254,7 +336,23 @@ export function ActivityLineChartCard({
           )}
           <div className="flex min-h-[3.5rem] flex-wrap items-center gap-3 rounded-[1.2rem] border border-[#e9e2fb] bg-white/90 px-4 py-3 text-left shadow-[0_12px_30px_rgba(81,61,168,0.08)] dark:border-white/10 dark:bg-white/[0.04]">
             {activePoint ? (
-              <>
+              activePointCollisionGroup.length > 1 ? (
+                <>
+                  <div className="grid min-w-0 flex-1 gap-1.5">
+                    {activePointCollisionGroup.map((point) => (
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs" key={point.pointKey}>
+                        <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: point.color }} />
+                        <span className="font-semibold text-[var(--text-primary)]">{point.seriesLabel}</span>
+                        <span className="text-[var(--text-secondary)]">{point.detailLabel ?? point.label}</span>
+                        <span className="font-black text-[var(--text-primary)]">{formatValue(point.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {activePointContext ? <span className="text-xs text-[var(--text-muted)]">{activePointContext}</span> : null}
+                  {pinnedPointKey ? <button className="ml-auto rounded-full border border-[#e4deef] px-3 py-1 text-xs font-semibold text-[#68738c] dark:border-white/10 dark:text-white/70" onClick={() => setPinnedPointKey(null)} type="button">Clear pin</button> : null}
+                </>
+              ) : (
+                <>
                 <span className="inline-flex items-center gap-2 rounded-full bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]">
                   <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: activePoint.color }} />
                   {activePoint.seriesLabel}
@@ -264,7 +362,8 @@ export function ActivityLineChartCard({
                 <span className="text-sm font-black text-[var(--text-primary)]">{formatValue(activePoint.value)}</span>
                 {activePointContext ? <span className="text-xs text-[var(--text-muted)]">{activePointContext}</span> : null}
                 {pinnedPointKey ? <button className="ml-auto rounded-full border border-[#e4deef] px-3 py-1 text-xs font-semibold text-[#68738c] dark:border-white/10 dark:text-white/70" onClick={() => setPinnedPointKey(null)} type="button">Clear pin</button> : null}
-              </>
+                </>
+              )
             ) : (
               <span className="text-sm text-[var(--text-muted)]">Hover over a point to see its details.</span>
             )}
