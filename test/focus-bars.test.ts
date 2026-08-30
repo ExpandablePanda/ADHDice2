@@ -22,6 +22,10 @@ const NOW_MS = 100_000;
 const focusBarsSource = readFileSync(new URL("../src/components/focus-bars.tsx", import.meta.url), "utf8");
 const focusBarsHelperSource = readFileSync(new URL("../src/lib/focus-bars.ts", import.meta.url), "utf8");
 const focusPageSource = readFileSync(new URL("../src/components/focus-page.tsx", import.meta.url), "utf8");
+const focusTimerPickerSource = focusPageSource.slice(
+  focusPageSource.indexOf("function FocusTimerPicker"),
+  focusPageSource.indexOf("export function FocusPage"),
+);
 const focusClocksSource = readFileSync(new URL("../src/components/focus-clocks.tsx", import.meta.url), "utf8");
 const clockFaceStageSource = focusClocksSource.slice(
   focusClocksSource.indexOf("{!hasSelectedDirection ?"),
@@ -496,6 +500,27 @@ test("Focus Timer dropdown highlight matches the active Clocks chip with white t
   assert.match(focusPageSource, /index === safeHighlightedIndex \? "bg-\[#6f57f6\] text-white"/);
   assert.match(focusPageSource, /<Clock3[\s\S]*?index === safeHighlightedIndex \? "text-white" : "text-\[#7b68ee\]/);
   assert.doesNotMatch(focusPageSource, /bg-\[#f1ecff\] text-\[#6249e8\]/);
+});
+
+test("Focus Timer picker chevron explicitly opens and closes the list with accessible control semantics", () => {
+  const chevronSource = focusTimerPickerSource.slice(
+    focusTimerPickerSource.indexOf("<button"),
+    focusTimerPickerSource.indexOf("</button>") + "</button>".length,
+  );
+
+  assert.match(chevronSource, /aria-label="Toggle focus timer options"/);
+  assert.match(chevronSource, /aria-expanded=\{isOpen\}/);
+  assert.match(chevronSource, /aria-controls=\{listboxId\}/);
+  assert.match(chevronSource, /if \(isOpen\) \{[\s\S]*?setIsOpen\(false\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?focusDropdownControl\(inputRef\.current\);[\s\S]*?setIsOpen\(true\);/);
+  assert.doesNotMatch(chevronSource, /setIsOpen\(\(current\) => !current\)/);
+});
+
+test("Focus Timer picker keeps input focus-open and panel-local Arrow behavior", () => {
+  assert.match(focusTimerPickerSource, /onFocus=\{\(\) => setIsOpen\(true\)\}/);
+  assert.match(focusTimerPickerSource, /event\.key === "ArrowDown"[\s\S]*event\.preventDefault\(\)[\s\S]*setHighlightedIndex/);
+  assert.match(focusTimerPickerSource, /event\.key === "ArrowUp"[\s\S]*event\.preventDefault\(\)[\s\S]*setHighlightedIndex/);
+  assert.match(focusTimerPickerSource, /revealDropdownOptionWithinPanel\(highlightedOptionRef\.current, panelRef\.current\)/);
+  assert.doesNotMatch(focusTimerPickerSource, /highlightedOptionRef\.current\?\.scrollIntoView/);
 });
 
 test("Focus Bars renders directly in the outer sandbox without a nested card shell", () => {

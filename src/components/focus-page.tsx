@@ -240,9 +240,26 @@ function FocusTimerPicker({
           type="text"
           value={query}
           />
-        <svg aria-hidden="true" className="pointer-events-none h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-          <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        <button
+          aria-controls={listboxId}
+          aria-expanded={isOpen}
+          aria-label="Toggle focus timer options"
+          className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/40"
+          onClick={() => {
+            if (isOpen) {
+              setIsOpen(false);
+              return;
+            }
+
+            focusDropdownControl(inputRef.current);
+            setIsOpen(true);
+          }}
+          type="button"
+        >
+          <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
 
       {isOpen ? (
