@@ -21,6 +21,12 @@ test("HealthDropdown options are not Tab stops and Tab closes without trapping f
   assert.doesNotMatch(tabBranch, /event\.preventDefault\(\)/);
 });
 
+test("HealthDropdown closes when focus leaves its root without selecting or trapping focus", () => {
+  assert.match(dropdownSource, /onBlur=\{\(event\) => \{\s+if \(!rootRef\.current\?\.contains\(event\.relatedTarget as Node \| null\)\) \{\s+setIsOpen\(false\);\s+\}\s+\}\}/);
+  const blurHandler = dropdownSource.slice(dropdownSource.indexOf("onBlur={(event) =>"), dropdownSource.indexOf("ref={rootRef}") );
+  assert.doesNotMatch(blurHandler, /preventDefault\(\)|chooseOption\(|onChange\(/);
+});
+
 test("HealthDropdown keeps current Arrow, Enter, Space, and Escape behavior", () => {
   assert.match(dropdownSource, /event\.key === "ArrowDown"/);
   assert.match(dropdownSource, /event\.key === "ArrowUp"/);

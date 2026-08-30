@@ -213,7 +213,15 @@ export function HealthDropdown({
   }
 
   return (
-    <div className="relative w-full" ref={rootRef}>
+    <div
+      className="relative w-full"
+      onBlur={(event) => {
+        if (!rootRef.current?.contains(event.relatedTarget as Node | null)) {
+          setIsOpen(false);
+        }
+      }}
+      ref={rootRef}
+    >
       <button
         aria-controls={isOpen ? listboxId : undefined}
         aria-expanded={isOpen}
