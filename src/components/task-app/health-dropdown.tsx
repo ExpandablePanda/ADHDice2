@@ -349,6 +349,7 @@ export function HealthDropdown({
                       event.stopPropagation();
                       option.trailingAction?.onClick();
                     }}
+                    onMouseDown={(event) => event.preventDefault()}
                     type="button"
                   >
                     {option.trailingAction.content}

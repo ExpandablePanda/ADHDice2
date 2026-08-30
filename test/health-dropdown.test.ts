@@ -54,6 +54,7 @@ test("HealthDropdown trailing actions are generic sibling controls that cannot s
   const actionRow = dropdownSource.slice(actionRowStart, dropdownSource.indexOf("</div>", actionRowStart) + 6);
   assert.match(actionRow, /\{optionButton\}/);
   assert.match(actionRow, /aria-label=\{option\.trailingAction\.ariaLabel\}/);
+  assert.match(actionRow, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(actionRow, /event\.stopPropagation\(\);\s+option\.trailingAction\?\.onClick\(\);/);
   assert.doesNotMatch(actionRow, /chooseOption\(index\)/);
   assert.match(dropdownSource, /if \(!option\.trailingAction\) \{\s+return optionButton;\s+\}/);

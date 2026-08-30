@@ -5,13 +5,21 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.21`.
+- Current working app version: `7.12.22`.
 - Current release group: `7.12.x` Health Journal symptom recovery.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-30 7.12.22 Health Journal color picker Safari correction
+
+Health Journal symptom color actions and palette buttons now prevent pointer
+focus transfer before click, keeping the parent `HealthDropdown` open while
+the color action runs. Keyboard activation remains available, and symptom
+selection still closes the parent dropdown. No schema, SQL, Supabase,
+persistence, chart, native, or iOS behavior changed.
 
 ## 2026-08-30 7.12.21 Health Journal symptom colors
 

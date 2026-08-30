@@ -501,6 +501,11 @@ test("symptom persistence has its own optional fallback and CRUD paths", () => {
 test("Journal symptom pickers expose palette actions and the trend series uses the selected symptom color", () => {
   assert.equal((healthPageSource.match(/buildHealthSymptomDropdownOption\(/g) ?? []).length >= 3, true);
   assert.match(healthPageSource, /ADHDICE_ACCENT_COLORS\.map/);
+  const paletteSourceStart = healthPageSource.indexOf("ADHDICE_ACCENT_COLORS.map");
+  const paletteSource = healthPageSource.slice(paletteSourceStart, healthPageSource.indexOf("</div>", paletteSourceStart));
+  assert.match(paletteSource, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\}/);
+  assert.match(paletteSource, /onClick=\{\(\) => onSetColor\(symptom\.id, paletteColor\)\}/);
+  assert.doesNotMatch(paletteSource, /chooseOption\(|setSymptomDraft|setSelectedSymptomTrendId/);
   assert.match(healthPageSource, /ariaLabel="Symptom"[\s\S]*?options=\{editingSymptomEntryId/);
   assert.match(healthPageSource, /ariaLabel="Trend symptom"[\s\S]*?options=\{symptomTrendOptions}/);
   assert.match(healthPageSource, /color: normalizeHealthSymptomColor\(selectedSymptomTrend\.color\)/);

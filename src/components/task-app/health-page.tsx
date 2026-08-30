@@ -426,6 +426,7 @@ function buildHealthSymptomDropdownOption(
               className={`h-5 w-5 rounded-full border-2 transition ${color === paletteColor ? "scale-110 border-[#2f294a] dark:border-white" : "border-transparent"}`}
               key={paletteColor}
               onClick={() => onSetColor(symptom.id, paletteColor)}
+              onMouseDown={(event) => event.preventDefault()}
               style={{ backgroundColor: paletteColor }}
               title={`Set ${symptom.name} color to ${paletteColor}`}
               type="button"
