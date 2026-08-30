@@ -18,6 +18,10 @@ const healthHookSource = readFileSync(
   new URL("../src/hooks/useHealth.ts", import.meta.url),
   "utf8",
 );
+const healthPageSource = readFileSync(
+  new URL("../src/components/task-app/health-page.tsx", import.meta.url),
+  "utf8",
+);
 
 function waterEntry(
   id: string,
@@ -110,6 +114,16 @@ test("Today’s Water keeps its existing editing binding", () => {
   assert.match(waterPanelSource, /todayEntries\.map\(\(entry\) => \(/);
   assert.match(waterPanelSource, /todayEntries\.map\(\(entry\) => \([\s\S]*?onStartEdit=\{startEditing\}/);
   assert.match(waterPanelSource, /todayEntries\.map\(\(entry\) => \([\s\S]*?onSaveEdit=\{saveEditing\}/);
+});
+
+test("Health Page destructures and forwards the Water confirmation callback", () => {
+  const propsSource = healthPageSource.slice(
+    healthPageSource.indexOf("export function HealthPage({"),
+    healthPageSource.indexOf("}: HealthPageProps)") + "}: HealthPageProps)".length,
+  );
+
+  assert.match(propsSource, /addWaterEntry,\s*confirmWaterEntry,\s*addWorkout/);
+  assert.match(healthPageSource, /confirmWaterEntry=\{confirmWaterEntry\}/);
 });
 
 test("Water History keeps the existing 14-day limit", () => {

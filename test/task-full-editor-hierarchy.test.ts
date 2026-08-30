@@ -50,6 +50,25 @@ test("every full-editor descendant row exposes Add Substep", () => {
   assert.match(editorChildRowsSource, /beginTableStepDraft\(item\.id, "Substep"\)/);
 });
 
+test("Step and Substep title activation targets metadata and starts inline rename", () => {
+  const titleButtonStart = editorChildRowsSource.indexOf("<button\n                          data-step-title-edit={item.id}");
+  const titleButtonEnd = editorChildRowsSource.indexOf("<p className=", titleButtonStart);
+  const titleButtonSource = editorChildRowsSource.slice(titleButtonStart, titleButtonEnd);
+  const childRoutingSource = tableSource.slice(
+    tableSource.indexOf("function revealChildTaskInParentEditor"),
+    tableSource.indexOf("function toggleInlineActionRow"),
+  );
+
+  assert.ok(titleButtonStart >= 0, "Step/Substep title button should be discoverable");
+  assert.match(titleButtonSource, /onClick=\{\(event\) => \{[\s\S]*event\.stopPropagation\(\);[\s\S]*openTaskInCurrentEditor\(item\.id\);[\s\S]*handoffEditorChildTitleRename\(item\.id, item\.title\);/);
+  assert.match(editorChildRowsSource, /displayedItems\.map\(\(item, itemIndex\) =>/);
+  assert.match(editorChildRowsSource, /item\.depth > 1 \? "Untitled substep" : "Untitled step"/);
+  assert.match(childRoutingSource, /openInspector\(parentTask\.id, "full"\)/);
+  assert.match(childRoutingSource, /setMetadataTargetTaskId\(taskId\)/);
+  assert.match(editorChildRowsSource, /aria-label=\{`Change status for \$\{item\.title[\s\S]*event\.stopPropagation\(\);[\s\S]*setActiveMetadataPanelByTaskId/);
+  assert.match(editorChildRowsSource, /aria-label=\{`\$\{isCollapsed \? "Expand" : "Collapse"[\s\S]*event\.stopPropagation\(\);[\s\S]*setCollapsedChildTaskIds/);
+});
+
 test("row child creation uses the clicked row ID and renders its form beneath that row", () => {
   assert.match(tableSource, /onCreateChildTask\(parentTaskId, nextTitle\)/);
   assert.match(editorChildRowsSource, /data-full-editor-child-draft-row=\{item\.id\}/);

@@ -564,6 +564,7 @@ export function HealthPage({
   confirmMealPlanEntry,
   addWeightEntry,
   addWaterEntry,
+  confirmWaterEntry,
   addWorkout,
   archiveGoal,
   archiveExercise,

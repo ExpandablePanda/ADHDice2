@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.27`.
+- Current working app version: `7.12.28`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -54,6 +54,15 @@ Nutrition calorie plus Sleep charts show their existing persisted goals as
 optional shared reference lines. No SQL, schema, native, or iOS changes were
 made; browser and cross-device verification remain outstanding.
 
+## 2026-08-30 7.12.28 QA failure corrections
+
+Step/Substep title clicks in the current parent Edit Task surface now target
+the clicked child in the existing metadata pane and begin the existing inline
+rename, while the parent remains the editor root. Health Page now destructures
+the existing Water confirmation callback, preventing the Water-page runtime
+ReferenceError. No SQL, migration, schema, persistence, or Supabase changes
+were made; browser QA remains outstanding.
+
 ## 2026-08-30 7.12.27 QA corrections and Water/import workflow
 
 Edit Task source Step/Substep rows now use the existing current-editor routing
@@ -64,7 +73,7 @@ goal line, and nullable `confirmed_at` Pending/Confirm semantics with
 confirmed-only totals and history. The shared Import Tasks adapter now reports
 real recursive persistence progress, including failed or skipped descendants.
 The authored-only `supabase/add_health_water_goal_and_confirmation_7_12_27.sql`
-migration must be applied manually; browser, cross-device, and live SQL
+migration was applied manually; browser, cross-device, and live SQL
 verification remain outstanding.
 
 ## 2026-08-30 7.12.22 Health Journal color picker Safari correction

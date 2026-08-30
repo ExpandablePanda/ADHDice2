@@ -7432,6 +7432,7 @@ export function TaskManagementTableV2({
                           className="block min-w-0 max-w-full flex-[0_1_auto] appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                           onClick={(event) => {
                             event.stopPropagation();
+                            openTaskInCurrentEditor(item.id);
                             handoffEditorChildTitleRename(item.id, item.title);
                           }}
                           onPointerDown={(event) => {
