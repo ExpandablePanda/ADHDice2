@@ -4,6 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
+import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
 
 export const HEALTH_COMPACT_CONTROL_CLASS = "health-input !h-[26px] !min-h-[26px] !rounded-full !px-2 !py-1 !text-[13px] !leading-none";
 export const HEALTH_COMPACT_INPUT_CLASS = `${HEALTH_COMPACT_CONTROL_CLASS} max-sm:!text-[16px]`;
@@ -38,6 +39,8 @@ export function HealthAutocomplete({
   const generatedId = useId();
   const listboxId = id ? `${id}-listbox` : `${generatedId}-listbox`;
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const highlightedOptionRef = useRef<HTMLButtonElement | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -61,8 +64,8 @@ export function HealthAutocomplete({
     if (!isOpen) {
       return;
     }
-    highlightedOptionRef.current?.scrollIntoView({ block: "nearest" });
-  }, [highlightedIndex, isOpen, matchingSuggestions.length]);
+    revealDropdownOptionWithinPanel(highlightedOptionRef.current, panelRef.current);
+  }, [highlightedIndex, isOpen, matchingSuggestions.length, value]);
 
   function chooseSuggestion(index: number) {
     const suggestion = matchingSuggestions[index];
@@ -75,7 +78,15 @@ export function HealthAutocomplete({
   }
 
   return (
-    <div className="relative w-full" ref={rootRef}>
+    <div
+      className="relative w-full"
+      onBlur={(event) => {
+        if (shouldCloseDropdownOnFocusLeave(rootRef.current, event.relatedTarget)) {
+          setIsOpen(false);
+        }
+      }}
+      ref={rootRef}
+    >
       <input
         aria-activedescendant={isOpen && matchingSuggestions[highlightedIndex] ? `${listboxId}-option-${highlightedIndex}` : undefined}
         aria-autocomplete="list"
@@ -93,7 +104,9 @@ export function HealthAutocomplete({
           setHighlightedIndex(0);
           setIsOpen(true);
         }}
+        onClick={() => focusDropdownControl(inputRef.current)}
         placeholder={placeholder}
+        ref={inputRef}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" && matchingSuggestions.length > 0) {
             event.preventDefault();
@@ -122,6 +135,7 @@ export function HealthAutocomplete({
           className="adhdice-scrollbar max-h-64 overflow-y-auto"
           id={listboxId}
           role="listbox"
+          ref={panelRef}
           widthClassName="w-full"
         >
           {matchingSuggestions.map((suggestion, index) => (
@@ -169,6 +183,10 @@ export function HealthDropdown({
   const generatedId = useId();
   const listboxId = id ?? `${generatedId}-listbox`;
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const pointerActivationRef = useRef(false);
+  const pointerOpenStateRef = useRef(false);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const highlightedOptionRef = useRef<HTMLButtonElement | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));
@@ -190,7 +208,7 @@ export function HealthDropdown({
     if (!isOpen) {
       return;
     }
-    highlightedOptionRef.current?.scrollIntoView({ block: "nearest" });
+    revealDropdownOptionWithinPanel(highlightedOptionRef.current, panelRef.current);
   }, [highlightedIndex, isOpen, options.length]);
 
   function moveHighlight(direction: 1 | -1) {
@@ -216,7 +234,7 @@ export function HealthDropdown({
     <div
       className="relative w-full"
       onBlur={(event) => {
-        if (!rootRef.current?.contains(event.relatedTarget as Node | null)) {
+        if (shouldCloseDropdownOnFocusLeave(rootRef.current, event.relatedTarget)) {
           setIsOpen(false);
         }
       }}
@@ -231,12 +249,19 @@ export function HealthDropdown({
         className={`${HEALTH_COMPACT_CONTROL_CLASS} flex items-center justify-between gap-2 text-left ${className ?? ""}`}
         disabled={disabled}
         id={id}
+        onPointerDown={() => {
+          pointerActivationRef.current = true;
+          pointerOpenStateRef.current = isOpen;
+        }}
         onClick={() => {
+          const wasOpen = pointerActivationRef.current ? pointerOpenStateRef.current : isOpen;
+          focusDropdownControl(triggerRef.current);
+          pointerActivationRef.current = false;
           setHighlightedIndex(selectedIndex);
-          setIsOpen((current) => !current);
+          setIsOpen(!wasOpen);
         }}
         onFocus={() => {
-          if (openOnFocus) {
+          if (openOnFocus && !pointerActivationRef.current) {
             setHighlightedIndex(selectedIndex);
             setIsOpen(true);
           }
@@ -259,7 +284,7 @@ export function HealthDropdown({
           } else if ((event.key === "Enter" || event.key === " ") && isOpen) {
             event.preventDefault();
             chooseOption(highlightedIndex);
-          } else if (event.key === "Tab") {
+          } else if (shouldCloseDropdownOnTab(event.key, isOpen)) {
             setIsOpen(false);
           } else if (event.key === "Escape") {
             event.preventDefault();
@@ -267,6 +292,7 @@ export function HealthDropdown({
           }
         }}
         role="combobox"
+        ref={triggerRef}
         type="button"
       >
         <span className="min-w-0 flex-1 truncate">{selectedOption?.label ?? "Select"}</span>
@@ -278,6 +304,7 @@ export function HealthDropdown({
           className="adhdice-scrollbar max-h-64 overflow-y-auto"
           id={listboxId}
           role="listbox"
+          ref={panelRef}
           widthClassName="w-full"
         >
           {options.map((option, index) => (

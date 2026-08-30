@@ -2,6 +2,7 @@
 
 import { Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { focusDropdownControl, revealDropdownOptionWithinPanel } from "@/lib/dropdown-interaction";
 import { searchNavigatorTargets, type NavigatorSearchTarget } from "@/lib/navigator-search";
 
 export type NavigatorSearchPlacement = "bottom" | "left" | "right";
@@ -18,11 +19,17 @@ export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIc
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const highlightedOptionRef = useRef<HTMLButtonElement | null>(null);
   const results = useMemo(() => searchNavigatorTargets(query, targets), [query, targets]);
 
   useEffect(() => {
-    inputRef.current?.focus();
+    focusDropdownControl(inputRef.current);
   }, []);
+
+  useEffect(() => {
+    revealDropdownOptionWithinPanel(highlightedOptionRef.current, panelRef.current);
+  }, [highlightedIndex, query, results.length]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
@@ -62,7 +69,7 @@ export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIc
       <button
         aria-label="Search navigation"
         className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[#6f57f6] transition hover:bg-[#f1ecff] dark:text-[#cabfff] dark:hover:bg-white/10"
-        onClick={() => inputRef.current?.focus()}
+        onClick={() => focusDropdownControl(inputRef.current)}
         type="button"
       >
         {renderIcon("Search")}
@@ -81,6 +88,7 @@ export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIc
             setQuery(event.target.value);
             setHighlightedIndex(0);
           }}
+          onClick={() => focusDropdownControl(inputRef.current)}
           onKeyDown={handleKeyDown}
           placeholder="Search pages and sections..."
           ref={inputRef}
@@ -102,7 +110,7 @@ export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIc
         {results.length === 0 ? (
           <p className="px-3 py-5 text-center text-sm font-medium text-[#7d88a1] dark:text-white/55">No destinations found.</p>
         ) : (
-          <div className="adhdice-scrollbar max-h-[min(55vh,22rem)] overflow-y-auto">
+          <div className="adhdice-scrollbar max-h-[min(55vh,22rem)] overflow-y-auto" ref={panelRef}>
             {results.map((target, index) => (
               <button
                 aria-selected={highlightedIndex === index}
@@ -114,6 +122,7 @@ export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIc
                   onClose();
                 }}
                 onMouseEnter={() => setHighlightedIndex(index)}
+                ref={index === highlightedIndex ? highlightedOptionRef : undefined}
                 role="option"
                 type="button"
               >

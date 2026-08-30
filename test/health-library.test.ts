@@ -117,7 +117,8 @@ test("Food Logging picker exposes custom Foods, Recipes, and Saved Meals by name
   assert.match(source, /provider: "saved_meal"/);
   assert.match(dropdown, /onSelect\?\.\(suggestion\)/);
   assert.match(dropdown, /event\.key === "Enter"[\s\S]*chooseSuggestion\(highlightedIndex\)/);
-  assert.match(dropdown, /scrollIntoView\(\{ block: "nearest" \}\)/);
+  assert.match(dropdown, /revealDropdownOptionWithinPanel\(highlightedOptionRef\.current, panelRef\.current\)/);
+  assert.doesNotMatch(dropdown, /scrollIntoView/);
 });
 
 test("custom food serving fields compose a backward-compatible label", () => {

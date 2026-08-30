@@ -77,7 +77,7 @@ test("inline search mode enters with an autofocused input and supports keyboard 
   assert.match(inlineSource, /event\.key === "Enter"/);
   assert.match(inlineSource, /event\.key === "Escape"/);
   assert.match(inlineSource, /No destinations found\./);
-  assert.match(inlineSource, /inputRef\.current\?\.focus\(\)/);
+  assert.match(inlineSource, /focusDropdownControl\(inputRef\.current\)/);
   assert.match(inlineSource, /onNavigate\(target\);\s*onClose\(\)/);
   assert.doesNotMatch(inlineSource, /ModalShell/);
 });

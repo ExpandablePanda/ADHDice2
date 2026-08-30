@@ -10,6 +10,7 @@ import {
 import { attachDailyOverallGoalSeconds } from "@/lib/focus-activity";
 import { ALL_FOCUS_ACTIVITY_FILTER, filterFocusActivityHistory, getFocusActivitySubtypeOptions, getFocusActivityTypeOptions } from "@/lib/focus-activity-filters";
 import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "@/lib/focus-activity-scroll";
+import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { type FocusCategory, type HistoricalFocusSession, type FocusLabelOptions, type FocusSubtype, type FocusType } from "@/lib/types";
 import { formatLocalDate } from "@/lib/utils";
@@ -1776,6 +1777,7 @@ function FocusActivitySummaryCard({
   const [selectedMode, setSelectedMode] = useState<ActivitySummaryMode>("overall");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isRangePickerOpen, setIsRangePickerOpen] = useState(false);
+  const rangeRootRef = useRef<HTMLDivElement | null>(null);
   const rangeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const rangePickerRef = useRef<HTMLDivElement | null>(null);
   const selectedRangeOptionRef = useRef<HTMLButtonElement | null>(null);
@@ -1893,7 +1895,7 @@ function FocusActivitySummaryCard({
         return;
       }
       setIsRangePickerOpen(false);
-      rangeTriggerRef.current?.focus();
+      focusDropdownControl(rangeTriggerRef.current);
     };
 
     window.addEventListener("pointerdown", handlePointerDown);
@@ -1911,7 +1913,7 @@ function FocusActivitySummaryCard({
     }
 
     const frame = window.requestAnimationFrame(() => {
-      selectedRangeOptionRef.current?.scrollIntoView({ block: "nearest" });
+      revealDropdownOptionWithinPanel(selectedRangeOptionRef.current, rangePickerRef.current);
     });
 
     return () => window.cancelAnimationFrame(frame);
@@ -1920,7 +1922,7 @@ function FocusActivitySummaryCard({
   const selectRangeOption = (optionDate: string) => {
     onDateChange(optionDate);
     setIsRangePickerOpen(false);
-    rangeTriggerRef.current?.focus();
+    focusDropdownControl(rangeTriggerRef.current);
   };
 
   return (
@@ -1940,13 +1942,29 @@ function FocusActivitySummaryCard({
                     <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </TaskTableChipButton>
-                <div className="relative">
+                <div
+                  className="relative"
+                  onBlur={(event) => {
+                    if (shouldCloseDropdownOnFocusLeave(rangeRootRef.current, event.relatedTarget)) {
+                      setIsRangePickerOpen(false);
+                    }
+                  }}
+                  ref={rangeRootRef}
+                >
                   <button
                     aria-controls="focus-activity-range-picker"
                     aria-expanded={isRangePickerOpen}
                     aria-haspopup="listbox"
                     className="inline-flex h-7 min-h-0 items-center gap-1 overflow-hidden rounded-full border border-[#e4deef] bg-[var(--surface-elevated)] px-3 py-0 text-[#5f6b83] shadow-none transition hover:border-[#ddd2ff] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b6a7ff] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-white/10 dark:bg-white/[0.03] dark:text-white/70 dark:hover:border-white/20 dark:hover:bg-white/[0.06] dark:focus-visible:ring-[#7f67ff] dark:focus-visible:ring-offset-[#140f26]"
-                    onClick={() => setIsRangePickerOpen((current) => !current)}
+                    onClick={() => {
+                      focusDropdownControl(rangeTriggerRef.current);
+                      setIsRangePickerOpen((current) => !current);
+                    }}
+                    onKeyDown={(event) => {
+                      if (shouldCloseDropdownOnTab(event.key, isRangePickerOpen)) {
+                        setIsRangePickerOpen(false);
+                      }
+                    }}
                     ref={rangeTriggerRef}
                     type="button"
                   >
@@ -1973,6 +1991,7 @@ function FocusActivitySummaryCard({
                           onClick={() => selectRangeOption(option.date)}
                           ref={option.isSelected ? selectedRangeOptionRef : undefined}
                           role="option"
+                          tabIndex={-1}
                           type="button"
                         >
                           <span className="text-sm font-bold leading-tight">{option.label}</span>

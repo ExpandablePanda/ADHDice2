@@ -40,6 +40,7 @@ import {
 } from "@/lib/focus-goals";
 import { getDisplayFocusCategories, isSystemCountdownCategoryId, SYSTEM_COUNTDOWN_CATEGORY_ID } from "@/lib/focus-utils";
 import { classifyFocusSandboxSwipe, getBoundedFocusSandboxPage } from "@/lib/focus-bars";
+import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
 import { FocusGoalsPanel } from "./focus-goals-panel";
 import { FocusBars, FocusBarsErrorBoundary } from "./focus-bars";
 import { FocusClockRow, FocusClockRowDesktop } from "./focus-clocks";
@@ -135,6 +136,9 @@ function FocusTimerPicker({
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const listboxId = useId();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const highlightedOptionRef = useRef<HTMLDivElement | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
   const categoryOptions = categories
     .filter((category) => !activeSessions[category.id])
@@ -164,6 +168,13 @@ function FocusTimerPicker({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    revealDropdownOptionWithinPanel(highlightedOptionRef.current, panelRef.current);
+  }, [isOpen, options.length, highlightedIndex, query]);
+
   const closePicker = () => {
     setQuery("");
     setHighlightedIndex(0);
@@ -180,7 +191,15 @@ function FocusTimerPicker({
   };
 
   return (
-    <div className="relative w-[min(12rem,calc(100vw-2rem))] text-left" ref={rootRef}>
+    <div
+      className="relative w-[min(12rem,calc(100vw-2rem))] text-left"
+      onBlur={(event) => {
+        if (shouldCloseDropdownOnFocusLeave(rootRef.current, event.relatedTarget)) {
+          setIsOpen(false);
+        }
+      }}
+      ref={rootRef}
+    >
       <label className="sr-only" htmlFor={`${listboxId}-input`}>Add a focus timer</label>
       <div className={`ui-pill-button-strong-light flex items-center gap-1.5 transition hover:-translate-y-0.5 ${FOCUS_TOOLBAR_CHIP_TONE_CLASS}`}>
         <input
@@ -195,6 +214,7 @@ function FocusTimerPicker({
             setHighlightedIndex(0);
             setIsOpen(true);
           }}
+          onClick={() => focusDropdownControl(inputRef.current)}
           onFocus={() => setIsOpen(true)}
           onKeyDown={(event) => {
             if (event.key === "ArrowDown") {
@@ -208,11 +228,14 @@ function FocusTimerPicker({
             } else if (event.key === "Enter" && isOpen && options[safeHighlightedIndex]) {
               event.preventDefault();
               selectOption(options[safeHighlightedIndex]);
+            } else if (shouldCloseDropdownOnTab(event.key, isOpen)) {
+              setIsOpen(false);
             } else if (event.key === "Escape") {
               setIsOpen(false);
             }
           }}
           placeholder="Add focus timer..."
+          ref={inputRef}
           role="combobox"
           type="text"
           value={query}
@@ -226,6 +249,7 @@ function FocusTimerPicker({
         <div
           className="adhdice-scrollbar absolute left-0 right-0 z-40 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-[#e7e0f7] bg-white p-2 shadow-[0_18px_45px_rgba(70,50,145,0.16)] dark:border-white/10 dark:bg-[#1b1630] dark:shadow-[0_18px_45px_rgba(0,0,0,0.35)]"
           id={listboxId}
+          ref={panelRef}
           role="listbox"
         >
           {options.length ? options.map((option, index) => (
@@ -237,6 +261,7 @@ function FocusTimerPicker({
               onClick={() => selectOption(option)}
               onMouseDown={(event) => event.preventDefault()}
               onMouseEnter={() => setHighlightedIndex(index)}
+              ref={index === safeHighlightedIndex ? highlightedOptionRef : undefined}
               role="option"
             >
               {option.kind === "countdown" ? (

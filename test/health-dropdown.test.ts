@@ -9,22 +9,30 @@ const healthDropdownSource = dropdownSource.slice(dropdownSource.indexOf("export
 test("HealthDropdown opens on focus only when opted in and highlights the selected option", () => {
   assert.match(dropdownSource, /openOnFocus = false/);
   assert.match(dropdownSource, /openOnFocus\?: boolean/);
-  assert.match(dropdownSource, /if \(openOnFocus\) \{\s+setHighlightedIndex\(selectedIndex\);\s+setIsOpen\(true\);/);
+  assert.match(dropdownSource, /if \(openOnFocus && !pointerActivationRef\.current\) \{\s+setHighlightedIndex\(selectedIndex\);\s+setIsOpen\(true\);/);
   assert.match(healthPageSource, /ariaLabel="Measurement"[\s\S]*?openOnFocus/);
   assert.doesNotMatch(dropdownSource, /openOnFocus = true/);
 });
 
 test("HealthDropdown options are not Tab stops and Tab closes without trapping focus", () => {
-  assert.match(dropdownSource, /event\.key === "Tab"\) \{\s+setIsOpen\(false\);/);
+  assert.match(dropdownSource, /shouldCloseDropdownOnTab\(event\.key, isOpen\)[\s\S]*setIsOpen\(false\);/);
   assert.match(dropdownSource, /role="option"\s+tabIndex=\{-1\}/);
   const tabBranch = healthDropdownSource.slice(healthDropdownSource.indexOf("} else if (event.key === \"Tab\")"), healthDropdownSource.indexOf("} else if (event.key === \"Escape\")"));
   assert.doesNotMatch(tabBranch, /event\.preventDefault\(\)/);
 });
 
 test("HealthDropdown closes when focus leaves its root without selecting or trapping focus", () => {
-  assert.match(dropdownSource, /onBlur=\{\(event\) => \{\s+if \(!rootRef\.current\?\.contains\(event\.relatedTarget as Node \| null\)\) \{\s+setIsOpen\(false\);\s+\}\s+\}\}/);
+  assert.match(dropdownSource, /shouldCloseDropdownOnFocusLeave\(rootRef\.current, event\.relatedTarget\)[\s\S]*setIsOpen\(false\);/);
   const blurHandler = dropdownSource.slice(dropdownSource.indexOf("onBlur={(event) =>"), dropdownSource.indexOf("ref={rootRef}") );
   assert.doesNotMatch(blurHandler, /preventDefault\(\)|chooseOption\(|onChange\(/);
+});
+
+test("HealthDropdown pointer opening focuses the existing trigger without page scrolling", () => {
+  assert.match(dropdownSource, /const triggerRef = useRef<HTMLButtonElement \| null>\(null\);/);
+  assert.match(dropdownSource, /focusDropdownControl\(triggerRef\.current\)/);
+  assert.match(dropdownSource, /ref=\{triggerRef\}/);
+  assert.match(dropdownSource, /ref=\{panelRef\}/);
+  assert.doesNotMatch(dropdownSource, /scrollIntoView/);
 });
 
 test("HealthDropdown keeps current Arrow, Enter, Space, and Escape behavior", () => {

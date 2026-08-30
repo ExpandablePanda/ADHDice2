@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
 
 export type FocusSelectOption = {
   label: string;
@@ -30,6 +31,9 @@ export function FocusSuggestionInput({
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const rootRef = useRef<HTMLLabelElement>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const highlightedOptionRef = useRef<HTMLButtonElement | null>(null);
   const listboxId = useId();
   const normalizedValue = value.trim().toLowerCase();
   const hasExactMatch = options.some((option) => option.trim().toLowerCase() === normalizedValue);
@@ -70,6 +74,13 @@ export function FocusSuggestionInput({
     setHighlightedIndex(0);
   }, [normalizedValue]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    revealDropdownOptionWithinPanel(highlightedOptionRef.current, panelRef.current);
+  }, [isOpen, filteredOptions.length, normalizedValue, safeHighlightedIndex]);
+
   const selectOption = (nextValue: string) => {
     onChange(nextValue);
     setIsOpen(false);
@@ -79,6 +90,11 @@ export function FocusSuggestionInput({
   return (
     <label
       className="flex flex-col gap-2"
+      onBlur={(event) => {
+        if (shouldCloseDropdownOnFocusLeave(rootRef.current, event.relatedTarget)) {
+          setIsOpen(false);
+        }
+      }}
       onKeyDown={(event) => {
         if (event.key === "ArrowDown") {
           if (!filteredOptions.length) {
@@ -106,6 +122,11 @@ export function FocusSuggestionInput({
           return;
         }
 
+        if (shouldCloseDropdownOnTab(event.key, isOpen)) {
+          setIsOpen(false);
+          return;
+        }
+
         if (event.key === "Escape" && isOpen) {
           event.preventDefault();
           event.stopPropagation();
@@ -129,21 +150,26 @@ export function FocusSuggestionInput({
           onFocus={() => setIsOpen(true)}
           placeholder={placeholder}
           role="combobox"
+          ref={inputRef}
           type="text"
           value={value}
         />
         <button
           aria-expanded={isOpen}
           className="absolute right-4 top-1/2 flex -translate-y-1/2 items-center justify-center text-[#6f57f6] dark:text-[#cabfff]"
-          onClick={() => setIsOpen((current) => !current)}
+          onClick={() => {
+            focusDropdownControl(inputRef.current);
+            setIsOpen((current) => !current);
+          }}
           type="button"
         >
           <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} />
         </button>
         {isOpen && filteredOptions.length > 0 ? (
           <div
-            className="absolute left-0 top-[calc(100%+0.5rem)] z-30 w-full overflow-hidden rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]"
+            className="adhdice-scrollbar absolute left-0 top-[calc(100%+0.5rem)] z-30 max-h-64 w-full overflow-y-auto rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]"
             id={listboxId}
+            ref={panelRef}
             role="listbox"
           >
             <div className="grid gap-1">
@@ -163,7 +189,9 @@ export function FocusSuggestionInput({
                     onClick={() => selectOption(option)}
                     onMouseDown={(event) => event.preventDefault()}
                     onMouseEnter={() => setHighlightedIndex(index)}
+                    ref={index === safeHighlightedIndex ? highlightedOptionRef : undefined}
                     role="option"
+                    tabIndex={-1}
                     type="button"
                   >
                     {option}
@@ -192,6 +220,9 @@ export function FocusPillSelect({
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(() => Math.max(0, options.findIndex((option) => option.value === value)));
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const highlightedOptionRef = useRef<HTMLButtonElement | null>(null);
   const listboxId = useId();
   const selectedLabel = options.find((option) => option.value === value)?.label ?? "";
   const safeHighlightedIndex = Math.min(highlightedIndex, Math.max(0, options.length - 1));
@@ -218,6 +249,13 @@ export function FocusPillSelect({
     setHighlightedIndex(Math.max(0, selectedIndex));
   }, [options, value]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    revealDropdownOptionWithinPanel(highlightedOptionRef.current, panelRef.current);
+  }, [isOpen, options.length, safeHighlightedIndex, value]);
+
   const selectOption = (nextValue: string) => {
     onChange(nextValue);
     setIsOpen(false);
@@ -226,6 +264,11 @@ export function FocusPillSelect({
   return (
     <div
       className="grid gap-2"
+      onBlur={(event) => {
+        if (shouldCloseDropdownOnFocusLeave(rootRef.current, event.relatedTarget)) {
+          setIsOpen(false);
+        }
+      }}
       onKeyDown={(event) => {
         if (!options.length) {
           return;
@@ -255,6 +298,11 @@ export function FocusPillSelect({
           event.preventDefault();
           event.stopPropagation();
           setIsOpen(false);
+          return;
+        }
+
+        if (shouldCloseDropdownOnTab(event.key, isOpen)) {
+          setIsOpen(false);
         }
       }}
       ref={rootRef}
@@ -266,8 +314,12 @@ export function FocusPillSelect({
           aria-controls={listboxId}
           aria-expanded={isOpen}
           className={`flex h-12 w-full items-center justify-between ${focusFieldInputClassName}`}
-          onClick={() => setIsOpen((current) => !current)}
+          onClick={() => {
+            focusDropdownControl(triggerRef.current);
+            setIsOpen((current) => !current);
+          }}
           role="combobox"
+          ref={triggerRef}
           type="button"
         >
           <span className="truncate pr-3 text-left">{selectedLabel}</span>
@@ -275,8 +327,9 @@ export function FocusPillSelect({
         </button>
         {isOpen ? (
           <div
-            className="absolute left-0 top-[calc(100%+0.5rem)] z-30 min-w-full overflow-hidden rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]"
+            className="adhdice-scrollbar absolute left-0 top-[calc(100%+0.5rem)] z-30 max-h-64 min-w-full overflow-y-auto rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]"
             id={listboxId}
+            ref={panelRef}
             role="listbox"
           >
             <div className="grid gap-1">
@@ -296,7 +349,9 @@ export function FocusPillSelect({
                     onClick={() => selectOption(option.value)}
                     onMouseDown={(event) => event.preventDefault()}
                     onMouseEnter={() => setHighlightedIndex(index)}
+                    ref={index === safeHighlightedIndex ? highlightedOptionRef : undefined}
                     role="option"
+                    tabIndex={-1}
                     type="button"
                   >
                     {option.label}
