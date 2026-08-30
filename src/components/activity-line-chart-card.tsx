@@ -6,6 +6,7 @@ export type NumericLineChartPoint = {
   detailLabel?: string;
   key: string;
   label: string;
+  xDomainKey?: string;
   value: number;
 };
 
@@ -21,6 +22,7 @@ export type NumericLineChartSeries = {
 type ActivityLineChartCardProps = {
   activePointContext?: string;
   ariaLabel: string;
+  compactPlot?: boolean;
   emptyText: string;
   emptyWhenAllZero?: boolean;
   eyebrow: string;
@@ -47,8 +49,35 @@ const PADDING = { top: 24, right: 24, bottom: 42, left: 68 };
 const PLOT_WIDTH = CHART_WIDTH - PADDING.left - PADDING.right;
 const PLOT_HEIGHT = CHART_HEIGHT - PADDING.top - PADDING.bottom;
 
-function getLinePointPosition(index: number, pointCount: number, value: number, maxValue: number) {
-  const x = pointCount <= 1 ? PLOT_WIDTH / 2 : (index / (pointCount - 1)) * PLOT_WIDTH;
+type NumericLineChartDomainPoint = Pick<NumericLineChartPoint, "key" | "xDomainKey">;
+
+function getNumericLineChartDomainKey(point: NumericLineChartDomainPoint) {
+  return point.xDomainKey ?? point.key;
+}
+
+function getNumericLineChartDomainKeys(points: ReadonlyArray<NumericLineChartDomainPoint>) {
+  if (!points.some((point) => point.xDomainKey !== undefined)) {
+    return null;
+  }
+  return [...new Set(points.map(getNumericLineChartDomainKey))];
+}
+
+export function getNumericLineChartXPositions(
+  points: ReadonlyArray<NumericLineChartDomainPoint>,
+  domainKeys = getNumericLineChartDomainKeys(points),
+) {
+  const pointCount = domainKeys?.length ?? points.length;
+  return points.map((point, index) => {
+    const domainIndex = domainKeys?.indexOf(getNumericLineChartDomainKey(point)) ?? index;
+    const xIndex = domainIndex >= 0 ? domainIndex : index;
+    return {
+      x: pointCount <= 1 ? PLOT_WIDTH / 2 : (xIndex / (pointCount - 1)) * PLOT_WIDTH,
+    };
+  });
+}
+
+function getLinePointPosition(index: number, pointCount: number, value: number, maxValue: number, xOverride?: number) {
+  const x = xOverride ?? (pointCount <= 1 ? PLOT_WIDTH / 2 : (index / (pointCount - 1)) * PLOT_WIDTH);
   const y = PLOT_HEIGHT - ((maxValue > 0 ? value / maxValue : 0) * PLOT_HEIGHT);
   return { x, y };
 }
@@ -79,6 +108,7 @@ export function getNearestNumericLineChartPoint(
 export function ActivityLineChartCard({
   activePointContext,
   ariaLabel,
+  compactPlot = false,
   emptyText,
   emptyWhenAllZero = false,
   eyebrow,
@@ -96,25 +126,39 @@ export function ActivityLineChartCard({
   const axisValueFormatter = formatAxisValue ?? formatValue;
   const maxValue = Math.max(1, maxValueOverride ?? 0, ...series.flatMap((item) => item.points.map((point) => point.value)));
   const axisPoints = series[0]?.points ?? [];
-  const labelStep = Math.max(1, Math.ceil(axisPoints.length / 6));
-  const interactivePoints = useMemo(() => (
-    series.flatMap((item) => item.points.map((point, index) => {
-      const position = getLinePointPosition(index, item.points.length, point.value, maxValue);
-      return {
-        ...point,
-        color: item.color,
-        pointKey: `${item.key}:${point.key}`,
-        seriesLabel: item.label,
-        x: PADDING.left + position.x,
-        y: PADDING.top + position.y,
-      } satisfies InteractivePoint;
-    }))
-  ), [maxValue, series]);
+  const axisDomainKeys = getNumericLineChartDomainKeys(axisPoints);
+  const axisLabelPoints = axisDomainKeys
+    ? axisDomainKeys.map((domainKey) => axisPoints.find((point) => getNumericLineChartDomainKey(point) === domainKey)).filter((point): point is NumericLineChartPoint => Boolean(point))
+    : axisPoints;
+  const axisLabelXPositions = getNumericLineChartXPositions(axisLabelPoints, axisDomainKeys);
+  const labelStep = Math.max(1, Math.ceil(axisLabelPoints.length / 6));
+  const interactivePoints = useMemo(() => {
+    const xDomainKeys = getNumericLineChartDomainKeys(series.flatMap((item) => item.points));
+    return series.flatMap((item) => {
+      const xPositions = getNumericLineChartXPositions(item.points, xDomainKeys);
+      return item.points.map((point, index) => {
+        const position = getLinePointPosition(index, item.points.length, point.value, maxValue, xPositions[index]?.x);
+        return {
+          ...point,
+          color: item.color,
+          pointKey: `${item.key}:${point.key}`,
+          seriesLabel: item.label,
+          x: PADDING.left + position.x,
+          y: PADDING.top + position.y,
+        } satisfies InteractivePoint;
+      });
+    });
+  }, [maxValue, series]);
   const activePoint = interactivePoints.find((point) => point.pointKey === (hoveredPointKey ?? pinnedPointKey))
     ?? interactivePoints.find((point) => point.pointKey === pinnedPointKey)
     ?? null;
   const hasData = series.length > 0 && axisPoints.length > 0 && !(emptyWhenAllZero && series.every((item) => item.points.every((point) => point.value === 0)));
   const isEmbedded = variant === "embedded";
+  const plotClassName = compactPlot
+    ? "min-w-[42rem]"
+    : isEmbedded
+      ? "w-[640px] min-w-[640px] sm:w-full sm:min-w-0"
+      : "min-w-[42rem]";
 
   function setNearestPointFromPointer(clientX: number, clientY: number, bounds: DOMRect) {
     const nearestPointKey = getNearestNumericLineChartPoint(interactivePoints, clientX, clientY, bounds);
@@ -158,7 +202,7 @@ export function ActivityLineChartCard({
               </ul>
               <svg
                 aria-label={ariaLabel}
-                className={`block ${isEmbedded ? "w-[640px] min-w-[640px] sm:w-full sm:min-w-0" : "min-w-[42rem]"}`}
+                className={`block ${plotClassName}`}
                 onPointerLeave={() => setHoveredPointKey(null)}
                 onPointerMove={(event) => { setNearestPointFromPointer(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect()); }}
                 onPointerUp={(event) => {
@@ -178,7 +222,9 @@ export function ActivityLineChartCard({
                   );
                 })}
                 {series.map((item) => {
-                  const points = item.points.map((point, index) => getLinePointPosition(index, item.points.length, point.value, maxValue));
+                  const xDomainKeys = getNumericLineChartDomainKeys(series.flatMap((seriesItem) => seriesItem.points));
+                  const xPositions = getNumericLineChartXPositions(item.points, xDomainKeys);
+                  const points = item.points.map((point, index) => getLinePointPosition(index, item.points.length, point.value, maxValue, xPositions[index]?.x));
                   const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${PADDING.left + point.x} ${PADDING.top + point.y}`).join(" ");
                   return (
                     <g key={item.key}>
@@ -192,10 +238,10 @@ export function ActivityLineChartCard({
                   );
                 })}
                 {activePoint ? <g><line stroke={activePoint.color} strokeDasharray="5 7" strokeWidth="1.5" x1={activePoint.x} x2={activePoint.x} y1={PADDING.top} y2={PADDING.top + PLOT_HEIGHT} /><circle cx={activePoint.x} cy={activePoint.y} fill={activePoint.color} r={6} stroke="white" strokeWidth="2.5" /></g> : null}
-                {axisPoints.map((point, index) => {
-                  if (index !== 0 && index !== axisPoints.length - 1 && index % labelStep !== 0) return null;
-                  const { x } = getLinePointPosition(index, axisPoints.length, 0, maxValue);
-                  return <text fill="var(--text-muted)" fontSize="11" key={point.key} textAnchor="middle" x={PADDING.left + x} y={CHART_HEIGHT - 12}>{point.label}</text>;
+                {axisLabelPoints.map((point, index) => {
+                  if (index !== 0 && index !== axisLabelPoints.length - 1 && index % labelStep !== 0) return null;
+                  const x = axisLabelXPositions[index]?.x ?? 0;
+                  return <text fill="var(--text-muted)" fontSize="11" key={point.xDomainKey ?? point.key} textAnchor="middle" x={PADDING.left + x} y={CHART_HEIGHT - 12}>{point.label}</text>;
                 })}
               </svg>
             </div>

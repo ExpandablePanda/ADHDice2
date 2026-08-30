@@ -35,6 +35,16 @@ test("HealthDropdown pointer opening focuses the existing trigger without page s
   assert.doesNotMatch(dropdownSource, /scrollIntoView/);
 });
 
+test("HealthDropdown pointer option selection prevents focus transfer and closes after choosing", () => {
+  const optionSource = healthDropdownSource.slice(healthDropdownSource.indexOf("{options.map"));
+  const chooseOptionSource = healthDropdownSource.slice(healthDropdownSource.indexOf("function chooseOption"), healthDropdownSource.indexOf("\n  return ("));
+
+  assert.match(optionSource, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\}/);
+  assert.match(optionSource, /onClick=\{\(\) => chooseOption\(index\)\}/);
+  assert.match(chooseOptionSource, /onChange\(option\.value\)/);
+  assert.match(chooseOptionSource, /setIsOpen\(false\)/);
+});
+
 test("HealthDropdown keeps current Arrow, Enter, Space, and Escape behavior", () => {
   assert.match(dropdownSource, /event\.key === "ArrowDown"/);
   assert.match(dropdownSource, /event\.key === "ArrowUp"/);

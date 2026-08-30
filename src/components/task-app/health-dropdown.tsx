@@ -314,6 +314,7 @@ export function HealthDropdown({
               id={`${listboxId}-option-${index}`}
               key={option.value}
               onClick={() => chooseOption(index)}
+              onMouseDown={(event) => event.preventDefault()}
               onMouseEnter={() => setHighlightedIndex(index)}
               ref={index === highlightedIndex ? highlightedOptionRef : undefined}
               role="option"

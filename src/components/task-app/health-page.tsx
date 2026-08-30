@@ -677,8 +677,9 @@ export function HealthPage({
         return {
           detailLabel: entry.note ? `${timestampLabel} · ${entry.note}` : timestampLabel,
           key: entry.id,
-          label: timestampLabel,
+          label: formatHealthDateLabel(entry.entry_date),
           value: entry.severity,
+          xDomainKey: entry.entry_date,
         };
       }),
       summaryLabel: "Latest",
@@ -2155,6 +2156,7 @@ export function HealthPage({
                   eyebrow="SYMPTOM TRENDS"
                   formatAxisValue={(value) => String(Math.round(value))}
                   formatValue={(value) => `${Math.round(value)}/10`}
+                  compactPlot
                   maxValue={10}
                   series={symptomTrendChartSeries}
                   subtitle={`${symptomTrendRange} • timestamped severity entries`}

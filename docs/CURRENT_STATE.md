@@ -5,13 +5,21 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.18`.
+- Current working app version: `7.12.19`.
 - Current release group: `7.12.x` Health Journal symptom recovery.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
 - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-30 7.12.19 Health Journal trend QA corrections
+
+Health → Journal Symptom Trends now uses the approved compact plot proportions,
+groups same-day entries on one calendar-date X position without collapsing raw
+points, and prevents pointer selection from reopening `HealthDropdown` after a
+symptom choice. Focus and Nutrition chart defaults, symptom persistence, and
+other Health UI behavior are unchanged.
 
 ## 2026-08-30 7.12.18 Health Journal trend summary correction
 

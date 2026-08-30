@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { HealthSymptom, HealthSymptomEntry } from "../src/lib/database.types.ts";
+import { getNumericLineChartXPositions } from "../src/components/activity-line-chart-card.tsx";
 import {
   groupHealthSymptomEntriesByDate,
   getDefaultHealthSymptomId,
@@ -110,6 +111,23 @@ test("symptom trends order timestamped entries and preserve multiple same-day po
   assert.equal(getLatestHealthSymptomTrendSeverity(trendEntries), 6);
 });
 
+test("symptom trend calendar domains align same-day points without changing legacy index positioning", () => {
+  const points = [
+    { key: "morning", xDomainKey: "2026-08-29" },
+    { key: "afternoon", xDomainKey: "2026-08-29" },
+    { key: "evening", xDomainKey: "2026-08-29" },
+    { key: "next-day", xDomainKey: "2026-08-30" },
+  ];
+  const datePositions = getNumericLineChartXPositions(points);
+  const legacyPositions = getNumericLineChartXPositions([{ key: "first" }, { key: "second" }, { key: "third" }]);
+
+  assert.equal(datePositions[0]?.x, datePositions[1]?.x);
+  assert.equal(datePositions[1]?.x, datePositions[2]?.x);
+  assert.ok((datePositions[3]?.x ?? 0) > (datePositions[2]?.x ?? 0));
+  assert.notEqual(legacyPositions[0]?.x, legacyPositions[1]?.x);
+  assert.notEqual(legacyPositions[1]?.x, legacyPositions[2]?.x);
+});
+
 test("symptom trend summary uses the latest visible severity, never a sum, and follows range-filtered points", () => {
   const entries = [
     symptomEntry("older", "2026-08-01", "2026-08-01T09:00:00.000Z", 3),
@@ -175,7 +193,14 @@ test("Journal symptom trends adapt into the shared chart with a fixed 1 to 10 se
   assert.match(healthPageSource, /summaryLabel: "Latest"/);
   assert.match(healthPageSource, /getLatestHealthSymptomTrendSeverity\(selectedSymptomTrendEntries\)/);
   assert.doesNotMatch(healthPageSource, /totalValue: selectedSymptomTrendEntries\.reduce/);
+  assert.match(healthPageSource, /xDomainKey: entry\.entry_date/);
+  assert.match(healthPageSource, /label: formatHealthDateLabel\(entry\.entry_date\)/);
+  assert.match(healthPageSource, /compactPlot/);
   assert.match(healthPageSource, /maxValue=\{10\}/);
+  assert.match(activityChartSource, /xDomainKey\?: string/);
+  assert.match(activityChartSource, /compactPlot\?: boolean/);
+  assert.match(activityChartSource, /const plotClassName = compactPlot\s+\? "min-w-\[42rem\]"/);
+  assert.match(activityChartSource, /axisLabelPoints/);
   assert.match(activityChartSource, /maxValue\?: number/);
   assert.match(activityChartSource, /maxValueOverride/);
   assert.match(activityChartSource, /item\.summaryLabel \?\? item\.label/);
