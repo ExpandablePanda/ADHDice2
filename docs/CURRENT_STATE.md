@@ -5,13 +5,32 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.34`.
+- Current working app version: `7.12.35`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-30 7.12.35 Journal Feeling UX and unified Symptoms Library
+
+Journal now presents user-facing Journal signals as Feelings and exposes one
+Symptoms Library backed by canonical Health symptoms. Symptom-backed Journal
+wrappers remain internal and are created or reused only when Journal behavior
+needs them; canonical renames flow through to Journal display names, while
+archived symptoms are excluded from new templates, Add, and hashtag choices.
+Journal Feelings use normalized eleven-label 0–10 scales with legacy endpoint
+compatibility, compact collapsed score controls, readable core metric labels,
+and full-label editing. The Journal Library header is always visible and
+manually collapsible; Manage Journal Library expands, scrolls, and focuses it.
+Symptom color palettes use a full-width Library row. Typing `#` in Your Day
+opens a keyboard-accessible picker that adds a selected Feeling to the current
+Daily Log without assigning a score or synchronizing deletion from reflection
+text. The authored migration is
+`supabase/add_health_journal_scale_labels_7_12_35.sql`; it has not been
+applied. Focused source/logic tests and diff checks passed; browser, live
+Supabase, and deployment verification remain outstanding.
 
 ## 2026-08-30 7.12.34 Journal Entry and customizable Daily Log foundation
 
@@ -23,9 +42,10 @@ emotion and other labels, preserve stable template order, and use explicit
 0/Not logged semantics. Journal-owned symptom occurrences retain their own
 timestamped severity rows and cascade with the parent entry; standalone symptom
 history remains separate. Legacy symptom tags remain readable but are no longer
-written by the Journal editor. The authored migration is
-`supabase/add_health_journal_daily_log_7_12_34.sql`; it has not been applied,
-and browser, live Supabase, and deployment verification remain outstanding.
+written by the Journal editor. The migration
+`supabase/add_health_journal_daily_log_7_12_34.sql` is live; this 7.12.35
+refinement follows its browser QA findings, while live deployment verification
+for the refinement remains outstanding.
 
 ## 2026-08-30 7.12.31 Tasks Calendar Month View
 

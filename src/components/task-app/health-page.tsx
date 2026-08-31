@@ -1,7 +1,7 @@
 "use client";
 
 import { Activity, Apple, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, MoonStar, Pencil, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 
 import type {
   HealthAchievementAward,
@@ -131,6 +131,7 @@ import {
 import {
   HEALTH_JOURNAL_SCORE_OPTIONS,
   buildHealthJournalDraftValues,
+  getDefaultHealthJournalScaleLabels,
   getHealthJournalSignalDisplayName,
   getHealthJournalTemplateSignals,
   type HealthJournalDraftValue,
@@ -372,9 +373,28 @@ type JournalOccurrenceDraft = {
 };
 
 type JournalLibraryEditDraft = {
-  highLabel: string;
-  lowLabel: string;
+  scaleLabels: string[];
   name: string;
+};
+
+type JournalTagQuery = {
+  end: number;
+  query: string;
+  start: number;
+};
+
+type JournalTagOption = {
+  kind: HealthJournalSignalKind;
+  name: string;
+  signal: HealthJournalSignal | null;
+  symptomId?: string;
+};
+
+const CORE_JOURNAL_SCALE_LABELS: Readonly<Record<string, readonly string[]>> = {
+  Mood: ["Very bad", "Bad", "Poor", "Low", "Okay", "Fair", "Good", "Very good", "Great", "Excellent"],
+  Energy: ["Drained", "Very low", "Low", "Sluggish", "Okay", "Moderate", "Good", "High", "Very high", "Energized"],
+  Stress: ["Calm", "Very low", "Low", "Mild", "Moderate", "Noticeable", "High", "Very high", "Severe", "Overwhelmed"],
+  "Mental clarity": ["Foggy", "Very foggy", "Unclear", "Distracted", "Mixed", "Fair", "Clear", "Very clear", "Sharp", "Crystal clear"],
 };
 
 type MealEditDraft = {
@@ -554,6 +574,129 @@ function buildHealthSymptomDropdownOption(
   };
 }
 
+function JournalScaleLabelsEditor({
+  draft,
+  nameDisabled = false,
+  onCancel,
+  onChange,
+  onSave,
+  signal,
+  symptoms = [],
+}: {
+  draft: JournalLibraryEditDraft;
+  nameDisabled?: boolean;
+  onCancel: () => void;
+  onChange: (draft: JournalLibraryEditDraft) => void;
+  onSave: () => void;
+  signal: HealthJournalSignal;
+  symptoms?: readonly HealthSymptom[];
+}) {
+  const labels = Array.from({ length: HEALTH_JOURNAL_SCORE_OPTIONS.length }, (_, index) => draft.scaleLabels[index] ?? "");
+  const displayName = getHealthJournalSignalDisplayName(signal, symptoms);
+  return (
+    <div className="grid gap-3 rounded-[0.9rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+      {signal.kind === "symptom" ? <p className="text-sm font-semibold text-[#26324f] dark:text-white">{displayName}</p> : <Field label="Name"><input aria-label={`Edit ${displayName} name`} className={HEALTH_COMPACT_INPUT_CLASS} disabled={nameDisabled} onChange={(event) => onChange({ ...draft, name: event.target.value })} value={draft.name} /></Field>}
+      <div className="grid gap-2" id={`journal-scale-labels-${signal.id}`}>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Scale labels</p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {labels.map((label, index) => <label className="flex min-w-0 items-center gap-2 rounded-[0.7rem] border border-[#edf0fb] bg-white px-2 py-1.5 text-xs dark:border-white/10 dark:bg-white/[0.04]" key={index}><span className="w-4 shrink-0 font-black text-[#6f57f6] dark:text-[#cabfff]">{index}</span><input aria-label={`${displayName} score ${index} label`} className="min-w-0 flex-1 bg-transparent text-sm text-[#3c4966] outline-none dark:text-white/75" onChange={(event) => { const nextLabels = [...labels]; nextLabels[index] = event.target.value; onChange({ ...draft, scaleLabels: nextLabels }); }} value={label} /></label>)}
+        </div>
+      </div>
+      <div className="flex justify-end gap-2"><AdhdChip onClick={onCancel} type="button">Cancel</AdhdChip><AdhdChip onClick={onSave} tone="purple" type="button">Save</AdhdChip></div>
+    </div>
+  );
+}
+
+function JournalFeelingLibrarySection({
+  deleteJournalSignal,
+  draft,
+  journalLibraryEditId,
+  journalSignalValues,
+  kind,
+  onCancelEdit,
+  onChangeDraft,
+  onEdit,
+  onSaveEdit,
+  onToggleTemplate,
+  signals,
+  symptoms,
+  archiveJournalSignal,
+  moveJournalSignal,
+}: {
+  deleteJournalSignal: (signalId: string) => Promise<boolean>;
+  draft: JournalLibraryEditDraft;
+  journalLibraryEditId: string | null;
+  journalSignalValues: HealthJournalSignalValue[];
+  kind: "emotion" | "other";
+  onCancelEdit: () => void;
+  onChangeDraft: (draft: JournalLibraryEditDraft) => void;
+  onEdit: (signal: HealthJournalSignal) => void;
+  onSaveEdit: (signal: HealthJournalSignal) => void;
+  onToggleTemplate: (signal: HealthJournalSignal) => void;
+  signals: HealthJournalSignal[];
+  symptoms: HealthSymptom[];
+  archiveJournalSignal: (signalId: string) => Promise<boolean>;
+  moveJournalSignal: (signalId: string, direction: -1 | 1) => void;
+}) {
+  const sectionSignals = signals.filter((signal) => signal.kind === kind && signal.archived_at === null);
+  const templateSignals = getHealthJournalTemplateSignals(signals, symptoms);
+  return <section className="grid gap-2"><SectionMiniTitle title={kind === "emotion" ? "Emotions" : "Other Feelings"} />{sectionSignals.map((signal) => { const templateIndex = templateSignals.findIndex((candidate) => candidate.id === signal.id); const hasHistory = journalSignalValues.some((value) => value.signal_id === signal.id); return <div className="grid gap-2 rounded-[0.9rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={signal.id}>{journalLibraryEditId === signal.id ? <JournalScaleLabelsEditor draft={draft} onCancel={onCancelEdit} onChange={onChangeDraft} onSave={() => onSaveEdit(signal)} signal={signal} /> : <div className="flex flex-wrap items-center gap-2"><span className="min-w-0 flex-1 font-semibold text-[#26324f] dark:text-white">{getHealthJournalSignalDisplayName(signal, symptoms)}</span><span className="text-xs text-[#7d88a3] dark:text-white/45">{signal.scale_labels[0]} → {signal.scale_labels[10]}</span><AdhdChip onClick={() => onToggleTemplate(signal)} type="button">{signal.in_template ? "In Daily Template" : "Add to Template"}</AdhdChip>{signal.in_template ? <><AdhdIconButton aria-label={`Move ${getHealthJournalSignalDisplayName(signal, symptoms)} up`} disabled={templateIndex <= 0} onClick={() => moveJournalSignal(signal.id, -1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronUp aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Move ${getHealthJournalSignalDisplayName(signal, symptoms)} down`} disabled={templateIndex < 0 || templateIndex >= templateSignals.length - 1} onClick={() => moveJournalSignal(signal.id, 1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronDown aria-hidden="true" /></AdhdIconButton></> : null}<AdhdIconButton aria-label={`Edit ${getHealthJournalSignalDisplayName(signal, symptoms)}`} onClick={() => onEdit(signal)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Archive ${getHealthJournalSignalDisplayName(signal, symptoms)}`} onClick={() => { void archiveJournalSignal(signal.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>{!hasHistory ? <AdhdIconButton aria-label={`Delete ${getHealthJournalSignalDisplayName(signal, symptoms)}`} onClick={() => { void deleteJournalSignal(signal.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton> : null}</div>}</div>; })}</section>;
+}
+
+function JournalSymptomLibrarySection({
+  activeSymptoms,
+  archiveSymptom,
+  editingSymptomId,
+  editingSymptomName,
+  getJournalSignalForSymptom,
+  handleRenameSymptom,
+  handleSetSymptomColor,
+  journalLibraryEditId,
+  journalLibraryEditDraft,
+  journalSignalValues,
+  onCancelEdit,
+  onChangeDraft,
+  onEdit,
+  onSaveEdit,
+  onToggleColorPicker,
+  onToggleTemplate,
+  onAddSymptom,
+  onMove,
+  openSymptomColorPickerKey,
+  setEditingSymptomId,
+  setEditingSymptomName,
+  startJournalSymptomEdit,
+  symptoms,
+  templateSignals,
+}: {
+  activeSymptoms: HealthSymptom[];
+  archiveSymptom: (symptomId: string) => Promise<boolean>;
+  editingSymptomId: string | null;
+  editingSymptomName: string;
+  getJournalSignalForSymptom: (symptomId: string) => HealthJournalSignal | null;
+  handleRenameSymptom: (symptomId: string) => Promise<void>;
+  handleSetSymptomColor: (symptomId: string, color: string) => void;
+  journalLibraryEditId: string | null;
+  journalLibraryEditDraft: JournalLibraryEditDraft;
+  journalSignalValues: HealthJournalSignalValue[];
+  onCancelEdit: () => void;
+  onChangeDraft: (draft: JournalLibraryEditDraft) => void;
+  onEdit: (signal: HealthJournalSignal) => void;
+  onSaveEdit: (signal: HealthJournalSignal) => void;
+  onToggleColorPicker: (key: string) => void;
+  onToggleTemplate: (symptom: HealthSymptom, inTemplate: boolean) => void;
+  onAddSymptom: () => void;
+  onMove: (signalId: string, direction: -1 | 1) => void;
+  openSymptomColorPickerKey: string | null;
+  setEditingSymptomId: (id: string | null) => void;
+  setEditingSymptomName: (name: string) => void;
+  startJournalSymptomEdit: (symptom: HealthSymptom) => void;
+  symptoms: HealthSymptom[];
+  templateSignals: HealthJournalSignal[];
+}) {
+  return <section className="grid gap-2"><div className="flex items-center justify-between gap-2"><SectionMiniTitle title="Symptoms" /><AdhdChip aria-label="Add symptom" onClick={onAddSymptom} type="button">+ Symptom</AdhdChip></div><p className="text-xs text-[#7d7598] dark:text-white/50">Symptoms use the canonical Health name. Journal controls appear here only when needed.</p>{activeSymptoms.map((symptom) => { const signal = getJournalSignalForSymptom(symptom.id); const templateIndex = signal ? templateSignals.findIndex((candidate) => candidate.id === signal.id) : -1; const hasHistory = signal ? journalSignalValues.some((value) => value.signal_id === signal.id) : false; const isColorOpen = openSymptomColorPickerKey === `library:${symptom.id}`; return <div className="grid gap-2 rounded-[0.9rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={symptom.id}><div className="flex flex-wrap items-center gap-2">{editingSymptomId === symptom.id ? null : <HealthSymptomColorControl isOpen={false} onSetColor={(color) => handleSetSymptomColor(symptom.id, color)} onToggle={() => onToggleColorPicker(`library:${symptom.id}`)} symptom={symptom} />}{editingSymptomId === symptom.id ? <input aria-label={`Rename ${symptom.name}`} className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 flex-1`} onChange={(event) => setEditingSymptomName(event.target.value)} value={editingSymptomName} /> : <span className="min-w-0 flex-1 font-semibold text-[#26324f] dark:text-white">{symptom.name}</span>}{signal ? <AdhdChip onClick={() => onToggleTemplate(symptom, !signal.in_template)} type="button">{signal.in_template ? "In Daily Template" : "Add to Template"}</AdhdChip> : <AdhdChip onClick={() => onToggleTemplate(symptom, true)} type="button">Add to Template</AdhdChip>}{signal?.in_template ? <><AdhdIconButton aria-label={`Move ${symptom.name} up`} disabled={templateIndex <= 0} onClick={() => signal && onMove(signal.id, -1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronUp aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Move ${symptom.name} down`} disabled={templateIndex < 0 || templateIndex >= templateSignals.length - 1} onClick={() => signal && onMove(signal.id, 1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronDown aria-hidden="true" /></AdhdIconButton></> : null}{editingSymptomId === symptom.id ? <><AdhdChip onClick={() => { void handleRenameSymptom(symptom.id); }} tone="purple" type="button">Save</AdhdChip><AdhdChip onClick={() => setEditingSymptomId(null)} type="button">Cancel</AdhdChip></> : <><AdhdIconButton aria-label={`Rename ${symptom.name}`} onClick={() => { setEditingSymptomId(symptom.id); setEditingSymptomName(symptom.name); }} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Archive ${symptom.name}`} onClick={() => { void archiveSymptom(symptom.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton></>}{signal ? <AdhdIconButton aria-label={`Edit ${symptom.name} labels`} onClick={() => onEdit(signal)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton> : <AdhdChip onClick={() => { void startJournalSymptomEdit(symptom); }} type="button">Edit labels</AdhdChip>}</div>{isColorOpen ? <div className="w-full"><HealthSymptomColorPalette className="w-max max-w-full" onSetColor={(color) => handleSetSymptomColor(symptom.id, color)} symptom={symptom} /></div> : null}{signal && journalLibraryEditId === signal.id ? <JournalScaleLabelsEditor draft={journalLibraryEditDraft} nameDisabled onCancel={onCancelEdit} onChange={onChangeDraft} onSave={() => onSaveEdit(signal)} signal={signal} symptoms={symptoms} /> : null}{hasHistory ? <span className="text-xs text-[#7d88a3] dark:text-white/45">Existing Journal history is retained.</span> : null}</div>; })}{activeSymptoms.length === 0 ? <EmptyCopy text="No active Symptoms yet." /> : null}</section>;
+}
+
 export function HealthPage({
   checkIns,
   journalSignals,
@@ -706,15 +849,14 @@ export function HealthPage({
   const [journalOccurrences, setJournalOccurrences] = useState<JournalOccurrenceDraft[]>([]);
   const [isJournalLibraryOpen, setIsJournalLibraryOpen] = useState(false);
   const [isJournalAddOpen, setIsJournalAddOpen] = useState(false);
-  const [journalSignalCreateKind, setJournalSignalCreateKind] = useState<HealthJournalSignalKind>("emotion");
+  const [journalSignalCreateKind, setJournalSignalCreateKind] = useState<"emotion" | "other">("emotion");
   const [journalSignalCreateName, setJournalSignalCreateName] = useState("");
-  const [journalSignalCreateSymptomId, setJournalSignalCreateSymptomId] = useState("");
-  const [journalSignalCreateNewSymptomName, setJournalSignalCreateNewSymptomName] = useState("");
-  const [journalSignalCreateLowLabel, setJournalSignalCreateLowLabel] = useState("None");
-  const [journalSignalCreateHighLabel, setJournalSignalCreateHighLabel] = useState("Extreme");
   const [journalSignalCreateInTemplate, setJournalSignalCreateInTemplate] = useState(true);
   const [journalLibraryEditId, setJournalLibraryEditId] = useState<string | null>(null);
-  const [journalLibraryEditDraft, setJournalLibraryEditDraft] = useState<JournalLibraryEditDraft>({ highLabel: "", lowLabel: "", name: "" });
+  const [journalLibraryEditDraft, setJournalLibraryEditDraft] = useState<JournalLibraryEditDraft>({ name: "", scaleLabels: [] });
+  const [expandedJournalScaleKey, setExpandedJournalScaleKey] = useState<string | null>(null);
+  const [journalTagQuery, setJournalTagQuery] = useState<JournalTagQuery | null>(null);
+  const [journalTagHighlightIndex, setJournalTagHighlightIndex] = useState(0);
   const [journalOccurrenceEditorOpen, setJournalOccurrenceEditorOpen] = useState(false);
   const [journalOccurrenceEditId, setJournalOccurrenceEditId] = useState<string | null>(null);
   const [journalOccurrenceSymptomId, setJournalOccurrenceSymptomId] = useState("");
@@ -757,7 +899,15 @@ export function HealthPage({
   const importAbortRef = useRef<AbortController | null>(null);
   const barcodeLookupGenerationRef = useRef(0);
   const mealSaveInFlightRef = useRef(false);
+  const journalReflectionRef = useRef<HTMLTextAreaElement | null>(null);
+  const journalLibraryRef = useRef<HTMLDivElement | null>(null);
+  const journalSignalsRef = useRef(journalSignals);
+  const journalDraftDateRef = useRef<string | null>(null);
   const today = todayHealthDate();
+
+  useEffect(() => {
+    journalSignalsRef.current = journalSignals;
+  }, [journalSignals]);
 
   useEffect(() => {
     if (!sleepActiveSession?.isRunning) return;
@@ -804,11 +954,20 @@ export function HealthPage({
     setJournalEnergy(selectedJournalEntry?.energy_score ?? null);
     setJournalStress(selectedJournalEntry?.stress_score ?? null);
     setJournalClarity(selectedJournalEntry?.clarity_score ?? null);
-    setJournalDraftValues(buildHealthJournalDraftValues({
-      journalEntryId: selectedJournalEntry?.id ?? null,
-      signals: journalSignals,
-      values: journalSignalValues,
-    }));
+    const preserveCurrentDraft = journalDraftDateRef.current === journalDate;
+    setJournalDraftValues((current) => {
+      const next = buildHealthJournalDraftValues({
+        journalEntryId: selectedJournalEntry?.id ?? null,
+        signals: journalSignalsRef.current,
+        values: journalSignalValues,
+        symptoms,
+      });
+      if (!preserveCurrentDraft) return next;
+      const nextIds = new Set(next.map((value) => value.signal_id));
+      const preserved = current.filter((value) => !nextIds.has(value.signal_id) && journalSignalsRef.current.some((signal) => signal.id === value.signal_id));
+      return [...next, ...preserved];
+    });
+    journalDraftDateRef.current = journalDate;
     setJournalOccurrences(selectedJournalEntry
       ? symptomEntries
         .filter((entry) => entry.journal_entry_id === selectedJournalEntry.id)
@@ -828,12 +987,44 @@ export function HealthPage({
     setJournalFormError(null);
     setJournalOccurrenceEditorOpen(false);
     setJournalOccurrenceEditId(null);
-  }, [journalDate, journalSignals, journalSignalValues, selectedJournalEntry, symptomEntries]);
+    setExpandedJournalScaleKey(null);
+    setJournalTagQuery(null);
+  }, [journalDate, journalSignalValues, selectedJournalEntry, symptomEntries, symptoms]);
 
   const activeSymptoms = useMemo(
     () => symptoms.filter((symptom) => symptom.archived_at === null),
     [symptoms],
   );
+  const activeJournalSignals = useMemo(
+    () => journalSignals.filter((signal) => signal.archived_at === null && signal.kind !== "symptom"),
+    [journalSignals],
+  );
+  const getJournalSignalForSymptom = useCallback((symptomId: string) => journalSignals.find(
+    (signal) => signal.kind === "symptom" && signal.symptom_id === symptomId && signal.archived_at === null,
+  ) ?? null, [journalSignals]);
+  const journalFeelingChoices = useMemo<JournalTagOption[]>(() => [
+    ...activeSymptoms.map((symptom) => ({
+      kind: "symptom" as const,
+      name: symptom.name,
+      signal: getJournalSignalForSymptom(symptom.id),
+      symptomId: symptom.id,
+    })),
+    ...activeJournalSignals.map((signal) => ({
+      kind: signal.kind,
+      name: getHealthJournalSignalDisplayName(signal, symptoms),
+      signal,
+    })),
+  ], [activeJournalSignals, activeSymptoms, getJournalSignalForSymptom, symptoms]);
+  const visibleJournalTagOptions = useMemo(() => {
+    const query = journalTagQuery?.query.trim().toLowerCase() ?? "";
+    return journalFeelingChoices
+      .filter((option) => !query || option.name.toLowerCase().includes(query))
+      .sort((left, right) => {
+        if (!query) return 0;
+        return Number(!left.name.toLowerCase().startsWith(query)) - Number(!right.name.toLowerCase().startsWith(query))
+          || left.name.localeCompare(right.name);
+      });
+  }, [journalFeelingChoices, journalTagQuery?.query]);
   const journalOccurrenceSymptoms = useMemo(() => {
     const selected = symptoms.find((symptom) => symptom.id === journalOccurrenceSymptomId);
     return selected && selected.archived_at !== null ? [...activeSymptoms, selected] : activeSymptoms;
@@ -1233,28 +1424,17 @@ export function HealthPage({
   }
 
   async function handleCreateJournalSignal() {
-    let symptomId = journalSignalCreateSymptomId;
-    if (journalSignalCreateKind === "symptom" && symptomId === NEW_SYMPTOM_VALUE) {
-      const created = await createSymptom({ name: journalSignalCreateNewSymptomName });
-      if (!created) return;
-      symptomId = created.id;
-    }
-    if (journalSignalCreateKind === "symptom" && !symptomId) {
-      setJournalFormError("Choose an existing symptom or create a new one.");
-      return;
-    }
     const created = await createJournalSignal({
-      high_label: journalSignalCreateHighLabel,
+      high_label: getDefaultHealthJournalScaleLabels(journalSignalCreateKind).at(-1),
       in_template: journalSignalCreateInTemplate,
       kind: journalSignalCreateKind,
-      low_label: journalSignalCreateLowLabel,
-      name: journalSignalCreateKind === "symptom" ? null : journalSignalCreateName,
-      symptom_id: journalSignalCreateKind === "symptom" ? symptomId : null,
+      low_label: getDefaultHealthJournalScaleLabels(journalSignalCreateKind)[0],
+      name: journalSignalCreateName,
+      scale_labels: getDefaultHealthJournalScaleLabels(journalSignalCreateKind),
+      symptom_id: null,
     });
     if (created) {
       setJournalSignalCreateName("");
-      setJournalSignalCreateNewSymptomName("");
-      setJournalSignalCreateSymptomId("");
       setJournalFormError(null);
     }
   }
@@ -1262,23 +1442,36 @@ export function HealthPage({
   function startJournalSignalEdit(signal: HealthJournalSignal) {
     setJournalLibraryEditId(signal.id);
     setJournalLibraryEditDraft({
-      highLabel: signal.high_label,
-      lowLabel: signal.low_label,
+      scaleLabels: [...signal.scale_labels],
       name: signal.name ?? "",
     });
   }
 
+  async function startJournalSymptomEdit(symptom: HealthSymptom) {
+    const signal = getJournalSignalForSymptom(symptom.id) ?? await createJournalSignal({
+      high_label: getDefaultHealthJournalScaleLabels("symptom")[10],
+      in_template: false,
+      kind: "symptom",
+      low_label: getDefaultHealthJournalScaleLabels("symptom")[0],
+      name: null,
+      scale_labels: getDefaultHealthJournalScaleLabels("symptom"),
+      symptom_id: symptom.id,
+    });
+    if (signal) startJournalSignalEdit(signal);
+  }
+
   async function saveJournalSignalEdit(signal: HealthJournalSignal) {
     const saved = await updateJournalSignal(signal.id, {
-      high_label: journalLibraryEditDraft.highLabel,
-      low_label: journalLibraryEditDraft.lowLabel,
+      high_label: journalLibraryEditDraft.scaleLabels[10],
+      low_label: journalLibraryEditDraft.scaleLabels[0],
       name: signal.kind === "symptom" ? null : journalLibraryEditDraft.name,
+      scale_labels: journalLibraryEditDraft.scaleLabels,
     });
     if (saved) setJournalLibraryEditId(null);
   }
 
   function moveJournalSignal(signalId: string, direction: -1 | 1) {
-    const templateSignals = getHealthJournalTemplateSignals(journalSignals);
+    const templateSignals = getHealthJournalTemplateSignals(journalSignals, symptoms);
     const currentIndex = templateSignals.findIndex((signal) => signal.id === signalId);
     const nextIndex = currentIndex + direction;
     if (currentIndex < 0 || nextIndex < 0 || nextIndex >= templateSignals.length) return;
@@ -1287,10 +1480,139 @@ export function HealthPage({
     void reorderJournalSignals(nextIds);
   }
 
-  function addJournalSignalToToday(signalId: string) {
-    if (journalDraftValues.some((value) => value.signal_id === signalId)) return;
-    setJournalDraftValues((current) => [...current, { score: null, signal_id: signalId }]);
+  async function addJournalFeelingToToday(choice: JournalTagOption) {
+    const signal = choice.kind === "symptom" && choice.symptomId
+      ? choice.signal ?? await createJournalSignal({
+        high_label: getDefaultHealthJournalScaleLabels("symptom")[10],
+        in_template: false,
+        kind: "symptom",
+        low_label: getDefaultHealthJournalScaleLabels("symptom")[0],
+        name: null,
+        scale_labels: getDefaultHealthJournalScaleLabels("symptom"),
+        symptom_id: choice.symptomId,
+      })
+      : choice.signal;
+    if (!signal || journalDraftValues.some((value) => value.signal_id === signal.id)) {
+      setIsJournalAddOpen(false);
+      return;
+    }
+    setJournalDraftValues((current) => [...current, { score: null, signal_id: signal.id }]);
     setIsJournalAddOpen(false);
+  }
+
+  function readJournalTagQuery(value: string, cursor: number): JournalTagQuery | null {
+    const beforeCursor = value.slice(0, cursor);
+    const match = beforeCursor.match(/(^|\s)#([^\s#]*)$/);
+    if (!match) return null;
+    const queryStart = cursor - match[0].length + (match[1] ? 1 : 0);
+    return { end: cursor, query: match[2] ?? "", start: queryStart };
+  }
+
+  function syncJournalTagQuery(target: HTMLTextAreaElement, resetHighlight = true) {
+    const nextQuery = readJournalTagQuery(target.value, target.selectionStart ?? target.value.length);
+    setJournalTagQuery(nextQuery);
+    if (resetHighlight) setJournalTagHighlightIndex(0);
+  }
+
+  async function selectJournalTag(option: JournalTagOption) {
+    if (!journalTagQuery) return;
+    const signal = option.kind === "symptom" && option.symptomId
+      ? option.signal ?? await createJournalSignal({
+        high_label: getDefaultHealthJournalScaleLabels("symptom")[10],
+        in_template: false,
+        kind: "symptom",
+        low_label: getDefaultHealthJournalScaleLabels("symptom")[0],
+        name: null,
+        scale_labels: getDefaultHealthJournalScaleLabels("symptom"),
+        symptom_id: option.symptomId,
+      })
+      : option.signal;
+    if (!signal) return;
+
+    const replacement = `#${option.name} `;
+    const nextReflection = `${journalReflection.slice(0, journalTagQuery.start)}${replacement}${journalReflection.slice(journalTagQuery.end)}`;
+    const nextCaret = journalTagQuery.start + replacement.length;
+    setJournalReflection(nextReflection);
+    setJournalDraftValues((current) => current.some((value) => value.signal_id === signal.id)
+      ? current
+      : [...current, { score: null, signal_id: signal.id }]);
+    setJournalTagQuery(null);
+    setJournalTagHighlightIndex(0);
+    requestAnimationFrame(() => {
+      const textarea = journalReflectionRef.current;
+      textarea?.focus();
+      textarea?.setSelectionRange(nextCaret, nextCaret);
+    });
+  }
+
+  function handleJournalReflectionKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!journalTagQuery || visibleJournalTagOptions.length === 0) {
+      if (event.key === "Escape") setJournalTagQuery(null);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setJournalTagHighlightIndex((current) => (current + 1) % visibleJournalTagOptions.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setJournalTagHighlightIndex((current) => (current - 1 + visibleJournalTagOptions.length) % visibleJournalTagOptions.length);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      void selectJournalTag(visibleJournalTagOptions[journalTagHighlightIndex] ?? visibleJournalTagOptions[0]!);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setJournalTagQuery(null);
+    }
+  }
+
+  async function toggleJournalSymptomTemplate(symptom: HealthSymptom, inTemplate: boolean) {
+    const signal = getJournalSignalForSymptom(symptom.id) ?? await createJournalSignal({
+      high_label: getDefaultHealthJournalScaleLabels("symptom")[10],
+      in_template: false,
+      kind: "symptom",
+      low_label: getDefaultHealthJournalScaleLabels("symptom")[0],
+      name: null,
+      scale_labels: getDefaultHealthJournalScaleLabels("symptom"),
+      symptom_id: symptom.id,
+    });
+    if (!signal) return;
+    const saved = await setJournalSignalTemplate(signal.id, inTemplate);
+    if (saved && inTemplate) {
+      setJournalDraftValues((current) => current.some((value) => value.signal_id === signal.id)
+        ? current
+        : [...current, { score: null, signal_id: signal.id }]);
+    }
+  }
+
+  async function toggleJournalFeelingTemplate(signal: HealthJournalSignal) {
+    const saved = await setJournalSignalTemplate(signal.id, !signal.in_template);
+    if (saved && !signal.in_template) {
+      setJournalDraftValues((current) => current.some((value) => value.signal_id === signal.id)
+        ? current
+        : [...current, { score: null, signal_id: signal.id }]);
+    }
+  }
+
+  async function archiveJournalFeeling(signalId: string) {
+    const saved = await archiveJournalSignal(signalId);
+    if (!saved || journalSignalValues.some((value) => value.journal_entry_id === selectedJournalEntry?.id && value.signal_id === signalId)) return;
+    setJournalDraftValues((current) => current.filter((value) => value.signal_id !== signalId));
+  }
+
+  async function archiveJournalSymptom(symptomId: string) {
+    const signal = getJournalSignalForSymptom(symptomId);
+    const saved = await archiveSymptom(symptomId);
+    if (!saved || !signal || journalSignalValues.some((value) => value.journal_entry_id === selectedJournalEntry?.id && value.signal_id === signal.id)) return;
+    setJournalDraftValues((current) => current.filter((value) => value.signal_id !== signal.id));
+  }
+
+  function handleManageJournalLibrary() {
+    setIsJournalLibraryOpen(true);
+    window.setTimeout(() => {
+      const library = journalLibraryRef.current;
+      library?.scrollIntoView({ behavior: "smooth", block: "start" });
+      library?.focus({ preventScroll: true });
+    }, 0);
   }
 
   function resetJournalOccurrenceDraft() {
@@ -2324,10 +2646,10 @@ export function HealthPage({
                   <SectionMiniTitle title="How was today?" />
                   <h3 className="sr-only" id="journal-core-heading">How was today?</h3>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <ScorePicker hint="1 very bad · 10 excellent" label="Mood" onClear={() => setJournalMood(null)} onSelect={setJournalMood} value={journalMood} />
-                    <ScorePicker hint="1 drained · 10 energized" label="Energy" onClear={() => setJournalEnergy(null)} onSelect={setJournalEnergy} value={journalEnergy} />
-                    <ScorePicker hint="1 calm · 10 overwhelmed" label="Stress" onClear={() => setJournalStress(null)} onSelect={setJournalStress} value={journalStress} />
-                    <ScorePicker hint="1 foggy · 10 clear" label="Mental clarity" onClear={() => setJournalClarity(null)} onSelect={setJournalClarity} value={journalClarity} />
+                    <ScorePicker expanded={expandedJournalScaleKey === "core:mood"} expandedScaleKey="core:mood" label="Mood" labels={CORE_JOURNAL_SCALE_LABELS.Mood} onClear={() => { setJournalMood(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalMood(score); setExpandedJournalScaleKey(null); }} onToggle={() => setExpandedJournalScaleKey("core:mood")} value={journalMood} />
+                    <ScorePicker expanded={expandedJournalScaleKey === "core:energy"} expandedScaleKey="core:energy" label="Energy" labels={CORE_JOURNAL_SCALE_LABELS.Energy} onClear={() => { setJournalEnergy(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalEnergy(score); setExpandedJournalScaleKey(null); }} onToggle={() => setExpandedJournalScaleKey("core:energy")} value={journalEnergy} />
+                    <ScorePicker expanded={expandedJournalScaleKey === "core:stress"} expandedScaleKey="core:stress" label="Stress" labels={CORE_JOURNAL_SCALE_LABELS.Stress} onClear={() => { setJournalStress(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalStress(score); setExpandedJournalScaleKey(null); }} onToggle={() => setExpandedJournalScaleKey("core:stress")} value={journalStress} />
+                    <ScorePicker expanded={expandedJournalScaleKey === "core:clarity"} expandedScaleKey="core:clarity" label="Mental clarity" labels={CORE_JOURNAL_SCALE_LABELS["Mental clarity"]} onClear={() => { setJournalClarity(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalClarity(score); setExpandedJournalScaleKey(null); }} onToggle={() => setExpandedJournalScaleKey("core:clarity")} value={journalClarity} />
                   </div>
                 </section>
 
@@ -2336,23 +2658,24 @@ export function HealthPage({
                     <SectionMiniTitle title="Daily log" />
                     <div className="flex flex-wrap gap-2">
                       <AdhdChip onClick={() => setIsJournalAddOpen((open) => !open)} type="button">+ Add</AdhdChip>
-                      <AdhdChip onClick={() => setIsJournalLibraryOpen((open) => !open)} type="button">Manage Journal Library</AdhdChip>
+                      <AdhdChip onClick={handleManageJournalLibrary} type="button">Manage Journal Library</AdhdChip>
                     </div>
                   </div>
                   <h3 className="sr-only" id="journal-daily-log-heading">Daily log</h3>
                   {isJournalAddOpen ? (
                     <div className="grid gap-2 rounded-[1rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
-                      <p className="text-xs text-[#68738c] dark:text-white/55">Add an active Library signal for this date only.</p>
-                      <div className="flex flex-wrap gap-2">
-                        {journalSignals.filter((signal) => signal.archived_at === null && !journalDraftValues.some((value) => value.signal_id === signal.id)).map((signal) => (
-                          <AdhdChip key={signal.id} onClick={() => addJournalSignalToToday(signal.id)} type="button">{getHealthJournalSignalDisplayName(signal, symptoms)}</AdhdChip>
-                        ))}
-                        {journalSignals.every((signal) => signal.archived_at !== null || journalDraftValues.some((value) => value.signal_id === signal.id)) ? <span className="text-xs text-[#7d7598] dark:text-white/50">All active signals are already in this entry.</span> : null}
+                      <p className="text-xs text-[#68738c] dark:text-white/55">Add a feeling to this Journal Entry.</p>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {(["symptom", "emotion", "other"] as const).map((kind) => {
+                          const choices = journalFeelingChoices.filter((choice) => choice.kind === kind && !journalDraftValues.some((value) => choice.signal?.id === value.signal_id));
+                          return <div className="grid content-start gap-2" key={kind}><SectionMiniTitle title={kind === "symptom" ? "Symptoms" : kind === "emotion" ? "Emotions" : "Other Feelings"} />{choices.map((choice) => <AdhdChip key={choice.symptomId ?? choice.signal?.id} onClick={() => { void addJournalFeelingToToday(choice); }} type="button">{choice.name}</AdhdChip>)}</div>;
+                        })}
                       </div>
+                      {journalFeelingChoices.every((choice) => journalDraftValues.some((value) => choice.signal?.id === value.signal_id)) ? <span className="text-xs text-[#7d7598] dark:text-white/50">All active Feelings are already in this entry.</span> : null}
                     </div>
                   ) : null}
                   <div className="grid gap-3">
-                    {journalDraftValues.length === 0 ? <EmptyCopy text="Add signals to your Daily Log from the Journal Library." /> : journalDraftValues.map((draftValue) => {
+                    {journalDraftValues.length === 0 ? <EmptyCopy text="Add Feelings to your Daily Log from the Journal Library." /> : journalDraftValues.map((draftValue) => {
                       const signal = journalSignals.find((candidate) => candidate.id === draftValue.signal_id);
                       if (!signal) return null;
                       const isDayOnly = !signal.in_template;
@@ -2361,7 +2684,7 @@ export function HealthPage({
                           <div className="flex flex-wrap items-baseline justify-between gap-2">
                             <div>
                               <p className="text-sm font-semibold text-[#26324f] dark:text-white">{getHealthJournalSignalDisplayName(signal, symptoms)}</p>
-                              <p className="text-[11px] text-[#7d88a3] dark:text-white/45">{signal.low_label} · {signal.high_label} · 0–10</p>
+                              <p className="text-[11px] text-[#7d88a3] dark:text-white/45">{signal.scale_labels[0]} · {signal.scale_labels[10]} · 0–10</p>
                             </div>
                             <div className="flex flex-wrap gap-2">
                               {isDayOnly && signal.archived_at === null ? <AdhdChip onClick={() => { void setJournalSignalTemplate(signal.id, true); }} type="button">Add to Daily Template</AdhdChip> : null}
@@ -2369,11 +2692,13 @@ export function HealthPage({
                             </div>
                           </div>
                           <JournalScalePicker
+                            expanded={expandedJournalScaleKey === `feeling:${signal.id}`}
+                            expandedScaleKey={`feeling:${signal.id}`}
                             label={getHealthJournalSignalDisplayName(signal, symptoms)}
-                            lowLabel={signal.low_label}
-                            highLabel={signal.high_label}
-                            onClear={() => setJournalDraftValues((current) => current.map((value) => value.signal_id === signal.id ? { ...value, score: null } : value))}
-                            onSelect={(score) => setJournalDraftValues((current) => current.map((value) => value.signal_id === signal.id ? { ...value, score } : value))}
+                            onClear={() => { setJournalDraftValues((current) => current.map((value) => value.signal_id === signal.id ? { ...value, score: null } : value)); setExpandedJournalScaleKey(null); }}
+                            onSelect={(score) => { setJournalDraftValues((current) => current.map((value) => value.signal_id === signal.id ? { ...value, score } : value)); setExpandedJournalScaleKey(null); }}
+                            onToggle={() => setExpandedJournalScaleKey(`feeling:${signal.id}`)}
+                            scaleLabels={signal.scale_labels}
                             value={draftValue.score}
                           />
                         </div>
@@ -2419,10 +2744,37 @@ export function HealthPage({
                   )}
                 </section>
 
-                <label className="grid gap-2">
+                <div className="grid gap-2">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Your day</span>
-                  <textarea aria-label="Journal reflection" className="health-journal-textarea min-h-40 rounded-[1.5rem] border border-[#e6e8f5] bg-white px-4 py-4 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white" onChange={(event) => setJournalReflection(event.target.value)} placeholder={'What happened today?\n\nWhat felt good or difficult?\nWhat was on your mind?\nDid your body feel different anywhere?\nAnything you want to remember about today?'} value={journalReflection} />
-                </label>
+                  <span className="text-xs text-[#7d88a3] dark:text-white/45">Tip: Type # while writing to tag a symptom or feeling. Choosing one adds it to today&apos;s Daily Log so you can rate it.</span>
+                  <div className="relative">
+                    <textarea
+                      aria-activedescendant={journalTagQuery && visibleJournalTagOptions.length > 0 ? `journal-tag-option-${journalTagHighlightIndex}` : undefined}
+                      aria-controls="journal-tag-picker"
+                      aria-label="Journal reflection"
+                      className="health-journal-textarea min-h-40 rounded-[1.5rem] border border-[#e6e8f5] bg-white px-4 py-4 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
+                      onChange={(event) => { setJournalReflection(event.target.value); syncJournalTagQuery(event.currentTarget); }}
+                      onClick={(event) => syncJournalTagQuery(event.currentTarget)}
+                      onKeyDown={handleJournalReflectionKeyDown}
+                      onKeyUp={(event) => {
+                        if (!(["ArrowDown", "ArrowUp", "Enter", "Escape"] as string[]).includes(event.key)) syncJournalTagQuery(event.currentTarget, false);
+                      }}
+                      placeholder={'What happened today?\n\nWhat felt good or difficult?\nWhat was on your mind?\nDid your body feel different anywhere?\nAnything you want to remember about today?'}
+                      ref={journalReflectionRef}
+                      value={journalReflection}
+                    />
+                    {journalTagQuery ? (
+                      <div aria-label="Journal feeling picker" className="absolute inset-x-0 top-full z-30 mt-1 max-h-60 overflow-y-auto rounded-[1rem] border border-[#e4deef] bg-white p-2 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-[#211c34]" id="journal-tag-picker" role="listbox">
+                        {(["symptom", "emotion", "other"] as const).map((kind) => {
+                          const groupOptions = visibleJournalTagOptions.filter((option) => option.kind === kind);
+                          if (groupOptions.length === 0) return null;
+                          return <div className="grid gap-1" key={kind}><SectionMiniTitle title={kind === "symptom" ? "Symptoms" : kind === "emotion" ? "Emotions" : "Other Feelings"} />{groupOptions.map((option) => { const optionIndex = visibleJournalTagOptions.indexOf(option); return <button aria-selected={journalTagHighlightIndex === optionIndex} className={`flex min-h-9 w-full items-center rounded-[0.7rem] px-3 text-left text-sm font-semibold ${journalTagHighlightIndex === optionIndex ? "bg-[#efe9ff] text-[#5d49c7] dark:bg-[#3a2b61] dark:text-[#e0d9ff]" : "text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"}`} id={`journal-tag-option-${optionIndex}`} key={`${option.kind}:${option.symptomId ?? option.signal?.id}`} onClick={() => { void selectJournalTag(option); }} onMouseDown={(event) => event.preventDefault()} role="option">{option.name}</button>; })}</div>;
+                        })}
+                        {visibleJournalTagOptions.length === 0 ? <p className="px-3 py-2 text-xs text-[#7d88a3] dark:text-white/45">No matching Feelings.</p> : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
                 {journalFormError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{journalFormError}</p> : null}
                 <div className="flex justify-end"><button className="ui-pill-button-strong-light" onClick={() => { void handleSaveJournal(); }} type="button">{selectedJournalEntry ? "Update Journal Entry" : "Save Journal Entry"}</button></div>
               </div>
@@ -2436,7 +2788,7 @@ export function HealthPage({
                   return <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
                     <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthDateLabel(entry.entry_date)}</p><div className="flex gap-1"><AdhdChip onClick={() => setJournalDate(entry.entry_date)} type="button">Edit</AdhdChip><AdhdChip onClick={() => handleDeleteJournalEntry(entry)} tone="danger" type="button">Delete</AdhdChip></div></div>
                     <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#68738c] dark:text-white/60">{entry.mood_score !== null ? <span>Mood {entry.mood_score}</span> : null}{entry.energy_score !== null ? <span>Energy {entry.energy_score}</span> : null}{entry.stress_score !== null ? <span>Stress {entry.stress_score}</span> : null}{entry.clarity_score !== null ? <span>Clarity {entry.clarity_score}</span> : null}</div>
-                    {entryValues.length > 0 ? <p className="mt-2 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Daily Log:</span> {entryValues.map((value) => { const signal = journalSignals.find((candidate) => candidate.id === value.signal_id); return `${getHealthJournalSignalDisplayName(signal ?? { id: value.signal_id, user_id: entry.user_id, kind: "other", symptom_id: null, name: "Signal", low_label: "None", high_label: "Extreme", in_template: false, template_sort_order: null, archived_at: null, created_at: entry.created_at, updated_at: entry.updated_at }, symptoms)} ${value.score}`; }).join(" · ")}</p> : null}
+                    {entryValues.length > 0 ? <p className="mt-2 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Daily Log:</span> {entryValues.map((value) => { const signal = journalSignals.find((candidate) => candidate.id === value.signal_id); return `${getHealthJournalSignalDisplayName(signal ?? { id: value.signal_id, user_id: entry.user_id, kind: "other", symptom_id: null, name: "Feeling", low_label: "None", high_label: "Extreme", scale_labels: ["None", "Very low", "Low", "Slightly low", "Below average", "Moderate", "Above average", "High", "Very high", "Intense", "Extreme"], in_template: false, template_sort_order: null, archived_at: null, created_at: entry.created_at, updated_at: entry.updated_at }, symptoms)} ${value.score}`; }).join(" · ")}</p> : null}
                     {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Symptoms:</span> {entryOccurrences.map((occurrence) => { const symptom = symptoms.find((candidate) => candidate.id === occurrence.symptom_id); const loggedAt = new Date(occurrence.logged_at); return `${symptom?.name ?? "Archived symptom"} ${occurrence.severity} @ ${Number.isFinite(loggedAt.getTime()) ? loggedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "time unavailable"}`; }).join(" · ")}</p> : null}
                     {entry.reflection ? <p className="mt-2 text-sm leading-6 text-[#66718f] dark:text-white/60">{entry.reflection}</p> : null}
                     {entry.symptom_tags.length > 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Legacy tags: {entry.symptom_tags.join(", ")}</p> : null}
@@ -2446,21 +2798,78 @@ export function HealthPage({
             </HealthPanel>
           </div>
 
-          {isJournalLibraryOpen ? (
-            <HealthPanel className="mt-5" icon={<Sparkles />} subtitle="Journal Library" title="Manage Journal Library">
+          <div className="mt-5" id="journal-library-section" ref={journalLibraryRef} tabIndex={-1}>
+            <HealthPanel isOpen={isJournalLibraryOpen} onOpenChange={setIsJournalLibraryOpen} icon={<Sparkles />} subtitle={`Journal Library · ${activeSymptoms.length} Symptoms · ${activeJournalSignals.filter((signal) => signal.kind === "emotion").length} Emotions · ${activeJournalSignals.filter((signal) => signal.kind === "other").length} Other Feelings`} title="Manage Journal Library">
               <div className="grid gap-5">
                 <div className="grid gap-3 rounded-[1rem] border border-[#eeeaf8] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
-                  <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold text-[#26324f] dark:text-white">New Journal signal</p><div className="flex gap-2">{(["symptom", "emotion", "other"] as const).map((kind) => <AdhdChip key={kind} onClick={() => setJournalSignalCreateKind(kind)} selected={journalSignalCreateKind === kind} type="button">{kind[0].toUpperCase() + kind.slice(1)}</AdhdChip>)}</div></div>
-                  {journalSignalCreateKind === "symptom" ? <><Field composite label="Canonical Health symptom"><HealthDropdown ariaLabel="Canonical Health symptom" onChange={setJournalSignalCreateSymptomId} options={[{ label: "Choose a symptom", value: "" }, ...activeSymptoms.map((symptom) => ({ label: symptom.name, value: symptom.id })), { label: "+ Add a new symptom", value: NEW_SYMPTOM_VALUE }]} value={journalSignalCreateSymptomId} /></Field>{journalSignalCreateSymptomId === NEW_SYMPTOM_VALUE ? <Field label="New Health symptom name"><input aria-label="New Health symptom name" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setJournalSignalCreateNewSymptomName(event.target.value)} value={journalSignalCreateNewSymptomName} /></Field> : null}</> : <Field label="Name"><input aria-label="Journal signal name" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setJournalSignalCreateName(event.target.value)} value={journalSignalCreateName} /></Field>}
-                  <div className="grid gap-3 sm:grid-cols-2"><Field label="0 label"><input aria-label="Journal signal zero label" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setJournalSignalCreateLowLabel(event.target.value)} value={journalSignalCreateLowLabel} /></Field><Field label="10 label"><input aria-label="Journal signal ten label" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setJournalSignalCreateHighLabel(event.target.value)} value={journalSignalCreateHighLabel} /></Field></div>
+                  <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold text-[#26324f] dark:text-white">New Feeling</p><div className="flex gap-2">{(["emotion", "other"] as const).map((kind) => <AdhdChip key={kind} onClick={() => setJournalSignalCreateKind(kind)} selected={journalSignalCreateKind === kind} type="button">{kind === "emotion" ? "Emotion" : "Other"}</AdhdChip>)}</div></div>
+                  <Field label="Name"><input aria-label="Feeling name" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setJournalSignalCreateName(event.target.value)} value={journalSignalCreateName} /></Field>
+                  <p className="text-xs text-[#7d7598] dark:text-white/50">New Feelings start with the default 0–10 labels. Edit all scale labels below.</p>
                   <label className="flex items-center gap-2 text-sm text-[#5d6783] dark:text-white/70"><input checked={journalSignalCreateInTemplate} onChange={(event) => setJournalSignalCreateInTemplate(event.target.checked)} type="checkbox" /> Add to Daily Template</label>
                   <div className="flex justify-end"><AdhdChip onClick={() => { void handleCreateJournalSignal(); }} tone="purple" type="button">+ New</AdhdChip></div>
                 </div>
-                {(["symptom", "emotion", "other"] as const).map((kind) => <section className="grid gap-2" key={kind}><SectionMiniTitle title={`${kind[0].toUpperCase()}${kind.slice(1)} signals`} />{journalSignals.filter((signal) => signal.kind === kind && signal.archived_at === null).map((signal) => { const hasHistory = journalSignalValues.some((value) => value.signal_id === signal.id); const templateSignals = getHealthJournalTemplateSignals(journalSignals); const templateIndex = templateSignals.findIndex((candidate) => candidate.id === signal.id); return <div className="grid gap-2 rounded-[0.9rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={signal.id}>{journalLibraryEditId === signal.id ? <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end"><Field label="Name"><input aria-label={`Edit ${getHealthJournalSignalDisplayName(signal, symptoms)} name`} className={HEALTH_COMPACT_INPUT_CLASS} disabled={signal.kind === "symptom"} onChange={(event) => setJournalLibraryEditDraft((current) => ({ ...current, name: event.target.value }))} value={journalLibraryEditDraft.name} /></Field><Field label="0 label"><input aria-label={`Edit ${getHealthJournalSignalDisplayName(signal, symptoms)} zero label`} className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setJournalLibraryEditDraft((current) => ({ ...current, lowLabel: event.target.value }))} value={journalLibraryEditDraft.lowLabel} /></Field><Field label="10 label"><input aria-label={`Edit ${getHealthJournalSignalDisplayName(signal, symptoms)} ten label`} className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setJournalLibraryEditDraft((current) => ({ ...current, highLabel: event.target.value }))} value={journalLibraryEditDraft.highLabel} /></Field><div className="flex gap-2"><AdhdChip onClick={() => { void saveJournalSignalEdit(signal); }} tone="purple" type="button">Save</AdhdChip><AdhdChip onClick={() => setJournalLibraryEditId(null)} type="button">Cancel</AdhdChip></div></div> : <div className="flex flex-wrap items-center gap-2">{signal.kind === "symptom" ? <HealthSymptomColorControl isOpen={openSymptomColorPickerKey === `journal:${signal.id}`} onSetColor={(color) => signal.symptom_id ? handleSetSymptomColor(signal.symptom_id, color) : undefined} onToggle={() => signal.symptom_id && toggleSymptomColorPicker(`journal:${signal.id}`)} symptom={symptoms.find((symptom) => symptom.id === signal.symptom_id) ?? { id: signal.symptom_id ?? signal.id, user_id: signal.user_id, name: getHealthJournalSignalDisplayName(signal, symptoms), color: "#6f57f6", archived_at: null, created_at: signal.created_at, updated_at: signal.updated_at }} /> : null}<span className="min-w-0 flex-1 font-semibold text-[#26324f] dark:text-white">{getHealthJournalSignalDisplayName(signal, symptoms)}</span><span className="text-xs text-[#7d88a3] dark:text-white/45">{signal.low_label} → {signal.high_label}</span><AdhdChip onClick={() => { void setJournalSignalTemplate(signal.id, !signal.in_template); }} type="button">{signal.in_template ? "In Daily Template" : "Add to Template"}</AdhdChip>{signal.in_template ? <><AdhdIconButton aria-label={`Move ${getHealthJournalSignalDisplayName(signal, symptoms)} up`} disabled={templateIndex <= 0} onClick={() => moveJournalSignal(signal.id, -1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronUp aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Move ${getHealthJournalSignalDisplayName(signal, symptoms)} down`} disabled={templateIndex < 0 || templateIndex >= templateSignals.length - 1} onClick={() => moveJournalSignal(signal.id, 1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronDown aria-hidden="true" /></AdhdIconButton></> : null}<AdhdIconButton aria-label={`Edit ${getHealthJournalSignalDisplayName(signal, symptoms)}`} onClick={() => startJournalSignalEdit(signal)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Archive ${getHealthJournalSignalDisplayName(signal, symptoms)}`} onClick={() => { void archiveJournalSignal(signal.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>{!hasHistory ? <AdhdIconButton aria-label={`Delete ${getHealthJournalSignalDisplayName(signal, symptoms)}`} onClick={() => { void deleteJournalSignal(signal.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton> : null}</div>}</div>; })}</section>)}
-                <section className="grid gap-2"><SectionMiniTitle title="Canonical Health symptoms" /><div className="flex items-center justify-between gap-2"><p className="text-xs text-[#7d7598] dark:text-white/50">Symptom-backed Journal signals always use these current names.</p><AdhdChip aria-label="Add symptom" onClick={openSymptomCreateForm} type="button">+ Symptom</AdhdChip></div>{isSymptomCreateOpen ? <div className="flex min-w-0 flex-wrap items-center gap-2"><input aria-label="New symptom name" className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 w-full sm:min-w-[12rem] sm:flex-1 sm:w-auto`} onChange={(event) => setSymptomCreateName(event.target.value)} value={symptomCreateName} /><div className="flex shrink-0 gap-2 sm:ml-auto"><AdhdChip onClick={closeSymptomCreateForm} type="button">Cancel</AdhdChip><AdhdChip onClick={() => { void handleCreateSymptom(); }} tone="purple" type="button">Save</AdhdChip></div></div> : null}{activeSymptoms.map((symptom) => <div className="flex min-h-8 items-center gap-2" key={symptom.id}><HealthSymptomColorControl isOpen={openSymptomColorPickerKey === `library:${symptom.id}`} onSetColor={(color) => handleSetSymptomColor(symptom.id, color)} onToggle={() => toggleSymptomColorPicker(`library:${symptom.id}`)} symptom={symptom} />{editingSymptomId === symptom.id ? <input aria-label={`Rename ${symptom.name}`} className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 flex-1`} onChange={(event) => setEditingSymptomName(event.target.value)} value={editingSymptomName} /> : <span className="min-w-0 flex-1 text-sm text-[#5d6783] dark:text-white/70">{symptom.name}</span>}{editingSymptomId === symptom.id ? <><AdhdChip onClick={() => { void handleRenameSymptom(symptom.id); }} tone="purple" type="button">Save</AdhdChip><AdhdChip onClick={() => { setEditingSymptomId(null); }} type="button">Cancel</AdhdChip></> : <><AdhdIconButton aria-label={`Rename ${symptom.name}`} onClick={() => { setEditingSymptomId(symptom.id); setEditingSymptomName(symptom.name); }} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Archive ${symptom.name}`} onClick={() => { void archiveSymptom(symptom.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton></>}</div>)}</section>
+                {isSymptomCreateOpen ? <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-[1rem] border border-[#eeeaf8] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]"><input aria-label="New symptom name" className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 w-full sm:min-w-[12rem] sm:flex-1 sm:w-auto`} onChange={(event) => setSymptomCreateName(event.target.value)} value={symptomCreateName} /><div className="flex shrink-0 gap-2 sm:ml-auto"><AdhdChip onClick={closeSymptomCreateForm} type="button">Cancel</AdhdChip><AdhdChip onClick={() => { void handleCreateSymptom(); }} tone="purple" type="button">Save</AdhdChip></div></div> : null}
+                <JournalSymptomLibrarySection
+                  activeSymptoms={activeSymptoms}
+                  archiveSymptom={archiveJournalSymptom}
+                  editingSymptomId={editingSymptomId}
+                  editingSymptomName={editingSymptomName}
+                  getJournalSignalForSymptom={getJournalSignalForSymptom}
+                  handleRenameSymptom={handleRenameSymptom}
+                  handleSetSymptomColor={handleSetSymptomColor}
+                  journalLibraryEditDraft={journalLibraryEditDraft}
+                  journalLibraryEditId={journalLibraryEditId}
+                  journalSignalValues={journalSignalValues}
+                  onAddSymptom={openSymptomCreateForm}
+                  onCancelEdit={() => setJournalLibraryEditId(null)}
+                  onChangeDraft={setJournalLibraryEditDraft}
+                  onEdit={startJournalSignalEdit}
+                  onMove={moveJournalSignal}
+                  onSaveEdit={saveJournalSignalEdit}
+                  onToggleColorPicker={toggleSymptomColorPicker}
+                  onToggleTemplate={toggleJournalSymptomTemplate}
+                  openSymptomColorPickerKey={openSymptomColorPickerKey}
+                  setEditingSymptomId={setEditingSymptomId}
+                  setEditingSymptomName={setEditingSymptomName}
+                  startJournalSymptomEdit={startJournalSymptomEdit}
+                  symptoms={symptoms}
+                  templateSignals={getHealthJournalTemplateSignals(journalSignals, symptoms)}
+                />
+                <JournalFeelingLibrarySection
+                  archiveJournalSignal={archiveJournalFeeling}
+                  deleteJournalSignal={deleteJournalSignal}
+                  draft={journalLibraryEditDraft}
+                  journalLibraryEditId={journalLibraryEditId}
+                  journalSignalValues={journalSignalValues}
+                  kind="emotion"
+                  moveJournalSignal={moveJournalSignal}
+                  onCancelEdit={() => setJournalLibraryEditId(null)}
+                  onChangeDraft={setJournalLibraryEditDraft}
+                  onEdit={startJournalSignalEdit}
+                  onSaveEdit={saveJournalSignalEdit}
+                  onToggleTemplate={toggleJournalFeelingTemplate}
+                  signals={journalSignals}
+                  symptoms={symptoms}
+                />
+                <JournalFeelingLibrarySection
+                  archiveJournalSignal={archiveJournalFeeling}
+                  deleteJournalSignal={deleteJournalSignal}
+                  draft={journalLibraryEditDraft}
+                  journalLibraryEditId={journalLibraryEditId}
+                  journalSignalValues={journalSignalValues}
+                  kind="other"
+                  moveJournalSignal={moveJournalSignal}
+                  onCancelEdit={() => setJournalLibraryEditId(null)}
+                  onChangeDraft={setJournalLibraryEditDraft}
+                  onEdit={startJournalSignalEdit}
+                  onSaveEdit={saveJournalSignalEdit}
+                  onToggleTemplate={toggleJournalFeelingTemplate}
+                  signals={journalSignals}
+                  symptoms={symptoms}
+                />
               </div>
             </HealthPanel>
-          ) : null}
+          </div>
 
           {editingSymptomEntryId ? <HealthPanel className="mt-5" icon={<Activity />} subtitle="Existing symptom history" title="Edit symptom occurrence">
             <div className="grid gap-3"><Field composite label="Symptom"><HealthDropdown ariaLabel="Symptom" onChange={(value) => setSymptomDraft((current) => ({ ...current, symptomId: value }))} options={[...symptomOptions.filter((option) => option.value !== NEW_SYMPTOM_VALUE), ...(editingArchivedSymptom ? [buildHealthSymptomDropdownOption(editingArchivedSymptom, `edit:${editingArchivedSymptom.id}`, openSymptomColorPickerKey, toggleSymptomColorPicker, handleSetSymptomColor)] : [])]} value={symptomDraft.symptomId} /></Field><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Severity</p><div className="mt-2 grid grid-cols-5 gap-2 sm:flex sm:flex-wrap">{HEALTH_SEVERITY_OPTIONS.map((severity) => <button aria-label={`Severity ${severity} out of 10`} aria-pressed={symptomDraft.severity === severity} className={`flex h-9 w-full items-center justify-center rounded-full text-sm font-semibold sm:w-9 ${symptomDraft.severity === severity ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={severity} onClick={() => setSymptomDraft((current) => ({ ...current, severity }))} type="button">{severity}</button>)}</div></div><div className="grid gap-3 sm:grid-cols-2"><Field label="Date"><HealthMealDateTimeInput onChange={(date) => setSymptomDraft((current) => ({ ...current, date }))} type="date" value={symptomDraft.date} /></Field><Field label="Time"><HealthMealDateTimeInput onChange={(time) => setSymptomDraft((current) => ({ ...current, time }))} type="time" value={symptomDraft.time} /></Field></div><Field label="Note (optional)"><textarea aria-label="Symptom note" className="health-journal-textarea min-h-20 rounded-[1.25rem] border border-[#e6e8f5] bg-white px-3 py-3 text-sm text-[#22304b] outline-none dark:border-white/10 dark:bg-white/[0.04] dark:text-white" onChange={(event) => setSymptomDraft((current) => ({ ...current, note: event.target.value }))} value={symptomDraft.note} /></Field>{symptomFormError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{symptomFormError}</p> : null}<div className="flex justify-end gap-2"><AdhdChip onClick={resetSymptomDraft} type="button">Cancel</AdhdChip><AdhdChip onClick={() => { void handleSaveSymptomEntry(); }} tone="purple" type="button">Update occurrence</AdhdChip></div></div>
@@ -3274,6 +3683,8 @@ function HealthPanel({
   icon,
   subtitle,
   title,
+  isOpen: controlledIsOpen,
+  onOpenChange,
 }: {
   className?: string;
   collapseAfterHeaderActions?: boolean;
@@ -3285,8 +3696,16 @@ function HealthPanel({
   icon: ReactNode;
   subtitle: string;
   title?: string;
+  isOpen?: boolean;
+  onOpenChange?: (isOpen: boolean) => void;
 }) {
-  const [isOpen, setIsOpen] = useState(true);
+  const [internalIsOpen, setInternalIsOpen] = useState(true);
+  const isOpen = controlledIsOpen ?? internalIsOpen;
+  const toggleOpen = () => {
+    const nextIsOpen = !isOpen;
+    onOpenChange?.(nextIsOpen);
+    if (controlledIsOpen === undefined) setInternalIsOpen(nextIsOpen);
+  };
   const collapseButtonChevronClassName = [
     "h-4 w-4 transition-transform",
     headerChevronClassName,
@@ -3313,7 +3732,7 @@ function HealthPanel({
       aria-expanded={isOpen}
       aria-label={`${isOpen ? "Collapse" : "Expand"} ${title ?? subtitle}`}
       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8d87a7] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/45 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
-      onClick={() => setIsOpen((current) => !current)}
+      onClick={toggleOpen}
       type="button"
     >
       <ChevronDown
@@ -3334,7 +3753,7 @@ function HealthPanel({
             <button
               aria-expanded={isOpen}
               className="flex min-w-0 flex-1 items-center gap-3 text-left"
-              onClick={() => setIsOpen((current) => !current)}
+              onClick={toggleOpen}
               type="button"
             >
               {panelTitle}
@@ -3345,7 +3764,7 @@ function HealthPanel({
           <button
             aria-expanded={isOpen}
             className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
-            onClick={() => setIsOpen((current) => !current)}
+            onClick={toggleOpen}
             type="button"
           >
             {panelTitle}
@@ -3439,69 +3858,71 @@ function SleepDraftFields({ draft, onChange }: { draft: SleepDraft; onChange: (d
 }
 
 function ScorePicker({
-  hint,
+  expanded,
+  expandedScaleKey,
   label,
+  labels,
   onClear,
   onSelect,
+  onToggle,
   value,
 }: {
-  hint?: string;
+  expanded: boolean;
+  expandedScaleKey: string;
   label: string;
+  labels: readonly string[];
   onClear?: () => void;
   onSelect: (value: number) => void;
+  onToggle: () => void;
   value: number | null;
 }) {
   return (
-    <div>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</p>
-        {hint ? <span className="text-[11px] text-[#8d87a3] dark:text-white/40">{hint}</span> : null}
-      </div>
-      <div className="mt-2 grid grid-cols-5 gap-2 sm:flex sm:flex-wrap">
-        {HEALTH_SCALE_OPTIONS.map((score) => (
-          <button
-            aria-label={`${label} ${score} out of 10`}
-            aria-pressed={value === score}
-            className={`flex h-9 w-full items-center justify-center rounded-full text-sm font-semibold transition sm:h-10 sm:w-10 ${
-              value === score
-                ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-                : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"
-            }`}
-            key={score}
-            onClick={() => onSelect(score)}
-            type="button"
-          >
-            {score}
-          </button>
-        ))}
-      </div>
-      {onClear && value !== null ? <button aria-label={`Clear ${label} score`} className="mt-2 text-xs font-semibold text-[#7569a8] underline-offset-2 hover:underline dark:text-[#c4baff]" onClick={onClear} type="button">Not logged</button> : null}
+    <div className="grid gap-2">
+      <button aria-controls={expandedScaleKey} aria-expanded={expanded} className="flex min-h-11 items-center justify-between gap-3 rounded-[0.9rem] border border-[#edf0fb] bg-white/70 px-3 py-2 text-left dark:border-white/10 dark:bg-white/[0.03]" onClick={onToggle} type="button">
+        <span className="min-w-0"><span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</span><span className="mt-1 block truncate text-sm font-semibold text-[#4f5a76] dark:text-white/70">{value === null ? "Not logged" : `${value} · ${labels[value - 1] ?? ""}`}</span></span>
+        <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${expanded ? "rotate-180" : ""}`} />
+      </button>
+      {expanded ? <div className="grid gap-2 rounded-[0.9rem] border border-[#eeeaf8] bg-[#fbfaff] p-2 dark:border-white/10 dark:bg-white/[0.03]" id={expandedScaleKey}>
+        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+          {HEALTH_SCALE_OPTIONS.map((score) => <button aria-label={`${label} ${score}, ${labels[score - 1] ?? ""}`} aria-pressed={value === score} className={`flex min-h-9 items-center justify-start gap-2 rounded-[0.7rem] px-2 text-left text-xs font-semibold ${value === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onSelect(score)} type="button"><span className="font-black">{score}</span><span className="truncate">{labels[score - 1] ?? ""}</span></button>)}
+        </div>
+        {onClear ? <button aria-label={`Clear ${label} score`} className="justify-self-start text-xs font-semibold text-[#7569a8] underline-offset-2 hover:underline dark:text-[#c4baff]" onClick={onClear} type="button">Not logged</button> : null}
+      </div> : null}
     </div>
   );
 }
 
 function JournalScalePicker({
-  highLabel,
+  expanded,
+  expandedScaleKey,
   label,
-  lowLabel,
   onClear,
   onSelect,
+  onToggle,
+  scaleLabels,
   value,
 }: {
-  highLabel: string;
+  expanded: boolean;
+  expandedScaleKey: string;
   label: string;
-  lowLabel: string;
   onClear: () => void;
   onSelect: (value: number) => void;
+  onToggle: () => void;
+  scaleLabels: readonly string[];
   value: number | null;
 }) {
   return (
-    <div className="mt-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#7d88a3] dark:text-white/45"><span>{lowLabel}</span><span>{highLabel}</span></div>
-      <div className="mt-2 grid grid-cols-6 gap-1.5 sm:grid-cols-11">
-        {HEALTH_JOURNAL_SCORE_OPTIONS.map((score) => <button aria-label={`${label} intensity, ${score} out of 10`} aria-pressed={value === score} className={`flex h-8 items-center justify-center rounded-full text-xs font-semibold ${value === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onSelect(score)} type="button">{score}</button>)}
-      </div>
-      {value !== null ? <button aria-label={`Clear ${label} intensity`} className="mt-2 text-xs font-semibold text-[#7569a8] underline-offset-2 hover:underline dark:text-[#c4baff]" onClick={onClear} type="button">Not logged</button> : <p className="mt-2 text-xs text-[#7d88a3] dark:text-white/45">Not logged</p>}
+    <div className="grid gap-2">
+      <button aria-controls={expandedScaleKey} aria-expanded={expanded} className="flex min-h-10 items-center justify-between gap-3 rounded-[0.8rem] border border-[#edf0fb] bg-white/70 px-3 py-2 text-left dark:border-white/10 dark:bg-white/[0.03]" onClick={onToggle} type="button">
+        <span className="min-w-0 truncate text-sm font-semibold text-[#4f5a76] dark:text-white/70">{value === null ? "Not logged" : `${value} · ${scaleLabels[value] ?? ""}`}</span>
+        <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${expanded ? "rotate-180" : ""}`} />
+      </button>
+      {expanded ? <div className="grid gap-2 rounded-[0.9rem] border border-[#eeeaf8] bg-[#fbfaff] p-2 dark:border-white/10 dark:bg-white/[0.03]" id={expandedScaleKey}>
+        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+          {HEALTH_JOURNAL_SCORE_OPTIONS.map((score) => <button aria-label={`${label} ${score}, ${scaleLabels[score] ?? ""}`} aria-pressed={value === score} className={`flex min-h-9 items-center justify-start gap-2 rounded-[0.7rem] px-2 text-left text-xs font-semibold ${value === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onSelect(score)} type="button"><span className="font-black">{score}</span><span className="truncate">{scaleLabels[score] ?? ""}</span></button>)}
+        </div>
+        <button aria-label={`Clear ${label} score`} className="justify-self-start text-xs font-semibold text-[#7569a8] underline-offset-2 hover:underline dark:text-[#c4baff]" onClick={onClear} type="button">Not logged</button>
+      </div> : null}
     </div>
   );
 }

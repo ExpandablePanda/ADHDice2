@@ -67,6 +67,7 @@ import {
   getHealthJournalSignalDisplayName,
   normalizeHealthJournalLabel,
   normalizeHealthJournalScore,
+  normalizeHealthJournalScaleLabels,
   normalizeHealthJournalSignal,
   sortHealthJournalSignals,
   type HealthJournalDraftValue,
@@ -835,6 +836,7 @@ export function useHealth(
               kind: signal.kind,
               low_label: signal.low_label,
               name: signal.name,
+              scale_labels: signal.scale_labels,
               symptom_id: signal.symptom_id,
               template_sort_order: signal.template_sort_order,
               user_id: userId,
@@ -1105,7 +1107,7 @@ export function useHealth(
 
     const currentValues = currentSnapshot.journalSignalValues.filter((value) => value.journal_entry_id === nextRow.id);
     if (input.signalValues.some((draft) => !currentSnapshot.journalSignals.some((signal) => signal.id === draft.signal_id))) {
-      setMessage({ tone: "warn", text: "Choose valid Daily Log signals before saving the Journal Entry." });
+      setMessage({ tone: "warn", text: "Choose valid Daily Log feelings before saving the Journal Entry." });
       return false;
     }
     if (input.signalValues.some((draft) => draft.score !== null && normalizeHealthJournalScore(draft.score) !== draft.score)) {
@@ -1277,9 +1279,24 @@ export function useHealth(
       setMessage({ tone: "warn", text: "Choose an active canonical symptom." });
       return null;
     }
+    const existingSymptomSignal = kind === "symptom"
+      ? currentSnapshot.journalSignals.find((signal) => signal.kind === "symptom" && signal.symptom_id === input.symptom_id)
+      : null;
+    if (existingSymptomSignal) {
+      if (existingSymptomSignal.archived_at !== null) {
+        const restored = await updateJournalSignal(existingSymptomSignal.id, {
+          archived_at: null,
+          in_template: input.in_template === true,
+          template_sort_order: input.in_template === true ? existingSymptomSignal.template_sort_order : null,
+        });
+        if (!restored) return null;
+        return healthSnapshotRef.current?.journalSignals.find((signal) => signal.id === existingSymptomSignal.id) ?? null;
+      }
+      return normalizeHealthJournalSignal(existingSymptomSignal);
+    }
     const name = kind === "symptom" ? null : normalizeHealthJournalLabel(input.name, "");
     if (kind !== "symptom" && !name) {
-      setMessage({ tone: "warn", text: "Enter a Journal signal name." });
+      setMessage({ tone: "warn", text: "Enter a Journal feeling name." });
       return null;
     }
     const now = new Date().toISOString();
@@ -1292,6 +1309,7 @@ export function useHealth(
       kind,
       low_label: normalizeHealthJournalLabel(input.low_label, DEFAULT_HEALTH_JOURNAL_LOW_LABEL),
       name,
+      scale_labels: normalizeHealthJournalScaleLabels(input.scale_labels, kind, input.low_label, input.high_label),
       symptom_id: kind === "symptom" ? input.symptom_id ?? null : null,
       template_sort_order: input.in_template === true
         ? Math.max(-1, ...currentSnapshot.journalSignals.map((signal) => signal.template_sort_order ?? -1)) + 1
@@ -1344,19 +1362,29 @@ export function useHealth(
     });
     const current = currentSnapshot.journalSignals.find((signal) => signal.id === signalId);
     if (!current) return false;
+    const nextScaleLabels = input.scale_labels === undefined
+      ? normalizeHealthJournalScaleLabels(current.scale_labels, current.kind).map((label, index) => (
+        index === 0
+          ? normalizeHealthJournalLabel(input.low_label, label)
+          : index === 10
+            ? normalizeHealthJournalLabel(input.high_label, label)
+            : label
+      ))
+      : normalizeHealthJournalScaleLabels(input.scale_labels, current.kind);
     const nextRow = normalizeHealthJournalSignal({
       ...current,
       ...input,
       archived_at: input.archived_at === undefined ? current.archived_at : input.archived_at,
-      high_label: normalizeHealthJournalLabel(input.high_label ?? current.high_label, DEFAULT_HEALTH_JOURNAL_HIGH_LABEL),
+      high_label: nextScaleLabels[10] ?? DEFAULT_HEALTH_JOURNAL_HIGH_LABEL,
       kind: current.kind,
-      low_label: normalizeHealthJournalLabel(input.low_label ?? current.low_label, DEFAULT_HEALTH_JOURNAL_LOW_LABEL),
+      low_label: nextScaleLabels[0] ?? DEFAULT_HEALTH_JOURNAL_LOW_LABEL,
       name: current.kind === "symptom" ? null : normalizeHealthJournalLabel(input.name ?? current.name, ""),
+      scale_labels: nextScaleLabels,
       symptom_id: current.kind === "symptom" ? current.symptom_id : null,
       updated_at: new Date().toISOString(),
     });
     if (nextRow.kind !== "symptom" && !nextRow.name) {
-      setMessage({ tone: "warn", text: "Enter a Journal signal name." });
+      setMessage({ tone: "warn", text: "Enter a Journal feeling name." });
       return false;
     }
     if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
@@ -1368,6 +1396,7 @@ export function useHealth(
           in_template: nextRow.in_template,
           low_label: nextRow.low_label,
           name: nextRow.name,
+          scale_labels: nextRow.scale_labels,
           template_sort_order: nextRow.template_sort_order,
         })
         .eq("id", signalId)
@@ -1401,7 +1430,7 @@ export function useHealth(
 
   async function archiveJournalSignal(signalId: string) {
     const saved = await updateJournalSignal(signalId, { archived_at: new Date().toISOString(), in_template: false, template_sort_order: null });
-    if (saved) setMessage({ tone: "good", text: "Journal signal archived." });
+    if (saved) setMessage({ tone: "good", text: "Feeling archived." });
     return saved;
   }
 
@@ -1423,7 +1452,7 @@ export function useHealth(
       weightEntries,
     });
     if (currentSnapshot.journalSignalValues.some((value) => value.signal_id === signalId)) {
-      setMessage({ tone: "warn", text: "This Journal signal has history. Archive it instead of deleting it." });
+      setMessage({ tone: "warn", text: "This Feeling has history. Archive it instead of deleting it." });
       return false;
     }
     if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
@@ -1444,7 +1473,7 @@ export function useHealth(
       ...currentSnapshot,
       journalSignals: currentSnapshot.journalSignals.filter((signal) => signal.id !== signalId),
     }));
-    setMessage({ tone: "good", text: "Journal signal deleted." });
+    setMessage({ tone: "good", text: "Feeling deleted." });
     return true;
   }
 

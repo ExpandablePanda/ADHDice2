@@ -11,9 +11,12 @@ import {
   buildHealthJournalDraftValues,
   DEFAULT_HEALTH_JOURNAL_HIGH_LABEL,
   DEFAULT_HEALTH_JOURNAL_LOW_LABEL,
+  getDefaultHealthJournalScaleLabels,
   getHealthJournalSignalDisplayName,
   getHealthJournalTemplateSignals,
+  HEALTH_JOURNAL_DEFAULT_SCALE_LABELS,
   HEALTH_JOURNAL_SCORE_OPTIONS,
+  normalizeHealthJournalScaleLabels,
   normalizeHealthJournalScore,
   normalizeHealthJournalSignal,
 } from "../src/lib/health-journal.ts";
@@ -22,6 +25,11 @@ const migrationSource = readFileSync(
   new URL("../supabase/add_health_journal_daily_log_7_12_34.sql", import.meta.url),
   "utf8",
 );
+const scaleLabelsMigrationSource = readFileSync(
+  new URL("../supabase/add_health_journal_scale_labels_7_12_35.sql", import.meta.url),
+  "utf8",
+);
+const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 const healthHookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 
@@ -35,6 +43,7 @@ function signal(id: string, overrides: Partial<HealthJournalSignal> = {}): Healt
     kind: "other",
     low_label: DEFAULT_HEALTH_JOURNAL_LOW_LABEL,
     name: id,
+    scale_labels: getDefaultHealthJournalScaleLabels("other"),
     symptom_id: null,
     template_sort_order: null,
     updated_at: `${id}-updated`,
@@ -104,6 +113,77 @@ test("symptom Journal signals resolve their current canonical Health symptom nam
 
   assert.equal(getHealthJournalSignalDisplayName(journalSignal, [symptom]), "Renamed symptom");
   assert.equal(journalSignal.name, null);
+});
+
+test("Journal Feelings normalize to eleven labels and preserve legacy endpoint customization", () => {
+  for (const kind of ["symptom", "emotion", "other"] as const) {
+    assert.equal(getDefaultHealthJournalScaleLabels(kind).length, 11);
+    assert.deepEqual(getDefaultHealthJournalScaleLabels(kind), [...HEALTH_JOURNAL_DEFAULT_SCALE_LABELS[kind]]);
+  }
+
+  const legacy = normalizeHealthJournalSignal(signal("legacy", {
+    kind: "symptom",
+    low_label: "Absent",
+    high_label: "Unbearable",
+    scale_labels: undefined as unknown as string[],
+  }));
+  assert.equal(legacy.scale_labels.length, 11);
+  assert.equal(legacy.scale_labels[0], "Absent");
+  assert.equal(legacy.scale_labels[10], "Unbearable");
+  assert.equal(legacy.low_label, "Absent");
+  assert.equal(legacy.high_label, "Unbearable");
+
+  const edited = normalizeHealthJournalScaleLabels(
+    ["None", "Barely", "Very slight", "Slight", "Mild", "Middle custom", "Noticeable", "Strong", "Very strong", "Intense", "Extreme"],
+    "emotion",
+    "Old low",
+    "Old high",
+  );
+  assert.equal(edited[5], "Middle custom");
+  assert.equal(edited[0], "None");
+  assert.equal(edited[10], "Extreme");
+});
+
+test("7.12.35 source contract covers scale-label migration, unified Symptoms, collapsed scales, and hashtags", () => {
+  assert.match(scaleLabelsMigrationSource, /add column if not exists scale_labels text\[\]/);
+  assert.match(scaleLabelsMigrationSource, /cardinality\(scale_labels\) <> 11/);
+  assert.match(scaleLabelsMigrationSource, /set low_label = scale_labels\[1\],[\s\S]*high_label = scale_labels\[11\]/);
+  assert.match(schemaSource, /scale_labels text\[\] not null/);
+  assert.match(schemaSource, /check \(cardinality\(scale_labels\) = 11\)/);
+  assert.match(healthHookSource, /scale_labels: signal\.scale_labels/);
+  assert.match(healthHookSource, /scale_labels: nextRow\.scale_labels/);
+  assert.match(healthPageSource, /expandedJournalScaleKey/);
+  assert.match(healthPageSource, /Type # while writing to tag a symptom or feeling/);
+  assert.match(healthPageSource, /journal-tag-picker/);
+  assert.match(healthPageSource, /JournalSymptomLibrarySection/);
+  assert.match(healthPageSource, /title="Symptoms"/);
+  assert.doesNotMatch(healthPageSource, /title="Symptom signals"/);
+  assert.doesNotMatch(healthPageSource, /title="Canonical Health symptoms"/);
+});
+
+test("archived canonical symptoms are excluded from current templates but saved history remains readable", () => {
+  const archivedSymptom: HealthSymptom = {
+    archived_at: "2026-08-30T10:00:00.000Z",
+    color: "#6f57f6",
+    created_at: "2026-08-29T10:00:00.000Z",
+    id: "archived-symptom",
+    name: "Archived reflux",
+    updated_at: "2026-08-30T10:00:00.000Z",
+    user_id: "user-1",
+  };
+  const archivedSignal = signal("archived-reflux-signal", {
+    kind: "symptom",
+    symptom_id: archivedSymptom.id,
+    in_template: true,
+    template_sort_order: 1,
+  });
+  assert.deepEqual(getHealthJournalTemplateSignals([archivedSignal], [archivedSymptom]), []);
+  assert.deepEqual(buildHealthJournalDraftValues({
+    journalEntryId: "entry-1",
+    signals: [archivedSignal],
+    symptoms: [archivedSymptom],
+    values: [value(archivedSignal.id, "entry-1", 6)],
+  }).map((item) => [item.signal_id, item.score]), [[archivedSignal.id, 6]]);
 });
 
 test("7.12.34 source contract covers daily-log constraints, ownership, RLS, and ordered save behavior", () => {

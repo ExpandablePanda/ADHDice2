@@ -10,6 +10,48 @@ export const HEALTH_JOURNAL_SCORE_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] a
 export const DEFAULT_HEALTH_JOURNAL_LOW_LABEL = "None";
 export const DEFAULT_HEALTH_JOURNAL_HIGH_LABEL = "Extreme";
 
+export const HEALTH_JOURNAL_DEFAULT_SCALE_LABELS: Readonly<Record<HealthJournalSignalKind, readonly string[]>> = {
+  symptom: [
+    "None",
+    "Barely noticeable",
+    "Very mild",
+    "Mild",
+    "Mild to moderate",
+    "Moderate",
+    "Moderately strong",
+    "Strong",
+    "Severe",
+    "Very severe",
+    "Extreme",
+  ],
+  emotion: [
+    "None",
+    "Barely",
+    "Very slight",
+    "Slight",
+    "Mild",
+    "Moderate",
+    "Noticeable",
+    "Strong",
+    "Very strong",
+    "Intense",
+    "Extreme",
+  ],
+  other: [
+    "None",
+    "Very low",
+    "Low",
+    "Slightly low",
+    "Below average",
+    "Moderate",
+    "Above average",
+    "High",
+    "Very high",
+    "Intense",
+    "Extreme",
+  ],
+};
+
 export type HealthJournalDraftValue = {
   id?: string;
   signal_id: string;
@@ -22,13 +64,45 @@ export function normalizeHealthJournalLabel(value: unknown, fallback: string) {
   return normalized || fallback;
 }
 
+export function getDefaultHealthJournalScaleLabels(kind: HealthJournalSignalKind) {
+  return [...HEALTH_JOURNAL_DEFAULT_SCALE_LABELS[kind]];
+}
+
+export function normalizeHealthJournalScaleLabels(
+  value: unknown,
+  kind: HealthJournalSignalKind,
+  lowLabel?: unknown,
+  highLabel?: unknown,
+) {
+  const defaults = getDefaultHealthJournalScaleLabels(kind);
+  const hasCompleteScale = Array.isArray(value) && value.length === HEALTH_JOURNAL_SCORE_OPTIONS.length;
+  const labels = defaults.map((fallback, index) => normalizeHealthJournalLabel(
+    Array.isArray(value) && value.length === HEALTH_JOURNAL_SCORE_OPTIONS.length ? value[index] : undefined,
+    fallback,
+  ));
+
+  if (!hasCompleteScale) {
+    labels[0] = normalizeHealthJournalLabel(lowLabel, labels[0] ?? DEFAULT_HEALTH_JOURNAL_LOW_LABEL);
+    labels[10] = normalizeHealthJournalLabel(highLabel, labels[10] ?? DEFAULT_HEALTH_JOURNAL_HIGH_LABEL);
+  }
+
+  return labels;
+}
+
 export function normalizeHealthJournalSignal(signal: HealthJournalSignal): HealthJournalSignal {
+  const scaleLabels = normalizeHealthJournalScaleLabels(
+    signal.scale_labels,
+    signal.kind,
+    signal.low_label,
+    signal.high_label,
+  );
   return {
     ...signal,
     kind: signal.kind,
-    low_label: normalizeHealthJournalLabel(signal.low_label, DEFAULT_HEALTH_JOURNAL_LOW_LABEL),
-    high_label: normalizeHealthJournalLabel(signal.high_label, DEFAULT_HEALTH_JOURNAL_HIGH_LABEL),
+    high_label: scaleLabels[10] ?? DEFAULT_HEALTH_JOURNAL_HIGH_LABEL,
+    low_label: scaleLabels[0] ?? DEFAULT_HEALTH_JOURNAL_LOW_LABEL,
     name: signal.kind === "symptom" ? null : signal.name?.trim().replace(/\s+/g, " ") || null,
+    scale_labels: scaleLabels,
     symptom_id: signal.kind === "symptom" ? signal.symptom_id : null,
     in_template: signal.in_template === true,
     template_sort_order: Number.isInteger(signal.template_sort_order) ? signal.template_sort_order : null,
@@ -48,7 +122,7 @@ export function getHealthJournalSignalDisplayName(signal: HealthJournalSignal, s
   if (signal.kind === "symptom") {
     return symptoms.find((symptom) => symptom.id === signal.symptom_id)?.name ?? "Archived symptom";
   }
-  return signal.name ?? "Unnamed signal";
+  return signal.name ?? "Unnamed feeling";
 }
 
 export function normalizeHealthJournalScore(value: unknown) {
@@ -61,10 +135,12 @@ export function buildHealthJournalDraftValues({
   signals,
   values,
   journalEntryId,
+  symptoms,
 }: {
   signals: readonly HealthJournalSignal[];
   values: readonly HealthJournalSignalValue[];
   journalEntryId: string | null;
+  symptoms?: readonly HealthSymptom[];
 }): HealthJournalDraftValue[] {
   const savedBySignal = new Map(
     values
@@ -72,7 +148,13 @@ export function buildHealthJournalDraftValues({
       .map((value) => [value.signal_id, value] as const),
   );
   const orderedSignals = [...signals]
-    .filter((signal) => (signal.archived_at === null && signal.in_template) || savedBySignal.has(signal.id))
+    .filter((signal) => {
+      if (savedBySignal.has(signal.id)) return true;
+      if (signal.archived_at !== null || !signal.in_template) return false;
+      return signal.kind !== "symptom"
+        || symptoms === undefined
+        || symptoms.some((symptom) => symptom.id === signal.symptom_id && symptom.archived_at === null);
+    })
     .sort(sortHealthJournalSignals);
   return orderedSignals.map((signal) => {
     const saved = savedBySignal.get(signal.id);
@@ -84,8 +166,15 @@ export function buildHealthJournalDraftValues({
   });
 }
 
-export function getHealthJournalTemplateSignals(signals: readonly HealthJournalSignal[]) {
+export function getHealthJournalTemplateSignals(
+  signals: readonly HealthJournalSignal[],
+  symptoms?: readonly HealthSymptom[],
+) {
   return signals
-    .filter((signal) => signal.archived_at === null && signal.in_template)
+    .filter((signal) => signal.archived_at === null && signal.in_template && (
+      signal.kind !== "symptom"
+      || symptoms === undefined
+      || symptoms.some((symptom) => symptom.id === signal.symptom_id && symptom.archived_at === null)
+    ))
     .sort(sortHealthJournalSignals);
 }
