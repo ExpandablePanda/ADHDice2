@@ -4,11 +4,14 @@ import type {
   HealthJournalSignalValue,
   HealthSymptom,
 } from "@/lib/database.types";
+import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
+import { normalizeHealthSymptomColor } from "@/lib/health-utils";
 
 export const HEALTH_JOURNAL_SIGNAL_KINDS: readonly HealthJournalSignalKind[] = ["symptom", "emotion", "other"];
 export const HEALTH_JOURNAL_SCORE_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 export const DEFAULT_HEALTH_JOURNAL_LOW_LABEL = "None";
 export const DEFAULT_HEALTH_JOURNAL_HIGH_LABEL = "Extreme";
+export const DEFAULT_HEALTH_JOURNAL_FEELING_COLOR = ADHDICE_ACCENT_COLORS[0];
 
 export const HEALTH_JOURNAL_DEFAULT_SCALE_LABELS: Readonly<Record<HealthJournalSignalKind, readonly string[]>> = {
   symptom: [
@@ -58,6 +61,11 @@ export type HealthJournalDraftValue = {
   score: number | null;
 };
 
+export function normalizeHealthJournalSignalColor(color: string | null | undefined) {
+  const normalized = color?.trim().toLowerCase() ?? "";
+  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : DEFAULT_HEALTH_JOURNAL_FEELING_COLOR;
+}
+
 export function normalizeHealthJournalLabel(value: unknown, fallback: string) {
   if (typeof value !== "string") return fallback;
   const normalized = value.trim().replace(/\s+/g, " ");
@@ -98,6 +106,7 @@ export function normalizeHealthJournalSignal(signal: HealthJournalSignal): Healt
   );
   return {
     ...signal,
+    color: signal.kind === "symptom" ? null : normalizeHealthJournalSignalColor(signal.color),
     kind: signal.kind,
     high_label: scaleLabels[10] ?? DEFAULT_HEALTH_JOURNAL_HIGH_LABEL,
     low_label: scaleLabels[0] ?? DEFAULT_HEALTH_JOURNAL_LOW_LABEL,
@@ -107,6 +116,15 @@ export function normalizeHealthJournalSignal(signal: HealthJournalSignal): Healt
     in_template: signal.in_template === true,
     template_sort_order: Number.isInteger(signal.template_sort_order) ? signal.template_sort_order : null,
   };
+}
+
+export function getHealthJournalSignalDisplayColor(
+  signal: HealthJournalSignal,
+  symptom?: Pick<HealthSymptom, "color"> | null,
+) {
+  return signal.kind === "symptom"
+    ? normalizeHealthSymptomColor(symptom?.color)
+    : normalizeHealthJournalSignalColor(signal.color);
 }
 
 export function sortHealthJournalSignals(left: HealthJournalSignal, right: HealthJournalSignal) {
@@ -129,6 +147,54 @@ export function normalizeHealthJournalScore(value: unknown) {
   if (value === "" || value === null || value === undefined) return null;
   const score = typeof value === "number" ? value : Number(value);
   return Number.isInteger(score) && score >= 0 && score <= 10 ? score : null;
+}
+
+export function replaceHealthJournalReflectionTag(
+  reflection: string,
+  start: number,
+  end: number,
+  replacement: string,
+) {
+  return `${reflection.slice(0, start)}${replacement}${reflection.slice(end)}`;
+}
+
+export function ensureHealthJournalDraftValue(
+  values: readonly HealthJournalDraftValue[],
+  signalId: string,
+) {
+  let found = false;
+  const nextValues: HealthJournalDraftValue[] = [];
+  for (const value of values) {
+    if (value.signal_id !== signalId) {
+      nextValues.push(value);
+      continue;
+    }
+    if (!found) {
+      nextValues.push(value);
+      found = true;
+    }
+  }
+  return found ? nextValues : [...nextValues, { score: null, signal_id: signalId }];
+}
+
+export function updateHealthJournalDraftValue(
+  values: readonly HealthJournalDraftValue[],
+  signalId: string,
+  score: number | null,
+) {
+  let found = false;
+  const nextValues: HealthJournalDraftValue[] = [];
+  for (const value of values) {
+    if (value.signal_id !== signalId) {
+      nextValues.push(value);
+      continue;
+    }
+    if (!found) {
+      nextValues.push({ ...value, score });
+      found = true;
+    }
+  }
+  return found ? nextValues : [...nextValues, { score, signal_id: signalId }];
 }
 
 export function buildHealthJournalDraftValues({

@@ -407,6 +407,7 @@ create table public.adhdice_health_journal_signals (
   kind text not null check (kind in ('symptom', 'emotion', 'other')),
   symptom_id uuid,
   name text,
+  color text,
   low_label text not null default 'None' check (char_length(trim(low_label)) > 0),
   high_label text not null default 'Extreme' check (char_length(trim(high_label)) > 0),
   scale_labels text[] not null default array['None', 'Barely', 'Very slight', 'Slight', 'Mild', 'Moderate', 'Noticeable', 'Strong', 'Very strong', 'Intense', 'Extreme']::text[],
@@ -422,6 +423,10 @@ create table public.adhdice_health_journal_signals (
   ),
   constraint adhdice_health_journal_signals_scale_labels_length_check
     check (cardinality(scale_labels) = 11),
+  constraint adhdice_health_journal_signals_color_check check (
+    (kind = 'symptom' and color is null)
+    or (kind in ('emotion', 'other') and color is not null and color ~ '^#[0-9A-Fa-f]{6}$')
+  ),
   constraint adhdice_health_journal_signals_symptom_fk
     foreign key (user_id, symptom_id)
     references public.adhdice_health_symptoms (user_id, id)

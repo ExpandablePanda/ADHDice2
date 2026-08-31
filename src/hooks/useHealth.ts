@@ -830,6 +830,7 @@ export function useHealth(
             .from("adhdice_health_journal_signals")
             .upsert(localSignalsToRecover.map((signal) => ({
               archived_at: signal.archived_at,
+              color: signal.color,
               high_label: signal.high_label,
               id: signal.id,
               in_template: signal.in_template,
@@ -1302,6 +1303,7 @@ export function useHealth(
     const now = new Date().toISOString();
     const localRow: HealthJournalSignal = normalizeHealthJournalSignal({
       archived_at: null,
+      color: kind === "symptom" ? null : input.color,
       created_at: now,
       high_label: normalizeHealthJournalLabel(input.high_label, DEFAULT_HEALTH_JOURNAL_HIGH_LABEL),
       id: input.id ?? createLocalId("health-journal-signal"),
@@ -1392,6 +1394,7 @@ export function useHealth(
         .from("adhdice_health_journal_signals")
         .update({
           archived_at: nextRow.archived_at,
+          color: nextRow.color,
           high_label: nextRow.high_label,
           in_template: nextRow.in_template,
           low_label: nextRow.low_label,

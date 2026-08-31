@@ -10,8 +10,11 @@ import type {
 import {
   buildHealthJournalDraftValues,
   DEFAULT_HEALTH_JOURNAL_HIGH_LABEL,
+  DEFAULT_HEALTH_JOURNAL_FEELING_COLOR,
   DEFAULT_HEALTH_JOURNAL_LOW_LABEL,
+  ensureHealthJournalDraftValue,
   getDefaultHealthJournalScaleLabels,
+  getHealthJournalSignalDisplayColor,
   getHealthJournalSignalDisplayName,
   getHealthJournalTemplateSignals,
   HEALTH_JOURNAL_DEFAULT_SCALE_LABELS,
@@ -19,6 +22,8 @@ import {
   normalizeHealthJournalScaleLabels,
   normalizeHealthJournalScore,
   normalizeHealthJournalSignal,
+  replaceHealthJournalReflectionTag,
+  updateHealthJournalDraftValue,
 } from "../src/lib/health-journal.ts";
 
 const migrationSource = readFileSync(
@@ -27,6 +32,10 @@ const migrationSource = readFileSync(
 );
 const scaleLabelsMigrationSource = readFileSync(
   new URL("../supabase/add_health_journal_scale_labels_7_12_35.sql", import.meta.url),
+  "utf8",
+);
+const feelingColorsMigrationSource = readFileSync(
+  new URL("../supabase/add_health_journal_feeling_colors_7_12_37.sql", import.meta.url),
   "utf8",
 );
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
@@ -43,6 +52,7 @@ function signal(id: string, overrides: Partial<HealthJournalSignal> = {}): Healt
     kind: "other",
     low_label: DEFAULT_HEALTH_JOURNAL_LOW_LABEL,
     name: id,
+    color: DEFAULT_HEALTH_JOURNAL_FEELING_COLOR,
     scale_labels: getDefaultHealthJournalScaleLabels("other"),
     symptom_id: null,
     template_sort_order: null,
@@ -71,6 +81,37 @@ test("Daily Log scores support explicit none, blank Not logged, and only integer
   assert.equal(normalizeHealthJournalScore(""), null);
   assert.equal(normalizeHealthJournalScore(11), null);
   assert.equal(normalizeHealthJournalScore(2.5), null);
+});
+
+test("Journal hashtag replacement preserves the full latest reflection across repeated and async-created tags", async () => {
+  let reflection = "Today was pretty good. I had #Anx";
+  const replaceTag = (current: string, query: string, name: string) => {
+    const start = current.lastIndexOf(query);
+    return replaceHealthJournalReflectionTag(current, start, start + query.length, `#${name} `);
+  };
+
+  reflection = replaceTag(reflection, "#Anx", "Anxiety");
+  reflection += "in the morning, then some #Back";
+  reflection = replaceTag(reflection, "#Back", "Back Pain");
+  reflection += "after lunch, but later I noticed #Pan";
+  const selectedQuery = { start: reflection.lastIndexOf("#Pan"), end: reflection.length };
+  await Promise.resolve();
+  reflection += "after the selection";
+  reflection = replaceHealthJournalReflectionTag(reflection, selectedQuery.start, selectedQuery.end, "#Panic ");
+
+  assert.equal(reflection, "Today was pretty good. I had #Anxiety in the morning, then some #Back Pain after lunch, but later I noticed #Panic after the selection");
+});
+
+test("Daily Log draft helpers keep one row while preserving 0 and Not logged semantics", () => {
+  const duplicate = [
+    { id: "value-1", score: 0, signal_id: "reflux" },
+    { id: "value-2", score: 7, signal_id: "reflux" },
+  ];
+  const ensured = ensureHealthJournalDraftValue(duplicate, "reflux");
+  assert.equal(ensured.length, 1);
+  assert.equal(ensured[0]?.score, 0);
+  assert.equal(updateHealthJournalDraftValue(ensured, "reflux", 0)[0]?.score, 0);
+  assert.equal(updateHealthJournalDraftValue(ensured, "reflux", null)[0]?.score, null);
 });
 
 test("Journal Entry loads active template signals plus saved day-only and archived history", () => {
@@ -113,6 +154,18 @@ test("symptom Journal signals resolve their current canonical Health symptom nam
 
   assert.equal(getHealthJournalSignalDisplayName(journalSignal, [symptom]), "Renamed symptom");
   assert.equal(journalSignal.name, null);
+});
+
+test("Journal-native colors normalize and display separately from canonical symptom colors", () => {
+  const emotion = normalizeHealthJournalSignal(signal("emotion", { kind: "emotion", color: " #EC4899 " }));
+  const invalidOther = normalizeHealthJournalSignal(signal("other", { color: "not-a-color" }));
+  const symptom = normalizeHealthJournalSignal(signal("symptom", { kind: "symptom", color: "#ef4444", symptom_id: "symptom-1" }));
+  assert.equal(emotion.color, "#ec4899");
+  assert.equal(invalidOther.color, DEFAULT_HEALTH_JOURNAL_FEELING_COLOR);
+  assert.equal(symptom.color, null);
+  assert.equal(getHealthJournalSignalDisplayColor(emotion), "#ec4899");
+  assert.equal(getHealthJournalSignalDisplayColor(symptom, { color: "#3b82f6" }), "#3b82f6");
+  assert.equal(getHealthJournalSignalDisplayColor(symptom, { color: "#ef4444" }), "#ef4444");
 });
 
 test("Journal Feelings normalize to eleven labels and preserve legacy endpoint customization", () => {
@@ -187,7 +240,7 @@ test("7.12.36 source contract covers readable scales, section-local creation, an
   assert.equal(normalizeHealthJournalScore(0), 0);
   assert.equal(normalizeHealthJournalScore(null), null);
   assert.match(healthPageSource, /setJournalMood\(score\); setExpandedJournalScaleKey\(null\)/);
-  assert.match(healthPageSource, /setJournalDraftValues\(\(current\) => current\.map[\s\S]*setExpandedJournalScaleKey\(null\)/);
+  assert.match(healthPageSource, /updateHealthJournalDraftValue\(current, signal\.id, null\)/);
 
   assert.match(healthPageSource, /className="relative w-full min-w-0"/);
   assert.match(healthPageSource, /className="health-journal-textarea block min-h-40 w-full min-w-0 max-w-full/);
@@ -206,6 +259,36 @@ test("7.12.36 source contract covers readable scales, section-local creation, an
   assert.match(healthPageSource, /ArrowDown/);
   assert.match(healthPageSource, /ArrowUp/);
   assert.match(healthPageSource, /selectJournalTag/);
+});
+
+test("7.12.37 source contract covers safe hashtag insertion, inline rating, and Feeling colors", () => {
+  assert.match(healthPageSource, /const selectedQuery = journalTagQuery/);
+  assert.match(healthPageSource, /setJournalReflection\(\(current\) => replaceHealthJournalReflectionTag\(current, selectedQuery\.start, selectedQuery\.end, replacement\)\)/);
+  assert.doesNotMatch(healthPageSource, /setJournalReflection\(nextReflection\)/);
+  assert.doesNotMatch(healthPageSource, /journalReflection\.slice\(0, journalTagQuery\.start\)/);
+  assert.match(healthPageSource, /journalTagRatingSignalId/);
+  assert.match(healthPageSource, /hideTrigger/);
+  assert.match(healthPageSource, /journalTagRatingSignal\.scale_labels/);
+  assert.match(healthPageSource, /Skip for now/);
+  assert.match(healthPageSource, /updateJournalTagRating\(null\)/);
+  assert.match(healthPageSource, /ensureHealthJournalDraftValue\(current, signal\.id\)/);
+  assert.match(healthPageSource, /HealthJournalColorPalette/);
+  assert.match(healthPageSource, /onSetColor=\{handleSetJournalSignalColor\}/);
+  assert.match(healthPageSource, /ADHDICE_ACCENT_COLORS/);
+
+  assert.match(feelingColorsMigrationSource, /add column if not exists color text/);
+  assert.match(feelingColorsMigrationSource, /kind in \('emotion', 'other'\)/);
+  assert.match(feelingColorsMigrationSource, /color is null or color !~/);
+  assert.match(feelingColorsMigrationSource, /color is not null and color ~/);
+  assert.match(feelingColorsMigrationSource, /kind = 'symptom' and color is null/);
+  assert.match(feelingColorsMigrationSource, /notify pgrst, 'reload schema'/);
+  assert.match(schemaSource, /color text,[\s\S]*scale_labels text\[\] not null/);
+  assert.match(schemaSource, /adhdice_health_journal_signals_color_check/);
+  assert.match(schemaSource, /kind in \('emotion', 'other'\) and color is not null and color ~/);
+  assert.match(healthHookSource, /color: signal\.color/);
+  assert.match(healthHookSource, /color: nextRow\.color/);
+  assert.match(healthHookSource, /color: kind === "symptom" \? null : input\.color/);
+  assert.match(healthHookSource, /update\([\s\S]*color: nextRow\.color/);
 });
 
 test("archived canonical symptoms are excluded from current templates but saved history remains readable", () => {

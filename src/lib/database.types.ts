@@ -1390,6 +1390,7 @@ export type HealthJournalSignal = {
   kind: HealthJournalSignalKind;
   symptom_id: string | null;
   name: string | null;
+  color: string | null;
   low_label: string;
   high_label: string;
   scale_labels: string[];
@@ -1406,6 +1407,7 @@ export type HealthJournalSignalInsert = {
   kind: HealthJournalSignalKind;
   symptom_id?: string | null;
   name?: string | null;
+  color?: string | null;
   low_label?: string;
   high_label?: string;
   scale_labels?: string[];
@@ -1417,7 +1419,7 @@ export type HealthJournalSignalInsert = {
 };
 
 export type HealthJournalSignalUpdate = Partial<
-  Pick<HealthJournalSignal, "kind" | "symptom_id" | "name" | "low_label" | "high_label" | "scale_labels" | "in_template" | "template_sort_order" | "archived_at">
+  Pick<HealthJournalSignal, "kind" | "symptom_id" | "name" | "color" | "low_label" | "high_label" | "scale_labels" | "in_template" | "template_sort_order" | "archived_at">
 >;
 
 export type HealthJournalSignalValue = {

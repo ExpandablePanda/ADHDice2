@@ -1,17 +1,34 @@
 # Current State
 
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.36`.
+- Current working app version: `7.12.37`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-31 7.12.37 Journal hashtag/rating/color correction
+
+Journal hashtag selection now captures the active query before asynchronous
+symptom-wrapper creation and replaces only that query in the latest controlled
+reflection state, preserving newer prose and earlier tags. Selecting a hashtag
+adds or reuses one Daily Log row and opens its existing 0–10 Feeling score
+options inline below Your Day; Skip for now and Not logged leave a null score
+and return focus to the reflection. Journal-native Emotion and Other Feeling
+signals now persist a nullable validated accent color, while symptom signals
+remain color-null and display the canonical Health symptom color. Manage
+Journal Library exposes the approved accent palette for both native Feeling
+families, and label edits/template changes preserve color. The authored-only
+`supabase/add_health_journal_feeling_colors_7_12_37.sql` migration adds the
+column, safe backfill, constraint, and PostgREST schema reload; it has not been
+applied. Browser, live Supabase, and deployment verification remain
+outstanding.
 
 ## 2026-08-30 7.12.36 Journal readability/layout polish
 
