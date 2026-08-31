@@ -580,7 +580,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.12.33";
+const APP_VERSION = "7.12.34";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1250,6 +1250,16 @@ export function TaskApp() {
   const {
     awards: healthAwards,
     checkIns: healthCheckIns,
+    journalSignals: healthJournalSignals,
+    journalSignalValues: healthJournalSignalValues,
+    saveJournalEntry,
+    createJournalSignal,
+    updateJournalSignal,
+    setJournalSignalTemplate,
+    archiveJournalSignal,
+    deleteJournalSignal,
+    reorderJournalSignals,
+    deleteJournalEntry,
     deleteFavoriteFood,
     deleteMealEntry,
     deleteRecipe: deleteHealthRecipe,
@@ -1279,7 +1289,6 @@ export function TaskApp() {
     metricEntries: healthMetricEntries,
     profile: healthProfile,
     recipes: healthRecipes,
-    saveCheckIn,
     saveFavoriteFood,
     setFavoriteFoodStatus,
     saveRecipe: saveHealthRecipe,
@@ -7170,6 +7179,16 @@ export function TaskApp() {
             archivePlan={archiveFitnessPlan}
             archivePlanItem={archiveFitnessPlanItem}
             checkIns={healthCheckIns}
+            journalSignals={healthJournalSignals}
+            journalSignalValues={healthJournalSignalValues}
+            saveJournalEntry={saveJournalEntry}
+            createJournalSignal={createJournalSignal}
+            updateJournalSignal={updateJournalSignal}
+            setJournalSignalTemplate={setJournalSignalTemplate}
+            archiveJournalSignal={archiveJournalSignal}
+            deleteJournalSignal={deleteJournalSignal}
+            reorderJournalSignals={reorderJournalSignals}
+            deleteJournalEntry={deleteJournalEntry}
             createPlan={createFitnessPlan}
             createPlanItem={createFitnessPlanItem}
             createGoal={createFitnessGoal}
@@ -7231,7 +7250,6 @@ export function TaskApp() {
             onUpdateSleepSession={onUpdateSleepSession}
             profile={healthProfile}
             recipes={healthRecipes}
-            saveCheckIn={saveCheckIn}
             saveFavoriteFood={saveFavoriteFood}
             setFavoriteFoodStatus={setFavoriteFoodStatus}
             saveRecipe={saveHealthRecipe}

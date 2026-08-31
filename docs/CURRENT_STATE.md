@@ -5,13 +5,27 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.33`.
+- Current working app version: `7.12.34`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-30 7.12.34 Journal Entry and customizable Daily Log foundation
+
+Health Journal now has one date-unique Journal Entry editor with nullable Mood,
+Energy, Stress, and Mental Clarity scores, reflection text, a persistent
+per-user Journal Library, and a customizable Daily Log template. Signals are
+stored independently from entries, support symptom-backed canonical names plus
+emotion and other labels, preserve stable template order, and use explicit
+0/Not logged semantics. Journal-owned symptom occurrences retain their own
+timestamped severity rows and cascade with the parent entry; standalone symptom
+history remains separate. Legacy symptom tags remain readable but are no longer
+written by the Journal editor. The authored migration is
+`supabase/add_health_journal_daily_log_7_12_34.sql`; it has not been applied,
+and browser, live Supabase, and deployment verification remain outstanding.
 
 ## 2026-08-30 7.12.31 Tasks Calendar Month View
 

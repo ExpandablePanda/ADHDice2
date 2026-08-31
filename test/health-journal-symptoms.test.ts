@@ -607,7 +607,7 @@ test("symptom persistence has its own optional fallback and CRUD paths", () => {
   assert.match(healthPageSource, /HEALTH_SEVERITY_OPTIONS\.map/);
   assert.match(healthPageSource, /title="Recent symptoms"/);
   assert.match(healthPageSource, /entry\.severity}\/10/);
-  assert.match(healthPageSource, /Save Symptom/);
+  assert.match(healthPageSource, /Update occurrence/);
   assert.match(healthPageSource, /deleteSymptomEntry\(entry\.id\)/);
 });
 
@@ -619,7 +619,7 @@ test("Journal symptom pickers expose palette actions and the trend series uses t
   assert.match(paletteSource, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(paletteSource, /onClick=\{\(\) => onSetColor\(paletteColor\)\}/);
   assert.doesNotMatch(paletteSource, /chooseOption\(|setSymptomDraft|setSelectedSymptomTrendId/);
-  assert.match(healthPageSource, /ariaLabel="Symptom"[\s\S]*?options=\{editingSymptomEntryId/);
+  assert.match(healthPageSource, /ariaLabel="Symptom"[\s\S]*?options=\{\[\.\.\.symptomOptions/);
   assert.match(healthPageSource, /ariaLabel="Trend symptom"[\s\S]*?options=\{symptomTrendOptions}/);
   assert.doesNotMatch(healthPageSource, /color: "#7c5cff"/);
   assert.match(healthPageSource, /label: "\+ Add a new symptom", value: NEW_SYMPTOM_VALUE/);
@@ -632,8 +632,8 @@ test("Symptom Library supports definition-only creation and shared color editing
   assert.match(healthPageSource, /isSymptomCreateOpen/);
   assert.match(healthPageSource, /aria-label="New symptom name"/);
   assert.match(healthPageSource, /createSymptom\(\{ name: symptomCreateName \}\)/);
-  const symptomCreateFormStart = healthPageSource.indexOf("{isSymptomCreateOpen ? (");
-  const symptomCreateFormSource = healthPageSource.slice(symptomCreateFormStart, healthPageSource.indexOf("{activeSymptoms.length", symptomCreateFormStart));
+  const symptomCreateFormStart = healthPageSource.indexOf("{isSymptomCreateOpen ?");
+  const symptomCreateFormSource = healthPageSource.slice(symptomCreateFormStart, healthPageSource.indexOf("{activeSymptoms.map", symptomCreateFormStart));
   assert.match(symptomCreateFormSource, /flex min-w-0 flex-wrap items-center gap-2/);
   assert.match(symptomCreateFormSource, /min-w-0 w-full sm:min-w-\[12rem\] sm:flex-1 sm:w-auto/);
   assert.doesNotMatch(symptomCreateFormSource, /max-w-\[260px\]|flex-\[0_1_260px\]/);

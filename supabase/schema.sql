@@ -366,6 +366,8 @@ create table public.adhdice_health_checkins (
   entry_date date not null,
   mood_score integer,
   energy_score integer,
+  stress_score integer,
+  clarity_score integer,
   symptom_tags text[] not null default '{}',
   reflection text not null default '',
   created_at timestamptz not null default now(),
@@ -374,8 +376,15 @@ create table public.adhdice_health_checkins (
     check (mood_score is null or (mood_score >= 1 and mood_score <= 10)),
   constraint adhdice_health_checkins_energy_score_range_check
     check (energy_score is null or (energy_score >= 1 and energy_score <= 10)),
+  constraint adhdice_health_checkins_stress_score_range_check
+    check (stress_score is null or (stress_score >= 1 and stress_score <= 10)),
+  constraint adhdice_health_checkins_clarity_score_range_check
+    check (clarity_score is null or (clarity_score >= 1 and clarity_score <= 10)),
   unique (user_id, entry_date)
 );
+
+create unique index adhdice_health_checkins_user_id_uidx
+  on public.adhdice_health_checkins (user_id, id);
 
 create table public.adhdice_health_symptoms (
   id uuid primary key default gen_random_uuid(),
@@ -392,10 +401,54 @@ create table public.adhdice_health_symptoms (
   constraint adhdice_health_symptoms_color_hex_check check (color ~ '^#[0-9A-Fa-f]{6}$')
 );
 
+create table public.adhdice_health_journal_signals (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null check (kind in ('symptom', 'emotion', 'other')),
+  symptom_id uuid,
+  name text,
+  low_label text not null default 'None' check (char_length(trim(low_label)) > 0),
+  high_label text not null default 'Extreme' check (char_length(trim(high_label)) > 0),
+  in_template boolean not null default false,
+  template_sort_order integer,
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, id),
+  constraint adhdice_health_journal_signals_identity_check check (
+    (kind = 'symptom' and symptom_id is not null and name is null)
+    or (kind in ('emotion', 'other') and symptom_id is null and name is not null and char_length(trim(name)) > 0)
+  ),
+  constraint adhdice_health_journal_signals_symptom_fk
+    foreign key (user_id, symptom_id)
+    references public.adhdice_health_symptoms (user_id, id)
+    on delete restrict
+);
+
+create table public.adhdice_health_journal_signal_values (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  journal_entry_id uuid not null,
+  signal_id uuid not null,
+  score integer not null check (score >= 0 and score <= 10),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, journal_entry_id, signal_id),
+  constraint adhdice_health_journal_signal_values_entry_fk
+    foreign key (user_id, journal_entry_id)
+    references public.adhdice_health_checkins (user_id, id)
+    on delete cascade,
+  constraint adhdice_health_journal_signal_values_signal_fk
+    foreign key (user_id, signal_id)
+    references public.adhdice_health_journal_signals (user_id, id)
+    on delete restrict
+);
+
 create table public.adhdice_health_symptom_entries (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   symptom_id uuid not null,
+  journal_entry_id uuid,
   entry_date date not null,
   logged_at timestamptz not null default now(),
   severity integer not null check (severity >= 1 and severity <= 10),
@@ -405,7 +458,11 @@ create table public.adhdice_health_symptom_entries (
   unique (user_id, id),
   foreign key (user_id, symptom_id)
     references public.adhdice_health_symptoms (user_id, id)
-    on delete restrict
+    on delete restrict,
+  constraint adhdice_health_symptom_entries_journal_entry_fk
+    foreign key (user_id, journal_entry_id)
+    references public.adhdice_health_checkins (user_id, id)
+    on delete cascade
 );
 
 create table public.adhdice_health_food_library (
@@ -765,6 +822,12 @@ create index adhdice_health_symptoms_user_active_name_idx
   on public.adhdice_health_symptoms (user_id, archived_at, name, created_at);
 create index adhdice_health_symptom_entries_user_date_idx
   on public.adhdice_health_symptom_entries (user_id, entry_date desc, logged_at desc, created_at desc);
+create index adhdice_health_journal_signals_user_template_idx
+  on public.adhdice_health_journal_signals (user_id, archived_at, in_template, template_sort_order, created_at);
+create index adhdice_health_journal_signal_values_user_entry_idx
+  on public.adhdice_health_journal_signal_values (user_id, journal_entry_id, signal_id);
+create index adhdice_health_symptom_entries_user_journal_idx
+  on public.adhdice_health_symptom_entries (user_id, journal_entry_id, logged_at desc);
 create index adhdice_health_food_library_user_updated_idx
   on public.adhdice_health_food_library (user_id, updated_at desc, created_at desc);
 create index adhdice_health_recipes_user_updated_idx
@@ -833,6 +896,8 @@ alter table public.adhdice_health_profiles enable row level security;
 alter table public.adhdice_health_checkins enable row level security;
 alter table public.adhdice_health_symptoms enable row level security;
 alter table public.adhdice_health_symptom_entries enable row level security;
+alter table public.adhdice_health_journal_signals enable row level security;
+alter table public.adhdice_health_journal_signal_values enable row level security;
 alter table public.adhdice_health_food_library enable row level security;
 alter table public.adhdice_health_recipes enable row level security;
 alter table public.adhdice_health_saved_meals enable row level security;
@@ -860,6 +925,10 @@ revoke all on table public.adhdice_health_symptoms from anon, authenticated;
 revoke all on table public.adhdice_health_symptom_entries from anon, authenticated;
 grant select, insert, update on table public.adhdice_health_symptoms to authenticated;
 grant select, insert, update, delete on table public.adhdice_health_symptom_entries to authenticated;
+revoke all on table public.adhdice_health_journal_signals from anon, authenticated;
+revoke all on table public.adhdice_health_journal_signal_values from anon, authenticated;
+grant select, insert, update, delete on table public.adhdice_health_journal_signals to authenticated;
+grant select, insert, update, delete on table public.adhdice_health_journal_signal_values to authenticated;
 
 create policy "Users can read their own clean tasks"
   on public.adhdice_clean_tasks
@@ -1227,6 +1296,56 @@ create policy "Users can delete their own health symptom entries"
   to authenticated
   using ((select auth.uid()) = user_id);
 
+create policy "Users can read their own health journal signals"
+  on public.adhdice_health_journal_signals
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+create policy "Users can create their own health journal signals"
+  on public.adhdice_health_journal_signals
+  for insert
+  to authenticated
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can update their own health journal signals"
+  on public.adhdice_health_journal_signals
+  for update
+  to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can delete their own health journal signals"
+  on public.adhdice_health_journal_signals
+  for delete
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+create policy "Users can read their own health journal signal values"
+  on public.adhdice_health_journal_signal_values
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+create policy "Users can create their own health journal signal values"
+  on public.adhdice_health_journal_signal_values
+  for insert
+  to authenticated
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can update their own health journal signal values"
+  on public.adhdice_health_journal_signal_values
+  for update
+  to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can delete their own health journal signal values"
+  on public.adhdice_health_journal_signal_values
+  for delete
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
 create policy "Users can manage their own health food library"
   on public.adhdice_health_food_library
   for all
@@ -1451,6 +1570,16 @@ create trigger adhdice_health_symptoms_set_updated_at
 
 create trigger adhdice_health_symptom_entries_set_updated_at
   before update on public.adhdice_health_symptom_entries
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_journal_signals_set_updated_at
+  before update on public.adhdice_health_journal_signals
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_journal_signal_values_set_updated_at
+  before update on public.adhdice_health_journal_signal_values
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
