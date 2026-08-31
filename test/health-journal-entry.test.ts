@@ -25,6 +25,12 @@ import {
   replaceHealthJournalReflectionTag,
   updateHealthJournalDraftValue,
 } from "../src/lib/health-journal.ts";
+import {
+  buildHealthMealLoggedAt,
+  getCurrentHealthDateTimeInputs,
+  HEALTH_SEVERITY_OPTIONS,
+  normalizeHealthMealTime,
+} from "../src/lib/health-utils.ts";
 
 const migrationSource = readFileSync(
   new URL("../supabase/add_health_journal_daily_log_7_12_34.sql", import.meta.url),
@@ -261,19 +267,32 @@ test("7.12.36 source contract covers readable scales, section-local creation, an
   assert.match(healthPageSource, /selectJournalTag/);
 });
 
-test("7.12.37 source contract covers safe hashtag insertion, inline rating, and Feeling colors", () => {
+test("7.12.38 source contract covers tag overlays, occurrence drafts, and shared Feeling colors", () => {
   assert.match(healthPageSource, /const selectedQuery = journalTagQuery/);
   assert.match(healthPageSource, /setJournalReflection\(\(current\) => replaceHealthJournalReflectionTag\(current, selectedQuery\.start, selectedQuery\.end, replacement\)\)/);
   assert.doesNotMatch(healthPageSource, /setJournalReflection\(nextReflection\)/);
   assert.doesNotMatch(healthPageSource, /journalReflection\.slice\(0, journalTagQuery\.start\)/);
-  assert.match(healthPageSource, /journalTagRatingSignalId/);
-  assert.match(healthPageSource, /hideTrigger/);
-  assert.match(healthPageSource, /journalTagRatingSignal\.scale_labels/);
-  assert.match(healthPageSource, /Skip for now/);
+  assert.match(healthPageSource, /const \[journalTagOverlay, setJournalTagOverlay\] = useState<JournalTagOverlay>\(null\)/);
+  assert.match(healthPageSource, /mode: "symptom_occurrence"/);
+  assert.match(healthPageSource, /mode: "feeling_rating"/);
+  assert.match(healthPageSource, /id="journal-tag-overlay"/);
+  assert.match(healthPageSource, /inputRef=\{journalTagTimeRef\}/);
+  assert.match(healthPageSource, /time: selectedTime/);
+  assert.match(healthPageSource, /HEALTH_SEVERITY_OPTIONS\.map/);
+  assert.doesNotMatch(healthPageSource, /journalTagRatingSignalId/);
+  assert.doesNotMatch(healthPageSource, /Skip for now/);
   assert.match(healthPageSource, /updateJournalTagRating\(null\)/);
   assert.match(healthPageSource, /ensureHealthJournalDraftValue\(current, signal\.id\)/);
-  assert.match(healthPageSource, /HealthJournalColorPalette/);
-  assert.match(healthPageSource, /onSetColor=\{handleSetJournalSignalColor\}/);
+  assert.match(healthPageSource, /this Journal Entry&apos;s Daily Log/);
+  assert.match(healthPageSource, /draftKey: createJournalDraftId\(\)/);
+  assert.match(healthPageSource, /setJournalOccurrences\(\(current\) => \[\.\.\.current/);
+  assert.match(healthPageSource, /\.\.\.\(occurrence\.id \? \{ id: occurrence\.id \} : \{\}\)/);
+  assert.match(healthPageSource, /journalOccurrenceSaveStatusRef/);
+  assert.match(healthPageSource, /setJournalOccurrences\(\(current\) => preserveCurrentDraft/);
+  assert.match(healthPageSource, /<AdhdDropdownPanel/);
+  assert.match(healthPageSource, /HealthJournalColorControl/);
+  assert.doesNotMatch(healthPageSource, /HealthJournalColorPalette/);
+  assert.match(healthPageSource, /HealthSymptomColorControl isOpen=\{isColorOpen\}/);
   assert.match(healthPageSource, /ADHDICE_ACCENT_COLORS/);
 
   assert.match(feelingColorsMigrationSource, /add column if not exists color text/);
@@ -289,6 +308,15 @@ test("7.12.37 source contract covers safe hashtag insertion, inline rating, and 
   assert.match(healthHookSource, /color: nextRow\.color/);
   assert.match(healthHookSource, /color: kind === "symptom" \? null : input\.color/);
   assert.match(healthHookSource, /update\([\s\S]*color: nextRow\.color/);
+});
+
+test("symptom hashtag occurrence defaults to a valid local time and accepts severity 1 through 10 only", () => {
+  const inputs = getCurrentHealthDateTimeInputs(new Date());
+  assert.match(inputs.time, /^([01]\d|2[0-3]):[0-5]\d$/);
+  assert.equal(normalizeHealthMealTime(inputs.time), inputs.time);
+  assert.deepEqual([...HEALTH_SEVERITY_OPTIONS], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.equal(buildHealthMealLoggedAt("2026-08-31", inputs.time) !== null, true);
+  assert.equal(buildHealthMealLoggedAt("2026-08-31", "24:00"), null);
 });
 
 test("archived canonical symptoms are excluded from current templates but saved history remains readable", () => {

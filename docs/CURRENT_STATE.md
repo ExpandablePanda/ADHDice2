@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.37`.
+- Current working app version: `7.12.38`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,21 +13,21 @@ Role: active working
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
-## 2026-08-31 7.12.37 Journal hashtag/rating/color correction
+## 2026-08-31 7.12.38 Journal hashtag occurrence overlay and color correction
 
-Journal hashtag selection now captures the active query before asynchronous
+Journal hashtag selection still captures the active query before asynchronous
 symptom-wrapper creation and replaces only that query in the latest controlled
-reflection state, preserving newer prose and earlier tags. Selecting a hashtag
-adds or reuses one Daily Log row and opens its existing 0–10 Feeling score
-options inline below Your Day; Skip for now and Not logged leave a null score
-and return focus to the reflection. Journal-native Emotion and Other Feeling
-signals now persist a nullable validated accent color, while symptom signals
-remain color-null and display the canonical Health symptom color. Manage
-Journal Library exposes the approved accent palette for both native Feeling
-families, and label edits/template changes preserve color. The authored-only
-`supabase/add_health_journal_feeling_colors_7_12_37.sql` migration adds the
-column, safe backfill, constraint, and PostgREST schema reload; it has not been
-applied. Browser, live Supabase, and deployment verification remain
+reflection state, preserving newer prose and earlier tags. Symptom hashtag
+selection adds or reuses one Daily Log row, then opens a compact floating
+occurrence overlay with 1–10 severity and a time input. Saving appends a new
+`journalOccurrences` draft with no database ID; repeated same-symptom hashtags
+remain independent timestamped occurrences, while the Daily Log overall score
+stays separate. Emotion and Other Feeling hashtags retain their 0–10,
+0-versus-Not-logged Daily Log behavior through the same overlay authority.
+Symptom, Emotion, and Other Feeling color controls now use the same anchored
+palette popover treatment while preserving their existing color authorities.
+There is no schema or SQL change. Multiple Journal Entries per day remains
+deferred to 7.12.39. Browser, live Supabase, and deployment verification remain
 outstanding.
 
 ## 2026-08-30 7.12.36 Journal readability/layout polish
