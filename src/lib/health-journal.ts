@@ -158,6 +158,50 @@ export function replaceHealthJournalReflectionTag(
   return `${reflection.slice(0, start)}${replacement}${reflection.slice(end)}`;
 }
 
+export type HealthJournalReflectionTagReference = {
+  key: string;
+  kind: HealthJournalSignalKind;
+  name: string;
+};
+
+export type HealthJournalReflectionTagMatch = {
+  end: number;
+  key: string;
+  start: number;
+  text: string;
+};
+
+export function findHealthJournalReflectionTagMatches(
+  reflection: string,
+  references: readonly HealthJournalReflectionTagReference[],
+): HealthJournalReflectionTagMatch[] {
+  const orderedReferences = [...references]
+    .map((reference) => ({
+      ...reference,
+      name: reference.name.trim().replace(/\s+/g, " "),
+    }))
+    .filter((reference) => reference.name.length > 0)
+    .sort((left, right) => right.name.length - left.name.length || left.key.localeCompare(right.key));
+  const matches: HealthJournalReflectionTagMatch[] = [];
+
+  for (let index = 0; index < reflection.length; index += 1) {
+    if (reflection[index] !== "#" || (index > 0 && !/\s/.test(reflection[index - 1] ?? ""))) continue;
+    const reference = orderedReferences.find((candidate) => {
+      const tagText = `#${candidate.name}`;
+      const actualText = reflection.slice(index, index + tagText.length);
+      const nextCharacter = reflection[index + tagText.length];
+      return actualText.toLowerCase() === tagText.toLowerCase()
+        && (!nextCharacter || !/[A-Za-z0-9_]/.test(nextCharacter));
+    });
+    if (!reference) continue;
+    const end = index + reference.name.length + 1;
+    matches.push({ end, key: reference.key, start: index, text: reflection.slice(index, end) });
+    index = end - 1;
+  }
+
+  return matches;
+}
+
 export function ensureHealthJournalDraftValue(
   values: readonly HealthJournalDraftValue[],
   signalId: string,

@@ -19,6 +19,7 @@ import {
   getHealthJournalTemplateSignals,
   HEALTH_JOURNAL_DEFAULT_SCALE_LABELS,
   HEALTH_JOURNAL_SCORE_OPTIONS,
+  findHealthJournalReflectionTagMatches,
   normalizeHealthJournalScaleLabels,
   normalizeHealthJournalScore,
   normalizeHealthJournalSignal,
@@ -106,6 +107,23 @@ test("Journal hashtag replacement preserves the full latest reflection across re
   reflection = replaceHealthJournalReflectionTag(reflection, selectedQuery.start, selectedQuery.end, "#Panic ");
 
   assert.equal(reflection, "Today was pretty good. I had #Anxiety in the morning, then some #Back Pain after lunch, but later I noticed #Panic after the selection");
+});
+
+test("Journal History tag matching resolves known display names without changing surrounding reflection text", () => {
+  const reflection = "I had #Brain Fog after #Reflux, then #Reflux and #Unknown.";
+  const matches = findHealthJournalReflectionTagMatches(reflection, [
+    { key: "symptom:reflux", kind: "symptom", name: "Reflux" },
+    { key: "emotion:brain-fog", kind: "emotion", name: "Brain Fog" },
+  ]);
+
+  assert.deepEqual(matches.map((match) => [match.text, match.key]), [
+    ["#Brain Fog", "emotion:brain-fog"],
+    ["#Reflux", "symptom:reflux"],
+    ["#Reflux", "symptom:reflux"],
+  ]);
+  assert.equal(matches.reduceRight((current, match) => `${current.slice(0, match.start)}${match.text}${current.slice(match.end)}`, reflection), reflection);
+  assert.equal(reflection.slice(matches[1]!.end, matches[2]!.start), ", then ");
+  assert.equal(reflection.includes("#Unknown"), true);
 });
 
 test("Daily Log draft helpers keep one row while preserving 0 and Not logged semantics", () => {
@@ -308,6 +326,38 @@ test("7.12.38 source contract covers tag overlays, occurrence drafts, and shared
   assert.match(healthHookSource, /color: nextRow\.color/);
   assert.match(healthHookSource, /color: kind === "symptom" \? null : input\.color/);
   assert.match(healthHookSource, /update\([\s\S]*color: nextRow\.color/);
+});
+
+test("7.12.39 source contract covers interactive History tags, exact ownership details, no-scroll overlays, and canonical symptom color reuse", () => {
+  const journalTagSource = healthPageSource.slice(
+    healthPageSource.indexOf("const [journalTagQuery"),
+    healthPageSource.indexOf("async function toggleJournalSymptomTemplate"),
+  );
+
+  assert.match(healthPageSource, /findHealthJournalReflectionTagMatches/);
+  assert.match(healthPageSource, /<JournalHistoryReflection/);
+  assert.match(healthPageSource, /aria-label=\{`View \$\{match\.text\.slice\(1\)\} details from this Journal Entry`\}/);
+  assert.match(healthPageSource, /type="button"/);
+  assert.match(healthPageSource, /role="dialog"/);
+  assert.match(healthPageSource, /occurrence\.journal_entry_id === entry\.id && occurrence\.symptom_id === option\.symptomId/);
+  assert.match(healthPageSource, /value\.signal_id === option\.signal\?\.id/);
+  assert.match(healthPageSource, /Overall today/);
+  assert.match(healthPageSource, /Not logged/);
+  assert.match(healthPageSource, /getJournalTagOptionColor/);
+  assert.match(healthPageSource, /scaleLabels\[overallValue\.score\]/);
+  assert.match(healthPageSource, /subtitle="Symptom History"/);
+  assert.doesNotMatch(healthPageSource, /Standalone symptom history/);
+
+  assert.doesNotMatch(journalTagSource, /journalTagTimeRef\.current\?\.focus/);
+  assert.doesNotMatch(journalTagSource, /journalTagOverlayRef\.current\?\.focus/);
+  assert.doesNotMatch(journalTagSource, /scrollIntoView/);
+  assert.match(healthPageSource, /textarea\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(healthPageSource, /bottom-2 left-auto top-auto z-40/);
+  assert.match(healthPageSource, /HealthSymptomColorControl isOpen=\{openSymptomColorPickerKey === `journal-tag:/);
+  assert.match(healthPageSource, /onSetColor=\{\(color\) => handleSetSymptomColor\(journalTagSymptom\.id, color\)\}/);
+  assert.match(healthPageSource, /setSymptomColor\(symptomId, color\)/);
+  assert.match(healthPageSource, /setJournalOccurrences\(\(current\) => \[\.\.\.current/);
+  assert.match(healthPageSource, /saveJournalEntry\(\{/);
 });
 
 test("symptom hashtag occurrence defaults to a valid local time and accepts severity 1 through 10 only", () => {

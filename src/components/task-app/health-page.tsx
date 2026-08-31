@@ -136,6 +136,7 @@ import {
   getHealthJournalSignalDisplayColor,
   getHealthJournalSignalDisplayName,
   getHealthJournalTemplateSignals,
+  findHealthJournalReflectionTagMatches,
   replaceHealthJournalReflectionTag,
   type HealthJournalDraftValue,
   updateHealthJournalDraftValue,
@@ -411,6 +412,12 @@ type JournalTagOption = {
   symptomId?: string;
 };
 
+type JournalHistoryTagOverlay = {
+  entryId: string;
+  optionKey: string;
+  start: number;
+} | null;
+
 type JournalSignalCreateKind = "emotion" | "other";
 
 const CORE_JOURNAL_SCALE_LABELS: Readonly<Record<string, readonly string[]>> = {
@@ -602,6 +609,165 @@ function HealthSymptomColorControl({
   symptom: HealthSymptom;
 }) {
   return <HealthColorControl color={normalizeHealthSymptomColor(symptom.color)} isOpen={isOpen} label={symptom.name} onSetColor={onSetColor} onToggle={onToggle} />;
+}
+
+function getJournalTagOptionKey(option: JournalTagOption) {
+  return `${option.kind}:${option.symptomId ?? option.signal?.id ?? option.name.toLowerCase()}`;
+}
+
+function getJournalTagOptionColor(option: JournalTagOption, symptoms: readonly HealthSymptom[]) {
+  if (option.kind === "symptom" && option.symptomId) {
+    return normalizeHealthSymptomColor(symptoms.find((symptom) => symptom.id === option.symptomId)?.color);
+  }
+  return option.signal ? getHealthJournalSignalDisplayColor(option.signal) : "#6f57f6";
+}
+
+function formatJournalHistoryOccurrenceTime(entry: HealthSymptomEntry) {
+  const loggedAt = new Date(entry.logged_at);
+  return Number.isFinite(loggedAt.getTime())
+    ? loggedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : "Time unavailable";
+}
+
+function JournalHistoryTagPopover({
+  entry,
+  entryValues,
+  onClose,
+  option,
+  symptomEntries,
+  symptoms,
+}: {
+  entry: HealthCheckIn;
+  entryValues: readonly HealthJournalSignalValue[];
+  onClose: () => void;
+  option: JournalTagOption;
+  symptomEntries: readonly HealthSymptomEntry[];
+  symptoms: readonly HealthSymptom[];
+}) {
+  const symptomOccurrences = option.kind === "symptom" && option.symptomId
+    ? symptomEntries
+      .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.symptom_id === option.symptomId)
+      .sort((left, right) => Date.parse(left.logged_at) - Date.parse(right.logged_at))
+    : [];
+  const overallValue = option.signal
+    ? entryValues.find((value) => value.signal_id === option.signal?.id) ?? null
+    : null;
+  const displayName = getHealthJournalSignalDisplayName(option.signal ?? {
+    archived_at: null,
+    color: null,
+    created_at: entry.created_at,
+    high_label: "Extreme",
+    id: option.symptomId ?? getJournalTagOptionKey(option),
+    in_template: false,
+    kind: option.kind,
+    low_label: "None",
+    name: option.name,
+    scale_labels: getDefaultHealthJournalScaleLabels(option.kind),
+    symptom_id: option.symptomId ?? null,
+    template_sort_order: null,
+    updated_at: entry.updated_at,
+    user_id: entry.user_id,
+  }, symptoms);
+  const scaleLabels = option.signal?.scale_labels ?? getDefaultHealthJournalScaleLabels(option.kind);
+
+  return (
+    <AdhdDropdownPanel
+      aria-label={`View ${displayName} details from this Journal Entry`}
+      className="left-0 top-[calc(100%+0.35rem)] z-50 max-h-[calc(100dvh-1rem)] overflow-y-auto"
+      role="dialog"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onClose();
+        }
+      }}
+      widthClassName="w-[min(20rem,calc(100vw-2rem))]"
+    >
+      <div className="grid gap-3 text-xs text-[#68738c] dark:text-white/60">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{displayName}</p>
+          {option.kind === "symptom" ? (
+            <div className="mt-2 grid gap-2">
+              <p className="font-semibold text-[#4f5872] dark:text-white/75">Occurrences</p>
+              {symptomOccurrences.length > 0 ? symptomOccurrences.map((occurrence) => (
+                <div className="flex items-baseline justify-between gap-3" key={occurrence.id}>
+                  <span>{formatJournalHistoryOccurrenceTime(occurrence)}</span>
+                  <span className="text-right font-semibold text-[#26324f] dark:text-white">{occurrence.severity} · {scaleLabels[occurrence.severity] ?? ""}</span>
+                </div>
+              )) : <span>None logged</span>}
+            </div>
+          ) : <p className="mt-2 font-semibold text-[#26324f] dark:text-white">{overallValue ? `${overallValue.score} · ${scaleLabels[overallValue.score] ?? ""}` : "Not logged"}</p>}
+        </div>
+        {option.kind === "symptom" && overallValue ? (
+          <div className="border-t border-[#eeeaf8] pt-2 dark:border-white/10">
+            <p className="font-semibold text-[#4f5872] dark:text-white/75">Overall today</p>
+            <p className="mt-1 font-semibold text-[#26324f] dark:text-white">{overallValue.score} · {scaleLabels[overallValue.score] ?? ""}</p>
+          </div>
+        ) : null}
+      </div>
+    </AdhdDropdownPanel>
+  );
+}
+
+function JournalHistoryReflection({
+  entry,
+  entryValues,
+  historyTagOptions,
+  historyTagOptionsByKey,
+  onToggleTag,
+  selectedTag,
+  symptomEntries,
+  symptoms,
+}: {
+  entry: HealthCheckIn;
+  entryValues: readonly HealthJournalSignalValue[];
+  historyTagOptions: readonly JournalTagOption[];
+  historyTagOptionsByKey: ReadonlyMap<string, JournalTagOption>;
+  onToggleTag: (match: { key: string; start: number }) => void;
+  selectedTag: JournalHistoryTagOverlay;
+  symptomEntries: readonly HealthSymptomEntry[];
+  symptoms: readonly HealthSymptom[];
+}) {
+  const matches = findHealthJournalReflectionTagMatches(
+    entry.reflection,
+    historyTagOptions.map((option) => ({ key: getJournalTagOptionKey(option), kind: option.kind, name: option.name })),
+  );
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  matches.forEach((match) => {
+    const option = historyTagOptionsByKey.get(match.key);
+    if (!option) return;
+    if (match.start > cursor) nodes.push(entry.reflection.slice(cursor, match.start));
+    const isOpen = selectedTag?.entryId === entry.id
+      && selectedTag.optionKey === match.key
+      && selectedTag.start === match.start;
+    nodes.push(
+      <span className="relative inline-block align-baseline" key={`${match.start}:${match.key}`}>
+        <button
+          aria-expanded={isOpen}
+          aria-haspopup="dialog"
+          aria-label={`View ${match.text.slice(1)} details from this Journal Entry`}
+          className="rounded px-0.5 font-semibold underline decoration-current/30 underline-offset-2 transition hover:bg-[#f1edff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.08]"
+          onClick={() => onToggleTag({ key: match.key, start: match.start })}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && isOpen) {
+              event.preventDefault();
+              onToggleTag({ key: match.key, start: match.start });
+            }
+          }}
+          style={{ color: getJournalTagOptionColor(option, symptoms) }}
+          type="button"
+        >
+          {match.text}
+        </button>
+        {isOpen ? <JournalHistoryTagPopover entry={entry} entryValues={entryValues} onClose={() => onToggleTag({ key: match.key, start: match.start })} option={option} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
+      </span>,
+    );
+    cursor = match.end;
+  });
+  if (cursor < entry.reflection.length) nodes.push(entry.reflection.slice(cursor));
+
+  return <div className="mt-2 text-sm leading-6 text-[#66718f] dark:text-white/60">{nodes}</div>;
 }
 
 function HealthJournalColorControl({
@@ -1030,6 +1196,7 @@ export function HealthPage({
   const [expandedJournalScaleKey, setExpandedJournalScaleKey] = useState<string | null>(null);
   const [journalTagQuery, setJournalTagQuery] = useState<JournalTagQuery | null>(null);
   const [journalTagOverlay, setJournalTagOverlay] = useState<JournalTagOverlay>(null);
+  const [journalHistoryTagOverlay, setJournalHistoryTagOverlay] = useState<JournalHistoryTagOverlay>(null);
   const [journalTagHighlightIndex, setJournalTagHighlightIndex] = useState(0);
   const [journalOccurrenceEditorOpen, setJournalOccurrenceEditorOpen] = useState(false);
   const [journalOccurrenceEditKey, setJournalOccurrenceEditKey] = useState<string | null>(null);
@@ -1076,7 +1243,6 @@ export function HealthPage({
   const mealSaveInFlightRef = useRef(false);
   const journalReflectionRef = useRef<HTMLTextAreaElement | null>(null);
   const journalTagCaretRef = useRef<number | null>(null);
-  const journalTagOverlayRef = useRef<HTMLDivElement | null>(null);
   const journalTagTimeRef = useRef<HTMLInputElement | null>(null);
   const journalLibraryRef = useRef<HTMLDivElement | null>(null);
   const journalSignalsRef = useRef(journalSignals);
@@ -1140,6 +1306,7 @@ export function HealthPage({
     setExpandedJournalScaleKey(null);
     setJournalTagQuery(null);
     setJournalTagOverlay(null);
+    setJournalHistoryTagOverlay(null);
     journalTagCaretRef.current = null;
   }, [journalDate, selectedJournalEntry]);
 
@@ -1185,17 +1352,6 @@ export function HealthPage({
     }
   }, [journalDate, journalOccurrenceHydrationVersion, journalSignalValues, selectedJournalEntry, symptomEntries, symptoms]);
 
-  useEffect(() => {
-    if (!journalTagOverlay) return;
-    requestAnimationFrame(() => {
-      if (journalTagOverlay?.mode === "symptom_occurrence") {
-        journalTagTimeRef.current?.focus({ preventScroll: true });
-      } else {
-        journalTagOverlayRef.current?.focus({ preventScroll: true });
-      }
-    });
-  }, [journalTagOverlay]);
-
   const activeSymptoms = useMemo(
     () => symptoms.filter((symptom) => symptom.archived_at === null),
     [symptoms],
@@ -1207,6 +1363,12 @@ export function HealthPage({
   const getJournalSignalForSymptom = useCallback((symptomId: string) => journalSignals.find(
     (signal) => signal.kind === "symptom" && signal.symptom_id === symptomId && signal.archived_at === null,
   ) ?? null, [journalSignals]);
+  const journalTagSymptom = useMemo(
+    () => journalTagOverlay?.mode === "symptom_occurrence"
+      ? symptoms.find((symptom) => symptom.id === journalTagOverlay.symptomId) ?? null
+      : null,
+    [journalTagOverlay, symptoms],
+  );
   const journalFeelingChoices = useMemo<JournalTagOption[]>(() => [
     ...activeSymptoms.map((symptom) => ({
       kind: "symptom" as const,
@@ -1238,6 +1400,27 @@ export function HealthPage({
       }))
       .filter((group) => group.options.length > 0),
     [visibleJournalTagOptions],
+  );
+  const journalHistoryTagOptions = useMemo<JournalTagOption[]>(() => [
+    ...symptoms.map((symptom) => ({
+      kind: "symptom" as const,
+      name: symptom.name,
+      signal: journalSignals.find((signal) => signal.kind === "symptom" && signal.symptom_id === symptom.id && signal.archived_at === null)
+        ?? journalSignals.find((signal) => signal.kind === "symptom" && signal.symptom_id === symptom.id)
+        ?? null,
+      symptomId: symptom.id,
+    })),
+    ...journalSignals
+      .filter((signal) => signal.kind === "emotion" || signal.kind === "other")
+      .map((signal) => ({
+        kind: signal.kind,
+        name: getHealthJournalSignalDisplayName(signal, symptoms),
+        signal,
+      })),
+  ], [journalSignals, symptoms]);
+  const journalHistoryTagOptionsByKey = useMemo(
+    () => new Map(journalHistoryTagOptions.map((option) => [getJournalTagOptionKey(option), option] as const)),
+    [journalHistoryTagOptions],
   );
   const journalTagRatingSignal = journalTagOverlay?.mode === "feeling_rating" ? journalTagOverlay.signal : null;
   const journalTagRatingValue = useMemo(
@@ -1782,6 +1965,7 @@ export function HealthPage({
     journalTagCaretRef.current = nextCaret;
     setJournalTagQuery(null);
     setJournalTagHighlightIndex(0);
+    setOpenSymptomColorPickerKey(null);
     setJournalTagOverlay(option.kind === "symptom" && option.symptomId
       ? {
           error: null,
@@ -1794,11 +1978,19 @@ export function HealthPage({
       : { mode: "feeling_rating", signal });
   }
 
+  function toggleJournalHistoryTag(entryId: string, tag: { key: string; start: number }) {
+    setJournalHistoryTagOverlay((current) => current?.entryId === entryId
+      && current.optionKey === tag.key
+      && current.start === tag.start
+      ? null
+      : { entryId, optionKey: tag.key, start: tag.start });
+  }
+
   function focusJournalReflectionAtCaret() {
     requestAnimationFrame(() => {
       const textarea = journalReflectionRef.current;
       if (!textarea) return;
-      textarea.focus();
+      textarea.focus({ preventScroll: true });
       if (journalTagCaretRef.current !== null) textarea.setSelectionRange(journalTagCaretRef.current, journalTagCaretRef.current);
     });
   }
@@ -3076,9 +3268,8 @@ export function HealthPage({
                     {journalTagOverlay ? (
                       <AdhdDropdownPanel
                         aria-label={journalTagOverlay.mode === "symptom_occurrence" ? `Log ${getHealthJournalSignalDisplayName(journalTagOverlay.signal, symptoms)}` : `Rate ${getHealthJournalSignalDisplayName(journalTagOverlay.signal, symptoms)}`}
-                        className="right-0 left-auto z-40 grid max-w-[calc(100vw-2rem)] gap-3"
+                        className="right-0 bottom-2 left-auto top-auto z-40 grid max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-2rem)] gap-3 overflow-y-auto"
                         id="journal-tag-overlay"
-                        ref={journalTagOverlayRef}
                         role="dialog"
                         tabIndex={-1}
                         onKeyDown={(event) => {
@@ -3090,7 +3281,7 @@ export function HealthPage({
                         widthClassName="w-[min(25rem,calc(100vw-2rem))]"
                       >
                         {journalTagOverlay.mode === "symptom_occurrence" ? <>
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Log {getHealthJournalSignalDisplayName(journalTagOverlay.signal, symptoms)}</p>
+                          <div className="flex items-center justify-between gap-2"><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Log {getHealthJournalSignalDisplayName(journalTagOverlay.signal, symptoms)}</p>{journalTagSymptom ? <HealthSymptomColorControl isOpen={openSymptomColorPickerKey === `journal-tag:${journalTagSymptom.id}`} onSetColor={(color) => handleSetSymptomColor(journalTagSymptom.id, color)} onToggle={() => toggleSymptomColorPicker(`journal-tag:${journalTagSymptom.id}`)} symptom={journalTagSymptom} /> : null}</div>
                           <div className="grid gap-2"><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Severity · 1–10</p><div className="grid grid-cols-2 gap-1.5">{HEALTH_SEVERITY_OPTIONS.map((severity) => <button aria-label={`${getHealthJournalSignalDisplayName(journalTagOverlay.signal, symptoms)} severity ${severity}, ${journalTagOverlay.signal.scale_labels[severity] ?? ""}`} aria-pressed={journalTagOverlay.severity === severity} className={`flex min-h-9 min-w-0 items-start justify-start gap-2 rounded-[0.7rem] px-2 py-2 text-left text-xs font-semibold ${journalTagOverlay.severity === severity ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={severity} onClick={() => updateJournalTagOccurrence({ severity })} type="button"><span className="shrink-0 font-black">{severity}</span><span className="min-w-0 flex-1 break-words whitespace-normal">{journalTagOverlay.signal.scale_labels[severity] ?? ""}</span></button>)}</div></div>
                           <Field label="Time"><HealthMealDateTimeInput ariaLabel="Symptom occurrence time" inputRef={journalTagTimeRef} onChange={(time) => updateJournalTagOccurrence({ time })} type="time" value={journalTagOverlay.time} /></Field>
                           {journalTagOverlay.error ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{journalTagOverlay.error}</p> : null}
@@ -3128,7 +3319,7 @@ export function HealthPage({
                     <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#68738c] dark:text-white/60">{entry.mood_score !== null ? <span>Mood {entry.mood_score}</span> : null}{entry.energy_score !== null ? <span>Energy {entry.energy_score}</span> : null}{entry.stress_score !== null ? <span>Stress {entry.stress_score}</span> : null}{entry.clarity_score !== null ? <span>Clarity {entry.clarity_score}</span> : null}</div>
                     {entryValues.length > 0 ? <p className="mt-2 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Daily Log:</span> {entryValues.map((value) => { const signal = journalSignals.find((candidate) => candidate.id === value.signal_id); return `${getHealthJournalSignalDisplayName(signal ?? { id: value.signal_id, user_id: entry.user_id, kind: "other", symptom_id: null, name: "Feeling", color: null, low_label: "None", high_label: "Extreme", scale_labels: ["None", "Very low", "Low", "Slightly low", "Below average", "Moderate", "Above average", "High", "Very high", "Intense", "Extreme"], in_template: false, template_sort_order: null, archived_at: null, created_at: entry.created_at, updated_at: entry.updated_at }, symptoms)} ${value.score}`; }).join(" · ")}</p> : null}
                     {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Symptoms:</span> {entryOccurrences.map((occurrence) => { const symptom = symptoms.find((candidate) => candidate.id === occurrence.symptom_id); const loggedAt = new Date(occurrence.logged_at); return `${symptom?.name ?? "Archived symptom"} ${occurrence.severity} @ ${Number.isFinite(loggedAt.getTime()) ? loggedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "time unavailable"}`; }).join(" · ")}</p> : null}
-                    {entry.reflection ? <p className="mt-2 text-sm leading-6 text-[#66718f] dark:text-white/60">{entry.reflection}</p> : null}
+                    {entry.reflection ? <JournalHistoryReflection entry={entry} entryValues={entryValues} historyTagOptions={journalHistoryTagOptions} historyTagOptionsByKey={journalHistoryTagOptionsByKey} onToggleTag={(tag) => toggleJournalHistoryTag(entry.id, tag)} selectedTag={journalHistoryTagOverlay} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
                     {entry.symptom_tags.length > 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Legacy tags: {entry.symptom_tags.join(", ")}</p> : null}
                   </div>;
                 })}
@@ -3232,8 +3423,8 @@ export function HealthPage({
             <div className="grid gap-3"><Field composite label="Symptom"><HealthDropdown ariaLabel="Symptom" onChange={(value) => setSymptomDraft((current) => ({ ...current, symptomId: value }))} options={[...symptomOptions.filter((option) => option.value !== NEW_SYMPTOM_VALUE), ...(editingArchivedSymptom ? [buildHealthSymptomDropdownOption(editingArchivedSymptom, `edit:${editingArchivedSymptom.id}`, openSymptomColorPickerKey, toggleSymptomColorPicker, handleSetSymptomColor)] : [])]} value={symptomDraft.symptomId} /></Field><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Severity</p><div className="mt-2 grid grid-cols-5 gap-2 sm:flex sm:flex-wrap">{HEALTH_SEVERITY_OPTIONS.map((severity) => <button aria-label={`Severity ${severity} out of 10`} aria-pressed={symptomDraft.severity === severity} className={`flex h-9 w-full items-center justify-center rounded-full text-sm font-semibold sm:w-9 ${symptomDraft.severity === severity ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={severity} onClick={() => setSymptomDraft((current) => ({ ...current, severity }))} type="button">{severity}</button>)}</div></div><div className="grid gap-3 sm:grid-cols-2"><Field label="Date"><HealthMealDateTimeInput onChange={(date) => setSymptomDraft((current) => ({ ...current, date }))} type="date" value={symptomDraft.date} /></Field><Field label="Time"><HealthMealDateTimeInput onChange={(time) => setSymptomDraft((current) => ({ ...current, time }))} type="time" value={symptomDraft.time} /></Field></div><Field label="Note (optional)"><textarea aria-label="Symptom note" className="health-journal-textarea min-h-20 rounded-[1.25rem] border border-[#e6e8f5] bg-white px-3 py-3 text-sm text-[#22304b] outline-none dark:border-white/10 dark:bg-white/[0.04] dark:text-white" onChange={(event) => setSymptomDraft((current) => ({ ...current, note: event.target.value }))} value={symptomDraft.note} /></Field>{symptomFormError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{symptomFormError}</p> : null}<div className="flex justify-end gap-2"><AdhdChip onClick={resetSymptomDraft} type="button">Cancel</AdhdChip><AdhdChip onClick={() => { void handleSaveSymptomEntry(); }} tone="purple" type="button">Update occurrence</AdhdChip></div></div>
           </HealthPanel> : null}
 
-          <HealthPanel className="mt-5" icon={<Activity />} subtitle="Standalone symptom history" title="Recent symptoms">
-            <div className="space-y-3">{standaloneSymptomHistoryGroups.length === 0 ? <EmptyCopy text="Standalone symptom occurrences will remain available here." /> : standaloneSymptomHistoryGroups.map((group) => <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-3 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={group.date}><p className="text-xs font-semibold text-[#68738c] dark:text-white/55">{formatHealthDateLabel(group.date)}</p><div className="mt-2 grid gap-2">{group.entries.map((entry) => { const symptom = symptoms.find((candidate) => candidate.id === entry.symptom_id); const loggedAt = new Date(entry.logged_at); return <div className="flex items-center gap-2 border-t border-[#eeeaf8] pt-2 first:border-t-0 first:pt-0 dark:border-white/10" key={entry.id}><span className="min-w-0 flex-1 text-sm font-semibold text-[#26324f] dark:text-white">{symptom?.name ?? "Archived symptom"}</span><span className="text-sm font-black text-[#6f57f6] dark:text-[#cabfff]">{entry.severity}/10</span><span className="text-xs text-[#7d88a3] dark:text-white/45">{Number.isFinite(loggedAt.getTime()) ? loggedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "Time unavailable"}</span><AdhdIconButton aria-label={`Edit ${symptom?.name ?? "symptom"} occurrence`} onClick={() => openSymptomEntryEdit(entry)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Delete ${symptom?.name ?? "symptom"} occurrence`} onClick={() => { void deleteSymptomEntry(entry.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton></div>; })}</div></div>)}</div>
+          <HealthPanel className="mt-5" icon={<Activity />} subtitle="Symptom History" title="Recent symptoms">
+            <div className="space-y-3">{standaloneSymptomHistoryGroups.length === 0 ? <EmptyCopy text="Independent symptom occurrences will remain available here." /> : standaloneSymptomHistoryGroups.map((group) => <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-3 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={group.date}><p className="text-xs font-semibold text-[#68738c] dark:text-white/55">{formatHealthDateLabel(group.date)}</p><div className="mt-2 grid gap-2">{group.entries.map((entry) => { const symptom = symptoms.find((candidate) => candidate.id === entry.symptom_id); const loggedAt = new Date(entry.logged_at); return <div className="flex items-center gap-2 border-t border-[#eeeaf8] pt-2 first:border-t-0 first:pt-0 dark:border-white/10" key={entry.id}><span className="min-w-0 flex-1 text-sm font-semibold text-[#26324f] dark:text-white">{symptom?.name ?? "Archived symptom"}</span><span className="text-sm font-black text-[#6f57f6] dark:text-[#cabfff]">{entry.severity}/10</span><span className="text-xs text-[#7d88a3] dark:text-white/45">{Number.isFinite(loggedAt.getTime()) ? loggedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "Time unavailable"}</span><AdhdIconButton aria-label={`Edit ${symptom?.name ?? "symptom"} occurrence`} onClick={() => openSymptomEntryEdit(entry)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Delete ${symptom?.name ?? "symptom"} occurrence`} onClick={() => { void deleteSymptomEntry(entry.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton></div>; })}</div></div>)}</div>
           </HealthPanel>
 
           <HealthPanel className="mt-5 min-w-0" icon={<Activity />} subtitle="Symptoms" title="Symptom Trends">

@@ -5,13 +5,31 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.38`.
+- Current working app version: `7.12.39`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-31 7.12.39 Journal History hashtag interaction and overlay stabilization
+
+Journal History now preserves reflection prose while rendering recognized current
+canonical Symptom, Emotion, and Other Feeling hashtags as accessible interactive
+tags. Each tag opens a compact read-only detail popover: symptom tags show only
+timestamped occurrences owned by that Journal Entry and canonical symptom,
+repeated same-symptom tags show the same complete occurrence set, and a separate
+Daily Log overall score is shown when present. Emotion and Other Feeling tags
+show their Journal Entry rating or `Not logged` using the persisted scale labels.
+Tag accents use the canonical symptom or Journal Feeling color. The Your Day
+hashtag overlay remains floating and does not autofocus or scroll the page;
+closing it restores the reflection caret with `preventScroll: true`. The
+symptom occurrence overlay reuses the canonical symptom color picker, so color
+changes update the HealthSymptom everywhere. The independent symptom-history
+surface now uses softened user-facing terminology. No SQL or schema change was
+made. Multiple Journal Entries per day is deferred to 7.12.40. Browser, live
+Supabase, and deployment verification remain outstanding.
 
 ## 2026-08-31 7.12.38 Journal hashtag occurrence overlay and color correction
 
@@ -27,7 +45,7 @@ stays separate. Emotion and Other Feeling hashtags retain their 0–10,
 Symptom, Emotion, and Other Feeling color controls now use the same anchored
 palette popover treatment while preserving their existing color authorities.
 There is no schema or SQL change. Multiple Journal Entries per day remains
-deferred to 7.12.39. Browser, live Supabase, and deployment verification remain
+deferred to 7.12.40. Browser, live Supabase, and deployment verification remain
 outstanding.
 
 ## 2026-08-30 7.12.36 Journal readability/layout polish
