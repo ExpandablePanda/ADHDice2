@@ -161,6 +161,53 @@ test("7.12.35 source contract covers scale-label migration, unified Symptoms, co
   assert.doesNotMatch(healthPageSource, /title="Canonical Health symptoms"/);
 });
 
+test("7.12.36 source contract covers readable scales, section-local creation, and picker spacing", () => {
+  const scorePickerSource = healthPageSource.slice(
+    healthPageSource.indexOf("function ScorePicker"),
+    healthPageSource.indexOf("function JournalScalePicker"),
+  );
+  const journalScalePickerSource = healthPageSource.slice(
+    healthPageSource.indexOf("function JournalScalePicker"),
+    healthPageSource.indexOf("function FavoriteFoodHistoryInlay"),
+  );
+
+  assert.match(scorePickerSource, /HEALTH_SCALE_OPTIONS\.map/);
+  assert.match(scorePickerSource, /className="grid grid-cols-2 gap-1\.5"/);
+  assert.match(scorePickerSource, /break-words whitespace-normal/);
+  assert.doesNotMatch(scorePickerSource, /HEALTH_JOURNAL_SCORE_OPTIONS/);
+  assert.doesNotMatch(scorePickerSource, /sm:grid-cols-5/);
+  assert.doesNotMatch(scorePickerSource, /<span className="truncate">/);
+
+  assert.match(journalScalePickerSource, /renderScoreOption\(0, "w-full"\)/);
+  assert.match(journalScalePickerSource, /HEALTH_JOURNAL_SCORE_OPTIONS\.filter\(\(score\) => score > 0\)/);
+  assert.match(journalScalePickerSource, /className="grid grid-cols-2 gap-1\.5"/);
+  assert.match(journalScalePickerSource, /onClick=\{onClear\}[^>]*>Not logged</);
+  assert.match(journalScalePickerSource, /break-words whitespace-normal/);
+  assert.doesNotMatch(journalScalePickerSource, /<span className="min-w-0 truncate/);
+  assert.equal(normalizeHealthJournalScore(0), 0);
+  assert.equal(normalizeHealthJournalScore(null), null);
+  assert.match(healthPageSource, /setJournalMood\(score\); setExpandedJournalScaleKey\(null\)/);
+  assert.match(healthPageSource, /setJournalDraftValues\(\(current\) => current\.map[\s\S]*setExpandedJournalScaleKey\(null\)/);
+
+  assert.match(healthPageSource, /className="relative w-full min-w-0"/);
+  assert.match(healthPageSource, /className="health-journal-textarea block min-h-40 w-full min-w-0 max-w-full/);
+  assert.match(healthPageSource, /journalLibraryCreateKind: JournalSignalCreateKind \| null/);
+  assert.match(healthPageSource, /<JournalFeelingCreationRow/);
+  assert.match(healthPageSource, /\+ \{createLabel\}/);
+  assert.match(healthPageSource, /kind === "emotion" \? "Emotion" : "Other Feeling"/);
+  assert.match(healthPageSource, /getDefaultHealthJournalScaleLabels\(kind\)/);
+  assert.doesNotMatch(healthPageSource, /New Feeling/);
+  assert.match(healthPageSource, /kind="emotion"/);
+  assert.match(healthPageSource, /kind="other"/);
+
+  assert.match(healthPageSource, /visibleJournalTagGroups\.map\(\(\{ kind, options: groupOptions \}, groupIndex\)/);
+  assert.match(healthPageSource, /groupIndex > 0 \? "mt-3" : ""/);
+  assert.match(healthPageSource, /handleJournalReflectionKeyDown/);
+  assert.match(healthPageSource, /ArrowDown/);
+  assert.match(healthPageSource, /ArrowUp/);
+  assert.match(healthPageSource, /selectJournalTag/);
+});
+
 test("archived canonical symptoms are excluded from current templates but saved history remains readable", () => {
   const archivedSymptom: HealthSymptom = {
     archived_at: "2026-08-30T10:00:00.000Z",

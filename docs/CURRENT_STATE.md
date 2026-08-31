@@ -5,13 +5,25 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.35`.
+- Current working app version: `7.12.36`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-30 7.12.36 Journal readability/layout polish
+
+Journal expanded scales now use readable two-column layouts with full labels.
+Core metrics remain 1–10 with a separate `Not logged` action; custom Feelings
+show an explicit score-0 `None` option while preserving null as Not logged.
+Your Day fills the Journal Entry column, and the Journal Library now creates
+Emotions and Other Feelings from compact section-local rows using default
+labels. The hashtag picker keeps its existing behavior with clearer spacing
+between Symptoms, Emotions, and Other Feelings. No SQL, schema, persistence,
+History, native, or iOS behavior changed; browser verification remains
+outstanding.
 
 ## 2026-08-30 7.12.35 Journal Feeling UX and unified Symptoms Library
 
