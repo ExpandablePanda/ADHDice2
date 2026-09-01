@@ -5,13 +5,23 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.55`.
+- Current working app version: `7.12.56`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.56 Edit Task Metadata Summary
+
+The full Edit Task inspector now defaults to a presentation-only Summary for
+each newly opened Task, Step, or supported Substep metadata target. Summary
+covers Title, Status, Priority, Energy, Due, Repeat, Estimated, Actual, Lists,
+Tags, Link, and Notes; each property row routes into its existing editor.
+Manual property selection remains open for the current target, while explicit
+property focus requests still override the Summary default. No SQL, schema, or
+persistence changes were made.
 
 ## 2026-09-01 7.12.55 Health Today Timeline
 

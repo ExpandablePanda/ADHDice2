@@ -56,6 +56,7 @@ import { TaskHierarchyChevronButton } from "@/components/task-app/task-hierarchy
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import {
   formatRepeatFrequencyLabel,
+  formatRepeatSummary,
   getTaskRepeatCategory,
   REPEAT_MONTHLY_MODE_OPTIONS,
   REPEAT_MONTHLY_ORDINAL_OPTIONS,
@@ -156,7 +157,7 @@ type StructuredFilters = {
 };
 type OverlayMode = "actual" | "delay" | "due" | "energy" | "estimated" | "full" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type OverlaySectionId = "actual" | "due" | "energyStatus" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "tags";
-type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
+export type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "summary" | "tags";
 type ColumnAlignment = "center" | "left" | "right";
 export type RowContextMenuState = { left: number; taskId: string; top: number };
 type ColumnMenuPosition = { left: number; maxHeight: number; placement: "down" | "up"; top: number };
@@ -2111,6 +2112,49 @@ function formatEnergyLabel(energy: TaskEnergy) {
   return ENERGY_OPTIONS.find((option) => option.value === energy)?.label ?? energy;
 }
 
+export type TaskMetadataSummaryRow = {
+  label: string;
+  panelId: MetadataPanelId | null;
+  value: string;
+};
+
+export function buildTaskMetadataSummary(
+  task: Pick<PrototypeTaskRow, "actualSeconds" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "status" | "tags" | "title">,
+  actualSeconds: number,
+): TaskMetadataSummaryRow[] {
+  const priority = getTaskPrioritySelection(task.priorities);
+  const notesPreview = task.notes.trim().replace(/\s+/g, " ");
+  const linkedNotesLabel = task.linkedNotes.length === 1 ? "1 linked note" : `${task.linkedNotes.length} linked notes`;
+  const notesValue = notesPreview
+    ? `${notesPreview.slice(0, 96)}${notesPreview.length > 96 ? "…" : ""}${task.linkedNotes.length > 0 ? ` · ${linkedNotesLabel}` : ""}`
+    : task.linkedNotes.length > 0 ? linkedNotesLabel : "None";
+  const linkValue = task.linkLabel.trim() || task.linkUrl.trim() || "None";
+  const repeatValue = formatRepeatSummary({
+    repeat_day_of_month: task.repeatDayOfMonth,
+    repeat_days_of_week: task.repeatDaysOfWeek,
+    repeat_frequency: task.repeat,
+    repeat_interval: task.repeatInterval,
+    repeat_monthly_mode: task.repeatMonthlyMode,
+    repeat_monthly_ordinal: task.repeatMonthlyOrdinal,
+    repeat_monthly_weekday: task.repeatMonthlyWeekday,
+  }) ?? "No repeat";
+
+  return [
+    { label: "Title", panelId: null, value: task.title.trim() || "Untitled task" },
+    { label: "Status", panelId: "status", value: formatTaskStatusLabel(task.status) },
+    { label: "Priority", panelId: "priority", value: priority ? formatPriorityLabel(priority) : "None" },
+    { label: "Energy", panelId: "energy", value: task.energy === "none" ? "None" : formatEnergyLabel(task.energy) },
+    { label: "Due", panelId: "due", value: formatDue(task.dueOn, task.dueTime) },
+    { label: "Repeat", panelId: "repeat", value: repeatValue },
+    { label: "Estimated", panelId: "estimated", value: task.estimatedMinutes && task.estimatedMinutes > 0 ? formatDuration(task.estimatedMinutes) : "None" },
+    { label: "Actual", panelId: "actual", value: formatActual(actualSeconds) },
+    { label: "Lists", panelId: "lists", value: task.lists.length > 0 ? task.lists.join(" · ") : "None" },
+    { label: "Tags", panelId: "tags", value: task.tags.length > 0 ? task.tags.map((tag) => `#${tag.replace(/^#+/, "")}`).join(" · ") : "None" },
+    { label: "Link", panelId: "link", value: linkValue },
+    { label: "Notes", panelId: "notes", value: notesValue },
+  ];
+}
+
 function statusSortValue(status: TaskDisplayStatus) {
   return STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
 }
@@ -3295,7 +3339,7 @@ export function TaskManagementTableV2({
     const resolvedMetadataTask = metadataTargetTask ?? selectedTask;
     const input = estimatedTimeInputRef.current;
     const phase = resolveTaskEditorFocusPhase({
-      activeMetadataPanel: resolvedMetadataTask ? activeMetadataPanelByTaskId[resolvedMetadataTask.id] ?? "due" : null,
+      activeMetadataPanel: resolvedMetadataTask ? activeMetadataPanelByTaskId[resolvedMetadataTask.id] ?? "summary" : null,
       handled: requestedEditorFocus ? handledEditorFocusTokensRef.current.has(requestedEditorFocus.token) : false,
       inputMounted: Boolean(input),
       inputOwnsFocus: Boolean(input && typeof document !== "undefined" && document.activeElement === input),
@@ -9167,11 +9211,12 @@ export function TaskManagementTableV2({
                 const tagDraft = metadataTagDraft;
                 const listDraft = metadataListDraft;
                 const selectedTaskVisibleSubtasks = filterPrototypeSubtasks(selectedTask.subtasks, hiddenSubtaskIds);
-                const activeMetadataPanel = activeMetadataPanelByTaskId[metadataTask.id] ?? "due";
+                const activeMetadataPanel = activeMetadataPanelByTaskId[metadataTask.id] ?? "summary";
                 const metadataPanelId: MetadataPanelId = overlayMode === "full"
                   ? activeMetadataPanel
                   : overlayMode;
                 const metadataPanelOptions: Array<{ id: MetadataPanelId; label: string }> = [
+                  { id: "summary", label: "Summary" },
                   { id: "delay", label: "Delay" },
                   { id: "due", label: "Due" },
                   { id: "status", label: "Status" },
@@ -9187,6 +9232,8 @@ export function TaskManagementTableV2({
                 ];
                 function metadataFieldHasValue(id: MetadataPanelId) {
                   switch (id) {
+                    case "summary":
+                      return false;
                     case "delay":
                       return metadataTask.status === "delayed";
                     case "due":
@@ -9215,6 +9262,7 @@ export function TaskManagementTableV2({
                       return false;
                   }
                 }
+                const metadataSummaryRows = buildTaskMetadataSummary(metadataTask, getDisplayedActualSeconds(metadataTask));
                 const activeMetadataPanelLabel = metadataPanelId === "status"
                   ? "Status"
                   : metadataPanelOptions.find((option) => option.id === metadataPanelId)?.label ?? "Meta Data";
@@ -9248,7 +9296,29 @@ export function TaskManagementTableV2({
                 const mobileTimeFieldWrapperClass = "min-w-0 w-full max-w-[9rem]";
                 const mobileDaysFieldWrapperClass = "min-w-0 w-full max-w-[6.5rem]";
                 let metadataPanelContent: ReactNode = null;
-                if (metadataPanelId === "due") {
+                if (metadataPanelId === "summary") {
+                  metadataPanelContent = (
+                    <div className="grid min-w-0 grid-cols-1 gap-1.5 sm:grid-cols-2">
+                      {metadataSummaryRows.map((row) => row.panelId ? (
+                        <button
+                          aria-label={`Edit ${row.label}`}
+                          className="min-w-0 rounded-[0.8rem] border border-transparent px-2.5 py-2 text-left transition hover:border-[#e5dcfb] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:focus-visible:ring-[#3b2f68]/90"
+                          key={row.label}
+                          onClick={() => selectMetadataPanel(metadataTask.id, row.panelId as MetadataPanelId)}
+                          type="button"
+                        >
+                          <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-[#9b92be] dark:text-white/35">{row.label}</span>
+                          <span className="mt-1 block min-w-0 break-words text-sm text-[#4e476f] dark:text-white/75">{row.value}</span>
+                        </button>
+                      ) : (
+                        <div className="min-w-0 rounded-[0.8rem] px-2.5 py-2" key={row.label}>
+                          <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-[#9b92be] dark:text-white/35">{row.label}</span>
+                          <span className="mt-1 block min-w-0 break-words text-sm text-[#2f294a] dark:text-white">{row.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                } else if (metadataPanelId === "due") {
                   metadataPanelContent = (
                     <>
                       {renderInlineTextChoices(
