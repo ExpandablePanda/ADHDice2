@@ -79,7 +79,7 @@ export function buildHealthFeelingTrendModel({
 
   symptoms.forEach((symptom) => {
     const entries = symptomEntriesById.get(symptom.id) ?? [];
-    if (entries.length === 0) return;
+    if (symptom.archived_at !== null && entries.length === 0) return;
     const signal = getSymptomSignal(symptom, journalSignals);
     const key = `symptom:${symptom.id}`;
     definitions.push({
@@ -103,7 +103,7 @@ export function buildHealthFeelingTrendModel({
 
   const signalIdsWithHistory = new Set(ownedJournalSignalOccurrences.map((occurrence) => occurrence.signal_id));
   journalSignals
-    .filter((signal) => (signal.kind === "emotion" || signal.kind === "other") && signalIdsWithHistory.has(signal.id))
+    .filter((signal) => (signal.kind === "emotion" || signal.kind === "other") && (signal.archived_at === null || signalIdsWithHistory.has(signal.id)))
     .forEach((signal) => {
       const key = `signal:${signal.id}`;
       definitions.push({

@@ -371,6 +371,8 @@ test("symptom colors survive reconciliation and archived definitions retain thei
 test("Journal Feeling Trends graph owned Symptoms, Emotions, and Other Feelings as separate raw series", () => {
   const archivedSymptom = symptomDefinition("archived-symptom", "Old Headache", "2026-08-28T12:00:00.000Z", "#ef4444");
   const activeSymptom = symptomDefinition("active-symptom", "Back Pain", null, "#3b82f6");
+  const activeSymptomWithoutHistory = symptomDefinition("active-symptom-empty", "Reflux", null, "#06b6d4");
+  const archivedSymptomWithoutHistory = symptomDefinition("archived-symptom-empty", "Unused Pain", "2026-08-28T12:00:00.000Z", "#64748b");
   const emotion: HealthJournalSignal = {
     archived_at: null,
     color: "#14b8a6",
@@ -388,37 +390,55 @@ test("Journal Feeling Trends graph owned Symptoms, Emotions, and Other Feelings 
     user_id: "user-1",
   };
   const other: HealthJournalSignal = { ...emotion, id: "other-1", kind: "other", name: "Hope", color: "#f59e0b" };
+  const activeEmotionWithoutHistory: HealthJournalSignal = { ...emotion, id: "emotion-empty", name: "Calm" };
+  const activeOtherWithoutHistory: HealthJournalSignal = { ...other, id: "other-empty", name: "Motivation" };
+  const archivedEmotion: HealthJournalSignal = { ...emotion, archived_at: "2026-08-28T12:00:00.000Z", id: "emotion-archived", name: "Old Anxiety" };
+  const archivedOtherWithoutHistory: HealthJournalSignal = { ...other, archived_at: "2026-08-28T12:00:00.000Z", id: "other-archived", name: "Unused Hope" };
   const model = buildHealthFeelingTrendModel({
     journalSignalOccurrences: [
       journalSignalOccurrence("anxiety-1", emotion.id, "2026-08-29", "2026-08-29T09:00:00.000Z", 3),
       journalSignalOccurrence("hope-1", other.id, "2026-08-29", "2026-08-29T10:00:00.000Z", 8),
       { ...journalSignalOccurrence("orphan", emotion.id, "2026-08-29", "2026-08-29T11:00:00.000Z", 10), journal_entry_id: null } as unknown as HealthJournalSignalOccurrence,
+      journalSignalOccurrence("archived-anxiety-1", archivedEmotion.id, "2026-08-29", "2026-08-29T12:00:00.000Z", 6),
     ],
-    journalSignals: [emotion, other],
+    journalSignals: [emotion, activeEmotionWithoutHistory, other, activeOtherWithoutHistory, archivedEmotion, archivedOtherWithoutHistory],
     symptomEntries: [
       symptomEntry("back-1", "2026-08-29", "2026-08-29T08:00:00.000Z", 4, activeSymptom.id),
       symptomEntry("old-1", "2026-08-28", "2026-08-28T12:00:00.000Z", 7, archivedSymptom.id),
     ],
-    symptoms: [activeSymptom, archivedSymptom],
+    symptoms: [activeSymptom, activeSymptomWithoutHistory, archivedSymptom, archivedSymptomWithoutHistory],
   });
 
   assert.deepEqual([...HEALTH_FEELING_TREND_RANGES], ["7D", "30D", "90D", "All"]);
   assert.equal(ALL_HEALTH_FEELINGS_VALUE, "__all_feelings__");
   assert.deepEqual(model.definitions.map(({ key, kind, name, archived, color }) => ({ key, kind, name, archived, color })), [
     { key: "symptom:active-symptom", kind: "symptom", name: "Back Pain", archived: false, color: "#3b82f6" },
+    { key: "symptom:active-symptom-empty", kind: "symptom", name: "Reflux", archived: false, color: "#06b6d4" },
     { key: "symptom:archived-symptom", kind: "symptom", name: "Old Headache", archived: true, color: "#ef4444" },
     { key: "signal:emotion-1", kind: "emotion", name: "Anxiety", archived: false, color: "#14b8a6" },
+    { key: "signal:emotion-empty", kind: "emotion", name: "Calm", archived: false, color: "#14b8a6" },
     { key: "signal:other-1", kind: "other", name: "Hope", archived: false, color: "#f59e0b" },
+    { key: "signal:other-empty", kind: "other", name: "Motivation", archived: false, color: "#f59e0b" },
+    { key: "signal:emotion-archived", kind: "emotion", name: "Old Anxiety", archived: true, color: "#14b8a6" },
   ]);
   assert.deepEqual(model.points.map(({ id, feelingKey, score }) => [id, feelingKey, score]), [
     ["old-1", "symptom:archived-symptom", 7],
     ["back-1", "symptom:active-symptom", 4],
     ["anxiety-1", "signal:emotion-1", 3],
     ["hope-1", "signal:other-1", 8],
+    ["archived-anxiety-1", "signal:emotion-archived", 6],
   ]);
   assert.equal(model.points.some((point) => point.id === "orphan"), false);
+  assert.equal(model.definitions.some((definition) => definition.key === "symptom:archived-symptom-empty"), false);
+  assert.equal(model.definitions.some((definition) => definition.key === "signal:other-archived"), false);
   assert.deepEqual(getHealthFeelingTrendPoints({ asOfDate: "2026-08-29", model, range: "7D", feelingKey: "symptom:active-symptom" }).map((point) => point.id), ["back-1"]);
-  assert.deepEqual(getHealthFeelingTrendPointsByDefinition({ asOfDate: "2026-08-29", model, range: "All" }).map(({ definition }) => definition.key), model.definitions.map((definition) => definition.key));
+  assert.deepEqual(getHealthFeelingTrendPointsByDefinition({ asOfDate: "2026-08-29", model, range: "All" }).map(({ definition }) => definition.key), [
+    "symptom:active-symptom",
+    "symptom:archived-symptom",
+    "signal:emotion-1",
+    "signal:other-1",
+    "signal:emotion-archived",
+  ]);
 });
 
 test("Journal Feeling Trends adapt into the shared chart with a fixed 1 to 10 occurrence scale", () => {
@@ -430,6 +450,7 @@ test("Journal Feeling Trends adapt into the shared chart with a fixed 1 to 10 oc
   assert.match(healthPageSource, /summaryLabel,/);
   assert.match(healthPageSource, /buildHealthFeelingTrendSeries\(selectedFeelingTrend, selectedFeelingTrendPoints, "Latest"\)/);
   assert.match(healthPageSource, /buildHealthFeelingTrendSeries\(definition, points, definition\.name\)/);
+  assert.match(healthPageSource, /!selectedFeelingTrend \|\| selectedFeelingTrendPoints\.length === 0/);
   assert.match(healthPageSource, /label: "All Feelings", value: ALL_HEALTH_FEELINGS_VALUE/);
   assert.match(healthPageSource, /getHealthFeelingTrendPointsByDefinition/);
   assert.match(healthPageSource, /title=\{isAllFeelingsTrendSelected \? "All Feelings"/);

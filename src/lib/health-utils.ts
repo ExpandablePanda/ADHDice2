@@ -692,6 +692,13 @@ export function formatHealthTimestampDate(value: string | null | undefined, loca
   return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric" }).format(timestamp);
 }
 
+export function formatHealthJournalMetadataDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00`) : new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}/${date.getFullYear()}`;
+}
+
 export function formatHealthNutritionNumber(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return "—";

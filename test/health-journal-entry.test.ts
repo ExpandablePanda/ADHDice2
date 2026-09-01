@@ -32,6 +32,7 @@ import {
 import {
   buildHealthMealLoggedAt,
   formatHealthJournalDate,
+  formatHealthJournalMetadataDate,
   formatHealthStandardTime,
   getCurrentHealthDateTimeInputs,
   HEALTH_SEVERITY_OPTIONS,
@@ -217,6 +218,8 @@ test("Journal display uses explicit standard 12-hour time and distinguishes Jour
   assert.equal(formatHealthStandardTime("12:05", "en-US"), "12:05 PM");
   assert.equal(formatHealthStandardTime("16:05", "en-US"), "4:05 PM");
   assert.equal(formatHealthJournalDate("2026-08-31", "en-US"), "Aug 31, 2026");
+  assert.equal(formatHealthJournalMetadataDate("2026-09-01"), "09/01/2026");
+  assert.equal(formatHealthJournalMetadataDate("2026-09-01T12:42:00"), "09/01/2026");
   assert.match(healthPageSource, /label="Journal Date"/);
   assert.match(healthPageSource, /label="Journal Time"/);
   assert.match(healthPageSource, /label="Logged Date"/);
@@ -536,7 +539,8 @@ test("7.12.41 source contract covers multiple entries, occurrence ownership, RLS
   assert.match(healthPageSource, /selectedJournalEntryId/);
   assert.match(healthPageSource, /Journal Time/);
   assert.match(healthPageSource, /\+ New Entry/);
-  assert.match(healthPageSource, /Your Daily Template/);
+  assert.match(healthPageSource, /How are you feeling\?/);
+  assert.doesNotMatch(healthPageSource, /Your Daily Template/);
   assert.match(healthPageSource, /Feeling Occurrences/);
   assert.match(healthPageSource, /buildHealthJournalSymptomOccurrenceSignal/);
   assert.match(healthPageSource, /canonical-symptom:/);
@@ -585,7 +589,7 @@ test("7.12.42 hardens Journal occurrence reruns and native kind integrity", () =
   assert.match(saveJournalSource, /\.from\("adhdice_health_symptom_entries"\)[\s\S]*?\.upsert\(occurrenceRows/);
 });
 
-test("7.12.44 keeps split controls desktop-only and starts History entries through the existing authority", () => {
+test("7.12.45 uses one responsive History/Journal toggle, collapsible metadata, and one Feeling section", () => {
   const journalHeaderSource = healthPageSource.slice(
     healthPageSource.indexOf("headerActions={("),
     healthPageSource.indexOf("icon={<HeartPulse />}", healthPageSource.indexOf("headerActions={(")),
@@ -595,10 +599,42 @@ test("7.12.44 keeps split controls desktop-only and starts History entries throu
     healthPageSource.indexOf("{journalWorkspaceMode !== \"entry\" ?", healthPageSource.indexOf("{journalWorkspaceMode !== \"history\" ?")),
   );
 
-  assert.match(journalHeaderSource, /<AdhdIconButton[\s\S]*?aria-label=\{journalWorkspaceMode === "history" \? "Return to Journal Entry" : "View Journal History"\}/);
-  assert.match(journalHeaderSource, /<div className="hidden items-center gap-1 md:flex">\s*<AdhdChip[\s\S]*?>History Left<\/AdhdChip>\s*<AdhdChip[\s\S]*?>History Right<\/AdhdChip>\s*<\/div>/);
+  assert.match(journalHeaderSource, /aria-label=\{journalWorkspaceMode === "entry" \? "View Journal History" : "Return to Journal Entry"\}/);
+  assert.match(journalHeaderSource, /journalWorkspaceMode === "entry" \? <History aria-hidden="true" \/> : <BookOpen aria-hidden="true" \/>/);
+  assert.doesNotMatch(journalHeaderSource, /<AdhdChip[\s\S]*?>History Left<\/AdhdChip>/);
+  assert.doesNotMatch(journalHeaderSource, /<AdhdChip[\s\S]*?>History Right<\/AdhdChip>/);
+  assert.doesNotMatch(journalHeaderSource, /Single Pane/);
+  assert.match(journalHeaderSource, /onPointerDown=\{handleJournalHistoryPointerDown\}/);
+  assert.match(journalHeaderSource, /onPointerUp=\{handleJournalHistoryPointerUp\}/);
+  assert.match(journalHeaderSource, /onPointerCancel=\{handleJournalHistoryPointerCancel\}/);
+  assert.match(journalHeaderSource, /onKeyDown=\{handleJournalHistoryKeyDown\}/);
+  assert.match(journalHeaderSource, /role="menu"/);
+  assert.match(healthPageSource, /journalHistoryLongPressFiredRef/);
+  assert.match(healthPageSource, /setJournalWorkspaceMode\(\(current\) => current === "entry" \? "history" : "entry"\)/);
+  assert.match(healthPageSource, /setTimeout\(\(\) => \{[\s\S]*?openJournalHistoryMenu\(\);[\s\S]*?\}, 500\)/);
+  assert.match(healthPageSource, /selectJournalWorkspaceMode\("split-history-left"\)/);
+  assert.match(healthPageSource, /selectJournalWorkspaceMode\("split-history-right"\)/);
   assert.match(journalHeaderSource, /journalWorkspaceMode === "history" \? <AdhdChip onClick=\{startNewJournalEntry\} type="button">\+ New Entry<\/AdhdChip>/);
   assert.match(healthPageSource, /function startNewJournalEntry\(\) \{\s*if \(journalWorkspaceMode === "history"\) \{\s*setJournalWorkspaceMode\("entry"\);/);
   assert.match(journalEditorSource, /<AdhdChip onClick=\{startNewJournalEntry\} type="button">\+ New Entry<\/AdhdChip>/);
   assert.match(healthPageSource, /journalWorkspaceMode === "split-history-left" \|\| journalWorkspaceMode === "split-history-right"/);
+  assert.match(healthPageSource, /const \[isJournalLoggedMetadataOpen, setIsJournalLoggedMetadataOpen\] = useState\(false\)/);
+  assert.match(healthPageSource, /formatHealthJournalMetadataDate\(selectedJournalEntry\.created_at\)/);
+  assert.match(healthPageSource, /<HealthStandardTimeInput ariaLabel="Logged Time" readOnly value=\{formatTimeInput\(selectedJournalEntry\.created_at\)\} \/>/);
+  assert.match(healthPageSource, /setIsJournalLoggedMetadataOpen\(\(open\) => !open\)/);
+  assert.match(healthPageSource, /function toggleJournalScale\(key: string\) \{\s*setExpandedJournalScaleKey\(\(current\) => current === key \? null : key\);/);
+  for (const key of ["core:mood", "core:energy", "core:stress", "core:clarity"]) {
+    assert.match(healthPageSource, new RegExp(`toggleJournalScale\\("${key}"\\)`));
+  }
+  assert.match(healthPageSource, /toggleJournalScale\(`feeling:\$\{signal\.id\}`\)/);
+  const journalSource = healthPageSource.slice(
+    healthPageSource.indexOf('{activeTab === "Journal" ? ('),
+    healthPageSource.indexOf('{activeTab === "Food" ? ('),
+  );
+  assert.equal((journalSource.match(/How are you feeling\?/g) ?? []).length, 2);
+  assert.doesNotMatch(journalSource, /Your Daily Template/);
+  assert.match(journalSource, /\+ Add Feeling/);
+  assert.match(journalSource, /Manage Journal Library/);
+  assert.match(healthPageSource, /note: occurrence\.note/);
+  assert.match(healthPageSource, /occurrence\.note\?\.trim\(\)/);
 });

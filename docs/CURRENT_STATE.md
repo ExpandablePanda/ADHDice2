@@ -5,13 +5,26 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.44`.
+- Current working app version: `7.12.45`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.45 Journal UX correction
+
+Journal now uses one responsive History/Journal toggle: short press switches
+between Entry and History, while desktop long press or `ArrowDown` opens the
+compact History Left/Right dock menu. Split History remains desktop-only, and
+History mode keeps `+ New Entry`. Logged Date/Time metadata is collapsed behind
+a chevron; Logged Date uses `MM/DD/YYYY`, and Logged Time reuses the compact
+read-only AM/PM treatment. Core ratings and custom Daily Template Feelings now
+share one `How are you feeling?` section, and all Journal scale pickers can be
+closed without selecting a score. Feeling Trends include every active Feeling,
+retain archived Feelings with occurrence history, and show occurrence notes in
+History hashtag popovers. No SQL or schema changes were made.
 
 ## 2026-09-01 7.12.44 Journal workspace QA corrections
 

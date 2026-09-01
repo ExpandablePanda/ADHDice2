@@ -1,7 +1,7 @@
 "use client";
 
-import { Activity, Apple, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, History, MoonStar, Pencil, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
+import { Activity, Apple, BookOpen, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, History, MoonStar, Pencil, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 
 import type {
   HealthAchievementAward,
@@ -85,6 +85,7 @@ import {
   formatEditableWeight,
   formatHealthDateLabel,
   formatHealthJournalDate,
+  formatHealthJournalMetadataDate,
   formatHealthMealSummary,
   formatMealLoggedTime,
   formatHealthStandardTime,
@@ -655,12 +656,12 @@ function JournalHistoryTagPopover({
     ? symptomEntries
       .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.symptom_id === option.symptomId)
       .sort((left, right) => Date.parse(left.logged_at) - Date.parse(right.logged_at))
-      .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.logged_at, score: occurrence.severity }))
+      .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.logged_at, note: occurrence.note, score: occurrence.severity }))
     : option.signal
       ? journalSignalOccurrences
         .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.signal_id === option.signal?.id)
         .sort((left, right) => Date.parse(left.occurred_at) - Date.parse(right.occurred_at))
-        .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.occurred_at, score: occurrence.score }))
+        .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.occurred_at, note: occurrence.note, score: occurrence.score }))
       : [];
   const overallValue = option.signal
     ? entryValues.find((value) => value.signal_id === option.signal?.id) ?? null
@@ -702,9 +703,12 @@ function JournalHistoryTagPopover({
           <div className="mt-2 grid gap-2">
             <p className="font-semibold text-[#4f5872] dark:text-white/75">Occurrences</p>
             {occurrenceRows.length > 0 ? occurrenceRows.map((occurrence) => (
-                <div className="flex items-baseline justify-between gap-3" key={occurrence.id}>
-                  <span>{formatJournalHistoryOccurrenceTime(occurrence.occurredAt)}</span>
-                  <span className="text-right font-semibold text-[#26324f] dark:text-white">{occurrence.score} · {scaleLabels[occurrence.score] ?? ""}</span>
+                <div className="grid gap-0.5" key={occurrence.id}>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span>{formatJournalHistoryOccurrenceTime(occurrence.occurredAt)}</span>
+                    <span className="text-right font-semibold text-[#26324f] dark:text-white">{occurrence.score} · {scaleLabels[occurrence.score] ?? ""}</span>
+                  </div>
+                  {occurrence.note?.trim() ? <p className="text-[#4f5872] dark:text-white/75">{occurrence.note}</p> : null}
                 </div>
               )) : <span>None logged</span>}
           </div>
@@ -1201,6 +1205,8 @@ export function HealthPage({
   const [journalOccurrenceNote, setJournalOccurrenceNote] = useState("");
   const [journalFormError, setJournalFormError] = useState<string | null>(null);
   const [journalWorkspaceMode, setJournalWorkspaceMode] = useState<JournalWorkspaceMode>("entry");
+  const [isJournalHistoryMenuOpen, setIsJournalHistoryMenuOpen] = useState(false);
+  const [isJournalLoggedMetadataOpen, setIsJournalLoggedMetadataOpen] = useState(false);
   const [selectedFeelingTrendKey, setSelectedFeelingTrendKey] = useState("");
   const [openSymptomColorPickerKey, setOpenSymptomColorPickerKey] = useState<string | null>(null);
   const [isSymptomCreateOpen, setIsSymptomCreateOpen] = useState(false);
@@ -1231,6 +1237,8 @@ export function HealthPage({
   const journalSignalsRef = useRef(journalSignals);
   const journalDraftEntryIdRef = useRef<string | null>(null);
   const journalOccurrenceSaveStatusRef = useRef<"idle" | "saving" | "succeeded">("idle");
+  const journalHistoryLongPressTimerRef = useRef<number | null>(null);
+  const journalHistoryLongPressFiredRef = useRef(false);
   const today = todayHealthDate();
 
   useEffect(() => {
@@ -1271,6 +1279,12 @@ export function HealthPage({
     importAbortRef.current?.abort();
   }, []);
 
+  useEffect(() => () => {
+    if (journalHistoryLongPressTimerRef.current !== null) {
+      window.clearTimeout(journalHistoryLongPressTimerRef.current);
+    }
+  }, []);
+
   const selectedJournalEntry = useMemo(
     () => selectedJournalEntryId ? checkIns.find((entry) => entry.id === selectedJournalEntryId) ?? null : null,
     [checkIns, selectedJournalEntryId],
@@ -1294,6 +1308,7 @@ export function HealthPage({
     setJournalTagQuery(null);
     setJournalTagOverlay(null);
     setJournalHistoryTagOverlay(null);
+    setIsJournalLoggedMetadataOpen(false);
     journalTagCaretRef.current = null;
   }, [selectedJournalEntry, selectedJournalEntryId]);
 
@@ -1534,7 +1549,7 @@ export function HealthPage({
       return allFeelingTrendPointsByDefinition.map(({ definition, points }) =>
         buildHealthFeelingTrendSeries(definition, points, definition.name));
     }
-    if (!selectedFeelingTrend) return [];
+    if (!selectedFeelingTrend || selectedFeelingTrendPoints.length === 0) return [];
     return [buildHealthFeelingTrendSeries(selectedFeelingTrend, selectedFeelingTrendPoints, "Latest")];
   }, [allFeelingTrendPointsByDefinition, isAllFeelingsTrendSelected, selectedFeelingTrend, selectedFeelingTrendPoints]);
 
@@ -2168,6 +2183,64 @@ export function HealthPage({
     setJournalOccurrenceTime(journalEntryTime || getCurrentHealthDateTimeInputs().time);
   }
 
+  function clearJournalHistoryLongPressTimer() {
+    if (journalHistoryLongPressTimerRef.current === null) return;
+    window.clearTimeout(journalHistoryLongPressTimerRef.current);
+    journalHistoryLongPressTimerRef.current = null;
+  }
+
+  function isJournalHistoryDesktopViewport() {
+    return typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
+  }
+
+  function openJournalHistoryMenu() {
+    if (isJournalHistoryDesktopViewport()) setIsJournalHistoryMenuOpen(true);
+  }
+
+  function handleJournalHistoryPointerDown(event: PointerEvent<HTMLButtonElement>) {
+    journalHistoryLongPressFiredRef.current = false;
+    if (!isJournalHistoryDesktopViewport() || (event.pointerType === "mouse" && event.button !== 0)) return;
+    clearJournalHistoryLongPressTimer();
+    journalHistoryLongPressTimerRef.current = window.setTimeout(() => {
+      journalHistoryLongPressTimerRef.current = null;
+      journalHistoryLongPressFiredRef.current = true;
+      openJournalHistoryMenu();
+    }, 500);
+  }
+
+  function handleJournalHistoryPointerUp() {
+    clearJournalHistoryLongPressTimer();
+  }
+
+  function handleJournalHistoryPointerCancel() {
+    clearJournalHistoryLongPressTimer();
+    journalHistoryLongPressFiredRef.current = false;
+  }
+
+  function handleJournalHistoryClick() {
+    if (journalHistoryLongPressFiredRef.current) {
+      journalHistoryLongPressFiredRef.current = false;
+      return;
+    }
+    setIsJournalHistoryMenuOpen(false);
+    setJournalWorkspaceMode((current) => current === "entry" ? "history" : "entry");
+  }
+
+  function handleJournalHistoryKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== "ArrowDown") return;
+    event.preventDefault();
+    openJournalHistoryMenu();
+  }
+
+  function selectJournalWorkspaceMode(mode: JournalWorkspaceMode) {
+    setJournalWorkspaceMode(mode);
+    setIsJournalHistoryMenuOpen(false);
+  }
+
+  function toggleJournalScale(key: string) {
+    setExpandedJournalScaleKey((current) => current === key ? null : key);
+  }
+
   function startNewJournalEntry() {
     if (journalWorkspaceMode === "history") {
       setJournalWorkspaceMode("entry");
@@ -2186,6 +2259,8 @@ export function HealthPage({
     setJournalOccurrenceEditKey(null);
     setJournalOccurrenceEditId(null);
     setExpandedJournalScaleKey(null);
+    setIsJournalLoggedMetadataOpen(false);
+    setIsJournalHistoryMenuOpen(false);
     setOpenSymptomColorPickerKey(null);
     setJournalTagQuery(null);
     setJournalTagOverlay(null);
@@ -3111,21 +3186,46 @@ export function HealthPage({
               className="min-w-0"
               headerActions={(
                 <div className="flex flex-wrap items-center justify-end gap-1">
-                  <AdhdIconButton
-                    aria-label={journalWorkspaceMode === "history" ? "Return to Journal Entry" : "View Journal History"}
-                    onClick={() => setJournalWorkspaceMode((current) => current === "history" ? "entry" : "history")}
-                    size="sm"
-                    title={journalWorkspaceMode === "history" ? "Return to Journal Entry" : "View Journal History"}
-                    tone="ghost"
-                    variant="rowToolbar"
-                  >
-                    <History aria-hidden="true" />
-                  </AdhdIconButton>
-                  <div className="hidden items-center gap-1 md:flex">
-                    <AdhdChip onClick={() => setJournalWorkspaceMode("split-history-left")} selected={journalWorkspaceMode === "split-history-left"} type="button">History Left</AdhdChip>
-                    <AdhdChip onClick={() => setJournalWorkspaceMode("split-history-right")} selected={journalWorkspaceMode === "split-history-right"} type="button">History Right</AdhdChip>
+                  <div className="relative">
+                    <AdhdIconButton
+                      aria-controls="journal-history-layout-menu"
+                      aria-expanded={isJournalHistoryMenuOpen}
+                      aria-haspopup="menu"
+                      aria-label={journalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
+                      onClick={handleJournalHistoryClick}
+                      onKeyDown={handleJournalHistoryKeyDown}
+                      onPointerCancel={handleJournalHistoryPointerCancel}
+                      onPointerDown={handleJournalHistoryPointerDown}
+                      onPointerLeave={handleJournalHistoryPointerUp}
+                      onPointerUp={handleJournalHistoryPointerUp}
+                      size="sm"
+                      title={journalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
+                      tone="ghost"
+                      variant="rowToolbar"
+                    >
+                      {journalWorkspaceMode === "entry" ? <History aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
+                    </AdhdIconButton>
+                    {isJournalHistoryMenuOpen ? (
+                      <AdhdDropdownPanel
+                        aria-label="Choose Journal History layout"
+                        className="left-auto right-0 top-[calc(100%+0.35rem)]"
+                        id="journal-history-layout-menu"
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            setIsJournalHistoryMenuOpen(false);
+                          }
+                        }}
+                        role="menu"
+                        widthClassName="w-40"
+                      >
+                        <div className="grid gap-1">
+                          <button className="min-h-9 rounded-[0.7rem] px-3 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]" onClick={() => selectJournalWorkspaceMode("split-history-left")} role="menuitem" type="button">History Left</button>
+                          <button className="min-h-9 rounded-[0.7rem] px-3 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]" onClick={() => selectJournalWorkspaceMode("split-history-right")} role="menuitem" type="button">History Right</button>
+                        </div>
+                      </AdhdDropdownPanel>
+                    ) : null}
                   </div>
-                  {journalWorkspaceMode !== "entry" ? <AdhdChip onClick={() => setJournalWorkspaceMode("entry")} type="button">Single Pane</AdhdChip> : null}
                   {journalWorkspaceMode === "history" ? <AdhdChip onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
                 </div>
               )}
@@ -3139,17 +3239,31 @@ export function HealthPage({
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="flex flex-wrap gap-3">
                     <Field label="Journal Date">
-                      <HealthMealDateTimeInput max={today} onChange={(date) => setJournalDate(date || today)} type="date" value={journalDate} />
+                      <HealthMealDateTimeInput className="min-w-[8.5rem]" max={today} onChange={(date) => setJournalDate(date || today)} type="date" value={journalDate} />
                     </Field>
                     <Field label="Journal Time">
                       <HealthStandardTimeInput ariaLabel="Journal Time" onChange={setJournalEntryTime} value={journalEntryTime} />
                     </Field>
-                    <Field label="Logged Date">
-                      <span className="flex min-h-9 items-center rounded-[0.9rem] border border-[#edf0fb] bg-[#fbfaff] px-3 text-sm text-[#68738c] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/60">{selectedJournalEntry ? formatHealthTimestampDate(selectedJournalEntry.created_at) ?? "Date unavailable" : "When saved"}</span>
-                    </Field>
-                    <Field label="Logged Time">
-                      <span className="flex min-h-9 items-center rounded-[0.9rem] border border-[#edf0fb] bg-[#fbfaff] px-3 text-sm text-[#68738c] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/60">{selectedJournalEntry ? formatHealthTimestampTime(selectedJournalEntry.created_at) ?? "Time unavailable" : "When saved"}</span>
-                    </Field>
+                    <AdhdIconButton
+                      aria-controls="journal-logged-metadata"
+                      aria-expanded={isJournalLoggedMetadataOpen}
+                      aria-label={isJournalLoggedMetadataOpen ? "Hide Logged Date and Time" : "Show Logged Date and Time"}
+                      onClick={() => setIsJournalLoggedMetadataOpen((open) => !open)}
+                      size="sm"
+                      title={isJournalLoggedMetadataOpen ? "Hide Logged Date and Time" : "Show Logged Date and Time"}
+                      tone="ghost"
+                      variant="rowToolbar"
+                    >
+                      <ChevronDown aria-hidden="true" className={`transition-transform ${isJournalLoggedMetadataOpen ? "rotate-180" : ""}`} />
+                    </AdhdIconButton>
+                    {isJournalLoggedMetadataOpen ? <div className="contents" id="journal-logged-metadata">
+                      <Field label="Logged Date">
+                        <span className={`${HEALTH_COMPACT_CONTROL_CLASS} inline-flex min-w-[8.5rem] items-center justify-start max-sm:!h-[32px] max-sm:!min-h-[32px]`} aria-readonly="true">{selectedJournalEntry ? formatHealthJournalMetadataDate(selectedJournalEntry.created_at) ?? "Date unavailable" : "When saved"}</span>
+                      </Field>
+                      <Field label="Logged Time">
+                        {selectedJournalEntry ? <HealthStandardTimeInput ariaLabel="Logged Time" readOnly value={formatTimeInput(selectedJournalEntry.created_at)} /> : <span className={`${HEALTH_COMPACT_CONTROL_CLASS} inline-flex items-center justify-start max-sm:!h-[32px] max-sm:!min-h-[32px]`} aria-readonly="true">When saved</span>}
+                      </Field>
+                    </div> : null}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <span className="text-xs text-[#7d88a3] dark:text-white/45">{selectedJournalEntry ? "Existing entry" : "New entry · not saved yet"}</span>
@@ -3157,26 +3271,23 @@ export function HealthPage({
                   </div>
                 </div>
 
-                <section className="grid gap-3" aria-labelledby="journal-core-heading">
-                  <SectionMiniTitle title="How are you feeling?" />
-                  <h3 className="sr-only" id="journal-core-heading">How are you feeling?</h3>
+                <section className="grid gap-3" aria-labelledby="journal-feelings-heading">
+                  <SectionMiniTitle
+                    actions={(
+                      <div className="flex flex-wrap gap-2">
+                        <AdhdChip onClick={() => setIsJournalAddOpen((open) => !open)} type="button">+ Add Feeling</AdhdChip>
+                        <AdhdChip onClick={handleManageJournalLibrary} type="button">Manage Journal Library</AdhdChip>
+                      </div>
+                    )}
+                    title="How are you feeling?"
+                  />
+                  <h3 className="sr-only" id="journal-feelings-heading">How are you feeling?</h3>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <ScorePicker expanded={expandedJournalScaleKey === "core:mood"} expandedScaleKey="core:mood" label="Mood" labels={CORE_JOURNAL_SCALE_LABELS.Mood} onClear={() => { setJournalMood(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalMood(score); setExpandedJournalScaleKey(null); }} onToggle={() => setExpandedJournalScaleKey("core:mood")} value={journalMood} />
-                    <ScorePicker expanded={expandedJournalScaleKey === "core:energy"} expandedScaleKey="core:energy" label="Energy" labels={CORE_JOURNAL_SCALE_LABELS.Energy} onClear={() => { setJournalEnergy(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalEnergy(score); setExpandedJournalScaleKey(null); }} onToggle={() => setExpandedJournalScaleKey("core:energy")} value={journalEnergy} />
-                    <ScorePicker expanded={expandedJournalScaleKey === "core:stress"} expandedScaleKey="core:stress" label="Stress" labels={CORE_JOURNAL_SCALE_LABELS.Stress} onClear={() => { setJournalStress(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalStress(score); setExpandedJournalScaleKey(null); }} onToggle={() => setExpandedJournalScaleKey("core:stress")} value={journalStress} />
-                    <ScorePicker expanded={expandedJournalScaleKey === "core:clarity"} expandedScaleKey="core:clarity" label="Mental clarity" labels={CORE_JOURNAL_SCALE_LABELS["Mental clarity"]} onClear={() => { setJournalClarity(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalClarity(score); setExpandedJournalScaleKey(null); }} onToggle={() => setExpandedJournalScaleKey("core:clarity")} value={journalClarity} />
+                    <ScorePicker expanded={expandedJournalScaleKey === "core:mood"} expandedScaleKey="core:mood" label="Mood" labels={CORE_JOURNAL_SCALE_LABELS.Mood} onClear={() => { setJournalMood(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalMood(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:mood")} value={journalMood} />
+                    <ScorePicker expanded={expandedJournalScaleKey === "core:energy"} expandedScaleKey="core:energy" label="Energy" labels={CORE_JOURNAL_SCALE_LABELS.Energy} onClear={() => { setJournalEnergy(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalEnergy(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:energy")} value={journalEnergy} />
+                    <ScorePicker expanded={expandedJournalScaleKey === "core:stress"} expandedScaleKey="core:stress" label="Stress" labels={CORE_JOURNAL_SCALE_LABELS.Stress} onClear={() => { setJournalStress(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalStress(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:stress")} value={journalStress} />
+                    <ScorePicker expanded={expandedJournalScaleKey === "core:clarity"} expandedScaleKey="core:clarity" label="Mental clarity" labels={CORE_JOURNAL_SCALE_LABELS["Mental clarity"]} onClear={() => { setJournalClarity(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalClarity(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:clarity")} value={journalClarity} />
                   </div>
-                </section>
-
-                <section className="grid gap-3" aria-labelledby="journal-template-heading">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <SectionMiniTitle title="Your Daily Template" />
-                    <div className="flex flex-wrap gap-2">
-                      <AdhdChip onClick={() => setIsJournalAddOpen((open) => !open)} type="button">+ Add Feeling</AdhdChip>
-                      <AdhdChip onClick={handleManageJournalLibrary} type="button">Manage Journal Library</AdhdChip>
-                    </div>
-                  </div>
-                  <h3 className="sr-only" id="journal-template-heading">Your Daily Template</h3>
                   {isJournalAddOpen ? (
                     <div className="grid gap-2 rounded-[1rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
                       <p className="text-xs text-[#68738c] dark:text-white/55">Add a feeling to this Journal Entry.</p>
@@ -3211,7 +3322,7 @@ export function HealthPage({
                             label={getHealthJournalSignalDisplayName(signal, symptoms)}
                             onClear={() => { setJournalDraftValues((current) => updateHealthJournalDraftValue(current, signal.id, null)); setExpandedJournalScaleKey(null); }}
                             onSelect={(score) => { setJournalDraftValues((current) => updateHealthJournalDraftValue(current, signal.id, score)); setExpandedJournalScaleKey(null); }}
-                            onToggle={() => setExpandedJournalScaleKey(`feeling:${signal.id}`)}
+                            onToggle={() => toggleJournalScale(`feeling:${signal.id}`)}
                             scaleLabels={signal.scale_labels}
                             value={draftValue.score}
                           />
@@ -4574,6 +4685,7 @@ function Field({
 
 function HealthMealDateTimeInput({
   ariaLabel,
+  className,
   inputRef,
   max,
   onChange,
@@ -4581,6 +4693,7 @@ function HealthMealDateTimeInput({
   value,
 }: {
   ariaLabel?: string;
+  className?: string;
   inputRef?: { current: HTMLInputElement | null };
   max?: string;
   onChange: (value: string) => void;
@@ -4588,7 +4701,7 @@ function HealthMealDateTimeInput({
   value: string;
 }) {
   return (
-    <div className={`${HEALTH_COMPACT_CONTROL_CLASS} flex min-w-0 max-w-full items-center max-sm:!h-[32px] max-sm:!min-h-[32px]`}>
+    <div className={`${HEALTH_COMPACT_CONTROL_CLASS} flex min-w-0 max-w-full items-center max-sm:!h-[32px] max-sm:!min-h-[32px] ${className ?? ""}`}>
       <input
         aria-label={ariaLabel}
         className="block min-w-0 w-full max-w-full box-border border-0 bg-transparent p-0 text-[13px] leading-normal text-[#2f294a] outline-none dark:text-white max-sm:!text-[16px] max-sm:!leading-normal"

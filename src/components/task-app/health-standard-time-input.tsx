@@ -1,11 +1,12 @@
 "use client";
 
-import { normalizeHealthMealTime } from "@/lib/health-utils";
+import { formatHealthStandardTime, normalizeHealthMealTime } from "@/lib/health-utils";
 
 type HealthStandardTimeInputProps = {
   ariaLabel?: string;
   className?: string;
-  onChange: (value: string) => void;
+  onChange?: (value: string) => void;
+  readOnly?: boolean;
   value: string;
 };
 
@@ -29,45 +30,47 @@ function toNormalizedTime(hour: string, minute: string, period: string) {
   return `${String(hours24).padStart(2, "0")}:${String(parsedMinute).padStart(2, "0")}`;
 }
 
-export function HealthStandardTimeInput({ ariaLabel = "Time", className, onChange, value }: HealthStandardTimeInputProps) {
+export function HealthStandardTimeInput({ ariaLabel = "Time", className, onChange, readOnly = false, value }: HealthStandardTimeInputProps) {
   const parts = getTimeParts(value);
   const emitChange = (next: Partial<typeof parts>) => {
     const normalized = toNormalizedTime(next.hour ?? parts.hour, next.minute ?? parts.minute, next.period ?? parts.period);
-    if (normalized) onChange(normalized);
+    if (normalized) onChange?.(normalized);
   };
 
   return (
     <div className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-[0.9rem] border border-[#e6e8f5] bg-white px-2.5 py-1.5 text-[13px] text-[#2f294a] dark:border-white/10 dark:bg-white/[0.04] dark:text-white ${className ?? ""}`}>
-      <input
-        aria-label={`${ariaLabel} hour`}
-        className="w-7 min-w-0 bg-transparent text-center outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80"
-        inputMode="numeric"
-        max={12}
-        min={1}
-        onChange={(event) => emitChange({ hour: event.target.value })}
-        onFocus={(event) => event.currentTarget.select()}
-        value={parts.hour}
-      />
-      <span aria-hidden="true">:</span>
-      <input
-        aria-label={`${ariaLabel} minute`}
-        className="w-8 min-w-0 bg-transparent text-center outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80"
-        inputMode="numeric"
-        max={59}
-        min={0}
-        onChange={(event) => emitChange({ minute: event.target.value })}
-        onFocus={(event) => event.currentTarget.select()}
-        value={parts.minute}
-      />
-      <select
-        aria-label={`${ariaLabel} AM or PM`}
-        className="bg-transparent font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80"
-        onChange={(event) => emitChange({ period: event.target.value })}
-        value={parts.period}
-      >
-        <option value="AM">AM</option>
-        <option value="PM">PM</option>
-      </select>
+      {readOnly ? <span aria-label={ariaLabel} aria-readonly="true">{formatHealthStandardTime(value) ?? "Time unavailable"}</span> : <>
+        <input
+          aria-label={`${ariaLabel} hour`}
+          className="w-7 min-w-0 bg-transparent text-center outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80"
+          inputMode="numeric"
+          max={12}
+          min={1}
+          onChange={(event) => emitChange({ hour: event.target.value })}
+          onFocus={(event) => event.currentTarget.select()}
+          value={parts.hour}
+        />
+        <span aria-hidden="true">:</span>
+        <input
+          aria-label={`${ariaLabel} minute`}
+          className="w-8 min-w-0 bg-transparent text-center outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80"
+          inputMode="numeric"
+          max={59}
+          min={0}
+          onChange={(event) => emitChange({ minute: event.target.value })}
+          onFocus={(event) => event.currentTarget.select()}
+          value={parts.minute}
+        />
+        <select
+          aria-label={`${ariaLabel} AM or PM`}
+          className="bg-transparent font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80"
+          onChange={(event) => emitChange({ period: event.target.value })}
+          value={parts.period}
+        >
+          <option value="AM">AM</option>
+          <option value="PM">PM</option>
+        </select>
+      </>}
     </div>
   );
 }
