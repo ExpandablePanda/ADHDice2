@@ -86,7 +86,6 @@ import {
   formatHealthDateLabel,
   formatHealthJournalDate,
   formatHealthJournalMetadataDate,
-  formatHealthMealSummary,
   formatMealLoggedTime,
   formatHealthStandardTime,
   formatHealthTimestampTime,
@@ -98,6 +97,7 @@ import {
   getHealthSleepStartTimestamp,
   getHealthSleepDayTotal,
   getHealthMealNutritionValue,
+  getHealthMealSummaryParts,
   buildHealthDailySleepSeries,
   getSleepFocusSessions,
   sortHealthSleepSessionsByStart,
@@ -3894,9 +3894,15 @@ export function HealthPage({
                     <div className="flex items-start gap-3">
                       <div className="min-w-0 flex-1">
                         <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(entry)}</p>
-                        <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">{formatHealthMealSummary(entry, undefined, { includeCalories: false })}</p>
+                        <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">
+                          {getHealthMealSummaryParts(entry).map((part, index) => (
+                            <span key={part.kind}>
+                              {index > 0 ? " / " : null}
+                              {part.kind === "calories" ? <strong className="font-semibold text-[#4f5872] dark:text-white/70">{part.text}</strong> : part.text}
+                            </span>
+                            ))}
+                        </p>
                         <NutritionDetailsDisclosure details={entry.nutrition_snapshot?.nutrition_details} />
-                        <p className="mt-3 text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "calories"))} kcal</p>
                       </div>
                       <div className="flex shrink-0 flex-wrap justify-end gap-2">
                         <button

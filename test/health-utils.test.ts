@@ -12,6 +12,7 @@ import {
   formatHealthMealSummary,
   formatHealthNutritionNumber,
   getHealthMealNutritionValue,
+  getHealthMealSummaryParts,
   formatHealthSleepDuration,
   formatMealLoggedTime,
   buildHealthSleepTimestamps,
@@ -138,8 +139,8 @@ test("structured meal summaries use logged quantity and calculated nutrition", (
   } as never, "calories"), 152.5);
 });
 
-test("logged meal summaries can omit calories for a dedicated card display", () => {
-  assert.doesNotMatch(formatHealthMealSummary({
+test("structured meal summary parts preserve order and identify only calories for emphasis", () => {
+  const parts = getHealthMealSummaryParts({
     attribution: null,
     barcode: null,
     brand_name: null,
@@ -158,7 +159,9 @@ test("logged meal summaries can omit calories for a dedicated card display", () 
     serving_label: "6 oz",
     updated_at: "2026-08-04T12:00:00.000Z",
     user_id: "user-1",
-  }, undefined, { includeCalories: false }), /280 kcal/);
+  });
+  assert.deepEqual(parts.map((part) => part.kind), ["meal", "serving", "calories", "protein", "carbs", "fat", "time"]);
+  assert.equal(parts.find((part) => part.kind === "calories")?.text, "280 kcal");
 });
 
 test("legacy meal summaries fall back safely when structured quantity data is absent", () => {

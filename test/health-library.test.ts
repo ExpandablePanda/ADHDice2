@@ -548,7 +548,7 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(source, /calculateHealthFoodNutrition/);
   assert.match(source, /formatHealthFoodQuantityUnit/);
   assert.match(source, /composeHealthFoodServingDefinition/);
-  assert.match(source, /formatHealthMealSummary\(entry\)/);
+  assert.match(source, /getHealthMealSummaryParts\(entry\)/);
   assert.doesNotMatch(source, /mealDraft\.measurement === "serving"/);
   assert.match(source, /nutrition_snapshot: calculation\.nutrientTotals/);
   assert.match(source, /mode: "legacy"/);

@@ -706,11 +706,12 @@ export function formatHealthNutritionNumber(value: number | null | undefined) {
   return String(Number(value.toFixed(2)));
 }
 
-export function formatHealthMealSummary(
-  entry: HealthMealEntry,
-  locale?: string,
-  options: { includeCalories?: boolean } = {},
-) {
+export type HealthMealSummaryPart = {
+  kind: "meal" | "serving" | "calories" | "protein" | "carbs" | "fat" | "time";
+  text: string;
+};
+
+export function getHealthMealSummaryParts(entry: HealthMealEntry, locale?: string): HealthMealSummaryPart[] {
   const loggedQuantity = typeof entry.consumed_quantity === "number"
     && Number.isFinite(entry.consumed_quantity)
     && entry.consumed_quantity > 0
@@ -719,16 +720,22 @@ export function formatHealthMealSummary(
     : null;
   const serving = loggedQuantity ?? (entry.serving_label?.trim() || "No serving");
   const loggedTime = formatMealLoggedTime(entry.logged_at, locale);
-  const parts = [
-    getMealSlotLabel(entry.meal_slot),
-    serving,
-    options.includeCalories === false ? null : `${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "calories"))} kcal`,
-    `Protein ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "protein_g"))}g`,
-    `Carbs ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "carbs_g"))}g`,
-    `Fat ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "fat_g"))}g`,
-    loggedTime,
+  const parts: HealthMealSummaryPart[] = [
+    { kind: "meal", text: getMealSlotLabel(entry.meal_slot) },
+    { kind: "serving", text: serving },
+    { kind: "calories", text: `${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "calories"))} kcal` },
+    { kind: "protein", text: `Protein ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "protein_g"))}g` },
+    { kind: "carbs", text: `Carbs ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "carbs_g"))}g` },
+    { kind: "fat", text: `Fat ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "fat_g"))}g` },
   ];
-  return parts.filter((part): part is string => Boolean(part)).join(" / ");
+  if (loggedTime) {
+    parts.push({ kind: "time", text: loggedTime });
+  }
+  return parts;
+}
+
+export function formatHealthMealSummary(entry: HealthMealEntry, locale?: string) {
+  return getHealthMealSummaryParts(entry, locale).map((part) => part.text).join(" / ");
 }
 
 export function formatWeight(weightKg: number | null, unit: WeightUnit) {

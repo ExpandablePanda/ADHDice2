@@ -5,13 +5,21 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.52`.
+- Current working app version: `7.12.53`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.53 Logged food calorie emphasis correction
+
+Logged-food calories are emphasized inline within the existing metadata summary;
+the standalone calorie line introduced in 7.12.52 was removed. The
+snapshot-first calorie authority remains shared by logged cards and meal
+totals, while planned food cards remain unchanged. No SQL or schema changes
+were made.
 
 ## 2026-09-01 7.12.52 Logged food calorie readability
 

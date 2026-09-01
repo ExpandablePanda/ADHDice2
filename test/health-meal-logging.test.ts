@@ -343,8 +343,10 @@ test("canonical persistence, editing, deletion, and totals remain unchanged", ()
 
 test("logged food cards expose one prominent effective-calorie line and preserve planned cards", () => {
   const loggedCard = foodSource.slice(foodSource.indexOf("{slotMeals.length === 0"), foodSource.indexOf("{editingMealId === entry.id"));
-  assert.match(loggedCard, /formatHealthMealSummary\(entry, undefined, \{ includeCalories: false \}\)/);
-  assert.match(loggedCard, /text-sm font-semibold[^}]*\{formatHealthNutritionNumber\(getHealthMealNutritionValue\(entry, "calories"\)\)\} kcal/);
+  assert.match(loggedCard, /getHealthMealSummaryParts\(entry\)\.map\(\(part, index\) =>/);
+  assert.match(loggedCard, /part\.kind === "calories" \? <strong className="font-semibold text-\[#4f5872\] dark:text-white\/70">\{part\.text\}<\/strong> : part\.text/);
+  assert.doesNotMatch(loggedCard, /formatHealthNutritionNumber\(getHealthMealNutritionValue\(entry, "calories"\)\).*kcal/);
+  assert.doesNotMatch(loggedCard, /mt-3 text-sm font-semibold/);
   assert.match(loggedCard, /NutritionDetailsDisclosure details=\{entry\.nutrition_snapshot\?\.nutrition_details\}/);
   assert.match(loggedCard, /startEditingMeal\(entry\)/);
   assert.match(loggedCard, /handleSaveFavoriteFromMeal\(entry\)/);
@@ -355,6 +357,9 @@ test("logged food cards expose one prominent effective-calorie line and preserve
 test("logged cards and meal-slot totals share the snapshot-first calorie authority", () => {
   assert.match(source, /const slotCaloriesTotal = slotMeals\.reduce\(\(total, entry\) => total \+ getHealthMealNutritionValue\(entry, "calories"\), 0\)/);
   assert.match(healthUtilsSource, /export function getHealthMealNutritionValue\(entry: HealthMealEntry/);
+  assert.match(healthUtilsSource, /export function getHealthMealSummaryParts\(entry: HealthMealEntry/);
+  assert.match(healthUtilsSource, /kind: "calories", text: `\$\{formatHealthNutritionNumber\(getHealthMealNutritionValue\(entry, "calories"\)\)\} kcal`/);
   assert.match(healthUtilsSource, /getHealthMealNutritionValue\(entry, "calories"\)/);
-  assert.match(healthUtilsSource, /options\.includeCalories === false \? null/);
+  assert.doesNotMatch(source, /formatHealthMealSummary\(entry, undefined/);
+  assert.doesNotMatch(source, /includeCalories/);
 });
