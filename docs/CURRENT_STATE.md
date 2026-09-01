@@ -5,13 +5,21 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.53`.
+- Current working app version: `7.12.54`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.54 Health Today Snapshot foundation
+
+Health Today now provides a canonical-record-derived Snapshot for Journal,
+Food, Water, Sleep, and Movement, plus Quick Log routes into the existing
+Health tabs and forms. No Today database or persistence authority was added;
+the chronological Today Timeline remains next. No SQL or schema changes were
+made.
 
 ## 2026-09-01 7.12.53 Logged food calorie emphasis correction
 

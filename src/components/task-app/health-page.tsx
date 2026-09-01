@@ -201,6 +201,7 @@ import { HealthSleepLineChart } from "./health-sleep-line-chart";
 import { HealthWaterPanel } from "./health-water-panel";
 import { HealthFitnessTab } from "./health-fitness-tab";
 import { HealthStandardTimeInput } from "./health-standard-time-input";
+import { HealthTodayTab } from "./health-today-tab";
 import { PageShellHeader } from "./page-shell-header";
 
 type HealthPageProps = {
@@ -3286,7 +3287,21 @@ export function HealthPage({
       </div>
 
       {activeTab === "Today" ? (
-        <div aria-labelledby="health-tab-today" className="mt-6" id={getHealthTabPanelId("Today")} role="tabpanel" />
+        <div aria-labelledby="health-tab-today" id={getHealthTabPanelId("Today")} role="tabpanel">
+          <HealthTodayTab
+            checkIns={checkIns}
+            focusCategories={focusCategories}
+            focusHistory={focusHistory}
+            journalSignalOccurrences={journalSignalOccurrences}
+            mealEntries={mealEntries}
+            metricEntries={metricEntries}
+            onNavigate={persistHealthTabPreference}
+            profile={activeProfile}
+            symptomEntries={symptomEntries}
+            today={today}
+            waterEntries={waterEntries}
+          />
+        </div>
       ) : null}
 
       {activeTab === "Fitness" ? (
