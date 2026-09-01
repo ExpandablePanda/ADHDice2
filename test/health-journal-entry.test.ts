@@ -518,3 +518,43 @@ test("7.12.41 source contract covers multiple entries, occurrence ownership, RLS
   assert.doesNotMatch(healthPageSource, /Save Check-In/);
   assert.doesNotMatch(healthPageSource, />Log a symptom</);
 });
+
+test("7.12.42 hardens Journal occurrence reruns and native kind integrity", () => {
+  const validatorStart = multipleEntriesMigrationSource.indexOf("create or replace function public.adhdice_validate_health_journal_signal_occurrence_kind()");
+  const validatorEnd = multipleEntriesMigrationSource.indexOf("$function$;", validatorStart) + "$function$;".length;
+  const validatorSource = multipleEntriesMigrationSource.slice(validatorStart, validatorEnd);
+  assert.ok(validatorStart >= 0 && validatorEnd > validatorStart);
+  assert.match(validatorSource, /where user_id = new\.user_id\s+and id = new\.signal_id/);
+  assert.match(validatorSource, /v_signal_kind not in \('emotion', 'other'\)/);
+  assert.match(validatorSource, /errcode = '23503'/);
+  assert.match(validatorSource, /errcode = '23514'/);
+  assert.match(validatorSource, /set search_path = ''/);
+  assert.ok(schemaSource.includes(validatorSource));
+
+  for (const policyName of [
+    "Users can read their own health journal signal occurrences",
+    "Users can create their own health journal signal occurrences",
+    "Users can update their own health journal signal occurrences",
+    "Users can delete their own health journal signal occurrences",
+  ]) {
+    assert.match(
+      multipleEntriesMigrationSource,
+      new RegExp(`drop policy if exists "${policyName}"[\\s\\S]*?create policy "${policyName}"`),
+    );
+  }
+  assert.match(multipleEntriesMigrationSource, /drop trigger if exists adhdice_health_journal_signal_occurrences_set_updated_at[\s\S]*?create trigger adhdice_health_journal_signal_occurrences_set_updated_at/);
+  assert.match(multipleEntriesMigrationSource, /drop trigger if exists adhdice_health_journal_signal_occurrences_validate_kind[\s\S]*?before insert or update on public\.adhdice_health_journal_signal_occurrences/);
+  assert.match(schemaSource, /create trigger adhdice_health_journal_signal_occurrences_validate_kind[\s\S]*?before insert or update on public\.adhdice_health_journal_signal_occurrences/);
+
+  const saveJournalStart = healthHookSource.indexOf("async function saveJournalEntry");
+  const saveJournalEnd = healthHookSource.indexOf("async function saveCheckIn", saveJournalStart);
+  const saveJournalSource = healthHookSource.slice(saveJournalStart, saveJournalEnd);
+  const guardIndex = saveJournalSource.indexOf("hasInvalidNativeOccurrenceSignal");
+  assert.ok(guardIndex >= 0);
+  assert.match(saveJournalSource, /signal\?\.user_id === userId[\s\S]*?signal\.kind === "emotion"[\s\S]*?signal\.kind === "other"/);
+  assert.ok(guardIndex < saveJournalSource.indexOf('.from("adhdice_health_checkins")'));
+  assert.match(saveJournalSource, /hasInvalidNativeOccurrenceSignal[\s\S]*?Choose an Emotion or Other Feeling for each occurrence\./);
+  assert.ok(guardIndex < saveJournalSource.indexOf("const journalSignalOccurrenceRows"));
+  assert.match(saveJournalSource, /\.from\("adhdice_health_journal_signal_occurrences"\)[\s\S]*?\.upsert\(journalSignalOccurrenceRows/);
+  assert.match(saveJournalSource, /\.from\("adhdice_health_symptom_entries"\)[\s\S]*?\.upsert\(occurrenceRows/);
+});

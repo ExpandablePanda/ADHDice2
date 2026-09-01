@@ -1171,6 +1171,16 @@ export function useHealth(
       waterEntries,
       weightEntries,
     });
+    const isValidNativeJournalSignal = (signal: HealthJournalSignal | undefined) =>
+      signal?.user_id === userId && (signal.kind === "emotion" || signal.kind === "other");
+    const hasInvalidNativeOccurrenceSignal = input.journalSignalOccurrences.some((occurrence) => {
+      const signal = currentSnapshot.journalSignals.find((candidate) => candidate.id === occurrence.signal_id);
+      return !isValidNativeJournalSignal(signal);
+    });
+    if (hasInvalidNativeOccurrenceSignal) {
+      setMessage({ tone: "warn", text: "Choose an Emotion or Other Feeling for each occurrence." });
+      return null;
+    }
     const now = new Date().toISOString();
     const requestedEntryId = input.checkIn.id;
     const existingRow = requestedEntryId
@@ -1274,7 +1284,7 @@ export function useHealth(
       const isExistingOccurrence = occurrence.id
         ? currentSnapshot.journalSignalOccurrences.some((candidate) => candidate.id === occurrence.id && candidate.journal_entry_id === nextRow.id)
         : false;
-      if (!signal || signal.kind === "symptom" || (signal.archived_at !== null && !isExistingOccurrence)) {
+      if (!isValidNativeJournalSignal(signal) || (signal.archived_at !== null && !isExistingOccurrence)) {
         setMessage({ tone: "warn", text: "Choose an active Emotion or Other Feeling for each occurrence." });
         return null;
       }

@@ -1532,6 +1532,35 @@ begin
 end;
 $$;
 
+create or replace function public.adhdice_validate_health_journal_signal_occurrence_kind()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_signal_kind text;
+begin
+  select kind
+    into v_signal_kind
+    from public.adhdice_health_journal_signals
+   where user_id = new.user_id
+     and id = new.signal_id;
+
+  if v_signal_kind is null then
+    raise exception using
+      errcode = '23503',
+      message = 'Journal signal occurrence references a missing or mismatched Journal signal.';
+  end if;
+  if v_signal_kind not in ('emotion', 'other') then
+    raise exception using
+      errcode = '23514',
+      message = 'Journal signal occurrences require an Emotion or Other Feeling signal.';
+  end if;
+  return new;
+end;
+$function$;
+
 create or replace function public.adhdice_clean_tasks_bump_revision()
 returns trigger
 language plpgsql
@@ -1648,6 +1677,13 @@ create trigger adhdice_health_journal_signal_values_set_updated_at
   before update on public.adhdice_health_journal_signal_values
   for each row
   execute function public.adhdice_clean_set_updated_at();
+
+drop trigger if exists adhdice_health_journal_signal_occurrences_validate_kind
+  on public.adhdice_health_journal_signal_occurrences;
+create trigger adhdice_health_journal_signal_occurrences_validate_kind
+  before insert or update on public.adhdice_health_journal_signal_occurrences
+  for each row
+  execute function public.adhdice_validate_health_journal_signal_occurrence_kind();
 
 create trigger adhdice_health_journal_signal_occurrences_set_updated_at
   before update on public.adhdice_health_journal_signal_occurrences

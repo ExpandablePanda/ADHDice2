@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.41`.
+- Current working app version: `7.12.42`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -31,6 +31,16 @@ occurrence timestamps. The authored migration is
 `supabase/add_health_journal_multiple_entries_7_12_41.sql`; it has NOT been
 applied remotely. No schema deployment was performed. Browser, live Supabase,
 and deployment verification remain outstanding.
+
+## 2026-09-01 7.12.42 Journal persistence hardening
+
+The approved 7.12.41 Journal architecture is preserved. Its authored-only
+migration is hardened before live deployment with idempotent occurrence-table
+policies/triggers, and database validation now restricts native Feeling
+Occurrences to Emotion and Other signals. The migration remains NOT remotely
+applied; no live schema deployment was performed. Focused source and
+persistence checks cover the guard and preserve canonical symptom occurrence
+storage.
 
 ## 2026-08-31 7.12.40 Journal Feeling overlay color picker
 

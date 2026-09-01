@@ -57,6 +57,44 @@ alter table public.adhdice_health_journal_signal_occurrences enable row level se
 revoke all on table public.adhdice_health_journal_signal_occurrences from anon, authenticated;
 grant select, insert, update, delete on table public.adhdice_health_journal_signal_occurrences to authenticated;
 
+create or replace function public.adhdice_validate_health_journal_signal_occurrence_kind()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_signal_kind text;
+begin
+  select kind
+    into v_signal_kind
+    from public.adhdice_health_journal_signals
+   where user_id = new.user_id
+     and id = new.signal_id;
+
+  if v_signal_kind is null then
+    raise exception using
+      errcode = '23503',
+      message = 'Journal signal occurrence references a missing or mismatched Journal signal.';
+  end if;
+  if v_signal_kind not in ('emotion', 'other') then
+    raise exception using
+      errcode = '23514',
+      message = 'Journal signal occurrences require an Emotion or Other Feeling signal.';
+  end if;
+  return new;
+end;
+$function$;
+
+drop policy if exists "Users can read their own health journal signal occurrences"
+  on public.adhdice_health_journal_signal_occurrences;
+drop policy if exists "Users can create their own health journal signal occurrences"
+  on public.adhdice_health_journal_signal_occurrences;
+drop policy if exists "Users can update their own health journal signal occurrences"
+  on public.adhdice_health_journal_signal_occurrences;
+drop policy if exists "Users can delete their own health journal signal occurrences"
+  on public.adhdice_health_journal_signal_occurrences;
+
 create policy "Users can read their own health journal signal occurrences"
   on public.adhdice_health_journal_signal_occurrences
   for select to authenticated
@@ -75,6 +113,15 @@ create policy "Users can delete their own health journal signal occurrences"
   for delete to authenticated
   using ((select auth.uid()) = user_id);
 
+drop trigger if exists adhdice_health_journal_signal_occurrences_validate_kind
+  on public.adhdice_health_journal_signal_occurrences;
+create trigger adhdice_health_journal_signal_occurrences_validate_kind
+  before insert or update on public.adhdice_health_journal_signal_occurrences
+  for each row
+  execute function public.adhdice_validate_health_journal_signal_occurrence_kind();
+
+drop trigger if exists adhdice_health_journal_signal_occurrences_set_updated_at
+  on public.adhdice_health_journal_signal_occurrences;
 create trigger adhdice_health_journal_signal_occurrences_set_updated_at
   before update on public.adhdice_health_journal_signal_occurrences
   for each row
