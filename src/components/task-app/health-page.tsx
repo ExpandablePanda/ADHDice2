@@ -97,6 +97,7 @@ import {
   getHealthSleepElapsedSeconds,
   getHealthSleepStartTimestamp,
   getHealthSleepDayTotal,
+  getHealthMealNutritionValue,
   buildHealthDailySleepSeries,
   getSleepFocusSessions,
   sortHealthSleepSessionsByStart,
@@ -3827,7 +3828,7 @@ export function HealthPage({
               {HEALTH_MEAL_SLOTS.map((slot) => {
                 const slotMeals = selectedMeals.filter((entry) => entry.meal_slot === slot);
                   const slotPlans = selectedMealPlans.filter((entry) => entry.meal_slot === slot);
-                  const slotCaloriesTotal = slotMeals.reduce((total, entry) => total + mealNutritionValue(entry, "calories"), 0);
+                  const slotCaloriesTotal = slotMeals.reduce((total, entry) => total + getHealthMealNutritionValue(entry, "calories"), 0);
                   const slotPlannedCaloriesTotal = slotPlans.reduce((total, entry) => total + (entry.nutrition_snapshot?.calories ?? entry.calories), 0);
                   return (
                   <section className="grid gap-3" key={slot}>
@@ -3893,8 +3894,9 @@ export function HealthPage({
                     <div className="flex items-start gap-3">
                       <div className="min-w-0 flex-1">
                         <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(entry)}</p>
-                        <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">{formatHealthMealSummary(entry)}</p>
+                        <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">{formatHealthMealSummary(entry, undefined, { includeCalories: false })}</p>
                         <NutritionDetailsDisclosure details={entry.nutrition_snapshot?.nutrition_details} />
+                        <p className="mt-3 text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "calories"))} kcal</p>
                       </div>
                       <div className="flex shrink-0 flex-wrap justify-end gap-2">
                         <button
@@ -5211,14 +5213,6 @@ function nullableFiniteNumber(value: unknown) {
 function positiveFiniteNumber(value: unknown) {
   const parsed = finiteNumber(value);
   return parsed !== null && parsed > 0 ? parsed : null;
-}
-
-function mealNutritionValue(entry: HealthMealEntry, key: "calories" | "protein_g" | "carbs_g" | "fat_g") {
-  const snapshotValue = entry.nutrition_snapshot?.[key];
-  if (typeof snapshotValue === "number" && Number.isFinite(snapshotValue)) {
-    return snapshotValue;
-  }
-  return entry[key] ?? 0;
 }
 
 function parseNullableInteger(value: unknown) {

@@ -706,7 +706,11 @@ export function formatHealthNutritionNumber(value: number | null | undefined) {
   return String(Number(value.toFixed(2)));
 }
 
-export function formatHealthMealSummary(entry: HealthMealEntry, locale?: string) {
+export function formatHealthMealSummary(
+  entry: HealthMealEntry,
+  locale?: string,
+  options: { includeCalories?: boolean } = {},
+) {
   const loggedQuantity = typeof entry.consumed_quantity === "number"
     && Number.isFinite(entry.consumed_quantity)
     && entry.consumed_quantity > 0
@@ -718,10 +722,10 @@ export function formatHealthMealSummary(entry: HealthMealEntry, locale?: string)
   const parts = [
     getMealSlotLabel(entry.meal_slot),
     serving,
-    `${formatHealthNutritionNumber(entry.calories)} kcal`,
-    `Protein ${formatHealthNutritionNumber(mealNutritionValue(entry, "protein_g"))}g`,
-    `Carbs ${formatHealthNutritionNumber(mealNutritionValue(entry, "carbs_g"))}g`,
-    `Fat ${formatHealthNutritionNumber(mealNutritionValue(entry, "fat_g"))}g`,
+    options.includeCalories === false ? null : `${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "calories"))} kcal`,
+    `Protein ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "protein_g"))}g`,
+    `Carbs ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "carbs_g"))}g`,
+    `Fat ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "fat_g"))}g`,
     loggedTime,
   ];
   return parts.filter((part): part is string => Boolean(part)).join(" / ");
@@ -755,11 +759,10 @@ export function sumMealNutritionForDate(entries: HealthMealEntry[], entryDate: s
   const datedEntries = entries.filter((entry) => entry.entry_date === entryDate);
   const totals = datedEntries.reduce(
     (accumulator, entry) => {
-      const snapshot = entry.nutrition_snapshot;
-      accumulator.calories += finiteOrFallback(snapshot?.calories, entry.calories);
-      accumulator.protein += finiteOrFallback(snapshot?.protein_g, entry.protein_g ?? 0);
-      accumulator.carbs += finiteOrFallback(snapshot?.carbs_g, entry.carbs_g ?? 0);
-      accumulator.fat += finiteOrFallback(snapshot?.fat_g, entry.fat_g ?? 0);
+      accumulator.calories += getHealthMealNutritionValue(entry, "calories");
+      accumulator.protein += getHealthMealNutritionValue(entry, "protein_g");
+      accumulator.carbs += getHealthMealNutritionValue(entry, "carbs_g");
+      accumulator.fat += getHealthMealNutritionValue(entry, "fat_g");
       return accumulator;
     },
     { calories: 0, carbs: 0, fat: 0, protein: 0 },
@@ -776,11 +779,7 @@ export function sumMealNutritionForDate(entries: HealthMealEntry[], entryDate: s
     : totals;
 }
 
-function finiteOrFallback(value: number | null | undefined, fallback: number) {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function mealNutritionValue(entry: HealthMealEntry, key: "calories" | "protein_g" | "carbs_g" | "fat_g") {
+export function getHealthMealNutritionValue(entry: HealthMealEntry, key: "calories" | "protein_g" | "carbs_g" | "fat_g") {
   const snapshotValue = entry.nutrition_snapshot?.[key];
   if (typeof snapshotValue === "number" && Number.isFinite(snapshotValue)) {
     return snapshotValue;

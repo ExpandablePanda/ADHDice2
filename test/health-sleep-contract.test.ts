@@ -127,7 +127,7 @@ test("Health descriptive rows let text wrap before responsive actions", async ()
   ]);
   assert.match(health, /<HealthBarcodeScanner[\s\S]*onDetected=\{handleMealBarcodeDetected\}/);
   assert.match(scanner, /<video[\s\S]*aria-label="Barcode camera preview"/);
-  assert.match(health, /formatHealthMealSummary\(entry\)[\s\S]*?flex shrink-0 flex-wrap justify-end gap-2/);
+  assert.match(health, /formatHealthMealSummary\(entry(?:, undefined, \{ includeCalories: false \})?\)[\s\S]*?flex shrink-0 flex-wrap justify-end gap-2/);
   assert.match(health, /title="Favorites & Recent Foods">[\s\S]*?max-h-\[26rem\] space-y-5 overflow-y-auto/);
   assert.match(health, /Sleep Focus Clock[\s\S]*?className="flex shrink-0 flex-nowrap items-center gap-2"/);
   assert.match(health, /resolveHealthSleepKind\(session,[\s\S]*?className="flex shrink-0 items-center gap-2"/);

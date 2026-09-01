@@ -5,13 +5,21 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.51`.
+- Current working app version: `7.12.52`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.52 Logged food calorie readability
+
+Individual logged foods in Health > Food now expose calories as a dedicated,
+prominent line using the existing snapshot-first meal calorie authority. Meal
+section totals and logged meal nutrition remain unchanged; planned food cards
+are unchanged. The logged-card summary omits its calorie portion to avoid
+duplicate display. No SQL or schema changes were made.
 
 ## 2026-09-01 7.12.51 Health Settings tab
 

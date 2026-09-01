@@ -11,6 +11,7 @@ import {
   formatEditableWeight,
   formatHealthMealSummary,
   formatHealthNutritionNumber,
+  getHealthMealNutritionValue,
   formatHealthSleepDuration,
   formatMealLoggedTime,
   buildHealthSleepTimestamps,
@@ -129,8 +130,35 @@ test("structured meal summaries use logged quantity and calculated nutrition", (
     user_id: "user-1",
   }, "en-US");
 
-  assert.match(summary, /^Breakfast \/ 60 Crackers \/ 153 kcal \/ Protein 3\.27g \/ Carbs 21\.82g \/ Fat 5\.45g \/ \d{1,2}:10/);
+  assert.match(summary, /^Breakfast \/ 60 Crackers \/ 152\.73 kcal \/ Protein 3\.27g \/ Carbs 21\.82g \/ Fat 5\.45g \/ \d{1,2}:10/);
   assert.doesNotMatch(summary, /55 Crackers|30 g/);
+  assert.equal(getHealthMealNutritionValue({
+    calories: 280,
+    nutrition_snapshot: { calories: 152.5 },
+  } as never, "calories"), 152.5);
+});
+
+test("logged meal summaries can omit calories for a dedicated card display", () => {
+  assert.doesNotMatch(formatHealthMealSummary({
+    attribution: null,
+    barcode: null,
+    brand_name: null,
+    calories: 280,
+    carbs_g: 0,
+    created_at: "2026-08-04T12:00:00.000Z",
+    entry_date: "2026-08-04",
+    fat_g: 0,
+    food_name: "Chicken Breast",
+    id: "meal-card",
+    logged_at: "2026-08-04T12:35:00",
+    meal_slot: "lunch",
+    protein_g: 0,
+    provider: "manual",
+    provider_item_id: null,
+    serving_label: "6 oz",
+    updated_at: "2026-08-04T12:00:00.000Z",
+    user_id: "user-1",
+  }, undefined, { includeCalories: false }), /280 kcal/);
 });
 
 test("legacy meal summaries fall back safely when structured quantity data is absent", () => {

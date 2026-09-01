@@ -340,3 +340,21 @@ test("canonical persistence, editing, deletion, and totals remain unchanged", ()
   assert.match(source, /deleteMealEntry\(entry\.id\)/);
   assert.match(source, /sumMealNutritionForDate\(mealEntries, foodHistoryDate\)/);
 });
+
+test("logged food cards expose one prominent effective-calorie line and preserve planned cards", () => {
+  const loggedCard = foodSource.slice(foodSource.indexOf("{slotMeals.length === 0"), foodSource.indexOf("{editingMealId === entry.id"));
+  assert.match(loggedCard, /formatHealthMealSummary\(entry, undefined, \{ includeCalories: false \}\)/);
+  assert.match(loggedCard, /text-sm font-semibold[^}]*\{formatHealthNutritionNumber\(getHealthMealNutritionValue\(entry, "calories"\)\)\} kcal/);
+  assert.match(loggedCard, /NutritionDetailsDisclosure details=\{entry\.nutrition_snapshot\?\.nutrition_details\}/);
+  assert.match(loggedCard, /startEditingMeal\(entry\)/);
+  assert.match(loggedCard, /handleSaveFavoriteFromMeal\(entry\)/);
+  assert.match(loggedCard, /deleteMealEntry\(entry\.id\)/);
+  assert.match(foodSource, /plan\.nutrition_snapshot\?\.calories \?\? plan\.calories\)\} kcal · \{formatPlanTime/);
+});
+
+test("logged cards and meal-slot totals share the snapshot-first calorie authority", () => {
+  assert.match(source, /const slotCaloriesTotal = slotMeals\.reduce\(\(total, entry\) => total \+ getHealthMealNutritionValue\(entry, "calories"\), 0\)/);
+  assert.match(healthUtilsSource, /export function getHealthMealNutritionValue\(entry: HealthMealEntry/);
+  assert.match(healthUtilsSource, /getHealthMealNutritionValue\(entry, "calories"\)/);
+  assert.match(healthUtilsSource, /options\.includeCalories === false \? null/);
+});
