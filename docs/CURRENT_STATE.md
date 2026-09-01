@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.49`.
+- Current working app version: `7.12.50`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -40,6 +40,15 @@ no-history Feelings still produce no chart line or zero chip. Journal History
 date groups are independently collapsible by canonical `entry_date`, with
 per-entry Logged metadata disclosure remaining independent. No SQL, migration,
 schema, or persistence-model changes were made.
+
+## 2026-09-01 7.12.50 Feeling Trends range polish
+
+Feeling Trends now offers `1D`, `3D`, `7D`, `30D`, `90D`, and `All` in that
+order. The 1D range is limited to the as-of date, the 3D range includes the
+as-of date and prior two calendar dates, and existing longer/all-range
+semantics remain unchanged. Existing per-Feeling visible-point averages and
+no-zero-fill behavior apply automatically to the new ranges. No SQL or schema
+changes were made.
 
 ## 2026-09-01 7.12.45 Journal UX correction
 

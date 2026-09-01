@@ -10,15 +10,13 @@ import {
   getDefaultHealthJournalScaleLabels,
 } from "@/lib/health-journal";
 import {
-  HEALTH_SYMPTOM_TREND_RANGES,
   normalizeHealthSymptomColor,
   shiftHealthDate,
-  type HealthSymptomTrendRange,
 } from "@/lib/health-utils";
 
 export const ALL_HEALTH_FEELINGS_VALUE = "__all_feelings__";
-export const HEALTH_FEELING_TREND_RANGES = HEALTH_SYMPTOM_TREND_RANGES;
-export type HealthFeelingTrendRange = HealthSymptomTrendRange;
+export const HEALTH_FEELING_TREND_RANGES = ["1D", "3D", "7D", "30D", "90D", "All"] as const;
+export type HealthFeelingTrendRange = (typeof HEALTH_FEELING_TREND_RANGES)[number];
 export type HealthFeelingTrendKind = "symptom" | "emotion" | "other";
 
 export type FeelingTrendDefinition = {
@@ -164,9 +162,20 @@ export function buildHealthFeelingTrendModel({
 }
 
 export function getHealthFeelingTrendRangeStartDate(range: HealthFeelingTrendRange, asOfDate: string) {
-  if (range === "All") return null;
-  const days = range === "7D" ? 7 : range === "30D" ? 30 : 90;
-  return shiftHealthDate(asOfDate, -(days - 1));
+  switch (range) {
+    case "All":
+      return null;
+    case "1D":
+      return asOfDate;
+    case "3D":
+      return shiftHealthDate(asOfDate, -2);
+    case "7D":
+      return shiftHealthDate(asOfDate, -6);
+    case "30D":
+      return shiftHealthDate(asOfDate, -29);
+    case "90D":
+      return shiftHealthDate(asOfDate, -89);
+  }
 }
 
 export function getHealthFeelingTrendPoints({

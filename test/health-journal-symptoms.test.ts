@@ -15,6 +15,7 @@ import {
   buildHealthFeelingTrendModel,
   formatHealthFeelingTrendScore,
   getHealthFeelingTrendAverage,
+  getHealthFeelingTrendRangeStartDate,
   getHealthFeelingTrendPoints,
   getHealthFeelingTrendSelectionSummary,
   getHealthFeelingTrendPointsByDefinition,
@@ -418,7 +419,7 @@ test("Journal Feeling Trends graph owned Symptoms, Emotions, and Other Feelings 
     symptoms: [activeSymptom, activeSymptomWithoutHistory, archivedSymptom, archivedSymptomWithoutHistory],
   });
 
-  assert.deepEqual([...HEALTH_FEELING_TREND_RANGES], ["7D", "30D", "90D", "All"]);
+  assert.deepEqual([...HEALTH_FEELING_TREND_RANGES], ["1D", "3D", "7D", "30D", "90D", "All"]);
   assert.equal(ALL_HEALTH_FEELINGS_VALUE, "__all_feelings__");
   assert.deepEqual(model.definitions.map(({ key, kind, name, archived, color }) => ({ key, kind, name, archived, color })), [
     { key: "symptom:active-symptom", kind: "symptom", name: "Back Pain", archived: false, color: "#3b82f6" },
@@ -448,6 +449,16 @@ test("Journal Feeling Trends graph owned Symptoms, Emotions, and Other Feelings 
     "signal:other-1",
     "signal:emotion-archived",
   ]);
+});
+
+test("Feeling Trend range starts are explicit and calendar-based", () => {
+  const asOfDate = "2026-09-01";
+  assert.equal(getHealthFeelingTrendRangeStartDate("1D", asOfDate), "2026-09-01");
+  assert.equal(getHealthFeelingTrendRangeStartDate("3D", asOfDate), "2026-08-30");
+  assert.equal(getHealthFeelingTrendRangeStartDate("7D", asOfDate), "2026-08-26");
+  assert.equal(getHealthFeelingTrendRangeStartDate("30D", asOfDate), "2026-08-03");
+  assert.equal(getHealthFeelingTrendRangeStartDate("90D", asOfDate), "2026-06-04");
+  assert.equal(getHealthFeelingTrendRangeStartDate("All", asOfDate), null);
 });
 
 test("Feeling Trend selections support all, category, individual, and cross-category blends", () => {
@@ -486,10 +497,14 @@ test("Feeling Trend averages use the visible range independently for each Feelin
     symptoms: [backPain, anxiety],
   });
   const backPain7D = getHealthFeelingTrendPoints({ asOfDate: "2026-09-01", feelingKey: "symptom:back-pain", model, range: "7D" });
+  const backPain1D = getHealthFeelingTrendPoints({ asOfDate: "2026-09-01", feelingKey: "symptom:back-pain", model, range: "1D" });
+  const backPain3D = getHealthFeelingTrendPoints({ asOfDate: "2026-09-01", feelingKey: "symptom:back-pain", model, range: "3D" });
   const backPain30D = getHealthFeelingTrendPoints({ asOfDate: "2026-09-01", feelingKey: "symptom:back-pain", model, range: "30D" });
   const backPainAll = getHealthFeelingTrendPoints({ asOfDate: "2026-09-01", feelingKey: "symptom:back-pain", model, range: "All" });
   const anxiety7D = getHealthFeelingTrendPoints({ asOfDate: "2026-09-01", feelingKey: "symptom:anxiety", model, range: "7D" });
 
+  assert.equal(getHealthFeelingTrendAverage(backPain1D), 6);
+  assert.equal(getHealthFeelingTrendAverage(backPain3D), 6.5);
   assert.equal(getHealthFeelingTrendAverage(backPain7D), 5.7);
   assert.equal(getHealthFeelingTrendAverage(backPain30D), 6.5);
   assert.equal(getHealthFeelingTrendAverage(backPainAll), 5.6);
@@ -511,6 +526,7 @@ test("Journal Feeling Trends adapt into the shared chart with a fixed 1 to 10 oc
   assert.match(healthPageSource, /summaryLabel: `\$\{definition\.name\} · Avg\.`/);
   assert.match(healthPageSource, /totalValue: average/);
   assert.match(healthPageSource, /formatHealthFeelingTrendScore\(value\)/);
+  assert.match(healthPageSource, /HEALTH_FEELING_TREND_RANGES\.map/);
   assert.match(healthPageSource, /selectedFeelingTrendPointsByDefinition/);
   assert.match(healthPageSource, /filter\(\(\{ points \}\) => points\.length > 0\)/);
   assert.match(healthPageSource, /<FeelingTrendSelector/);
