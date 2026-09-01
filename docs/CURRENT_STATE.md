@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.46`.
+- Current working app version: `7.12.47`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -34,6 +34,14 @@ while retaining normalized storage and 12-hour AM/PM display. Journal Date and
 Logged Date retain matching compact width, height, border, spacing, and responsive
 typography; Logged Date remains read-only and uses `MM/DD/YYYY`. No SQL or schema
 changes were made.
+
+## 2026-09-01 7.12.47 Journal unsaved metadata sizing correction
+
+Unsaved Logged Time now uses the shared read-only `HealthStandardTimeInput`
+placeholder treatment, so `When saved` has the same compact `8.5rem × 32px`
+control size as Journal Time and saved Logged Time without presenting a fake
+timestamp. Unsaved Logged Date remains `When saved` with matching Journal Date
+sizing. No SQL or schema changes were made.
 
 ## 2026-09-01 7.12.44 Journal workspace QA corrections
 

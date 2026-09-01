@@ -7,6 +7,7 @@ type HealthStandardTimeInputProps = {
   className?: string;
   onChange?: (value: string) => void;
   readOnly?: boolean;
+  readOnlyPlaceholder?: string;
   value: string;
 };
 
@@ -30,7 +31,7 @@ function toNormalizedTime(hour: string, minute: string, period: string) {
   return `${String(hours24).padStart(2, "0")}:${String(parsedMinute).padStart(2, "0")}`;
 }
 
-export function HealthStandardTimeInput({ ariaLabel = "Time", className, onChange, readOnly = false, value }: HealthStandardTimeInputProps) {
+export function HealthStandardTimeInput({ ariaLabel = "Time", className, onChange, readOnly = false, readOnlyPlaceholder, value }: HealthStandardTimeInputProps) {
   const parts = getTimeParts(value);
   const emitChange = (next: Partial<typeof parts>) => {
     const normalized = toNormalizedTime(next.hour ?? parts.hour, next.minute ?? parts.minute, next.period ?? parts.period);
@@ -39,7 +40,7 @@ export function HealthStandardTimeInput({ ariaLabel = "Time", className, onChang
 
   return (
     <div className={`inline-flex h-8 min-h-8 w-[8.5rem] min-w-0 max-w-full items-center gap-1 rounded-[0.9rem] border border-[#e6e8f5] bg-white px-2.5 py-1.5 text-[13px] text-[#2f294a] dark:border-white/10 dark:bg-white/[0.04] dark:text-white ${className ?? ""}`}>
-      {readOnly ? <span aria-label={ariaLabel} aria-readonly="true">{formatHealthStandardTime(value) ?? "Time unavailable"}</span> : <>
+      {readOnly ? <span aria-label={ariaLabel} aria-readonly="true">{readOnlyPlaceholder ?? formatHealthStandardTime(value) ?? "Time unavailable"}</span> : <>
         <input
           aria-label={`${ariaLabel} hour`}
           className="w-7 min-w-0 bg-transparent text-center outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80"

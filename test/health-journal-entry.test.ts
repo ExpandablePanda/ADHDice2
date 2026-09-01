@@ -239,14 +239,17 @@ test("Journal display uses explicit standard 12-hour time and distinguishes Jour
   assert.doesNotMatch(journalSource, /<HealthMealDateTimeInput[^>]+type="time"/);
 });
 
-test("Journal metadata keeps compact date sizing and Logged Time read-only", () => {
+test("Journal metadata keeps compact date sizing and saved/unsaved Logged Time read-only", () => {
   assert.match(healthPageSource, /<HealthMealDateTimeInput className="min-w-\[8\.5rem\] justify-start"/);
   assert.match(healthPageSource, /<span aria-label="Logged Date" aria-readonly="true" className=\{`\$\{HEALTH_COMPACT_CONTROL_CLASS\} inline-flex min-w-\[8\.5rem\] items-center justify-start max-sm:!h-\[32px\] max-sm:!min-h-\[32px\]`\}>/);
   assert.match(healthPageSource, /<span className="text-\[13px\] leading-normal max-sm:!text-\[16px\] max-sm:!leading-normal">\{selectedJournalEntry \? formatHealthJournalMetadataDate\(selectedJournalEntry\.created_at\)/);
+  assert.match(healthPageSource, /formatHealthJournalMetadataDate\(selectedJournalEntry\.created_at\) \?\? "Date unavailable" : "When saved"/);
   assert.match(healthPageSource, /<HealthStandardTimeInput ariaLabel="Logged Time" readOnly value=\{formatTimeInput\(selectedJournalEntry\.created_at\)\} \/>/);
+  assert.match(healthPageSource, /<HealthStandardTimeInput ariaLabel="Logged Time" readOnly readOnlyPlaceholder="When saved" value="" \/>/);
   assert.match(healthPageSource, /formatHealthJournalMetadataDate\(selectedJournalEntry\.created_at\)/);
   assert.match(healthPageSource, /formatTimeInput\(selectedJournalEntry\.created_at\)/);
-  assert.match(standardTimeInputSource, /readOnly \? <span aria-label=\{ariaLabel\} aria-readonly="true">\{formatHealthStandardTime\(value\)/);
+  assert.match(standardTimeInputSource, /readOnlyPlaceholder\?: string/);
+  assert.match(standardTimeInputSource, /readOnly \? <span aria-label=\{ariaLabel\} aria-readonly="true">\{readOnlyPlaceholder \?\? formatHealthStandardTime\(value\)/);
   assert.match(standardTimeInputSource, /<option value="PM">PM<\/option>/);
 });
 

@@ -3261,7 +3261,7 @@ export function HealthPage({
                         <span aria-label="Logged Date" aria-readonly="true" className={`${HEALTH_COMPACT_CONTROL_CLASS} inline-flex min-w-[8.5rem] items-center justify-start max-sm:!h-[32px] max-sm:!min-h-[32px]`}><span className="text-[13px] leading-normal max-sm:!text-[16px] max-sm:!leading-normal">{selectedJournalEntry ? formatHealthJournalMetadataDate(selectedJournalEntry.created_at) ?? "Date unavailable" : "When saved"}</span></span>
                       </Field>
                       <Field label="Logged Time">
-                        {selectedJournalEntry ? <HealthStandardTimeInput ariaLabel="Logged Time" readOnly value={formatTimeInput(selectedJournalEntry.created_at)} /> : <span className={`${HEALTH_COMPACT_CONTROL_CLASS} inline-flex items-center justify-start max-sm:!h-[32px] max-sm:!min-h-[32px]`} aria-readonly="true">When saved</span>}
+                        {selectedJournalEntry ? <HealthStandardTimeInput ariaLabel="Logged Time" readOnly value={formatTimeInput(selectedJournalEntry.created_at)} /> : <HealthStandardTimeInput ariaLabel="Logged Time" readOnly readOnlyPlaceholder="When saved" value="" />}
                       </Field>
                     </div> : null}
                   </div>
