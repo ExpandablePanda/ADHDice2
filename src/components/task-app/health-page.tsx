@@ -3121,9 +3121,12 @@ export function HealthPage({
                   >
                     <History aria-hidden="true" />
                   </AdhdIconButton>
-                  <AdhdChip onClick={() => setJournalWorkspaceMode("split-history-left")} selected={journalWorkspaceMode === "split-history-left"} type="button">History Left</AdhdChip>
-                  <AdhdChip onClick={() => setJournalWorkspaceMode("split-history-right")} selected={journalWorkspaceMode === "split-history-right"} type="button">History Right</AdhdChip>
+                  <div className="hidden items-center gap-1 md:flex">
+                    <AdhdChip onClick={() => setJournalWorkspaceMode("split-history-left")} selected={journalWorkspaceMode === "split-history-left"} type="button">History Left</AdhdChip>
+                    <AdhdChip onClick={() => setJournalWorkspaceMode("split-history-right")} selected={journalWorkspaceMode === "split-history-right"} type="button">History Right</AdhdChip>
+                  </div>
                   {journalWorkspaceMode !== "entry" ? <AdhdChip onClick={() => setJournalWorkspaceMode("entry")} type="button">Single Pane</AdhdChip> : null}
+                  {journalWorkspaceMode === "history" ? <AdhdChip onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
                 </div>
               )}
               icon={<HeartPulse />}

@@ -5,13 +5,22 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.43`.
+- Current working app version: `7.12.44`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.44 Journal workspace QA corrections
+
+Journal workspace split controls (`History Left` and `History Right`) are now
+desktop-only at `md+`; narrow screens retain the normal History single-pane
+action. History-only mode now exposes `+ New Entry` in the workspace header and
+uses the existing `startNewJournalEntry()` authority, while split-mode Entry
+actions continue to preserve split mode. No SQL, schema, or migration changes
+were made.
 
 ## 2026-09-01 7.12.43 Journal Feeling ownership, time display, and workspace
 

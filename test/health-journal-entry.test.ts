@@ -584,3 +584,21 @@ test("7.12.42 hardens Journal occurrence reruns and native kind integrity", () =
   assert.match(saveJournalSource, /\.from\("adhdice_health_journal_signal_occurrences"\)[\s\S]*?\.upsert\(journalSignalOccurrenceRows/);
   assert.match(saveJournalSource, /\.from\("adhdice_health_symptom_entries"\)[\s\S]*?\.upsert\(occurrenceRows/);
 });
+
+test("7.12.44 keeps split controls desktop-only and starts History entries through the existing authority", () => {
+  const journalHeaderSource = healthPageSource.slice(
+    healthPageSource.indexOf("headerActions={("),
+    healthPageSource.indexOf("icon={<HeartPulse />}", healthPageSource.indexOf("headerActions={(")),
+  );
+  const journalEditorSource = healthPageSource.slice(
+    healthPageSource.indexOf("{journalWorkspaceMode !== \"history\" ?"),
+    healthPageSource.indexOf("{journalWorkspaceMode !== \"entry\" ?", healthPageSource.indexOf("{journalWorkspaceMode !== \"history\" ?")),
+  );
+
+  assert.match(journalHeaderSource, /<AdhdIconButton[\s\S]*?aria-label=\{journalWorkspaceMode === "history" \? "Return to Journal Entry" : "View Journal History"\}/);
+  assert.match(journalHeaderSource, /<div className="hidden items-center gap-1 md:flex">\s*<AdhdChip[\s\S]*?>History Left<\/AdhdChip>\s*<AdhdChip[\s\S]*?>History Right<\/AdhdChip>\s*<\/div>/);
+  assert.match(journalHeaderSource, /journalWorkspaceMode === "history" \? <AdhdChip onClick=\{startNewJournalEntry\} type="button">\+ New Entry<\/AdhdChip>/);
+  assert.match(healthPageSource, /function startNewJournalEntry\(\) \{\s*if \(journalWorkspaceMode === "history"\) \{\s*setJournalWorkspaceMode\("entry"\);/);
+  assert.match(journalEditorSource, /<AdhdChip onClick=\{startNewJournalEntry\} type="button">\+ New Entry<\/AdhdChip>/);
+  assert.match(healthPageSource, /journalWorkspaceMode === "split-history-left" \|\| journalWorkspaceMode === "split-history-right"/);
+});
