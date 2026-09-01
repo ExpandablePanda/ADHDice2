@@ -19,14 +19,14 @@ import { HEALTH_WORKOUT_TYPES, normalizeHealthWorkoutOptionValues } from "@/lib/
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
 
-export type HealthTab = "Today" | "Food" | "Water" | "Fitness" | "Journal" | "Weight" | "Sleep" | "Insights" | "Awards";
+export type HealthTab = "Today" | "Food" | "Water" | "Fitness" | "Journal" | "Weight" | "Sleep" | "Insights" | "Awards" | "Settings";
 export type HealthMealSlot = HealthMealEntry["meal_slot"];
 export type WeightUnit = HealthProfile["preferred_weight_unit"];
 export type HealthAchievementCode = HealthAchievementAward["achievement_code"];
 export type HealthReminderTemplateKey = "daily_check_in" | "meal_log" | "weigh_in" | "movement_intention";
 export type HealthSleepKind = "CPAP Sleep" | "CPAP Nap" | "Sleep" | "Nap";
 
-export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards"];
+export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards", "Settings"];
 export const HEALTH_MEAL_SLOTS: HealthMealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
 export const HEALTH_SLEEP_KINDS: readonly HealthSleepKind[] = ["CPAP Sleep", "CPAP Nap", "Sleep", "Nap"];
 export const HEALTH_SCALE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;

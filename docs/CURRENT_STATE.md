@@ -5,13 +5,20 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.50`.
+- Current working app version: `7.12.51`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.51 Health Settings tab
+
+Health Settings is now the final Health tab. The existing Health Settings
+panel moved intact into that tab and no longer renders beneath every Health
+section. The existing `profileDraft` and `saveProfile` profile persistence
+authority remains unchanged. No SQL or schema changes were made.
 
 ## 2026-09-01 7.12.48 Journal QA and Feeling Trends UX
 

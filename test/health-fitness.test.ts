@@ -57,8 +57,8 @@ function workout(overrides: Partial<HealthWorkout> = {}): HealthWorkout {
   };
 }
 
-test("Fitness is a Health tab after Water", () => {
-  assert.deepEqual(HEALTH_TABS, ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards"]);
+test("Fitness is a Health tab after Water and Settings is final", () => {
+  assert.deepEqual(HEALTH_TABS, ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards", "Settings"]);
 });
 
 test("Standing is a workout category without changing the existing types", () => {
@@ -534,12 +534,12 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.12.8 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.12.8");
-  assert.equal(packageLock.version, "7.12.8");
-  assert.equal(packageLock.packages[""].version, "7.12.8");
-  assert.match(appVersionSource, /"version":\s*"7\.12\.8"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.8"/);
+test("all 7.12.51 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.12.51");
+  assert.equal(packageLock.version, "7.12.51");
+  assert.equal(packageLock.packages[""].version, "7.12.51");
+  assert.match(appVersionSource, /"version":\s*"7\.12\.51"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.51"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
-  assert.match(currentStateSource, /Current working app version: `7\.12\.8`/);
+  assert.match(currentStateSource, /Current working app version: `7\.12\.51`/);
 });

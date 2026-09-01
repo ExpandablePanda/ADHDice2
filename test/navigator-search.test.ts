@@ -4,7 +4,7 @@ import test from "node:test";
 import { createNavigatorSearchTargets, searchNavigatorTargets, type NavigatorSearchTarget } from "@/lib/navigator-search";
 
 const dockItems = ["Home", "Tasks", "Focus", "Health", "Roll", "Achievements", "Games", "Stats", "Notes", "Settings", "Test"] as const;
-const healthTabs = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards"] as const;
+const healthTabs = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards", "Settings"] as const;
 const targets = createNavigatorSearchTargets(dockItems, healthTabs);
 const inlineSource = readFileSync(new URL("../src/components/task-app/navigator-search-inline.tsx", import.meta.url), "utf8");
 const dockSource = readFileSync(new URL("../src/components/task-app/bottom-dock.tsx", import.meta.url), "utf8");

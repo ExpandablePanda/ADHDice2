@@ -4473,62 +4473,64 @@ export function HealthPage({
         </div>
       ) : null}
 
-      <div className="mt-8">
-        <HealthPanel icon={<Target />} subtitle="Health settings">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Field label="Weight unit">
-            <select className="health-input" onChange={(event) => handleWeightUnitChange(event.target.value as HealthProfile["preferred_weight_unit"])} value={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit}>
-              <option value="lb">Pounds</option>
-              <option value="kg">Kilograms</option>
-            </select>
-          </Field>
-          <Field label="Calorie goal">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, calorie_goal: event.target.value as unknown as number }))} value={String(profileDraft.calorie_goal ?? "")} />
-          </Field>
-          <Field label="Protein goal (g)">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, protein_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.protein_goal_grams ?? "")} />
-          </Field>
-          <Field label="Carbs goal (g)">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, carbs_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.carbs_goal_grams ?? "")} />
-          </Field>
-          <Field label="Fat goal (g)">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, fat_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.fat_goal_grams ?? "")} />
-          </Field>
-          <Field label="Move goal (kcal)">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, movement_goal_calories: event.target.value as unknown as number }))} value={String(profileDraft.movement_goal_calories ?? "")} />
-          </Field>
-          <Field label="Move goal (min)">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, movement_goal_minutes: event.target.value as unknown as number }))} value={String(profileDraft.movement_goal_minutes ?? "")} />
-          </Field>
-          <Field label="Sleep goal">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="grid gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Hours</span>
-                <input className="health-input" inputMode="numeric" onChange={(event) => handleSleepGoalHoursChange(event.target.value)} value={sleepGoalHours} />
-              </label>
-              <label className="grid gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Minutes</span>
-                <input className="health-input" inputMode="numeric" max={59} onChange={(event) => handleSleepGoalMinutesChange(event.target.value)} value={sleepGoalRemainingMinutes} />
-              </label>
+      {activeTab === "Settings" ? (
+        <div aria-labelledby="health-tab-settings" className="mt-6" id={getHealthTabPanelId("Settings")} role="tabpanel">
+          <HealthPanel icon={<Target />} subtitle="Health settings">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Field label="Weight unit">
+              <select className="health-input" onChange={(event) => handleWeightUnitChange(event.target.value as HealthProfile["preferred_weight_unit"])} value={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit}>
+                <option value="lb">Pounds</option>
+                <option value="kg">Kilograms</option>
+              </select>
+            </Field>
+            <Field label="Calorie goal">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, calorie_goal: event.target.value as unknown as number }))} value={String(profileDraft.calorie_goal ?? "")} />
+            </Field>
+            <Field label="Protein goal (g)">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, protein_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.protein_goal_grams ?? "")} />
+            </Field>
+            <Field label="Carbs goal (g)">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, carbs_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.carbs_goal_grams ?? "")} />
+            </Field>
+            <Field label="Fat goal (g)">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, fat_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.fat_goal_grams ?? "")} />
+            </Field>
+            <Field label="Move goal (kcal)">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, movement_goal_calories: event.target.value as unknown as number }))} value={String(profileDraft.movement_goal_calories ?? "")} />
+            </Field>
+            <Field label="Move goal (min)">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, movement_goal_minutes: event.target.value as unknown as number }))} value={String(profileDraft.movement_goal_minutes ?? "")} />
+            </Field>
+            <Field label="Sleep goal">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Hours</span>
+                  <input className="health-input" inputMode="numeric" onChange={(event) => handleSleepGoalHoursChange(event.target.value)} value={sleepGoalHours} />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Minutes</span>
+                  <input className="health-input" inputMode="numeric" max={59} onChange={(event) => handleSleepGoalMinutesChange(event.target.value)} value={sleepGoalRemainingMinutes} />
+                </label>
+              </div>
+            </Field>
+            <Field label={`Target weight (${profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit})`}>
+              <input
+                className="health-input"
+                inputMode="decimal"
+                onChange={(event) => setTargetWeightDraft(event.target.value)}
+                value={targetWeightDraft}
+              />
+            </Field>
             </div>
-          </Field>
-          <Field label={`Target weight (${profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit})`}>
-            <input
-              className="health-input"
-              inputMode="decimal"
-              onChange={(event) => setTargetWeightDraft(event.target.value)}
-              value={targetWeightDraft}
-            />
-          </Field>
-          </div>
-          <div className="mt-4 flex justify-end">
-            <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveProfile(); }} type="button">
-              Save Goals
-            </button>
-          </div>
-          <WeightForecastCard forecast={weightForecast} unit={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit} />
-        </HealthPanel>
-      </div>
+            <div className="mt-4 flex justify-end">
+              <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveProfile(); }} type="button">
+                Save Goals
+              </button>
+            </div>
+            <WeightForecastCard forecast={weightForecast} unit={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit} />
+          </HealthPanel>
+        </div>
+      ) : null}
     </section>
   );
 }
