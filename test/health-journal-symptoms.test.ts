@@ -14,8 +14,11 @@ import {
   ALL_HEALTH_FEELINGS_VALUE,
   buildHealthFeelingTrendModel,
   getHealthFeelingTrendPoints,
+  getHealthFeelingTrendSelectionSummary,
   getHealthFeelingTrendPointsByDefinition,
   HEALTH_FEELING_TREND_RANGES,
+  toggleHealthFeelingTrendSelection,
+  type FeelingTrendDefinition,
 } from "../src/lib/health-feeling-trends.ts";
 import {
   ALL_HEALTH_SYMPTOMS_VALUE,
@@ -116,6 +119,10 @@ function symptomDefinition(
     updated_at: timestamp,
     user_id: "user-1",
   };
+}
+
+function feelingDefinition(key: string, kind: FeelingTrendDefinition["kind"], name: string): FeelingTrendDefinition {
+  return { archived: false, color: "#6f57f6", key, kind, name, scaleLabels: [] };
 }
 
 test("symptom colors use the approved palette and safely normalize legacy values", () => {
@@ -441,6 +448,24 @@ test("Journal Feeling Trends graph owned Symptoms, Emotions, and Other Feelings 
   ]);
 });
 
+test("Feeling Trend selections support all, category, individual, and cross-category blends", () => {
+  const definitions = [
+    feelingDefinition("symptom:back-pain", "symptom", "Back Pain"),
+    feelingDefinition("symptom:headache", "symptom", "Headache"),
+    feelingDefinition("signal:anxiety", "emotion", "Anxiety"),
+    feelingDefinition("signal:motivation", "other", "Motivation"),
+  ];
+  const all = new Set(definitions.map((definition) => definition.key));
+  const symptoms = new Set(["symptom:back-pain", "symptom:headache"]);
+
+  assert.deepEqual([...toggleHealthFeelingTrendSelection(new Set(), [...symptoms])], [...symptoms]);
+  assert.deepEqual([...toggleHealthFeelingTrendSelection(symptoms, ["symptom:back-pain"])], ["symptom:headache"]);
+  assert.deepEqual([...toggleHealthFeelingTrendSelection(new Set(["symptom:back-pain"]), ["signal:anxiety", "signal:motivation"])], ["symptom:back-pain", "signal:anxiety", "signal:motivation"]);
+  assert.equal(getHealthFeelingTrendSelectionSummary(definitions, all), "All Feelings");
+  assert.equal(getHealthFeelingTrendSelectionSummary(definitions, new Set(["symptom:back-pain", "signal:anxiety"])), "Back Pain + Anxiety");
+  assert.equal(getHealthFeelingTrendSelectionSummary(definitions, new Set(["symptom:back-pain", "symptom:headache", "signal:anxiety"])), "3 Feelings");
+});
+
 test("Journal Feeling Trends adapt into the shared chart with a fixed 1 to 10 occurrence scale", () => {
   assert.match(healthPageSource, /ActivityLineChartCard/);
   assert.match(healthPageSource, /buildHealthFeelingTrendModel/);
@@ -448,14 +473,22 @@ test("Journal Feeling Trends adapt into the shared chart with a fixed 1 to 10 oc
   assert.match(healthPageSource, /HealthStandardTimeInput/);
   assert.match(healthPageSource, /formatHealthStandardTime/);
   assert.match(healthPageSource, /summaryLabel,/);
-  assert.match(healthPageSource, /buildHealthFeelingTrendSeries\(selectedFeelingTrend, selectedFeelingTrendPoints, "Latest"\)/);
   assert.match(healthPageSource, /buildHealthFeelingTrendSeries\(definition, points, definition\.name\)/);
-  assert.match(healthPageSource, /!selectedFeelingTrend \|\| selectedFeelingTrendPoints\.length === 0/);
-  assert.match(healthPageSource, /label: "All Feelings", value: ALL_HEALTH_FEELINGS_VALUE/);
-  assert.match(healthPageSource, /getHealthFeelingTrendPointsByDefinition/);
-  assert.match(healthPageSource, /title=\{isAllFeelingsTrendSelected \? "All Feelings"/);
-  assert.match(healthPageSource, /No Feeling Occurrence history is available to graph yet\./);
-  assert.match(healthPageSource, /No Feeling Occurrences in the selected range\./);
+  assert.match(healthPageSource, /selectedFeelingTrendPointsByDefinition/);
+  assert.match(healthPageSource, /filter\(\(\{ points \}\) => points\.length > 0\)/);
+  assert.match(healthPageSource, /<FeelingTrendSelector/);
+  assert.match(healthPageSource, /selectedFeelingTrendDefinitionKeys/);
+  assert.match(healthPageSource, /useState<Set<string>>\(\(\) => new Set\(\)\)/);
+  assert.match(healthPageSource, /All Feelings/);
+  assert.match(healthPageSource, /All Symptoms/);
+  assert.match(healthPageSource, /All Emotions/);
+  assert.match(healthPageSource, /All Other Feelings/);
+  assert.match(healthPageSource, /type="checkbox"/);
+  assert.match(healthPageSource, /toggleHealthFeelingTrendSelection\(current, keys\)/);
+  assert.match(healthPageSource, /new Set\(availableKeys\)/);
+  assert.match(healthPageSource, /No occurrences logged for/);
+  assert.match(healthPageSource, /No selected Feeling Occurrences in the selected range\./);
+  assert.doesNotMatch(healthPageSource, /selectedFeelingTrendKey/);
   assert.match(healthPageSource, /color: definition\.color/);
   assert.doesNotMatch(healthPageSource, /totalValue: selectedFeelingTrendPoints\.reduce/);
   assert.match(healthPageSource, /xDomainKey: point\.entryDate/);
@@ -738,7 +771,8 @@ test("Journal Feeling pickers expose palette actions and the trend series uses c
   assert.match(paletteSource, /onClick=\{\(\) => onSetColor\(paletteColor\)\}/);
   assert.doesNotMatch(paletteSource, /chooseOption\(|setSymptomDraft|setSelectedSymptomTrendId/);
   assert.match(healthPageSource, /ariaLabel="Occurrence Feeling"/);
-  assert.match(healthPageSource, /ariaLabel="Trend Feeling"[\s\S]*?options=\{feelingTrendOptions}/);
+  assert.match(healthPageSource, /aria-label="Trend Feelings"/);
+  assert.match(healthPageSource, /aria-haspopup="dialog"/);
   assert.doesNotMatch(healthPageSource, /color: "#7c5cff"/);
   assert.doesNotMatch(healthPageSource, /NEW_SYMPTOM_VALUE|trailingAction/);
 });

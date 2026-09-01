@@ -5,13 +5,30 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.47`.
+- Current working app version: `7.12.48`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.48 Journal QA and Feeling Trends UX
+
+Journal History cards now keep Logged metadata collapsed independently per
+entry, with `created_at` as the immutable Logged timestamp authority and
+`MM/DD/YYYY` plus 12-hour AM/PM display when expanded. Core ratings and custom
+Daily Template Feelings now flow through one responsive grid: one column on
+mobile, two at medium widths, and three in the normal wide desktop Journal
+pane; split mode remains at two columns for readability.
+
+Feeling Trends now uses a grouped multi-select for All Feelings, category-all
+groups, and individual cross-category blends. Selected no-history Feelings stay
+selectable without zero-filled series, while active and archived-with-history
+definition visibility remains unchanged. Successful Journal Save and Update
+actions reuse `startNewJournalEntry()` to open a fresh entry while preserving
+the selected Journal date and split workspace mode. No SQL, migration, or
+schema changes were made.
 
 ## 2026-09-01 7.12.45 Journal UX correction
 

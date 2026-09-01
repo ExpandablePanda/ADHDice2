@@ -45,6 +45,39 @@ export type HealthFeelingTrendModel = {
   points: FeelingTrendPoint[];
 };
 
+export function toggleHealthFeelingTrendSelection(
+  selectedKeys: ReadonlySet<string>,
+  definitionKeys: readonly string[],
+) {
+  const next = new Set(selectedKeys);
+  const shouldSelect = definitionKeys.some((key) => !next.has(key));
+  definitionKeys.forEach((key) => {
+    if (shouldSelect) {
+      next.add(key);
+    } else {
+      next.delete(key);
+    }
+  });
+  return next;
+}
+
+export function getHealthFeelingTrendSelectionSummary(
+  definitions: readonly FeelingTrendDefinition[],
+  selectedKeys: ReadonlySet<string>,
+) {
+  const selectedDefinitions = definitions.filter((definition) => selectedKeys.has(definition.key));
+  if (definitions.length > 0 && selectedDefinitions.length === definitions.length) {
+    return "All Feelings";
+  }
+  if (selectedDefinitions.length === 0) {
+    return "Select Feelings";
+  }
+  if (selectedDefinitions.length <= 2) {
+    return selectedDefinitions.map((definition) => `${definition.name}${definition.archived ? " (archived)" : ""}`).join(" + ");
+  }
+  return `${selectedDefinitions.length} Feelings`;
+}
+
 function sortFeelingTrendPoints(left: FeelingTrendPoint, right: FeelingTrendPoint) {
   return left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id);
 }

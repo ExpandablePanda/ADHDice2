@@ -89,7 +89,6 @@ import {
   formatHealthMealSummary,
   formatMealLoggedTime,
   formatHealthStandardTime,
-  formatHealthTimestampDate,
   formatHealthTimestampTime,
   formatHealthNutritionNumber,
   formatHealthSleepDuration,
@@ -126,13 +125,14 @@ import {
   type HealthTab,
 } from "@/lib/health-utils";
 import {
-  ALL_HEALTH_FEELINGS_VALUE,
   buildHealthFeelingTrendModel,
   getHealthFeelingTrendPoints,
-  getHealthFeelingTrendPointsByDefinition,
+  getHealthFeelingTrendSelectionSummary,
   HEALTH_FEELING_TREND_RANGES,
+  toggleHealthFeelingTrendSelection,
   type FeelingTrendDefinition,
   type FeelingTrendPoint,
+  type HealthFeelingTrendKind,
   type HealthFeelingTrendRange,
 } from "@/lib/health-feeling-trends";
 import {
@@ -630,9 +630,132 @@ function formatJournalHistoryOccurrenceTime(timestamp: string) {
 }
 
 function formatJournalLoggedAt(timestamp: string) {
-  const date = formatHealthTimestampDate(timestamp);
+  const date = formatHealthJournalMetadataDate(timestamp);
   const time = formatHealthTimestampTime(timestamp);
   return date && time ? `${date} · ${time}` : "time unavailable";
+}
+
+const FEELING_TREND_GROUPS: ReadonlyArray<{
+  allLabel: string;
+  heading: string;
+  kind: HealthFeelingTrendKind;
+}> = [
+  { allLabel: "All Symptoms", heading: "Symptoms", kind: "symptom" },
+  { allLabel: "All Emotions", heading: "Emotions", kind: "emotion" },
+  { allLabel: "All Other Feelings", heading: "Other Feelings", kind: "other" },
+];
+
+function FeelingTrendSelector({
+  definitions,
+  disabled,
+  onToggleKeys,
+  selectedKeys,
+}: {
+  definitions: readonly FeelingTrendDefinition[];
+  disabled: boolean;
+  onToggleKeys: (keys: readonly string[]) => void;
+  selectedKeys: ReadonlySet<string>;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selectorId = "feeling-trend-selector";
+  const selectionSummary = getHealthFeelingTrendSelectionSummary(definitions, selectedKeys);
+
+  useEffect(() => {
+    function handleOutsidePointerDown(event: globalThis.PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handleOutsidePointerDown);
+    return () => document.removeEventListener("pointerdown", handleOutsidePointerDown);
+  }, []);
+
+  function renderCheckbox(label: string, keys: readonly string[], key: string) {
+    const isChecked = keys.length > 0 && keys.every((definitionKey) => selectedKeys.has(definitionKey));
+    return (
+      <label className="flex min-w-0 cursor-pointer items-start gap-2 rounded-[0.8rem] px-2 py-1.5 text-left text-[13px] leading-5 text-[#5f5876] transition hover:bg-[#f7f5fb] dark:text-white/75 dark:hover:bg-white/8" key={key}>
+        <input
+          aria-label={label}
+          checked={isChecked}
+          className="mt-1 h-3.5 w-3.5 shrink-0 accent-[#6f57f6]"
+          onChange={() => onToggleKeys(keys)}
+          type="checkbox"
+        />
+        <span className="min-w-0 break-words whitespace-normal">{label}</span>
+      </label>
+    );
+  }
+
+  return (
+    <div
+      className="relative w-full"
+      onBlur={(event) => {
+        if (event.relatedTarget && !rootRef.current?.contains(event.relatedTarget as Node)) {
+          setIsOpen(false);
+        }
+      }}
+      ref={rootRef}
+    >
+      <button
+        aria-controls={isOpen ? selectorId : undefined}
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+        aria-label="Trend Feelings"
+        className={`${HEALTH_COMPACT_CONTROL_CLASS} flex items-center justify-between gap-2 text-left`}
+        disabled={disabled}
+        onClick={() => setIsOpen((open) => !open)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setIsOpen(false);
+          }
+        }}
+        type="button"
+      >
+        <span className="min-w-0 flex-1 truncate">{selectionSummary}</span>
+        <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${isOpen ? "rotate-180" : ""}`} />
+      </button>
+      {isOpen ? (
+        <AdhdDropdownPanel
+          aria-label="Feeling trend selector"
+          className="adhdice-scrollbar max-h-[min(32rem,calc(100dvh-2rem))] overflow-y-auto"
+          id={selectorId}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setIsOpen(false);
+            }
+          }}
+          role="dialog"
+          widthClassName="w-[min(24rem,calc(100vw-2rem))]"
+        >
+          <div className="grid gap-3">
+            <section aria-labelledby={`${selectorId}-all-heading`} className="grid gap-1">
+              <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40" id={`${selectorId}-all-heading`}>All</p>
+              {renderCheckbox("All Feelings", definitions.map((definition) => definition.key), `${selectorId}-all`)}
+            </section>
+            {FEELING_TREND_GROUPS.map((group) => {
+              const groupDefinitions = definitions.filter((definition) => definition.kind === group.kind);
+              if (groupDefinitions.length === 0) return null;
+              return (
+                <section aria-labelledby={`${selectorId}-${group.kind}-heading`} className="grid gap-1" key={group.kind}>
+                  <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40" id={`${selectorId}-${group.kind}-heading`}>{group.heading}</p>
+                  {renderCheckbox(group.allLabel, groupDefinitions.map((definition) => definition.key), `${selectorId}-${group.kind}-all`)}
+                  {groupDefinitions.map((definition) => renderCheckbox(
+                    `${definition.name}${definition.archived ? " (archived)" : ""}`,
+                    [definition.key],
+                    `${selectorId}-${definition.key}`,
+                  ))}
+                </section>
+              );
+            })}
+          </div>
+        </AdhdDropdownPanel>
+      ) : null}
+    </div>
+  );
 }
 
 function JournalHistoryTagPopover({
@@ -1207,7 +1330,8 @@ export function HealthPage({
   const [journalWorkspaceMode, setJournalWorkspaceMode] = useState<JournalWorkspaceMode>("entry");
   const [isJournalHistoryMenuOpen, setIsJournalHistoryMenuOpen] = useState(false);
   const [isJournalLoggedMetadataOpen, setIsJournalLoggedMetadataOpen] = useState(false);
-  const [selectedFeelingTrendKey, setSelectedFeelingTrendKey] = useState("");
+  const [expandedJournalHistoryEntryIds, setExpandedJournalHistoryEntryIds] = useState<Set<string>>(() => new Set());
+  const [selectedFeelingTrendDefinitionKeys, setSelectedFeelingTrendDefinitionKeys] = useState<Set<string>>(() => new Set());
   const [openSymptomColorPickerKey, setOpenSymptomColorPickerKey] = useState<string | null>(null);
   const [isSymptomCreateOpen, setIsSymptomCreateOpen] = useState(false);
   const [isCreatingSymptom, setIsCreatingSymptom] = useState(false);
@@ -1239,6 +1363,8 @@ export function HealthPage({
   const journalOccurrenceSaveStatusRef = useRef<"idle" | "saving" | "succeeded">("idle");
   const journalHistoryLongPressTimerRef = useRef<number | null>(null);
   const journalHistoryLongPressFiredRef = useRef(false);
+  const previousFeelingTrendDefinitionKeysRef = useRef<string[]>([]);
+  const hasInitializedFeelingTrendSelectionRef = useRef(false);
   const today = todayHealthDate();
 
   useEffect(() => {
@@ -1496,62 +1622,65 @@ export function HealthPage({
     () => buildHealthFeelingTrendModel({ journalSignalOccurrences, journalSignals, symptomEntries, symptoms }),
     [journalSignalOccurrences, journalSignals, symptomEntries, symptoms],
   );
-  const feelingTrendOptions = [
-    { label: "All Feelings", value: ALL_HEALTH_FEELINGS_VALUE },
-    ...(feelingTrendModel.definitions.length > 0
-      ? feelingTrendModel.definitions.map((definition) => ({
-        label: definition.archived ? `${definition.name} (archived)` : definition.name,
-        value: definition.key,
-      }))
-      : [{ label: "No Feeling history available", value: "" }]),
-  ];
-  const defaultFeelingTrendKey = useMemo(
-    () => isLoading ? "" : feelingTrendModel.definitions[0]?.key ?? "",
-    [feelingTrendModel.definitions, isLoading],
+  const feelingTrendDefinitionKeys = useMemo(
+    () => feelingTrendModel.definitions.map((definition) => definition.key),
+    [feelingTrendModel.definitions],
   );
-  const isAllFeelingsTrendSelected = selectedFeelingTrendKey === ALL_HEALTH_FEELINGS_VALUE;
-  const selectedFeelingTrendKeyForView = useMemo(
-    () => isAllFeelingsTrendSelected
-      ? ALL_HEALTH_FEELINGS_VALUE
-      : feelingTrendModel.definitions.some((definition) => definition.key === selectedFeelingTrendKey)
-      ? selectedFeelingTrendKey
-      : defaultFeelingTrendKey,
-    [defaultFeelingTrendKey, feelingTrendModel.definitions, isAllFeelingsTrendSelected, selectedFeelingTrendKey],
+  useEffect(() => {
+    const availableKeys = new Set(feelingTrendDefinitionKeys);
+    const previousKeys = previousFeelingTrendDefinitionKeysRef.current;
+    setSelectedFeelingTrendDefinitionKeys((current) => {
+      if (!hasInitializedFeelingTrendSelectionRef.current && availableKeys.size > 0) {
+        hasInitializedFeelingTrendSelectionRef.current = true;
+        return new Set(availableKeys);
+      }
+      const wasShowingAllPreviousDefinitions = previousKeys.length > 0 && previousKeys.every((key) => current.has(key));
+      if (wasShowingAllPreviousDefinitions) {
+        return new Set(availableKeys);
+      }
+      const validKeys = new Set([...current].filter((key) => availableKeys.has(key)));
+      return validKeys.size === current.size ? current : validKeys;
+    });
+    previousFeelingTrendDefinitionKeysRef.current = feelingTrendDefinitionKeys;
+  }, [feelingTrendDefinitionKeys]);
+  const selectedFeelingTrendDefinitions = useMemo(
+    () => feelingTrendModel.definitions.filter((definition) => selectedFeelingTrendDefinitionKeys.has(definition.key)),
+    [feelingTrendModel.definitions, selectedFeelingTrendDefinitionKeys],
   );
-  const selectedFeelingTrend = useMemo(
-    () => feelingTrendModel.definitions.find((definition) => definition.key === selectedFeelingTrendKeyForView) ?? null,
-    [feelingTrendModel.definitions, selectedFeelingTrendKeyForView],
+  const feelingTrendSelectionSummary = useMemo(
+    () => getHealthFeelingTrendSelectionSummary(feelingTrendModel.definitions, selectedFeelingTrendDefinitionKeys),
+    [feelingTrendModel.definitions, selectedFeelingTrendDefinitionKeys],
   );
-  const selectedFeelingTrendPoints = useMemo(
-    () => isAllFeelingsTrendSelected ? [] : getHealthFeelingTrendPoints({
-      asOfDate: today,
-      feelingKey: selectedFeelingTrendKeyForView,
-      model: feelingTrendModel,
-      range: feelingTrendRange,
-    }),
-    [feelingTrendModel, feelingTrendRange, isAllFeelingsTrendSelected, selectedFeelingTrendKeyForView, today],
+  const isAllFeelingsTrendSelected = feelingTrendModel.definitions.length > 0
+    && selectedFeelingTrendDefinitions.length === feelingTrendModel.definitions.length;
+  const selectedFeelingTrendPointsByDefinition = useMemo(
+    () => selectedFeelingTrendDefinitions.map((definition) => ({
+      definition,
+      points: getHealthFeelingTrendPoints({ asOfDate: today, feelingKey: definition.key, model: feelingTrendModel, range: feelingTrendRange }),
+    })),
+    [feelingTrendModel, feelingTrendRange, selectedFeelingTrendDefinitions, today],
   );
-  const selectedFeelingTrendHistoryPoints = useMemo(
-    () => !isAllFeelingsTrendSelected && selectedFeelingTrendKeyForView
-      ? getHealthFeelingTrendPoints({ asOfDate: today, feelingKey: selectedFeelingTrendKeyForView, model: feelingTrendModel, range: "All" })
-      : [],
-    [feelingTrendModel, isAllFeelingsTrendSelected, selectedFeelingTrendKeyForView, today],
+  const selectedFeelingTrendHistoryExists = useMemo(
+    () => selectedFeelingTrendDefinitions.some((definition) => feelingTrendModel.points.some((point) => point.feelingKey === definition.key)),
+    [feelingTrendModel.points, selectedFeelingTrendDefinitions],
   );
-  const allFeelingTrendPointsByDefinition = useMemo(
-    () => isAllFeelingsTrendSelected
-      ? getHealthFeelingTrendPointsByDefinition({ asOfDate: today, model: feelingTrendModel, range: feelingTrendRange })
-      : [],
-    [feelingTrendModel, feelingTrendRange, isAllFeelingsTrendSelected, today],
-  );
-  const allFeelingTrendHistoryExists = feelingTrendModel.points.length > 0;
   const feelingTrendChartSeries = useMemo<NumericLineChartSeries[]>(() => {
-    if (isAllFeelingsTrendSelected) {
-      return allFeelingTrendPointsByDefinition.map(({ definition, points }) =>
-        buildHealthFeelingTrendSeries(definition, points, definition.name));
-    }
-    if (!selectedFeelingTrend || selectedFeelingTrendPoints.length === 0) return [];
-    return [buildHealthFeelingTrendSeries(selectedFeelingTrend, selectedFeelingTrendPoints, "Latest")];
-  }, [allFeelingTrendPointsByDefinition, isAllFeelingsTrendSelected, selectedFeelingTrend, selectedFeelingTrendPoints]);
+    return selectedFeelingTrendPointsByDefinition
+      .filter(({ points }) => points.length > 0)
+      .map(({ definition, points }) => buildHealthFeelingTrendSeries(definition, points, definition.name));
+  }, [selectedFeelingTrendPointsByDefinition]);
+  const feelingTrendChartTitle = isAllFeelingsTrendSelected
+    ? "All Feelings"
+    : selectedFeelingTrendDefinitions.length === 1
+      ? `${selectedFeelingTrendDefinitions[0]?.name ?? "Feeling"} Occurrences`
+      : "Selected Feeling Occurrences";
+  const feelingTrendEmptyText = selectedFeelingTrendDefinitions.length === 1
+    ? selectedFeelingTrendHistoryExists
+      ? `No ${selectedFeelingTrendDefinitions[0]?.name ?? "Feeling"} Occurrences in the selected range.`
+      : `No occurrences logged for ${selectedFeelingTrendDefinitions[0]?.name ?? "Feeling"} yet.`
+    : selectedFeelingTrendHistoryExists
+      ? "No selected Feeling Occurrences in the selected range."
+      : "No occurrences logged for the selected Feelings yet.";
 
   const selectedMeals = useMemo(
     () => mealEntries.filter((entry) => entry.entry_date === foodHistoryDate),
@@ -1867,9 +1996,9 @@ export function HealthPage({
       symptomOccurrences: symptomOccurrenceInputs,
     });
     if (saved) {
-      setSelectedJournalEntryId(saved.id);
       journalOccurrenceSaveStatusRef.current = "succeeded";
       setJournalOccurrenceHydrationVersion((current) => current + 1);
+      startNewJournalEntry();
       setJournalFormError(null);
     } else {
       journalOccurrenceSaveStatusRef.current = "idle";
@@ -2239,6 +2368,18 @@ export function HealthPage({
 
   function toggleJournalScale(key: string) {
     setExpandedJournalScaleKey((current) => current === key ? null : key);
+  }
+
+  function toggleJournalHistoryMetadata(entryId: string) {
+    setExpandedJournalHistoryEntryIds((current) => {
+      const next = new Set(current);
+      if (next.has(entryId)) {
+        next.delete(entryId);
+      } else {
+        next.add(entryId);
+      }
+      return next;
+    });
   }
 
   function startNewJournalEntry() {
@@ -3282,12 +3423,6 @@ export function HealthPage({
                     title="How are you feeling?"
                   />
                   <h3 className="sr-only" id="journal-feelings-heading">How are you feeling?</h3>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <ScorePicker expanded={expandedJournalScaleKey === "core:mood"} expandedScaleKey="core:mood" label="Mood" labels={CORE_JOURNAL_SCALE_LABELS.Mood} onClear={() => { setJournalMood(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalMood(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:mood")} value={journalMood} />
-                    <ScorePicker expanded={expandedJournalScaleKey === "core:energy"} expandedScaleKey="core:energy" label="Energy" labels={CORE_JOURNAL_SCALE_LABELS.Energy} onClear={() => { setJournalEnergy(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalEnergy(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:energy")} value={journalEnergy} />
-                    <ScorePicker expanded={expandedJournalScaleKey === "core:stress"} expandedScaleKey="core:stress" label="Stress" labels={CORE_JOURNAL_SCALE_LABELS.Stress} onClear={() => { setJournalStress(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalStress(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:stress")} value={journalStress} />
-                    <ScorePicker expanded={expandedJournalScaleKey === "core:clarity"} expandedScaleKey="core:clarity" label="Mental clarity" labels={CORE_JOURNAL_SCALE_LABELS["Mental clarity"]} onClear={() => { setJournalClarity(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalClarity(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:clarity")} value={journalClarity} />
-                  </div>
                   {isJournalAddOpen ? (
                     <div className="grid gap-2 rounded-[1rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
                       <p className="text-xs text-[#68738c] dark:text-white/55">Add a feeling to this Journal Entry.</p>
@@ -3300,13 +3435,17 @@ export function HealthPage({
                       {journalFeelingChoices.every((choice) => journalDraftValues.some((value) => choice.signal?.id === value.signal_id)) ? <span className="text-xs text-[#7d7598] dark:text-white/50">All active Feelings are already in this entry.</span> : null}
                     </div>
                   ) : null}
-                  <div className="grid gap-3">
-                    {journalDraftValues.length === 0 ? <EmptyCopy text="Add template Feelings from the Journal Library." /> : journalDraftValues.map((draftValue) => {
+                  <div className={`grid min-w-0 gap-4 md:grid-cols-2 ${journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right" ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
+                    <div className="min-w-0"><ScorePicker expanded={expandedJournalScaleKey === "core:mood"} expandedScaleKey="core:mood" label="Mood" labels={CORE_JOURNAL_SCALE_LABELS.Mood} onClear={() => { setJournalMood(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalMood(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:mood")} value={journalMood} /></div>
+                    <div className="min-w-0"><ScorePicker expanded={expandedJournalScaleKey === "core:energy"} expandedScaleKey="core:energy" label="Energy" labels={CORE_JOURNAL_SCALE_LABELS.Energy} onClear={() => { setJournalEnergy(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalEnergy(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:energy")} value={journalEnergy} /></div>
+                    <div className="min-w-0"><ScorePicker expanded={expandedJournalScaleKey === "core:stress"} expandedScaleKey="core:stress" label="Stress" labels={CORE_JOURNAL_SCALE_LABELS.Stress} onClear={() => { setJournalStress(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalStress(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:stress")} value={journalStress} /></div>
+                    <div className="min-w-0"><ScorePicker expanded={expandedJournalScaleKey === "core:clarity"} expandedScaleKey="core:clarity" label="Mental clarity" labels={CORE_JOURNAL_SCALE_LABELS["Mental clarity"]} onClear={() => { setJournalClarity(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalClarity(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:clarity")} value={journalClarity} /></div>
+                    {journalDraftValues.length === 0 ? <div className="min-w-0"><EmptyCopy text="Add template Feelings from the Journal Library." /></div> : journalDraftValues.map((draftValue) => {
                       const signal = journalSignals.find((candidate) => candidate.id === draftValue.signal_id);
                       if (!signal) return null;
                       const isDayOnly = !signal.in_template;
                       return (
-                        <div className="rounded-[1rem] border border-[#edf0fb] bg-white/70 px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]" key={signal.id}>
+                        <div className="min-w-0 rounded-[1rem] border border-[#edf0fb] bg-white/70 px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]" key={signal.id}>
                           <div className="flex flex-wrap items-baseline justify-between gap-2">
                             <div>
                               <p className="text-sm font-semibold text-[#26324f] dark:text-white">{getHealthJournalSignalDisplayName(signal, symptoms)}</p>
@@ -3450,8 +3589,34 @@ export function HealthPage({
                           occurredAt: occurrence.occurred_at,
                         })),
                       ].sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt));
+                      const isLoggedMetadataOpen = expandedJournalHistoryEntryIds.has(entry.id);
                       return <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
-                        <div className="flex flex-wrap items-start justify-between gap-2"><div className="grid gap-1"><div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Journal</p><p className="text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthJournalDate(entry.entry_date)} · {formatHealthStandardTime(normalizeHealthJournalEntryTime(entry.entry_time, entry.created_at)) ?? "Time unavailable"}</p></div><div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Logged</p><p className="text-xs text-[#7d88a3] dark:text-white/45">{formatJournalLoggedAt(entry.created_at)}</p></div></div><div className="flex gap-1"><AdhdChip onClick={() => selectJournalEntry(entry)} type="button">Edit</AdhdChip><AdhdChip onClick={() => handleDeleteJournalEntry(entry)} tone="danger" type="button">Delete</AdhdChip></div></div>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="grid gap-1">
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Journal</p>
+                              <div className="flex min-w-0 items-center gap-1">
+                                <p className="min-w-0 text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthJournalDate(entry.entry_date)} · {formatHealthStandardTime(normalizeHealthJournalEntryTime(entry.entry_time, entry.created_at)) ?? "Time unavailable"}</p>
+                                <button
+                                  aria-controls={`journal-history-logged-${entry.id}`}
+                                  aria-expanded={isLoggedMetadataOpen}
+                                  aria-label={isLoggedMetadataOpen ? "Hide Logged Date and Time" : "Show Logged Date and Time"}
+                                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#8d87a7] transition hover:bg-[#f1ecff] dark:text-white/45 dark:hover:bg-white/8"
+                                  onClick={() => toggleJournalHistoryMetadata(entry.id)}
+                                  title={isLoggedMetadataOpen ? "Hide Logged Date and Time" : "Show Logged Date and Time"}
+                                  type="button"
+                                >
+                                  <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isLoggedMetadataOpen ? "rotate-180" : ""}`} />
+                                </button>
+                              </div>
+                            </div>
+                            {isLoggedMetadataOpen ? <div id={`journal-history-logged-${entry.id}`}>
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Logged</p>
+                              <p className="text-xs text-[#7d88a3] dark:text-white/45">{formatJournalLoggedAt(entry.created_at)}</p>
+                            </div> : null}
+                          </div>
+                          <div className="flex gap-1"><AdhdChip onClick={() => selectJournalEntry(entry)} type="button">Edit</AdhdChip><AdhdChip onClick={() => handleDeleteJournalEntry(entry)} tone="danger" type="button">Delete</AdhdChip></div>
+                        </div>
                         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#68738c] dark:text-white/60">{entry.mood_score !== null ? <span>Mood {entry.mood_score}</span> : null}{entry.energy_score !== null ? <span>Energy {entry.energy_score}</span> : null}{entry.stress_score !== null ? <span>Stress {entry.stress_score}</span> : null}{entry.clarity_score !== null ? <span>Clarity {entry.clarity_score}</span> : null}</div>
                         {entryValues.length > 0 ? <p className="mt-2 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Snapshot ratings:</span> {entryValues.map((value) => { const signal = journalSignals.find((candidate) => candidate.id === value.signal_id); return `${signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Feeling"} ${value.score}`; }).join(" · ")}</p> : null}
                         {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span> {entryOccurrences.map((occurrence) => `${occurrence.label} ${occurrence.score} @ ${formatJournalHistoryOccurrenceTime(occurrence.occurredAt)}`).join(" · ")}</p> : null}
@@ -3564,16 +3729,15 @@ export function HealthPage({
           <HealthPanel className="mt-5 min-w-0" icon={<Activity />} subtitle="Feelings" title="Feeling Trends">
             <div className="grid gap-4">
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                <Field composite label="Feeling">
-                  <HealthDropdown
-                    ariaLabel="Trend Feeling"
+                <Field composite label="Feelings">
+                  <FeelingTrendSelector
+                    definitions={feelingTrendModel.definitions}
                     disabled={feelingTrendModel.definitions.length === 0}
-                    onChange={(value) => {
+                    onToggleKeys={(keys) => {
                       setOpenSymptomColorPickerKey(null);
-                      setSelectedFeelingTrendKey(value);
+                      setSelectedFeelingTrendDefinitionKeys((current) => toggleHealthFeelingTrendSelection(current, keys));
                     }}
-                    options={feelingTrendOptions}
-                    value={selectedFeelingTrendKeyForView}
+                    selectedKeys={selectedFeelingTrendDefinitionKeys}
                   />
                 </Field>
                 <div>
@@ -3594,19 +3758,11 @@ export function HealthPage({
                 </div>
               </div>
 
-              {isAllFeelingsTrendSelected || selectedFeelingTrend ? (
+              {selectedFeelingTrendDefinitions.length > 0 ? (
                 <ActivityLineChartCard
                   activePointContext={`${feelingTrendRange} • occurrence score scale 1–10`}
-                  ariaLabel={isAllFeelingsTrendSelected
-                    ? "All Feelings occurrence trend line graph"
-                    : `${selectedFeelingTrend?.name ?? "Feeling"} occurrence trend line graph`}
-                  emptyText={isAllFeelingsTrendSelected
-                    ? allFeelingTrendHistoryExists
-                      ? "No Feeling Occurrences in the selected range."
-                      : "No Feeling Occurrence history is available to graph yet."
-                    : selectedFeelingTrendHistoryPoints.length === 0
-                      ? `No history for ${selectedFeelingTrend?.name ?? "Feeling"} yet.`
-                      : `No ${selectedFeelingTrend?.name ?? "Feeling"} Occurrences in the selected range.`}
+                  ariaLabel={`${feelingTrendSelectionSummary} occurrence trend line graph`}
+                  emptyText={feelingTrendEmptyText}
                   eyebrow="FEELING TRENDS"
                   formatAxisValue={(value) => String(Math.round(value))}
                   formatValue={(value) => `${Math.round(value)}/10`}
@@ -3614,12 +3770,12 @@ export function HealthPage({
                   maxValue={10}
                   series={feelingTrendChartSeries}
                   subtitle={`${feelingTrendRange} • timestamped Feeling Occurrences only`}
-                  title={isAllFeelingsTrendSelected ? "All Feelings" : `${selectedFeelingTrend?.name ?? "Feeling"} Occurrences`}
+                  title={feelingTrendChartTitle}
                   variant="embedded"
                 />
               ) : (
                 <EmptyCopy
-                  text="Log a Feeling Occurrence in Journal to see Feeling Trends here."
+                  text="Select one or more Feelings to see Feeling Trends here."
                 />
               )}
             </div>
@@ -4557,7 +4713,7 @@ function ScorePicker({
   value: number | null;
 }) {
   return (
-    <div className="grid gap-2">
+    <div className="grid min-w-0 gap-2">
       <button aria-controls={expandedScaleKey} aria-expanded={expanded} className="flex min-h-11 items-center justify-between gap-3 rounded-[0.9rem] border border-[#edf0fb] bg-white/70 px-3 py-2 text-left dark:border-white/10 dark:bg-white/[0.03]" onClick={onToggle} type="button">
         <span className="min-w-0 flex-1"><span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</span><span className="mt-1 block break-words whitespace-normal text-sm font-semibold text-[#4f5a76] dark:text-white/70">{value === null ? "Not logged" : `${value} · ${labels[value - 1] ?? ""}`}</span></span>
         <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${expanded ? "rotate-180" : ""}`} />

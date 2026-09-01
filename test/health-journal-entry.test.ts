@@ -653,3 +653,40 @@ test("7.12.45 uses one responsive History/Journal toggle, collapsible metadata, 
   assert.match(healthPageSource, /note: occurrence\.note/);
   assert.match(healthPageSource, /occurrence\.note\?\.trim\(\)/);
 });
+
+test("7.12.48 keeps History Logged metadata per-entry, shares the rating grid, and resets after save", () => {
+  const loggedFormatterStart = healthPageSource.indexOf("function formatJournalLoggedAt");
+  const loggedFormatterEnd = healthPageSource.indexOf("const FEELING_TREND_GROUPS", loggedFormatterStart);
+  const loggedFormatterSource = healthPageSource.slice(loggedFormatterStart, loggedFormatterEnd);
+  const saveHandlerStart = healthPageSource.indexOf("async function handleSaveJournal");
+  const saveHandlerEnd = healthPageSource.indexOf("function openJournalSignalCreateForm", saveHandlerStart);
+  const saveHandlerSource = healthPageSource.slice(saveHandlerStart, saveHandlerEnd);
+
+  assert.match(healthPageSource, /const \[expandedJournalHistoryEntryIds, setExpandedJournalHistoryEntryIds\] = useState<Set<string>>/);
+  assert.match(healthPageSource, /const isLoggedMetadataOpen = expandedJournalHistoryEntryIds\.has\(entry\.id\)/);
+  assert.match(healthPageSource, /aria-controls=\{`journal-history-logged-\$\{entry\.id\}`\}/);
+  assert.match(healthPageSource, /toggleJournalHistoryMetadata\(entry\.id\)/);
+  assert.match(healthPageSource, /isLoggedMetadataOpen \? <div id=\{`journal-history-logged-\$\{entry\.id\}`\}/);
+  assert.match(loggedFormatterSource, /formatHealthJournalMetadataDate\(timestamp\)/);
+  assert.match(loggedFormatterSource, /formatHealthTimestampTime\(timestamp\)/);
+  assert.doesNotMatch(loggedFormatterSource, /updated_at/);
+
+  const journalFeelingsSource = healthPageSource.slice(
+    healthPageSource.indexOf('<section className="grid gap-3" aria-labelledby="journal-feelings-heading">'),
+    healthPageSource.indexOf('<section className="grid gap-3" aria-labelledby="journal-occurrences-heading">'),
+  );
+  assert.match(journalFeelingsSource, /grid min-w-0 gap-4 md:grid-cols-2 \$\{journalWorkspaceMode/);
+  assert.match(journalFeelingsSource, /"lg:grid-cols-2" : "lg:grid-cols-3"/);
+  assert.match(journalFeelingsSource, /ScorePicker[\s\S]*journalDraftValues\.map/);
+  assert.match(journalFeelingsSource, /className="min-w-0 rounded-\[1rem\]/);
+  assert.doesNotMatch(journalFeelingsSource, /grid gap-3">\s*\{journalDraftValues/);
+
+  assert.match(saveHandlerSource, /if \(saved\) \{[\s\S]*?startNewJournalEntry\(\);/);
+  assert.doesNotMatch(saveHandlerSource, /setSelectedJournalEntryId\(saved\.id\)/);
+  assert.match(healthPageSource, /function startNewJournalEntry\(\) \{[\s\S]*?setSelectedJournalEntryId\(null\)/);
+  assert.match(healthPageSource, /setJournalReflection\(""\)/);
+  assert.match(healthPageSource, /setJournalDraftValues\(buildHealthJournalDraftValues\(\{ journalEntryId: null/);
+  assert.match(healthPageSource, /setJournalOccurrences\(\[\]\)/);
+  assert.match(healthPageSource, /setIsJournalLoggedMetadataOpen\(false\)/);
+  assert.match(saveHandlerSource, /\} else \{\s*journalOccurrenceSaveStatusRef\.current = "idle";/);
+});
