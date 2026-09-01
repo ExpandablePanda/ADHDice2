@@ -192,7 +192,7 @@ test("Today Journal uses today's entries, latest represented time, and Journal-o
   assert.equal(snapshot.journal.feelingOccurrenceCount, 3);
 });
 
-test("Today renders safe empty states, canonical tab navigation, and Quick Log routes without persistence", () => {
+test("Today renders safe empty states, canonical tab navigation, Quick Log, and Timeline without persistence", () => {
   const snapshot = emptySnapshot();
   assert.equal(snapshot.journal.latestEntry, null);
   assert.equal(snapshot.journal.entryCount, 0);
@@ -206,13 +206,15 @@ test("Today renders safe empty states, canonical tab navigation, and Quick Log r
     assert.match(todaySource, new RegExp(`onNavigate\\(\\"${tab}\\"\\)`));
   }
   assert.match(todaySource, /\[\"Workout\", \"Fitness\"\]/);
-  assert.doesNotMatch(todaySource, /useState|localStorage|supabase|Timeline|adhdice_health/);
+  assert.match(todaySource, /TODAY TIMELINE/);
+  assert.match(todaySource, /No Health activity logged yet today/);
+  assert.doesNotMatch(todaySource, /useState|localStorage|supabase|adhdice_health/);
 });
 
 test("HealthPage owns Today navigation and passes canonical records without adding Today persistence", () => {
   const todayBranch = pageSource.slice(pageSource.indexOf('{activeTab === "Today"'), pageSource.indexOf('{activeTab === "Fitness"'));
   assert.match(todayBranch, /onNavigate=\{persistHealthTabPreference\}/);
-  for (const prop of ["checkIns", "mealEntries", "waterEntries", "metricEntries", "focusHistory", "journalSignalOccurrences", "symptomEntries", "profile"]) {
+  for (const prop of ["checkIns", "mealEntries", "waterEntries", "metricEntries", "focusHistory", "journalSignals", "journalSignalOccurrences", "symptoms", "symptomEntries", "profile", "weightEntries", "workouts"]) {
     assert.match(todayBranch, new RegExp(`${prop}=`));
   }
   assert.doesNotMatch(todayBranch, /localStorage|supabase|setState|useState/);

@@ -3,12 +3,16 @@
 import type { ReactNode } from "react";
 import type {
   HealthCheckIn,
+  HealthJournalSignal,
   HealthJournalSignalOccurrence,
   HealthMealEntry,
   HealthMetricEntry,
   HealthProfile,
+  HealthSymptom,
   HealthSymptomEntry,
   HealthWaterEntry,
+  HealthWeightEntry,
+  HealthWorkout,
 } from "@/lib/database.types";
 import {
   formatHealthDateLabel,
@@ -17,7 +21,7 @@ import {
   type HealthTab,
 } from "@/lib/health-utils";
 import { formatQuantity, millilitersToWaterAmount } from "@/lib/health-library";
-import { buildHealthTodaySnapshot } from "@/lib/health-today";
+import { buildHealthTodaySnapshot, buildHealthTodayTimeline, type HealthTodayTimelineEvent } from "@/lib/health-today";
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 
@@ -25,28 +29,36 @@ type HealthTodayTabProps = {
   checkIns: HealthCheckIn[];
   focusCategories: Parameters<typeof buildHealthTodaySnapshot>[0]["focusCategories"];
   focusHistory: Parameters<typeof buildHealthTodaySnapshot>[0]["focusHistory"];
+  journalSignals: HealthJournalSignal[];
   journalSignalOccurrences: HealthJournalSignalOccurrence[];
   mealEntries: HealthMealEntry[];
   metricEntries: HealthMetricEntry[];
   onNavigate: (tab: HealthTab) => void;
   profile: HealthProfile;
+  symptoms: HealthSymptom[];
   symptomEntries: HealthSymptomEntry[];
   today: string;
   waterEntries: HealthWaterEntry[];
+  weightEntries: HealthWeightEntry[];
+  workouts: HealthWorkout[];
 };
 
 export function HealthTodayTab({
   checkIns,
   focusCategories,
   focusHistory,
+  journalSignals,
   journalSignalOccurrences,
   mealEntries,
   metricEntries,
   onNavigate,
   profile,
+  symptoms,
   symptomEntries,
   today,
   waterEntries,
+  weightEntries,
+  workouts,
 }: HealthTodayTabProps) {
   const snapshot = buildHealthTodaySnapshot({
     checkIns,
@@ -58,6 +70,21 @@ export function HealthTodayTab({
     metricEntries,
     symptomEntries,
     waterEntries,
+  });
+  const timeline = buildHealthTodayTimeline({
+    checkIns,
+    date: today,
+    focusCategories,
+    focusHistory,
+    journalSignals,
+    journalSignalOccurrences,
+    mealEntries,
+    preferredWeightUnit: profile.preferred_weight_unit,
+    symptomEntries,
+    symptoms,
+    waterEntries,
+    weightEntries,
+    workouts,
   });
   const waterAmount = formatQuantity(snapshot.water.fluidOunces);
   const waterGoal = profile.water_goal_ml === null
@@ -123,7 +150,41 @@ export function HealthTodayTab({
           ))}
         </div>
       </section>
+
+      <HealthTodayTimeline events={timeline} onNavigate={onNavigate} />
     </div>
+  );
+}
+
+function HealthTodayTimeline({ events, onNavigate }: { events: HealthTodayTimelineEvent[]; onNavigate: (tab: HealthTodayTimelineEvent["targetTab"]) => void }) {
+  return (
+    <section aria-labelledby="health-today-timeline-heading" className="grid gap-2">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40" id="health-today-timeline-heading">TODAY TIMELINE</p>
+      {events.length === 0 ? <p className="rounded-[1rem] border border-dashed border-[#e5e1f1] px-3 py-4 text-sm text-[#74809b] dark:border-white/10 dark:text-white/50">No Health activity logged yet today.</p> : (
+        <div className="overflow-hidden rounded-[1rem] border border-[#edf0fb] bg-white/70 divide-y divide-[#edf0fb] dark:border-white/10 dark:bg-white/[0.03] dark:divide-white/10">
+          {events.map((event) => (
+            <button
+              aria-label={`Open ${event.title}: ${event.detail}`}
+              className="grid w-full grid-cols-[5.5rem_minmax(0,1fr)] gap-3 px-3 py-3 text-left transition-colors hover:bg-[#faf9ff] focus-visible:bg-[#faf9ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8d7bf5] dark:hover:bg-white/[0.05] dark:focus-visible:bg-white/[0.05] sm:grid-cols-[6.5rem_minmax(0,1fr)]"
+              data-timeline-kind={event.kind}
+              key={event.id}
+              onClick={() => onNavigate(event.targetTab)}
+              type="button"
+            >
+              <span className="flex items-start gap-2 pt-0.5 text-xs font-semibold tabular-nums text-[#7c7698] dark:text-white/50">
+                <span aria-hidden="true" className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#9c8df2] dark:bg-[#b9adff]" />
+                <span>{event.timeLabel}</span>
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-[#26324f] dark:text-white">{event.title}</span>
+                <span className="mt-0.5 block break-words text-sm text-[#4f5872] dark:text-white/75">{event.detail}</span>
+                {event.secondaryDetail ? <span className="mt-0.5 block break-words text-xs text-[#7d88a3] dark:text-white/50">{event.secondaryDetail}</span> : null}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

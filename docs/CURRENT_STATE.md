@@ -5,13 +5,21 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.54`.
+- Current working app version: `7.12.55`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.55 Health Today Timeline
+
+Health Today now adds a chronological Timeline beneath the existing Snapshot
+and Quick Log. Timeline rows derive Food, Water, Feeling, Workout, Weight,
+Journal, and precise Sleep events from canonical Health records, with no Today
+persistence authority. Aggregate movement metrics and imported Sleep totals do
+not receive fabricated activity times. No SQL or schema changes were made.
 
 ## 2026-09-01 7.12.54 Health Today Snapshot foundation
 

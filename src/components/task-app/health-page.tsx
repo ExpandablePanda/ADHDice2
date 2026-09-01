@@ -3292,14 +3292,18 @@ export function HealthPage({
             checkIns={checkIns}
             focusCategories={focusCategories}
             focusHistory={focusHistory}
+            journalSignals={journalSignals}
             journalSignalOccurrences={journalSignalOccurrences}
             mealEntries={mealEntries}
             metricEntries={metricEntries}
             onNavigate={persistHealthTabPreference}
             profile={activeProfile}
+            symptoms={symptoms}
             symptomEntries={symptomEntries}
             today={today}
             waterEntries={waterEntries}
+            weightEntries={weightEntries}
+            workouts={workouts}
           />
         </div>
       ) : null}
