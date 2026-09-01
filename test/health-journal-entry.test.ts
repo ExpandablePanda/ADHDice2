@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type {
+  HealthCheckIn,
   HealthJournalSignal,
   HealthJournalSignalValue,
   HealthSymptom,
@@ -17,12 +18,14 @@ import {
   getHealthJournalSignalDisplayColor,
   getHealthJournalSignalDisplayName,
   getHealthJournalTemplateSignals,
+  groupHealthJournalEntriesByDate,
   HEALTH_JOURNAL_DEFAULT_SCALE_LABELS,
   HEALTH_JOURNAL_SCORE_OPTIONS,
   findHealthJournalReflectionTagMatches,
   normalizeHealthJournalScaleLabels,
   normalizeHealthJournalScore,
   normalizeHealthJournalSignal,
+  normalizeHealthJournalEntryTime,
   replaceHealthJournalReflectionTag,
   updateHealthJournalDraftValue,
 } from "../src/lib/health-journal.ts";
@@ -46,6 +49,10 @@ const feelingColorsMigrationSource = readFileSync(
   "utf8",
 );
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+const multipleEntriesMigrationSource = readFileSync(
+  new URL("../supabase/add_health_journal_multiple_entries_7_12_41.sql", import.meta.url),
+  "utf8",
+);
 const healthHookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 
@@ -77,6 +84,28 @@ function value(signalId: string, entryId: string, score: number): HealthJournalS
     score,
     signal_id: signalId,
     updated_at: "2026-08-30T09:00:00.000Z",
+    user_id: "user-1",
+  };
+}
+
+function journalEntry(
+  id: string,
+  entryDate: string,
+  entryTime: string,
+  createdAt: string,
+): HealthCheckIn {
+  return {
+    clarity_score: null,
+    created_at: createdAt,
+    energy_score: null,
+    entry_date: entryDate,
+    entry_time: entryTime,
+    id,
+    mood_score: null,
+    reflection: "",
+    stress_score: null,
+    symptom_tags: [],
+    updated_at: createdAt,
     user_id: "user-1",
   };
 }
@@ -158,6 +187,26 @@ test("Journal Entry loads active template signals plus saved day-only and archiv
     ["archived", 7],
   ]);
   assert.deepEqual(getHealthJournalTemplateSignals(signals).map((item) => item.id), ["template-first", "template-late"]);
+});
+
+test("Journal snapshots keep same-date entries separate and order by Entry time", () => {
+  const groups = groupHealthJournalEntriesByDate([
+    journalEntry("late", "2026-08-31", "22:00", "2026-09-01T02:00:00.000Z"),
+    journalEntry("morning", "2026-08-31", "09:00", "2026-08-31T13:00:00.000Z"),
+    journalEntry("other-day", "2026-08-30", "18:00", "2026-08-30T22:00:00.000Z"),
+  ]);
+
+  assert.deepEqual(groups.map((group) => group.date), ["2026-08-31", "2026-08-30"]);
+  assert.deepEqual(groups[0]?.entries.map((entry) => entry.id), ["late", "morning"]);
+  assert.equal(groups[0]?.entries.length, 2);
+});
+
+test("legacy Journal rows get a safe Entry time from created_at without changing Logged time", () => {
+  const loggedAt = "2026-09-01T00:08:00.000Z";
+  const expectedLocalTime = new Date(loggedAt);
+  assert.equal(normalizeHealthJournalEntryTime(undefined, loggedAt), `${String(expectedLocalTime.getHours()).padStart(2, "0")}:08`);
+  assert.equal(normalizeHealthJournalEntryTime("16:00:00", loggedAt), "16:00");
+  assert.equal(loggedAt, "2026-09-01T00:08:00.000Z");
 });
 
 test("symptom Journal signals resolve their current canonical Health symptom name", () => {
@@ -285,23 +334,22 @@ test("7.12.36 source contract covers readable scales, section-local creation, an
   assert.match(healthPageSource, /selectJournalTag/);
 });
 
-test("7.12.38 source contract covers tag overlays, occurrence drafts, and shared Feeling colors", () => {
+test("7.12.41 source contract covers unified tag occurrence overlays and shared Feeling colors", () => {
   assert.match(healthPageSource, /const selectedQuery = journalTagQuery/);
   assert.match(healthPageSource, /setJournalReflection\(\(current\) => replaceHealthJournalReflectionTag\(current, selectedQuery\.start, selectedQuery\.end, replacement\)\)/);
   assert.doesNotMatch(healthPageSource, /setJournalReflection\(nextReflection\)/);
   assert.doesNotMatch(healthPageSource, /journalReflection\.slice\(0, journalTagQuery\.start\)/);
   assert.match(healthPageSource, /const \[journalTagOverlay, setJournalTagOverlay\] = useState<JournalTagOverlay>\(null\)/);
-  assert.match(healthPageSource, /mode: "symptom_occurrence"/);
-  assert.match(healthPageSource, /mode: "feeling_rating"/);
+  assert.match(healthPageSource, /mode: "feeling_occurrence"/);
+  assert.doesNotMatch(healthPageSource, /mode: "feeling_rating"/);
   assert.match(healthPageSource, /id="journal-tag-overlay"/);
   assert.match(healthPageSource, /inputRef=\{journalTagTimeRef\}/);
-  assert.match(healthPageSource, /time: selectedTime/);
+  assert.match(healthPageSource, /time: journalEntryTime \|\| getCurrentHealthDateTimeInputs\(\)\.time/);
   assert.match(healthPageSource, /HEALTH_SEVERITY_OPTIONS\.map/);
   assert.doesNotMatch(healthPageSource, /journalTagRatingSignalId/);
   assert.doesNotMatch(healthPageSource, /Skip for now/);
-  assert.match(healthPageSource, /updateJournalTagRating\(null\)/);
-  assert.match(healthPageSource, /ensureHealthJournalDraftValue\(current, signal\.id\)/);
-  assert.match(healthPageSource, /this Journal Entry&apos;s Daily Log/);
+  assert.doesNotMatch(healthPageSource, /updateJournalTagRating/);
+  assert.doesNotMatch(healthPageSource, /this Journal Entry&apos;s Daily Log/);
   assert.match(healthPageSource, /draftKey: createJournalDraftId\(\)/);
   assert.match(healthPageSource, /setJournalOccurrences\(\(current\) => \[\.\.\.current/);
   assert.match(healthPageSource, /\.\.\.\(occurrence\.id \? \{ id: occurrence\.id \} : \{\}\)/);
@@ -312,6 +360,14 @@ test("7.12.38 source contract covers tag overlays, occurrence drafts, and shared
   assert.doesNotMatch(healthPageSource, /HealthJournalColorPalette/);
   assert.match(healthPageSource, /HealthSymptomColorControl isOpen=\{isColorOpen\}/);
   assert.match(healthPageSource, /ADHDICE_ACCENT_COLORS/);
+
+  const tagSelectionSource = healthPageSource.slice(
+    healthPageSource.indexOf("async function selectJournalTag"),
+    healthPageSource.indexOf("function toggleJournalHistoryTag"),
+  );
+  assert.doesNotMatch(tagSelectionSource, /setJournalDraftValues/);
+  assert.doesNotMatch(tagSelectionSource, /updateHealthJournalDraftValue/);
+  assert.match(healthPageSource, /setJournalOccurrences\(\(current\) => \[\.\.\.current/);
 
   assert.match(feelingColorsMigrationSource, /add column if not exists color text/);
   assert.match(feelingColorsMigrationSource, /kind in \('emotion', 'other'\)/);
@@ -341,11 +397,11 @@ test("7.12.39 source contract covers interactive History tags, exact ownership d
   assert.match(healthPageSource, /role="dialog"/);
   assert.match(healthPageSource, /occurrence\.journal_entry_id === entry\.id && occurrence\.symptom_id === option\.symptomId/);
   assert.match(healthPageSource, /value\.signal_id === option\.signal\?\.id/);
-  assert.match(healthPageSource, /Overall today/);
+  assert.match(healthPageSource, /Snapshot rating/);
   assert.match(healthPageSource, /Not logged/);
   assert.match(healthPageSource, /getJournalTagOptionColor/);
   assert.match(healthPageSource, /scaleLabels\[overallValue\.score\]/);
-  assert.match(healthPageSource, /subtitle="Symptom History"/);
+  assert.match(healthPageSource, /subtitle="Feeling Occurrences"/);
   assert.doesNotMatch(healthPageSource, /Standalone symptom history/);
 
   assert.doesNotMatch(journalTagSource, /journalTagTimeRef\.current\?\.focus/);
@@ -360,25 +416,25 @@ test("7.12.39 source contract covers interactive History tags, exact ownership d
   assert.match(healthPageSource, /saveJournalEntry\(\{/);
 });
 
-test("7.12.40 rating overlays expose shared Journal colors for Emotion and Other Feeling", () => {
-  const feelingOverlayStart = healthPageSource.indexOf("<HealthJournalColorControl isOpen={journalTagRatingSignal ?");
-  const feelingScaleStart = healthPageSource.indexOf("<JournalScalePicker", feelingOverlayStart);
-  assert.ok(feelingOverlayStart >= 0);
-  assert.ok(feelingScaleStart > feelingOverlayStart);
-  const feelingOverlaySource = healthPageSource.slice(feelingOverlayStart, feelingScaleStart);
-  const feelingColorControlSource = healthPageSource.slice(feelingOverlayStart, healthPageSource.indexOf("<AdhdChip", feelingOverlayStart));
+test("7.12.41 source contract keeps all Feeling tag overlays on the shared palette", () => {
+  const tagOverlaySource = healthPageSource.slice(
+    healthPageSource.indexOf("{journalTagOverlay ? ("),
+    healthPageSource.indexOf("</AdhdDropdownPanel>", healthPageSource.indexOf("{journalTagOverlay ? (")),
+  );
 
   assert.match(healthPageSource, /activeJournalSignals\.map\(\(signal\) => \(\{/);
   assert.match(healthPageSource, /kind: signal\.kind/);
-  assert.match(healthPageSource, /: \{ mode: "feeling_rating", signal \}\)/);
-  assert.match(feelingOverlaySource, /HealthJournalColorControl/);
-  assert.match(feelingOverlaySource, /handleSetJournalSignalColor\(journalTagRatingSignal\.id, color\)/);
-  assert.doesNotMatch(feelingOverlaySource, /HealthAccentColorPalette/);
-  assert.doesNotMatch(feelingColorControlSource, /updateJournalTagRating/);
+  assert.match(tagOverlaySource, /HealthJournalColorControl/);
+  assert.match(tagOverlaySource, /handleSetJournalSignalColor\(journalTagSignal\.id, color\)/);
+  assert.match(tagOverlaySource, /HealthSymptomColorControl/);
+  assert.match(tagOverlaySource, /handleSetSymptomColor\(journalTagSymptom\.id, color\)/);
   assert.match(healthPageSource, /function handleSetJournalSignalColor\(signalId: string, color: string\)[\s\S]*?void updateJournalSignal\(signalId, \{ color \}\)/);
   assert.match(healthPageSource, /function handleSetSymptomColor\(symptomId: string, color: string\)[\s\S]*?void setSymptomColor\(symptomId, color\)/);
   assert.match(healthPageSource, /function HealthJournalColorControl\([\s\S]*?return <HealthColorControl/);
   assert.match(healthPageSource, /function HealthColorControl\([\s\S]*?<HealthAccentColorPalette/);
+  assert.match(tagOverlaySource, /journalTagSignal\.kind === "symptom" \? "Severity" : "Intensity"/);
+  assert.match(healthPageSource, /score: null/);
+  assert.doesNotMatch(tagOverlaySource, /JournalScalePicker/);
 });
 
 test("symptom hashtag occurrence defaults to a valid local time and accepts severity 1 through 10 only", () => {
@@ -415,7 +471,7 @@ test("archived canonical symptoms are excluded from current templates but saved 
   }).map((item) => [item.signal_id, item.score]), [[archivedSignal.id, 6]]);
 });
 
-test("7.12.34 source contract covers daily-log constraints, ownership, RLS, and ordered save behavior", () => {
+test("7.12.41 source contract covers multiple entries, occurrence ownership, RLS, and exact-ID save behavior", () => {
   assert.match(migrationSource, /add column if not exists stress_score integer/);
   assert.match(migrationSource, /add column if not exists clarity_score integer/);
   assert.match(migrationSource, /stress_score is null or \(stress_score >= 1 and stress_score <= 10\)/);
@@ -430,12 +486,34 @@ test("7.12.34 source contract covers daily-log constraints, ownership, RLS, and 
   assert.match(migrationSource, /grant select, insert, update, delete on table public\.adhdice_health_journal_signal_values to authenticated/);
   assert.match(migrationSource, /notify pgrst, 'reload schema'/);
 
-  assert.match(healthHookSource, /\.from\("adhdice_health_checkins"\)[\s\S]*\.upsert\(remoteCheckInPayload/);
+  assert.match(multipleEntriesMigrationSource, /add column if not exists entry_time time without time zone/);
+  assert.match(multipleEntriesMigrationSource, /created_at at time zone 'UTC'/);
+  assert.match(multipleEntriesMigrationSource, /alter column entry_time set not null/);
+  assert.match(multipleEntriesMigrationSource, /drop constraint if exists adhdice_health_checkins_user_id_entry_date_key/);
+  assert.match(multipleEntriesMigrationSource, /create table if not exists public\.adhdice_health_journal_signal_occurrences/);
+  assert.match(multipleEntriesMigrationSource, /score integer not null check \(score between 1 and 10\)/);
+  assert.match(multipleEntriesMigrationSource, /occurred_at timestamptz not null/);
+  assert.match(multipleEntriesMigrationSource, /notify pgrst, 'reload schema'/);
+  assert.doesNotMatch(schemaSource, /unique \(user_id, entry_date\)/);
+  assert.match(schemaSource, /entry_time time without time zone not null/);
+  assert.match(healthHookSource, /\.from\("adhdice_health_checkins"\)[\s\S]*\.insert\(\{ \.\.\.remoteCheckInFields, user_id: userId \}\)/);
+  assert.match(healthHookSource, /\.from\("adhdice_health_checkins"\)[\s\S]*\.update\(remoteCheckInFields\)[\s\S]*\.eq\("id", requestedEntryId\)/);
+  assert.doesNotMatch(healthHookSource, /onConflict: "user_id,entry_date"/);
   assert.match(healthHookSource, /\.from\("adhdice_health_journal_signal_values"\)[\s\S]*\.upsert\(scoredValues/);
   assert.match(healthHookSource, /\.from\("adhdice_health_symptom_entries"\)[\s\S]*\.upsert\(occurrenceRows/);
+  assert.match(healthHookSource, /\.from\("adhdice_health_journal_signal_occurrences"\)[\s\S]*\.upsert\(journalSignalOccurrenceRows/);
   assert.match(healthHookSource, /journal_entry_id: nextRow\.id/);
+  assert.match(healthHookSource, /checkIns\.filter\(\(entry\) => entry\.id !== nextRow\.id\)/);
+  assert.match(healthHookSource, /journalSignalOccurrences.*storageKey\(userId, "journal-signal-occurrences"\)/s);
   assert.match(healthPageSource, /Save Journal Entry/);
   assert.match(healthPageSource, /Manage Journal Library/);
+  assert.match(healthPageSource, /selectedJournalEntryId/);
+  assert.match(healthPageSource, /Entry time/);
+  assert.match(healthPageSource, /\+ New Entry/);
+  assert.match(healthPageSource, /Your Daily Template/);
+  assert.match(healthPageSource, /Feeling Occurrences/);
+  assert.match(healthPageSource, /buildHealthJournalSymptomOccurrenceSignal/);
+  assert.match(healthPageSource, /canonical-symptom:/);
   assert.match(healthPageSource, /Not logged/);
   assert.doesNotMatch(healthPageSource, /Save Check-In/);
   assert.doesNotMatch(healthPageSource, />Log a symptom</);

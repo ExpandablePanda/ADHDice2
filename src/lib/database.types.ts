@@ -1356,6 +1356,7 @@ export type HealthCheckIn = {
   id: string;
   user_id: string;
   entry_date: string;
+  entry_time: string;
   mood_score: number | null;
   energy_score: number | null;
   stress_score: number | null;
@@ -1370,6 +1371,7 @@ export type HealthCheckInInsert = {
   id?: string;
   user_id: string;
   entry_date: string;
+  entry_time: string;
   mood_score?: number | null;
   energy_score?: number | null;
   stress_score?: number | null;
@@ -1379,7 +1381,7 @@ export type HealthCheckInInsert = {
 };
 
 export type HealthCheckInUpdate = Partial<
-  Pick<HealthCheckIn, "mood_score" | "energy_score" | "stress_score" | "clarity_score" | "symptom_tags" | "reflection">
+  Pick<HealthCheckIn, "entry_date" | "entry_time" | "mood_score" | "energy_score" | "stress_score" | "clarity_score" | "symptom_tags" | "reflection">
 >;
 
 export type HealthJournalSignalKind = "symptom" | "emotion" | "other";
@@ -1443,6 +1445,36 @@ export type HealthJournalSignalValueInsert = {
 };
 
 export type HealthJournalSignalValueUpdate = Partial<Pick<HealthJournalSignalValue, "score">>;
+
+export type HealthJournalSignalOccurrence = {
+  id: string;
+  user_id: string;
+  journal_entry_id: string;
+  signal_id: string;
+  entry_date: string;
+  occurred_at: string;
+  score: number;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthJournalSignalOccurrenceInsert = {
+  id?: string;
+  user_id: string;
+  journal_entry_id: string;
+  signal_id: string;
+  entry_date: string;
+  occurred_at: string;
+  score: number;
+  note?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthJournalSignalOccurrenceUpdate = Partial<
+  Pick<HealthJournalSignalOccurrence, "journal_entry_id" | "signal_id" | "entry_date" | "occurred_at" | "score" | "note">
+>;
 
 export type HealthSymptom = {
   id: string;
@@ -2738,6 +2770,12 @@ export type Database = {
         Row: HealthJournalSignalValue;
         Insert: HealthJournalSignalValueInsert;
         Update: HealthJournalSignalValueUpdate;
+        Relationships: [];
+      };
+      adhdice_health_journal_signal_occurrences: {
+        Row: HealthJournalSignalOccurrence;
+        Insert: HealthJournalSignalOccurrenceInsert;
+        Update: HealthJournalSignalOccurrenceUpdate;
         Relationships: [];
       };
       adhdice_health_symptoms: {

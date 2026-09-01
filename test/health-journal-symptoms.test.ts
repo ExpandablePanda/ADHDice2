@@ -35,6 +35,10 @@ const migrationSource = readFileSync(
   new URL("../supabase/add_health_journal_symptom_tracking_7_12_7.sql", import.meta.url),
   "utf8",
 );
+const multipleEntriesMigrationSource = readFileSync(
+  new URL("../supabase/add_health_journal_multiple_entries_7_12_41.sql", import.meta.url),
+  "utf8",
+);
 const colorMigrationSource = readFileSync(
   new URL("../supabase/add_health_journal_symptom_colors_7_12_21.sql", import.meta.url),
   "utf8",
@@ -518,13 +522,14 @@ test("genuinely new local symptoms remain eligible for definition recovery", () 
   assert.deepEqual(recovery.mergedEntries, [localEntry]);
 });
 
-test("the migration expands daily scores without rewriting existing values", () => {
+test("the Journal migration preserves daily score ranges while allowing multiple snapshots per date", () => {
   assert.match(migrationSource, /mood_score_range_check[\s\S]*?mood_score >= 1 and mood_score <= 10/i);
   assert.match(migrationSource, /energy_score_range_check[\s\S]*?energy_score >= 1 and energy_score <= 10/i);
   assert.match(schemaSource, /mood_score_range_check[\s\S]*?mood_score >= 1 and mood_score <= 10/i);
   assert.match(schemaSource, /energy_score_range_check[\s\S]*?energy_score >= 1 and energy_score <= 10/i);
   assert.match(schemaSource, /symptom_tags text\[\] not null default '\{\}'/);
-  assert.match(schemaSource, /unique \(user_id, entry_date\)/);
+  assert.doesNotMatch(schemaSource, /unique \(user_id, entry_date\)/);
+  assert.match(multipleEntriesMigrationSource, /drop constraint if exists adhdice_health_checkins_user_id_entry_date_key/);
 });
 
 test("symptom storage is normalized, unlimited per day, and preserves history on archive", () => {
@@ -605,7 +610,7 @@ test("symptom persistence has its own optional fallback and CRUD paths", () => {
   assert.doesNotMatch(migrationSource, /alter publication supabase_realtime add table public\.adhdice_health_symptoms/);
   assert.doesNotMatch(migrationSource, /alter publication supabase_realtime add table public\.adhdice_health_symptom_entries/);
   assert.match(healthPageSource, /HEALTH_SEVERITY_OPTIONS\.map/);
-  assert.match(healthPageSource, /title="Recent symptoms"/);
+  assert.match(healthPageSource, /title="Recent Feeling Occurrences"/);
   assert.match(healthPageSource, /entry\.severity}\/10/);
   assert.match(healthPageSource, /Update occurrence/);
   assert.match(healthPageSource, /deleteSymptomEntry\(entry\.id\)/);

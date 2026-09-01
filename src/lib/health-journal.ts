@@ -1,11 +1,13 @@
 import type {
+  HealthCheckIn,
+  HealthJournalSignalOccurrence,
   HealthJournalSignal,
   HealthJournalSignalKind,
   HealthJournalSignalValue,
   HealthSymptom,
 } from "@/lib/database.types";
 import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
-import { normalizeHealthSymptomColor } from "@/lib/health-utils";
+import { normalizeHealthMealTime, normalizeHealthSymptomColor } from "@/lib/health-utils";
 
 export const HEALTH_JOURNAL_SIGNAL_KINDS: readonly HealthJournalSignalKind[] = ["symptom", "emotion", "other"];
 export const HEALTH_JOURNAL_SCORE_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
@@ -60,6 +62,53 @@ export type HealthJournalDraftValue = {
   signal_id: string;
   score: number | null;
 };
+
+export function normalizeHealthJournalEntryTime(entryTime: unknown, createdAt: string) {
+  const normalizedEntryTime = normalizeHealthMealTime(typeof entryTime === "string" ? entryTime : "");
+  if (normalizedEntryTime) return normalizedEntryTime;
+  const createdTimestamp = new Date(createdAt);
+  return Number.isFinite(createdTimestamp.getTime())
+    ? `${String(createdTimestamp.getHours()).padStart(2, "0")}:${String(createdTimestamp.getMinutes()).padStart(2, "0")}`
+    : "00:00";
+}
+
+export function normalizeHealthJournalSignalOccurrence(
+  occurrence: HealthJournalSignalOccurrence,
+): HealthJournalSignalOccurrence {
+  return {
+    ...occurrence,
+    entry_date: typeof occurrence.entry_date === "string" ? occurrence.entry_date : "",
+    note: typeof occurrence.note === "string" ? occurrence.note : null,
+    occurred_at: typeof occurrence.occurred_at === "string" ? occurrence.occurred_at : "",
+    score: Number.isInteger(occurrence.score) && occurrence.score >= 1 && occurrence.score <= 10 ? occurrence.score : 1,
+  };
+}
+
+export function sortHealthJournalSignalOccurrences(
+  left: HealthJournalSignalOccurrence,
+  right: HealthJournalSignalOccurrence,
+) {
+  return Date.parse(left.occurred_at) - Date.parse(right.occurred_at)
+    || Date.parse(left.created_at) - Date.parse(right.created_at)
+    || left.id.localeCompare(right.id);
+}
+
+export function sortHealthJournalEntries(left: HealthCheckIn, right: HealthCheckIn) {
+  return right.entry_date.localeCompare(left.entry_date)
+    || normalizeHealthJournalEntryTime(right.entry_time, right.created_at).localeCompare(normalizeHealthJournalEntryTime(left.entry_time, left.created_at))
+    || right.created_at.localeCompare(left.created_at)
+    || right.id.localeCompare(left.id);
+}
+
+export function groupHealthJournalEntriesByDate(entries: readonly HealthCheckIn[]) {
+  const groups = new Map<string, HealthCheckIn[]>();
+  [...entries].sort(sortHealthJournalEntries).forEach((entry) => {
+    const group = groups.get(entry.entry_date) ?? [];
+    group.push(entry);
+    groups.set(entry.entry_date, group);
+  });
+  return [...groups.entries()].map(([date, groupedEntries]) => ({ date, entries: groupedEntries }));
+}
 
 export function normalizeHealthJournalSignalColor(color: string | null | undefined) {
   const normalized = color?.trim().toLowerCase() ?? "";

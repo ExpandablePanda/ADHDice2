@@ -5,13 +5,32 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.40`.
+- Current working app version: `7.12.41`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-31 7.12.41 Journal snapshots and Feeling Occurrences
+
+Journal Entries are now identified by row `id`, so multiple timestamped
+snapshots may share one `entry_date`. Each snapshot requires an `entry_time`,
+while immutable `created_at` remains the actual Logged time. The Journal editor
+now combines core metrics and explicit Journal Library `in_template` Feelings
+under `How are you feeling?` / `Your Daily Template`. Snapshot ratings remain
+separate per Journal Entry and retain 0 versus Not logged semantics.
+
+Symptoms, Emotions, and Other Feelings are presented as unified `Feeling
+Occurrences`. Hashtags create occurrence drafts only; they do not add template
+Feelings or snapshot ratings. Canonical symptom occurrences continue using
+`adhdice_health_symptom_entries`; Emotion and Other Feeling occurrences persist
+through `adhdice_health_journal_signal_occurrences` with 1–10 scores and
+occurrence timestamps. The authored migration is
+`supabase/add_health_journal_multiple_entries_7_12_41.sql`; it has NOT been
+applied remotely. No schema deployment was performed. Browser, live Supabase,
+and deployment verification remain outstanding.
 
 ## 2026-08-31 7.12.40 Journal Feeling overlay color picker
 

@@ -364,6 +364,7 @@ create table public.adhdice_health_checkins (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   entry_date date not null,
+  entry_time time without time zone not null,
   mood_score integer,
   energy_score integer,
   stress_score integer,
@@ -379,8 +380,7 @@ create table public.adhdice_health_checkins (
   constraint adhdice_health_checkins_stress_score_range_check
     check (stress_score is null or (stress_score >= 1 and stress_score <= 10)),
   constraint adhdice_health_checkins_clarity_score_range_check
-    check (clarity_score is null or (clarity_score >= 1 and clarity_score <= 10)),
-  unique (user_id, entry_date)
+    check (clarity_score is null or (clarity_score >= 1 and clarity_score <= 10))
 );
 
 create unique index adhdice_health_checkins_user_id_uidx
@@ -471,6 +471,28 @@ create table public.adhdice_health_symptom_entries (
     foreign key (user_id, journal_entry_id)
     references public.adhdice_health_checkins (user_id, id)
     on delete cascade
+);
+
+create table public.adhdice_health_journal_signal_occurrences (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  journal_entry_id uuid not null,
+  signal_id uuid not null,
+  entry_date date not null,
+  occurred_at timestamptz not null,
+  score integer not null check (score between 1 and 10),
+  note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, id),
+  constraint adhdice_health_journal_signal_occurrences_entry_fk
+    foreign key (user_id, journal_entry_id)
+    references public.adhdice_health_checkins (user_id, id)
+    on delete cascade,
+  constraint adhdice_health_journal_signal_occurrences_signal_fk
+    foreign key (user_id, signal_id)
+    references public.adhdice_health_journal_signals (user_id, id)
+    on delete restrict
 );
 
 create table public.adhdice_health_food_library (
@@ -822,7 +844,7 @@ create index adhdice_record_events_owner_valid_identity_idx
 create index adhdice_task_grid_layouts_updated_at_idx
   on public.adhdice_task_grid_layouts (updated_at desc);
 create index adhdice_health_checkins_user_date_idx
-  on public.adhdice_health_checkins (user_id, entry_date desc, updated_at desc);
+  on public.adhdice_health_checkins (user_id, entry_date desc, entry_time desc, created_at desc);
 create unique index adhdice_health_symptoms_user_active_name_uidx
   on public.adhdice_health_symptoms (user_id, lower(regexp_replace(trim(name), '\s+', ' ', 'g')))
   where archived_at is null;
@@ -836,6 +858,14 @@ create index adhdice_health_journal_signal_values_user_entry_idx
   on public.adhdice_health_journal_signal_values (user_id, journal_entry_id, signal_id);
 create index adhdice_health_symptom_entries_user_journal_idx
   on public.adhdice_health_symptom_entries (user_id, journal_entry_id, logged_at desc);
+
+create index adhdice_health_journal_signal_occurrences_user_date_idx
+  on public.adhdice_health_journal_signal_occurrences (user_id, entry_date desc, occurred_at desc);
+create index adhdice_health_journal_signal_occurrences_journal_idx
+  on public.adhdice_health_journal_signal_occurrences (journal_entry_id, occurred_at);
+create index adhdice_health_journal_signal_occurrences_signal_idx
+  on public.adhdice_health_journal_signal_occurrences (signal_id, occurred_at);
+
 create index adhdice_health_food_library_user_updated_idx
   on public.adhdice_health_food_library (user_id, updated_at desc, created_at desc);
 create index adhdice_health_recipes_user_updated_idx
@@ -906,6 +936,7 @@ alter table public.adhdice_health_symptoms enable row level security;
 alter table public.adhdice_health_symptom_entries enable row level security;
 alter table public.adhdice_health_journal_signals enable row level security;
 alter table public.adhdice_health_journal_signal_values enable row level security;
+alter table public.adhdice_health_journal_signal_occurrences enable row level security;
 alter table public.adhdice_health_food_library enable row level security;
 alter table public.adhdice_health_recipes enable row level security;
 alter table public.adhdice_health_saved_meals enable row level security;
@@ -935,8 +966,10 @@ grant select, insert, update on table public.adhdice_health_symptoms to authenti
 grant select, insert, update, delete on table public.adhdice_health_symptom_entries to authenticated;
 revoke all on table public.adhdice_health_journal_signals from anon, authenticated;
 revoke all on table public.adhdice_health_journal_signal_values from anon, authenticated;
+revoke all on table public.adhdice_health_journal_signal_occurrences from anon, authenticated;
 grant select, insert, update, delete on table public.adhdice_health_journal_signals to authenticated;
 grant select, insert, update, delete on table public.adhdice_health_journal_signal_values to authenticated;
+grant select, insert, update, delete on table public.adhdice_health_journal_signal_occurrences to authenticated;
 
 create policy "Users can read their own clean tasks"
   on public.adhdice_clean_tasks
@@ -1354,6 +1387,31 @@ create policy "Users can delete their own health journal signal values"
   to authenticated
   using ((select auth.uid()) = user_id);
 
+create policy "Users can read their own health journal signal occurrences"
+  on public.adhdice_health_journal_signal_occurrences
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+create policy "Users can create their own health journal signal occurrences"
+  on public.adhdice_health_journal_signal_occurrences
+  for insert
+  to authenticated
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can update their own health journal signal occurrences"
+  on public.adhdice_health_journal_signal_occurrences
+  for update
+  to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can delete their own health journal signal occurrences"
+  on public.adhdice_health_journal_signal_occurrences
+  for delete
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
 create policy "Users can manage their own health food library"
   on public.adhdice_health_food_library
   for all
@@ -1588,6 +1646,11 @@ create trigger adhdice_health_journal_signals_set_updated_at
 
 create trigger adhdice_health_journal_signal_values_set_updated_at
   before update on public.adhdice_health_journal_signal_values
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_journal_signal_occurrences_set_updated_at
+  before update on public.adhdice_health_journal_signal_occurrences
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
