@@ -5,13 +5,24 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.39`.
+- Current working app version: `7.12.40`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-08-31 7.12.40 Journal Feeling overlay color picker
+
+The Your Day post-hashtag rating overlay now exposes the existing shared color
+control for Emotion and Other Feeling tags beside the compact `Skip` action.
+Both controls use the anchored `HealthColorControl` / `HealthAccentColorPalette`
+treatment and persist through the existing `HealthJournalSignal.color` and
+`updateJournalSignal` authority. Symptom occurrence overlays remain on the
+canonical `HealthSymptom.color` and `setSymptomColor` path. No SQL or schema
+change was made. Multiple Journal Entries per day is deferred to 7.12.41.
+Browser, live Supabase, and deployment verification remain outstanding.
 
 ## 2026-08-31 7.12.39 Journal History hashtag interaction and overlay stabilization
 
@@ -28,7 +39,7 @@ closing it restores the reflection caret with `preventScroll: true`. The
 symptom occurrence overlay reuses the canonical symptom color picker, so color
 changes update the HealthSymptom everywhere. The independent symptom-history
 surface now uses softened user-facing terminology. No SQL or schema change was
-made. Multiple Journal Entries per day is deferred to 7.12.40. Browser, live
+made. Multiple Journal Entries per day is deferred to 7.12.41. Browser, live
 Supabase, and deployment verification remain outstanding.
 
 ## 2026-08-31 7.12.38 Journal hashtag occurrence overlay and color correction

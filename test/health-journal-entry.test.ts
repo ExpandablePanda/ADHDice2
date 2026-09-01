@@ -360,6 +360,27 @@ test("7.12.39 source contract covers interactive History tags, exact ownership d
   assert.match(healthPageSource, /saveJournalEntry\(\{/);
 });
 
+test("7.12.40 rating overlays expose shared Journal colors for Emotion and Other Feeling", () => {
+  const feelingOverlayStart = healthPageSource.indexOf("<HealthJournalColorControl isOpen={journalTagRatingSignal ?");
+  const feelingScaleStart = healthPageSource.indexOf("<JournalScalePicker", feelingOverlayStart);
+  assert.ok(feelingOverlayStart >= 0);
+  assert.ok(feelingScaleStart > feelingOverlayStart);
+  const feelingOverlaySource = healthPageSource.slice(feelingOverlayStart, feelingScaleStart);
+  const feelingColorControlSource = healthPageSource.slice(feelingOverlayStart, healthPageSource.indexOf("<AdhdChip", feelingOverlayStart));
+
+  assert.match(healthPageSource, /activeJournalSignals\.map\(\(signal\) => \(\{/);
+  assert.match(healthPageSource, /kind: signal\.kind/);
+  assert.match(healthPageSource, /: \{ mode: "feeling_rating", signal \}\)/);
+  assert.match(feelingOverlaySource, /HealthJournalColorControl/);
+  assert.match(feelingOverlaySource, /handleSetJournalSignalColor\(journalTagRatingSignal\.id, color\)/);
+  assert.doesNotMatch(feelingOverlaySource, /HealthAccentColorPalette/);
+  assert.doesNotMatch(feelingColorControlSource, /updateJournalTagRating/);
+  assert.match(healthPageSource, /function handleSetJournalSignalColor\(signalId: string, color: string\)[\s\S]*?void updateJournalSignal\(signalId, \{ color \}\)/);
+  assert.match(healthPageSource, /function handleSetSymptomColor\(symptomId: string, color: string\)[\s\S]*?void setSymptomColor\(symptomId, color\)/);
+  assert.match(healthPageSource, /function HealthJournalColorControl\([\s\S]*?return <HealthColorControl/);
+  assert.match(healthPageSource, /function HealthColorControl\([\s\S]*?<HealthAccentColorPalette/);
+});
+
 test("symptom hashtag occurrence defaults to a valid local time and accepts severity 1 through 10 only", () => {
   const inputs = getCurrentHealthDateTimeInputs(new Date());
   assert.match(inputs.time, /^([01]\d|2[0-3]):[0-5]\d$/);

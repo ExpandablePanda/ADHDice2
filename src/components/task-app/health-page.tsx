@@ -1422,7 +1422,12 @@ export function HealthPage({
     () => new Map(journalHistoryTagOptions.map((option) => [getJournalTagOptionKey(option), option] as const)),
     [journalHistoryTagOptions],
   );
-  const journalTagRatingSignal = journalTagOverlay?.mode === "feeling_rating" ? journalTagOverlay.signal : null;
+  const journalTagRatingSignal = useMemo(
+    () => journalTagOverlay?.mode === "feeling_rating"
+      ? journalSignals.find((signal) => signal.id === journalTagOverlay.signal.id) ?? journalTagOverlay.signal
+      : null,
+    [journalSignals, journalTagOverlay],
+  );
   const journalTagRatingValue = useMemo(
     () => journalTagRatingSignal ? journalDraftValues.find((value) => value.signal_id === journalTagRatingSignal.id)?.score ?? null : null,
     [journalDraftValues, journalTagRatingSignal],
@@ -3287,7 +3292,7 @@ export function HealthPage({
                           {journalTagOverlay.error ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{journalTagOverlay.error}</p> : null}
                           <div className="flex justify-end gap-2"><AdhdChip onClick={closeJournalTagOverlay} type="button">Skip</AdhdChip><AdhdChip onClick={saveJournalTagOccurrence} tone="purple" type="button">Add occurrence</AdhdChip></div>
                         </> : <>
-                          <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Rate {getHealthJournalSignalDisplayName(journalTagOverlay.signal, symptoms)}</p><AdhdChip onClick={() => updateJournalTagRating(null)} type="button">Skip</AdhdChip></div>
+                          <div className="flex flex-wrap items-center justify-between gap-2"><p className="min-w-0 flex-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Rate {getHealthJournalSignalDisplayName(journalTagOverlay.signal, symptoms)}</p><div className="flex shrink-0 items-center gap-1"><HealthJournalColorControl isOpen={journalTagRatingSignal ? openSymptomColorPickerKey === `journal-tag:${journalTagRatingSignal.id}` : false} onSetColor={(color) => { if (journalTagRatingSignal) handleSetJournalSignalColor(journalTagRatingSignal.id, color); }} onToggle={() => { if (journalTagRatingSignal) toggleSymptomColorPicker(`journal-tag:${journalTagRatingSignal.id}`); }} signal={journalTagRatingSignal ?? journalTagOverlay.signal} symptoms={symptoms} /><AdhdChip onClick={() => updateJournalTagRating(null)} type="button">Skip</AdhdChip></div></div>
                           <JournalScalePicker
                             expanded
                             expandedScaleKey={`journal-tag-rating-${journalTagOverlay.signal.id}`}
