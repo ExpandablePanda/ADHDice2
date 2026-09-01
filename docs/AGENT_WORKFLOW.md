@@ -171,15 +171,23 @@ After two unsuccessful fixes for the same issue:
 - create a diagnosis-only ticket
 - verify the real component, event, state, persistence, cache, and build paths
 
-### 9. Checkpoint Stable Work
+### 9. Commit and Push Completed Work
 
-After QA passes:
+After the ticket's required verification passes:
 
 1. inspect the worktree
 2. confirm the intended diff
 3. run `git diff --check`
-4. create a local checkpoint commit after Andrew authorizes it
-5. begin the next substantial ticket from a clearer baseline
+4. commit only ticket-related changes
+5. push the specified active branch to `origin`
+6. report the commit SHA, push result, and final `git status --short`
+7. begin the next substantial ticket from a clearer baseline
+
+For every completed code-changing Implement or Correct QA Failure ticket, patch-bump the app version unless explicitly exempted, complete the required verification, commit only ticket-related changes, and push the specified active branch to `origin`.
+
+Exceptions are Diagnose, Review, planning, explicitly incomplete or unsafe work, and explicit `do not commit` or `do not push` instructions. Documentation-only changes do not bump the app version by default, but the documentation update is still committed and pushed.
+
+Dirty-worktree protection remains in force: never reset, stash, clean, or discard changes without approval; do not stage or commit unrelated files.
 
 Avoid stacking several architectural releases in one dirty worktree.
 
@@ -363,6 +371,7 @@ Verification:
 
 Version:
 - Bump to the next patch version for code changes.
+- Do not bump the app version for documentation-only changes by default.
 
 Final response:
 1. Changes

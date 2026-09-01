@@ -97,15 +97,27 @@ Before editing:
 
 Do not:
 
-* reset
-* stash
-* clean
+* reset, stash, clean, or otherwise discard changes without approval
 * revert unrelated work
 * reformat unrelated code
-* stage, commit, or push unless explicitly requested
+* stage unrelated files or commit or push unrelated changes
 * claim pre-existing changes as part of the current task
 
 When a required file already contains uncommitted work, make the smallest compatible change and report that the file had protected baseline edits.
+
+## Commit and Push Policy
+
+For every completed code-changing implementation or Correct QA Failure ticket:
+
+* patch-bump the app version unless the ticket is explicitly exempted
+* complete the required verification
+* commit only ticket-related changes
+* push the specified active branch to `origin`
+* report the commit SHA, push result, and final `git status --short`
+
+Exceptions are Diagnose, Review, planning, explicitly incomplete or unsafe work, and explicit `do not commit` or `do not push` instructions.
+
+Documentation-only changes do not bump the app version by default, but the documentation update is still committed and pushed. Dirty-worktree protection always applies: do not stage unrelated files or include unrelated changes in a commit.
 
 ## Exploration
 
@@ -253,7 +265,7 @@ Report existing version drift before changing it unless version synchronization 
 
 ## Checkpoints
 
-After user QA passes, do not automatically begin another architectural ticket in the same dirty worktree.
+After the ticket's required verification passes, do not automatically begin another architectural ticket in the same dirty worktree.
 
 Before the next substantial ticket, inspect:
 
@@ -261,7 +273,7 @@ Before the next substantial ticket, inspect:
 * `git diff --stat`
 * `git diff --check`
 
-A local checkpoint commit should normally be made after authorization when the completed work is stable.
+For completed work that is not covered by a Commit and Push Policy exception, commit only the intended ticket-related changes and push the specified active branch to `origin`. Then report the commit SHA, push result, and final worktree status before beginning another substantial ticket.
 
 ## Final Response
 
