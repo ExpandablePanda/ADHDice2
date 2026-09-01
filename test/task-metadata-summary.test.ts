@@ -41,13 +41,11 @@ function summaryByLabel(task = baseTask, actualSeconds = task.actualSeconds) {
   return Object.fromEntries(buildTaskMetadataSummary(task, actualSeconds).map((row) => [row.label, row]));
 }
 
-test("MetadataPanelId and full inspector navigation put Summary first without adding it to quick edit", () => {
+test("MetadataPanelId remains available while the full inspector no longer renders a metadata navigation strip", () => {
   assert.match(tableSource, /export type MetadataPanelId = [^;]*"summary"/);
-  const optionsStart = tableSource.indexOf("const metadataPanelOptions");
-  const optionsEnd = tableSource.indexOf("function metadataFieldHasValue", optionsStart);
-  const options = tableSource.slice(optionsStart, optionsEnd);
-  assert.ok(options.indexOf('{ id: "summary", label: "Summary" }') < options.indexOf('{ id: "delay", label: "Delay" }'));
-  assert.match(options, /\{ id: "notes", label: "Notes" \}/);
+  assert.match(tableSource, /const metadataPanelLabels: Record<MetadataPanelId, string>/);
+  assert.doesNotMatch(tableSource, /metadataPanelOptions\.map/);
+  assert.doesNotMatch(tableSource, /metadataFieldHasValue/);
   assert.doesNotMatch(tableSource.slice(tableSource.indexOf("type TaskRowContextMenuQuickEditMode"), tableSource.indexOf("type TaskEditorInitialField")), /summary/);
   assert.doesNotMatch(tableSource.slice(tableSource.indexOf("const BATCH_QUICK_EDIT_MODES"), tableSource.indexOf("const TABLE_REVEAL_TOP_PADDING")), /summary/);
 });
@@ -71,7 +69,17 @@ test("Summary is derived from the active metadataTask and exposes every property
     assert.match(summaryHelper, new RegExp(`panelId: "${panelId}"`));
   }
   assert.match(tableSource, /const metadataTask = overlayMode === "full" \? metadataTargetTask \?\? selectedTask : selectedTask/);
-  assert.match(tableSource, /case "summary":\s*return false;/);
+});
+
+test("full-editor property panels expose one Back to Summary control without changing metadata", () => {
+  const fullEditor = tableSource.slice(tableSource.indexOf("const fullDesktopEditorContent"), tableSource.indexOf("const fullDesktopEditorNode"));
+  assert.match(fullEditor, /aria-label="Back to Summary"/);
+  assert.match(fullEditor, /onClick=\{\(\) => selectMetadataPanel\(metadataTask\.id, "summary"\)\}/);
+  assert.match(fullEditor, /metadataPanelId !== "summary"/);
+  assert.match(fullEditor, /<ArrowLeft className=/);
+  assert.match(tableSource, /grid min-w-0 grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-3/);
+  assert.match(tableSource, /px-2\.5 py-1\.5/);
+  assert.match(tableSource, /mt-0\.5 block min-w-0 break-words/);
 });
 
 test("Summary formatting keeps configured values visible and uses displayed actual seconds", () => {

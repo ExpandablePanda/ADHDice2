@@ -5,13 +5,21 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.56`.
+- Current working app version: `7.12.57`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.57 Edit Task Metadata Summary Navigation
+
+The Metadata Summary is now the full-editor metadata home screen. The redundant
+horizontal Metadata navigator was removed; existing property rows still open
+the existing editors, and each non-Summary property editor provides a Back to
+Summary control. Summary uses a compact responsive one-, two-, and three-column
+layout. No persistence, schema, or SQL changes were made.
 
 ## 2026-09-01 7.12.56 Edit Task Metadata Summary
 

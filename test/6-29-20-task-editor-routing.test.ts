@@ -97,7 +97,7 @@ test("manual and automatic metadata selection share the render-resolved selector
   const table = await source("../src/components/ui/task-management-table-v2.tsx");
   assert.match(table, /const selectMetadataPanel = useCallback/);
   assert.match(table, /selectMetadataPanel\(resolvedMetadataTask\.id, "estimated"\)/);
-  assert.match(table, /onClick=\{\(\) => selectMetadataPanel\(metadataTask\.id, option\.id\)\}/);
+  assert.match(table, /onClick=\{\(\) => selectMetadataPanel\(metadataTask\.id, row\.panelId as MetadataPanelId\)\}/);
 });
 
 test("desktop and mobile share one semantic Estimated Time input and unchanged Apply mutation", async () => {

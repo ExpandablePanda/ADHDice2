@@ -3,6 +3,7 @@
 import { Children, Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
+  ArrowLeft,
   ArrowUp,
   ArrowDown,
   CalendarDays,
@@ -9215,57 +9216,23 @@ export function TaskManagementTableV2({
                 const metadataPanelId: MetadataPanelId = overlayMode === "full"
                   ? activeMetadataPanel
                   : overlayMode;
-                const metadataPanelOptions: Array<{ id: MetadataPanelId; label: string }> = [
-                  { id: "summary", label: "Summary" },
-                  { id: "delay", label: "Delay" },
-                  { id: "due", label: "Due" },
-                  { id: "status", label: "Status" },
-                  { id: "estimated", label: "Estimated Time" },
-                  { id: "actual", label: "Actual Time" },
-                  { id: "priority", label: "Priority" },
-                  { id: "repeat", label: "Repeat" },
-                  { id: "energy", label: "Energy" },
-                  { id: "lists", label: "Lists" },
-                  { id: "tags", label: "Tags" },
-                  { id: "link", label: "Link" },
-                  { id: "notes", label: "Notes" },
-                ];
-                function metadataFieldHasValue(id: MetadataPanelId) {
-                  switch (id) {
-                    case "summary":
-                      return false;
-                    case "delay":
-                      return metadataTask.status === "delayed";
-                    case "due":
-                      return Boolean(metadataTask.dueOn || metadataTask.dueTime);
-                    case "estimated":
-                      return metadataTask.estimatedMinutes !== null;
-                    case "actual":
-                      return getDisplayedActualSeconds(metadataTask) > 0;
-                    case "priority":
-                      return metadataTask.priorities.length > 0;
-                    case "repeat":
-                      return metadataTask.repeat !== "none";
-                    case "energy":
-                      return metadataTask.energy !== "none";
-                    case "status":
-                      return metadataTask.status !== "pending";
-                    case "lists":
-                      return metadataTask.lists.length > 0;
-                    case "tags":
-                      return metadataTask.tags.length > 0;
-                    case "link":
-                      return Boolean(metadataTask.linkLabel || metadataTask.linkUrl);
-                    case "notes":
-                      return Boolean(metadataTask.notes.trim() || metadataTask.linkedNotes.length > 0);
-                    default:
-                      return false;
-                  }
-                }
+                const metadataPanelLabels: Record<MetadataPanelId, string> = {
+                  actual: "Actual Time",
+                  delay: "Delay",
+                  due: "Due",
+                  energy: "Energy",
+                  estimated: "Estimated Time",
+                  link: "Link",
+                  lists: "Lists",
+                  notes: "Notes",
+                  priority: "Priority",
+                  repeat: "Repeat",
+                  status: "Status",
+                  summary: "Summary",
+                  tags: "Tags",
+                };
                 const metadataSummaryRows = buildTaskMetadataSummary(metadataTask, getDisplayedActualSeconds(metadataTask));
-                const activeMetadataPanelLabel = metadataPanelId === "status"
-                  ? "Status"
-                  : metadataPanelOptions.find((option) => option.id === metadataPanelId)?.label ?? "Meta Data";
+                const activeMetadataPanelLabel = metadataPanelLabels[metadataPanelId] ?? "Meta Data";
                 function renderInlineTextChoices<T extends string>(
                   options: Array<{ label: string; value: T }>,
                   selectedValues: T[],
@@ -9298,22 +9265,22 @@ export function TaskManagementTableV2({
                 let metadataPanelContent: ReactNode = null;
                 if (metadataPanelId === "summary") {
                   metadataPanelContent = (
-                    <div className="grid min-w-0 grid-cols-1 gap-1.5 sm:grid-cols-2">
+                    <div className="grid min-w-0 grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-3">
                       {metadataSummaryRows.map((row) => row.panelId ? (
                         <button
                           aria-label={`Edit ${row.label}`}
-                          className="min-w-0 rounded-[0.8rem] border border-transparent px-2.5 py-2 text-left transition hover:border-[#e5dcfb] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:focus-visible:ring-[#3b2f68]/90"
+                          className="min-w-0 rounded-[0.8rem] border border-transparent px-2.5 py-1.5 text-left transition hover:border-[#e5dcfb] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:focus-visible:ring-[#3b2f68]/90"
                           key={row.label}
                           onClick={() => selectMetadataPanel(metadataTask.id, row.panelId as MetadataPanelId)}
                           type="button"
                         >
                           <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-[#9b92be] dark:text-white/35">{row.label}</span>
-                          <span className="mt-1 block min-w-0 break-words text-sm text-[#4e476f] dark:text-white/75">{row.value}</span>
+                          <span className="mt-0.5 block min-w-0 break-words text-sm text-[#4e476f] dark:text-white/75">{row.value}</span>
                         </button>
                       ) : (
-                        <div className="min-w-0 rounded-[0.8rem] px-2.5 py-2" key={row.label}>
+                        <div className="min-w-0 rounded-[0.8rem] px-2.5 py-1.5" key={row.label}>
                           <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-[#9b92be] dark:text-white/35">{row.label}</span>
-                          <span className="mt-1 block min-w-0 break-words text-sm text-[#2f294a] dark:text-white">{row.value}</span>
+                          <span className="mt-0.5 block min-w-0 break-words text-sm text-[#2f294a] dark:text-white">{row.value}</span>
                         </div>
                       ))}
                     </div>
@@ -9745,9 +9712,6 @@ export function TaskManagementTableV2({
                   ? "min-w-0 w-full max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
                   : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4 lg:self-start";
                 const titleInputClass = `${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] ${useMobileFullOverlay ? "text-[17px]" : "text-[18px]"}`;
-                const metadataTabRowClass = useMobileFullOverlay
-                  ? "mt-3 flex min-w-0 flex-wrap gap-x-3 gap-y-2 text-[13px] leading-5"
-                  : "mt-3 flex flex-wrap items-center gap-y-1.5 text-sm";
                 const metadataPanelClass = useMobileFullOverlay
                   ? "mt-5 min-w-0 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]"
                   : "mt-4 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]";
@@ -9858,30 +9822,21 @@ export function TaskManagementTableV2({
                           />
                         </label>
                       ) : null}
-                      <div className={metadataTabRowClass}>
-                        {metadataPanelOptions.map((option, index) => (
-                          <div className={useMobileFullOverlay ? "min-w-0" : "flex items-center"} key={`${option.id || "metadata-panel"}-${index}`}>
-                            {!useMobileFullOverlay && index > 0 ? <span className="px-2 text-[#c9c0e2] dark:text-white/18">|</span> : null}
+                      <div className={metadataPanelClass}>
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div className="text-xs font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">
+                            {activeMetadataPanelLabel}
+                          </div>
+                          {metadataPanelId !== "summary" ? (
                             <button
-                              className={`inline-flex min-w-0 items-center gap-1.5 transition ${
-                                activeMetadataPanel === option.id
-                                  ? "text-[#6f57f6] dark:text-[#cabfff]"
-                                  : "text-[#8d87a7] hover:text-[#6f57f6] dark:text-white/45 dark:hover:text-[#cabfff]"
-                              }`}
-                              onClick={() => selectMetadataPanel(metadataTask.id, option.id)}
+                              aria-label="Back to Summary"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#e4deef] bg-white/92 text-[#8a82a7] shadow-sm transition hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:border-white/10 dark:bg-[#201936]/92 dark:text-white/55 dark:hover:text-[#cabfff] dark:focus-visible:ring-[#3b2f68]/90"
+                              onClick={() => selectMetadataPanel(metadataTask.id, "summary")}
                               type="button"
                             >
-                              <span>{option.label}</span>
-                              {metadataFieldHasValue(option.id) ? (
-                                <span className={`h-1.5 w-1.5 rounded-full ${activeMetadataPanel === option.id ? "bg-[#6f57f6] dark:bg-[#cabfff]" : "bg-[#a99de4] dark:bg-white/45"}`} />
-                              ) : null}
+                              <ArrowLeft className="h-4 w-4" />
                             </button>
-                          </div>
-                        ))}
-                      </div>
-                      <div className={metadataPanelClass}>
-                        <div className="mb-3 text-xs font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">
-                          {activeMetadataPanelLabel}
+                          ) : null}
                         </div>
                         {metadataPanelContent}
                       </div>
