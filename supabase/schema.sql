@@ -456,7 +456,7 @@ create table public.adhdice_health_symptom_entries (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   symptom_id uuid not null,
-  journal_entry_id uuid,
+  journal_entry_id uuid not null,
   entry_date date not null,
   logged_at timestamptz not null default now(),
   severity integer not null check (severity >= 1 and severity <= 10),

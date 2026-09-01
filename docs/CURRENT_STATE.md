@@ -1,17 +1,36 @@
 # Current State
 
-Last reviewed: 2026-08-31
+Last reviewed: 2026-09-01
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.42`.
+- Current working app version: `7.12.43`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.43 Journal Feeling ownership, time display, and workspace
+
+Journal is now the only rendered workspace for Feeling Occurrences. Symptom
+occurrences are Journal-owned by required `journal_entry_id`; the authored-only
+`supabase/enforce_health_feeling_journal_ownership_7_12_43.sql` removes known
+orphan test rows, enforces the constraint, and verifies the cascade FK. It has
+NOT been applied remotely.
+
+Journal displays Journal Date/Time separately from immutable Logged Date/Time,
+using the shared compact 12-hour AM/PM control for Journal and occurrence
+times. Entry and History are one responsive workspace with exact-ID editing,
+desktop History Left/Right split options, and a mobile single-pane fallback.
+
+Feeling Trends graph raw timestamped occurrences for Symptoms, Emotions, and
+Other Feelings as separate colored series, including archived definitions;
+Daily Log snapshot ratings are excluded. Focused source/tests were updated.
+Browser, live Supabase, deployment, full build, typecheck, and full-suite
+verification remain outstanding.
 
 ## 2026-08-31 7.12.41 Journal snapshots and Feeling Occurrences
 

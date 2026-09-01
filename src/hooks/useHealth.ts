@@ -118,7 +118,7 @@ export type HealthImportSaveProgress = {
 export type HealthJournalEntrySaveInput = {
   checkIn: Omit<HealthCheckInInsert, "user_id">;
   signalValues: HealthJournalDraftValue[];
-  symptomOccurrences: Omit<HealthSymptomEntryInsert, "user_id">[];
+  symptomOccurrences: Omit<HealthSymptomEntryInsert, "user_id" | "journal_entry_id">[];
   journalSignalOccurrences: Omit<HealthJournalSignalOccurrenceInsert, "user_id" | "journal_entry_id">[];
 };
 
@@ -217,8 +217,12 @@ function normalizeHealthCheckIn(checkIn: HealthCheckIn): HealthCheckIn {
   };
 }
 
-function normalizeHealthSymptomEntry(entry: HealthSymptomEntry): HealthSymptomEntry {
-  return { ...entry, journal_entry_id: entry.journal_entry_id ?? null };
+function normalizeHealthSymptomEntry(entry: HealthSymptomEntry): HealthSymptomEntry | null {
+  return entry.journal_entry_id ? entry : null;
+}
+
+function normalizeHealthSymptomEntries(entries: readonly HealthSymptomEntry[]) {
+  return entries.map(normalizeHealthSymptomEntry).filter((entry): entry is HealthSymptomEntry => entry !== null);
 }
 
 function readLocalHealthState(userId: string): LocalHealthState {
@@ -245,7 +249,7 @@ function readLocalHealthState(userId: string): LocalHealthState {
     ),
     recipes: readStoredJson(storageKey(userId, "recipes"), emptyState.recipes),
     savedMeals: readStoredJson(storageKey(userId, "saved-meals"), emptyState.savedMeals),
-    symptomEntries: sortHealthSymptomEntries(readStoredJson<HealthSymptomEntry[]>(storageKey(userId, "symptom-entries"), emptyState.symptomEntries).map(normalizeHealthSymptomEntry)),
+    symptomEntries: sortHealthSymptomEntries(normalizeHealthSymptomEntries(readStoredJson<HealthSymptomEntry[]>(storageKey(userId, "symptom-entries"), emptyState.symptomEntries))),
     symptoms: sortHealthSymptoms(readStoredJson<HealthSymptom[]>(storageKey(userId, "symptoms"), emptyState.symptoms).map(normalizeHealthSymptom)),
     waterEntries: readStoredJson<HealthWaterEntry[]>(storageKey(userId, "water"), emptyState.waterEntries)
       .map(normalizeHealthWaterEntry),
@@ -750,7 +754,7 @@ export function useHealth(
       const latestLocalSymptoms = healthSnapshotRef.current?.symptoms ?? localState.snapshot.symptoms;
       const latestLocalSymptomEntries = healthSnapshotRef.current?.symptomEntries ?? localState.snapshot.symptomEntries;
       let remoteSymptoms = symptomsResult.data ?? [];
-      let remoteSymptomEntries = symptomEntriesResult.data ?? [];
+      let remoteSymptomEntries = normalizeHealthSymptomEntries(symptomEntriesResult.data ?? []);
       let symptomRecovery = reconcileHealthSymptoms(
         latestLocalSymptoms,
         remoteSymptoms,
@@ -827,7 +831,7 @@ export function useHealth(
             symptomEntryRecoveryError = error;
             symptomEntriesRemoteEnabledRef.current = false;
           } else {
-            remoteSymptomEntries = [...remoteSymptomEntries, ...(data && data.length > 0 ? data : symptomRecovery.unreconciledLocalEntries)];
+            remoteSymptomEntries = [...remoteSymptomEntries, ...normalizeHealthSymptomEntries(data && data.length > 0 ? data : symptomRecovery.unreconciledLocalEntries)];
           }
         }
       }
@@ -1081,7 +1085,7 @@ export function useHealth(
         profile: normalizeHealthProfile(profileResult.data, userId),
         recipes: recipesResult.data ?? [],
         savedMeals: savedMealsResult.data ?? [],
-        symptomEntries: symptomEntriesResult.error ? currentLocalSymptomEntries : symptomRecovery.mergedEntries.map(normalizeHealthSymptomEntry),
+        symptomEntries: symptomEntriesResult.error ? currentLocalSymptomEntries : normalizeHealthSymptomEntries(symptomRecovery.mergedEntries),
         symptoms: symptomsResult.error ? currentLocalSymptoms : symptomRecovery.mergedSymptoms,
         waterEntries: (waterEntriesResult.data ?? []).map(normalizeHealthWaterEntry),
         workouts: workoutRecovery.mergedWorkouts,
@@ -1950,6 +1954,12 @@ export function useHealth(
     }
     const currentSymptoms = healthSnapshotRef.current?.symptoms ?? symptoms;
     const currentSymptomEntries = healthSnapshotRef.current?.symptomEntries ?? symptomEntries;
+    const currentCheckIns = healthSnapshotRef.current?.checkIns ?? checkIns;
+    const journalEntry = currentCheckIns.find((entry) => entry.id === input.journal_entry_id && entry.user_id === userId);
+    if (!journalEntry) {
+      setMessage({ tone: "warn", text: "Feeling occurrences must belong to a Journal Entry." });
+      return false;
+    }
     const symptom = currentSymptoms.find((candidate) => candidate.id === input.symptom_id);
     if (!symptom || symptom.archived_at !== null) {
       setMessage({ tone: "warn", text: "Choose an active symptom." });
@@ -1965,7 +1975,7 @@ export function useHealth(
       created_at: now,
       entry_date: input.entry_date,
       id: input.id ?? createLocalId("health-symptom-entry"),
-      journal_entry_id: input.journal_entry_id ?? null,
+      journal_entry_id: input.journal_entry_id,
       logged_at: input.logged_at ?? now,
       note: normalizeHealthSymptomNote(input.note),
       severity: input.severity,
@@ -2027,6 +2037,12 @@ export function useHealth(
     if (!currentEntry) {
       return false;
     }
+    const nextJournalEntryId = input.journal_entry_id ?? currentEntry.journal_entry_id;
+    const currentCheckIns = healthSnapshotRef.current?.checkIns ?? checkIns;
+    if (!nextJournalEntryId || !currentCheckIns.some((entry) => entry.id === nextJournalEntryId && entry.user_id === userId)) {
+      setMessage({ tone: "warn", text: "Feeling occurrences must belong to a Journal Entry." });
+      return false;
+    }
     const nextSymptomId = input.symptom_id ?? currentEntry.symptom_id;
     const symptom = symptoms.find((candidate) => candidate.id === nextSymptomId);
     if (!symptom) {
@@ -2041,12 +2057,14 @@ export function useHealth(
 
     const normalizedInput: HealthSymptomEntryUpdate = {
       ...input,
+      journal_entry_id: nextJournalEntryId,
       ...(input.note === undefined ? {} : { note: normalizeHealthSymptomNote(input.note) }),
     };
     const now = new Date().toISOString();
     const localRow: HealthSymptomEntry = {
       ...currentEntry,
       ...normalizedInput,
+      journal_entry_id: nextJournalEntryId,
       severity: nextSeverity,
       symptom_id: nextSymptomId,
       updated_at: now,

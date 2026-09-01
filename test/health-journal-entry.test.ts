@@ -31,6 +31,8 @@ import {
 } from "../src/lib/health-journal.ts";
 import {
   buildHealthMealLoggedAt,
+  formatHealthJournalDate,
+  formatHealthStandardTime,
   getCurrentHealthDateTimeInputs,
   HEALTH_SEVERITY_OPTIONS,
   normalizeHealthMealTime,
@@ -55,6 +57,7 @@ const multipleEntriesMigrationSource = readFileSync(
 );
 const healthHookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
+const standardTimeInputSource = readFileSync(new URL("../src/components/task-app/health-standard-time-input.tsx", import.meta.url), "utf8");
 
 function signal(id: string, overrides: Partial<HealthJournalSignal> = {}): HealthJournalSignal {
   return {
@@ -209,6 +212,29 @@ test("legacy Journal rows get a safe Entry time from created_at without changing
   assert.equal(loggedAt, "2026-09-01T00:08:00.000Z");
 });
 
+test("Journal display uses explicit standard 12-hour time and distinguishes Journal from Logged metadata", () => {
+  assert.equal(formatHealthStandardTime("00:05", "en-US"), "12:05 AM");
+  assert.equal(formatHealthStandardTime("12:05", "en-US"), "12:05 PM");
+  assert.equal(formatHealthStandardTime("16:05", "en-US"), "4:05 PM");
+  assert.equal(formatHealthJournalDate("2026-08-31", "en-US"), "Aug 31, 2026");
+  assert.match(healthPageSource, /label="Journal Date"/);
+  assert.match(healthPageSource, /label="Journal Time"/);
+  assert.match(healthPageSource, /label="Logged Date"/);
+  assert.match(healthPageSource, /label="Logged Time"/);
+  assert.match(healthPageSource, /created_at/);
+  assert.match(healthPageSource, /HealthStandardTimeInput/);
+  assert.match(standardTimeInputSource, /export function HealthStandardTimeInput/);
+  assert.match(standardTimeInputSource, /value=\{parts\.hour\}/);
+  assert.match(standardTimeInputSource, /value=\{parts\.minute\}/);
+  assert.match(standardTimeInputSource, /<option value="AM">AM<\/option>/);
+  assert.doesNotMatch(standardTimeInputSource, /type="time"/);
+  const journalSource = healthPageSource.slice(
+    healthPageSource.indexOf('{activeTab === "Journal" ? ('),
+    healthPageSource.indexOf('{activeTab === "Food" ? ('),
+  );
+  assert.doesNotMatch(journalSource, /<HealthMealDateTimeInput[^>]+type="time"/);
+});
+
 test("symptom Journal signals resolve their current canonical Health symptom name", () => {
   const symptom: HealthSymptom = {
     archived_at: null,
@@ -343,7 +369,7 @@ test("7.12.41 source contract covers unified tag occurrence overlays and shared 
   assert.match(healthPageSource, /mode: "feeling_occurrence"/);
   assert.doesNotMatch(healthPageSource, /mode: "feeling_rating"/);
   assert.match(healthPageSource, /id="journal-tag-overlay"/);
-  assert.match(healthPageSource, /inputRef=\{journalTagTimeRef\}/);
+  assert.match(healthPageSource, /<HealthStandardTimeInput ariaLabel="Feeling occurrence time"/);
   assert.match(healthPageSource, /time: journalEntryTime \|\| getCurrentHealthDateTimeInputs\(\)\.time/);
   assert.match(healthPageSource, /HEALTH_SEVERITY_OPTIONS\.map/);
   assert.doesNotMatch(healthPageSource, /journalTagRatingSignalId/);
@@ -401,7 +427,7 @@ test("7.12.39 source contract covers interactive History tags, exact ownership d
   assert.match(healthPageSource, /Not logged/);
   assert.match(healthPageSource, /getJournalTagOptionColor/);
   assert.match(healthPageSource, /scaleLabels\[overallValue\.score\]/);
-  assert.match(healthPageSource, /subtitle="Feeling Occurrences"/);
+  assert.match(healthPageSource, /SectionMiniTitle title="Feeling Occurrences"/);
   assert.doesNotMatch(healthPageSource, /Standalone symptom history/);
 
   assert.doesNotMatch(journalTagSource, /journalTagTimeRef\.current\?\.focus/);
@@ -508,7 +534,7 @@ test("7.12.41 source contract covers multiple entries, occurrence ownership, RLS
   assert.match(healthPageSource, /Save Journal Entry/);
   assert.match(healthPageSource, /Manage Journal Library/);
   assert.match(healthPageSource, /selectedJournalEntryId/);
-  assert.match(healthPageSource, /Entry time/);
+  assert.match(healthPageSource, /Journal Time/);
   assert.match(healthPageSource, /\+ New Entry/);
   assert.match(healthPageSource, /Your Daily Template/);
   assert.match(healthPageSource, /Feeling Occurrences/);

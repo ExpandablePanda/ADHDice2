@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import type { HealthSymptom, HealthSymptomEntry } from "../src/lib/database.types.ts";
+import type { HealthJournalSignal, HealthJournalSignalOccurrence, HealthSymptom, HealthSymptomEntry } from "../src/lib/database.types.ts";
 import {
   getNumericLineChartCollisionGroupKey,
   getNumericLineChartCollisionOffsets,
@@ -10,6 +10,13 @@ import {
   getNumericLineChartXPositions,
 } from "../src/components/activity-line-chart-card.tsx";
 import { ADHDICE_ACCENT_COLORS } from "../src/lib/accent-colors.ts";
+import {
+  ALL_HEALTH_FEELINGS_VALUE,
+  buildHealthFeelingTrendModel,
+  getHealthFeelingTrendPoints,
+  getHealthFeelingTrendPointsByDefinition,
+  HEALTH_FEELING_TREND_RANGES,
+} from "../src/lib/health-feeling-trends.ts";
 import {
   ALL_HEALTH_SYMPTOMS_VALUE,
   DEFAULT_HEALTH_SYMPTOM_COLOR,
@@ -22,7 +29,6 @@ import {
   HEALTH_MOOD_OPTIONS,
   HEALTH_SCALE_OPTIONS,
   HEALTH_SEVERITY_OPTIONS,
-  HEALTH_SYMPTOM_TREND_RANGES,
   normalizeHealthSymptom,
   normalizeHealthSymptomColor,
   normalizeHealthSymptomName,
@@ -43,6 +49,10 @@ const colorMigrationSource = readFileSync(
   new URL("../supabase/add_health_journal_symptom_colors_7_12_21.sql", import.meta.url),
   "utf8",
 );
+const ownershipMigrationSource = readFileSync(
+  new URL("../supabase/enforce_health_feeling_journal_ownership_7_12_43.sql", import.meta.url),
+  "utf8",
+);
 const healthHookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const activityChartSource = readFileSync(new URL("../src/components/activity-line-chart-card.tsx", import.meta.url), "utf8");
@@ -58,11 +68,34 @@ function symptomEntry(
     created_at: loggedAt,
     entry_date: entryDate,
     id,
+    journal_entry_id: "journal-1",
     logged_at: loggedAt,
     note: null,
     severity,
     symptom_id: symptomId,
     updated_at: loggedAt,
+    user_id: "user-1",
+  };
+}
+
+function journalSignalOccurrence(
+  id: string,
+  signalId: string,
+  entryDate: string,
+  occurredAt: string,
+  score: number,
+  journalEntryId = "journal-1",
+): HealthJournalSignalOccurrence {
+  return {
+    created_at: occurredAt,
+    entry_date: entryDate,
+    id,
+    journal_entry_id: journalEntryId,
+    note: null,
+    occurred_at: occurredAt,
+    score,
+    signal_id: signalId,
+    updated_at: occurredAt,
     user_id: "user-1",
   };
 }
@@ -335,30 +368,78 @@ test("symptom colors survive reconciliation and archived definitions retain thei
   assert.equal(getSelectableHealthSymptoms(recovery.mergedSymptoms, [symptomEntry("archived-entry", "2026-08-29", "2026-08-29T09:00:00.000Z", 5, archivedDefinition.id)])[1]?.color, archivedDefinition.color);
 });
 
-test("Journal symptom trends adapt into the shared chart with a fixed 1 to 10 severity scale", () => {
-  assert.deepEqual([...HEALTH_SYMPTOM_TREND_RANGES], ["7D", "30D", "90D", "All"]);
+test("Journal Feeling Trends graph owned Symptoms, Emotions, and Other Feelings as separate raw series", () => {
+  const archivedSymptom = symptomDefinition("archived-symptom", "Old Headache", "2026-08-28T12:00:00.000Z", "#ef4444");
+  const activeSymptom = symptomDefinition("active-symptom", "Back Pain", null, "#3b82f6");
+  const emotion: HealthJournalSignal = {
+    archived_at: null,
+    color: "#14b8a6",
+    created_at: "emotion-created",
+    high_label: "Extreme",
+    id: "emotion-1",
+    in_template: true,
+    kind: "emotion",
+    low_label: "None",
+    name: "Anxiety",
+    scale_labels: ["None", "1", "2", "3", "4", "5", "6", "7", "8", "9", "Extreme"],
+    symptom_id: null,
+    template_sort_order: 1,
+    updated_at: "emotion-updated",
+    user_id: "user-1",
+  };
+  const other: HealthJournalSignal = { ...emotion, id: "other-1", kind: "other", name: "Hope", color: "#f59e0b" };
+  const model = buildHealthFeelingTrendModel({
+    journalSignalOccurrences: [
+      journalSignalOccurrence("anxiety-1", emotion.id, "2026-08-29", "2026-08-29T09:00:00.000Z", 3),
+      journalSignalOccurrence("hope-1", other.id, "2026-08-29", "2026-08-29T10:00:00.000Z", 8),
+      { ...journalSignalOccurrence("orphan", emotion.id, "2026-08-29", "2026-08-29T11:00:00.000Z", 10), journal_entry_id: null } as unknown as HealthJournalSignalOccurrence,
+    ],
+    journalSignals: [emotion, other],
+    symptomEntries: [
+      symptomEntry("back-1", "2026-08-29", "2026-08-29T08:00:00.000Z", 4, activeSymptom.id),
+      symptomEntry("old-1", "2026-08-28", "2026-08-28T12:00:00.000Z", 7, archivedSymptom.id),
+    ],
+    symptoms: [activeSymptom, archivedSymptom],
+  });
+
+  assert.deepEqual([...HEALTH_FEELING_TREND_RANGES], ["7D", "30D", "90D", "All"]);
+  assert.equal(ALL_HEALTH_FEELINGS_VALUE, "__all_feelings__");
+  assert.deepEqual(model.definitions.map(({ key, kind, name, archived, color }) => ({ key, kind, name, archived, color })), [
+    { key: "symptom:active-symptom", kind: "symptom", name: "Back Pain", archived: false, color: "#3b82f6" },
+    { key: "symptom:archived-symptom", kind: "symptom", name: "Old Headache", archived: true, color: "#ef4444" },
+    { key: "signal:emotion-1", kind: "emotion", name: "Anxiety", archived: false, color: "#14b8a6" },
+    { key: "signal:other-1", kind: "other", name: "Hope", archived: false, color: "#f59e0b" },
+  ]);
+  assert.deepEqual(model.points.map(({ id, feelingKey, score }) => [id, feelingKey, score]), [
+    ["old-1", "symptom:archived-symptom", 7],
+    ["back-1", "symptom:active-symptom", 4],
+    ["anxiety-1", "signal:emotion-1", 3],
+    ["hope-1", "signal:other-1", 8],
+  ]);
+  assert.equal(model.points.some((point) => point.id === "orphan"), false);
+  assert.deepEqual(getHealthFeelingTrendPoints({ asOfDate: "2026-08-29", model, range: "7D", feelingKey: "symptom:active-symptom" }).map((point) => point.id), ["back-1"]);
+  assert.deepEqual(getHealthFeelingTrendPointsByDefinition({ asOfDate: "2026-08-29", model, range: "All" }).map(({ definition }) => definition.key), model.definitions.map((definition) => definition.key));
+});
+
+test("Journal Feeling Trends adapt into the shared chart with a fixed 1 to 10 occurrence scale", () => {
   assert.match(healthPageSource, /ActivityLineChartCard/);
-  assert.match(healthPageSource, /getHealthSymptomTrendEntries/);
-  assert.match(healthPageSource, /HEALTH_SYMPTOM_TREND_RANGES/);
-  assert.match(healthPageSource, /title="Symptom Trends"/);
-  assert.match(healthPageSource, /key: entry\.id/);
+  assert.match(healthPageSource, /buildHealthFeelingTrendModel/);
+  assert.match(healthPageSource, /title="Feeling Trends"/);
+  assert.match(healthPageSource, /HealthStandardTimeInput/);
+  assert.match(healthPageSource, /formatHealthStandardTime/);
   assert.match(healthPageSource, /summaryLabel,/);
-  assert.match(healthPageSource, /buildHealthSymptomTrendSeries\(selectedSymptomTrend, selectedSymptomTrendEntries, "Latest"\)/);
-  assert.match(healthPageSource, /buildHealthSymptomTrendSeries\(symptom, entries, symptom\.name\)/);
-  assert.match(healthPageSource, /label: "All Symptoms", value: ALL_HEALTH_SYMPTOMS_VALUE/);
-  const allSymptomsOptionStart = healthPageSource.indexOf('label: "All Symptoms"');
-  const allSymptomsOptionSource = healthPageSource.slice(allSymptomsOptionStart, allSymptomsOptionStart + 90);
-  assert.doesNotMatch(allSymptomsOptionSource, /trailingAction/);
-  assert.match(healthPageSource, /getHealthSymptomTrendEntriesBySymptom/);
-  assert.match(healthPageSource, /title=\{isAllSymptomsTrendSelected \? "All symptom severity"/);
-  assert.match(healthPageSource, /No symptom history is available to graph yet\./);
-  assert.match(healthPageSource, /No symptom entries in the selected range\./);
-  assert.match(healthPageSource, /ariaLabel=\{isAllSymptomsTrendSelected/);
-  assert.match(healthPageSource, /color: normalizeHealthSymptomColor\(symptom\.color\)/);
-  assert.doesNotMatch(healthPageSource, /totalValue: selectedSymptomTrendEntries\.reduce/);
-  assert.match(healthPageSource, /xDomainKey: entry\.entry_date/);
-  assert.match(healthPageSource, /xSubpositionKey: entry\.logged_at/);
-  assert.match(healthPageSource, /label: formatHealthDateLabel\(entry\.entry_date\)/);
+  assert.match(healthPageSource, /buildHealthFeelingTrendSeries\(selectedFeelingTrend, selectedFeelingTrendPoints, "Latest"\)/);
+  assert.match(healthPageSource, /buildHealthFeelingTrendSeries\(definition, points, definition\.name\)/);
+  assert.match(healthPageSource, /label: "All Feelings", value: ALL_HEALTH_FEELINGS_VALUE/);
+  assert.match(healthPageSource, /getHealthFeelingTrendPointsByDefinition/);
+  assert.match(healthPageSource, /title=\{isAllFeelingsTrendSelected \? "All Feelings"/);
+  assert.match(healthPageSource, /No Feeling Occurrence history is available to graph yet\./);
+  assert.match(healthPageSource, /No Feeling Occurrences in the selected range\./);
+  assert.match(healthPageSource, /color: definition\.color/);
+  assert.doesNotMatch(healthPageSource, /totalValue: selectedFeelingTrendPoints\.reduce/);
+  assert.match(healthPageSource, /xDomainKey: point\.entryDate/);
+  assert.match(healthPageSource, /xSubpositionKey: point\.occurredAt/);
+  assert.match(healthPageSource, /label: formatHealthDateLabel\(point\.entryDate\)/);
   assert.match(healthPageSource, /compactPlot/);
   assert.match(healthPageSource, /maxValue=\{10\}/);
   assert.match(activityChartSource, /xDomainKey\?: string/);
@@ -374,6 +455,7 @@ test("Journal symptom trends adapt into the shared chart with a fixed 1 to 10 se
   assert.match(activityChartSource, /maxValue\?: number/);
   assert.match(activityChartSource, /maxValueOverride/);
   assert.match(activityChartSource, /item\.summaryLabel \?\? item\.label/);
+  assert.doesNotMatch(healthPageSource, /title="Symptom Trends"/);
 });
 
 test("local symptom recovery keeps an empty remote response visible and recovers definitions before entries", () => {
@@ -569,7 +651,7 @@ test("new symptom tables use authenticated owner-scoped Data API access", () => 
   }
 });
 
-test("symptom persistence has its own optional fallback and CRUD paths", () => {
+test("Journal owns Feeling Occurrences and symptom persistence rejects orphan ownership", () => {
   assert.match(healthHookSource, /symptomsResult\.error, symptomEntriesResult\.error/);
   assert.match(healthHookSource, /const symptomPersistenceErrors = \[symptomsResult\.error, symptomEntriesResult\.error\]/);
   assert.match(healthHookSource, /function isMissingHealthSymptomPersistence/);
@@ -591,6 +673,8 @@ test("symptom persistence has its own optional fallback and CRUD paths", () => {
   assert.match(healthHookSource, /async function addSymptomEntry/);
   assert.match(healthHookSource, /async function updateSymptomEntry/);
   assert.match(healthHookSource, /async function deleteSymptomEntry/);
+  assert.match(healthHookSource, /Feeling occurrences must belong to a Journal Entry/);
+  assert.match(healthHookSource, /normalizeHealthSymptomEntries/);
   assert.match(healthHookSource, /\.eq\("id", entryId\)\n\s+\.eq\("user_id", userId\)/);
   const recoverySectionStart = healthHookSource.indexOf("let remoteSymptoms =");
   const recoverySectionEnd = healthHookSource.indexOf("const remoteWorkouts =", recoverySectionStart);
@@ -601,7 +685,7 @@ test("symptom persistence has its own optional fallback and CRUD paths", () => {
   assert.match(recoverySection, /symptomRecovery\.unreconciledLocalSymptoms/);
   assert.match(recoverySection, /symptomRecovery\.unreconciledLocalEntries/);
   assert.match(healthHookSource, /symptoms: symptomsResult\.error \? currentLocalSymptoms : symptomRecovery\.mergedSymptoms/);
-  assert.match(healthHookSource, /symptomEntries: symptomEntriesResult\.error \? currentLocalSymptomEntries : symptomRecovery\.mergedEntries/);
+  assert.match(healthHookSource, /symptomEntries: symptomEntriesResult\.error \? currentLocalSymptomEntries : normalizeHealthSymptomEntries\(symptomRecovery\.mergedEntries\)/);
   const baseHealthErrorsStart = healthHookSource.indexOf("const errors = [");
   const baseHealthErrorsEnd = healthHookSource.indexOf("].filter(Boolean);", baseHealthErrorsStart);
   assert.doesNotMatch(healthHookSource.slice(baseHealthErrorsStart, baseHealthErrorsEnd), /symptom/i);
@@ -609,27 +693,33 @@ test("symptom persistence has its own optional fallback and CRUD paths", () => {
   assert.doesNotMatch(schemaSource, /alter publication supabase_realtime add table public\.adhdice_health_symptom_entries/);
   assert.doesNotMatch(migrationSource, /alter publication supabase_realtime add table public\.adhdice_health_symptoms/);
   assert.doesNotMatch(migrationSource, /alter publication supabase_realtime add table public\.adhdice_health_symptom_entries/);
+  assert.match(ownershipMigrationSource, /delete from public\.adhdice_health_symptom_entries\s+where journal_entry_id is null/);
+  assert.match(ownershipMigrationSource, /alter column journal_entry_id set not null/);
+  assert.match(ownershipMigrationSource, /confdeltype/);
+  assert.match(ownershipMigrationSource, /Expected Journal ownership FK with ON DELETE CASCADE was not found/);
+  assert.match(schemaSource, /journal_entry_id uuid not null/);
   assert.match(healthPageSource, /HEALTH_SEVERITY_OPTIONS\.map/);
-  assert.match(healthPageSource, /title="Recent Feeling Occurrences"/);
-  assert.match(healthPageSource, /entry\.severity}\/10/);
+  assert.match(healthPageSource, /title="Journal"/);
+  assert.match(healthPageSource, /History Left/);
+  assert.match(healthPageSource, /History Right/);
+  assert.match(healthPageSource, /hidden md:block/);
   assert.match(healthPageSource, /Update occurrence/);
-  assert.match(healthPageSource, /deleteSymptomEntry\(entry\.id\)/);
+  assert.doesNotMatch(healthPageSource, /title="Recent Feeling Occurrences"/);
+  assert.doesNotMatch(healthPageSource, /deleteSymptomEntry\(entry\.id\)/);
+  assert.doesNotMatch(healthPageSource, /Standalone symptom history/);
 });
 
-test("Journal symptom pickers expose palette actions and the trend series uses the selected symptom color", () => {
-  assert.equal((healthPageSource.match(/buildHealthSymptomDropdownOption\(/g) ?? []).length >= 3, true);
+test("Journal Feeling pickers expose palette actions and the trend series uses canonical colors", () => {
   assert.match(healthPageSource, /ADHDICE_ACCENT_COLORS\.map/);
   const paletteSourceStart = healthPageSource.indexOf("ADHDICE_ACCENT_COLORS.map");
   const paletteSource = healthPageSource.slice(paletteSourceStart, healthPageSource.indexOf("</div>", paletteSourceStart));
   assert.match(paletteSource, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(paletteSource, /onClick=\{\(\) => onSetColor\(paletteColor\)\}/);
   assert.doesNotMatch(paletteSource, /chooseOption\(|setSymptomDraft|setSelectedSymptomTrendId/);
-  assert.match(healthPageSource, /ariaLabel="Symptom"[\s\S]*?options=\{\[\.\.\.symptomOptions/);
-  assert.match(healthPageSource, /ariaLabel="Trend symptom"[\s\S]*?options=\{symptomTrendOptions}/);
+  assert.match(healthPageSource, /ariaLabel="Occurrence Feeling"/);
+  assert.match(healthPageSource, /ariaLabel="Trend Feeling"[\s\S]*?options=\{feelingTrendOptions}/);
   assert.doesNotMatch(healthPageSource, /color: "#7c5cff"/);
-  assert.match(healthPageSource, /label: "\+ Add a new symptom", value: NEW_SYMPTOM_VALUE/);
-  const syntheticOptionSource = healthPageSource.slice(healthPageSource.indexOf('label: "+ Add a new symptom"'), healthPageSource.indexOf('label: "+ Add a new symptom"') + 90);
-  assert.doesNotMatch(syntheticOptionSource, /trailingAction/);
+  assert.doesNotMatch(healthPageSource, /NEW_SYMPTOM_VALUE|trailingAction/);
 });
 
 test("Symptom Library supports definition-only creation and shared color editing", () => {

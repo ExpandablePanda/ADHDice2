@@ -1502,7 +1502,7 @@ export type HealthSymptomEntry = {
   id: string;
   user_id: string;
   symptom_id: string;
-  journal_entry_id: string | null;
+  journal_entry_id: string;
   entry_date: string;
   logged_at: string;
   severity: number;
@@ -1515,7 +1515,7 @@ export type HealthSymptomEntryInsert = {
   id?: string;
   user_id: string;
   symptom_id: string;
-  journal_entry_id?: string | null;
+  journal_entry_id: string;
   entry_date: string;
   logged_at?: string;
   severity: number;

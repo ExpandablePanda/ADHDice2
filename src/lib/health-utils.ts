@@ -664,6 +664,34 @@ export function formatMealLoggedTime(value: string, locale?: string) {
   return new Intl.DateTimeFormat(locale, { hour: "numeric", hour12: true, minute: "2-digit" }).format(timestamp);
 }
 
+export function formatHealthStandardTime(value: string | null | undefined, locale?: string) {
+  const normalizedTime = normalizeHealthMealTime(value ?? "");
+  if (!normalizedTime) return null;
+  const [hours, minutes] = normalizedTime.split(":").map((part) => Number.parseInt(part, 10));
+  const date = new Date(2000, 0, 1, hours, minutes);
+  return new Intl.DateTimeFormat(locale, { hour: "numeric", hour12: true, minute: "2-digit" }).format(date);
+}
+
+export function formatHealthTimestampTime(value: string | null | undefined, locale?: string) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Intl.DateTimeFormat(locale, { hour: "numeric", hour12: true, minute: "2-digit" }).format(timestamp);
+}
+
+export function formatHealthJournalDate(value: string, locale?: string) {
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric" }).format(date);
+}
+
+export function formatHealthTimestampDate(value: string | null | undefined, locale?: string) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric" }).format(timestamp);
+}
+
 export function formatHealthNutritionNumber(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return "—";
