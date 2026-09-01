@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.45`.
+- Current working app version: `7.12.46`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -25,6 +25,15 @@ share one `How are you feeling?` section, and all Journal scale pickers can be
 closed without selecting a score. Feeling Trends include every active Feeling,
 retain archived Feelings with occurrence history, and show occurrence notes in
 History hashtag popovers. No SQL or schema changes were made.
+
+## 2026-09-01 7.12.46 Journal metadata sizing correction
+
+Journal and Logged Time now share one fixed compact `8.5rem × 32px` control
+contract through `HealthStandardTimeInput` in both editable and read-only modes,
+while retaining normalized storage and 12-hour AM/PM display. Journal Date and
+Logged Date retain matching compact width, height, border, spacing, and responsive
+typography; Logged Date remains read-only and uses `MM/DD/YYYY`. No SQL or schema
+changes were made.
 
 ## 2026-09-01 7.12.44 Journal workspace QA corrections
 

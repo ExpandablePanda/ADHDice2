@@ -231,11 +231,23 @@ test("Journal display uses explicit standard 12-hour time and distinguishes Jour
   assert.match(standardTimeInputSource, /value=\{parts\.minute\}/);
   assert.match(standardTimeInputSource, /<option value="AM">AM<\/option>/);
   assert.doesNotMatch(standardTimeInputSource, /type="time"/);
+  assert.match(standardTimeInputSource, /inline-flex h-8 min-h-8 w-\[8\.5rem\] min-w-0 max-w-full/);
   const journalSource = healthPageSource.slice(
     healthPageSource.indexOf('{activeTab === "Journal" ? ('),
     healthPageSource.indexOf('{activeTab === "Food" ? ('),
   );
   assert.doesNotMatch(journalSource, /<HealthMealDateTimeInput[^>]+type="time"/);
+});
+
+test("Journal metadata keeps compact date sizing and Logged Time read-only", () => {
+  assert.match(healthPageSource, /<HealthMealDateTimeInput className="min-w-\[8\.5rem\] justify-start"/);
+  assert.match(healthPageSource, /<span aria-label="Logged Date" aria-readonly="true" className=\{`\$\{HEALTH_COMPACT_CONTROL_CLASS\} inline-flex min-w-\[8\.5rem\] items-center justify-start max-sm:!h-\[32px\] max-sm:!min-h-\[32px\]`\}>/);
+  assert.match(healthPageSource, /<span className="text-\[13px\] leading-normal max-sm:!text-\[16px\] max-sm:!leading-normal">\{selectedJournalEntry \? formatHealthJournalMetadataDate\(selectedJournalEntry\.created_at\)/);
+  assert.match(healthPageSource, /<HealthStandardTimeInput ariaLabel="Logged Time" readOnly value=\{formatTimeInput\(selectedJournalEntry\.created_at\)\} \/>/);
+  assert.match(healthPageSource, /formatHealthJournalMetadataDate\(selectedJournalEntry\.created_at\)/);
+  assert.match(healthPageSource, /formatTimeInput\(selectedJournalEntry\.created_at\)/);
+  assert.match(standardTimeInputSource, /readOnly \? <span aria-label=\{ariaLabel\} aria-readonly="true">\{formatHealthStandardTime\(value\)/);
+  assert.match(standardTimeInputSource, /<option value="PM">PM<\/option>/);
 });
 
 test("symptom Journal signals resolve their current canonical Health symptom name", () => {

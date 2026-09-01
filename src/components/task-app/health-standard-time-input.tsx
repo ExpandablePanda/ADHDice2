@@ -38,7 +38,7 @@ export function HealthStandardTimeInput({ ariaLabel = "Time", className, onChang
   };
 
   return (
-    <div className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-[0.9rem] border border-[#e6e8f5] bg-white px-2.5 py-1.5 text-[13px] text-[#2f294a] dark:border-white/10 dark:bg-white/[0.04] dark:text-white ${className ?? ""}`}>
+    <div className={`inline-flex h-8 min-h-8 w-[8.5rem] min-w-0 max-w-full items-center gap-1 rounded-[0.9rem] border border-[#e6e8f5] bg-white px-2.5 py-1.5 text-[13px] text-[#2f294a] dark:border-white/10 dark:bg-white/[0.04] dark:text-white ${className ?? ""}`}>
       {readOnly ? <span aria-label={ariaLabel} aria-readonly="true">{formatHealthStandardTime(value) ?? "Time unavailable"}</span> : <>
         <input
           aria-label={`${ariaLabel} hour`}

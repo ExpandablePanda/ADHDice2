@@ -3239,7 +3239,7 @@ export function HealthPage({
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="flex flex-wrap gap-3">
                     <Field label="Journal Date">
-                      <HealthMealDateTimeInput className="min-w-[8.5rem]" max={today} onChange={(date) => setJournalDate(date || today)} type="date" value={journalDate} />
+                      <HealthMealDateTimeInput className="min-w-[8.5rem] justify-start" max={today} onChange={(date) => setJournalDate(date || today)} type="date" value={journalDate} />
                     </Field>
                     <Field label="Journal Time">
                       <HealthStandardTimeInput ariaLabel="Journal Time" onChange={setJournalEntryTime} value={journalEntryTime} />
@@ -3258,7 +3258,7 @@ export function HealthPage({
                     </AdhdIconButton>
                     {isJournalLoggedMetadataOpen ? <div className="contents" id="journal-logged-metadata">
                       <Field label="Logged Date">
-                        <span className={`${HEALTH_COMPACT_CONTROL_CLASS} inline-flex min-w-[8.5rem] items-center justify-start max-sm:!h-[32px] max-sm:!min-h-[32px]`} aria-readonly="true">{selectedJournalEntry ? formatHealthJournalMetadataDate(selectedJournalEntry.created_at) ?? "Date unavailable" : "When saved"}</span>
+                        <span aria-label="Logged Date" aria-readonly="true" className={`${HEALTH_COMPACT_CONTROL_CLASS} inline-flex min-w-[8.5rem] items-center justify-start max-sm:!h-[32px] max-sm:!min-h-[32px]`}><span className="text-[13px] leading-normal max-sm:!text-[16px] max-sm:!leading-normal">{selectedJournalEntry ? formatHealthJournalMetadataDate(selectedJournalEntry.created_at) ?? "Date unavailable" : "When saved"}</span></span>
                       </Field>
                       <Field label="Logged Time">
                         {selectedJournalEntry ? <HealthStandardTimeInput ariaLabel="Logged Time" readOnly value={formatTimeInput(selectedJournalEntry.created_at)} /> : <span className={`${HEALTH_COMPACT_CONTROL_CLASS} inline-flex items-center justify-start max-sm:!h-[32px] max-sm:!min-h-[32px]`} aria-readonly="true">When saved</span>}
