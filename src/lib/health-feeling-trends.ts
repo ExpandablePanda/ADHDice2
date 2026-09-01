@@ -203,3 +203,13 @@ export function getHealthFeelingTrendPointsByDefinition({
     }))
     .filter(({ points }) => points.length > 0);
 }
+
+export function getHealthFeelingTrendAverage(points: readonly FeelingTrendPoint[]) {
+  if (points.length === 0) return null;
+  return Math.round((points.reduce((total, point) => total + point.score, 0) / points.length) * 10) / 10;
+}
+
+export function formatHealthFeelingTrendScore(value: number) {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}

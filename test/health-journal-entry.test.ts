@@ -332,28 +332,25 @@ test("7.12.35 source contract covers scale-label migration, unified Symptoms, co
 });
 
 test("7.12.36 source contract covers readable scales, section-local creation, and picker spacing", () => {
-  const scorePickerSource = healthPageSource.slice(
-    healthPageSource.indexOf("function ScorePicker"),
-    healthPageSource.indexOf("function JournalScalePicker"),
-  );
-  const journalScalePickerSource = healthPageSource.slice(
-    healthPageSource.indexOf("function JournalScalePicker"),
+  const ratingCardSource = healthPageSource.slice(
+    healthPageSource.indexOf("function JournalRatingCard"),
     healthPageSource.indexOf("function FavoriteFoodHistoryInlay"),
   );
 
-  assert.match(scorePickerSource, /HEALTH_SCALE_OPTIONS\.map/);
-  assert.match(scorePickerSource, /className="grid grid-cols-2 gap-1\.5"/);
-  assert.match(scorePickerSource, /break-words whitespace-normal/);
-  assert.doesNotMatch(scorePickerSource, /HEALTH_JOURNAL_SCORE_OPTIONS/);
-  assert.doesNotMatch(scorePickerSource, /sm:grid-cols-5/);
-  assert.doesNotMatch(scorePickerSource, /<span className="truncate">/);
+  assert.match(ratingCardSource, /scoreOptions\.map/);
+  assert.match(ratingCardSource, /className="grid grid-cols-2 gap-1\.5"/);
+  assert.match(ratingCardSource, /break-words whitespace-normal/);
+  assert.doesNotMatch(ratingCardSource, /HEALTH_JOURNAL_SCORE_OPTIONS/);
+  assert.doesNotMatch(ratingCardSource, /sm:grid-cols-5/);
+  assert.doesNotMatch(ratingCardSource, /<span className="truncate">/);
 
-  assert.match(journalScalePickerSource, /renderScoreOption\(0, "w-full"\)/);
-  assert.match(journalScalePickerSource, /HEALTH_JOURNAL_SCORE_OPTIONS\.filter\(\(score\) => score > 0\)/);
-  assert.match(journalScalePickerSource, /className="grid grid-cols-2 gap-1\.5"/);
-  assert.match(journalScalePickerSource, /onClick=\{onClear\}[^>]*>Not logged</);
-  assert.match(journalScalePickerSource, /break-words whitespace-normal/);
-  assert.doesNotMatch(journalScalePickerSource, /<span className="min-w-0 truncate/);
+  assert.match(ratingCardSource, /firstScore === 0/);
+  assert.match(ratingCardSource, /className="grid gap-1\.5"/);
+  assert.match(ratingCardSource, /onClick=\{onClear\}[^>]*>Not logged</);
+  assert.match(ratingCardSource, /break-words whitespace-normal/);
+  assert.doesNotMatch(ratingCardSource, /<span className="min-w-0 truncate/);
+  assert.match(healthPageSource, /scoreOptions=\{HEALTH_JOURNAL_SCORE_OPTIONS\}/);
+  assert.match(healthPageSource, /scaleLabelIndexOffset=\{0\}/);
   assert.equal(normalizeHealthJournalScore(0), 0);
   assert.equal(normalizeHealthJournalScore(null), null);
   assert.match(healthPageSource, /setJournalMood\(score\); setExpandedJournalScaleKey\(null\)/);
@@ -654,22 +651,47 @@ test("7.12.45 uses one responsive History/Journal toggle, collapsible metadata, 
   assert.match(healthPageSource, /occurrence\.note\?\.trim\(\)/);
 });
 
-test("7.12.48 keeps History Logged metadata per-entry, shares the rating grid, and resets after save", () => {
+test("7.12.49 keeps Journal rating cards unified, date groups independent, and resets after save", () => {
   const loggedFormatterStart = healthPageSource.indexOf("function formatJournalLoggedAt");
   const loggedFormatterEnd = healthPageSource.indexOf("const FEELING_TREND_GROUPS", loggedFormatterStart);
   const loggedFormatterSource = healthPageSource.slice(loggedFormatterStart, loggedFormatterEnd);
+  const ratingCardStart = healthPageSource.indexOf("function JournalRatingCard");
+  const ratingCardEnd = healthPageSource.indexOf("function FavoriteFoodHistoryInlay", ratingCardStart);
+  const ratingCardSource = healthPageSource.slice(ratingCardStart, ratingCardEnd);
   const saveHandlerStart = healthPageSource.indexOf("async function handleSaveJournal");
   const saveHandlerEnd = healthPageSource.indexOf("function openJournalSignalCreateForm", saveHandlerStart);
   const saveHandlerSource = healthPageSource.slice(saveHandlerStart, saveHandlerEnd);
 
   assert.match(healthPageSource, /const \[expandedJournalHistoryEntryIds, setExpandedJournalHistoryEntryIds\] = useState<Set<string>>/);
+  assert.match(healthPageSource, /const \[collapsedJournalHistoryDates, setCollapsedJournalHistoryDates\] = useState<Set<string>>\(\(\) => new Set\(\)\)/);
   assert.match(healthPageSource, /const isLoggedMetadataOpen = expandedJournalHistoryEntryIds\.has\(entry\.id\)/);
+  assert.match(healthPageSource, /const isJournalHistoryDateCollapsed = collapsedJournalHistoryDates\.has\(group\.date\)/);
+  assert.match(healthPageSource, /aria-controls=\{`journal-history-date-\$\{group\.date\}`\}/);
+  assert.match(healthPageSource, /aria-expanded=\{!isJournalHistoryDateCollapsed\}/);
+  assert.match(healthPageSource, /onClick=\{\(\) => toggleJournalHistoryDate\(group\.date\)\}/);
+  assert.match(healthPageSource, /hidden=\{isJournalHistoryDateCollapsed\} id=\{`journal-history-date-\$\{group\.date\}`\}/);
   assert.match(healthPageSource, /aria-controls=\{`journal-history-logged-\$\{entry\.id\}`\}/);
   assert.match(healthPageSource, /toggleJournalHistoryMetadata\(entry\.id\)/);
   assert.match(healthPageSource, /isLoggedMetadataOpen \? <div id=\{`journal-history-logged-\$\{entry\.id\}`\}/);
   assert.match(loggedFormatterSource, /formatHealthJournalMetadataDate\(timestamp\)/);
   assert.match(loggedFormatterSource, /formatHealthTimestampTime\(timestamp\)/);
   assert.doesNotMatch(loggedFormatterSource, /updated_at/);
+  assert.match(ratingCardSource, /const scaleDescription =/);
+  assert.match(ratingCardSource, /scaleLabels\[0\]/);
+  assert.match(ratingCardSource, /scoreOptions\[0\]/);
+  assert.match(ratingCardSource, /Not logged/);
+  for (const [label, low, high] of [
+    ["Mood", "Very bad", "Excellent"],
+    ["Energy", "Drained", "Energized"],
+    ["Stress", "Calm", "Overwhelmed"],
+    ["Mental Clarity", "Foggy", "Crystal clear"],
+  ]) {
+    const labelKey = label === "Mental Clarity" ? '"Mental clarity"' : label;
+    assert.match(healthPageSource, new RegExp(`${labelKey}: \\["${low}"[\\s\\S]*?"${high}"`));
+    assert.match(healthPageSource, new RegExp(`label="${label}"[\\s\\S]*?scoreOptions=\\{HEALTH_SCALE_OPTIONS\\}`));
+  }
+  assert.doesNotMatch(healthPageSource, /function ScorePicker/);
+  assert.doesNotMatch(healthPageSource, /function JournalScalePicker/);
 
   const journalFeelingsSource = healthPageSource.slice(
     healthPageSource.indexOf('<section className="grid gap-3" aria-labelledby="journal-feelings-heading">'),
@@ -677,9 +699,11 @@ test("7.12.48 keeps History Logged metadata per-entry, shares the rating grid, a
   );
   assert.match(journalFeelingsSource, /grid min-w-0 gap-4 md:grid-cols-2 \$\{journalWorkspaceMode/);
   assert.match(journalFeelingsSource, /"lg:grid-cols-2" : "lg:grid-cols-3"/);
-  assert.match(journalFeelingsSource, /ScorePicker[\s\S]*journalDraftValues\.map/);
-  assert.match(journalFeelingsSource, /className="min-w-0 rounded-\[1rem\]/);
-  assert.doesNotMatch(journalFeelingsSource, /grid gap-3">\s*\{journalDraftValues/);
+  assert.match(journalFeelingsSource, /JournalRatingCard[\s\S]*journalDraftValues\.map/);
+  assert.match(journalFeelingsSource, /scaleLabelIndexOffset=\{-1\}/);
+  assert.match(journalFeelingsSource, /scaleLabelIndexOffset=\{0\}/);
+  assert.doesNotMatch(journalFeelingsSource, /JournalScalePicker/);
+  assert.doesNotMatch(journalFeelingsSource, /rounded-\[1rem\][^\n]*>\s*<div[^>]*rounded-\[/);
 
   assert.match(saveHandlerSource, /if \(saved\) \{[\s\S]*?startNewJournalEntry\(\);/);
   assert.doesNotMatch(saveHandlerSource, /setSelectedJournalEntryId\(saved\.id\)/);

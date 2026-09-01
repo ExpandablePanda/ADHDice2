@@ -13,6 +13,8 @@ import { ADHDICE_ACCENT_COLORS } from "../src/lib/accent-colors.ts";
 import {
   ALL_HEALTH_FEELINGS_VALUE,
   buildHealthFeelingTrendModel,
+  formatHealthFeelingTrendScore,
+  getHealthFeelingTrendAverage,
   getHealthFeelingTrendPoints,
   getHealthFeelingTrendSelectionSummary,
   getHealthFeelingTrendPointsByDefinition,
@@ -466,14 +468,49 @@ test("Feeling Trend selections support all, category, individual, and cross-cate
   assert.equal(getHealthFeelingTrendSelectionSummary(definitions, new Set(["symptom:back-pain", "symptom:headache", "signal:anxiety"])), "3 Feelings");
 });
 
+test("Feeling Trend averages use the visible range independently for each Feeling", () => {
+  const backPain = symptomDefinition("back-pain", "Back Pain");
+  const anxiety = symptomDefinition("anxiety", "Anxiety");
+  const model = buildHealthFeelingTrendModel({
+    journalSignalOccurrences: [],
+    journalSignals: [],
+    symptomEntries: [
+      symptomEntry("back-1", "2026-09-01", "2026-09-01T09:00:00.000Z", 6, backPain.id),
+      symptomEntry("back-2", "2026-08-30", "2026-08-30T09:00:00.000Z", 7, backPain.id),
+      symptomEntry("back-3", "2026-08-27", "2026-08-27T09:00:00.000Z", 4, backPain.id),
+      symptomEntry("back-4", "2026-08-05", "2026-08-05T09:00:00.000Z", 9, backPain.id),
+      symptomEntry("back-5", "2026-01-01", "2026-01-01T09:00:00.000Z", 2, backPain.id),
+      symptomEntry("anxiety-1", "2026-08-31", "2026-08-31T09:00:00.000Z", 3, anxiety.id),
+      symptomEntry("anxiety-2", "2026-08-28", "2026-08-28T09:00:00.000Z", 9, anxiety.id),
+    ],
+    symptoms: [backPain, anxiety],
+  });
+  const backPain7D = getHealthFeelingTrendPoints({ asOfDate: "2026-09-01", feelingKey: "symptom:back-pain", model, range: "7D" });
+  const backPain30D = getHealthFeelingTrendPoints({ asOfDate: "2026-09-01", feelingKey: "symptom:back-pain", model, range: "30D" });
+  const backPainAll = getHealthFeelingTrendPoints({ asOfDate: "2026-09-01", feelingKey: "symptom:back-pain", model, range: "All" });
+  const anxiety7D = getHealthFeelingTrendPoints({ asOfDate: "2026-09-01", feelingKey: "symptom:anxiety", model, range: "7D" });
+
+  assert.equal(getHealthFeelingTrendAverage(backPain7D), 5.7);
+  assert.equal(getHealthFeelingTrendAverage(backPain30D), 6.5);
+  assert.equal(getHealthFeelingTrendAverage(backPainAll), 5.6);
+  assert.equal(getHealthFeelingTrendAverage(anxiety7D), 6);
+  assert.equal(getHealthFeelingTrendAverage([]), null);
+  assert.equal(formatHealthFeelingTrendScore(6), "6");
+  assert.equal(formatHealthFeelingTrendScore(6.5), "6.5");
+  assert.equal(formatHealthFeelingTrendScore(6.3333), "6.3");
+});
+
 test("Journal Feeling Trends adapt into the shared chart with a fixed 1 to 10 occurrence scale", () => {
   assert.match(healthPageSource, /ActivityLineChartCard/);
   assert.match(healthPageSource, /buildHealthFeelingTrendModel/);
   assert.match(healthPageSource, /title="Feeling Trends"/);
   assert.match(healthPageSource, /HealthStandardTimeInput/);
   assert.match(healthPageSource, /formatHealthStandardTime/);
-  assert.match(healthPageSource, /summaryLabel,/);
-  assert.match(healthPageSource, /buildHealthFeelingTrendSeries\(definition, points, definition\.name\)/);
+  assert.match(healthPageSource, /summaryLabel:/);
+  assert.match(healthPageSource, /buildHealthFeelingTrendSeries\(definition, points\)/);
+  assert.match(healthPageSource, /summaryLabel: `\$\{definition\.name\} · Avg\.`/);
+  assert.match(healthPageSource, /totalValue: average/);
+  assert.match(healthPageSource, /formatHealthFeelingTrendScore\(value\)/);
   assert.match(healthPageSource, /selectedFeelingTrendPointsByDefinition/);
   assert.match(healthPageSource, /filter\(\(\{ points \}\) => points\.length > 0\)/);
   assert.match(healthPageSource, /<FeelingTrendSelector/);

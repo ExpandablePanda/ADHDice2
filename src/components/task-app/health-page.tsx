@@ -126,7 +126,9 @@ import {
 } from "@/lib/health-utils";
 import {
   buildHealthFeelingTrendModel,
+  formatHealthFeelingTrendScore,
   getHealthFeelingTrendPoints,
+  getHealthFeelingTrendAverage,
   getHealthFeelingTrendSelectionSummary,
   HEALTH_FEELING_TREND_RANGES,
   toggleHealthFeelingTrendSelection,
@@ -508,8 +510,8 @@ function formatHealthFeelingTrendTimestamp(point: FeelingTrendPoint) {
 function buildHealthFeelingTrendSeries(
   definition: FeelingTrendDefinition,
   points: FeelingTrendPoint[],
-  summaryLabel: string,
 ): NumericLineChartSeries {
+  const average = getHealthFeelingTrendAverage(points) ?? 0;
   return {
     color: definition.color,
     key: definition.key,
@@ -526,8 +528,8 @@ function buildHealthFeelingTrendSeries(
         xSubpositionKey: point.occurredAt,
       };
     }),
-    summaryLabel,
-    totalValue: points.at(-1)?.score ?? 0,
+    summaryLabel: `${definition.name} · Avg.`,
+    totalValue: average,
   };
 }
 
@@ -1331,6 +1333,7 @@ export function HealthPage({
   const [isJournalHistoryMenuOpen, setIsJournalHistoryMenuOpen] = useState(false);
   const [isJournalLoggedMetadataOpen, setIsJournalLoggedMetadataOpen] = useState(false);
   const [expandedJournalHistoryEntryIds, setExpandedJournalHistoryEntryIds] = useState<Set<string>>(() => new Set());
+  const [collapsedJournalHistoryDates, setCollapsedJournalHistoryDates] = useState<Set<string>>(() => new Set());
   const [selectedFeelingTrendDefinitionKeys, setSelectedFeelingTrendDefinitionKeys] = useState<Set<string>>(() => new Set());
   const [openSymptomColorPickerKey, setOpenSymptomColorPickerKey] = useState<string | null>(null);
   const [isSymptomCreateOpen, setIsSymptomCreateOpen] = useState(false);
@@ -1667,7 +1670,7 @@ export function HealthPage({
   const feelingTrendChartSeries = useMemo<NumericLineChartSeries[]>(() => {
     return selectedFeelingTrendPointsByDefinition
       .filter(({ points }) => points.length > 0)
-      .map(({ definition, points }) => buildHealthFeelingTrendSeries(definition, points, definition.name));
+      .map(({ definition, points }) => buildHealthFeelingTrendSeries(definition, points));
   }, [selectedFeelingTrendPointsByDefinition]);
   const feelingTrendChartTitle = isAllFeelingsTrendSelected
     ? "All Feelings"
@@ -2377,6 +2380,18 @@ export function HealthPage({
         next.delete(entryId);
       } else {
         next.add(entryId);
+      }
+      return next;
+    });
+  }
+
+  function toggleJournalHistoryDate(date: string) {
+    setCollapsedJournalHistoryDates((current) => {
+      const next = new Set(current);
+      if (next.has(date)) {
+        next.delete(date);
+      } else {
+        next.add(date);
       }
       return next;
     });
@@ -3436,33 +3451,27 @@ export function HealthPage({
                     </div>
                   ) : null}
                   <div className={`grid min-w-0 gap-4 md:grid-cols-2 ${journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right" ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
-                    <div className="min-w-0"><ScorePicker expanded={expandedJournalScaleKey === "core:mood"} expandedScaleKey="core:mood" label="Mood" labels={CORE_JOURNAL_SCALE_LABELS.Mood} onClear={() => { setJournalMood(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalMood(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:mood")} value={journalMood} /></div>
-                    <div className="min-w-0"><ScorePicker expanded={expandedJournalScaleKey === "core:energy"} expandedScaleKey="core:energy" label="Energy" labels={CORE_JOURNAL_SCALE_LABELS.Energy} onClear={() => { setJournalEnergy(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalEnergy(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:energy")} value={journalEnergy} /></div>
-                    <div className="min-w-0"><ScorePicker expanded={expandedJournalScaleKey === "core:stress"} expandedScaleKey="core:stress" label="Stress" labels={CORE_JOURNAL_SCALE_LABELS.Stress} onClear={() => { setJournalStress(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalStress(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:stress")} value={journalStress} /></div>
-                    <div className="min-w-0"><ScorePicker expanded={expandedJournalScaleKey === "core:clarity"} expandedScaleKey="core:clarity" label="Mental clarity" labels={CORE_JOURNAL_SCALE_LABELS["Mental clarity"]} onClear={() => { setJournalClarity(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalClarity(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:clarity")} value={journalClarity} /></div>
+                    <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:mood"} expandedScaleKey="core:mood" label="Mood" onClear={() => { setJournalMood(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalMood(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:mood")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Mood} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalMood} /></div>
+                    <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:energy"} expandedScaleKey="core:energy" label="Energy" onClear={() => { setJournalEnergy(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalEnergy(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:energy")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Energy} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalEnergy} /></div>
+                    <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:stress"} expandedScaleKey="core:stress" label="Stress" onClear={() => { setJournalStress(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalStress(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:stress")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Stress} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalStress} /></div>
+                    <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:clarity"} expandedScaleKey="core:clarity" label="Mental Clarity" onClear={() => { setJournalClarity(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalClarity(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:clarity")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS["Mental clarity"]} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalClarity} /></div>
                     {journalDraftValues.length === 0 ? <div className="min-w-0"><EmptyCopy text="Add template Feelings from the Journal Library." /></div> : journalDraftValues.map((draftValue) => {
                       const signal = journalSignals.find((candidate) => candidate.id === draftValue.signal_id);
                       if (!signal) return null;
                       const isDayOnly = !signal.in_template;
                       return (
-                        <div className="min-w-0 rounded-[1rem] border border-[#edf0fb] bg-white/70 px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]" key={signal.id}>
-                          <div className="flex flex-wrap items-baseline justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-semibold text-[#26324f] dark:text-white">{getHealthJournalSignalDisplayName(signal, symptoms)}</p>
-                              <p className="text-[11px] text-[#7d88a3] dark:text-white/45">{signal.scale_labels[0]} · {signal.scale_labels[10]} · 0–10</p>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              {isDayOnly ? <AdhdIconButton aria-label={`Remove ${getHealthJournalSignalDisplayName(signal, symptoms)} from this Journal Entry`} onClick={() => setJournalDraftValues((current) => current.filter((value) => value.signal_id !== signal.id))} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton> : null}
-                            </div>
-                          </div>
-                          <JournalScalePicker
+                        <div className="min-w-0" key={signal.id}>
+                          <JournalRatingCard
                             expanded={expandedJournalScaleKey === `feeling:${signal.id}`}
                             expandedScaleKey={`feeling:${signal.id}`}
                             label={getHealthJournalSignalDisplayName(signal, symptoms)}
                             onClear={() => { setJournalDraftValues((current) => updateHealthJournalDraftValue(current, signal.id, null)); setExpandedJournalScaleKey(null); }}
                             onSelect={(score) => { setJournalDraftValues((current) => updateHealthJournalDraftValue(current, signal.id, score)); setExpandedJournalScaleKey(null); }}
                             onToggle={() => toggleJournalScale(`feeling:${signal.id}`)}
+                            removeAction={isDayOnly ? <AdhdIconButton aria-label={`Remove ${getHealthJournalSignalDisplayName(signal, symptoms)} from this Journal Entry`} onClick={() => setJournalDraftValues((current) => current.filter((value) => value.signal_id !== signal.id))} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton> : null}
+                            scaleLabelIndexOffset={0}
                             scaleLabels={signal.scale_labels}
+                            scoreOptions={HEALTH_JOURNAL_SCORE_OPTIONS}
                             value={draftValue.score}
                           />
                         </div>
@@ -3570,10 +3579,24 @@ export function HealthPage({
             {journalWorkspaceMode !== "entry" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? `${journalWorkspaceMode === "split-history-left" ? "md:order-1" : "md:order-2"} hidden md:block` : ""}`}>
               <div className="space-y-4">
                 <SectionMiniTitle title="Journal History" />
-                {journalHistoryGroups.length === 0 ? <EmptyCopy text="Your first Journal Entry will start history here." /> : journalHistoryGroups.slice(0, 12).map((group) => (
+                {journalHistoryGroups.length === 0 ? <EmptyCopy text="Your first Journal Entry will start history here." /> : journalHistoryGroups.slice(0, 12).map((group) => {
+                  const isJournalHistoryDateCollapsed = collapsedJournalHistoryDates.has(group.date);
+                  return (
                   <section className="grid gap-2" key={group.date}>
-                    <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{formatHealthDateLabel(group.date)}</h3>
-                    {group.entries.map((entry) => {
+                        <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">
+                          <button
+                            aria-controls={`journal-history-date-${group.date}`}
+                            aria-expanded={!isJournalHistoryDateCollapsed}
+                            className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-left transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
+                            onClick={() => toggleJournalHistoryDate(group.date)}
+                            type="button"
+                          >
+                            <span>{formatHealthDateLabel(group.date)}</span>
+                            <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isJournalHistoryDateCollapsed ? "-rotate-90" : "rotate-180"}`} />
+                          </button>
+                        </h3>
+                        <div className="grid gap-2" hidden={isJournalHistoryDateCollapsed} id={`journal-history-date-${group.date}`}>
+                          {group.entries.map((entry) => {
                       const entryValues = journalSignalValues.filter((value) => value.journal_entry_id === entry.id);
                       const entryOccurrences = [
                         ...symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => ({
@@ -3622,10 +3645,12 @@ export function HealthPage({
                         {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span> {entryOccurrences.map((occurrence) => `${occurrence.label} ${occurrence.score} @ ${formatJournalHistoryOccurrenceTime(occurrence.occurredAt)}`).join(" · ")}</p> : null}
                         {entry.reflection ? <JournalHistoryReflection entry={entry} entryValues={entryValues} historyTagOptions={journalHistoryTagOptions} historyTagOptionsByKey={journalHistoryTagOptionsByKey} journalSignalOccurrences={journalSignalOccurrences} onToggleTag={(tag) => toggleJournalHistoryTag(entry.id, tag)} selectedTag={journalHistoryTagOverlay} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
                         {entry.symptom_tags.length > 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Legacy tags: {entry.symptom_tags.join(", ")}</p> : null}
-                      </div>;
-                    })}
+                          </div>;
+                          })}
+                        </div>
                   </section>
-                ))}
+                  );
+                })}
               </div>
             </div> : null}
             </div>
@@ -3765,7 +3790,7 @@ export function HealthPage({
                   emptyText={feelingTrendEmptyText}
                   eyebrow="FEELING TRENDS"
                   formatAxisValue={(value) => String(Math.round(value))}
-                  formatValue={(value) => `${Math.round(value)}/10`}
+                  formatValue={(value) => `${formatHealthFeelingTrendScore(value)}/10`}
                   compactPlot
                   maxValue={10}
                   series={feelingTrendChartSeries}
@@ -4693,51 +4718,18 @@ function SleepDraftFields({ draft, onChange }: { draft: SleepDraft; onChange: (d
   );
 }
 
-function ScorePicker({
-  expanded,
-  expandedScaleKey,
-  label,
-  labels,
-  onClear,
-  onSelect,
-  onToggle,
-  value,
-}: {
-  expanded: boolean;
-  expandedScaleKey: string;
-  label: string;
-  labels: readonly string[];
-  onClear?: () => void;
-  onSelect: (value: number) => void;
-  onToggle: () => void;
-  value: number | null;
-}) {
-  return (
-    <div className="grid min-w-0 gap-2">
-      <button aria-controls={expandedScaleKey} aria-expanded={expanded} className="flex min-h-11 items-center justify-between gap-3 rounded-[0.9rem] border border-[#edf0fb] bg-white/70 px-3 py-2 text-left dark:border-white/10 dark:bg-white/[0.03]" onClick={onToggle} type="button">
-        <span className="min-w-0 flex-1"><span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</span><span className="mt-1 block break-words whitespace-normal text-sm font-semibold text-[#4f5a76] dark:text-white/70">{value === null ? "Not logged" : `${value} · ${labels[value - 1] ?? ""}`}</span></span>
-        <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${expanded ? "rotate-180" : ""}`} />
-      </button>
-      {expanded ? <div className="grid gap-2 rounded-[0.9rem] border border-[#eeeaf8] bg-[#fbfaff] p-2 dark:border-white/10 dark:bg-white/[0.03]" id={expandedScaleKey}>
-        <div className="grid grid-cols-2 gap-1.5">
-          {HEALTH_SCALE_OPTIONS.map((score) => <button aria-label={`${label} ${score}, ${labels[score - 1] ?? ""}`} aria-pressed={value === score} className={`flex min-h-9 min-w-0 items-start justify-start gap-2 rounded-[0.7rem] px-2 py-2 text-left text-xs font-semibold ${value === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onSelect(score)} type="button"><span className="shrink-0 font-black">{score}</span><span className="min-w-0 flex-1 break-words whitespace-normal">{labels[score - 1] ?? ""}</span></button>)}
-        </div>
-        {onClear ? <button aria-label={`Clear ${label} score`} className="justify-self-start text-xs font-semibold text-[#7569a8] underline-offset-2 hover:underline dark:text-[#c4baff]" onClick={onClear} type="button">Not logged</button> : null}
-      </div> : null}
-    </div>
-  );
-}
-
-function JournalScalePicker({
+function JournalRatingCard({
   expanded,
   expandedScaleKey,
   label,
   onClear,
   onSelect,
   onToggle,
+  removeAction,
+  scaleLabelIndexOffset,
   scaleLabels,
+  scoreOptions,
   value,
-  hideTrigger = false,
 }: {
   expanded: boolean;
   expandedScaleKey: string;
@@ -4745,24 +4737,32 @@ function JournalScalePicker({
   onClear: () => void;
   onSelect: (value: number) => void;
   onToggle: () => void;
+  removeAction?: ReactNode;
+  scaleLabelIndexOffset: number;
   scaleLabels: readonly string[];
+  scoreOptions: readonly number[];
   value: number | null;
-  hideTrigger?: boolean;
 }) {
-  const renderScoreOption = (score: number, className = "") => <button aria-label={`${label} ${score}, ${scaleLabels[score] ?? ""}`} aria-pressed={value === score} className={`flex min-h-9 min-w-0 items-start justify-start gap-2 rounded-[0.7rem] px-2 py-2 text-left text-xs font-semibold ${className} ${value === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onSelect(score)} type="button"><span className="shrink-0 font-black">{score}</span><span className="min-w-0 flex-1 break-words whitespace-normal">{scaleLabels[score] ?? ""}</span></button>;
+  const firstScore = scoreOptions[0];
+  const lastScore = scoreOptions[scoreOptions.length - 1];
+  const scaleDescription = `${scaleLabels[0] ?? ""} · ${scaleLabels[scaleLabels.length - 1] ?? ""} · ${firstScore}–${lastScore}`;
+  const getScoreLabel = (score: number) => scaleLabels[score + scaleLabelIndexOffset] ?? "";
+  const renderScoreOption = (score: number) => <button aria-label={`${label} ${score}, ${getScoreLabel(score)}`} aria-pressed={value === score} className={`flex min-h-9 min-w-0 items-start justify-start gap-2 rounded-[0.7rem] px-2 py-2 text-left text-xs font-semibold ${value === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onSelect(score)} type="button"><span className="shrink-0 font-black">{score}</span><span className="min-w-0 flex-1 break-words whitespace-normal">{getScoreLabel(score)}</span></button>;
   return (
-    <div className="grid gap-2">
-      {hideTrigger ? null : <button aria-controls={expandedScaleKey} aria-expanded={expanded} className="flex min-h-10 items-center justify-between gap-3 rounded-[0.8rem] border border-[#edf0fb] bg-white/70 px-3 py-2 text-left dark:border-white/10 dark:bg-white/[0.03]" onClick={onToggle} type="button">
-        <span className="min-w-0 flex-1 break-words whitespace-normal text-sm font-semibold text-[#4f5a76] dark:text-white/70">{value === null ? "Not logged" : `${value} · ${scaleLabels[value] ?? ""}`}</span>
-        <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${expanded ? "rotate-180" : ""}`} />
-      </button>}
-      {expanded ? <div className="grid gap-2 rounded-[0.9rem] border border-[#eeeaf8] bg-[#fbfaff] p-2 dark:border-white/10 dark:bg-white/[0.03]" id={expandedScaleKey}>
-        <div className="grid gap-1.5">
-          {renderScoreOption(0, "w-full")}
-          <div className="grid grid-cols-2 gap-1.5">
-            {HEALTH_JOURNAL_SCORE_OPTIONS.filter((score) => score > 0).map((score) => renderScoreOption(score))}
-          </div>
+    <div className="grid min-w-0 gap-2 rounded-[1rem] border border-[#edf0fb] bg-white/70 px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-[#26324f] dark:text-white">{label}</p>
+          <p className="text-[11px] text-[#7d88a3] dark:text-white/45">{scaleDescription}</p>
         </div>
+        {removeAction ? <div className="flex flex-wrap gap-2">{removeAction}</div> : null}
+      </div>
+      <button aria-controls={expandedScaleKey} aria-expanded={expanded} className="flex min-h-10 items-center justify-between gap-3 rounded-[0.8rem] px-1 py-1 text-left" onClick={onToggle} type="button">
+        <span className="min-w-0 flex-1 break-words whitespace-normal text-sm font-semibold text-[#4f5a76] dark:text-white/70">{value === null ? "Not logged" : `${value} · ${getScoreLabel(value)}`}</span>
+        <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${expanded ? "rotate-180" : ""}`} />
+      </button>
+      {expanded ? <div className="grid gap-2 rounded-[0.9rem] border border-[#eeeaf8] bg-[#fbfaff] p-2 dark:border-white/10 dark:bg-white/[0.03]" id={expandedScaleKey}>
+        {firstScore === 0 ? <div className="grid gap-1.5"><div>{renderScoreOption(0)}</div><div className="grid grid-cols-2 gap-1.5">{scoreOptions.slice(1).map(renderScoreOption)}</div></div> : <div className="grid grid-cols-2 gap-1.5">{scoreOptions.map(renderScoreOption)}</div>}
         <button aria-label={`Clear ${label} score`} className="justify-self-start text-xs font-semibold text-[#7569a8] underline-offset-2 hover:underline dark:text-[#c4baff]" onClick={onClear} type="button">Not logged</button>
       </div> : null}
     </div>

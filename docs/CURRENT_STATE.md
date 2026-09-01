@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.48`.
+- Current working app version: `7.12.49`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -29,6 +29,17 @@ definition visibility remains unchanged. Successful Journal Save and Update
 actions reuse `startNewJournalEntry()` to open a fresh entry while preserving
 the selected Journal date and split workspace mode. No SQL, migration, or
 schema changes were made.
+
+## 2026-09-01 7.12.49 Journal rating cards, trend averages, and History dates
+
+Journal core ratings and custom Feelings now use one shared rating-card design;
+core cards show their scale descriptors, and the nested custom Feeling
+`Not logged` shell is removed. Feeling Trends chips show a range-sensitive
+visible-point average per Feeling, formatted as `Avg. N/10`, while selected
+no-history Feelings still produce no chart line or zero chip. Journal History
+date groups are independently collapsible by canonical `entry_date`, with
+per-entry Logged metadata disclosure remaining independent. No SQL, migration,
+schema, or persistence-model changes were made.
 
 ## 2026-09-01 7.12.45 Journal UX correction
 
