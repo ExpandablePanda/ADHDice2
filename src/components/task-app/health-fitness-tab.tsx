@@ -740,9 +740,11 @@ export function HealthFitnessTab({
       </div>
 
       <ReorderablePageShells layout={layout} shellsClassName="grid gap-5 xl:grid-cols-12">
-        <PageShell id="fitness-active-workout" label="Active Workout">
-          <HealthActiveWorkout controller={activeWorkout} exerciseLibrary={exerciseLibrary} planItems={planItems} plans={plans} workoutTypes={workoutTypes} />
-        </PageShell>
+        {activeWorkout.runtime ? (
+          <PageShell id="fitness-active-workout" label="Active Workout">
+            <HealthActiveWorkout controller={activeWorkout} exerciseLibrary={exerciseLibrary} planItems={planItems} plans={plans} workoutTypes={workoutTypes} />
+          </PageShell>
+        ) : null}
         <PageShell id="fitness-today" label="Today">
         <HealthCollapsiblePanel
           header={<Activity aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}

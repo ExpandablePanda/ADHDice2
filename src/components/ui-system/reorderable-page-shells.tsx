@@ -7,8 +7,11 @@ import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import {
   getPageShellInsertionIndex,
+  mergeVisiblePageShellOrder,
   normalizePageShellSpan,
+  PAGE_SHELL_ROW_ALIGNMENT_PX,
   reorderPageShellOrderAt,
+  snapPageShellHeight,
   type PageShellGeometry,
   type PageShellLayoutPreference,
   type PageShellSize,
@@ -19,13 +22,6 @@ export type PageShellProps = {
   id: string;
   label: string;
   children: ReactNode;
-};
-
-type ReorderablePageShell = {
-  className?: string;
-  id: string;
-  label: string;
-  node: ReactNode;
 };
 
 type ReorderablePageShellsProps = {
@@ -39,7 +35,9 @@ type ShellMoveInteraction = {
   id: string;
   kind: "move";
   pointerId: number;
+  startVisibleOrder: string[];
   startLayout: PageShellLayoutPreference;
+  targetIndex: number;
 };
 
 type ShellResizeInteraction = {
@@ -55,6 +53,12 @@ type ShellResizeInteraction = {
 };
 
 type ShellInteraction = ShellMoveInteraction | ShellResizeInteraction;
+type PageShellInsertionIndicatorStyle = {
+  height: number;
+  left: number;
+  top: number;
+  width: number;
+};
 
 const SHELL_SPAN_CLASSES: Record<number, string> = {
   6: "xl:col-span-6",
@@ -65,31 +69,60 @@ const SHELL_SPAN_CLASSES: Record<number, string> = {
   11: "xl:col-span-11",
   12: "xl:col-span-12",
 };
-const SHELL_HEIGHT_SNAP = 48;
-
-function cloneLayout(layout: PageShellLayoutPreference): PageShellLayoutPreference {
-  return {
-    order: [...layout.order],
-    sizes: Object.fromEntries(Object.entries(layout.sizes).map(([id, size]) => [id, { ...size }])),
-  };
-}
-
 function layoutsHaveSameOrder(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((id, index) => id === right[index]);
 }
 
-function snapShellHeight(value: number, naturalHeight: number) {
-  const snapped = Math.max(SHELL_HEIGHT_SNAP, Math.round(value / SHELL_HEIGHT_SNAP) * SHELL_HEIGHT_SNAP);
-  return snapped > naturalHeight + SHELL_HEIGHT_SNAP / 2 ? snapped : null;
-}
-
 function measureNaturalShellHeight(element: HTMLDivElement | null) {
   if (!element) return 0;
+  const currentHeight = element.style.height;
   const currentMinHeight = element.style.minHeight;
+  const currentOverflowY = element.style.overflowY;
+  element.style.height = "";
   element.style.minHeight = "0px";
+  element.style.overflowY = "visible";
   const naturalHeight = element.getBoundingClientRect().height;
+  element.style.height = currentHeight;
   element.style.minHeight = currentMinHeight;
+  element.style.overflowY = currentOverflowY;
   return naturalHeight;
+}
+
+function geometriesShareRow(left: PageShellGeometry, right: PageShellGeometry) {
+  const overlap = Math.max(0, Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top));
+  const minimumHeight = Math.min(left.bottom - left.top, right.bottom - right.top);
+  return Math.abs(left.top - right.top) <= PAGE_SHELL_ROW_ALIGNMENT_PX || (minimumHeight > 0 && overlap / minimumHeight >= 0.5);
+}
+
+function getInsertionIndicatorStyle(
+  interaction: ShellMoveInteraction,
+  insertionIndex: number,
+  container: HTMLDivElement | null,
+) {
+  const containerRect = container?.getBoundingClientRect();
+  const fallbackWidth = containerRect?.width ?? 0;
+  const geometryById = new Map(interaction.geometries.map((geometry) => [geometry.id, geometry]));
+  const orderWithoutSource = interaction.startVisibleOrder.filter((id) => id !== interaction.id);
+  const before = insertionIndex > 0 ? geometryById.get(orderWithoutSource[insertionIndex - 1]) : undefined;
+  const after = insertionIndex < orderWithoutSource.length ? geometryById.get(orderWithoutSource[insertionIndex]) : undefined;
+  const leftOffset = containerRect?.left ?? 0;
+  const topOffset = containerRect?.top ?? 0;
+
+  if (before && after && geometriesShareRow(before, after)) {
+    return {
+      height: Math.max(before.bottom, after.bottom) - Math.min(before.top, after.top),
+      left: (after.left - leftOffset) - 2,
+      top: Math.min(before.top, after.top) - topOffset,
+      width: 4,
+    };
+  }
+  const top = after?.top ?? before?.bottom ?? topOffset;
+  return {
+    height: 4,
+    left: 0,
+    top: top - topOffset - 2,
+    width: fallbackWidth,
+  };
 }
 
 export function PageShell({ children }: PageShellProps) {
@@ -127,18 +160,29 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     [shellElements],
   );
   const shellsById = useMemo(() => new Map(shells.map((shell) => [shell.id, shell])), [shells]);
-  const orderedShells = layout.order.map((id) => shellsById.get(id)).filter((shell): shell is ReorderablePageShell => Boolean(shell));
+  const visibleShellIds = useMemo(() => shells.map((shell) => shell.id), [shells]);
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const shellRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const shellContentRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const interactionRef = useRef<ShellInteraction | null>(null);
+  const [dragStartVisibleOrder, setDragStartVisibleOrder] = useState<string[] | null>(null);
+  const [dragIndicatorStyle, setDragIndicatorStyle] = useState<PageShellInsertionIndicatorStyle | null>(null);
+  const renderedShellOrder = dragStartVisibleOrder ?? layout.order;
+  const orderedShells = renderedShellOrder.flatMap((id) => {
+    const shell = shellsById.get(id);
+    return shell ? [shell] : [];
+  });
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragInsertionIndex, setDragInsertionIndex] = useState<number | null>(null);
   const [resizingId, setResizingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (layout.isEditing || !interactionRef.current) return;
     interactionRef.current = null;
     setDraggingId(null);
+    setDragStartVisibleOrder(null);
+    setDragInsertionIndex(null);
+    setDragIndicatorStyle(null);
     setResizingId(null);
   }, [layout.isEditing]);
 
@@ -163,15 +207,22 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     event.preventDefault();
     event.stopPropagation();
     const startLayout = currentLayout();
-    interactionRef.current = {
+    const startVisibleOrder = orderedShells.map((shell) => shell.id);
+    const moveInteraction: ShellMoveInteraction = {
       geometries: captureShellGeometry(),
       id,
       kind: "move",
       pointerId: event.pointerId,
+      startVisibleOrder,
       startLayout,
+      targetIndex: Math.max(0, startVisibleOrder.indexOf(id)),
     };
+    interactionRef.current = moveInteraction;
     layout.beginPreview(startLayout);
     setDraggingId(id);
+    setDragStartVisibleOrder(startVisibleOrder);
+    setDragInsertionIndex(Math.max(0, startVisibleOrder.indexOf(id)));
+    setDragIndicatorStyle(getInsertionIndicatorStyle(moveInteraction, moveInteraction.targetIndex, layoutRef.current));
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
@@ -184,7 +235,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const layoutElement = layoutRef.current;
     const naturalHeight = measureNaturalShellHeight(shellContent);
     const layoutWidth = layoutElement?.getBoundingClientRect().width ?? shellContent?.getBoundingClientRect().width ?? 0;
-    const initialSize = startLayout.sizes[id] ?? { minHeight: null, span: 12 };
+    const initialSize = startLayout.sizes[id] ?? { heightPx: null, span: 12 };
     interactionRef.current = {
       columnWidth: layoutWidth > 0 ? layoutWidth / 12 : Math.max(shellContent?.getBoundingClientRect().width ?? 1, 1),
       id,
@@ -207,21 +258,32 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     event.preventDefault();
     event.stopPropagation();
     if (interaction.kind === "move") {
-      const insertionIndex = getPageShellInsertionIndex(interaction.geometries, interaction.startLayout.order, interaction.id, event.clientX, event.clientY);
-      const nextOrder = reorderPageShellOrderAt(interaction.startLayout.order, interaction.id, insertionIndex);
+      const insertionIndex = getPageShellInsertionIndex(
+        interaction.geometries,
+        interaction.startVisibleOrder,
+        interaction.id,
+        event.clientX,
+        event.clientY,
+        interaction.targetIndex,
+      );
+      interaction.targetIndex = insertionIndex;
+      setDragInsertionIndex(insertionIndex);
+      setDragIndicatorStyle(getInsertionIndicatorStyle(interaction, insertionIndex, layoutRef.current));
+      const nextVisibleOrder = reorderPageShellOrderAt(interaction.startVisibleOrder, interaction.id, insertionIndex);
+      const nextOrder = mergeVisiblePageShellOrder(interaction.startLayout.order, nextVisibleOrder, visibleShellIds);
       if (!layoutsHaveSameOrder(nextOrder, layout.order)) layout.setPreviewOrder(nextOrder);
       return;
     }
 
     const deltaColumns = interaction.columnWidth > 0 ? Math.round((event.clientX - interaction.startX) / interaction.columnWidth) : 0;
     const span = normalizePageShellSpan(interaction.initialSize.span + deltaColumns, interaction.initialSize.span);
-    const initialMinHeight = interaction.initialSize.minHeight ?? interaction.naturalHeight;
-    const minHeight = snapShellHeight(initialMinHeight + (event.clientY - interaction.startY), interaction.naturalHeight);
+    const initialHeight = interaction.initialSize.heightPx ?? interaction.naturalHeight;
+    const heightPx = snapPageShellHeight(initialHeight + (event.clientY - interaction.startY), interaction.naturalHeight);
     const currentSize = layout.sizes[interaction.id];
-    if (currentSize?.span === span && currentSize.minHeight === minHeight) return;
+    if (currentSize?.span === span && currentSize.heightPx === heightPx) return;
     layout.setPreviewSizes((sizes) => ({
       ...sizes,
-      [interaction.id]: { minHeight, span },
+      [interaction.id]: { heightPx, span },
     }));
   }
 
@@ -234,14 +296,18 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     if (cancelled) layout.cancelPreview();
     else layout.commitPreview();
     setDraggingId(null);
+    setDragStartVisibleOrder(null);
+    setDragInsertionIndex(null);
+    setDragIndicatorStyle(null);
     setResizingId(null);
   }
 
   return (
-    <div className={shellsClassName} data-page-shell-layout={layout.pageKey} data-page-shell-edit-mode={layout.isEditing ? "true" : "false"} ref={layoutRef}>
+    <div className={`${shellsClassName} relative`} data-page-shell-layout={layout.pageKey} data-page-shell-edit-mode={layout.isEditing ? "true" : "false"} ref={layoutRef}>
       {orderedShells.map((shell) => {
-        const size = layout.sizes[shell.id] ?? { minHeight: null, span: 12 as const };
+        const size = layout.sizes[shell.id] ?? { heightPx: null, span: 12 as const };
         const spanClass = SHELL_SPAN_CLASSES[size.span] ?? SHELL_SPAN_CLASSES[12];
+        const hasCustomHeight = size.heightPx !== null;
         return (
           <div
             className={`min-w-0 transition-transform ${spanClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
@@ -271,10 +337,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
               </div>
             ) : null}
             <div
-              className="relative min-w-0"
-              data-page-shell-min-height={size.minHeight ?? "natural"}
+              className={`relative min-w-0 ${hasCustomHeight ? "adhdice-scrollbar page-shell-custom-height overflow-y-auto overscroll-contain" : ""}`}
+              data-page-shell-height={size.heightPx ?? "natural"}
               ref={(element) => { shellContentRefs.current[shell.id] = element; }}
-              style={size.minHeight === null ? undefined : { minHeight: `${size.minHeight}px` }}
+              style={hasCustomHeight ? { height: `${size.heightPx}px` } : undefined}
             >
               {shell.node}
               {layout.isEditing ? (
@@ -295,6 +361,14 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
           </div>
         );
       })}
+      {draggingId && dragInsertionIndex !== null && dragIndicatorStyle ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute z-30 rounded-full bg-[#6f57f6]/75 shadow-[0_0_0_3px_rgba(111,87,246,0.12)]"
+          data-page-shell-insertion-indicator
+          style={dragIndicatorStyle}
+        />
+      ) : null}
     </div>
   );
 }

@@ -315,6 +315,13 @@ body::-webkit-scrollbar-thumb:hover,
   height: 0;
 }
 
+@media (max-width: 1279px) {
+  .page-shell-custom-height {
+    height: auto !important;
+    overflow-y: visible !important;
+  }
+}
+
 .adhdice-hud-workspace-scrollbar {
   scrollbar-width: none;
   -ms-overflow-style: none;

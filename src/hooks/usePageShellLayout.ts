@@ -47,11 +47,11 @@ export function usePageShellLayout(
   defaultSizes: PageShellSizeDefaults = {},
 ): PageShellLayoutState {
   const defaultIdsKey = defaultShellIds.join("|");
-  const defaultSizesKey = defaultShellIds.map((id) => `${id}:${defaultSizes[id]?.span ?? 12}:${defaultSizes[id]?.minHeight ?? "natural"}`).join("|");
+  const defaultSizesKey = defaultShellIds.map((id) => `${id}:${defaultSizes[id]?.span ?? 12}:${defaultSizes[id]?.heightPx ?? "natural"}`).join("|");
   const storageKey = userId ? getPageShellLayoutStorageKey(userId) : null;
   const instanceKey = [storageKey ?? "anonymous", pageKey, defaultIdsKey, defaultSizesKey].join(":");
   const defaults = useMemo(() => (defaultIdsKey ? defaultIdsKey.split("|") : []), [defaultIdsKey]);
-  const normalizedDefaultSizes = useMemo(() => getDefaultPageShellSizes(defaults, defaultSizes), [defaultIdsKey, defaultSizes, defaults]);
+  const normalizedDefaultSizes = useMemo(() => getDefaultPageShellSizes(defaults, defaultSizes), [defaultSizes, defaults]);
   const defaultLayout = useMemo(() => ({ order: defaults, sizes: normalizedDefaultSizes }), [defaults, normalizedDefaultSizes]);
   const [committedLayout, setCommittedLayout] = useState<PageShellLayoutPreference>(defaultLayout);
   const [previewLayout, setPreviewLayout] = useState<PageShellLayoutPreference | null>(null);

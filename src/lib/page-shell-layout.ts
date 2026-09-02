@@ -5,7 +5,7 @@ export const PAGE_SHELL_SPAN_OPTIONS = [6, 7, 8, 9, 10, 11, 12] as const;
 export type PageShellSpan = typeof PAGE_SHELL_SPAN_OPTIONS[number];
 
 export type PageShellSize = {
-  minHeight: number | null;
+  heightPx: number | null;
   span: PageShellSpan;
 };
 
@@ -16,8 +16,8 @@ export type PageShellLayoutPreference = {
   sizes: Record<string, PageShellSize>;
 };
 
-const DEFAULT_PAGE_SHELL_SIZE: PageShellSize = { minHeight: null, span: 12 };
-const FITNESS_HALF_SIZE: PageShellSize = { minHeight: null, span: 6 };
+const DEFAULT_PAGE_SHELL_SIZE: PageShellSize = { heightPx: null, span: 12 };
+const FITNESS_HALF_SIZE: PageShellSize = { heightPx: null, span: 6 };
 
 export const HEALTH_PAGE_SHELL_IDS = {
   Today: ["today-snapshot", "today-quick-log", "today-timeline"],
@@ -120,9 +120,11 @@ export function normalizePageShellOrder(stored: unknown, defaults: readonly stri
   }
   const validIds = new Set(defaultIds);
   const seen = new Set<string>();
-  const normalized = stored.filter((id): id is string => (
-    typeof id === "string" && validIds.has(id) && !seen.has(id) && seen.add(id)
-  ));
+  const normalized = stored.filter((id): id is string => {
+    if (typeof id !== "string" || !validIds.has(id) || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
   return [...normalized, ...defaultIds.filter((id) => !seen.has(id))];
 }
 
@@ -144,6 +146,38 @@ export function reorderPageShellOrderAt(order: readonly string[], sourceId: stri
   return withoutSource;
 }
 
+/**
+ * Replaces only the currently visible semantic slots in a full page order.
+ * Hidden shells keep their saved positions so they can reappear predictably.
+ */
+export function mergeVisiblePageShellOrder(
+  fullOrder: readonly string[],
+  visibleOrder: readonly string[],
+  visibleShellIds: readonly string[],
+) {
+  const visibleIds = new Set(visibleShellIds);
+  const nextVisibleOrder: string[] = [];
+  const seenVisibleIds = new Set<string>();
+  for (const id of [...visibleOrder, ...fullOrder, ...visibleShellIds]) {
+    if (visibleIds.has(id) && !seenVisibleIds.has(id)) {
+      seenVisibleIds.add(id);
+      nextVisibleOrder.push(id);
+    }
+  }
+
+  const merged: string[] = [];
+  let nextVisibleIndex = 0;
+  for (const id of fullOrder) {
+    if (visibleIds.has(id)) {
+      merged.push(nextVisibleOrder[nextVisibleIndex] ?? id);
+      nextVisibleIndex += 1;
+    } else {
+      merged.push(id);
+    }
+  }
+  return [...merged, ...nextVisibleOrder.slice(nextVisibleIndex)];
+}
+
 export type PageShellGeometry = {
   bottom: number;
   id: string;
@@ -153,6 +187,69 @@ export type PageShellGeometry = {
 };
 
 export const PAGE_SHELL_POINTER_HYSTERESIS_PX = 8;
+export const PAGE_SHELL_ROW_ALIGNMENT_PX = 12;
+
+function verticalOverlap(left: PageShellGeometry, right: PageShellGeometry) {
+  return Math.max(0, Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top));
+}
+
+function geometriesSharePageShellRow(left: PageShellGeometry, right: PageShellGeometry) {
+  const minimumHeight = Math.min(left.bottom - left.top, right.bottom - right.top);
+  return Math.abs(left.top - right.top) <= PAGE_SHELL_ROW_ALIGNMENT_PX
+    || (minimumHeight > 0 && verticalOverlap(left, right) / minimumHeight >= 0.5);
+}
+
+type PageShellInsertionBoundary = {
+  axis: "x" | "y";
+  value: number;
+};
+
+function getPageShellInsertionBoundary(
+  geometriesById: ReadonlyMap<string, PageShellGeometry>,
+  orderWithoutSource: readonly string[],
+  insertionIndex: number,
+): PageShellInsertionBoundary | null {
+  const before = insertionIndex > 0 ? geometriesById.get(orderWithoutSource[insertionIndex - 1]) : undefined;
+  const after = insertionIndex < orderWithoutSource.length ? geometriesById.get(orderWithoutSource[insertionIndex]) : undefined;
+  if (!before && !after) return null;
+  if (!before) return after ? { axis: "y", value: after.top } : null;
+  if (!after) return { axis: "y", value: (before.top + before.bottom) / 2 };
+  if (geometriesSharePageShellRow(before, after)) {
+    return { axis: "x", value: (before.right + after.left) / 2 };
+  }
+  return {
+    axis: "y",
+    value: ((before.top + before.bottom) / 2 + (after.top + after.bottom) / 2) / 2,
+  };
+}
+
+function stabilizePageShellInsertionIndex(
+  candidate: number,
+  previous: number | undefined,
+  geometriesById: ReadonlyMap<string, PageShellGeometry>,
+  orderWithoutSource: readonly string[],
+  pointerX: number,
+  pointerY: number,
+) {
+  if (previous === undefined || orderWithoutSource.length === 0) return candidate;
+  let stable = Math.max(0, Math.min(previous, orderWithoutSource.length));
+  const safeCandidate = Math.max(0, Math.min(candidate, orderWithoutSource.length));
+  while (stable < safeCandidate) {
+    const boundary = getPageShellInsertionBoundary(geometriesById, orderWithoutSource, stable + 1);
+    if (!boundary) break;
+    const pointer = boundary.axis === "x" ? pointerX : pointerY;
+    if (pointer <= boundary.value + PAGE_SHELL_POINTER_HYSTERESIS_PX) break;
+    stable += 1;
+  }
+  while (stable > safeCandidate) {
+    const boundary = getPageShellInsertionBoundary(geometriesById, orderWithoutSource, stable);
+    if (!boundary) break;
+    const pointer = boundary.axis === "x" ? pointerX : pointerY;
+    if (pointer >= boundary.value - PAGE_SHELL_POINTER_HYSTERESIS_PX) break;
+    stable -= 1;
+  }
+  return stable;
+}
 
 /**
  * Returns an insertion boundary in the order after the dragged shell is removed.
@@ -164,6 +261,7 @@ export function getPageShellInsertionIndex(
   sourceId: string,
   pointerX: number,
   pointerY: number,
+  previousInsertionIndex?: number,
 ) {
   const orderWithoutSource = order.filter((id) => id !== sourceId);
   const rows: Array<{ bottom: number; centerY: number; items: PageShellGeometry[]; top: number }> = [];
@@ -172,7 +270,7 @@ export function getPageShellInsertionIndex(
     .sort((left, right) => left.top - right.top || left.left - right.left);
 
   for (const geometry of sorted) {
-    const row = rows.find((candidate) => geometry.top <= candidate.bottom + PAGE_SHELL_POINTER_HYSTERESIS_PX * 2 && geometry.bottom >= candidate.top - PAGE_SHELL_POINTER_HYSTERESIS_PX * 2);
+    const row = rows.find((candidate) => candidate.items.some((item) => geometriesSharePageShellRow(item, geometry)));
     if (row) {
       row.items.push(geometry);
       row.top = Math.min(row.top, geometry.top);
@@ -186,6 +284,19 @@ export function getPageShellInsertionIndex(
   rows.forEach((row) => row.items.sort((left, right) => left.left - right.left));
 
   if (rows.length === 0) return 0;
+  const geometriesById = new Map(sorted.map((geometry) => [geometry.id, geometry]));
+  const sourceGeometry = geometries.find((geometry) => geometry.id === sourceId);
+  const sourceSharesRowWithAnotherShell = Boolean(sourceGeometry && geometries.some((geometry) => (
+    geometry.id !== sourceId && geometriesSharePageShellRow(sourceGeometry, geometry)
+  )));
+  if (rows.every((row) => row.items.length === 1) && !sourceSharesRowWithAnotherShell) {
+    let candidate = 0;
+    for (const row of rows) {
+      const rowIndex = orderWithoutSource.indexOf(row.items[0].id);
+      if (pointerY >= row.centerY) candidate = Math.max(candidate, rowIndex + 1);
+    }
+    return stabilizePageShellInsertionIndex(candidate, previousInsertionIndex, geometriesById, orderWithoutSource, pointerX, pointerY);
+  }
   const firstItemIndex = orderWithoutSource.indexOf(rows[0].items[0].id);
   if (pointerY < rows[0].top - PAGE_SHELL_POINTER_HYSTERESIS_PX) return Math.max(0, firstItemIndex);
   const lastRow = rows[rows.length - 1];
@@ -208,20 +319,28 @@ export function normalizePageShellSpan(value: unknown, fallback: PageShellSpan =
   ), fallback);
 }
 
-const PAGE_SHELL_HEIGHT_SNAP = 48;
+export const PAGE_SHELL_HEIGHT_SNAP = 48;
+export const PAGE_SHELL_MIN_HEIGHT = 144;
+
+export function snapPageShellHeight(value: number, naturalHeight: number) {
+  const snapped = Math.max(PAGE_SHELL_MIN_HEIGHT, Math.round(value / PAGE_SHELL_HEIGHT_SNAP) * PAGE_SHELL_HEIGHT_SNAP);
+  return Math.abs(snapped - naturalHeight) <= PAGE_SHELL_HEIGHT_SNAP / 2 ? null : snapped;
+}
+
+function normalizePageShellHeight(value: unknown, fallback: number | null) {
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return fallback;
+  const snapped = Math.round(value / PAGE_SHELL_HEIGHT_SNAP) * PAGE_SHELL_HEIGHT_SNAP;
+  return Math.max(PAGE_SHELL_MIN_HEIGHT, snapped);
+}
 
 export function normalizePageShellSize(stored: unknown, fallback: PageShellSize = DEFAULT_PAGE_SHELL_SIZE): PageShellSize {
   const source = stored && typeof stored === "object" && !Array.isArray(stored) ? stored as Record<string, unknown> : {};
-  let minHeight = fallback.minHeight;
-  if (Object.prototype.hasOwnProperty.call(source, "minHeight")) {
-    if (source.minHeight === null) {
-      minHeight = null;
-    } else if (typeof source.minHeight === "number" && Number.isFinite(source.minHeight) && source.minHeight > 0) {
-      minHeight = Math.max(PAGE_SHELL_HEIGHT_SNAP, Math.round(source.minHeight / PAGE_SHELL_HEIGHT_SNAP) * PAGE_SHELL_HEIGHT_SNAP);
-    }
-  }
+  const storedHeight = Object.prototype.hasOwnProperty.call(source, "heightPx")
+    ? source.heightPx
+    : source.minHeight;
   return {
-    minHeight,
+    heightPx: normalizePageShellHeight(storedHeight, fallback.heightPx),
     span: normalizePageShellSpan(source.span, normalizePageShellSpan(fallback.span)),
   };
 }

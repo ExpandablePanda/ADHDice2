@@ -9,13 +9,17 @@ import {
   getPageShellInsertionIndex,
   getPageShellLayoutStorageKey,
   HEALTH_PAGE_SHELL_SIZE_DEFAULTS,
+  mergeVisiblePageShellOrder,
   normalizePageShellLayout,
   normalizePageShellSize,
   normalizePageShellOrder,
+  PAGE_SHELL_HEIGHT_SNAP,
+  PAGE_SHELL_MIN_HEIGHT,
   readPageShellLayout,
   reorderPageShellOrder,
   reorderPageShellOrderAt,
   removePageShellLayout,
+  snapPageShellHeight,
   writePageShellLayout,
 } from "@/lib/page-shell-layout";
 
@@ -29,6 +33,7 @@ const focusSource = readFileSync(new URL("../src/components/focus-page.tsx", imp
 const headerSource = readFileSync(new URL("../src/components/task-app/page-shell-header.tsx", import.meta.url), "utf8");
 const shellSource = readFileSync(new URL("../src/components/ui-system/reorderable-page-shells.tsx", import.meta.url), "utf8");
 const layoutHookSource = readFileSync(new URL("../src/hooks/usePageShellLayout.ts", import.meta.url), "utf8");
+const globalSource = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8");
 
 function storage() {
   const values = new Map<string, string>();
@@ -60,15 +65,15 @@ test("shell layout storage is user-scoped, page-independent, and resettable", ()
   store.setItem("adhdice-page-section-order:user-1", JSON.stringify({ "health:fitness": ["fitness-week", "fitness-today"] }));
   assert.equal(key, "adhdice-page-shell-layout-v1:user-1");
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", fitnessDefaults, fitnessSizes).order, [...fitnessDefaults]);
-  writePageShellLayout(store, key, "health:fitness", { order: ["fitness-week", "fitness-today", ...fitnessDefaults.slice(0, 1), ...fitnessDefaults.slice(3)], sizes: { "fitness-today": { minHeight: 384, span: 8 } } });
+  writePageShellLayout(store, key, "health:fitness", { order: ["fitness-week", "fitness-today", ...fitnessDefaults.slice(0, 1), ...fitnessDefaults.slice(3)], sizes: { "fitness-today": { heightPx: 384, span: 8 } } });
   writePageShellLayout(store, key, "focus", { order: ["focus-goals", "focus-timer-workspace"], sizes: {} });
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", fitnessDefaults, fitnessSizes).order, ["fitness-week", "fitness-today", "fitness-active-workout", "fitness-goals", "fitness-plans", "fitness-workout-history"]);
-  assert.deepEqual(readPageShellLayout(store, key, "health:fitness", fitnessDefaults, fitnessSizes).sizes["fitness-today"], { minHeight: 384, span: 8 });
+  assert.deepEqual(readPageShellLayout(store, key, "health:fitness", fitnessDefaults, fitnessSizes).sizes["fitness-today"], { heightPx: 384, span: 8 });
   assert.deepEqual(readPageShellLayout(store, key, "focus", ["focus-timer-workspace", "focus-goals"], {}).order, ["focus-goals", "focus-timer-workspace"]);
   assert.deepEqual(readPageShellLayout(store, getPageShellLayoutStorageKey("user-2"), "focus", ["focus-timer-workspace", "focus-goals"], {}).order, ["focus-timer-workspace", "focus-goals"]);
   removePageShellLayout(store, key, "health:fitness");
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", ["fitness-today", "fitness-week"], {}).order, ["fitness-today", "fitness-week"]);
-  assert.deepEqual(readPageShellLayout(store, key, "health:fitness", ["fitness-today", "fitness-week"], {}).sizes["fitness-today"], { minHeight: null, span: 12 });
+  assert.deepEqual(readPageShellLayout(store, key, "health:fitness", ["fitness-today", "fitness-week"], {}).sizes["fitness-today"], { heightPx: null, span: 12 });
   assert.deepEqual(readPageShellLayout(store, key, "focus", ["focus-timer-workspace", "focus-goals"], {}).order, ["focus-goals", "focus-timer-workspace"]);
 });
 
@@ -79,16 +84,37 @@ test("corrupt page shell storage falls back to defaults", () => {
   assert.deepEqual(readPageShellLayout(store, key, "stats", ["stats-overview", "stats-energy"], {}).order, ["stats-overview", "stats-energy"]);
 });
 
+test("legacy minHeight shell storage is read as a safe custom height", () => {
+  const store = storage();
+  const key = getPageShellLayoutStorageKey("user-legacy");
+  store.setItem(key, JSON.stringify({
+    focus: {
+      order: ["focus-timer-workspace", "focus-goals"],
+      sizes: { "focus-timer-workspace": { minHeight: 384, span: 8 } },
+    },
+  }));
+  assert.deepEqual(
+    readPageShellLayout(store, key, "focus", ["focus-timer-workspace", "focus-goals"], {}).sizes["focus-timer-workspace"],
+    { heightPx: 384, span: 8 },
+  );
+});
+
 test("shell layout sizes and 2D insertion boundaries normalize defensively", () => {
   const layout = normalizePageShellLayout({
     order: ["C", "C", "stale"],
-    sizes: { C: { minHeight: 401, span: 7 }, stale: { minHeight: 999, span: 12 } },
-  }, ["A", "B", "C"], { A: { minHeight: null, span: 12 }, B: { minHeight: null, span: 6 }, C: { minHeight: null, span: 12 } });
+    sizes: { C: { heightPx: 401, span: 7 }, stale: { heightPx: 999, span: 12 } },
+  }, ["A", "B", "C"], { A: { heightPx: null, span: 12 }, B: { heightPx: null, span: 6 }, C: { heightPx: null, span: 12 } });
   assert.deepEqual(layout.order, ["C", "A", "B"]);
-  assert.deepEqual(layout.sizes.C, { minHeight: 384, span: 7 });
-  assert.deepEqual(layout.sizes.B, { minHeight: null, span: 6 });
-  assert.deepEqual(normalizePageShellSize({ minHeight: -1, span: 1 }), { minHeight: null, span: 6 });
-  assert.deepEqual(normalizePageShellSize({ minHeight: 99, span: 99 }), { minHeight: 96, span: 12 });
+  assert.deepEqual(layout.sizes.C, { heightPx: 384, span: 7 });
+  assert.deepEqual(layout.sizes.B, { heightPx: null, span: 6 });
+  assert.deepEqual(normalizePageShellSize({ heightPx: -1, span: 1 }), { heightPx: null, span: 6 });
+  assert.deepEqual(normalizePageShellSize({ heightPx: 99, span: 99 }), { heightPx: PAGE_SHELL_MIN_HEIGHT, span: 12 });
+  assert.deepEqual(normalizePageShellSize({ minHeight: 384, span: 8 }), { heightPx: 384, span: 8 });
+  assert.deepEqual(normalizePageShellSize({ minHeight: 96, span: 8 }), { heightPx: PAGE_SHELL_MIN_HEIGHT, span: 8 });
+  assert.equal(snapPageShellHeight(192, 400), 192);
+  assert.equal(snapPageShellHeight(400, 400), null);
+  assert.equal(snapPageShellHeight(800, 400), 816);
+  assert.equal(PAGE_SHELL_HEIGHT_SNAP, 48);
   const geometries = [
     { bottom: 100, id: "A", left: 0, right: 100, top: 0 },
     { bottom: 100, id: "B", left: 110, right: 210, top: 0 },
@@ -99,6 +125,40 @@ test("shell layout sizes and 2D insertion boundaries normalize defensively", () 
   assert.equal(getPageShellInsertionIndex(geometries, ["A", "B", "C"], "A", 0, -20), 0);
   assert.equal(getPageShellInsertionIndex(geometries, ["A", "B", "C"], "A", 0, 260), 2);
   assert.deepEqual(reorderPageShellOrderAt(["A", "B", "C"], "A", 2), ["B", "C", "A"]);
+});
+
+test("visible shell reorders preserve hidden semantic slots and restore deterministically", () => {
+  const fullOrder = ["A", "B", "hidden-C", "D", "E"];
+  const visibleOrder = ["D", "A", "B", "E"];
+  const merged = mergeVisiblePageShellOrder(fullOrder, visibleOrder, ["A", "B", "D", "E"]);
+  assert.deepEqual(merged, ["D", "A", "hidden-C", "B", "E"]);
+  assert.deepEqual(mergeVisiblePageShellOrder(merged, merged, ["D", "A", "hidden-C", "B", "E"]), merged);
+});
+
+test("Focus-like zero-gap full-width shells remain separate rows and use vertical hysteresis", () => {
+  const geometries = [
+    { bottom: 120, id: "timer", left: 0, right: 960, top: 0 },
+    { bottom: 260, id: "goals", left: 0, right: 960, top: 120 },
+    { bottom: 380, id: "history", left: 0, right: 960, top: 260 },
+  ];
+  assert.equal(getPageShellInsertionIndex(geometries, ["timer", "goals", "history"], "history", 8, 108), 1);
+  assert.equal(getPageShellInsertionIndex(geometries, ["timer", "goals", "history"], "history", 940, 185, 2), 2);
+  assert.equal(getPageShellInsertionIndex(geometries, ["timer", "goals", "history"], "history", 940, 170, 2), 1);
+  assert.equal(getPageShellInsertionIndex(geometries, ["timer", "goals", "history"], "history", 940, 195, 1), 1);
+  assert.equal(getPageShellInsertionIndex(geometries, ["timer", "goals", "history"], "history", 940, 205, 1), 2);
+  assert.equal(getPageShellInsertionIndex(geometries, ["timer", "goals", "history"], "history", 940, 100), 1);
+});
+
+test("side-by-side shells still use horizontal placement within one row", () => {
+  const geometries = [
+    { bottom: 240, id: "left", left: 0, right: 470, top: 0 },
+    { bottom: 240, id: "right", left: 490, right: 960, top: 0 },
+    { bottom: 360, id: "below", left: 0, right: 960, top: 260 },
+  ];
+  assert.equal(getPageShellInsertionIndex(geometries, ["left", "right", "below"], "below", 20, 100), 0);
+  assert.equal(getPageShellInsertionIndex(geometries, ["left", "right", "below"], "below", 800, 100), 2);
+  assert.equal(getPageShellInsertionIndex(geometries, ["left", "right", "below"], "left", 20, 100), 0);
+  assert.equal(getPageShellInsertionIndex(geometries, ["left", "right", "below"], "left", 800, 100), 1);
 });
 
 test("Home keeps Task Search and To-do content inside its canonical shell", () => {
@@ -153,6 +213,8 @@ test("Fitness reorders whole shells while keeping Today cards and Week content t
   assert.match(fitnessSource, /<PageShell id="fitness-goals"/);
   assert.match(fitnessSource, /<PageShell id="fitness-plans"/);
   assert.match(fitnessSource, /<PageShell id="fitness-workout-history"/);
+  assert.match(fitnessSource, /activeWorkout\.runtime \? \(/);
+  assert.match(fitnessSource, /activeWorkout\.runtime \? \([\s\S]{0,180}<PageShell id="fitness-active-workout"/);
 });
 
 test("Focus reorders top-level workspace shells, not individual clocks or bars", () => {
@@ -173,8 +235,24 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /layout\.commitPreview/);
   assert.match(shellSource, /layout\.cancelPreview/);
   assert.match(shellSource, /getPageShellInsertionIndex/);
+  assert.match(shellSource, /startVisibleOrder/);
+  assert.match(shellSource, /mergeVisiblePageShellOrder/);
+  assert.match(shellSource, /data-page-shell-insertion-indicator/);
+  assert.match(shellSource, /interaction\.targetIndex/);
+  assert.match(shellSource, /renderedShellOrder/);
+  const moveUpdateSource = shellSource.slice(shellSource.indexOf('if (interaction.kind === "move")'), shellSource.indexOf("const deltaColumns"));
+  assert.match(moveUpdateSource, /setDragInsertionIndex/);
+  assert.match(moveUpdateSource, /layout\.setPreviewOrder/);
+  assert.doesNotMatch(moveUpdateSource, /setDraggingId/);
+  assert.match(shellSource, /if \(cancelled\) layout\.cancelPreview\(\);\s+else layout\.commitPreview\(\);/);
   assert.match(shellSource, /aria-label=\{`Resize \$\{shell\.label\}`\}/);
   assert.match(shellSource, /measureNaturalShellHeight/);
+  assert.match(shellSource, /data-page-shell-height=\{size\.heightPx \?\? "natural"\}/);
+  assert.match(shellSource, /adhdice-scrollbar page-shell-custom-height overflow-y-auto overscroll-contain/);
+  assert.doesNotMatch(shellSource, /data-page-shell-min-height/);
+  assert.doesNotMatch(shellSource, /minHeight: \$\{/);
+  assert.match(globalSource, /@media \(max-width: 1279px\)/);
+  assert.match(globalSource, /\.page-shell-custom-height[\s\S]*height: auto !important/);
   assert.match(shellSource, /xl:col-span-6/);
   assert.match(shellSource, /xl:col-span-12/);
   assert.equal((shellSource.match(/<GripVertical/g) ?? []).length, 1);
