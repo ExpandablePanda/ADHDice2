@@ -7,6 +7,7 @@ import {
   buildWeightGoalForecast,
   buildHealthCoachMessage,
   buildHealthReminderTemplate,
+  calculateHealthDailyCalorieBudget,
   displayWeightToKilograms,
   formatEditableWeight,
   formatHealthMealSummary,
@@ -33,6 +34,15 @@ import {
   isHealthMealTimestampFuture,
   sumMealNutritionForDate,
 } from "../src/lib/health-utils.ts";
+
+test("daily calorie budget adds only the date's canonical Active Energy", () => {
+  assert.equal(calculateHealthDailyCalorieBudget(1900, 356.8), 2256.8);
+  assert.equal(calculateHealthDailyCalorieBudget(1900, 0), 1900);
+  assert.equal(calculateHealthDailyCalorieBudget(1900, null), 1900);
+  assert.equal(calculateHealthDailyCalorieBudget(1900, undefined), 1900);
+  assert.equal(calculateHealthDailyCalorieBudget(1900, Number.NaN), 1900);
+  assert.equal(calculateHealthDailyCalorieBudget(1900, -25), 1900);
+});
 
 test("health weight conversion helpers round-trip between pounds and kilograms", () => {
   const kilograms = displayWeightToKilograms(180, "lb");

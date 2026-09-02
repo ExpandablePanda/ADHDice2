@@ -753,6 +753,19 @@ export function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+export function calculateHealthDailyCalorieBudget(
+  baseCalorieGoal: number | null | undefined,
+  activeEnergyKcal: number | null | undefined,
+) {
+  if (typeof baseCalorieGoal !== "number" || !Number.isFinite(baseCalorieGoal)) {
+    return null;
+  }
+  const activityAdjustment = typeof activeEnergyKcal === "number" && Number.isFinite(activeEnergyKcal) && activeEnergyKcal > 0
+    ? activeEnergyKcal
+    : 0;
+  return baseCalorieGoal + activityAdjustment;
+}
+
 export type HealthDailyNutritionTotals = {
   calories: number;
   carbs: number;

@@ -119,6 +119,27 @@ test("Food nutrition targets use descriptive comparisons without changing known 
   assert.doesNotMatch(markdown, /\b(?:met|failed|good|bad|over goal|under goal)\b/i);
 });
 
+test("Food calorie targets use each date's Active Energy and exclude workout calories", () => {
+  const reportData: HealthReportData = {
+    ...data,
+    metricEntries: [
+      ...data.metricEntries,
+      { id: "energy-aug-31", user_id: "user-1", metric_type: "active_energy_kcal", metric_date: "2026-08-31", metric_value: 356.8, source: "manual", source_fingerprint: "energy-aug-31", created_at: "2026-08-31T23:00:00.000Z", updated_at: "2026-08-31T23:00:00.000Z" },
+      { id: "energy-sep-01", user_id: "user-1", metric_type: "active_energy_kcal", metric_date: "2026-09-01", metric_value: 0, source: "manual", source_fingerprint: "energy-sep-01", created_at: "2026-09-01T23:00:00.000Z", updated_at: "2026-09-01T23:00:00.000Z" },
+    ],
+    profile: { ...profile, calorie_goal: 1900 },
+    workouts: [{ ...data.workouts[0], active_calories: 900 }],
+  };
+  const summary = formatHealthReportSection(reportData, range, false).join("\n");
+  const detailed = formatHealthReportSection(reportData, range, true).join("\n");
+
+  assert.match(summary, /Average adjusted calorie target per logged day: 2,078\.4 kcal/);
+  assert.match(summary, /Current target: 2,078\.4 kcal\/day; average 400 kcal\/day; 1,678\.4 kcal below target/);
+  assert.match(detailed, /Adjusted calorie target: 2,256\.8 kcal\/day/);
+  assert.match(detailed, /Adjusted calorie target: 1,900 kcal\/day/);
+  assert.doesNotMatch(detailed, /Adjusted calorie target: 3,156\.8 kcal\/day/);
+});
+
 test("Food nutrition coverage keeps zero known, null unknown, and partial days explicit", () => {
   const partialMeal = (id: string, values: Pick<HealthMealEntry, "protein_g" | "carbs_g" | "fat_g">): HealthMealEntry => ({
     ...data.mealEntries[1],

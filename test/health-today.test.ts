@@ -166,6 +166,7 @@ test("Today derives Food, confirmed Water, Sleep, and separate Movement metrics 
   assert.equal(snapshot.sleep.totalMinutes, 432);
   assert.deepEqual(snapshot.movement, { activeEnergyKcal: 420, exerciseMinutes: 22, steps: 6840 });
   assert.notEqual(snapshot.movement.steps + snapshot.movement.exerciseMinutes + snapshot.movement.activeEnergyKcal, snapshot.movement.steps);
+  assert.match(todaySource, /calculateHealthDailyCalorieBudget\(profile\.calorie_goal, snapshot\.movement\.activeEnergyKcal\)/);
   assert.match(todayDerivationSource, /sumMealNutritionForDate/);
   assert.match(todayDerivationSource, /sumWaterForDate/);
   assert.match(todayDerivationSource, /getHealthSleepDayTotal/);

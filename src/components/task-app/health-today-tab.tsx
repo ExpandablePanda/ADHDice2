@@ -15,6 +15,7 @@ import type {
   HealthWorkout,
 } from "@/lib/database.types";
 import {
+  calculateHealthDailyCalorieBudget,
   formatHealthDateLabel,
   formatHealthNutritionNumber,
   formatHealthSleepDuration,
@@ -91,7 +92,8 @@ export function HealthTodayTab({
     ? null
     : formatQuantity(millilitersToWaterAmount(profile.water_goal_ml, "fl_oz"));
   const journal = snapshot.journal.latestEntry;
-  const foodGoal = profile.calorie_goal === null ? null : formatHealthNutritionNumber(profile.calorie_goal);
+  const foodGoal = calculateHealthDailyCalorieBudget(profile.calorie_goal, snapshot.movement.activeEnergyKcal);
+  const formattedFoodGoal = foodGoal === null ? null : formatHealthNutritionNumber(foodGoal);
   const proteinGoal = profile.protein_goal_grams === null ? null : formatHealthNutritionNumber(profile.protein_goal_grams);
   const sleepGoal = profile.sleep_goal_minutes === null ? null : formatHealthSleepDuration(profile.sleep_goal_minutes);
 
@@ -114,7 +116,7 @@ export function HealthTodayTab({
         </HealthTodaySnapshotCard>
 
         <HealthTodaySnapshotCard label="Food" onClick={() => onNavigate("Food")}>
-          <p>{foodGoal === null ? `${formatHealthNutritionNumber(snapshot.food.calories)} kcal` : `${formatHealthNutritionNumber(snapshot.food.calories)} / ${foodGoal} kcal`}</p>
+          <p>{formattedFoodGoal === null ? `${formatHealthNutritionNumber(snapshot.food.calories)} kcal` : `${formatHealthNutritionNumber(snapshot.food.calories)} / ${formattedFoodGoal} kcal`}</p>
           <p className="mt-1 text-xs text-[#74809b] dark:text-white/50">{proteinGoal === null ? `Protein ${formatHealthNutritionNumber(snapshot.food.protein)}g` : `Protein ${formatHealthNutritionNumber(snapshot.food.protein)} / ${proteinGoal}g`}</p>
         </HealthTodaySnapshotCard>
 

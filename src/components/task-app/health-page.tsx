@@ -78,6 +78,7 @@ import {
 } from "@/lib/health-meal-draft";
 import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
+  calculateHealthDailyCalorieBudget,
   clampPercent,
   buildHealthMealLoggedAt,
   buildWeightGoalForecast,
@@ -1694,6 +1695,13 @@ export function HealthPage({
   const selectedNutrition = useMemo(
     () => sumMealNutritionForDate(mealEntries, foodHistoryDate),
     [foodHistoryDate, mealEntries],
+  );
+  const selectedCalorieBudget = useMemo(
+    () => calculateHealthDailyCalorieBudget(
+      profile?.calorie_goal,
+      sumMetricValueForDate(metricEntries, foodHistoryDate, ["active_energy_kcal"]),
+    ),
+    [foodHistoryDate, metricEntries, profile?.calorie_goal],
   );
   const selectedMealPlans = useMemo(
     () => getActiveHealthMealPlans(mealPlanEntries, foodHistoryDate),
@@ -4069,7 +4077,7 @@ export function HealthPage({
             subtitle="Daily totals"
           >
             <div className="grid gap-3 sm:grid-cols-2">
-              <CompactStat detail={profile.calorie_goal ? `goal ${profile.calorie_goal}` : "set in goals"} label="Calories" progressPercent={profile.calorie_goal ? clampPercent((selectedNutrition.calories / profile.calorie_goal) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
+              <CompactStat detail={selectedCalorieBudget ? `target ${formatHealthNutritionNumber(selectedCalorieBudget)} kcal` : "set in goals"} label="Calories" progressPercent={selectedCalorieBudget ? clampPercent((selectedNutrition.calories / selectedCalorieBudget) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
               <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" progressPercent={profile.protein_goal_grams ? clampPercent((selectedNutrition.protein / profile.protein_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.protein)}g`} />
               <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.carbs)}g`} />
               <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.fat)}g`} />
@@ -4109,7 +4117,7 @@ export function HealthPage({
                 />
               </div>
             ) : null}
-            <HealthCalorieLineChart calorieGoal={profile.calorie_goal} series={dailyCalorieSeries} />
+            <HealthCalorieLineChart calorieGoal={selectedCalorieBudget} series={dailyCalorieSeries} />
           </HealthPanel>
 
           <HealthPanel className="min-w-0" icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">

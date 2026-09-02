@@ -14,6 +14,7 @@ import type {
 } from "@/lib/database.types";
 import { getHealthDailyMovementMetrics } from "@/lib/health-fitness";
 import {
+  calculateHealthDailyCalorieBudget,
   formatHealthSleepDuration,
   formatHealthStandardTime,
   formatHealthTimestampTime,
@@ -22,6 +23,7 @@ import {
   getMealSlotLabel,
   getSleepFocusSessions,
   kilogramsToDisplayValue,
+  sumMetricValueForDate,
   type HealthSleepDayTotal,
 } from "@/lib/health-utils";
 import {
@@ -182,6 +184,10 @@ function formatFoodSection(data: HealthReportData, range: HealthReportRange, det
     const dayEntries = entries.filter((entry) => entry.entry_date === date);
     return {
       carbs: sumKnownNutrient(dayEntries, "carbs_g"),
+      calorieTarget: calculateHealthDailyCalorieBudget(
+        data.profile?.calorie_goal,
+        sumMetricValueForDate(data.metricEntries, date, ["active_energy_kcal"]),
+      ),
       calories: sumKnownNutrient(dayEntries, "calories"),
       fat: sumKnownNutrient(dayEntries, "fat_g"),
       protein: sumKnownNutrient(dayEntries, "protein_g"),
@@ -207,6 +213,7 @@ function formatFoodSection(data: HealthReportData, range: HealthReportRange, det
   const knownCalories = knownDailyValues("calories");
   const totalCalories = knownCalories.length > 0 ? knownCalories.reduce((sum, value) => sum + value, 0) : null;
   const averageCalories = average(knownDailyValues("calories"));
+  const averageCalorieTarget = average(daily.map((day) => day.calorieTarget).filter((value): value is number => value !== null));
   const proteinCoverage = getCoverage("protein_g");
   const carbsCoverage = getCoverage("carbs_g");
   const fatCoverage = getCoverage("fat_g");
@@ -215,13 +222,14 @@ function formatFoodSection(data: HealthReportData, range: HealthReportRange, det
     `- Total logged food entries: ${entries.length}`,
     `- Total calories: ${formatKnownValue(totalCalories, " kcal")}`,
     `- Average calories per logged day: ${formatKnownValue(averageCalories, " kcal")}`,
+    ...(averageCalorieTarget === null ? [] : [`- Average adjusted calorie target per logged day: ${formatKnownValue(averageCalorieTarget, " kcal")}`]),
     `- Average protein${proteinCoverage.fullyCoveredDays === proteinCoverage.totalDays ? " per logged day" : " from known nutrition data"}: ${formatKnownValue(proteinCoverage.average, " g")}${proteinCoverage.fullyCoveredDays === proteinCoverage.totalDays ? "" : ` across ${proteinCoverage.knownDays} logged day${proteinCoverage.knownDays === 1 ? "" : "s"} (${formatNutritionCoverageNote(proteinCoverage, "protein")})`}`,
     `- Average carbs${carbsCoverage.fullyCoveredDays === carbsCoverage.totalDays ? " per logged day" : " from known nutrition data"}: ${formatKnownValue(carbsCoverage.average, " g")}${carbsCoverage.fullyCoveredDays === carbsCoverage.totalDays ? "" : ` across ${carbsCoverage.knownDays} logged day${carbsCoverage.knownDays === 1 ? "" : "s"} (${formatNutritionCoverageNote(carbsCoverage, "carbs")})`}`,
     `- Average fat${fatCoverage.fullyCoveredDays === fatCoverage.totalDays ? " per logged day" : " from known nutrition data"}: ${formatKnownValue(fatCoverage.average, " g")}${fatCoverage.fullyCoveredDays === fatCoverage.totalDays ? "" : ` across ${fatCoverage.knownDays} logged day${fatCoverage.knownDays === 1 ? "" : "s"} (${formatNutritionCoverageNote(fatCoverage, "fat")})`}`,
   );
   const profile = data.profile;
   const comparisons = [
-    formatNutritionTargetComparison(averageCalories, profile?.calorie_goal ?? null, " kcal/day", " kcal", null, "calories"),
+    formatNutritionTargetComparison(averageCalories, averageCalorieTarget, " kcal/day", " kcal", null, "calories"),
     formatNutritionTargetComparison(proteinCoverage.average, profile?.protein_goal_grams ?? null, " g/day protein", " g", proteinCoverage, "protein"),
     formatNutritionTargetComparison(carbsCoverage.average, profile?.carbs_goal_grams ?? null, " g/day carbs", " g", carbsCoverage, "carbs"),
     formatNutritionTargetComparison(fatCoverage.average, profile?.fat_goal_grams ?? null, " g/day fat", " g", fatCoverage, "fat"),
@@ -233,6 +241,10 @@ function formatFoodSection(data: HealthReportData, range: HealthReportRange, det
   for (const entry of entries) entriesByDate.set(entry.entry_date, [...(entriesByDate.get(entry.entry_date) ?? []), entry]);
   for (const date of dates) {
     lines.push("", `#### ${formatReportDate(date)}`);
+    const day = daily.find((candidate) => candidate.date === date);
+    if (day?.calorieTarget !== null && day?.calorieTarget !== undefined) {
+      lines.push(`- Adjusted calorie target: ${formatNumber(day.calorieTarget)} kcal/day`);
+    }
     const dayEntries = (entriesByDate.get(date) ?? []).sort((left, right) => left.logged_at.localeCompare(right.logged_at) || left.id.localeCompare(right.id));
     for (const entry of dayEntries) {
       const parts = [
