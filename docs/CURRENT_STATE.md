@@ -1,17 +1,38 @@
 # Current State
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-02
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.60`.
+- Current working app version: `7.12.61`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-02 7.12.61 ADHDice Report Health and Task Metadata
+
+The existing Tasks -> Reports workspace now extends the copied/previewed
+ADHDice Report with range-specific Health read data from persisted authority:
+Food/Nutrition, confirmed Water, Journal, Feelings, Symptoms, Weight,
+Movement, the Health sleep selector, and Workouts. Current Health goals and
+settings are included as context and are not represented as historical goal
+snapshots. Health Awards and Fitness Plans remain deferred from the behavioral
+report.
+
+All Available now includes dates from the fetched Health domains. Summary stays
+compact and analytical; Detailed adds user-facing Health records and current
+Task metadata including canonical Due, time, Energy, estimates, actual time,
+Lists, Tags, links, and Notes. Task list names use the current membership
+projection and retain the warning that historical membership is unavailable.
+Health reads are independent of Health page activation, paginated for
+unbounded ranges, and report domain failures as warnings without fabricating
+zero data. No SQL, schema change, Health persistence change, Task State
+authority change, report persistence, or Calendar work was added; Calendar
+remains paused.
 
 ## 2026-09-01 7.12.59 Recurring Success Occurrence Identity
 

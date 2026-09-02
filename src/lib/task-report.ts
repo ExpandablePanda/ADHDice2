@@ -20,6 +20,7 @@ import {
   type ReportDateRange,
   type RecordsReportData,
 } from "@/lib/report-presentation";
+import { formatHealthReportSection, getHealthReportDateKeys, type HealthReportData } from "@/lib/health-report";
 
 export const TASK_REPORT_RANGE_OPTIONS = [
   { id: "today", label: "Today", days: 1 },
@@ -55,6 +56,7 @@ type GenerateTaskReportInput = {
   focusCategories: FocusCategory[];
   focusDailyGoalAdjustments: FocusDailyGoalAdjustment[];
   focusHistory: HistoricalFocusSession[];
+  healthData?: HealthReportData | null;
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
   milestoneEvents?: MilestoneEvent[];
   milestones?: Milestone[];
@@ -80,6 +82,16 @@ type OutcomeLabel = "Done" | "Did My Best" | "Complete" | "Missed";
 type TaskReportTaskMetadata = {
   cadenceLabel: string | null;
   currentStatusLabel: string;
+  dueDate: string | null;
+  dueTime: string | null;
+  energyLabel: string | null;
+  estimatedMinutes: number | null;
+  actualSeconds: number;
+  listNames: string[];
+  tags: string[];
+  externalLinkLabel: string | null;
+  externalLinkUrl: string | null;
+  notes: string | null;
   isImportant: boolean;
   isPinned: boolean;
   isRoutine: boolean;
@@ -217,6 +229,16 @@ function formatTimeOnly(isoString: string | null | undefined) {
   }).format(date);
 }
 
+function formatTaskTime(value: string | null) {
+  if (!value) return null;
+  const [hourText, minuteText] = value.split(":");
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return value;
+  const date = new Date(2000, 0, 1, hour, minute);
+  return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(date);
+}
+
 function formatHistoryMoment(isoString: string | null | undefined) {
   if (!isoString) {
     return null;
@@ -312,22 +334,24 @@ function buildRange(
   history: TaskHistory[],
   focusHistory: HistoricalFocusSession[] = [],
   focusDailyGoalAdjustments: FocusDailyGoalAdjustment[] = [],
+  healthDateKeys: string[] = [],
   customRange?: TaskReportCustomRange | null,
 ): ReportRange {
   const option = TASK_REPORT_RANGE_OPTIONS.find((entry) => entry.id === rangeId) ?? TASK_REPORT_RANGE_OPTIONS[0];
   const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
   if (option.days === "custom") {
+    const customFetchRange = normalizeTaskReportCustomRange(customRange, todayDateKey);
     let spanDays = 0;
-    let cursor = fetchRange.startDateKey;
-    while (cursor <= fetchRange.endDateKey) {
+    let cursor = customFetchRange.startDateKey;
+    while (cursor <= customFetchRange.endDateKey) {
       spanDays += 1;
-      if (cursor === fetchRange.endDateKey) {
+      if (cursor === customFetchRange.endDateKey) {
         break;
       }
       cursor = shiftDateKey(cursor, 1);
     }
     return {
-      ...fetchRange,
+      ...customFetchRange,
       label: option.label,
       spanDays,
     };
@@ -344,9 +368,11 @@ function buildRange(
     ...history.map((entry) => entry.entry_date),
     ...focusHistory.map((session) => session.date),
     ...focusDailyGoalAdjustments.map((adjustment) => adjustment.adjustmentDate),
+    ...healthDateKeys,
   ].sort();
   const startDateKey = sortedDates[0] ?? null;
-  const endDateKey = sortedDates.at(-1) ?? todayDateKey;
+  const latestAvailableDateKey = sortedDates.at(-1) ?? todayDateKey;
+  const endDateKey = latestAvailableDateKey > todayDateKey ? latestAvailableDateKey : todayDateKey;
   let spanDays = 0;
 
   if (startDateKey && endDateKey) {
@@ -390,15 +416,6 @@ function getTaskTypeLabel(task: Task, depth: number | null): TaskTypeLabel {
 
 function isTestLikeTaskTitle(title: string) {
   return title.trim().toLowerCase().includes("test");
-}
-
-function buildTaskHistoryByTaskId(taskHistory: TaskHistory[]) {
-  return taskHistory.reduce<Record<string, TaskHistory[]>>((accumulator, entry) => {
-    const entries = accumulator[entry.task_id] ?? [];
-    entries.push(entry);
-    accumulator[entry.task_id] = entries;
-    return accumulator;
-  }, {});
 }
 
 function isFocusSessionInRange(session: HistoricalFocusSession, range: ReportRange) {
@@ -540,12 +557,11 @@ function buildFocusSection(
 
 function buildTaskMetadata(
   tasks: Task[],
-  _availableTaskLists: TaskListDefinition[],
+  availableTaskLists: TaskListDefinition[],
   listMembershipsByTaskId: Record<string, TaskListMembership[]>,
-  taskHistoryByTaskId: Record<string, TaskHistory[]>,
-  todayDateKey: string,
 ) {
   const taskHierarchy = buildTaskHierarchyAdapter(tasks);
+  const listNameById = new Map(availableTaskLists.map((list) => [list.id, list.name] as const));
   const metadataByTaskId = new Map<string, TaskReportTaskMetadata>();
 
   for (const task of tasks) {
@@ -563,6 +579,19 @@ function buildTaskMetadata(
     metadataByTaskId.set(task.id, {
       cadenceLabel: formatRepeatSummary(task) ?? null,
       currentStatusLabel: STATUS_LABELS[task.status] ?? task.status,
+      dueDate: task.active_occurrence_due_on ?? task.due_on,
+      dueTime: task.due_time,
+      energyLabel: task.energy === "none" ? null : task.energy,
+      estimatedMinutes: task.estimated_minutes,
+      actualSeconds: task.actual_seconds,
+      listNames: (listMembershipsByTaskId[task.id] ?? [])
+        .map((membership) => listNameById.get(membership.id))
+        .filter((name): name is string => Boolean(name))
+        .sort((left, right) => left.localeCompare(right)),
+      tags: task.tags.filter((tag) => tag.trim()).sort((left, right) => left.localeCompare(right)),
+      externalLinkLabel: task.external_link_label,
+      externalLinkUrl: task.external_link_url,
+      notes: task.notes,
       isImportant: priorityLevel === 4,
       isPinned: Boolean(task.pinned_at),
       isRoutine: hasTaskListMembership(listMembershipsByTaskId[task.id] ?? [], "routine") || hasInheritedManualRoutineMembership,
@@ -581,12 +610,10 @@ function buildTaskMetadata(
 
 function buildTaskSnapshotSections(
   tasks: Task[],
-  todayDateKey: string,
   availableTaskLists: TaskListDefinition[],
   listMembershipsByTaskId: Record<string, TaskListMembership[]>,
-  taskHistoryByTaskId: Record<string, TaskHistory[]>,
 ) {
-  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId, todayDateKey);
+  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, listMembershipsByTaskId);
   const workloadTasks = tasks.filter((task) => !metadataByTaskId.get(task.id)?.isTrashed);
   const currentStatusSnapshotCounts = workloadTasks.reduce<Record<string, number>>((accumulator, task) => {
     const metadata = metadataByTaskId.get(task.id);
@@ -712,13 +739,11 @@ function buildHistorySections(
   tasks: Task[],
   taskHistory: TaskHistory[],
   range: ReportRange,
-  todayDateKey: string,
   availableTaskLists: TaskListDefinition[],
   listMembershipsByTaskId: Record<string, TaskListMembership[]>,
-  taskHistoryByTaskId: Record<string, TaskHistory[]>,
 ) {
   const tasksById = new Map(tasks.map((task) => [task.id, task] as const));
-  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId, todayDateKey);
+  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, listMembershipsByTaskId);
   const rangedEntries = taskHistory.filter((entry) => isEntryInRange(entry, range));
   const latestEntries = buildLatestEntries(rangedEntries, tasksById, metadataByTaskId);
   const dayBreakdownsByDate = new Map<string, DayBreakdown>();
@@ -1033,7 +1058,7 @@ function formatCurrentStreak(entries: LatestHistoryEntry[]) {
   return `${streakCount} ${latestOutcome}`;
 }
 
-function formatTaskHistoryLine(entry: TaskPatternEntry) {
+function formatTaskHistoryLine(entry: TaskPatternEntry, detailed = false) {
   const parts = [
     entry.metadata.title,
     `Type: ${entry.metadata.typeLabel}`,
@@ -1042,6 +1067,15 @@ function formatTaskHistoryLine(entry: TaskPatternEntry) {
     `History: ${formatCompactHistory(entry.historyEntries)}`,
     `Current Streak: ${formatCurrentStreak(entry.historyEntries)}`,
     `Cadence: ${entry.metadata.cadenceLabel ?? "None"}`,
+    entry.metadata.dueDate ? `Due: ${formatDateLabel(entry.metadata.dueDate)}${formatTaskTime(entry.metadata.dueTime) ? ` at ${formatTaskTime(entry.metadata.dueTime)}` : ""}` : null,
+    entry.metadata.energyLabel ? `Energy: ${entry.metadata.energyLabel}` : null,
+    entry.metadata.estimatedMinutes === null ? null : `Estimated Time: ${formatDurationCompact(entry.metadata.estimatedMinutes * 60)}`,
+    entry.metadata.actualSeconds > 0 ? `Actual Time: ${formatDurationCompact(entry.metadata.actualSeconds)}` : null,
+    entry.metadata.listNames.length > 0 ? `Lists: ${entry.metadata.listNames.join(", ")}` : null,
+    entry.metadata.tags.length > 0 ? `Tags: ${entry.metadata.tags.join(", ")}` : null,
+    entry.metadata.externalLinkLabel || entry.metadata.externalLinkUrl
+      ? `External Link: ${entry.metadata.externalLinkLabel || "Link"}${entry.metadata.externalLinkUrl ? ` — ${entry.metadata.externalLinkUrl}` : ""}`
+      : null,
   ];
   if (entry.metadata.priorityLevel !== null) {
     parts.push(`Priority: ${formatTaskPriorityLevel(entry.metadata.priorityLevel)}`);
@@ -1051,6 +1085,9 @@ function formatTaskHistoryLine(entry: TaskPatternEntry) {
   }
   if (entry.metadata.isRoutine) {
     parts.push("Routine");
+  }
+  if (detailed && entry.metadata.notes?.trim()) {
+    parts.push(`Notes: ${entry.metadata.notes.trim()}`);
   }
   return `- ${parts.filter((value): value is string => Boolean(value)).join(" — ")}`;
 }
@@ -1129,6 +1166,7 @@ function generateTaskReport({
   focusCategories,
   focusDailyGoalAdjustments = [],
   focusHistory,
+  healthData = null,
   generatedAt,
   historySourceLabel,
   historyWarning,
@@ -1143,12 +1181,12 @@ function generateTaskReport({
   tasks,
   todayDateKey,
 }: GenerateTaskReportInput) {
-  const range = buildRange(rangeId, todayDateKey, taskHistory, focusHistory, focusDailyGoalAdjustments, customRange);
-  const taskHistoryByTaskId = buildTaskHistoryByTaskId(taskHistory);
-  const snapshot = buildTaskSnapshotSections(tasks, todayDateKey, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId);
-  const history = buildHistorySections(tasks, taskHistory, range, todayDateKey, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId);
+  const range = buildRange(rangeId, todayDateKey, taskHistory, focusHistory, focusDailyGoalAdjustments, healthData ? getHealthReportDateKeys(healthData) : [], customRange);
+  const snapshot = buildTaskSnapshotSections(tasks, availableTaskLists, listMembershipsByTaskId);
+  const history = buildHistorySections(tasks, taskHistory, range, availableTaskLists, listMembershipsByTaskId);
   const routinePerformance = buildRoutinePerformanceSummary(tasks, taskHistory, range, snapshot.metadataByTaskId);
   const focusSection = buildFocusSection(range, focusCategories, focusHistory, focusDailyGoalAdjustments, todayDateKey);
+  const healthSection = healthData ? formatHealthReportSection(healthData, range, detailLevel === "detailed", focusCategories, focusHistory) : [];
   const milestoneRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
   const achievementSection = formatAchievementSection(achievementModel, milestoneRange, achievementWarning);
   const milestoneSection = formatMilestoneReportSection(
@@ -1165,6 +1203,17 @@ function generateTaskReport({
     const metadata = snapshot.metadataByTaskId.get(entry.task_id);
     return metadata && !metadata.isTrashed;
   }).length;
+  const healthRecordCount = healthData
+    ? healthData.checkIns.length
+      + healthData.journalSignalValues.length
+      + healthData.journalSignalOccurrences.length
+      + healthData.symptomEntries.length
+      + healthData.mealEntries.length
+      + healthData.waterEntries.length
+      + healthData.weightEntries.length
+      + healthData.metricEntries.length
+      + healthData.workouts.length
+    : null;
 
   const lines = [
     "# ADHDice Report",
@@ -1175,6 +1224,7 @@ function generateTaskReport({
     `- Selected Date Range: ${formatRangeSummary(range)}`,
     `- History Records Analyzed: ${reportEligibleHistoryCount}`,
     `- History Source: ${historySourceLabel}`,
+    ...(healthData ? [`- Health Records Analyzed: ${healthData.isAvailable ? healthData.warnings.length > 0 ? "partial; see Health warnings" : healthRecordCount : "unavailable"}`, "- Health Source: Range-scoped persisted Health reads"] : []),
     `- Active vs Trashed Loaded: ${snapshot.activeLoadedTaskCount} active, ${snapshot.trashedLoadedTaskCount} trashed excluded`,
     ...(historyWarning ? [`- Warning: ${historyWarning}`] : []),
     formatOutcomeTotalLine("Done", history.outcomeTotals.Done),
@@ -1202,6 +1252,7 @@ function generateTaskReport({
     ...recordsSection,
     "",
     ...focusSection,
+    ...(healthSection.length > 0 ? ["", ...healthSection] : []),
   ];
 
   if (detailLevel === "detailed") {
@@ -1211,7 +1262,7 @@ function generateTaskReport({
       "",
       "### All Current Task History",
       ...(history.taskPatterns.length > 0
-        ? history.taskPatterns.map((entry) => formatTaskHistoryLine(entry))
+        ? history.taskPatterns.map((entry) => formatTaskHistoryLine(entry, true))
         : ["- No active, non-trashed task history in the selected range."]),
       "",
       "### Day-by-Day Breakdown",
@@ -1253,6 +1304,8 @@ function generateTaskReport({
     "- Use the day-by-day breakdown to spot context, sequencing, or timing patterns behind wins and misses.",
     "- Suggest which recurring tasks need lighter cadence, clearer success criteria, or a better time of day.",
     "- Propose a realistic 7-day adjustment plan plus 3 to 5 small experiments to improve follow-through.",
+    "- Look for possible correlations worth monitoring across sleep, food/nutrition, hydration, movement/workouts, mood, energy, stress, symptoms, focus, and task follow-through.",
+    "- Describe cross-domain patterns cautiously as associations to explore; do not diagnose medical conditions or assert medical causation.",
   );
 
   return lines.join("\n");

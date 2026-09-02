@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy } from "lucide-react";
-import type { Milestone, MilestoneEvent, Task, TaskHistory } from "@/lib/database.types";
+import type { HealthCheckIn, HealthJournalSignal, HealthJournalSignalOccurrence, HealthJournalSignalValue, HealthMealEntry, HealthMetricEntry, HealthProfile, HealthSymptom, HealthSymptomEntry, HealthWaterEntry, HealthWeightEntry, HealthWorkout, Milestone, MilestoneEvent, Task, TaskHistory } from "@/lib/database.types";
 import type { CanonicalTaskHistoryFact } from "@/lib/task-state-canonical/types";
 import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
@@ -23,6 +23,7 @@ import { TASK_TABLE_BODY_VALUE_CLASS, TASK_TABLE_INPUT_CLASS, TaskTableChipButto
 import type { AchievementProgressModel } from "@/lib/achievement-progress";
 import type { PersistedRecordCurrent, PersistedRecordEvent } from "@/lib/records/types";
 import { copyReportMarkdown, type RecordsReportData } from "@/lib/report-presentation";
+import { EMPTY_HEALTH_REPORT_DATA, getHealthReportDateKeys, type HealthReportData } from "@/lib/health-report";
 
 type TaskReportWorkspaceProps = {
   achievementModel: AchievementProgressModel;
@@ -47,10 +48,146 @@ const REPORT_HISTORY_PAGE_SIZE = 1000;
 const REPORT_FULL_HISTORY_SOURCE_LABEL = "Full selected date range fetch";
 const REPORT_FALLBACK_HISTORY_SOURCE_LABEL = "Loaded workspace history fallback";
 
+type HealthQueryResult<T> = {
+  data: T[] | null;
+  error: { message: string } | null;
+};
+
+async function fetchPagedHealthRows<T>(createPage: (from: number, to: number) => PromiseLike<HealthQueryResult<T>>) {
+  const rows: T[] = [];
+  let offset = 0;
+  while (true) {
+    const result = await createPage(offset, offset + REPORT_HISTORY_PAGE_SIZE - 1);
+    if (result.error) throw new Error(result.error.message);
+    const batch = result.data ?? [];
+    rows.push(...batch);
+    if (batch.length < REPORT_HISTORY_PAGE_SIZE) return rows;
+    offset += REPORT_HISTORY_PAGE_SIZE;
+  }
+}
+
+function applyHealthDateRange<T extends { gte: (column: string, value: string) => T; lte: (column: string, value: string) => T }>(query: T, dateColumn: string, range: ReturnType<typeof resolveTaskReportHistoryFetchRange>) {
+  let next = query;
+  if (range.startDateKey) next = next.gte(dateColumn, range.startDateKey);
+  if (range.endDateKey) next = next.lte(dateColumn, range.endDateKey);
+  return next;
+}
+
+async function fetchHealthReportDataForRange({
+  rangeId,
+  todayDateKey,
+  userId,
+  customRange,
+}: {
+  rangeId: TaskReportRangeId;
+  todayDateKey: string;
+  userId: string;
+  customRange?: TaskReportCustomRange | null;
+}): Promise<HealthReportData> {
+  const client = createBrowserSupabaseClient();
+  if (!client) throw new Error("Supabase client is unavailable.");
+  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
+  const warnings: string[] = [];
+  async function optional<T>(label: string, request: PromiseLike<T>, fallback: T) {
+    try {
+      return await request;
+    } catch (error) {
+      const message = error instanceof Error && error.message ? error.message : "Unknown fetch error.";
+      warnings.push(`${label} failed to load (${message}).`);
+      return fallback;
+    }
+  }
+  const profilePromise = client.from("adhdice_health_profiles").select("*").eq("user_id", userId).maybeSingle().then((result) => {
+    if (result.error) throw new Error(result.error.message);
+    return result.data as HealthProfile | null;
+  });
+  const checkInsPromise = fetchPagedHealthRows<HealthCheckIn>((from, to) => applyHealthDateRange(
+    client.from("adhdice_health_checkins").select("*").eq("user_id", userId).order("entry_date", { ascending: true }).order("entry_time", { ascending: true }).range(from, to),
+    "entry_date",
+    fetchRange,
+  ));
+  const signalsPromise = fetchPagedHealthRows<HealthJournalSignal>((from, to) => client.from("adhdice_health_journal_signals").select("*").eq("user_id", userId).order("created_at", { ascending: true }).range(from, to));
+  const symptomsPromise = fetchPagedHealthRows<HealthSymptom>((from, to) => client.from("adhdice_health_symptoms").select("*").eq("user_id", userId).order("name", { ascending: true }).range(from, to));
+  const symptomEntriesPromise = fetchPagedHealthRows<HealthSymptomEntry>((from, to) => applyHealthDateRange(
+    client.from("adhdice_health_symptom_entries").select("*").eq("user_id", userId).order("entry_date", { ascending: true }).order("logged_at", { ascending: true }).range(from, to),
+    "entry_date",
+    fetchRange,
+  ));
+  const signalOccurrencesPromise = fetchPagedHealthRows<HealthJournalSignalOccurrence>((from, to) => applyHealthDateRange(
+    client.from("adhdice_health_journal_signal_occurrences").select("*").eq("user_id", userId).order("entry_date", { ascending: true }).order("occurred_at", { ascending: true }).range(from, to),
+    "entry_date",
+    fetchRange,
+  ));
+  const mealsPromise = fetchPagedHealthRows<HealthMealEntry>((from, to) => applyHealthDateRange(
+    client.from("adhdice_health_meal_entries").select("*").eq("user_id", userId).order("entry_date", { ascending: true }).order("logged_at", { ascending: true }).range(from, to),
+    "entry_date",
+    fetchRange,
+  ));
+  const waterPromise = fetchPagedHealthRows<HealthWaterEntry>((from, to) => applyHealthDateRange(
+    client.from("adhdice_health_water_entries").select("*").eq("user_id", userId).order("entry_date", { ascending: true }).order("logged_at", { ascending: true }).range(from, to),
+    "entry_date",
+    fetchRange,
+  ));
+  const weightsPromise = fetchPagedHealthRows<HealthWeightEntry>((from, to) => applyHealthDateRange(
+    client.from("adhdice_health_weight_entries").select("*").eq("user_id", userId).order("entry_date", { ascending: true }).order("logged_at", { ascending: true }).range(from, to),
+    "entry_date",
+    fetchRange,
+  ));
+  const metricsPromise = fetchPagedHealthRows<HealthMetricEntry>((from, to) => applyHealthDateRange(
+    client.from("adhdice_health_metric_entries").select("*").eq("user_id", userId).order("metric_date", { ascending: true }).range(from, to),
+    "metric_date",
+    fetchRange,
+  ));
+  const workoutsPromise = fetchPagedHealthRows<HealthWorkout>((from, to) => applyHealthDateRange(
+    client.from("adhdice_health_workouts").select("*").eq("user_id", userId).order("workout_date", { ascending: true }).order("started_at", { ascending: true }).range(from, to),
+    "workout_date",
+    fetchRange,
+  ));
+  const [profile, checkIns, journalSignals, symptoms, symptomEntries, journalSignalOccurrences, mealEntries, waterEntries, weightEntries, metricEntries, workouts] = await Promise.all([
+    optional("Health profile", profilePromise, null),
+    optional("Journal entries", checkInsPromise, []),
+    optional("Journal definitions", signalsPromise, []),
+    optional("Symptom definitions", symptomsPromise, []),
+    optional("Symptoms", symptomEntriesPromise, []),
+    optional("Feeling occurrences", signalOccurrencesPromise, []),
+    optional("Food", mealsPromise, []),
+    optional("Water", waterPromise, []),
+    optional("Weight", weightsPromise, []),
+    optional("Movement and sleep", metricsPromise, []),
+    optional("Workouts", workoutsPromise, []),
+  ]);
+  const journalEntryIds = checkIns.map((entry) => entry.id);
+  const journalSignalValues = journalEntryIds.length === 0
+    ? []
+    : (await Promise.all(Array.from({ length: Math.ceil(journalEntryIds.length / 100) }, (_, index) => journalEntryIds.slice(index * 100, index * 100 + 100).map((id) => id)).map((ids) => optional(
+      "Journal snapshot values",
+      fetchPagedHealthRows<HealthJournalSignalValue>((from, to) => client.from("adhdice_health_journal_signal_values").select("*").eq("user_id", userId).in("journal_entry_id", ids).order("journal_entry_id", { ascending: true }).order("signal_id", { ascending: true }).range(from, to)),
+      [],
+    )))).flat();
+  return {
+    checkIns,
+    dateKeys: [],
+    isAvailable: true,
+    journalSignalOccurrences,
+    journalSignalValues,
+    journalSignals,
+    mealEntries,
+    metricEntries,
+    profile,
+    symptomEntries,
+    symptoms,
+    warnings: [...new Set(warnings)].sort((left, right) => left.localeCompare(right)),
+    waterEntries,
+    weightEntries,
+    workouts,
+  };
+}
+
 type ReportHistoryState = {
   focusDailyGoalAdjustments: FocusDailyGoalAdjustment[];
   focusHistory: HistoricalFocusSession[];
   history: TaskHistory[];
+  healthData: HealthReportData;
   milestoneEvents: MilestoneEvent[];
   milestones: Milestone[];
   milestoneWarning: string | null;
@@ -263,6 +400,7 @@ async function fetchMilestoneReportDataForRange({
 async function fetchPersistedRecordsReportData(userId: string): Promise<RecordsReportData> {
   const client = createBrowserSupabaseClient();
   if (!client) throw new Error("Supabase client is unavailable.");
+  const reportClient = client;
 
   async function fetchRows<T>(
     table: "adhdice_record_current" | "adhdice_record_events",
@@ -271,10 +409,10 @@ async function fetchPersistedRecordsReportData(userId: string): Promise<RecordsR
     const rows: T[] = [];
     let offset = 0;
     while (true) {
-      let query = client.from(table).select("*").eq("user_id", userId)
+      let query = reportClient.from(table).select("*").eq("user_id", userId)
         .order("credited_date", { ascending: false }).order("id", { ascending: false })
         .range(offset, offset + REPORT_HISTORY_PAGE_SIZE - 1);
-      if (validOnly) query = query.eq("validity_state", "valid");
+      if (validOnly) query = query.eq("validity_state" as never, "valid" as never);
       const { data, error } = await query;
       if (error) throw error;
       const batch = (data ?? []) as unknown as T[];
@@ -321,6 +459,7 @@ export function TaskReportWorkspace({
     focusDailyGoalAdjustments,
     focusHistory,
     history: taskHistory,
+    healthData: EMPTY_HEALTH_REPORT_DATA,
     milestoneEvents: [],
     milestones,
     milestoneWarning: null,
@@ -342,6 +481,7 @@ export function TaskReportWorkspace({
             focusDailyGoalAdjustments,
             focusHistory,
             history: taskHistory,
+            healthData: { ...EMPTY_HEALTH_REPORT_DATA, isAvailable: false, warnings: ["Full Health report reads require an active signed-in user."] },
             milestoneEvents: [],
             milestones,
             milestoneWarning: "Milestone lifecycle activity is unavailable without an active signed-in user. Earned trophy counts use currently loaded Milestones.",
@@ -365,7 +505,7 @@ export function TaskReportWorkspace({
             userId,
           };
         }
-        const [fullHistory, fullFocusHistory, fullAdjustments, milestoneReportData, recordsReportData] = await Promise.all([
+        const [fullHistory, fullFocusHistory, fullAdjustments, milestoneReportData, recordsReportData, healthData] = await Promise.all([
           fetchTaskReportHistoryForRange({
             customRange,
             rangeId,
@@ -395,6 +535,12 @@ export function TaskReportWorkspace({
               };
             }),
           recordsReportRequestRef.current.promise,
+          fetchHealthReportDataForRange({ customRange, rangeId, todayDateKey, userId })
+            .catch((error: unknown) => ({
+              ...EMPTY_HEALTH_REPORT_DATA,
+              isAvailable: false,
+              warnings: [`Range-scoped Health data failed to load (${error instanceof Error && error.message ? error.message : "Unknown fetch error."}).`],
+            })),
         ]);
         if (cancelled) {
           return;
@@ -403,6 +549,7 @@ export function TaskReportWorkspace({
           focusDailyGoalAdjustments: fullAdjustments,
           focusHistory: fullFocusHistory,
           history: fullHistory,
+          healthData,
           milestoneEvents: milestoneReportData.milestoneEvents,
           milestones: milestoneReportData.milestones,
           milestoneWarning: milestoneReportData.warning,
@@ -421,6 +568,7 @@ export function TaskReportWorkspace({
           focusDailyGoalAdjustments,
           focusHistory,
           history: taskHistory,
+          healthData: { ...EMPTY_HEALTH_REPORT_DATA, isAvailable: false, warnings: ["Health report data could not be loaded because the report history request failed."] },
           milestoneEvents: [],
           milestones,
           milestoneWarning: `Range-scoped Milestone data failed to load (${message}). Earned trophy counts use currently loaded Milestones; lifecycle activity is unavailable.`,
@@ -460,6 +608,10 @@ export function TaskReportWorkspace({
       milestoneEvents: reportHistoryState.milestoneEvents,
       milestones: reportHistoryState.milestones,
       milestoneWarning: reportHistoryState.milestoneWarning,
+      healthData: {
+        ...reportHistoryState.healthData,
+        dateKeys: getHealthReportDateKeys(reportHistoryState.healthData),
+      },
       records: reportHistoryState.records,
       customRange: rangeId === "custom" ? customRange : null,
       rangeId,
