@@ -1090,6 +1090,7 @@ export function BottomDockAdapter({
   onNavigateSearchTarget,
   renderIcon,
   searchTargets,
+  taskSearchEntities,
 }: {
   activePage: AppPage;
   dockIcons: Record<AppPage, string>;

@@ -120,6 +120,7 @@ test("inline search mode enters with an autofocused input and supports keyboard 
 });
 
 test("task selection converges with the openTask deep-link path and preserves the current task workspace", () => {
+  const bottomDockAdapterSource = adapterSource.slice(adapterSource.indexOf("export function BottomDockAdapter"));
   assert.match(appSource, /const openTaskFromExternalNavigation = useCallback/);
   assert.match(appSource, /openTaskFromExternalNavigation\(requestedTaskId\)/);
   assert.match(appSource, /action\.kind === "task"/);
@@ -129,6 +130,8 @@ test("task selection converges with the openTask deep-link path and preserves th
   assert.match(adapterSource, /taskSearchEntities/);
   assert.match(dockSource, /taskSearchEntities/);
   assert.match(adapterSource, /BottomDockComponent/);
+  assert.match(bottomDockAdapterSource, /export function BottomDockAdapter\(\{[\s\S]*?searchTargets,\s*taskSearchEntities,\s*\}: \{/);
+  assert.match(bottomDockAdapterSource, /<BottomDockComponent[\s\S]*?searchTargets=\{searchTargets\}[\s\S]*?taskSearchEntities=\{taskSearchEntities\}/);
 });
 
 test("expanded dock puts search first and swaps normal controls for inline search mode", () => {
