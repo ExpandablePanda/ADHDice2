@@ -196,7 +196,9 @@ import {
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
-import { PageSection, ReorderablePageSections } from "@/components/ui-system/reorderable-page-sections";
+import { PageShell, PageShellLayoutControls, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { usePageShellLayout } from "@/hooks/usePageShellLayout";
+import { HEALTH_PAGE_SHELL_IDS, getHealthPageShellKey } from "@/lib/page-shell-layout";
 import { HealthBarcodeScanner } from "./health-barcode-scanner";
 import { HealthLibraryPanel } from "./health-library-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_CONTROL_CLASS, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
@@ -1265,6 +1267,7 @@ export function HealthPage({
   workoutSets,
 }: HealthPageProps) {
   const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
+  const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab]);
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
   const [mealDraft, setMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
   const [activeMealEntrySlot, setActiveMealEntrySlot] = useState<HealthMealEntry["meal_slot"] | null>(null);
@@ -3289,7 +3292,7 @@ export function HealthPage({
 
   return (
     <section className="-mx-[15px] px-3 pb-32 sm:mx-0 sm:px-4">
-      <PageShellHeader subtitle="Health, Diet, Fitness" title="Health" />
+      <PageShellHeader actions={<PageShellLayoutControls layout={pageShellLayout} />} subtitle="Health, Diet, Fitness" title="Health" />
 
       <div aria-label="Health sections" className="mt-5 flex flex-wrap gap-2" role="tablist">
         {HEALTH_TABS.map((tab) => (
@@ -3330,6 +3333,7 @@ export function HealthPage({
             waterEntries={waterEntries}
             weightEntries={weightEntries}
             workouts={workouts}
+            layout={pageShellLayout}
           />
         </div>
       ) : null}
@@ -3378,13 +3382,14 @@ export function HealthPage({
           workoutExercises={workoutExercises}
           workoutSets={workoutSets}
           workouts={workouts}
+          layout={pageShellLayout}
         />
       ) : null}
 
       {activeTab === "Journal" ? (
         <>
-          <ReorderablePageSections pageKey="health:journal" userId={activeProfile.user_id}>
-          <PageSection id="journal-entry-history" label="Journal Entry and History">
+          <ReorderablePageShells layout={pageShellLayout}>
+          <PageShell id="journal-entry-history" label="Journal Entry and History">
           <div aria-labelledby="health-tab-journal" className="mt-6 min-w-0" id={getHealthTabPanelId("Journal")} role="tabpanel">
             <HealthPanel
               className="min-w-0"
@@ -3705,8 +3710,8 @@ export function HealthPage({
             </HealthPanel>
           </div>
 
-          </PageSection>
-          <PageSection id="journal-library" label="Journal Library">
+          </PageShell>
+          <PageShell id="journal-library" label="Journal Library">
           <div className="mt-5" id="journal-library-section" ref={journalLibraryRef} tabIndex={-1}>
             <HealthPanel isOpen={isJournalLibraryOpen} onOpenChange={setIsJournalLibraryOpen} icon={<Sparkles />} subtitle={`Journal Library · ${activeSymptoms.length} Symptoms · ${activeJournalSignals.filter((signal) => signal.kind === "emotion").length} Emotions · ${activeJournalSignals.filter((signal) => signal.kind === "other").length} Other Feelings`} title="Manage Journal Library">
               <div className="grid gap-5">
@@ -3801,8 +3806,8 @@ export function HealthPage({
             </HealthPanel>
           </div>
 
-          </PageSection>
-          <PageSection id="journal-feeling-trends" label="Feeling Trends">
+          </PageShell>
+          <PageShell id="journal-feeling-trends" label="Feeling Trends">
           <HealthPanel className="mt-5 min-w-0" icon={<Activity />} subtitle="Feelings" title="Feeling Trends">
             <div className="grid gap-4">
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
@@ -3857,15 +3862,15 @@ export function HealthPage({
               )}
             </div>
           </HealthPanel>
-          </PageSection>
-          </ReorderablePageSections>
+          </PageShell>
+          </ReorderablePageShells>
         </>
       ) : null}
 
       {activeTab === "Food" ? (
         <div aria-labelledby="health-tab-food" className="mt-3 min-w-0" id={getHealthTabPanelId("Food")} role="tabpanel">
-          <ReorderablePageSections pageKey="health:food" sectionsClassName="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]" userId={activeProfile.user_id}>
-          <PageSection id="food-meal-log" label="Meal Log">
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
+          <PageShell id="food-meal-log" label="Meal Log">
           <div className="grid min-w-0 content-start gap-5">
           <HealthPanel
             className="min-w-0"
@@ -4097,8 +4102,8 @@ export function HealthPage({
           </HealthPanel>
           </div>
 
-          </PageSection>
-          <PageSection id="food-daily-totals" label="Daily Totals and Favorites">
+          </PageShell>
+          <PageShell id="food-daily-totals" label="Daily Totals and Favorites">
           <div className="grid min-w-0 content-start gap-5">
           <HealthPanel
             headerActions={<FoodHistoryDateChip allowFuture date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
@@ -4232,8 +4237,8 @@ export function HealthPage({
           </HealthPanel>
           </div>
 
-          </PageSection>
-          <PageSection className="xl:col-span-2" id="food-library" label="Food Library">
+          </PageShell>
+          <PageShell className="xl:col-span-2" id="food-library" label="Food Library">
           <HealthLibraryPanel
             deleteFood={deleteFavoriteFood}
             deleteRecipe={deleteRecipe}
@@ -4245,9 +4250,9 @@ export function HealthPage({
             savedMeals={savedMeals}
             saveSavedMeal={saveSavedMeal}
           />
-          </PageSection>
+          </PageShell>
 
-          </ReorderablePageSections>
+          </ReorderablePageShells>
         </div>
       ) : null}
 
@@ -4258,17 +4263,17 @@ export function HealthPage({
           deleteWaterEntry={deleteWaterEntry}
           saveWaterGoal={(waterGoalMl) => saveProfile({ water_goal_ml: waterGoalMl })}
           today={today}
-          userId={activeProfile.user_id}
           updateWaterEntry={updateWaterEntry}
           waterGoalMl={profile.water_goal_ml}
           waterEntries={waterEntries}
+          layout={pageShellLayout}
         />
       ) : null}
 
       {activeTab === "Weight" ? (
         <div aria-labelledby="health-tab-weight" className="mt-6 min-w-0" id={getHealthTabPanelId("Weight")} role="tabpanel">
-          <ReorderablePageSections pageKey="health:weight" sectionsClassName="grid gap-5 xl:grid-cols-[1fr_1fr]" userId={activeProfile.user_id}>
-          <PageSection id="weight-entry" label="Weigh-in">
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-[1fr_1fr]">
+          <PageShell id="weight-entry" label="Weigh-in">
           <HealthPanel icon={<Scale />} subtitle="Weigh-in" title="Track trend, not perfection">
             <div className="grid gap-4 sm:grid-cols-[0.8fr_1.2fr]">
               <Field label={`Weight (${profile.preferred_weight_unit})`}>
@@ -4293,9 +4298,9 @@ export function HealthPage({
               />
             </div>
           </HealthPanel>
-          </PageSection>
+          </PageShell>
 
-          <PageSection id="weight-trend" label="Recent Trend">
+          <PageShell id="weight-trend" label="Recent Trend">
           <HealthPanel icon={<Activity />} subtitle="30 days" title="Recent trend">
             <div className="space-y-3">
               {weightTrend30.length === 0 ? (
@@ -4324,15 +4329,15 @@ export function HealthPage({
               )}
             </div>
           </HealthPanel>
-          </PageSection>
-          </ReorderablePageSections>
+          </PageShell>
+          </ReorderablePageShells>
         </div>
       ) : null}
 
       {activeTab === "Sleep" ? (
         <div aria-labelledby="health-tab-sleep" className="mt-6 min-w-0" id={getHealthTabPanelId("Sleep")} role="tabpanel">
-          <ReorderablePageSections pageKey="health:sleep" sectionsClassName="grid gap-5 xl:grid-cols-[1fr_1fr]" userId={activeProfile.user_id}>
-          <PageSection id="sleep-ledger" label="Health Sleep Totals">
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-[1fr_1fr]">
+          <PageShell id="sleep-ledger" label="Health Sleep Totals">
           <div className="grid content-start gap-5">
           <HealthPanel
             collapseAfterHeaderActions
@@ -4371,9 +4376,9 @@ export function HealthPage({
           </HealthPanel>
 
           </div>
-          </PageSection>
+          </PageShell>
 
-          <PageSection id="sleep-entry-and-sources" label="Sleep Entry and Sources">
+          <PageShell id="sleep-entry-and-sources" label="Sleep Entry and Sources">
           <div className="grid content-start gap-5">
           <HealthPanel icon={<MoonStar />} subtitle="Manual entry" title="Log sleep">
             <SleepKindSelector onChange={(kind) => setManualSleepDraft((current) => ({ ...current, kind }))} value={manualSleepDraft.kind} />
@@ -4443,15 +4448,15 @@ export function HealthPage({
             </div>
           </HealthPanel>
           </div>
-          </PageSection>
-          </ReorderablePageSections>
+          </PageShell>
+          </ReorderablePageShells>
         </div>
       ) : null}
 
       {activeTab === "Insights" ? (
         <div aria-labelledby="health-tab-insights" className="mt-6 min-w-0" id={getHealthTabPanelId("Insights")} role="tabpanel">
-          <ReorderablePageSections pageKey="health:insights" sectionsClassName="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]" userId={activeProfile.user_id}>
-          <PageSection id="insights-import" label="Apple Health Import">
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
+          <PageShell id="insights-import" label="Apple Health Import">
           <HealthPanel icon={<Apple />} subtitle="Import pathway" title="Apple Health groundwork">
             <div className="rounded-[1.5rem] border border-dashed border-[#d6def4] bg-[#fbfcff] p-5 dark:border-white/10 dark:bg-white/[0.03]">
               <p className="text-sm font-semibold text-[#22304b] dark:text-white">Upload an Apple Health export to preview what Health can import.</p>
@@ -4524,8 +4529,8 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          </PageSection>
-          <PageSection id="insights-trends" label="Imported Trends">
+          </PageShell>
+          <PageShell id="insights-trends" label="Imported Trends">
           <HealthPanel icon={<MoonStar />} subtitle="Imported trends" title="What will appear here">
             <div className="space-y-3">
               {metricEntries.length === 0 ? (
@@ -4546,27 +4551,27 @@ export function HealthPage({
               )}
             </div>
           </HealthPanel>
-          </PageSection>
-          </ReorderablePageSections>
+          </PageShell>
+          </ReorderablePageShells>
         </div>
       ) : null}
 
       {activeTab === "Awards" ? (
         <div aria-labelledby="health-tab-awards" className="mt-6" id={getHealthTabPanelId("Awards")} role="tabpanel">
-          <ReorderablePageSections pageKey="health:awards" userId={activeProfile.user_id}>
-          <PageSection id="awards-content" label="Awards">
+          <ReorderablePageShells layout={pageShellLayout}>
+          <PageShell id="awards-content" label="Awards">
           <HealthPanel icon={<Trophy />} subtitle="Awards" title="Under construction">
             <EmptyCopy text="This tab is under construction." />
           </HealthPanel>
-          </PageSection>
-          </ReorderablePageSections>
+          </PageShell>
+          </ReorderablePageShells>
         </div>
       ) : null}
 
       {activeTab === "Settings" ? (
         <div aria-labelledby="health-tab-settings" className="mt-6" id={getHealthTabPanelId("Settings")} role="tabpanel">
-          <ReorderablePageSections pageKey="health:settings" userId={activeProfile.user_id}>
-          <PageSection id="settings-content" label="Health Settings">
+          <ReorderablePageShells layout={pageShellLayout}>
+          <PageShell id="settings-content" label="Health Settings">
           <HealthPanel icon={<Target />} subtitle="Health settings">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Field label="Weight unit">
@@ -4621,8 +4626,8 @@ export function HealthPage({
             </div>
             <WeightForecastCard forecast={weightForecast} unit={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit} />
           </HealthPanel>
-          </PageSection>
-          </ReorderablePageSections>
+          </PageShell>
+          </ReorderablePageShells>
         </div>
       ) : null}
     </section>

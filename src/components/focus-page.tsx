@@ -52,6 +52,10 @@ import { SessionFinishModal, ManualEntryModal } from "./focus-modals";
 import { ModalShell } from "./modal-shell";
 import { FocusPillSelect } from "./focus-form-controls";
 import { CategoryIcon } from "./task-app";
+import { PageShellHeader } from "./task-app/page-shell-header";
+import { PageShell, PageShellLayoutControls, ReorderablePageShells } from "./ui-system/reorderable-page-shells";
+import { usePageShellLayout } from "@/hooks/usePageShellLayout";
+import { FOCUS_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import {
   TASKS_SURFACE_ACTIVE_CHIP_CLASS,
   TASKS_SURFACE_GROUP_CLASS,
@@ -339,7 +343,9 @@ export function FocusPage({
   onDismissDailyGoalSurplus,
   onSaveDailyGoalAdjustment,
   onSetFocusReallocationMode,
+  userId,
 }: {
+  userId: string | null;
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
   counters: FocusCounter[];
@@ -367,6 +373,7 @@ export function FocusPage({
   onSaveDailyGoalAdjustment: (input: { adjustmentDate: string; sourceCategoryId: string; targetCategoryId: string; sourceSessionId?: string | null; reductionSeconds: number; reason?: string }) => Promise<boolean>;
   onSetFocusReallocationMode: (mode: FocusReallocationMode) => void;
 }) {
+  const layout = usePageShellLayout(userId, "focus", FOCUS_PAGE_SHELL_IDS);
   const [countdownPickerOpenRequest, setCountdownPickerOpenRequest] = useState(0);
   const [focusSandboxPage, setFocusSandboxPage] = useState(0);
   const [focusSandboxTabOrder, setFocusSandboxTabOrder] = useState<number[]>(readFocusSandboxTabOrder);
@@ -569,10 +576,8 @@ export function FocusPage({
 
   return (
     <>
-      <section className="flex flex-col items-center pt-5 text-center sm:pt-6">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
-          Focus Timers
-        </p>
+      <PageShellHeader actions={<PageShellLayoutControls layout={layout} />} subtitle="Focus Timers" title="Focus" />
+      <section className="flex flex-col items-center text-center">
 
         <div className="mt-3 flex flex-wrap items-center justify-center gap-3 sm:mt-4">
           <button
@@ -616,6 +621,8 @@ export function FocusPage({
         </div>
       </section>
 
+      <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0">
+      <PageShell id="focus-timer-workspace" label="Focus Timer Workspace">
       <section className="mt-5 min-w-0 overflow-x-clip">
         <div className="mb-3 flex justify-center" data-focus-pager-alignment="centered-sandbox">
           <nav
@@ -774,6 +781,9 @@ export function FocusPage({
         </div>
       </section>
 
+      </PageShell>
+
+      <PageShell id="focus-goals" label="Focus Goals">
       <FocusGoalsPanel
         activeSessions={activeSessions}
         adjustments={adjustments}
@@ -785,11 +795,15 @@ export function FocusPage({
         manualDailySurplusOpportunity={manualDailySurplusOpportunity}
       />
 
-      <FocusCounterHistoryCard
-        countersById={countersById}
-        history={counterHistory}
-      />
+      </PageShell>
 
+      {counterHistory.length ? (
+        <PageShell id="focus-counter-history" label="Counter History">
+          <FocusCounterHistoryCard countersById={countersById} history={counterHistory} />
+        </PageShell>
+      ) : null}
+
+      <PageShell id="focus-history" label="Focus History">
       <div className="mt-6 w-full pb-40 sm:mt-10 sm:pb-44 lg:pb-28">
         <DailyHistoryGallery
           categories={userCategories}
@@ -800,6 +814,8 @@ export function FocusPage({
           onUpdateEntry={onUpdateHistoryEntry}
         />
       </div>
+      </PageShell>
+      </ReorderablePageShells>
 
       {showCategoryManager ? (
         <CategoryManager

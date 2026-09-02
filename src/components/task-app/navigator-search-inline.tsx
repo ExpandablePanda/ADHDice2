@@ -1,9 +1,9 @@
 "use client";
 
-import { Search, X } from "lucide-react";
+import { ListTodo, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { focusDropdownControl, revealDropdownOptionWithinPanel } from "@/lib/dropdown-interaction";
-import { searchNavigatorTargets, type NavigatorSearchTarget } from "@/lib/navigator-search";
+import { getNavigatorTaskSearchQuery, isNavigatorTaskSearchQuery, searchNavigatorTargets, toggleNavigatorTaskSearchQuery, type NavigatorSearchTarget } from "@/lib/navigator-search";
 import { searchNavigatorTasks } from "@/lib/navigator-task-search";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 
@@ -21,12 +21,14 @@ type NavigatorSearchInlineProps = {
 export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIcon, targets, taskSearchEntities }: NavigatorSearchInlineProps) {
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
-  const [isTaskSearchMode, setIsTaskSearchMode] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const highlightedOptionRef = useRef<HTMLButtonElement | null>(null);
+  const isTaskSearchMode = isNavigatorTaskSearchQuery(query);
   const results = useMemo(
-    () => isTaskSearchMode ? searchNavigatorTasks(query, taskSearchEntities) : searchNavigatorTargets(query, targets),
+    () => isTaskSearchMode
+      ? searchNavigatorTasks(getNavigatorTaskSearchQuery(query), taskSearchEntities)
+      : searchNavigatorTargets(query, targets),
     [isTaskSearchMode, query, targets, taskSearchEntities],
   );
 
@@ -86,15 +88,14 @@ export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIc
         aria-pressed={isTaskSearchMode}
         className={`flex h-10 w-8 shrink-0 items-center justify-center rounded-xl text-sm font-black transition ${isTaskSearchMode ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "text-[#6f57f6] hover:bg-[#f1ecff] dark:text-[#cabfff] dark:hover:bg-white/10"}`}
         onClick={() => {
-          setIsTaskSearchMode((current) => !current);
-          setQuery("");
+          setQuery(toggleNavigatorTaskSearchQuery);
           setHighlightedIndex(0);
           focusDropdownControl(inputRef.current);
         }}
         title="Search all tasks"
         type="button"
       >
-        #
+        <ListTodo aria-hidden="true" className="h-4 w-4" />
       </button>
       <div className="relative flex min-w-0 w-full flex-1 items-center sm:w-auto">
         <Search aria-hidden="true" className="pointer-events-none absolute left-2 h-4 w-4 text-[#8d87a7] dark:text-white/45" />

@@ -7,7 +7,6 @@ import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
-import { PageSection, ReorderablePageSections } from "@/components/ui-system/reorderable-page-sections";
 import { SortableList } from "@/components/ui/sortable-list";
 import { useHomeTodoState } from "@/hooks/useHomeTodoState";
 import { TaskStatusCircleRail, formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
@@ -362,8 +361,6 @@ export function HomePage({
           </div>
         )}
       >
-        <ReorderablePageSections pageKey="home" userId={userId}>
-        <PageSection id="home-task-search" label="Task Search and Capture">
         <div className="relative mt-2" ref={searchRef}>
           <div className="flex flex-wrap items-end justify-between gap-2">
             <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Search tasks</span>
@@ -450,8 +447,6 @@ export function HomePage({
           ) : null}
         </div>
 
-        </PageSection>
-        <PageSection id="home-todo-list" label="To-do List">
           <SortableList
             className={HOME_TODO_LIST_CLASS}
             getId={(task) => task.id}
@@ -497,8 +492,6 @@ export function HomePage({
               Search above to add the first task to your ordered list.
             </p>
           ) : null}
-        </PageSection>
-        </ReorderablePageSections>
       </AdhdPanel>
     </section>
   );

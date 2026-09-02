@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { createNavigatorSearchTargets, searchNavigatorTargets, type NavigatorSearchTarget } from "@/lib/navigator-search";
+import { createNavigatorSearchTargets, getNavigatorTaskSearchQuery, isNavigatorTaskSearchQuery, searchNavigatorTargets, toggleNavigatorTaskSearchQuery, type NavigatorSearchTarget } from "@/lib/navigator-search";
 import { searchNavigatorTasks } from "@/lib/navigator-task-search";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 
@@ -39,6 +39,18 @@ test("navigation search matches destination titles and aliases without searching
   assert.deepEqual(findTarget("brain").breadcrumb, ["Tasks", "Brainstorm"]);
   assert.deepEqual(findTarget("timezone").breadcrumb, ["Settings", "Day Reset", "Time Zone"]);
   assert.doesNotMatch(readFileSync(new URL("../src/lib/navigator-search.ts", import.meta.url), "utf8"), /Task\[\]|supabase|from\("/);
+});
+
+test("Navigator query syntax selects destination search versus task search", () => {
+  assert.equal(searchNavigatorTargets("fitness", targets)[0]?.action.kind, "health-tab");
+  assert.equal(isNavigatorTaskSearchQuery("milk"), false);
+  assert.equal(isNavigatorTaskSearchQuery("#milk"), true);
+  assert.equal(isNavigatorTaskSearchQuery("# milk"), true);
+  assert.equal(isNavigatorTaskSearchQuery("  #milk"), true);
+  assert.equal(getNavigatorTaskSearchQuery("#milk"), "milk");
+  assert.equal(getNavigatorTaskSearchQuery("# milk"), "milk");
+  assert.equal(getNavigatorTaskSearchQuery("  #  milk"), "milk");
+  assert.equal(isNavigatorTaskSearchQuery(getNavigatorTaskSearchQuery("#milk")), false);
 });
 
 test("all-task Navigator search is query-gated and includes the complete canonical hierarchy", () => {
@@ -109,6 +121,11 @@ test("inline search mode enters with an autofocused input and supports keyboard 
   assert.match(inlineSource, /placeholder=\{isTaskSearchMode \? "Search all tasks\.\.\."/);
   assert.match(inlineSource, /Type to search all tasks\./);
   assert.match(inlineSource, /aria-pressed=\{isTaskSearchMode\}/);
+  assert.match(inlineSource, /const isTaskSearchMode = isNavigatorTaskSearchQuery\(query\)/);
+  assert.match(inlineSource, /searchNavigatorTasks\(getNavigatorTaskSearchQuery\(query\), taskSearchEntities\)/);
+  assert.match(inlineSource, /setQuery\(toggleNavigatorTaskSearchQuery\)/);
+  assert.match(inlineSource, /<ListTodo aria-hidden="true"/);
+  assert.doesNotMatch(inlineSource, /useState\(false\).*isTaskSearchMode/);
   assert.match(inlineSource, /event\.key === "ArrowDown"/);
   assert.match(inlineSource, /event\.key === "ArrowUp"/);
   assert.match(inlineSource, /event\.key === "Enter"/);
@@ -117,6 +134,15 @@ test("inline search mode enters with an autofocused input and supports keyboard 
   assert.match(inlineSource, /focusDropdownControl\(inputRef\.current\)/);
   assert.match(inlineSource, /onNavigate\(target\);\s*onClose\(\)/);
   assert.doesNotMatch(inlineSource, /ModalShell/);
+});
+
+test("task query examples search canonical tasks and the icon toggles the hash", () => {
+  const entities = [taskEntity("milk", "Buy milk"), taskEntity("other", "Other task")];
+  assert.equal(searchNavigatorTasks(getNavigatorTaskSearchQuery("#milk"), entities)[0]?.action.taskId, "milk");
+  assert.equal(searchNavigatorTasks(getNavigatorTaskSearchQuery("# milk"), entities)[0]?.action.taskId, "milk");
+  assert.equal(toggleNavigatorTaskSearchQuery("milk"), "#milk");
+  assert.equal(toggleNavigatorTaskSearchQuery("#milk"), "milk");
+  assert.equal(toggleNavigatorTaskSearchQuery("# milk"), "milk");
 });
 
 test("task selection converges with the openTask deep-link path and preserves the current task workspace", () => {

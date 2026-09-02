@@ -75,7 +75,8 @@ import { HealthFitnessGoalsPanel } from "./health-fitness-goals-panel";
 import { HealthFitnessReorderList } from "./health-fitness-reorder-list";
 import { HealthFitnessSessionEditor } from "./health-fitness-session-editor";
 import { HealthActiveWorkout } from "./health-active-workout";
-import { PageSection, ReorderablePageSections } from "@/components/ui-system/reorderable-page-sections";
+import { PageShell, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 
 type HealthFitnessTabProps = {
   addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<HealthWorkout | null>;
@@ -120,6 +121,7 @@ type HealthFitnessTabProps = {
   workoutExercises: HealthWorkoutExercise[];
   workoutSets: HealthWorkoutSet[];
   workouts: HealthWorkout[];
+  layout: PageShellLayoutState;
 };
 
 function createDefaultWorkoutDraft(workoutTypes: readonly string[] = HEALTH_WORKOUT_TYPES, plannedItem?: HealthFitnessPlanItem): HealthWorkoutFormInput {
@@ -178,6 +180,7 @@ export function HealthFitnessTab({
   workoutExercises,
   workoutSets,
   workouts,
+  layout,
 }: HealthFitnessTabProps) {
   const today = todayHealthDate();
   const [draft, setDraft] = useState<HealthWorkoutFormInput>(() => createDefaultWorkoutDraft());
@@ -736,12 +739,11 @@ export function HealthFitnessTab({
         </div>
       </div>
 
-      <ReorderablePageSections pageKey="health:fitness" userId={profile.user_id}>
-        <PageSection id="fitness-active-workout" label="Active Workout">
+      <ReorderablePageShells layout={layout} shellsClassName="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
+        <PageShell className="xl:col-span-2" id="fitness-active-workout" label="Active Workout">
           <HealthActiveWorkout controller={activeWorkout} exerciseLibrary={exerciseLibrary} planItems={planItems} plans={plans} workoutTypes={workoutTypes} />
-        </PageSection>
-        <PageSection id="fitness-day-week" label="Today and This Week">
-      <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
+        </PageShell>
+        <PageShell id="fitness-today" label="Today">
         <HealthCollapsiblePanel
           header={<Activity aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
           subtitle={formatHealthTimestampDate(`${selectedFitnessDate}T12:00:00`) ?? selectedFitnessDate}
@@ -788,6 +790,8 @@ export function HealthFitnessTab({
           </div>
         </HealthCollapsiblePanel>
 
+        </PageShell>
+        <PageShell id="fitness-week" label="This Week">
         <HealthCollapsiblePanel
           header={<Timer aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
           subtitle={`${formatHealthDateLabel(weeklySummary.startDate)} – ${formatHealthDateLabel(weeklySummary.endDate)}`}
@@ -818,10 +822,8 @@ export function HealthFitnessTab({
             </div>
           </div>
         </HealthCollapsiblePanel>
-      </div>
-
-        </PageSection>
-        <PageSection id="fitness-goals" label="Fitness Goals">
+        </PageShell>
+        <PageShell className="xl:col-span-2" id="fitness-goals" label="Fitness Goals">
       <HealthFitnessGoalsPanel
         archiveGoal={archiveGoal}
         createGoal={createGoal}
@@ -839,9 +841,9 @@ export function HealthFitnessTab({
         workoutSets={workoutSets}
         workouts={workouts}
       />
-        </PageSection>
+        </PageShell>
 
-        <PageSection id="fitness-plans" label="Fitness Plans">
+        <PageShell className="xl:col-span-2" id="fitness-plans" label="Fitness Plans">
       <HealthFitnessPlansPanel
         archivePlan={archivePlan}
         archivePlanItem={archivePlanItem}
@@ -858,9 +860,9 @@ export function HealthFitnessTab({
         workoutPlanItemLinks={workoutPlanItemLinks}
         workouts={workouts}
       />
-        </PageSection>
+        </PageShell>
 
-        <PageSection id="fitness-workout-history" label="Workout History">
+        <PageShell className="xl:col-span-2" id="fitness-workout-history" label="Workout History">
       <HealthCollapsiblePanel
         header={<Flame aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
         onOpenChange={setIsHistoryPanelOpen}
@@ -929,8 +931,8 @@ export function HealthFitnessTab({
           </div>
         )}
       </HealthCollapsiblePanel>
-        </PageSection>
-      </ReorderablePageSections>
+        </PageShell>
+      </ReorderablePageShells>
     </div>
   );
 }

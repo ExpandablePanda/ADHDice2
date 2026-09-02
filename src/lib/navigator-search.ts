@@ -175,3 +175,17 @@ export function searchNavigatorTargets(query: string, targets: readonly Navigato
     .sort((left, right) => left.rank - right.rank || left.index - right.index)
     .map((entry) => entry.target);
 }
+
+export function isNavigatorTaskSearchQuery(query: string) {
+  return query.trimStart().startsWith("#");
+}
+
+export function getNavigatorTaskSearchQuery(query: string) {
+  return query.replace(/^\s*#\s*/, "");
+}
+
+export function toggleNavigatorTaskSearchQuery(query: string) {
+  return isNavigatorTaskSearchQuery(query)
+    ? getNavigatorTaskSearchQuery(query)
+    : `#${query}`;
+}
