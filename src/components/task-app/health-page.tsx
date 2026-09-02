@@ -79,6 +79,7 @@ import {
 import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
   calculateHealthDailyCalorieBudget,
+  buildHealthDailyCalorieTargetSeries,
   clampPercent,
   buildHealthMealLoggedAt,
   buildWeightGoalForecast,
@@ -1718,6 +1719,14 @@ export function HealthPage({
   const dailyCalorieSeries = useMemo(
     () => buildHealthDailyCalorieSeries({ endDate: foodHistoryDate, mealEntries }),
     [foodHistoryDate, mealEntries],
+  );
+  const dailyCalorieTargetSeries = useMemo(
+    () => buildHealthDailyCalorieTargetSeries({
+      baseCalorieGoal: profile?.calorie_goal,
+      metricEntries,
+      points: dailyCalorieSeries,
+    }),
+    [dailyCalorieSeries, metricEntries, profile?.calorie_goal],
   );
   const todayMovement = useMemo(
     () => sumMetricValueForDate(metricEntries, today, ["steps", "active_energy_kcal", "exercise_minutes"]),
@@ -4117,7 +4126,7 @@ export function HealthPage({
                 />
               </div>
             ) : null}
-            <HealthCalorieLineChart calorieGoal={selectedCalorieBudget} series={dailyCalorieSeries} />
+            <HealthCalorieLineChart series={dailyCalorieSeries} targetSeries={dailyCalorieTargetSeries} />
           </HealthPanel>
 
           <HealthPanel className="min-w-0" icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">

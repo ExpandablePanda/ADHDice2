@@ -766,6 +766,30 @@ export function calculateHealthDailyCalorieBudget(
   return baseCalorieGoal + activityAdjustment;
 }
 
+export type HealthDailyCalorieTargetPoint = {
+  date: string;
+  label: string;
+  target: number;
+};
+
+export function buildHealthDailyCalorieTargetSeries({
+  baseCalorieGoal,
+  metricEntries,
+  points,
+}: {
+  baseCalorieGoal: number | null | undefined;
+  metricEntries: HealthMetricEntry[];
+  points: ReadonlyArray<Pick<HealthDailyCalorieTargetPoint, "date" | "label">>;
+}) {
+  return points.flatMap(({ date, label }) => {
+    const target = calculateHealthDailyCalorieBudget(
+      baseCalorieGoal,
+      sumMetricValueForDate(metricEntries, date, ["active_energy_kcal"]),
+    );
+    return target === null ? [] : [{ date, label, target }];
+  });
+}
+
 export type HealthDailyNutritionTotals = {
   calories: number;
   carbs: number;

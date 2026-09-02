@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildHealthMealLoggedAt,
+  buildHealthDailyCalorieTargetSeries,
   buildDefaultHealthProfile,
   buildWeightGoalForecast,
   buildHealthCoachMessage,
@@ -42,6 +43,34 @@ test("daily calorie budget adds only the date's canonical Active Energy", () => 
   assert.equal(calculateHealthDailyCalorieBudget(1900, undefined), 1900);
   assert.equal(calculateHealthDailyCalorieBudget(1900, Number.NaN), 1900);
   assert.equal(calculateHealthDailyCalorieBudget(1900, -25), 1900);
+});
+
+test("daily calorie target series keeps each date's adjusted target separate", () => {
+  const points = [
+    { date: "2026-08-26", label: "Wed" },
+    { date: "2026-08-27", label: "Thu" },
+    { date: "2026-08-28", label: "Fri" },
+    { date: "2026-08-29", label: "Sat" },
+    { date: "2026-08-30", label: "Sun" },
+    { date: "2026-08-31", label: "Mon" },
+    { date: "2026-09-01", label: "Tue" },
+  ];
+  const metricEntries = [
+    { id: "energy-1", user_id: "user-1", metric_type: "active_energy_kcal" as const, metric_date: "2026-09-01", metric_value: 356.8, source: "manual" as const, source_fingerprint: "energy-1", created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+    { id: "energy-2", user_id: "user-1", metric_type: "active_energy_kcal" as const, metric_date: "2026-08-31", metric_value: 180, source: "manual" as const, source_fingerprint: "energy-2", created_at: "2026-08-31T00:00:00.000Z", updated_at: "2026-08-31T00:00:00.000Z" },
+    { id: "energy-3", user_id: "user-1", metric_type: "active_energy_kcal" as const, metric_date: "2026-08-30", metric_value: 0, source: "manual" as const, source_fingerprint: "energy-3", created_at: "2026-08-30T00:00:00.000Z", updated_at: "2026-08-30T00:00:00.000Z" },
+  ];
+
+  assert.deepEqual(buildHealthDailyCalorieTargetSeries({ baseCalorieGoal: 1900, metricEntries, points }), [
+    { date: "2026-08-26", label: "Wed", target: 1900 },
+    { date: "2026-08-27", label: "Thu", target: 1900 },
+    { date: "2026-08-28", label: "Fri", target: 1900 },
+    { date: "2026-08-29", label: "Sat", target: 1900 },
+    { date: "2026-08-30", label: "Sun", target: 1900 },
+    { date: "2026-08-31", label: "Mon", target: 2080 },
+    { date: "2026-09-01", label: "Tue", target: 2256.8 },
+  ]);
+  assert.deepEqual(buildHealthDailyCalorieTargetSeries({ baseCalorieGoal: null, metricEntries, points }), []);
 });
 
 test("health weight conversion helpers round-trip between pounds and kilograms", () => {
