@@ -21,7 +21,7 @@ import {
   renameHealthWorkoutTitleOption,
   sortHealthWorkouts,
 } from "@/lib/health-fitness";
-import { HEALTH_TABS, normalizeHealthProfile } from "@/lib/health-utils";
+import { HEALTH_TABS, formatHealthTimestampDate, normalizeHealthProfile, shiftHealthDate } from "@/lib/health-utils";
 
 const fitnessSource = readFileSync(new URL("../src/components/task-app/health-fitness-tab.tsx", import.meta.url), "utf8");
 const reorderSource = readFileSync(new URL("../src/components/task-app/health-fitness-reorder-list.tsx", import.meta.url), "utf8");
@@ -485,6 +485,25 @@ test("Fitness week bounds use the selected anchor date and stop next-week naviga
   assert.match(fitnessSource, /title=\{isCurrentWeek \? "This Week" : "Week"\}/);
 });
 
+test("Fitness Today has independent historical day navigation and uses the selected date for every daily card", () => {
+  assert.equal(shiftHealthDate("2026-09-02", -1), "2026-09-01");
+  assert.equal(shiftHealthDate("2026-09-01", 1), "2026-09-02");
+  assert.equal(formatHealthTimestampDate("2026-09-01T12:00:00"), "Sep 1, 2026");
+  assert.match(fitnessSource, /const \[selectedFitnessDate, setSelectedFitnessDate\] = useState\(today\)/);
+  assert.match(fitnessSource, /getHealthDailyMovementMetrics\(metricEntries, selectedFitnessDate\)/);
+  assert.match(fitnessSource, /getHealthWorkoutActiveCaloriesForDate\(workouts, selectedFitnessDate\)/);
+  assert.match(fitnessSource, /aria-label="Previous day"[\s\S]*?moveFitnessDay\(-1\)/);
+  assert.match(fitnessSource, /aria-label="Next day" disabled=\{isCurrentFitnessDate\}/);
+  assert.match(fitnessSource, /if \(direction > 0 && nextDate > today\)/);
+  assert.match(fitnessSource, /aria-label="Fitness day date"/);
+  assert.match(fitnessSource, /max=\{today\}/);
+  assert.match(fitnessSource, /setSelectedFitnessDate\(today\)/);
+  assert.match(fitnessSource, /title=\{isCurrentFitnessDate \? "Today" : "Day"\}/);
+  assert.match(fitnessSource, /formatHealthTimestampDate\(`\$\{selectedFitnessDate\}T12:00:00`\)/);
+  const dailyProjectionSection = fitnessSource.slice(fitnessSource.indexOf("const dailyMovement"), fitnessSource.indexOf("const currentWeek"));
+  assert.doesNotMatch(dailyProjectionSection, /weekAnchorDate/);
+});
+
 test("Fitness Today keeps canonical Total Active Calories separate from workout ledger calories", () => {
   const metrics = [
     { created_at: "", id: "energy", metric_date: "2026-08-23", metric_type: "active_energy_kcal", metric_value: 356.8, source: "manual", source_fingerprint: "energy", updated_at: "", user_id: "user-1" },
@@ -519,7 +538,14 @@ test("Fitness Week totals use canonical daily Active Energy and do not infer mis
   assert.match(fitnessSource, /label="Total Active Calories" value=\{`\$\{formatWholeNumber\(weeklyMovement\.activeEnergyKcal\)\} kcal`\}/);
   assert.match(fitnessSource, /label="Workout Active Calories" value=\{`\$\{formatWholeNumber\(weeklySummary\.workoutActiveCalories\)\} kcal`\}/);
   assert.doesNotMatch(fitnessSource, /weeklyMovement\.activeEnergyKcal \+ weeklySummary\.workoutActiveCalories/);
+  assert.match(fitnessSource, /getHealthWeeklyWorkoutSummary\(workouts, weekAnchorDate\)/);
+  assert.match(fitnessSource, /getHealthWeeklyMovementMetrics\(metricEntries, weekAnchorDate\)/);
+  assert.doesNotMatch(dailyProjectionSectionForTest(fitnessSource), /weekAnchorDate/);
 });
+
+function dailyProjectionSectionForTest(source: string) {
+  return source.slice(source.indexOf("const dailyMovement"), source.indexOf("const currentWeek"));
+}
 
 test("daily Fitness cards read the existing steps, active energy, and exercise metric authorities", () => {
   const metrics = [
@@ -585,12 +611,12 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.12.66 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.12.66");
-  assert.equal(packageLock.version, "7.12.66");
-  assert.equal(packageLock.packages[""].version, "7.12.66");
-  assert.match(appVersionSource, /"version":\s*"7\.12\.66"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.66"/);
+test("all 7.12.67 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.12.67");
+  assert.equal(packageLock.version, "7.12.67");
+  assert.equal(packageLock.packages[""].version, "7.12.67");
+  assert.match(appVersionSource, /"version":\s*"7\.12\.67"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.67"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
-  assert.match(currentStateSource, /Current working app version: `7\.12\.66`/);
+  assert.match(currentStateSource, /Current working app version: `7\.12\.67`/);
 });

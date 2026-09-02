@@ -58,6 +58,7 @@ import { saveHealthWorkoutBundle } from "@/lib/health-workout-save";
 import {
   clampPercent,
   formatHealthDateLabel,
+  formatHealthTimestampDate,
   formatMealLoggedTime,
   getCurrentHealthDateTimeInputs,
   shiftHealthDate,
@@ -183,6 +184,7 @@ export function HealthFitnessTab({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [selectedFitnessDate, setSelectedFitnessDate] = useState(today);
   const [weekAnchorDate, setWeekAnchorDate] = useState(today);
   const [selectedPlanItemIds, setSelectedPlanItemIds] = useState<string[]>([]);
   const [revealRequest, setRevealRequest] = useState(0);
@@ -198,11 +200,12 @@ export function HealthFitnessTab({
   const workoutFormRef = useRef<HTMLFormElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const pendingRevealRef = useRef(false);
-  const dailyMovement = useMemo(() => getHealthDailyMovementMetrics(metricEntries, today), [metricEntries, today]);
-  const dailyWorkoutActiveCalories = useMemo(() => getHealthWorkoutActiveCaloriesForDate(workouts, today), [today, workouts]);
+  const dailyMovement = useMemo(() => getHealthDailyMovementMetrics(metricEntries, selectedFitnessDate), [metricEntries, selectedFitnessDate]);
+  const dailyWorkoutActiveCalories = useMemo(() => getHealthWorkoutActiveCaloriesForDate(workouts, selectedFitnessDate), [selectedFitnessDate, workouts]);
   const currentWeek = useMemo(() => getHealthWeekBounds(today), [today]);
   const weeklySummary = useMemo(() => getHealthWeeklyWorkoutSummary(workouts, weekAnchorDate), [weekAnchorDate, workouts]);
   const weeklyMovement = useMemo(() => getHealthWeeklyMovementMetrics(metricEntries, weekAnchorDate), [metricEntries, weekAnchorDate]);
+  const isCurrentFitnessDate = selectedFitnessDate === today;
   const isCurrentWeek = weeklySummary.startDate === currentWeek.startDate;
   const orderedWorkouts = useMemo(() => sortHealthWorkouts(workouts), [workouts]);
   const structuredSummaries = useMemo(
@@ -236,6 +239,18 @@ export function HealthFitnessTab({
       return;
     }
     setWeekAnchorDate(nextAnchorDate);
+  }
+
+  function moveFitnessDay(direction: -1 | 1) {
+    const nextDate = shiftHealthDate(selectedFitnessDate, direction);
+    if (direction > 0 && nextDate > today) {
+      return;
+    }
+    setSelectedFitnessDate(nextDate);
+  }
+
+  function handleFitnessDateChange(date: string) {
+    setSelectedFitnessDate(date && date <= today ? date : today);
   }
 
   function handleWeekDateChange(date: string) {
@@ -662,29 +677,47 @@ export function HealthFitnessTab({
       <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
         <HealthCollapsiblePanel
           header={<Activity aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
-          subtitle="Existing daily movement goals"
-          title="Today"
+          subtitle={formatHealthTimestampDate(`${selectedFitnessDate}T12:00:00`) ?? selectedFitnessDate}
+          title={isCurrentFitnessDate ? "Today" : "Day"}
         >
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <FitnessStatCard
-              detail={profile.movement_goal === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal)}`}
-              label="Steps"
-              progressPercent={progressForGoal(dailyMovement.steps, profile.movement_goal)}
-              value={formatWholeNumber(dailyMovement.steps)}
-            />
-            <FitnessStatCard
-              detail={profile.movement_goal_calories === null ? "canonical Health Active Energy" : `canonical Health Active Energy · goal ${formatWholeNumber(profile.movement_goal_calories)} kcal`}
-              label="Total Active Calories"
-              progressPercent={progressForGoal(dailyMovement.activeEnergyKcal, profile.movement_goal_calories)}
-              value={`${formatWholeNumber(dailyMovement.activeEnergyKcal)} kcal`}
-            />
-            <FitnessStatCard detail="workout ledger" label="Workout Active Calories" value={`${formatWholeNumber(dailyWorkoutActiveCalories)} kcal`} />
-            <FitnessStatCard
-              detail={profile.movement_goal_minutes === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal_minutes)} min`}
-              label="Exercise"
-              progressPercent={progressForGoal(dailyMovement.exerciseMinutes, profile.movement_goal_minutes)}
-              value={`${formatWholeNumber(dailyMovement.exerciseMinutes)} min`}
-            />
+          <div className="grid gap-3">
+            <div aria-label="Fitness day navigation" className="flex flex-wrap items-center gap-1.5" role="group">
+              <AdhdIconButton aria-label="Previous day" onClick={() => moveFitnessDay(-1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronLeft aria-hidden="true" /></AdhdIconButton>
+              <label className="relative inline-flex items-center">
+                <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-[#6f57f6]" />
+                <input
+                  aria-label="Fitness day date"
+                  className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS} h-[26px] min-h-[26px] min-w-[9.5rem] pl-7 text-[13px] leading-none`}
+                  max={today}
+                  onChange={(event) => handleFitnessDateChange(event.target.value)}
+                  type="date"
+                  value={selectedFitnessDate}
+                />
+              </label>
+              <AdhdIconButton aria-label="Next day" disabled={isCurrentFitnessDate} onClick={() => moveFitnessDay(1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronRight aria-hidden="true" /></AdhdIconButton>
+              {!isCurrentFitnessDate ? <AdhdChip onClick={() => setSelectedFitnessDate(today)} type="button">Today</AdhdChip> : null}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <FitnessStatCard
+                detail={profile.movement_goal === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal)}`}
+                label="Steps"
+                progressPercent={progressForGoal(dailyMovement.steps, profile.movement_goal)}
+                value={formatWholeNumber(dailyMovement.steps)}
+              />
+              <FitnessStatCard
+                detail={profile.movement_goal_calories === null ? "canonical Health Active Energy" : `canonical Health Active Energy · goal ${formatWholeNumber(profile.movement_goal_calories)} kcal`}
+                label="Total Active Calories"
+                progressPercent={progressForGoal(dailyMovement.activeEnergyKcal, profile.movement_goal_calories)}
+                value={`${formatWholeNumber(dailyMovement.activeEnergyKcal)} kcal`}
+              />
+              <FitnessStatCard detail="workout ledger" label="Workout Active Calories" value={`${formatWholeNumber(dailyWorkoutActiveCalories)} kcal`} />
+              <FitnessStatCard
+                detail={profile.movement_goal_minutes === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal_minutes)} min`}
+                label="Exercise"
+                progressPercent={progressForGoal(dailyMovement.exerciseMinutes, profile.movement_goal_minutes)}
+                value={`${formatWholeNumber(dailyMovement.exerciseMinutes)} min`}
+              />
+            </div>
           </div>
         </HealthCollapsiblePanel>
 
