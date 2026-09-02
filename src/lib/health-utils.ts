@@ -706,6 +706,13 @@ export function formatHealthNutritionNumber(value: number | null | undefined) {
   return String(Number(value.toFixed(2)));
 }
 
+export function formatHealthCalorieTarget(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "—";
+  }
+  return Number(value.toFixed(2)).toLocaleString();
+}
+
 export type HealthMealSummaryPart = {
   kind: "meal" | "serving" | "calories" | "protein" | "carbs" | "fat" | "time";
   text: string;

@@ -86,6 +86,7 @@ import {
   displayWeightToKilograms,
   formatEditableWeight,
   formatHealthDateLabel,
+  formatHealthCalorieTarget,
   formatHealthJournalDate,
   formatHealthJournalMetadataDate,
   formatMealLoggedTime,
@@ -1697,13 +1698,20 @@ export function HealthPage({
     () => sumMealNutritionForDate(mealEntries, foodHistoryDate),
     [foodHistoryDate, mealEntries],
   );
+  const selectedActiveEnergyKcal = useMemo(
+    () => sumMetricValueForDate(metricEntries, foodHistoryDate, ["active_energy_kcal"]),
+    [foodHistoryDate, metricEntries],
+  );
   const selectedCalorieBudget = useMemo(
     () => calculateHealthDailyCalorieBudget(
       profile?.calorie_goal,
-      sumMetricValueForDate(metricEntries, foodHistoryDate, ["active_energy_kcal"]),
+      selectedActiveEnergyKcal,
     ),
-    [foodHistoryDate, metricEntries, profile?.calorie_goal],
+    [profile?.calorie_goal, selectedActiveEnergyKcal],
   );
+  const selectedCalorieTargetDetail = selectedCalorieBudget === null
+    ? "set in goals"
+    : `target ${formatHealthCalorieTarget(selectedCalorieBudget)} kcal${selectedActiveEnergyKcal > 0 ? ` (+${formatHealthCalorieTarget(selectedActiveEnergyKcal)} active kcal)` : ""}`;
   const selectedMealPlans = useMemo(
     () => getActiveHealthMealPlans(mealPlanEntries, foodHistoryDate),
     [foodHistoryDate, mealPlanEntries],
@@ -4086,7 +4094,7 @@ export function HealthPage({
             subtitle="Daily totals"
           >
             <div className="grid gap-3 sm:grid-cols-2">
-              <CompactStat detail={selectedCalorieBudget ? `target ${formatHealthNutritionNumber(selectedCalorieBudget)} kcal` : "set in goals"} label="Calories" progressPercent={selectedCalorieBudget ? clampPercent((selectedNutrition.calories / selectedCalorieBudget) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
+              <CompactStat detail={selectedCalorieTargetDetail} label="Calories" progressPercent={selectedCalorieBudget ? clampPercent((selectedNutrition.calories / selectedCalorieBudget) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
               <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" progressPercent={profile.protein_goal_grams ? clampPercent((selectedNutrition.protein / profile.protein_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.protein)}g`} />
               <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.carbs)}g`} />
               <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.fat)}g`} />

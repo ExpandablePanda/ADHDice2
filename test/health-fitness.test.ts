@@ -8,6 +8,9 @@ import {
   addHealthWorkoutTitleOption,
   buildHealthWorkoutFormPayload,
   getHealthDailyMovementMetrics,
+  getHealthWorkoutActiveCaloriesForDate,
+  getHealthWeekBounds,
+  getHealthWeeklyMovementMetrics,
   getHealthWeeklyWorkoutSummary,
   HEALTH_WORKOUT_TYPES,
   moveFitnessOption,
@@ -470,6 +473,54 @@ test("weekly workout totals count sessions, seconds-derived minutes, and non-nul
   assert.equal(summary.workoutActiveCalories, 250);
 });
 
+test("Fitness week bounds use the selected anchor date and stop next-week navigation at the current week", () => {
+  assert.deepEqual(getHealthWeekBounds("2026-08-27"), { endDate: "2026-08-30", startDate: "2026-08-24" });
+  assert.equal(getHealthWeekBounds("2026-08-27").startDate, getHealthWeekBounds("2026-08-24").startDate);
+  assert.equal(getHealthWeekBounds("2026-09-03").startDate, "2026-08-31");
+  assert.match(fitnessSource, /const \[weekAnchorDate, setWeekAnchorDate\] = useState\(today\)/);
+  assert.match(fitnessSource, /aria-label="Previous week"[\s\S]*?moveWeek\(-1\)/);
+  assert.match(fitnessSource, /aria-label="Next week" disabled=\{isCurrentWeek\}/);
+  assert.match(fitnessSource, /setWeekAnchorDate\(today\)/);
+  assert.match(fitnessSource, /aria-label="Fitness week date"/);
+  assert.match(fitnessSource, /title=\{isCurrentWeek \? "This Week" : "Week"\}/);
+});
+
+test("Fitness Today keeps canonical Total Active Calories separate from workout ledger calories", () => {
+  const metrics = [
+    { created_at: "", id: "energy", metric_date: "2026-08-23", metric_type: "active_energy_kcal", metric_value: 356.8, source: "manual", source_fingerprint: "energy", updated_at: "", user_id: "user-1" },
+  ] as HealthMetricEntry[];
+  const workouts = [
+    workout({ active_calories: 276.3, id: "today-workout", workout_date: "2026-08-23" }),
+    workout({ active_calories: 900, id: "other-day", workout_date: "2026-08-22" }),
+  ];
+  const totalActiveCalories = getHealthDailyMovementMetrics(metrics, "2026-08-23").activeEnergyKcal;
+  const workoutActiveCalories = getHealthWorkoutActiveCaloriesForDate(workouts, "2026-08-23");
+  assert.equal(totalActiveCalories, 356.8);
+  assert.equal(workoutActiveCalories, 276.3);
+  assert.notEqual(totalActiveCalories + workoutActiveCalories, totalActiveCalories);
+  assert.match(fitnessSource, /label="Total Active Calories"/);
+  assert.match(fitnessSource, /label="Workout Active Calories"/);
+  assert.match(fitnessSource, /detail="workout ledger"/);
+  assert.doesNotMatch(fitnessSource, /dailyMovement\.activeEnergyKcal \+ dailyWorkoutActiveCalories/);
+});
+
+test("Fitness Week totals use canonical daily Active Energy and do not infer missing dates from workouts", () => {
+  const metrics = [
+    { created_at: "", id: "monday", metric_date: "2026-08-24", metric_type: "active_energy_kcal", metric_value: 100, source: "manual", source_fingerprint: "monday", updated_at: "", user_id: "user-1" },
+    { created_at: "", id: "wednesday", metric_date: "2026-08-26", metric_type: "active_energy_kcal", metric_value: 250.5, source: "manual", source_fingerprint: "wednesday", updated_at: "", user_id: "user-1" },
+  ] as HealthMetricEntry[];
+  const weeklyMovement = getHealthWeeklyMovementMetrics(metrics, "2026-08-27");
+  const weeklyWorkoutSummary = getHealthWeeklyWorkoutSummary([
+    workout({ active_calories: 276.3, id: "ledger-only", workout_date: "2026-08-25" }),
+  ], "2026-08-27");
+  assert.deepEqual(weeklyMovement, { activeEnergyKcal: 350.5, endDate: "2026-08-30", startDate: "2026-08-24" });
+  assert.equal(weeklyWorkoutSummary.workoutActiveCalories, 276.3);
+  assert.match(fitnessSource, /getHealthWeeklyMovementMetrics\(metricEntries, weekAnchorDate\)/);
+  assert.match(fitnessSource, /label="Total Active Calories" value=\{`\$\{formatWholeNumber\(weeklyMovement\.activeEnergyKcal\)\} kcal`\}/);
+  assert.match(fitnessSource, /label="Workout Active Calories" value=\{`\$\{formatWholeNumber\(weeklySummary\.workoutActiveCalories\)\} kcal`\}/);
+  assert.doesNotMatch(fitnessSource, /weeklyMovement\.activeEnergyKcal \+ weeklySummary\.workoutActiveCalories/);
+});
+
 test("daily Fitness cards read the existing steps, active energy, and exercise metric authorities", () => {
   const metrics = [
     { created_at: "", id: "steps", metric_date: "2026-08-23", metric_type: "steps", metric_value: 5000, source: "manual", source_fingerprint: "steps", updated_at: "", user_id: "user-1" },
@@ -534,12 +585,12 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.12.63 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.12.63");
-  assert.equal(packageLock.version, "7.12.63");
-  assert.equal(packageLock.packages[""].version, "7.12.63");
-  assert.match(appVersionSource, /"version":\s*"7\.12\.63"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.63"/);
+test("all 7.12.66 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.12.66");
+  assert.equal(packageLock.version, "7.12.66");
+  assert.equal(packageLock.packages[""].version, "7.12.66");
+  assert.match(appVersionSource, /"version":\s*"7\.12\.66"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.66"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
-  assert.match(currentStateSource, /Current working app version: `7\.12\.63`/);
+  assert.match(currentStateSource, /Current working app version: `7\.12\.66`/);
 });

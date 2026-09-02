@@ -9,6 +9,7 @@ import {
   buildHealthCoachMessage,
   buildHealthReminderTemplate,
   calculateHealthDailyCalorieBudget,
+  formatHealthCalorieTarget,
   displayWeightToKilograms,
   formatEditableWeight,
   formatHealthMealSummary,
@@ -43,6 +44,13 @@ test("daily calorie budget adds only the date's canonical Active Energy", () => 
   assert.equal(calculateHealthDailyCalorieBudget(1900, undefined), 1900);
   assert.equal(calculateHealthDailyCalorieBudget(1900, Number.NaN), 1900);
   assert.equal(calculateHealthDailyCalorieBudget(1900, -25), 1900);
+});
+
+test("daily calorie target presentation shows positive Active Energy without inventing zero data", () => {
+  assert.equal(formatHealthCalorieTarget(calculateHealthDailyCalorieBudget(1900, 100)), "2,000");
+  assert.equal(formatHealthCalorieTarget(calculateHealthDailyCalorieBudget(1900, 0)), "1,900");
+  assert.equal(formatHealthCalorieTarget(calculateHealthDailyCalorieBudget(1900, null)), "1,900");
+  assert.equal(formatHealthCalorieTarget(calculateHealthDailyCalorieBudget(1900, 276.3)), "2,176.3");
 });
 
 test("daily calorie target series keeps each date's adjusted target separate", () => {

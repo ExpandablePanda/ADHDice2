@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Check, Flame, Pencil, Plus, Settings2, Timer, Trash2, X } from "lucide-react";
+import { Activity, CalendarDays, Check, ChevronLeft, ChevronRight, Flame, Pencil, Plus, Settings2, Timer, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -38,6 +38,9 @@ import {
   addHealthWorkoutTypeOption,
   addHealthWorkoutTitleOption,
   getHealthDailyMovementMetrics,
+  getHealthWorkoutActiveCaloriesForDate,
+  getHealthWeekBounds,
+  getHealthWeeklyMovementMetrics,
   getHealthWeeklyWorkoutSummary,
   HEALTH_WORKOUT_TYPES,
   HEALTH_WORKOUT_OPTION_MAX_LENGTH,
@@ -57,8 +60,10 @@ import {
   formatHealthDateLabel,
   formatMealLoggedTime,
   getCurrentHealthDateTimeInputs,
+  shiftHealthDate,
   todayHealthDate,
 } from "@/lib/health-utils";
+import { TASK_TABLE_CHIP_BASE_CLASS, TASK_TABLE_LIST_CHIP_CLASS } from "@/components/ui/task-table-primitives";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { FitnessPlanAssociationPicker, HealthFitnessPlansPanel } from "./health-fitness-plans-panel";
@@ -178,6 +183,7 @@ export function HealthFitnessTab({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [weekAnchorDate, setWeekAnchorDate] = useState(today);
   const [selectedPlanItemIds, setSelectedPlanItemIds] = useState<string[]>([]);
   const [revealRequest, setRevealRequest] = useState(0);
   const [workoutTypeDraft, setWorkoutTypeDraft] = useState("");
@@ -193,7 +199,11 @@ export function HealthFitnessTab({
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const pendingRevealRef = useRef(false);
   const dailyMovement = useMemo(() => getHealthDailyMovementMetrics(metricEntries, today), [metricEntries, today]);
-  const weeklySummary = useMemo(() => getHealthWeeklyWorkoutSummary(workouts, today), [today, workouts]);
+  const dailyWorkoutActiveCalories = useMemo(() => getHealthWorkoutActiveCaloriesForDate(workouts, today), [today, workouts]);
+  const currentWeek = useMemo(() => getHealthWeekBounds(today), [today]);
+  const weeklySummary = useMemo(() => getHealthWeeklyWorkoutSummary(workouts, weekAnchorDate), [weekAnchorDate, workouts]);
+  const weeklyMovement = useMemo(() => getHealthWeeklyMovementMetrics(metricEntries, weekAnchorDate), [metricEntries, weekAnchorDate]);
+  const isCurrentWeek = weeklySummary.startDate === currentWeek.startDate;
   const orderedWorkouts = useMemo(() => sortHealthWorkouts(workouts), [workouts]);
   const structuredSummaries = useMemo(
     () => new Map(orderedWorkouts.map((workout) => [workout.id, getHealthWorkoutStructuredSummary(workout.id, workoutExercises, workoutSets)])),
@@ -219,6 +229,18 @@ export function HealthFitnessTab({
     userId: profile.user_id,
     workoutTypes,
   });
+
+  function moveWeek(direction: -1 | 1) {
+    const nextAnchorDate = shiftHealthDate(weekAnchorDate, direction * 7);
+    if (direction > 0 && getHealthWeekBounds(nextAnchorDate).startDate > currentWeek.startDate) {
+      return;
+    }
+    setWeekAnchorDate(nextAnchorDate);
+  }
+
+  function handleWeekDateChange(date: string) {
+    setWeekAnchorDate(date && date <= today ? date : today);
+  }
 
   useEffect(() => {
     if (!isFormOpen || !pendingRevealRef.current) {
@@ -643,7 +665,7 @@ export function HealthFitnessTab({
           subtitle="Existing daily movement goals"
           title="Today"
         >
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <FitnessStatCard
               detail={profile.movement_goal === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal)}`}
               label="Steps"
@@ -651,11 +673,12 @@ export function HealthFitnessTab({
               value={formatWholeNumber(dailyMovement.steps)}
             />
             <FitnessStatCard
-              detail={profile.movement_goal_calories === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal_calories)} kcal`}
-              label="Active Calories"
+              detail={profile.movement_goal_calories === null ? "canonical Health Active Energy" : `canonical Health Active Energy · goal ${formatWholeNumber(profile.movement_goal_calories)} kcal`}
+              label="Total Active Calories"
               progressPercent={progressForGoal(dailyMovement.activeEnergyKcal, profile.movement_goal_calories)}
               value={`${formatWholeNumber(dailyMovement.activeEnergyKcal)} kcal`}
             />
+            <FitnessStatCard detail="workout ledger" label="Workout Active Calories" value={`${formatWholeNumber(dailyWorkoutActiveCalories)} kcal`} />
             <FitnessStatCard
               detail={profile.movement_goal_minutes === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal_minutes)} min`}
               label="Exercise"
@@ -668,12 +691,31 @@ export function HealthFitnessTab({
         <HealthCollapsiblePanel
           header={<Timer aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
           subtitle={`${formatHealthDateLabel(weeklySummary.startDate)} – ${formatHealthDateLabel(weeklySummary.endDate)}`}
-          title="This Week"
+          title={isCurrentWeek ? "This Week" : "Week"}
         >
-          <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-            <FitnessStatCard detail="logged sessions" label="Workouts" value={String(weeklySummary.workouts)} />
-            <FitnessStatCard detail="workout ledger only" label="Workout Minutes" value={formatMinutes(weeklySummary.workoutMinutes)} />
-            <FitnessStatCard detail="workout ledger only" label="Workout Active Calories" value={`${formatWholeNumber(weeklySummary.workoutActiveCalories)} kcal`} />
+          <div className="grid gap-3">
+            <div aria-label="Fitness week navigation" className="flex flex-wrap items-center gap-1.5" role="group">
+              <AdhdIconButton aria-label="Previous week" onClick={() => moveWeek(-1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronLeft aria-hidden="true" /></AdhdIconButton>
+              <label className="relative inline-flex items-center">
+                <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-[#6f57f6]" />
+                <input
+                  aria-label="Fitness week date"
+                  className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS} h-[26px] min-h-[26px] min-w-[9.5rem] pl-7 text-[13px] leading-none`}
+                  max={today}
+                  onChange={(event) => handleWeekDateChange(event.target.value)}
+                  type="date"
+                  value={weekAnchorDate}
+                />
+              </label>
+              <AdhdIconButton aria-label="Next week" disabled={isCurrentWeek} onClick={() => moveWeek(1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronRight aria-hidden="true" /></AdhdIconButton>
+              {!isCurrentWeek ? <AdhdChip onClick={() => setWeekAnchorDate(today)} type="button">Today</AdhdChip> : null}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+              <FitnessStatCard detail="logged sessions" label="Workouts" value={String(weeklySummary.workouts)} />
+              <FitnessStatCard detail="workout ledger" label="Workout Minutes" value={formatMinutes(weeklySummary.workoutMinutes)} />
+              <FitnessStatCard detail="canonical Health Active Energy" label="Total Active Calories" value={`${formatWholeNumber(weeklyMovement.activeEnergyKcal)} kcal`} />
+              <FitnessStatCard detail="workout ledger" label="Workout Active Calories" value={`${formatWholeNumber(weeklySummary.workoutActiveCalories)} kcal`} />
+            </div>
           </div>
         </HealthCollapsiblePanel>
       </div>

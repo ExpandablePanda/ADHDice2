@@ -137,6 +137,8 @@ test("Focus Activity Lines adapts its existing series into the shared chart card
   assert.match(sharedChart, /NumericLineChartSeries/);
   assert.match(sharedChart, /onPointerMove/);
   assert.match(sharedChart, /onPointerUp/);
+  assert.match(sharedChart, /strokeDasharray\?: string/);
+  assert.doesNotMatch(source, /strokeDasharray/);
 });
 
 test("shared line chart hover uses scaled X/Y distance for the nearest point", () => {

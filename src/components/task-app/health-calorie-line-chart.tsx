@@ -37,6 +37,7 @@ export function HealthCalorieLineChart({ series, targetSeries }: { series: Healt
         xDomainKey: point.date,
         value: point.target,
       })),
+      strokeDasharray: "1 7",
       totalValue: targetSeries.reduce((total, point) => total + point.target, 0),
     });
   }

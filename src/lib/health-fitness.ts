@@ -1,7 +1,7 @@
 "use client";
 
 import type { HealthMetricEntry, HealthWorkout, HealthWorkoutInsert } from "@/lib/database.types";
-import { buildHealthMealLoggedAt, sumMetricValueForDate, todayHealthDate } from "@/lib/health-utils";
+import { buildHealthMealLoggedAt, shiftHealthDate, sumMetricValueForDate, todayHealthDate } from "@/lib/health-utils";
 import {
   HEALTH_WORKOUT_OPTION_MAX_LENGTH,
 } from "@/lib/health-workout-options";
@@ -43,6 +43,12 @@ export type HealthWorkoutWeeklySummary = {
   workoutActiveCalories: number;
   workoutMinutes: number;
   workouts: number;
+};
+
+export type HealthWeeklyMovementMetrics = {
+  activeEnergyKcal: number;
+  endDate: string;
+  startDate: string;
 };
 
 export function addHealthWorkoutTitleOption(
@@ -266,6 +272,12 @@ export function getHealthWeekBounds(asOfDate = todayHealthDate()) {
   return { endDate: formatHealthWorkoutDateKey(date), startDate };
 }
 
+export function getHealthWorkoutActiveCaloriesForDate(workouts: HealthWorkout[], date: string) {
+  return workouts
+    .filter((workout) => workout.workout_date === date)
+    .reduce((total, workout) => total + (workout.active_calories ?? 0), 0);
+}
+
 export function getHealthWeeklyWorkoutSummary(workouts: HealthWorkout[], asOfDate = todayHealthDate()): HealthWorkoutWeeklySummary {
   const { endDate, startDate } = getHealthWeekBounds(asOfDate);
   const currentWeek = workouts.filter((workout) => workout.workout_date >= startDate && workout.workout_date <= endDate);
@@ -276,6 +288,17 @@ export function getHealthWeeklyWorkoutSummary(workouts: HealthWorkout[], asOfDat
     workoutMinutes: currentWeek.reduce((total, workout) => total + workout.duration_seconds / 60, 0),
     workouts: currentWeek.length,
   };
+}
+
+export function getHealthWeeklyMovementMetrics(metricEntries: HealthMetricEntry[], anchorDate = todayHealthDate()): HealthWeeklyMovementMetrics {
+  const { endDate, startDate } = getHealthWeekBounds(anchorDate);
+  let date = startDate;
+  let activeEnergyKcal = 0;
+  while (date <= endDate) {
+    activeEnergyKcal += sumMetricValueForDate(metricEntries, date, ["active_energy_kcal"]);
+    date = shiftHealthDate(date, 1);
+  }
+  return { activeEnergyKcal, endDate, startDate };
 }
 
 export function getHealthDailyMovementMetrics(metricEntries: HealthMetricEntry[], date: string) {

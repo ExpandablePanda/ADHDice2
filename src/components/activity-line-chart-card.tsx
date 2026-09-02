@@ -18,6 +18,7 @@ export type NumericLineChartSeries = {
   key: string;
   label: string;
   points: NumericLineChartPoint[];
+  strokeDasharray?: string;
   summaryLabel?: string;
   totalValue: number;
 };
@@ -349,7 +350,7 @@ export function ActivityLineChartCard({
                   const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${PADDING.left + point.x} ${PADDING.top + point.y}`).join(" ");
                   return (
                     <g key={item.key}>
-                      {points.length > 1 ? <path d={path} fill="none" stroke={item.color} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" /> : null}
+                      {points.length > 1 ? <path d={path} fill="none" stroke={item.color} strokeDasharray={item.strokeDasharray} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" /> : null}
                       {points.map((point, index) => {
                         const pointKey = `${item.key}:${item.points[index]?.key ?? index}`;
                         const pointLabel = item.points[index]?.detailLabel ?? item.points[index]?.label ?? "Point";
