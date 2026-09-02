@@ -302,6 +302,61 @@ test("handled Done uses the engine-derived projection for a recurring task", () 
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
 });
 
+test("fixed weekly command persists the engine-resolved early-success occurrence", () => {
+  const planningState = state({ status: "missed", due_on: "2026-09-06", repeat_frequency: "weekly", repeat_days_of_week: [0] });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-09-01T14:00:00.000Z",
+    task: {
+      ...planningState.engineInput!.task,
+      activeStatus: "missed",
+      dueOn: "2026-09-06",
+      recurrence: { kind: "weekly", weekdays: [0], anchorDate: "2026-08-30" },
+    },
+    history: [missedHistory("2026-08-30", "2026-08-30")],
+  };
+  const plan = planTaskStateCommand(planningState, command({
+    commandId: "00000000-0000-4000-8000-000000000041",
+    logicalDay: { ...logicalDay, logicalDate: "2026-08-31" },
+    logicalDate: "2026-08-31",
+    outcome: "done",
+  }));
+
+  assert.equal(plan.normalizedResult.historyFact?.scheduled_due_on, "2026-09-06");
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-09-13");
+  assert.notEqual(plan.normalizedResult.compatibilityProjection.status, "missed");
+  assert.equal(plan.normalizedResult.rewardEntitlement?.effectiveObligationIdentity, "2026-09-06");
+});
+
+test("rolling interval three command persists the current obligation resolved by the engine", () => {
+  const planningState = state({ status: "missed", due_on: "2026-08-29", repeat_frequency: "daily", repeat_interval: 3 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-09-01T14:00:00.000Z",
+    task: {
+      ...planningState.engineInput!.task,
+      activeStatus: "missed",
+      dueOn: "2026-08-29",
+      recurrence: { kind: "rolling", intervalDays: 3 },
+    },
+    history: [{
+      ...automaticMissedHistory("2026-08-29", "2026-08-29"),
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-29",
+    }],
+  };
+  const plan = planTaskStateCommand(planningState, command({
+    commandId: "00000000-0000-4000-8000-000000000042",
+    logicalDay: { ...logicalDay, logicalDate: "2026-09-01" },
+    logicalDate: "2026-09-01",
+    outcome: "done",
+  }));
+
+  assert.equal(plan.normalizedResult.historyFact?.scheduled_due_on, "2026-08-29");
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-09-04");
+  assert.notEqual(plan.normalizedResult.compatibilityProjection.status, "missed");
+  assert.equal(plan.normalizedResult.rewardEntitlement?.effectiveObligationIdentity, "2026-08-29");
+});
+
 function staleRolloverState(overrides: Partial<CanonicalTaskRow> = {}): CanonicalCommandPlanningState {
   const planningState = state({
     status: "in_progress",

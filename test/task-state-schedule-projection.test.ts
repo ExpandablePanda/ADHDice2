@@ -91,6 +91,7 @@ test("canonical engine input separates the boundary anchor from the current due 
       id: "task-1",
       status: "pending",
       due_on: "2026-08-14",
+      canonicalization_status: "canonical_runtime",
       terminal_state: "active",
       container_state: "active",
       workflow_state: "none",
@@ -122,12 +123,71 @@ test("canonical engine input separates the boundary anchor from the current due 
   assert.equal(input.task.historicalScheduleAnchor, "2026-08-04");
 });
 
+test("canonical read projection self-heals an identity-less fixed success after Missed", () => {
+  const fact = (id: string, logicalDate: string, outcome: "done" | "missed", scheduledDueOn: string | null) => ({
+    id,
+    user_id: "user-1",
+    entity_id: "task-1",
+    logical_date: logicalDate,
+    outcome,
+    event_kind: "explicit_outcome",
+    occurrence_id: null,
+    scheduled_due_on: scheduledDueOn,
+    effective_due_on: null,
+    provenance_kind: "user",
+    created_at: `${logicalDate}T12:00:00.000Z`,
+    updated_at: `${logicalDate}T12:00:00.000Z`,
+  });
+  const readModel = {
+    task: {
+      id: "task-1",
+      status: "missed",
+      due_on: "2026-09-06",
+      active_status_logical_date: null,
+      active_occurrence_due_on: null,
+      canonicalization_status: "canonical_runtime",
+      terminal_state: "active",
+      container_state: "active",
+      workflow_state: "none",
+    },
+    scheduleBoundaries: [{
+      id: "boundary-fixed",
+      schedule_model: "fixed",
+      repeat_frequency: "weekly",
+      repeat_interval: 1,
+      repeat_days_of_week: [0],
+      repeat_day_of_month: null,
+      repeat_monthly_mode: "day_of_month",
+      repeat_monthly_ordinal: null,
+      repeat_monthly_weekday: null,
+      one_time_due_on: null,
+      anchor_date: "2026-08-30",
+      anchor_confidence: "proven",
+      boundary_sequence: 1,
+    }],
+    occurrences: [],
+    historyFacts: [fact("missed-8-30", "2026-08-30", "missed", "2026-08-30"), fact("done-8-31", "2026-08-31", "done", null)],
+  } as unknown as CanonicalTaskStateReadModel;
+  const input = buildCanonicalTaskStateEngineInput(readModel, {
+    logicalDayRollover: "00:00",
+    now: "2026-09-01T12:00:00.000Z",
+    timezone: "UTC",
+  });
+  const result = evaluateTaskState(input);
+
+  assert.equal(result.activeStatus === "missed", false);
+  assert.equal(result.nextDueDate, "2026-09-13");
+  assert.equal(input.history.find((row) => row.logicalDate === "2026-08-31")?.occurrenceDueOn, null);
+  assert.equal(readModel.historyFacts[1]?.scheduled_due_on, null);
+});
+
 test("zero-History recovery accepts only proven historical anchors", () => {
   const model = (anchorConfidence: "proven" | "high_confidence") => ({
     task: {
       id: "task-1",
       status: "pending",
       due_on: null,
+      canonicalization_status: "canonical_runtime",
       terminal_state: "active",
       container_state: "active",
       workflow_state: "none",
@@ -165,6 +225,7 @@ test("canonical engine input hydrates the active workflow occurrence from canoni
       id: "task-1",
       status: "in_progress",
       due_on: "2026-08-10",
+      canonicalization_status: "canonical_runtime",
       terminal_state: "active",
       container_state: "active",
       workflow_state: "in_progress",

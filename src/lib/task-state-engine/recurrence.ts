@@ -1,5 +1,5 @@
 import { daysBetween, formatDateKey, parseDateKey, shiftDateKey } from "./calendar.ts";
-import type { MonthlyOrdinal, TaskRecurrence } from "./types.ts";
+import type { MonthlyOrdinal, TaskRecurrence, TaskStateHistoryRow } from "./types.ts";
 
 export function isUnscheduled(recurrence: TaskRecurrence, dueOn: string | null) {
   return recurrence.kind === "none" && dueOn === null;
@@ -190,6 +190,103 @@ export function recurrenceAfterSuccess(
   if (satisfied) consumed.add(satisfied);
   const nextDue = nextFixedOccurrence(recurrence, seed, satisfied ? shiftDateKey(satisfied, 1) : actionDate, consumed);
   return { anchor: satisfied ?? actionDate, nextDue, satisfied };
+}
+
+export type SuccessfulOccurrenceTarget = {
+  occurrenceDueOn: string | null;
+  occurrenceIdentity: string | null;
+};
+
+function occurrenceDateFromIdentity(identity: string | null | undefined) {
+  const date = identity?.split(":").at(-1) ?? null;
+  return date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+}
+
+function historyOccurrenceDate(row: TaskStateHistoryRow) {
+  return row.occurrenceDueOn ?? occurrenceDateFromIdentity(row.occurrenceIdentity);
+}
+
+function consumedOccurrenceDates(history: readonly TaskStateHistoryRow[]) {
+  return new Set(
+    history
+      .map(historyOccurrenceDate)
+      .filter((date): date is string => Boolean(date)),
+  );
+}
+
+/**
+ * Resolves the occurrence a successful outcome satisfies. Explicit metadata
+ * always wins. Implicit legacy inference is deliberately limited to a prior
+ * Missed fact so an old identity-less success cannot consume an arbitrary
+ * current or future occurrence.
+ */
+export function resolveSuccessfulOccurrenceTarget(input: {
+  taskId: string;
+  recurrence: TaskRecurrence;
+  dueOn: string | null;
+  historicalScheduleAnchor?: string | null;
+  logicalDate: string;
+  occurrenceIdentity?: string | null;
+  occurrenceDueOn?: string | null;
+  history?: readonly TaskStateHistoryRow[];
+  allowImplicitTarget?: boolean;
+  requirePriorMissed?: boolean;
+}): SuccessfulOccurrenceTarget {
+  const explicitDueOn = input.occurrenceDueOn ?? occurrenceDateFromIdentity(input.occurrenceIdentity);
+  if (input.occurrenceIdentity || explicitDueOn) {
+    return {
+      occurrenceDueOn: explicitDueOn,
+      occurrenceIdentity: input.occurrenceIdentity ?? (explicitDueOn ? occurrenceIdentity(input.taskId, explicitDueOn) : null),
+    };
+  }
+
+  if (!input.allowImplicitTarget) return { occurrenceDueOn: null, occurrenceIdentity: null };
+
+  const history = input.history ?? [];
+  const priorMissed = history.some((row) => row.outcome === "missed" && row.logicalDate < input.logicalDate);
+  if (input.requirePriorMissed && (
+    !priorMissed
+    || input.recurrence.kind === "rolling"
+      && !history.some((row) => row.outcome === "missed" && historyOccurrenceDate(row) === input.dueOn)
+  )) return { occurrenceDueOn: null, occurrenceIdentity: null };
+
+  if (input.recurrence.kind === "rolling") {
+    if (input.recurrence.intervalDays === 1) {
+      return { occurrenceDueOn: null, occurrenceIdentity: null };
+    }
+    if (!input.dueOn) {
+      return { occurrenceDueOn: null, occurrenceIdentity: null };
+    }
+    return {
+      occurrenceDueOn: input.dueOn,
+      occurrenceIdentity: occurrenceIdentity(input.taskId, input.dueOn),
+    };
+  }
+
+  if (input.recurrence.kind !== "weekly" && input.recurrence.kind !== "monthly") {
+    return { occurrenceDueOn: null, occurrenceIdentity: null };
+  }
+
+  // Once the current fixed cursor has already been satisfied, an additional
+  // action before the next scheduled date is a Not Due entry, not a second
+  // early completion. A still-unresolved Missed cursor remains actionable.
+  if (input.dueOn && input.dueOn < input.logicalDate && history.some((row) => (
+    (row.outcome === "done" || row.outcome === "did_my_best" || row.outcome === "complete")
+    && historyOccurrenceDate(row) === input.dueOn
+  ))) {
+    return { occurrenceDueOn: null, occurrenceIdentity: null };
+  }
+
+  const seed = input.dueOn ?? input.historicalScheduleAnchor ?? input.logicalDate;
+  const satisfied = nextFixedOccurrenceOnOrAfter(
+    input.recurrence,
+    seed,
+    input.logicalDate,
+    consumedOccurrenceDates(history),
+  );
+  return satisfied
+    ? { occurrenceDueOn: satisfied, occurrenceIdentity: occurrenceIdentity(input.taskId, satisfied) }
+    : { occurrenceDueOn: null, occurrenceIdentity: null };
 }
 
 export function occurrenceIdentity(taskId: string, dueDate: string) {

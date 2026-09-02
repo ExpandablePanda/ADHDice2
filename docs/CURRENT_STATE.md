@@ -5,13 +5,26 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.58`.
+- Current working app version: `7.12.59`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.59 Recurring Success Occurrence Identity
+
+Recurring Done, Did My Best, and Complete outcomes now resolve and persist the
+occurrence they actually satisfy through the canonical Task State authority.
+Fixed recurrence targets the nearest scheduled occurrence on or after the
+handled date; rolling recurrence resolves the current rolling obligation and
+advances from its canonical cursor. Legacy identity-less successful History
+facts self-heal during in-memory canonical read/replay when a prior Missed fact
+makes the target safe to infer. Historical Missed facts remain preserved, and
+Table/List, Calendar, and other projections continue to consume the shared
+canonical result. No SQL, schema migration, or manual production-row repair
+was used.
 
 ## 2026-09-01 7.12.58 Metadata Home Navigation and Description Placement
 
