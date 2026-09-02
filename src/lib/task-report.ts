@@ -579,7 +579,7 @@ function buildTaskMetadata(
     metadataByTaskId.set(task.id, {
       cadenceLabel: formatRepeatSummary(task) ?? null,
       currentStatusLabel: STATUS_LABELS[task.status] ?? task.status,
-      dueDate: task.active_occurrence_due_on ?? task.due_on,
+      dueDate: task.due_on,
       dueTime: task.due_time,
       energyLabel: task.energy === "none" ? null : task.energy,
       estimatedMinutes: task.estimated_minutes,

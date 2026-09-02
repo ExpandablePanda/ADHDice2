@@ -111,9 +111,9 @@ test("Health report failure is explicit and does not become fake zero data", () 
 
 test("Detailed ADHDice report includes current Task metadata while Summary stays compact", () => {
   const task = createTask({
-    active_occurrence_due_on: "2026-09-02",
+    active_occurrence_due_on: "2026-09-06",
     actual_seconds: 3660,
-    due_on: "2026-09-01",
+    due_on: "2026-09-13",
     due_time: "14:30",
     energy: "high",
     estimated_minutes: 45,
@@ -126,7 +126,7 @@ test("Detailed ADHDice report includes current Task metadata while Summary stays
     title: "Write report",
   });
   const common = {
-    appVersion: "7.12.61",
+    appVersion: "7.12.62",
     availableTaskLists: getBuiltInTaskLists(),
     focusCategories: [],
     focusHistory: [],
@@ -140,7 +140,8 @@ test("Detailed ADHDice report includes current Task metadata while Summary stays
     todayDateKey: "2026-09-02",
   };
   const detailed = generateTaskReport({ ...common, detailLevel: "detailed" });
-  assert.match(detailed, /Due: Sep 2, 2026 at 2:30 PM/);
+  assert.match(detailed, /Due: Sep 13, 2026 at 2:30 PM/);
+  assert.doesNotMatch(detailed, /Due: Sep 6, 2026/);
   assert.match(detailed, /Energy: high/);
   assert.match(detailed, /Estimated Time: 45m/);
   assert.match(detailed, /Actual Time: 1h 1m/);
@@ -154,7 +155,7 @@ test("Detailed ADHDice report includes current Task metadata while Summary stays
 
 test("All available report range includes older Health dates", () => {
   const report = generateTaskReport({
-    appVersion: "7.12.61",
+    appVersion: "7.12.62",
     availableTaskLists: getBuiltInTaskLists(),
     detailLevel: "summary",
     focusCategories: [],

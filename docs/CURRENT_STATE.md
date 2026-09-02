@@ -5,13 +5,20 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.61`.
+- Current working app version: `7.12.62`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-02 7.12.62 Detailed Report Due Authority
+
+Detailed ADHDice Report `Due` now uses the canonical presentation `due_on`
+projection also shown by Table/List. Internal `active_occurrence_due_on` no
+longer overrides the user-facing Due field. No Health reporting behavior
+changed, and no SQL, schema, or persistence changes were made.
 
 ## 2026-09-02 7.12.61 ADHDice Report Health and Task Metadata
 
