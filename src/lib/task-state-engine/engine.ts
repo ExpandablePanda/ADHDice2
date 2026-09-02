@@ -121,9 +121,9 @@ type UnresolvedMissedOccurrence = {
 
 /**
  * History, rather than the mutable task cursor, owns whether a Missed
- * occurrence is still open. Legacy rows are deliberately inferred only when
- * their logical date is the current persisted cursor; an older identity-less
- * row is not promoted to the live occurrence by recency alone.
+ * occurrence is still open. Legacy fixed rows are deliberately inferred only
+ * with schedule and temporal evidence; rolling rows also close the prior
+ * active streak when a later resolved occurrence proves it was handled.
  */
 export function findUnresolvedMissedOccurrence(
   task: TaskStateEngineInput["task"],
@@ -184,6 +184,17 @@ export function findUnresolvedMissedOccurrence(
       && !(
         (task.recurrence.kind === "weekly" || task.recurrence.kind === "monthly")
         && laterSuccessfulOccurrences.some((success) => success.logicalDate > row.logicalDate && success.dueOn > dueOn)
+      )
+      // A rolling success closes the preceding active missed streak through
+      // the rolling occurrence it resolves. The historical rows remain in
+      // History, while a Missed row after the success remains actionable.
+      && !(
+        task.recurrence.kind === "rolling"
+        && task.recurrence.intervalDays > 1
+        && laterSuccessfulOccurrences.some((success) => (
+          success.logicalDate > row.logicalDate
+          && success.dueOn >= dueOn
+        ))
       )
     ));
   const distinct = [...new Map(candidates.map((candidate) => [candidate.identity, candidate])).values()];

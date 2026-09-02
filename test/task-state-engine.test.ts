@@ -683,6 +683,52 @@ test("legacy rolling interval three success self-heals without changing History 
   assert.equal(legacyDone.occurrenceDueOn, undefined);
 });
 
+test("legacy rolling success closes an advanced-cursor missed streak", () => {
+  const historyRows = [
+    history("2026-08-17", "missed", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-17",
+      occurrenceDueOn: "2026-08-17",
+    }),
+    history("2026-08-20", "missed", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-20",
+      occurrenceDueOn: "2026-08-20",
+    }),
+    history("2026-09-01", "done", { occurrenceIdentity: null, occurrenceDueOn: null }),
+  ];
+  const result = evaluateTaskState(input({
+    now: "2026-09-01T14:00:00.000Z",
+    task: task({ activeStatus: "pending", dueOn: "2026-09-04", recurrence: { kind: "rolling", intervalDays: 3 } }),
+    history: historyRows,
+  }));
+
+  assert.equal(result.activeStatus, "upcoming");
+  assert.equal(result.nextDueDate, "2026-09-04");
+  assert.equal(result.unresolvedOccurrenceIdentity, null);
+  assert.deepEqual(historyRows.map((row) => [row.occurrenceIdentity, row.occurrenceDueOn]), [
+    ["task:task-1:occurrence:2026-08-17", "2026-08-17"],
+    ["task:task-1:occurrence:2026-08-20", "2026-08-20"],
+    [null, null],
+  ]);
+  assert.equal(result.proposedHistoryChanges.filter((change) => change.type === "insert").length, 0);
+});
+
+test("a rolling Missed occurrence after a legacy success remains active", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-09-02T14:00:00.000Z",
+    task: task({ activeStatus: "pending", dueOn: "2026-09-04", recurrence: { kind: "rolling", intervalDays: 3 } }),
+    history: [
+      history("2026-09-01", "done", { occurrenceIdentity: null, occurrenceDueOn: null }),
+      history("2026-09-02", "missed", {
+        occurrenceIdentity: "task:task-1:occurrence:2026-09-04",
+        occurrenceDueOn: "2026-09-04",
+      }),
+    ],
+  }));
+
+  assert.equal(result.activeStatus, "missed");
+  assert.equal(result.nextDueDate, "2026-09-04");
+});
+
 test("an active occurrence finalizes in place and advances the weekly cursor once", () => {
   const result = evaluateTaskState(input({
     now: "2026-08-04T14:00:00Z",

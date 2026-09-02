@@ -580,7 +580,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.12.59";
+const APP_VERSION = "7.12.60";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2713,18 +2713,22 @@ export function TaskApp() {
     [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache],
   );
   const taskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId ?? persistedTaskDisplayStatusByTaskId;
+  const taskDisplayDueOnByTaskId = activeStatusRead?.dueOnByTaskId ?? {};
   const activeStatusRevision = useMemo(
-    () => createProjectionDomainRevision("active-status", taskDisplayStatusByTaskId),
-    [taskDisplayStatusByTaskId],
+    () => createProjectionDomainRevision("active-task-read", {
+      dueOnByTaskId: taskDisplayDueOnByTaskId,
+      statusesByTaskId: taskDisplayStatusByTaskId,
+    }),
+    [taskDisplayDueOnByTaskId, taskDisplayStatusByTaskId],
   );
   const canonicalEntityRevision = combineProjectionRevisions(taskDomainRevision, activeStatusRevision);
   const tasksForActiveStatusRead = useMemo(
     () => projectionCache.getOrCreate(
       "canonical-entities",
       canonicalEntityRevision,
-      () => projectTasksForActiveStatusRead(tasks, taskDisplayStatusByTaskId),
+      () => projectTasksForActiveStatusRead(tasks, taskDisplayStatusByTaskId, taskDisplayDueOnByTaskId),
     ),
-    // Equivalent Task/status revisions deliberately retain canonical entity identity.
+    // Equivalent Task/status/due revisions deliberately retain canonical entity identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [canonicalEntityRevision, projectionCache],
   );

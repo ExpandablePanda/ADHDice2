@@ -218,7 +218,9 @@ function consumedOccurrenceDates(history: readonly TaskStateHistoryRow[]) {
  * Resolves the occurrence a successful outcome satisfies. Explicit metadata
  * always wins. Implicit legacy inference is deliberately limited to a prior
  * Missed fact so an old identity-less success cannot consume an arbitrary
- * current or future occurrence.
+ * current or future occurrence. Rolling compatibility replay selects the
+ * latest explicit unresolved Missed occurrence when the mutable cursor has
+ * already advanced.
  */
 export function resolveSuccessfulOccurrenceTarget(input: {
   taskId: string;
@@ -244,15 +246,36 @@ export function resolveSuccessfulOccurrenceTarget(input: {
 
   const history = input.history ?? [];
   const priorMissed = history.some((row) => row.outcome === "missed" && row.logicalDate < input.logicalDate);
-  if (input.requirePriorMissed && (
-    !priorMissed
-    || input.recurrence.kind === "rolling"
-      && !history.some((row) => row.outcome === "missed" && historyOccurrenceDate(row) === input.dueOn)
-  )) return { occurrenceDueOn: null, occurrenceIdentity: null };
+  if (input.requirePriorMissed && !priorMissed) return { occurrenceDueOn: null, occurrenceIdentity: null };
 
   if (input.recurrence.kind === "rolling") {
     if (input.recurrence.intervalDays === 1) {
       return { occurrenceDueOn: null, occurrenceIdentity: null };
+    }
+    if (input.requirePriorMissed) {
+      const earlierResolvedOccurrences = new Set(
+        history
+          .filter((row) => (
+            (row.outcome === "done" || row.outcome === "did_my_best" || row.outcome === "complete")
+            && row.logicalDate < input.logicalDate
+          ))
+          .map(historyOccurrenceDate)
+          .filter((date): date is string => Boolean(date)),
+      );
+      const latestUnresolvedMissed = [...new Set(
+        history
+          .filter((row) => row.outcome === "missed" && row.logicalDate < input.logicalDate)
+          .map(historyOccurrenceDate)
+          .filter((date): date is string => Boolean(date))
+          .filter((date) => date < input.logicalDate)
+          .filter((date) => !earlierResolvedOccurrences.has(date)),
+      )].sort().at(-1) ?? null;
+      return latestUnresolvedMissed
+        ? {
+            occurrenceDueOn: latestUnresolvedMissed,
+            occurrenceIdentity: occurrenceIdentity(input.taskId, latestUnresolvedMissed),
+          }
+        : { occurrenceDueOn: null, occurrenceIdentity: null };
     }
     if (!input.dueOn) {
       return { occurrenceDueOn: null, occurrenceIdentity: null };

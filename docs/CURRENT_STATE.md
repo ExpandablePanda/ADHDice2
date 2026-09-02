@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.59`.
+- Current working app version: `7.12.60`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -25,6 +25,18 @@ makes the target safe to infer. Historical Missed facts remain preserved, and
 Table/List, Calendar, and other projections continue to consume the shared
 canonical result. No SQL, schema migration, or manual production-row repair
 was used.
+
+## 2026-09-02 7.12.60 Canonical Due Projection and Rolling Missed-Streak Read
+
+Canonical current Due now travels through the shared Task read projection
+alongside Active Status, so Table/List and related task surfaces no longer
+rely on stale compatibility `due_on` when the engine derives a different
+cursor. The projection revision includes canonical Due changes. Legacy rolling
+success replay handles an already-advanced task cursor and closes the prior
+active Missed streak while preserving historical Missed facts. The Play New
+Game production Task was manually rescheduled by the user and was not altered
+or repaired by this ticket. No SQL, schema change, or manual production data
+repair was used.
 
 ## 2026-09-01 7.12.58 Metadata Home Navigation and Description Placement
 

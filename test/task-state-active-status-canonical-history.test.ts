@@ -268,6 +268,9 @@ test("TaskApp keeps persisted Task status authoritative until full History is re
   assert.match(taskAppSource, /taskHistoryReadinessRevision,[\s\S]*activeStatusRead/);
   assert.match(activeStatusRead, /if \(!isTaskHistoryLoaded\) return null/);
   assert.match(activeStatusRead, /resolveActiveTaskStatuses\(/);
+  assert.match(taskAppSource, /const taskDisplayDueOnByTaskId = activeStatusRead\?\.dueOnByTaskId/);
+  assert.match(taskAppSource, /createProjectionDomainRevision\("active-task-read", \{[\s\S]*dueOnByTaskId:[\s\S]*statusesByTaskId:/);
+  assert.match(taskAppSource, /projectTasksForActiveStatusRead\(tasks, taskDisplayStatusByTaskId, taskDisplayDueOnByTaskId\)/);
 });
 
 test("recurring Active Status differs with real History from an empty History map", () => {

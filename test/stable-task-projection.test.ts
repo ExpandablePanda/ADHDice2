@@ -46,6 +46,24 @@ test("canonical projection cache ignores search, page, editor, and minute-only s
   assert.strictEqual(first[0], tasks[0]);
 });
 
+test("canonical due changes invalidate the shared presentation projection even when status is unchanged", () => {
+  const cache = createStableTaskProjectionCache();
+  const tasks = [task({ due_on: "2026-09-06" })];
+  const status = { "task-1": "upcoming" as const };
+  const beforeDue = { "task-1": "2026-09-06" };
+  const afterDue = { "task-1": "2026-09-13" };
+  const revision = (dueOnByTaskId: Record<string, string | null>) => createProjectionDomainRevision("active-task-read", {
+    dueOnByTaskId,
+    statusesByTaskId: status,
+  });
+  const first = cache.getOrCreate("canonical-entities", revision(beforeDue), () => projectTasksForActiveStatusRead(tasks, status, beforeDue));
+  const second = cache.getOrCreate("canonical-entities", revision(afterDue), () => projectTasksForActiveStatusRead(tasks, status, afterDue));
+
+  assert.notStrictEqual(second, first);
+  assert.equal(second[0]?.due_on, "2026-09-13");
+  assert.equal(tasks[0]?.due_on, "2026-09-06");
+});
+
 test("equivalent hydration payloads reuse projection and Task-domain changes rebuild it", () => {
   const cache = createStableTaskProjectionCache();
   const original = [task()];

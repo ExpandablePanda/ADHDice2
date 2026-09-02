@@ -4,6 +4,7 @@ import test from "node:test";
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import type { CanonicalTaskStateColumns } from "../src/lib/task-state-canonical/types.ts";
 import { formatTaskStatusLabel, TASK_STATUS_OPTIONS } from "../src/components/task-app/task-status-ui.tsx";
+import { buildTaskTableRow } from "../src/lib/task-table-row.ts";
 import { projectTasksForActiveStatusRead, resolveCompatibilityTaskStatuses as resolveActiveTaskStatuses } from "../src/lib/task-state-engine/index.ts";
 import { resolveTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
 
@@ -38,6 +39,83 @@ test("shared active-status projection supplies all read surfaces", () => {
   });
   assert.equal(repeated.authority, "engine");
   assert.deepEqual(repeated.statusesByTaskId, engine.statusesByTaskId);
+});
+
+test("canonical due projection replaces stale fixed compatibility due without mutating the source Task", () => {
+  const source = task({
+    due_on: "2026-09-06",
+    repeat_days_of_week: [0],
+    repeat_frequency: "weekly",
+    status: "missed",
+  });
+  const historyRows: TaskHistory[] = [
+    {
+      counted_as_due_occurrence: true,
+      created_at: "2026-08-30T12:00:00.000Z",
+      entry_date: "2026-08-30",
+      event_type: "status",
+      id: "missed-2026-08-30",
+      occurrence_due_on: "2026-08-30",
+      occurrence_key: "task:task-1:occurrence:2026-08-30",
+      status: "missed",
+      task_id: source.id,
+      updated_at: "2026-08-30T12:00:00.000Z",
+      user_id: source.user_id,
+      was_completed: false,
+    },
+    {
+      counted_as_due_occurrence: true,
+      created_at: "2026-08-31T12:00:00.000Z",
+      entry_date: "2026-08-31",
+      event_type: "status",
+      id: "done-2026-08-31",
+      occurrence_due_on: null,
+      occurrence_key: null,
+      status: "done",
+      task_id: source.id,
+      updated_at: "2026-08-31T12:00:00.000Z",
+      user_id: source.user_id,
+      was_completed: true,
+    },
+  ];
+  const engine = resolveActiveTaskStatuses({
+    historyByTaskId: { [source.id]: historyRows },
+    logicalDayRollover: "00:00",
+    now: "2026-08-31T12:00:00.000Z",
+    tasks: [source],
+    timezone: "UTC",
+  });
+  const projected = projectTasksForActiveStatusRead(source ? [source] : [], engine.statusesByTaskId, engine.dueOnByTaskId);
+
+  assert.notEqual(engine.statusesByTaskId[source.id], "missed");
+  assert.equal(engine.dueOnByTaskId[source.id], "2026-09-13");
+  assert.equal(projected[0]?.due_on, "2026-09-13");
+  assert.equal(projected[0]?.status, engine.statusesByTaskId[source.id]);
+  assert.equal(source.due_on, "2026-09-06");
+  assert.equal(source.status, "missed");
+  assert.equal(historyRows[1]?.occurrence_due_on, null);
+  assert.equal(historyRows[1]?.occurrence_key, null);
+
+  const row = buildTaskTableRow(projected[0]!, {
+    focusedTaskIdSet: new Set(),
+    linkedNotes: [],
+    listDefinitions: [],
+    listMemberships: [],
+    subtasks: [],
+    taskHistory: historyRows,
+    todayDateKey: "2026-08-31",
+  });
+  assert.equal(row.dueOn, "2026-09-13");
+});
+
+test("canonical null due clears a presentation copy while keeping unscheduled status engine-only", () => {
+  const source = task({ due_on: "2026-09-06", status: "pending" });
+  const projected = projectTasksForActiveStatusRead([source], { [source.id]: "unscheduled" }, { [source.id]: null });
+
+  assert.equal(projected[0]?.due_on, null);
+  assert.equal(projected[0]?.status, "pending");
+  assert.equal(source.due_on, "2026-09-06");
+  assert.equal(source.status, "pending");
 });
 
 test("stored Pending dormant tasks remain engine-derived Unscheduled on read", () => {
