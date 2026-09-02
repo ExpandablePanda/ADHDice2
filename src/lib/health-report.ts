@@ -96,11 +96,39 @@ function getMealNutrient(entry: HealthMealEntry, key: "calories" | "protein_g" |
   return knownNumber(entry[key]);
 }
 
-function formatGoalComparison(value: number | null, goal: number | null, suffix: string) {
-  if (goal === null) return null;
-  return value === null
-    ? `Current goal: ${formatNumber(goal)}${suffix}; comparison unavailable`
-    : `Current goal: ${formatNumber(goal)}${suffix}; average ${formatNumber(value)}${suffix} (${value >= goal ? "met" : "below"})`;
+type FoodNutrientKey = "protein_g" | "carbs_g" | "fat_g";
+
+type FoodNutrientCoverage = {
+  average: number | null;
+  knownEntries: number;
+  totalEntries: number;
+  knownDays: number;
+  totalDays: number;
+  fullyCoveredDays: number;
+};
+
+function formatNutritionCoverageNote(coverage: FoodNutrientCoverage, label: string) {
+  return `${coverage.knownEntries} of ${coverage.totalEntries} Food entries had known ${label}; ${coverage.fullyCoveredDays} of ${coverage.totalDays} logged days fully covered`;
+}
+
+function formatNutritionTargetComparison(
+  value: number | null,
+  target: number | null,
+  targetSuffix: string,
+  differenceSuffix: string,
+  coverage: FoodNutrientCoverage | null,
+  nutrientLabel: string,
+) {
+  if (target === null) return null;
+  const coverageNote = coverage && coverage.fullyCoveredDays !== coverage.totalDays
+    ? ` (${formatNutritionCoverageNote(coverage, nutrientLabel)})`
+    : "";
+  if (value === null) return `Current target: ${formatNumber(target)}${targetSuffix}; comparison unavailable${coverageNote}`;
+  const difference = value - target;
+  const comparison = difference === 0
+    ? "at target"
+    : `${formatNumber(Math.abs(difference))}${differenceSuffix} ${difference > 0 ? "above" : "below"} target`;
+  return `Current target: ${formatNumber(target)}${targetSuffix}; average ${formatNumber(value)}${targetSuffix}; ${comparison}${coverageNote}`;
 }
 
 function formatGoalLine(label: string, value: number | null, suffix: string) {
@@ -160,28 +188,43 @@ function formatFoodSection(data: HealthReportData, range: HealthReportRange, det
       date,
     };
   });
+  const getCoverage = (key: FoodNutrientKey): FoodNutrientCoverage => {
+    const knownEntries = entries.filter((entry) => getMealNutrient(entry, key) !== null).length;
+    const dailyValues = daily.map((day) => day[key === "protein_g" ? "protein" : key === "carbs_g" ? "carbs" : "fat"]);
+    return {
+      average: average(dailyValues.filter((value): value is number => value !== null)),
+      knownEntries,
+      totalEntries: entries.length,
+      knownDays: dailyValues.filter((value): value is number => value !== null).length,
+      totalDays: dates.length,
+      fullyCoveredDays: dates.filter((date) => {
+        const dayEntries = entries.filter((entry) => entry.entry_date === date);
+        return dayEntries.every((entry) => getMealNutrient(entry, key) !== null);
+      }).length,
+    };
+  };
   const knownDailyValues = (key: "calories" | "protein" | "carbs" | "fat") => daily.map((day) => day[key]).filter((value): value is number => value !== null);
   const knownCalories = knownDailyValues("calories");
   const totalCalories = knownCalories.length > 0 ? knownCalories.reduce((sum, value) => sum + value, 0) : null;
   const averageCalories = average(knownDailyValues("calories"));
-  const averageProtein = average(knownDailyValues("protein"));
-  const averageCarbs = average(knownDailyValues("carbs"));
-  const averageFat = average(knownDailyValues("fat"));
+  const proteinCoverage = getCoverage("protein_g");
+  const carbsCoverage = getCoverage("carbs_g");
+  const fatCoverage = getCoverage("fat_g");
   lines.push(
     `- Days with food logged: ${dates.length}`,
     `- Total logged food entries: ${entries.length}`,
     `- Total calories: ${formatKnownValue(totalCalories, " kcal")}`,
     `- Average calories per logged day: ${formatKnownValue(averageCalories, " kcal")}`,
-    `- Average protein per logged day: ${formatKnownValue(averageProtein, " g")}`,
-    `- Average carbs per logged day: ${formatKnownValue(averageCarbs, " g")}`,
-    `- Average fat per logged day: ${formatKnownValue(averageFat, " g")}`,
+    `- Average protein${proteinCoverage.fullyCoveredDays === proteinCoverage.totalDays ? " per logged day" : " from known nutrition data"}: ${formatKnownValue(proteinCoverage.average, " g")}${proteinCoverage.fullyCoveredDays === proteinCoverage.totalDays ? "" : ` across ${proteinCoverage.knownDays} logged day${proteinCoverage.knownDays === 1 ? "" : "s"} (${formatNutritionCoverageNote(proteinCoverage, "protein")})`}`,
+    `- Average carbs${carbsCoverage.fullyCoveredDays === carbsCoverage.totalDays ? " per logged day" : " from known nutrition data"}: ${formatKnownValue(carbsCoverage.average, " g")}${carbsCoverage.fullyCoveredDays === carbsCoverage.totalDays ? "" : ` across ${carbsCoverage.knownDays} logged day${carbsCoverage.knownDays === 1 ? "" : "s"} (${formatNutritionCoverageNote(carbsCoverage, "carbs")})`}`,
+    `- Average fat${fatCoverage.fullyCoveredDays === fatCoverage.totalDays ? " per logged day" : " from known nutrition data"}: ${formatKnownValue(fatCoverage.average, " g")}${fatCoverage.fullyCoveredDays === fatCoverage.totalDays ? "" : ` across ${fatCoverage.knownDays} logged day${fatCoverage.knownDays === 1 ? "" : "s"} (${formatNutritionCoverageNote(fatCoverage, "fat")})`}`,
   );
   const profile = data.profile;
   const comparisons = [
-    formatGoalComparison(averageCalories, profile?.calorie_goal ?? null, " kcal/day"),
-    formatGoalComparison(averageProtein, profile?.protein_goal_grams ?? null, " g/day protein"),
-    formatGoalComparison(averageCarbs, profile?.carbs_goal_grams ?? null, " g/day carbs"),
-    formatGoalComparison(averageFat, profile?.fat_goal_grams ?? null, " g/day fat"),
+    formatNutritionTargetComparison(averageCalories, profile?.calorie_goal ?? null, " kcal/day", " kcal", null, "calories"),
+    formatNutritionTargetComparison(proteinCoverage.average, profile?.protein_goal_grams ?? null, " g/day protein", " g", proteinCoverage, "protein"),
+    formatNutritionTargetComparison(carbsCoverage.average, profile?.carbs_goal_grams ?? null, " g/day carbs", " g", carbsCoverage, "carbs"),
+    formatNutritionTargetComparison(fatCoverage.average, profile?.fat_goal_grams ?? null, " g/day fat", " g", fatCoverage, "fat"),
   ].filter((value): value is string => Boolean(value));
   lines.push(...comparisons.map((value) => `- ${value}`));
   if (!detailed) return lines;
@@ -333,7 +376,7 @@ function formatFeelingsAndSymptomsSection(data: HealthReportData, range: HealthR
     for (const [symptomId, entries] of [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right))) {
       const name = symptomById.get(symptomId)?.name ?? "Archived symptom";
       const severities = entries.map((entry) => entry.severity);
-      lines.push(`- ${name}: ${entries.length} occurrences; average severity ${formatNumber(average(severities))}; min ${formatNumber(Math.min(...severities))}; max ${formatNumber(Math.max(...severities))}`);
+      lines.push(`- ${name}: ${entries.length} ${entries.length === 1 ? "occurrence" : "occurrences"}; average severity ${formatNumber(average(severities))}; min ${formatNumber(Math.min(...severities))}; max ${formatNumber(Math.max(...severities))}`);
     }
   }
   lines.push("", "#### Emotions and Other Feelings");
@@ -345,7 +388,7 @@ function formatFeelingsAndSymptomsSection(data: HealthReportData, range: HealthR
     for (const [signalId, entries] of [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right))) {
       const signal = signalById.get(signalId);
       if (!signal) continue;
-      lines.push(`- ${getHealthJournalSignalDisplayName(signal, [...symptomById.values()])}: ${entries.length} occurrences; average score ${formatNumber(average(entries.map((entry) => entry.score)))}; min ${Math.min(...entries.map((entry) => entry.score))}; max ${Math.max(...entries.map((entry) => entry.score))}`);
+      lines.push(`- ${getHealthJournalSignalDisplayName(signal, [...symptomById.values()])}: ${entries.length} ${entries.length === 1 ? "occurrence" : "occurrences"}; average score ${formatNumber(average(entries.map((entry) => entry.score)))}; min ${Math.min(...entries.map((entry) => entry.score))}; max ${Math.max(...entries.map((entry) => entry.score))}`);
     }
   }
   if (!detailed) return lines;
@@ -464,7 +507,7 @@ function formatCurrentGoals(profile: HealthProfile | null) {
     formatGoalLine("Steps", profile.movement_goal, " /day"),
     formatGoalLine("Movement calories", profile.movement_goal_calories, " kcal/day"),
     formatGoalLine("Movement minutes", profile.movement_goal_minutes, " min/day"),
-    formatGoalLine("Sleep", profile.sleep_goal_minutes, " min/night"),
+    profile.sleep_goal_minutes === null ? null : `- Sleep: ${formatHealthSleepDuration(profile.sleep_goal_minutes)}/night`,
     profile.target_weight_kg === null ? null : `- Target weight: ${formatWeight(profile.target_weight_kg, profile.preferred_weight_unit)}`,
     `- Preferred weight unit: ${profile.preferred_weight_unit}`,
   ].filter((value): value is string => Boolean(value));

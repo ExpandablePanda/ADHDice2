@@ -5,13 +5,24 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.62`.
+- Current working app version: `7.12.63`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-02 7.12.63 Health Report Nutrition Semantics and Presentation
+
+Health Report nutrition target comparisons are descriptive: above target,
+below target, or at target, without generic success/failure wording.
+Incomplete macro coverage remains explicit, with null nutrients unknown and
+numeric zero preserved as known data. Feeling/Symptom occurrence grammar is
+singular or plural as appropriate, and Current Health Goals formats Sleep
+with the shared human-readable duration formatter. Underlying Food/provider
+nutrition anomalies are intentionally not repaired by Reports. No SQL,
+schema, or persistence changes were made.
 
 ## 2026-09-02 7.12.62 Detailed Report Due Authority
 

@@ -534,12 +534,12 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.12.62 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.12.62");
-  assert.equal(packageLock.version, "7.12.62");
-  assert.equal(packageLock.packages[""].version, "7.12.62");
-  assert.match(appVersionSource, /"version":\s*"7\.12\.62"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.62"/);
+test("all 7.12.63 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.12.63");
+  assert.equal(packageLock.version, "7.12.63");
+  assert.equal(packageLock.packages[""].version, "7.12.63");
+  assert.match(appVersionSource, /"version":\s*"7\.12\.63"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.63"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
-  assert.match(currentStateSource, /Current working app version: `7\.12\.62`/);
+  assert.match(currentStateSource, /Current working app version: `7\.12\.63`/);
 });

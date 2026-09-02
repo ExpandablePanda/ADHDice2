@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import type { HealthCheckIn, HealthJournalSignal, HealthMetricEntry, HealthProfile, HealthSymptom, HealthSymptomEntry, HealthWaterEntry, HealthWorkout } from "../src/lib/database.types.ts";
+import type { HealthCheckIn, HealthJournalSignal, HealthMealEntry, HealthMetricEntry, HealthProfile, HealthSymptom, HealthSymptomEntry, HealthWaterEntry, HealthWorkout } from "../src/lib/database.types.ts";
 import { EMPTY_HEALTH_REPORT_DATA, formatHealthReportSection, type HealthReportData } from "../src/lib/health-report.ts";
 import type { ReportDateRange } from "../src/lib/report-presentation.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
@@ -74,19 +74,96 @@ test("Health report summarizes range-scoped domains without inventing missing va
   assert.match(markdown, /Days with food logged: 2/);
   assert.match(markdown, /Total calories: 800 kcal/);
   assert.match(markdown, /Average calories per logged day: 400 kcal/);
-  assert.match(markdown, /Average protein per logged day: 20 g/);
+  assert.match(markdown, /Average protein from known nutrition data: 20 g across 1 logged day \(1 of 2 Food entries had known protein; 1 of 2 logged days fully covered\)/);
   assert.match(markdown, /Days with water logged: 1/);
   assert.match(markdown, /Total consumed water: 16\.23 fl oz/);
   assert.match(markdown, /Journal Entries: 2/);
   assert.match(markdown, /Energy: 1 logged; average 6/);
   assert.match(markdown, /Calm: 1 logged value; Explicit None 1/);
-  assert.match(markdown, /Headache: 1 occurrences; average severity 6/);
+  assert.match(markdown, /Headache: 1 occurrence; average severity 6/);
+  assert.match(markdown, /Calm: 1 occurrence; average score 4/);
   assert.match(markdown, /Measurements: 2/);
   assert.match(markdown, /Change from earliest to latest: -4.4 lb/);
   assert.match(markdown, /Steps: 1 recorded day/);
   assert.match(markdown, /Average duration per recorded day: 7h/);
   assert.match(markdown, /Workout count: 1/);
   assert.doesNotMatch(markdown, /water-pending|provider-id|fingerprint|external-id/);
+});
+
+test("Food nutrition targets use descriptive comparisons without changing known values", () => {
+  const targetData: HealthReportData = {
+    ...data,
+    mealEntries: [{
+      ...data.mealEntries[1],
+      calories: 1813.5,
+      carbs_g: 263.5,
+      entry_date: "2026-09-02",
+      fat_g: 60.3,
+      id: "meal-target",
+      nutrition_snapshot: null,
+      protein_g: 87.8,
+    }],
+    profile: {
+      ...profile,
+      calorie_goal: 1813.5,
+      carbs_goal_grams: 150,
+      fat_goal_grams: 55,
+      protein_goal_grams: 150,
+    },
+  };
+  const markdown = formatHealthReportSection(targetData, range, false).join("\n");
+  assert.match(markdown, /Current target: 150 g\/day protein; average 87\.8 g\/day protein; 62\.2 g below target/);
+  assert.match(markdown, /Current target: 150 g\/day carbs; average 263\.5 g\/day carbs; 113\.5 g above target/);
+  assert.match(markdown, /Current target: 55 g\/day fat; average 60\.3 g\/day fat; 5\.3 g above target/);
+  assert.match(markdown, /Current target: 1,813\.5 kcal\/day; average 1,813\.5 kcal\/day; at target/);
+  assert.doesNotMatch(markdown, /\b(?:met|failed|good|bad|over goal|under goal)\b/i);
+});
+
+test("Food nutrition coverage keeps zero known, null unknown, and partial days explicit", () => {
+  const partialMeal = (id: string, values: Pick<HealthMealEntry, "protein_g" | "carbs_g" | "fat_g">): HealthMealEntry => ({
+    ...data.mealEntries[1],
+    ...values,
+    calories: 100,
+    entry_date: "2026-09-02",
+    id,
+    logged_at: `2026-09-02T${id === "meal-zero" ? "12" : "13"}:00:00.000Z`,
+    nutrition_snapshot: null,
+  });
+  const partialData: HealthReportData = {
+    ...data,
+    mealEntries: [
+      partialMeal("meal-zero", { carbs_g: null, fat_g: null, protein_g: 0 }),
+      partialMeal("meal-unknown", { carbs_g: 20, fat_g: null, protein_g: null }),
+    ],
+  };
+  const markdown = formatHealthReportSection(partialData, range, false).join("\n");
+  assert.match(markdown, /Average protein from known nutrition data: 0 g across 1 logged day \(1 of 2 Food entries had known protein; 0 of 1 logged days fully covered\)/);
+  assert.match(markdown, /Average carbs from known nutrition data: 20 g across 1 logged day \(1 of 2 Food entries had known carbs; 0 of 1 logged days fully covered\)/);
+  assert.match(markdown, /Average fat from known nutrition data: unknown across 0 logged days \(0 of 2 Food entries had known fat; 0 of 1 logged days fully covered\)/);
+  assert.match(markdown, /Current target: 120 g\/day protein; average 0 g\/day protein; 120 g below target \(1 of 2 Food entries had known protein; 0 of 1 logged days fully covered\)/);
+  assert.doesNotMatch(markdown, /Average protein from known nutrition data: unknown/);
+});
+
+test("Health report occurrence grammar distinguishes singular and plural", () => {
+  const pluralData: HealthReportData = {
+    ...data,
+    journalSignalOccurrences: [
+      ...data.journalSignalOccurrences,
+      { ...data.journalSignalOccurrences[0], id: "occurrence-2", occurred_at: "2026-09-01T13:00:00.000Z" },
+    ],
+    symptomEntries: [
+      ...data.symptomEntries,
+      { ...data.symptomEntries[0], id: "symptom-entry-2", logged_at: "2026-09-01T11:00:00.000Z" },
+    ],
+  };
+  const markdown = formatHealthReportSection(pluralData, range, false).join("\n");
+  assert.match(markdown, /Headache: 2 occurrences; average severity 6/);
+  assert.match(markdown, /Calm: 2 occurrences; average score 4/);
+});
+
+test("Current Health Goals formats sleep duration with the shared formatter", () => {
+  const markdown = formatHealthReportSection({ ...data, profile: { ...profile, sleep_goal_minutes: 450 } }, range, false).join("\n");
+  assert.match(markdown, /- Sleep: 7h 30m\/night/);
 });
 
 test("Health report detailed mode retains user-facing records and semantic labels", () => {
