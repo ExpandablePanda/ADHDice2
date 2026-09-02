@@ -1,11 +1,18 @@
 "use client";
 
-import { Check, GripVertical, PanelsTopLeft, RotateCcw } from "lucide-react";
-import { Children, isValidElement, useMemo, useRef, useState, type PointerEvent, type ReactElement, type ReactNode } from "react";
+import { Check, CornerDownRight, GripVertical, PanelsTopLeft, RotateCcw } from "lucide-react";
+import { Children, isValidElement, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactElement, type ReactNode } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
-import { reorderPageShellOrder } from "@/lib/page-shell-layout";
+import {
+  getPageShellInsertionIndex,
+  normalizePageShellSpan,
+  reorderPageShellOrderAt,
+  type PageShellGeometry,
+  type PageShellLayoutPreference,
+  type PageShellSize,
+} from "@/lib/page-shell-layout";
 
 export type PageShellProps = {
   className?: string;
@@ -26,6 +33,64 @@ type ReorderablePageShellsProps = {
   layout: PageShellLayoutState;
   shellsClassName?: string;
 };
+
+type ShellMoveInteraction = {
+  geometries: PageShellGeometry[];
+  id: string;
+  kind: "move";
+  pointerId: number;
+  startLayout: PageShellLayoutPreference;
+};
+
+type ShellResizeInteraction = {
+  columnWidth: number;
+  id: string;
+  initialSize: PageShellSize;
+  kind: "resize";
+  naturalHeight: number;
+  pointerId: number;
+  startLayout: PageShellLayoutPreference;
+  startX: number;
+  startY: number;
+};
+
+type ShellInteraction = ShellMoveInteraction | ShellResizeInteraction;
+
+const SHELL_SPAN_CLASSES: Record<number, string> = {
+  6: "xl:col-span-6",
+  7: "xl:col-span-7",
+  8: "xl:col-span-8",
+  9: "xl:col-span-9",
+  10: "xl:col-span-10",
+  11: "xl:col-span-11",
+  12: "xl:col-span-12",
+};
+const SHELL_HEIGHT_SNAP = 48;
+
+function cloneLayout(layout: PageShellLayoutPreference): PageShellLayoutPreference {
+  return {
+    order: [...layout.order],
+    sizes: Object.fromEntries(Object.entries(layout.sizes).map(([id, size]) => [id, { ...size }])),
+  };
+}
+
+function layoutsHaveSameOrder(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+function snapShellHeight(value: number, naturalHeight: number) {
+  const snapped = Math.max(SHELL_HEIGHT_SNAP, Math.round(value / SHELL_HEIGHT_SNAP) * SHELL_HEIGHT_SNAP);
+  return snapped > naturalHeight + SHELL_HEIGHT_SNAP / 2 ? snapped : null;
+}
+
+function measureNaturalShellHeight(element: HTMLDivElement | null) {
+  if (!element) return 0;
+  const currentMinHeight = element.style.minHeight;
+  element.style.minHeight = "0px";
+  const naturalHeight = element.getBoundingClientRect().height;
+  element.style.minHeight = currentMinHeight;
+  return naturalHeight;
+}
 
 export function PageShell({ children }: PageShellProps) {
   return <>{children}</>;
@@ -52,7 +117,7 @@ export function PageShellLayoutControls({ layout }: { layout: PageShellLayoutSta
   );
 }
 
-export function ReorderablePageShells({ children, layout, shellsClassName = "grid gap-3" }: ReorderablePageShellsProps) {
+export function ReorderablePageShells({ children, layout, shellsClassName = "grid gap-3 xl:grid-cols-12" }: ReorderablePageShellsProps) {
   const shellElements = useMemo(
     () => Children.toArray(children).filter((child): child is ReactElement<PageShellProps> => isValidElement(child)),
     [children],
@@ -63,77 +128,173 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   );
   const shellsById = useMemo(() => new Map(shells.map((shell) => [shell.id, shell])), [shells]);
   const orderedShells = layout.order.map((id) => shellsById.get(id)).filter((shell): shell is ReorderablePageShell => Boolean(shell));
+  const layoutRef = useRef<HTMLDivElement | null>(null);
   const shellRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const dragRef = useRef<{ id: string; pointerId: number } | null>(null);
+  const shellContentRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const interactionRef = useRef<ShellInteraction | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [resizingId, setResizingId] = useState<string | null>(null);
 
-  function updatePreview(event: PointerEvent<HTMLButtonElement>) {
-    const drag = dragRef.current;
-    if (!drag) return;
-    const candidates = orderedShells
-      .filter((shell) => shell.id !== drag.id)
-      .map((shell) => {
-        const element = shellRefs.current[shell.id];
-        if (!element) return null;
-        const rect = element.getBoundingClientRect();
-        const horizontalDistance = event.clientX < rect.left ? rect.left - event.clientX : event.clientX > rect.right ? event.clientX - rect.right : 0;
-        const verticalDistance = event.clientY < rect.top ? rect.top - event.clientY : event.clientY > rect.bottom ? event.clientY - rect.bottom : 0;
-        return { distance: horizontalDistance + verticalDistance, id: shell.id };
-      })
-      .filter((candidate): candidate is { distance: number; id: string } => Boolean(candidate))
-      .sort((left, right) => left.distance - right.distance);
-    const target = candidates[0];
-    const nextOrder = target
-      ? reorderPageShellOrder(layout.order, drag.id, target.id)
-      : [...layout.order.filter((id) => id !== drag.id), drag.id];
-    if (nextOrder.some((id, index) => id !== layout.order[index])) {
-      layout.setOrder(nextOrder);
-    }
+  useEffect(() => {
+    if (layout.isEditing || !interactionRef.current) return;
+    interactionRef.current = null;
+    setDraggingId(null);
+    setResizingId(null);
+  }, [layout.isEditing]);
+
+  function currentLayout(): PageShellLayoutPreference {
+    return {
+      order: [...layout.order],
+      sizes: Object.fromEntries(Object.entries(layout.sizes).map(([id, size]) => [id, { ...size }])),
+    };
   }
 
-  function handlePointerDown(event: PointerEvent<HTMLButtonElement>, id: string) {
+  function captureShellGeometry() {
+    return orderedShells.flatMap((shell) => {
+      const element = shellRefs.current[shell.id];
+      if (!element) return [];
+      const rect = element.getBoundingClientRect();
+      return [{ bottom: rect.bottom, id: shell.id, left: rect.left, right: rect.right, top: rect.top }];
+    });
+  }
+
+  function beginMove(event: PointerEvent<HTMLButtonElement>, id: string) {
+    if (!layout.isEditing) return;
     event.preventDefault();
     event.stopPropagation();
-    dragRef.current = { id, pointerId: event.pointerId };
+    const startLayout = currentLayout();
+    interactionRef.current = {
+      geometries: captureShellGeometry(),
+      id,
+      kind: "move",
+      pointerId: event.pointerId,
+      startLayout,
+    };
+    layout.beginPreview(startLayout);
     setDraggingId(id);
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  function handlePointerUp(event: PointerEvent<HTMLButtonElement>) {
-    if (dragRef.current?.pointerId !== event.pointerId) return;
+  function beginResize(event: PointerEvent<HTMLButtonElement>, id: string) {
+    if (!layout.isEditing) return;
     event.preventDefault();
     event.stopPropagation();
-    dragRef.current = null;
+    const startLayout = currentLayout();
+    const shellContent = shellContentRefs.current[id];
+    const layoutElement = layoutRef.current;
+    const naturalHeight = measureNaturalShellHeight(shellContent);
+    const layoutWidth = layoutElement?.getBoundingClientRect().width ?? shellContent?.getBoundingClientRect().width ?? 0;
+    const initialSize = startLayout.sizes[id] ?? { minHeight: null, span: 12 };
+    interactionRef.current = {
+      columnWidth: layoutWidth > 0 ? layoutWidth / 12 : Math.max(shellContent?.getBoundingClientRect().width ?? 1, 1),
+      id,
+      initialSize,
+      kind: "resize",
+      naturalHeight,
+      pointerId: event.pointerId,
+      startLayout,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    layout.beginPreview(startLayout);
+    setResizingId(id);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function updateInteraction(event: PointerEvent<HTMLButtonElement>) {
+    const interaction = interactionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (interaction.kind === "move") {
+      const insertionIndex = getPageShellInsertionIndex(interaction.geometries, interaction.startLayout.order, interaction.id, event.clientX, event.clientY);
+      const nextOrder = reorderPageShellOrderAt(interaction.startLayout.order, interaction.id, insertionIndex);
+      if (!layoutsHaveSameOrder(nextOrder, layout.order)) layout.setPreviewOrder(nextOrder);
+      return;
+    }
+
+    const deltaColumns = interaction.columnWidth > 0 ? Math.round((event.clientX - interaction.startX) / interaction.columnWidth) : 0;
+    const span = normalizePageShellSpan(interaction.initialSize.span + deltaColumns, interaction.initialSize.span);
+    const initialMinHeight = interaction.initialSize.minHeight ?? interaction.naturalHeight;
+    const minHeight = snapShellHeight(initialMinHeight + (event.clientY - interaction.startY), interaction.naturalHeight);
+    const currentSize = layout.sizes[interaction.id];
+    if (currentSize?.span === span && currentSize.minHeight === minHeight) return;
+    layout.setPreviewSizes((sizes) => ({
+      ...sizes,
+      [interaction.id]: { minHeight, span },
+    }));
+  }
+
+  function endInteraction(event: PointerEvent<HTMLButtonElement>, cancelled: boolean) {
+    const interaction = interactionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    interactionRef.current = null;
+    if (cancelled) layout.cancelPreview();
+    else layout.commitPreview();
     setDraggingId(null);
+    setResizingId(null);
   }
 
   return (
-    <div className={shellsClassName} data-page-shell-layout={layout.pageKey} data-page-shell-edit-mode={layout.isEditing ? "true" : "false"}>
-      {orderedShells.map((shell) => (
-        <div
-          className={`min-w-0 transition-transform ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${shell.className ?? ""}`}
-          data-page-shell-id={shell.id}
-          data-page-shell-dragging={draggingId === shell.id ? "true" : "false"}
-          key={shell.id}
-          ref={(element) => { shellRefs.current[shell.id] = element; }}
-        >
-          {layout.isEditing ? (
-            <button
-              aria-label={`Drag ${shell.label}`}
-              className="absolute right-3 top-3 z-20 flex h-8 w-8 cursor-grab touch-none items-center justify-center rounded-full border border-[#d8d0f5] bg-[#faf8ff]/95 text-[#6f57f6] shadow-sm hover:bg-[#eee9ff] active:cursor-grabbing dark:border-white/15 dark:bg-[#211a38]/95 dark:text-[#cabfff] dark:hover:bg-white/10"
-              onPointerCancel={handlePointerUp}
-              onPointerDown={(event) => handlePointerDown(event, shell.id)}
-              onPointerMove={updatePreview}
-              onPointerUp={handlePointerUp}
-              title={`Drag ${shell.label}`}
-              type="button"
+    <div className={shellsClassName} data-page-shell-layout={layout.pageKey} data-page-shell-edit-mode={layout.isEditing ? "true" : "false"} ref={layoutRef}>
+      {orderedShells.map((shell) => {
+        const size = layout.sizes[shell.id] ?? { minHeight: null, span: 12 as const };
+        const spanClass = SHELL_SPAN_CLASSES[size.span] ?? SHELL_SPAN_CLASSES[12];
+        return (
+          <div
+            className={`min-w-0 transition-transform ${spanClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
+            data-page-shell-id={shell.id}
+            data-page-shell-dragging={draggingId === shell.id ? "true" : "false"}
+            data-page-shell-resizing={resizingId === shell.id ? "true" : "false"}
+            data-page-shell-size-span={size.span}
+            key={shell.id}
+            ref={(element) => { shellRefs.current[shell.id] = element; }}
+          >
+            {layout.isEditing ? (
+              <div className="mb-1 flex min-h-7 items-center gap-1.5 rounded-lg border border-[#e4def8] bg-[#faf8ff]/90 px-1.5 py-1 text-xs text-[#6f57f6] dark:border-white/10 dark:bg-[#211a38]/90 dark:text-[#cabfff]" data-page-shell-layout-strip>
+                <button
+                  aria-label={`Move ${shell.label}`}
+                  className="flex h-6 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md hover:bg-[#eee9ff] active:cursor-grabbing dark:hover:bg-white/10"
+                  onPointerCancel={(event) => endInteraction(event, true)}
+                  onPointerDown={(event) => beginMove(event, shell.id)}
+                  onPointerMove={updateInteraction}
+                  onPointerUp={(event) => endInteraction(event, false)}
+                  title={`Move ${shell.label}`}
+                  type="button"
+                >
+                  <GripVertical aria-hidden="true" className="h-4 w-4" />
+                </button>
+                <span className="min-w-0 flex-1 truncate font-semibold">{shell.label}</span>
+                <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{size.span}/12</span>
+              </div>
+            ) : null}
+            <div
+              className="relative min-w-0"
+              data-page-shell-min-height={size.minHeight ?? "natural"}
+              ref={(element) => { shellContentRefs.current[shell.id] = element; }}
+              style={size.minHeight === null ? undefined : { minHeight: `${size.minHeight}px` }}
             >
-              <GripVertical aria-hidden="true" className="h-4 w-4" />
-            </button>
-          ) : null}
-          {shell.node}
-        </div>
-      ))}
+              {shell.node}
+              {layout.isEditing ? (
+                <button
+                  aria-label={`Resize ${shell.label}`}
+                  className="absolute bottom-1 right-1 z-20 flex h-6 w-6 cursor-se-resize touch-none items-center justify-center rounded-md border border-[#d8d0f5] bg-[#faf8ff]/95 text-[#6f57f6] shadow-sm hover:bg-[#eee9ff] dark:border-white/15 dark:bg-[#211a38]/95 dark:text-[#cabfff] dark:hover:bg-white/10"
+                  onPointerCancel={(event) => endInteraction(event, true)}
+                  onPointerDown={(event) => beginResize(event, shell.id)}
+                  onPointerMove={updateInteraction}
+                  onPointerUp={(event) => endInteraction(event, false)}
+                  title={`Resize ${shell.label}`}
+                  type="button"
+                >
+                  <CornerDownRight aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

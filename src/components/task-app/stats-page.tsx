@@ -12,7 +12,7 @@ import { shiftDateKey } from "@/lib/task-grid-layout";
 import { PageShellHeader } from "./page-shell-header";
 import { PageShell, PageShellLayoutControls, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
-import { STATS_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
+import { STATS_PAGE_SHELL_IDS, STATS_PAGE_SHELL_SIZE_DEFAULTS } from "@/lib/page-shell-layout";
 
 type TaskHistoryStats = {
   bestStreak: number;
@@ -41,7 +41,7 @@ export function StatsPage({
   todayDateKey,
   userId,
 }: StatsPageProps) {
-  const layout = usePageShellLayout(userId, "stats", STATS_PAGE_SHELL_IDS);
+  const layout = usePageShellLayout(userId, "stats", STATS_PAGE_SHELL_IDS, STATS_PAGE_SHELL_SIZE_DEFAULTS);
   const today = todayDateKey;
   const todayDone = taskHistory.filter((entry) => entry.entry_date === today && entry.was_completed).length;
   const weekDates = Array.from({ length: 7 }, (_, index) => shiftDateKey(today, -index));

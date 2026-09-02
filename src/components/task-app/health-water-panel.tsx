@@ -192,7 +192,7 @@ export function HealthWaterPanel({
 
   return (
     <div aria-labelledby="health-tab-water" className="mt-6 min-w-0" id="health-panel-water" role="tabpanel">
-      <ReorderablePageShells layout={layout} shellsClassName="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+      <ReorderablePageShells layout={layout} shellsClassName="grid gap-5 xl:grid-cols-12">
       <PageShell id="water-log" label="Water Log">
       <div className="grid content-start gap-5">
         <HealthCollapsiblePanel

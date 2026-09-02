@@ -198,7 +198,7 @@ import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { PageShell, PageShellLayoutControls, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
-import { HEALTH_PAGE_SHELL_IDS, getHealthPageShellKey } from "@/lib/page-shell-layout";
+import { HEALTH_PAGE_SHELL_IDS, HEALTH_PAGE_SHELL_SIZE_DEFAULTS, getHealthPageShellKey } from "@/lib/page-shell-layout";
 import { HealthBarcodeScanner } from "./health-barcode-scanner";
 import { HealthLibraryPanel } from "./health-library-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_CONTROL_CLASS, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
@@ -1267,7 +1267,7 @@ export function HealthPage({
   workoutSets,
 }: HealthPageProps) {
   const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
-  const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab]);
+  const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab], HEALTH_PAGE_SHELL_SIZE_DEFAULTS[activeTab]);
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
   const [mealDraft, setMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
   const [activeMealEntrySlot, setActiveMealEntrySlot] = useState<HealthMealEntry["meal_slot"] | null>(null);
@@ -3869,7 +3869,7 @@ export function HealthPage({
 
       {activeTab === "Food" ? (
         <div aria-labelledby="health-tab-food" className="mt-3 min-w-0" id={getHealthTabPanelId("Food")} role="tabpanel">
-          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-12">
           <PageShell id="food-meal-log" label="Meal Log">
           <div className="grid min-w-0 content-start gap-5">
           <HealthPanel
@@ -4238,7 +4238,7 @@ export function HealthPage({
           </div>
 
           </PageShell>
-          <PageShell className="xl:col-span-2" id="food-library" label="Food Library">
+          <PageShell id="food-library" label="Food Library">
           <HealthLibraryPanel
             deleteFood={deleteFavoriteFood}
             deleteRecipe={deleteRecipe}
@@ -4272,7 +4272,7 @@ export function HealthPage({
 
       {activeTab === "Weight" ? (
         <div aria-labelledby="health-tab-weight" className="mt-6 min-w-0" id={getHealthTabPanelId("Weight")} role="tabpanel">
-          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-[1fr_1fr]">
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-12">
           <PageShell id="weight-entry" label="Weigh-in">
           <HealthPanel icon={<Scale />} subtitle="Weigh-in" title="Track trend, not perfection">
             <div className="grid gap-4 sm:grid-cols-[0.8fr_1.2fr]">
@@ -4336,7 +4336,7 @@ export function HealthPage({
 
       {activeTab === "Sleep" ? (
         <div aria-labelledby="health-tab-sleep" className="mt-6 min-w-0" id={getHealthTabPanelId("Sleep")} role="tabpanel">
-          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-[1fr_1fr]">
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-12">
           <PageShell id="sleep-ledger" label="Health Sleep Totals">
           <div className="grid content-start gap-5">
           <HealthPanel
@@ -4455,7 +4455,7 @@ export function HealthPage({
 
       {activeTab === "Insights" ? (
         <div aria-labelledby="health-tab-insights" className="mt-6 min-w-0" id={getHealthTabPanelId("Insights")} role="tabpanel">
-          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-12">
           <PageShell id="insights-import" label="Apple Health Import">
           <HealthPanel icon={<Apple />} subtitle="Import pathway" title="Apple Health groundwork">
             <div className="rounded-[1.5rem] border border-dashed border-[#d6def4] bg-[#fbfcff] p-5 dark:border-white/10 dark:bg-white/[0.03]">

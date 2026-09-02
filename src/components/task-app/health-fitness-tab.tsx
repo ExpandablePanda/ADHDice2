@@ -739,8 +739,8 @@ export function HealthFitnessTab({
         </div>
       </div>
 
-      <ReorderablePageShells layout={layout} shellsClassName="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
-        <PageShell className="xl:col-span-2" id="fitness-active-workout" label="Active Workout">
+      <ReorderablePageShells layout={layout} shellsClassName="grid gap-5 xl:grid-cols-12">
+        <PageShell id="fitness-active-workout" label="Active Workout">
           <HealthActiveWorkout controller={activeWorkout} exerciseLibrary={exerciseLibrary} planItems={planItems} plans={plans} workoutTypes={workoutTypes} />
         </PageShell>
         <PageShell id="fitness-today" label="Today">
@@ -823,7 +823,7 @@ export function HealthFitnessTab({
           </div>
         </HealthCollapsiblePanel>
         </PageShell>
-        <PageShell className="xl:col-span-2" id="fitness-goals" label="Fitness Goals">
+        <PageShell id="fitness-goals" label="Fitness Goals">
       <HealthFitnessGoalsPanel
         archiveGoal={archiveGoal}
         createGoal={createGoal}
@@ -843,7 +843,7 @@ export function HealthFitnessTab({
       />
         </PageShell>
 
-        <PageShell className="xl:col-span-2" id="fitness-plans" label="Fitness Plans">
+        <PageShell id="fitness-plans" label="Fitness Plans">
       <HealthFitnessPlansPanel
         archivePlan={archivePlan}
         archivePlanItem={archivePlanItem}
@@ -862,7 +862,7 @@ export function HealthFitnessTab({
       />
         </PageShell>
 
-        <PageShell className="xl:col-span-2" id="fitness-workout-history" label="Workout History">
+        <PageShell id="fitness-workout-history" label="Workout History">
       <HealthCollapsiblePanel
         header={<Flame aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
         onOpenChange={setIsHistoryPanelOpen}
