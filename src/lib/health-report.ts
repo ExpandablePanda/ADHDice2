@@ -12,7 +12,7 @@ import type {
   HealthWeightEntry,
   HealthWorkout,
 } from "@/lib/database.types";
-import { getHealthDailyMovementMetrics } from "@/lib/health-fitness";
+import { getHealthDailyMovementMetrics, getHealthWorkoutDisplayTitle } from "@/lib/health-fitness";
 import {
   calculateHealthDailyCalorieBudget,
   formatHealthSleepDuration,
@@ -499,7 +499,7 @@ function formatWorkoutSection(data: HealthReportData, range: HealthReportRange, 
   if (!detailed) return lines;
   for (const entry of entries) {
     const time = entry.started_at && entry.ended_at ? `${formatHealthTimestampTime(entry.started_at) ?? "?"}-${formatHealthTimestampTime(entry.ended_at) ?? "?"}` : formatHealthTimestampTime(entry.started_at) ?? "Time unknown";
-    lines.push(`- ${formatReportDate(entry.workout_date)} ${time} — ${entry.title.trim() || "Untitled workout"} — Type: ${entry.workout_type || "Unspecified"} — Duration: ${formatHealthSleepDuration(entry.duration_seconds / 60)}${entry.active_calories === null ? "" : ` — Active calories: ${formatNumber(entry.active_calories)} kcal`}${entry.notes.trim() ? ` — Notes: ${entry.notes.trim()}` : ""}${entry.source ? ` — Source: ${entry.source}` : ""}`);
+    lines.push(`- ${formatReportDate(entry.workout_date)} ${time} — ${getHealthWorkoutDisplayTitle(entry, data.profile?.workout_import_aliases)} — Type: ${entry.workout_type || "Unspecified"} — Duration: ${formatHealthSleepDuration(entry.duration_seconds / 60)}${entry.active_calories === null ? "" : ` — Active calories: ${formatNumber(entry.active_calories)} kcal`}${entry.notes.trim() ? ` — Notes: ${entry.notes.trim()}` : ""}${entry.source ? ` — Source: ${entry.source}` : ""}`);
   }
   return lines;
 }

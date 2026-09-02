@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createNavigatorSearchTargets, searchNavigatorTargets, type NavigatorSearchTarget } from "@/lib/navigator-search";
+import { searchNavigatorTasks } from "@/lib/navigator-task-search";
+import type { TaskSearchEntity } from "@/lib/task-search-selector";
 
 const dockItems = ["Home", "Tasks", "Focus", "Health", "Roll", "Achievements", "Games", "Stats", "Notes", "Settings", "Test"] as const;
 const healthTabs = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards", "Settings"] as const;
@@ -12,6 +14,18 @@ const adapterSource = readFileSync(new URL("../src/components/task-app/task-view
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("../src/components/task-app/settings-page.tsx", import.meta.url), "utf8");
 const healthPreferenceSource = readFileSync(new URL("../src/lib/health-tab-preference.ts", import.meta.url), "utf8");
+
+function taskEntity(id: string, title: string, ancestorIds: string[] = [], status: TaskSearchEntity["task"]["status"] = "pending"): TaskSearchEntity {
+  return {
+    ancestorIds,
+    displayStatus: status,
+    id,
+    listIds: ["different-list"],
+    rootParentId: ancestorIds[0] ?? id,
+    searchDocument: title.toLowerCase(),
+    task: { id, status, title, permanently_deleted_at: null } as TaskSearchEntity["task"],
+  };
+}
 
 function findTarget(query: string) {
   const target = searchNavigatorTargets(query, targets)[0];
@@ -25,6 +39,26 @@ test("navigation search matches destination titles and aliases without searching
   assert.deepEqual(findTarget("brain").breadcrumb, ["Tasks", "Brainstorm"]);
   assert.deepEqual(findTarget("timezone").breadcrumb, ["Settings", "Day Reset", "Time Zone"]);
   assert.doesNotMatch(readFileSync(new URL("../src/lib/navigator-search.ts", import.meta.url), "utf8"), /Task\[\]|supabase|from\("/);
+});
+
+test("all-task Navigator search is query-gated and includes the complete canonical hierarchy", () => {
+  const entities = [
+    taskEntity("parent", "Practice guitar"),
+    taskEntity("step", "Change strings", ["parent"]),
+    taskEntity("substep", "Order strings online", ["parent", "step"]),
+    taskEntity("complete", "Completed practice", [], "complete"),
+    taskEntity("archived", "Archived practice", [], "archived"),
+    taskEntity("trash", "Trashed practice", [], "trashed"),
+    taskEntity("trash-child", "Trashed child practice", ["trash"]),
+  ];
+  assert.deepEqual(searchNavigatorTasks("", entities), []);
+  assert.deepEqual(searchNavigatorTasks("practice guitar", entities)[0]?.action, { kind: "task", page: "Tasks", taskId: "parent" });
+  assert.deepEqual(searchNavigatorTasks("change strings", entities)[0]?.breadcrumb, ["Practice guitar"]);
+  assert.deepEqual(searchNavigatorTasks("order strings", entities)[0]?.breadcrumb, ["Practice guitar", "Change strings"]);
+  assert.equal(searchNavigatorTasks("completed practice", entities)[0]?.action.kind, "task");
+  assert.equal(searchNavigatorTasks("archived practice", entities)[0]?.action.kind, "task");
+  assert.equal(searchNavigatorTasks("trashed", entities).length, 0);
+  assert.equal(searchNavigatorTasks("trashed child", entities).length, 0);
 });
 
 test("exact title ranking outranks a keyword-only match", () => {
@@ -71,7 +105,10 @@ test("Settings targets request a mounted section once", () => {
 });
 
 test("inline search mode enters with an autofocused input and supports keyboard selection", () => {
-  assert.match(inlineSource, /placeholder="Search pages and sections\.\.\."/);
+  assert.match(inlineSource, /placeholder=\{isTaskSearchMode \? "Search all tasks\.\.\." : "Search pages and sections\.\.\."\}/);
+  assert.match(inlineSource, /placeholder=\{isTaskSearchMode \? "Search all tasks\.\.\."/);
+  assert.match(inlineSource, /Type to search all tasks\./);
+  assert.match(inlineSource, /aria-pressed=\{isTaskSearchMode\}/);
   assert.match(inlineSource, /event\.key === "ArrowDown"/);
   assert.match(inlineSource, /event\.key === "ArrowUp"/);
   assert.match(inlineSource, /event\.key === "Enter"/);
@@ -80,6 +117,18 @@ test("inline search mode enters with an autofocused input and supports keyboard 
   assert.match(inlineSource, /focusDropdownControl\(inputRef\.current\)/);
   assert.match(inlineSource, /onNavigate\(target\);\s*onClose\(\)/);
   assert.doesNotMatch(inlineSource, /ModalShell/);
+});
+
+test("task selection converges with the openTask deep-link path and preserves the current task workspace", () => {
+  assert.match(appSource, /const openTaskFromExternalNavigation = useCallback/);
+  assert.match(appSource, /openTaskFromExternalNavigation\(requestedTaskId\)/);
+  assert.match(appSource, /action\.kind === "task"/);
+  assert.match(appSource, /openTaskFromExternalNavigation\(action\.taskId\)/);
+  assert.match(appSource, /setActiveTaskWorkspaceTab\(nextTaskWorkspaceTabId\)/);
+  assert.match(appSource, /setSharedTaskEditorOverlayTaskId\(taskId\)/);
+  assert.match(adapterSource, /taskSearchEntities/);
+  assert.match(dockSource, /taskSearchEntities/);
+  assert.match(adapterSource, /BottomDockComponent/);
 });
 
 test("expanded dock puts search first and swaps normal controls for inline search mode", () => {

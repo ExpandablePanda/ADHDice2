@@ -39,6 +39,8 @@ import {
   addHealthWorkoutTitleOption,
   getHealthDailyMovementMetrics,
   getHealthWorkoutActiveCaloriesForDate,
+  getHealthWorkoutDisplayTitle,
+  getHealthWorkoutImportAliasKey,
   getHealthWeekBounds,
   getHealthWeeklyMovementMetrics,
   getHealthWeeklyWorkoutSummary,
@@ -73,6 +75,7 @@ import { HealthFitnessGoalsPanel } from "./health-fitness-goals-panel";
 import { HealthFitnessReorderList } from "./health-fitness-reorder-list";
 import { HealthFitnessSessionEditor } from "./health-fitness-session-editor";
 import { HealthActiveWorkout } from "./health-active-workout";
+import { PageSection, ReorderablePageSections } from "@/components/ui-system/reorderable-page-sections";
 
 type HealthFitnessTabProps = {
   addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<HealthWorkout | null>;
@@ -197,6 +200,7 @@ export function HealthFitnessTab({
   const [editingSavedTitle, setEditingSavedTitle] = useState<string | null>(null);
   const [editingSavedTitleDraft, setEditingSavedTitleDraft] = useState("");
   const [isSavingTitleOptions, setIsSavingTitleOptions] = useState(false);
+  const [workoutAliasDrafts, setWorkoutAliasDrafts] = useState<Record<string, string>>({});
   const workoutFormRef = useRef<HTMLFormElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const pendingRevealRef = useRef(false);
@@ -224,6 +228,36 @@ export function HealthFitnessTab({
     return options;
   }, [draft.workoutType, editingWorkoutId, workoutTypes]);
   const savedWorkoutTitles = profile.workout_title_options ?? [];
+  const importedWorkoutNames = useMemo(
+    () => [...new Set(workouts.filter((workout) => workout.source !== "manual").map(getHealthWorkoutImportAliasKey).filter(Boolean))].sort((left, right) => left.localeCompare(right)),
+    [workouts],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setWorkoutAliasDrafts(profile.workout_import_aliases ?? {});
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile.workout_import_aliases]);
+
+  async function saveWorkoutImportAlias(sourceName: string, rawAlias = workoutAliasDrafts[sourceName] ?? "") {
+    const alias = rawAlias.trim();
+    const nextAliases = { ...(profile.workout_import_aliases ?? {}) };
+    if (alias) {
+      nextAliases[sourceName] = alias;
+    } else {
+      delete nextAliases[sourceName];
+    }
+    const saved = await saveProfile({ workout_import_aliases: nextAliases });
+    if (saved) {
+      setWorkoutAliasDrafts((current) => ({ ...current, [sourceName]: alias }));
+    }
+  }
   const activeWorkout = useActiveFitnessWorkout({
     addWorkout,
     saveWorkoutPlanItemLinks,
@@ -658,6 +692,36 @@ export function HealthFitnessTab({
                 )}
               </section>
 
+              <section className="grid gap-2 border-t border-[#eeeaf8] pt-4 dark:border-white/10" aria-labelledby="fitness-settings-import-aliases">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-[#6f57f6] dark:text-[#cabfff]" id="fitness-settings-import-aliases">Imported Workout Aliases</h3>
+                  <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">Rename imported workout names for every matching existing and future workout. Apple Health values stay unchanged.</p>
+                </div>
+                {importedWorkoutNames.length === 0 ? (
+                  <p className="text-xs text-[#8d87a7] dark:text-white/40">No imported workout names are available yet.</p>
+                ) : importedWorkoutNames.map((sourceName) => (
+                  <div className="grid gap-2 rounded-[1rem] border border-[#eeeaf8] bg-white/80 p-3 dark:border-white/10 dark:bg-white/[0.03]" key={sourceName}>
+                    <p className="text-sm font-semibold text-[#4a5470] dark:text-white/80">{sourceName}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="min-w-0 flex-1">
+                        <span className="sr-only">Display imported workout as</span>
+                        <input
+                          aria-label="Imported workout display alias"
+                          className={HEALTH_COMPACT_INPUT_CLASS}
+                          disabled={isSavingTitleOptions}
+                          onChange={(event) => setWorkoutAliasDrafts((current) => ({ ...current, [sourceName]: event.target.value }))}
+                          placeholder={sourceName}
+                          type="text"
+                          value={workoutAliasDrafts[sourceName] ?? ""}
+                        />
+                      </label>
+                      <AdhdChip aria-label="Save imported workout alias" disabled={isSavingTitleOptions} onClick={() => { void saveWorkoutImportAlias(sourceName); }} tone="purple" type="button">Save</AdhdChip>
+                      <AdhdChip aria-label="Clear imported workout alias" disabled={isSavingTitleOptions || !(workoutAliasDrafts[sourceName] ?? "").trim()} onClick={() => { setWorkoutAliasDrafts((current) => ({ ...current, [sourceName]: "" })); void saveWorkoutImportAlias(sourceName, ""); }} type="button">Clear</AdhdChip>
+                    </div>
+                  </div>
+                ))}
+              </section>
+
               <HealthFitnessExerciseLibrary
                 archiveExercise={archiveExercise}
                 createExercise={createExercise}
@@ -672,8 +736,11 @@ export function HealthFitnessTab({
         </div>
       </div>
 
-      <HealthActiveWorkout controller={activeWorkout} exerciseLibrary={exerciseLibrary} planItems={planItems} plans={plans} workoutTypes={workoutTypes} />
-
+      <ReorderablePageSections pageKey="health:fitness" userId={profile.user_id}>
+        <PageSection id="fitness-active-workout" label="Active Workout">
+          <HealthActiveWorkout controller={activeWorkout} exerciseLibrary={exerciseLibrary} planItems={planItems} plans={plans} workoutTypes={workoutTypes} />
+        </PageSection>
+        <PageSection id="fitness-day-week" label="Today and This Week">
       <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
         <HealthCollapsiblePanel
           header={<Activity aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
@@ -753,6 +820,8 @@ export function HealthFitnessTab({
         </HealthCollapsiblePanel>
       </div>
 
+        </PageSection>
+        <PageSection id="fitness-goals" label="Fitness Goals">
       <HealthFitnessGoalsPanel
         archiveGoal={archiveGoal}
         createGoal={createGoal}
@@ -770,7 +839,9 @@ export function HealthFitnessTab({
         workoutSets={workoutSets}
         workouts={workouts}
       />
+        </PageSection>
 
+        <PageSection id="fitness-plans" label="Fitness Plans">
       <HealthFitnessPlansPanel
         archivePlan={archivePlan}
         archivePlanItem={archivePlanItem}
@@ -787,7 +858,9 @@ export function HealthFitnessTab({
         workoutPlanItemLinks={workoutPlanItemLinks}
         workouts={workouts}
       />
+        </PageSection>
 
+        <PageSection id="fitness-workout-history" label="Workout History">
       <HealthCollapsiblePanel
         header={<Flame aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
         onOpenChange={setIsHistoryPanelOpen}
@@ -851,33 +924,39 @@ export function HealthFitnessTab({
         ) : (
           <div className="grid gap-3">
             {orderedWorkouts.map((workout) => (
-              <WorkoutHistoryRow key={workout.id} onDelete={deleteWorkout} onEdit={openEditForm} structuredSummary={structuredSummaries.get(workout.id) ?? []} workout={workout} />
+              <WorkoutHistoryRow aliases={profile.workout_import_aliases} key={workout.id} onDelete={deleteWorkout} onEdit={openEditForm} structuredSummary={structuredSummaries.get(workout.id) ?? []} workout={workout} />
             ))}
           </div>
         )}
       </HealthCollapsiblePanel>
+        </PageSection>
+      </ReorderablePageSections>
     </div>
   );
 }
 
 function WorkoutHistoryRow({
+  aliases,
   onDelete,
   onEdit,
   structuredSummary,
   workout,
 }: {
+  aliases: Readonly<Record<string, string>>;
   onDelete: (workoutId: string) => Promise<boolean>;
   onEdit: (workout: HealthWorkout) => void;
   structuredSummary: ReturnType<typeof getHealthWorkoutStructuredSummary>;
   workout: HealthWorkout;
 }) {
   const startTime = formatMealLoggedTime(workout.started_at ?? "");
+  const displayTitle = getHealthWorkoutDisplayTitle(workout, aliases);
+  const importedName = getHealthWorkoutImportAliasKey(workout);
   return (
     <article className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-base font-bold text-[#26324f] dark:text-white">{workout.title}</h3>
+            <h3 className="truncate text-base font-bold text-[#26324f] dark:text-white">{displayTitle}</h3>
             <AdhdChip className="pointer-events-none" tone="purple" type="button">{workout.workout_type}</AdhdChip>
           </div>
           <p className="mt-1 text-xs text-[#74809b] dark:text-white/50">
@@ -898,16 +977,16 @@ function WorkoutHistoryRow({
         </div>
         {workout.source === "manual" ? (
           <div className="flex shrink-0 items-center gap-1">
-            <AdhdIconButton aria-label={`Edit ${workout.title}`} onClick={() => onEdit(workout)} size="sm" variant="rowToolbar">
+            <AdhdIconButton aria-label={`Edit ${displayTitle}`} onClick={() => onEdit(workout)} size="sm" variant="rowToolbar">
               <Pencil aria-hidden="true" />
             </AdhdIconButton>
-            <AdhdIconButton aria-label={`Delete ${workout.title}`} onClick={() => void onDelete(workout.id)} size="sm" tone="danger" variant="rowToolbar">
+            <AdhdIconButton aria-label={`Delete ${displayTitle}`} onClick={() => void onDelete(workout.id)} size="sm" tone="danger" variant="rowToolbar">
               <Trash2 aria-hidden="true" />
             </AdhdIconButton>
           </div>
         ) : null}
       </div>
-      {workout.source !== "manual" ? <p className="mt-2 text-[11px] font-medium text-[#8d87a7] dark:text-white/40">Imported workout · editing unavailable</p> : null}
+      {workout.source !== "manual" ? <p className="mt-2 text-[11px] font-medium text-[#8d87a7] dark:text-white/40">Apple Health · {importedName || workout.workout_type || "Imported workout"} · editing unavailable</p> : null}
     </article>
   );
 }

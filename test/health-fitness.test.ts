@@ -9,6 +9,8 @@ import {
   buildHealthWorkoutFormPayload,
   getHealthDailyMovementMetrics,
   getHealthWorkoutActiveCaloriesForDate,
+  getHealthWorkoutDisplayTitle,
+  getHealthWorkoutImportAliasKey,
   getHealthWeekBounds,
   getHealthWeeklyMovementMetrics,
   getHealthWeeklyWorkoutSummary,
@@ -21,7 +23,7 @@ import {
   renameHealthWorkoutTitleOption,
   sortHealthWorkouts,
 } from "@/lib/health-fitness";
-import { HEALTH_TABS, formatHealthTimestampDate, normalizeHealthProfile, shiftHealthDate } from "@/lib/health-utils";
+import { HEALTH_TABS, formatHealthTimestampDate, normalizeHealthProfile, normalizeHealthWorkoutImportAliases, shiftHealthDate } from "@/lib/health-utils";
 
 const fitnessSource = readFileSync(new URL("../src/components/task-app/health-fitness-tab.tsx", import.meta.url), "utf8");
 const reorderSource = readFileSync(new URL("../src/components/task-app/health-fitness-reorder-list.tsx", import.meta.url), "utf8");
@@ -32,6 +34,7 @@ const healthTabPreferenceSource = readFileSync(new URL("../src/lib/health-tab-pr
 const migrationSource = readFileSync(new URL("../supabase/add_health_fitness_foundation_7_11_33.sql", import.meta.url), "utf8");
 const titleOptionsMigrationSource = readFileSync(new URL("../supabase/add_health_workout_title_options_7_11_34.sql", import.meta.url), "utf8");
 const typeOptionsMigrationSource = readFileSync(new URL("../supabase/add_health_workout_type_options_7_11_35.sql", import.meta.url), "utf8");
+const importAliasesMigrationSource = readFileSync(new URL("../supabase/add_health_workout_import_aliases_7_12_68.sql", import.meta.url), "utf8");
 const healthTablesSource = readFileSync(new URL("../supabase/add_health_tables.sql", import.meta.url), "utf8");
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -81,6 +84,7 @@ test("Standing is a workout category without changing the existing types", () =>
 test("existing Health profiles safely receive the default workout type list", () => {
   const profile = normalizeHealthProfile({ user_id: "user-1" }, "user-1");
   assert.deepEqual(profile.workout_type_options, [...HEALTH_WORKOUT_TYPES]);
+  assert.deepEqual(profile.workout_import_aliases, {});
   assert.match(healthTablesSource, /workout_type_options text\[\] not null default array\['Walking'.*'Standing'.*'Other'\]/);
   assert.match(schemaSource, /workout_type_options text\[\] not null default array\['Walking'.*'Standing'.*'Other'\]/);
   assert.match(typeOptionsMigrationSource, /add column if not exists workout_type_options text\[\]/);
@@ -96,6 +100,26 @@ test("workout type options trim, reject empty and duplicates, rename, remove, an
   assert.deepEqual(renameHealthWorkoutTypeOption(["Walking", "Hiking"], "Hiking", "  Trail Run ").value, ["Walking", "Trail Run"]);
   assert.deepEqual(removeHealthWorkoutTypeOption(["Walking", "Trail Run"], "Trail Run").value, ["Walking"]);
   assert.equal(removeHealthWorkoutTypeOption(["Walking"], "Walking").error, "Keep at least one workout type.");
+});
+
+test("imported workout aliases are presentation-only and normalize safely", () => {
+  const imported = workout({ source: "apple_health_import", title: "Activity 53", workout_type: "Other", active_calories: 320 });
+  assert.equal(getHealthWorkoutImportAliasKey(imported), "Activity 53");
+  assert.equal(getHealthWorkoutDisplayTitle(imported), "Activity 53");
+  assert.equal(getHealthWorkoutDisplayTitle(imported, { "Activity 53": "  Aquatic Movement " }), "Aquatic Movement");
+  assert.equal(getHealthWorkoutDisplayTitle(workout({ title: "My workout" }), { "My workout": "Changed" }), "My workout");
+  assert.deepEqual(normalizeHealthWorkoutImportAliases({ " Activity 53 ": " Aquatic Movement ", empty: " ", bad: 42, nested: {} }), { "Activity 53": "Aquatic Movement" });
+  assert.equal(imported.title, "Activity 53");
+  assert.equal(imported.workout_type, "Other");
+  assert.equal(imported.active_calories, 320);
+});
+
+test("imported workout aliases use an object-constrained profile migration and never rewrite workouts", () => {
+  assert.match(importAliasesMigrationSource, /add column if not exists workout_import_aliases jsonb/);
+  assert.match(importAliasesMigrationSource, /jsonb_typeof\(workout_import_aliases\) <> 'object'/);
+  assert.match(importAliasesMigrationSource, /set not null/);
+  assert.match(importAliasesMigrationSource, /workout_import_aliases_object_check/);
+  assert.doesNotMatch(importAliasesMigrationSource, /adhdice_health_workouts/);
 });
 
 test("Fitness option reorder moves first-to-last and last-to-first without mutation", () => {
@@ -611,12 +635,12 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.12.67 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.12.67");
-  assert.equal(packageLock.version, "7.12.67");
-  assert.equal(packageLock.packages[""].version, "7.12.67");
-  assert.match(appVersionSource, /"version":\s*"7\.12\.67"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.67"/);
+test("all 7.12.68 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.12.68");
+  assert.equal(packageLock.version, "7.12.68");
+  assert.equal(packageLock.packages[""].version, "7.12.68");
+  assert.match(appVersionSource, /"version":\s*"7\.12\.68"/);
+  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.68"/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
-  assert.match(currentStateSource, /Current working app version: `7\.12\.67`/);
+  assert.match(currentStateSource, /Current working app version: `7\.12\.68`/);
 });

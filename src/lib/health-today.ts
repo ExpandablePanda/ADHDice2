@@ -10,7 +10,7 @@ import type {
   HealthWeightEntry,
   HealthWorkout,
 } from "@/lib/database.types";
-import { getHealthDailyMovementMetrics } from "@/lib/health-fitness";
+import { getHealthDailyMovementMetrics, getHealthWorkoutDisplayTitle } from "@/lib/health-fitness";
 import {
   formatHealthNutritionNumber,
   formatHealthSleepDuration,
@@ -112,6 +112,7 @@ export function buildHealthTodayTimeline({
   journalSignalOccurrences,
   mealEntries,
   preferredWeightUnit = "lb",
+  workoutImportAliases = {},
   symptomEntries,
   symptoms,
   waterEntries,
@@ -126,6 +127,7 @@ export function buildHealthTodayTimeline({
   journalSignalOccurrences: HealthJournalSignalOccurrence[];
   mealEntries: HealthMealEntry[];
   preferredWeightUnit?: "kg" | "lb";
+  workoutImportAliases?: Readonly<Record<string, string>>;
   symptomEntries: HealthSymptomEntry[];
   symptoms: HealthSymptom[];
   waterEntries: HealthWaterEntry[];
@@ -226,7 +228,7 @@ export function buildHealthTodayTimeline({
     .forEach((workout) => {
       const activityTime = getTimestampParts(workout.started_at);
       events.push({
-        detail: `${workout.title || workout.workout_type} · ${formatHealthSleepDuration(workout.duration_seconds / 60)}`,
+        detail: `${getHealthWorkoutDisplayTitle(workout, workoutImportAliases)} · ${formatHealthSleepDuration(workout.duration_seconds / 60)}`,
         id: `workout:${workout.id}`,
         kind: "workout",
         secondaryDetail: typeof workout.active_calories === "number" && Number.isFinite(workout.active_calories)

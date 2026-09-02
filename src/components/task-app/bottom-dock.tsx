@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { NavigatorSearchTarget } from "@/lib/navigator-search";
+import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import { NavigatorSearchInline, type NavigatorSearchPlacement } from "./navigator-search-inline";
 
 type DockPlacement = NavigatorSearchPlacement;
@@ -15,6 +16,7 @@ type BottomDockProps<TPage extends string> = {
   onNavigateSearchTarget: (target: NavigatorSearchTarget) => void;
   renderIcon: (name: string) => ReactNode;
   searchTargets: readonly NavigatorSearchTarget[];
+  taskSearchEntities: readonly TaskSearchEntity[];
 };
 
 export function BottomDockComponent<TPage extends string>({
@@ -25,6 +27,7 @@ export function BottomDockComponent<TPage extends string>({
   onNavigateSearchTarget,
   renderIcon,
   searchTargets,
+  taskSearchEntities,
 }: BottomDockProps<TPage>) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isSearchMode, setIsSearchMode] = useState(false);
@@ -261,6 +264,7 @@ export function BottomDockComponent<TPage extends string>({
             placement={renderedDockPlacement}
             renderIcon={renderIcon}
             targets={searchTargets}
+            taskSearchEntities={taskSearchEntities}
           />
         ) : (
           <>

@@ -177,6 +177,7 @@ import {
   type NavigatorSearchTarget,
   type NavigatorSettingsSection,
 } from "@/lib/navigator-search";
+import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import { appendTaskListRuleRow, removeTaskListRuleRow, summarizeTaskListRules, updateTaskListRuleRow, updateTaskListRuleRowConnector } from "@/lib/task-list-rule-editor";
 import {
   normalizeTaskGridLayout,
@@ -580,7 +581,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.12.67";
+const APP_VERSION = "7.12.68";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2160,14 +2161,7 @@ export function TaskApp() {
     saveLogicalDaySettings({ dayStartTime, timezone: userTimeZone });
   }, [dayStartTime, userTimeZone]);
 
-  useEffect(() => {
-    if (typeof window === "undefined" || isRestoringPersistedUiState) {
-      return;
-    }
-    const requestedTaskId = new URLSearchParams(window.location.search).get(OPEN_TASK_QUERY_PARAM);
-    if (!requestedTaskId) {
-      return;
-    }
+  const openTaskFromExternalNavigation = useCallback((taskId: string) => {
     const nextTaskWorkspaceTabId = taskWorkspaceTabsState.tabs.find((tab) => !isReportTaskWorkspaceTab(tab))?.id
       ?? taskWorkspaceTabsState.activeTabId;
     setActivePage("Tasks");
@@ -2177,12 +2171,25 @@ export function TaskApp() {
         ? current
         : { ...current, tasksSurface: "tasks" }
     ));
+    setRequestedListOverlayTaskId(null);
     setSuppressDetachedListNoticeTaskId(null);
-    setRequestedListOverlayTaskId(requestedTaskId);
+    setTaskEditorFocusRequest(null);
+    setSharedTaskEditorOverlayTaskId(taskId);
+  }, [setActivePage, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.activeTabId, taskWorkspaceTabsState.tabs]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || isRestoringPersistedUiState) {
+      return;
+    }
+    const requestedTaskId = new URLSearchParams(window.location.search).get(OPEN_TASK_QUERY_PARAM);
+    if (!requestedTaskId) {
+      return;
+    }
+    openTaskFromExternalNavigation(requestedTaskId);
     const nextUrl = new URL(window.location.href);
     nextUrl.searchParams.delete(OPEN_TASK_QUERY_PARAM);
     window.history.replaceState({}, "", `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
-  }, [isRestoringPersistedUiState, setActivePage, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.activeTabId, taskWorkspaceTabsState.tabs]);
+  }, [isRestoringPersistedUiState, openTaskFromExternalNavigation]);
 
   useEffect(() => {
     focusAlarmAudioRef.current = new Audio(withBasePath("/calm-alarm.wav"));
@@ -2988,6 +2995,18 @@ export function TaskApp() {
       tableColumnFilters: taskUiStateForDerivedData.tableColumnFilters,
     },
   ), [focusedTaskIds, stableCanonicalTaskIndex, taskUiStateForDerivedData]);
+  const navigatorTaskSearchEntities = useMemo<readonly TaskSearchEntity[]>(
+    () => Array.from(stableCanonicalTaskIndex.entityFactsById.values()).map((fact) => ({
+      ancestorIds: fact.ancestorIds,
+      displayStatus: fact.displayStatus,
+      id: fact.id,
+      listIds: fact.listMemberships.map((membership) => membership.id),
+      rootParentId: fact.rootParentId,
+      searchDocument: fact.searchDocument,
+      task: fact.task,
+    })),
+    [stableCanonicalTaskIndex],
+  );
   const taskSearchSelection = useMemo(() => {
     if (!shouldRunTaskSearch(activePage)) return null;
     const result = queryTaskSearch(
@@ -4053,6 +4072,9 @@ export function TaskApp() {
       setActivePage("Tasks");
       handleTaskWorkspaceSurfaceChange("tasks");
       setTaskUiState((prev) => ({ ...prev, view: action.view }));
+    } else if (action.kind === "task") {
+      setRequestedSettingsSection(null);
+      openTaskFromExternalNavigation(action.taskId);
     } else if (action.kind === "health-tab") {
       setRequestedSettingsSection(null);
       setActivePage("Health");
@@ -4061,7 +4083,7 @@ export function TaskApp() {
       setActivePage("Settings");
       setRequestedSettingsSection(action.section);
     }
-  }, [handleTaskWorkspaceSurfaceChange, setActivePage, setTaskUiState]);
+  }, [handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, setActivePage, setTaskUiState]);
 
   const openExistingTaskEditor = useCallback((task: Task) => {
     setSuppressDetachedListNoticeTaskId(null);
@@ -7293,6 +7315,7 @@ export function TaskApp() {
             taskHistoryStats={taskHistoryStats}
             tasks={tasksForActiveStatusRead}
             todayDateKey={todayKey}
+            userId={currentUserId}
           />
         ) : activePage === "Notes" ? (
           <NotesPage
@@ -7350,6 +7373,7 @@ export function TaskApp() {
           onNavigateSearchTarget={handleNavigatorSearchTarget}
           renderIcon={(name) => <CategoryIcon className="h-6 w-6" name={name} />}
           searchTargets={navigatorSearchTargets}
+          taskSearchEntities={navigatorTaskSearchEntities}
         />
       </div>
       <TaskActiveTimersTray

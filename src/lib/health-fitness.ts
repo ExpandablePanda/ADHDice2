@@ -45,6 +45,25 @@ export type HealthWorkoutWeeklySummary = {
   workouts: number;
 };
 
+export function isImportedHealthWorkout(workout: Pick<HealthWorkout, "source">) {
+  return workout.source !== "manual";
+}
+
+export function getHealthWorkoutImportAliasKey(workout: Pick<HealthWorkout, "source" | "title" | "workout_type">) {
+  return workout.title.trim() || workout.workout_type.trim();
+}
+
+export function getHealthWorkoutDisplayTitle(
+  workout: Pick<HealthWorkout, "source" | "title" | "workout_type">,
+  aliases: Readonly<Record<string, string>> = {},
+) {
+  if (!isImportedHealthWorkout(workout)) {
+    return workout.title;
+  }
+  const canonicalName = getHealthWorkoutImportAliasKey(workout);
+  return aliases[canonicalName]?.trim() || workout.title || workout.workout_type;
+}
+
 export type HealthWeeklyMovementMetrics = {
   activeEnergyKcal: number;
   endDate: string;

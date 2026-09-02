@@ -4,6 +4,8 @@ import { Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { focusDropdownControl, revealDropdownOptionWithinPanel } from "@/lib/dropdown-interaction";
 import { searchNavigatorTargets, type NavigatorSearchTarget } from "@/lib/navigator-search";
+import { searchNavigatorTasks } from "@/lib/navigator-task-search";
+import type { TaskSearchEntity } from "@/lib/task-search-selector";
 
 export type NavigatorSearchPlacement = "bottom" | "left" | "right";
 
@@ -13,15 +15,20 @@ type NavigatorSearchInlineProps = {
   placement: NavigatorSearchPlacement;
   renderIcon: (name: string) => ReactNode;
   targets: readonly NavigatorSearchTarget[];
+  taskSearchEntities: readonly TaskSearchEntity[];
 };
 
-export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIcon, targets }: NavigatorSearchInlineProps) {
+export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIcon, targets, taskSearchEntities }: NavigatorSearchInlineProps) {
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const [isTaskSearchMode, setIsTaskSearchMode] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const highlightedOptionRef = useRef<HTMLButtonElement | null>(null);
-  const results = useMemo(() => searchNavigatorTargets(query, targets), [query, targets]);
+  const results = useMemo(
+    () => isTaskSearchMode ? searchNavigatorTasks(query, taskSearchEntities) : searchNavigatorTargets(query, targets),
+    [isTaskSearchMode, query, targets, taskSearchEntities],
+  );
 
   useEffect(() => {
     focusDropdownControl(inputRef.current);
@@ -74,12 +81,27 @@ export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIc
       >
         {renderIcon("Search")}
       </button>
+      <button
+        aria-label="Search all tasks"
+        aria-pressed={isTaskSearchMode}
+        className={`flex h-10 w-8 shrink-0 items-center justify-center rounded-xl text-sm font-black transition ${isTaskSearchMode ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "text-[#6f57f6] hover:bg-[#f1ecff] dark:text-[#cabfff] dark:hover:bg-white/10"}`}
+        onClick={() => {
+          setIsTaskSearchMode((current) => !current);
+          setQuery("");
+          setHighlightedIndex(0);
+          focusDropdownControl(inputRef.current);
+        }}
+        title="Search all tasks"
+        type="button"
+      >
+        #
+      </button>
       <div className="relative flex min-w-0 w-full flex-1 items-center sm:w-auto">
         <Search aria-hidden="true" className="pointer-events-none absolute left-2 h-4 w-4 text-[#8d87a7] dark:text-white/45" />
         <input
           aria-activedescendant={results[highlightedIndex] ? `navigator-search-option-${results[highlightedIndex].id}` : undefined}
           aria-controls="navigator-search-results"
-          aria-label="Search pages and sections"
+          aria-label={isTaskSearchMode ? "Search all tasks" : "Search pages and sections"}
           aria-autocomplete="list"
           aria-expanded="true"
           autoComplete="off"
@@ -90,7 +112,7 @@ export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIc
           }}
           onClick={() => focusDropdownControl(inputRef.current)}
           onKeyDown={handleKeyDown}
-          placeholder="Search pages and sections..."
+          placeholder={isTaskSearchMode ? "Search all tasks..." : "Search pages and sections..."}
           ref={inputRef}
           role="combobox"
           type="search"
@@ -106,9 +128,9 @@ export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIc
         <X aria-hidden="true" className="h-5 w-5" />
       </button>
 
-      <div aria-label="Navigation destinations" className={`absolute z-30 ${placement === "bottom" ? "w-[min(28rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]" : "w-[min(28rem,calc(100vw-7rem))] max-w-[calc(100vw-7rem)] sm:w-[min(28rem,calc(100vw-22rem))] sm:max-w-[calc(100vw-22rem)]"} rounded-2xl border border-[#ece8f8] bg-white p-2 shadow-[0_20px_50px_rgba(60,44,140,0.18)] dark:border-white/10 dark:bg-[#171328] ${resultsPositionClass}`} id="navigator-search-results" role="listbox">
+      <div aria-label={isTaskSearchMode ? "All tasks" : "Navigation destinations"} className={`absolute z-30 ${placement === "bottom" ? "w-[min(28rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]" : "w-[min(28rem,calc(100vw-7rem))] max-w-[calc(100vw-7rem)] sm:w-[min(28rem,calc(100vw-22rem))] sm:max-w-[calc(100vw-22rem)]"} rounded-2xl border border-[#ece8f8] bg-white p-2 shadow-[0_20px_50px_rgba(60,44,140,0.18)] dark:border-white/10 dark:bg-[#171328] ${resultsPositionClass}`} id="navigator-search-results" role="listbox">
         {results.length === 0 ? (
-          <p className="px-3 py-5 text-center text-sm font-medium text-[#7d88a1] dark:text-white/55">No destinations found.</p>
+          <p className="px-3 py-5 text-center text-sm font-medium text-[#7d88a1] dark:text-white/55">{isTaskSearchMode ? (query.trim() ? "No tasks found." : "Type to search all tasks.") : "No destinations found."}</p>
         ) : (
           <div className="adhdice-scrollbar max-h-[min(55vh,22rem)] overflow-y-auto" ref={panelRef}>
             {results.map((target, index) => (

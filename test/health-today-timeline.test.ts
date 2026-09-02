@@ -225,3 +225,11 @@ test("Workout, Weight, Journal, and Sleep Timeline events use their canonical ac
   assert.equal(events.find((event) => event.id === "sleep:untimed-sleep")?.timeLabel, "Time not logged");
   assert.equal(events.filter((event) => event.kind === "sleep").length, 2);
 });
+
+test("timeline applies imported workout aliases without changing workout facts", () => {
+  const events = timeline({
+    workoutImportAliases: { "Upper Body": "Aquatic Movement" },
+    workouts: [{ id: "workout", workout_date: today, started_at: at("18:20"), ended_at: at("19:02"), duration_seconds: 2520, title: "Upper Body", workout_type: "Activity 53", active_calories: 320, source: "apple_health_import" } as HealthWorkout],
+  });
+  assert.equal(events.find((event) => event.id === "workout:workout")?.detail, "Aquatic Movement · 42m");
+});

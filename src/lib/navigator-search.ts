@@ -5,6 +5,7 @@ export type NavigatorSettingsSection = "appearance" | "day-reset" | "economy" | 
 
 export type NavigatorSearchAction =
   | { kind: "page"; page: AppPage }
+  | { kind: "task"; page: "Tasks"; taskId: string }
   | { kind: "tasks-surface"; page: "Tasks"; surface: TasksSurface }
   | { kind: "tasks-view"; page: "Tasks"; surface: "tasks"; view: TaskViewMode }
   | { kind: "health-tab"; page: "Health"; tab: HealthTab }

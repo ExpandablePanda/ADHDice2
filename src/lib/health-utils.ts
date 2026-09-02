@@ -231,9 +231,24 @@ export const DEFAULT_HEALTH_PROFILE: Omit<HealthProfile, "created_at" | "updated
   target_weight_kg: null,
   workout_type_options: [...HEALTH_WORKOUT_TYPES],
   workout_title_options: [],
+  workout_import_aliases: {},
   user_id: "",
   fat_goal_grams: 75,
 };
+
+export function normalizeHealthWorkoutImportAliases(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return Object.entries(value).reduce<Record<string, string>>((aliases, [rawKey, rawAlias]) => {
+    const key = rawKey.trim();
+    const alias = typeof rawAlias === "string" ? rawAlias.trim() : "";
+    if (key && alias) {
+      aliases[key] = alias;
+    }
+    return aliases;
+  }, {});
+}
 
 export function buildDefaultHealthProfile(userId: string): HealthProfile {
   const now = new Date().toISOString();
@@ -251,6 +266,7 @@ export function normalizeHealthProfile(profile: Partial<HealthProfile> | null | 
     ? profile.workout_title_options.filter((title): title is string => typeof title === "string")
     : [];
   const workoutTypeOptions = normalizeHealthWorkoutOptionValues(profile?.workout_type_options);
+  const workoutImportAliases = normalizeHealthWorkoutImportAliases(profile?.workout_import_aliases);
   const waterGoalMl = Number(profile?.water_goal_ml);
   return {
     ...fallback,
@@ -263,6 +279,7 @@ export function normalizeHealthProfile(profile: Partial<HealthProfile> | null | 
         : null,
     workout_type_options: workoutTypeOptions.length > 0 ? workoutTypeOptions : [...HEALTH_WORKOUT_TYPES],
     workout_title_options: workoutTitleOptions,
+    workout_import_aliases: workoutImportAliases,
   };
 }
 

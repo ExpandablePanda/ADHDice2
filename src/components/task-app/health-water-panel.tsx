@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
+import { PageSection, ReorderablePageSections } from "@/components/ui-system/reorderable-page-sections";
 import type { HealthWaterEntry, HealthWaterUnit } from "@/lib/database.types";
 import {
   buildHealthWaterHistory,
@@ -33,6 +34,7 @@ type HealthWaterPanelProps = {
   deleteWaterEntry: (id: string) => Promise<boolean>;
   saveWaterGoal: (waterGoalMl: number | null) => Promise<boolean>;
   today: string;
+  userId: string | null;
   updateWaterEntry: (entryId: string, input: {
     amount: number;
     amount_ml: number;
@@ -53,6 +55,7 @@ export function HealthWaterPanel({
   deleteWaterEntry,
   saveWaterGoal,
   today,
+  userId,
   updateWaterEntry,
   waterGoalMl,
   waterEntries,
@@ -187,7 +190,9 @@ export function HealthWaterPanel({
   }
 
   return (
-    <div aria-labelledby="health-tab-water" className="mt-6 grid gap-5 xl:grid-cols-[0.9fr_1.1fr]" id="health-panel-water" role="tabpanel">
+    <div aria-labelledby="health-tab-water" className="mt-6 min-w-0" id="health-panel-water" role="tabpanel">
+      <ReorderablePageSections pageKey="health:water" sectionsClassName="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]" userId={userId}>
+      <PageSection id="water-log" label="Water Log">
       <div className="grid content-start gap-5">
         <HealthCollapsiblePanel
           header={(
@@ -284,6 +289,8 @@ export function HealthWaterPanel({
         <HealthWaterLineChart history={waterHistory} waterGoalMl={waterGoalMl} />
       </div>
 
+      </PageSection>
+      <PageSection id="water-history" label="Water History">
       <div className="grid content-start gap-5">
         {pendingEntries.length > 0 ? (
           <HealthCollapsiblePanel subtitle="These entries do not count toward totals until confirmed." title="Pending water">
@@ -379,6 +386,8 @@ export function HealthWaterPanel({
           )}
         </HealthCollapsiblePanel>
       </div>
+      </PageSection>
+      </ReorderablePageSections>
     </div>
   );
 }

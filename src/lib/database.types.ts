@@ -1312,6 +1312,7 @@ export type HealthProfile = {
   target_weight_kg: number | null;
   workout_type_options: string[];
   workout_title_options: string[];
+  workout_import_aliases: Record<string, string>;
   created_at: string;
   updated_at: string;
 };
@@ -1331,6 +1332,7 @@ export type HealthProfileInsert = {
   target_weight_kg?: number | null;
   workout_type_options?: string[];
   workout_title_options?: string[];
+  workout_import_aliases?: Record<string, string>;
 };
 
 export type HealthProfileUpdate = Partial<
@@ -1349,6 +1351,7 @@ export type HealthProfileUpdate = Partial<
     | "target_weight_kg"
     | "workout_type_options"
     | "workout_title_options"
+    | "workout_import_aliases"
   >
 >;
 

@@ -25,6 +25,7 @@ import { formatQuantity, millilitersToWaterAmount } from "@/lib/health-library";
 import { buildHealthTodaySnapshot, buildHealthTodayTimeline, type HealthTodayTimelineEvent } from "@/lib/health-today";
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
+import { PageSection, ReorderablePageSections } from "@/components/ui-system/reorderable-page-sections";
 
 type HealthTodayTabProps = {
   checkIns: HealthCheckIn[];
@@ -81,6 +82,7 @@ export function HealthTodayTab({
     journalSignalOccurrences,
     mealEntries,
     preferredWeightUnit: profile.preferred_weight_unit,
+    workoutImportAliases: profile.workout_import_aliases,
     symptomEntries,
     symptoms,
     waterEntries,
@@ -104,6 +106,8 @@ export function HealthTodayTab({
         <h2 className="mt-1 text-xl font-black text-[#1e2744] dark:text-white">Today&apos;s Snapshot</h2>
       </div>
 
+      <ReorderablePageSections pageKey="health:today" userId={profile.user_id}>
+      <PageSection id="today-snapshot" label="Today Snapshot">
       <section aria-labelledby="health-today-snapshot-heading" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <h3 className="sr-only" id="health-today-snapshot-heading">Today&apos;s Snapshot</h3>
         <HealthTodaySnapshotCard label="Journal" onClick={() => onNavigate("Journal")}>
@@ -136,7 +140,9 @@ export function HealthTodayTab({
           <MovementLine label="kcal" value={snapshot.movement.activeEnergyKcal} goal={profile.movement_goal_calories} />
         </HealthTodaySnapshotCard>
       </section>
+      </PageSection>
 
+      <PageSection id="today-quick-log" label="Quick Log">
       <section aria-labelledby="health-today-quick-log-heading" className="grid gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40" id="health-today-quick-log-heading">Quick Log</p>
         <div className="flex flex-wrap gap-2">
@@ -152,8 +158,12 @@ export function HealthTodayTab({
           ))}
         </div>
       </section>
+      </PageSection>
 
+      <PageSection id="today-timeline" label="Today Timeline">
       <HealthTodayTimeline events={timeline} onNavigate={onNavigate} />
+      </PageSection>
+      </ReorderablePageSections>
     </div>
   );
 }

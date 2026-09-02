@@ -27,6 +27,7 @@ const profile: HealthProfile = {
   water_goal_ml: 2000,
   workout_title_options: [],
   workout_type_options: [],
+  workout_import_aliases: {},
 };
 
 const checkIns: HealthCheckIn[] = [
@@ -138,6 +139,18 @@ test("Food calorie targets use each date's Active Energy and exclude workout cal
   assert.match(detailed, /Adjusted calorie target: 2,256\.8 kcal\/day/);
   assert.match(detailed, /Adjusted calorie target: 1,900 kcal\/day/);
   assert.doesNotMatch(detailed, /Adjusted calorie target: 3,156\.8 kcal\/day/);
+});
+
+test("detailed workout reports use imported display aliases without changing arithmetic", () => {
+  const markdown = formatHealthReportSection({
+    ...data,
+    profile: { ...profile, workout_import_aliases: { Walk: "Aquatic Movement" } },
+    workouts: [{ ...data.workouts[0], source: "apple_health_import", title: "Walk", workout_type: "Activity 53", duration_seconds: 1800, active_calories: 150 }],
+  }, range, true).join("\n");
+  assert.match(markdown, /Aquatic Movement/);
+  assert.match(markdown, /Workout count: 1/);
+  assert.match(markdown, /Total active calories where known: 150 kcal/);
+  assert.match(markdown, /Type: Activity 53/);
 });
 
 test("Food nutrition coverage keeps zero known, null unknown, and partial days explicit", () => {

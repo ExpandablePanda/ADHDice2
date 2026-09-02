@@ -12,6 +12,8 @@ create table if not exists public.adhdice_health_profiles (
   target_weight_kg numeric(7,2) check (target_weight_kg is null or target_weight_kg > 0),
   workout_type_options text[] not null default array['Walking', 'Running', 'Strength Training', 'Cycling', 'Cardio', 'Stretching', 'Sports', 'Standing', 'Other']::text[],
   workout_title_options text[] not null default '{}',
+  workout_import_aliases jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(workout_import_aliases) = 'object'),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
