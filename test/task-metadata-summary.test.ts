@@ -82,6 +82,43 @@ test("full-editor property panels expose one Back to Summary control without cha
   assert.match(tableSource, /mt-0\.5 block min-w-0 break-words/);
 });
 
+test("full-editor finishing actions return to Summary while intermediate editors stay open", () => {
+  const metadataBranch = tableSource.slice(tableSource.indexOf("const isFullMetadataEditor"), tableSource.indexOf("const childTaskPreviewGroup"));
+  assert.match(tableSource, /const returnMetadataToSummary = useCallback/);
+  assert.match(metadataBranch, /const returnFullMetadataToSummary = \(\) =>/);
+  assert.ok(metadataBranch.includes('setTaskDue(metadataTask.id, "", ""); returnFullMetadataToSummary()'));
+  assert.match(metadataBranch, /setTaskEstimatedMinutes\(metadataTask\.id, metadataTask\.estimatedMinutes === minutes \? null : minutes\);\s*returnFullMetadataToSummary\(\)/);
+  assert.ok(metadataBranch.includes('setTaskPriorities(metadataTask.id, []); returnFullMetadataToSummary()'));
+  assert.ok(metadataBranch.includes('setTaskEnergy(metadataTask.id, option.value); returnFullMetadataToSummary()'));
+  assert.match(metadataBranch, /setTaskDisplayStatus\(metadataTask\.id, status\);\s*returnFullMetadataToSummary\(\)/);
+  assert.match(metadataBranch, /value === "none" \|\| value === "daily" \|\| value === "daily_until_complete"/);
+  assert.match(metadataBranch, /setTaskRepeat\(metadataTask\.id, "weekly", \{ repeatDaysOfWeek/);
+  assert.match(metadataBranch, /commitTaskLink\(metadataTask\.id\); returnFullMetadataToSummary\(\)/);
+  assert.match(metadataBranch, /clearTaskNotes\(metadataTask\.id\); returnFullMetadataToSummary\(\)/);
+  assert.match(metadataBranch, /onKeyDown=\{\(event\) => \{ if \(event\.key !== "Enter"\) return; event\.preventDefault\(\); applyMetadataEstimatedMinutes\(\); \}\}/);
+  assert.match(metadataBranch, /onBlur=\{\(\) => commitTaskLink\(metadataTask\.id\)\}/);
+  const multiSelectBranch = metadataBranch.slice(metadataBranch.indexOf('metadataPanelId === "lists"'), metadataBranch.indexOf('metadataPanelId === "link"'));
+  assert.doesNotMatch(multiSelectBranch, /returnFullMetadataToSummary/);
+  const actualBranch = metadataBranch.slice(metadataBranch.indexOf('metadataPanelId === "actual"'), metadataBranch.indexOf('metadataPanelId === "priority"'));
+  assert.doesNotMatch(actualBranch, /returnFullMetadataToSummary/);
+  const notesBranch = metadataBranch.slice(metadataBranch.indexOf('metadataPanelId === "notes"'));
+  assert.doesNotMatch(notesBranch, /onKeyDown/);
+  assert.match(tableSource, /if \(didDelay !== false\) \{\s*if \(options\?\.returnToSummary\) \{\s*returnMetadataToSummary\(taskId\);\s*\} else \{\s*closeInspector\(\);/);
+  assert.match(metadataBranch, /onSave=\{\(nextDueOn\) => applyTaskDelay\(metadataTask\.id, nextDueOn, \{ returnToSummary: isFullMetadataEditor \}\)\}/);
+  assert.match(metadataBranch, /onKeyDown=\{\(event\) => \{\s*if \(event\.key !== "Enter"\) return;\s*event\.preventDefault\(\);\s*saveMetadataDueDraft\(\);/);
+});
+
+test("full-editor Description follows metadataTask for parent, Step, and Substep without a parallel field", () => {
+  const fullEditor = tableSource.slice(tableSource.indexOf("const fullDesktopEditorContent"), tableSource.indexOf("const fullDesktopEditorNode"));
+  const metadataCard = fullEditor.slice(fullEditor.indexOf("<section className={fullMetadataCardClass}>"));
+  const leftColumn = fullEditor.slice(0, fullEditor.indexOf("<section className={fullMetadataCardClass}>"));
+  assert.doesNotMatch(leftColumn, /Description/);
+  assert.match(metadataCard, /<label className="mt-3 block">[\s\S]*?Description[\s\S]*?commitTaskNotes\(metadataTask\.id\)[\s\S]*?value=\{metadataDescriptionDraft\}/);
+  assert.match(tableSource, /const metadataDescriptionDraft = notesDrafts\[metadataTask\.id\] \?\? metadataTask\.notes/);
+  assert.match(tableSource, /const metadataTask = overlayMode === "full" \? metadataTargetTask \?\? selectedTask : selectedTask/);
+  assert.doesNotMatch(tableSource, /useState[^\n]*description/i);
+});
+
 test("Summary formatting keeps configured values visible and uses displayed actual seconds", () => {
   const summary = summaryByLabel({
     ...baseTask,

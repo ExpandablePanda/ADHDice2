@@ -106,7 +106,7 @@ test("desktop and mobile share one semantic Estimated Time input and unchanged A
   assert.match(table, /name="estimated_time"/);
   assert.match(table, /const useMobileFullOverlay = overlayMode === "full" && isCompactViewport/);
   assert.equal((table.match(/ref=\{estimatedTimeInputRef\}/g) ?? []).length, 1);
-  assert.match(table, /onClick=\{\(\) => setTaskEstimatedMinutes\(metadataTask\.id, metadataEstimatedMinutesDraft \? Number\.parseInt\(metadataEstimatedMinutesDraft, 10\) : null\)\}/);
+  assert.match(table, /onClick=\{applyMetadataEstimatedMinutes\}/);
 });
 
 test("overlay close clears unhandled focus without creating task writes", async () => {

@@ -5,13 +5,23 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.57`.
+- Current working app version: `7.12.58`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-01 7.12.58 Metadata Home Navigation and Description Placement
+
+Completed full-editor metadata edits now return to Summary after explicit
+Save, Apply, terminal choice, or submit-key actions. Multi-select,
+intermediate, textarea-blur, and ongoing timer interactions remain open until
+Back; full-editor Delay returns to Summary after successful Apply without
+closing Edit Task. Parent Description moved from the left column to the right
+metadata card and follows the active Parent, Step, or Substep target. No SQL,
+schema, or persistence changes were made.
 
 ## 2026-09-01 7.12.57 Edit Task Metadata Summary Navigation
 

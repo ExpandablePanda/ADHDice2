@@ -15,7 +15,7 @@ test("Table status circles route Delayed through the existing Delay picker", () 
   assert.match(tableSource, /onRequestDelay=\{\(subtaskId\) => openTaskDelay\(subtaskId\)\}/);
   assert.match(tableSource, /if \(status === "delayed"\) \{\s*onRequestDelay\?\.\(subtask\.id\);/);
   assert.match(tableSource, /metadataPanelId === "delay"/);
-  assert.match(tableSource, /onSave=\{\(nextDueOn\) => applyTaskDelay\(metadataTask\.id, nextDueOn\)\}/);
+  assert.match(tableSource, /onSave=\{\(nextDueOn\) => applyTaskDelay\(metadataTask\.id, nextDueOn, \{ returnToSummary: isFullMetadataEditor \}\)\}/);
 });
 
 test("List parent, Step, and Substep status circles never fall back to a bare Delayed status write", () => {
