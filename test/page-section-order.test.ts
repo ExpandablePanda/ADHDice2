@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   FOCUS_PAGE_SHELL_IDS,
   HEALTH_PAGE_SHELL_IDS,
   STATS_PAGE_SHELL_IDS,
+  getPageShellDragAutoScrollDelta,
   getHealthPageShellKey,
   getPageShellInsertionIndex,
   getPageShellLayoutStorageKey,
@@ -13,15 +16,19 @@ import {
   normalizePageShellLayout,
   normalizePageShellSize,
   normalizePageShellOrder,
+  PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX,
   PAGE_SHELL_HEIGHT_SNAP,
   PAGE_SHELL_MIN_HEIGHT,
   readPageShellLayout,
   reorderPageShellOrder,
   reorderPageShellOrderAt,
   removePageShellLayout,
+  projectVisiblePageShellOrder,
   snapPageShellHeight,
   writePageShellLayout,
 } from "@/lib/page-shell-layout";
+import { PageShell, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 
 const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
 const statsSource = readFileSync(new URL("../src/components/task-app/stats-page.tsx", import.meta.url), "utf8");
@@ -42,6 +49,27 @@ function storage() {
     removeItem: (key: string) => { values.delete(key); },
     setItem: (key: string, value: string) => { values.set(key, value); },
     values,
+  };
+}
+
+function staticShellLayout(isEditing: boolean): PageShellLayoutState {
+  return {
+    beginPreview: () => undefined,
+    canEdit: true,
+    cancelPreview: () => undefined,
+    commitPreview: () => undefined,
+    finishEditing: () => undefined,
+    isEditing,
+    order: ["conditional", "regular"],
+    pageKey: "test",
+    reset: () => undefined,
+    setPreviewOrder: () => undefined,
+    setPreviewSizes: () => undefined,
+    sizes: {
+      conditional: { heightPx: 288, span: 6 },
+      regular: { heightPx: null, span: 12 },
+    },
+    startEditing: () => undefined,
   };
 }
 
@@ -84,6 +112,28 @@ test("corrupt page shell storage falls back to defaults", () => {
   assert.deepEqual(readPageShellLayout(store, key, "stats", ["stats-overview", "stats-energy"], {}).order, ["stats-overview", "stats-energy"]);
 });
 
+test("conditional shells disappear normally and become editable placeholders", () => {
+  const children = [
+    createElement(PageShell, { hiddenDescription: "Hidden until ready", id: "conditional", label: "Conditional", visible: false }, createElement("div", { "data-hidden-node": true }, "real content")),
+    createElement(PageShell, { id: "regular", label: "Regular" }, createElement("div", { "data-regular-node": true }, "regular content")),
+  ];
+  const normalMarkup = renderToStaticMarkup(createElement(ReorderablePageShells, { layout: staticShellLayout(false) }, children));
+  assert.doesNotMatch(normalMarkup, /data-page-shell-id="conditional"/);
+  assert.doesNotMatch(normalMarkup, /data-hidden-node/);
+  assert.match(normalMarkup, /data-page-shell-id="regular"/);
+
+  const editMarkup = renderToStaticMarkup(createElement(ReorderablePageShells, { layout: staticShellLayout(true) }, children));
+  assert.match(editMarkup, /data-page-shell-id="conditional"/);
+  assert.match(editMarkup, /data-page-shell-placeholder/);
+  assert.match(editMarkup, /Hidden until ready/);
+  assert.doesNotMatch(editMarkup, /data-hidden-node/);
+  assert.match(editMarkup, /aria-label="Resize Conditional"/);
+  assert.match(editMarkup, /data-page-shell-height="288"/);
+  assert.match(editMarkup, /data-page-shell-size-span="6"/);
+  assert.match(editMarkup, /aria-label="Use natural height for Conditional"/);
+  assert.match(editMarkup, /6\/12 · 288px/);
+});
+
 test("legacy minHeight shell storage is read as a safe custom height", () => {
   const store = storage();
   const key = getPageShellLayoutStorageKey("user-legacy");
@@ -111,9 +161,10 @@ test("shell layout sizes and 2D insertion boundaries normalize defensively", () 
   assert.deepEqual(normalizePageShellSize({ heightPx: 99, span: 99 }), { heightPx: PAGE_SHELL_MIN_HEIGHT, span: 12 });
   assert.deepEqual(normalizePageShellSize({ minHeight: 384, span: 8 }), { heightPx: 384, span: 8 });
   assert.deepEqual(normalizePageShellSize({ minHeight: 96, span: 8 }), { heightPx: PAGE_SHELL_MIN_HEIGHT, span: 8 });
-  assert.equal(snapPageShellHeight(192, 400), 192);
-  assert.equal(snapPageShellHeight(400, 400), null);
-  assert.equal(snapPageShellHeight(800, 400), 816);
+  assert.equal(snapPageShellHeight(192), 192);
+  assert.equal(snapPageShellHeight(400), 384);
+  assert.equal(snapPageShellHeight(400), snapPageShellHeight(400));
+  assert.equal(snapPageShellHeight(800), 816);
   assert.equal(PAGE_SHELL_HEIGHT_SNAP, 48);
   const geometries = [
     { bottom: 100, id: "A", left: 0, right: 100, top: 0 },
@@ -127,12 +178,38 @@ test("shell layout sizes and 2D insertion boundaries normalize defensively", () 
   assert.deepEqual(reorderPageShellOrderAt(["A", "B", "C"], "A", 2), ["B", "C", "A"]);
 });
 
+test("page shell insertion is stable insertion rather than swapping", () => {
+  assert.deepEqual(reorderPageShellOrderAt(["A", "B", "C", "D"], "D", 1), ["A", "D", "B", "C"]);
+  assert.deepEqual(reorderPageShellOrderAt(["A", "B", "C", "D"], "B", 2), ["A", "C", "B", "D"]);
+  assert.deepEqual(reorderPageShellOrderAt(["A", "B", "C", "D"], "C", 1), ["A", "C", "B", "D"]);
+});
+
 test("visible shell reorders preserve hidden semantic slots and restore deterministically", () => {
   const fullOrder = ["A", "B", "hidden-C", "D", "E"];
   const visibleOrder = ["D", "A", "B", "E"];
   const merged = mergeVisiblePageShellOrder(fullOrder, visibleOrder, ["A", "B", "D", "E"]);
   assert.deepEqual(merged, ["D", "A", "hidden-C", "B", "E"]);
+  assert.deepEqual(projectVisiblePageShellOrder(merged, ["A", "B", "D", "E"]), visibleOrder);
   assert.deepEqual(mergeVisiblePageShellOrder(merged, merged, ["D", "A", "hidden-C", "B", "E"]), merged);
+  const focusHiddenOrder = ["focus-timer-workspace", "focus-goals", "focus-counter-history", "focus-history"];
+  const focusHiddenVisible = ["focus-timer-workspace", "focus-goals", "focus-history"];
+  const focusHiddenNextVisible = ["focus-timer-workspace", "focus-history", "focus-goals"];
+  const focusHiddenMerged = mergeVisiblePageShellOrder(focusHiddenOrder, focusHiddenNextVisible, focusHiddenVisible);
+  assert.deepEqual(projectVisiblePageShellOrder(focusHiddenMerged, focusHiddenVisible), focusHiddenNextVisible);
+  const focusVisibleNext = ["focus-timer-workspace", "focus-history", "focus-goals", "focus-counter-history"];
+  assert.deepEqual(projectVisiblePageShellOrder(
+    mergeVisiblePageShellOrder(focusHiddenOrder, focusVisibleNext, focusVisibleNext),
+    focusVisibleNext,
+  ), focusVisibleNext);
+});
+
+test("drag auto-scroll is bounded, directional, and inactive outside the edge zones", () => {
+  assert.equal(getPageShellDragAutoScrollDelta(400, 800, 300, 1800), 0);
+  assert.ok(getPageShellDragAutoScrollDelta(PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX - 1, 800, 300, 1800) < 0);
+  assert.ok(getPageShellDragAutoScrollDelta(800 - PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX + 1, 800, 300, 1800) > 0);
+  assert.equal(getPageShellDragAutoScrollDelta(0, 800, 0, 1800), 0);
+  assert.equal(getPageShellDragAutoScrollDelta(800, 800, 1000, 1800), 0);
+  assert.equal(getPageShellDragAutoScrollDelta(0, 800, 300, 800), 0);
 });
 
 test("Focus-like zero-gap full-width shells remain separate rows and use vertical hysteresis", () => {
@@ -147,6 +224,15 @@ test("Focus-like zero-gap full-width shells remain separate rows and use vertica
   assert.equal(getPageShellInsertionIndex(geometries, ["timer", "goals", "history"], "history", 940, 195, 1), 1);
   assert.equal(getPageShellInsertionIndex(geometries, ["timer", "goals", "history"], "history", 940, 205, 1), 2);
   assert.equal(getPageShellInsertionIndex(geometries, ["timer", "goals", "history"], "history", 940, 100), 1);
+});
+
+test("document-space geometry keeps insertion targets stable after page scrolling", () => {
+  const geometries = [
+    { bottom: 360, id: "A", left: 0, right: 960, top: 240 },
+    { bottom: 500, id: "B", left: 0, right: 960, top: 360 },
+    { bottom: 640, id: "C", left: 0, right: 960, top: 500 },
+  ];
+  assert.equal(getPageShellInsertionIndex(geometries, ["A", "B", "C"], "C", 12, 120 + 240), 1);
 });
 
 test("side-by-side shells still use horizontal placement within one row", () => {
@@ -213,8 +299,8 @@ test("Fitness reorders whole shells while keeping Today cards and Week content t
   assert.match(fitnessSource, /<PageShell id="fitness-goals"/);
   assert.match(fitnessSource, /<PageShell id="fitness-plans"/);
   assert.match(fitnessSource, /<PageShell id="fitness-workout-history"/);
-  assert.match(fitnessSource, /activeWorkout\.runtime \? \(/);
-  assert.match(fitnessSource, /activeWorkout\.runtime \? \([\s\S]{0,180}<PageShell id="fitness-active-workout"/);
+  assert.match(fitnessSource, /visible=\{Boolean\(activeWorkout\.runtime\)\}/);
+  assert.match(fitnessSource, /hiddenDescription="Hidden until a workout is active"/);
 });
 
 test("Focus reorders top-level workspace shells, not individual clocks or bars", () => {
@@ -222,11 +308,17 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(focusSource, /<PageShell id="focus-timer-workspace"/);
   assert.match(focusSource, /<PageShell id="focus-goals"/);
   assert.match(focusSource, /<PageShell id="focus-history"/);
+  assert.match(focusSource, /visible=\{counterHistory\.length > 0\}/);
+  assert.match(focusSource, /hiddenDescription="Hidden until counter history exists"/);
   assert.match(focusSource, /focusSandboxTabOrder/);
   assert.match(shellSource, /onPointerDown=\{\(event\) => beginMove\(event, shell\.id\)\}/);
   assert.match(shellSource, /<button/);
   assert.match(shellSource, /layout\.isEditing \? \(/);
-  assert.match(shellSource, /\{shell\.node\}/);
+  assert.match(shellSource, /shell\.visible \? shell\.node/);
+  assert.match(shellSource, /renderedShells = useMemo/);
+  assert.match(shellSource, /layout\.isEditing \? shells : shells\.filter/);
+  assert.match(shellSource, /data-page-shell-placeholder/);
+  assert.match(shellSource, /hiddenDescription/);
   assert.doesNotMatch(shellSource, /<div[^>]+draggable/);
   assert.match(shellSource, /data-page-shell-id=\{shell\.id\}/);
   assert.match(shellSource, /data-page-shell-layout-strip/);
@@ -240,19 +332,29 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /data-page-shell-insertion-indicator/);
   assert.match(shellSource, /interaction\.targetIndex/);
   assert.match(shellSource, /renderedShellOrder/);
+  assert.match(shellSource, /rect\.top \+ scrollTop/);
+  assert.match(shellSource, /pointerY \+ getPageScrollTop\(\)/);
+  assert.match(shellSource, /requestAnimationFrame\(runDragAutoScroll\)/);
+  assert.match(shellSource, /cancelDragAutoScroll/);
+  assert.match(shellSource, /window\.scrollTo\(\{ behavior: "auto", top: nextScrollTop \}\)/);
+  assert.match(shellSource, /heightPx: snapPageShellHeight\(initialHeight\)/);
   const moveUpdateSource = shellSource.slice(shellSource.indexOf('if (interaction.kind === "move")'), shellSource.indexOf("const deltaColumns"));
-  assert.match(moveUpdateSource, /setDragInsertionIndex/);
-  assert.match(moveUpdateSource, /layout\.setPreviewOrder/);
+  assert.match(moveUpdateSource, /updateMovePreview/);
+  assert.match(shellSource, /function updateMovePreview[\s\S]*layout\.setPreviewOrder/);
   assert.doesNotMatch(moveUpdateSource, /setDraggingId/);
   assert.match(shellSource, /if \(cancelled\) layout\.cancelPreview\(\);\s+else layout\.commitPreview\(\);/);
   assert.match(shellSource, /aria-label=\{`Resize \$\{shell\.label\}`\}/);
   assert.match(shellSource, /measureNaturalShellHeight/);
   assert.match(shellSource, /data-page-shell-height=\{size\.heightPx \?\? "natural"\}/);
-  assert.match(shellSource, /adhdice-scrollbar page-shell-custom-height overflow-y-auto overscroll-contain/);
+  assert.match(shellSource, /adhdice-scrollbar page-shell-custom-height overflow-y-auto/);
+  assert.doesNotMatch(shellSource, /page-shell-custom-height overflow-y-auto overscroll-contain/);
   assert.doesNotMatch(shellSource, /data-page-shell-min-height/);
   assert.doesNotMatch(shellSource, /minHeight: \$\{/);
   assert.match(globalSource, /@media \(max-width: 1279px\)/);
   assert.match(globalSource, /\.page-shell-custom-height[\s\S]*height: auto !important/);
+  assert.match(shellSource, /setShellToNaturalHeight/);
+  assert.match(shellSource, /aria-label=\{`Use natural height for \$\{shell\.label\}`\}/);
+  assert.match(shellSource, /\{size\.span\}\/12 · \{hasCustomHeight \? `\$\{size\.heightPx\}px` : "Auto"\}/);
   assert.match(shellSource, /xl:col-span-6/);
   assert.match(shellSource, /xl:col-span-12/);
   assert.equal((shellSource.match(/<GripVertical/g) ?? []).length, 1);

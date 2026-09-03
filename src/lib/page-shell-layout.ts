@@ -178,6 +178,16 @@ export function mergeVisiblePageShellOrder(
   return [...merged, ...nextVisibleOrder.slice(nextVisibleIndex)];
 }
 
+export function projectVisiblePageShellOrder(fullOrder: readonly string[], visibleShellIds: readonly string[]) {
+  const visibleIds = new Set(visibleShellIds);
+  const seen = new Set<string>();
+  return fullOrder.filter((id) => {
+    if (!visibleIds.has(id) || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
 export type PageShellGeometry = {
   bottom: number;
   id: string;
@@ -188,6 +198,28 @@ export type PageShellGeometry = {
 
 export const PAGE_SHELL_POINTER_HYSTERESIS_PX = 8;
 export const PAGE_SHELL_ROW_ALIGNMENT_PX = 12;
+export const PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX = 80;
+export const PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX = 18;
+
+export function getPageShellDragAutoScrollDelta(
+  pointerY: number,
+  viewportHeight: number,
+  scrollTop: number,
+  scrollHeight: number,
+) {
+  const maxScrollTop = Math.max(0, scrollHeight - viewportHeight);
+  if (maxScrollTop <= 0) return 0;
+  if (pointerY < PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX && scrollTop > 0) {
+    const strength = Math.min(1, Math.max(0, (PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX - pointerY) / PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX));
+    return -Math.min(scrollTop, Math.max(1, Math.round(strength * PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX)));
+  }
+  const distanceFromBottom = viewportHeight - pointerY;
+  if (distanceFromBottom < PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX && scrollTop < maxScrollTop) {
+    const strength = Math.min(1, Math.max(0, (PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX - distanceFromBottom) / PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX));
+    return Math.min(maxScrollTop - scrollTop, Math.max(1, Math.round(strength * PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX)));
+  }
+  return 0;
+}
 
 function verticalOverlap(left: PageShellGeometry, right: PageShellGeometry) {
   return Math.max(0, Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top));
@@ -322,9 +354,9 @@ export function normalizePageShellSpan(value: unknown, fallback: PageShellSpan =
 export const PAGE_SHELL_HEIGHT_SNAP = 48;
 export const PAGE_SHELL_MIN_HEIGHT = 144;
 
-export function snapPageShellHeight(value: number, naturalHeight: number) {
+export function snapPageShellHeight(value: number) {
   const snapped = Math.max(PAGE_SHELL_MIN_HEIGHT, Math.round(value / PAGE_SHELL_HEIGHT_SNAP) * PAGE_SHELL_HEIGHT_SNAP);
-  return Math.abs(snapped - naturalHeight) <= PAGE_SHELL_HEIGHT_SNAP / 2 ? null : snapped;
+  return snapped;
 }
 
 function normalizePageShellHeight(value: unknown, fallback: number | null) {

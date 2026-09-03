@@ -1,12 +1,13 @@
 "use client";
 
 import { Check, CornerDownRight, GripVertical, PanelsTopLeft, RotateCcw } from "lucide-react";
-import { Children, isValidElement, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactElement, type ReactNode } from "react";
+import { Children, isValidElement, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import {
   getPageShellInsertionIndex,
+  getPageShellDragAutoScrollDelta,
   mergeVisiblePageShellOrder,
   normalizePageShellSpan,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
@@ -19,8 +20,10 @@ import {
 
 export type PageShellProps = {
   className?: string;
+  hiddenDescription?: string;
   id: string;
   label: string;
+  visible?: boolean;
   children: ReactNode;
 };
 
@@ -35,6 +38,8 @@ type ShellMoveInteraction = {
   id: string;
   kind: "move";
   pointerId: number;
+  pointerX: number;
+  pointerY: number;
   startVisibleOrder: string[];
   startLayout: PageShellLayoutPreference;
   targetIndex: number;
@@ -69,6 +74,7 @@ const SHELL_SPAN_CLASSES: Record<number, string> = {
   11: "xl:col-span-11",
   12: "xl:col-span-12",
 };
+const DEFAULT_HIDDEN_SHELL_DESCRIPTION = "Hidden until available";
 function layoutsHaveSameOrder(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((id, index) => id === right[index]);
 }
@@ -100,13 +106,14 @@ function getInsertionIndicatorStyle(
   container: HTMLDivElement | null,
 ) {
   const containerRect = container?.getBoundingClientRect();
+  const scrollTop = getPageScrollTop();
   const fallbackWidth = containerRect?.width ?? 0;
   const geometryById = new Map(interaction.geometries.map((geometry) => [geometry.id, geometry]));
   const orderWithoutSource = interaction.startVisibleOrder.filter((id) => id !== interaction.id);
   const before = insertionIndex > 0 ? geometryById.get(orderWithoutSource[insertionIndex - 1]) : undefined;
   const after = insertionIndex < orderWithoutSource.length ? geometryById.get(orderWithoutSource[insertionIndex]) : undefined;
   const leftOffset = containerRect?.left ?? 0;
-  const topOffset = containerRect?.top ?? 0;
+  const topOffset = (containerRect?.top ?? 0) + scrollTop;
 
   if (before && after && geometriesShareRow(before, after)) {
     return {
@@ -123,6 +130,11 @@ function getInsertionIndicatorStyle(
     top: top - topOffset - 2,
     width: fallbackWidth,
   };
+}
+
+function getPageScrollTop() {
+  if (typeof window === "undefined" || typeof document === "undefined") return 0;
+  return Math.max(window.scrollY, document.scrollingElement?.scrollTop ?? 0);
 }
 
 export function PageShell({ children }: PageShellProps) {
@@ -156,15 +168,27 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     [children],
   );
   const shells = useMemo(
-    () => shellElements.map((element) => ({ className: element.props.className, id: element.props.id, label: element.props.label, node: element.props.children })),
+    () => shellElements.map((element) => ({
+      className: element.props.className,
+      hiddenDescription: element.props.hiddenDescription,
+      id: element.props.id,
+      label: element.props.label,
+      node: element.props.children,
+      visible: element.props.visible !== false,
+    })),
     [shellElements],
   );
-  const shellsById = useMemo(() => new Map(shells.map((shell) => [shell.id, shell])), [shells]);
-  const visibleShellIds = useMemo(() => shells.map((shell) => shell.id), [shells]);
+  const renderedShells = useMemo(
+    () => layout.isEditing ? shells : shells.filter((shell) => shell.visible),
+    [layout.isEditing, shells],
+  );
+  const shellsById = useMemo(() => new Map(renderedShells.map((shell) => [shell.id, shell])), [renderedShells]);
+  const visibleShellIds = useMemo(() => renderedShells.map((shell) => shell.id), [renderedShells]);
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const shellRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const shellContentRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const interactionRef = useRef<ShellInteraction | null>(null);
+  const autoScrollFrameRef = useRef<number | null>(null);
   const [dragStartVisibleOrder, setDragStartVisibleOrder] = useState<string[] | null>(null);
   const [dragIndicatorStyle, setDragIndicatorStyle] = useState<PageShellInsertionIndicatorStyle | null>(null);
   const renderedShellOrder = dragStartVisibleOrder ?? layout.order;
@@ -177,6 +201,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const [resizingId, setResizingId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!layout.isEditing && autoScrollFrameRef.current !== null && typeof window !== "undefined") {
+      window.cancelAnimationFrame(autoScrollFrameRef.current);
+      autoScrollFrameRef.current = null;
+    }
     if (layout.isEditing || !interactionRef.current) return;
     interactionRef.current = null;
     setDraggingId(null);
@@ -186,6 +214,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setResizingId(null);
   }, [layout.isEditing]);
 
+  useEffect(() => () => {
+    if (autoScrollFrameRef.current !== null && typeof window !== "undefined") {
+      window.cancelAnimationFrame(autoScrollFrameRef.current);
+    }
+  }, []);
+
   function currentLayout(): PageShellLayoutPreference {
     return {
       order: [...layout.order],
@@ -194,12 +228,71 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   }
 
   function captureShellGeometry() {
+    const scrollTop = getPageScrollTop();
     return orderedShells.flatMap((shell) => {
       const element = shellRefs.current[shell.id];
       if (!element) return [];
       const rect = element.getBoundingClientRect();
-      return [{ bottom: rect.bottom, id: shell.id, left: rect.left, right: rect.right, top: rect.top }];
+      return [{ bottom: rect.bottom + scrollTop, id: shell.id, left: rect.left, right: rect.right, top: rect.top + scrollTop }];
     });
+  }
+
+  function updateMovePreview(interaction: ShellMoveInteraction, pointerX: number, pointerY: number) {
+    const insertionIndex = getPageShellInsertionIndex(
+      interaction.geometries,
+      interaction.startVisibleOrder,
+      interaction.id,
+      pointerX,
+      pointerY + getPageScrollTop(),
+      interaction.targetIndex,
+    );
+    interaction.targetIndex = insertionIndex;
+    setDragInsertionIndex(insertionIndex);
+    setDragIndicatorStyle(getInsertionIndicatorStyle(interaction, insertionIndex, layoutRef.current));
+    const nextVisibleOrder = reorderPageShellOrderAt(interaction.startVisibleOrder, interaction.id, insertionIndex);
+    const nextOrder = mergeVisiblePageShellOrder(interaction.startLayout.order, nextVisibleOrder, visibleShellIds);
+    if (!layoutsHaveSameOrder(nextOrder, layout.order)) layout.setPreviewOrder(nextOrder);
+  }
+
+  function cancelDragAutoScroll() {
+    if (autoScrollFrameRef.current !== null && typeof window !== "undefined") {
+      window.cancelAnimationFrame(autoScrollFrameRef.current);
+    }
+    autoScrollFrameRef.current = null;
+  }
+
+  function runDragAutoScroll() {
+    autoScrollFrameRef.current = null;
+    const interaction = interactionRef.current;
+    if (!interaction || interaction.kind !== "move" || typeof window === "undefined" || typeof document === "undefined") return;
+    const scrollingElement = document.scrollingElement ?? document.documentElement;
+    const scrollTop = getPageScrollTop();
+    const scrollHeight = Math.max(scrollingElement.scrollHeight, document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0);
+    const delta = getPageShellDragAutoScrollDelta(interaction.pointerY, window.innerHeight, scrollTop, scrollHeight);
+    if (!delta) return;
+    const maxScrollTop = Math.max(0, scrollHeight - window.innerHeight);
+    const nextScrollTop = Math.max(0, Math.min(maxScrollTop, scrollTop + delta));
+    if (nextScrollTop === scrollTop) return;
+    window.scrollTo({ behavior: "auto", top: nextScrollTop });
+    updateMovePreview(interaction, interaction.pointerX, interaction.pointerY);
+    if (interactionRef.current === interaction) {
+      autoScrollFrameRef.current = window.requestAnimationFrame(runDragAutoScroll);
+    }
+  }
+
+  function scheduleDragAutoScroll() {
+    const interaction = interactionRef.current;
+    if (!interaction || interaction.kind !== "move" || typeof window === "undefined" || typeof document === "undefined") return;
+    const scrollingElement = document.scrollingElement ?? document.documentElement;
+    const scrollTop = getPageScrollTop();
+    const scrollHeight = Math.max(scrollingElement.scrollHeight, document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0);
+    if (!getPageShellDragAutoScrollDelta(interaction.pointerY, window.innerHeight, scrollTop, scrollHeight)) {
+      cancelDragAutoScroll();
+      return;
+    }
+    if (autoScrollFrameRef.current === null) {
+      autoScrollFrameRef.current = window.requestAnimationFrame(runDragAutoScroll);
+    }
   }
 
   function beginMove(event: PointerEvent<HTMLButtonElement>, id: string) {
@@ -213,6 +306,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       id,
       kind: "move",
       pointerId: event.pointerId,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
       startVisibleOrder,
       startLayout,
       targetIndex: Math.max(0, startVisibleOrder.indexOf(id)),
@@ -236,6 +331,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const naturalHeight = measureNaturalShellHeight(shellContent);
     const layoutWidth = layoutElement?.getBoundingClientRect().width ?? shellContent?.getBoundingClientRect().width ?? 0;
     const initialSize = startLayout.sizes[id] ?? { heightPx: null, span: 12 };
+    const initialHeight = initialSize.heightPx ?? naturalHeight;
     interactionRef.current = {
       columnWidth: layoutWidth > 0 ? layoutWidth / 12 : Math.max(shellContent?.getBoundingClientRect().width ?? 1, 1),
       id,
@@ -248,8 +344,26 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       startY: event.clientY,
     };
     layout.beginPreview(startLayout);
+    layout.setPreviewSizes((sizes) => ({
+      ...sizes,
+      [id]: { ...(sizes[id] ?? initialSize), heightPx: snapPageShellHeight(initialHeight) },
+    }));
     setResizingId(id);
     event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function setShellToNaturalHeight(event: MouseEvent<HTMLButtonElement>, id: string) {
+    if (!layout.isEditing || interactionRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startLayout = currentLayout();
+    if (startLayout.sizes[id]?.heightPx === null || !startLayout.sizes[id]) return;
+    layout.beginPreview(startLayout);
+    layout.setPreviewSizes((sizes) => ({
+      ...sizes,
+      [id]: { ...sizes[id], heightPx: null },
+    }));
+    layout.commitPreview();
   }
 
   function updateInteraction(event: PointerEvent<HTMLButtonElement>) {
@@ -258,27 +372,17 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     event.preventDefault();
     event.stopPropagation();
     if (interaction.kind === "move") {
-      const insertionIndex = getPageShellInsertionIndex(
-        interaction.geometries,
-        interaction.startVisibleOrder,
-        interaction.id,
-        event.clientX,
-        event.clientY,
-        interaction.targetIndex,
-      );
-      interaction.targetIndex = insertionIndex;
-      setDragInsertionIndex(insertionIndex);
-      setDragIndicatorStyle(getInsertionIndicatorStyle(interaction, insertionIndex, layoutRef.current));
-      const nextVisibleOrder = reorderPageShellOrderAt(interaction.startVisibleOrder, interaction.id, insertionIndex);
-      const nextOrder = mergeVisiblePageShellOrder(interaction.startLayout.order, nextVisibleOrder, visibleShellIds);
-      if (!layoutsHaveSameOrder(nextOrder, layout.order)) layout.setPreviewOrder(nextOrder);
+      interaction.pointerX = event.clientX;
+      interaction.pointerY = event.clientY;
+      updateMovePreview(interaction, interaction.pointerX, interaction.pointerY);
+      scheduleDragAutoScroll();
       return;
     }
 
     const deltaColumns = interaction.columnWidth > 0 ? Math.round((event.clientX - interaction.startX) / interaction.columnWidth) : 0;
     const span = normalizePageShellSpan(interaction.initialSize.span + deltaColumns, interaction.initialSize.span);
     const initialHeight = interaction.initialSize.heightPx ?? interaction.naturalHeight;
-    const heightPx = snapPageShellHeight(initialHeight + (event.clientY - interaction.startY), interaction.naturalHeight);
+    const heightPx = snapPageShellHeight(initialHeight + (event.clientY - interaction.startY));
     const currentSize = layout.sizes[interaction.id];
     if (currentSize?.span === span && currentSize.heightPx === heightPx) return;
     layout.setPreviewSizes((sizes) => ({
@@ -293,6 +397,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     event.preventDefault();
     event.stopPropagation();
     interactionRef.current = null;
+    cancelDragAutoScroll();
     if (cancelled) layout.cancelPreview();
     else layout.commitPreview();
     setDraggingId(null);
@@ -324,6 +429,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                   aria-label={`Move ${shell.label}`}
                   className="flex h-6 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md hover:bg-[#eee9ff] active:cursor-grabbing dark:hover:bg-white/10"
                   onPointerCancel={(event) => endInteraction(event, true)}
+                  onLostPointerCapture={(event) => endInteraction(event, true)}
                   onPointerDown={(event) => beginMove(event, shell.id)}
                   onPointerMove={updateInteraction}
                   onPointerUp={(event) => endInteraction(event, false)}
@@ -333,21 +439,38 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                   <GripVertical aria-hidden="true" className="h-4 w-4" />
                 </button>
                 <span className="min-w-0 flex-1 truncate font-semibold">{shell.label}</span>
-                <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{size.span}/12</span>
+                <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{size.span}/12 · {hasCustomHeight ? `${size.heightPx}px` : "Auto"}</span>
+                {hasCustomHeight ? (
+                  <button
+                    aria-label={`Use natural height for ${shell.label}`}
+                    className="shrink-0 rounded-md px-1.5 py-1 text-[10px] font-semibold text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
+                    onClick={(event) => setShellToNaturalHeight(event, shell.id)}
+                    title={`Use natural height for ${shell.label}`}
+                    type="button"
+                  >
+                    Auto
+                  </button>
+                ) : null}
               </div>
             ) : null}
             <div
-              className={`relative min-w-0 ${hasCustomHeight ? "adhdice-scrollbar page-shell-custom-height overflow-y-auto overscroll-contain" : ""}`}
+              className={`relative min-w-0 ${hasCustomHeight ? "adhdice-scrollbar page-shell-custom-height overflow-y-auto" : ""}`}
               data-page-shell-height={size.heightPx ?? "natural"}
               ref={(element) => { shellContentRefs.current[shell.id] = element; }}
               style={hasCustomHeight ? { height: `${size.heightPx}px` } : undefined}
             >
-              {shell.node}
+              {shell.visible ? shell.node : (
+                <div aria-label={`${shell.label} placeholder`} className="flex min-h-36 flex-col justify-center rounded-[1rem] border border-dashed border-[#d8d0f5] bg-[#faf8ff]/70 px-4 py-5 text-center dark:border-white/15 dark:bg-white/[0.04]" data-page-shell-placeholder>
+                  <p className="text-sm font-semibold text-[#514779] dark:text-white/80">{shell.label}</p>
+                  <p className="mt-1 text-xs text-[#8c84aa] dark:text-white/50">{shell.hiddenDescription ?? DEFAULT_HIDDEN_SHELL_DESCRIPTION}</p>
+                </div>
+              )}
               {layout.isEditing ? (
                 <button
                   aria-label={`Resize ${shell.label}`}
                   className="absolute bottom-1 right-1 z-20 flex h-6 w-6 cursor-se-resize touch-none items-center justify-center rounded-md border border-[#d8d0f5] bg-[#faf8ff]/95 text-[#6f57f6] shadow-sm hover:bg-[#eee9ff] dark:border-white/15 dark:bg-[#211a38]/95 dark:text-[#cabfff] dark:hover:bg-white/10"
                   onPointerCancel={(event) => endInteraction(event, true)}
+                  onLostPointerCapture={(event) => endInteraction(event, true)}
                   onPointerDown={(event) => beginResize(event, shell.id)}
                   onPointerMove={updateInteraction}
                   onPointerUp={(event) => endInteraction(event, false)}

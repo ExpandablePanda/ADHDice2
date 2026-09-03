@@ -797,11 +797,14 @@ export function FocusPage({
 
       </PageShell>
 
-      {counterHistory.length ? (
-        <PageShell id="focus-counter-history" label="Counter History">
-          <FocusCounterHistoryCard countersById={countersById} history={counterHistory} />
-        </PageShell>
-      ) : null}
+      <PageShell
+        hiddenDescription="Hidden until counter history exists"
+        id="focus-counter-history"
+        label="Counter History"
+        visible={counterHistory.length > 0}
+      >
+        <FocusCounterHistoryCard countersById={countersById} history={counterHistory} />
+      </PageShell>
 
       <PageShell id="focus-history" label="Focus History">
       <div className="mt-6 w-full pb-40 sm:mt-10 sm:pb-44 lg:pb-28">
