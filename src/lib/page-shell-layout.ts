@@ -11,6 +11,13 @@ export type PageShellSize = {
 
 export type PageShellSizeDefaults = Readonly<Record<string, PageShellSize>>;
 
+export type PageShellCanonicalLayout = {
+  gridClassName?: string;
+  order: readonly string[];
+  shellClassNames?: Readonly<Record<string, string>>;
+  sizes: PageShellSizeDefaults;
+};
+
 export type PageShellLayoutPreference = {
   order: string[];
   sizes: Record<string, PageShellSize>;
@@ -33,8 +40,16 @@ const PAGE_SHELL_LEGACY_ID_REPLACEMENTS: Readonly<Record<string, PageShellLegacy
   },
 };
 
-const DEFAULT_PAGE_SHELL_SIZE: PageShellSize = { heightPx: null, span: 12 };
-const FITNESS_HALF_SIZE: PageShellSize = { heightPx: null, span: 6 };
+const NATURAL_PAGE_SHELL_SIZE: PageShellSize = { heightPx: null, span: 12 };
+const CANONICAL_PAGE_SHELL_SIZE = (span: PageShellSpan): PageShellSize => ({ heightPx: null, span });
+
+function canonicalLayout(
+  order: readonly string[],
+  sizes: PageShellSizeDefaults,
+  options: Omit<PageShellCanonicalLayout, "order" | "sizes"> = {},
+): PageShellCanonicalLayout {
+  return { ...options, order, sizes };
+}
 
 export const HEALTH_PAGE_SHELL_IDS = {
   Today: ["today-snapshot", "today-quick-log", "today-timeline"],
@@ -51,59 +66,6 @@ export const HEALTH_PAGE_SHELL_IDS = {
 
 export type HealthPageShellTab = keyof typeof HEALTH_PAGE_SHELL_IDS;
 
-export const HEALTH_PAGE_SHELL_SIZE_DEFAULTS: Record<HealthPageShellTab, PageShellSizeDefaults> = {
-  Today: {
-    "today-snapshot": DEFAULT_PAGE_SHELL_SIZE,
-    "today-quick-log": DEFAULT_PAGE_SHELL_SIZE,
-    "today-timeline": DEFAULT_PAGE_SHELL_SIZE,
-  },
-  Food: {
-    "food-meal-log": FITNESS_HALF_SIZE,
-    "food-daily-totals": FITNESS_HALF_SIZE,
-    "food-favorites-recent": FITNESS_HALF_SIZE,
-    "food-library": DEFAULT_PAGE_SHELL_SIZE,
-  },
-  Water: {
-    "water-log": FITNESS_HALF_SIZE,
-    "water-pending": FITNESS_HALF_SIZE,
-    "water-today": FITNESS_HALF_SIZE,
-    "water-history": FITNESS_HALF_SIZE,
-  },
-  Fitness: {
-    "fitness-active-workout": DEFAULT_PAGE_SHELL_SIZE,
-    "fitness-today": FITNESS_HALF_SIZE,
-    "fitness-week": FITNESS_HALF_SIZE,
-    "fitness-goals": DEFAULT_PAGE_SHELL_SIZE,
-    "fitness-plans": DEFAULT_PAGE_SHELL_SIZE,
-    "fitness-workout-history": DEFAULT_PAGE_SHELL_SIZE,
-  },
-  Journal: {
-    "journal-entry-history": DEFAULT_PAGE_SHELL_SIZE,
-    "journal-library": DEFAULT_PAGE_SHELL_SIZE,
-    "journal-feeling-trends": DEFAULT_PAGE_SHELL_SIZE,
-  },
-  Weight: {
-    "weight-entry": FITNESS_HALF_SIZE,
-    "weight-trend": FITNESS_HALF_SIZE,
-  },
-  Sleep: {
-    "sleep-ledger": FITNESS_HALF_SIZE,
-    "sleep-log": FITNESS_HALF_SIZE,
-    "sleep-sources": FITNESS_HALF_SIZE,
-    "sleep-focus-ledger": FITNESS_HALF_SIZE,
-  },
-  Insights: {
-    "insights-import": FITNESS_HALF_SIZE,
-    "insights-trends": FITNESS_HALF_SIZE,
-  },
-  Awards: {
-    "awards-content": DEFAULT_PAGE_SHELL_SIZE,
-  },
-  Settings: {
-    "settings-content": DEFAULT_PAGE_SHELL_SIZE,
-  },
-};
-
 export const STATS_PAGE_SHELL_IDS = [
   "stats-overview",
   "stats-economy",
@@ -111,10 +73,6 @@ export const STATS_PAGE_SHELL_IDS = [
   "stats-achievements",
   "stats-energy",
 ] as const;
-
-export const STATS_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = Object.fromEntries(
-  STATS_PAGE_SHELL_IDS.map((id) => [id, DEFAULT_PAGE_SHELL_SIZE]),
-);
 
 export const FOCUS_PAGE_SHELL_IDS = [
   "focus-timer-workspace",
@@ -124,9 +82,124 @@ export const FOCUS_PAGE_SHELL_IDS = [
   "focus-activity-trend",
 ] as const;
 
-export const FOCUS_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = Object.fromEntries(
-  FOCUS_PAGE_SHELL_IDS.map((id) => [id, DEFAULT_PAGE_SHELL_SIZE]),
-);
+export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, PageShellCanonicalLayout> = {
+  Today: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Today, {
+    "today-snapshot": NATURAL_PAGE_SHELL_SIZE,
+    "today-quick-log": NATURAL_PAGE_SHELL_SIZE,
+    "today-timeline": NATURAL_PAGE_SHELL_SIZE,
+  }),
+  Food: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Food, {
+    "food-meal-log": CANONICAL_PAGE_SHELL_SIZE(7),
+    "food-daily-totals": CANONICAL_PAGE_SHELL_SIZE(5),
+    "food-favorites-recent": CANONICAL_PAGE_SHELL_SIZE(5),
+    "food-library": NATURAL_PAGE_SHELL_SIZE,
+  }, {
+    gridClassName: "xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]",
+    shellClassNames: {
+      "food-meal-log": "xl:col-start-1 xl:col-end-2",
+      "food-daily-totals": "xl:col-start-2 xl:col-end-3",
+      "food-favorites-recent": "xl:col-start-2 xl:col-end-3",
+      "food-library": "xl:col-span-full",
+    },
+  }),
+  Water: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Water, {
+    "water-log": CANONICAL_PAGE_SHELL_SIZE(5),
+    "water-pending": CANONICAL_PAGE_SHELL_SIZE(7),
+    "water-today": CANONICAL_PAGE_SHELL_SIZE(7),
+    "water-history": CANONICAL_PAGE_SHELL_SIZE(7),
+  }, {
+    gridClassName: "xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]",
+    shellClassNames: {
+      "water-log": "xl:col-start-1 xl:col-end-2",
+      "water-pending": "xl:col-start-2 xl:col-end-3",
+      "water-today": "xl:col-start-2 xl:col-end-3",
+      "water-history": "xl:col-start-2 xl:col-end-3",
+    },
+  }),
+  Fitness: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Fitness, {
+    "fitness-active-workout": NATURAL_PAGE_SHELL_SIZE,
+    "fitness-today": CANONICAL_PAGE_SHELL_SIZE(7),
+    "fitness-week": CANONICAL_PAGE_SHELL_SIZE(5),
+    "fitness-goals": NATURAL_PAGE_SHELL_SIZE,
+    "fitness-plans": NATURAL_PAGE_SHELL_SIZE,
+    "fitness-workout-history": NATURAL_PAGE_SHELL_SIZE,
+  }, {
+    gridClassName: "xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]",
+    shellClassNames: {
+      "fitness-active-workout": "xl:col-span-full",
+      "fitness-today": "xl:col-start-1 xl:col-end-2",
+      "fitness-week": "xl:col-start-2 xl:col-end-3",
+      "fitness-goals": "xl:col-span-full",
+      "fitness-plans": "xl:col-span-full",
+      "fitness-workout-history": "xl:col-span-full",
+    },
+  }),
+  Journal: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Journal, {
+    "journal-entry-history": NATURAL_PAGE_SHELL_SIZE,
+    "journal-library": NATURAL_PAGE_SHELL_SIZE,
+    "journal-feeling-trends": NATURAL_PAGE_SHELL_SIZE,
+  }),
+  Weight: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Weight, {
+    "weight-entry": CANONICAL_PAGE_SHELL_SIZE(6),
+    "weight-trend": CANONICAL_PAGE_SHELL_SIZE(6),
+  }, {
+    gridClassName: "xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]",
+    shellClassNames: {
+      "weight-entry": "xl:col-start-1 xl:col-end-2",
+      "weight-trend": "xl:col-start-2 xl:col-end-3",
+    },
+  }),
+  Sleep: canonicalLayout(["sleep-ledger", "sleep-log", "sleep-focus-ledger", "sleep-sources"], {
+    "sleep-ledger": CANONICAL_PAGE_SHELL_SIZE(6),
+    "sleep-log": CANONICAL_PAGE_SHELL_SIZE(6),
+    "sleep-focus-ledger": CANONICAL_PAGE_SHELL_SIZE(6),
+    "sleep-sources": CANONICAL_PAGE_SHELL_SIZE(6),
+  }, {
+    gridClassName: "xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]",
+    shellClassNames: {
+      "sleep-ledger": "xl:col-start-1 xl:col-end-2",
+      "sleep-log": "xl:col-start-2 xl:col-end-3",
+      "sleep-focus-ledger": "xl:col-start-2 xl:col-end-3",
+      "sleep-sources": "xl:col-start-2 xl:col-end-3",
+    },
+  }),
+  Insights: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Insights, {
+    "insights-import": CANONICAL_PAGE_SHELL_SIZE(6),
+    "insights-trends": CANONICAL_PAGE_SHELL_SIZE(6),
+  }, {
+    gridClassName: "xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]",
+    shellClassNames: {
+      "insights-import": "xl:col-start-1 xl:col-end-2",
+      "insights-trends": "xl:col-start-2 xl:col-end-3",
+    },
+  }),
+  Awards: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Awards, {
+    "awards-content": NATURAL_PAGE_SHELL_SIZE,
+  }),
+  Settings: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Settings, {
+    "settings-content": NATURAL_PAGE_SHELL_SIZE,
+  }),
+};
+
+export const STATS_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canonicalLayout(STATS_PAGE_SHELL_IDS, Object.fromEntries(
+  STATS_PAGE_SHELL_IDS.map((id) => [id, NATURAL_PAGE_SHELL_SIZE]),
+));
+
+export const FOCUS_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canonicalLayout(FOCUS_PAGE_SHELL_IDS, Object.fromEntries(
+  FOCUS_PAGE_SHELL_IDS.map((id) => [id, NATURAL_PAGE_SHELL_SIZE]),
+));
+
+/**
+ * 12-column editing fallbacks are derived from the canonical layouts. The
+ * canonical layouts above remain the source of truth for the no-preference
+ * presentation and Reset Layout behavior.
+ */
+export const HEALTH_PAGE_SHELL_SIZE_DEFAULTS: Record<HealthPageShellTab, PageShellSizeDefaults> = Object.fromEntries(
+  Object.entries(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS).map(([tab, layout]) => [tab, layout.sizes]),
+) as Record<HealthPageShellTab, PageShellSizeDefaults>;
+
+export const STATS_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = STATS_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
+export const FOCUS_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = FOCUS_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
 
 export function getHealthPageShellKey(tab: HealthPageShellTab) {
   return `health:${tab.toLowerCase()}`;
@@ -376,7 +449,7 @@ export function getPageShellInsertionIndex(
   return Math.min(orderWithoutSource.length, lastItemIndex + 1);
 }
 
-export function normalizePageShellSpan(value: unknown, fallback: PageShellSpan = DEFAULT_PAGE_SHELL_SIZE.span): PageShellSpan {
+export function normalizePageShellSpan(value: unknown, fallback: PageShellSpan = NATURAL_PAGE_SHELL_SIZE.span): PageShellSpan {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return PAGE_SHELL_SPAN_OPTIONS.reduce((closest, option) => (
     Math.abs(option - value) < Math.abs(closest - value) ? option : closest
@@ -413,7 +486,7 @@ function normalizePageShellHeight(value: unknown, fallback: number | null) {
   return Math.max(PAGE_SHELL_MIN_HEIGHT, snapped);
 }
 
-export function normalizePageShellSize(stored: unknown, fallback: PageShellSize = DEFAULT_PAGE_SHELL_SIZE): PageShellSize {
+export function normalizePageShellSize(stored: unknown, fallback: PageShellSize = NATURAL_PAGE_SHELL_SIZE): PageShellSize {
   const source = stored && typeof stored === "object" && !Array.isArray(stored) ? stored as Record<string, unknown> : {};
   const storedHeight = Object.prototype.hasOwnProperty.call(source, "heightPx")
     ? source.heightPx
@@ -470,6 +543,10 @@ function readStoredPageShellLayouts(storage: PageShellLayoutStorage, storageKey:
   } catch {
     return {};
   }
+}
+
+export function hasPageShellLayout(storage: PageShellLayoutStorage, storageKey: string, pageKey: string) {
+  return Object.prototype.hasOwnProperty.call(readStoredPageShellLayouts(storage, storageKey), pageKey);
 }
 
 export function readPageShellLayout(

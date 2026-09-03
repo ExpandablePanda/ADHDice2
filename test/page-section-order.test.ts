@@ -5,13 +5,16 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   FOCUS_PAGE_SHELL_IDS,
+  FOCUS_PAGE_SHELL_CANONICAL_LAYOUT,
+  HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS,
   HEALTH_PAGE_SHELL_IDS,
   STATS_PAGE_SHELL_IDS,
+  STATS_PAGE_SHELL_CANONICAL_LAYOUT,
   getPageShellDragAutoScrollDelta,
   getHealthPageShellKey,
   getPageShellInsertionIndex,
   getPageShellLayoutStorageKey,
-  HEALTH_PAGE_SHELL_SIZE_DEFAULTS,
+  hasPageShellLayout,
   clampPageShellHeight,
   getPageShellShrinkHeight,
   mergeVisiblePageShellOrder,
@@ -30,7 +33,7 @@ import {
   snapPageShellHeight,
   writePageShellLayout,
 } from "@/lib/page-shell-layout";
-import { PageShell, PageShellBody, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 
 const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
@@ -63,10 +66,20 @@ function staticShellLayout(isEditing: boolean): PageShellLayoutState {
   return {
     beginPreview: () => undefined,
     canEdit: true,
+    canReorder: true,
+    canResize: true,
+    canonicalLayout: {
+      order: ["conditional", "regular"],
+      sizes: {
+        conditional: { heightPx: 288, span: 6 },
+        regular: { heightPx: null, span: 12 },
+      },
+    },
     cancelPreview: () => undefined,
     commitPreview: () => undefined,
     finishEditing: () => undefined,
     isEditing,
+    isCanonical: false,
     order: ["conditional", "regular"],
     pageKey: "test",
     reset: () => undefined,
@@ -106,7 +119,7 @@ test("shell layout storage is user-scoped, page-independent, and resettable", ()
   const store = storage();
   const key = getPageShellLayoutStorageKey("user-1");
   const fitnessDefaults = HEALTH_PAGE_SHELL_IDS.Fitness;
-  const fitnessSizes = HEALTH_PAGE_SHELL_SIZE_DEFAULTS.Fitness;
+  const fitnessSizes = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Fitness.sizes;
   store.setItem("adhdice-page-section-order:user-1", JSON.stringify({ "health:fitness": ["fitness-week", "fitness-today"] }));
   assert.equal(key, "adhdice-page-shell-layout-v1:user-1");
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", fitnessDefaults, fitnessSizes).order, [...fitnessDefaults]);
@@ -121,7 +134,7 @@ test("shell layout storage is user-scoped, page-independent, and resettable", ()
       sizes: { "food-daily-totals": { heightPx: 288, span: 4 } },
     },
   }));
-  const foodLayout = readPageShellLayout(store, key, "health:food", HEALTH_PAGE_SHELL_IDS.Food, HEALTH_PAGE_SHELL_SIZE_DEFAULTS.Food);
+  const foodLayout = readPageShellLayout(store, key, "health:food", HEALTH_PAGE_SHELL_IDS.Food, HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food.sizes);
   assert.deepEqual(foodLayout.order, ["food-meal-log", "food-daily-totals", "food-favorites-recent", "food-library"]);
   assert.deepEqual(foodLayout.sizes["food-daily-totals"], { heightPx: 288, span: 4 });
   assert.deepEqual(foodLayout.sizes["food-favorites-recent"], { heightPx: 288, span: 4 });
@@ -136,6 +149,68 @@ test("shell layout storage is user-scoped, page-independent, and resettable", ()
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", ["fitness-today", "fitness-week"], {}).sizes["fitness-today"], { heightPx: null, span: 12 });
   removePageShellLayout(store, key, "focus");
   assert.deepEqual(readPageShellLayout(store, key, "focus", FOCUS_PAGE_SHELL_IDS, {}).order, [...FOCUS_PAGE_SHELL_IDS]);
+});
+
+test("Reset Layout removes only the current preference and restores canonical order, width, and natural height", () => {
+  const store = storage();
+  const key = getPageShellLayoutStorageKey("user-reset");
+  const foodCanonical = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food;
+  writePageShellLayout(store, key, "health:food", {
+    order: ["food-library", "food-favorites-recent", "food-daily-totals", "food-meal-log"],
+    sizes: { "food-meal-log": { heightPx: 384, span: 12 } },
+  });
+  writePageShellLayout(store, key, "focus", {
+    order: ["focus-goals", ...FOCUS_PAGE_SHELL_IDS.filter((id) => id !== "focus-goals")],
+    sizes: { "focus-goals": { heightPx: 384, span: 8 } },
+  });
+
+  const savedFood = readPageShellLayout(store, key, "health:food", HEALTH_PAGE_SHELL_IDS.Food, foodCanonical.sizes);
+  assert.deepEqual(savedFood.order[0], "food-library");
+  assert.deepEqual(savedFood.sizes["food-meal-log"], { heightPx: 384, span: 12 });
+  assert.equal(hasPageShellLayout(store, key, "health:food"), true);
+
+  removePageShellLayout(store, key, "health:food");
+  const resetFood = readPageShellLayout(store, key, "health:food", foodCanonical.order, foodCanonical.sizes);
+  assert.deepEqual(resetFood.order, [...foodCanonical.order]);
+  assert.deepEqual(resetFood.sizes, foodCanonical.sizes);
+  assert.equal(hasPageShellLayout(store, key, "health:food"), false);
+  assert.equal(hasPageShellLayout(store, key, "focus"), true);
+  assert.deepEqual(readPageShellLayout(store, key, "health:food", foodCanonical.order, foodCanonical.sizes), resetFood);
+});
+
+test("canonical Health metadata preserves pre-shell placement and proportions", () => {
+  const food = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food;
+  assert.equal(food.gridClassName, "xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]");
+  assert.equal(food.shellClassNames?.["food-meal-log"], "xl:col-start-1 xl:col-end-2");
+  assert.equal(food.shellClassNames?.["food-daily-totals"], "xl:col-start-2 xl:col-end-3");
+  assert.equal(food.shellClassNames?.["food-favorites-recent"], "xl:col-start-2 xl:col-end-3");
+  assert.equal(food.shellClassNames?.["food-library"], "xl:col-span-full");
+  assert.equal(food.sizes["food-meal-log"].heightPx, null);
+
+  const fitness = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Fitness;
+  assert.equal(fitness.gridClassName, "xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]");
+  assert.equal(fitness.shellClassNames?.["fitness-active-workout"], "xl:col-span-full");
+  assert.equal(fitness.shellClassNames?.["fitness-today"], "xl:col-start-1 xl:col-end-2");
+  assert.equal(fitness.shellClassNames?.["fitness-week"], "xl:col-start-2 xl:col-end-3");
+  assert.equal(fitness.sizes["fitness-today"].span, 7);
+  assert.equal(fitness.sizes["fitness-week"].span, 5);
+  assert.equal(fitness.sizes["fitness-today"].heightPx, null);
+});
+
+test("Health, Focus, and Stats canonical defaults are explicit and natural", () => {
+  for (const [tab, layout] of Object.entries(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS)) {
+    assert.ok(layout.order.length > 0, `${tab} should have canonical shells`);
+    for (const id of layout.order) assert.equal(layout.sizes[id].heightPx, null, `${tab}/${id} should be natural height`);
+  }
+  assert.deepEqual([...HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Sleep.order], ["sleep-ledger", "sleep-log", "sleep-focus-ledger", "sleep-sources"]);
+  assert.equal(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Water.gridClassName, "xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]");
+  assert.equal(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Insights.gridClassName, "xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]");
+  assert.equal(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Weight.gridClassName, "xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]");
+  assert.deepEqual([...FOCUS_PAGE_SHELL_CANONICAL_LAYOUT.order], [...FOCUS_PAGE_SHELL_IDS]);
+  assert.deepEqual([...STATS_PAGE_SHELL_CANONICAL_LAYOUT.order], [...STATS_PAGE_SHELL_IDS]);
+  for (const layout of [FOCUS_PAGE_SHELL_CANONICAL_LAYOUT, STATS_PAGE_SHELL_CANONICAL_LAYOUT]) {
+    for (const id of layout.order) assert.equal(layout.sizes[id].heightPx, null);
+  }
 });
 
 test("Water and Sleep legacy composite slots migrate their order and size to replacement shells", () => {
@@ -155,13 +230,13 @@ test("Water and Sleep legacy composite slots migrate their order and size to rep
     },
   }));
 
-  const water = readPageShellLayout(store, key, "health:water", HEALTH_PAGE_SHELL_IDS.Water, HEALTH_PAGE_SHELL_SIZE_DEFAULTS.Water);
+  const water = readPageShellLayout(store, key, "health:water", HEALTH_PAGE_SHELL_IDS.Water, HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Water.sizes);
   assert.deepEqual(water.order, ["water-log", "water-pending", "water-today", "water-history"]);
   for (const id of ["water-pending", "water-today", "water-history"]) {
     assert.deepEqual(water.sizes[id], { heightPx: 432, span: 8 });
   }
 
-  const sleep = readPageShellLayout(store, key, "health:sleep", HEALTH_PAGE_SHELL_IDS.Sleep, HEALTH_PAGE_SHELL_SIZE_DEFAULTS.Sleep);
+  const sleep = readPageShellLayout(store, key, "health:sleep", HEALTH_PAGE_SHELL_IDS.Sleep, HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Sleep.sizes);
   assert.deepEqual(sleep.order, ["sleep-log", "sleep-sources", "sleep-focus-ledger", "sleep-ledger"]);
   for (const id of ["sleep-log", "sleep-sources", "sleep-focus-ledger"]) {
     assert.deepEqual(sleep.sizes[id], { heightPx: 384, span: 7 });
@@ -211,6 +286,44 @@ test("shell surfaces keep the visual frame fixed while the body owns constrained
   assert.match(markup, /data-test-body/);
   assert.match(markup, /page-shell-body/);
   assert.doesNotMatch(markup, /page-shell-body[^\"]*overflow-y-auto/);
+  assert.doesNotMatch(shellSource, /page-shell-custom-height overflow-hidden/);
+  assert.doesNotMatch(globalSource, /page-shell-custom-height:not\(:has/);
+});
+
+test("single-shell layouts can edit and resize without exposing reorder controls", () => {
+  const layout: PageShellLayoutState = {
+    ...staticShellLayout(true),
+    canReorder: false,
+    canonicalLayout: {
+      order: ["only"],
+      sizes: { only: { heightPx: null, span: 12 } },
+    },
+    isCanonical: true,
+    order: ["only"],
+    pageKey: "single-shell",
+    sizes: { only: { heightPx: 288, span: 12 } },
+  };
+  const markup = renderToStaticMarkup(createElement(
+    ReorderablePageShells,
+    { layout },
+    createElement(PageShell, { id: "only", label: "Only Shell" }, createElement("div", null, "content")),
+  ));
+  const controls = renderToStaticMarkup(createElement(PageShellLayoutControls, { layout }));
+  assert.equal(layout.canEdit, true);
+  assert.equal(layout.canResize, true);
+  assert.equal(layout.canReorder, false);
+  assert.match(controls, /Reset Layout/);
+  assert.match(controls, /Done/);
+  assert.match(markup, /aria-label="Resize Only Shell"/);
+  assert.match(markup, /aria-label="Shrink Only Shell"/);
+  assert.match(markup, /aria-label="Expand Only Shell"/);
+  assert.doesNotMatch(markup, /aria-label="Move Only Shell"/);
+});
+
+test("two-or-more-shell layouts retain reorder capability", () => {
+  assert.equal(staticShellLayout(false).canEdit, true);
+  assert.equal(staticShellLayout(false).canResize, true);
+  assert.equal(staticShellLayout(false).canReorder, true);
 });
 
 test("Health collapsible shell surfaces keep collapse state canonical and scroll only their open body", () => {
@@ -346,11 +459,13 @@ test("Home keeps Task Search and To-do content inside its canonical shell", () =
   assert.match(homeSource, /<AdhdPanel/);
 });
 
-test("page-level layout controls are header actions and only render for two or more shells", () => {
+test("page-level layout controls are header actions and render for every valid shell layout", () => {
   assert.match(headerSource, /actions\?: ReactNode/);
   assert.match(shellSource, /aria-label="Edit page layout"/);
   assert.match(shellSource, /title="Edit layout"/);
   assert.match(shellSource, /layout\.canEdit/);
+  assert.match(shellSource, /layout\.canReorder/);
+  assert.match(shellSource, /layout\.canResize/);
   assert.match(shellSource, /Reset Layout/);
   assert.match(shellSource, /Done/);
   assert.match(statsSource, /PageShellHeader actions=\{<PageShellLayoutControls layout=\{layout\} \/>\}/);
@@ -359,6 +474,9 @@ test("page-level layout controls are header actions and only render for two or m
   assert.doesNotMatch(homeSource, /Edit page layout|PageShellLayoutControls/);
   assert.equal(HEALTH_PAGE_SHELL_IDS.Awards.length, 1);
   assert.equal(HEALTH_PAGE_SHELL_IDS.Settings.length, 1);
+  assert.match(healthSource, /HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS/);
+  assert.match(focusSource, /FOCUS_PAGE_SHELL_CANONICAL_LAYOUT/);
+  assert.match(statsSource, /STATS_PAGE_SHELL_CANONICAL_LAYOUT/);
 });
 
 test("Health tabs use independent semantic shell IDs and preserve grouped internals", () => {
@@ -371,9 +489,9 @@ test("Health tabs use independent semantic shell IDs and preserve grouped intern
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Sleep], ["sleep-ledger", "sleep-log", "sleep-sources", "sleep-focus-ledger"]);
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Insights], ["insights-import", "insights-trends"]);
   assert.equal(getHealthPageShellKey("Fitness"), "health:fitness");
-  assert.equal(HEALTH_PAGE_SHELL_SIZE_DEFAULTS.Fitness["fitness-today"].span, 6);
-  assert.equal(HEALTH_PAGE_SHELL_SIZE_DEFAULTS.Fitness["fitness-week"].span, 6);
-  assert.equal(HEALTH_PAGE_SHELL_SIZE_DEFAULTS.Fitness["fitness-goals"].span, 12);
+  assert.equal(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Fitness.sizes["fitness-today"].span, 7);
+  assert.equal(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Fitness.sizes["fitness-week"].span, 5);
+  assert.equal(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Fitness.sizes["fitness-goals"].span, 12);
   assert.match(healthSource, /HEALTH_PAGE_SHELL_IDS\[activeTab\]/);
   assert.match(healthSource, /layout=\{pageShellLayout\}/);
   assert.match(todaySource, /<PageShell id="today-snapshot"/);
@@ -482,7 +600,7 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(globalSource, /\.page-shell-body[\s\S]*overflow-y: auto/);
   assert.match(globalSource, /\.page-shell-chart-header/);
   assert.match(globalSource, /\.fitness-stat-progress[\s\S]*max-width: 100%/);
-  assert.match(globalSource, /\.page-shell-custom-height:not\(:has\(> \.page-shell-surface\)\)[\s\S]*overflow-y: auto/);
+  assert.doesNotMatch(globalSource, /\.page-shell-custom-height:not\(:has/);
   assert.match(globalSource, /@container page-shell \(min-width: 36rem\)/);
   assert.match(globalSource, /@container page-shell \(min-width: 64rem\)/);
   assert.match(globalSource, /@container page-shell \(max-width: 24rem\)/);

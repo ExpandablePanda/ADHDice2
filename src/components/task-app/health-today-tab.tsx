@@ -109,7 +109,7 @@ export function HealthTodayTab({
         <h2 className="mt-1 text-xl font-black text-[#1e2744] dark:text-white">Today&apos;s Snapshot</h2>
       </div>
 
-      <ReorderablePageShells layout={layout}>
+      <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5">
       <PageShell id="today-snapshot" label="Today Snapshot">
       <PageShellSurface>
       <PageShellBody>

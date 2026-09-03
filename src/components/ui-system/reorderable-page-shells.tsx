@@ -318,7 +318,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   }
 
   function beginMove(event: PointerEvent<HTMLButtonElement>, id: string) {
-    if (!layout.isEditing) return;
+    if (!layout.isEditing || !layout.canReorder) return;
     event.preventDefault();
     event.stopPropagation();
     const startLayout = currentLayout();
@@ -344,7 +344,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   }
 
   function beginResize(event: PointerEvent<HTMLButtonElement>, id: string) {
-    if (!layout.isEditing) return;
+    if (!layout.isEditing || !layout.canResize) return;
     event.preventDefault();
     event.stopPropagation();
     const startLayout = currentLayout();
@@ -376,7 +376,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   }
 
   function setShellHeight(event: MouseEvent<HTMLButtonElement>, id: string, heightPx: number | null) {
-    if (!layout.isEditing || interactionRef.current) return;
+    if (!layout.isEditing || !layout.canResize || interactionRef.current) return;
     event.preventDefault();
     event.stopPropagation();
     const startLayout = currentLayout();
@@ -442,14 +442,23 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   }
 
   return (
-    <div className={`${shellsClassName} relative`} data-page-shell-layout={layout.pageKey} data-page-shell-edit-mode={layout.isEditing ? "true" : "false"} ref={layoutRef}>
+    <div
+      className={`${shellsClassName.replace(/\bxl:grid-cols-12\b/g, "").trim()} ${layout.isCanonical ? layout.canonicalLayout.gridClassName ?? "" : "xl:grid-cols-12"} relative`.trim()}
+      data-page-shell-layout={layout.pageKey}
+      data-page-shell-edit-mode={layout.isEditing ? "true" : "false"}
+      data-page-shell-presentation={layout.isCanonical ? "canonical" : "custom"}
+      ref={layoutRef}
+    >
       {orderedShells.map((shell) => {
         const size = layout.sizes[shell.id] ?? { heightPx: null, span: 12 as const };
         const spanClass = SHELL_SPAN_CLASSES[size.span] ?? SHELL_SPAN_CLASSES[12];
         const hasCustomHeight = size.heightPx !== null;
+        const shellPlacementClass = layout.isCanonical
+          ? layout.canonicalLayout.shellClassNames?.[shell.id] ?? ""
+          : spanClass;
         return (
           <div
-            className={`min-w-0 transition-transform ${spanClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
+            className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
             data-page-shell-id={shell.id}
             data-page-shell-dragging={draggingId === shell.id ? "true" : "false"}
             data-page-shell-resizing={resizingId === shell.id ? "true" : "false"}
@@ -459,19 +468,21 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
           >
             {layout.isEditing ? (
               <div className="mb-1 flex min-h-7 items-center gap-1.5 rounded-lg border border-[#e4def8] bg-[#faf8ff]/90 px-1.5 py-1 text-xs text-[#6f57f6] dark:border-white/10 dark:bg-[#211a38]/90 dark:text-[#cabfff]" data-page-shell-layout-strip>
-                <button
-                  aria-label={`Move ${shell.label}`}
-                  className="flex h-6 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md hover:bg-[#eee9ff] active:cursor-grabbing dark:hover:bg-white/10"
-                  onPointerCancel={(event) => endInteraction(event, true)}
-                  onLostPointerCapture={(event) => endInteraction(event, true)}
-                  onPointerDown={(event) => beginMove(event, shell.id)}
-                  onPointerMove={updateInteraction}
-                  onPointerUp={(event) => endInteraction(event, false)}
-                  title={`Move ${shell.label}`}
-                  type="button"
-                >
-                  <GripVertical aria-hidden="true" className="h-4 w-4" />
-                </button>
+                {layout.canReorder ? (
+                  <button
+                    aria-label={`Move ${shell.label}`}
+                    className="flex h-6 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md hover:bg-[#eee9ff] active:cursor-grabbing dark:hover:bg-white/10"
+                    onPointerCancel={(event) => endInteraction(event, true)}
+                    onLostPointerCapture={(event) => endInteraction(event, true)}
+                    onPointerDown={(event) => beginMove(event, shell.id)}
+                    onPointerMove={updateInteraction}
+                    onPointerUp={(event) => endInteraction(event, false)}
+                    title={`Move ${shell.label}`}
+                    type="button"
+                  >
+                    <GripVertical aria-hidden="true" className="h-4 w-4" />
+                  </button>
+                ) : null}
                 <span className="min-w-0 flex-1 truncate font-semibold">{shell.label}</span>
                 <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{size.span}/12 · {hasCustomHeight ? `${size.heightPx}px` : "Auto"}</span>
                 <button
@@ -495,7 +506,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
               </div>
             ) : null}
             <div
-              className={`relative min-w-0 ${hasCustomHeight ? "page-shell-custom-height overflow-hidden" : ""}`}
+              className={`relative min-w-0 ${hasCustomHeight ? "page-shell-custom-height" : ""}`}
               data-page-shell-height={size.heightPx ?? "natural"}
               ref={(element) => { shellContentRefs.current[shell.id] = element; }}
               style={hasCustomHeight ? { height: `${size.heightPx}px` } : undefined}

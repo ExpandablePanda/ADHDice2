@@ -198,7 +198,7 @@ import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { PageShell, PageShellBody, PageShellLayoutControls, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
-import { HEALTH_PAGE_SHELL_IDS, HEALTH_PAGE_SHELL_SIZE_DEFAULTS, getHealthPageShellKey } from "@/lib/page-shell-layout";
+import { HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS, HEALTH_PAGE_SHELL_IDS, getHealthPageShellKey } from "@/lib/page-shell-layout";
 import { HealthBarcodeScanner } from "./health-barcode-scanner";
 import { HealthLibraryPanel } from "./health-library-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_CONTROL_CLASS, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
@@ -1267,7 +1267,8 @@ export function HealthPage({
   workoutSets,
 }: HealthPageProps) {
   const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
-  const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab], HEALTH_PAGE_SHELL_SIZE_DEFAULTS[activeTab]);
+  const canonicalPageShellLayout = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS[activeTab];
+  const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab], canonicalPageShellLayout.sizes, canonicalPageShellLayout);
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
   const [mealDraft, setMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
   const [activeMealEntrySlot, setActiveMealEntrySlot] = useState<HealthMealEntry["meal_slot"] | null>(null);
@@ -4562,7 +4563,7 @@ export function HealthPage({
         <div aria-labelledby="health-tab-awards" className="mt-6" id={getHealthTabPanelId("Awards")} role="tabpanel">
           <ReorderablePageShells layout={pageShellLayout}>
           <PageShell id="awards-content" label="Awards">
-          <HealthPanel icon={<Trophy />} subtitle="Awards" title="Under construction">
+          <HealthPanel icon={<Trophy />} shellSurface subtitle="Awards" title="Under construction">
             <EmptyCopy text="This tab is under construction." />
           </HealthPanel>
           </PageShell>
@@ -4574,7 +4575,7 @@ export function HealthPage({
         <div aria-labelledby="health-tab-settings" className="mt-6" id={getHealthTabPanelId("Settings")} role="tabpanel">
           <ReorderablePageShells layout={pageShellLayout}>
           <PageShell id="settings-content" label="Health Settings">
-          <HealthPanel icon={<Target />} subtitle="Health settings">
+          <HealthPanel icon={<Target />} shellSurface subtitle="Health settings">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Field label="Weight unit">
               <select className="health-input" onChange={(event) => handleWeightUnitChange(event.target.value as HealthProfile["preferred_weight_unit"])} value={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit}>

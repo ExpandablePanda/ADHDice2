@@ -55,7 +55,7 @@ import { CategoryIcon } from "./task-app";
 import { PageShellHeader } from "./task-app/page-shell-header";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "./ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
-import { FOCUS_PAGE_SHELL_IDS, FOCUS_PAGE_SHELL_SIZE_DEFAULTS } from "@/lib/page-shell-layout";
+import { FOCUS_PAGE_SHELL_CANONICAL_LAYOUT, FOCUS_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import {
   TASKS_SURFACE_ACTIVE_CHIP_CLASS,
   TASKS_SURFACE_GROUP_CLASS,
@@ -373,7 +373,7 @@ export function FocusPage({
   onSaveDailyGoalAdjustment: (input: { adjustmentDate: string; sourceCategoryId: string; targetCategoryId: string; sourceSessionId?: string | null; reductionSeconds: number; reason?: string }) => Promise<boolean>;
   onSetFocusReallocationMode: (mode: FocusReallocationMode) => void;
 }) {
-  const layout = usePageShellLayout(userId, "focus", FOCUS_PAGE_SHELL_IDS, FOCUS_PAGE_SHELL_SIZE_DEFAULTS);
+  const layout = usePageShellLayout(userId, "focus", FOCUS_PAGE_SHELL_IDS, FOCUS_PAGE_SHELL_CANONICAL_LAYOUT.sizes, FOCUS_PAGE_SHELL_CANONICAL_LAYOUT);
   const [countdownPickerOpenRequest, setCountdownPickerOpenRequest] = useState(0);
   const [focusSandboxPage, setFocusSandboxPage] = useState(0);
   const [focusSandboxTabOrder, setFocusSandboxTabOrder] = useState<number[]>(readFocusSandboxTabOrder);

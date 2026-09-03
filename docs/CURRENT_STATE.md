@@ -1,17 +1,31 @@
 # Current State
 
-Last reviewed: 2026-09-02
+Last reviewed: 2026-09-03
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.76`.
+- Current working app version: `7.12.77`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-03 7.12.77 Canonical Page-Shell Layout Reset and Editing Foundation
+
+Reset Layout now removes the current page/tab preference and returns Health
+Today, Food, Water, Fitness, Journal, Weight, Sleep, Insights, Awards, and
+Health Settings, plus Focus and Stats, to explicit pre-shell canonical layout metadata.
+Food, Water, Fitness, Sleep, Weight, and Insights retain their original
+placement/grouping and column relationships; natural height remains separate
+from mutable custom order/span/height preferences. Custom-height shell slots no
+longer clip the shell surface shadow; the visible surface owns its frame and
+the shell body owns internal scrolling. Layout editing and resizing are
+available for one valid shell, while reorder controls remain limited to pages
+with at least two valid shells. Expansion of page-shell support to Home, Tasks,
+Roll, Achievements, Games, Notes, the main Settings page, and Test remains pending.
 
 ## 2026-09-02 7.12.74 Responsive Shell Surfaces and Adaptive Fitness Content
 

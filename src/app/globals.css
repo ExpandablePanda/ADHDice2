@@ -341,11 +341,6 @@ body::-webkit-scrollbar-thumb:hover,
   }
 }
 
-/* Legacy shells without a PageShellSurface keep bounded fallback scrolling until migrated. */
-.page-shell-custom-height:not(:has(> .page-shell-surface)) {
-  overflow-y: auto;
-}
-
 .fitness-stat-grid,
 .fitness-week-grid {
   grid-template-columns: minmax(0, 1fr);
