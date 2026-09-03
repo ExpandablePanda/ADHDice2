@@ -53,7 +53,7 @@ import { ModalShell } from "./modal-shell";
 import { FocusPillSelect } from "./focus-form-controls";
 import { CategoryIcon } from "./task-app";
 import { PageShellHeader } from "./task-app/page-shell-header";
-import { PageShell, PageShellLayoutControls, ReorderablePageShells } from "./ui-system/reorderable-page-shells";
+import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "./ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { FOCUS_PAGE_SHELL_IDS, FOCUS_PAGE_SHELL_SIZE_DEFAULTS } from "@/lib/page-shell-layout";
 import {
@@ -629,9 +629,11 @@ export function FocusPage({
         onEditGoals={() => setShowGoalsEditor(true)}
         onUpdateEntry={onUpdateHistoryEntry}
       >
-      <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 xl:grid-cols-12">
+      <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-12">
       <PageShell id="focus-timer-workspace" label="Focus Timer Workspace">
-      <section className="mt-5 min-w-0 overflow-x-clip">
+      <PageShellSurface>
+      <PageShellBody className="min-w-0 overflow-x-clip">
+      <section className="min-w-0">
         <div className="mb-3 flex justify-center" data-focus-pager-alignment="centered-sandbox">
           <nav
             aria-label="Focus sandbox pages"
@@ -788,7 +790,8 @@ export function FocusPage({
           )}
         </div>
       </section>
-
+      </PageShellBody>
+      </PageShellSurface>
       </PageShell>
 
       <PageShell id="focus-goals" label="Focus Goals">

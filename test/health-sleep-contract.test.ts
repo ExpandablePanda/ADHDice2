@@ -105,15 +105,22 @@ test("Health stacked tabs use independent columns and preserve narrow-screen ord
   assert.ok(food.indexOf('subtitle="Meal logging"') < food.indexOf('subtitle="Daily totals"'));
   assert.ok(food.indexOf('title="Favorites & Recent Foods"') < food.indexOf("<HealthLibraryPanel"));
 
-  assert.equal((sleep.match(/className="grid content-start gap-5"/g) ?? []).length, 1);
   assert.doesNotMatch(sleep, /contents xl:grid/);
   assert.match(sleep, /<PageShell id="sleep-ledger"[\s\S]*shellSurface[\s\S]*title="Health sleep totals"/);
-  assert.match(sleep, /<PageShell id="sleep-entry-and-sources"[\s\S]*<PageShellSurface>[\s\S]*<PageShellBody className="grid content-start gap-5"/);
-  assert.match(sleep, /subtitle="Manual entry"[\s\S]*?className="xl:order-2"[\s\S]*?title="Sleep sources"[\s\S]*?className="xl:order-1"[\s\S]*?title="Sleep Ledger"/);
+  assert.match(sleep, /<PageShell id="sleep-log" label="Log Sleep">[\s\S]*<HealthPanel[\s\S]*shellSurface[\s\S]*title="Log sleep"/);
+  assert.match(sleep, /<PageShell id="sleep-sources" label="Sleep Sources">[\s\S]*<HealthPanel[\s\S]*shellSurface[\s\S]*title="Sleep sources"/);
+  assert.match(sleep, /<PageShell id="sleep-focus-ledger" label="Sleep Ledger">[\s\S]*<HealthPanel[\s\S]*shellSurface[\s\S]*title="Sleep Ledger"/);
+  assert.doesNotMatch(sleep, /sleep-entry-and-sources/);
   assert.equal((sleep.match(/<HealthPanel/g) ?? []).length, 4);
+  assert.equal((sleep.match(/shellSurface/g) ?? []).length, 4);
 
-  assert.equal((water.match(/<PageShellSurface>/g) ?? []).length, 2);
-  assert.equal((water.match(/<PageShellBody className="grid content-start gap-5">/g) ?? []).length, 2);
+  assert.equal((water.match(/<PageShell[^>]*id="water-/g) ?? []).length, 4);
+  assert.match(water, /<PageShell id="water-log"[\s\S]*<HealthCollapsiblePanel[\s\S]*shellSurface/);
+  assert.match(water, /<PageShell hiddenDescription="Hidden until pending water exists" id="water-pending"[\s\S]*<HealthCollapsiblePanel[\s\S]*shellSurface/);
+  assert.match(water, /<PageShell id="water-today"[\s\S]*<HealthCollapsiblePanel[\s\S]*shellSurface/);
+  assert.match(water, /<PageShell id="water-history"[\s\S]*<HealthCollapsiblePanel[\s\S]*shellSurface/);
+  assert.equal((water.match(/shellSurface/g) ?? []).length, 4);
+  assert.doesNotMatch(water, /<PageShellSurface>|<PageShellBody/);
 });
 
 test("Health descriptive rows let text wrap before responsive actions", async () => {

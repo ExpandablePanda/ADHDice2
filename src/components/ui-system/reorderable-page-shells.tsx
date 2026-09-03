@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CornerDownRight, GripVertical, PanelsTopLeft, RotateCcw } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, Check, CornerDownRight, GripVertical, PanelsTopLeft, RotateCcw } from "lucide-react";
 import { Children, isValidElement, useEffect, useMemo, useRef, useState, type HTMLAttributes, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, type Ref } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
@@ -8,11 +8,13 @@ import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import {
   getPageShellInsertionIndex,
   getPageShellDragAutoScrollDelta,
+  clampPageShellHeight,
+  getPageShellShrinkHeight,
   mergeVisiblePageShellOrder,
   normalizePageShellSpan,
+  PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
   reorderPageShellOrderAt,
-  snapPageShellHeight,
   type PageShellGeometry,
   type PageShellLayoutPreference,
   type PageShellSize,
@@ -49,6 +51,7 @@ type ShellResizeInteraction = {
   columnWidth: number;
   id: string;
   initialSize: PageShellSize;
+  initialHeight: number;
   kind: "resize";
   naturalHeight: number;
   pointerId: number;
@@ -350,11 +353,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const naturalHeight = measureNaturalShellHeight(shellContent);
     const layoutWidth = layoutElement?.getBoundingClientRect().width ?? shellContent?.getBoundingClientRect().width ?? 0;
     const initialSize = startLayout.sizes[id] ?? { heightPx: null, span: 12 };
-    const initialHeight = initialSize.heightPx ?? naturalHeight;
+    const initialHeight = clampPageShellHeight(initialSize.heightPx ?? naturalHeight, naturalHeight);
     interactionRef.current = {
       columnWidth: layoutWidth > 0 ? layoutWidth / 12 : Math.max(shellContent?.getBoundingClientRect().width ?? 1, 1),
       id,
       initialSize,
+      initialHeight,
       kind: "resize",
       naturalHeight,
       pointerId: event.pointerId,
@@ -365,24 +369,34 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     layout.beginPreview(startLayout);
     layout.setPreviewSizes((sizes) => ({
       ...sizes,
-      [id]: { ...(sizes[id] ?? initialSize), heightPx: snapPageShellHeight(initialHeight) },
+      [id]: { ...(sizes[id] ?? initialSize), heightPx: naturalHeight < PAGE_SHELL_MIN_HEIGHT ? null : initialHeight },
     }));
     setResizingId(id);
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  function setShellToNaturalHeight(event: MouseEvent<HTMLButtonElement>, id: string) {
+  function setShellHeight(event: MouseEvent<HTMLButtonElement>, id: string, heightPx: number | null) {
     if (!layout.isEditing || interactionRef.current) return;
     event.preventDefault();
     event.stopPropagation();
     const startLayout = currentLayout();
-    if (startLayout.sizes[id]?.heightPx === null || !startLayout.sizes[id]) return;
+    const currentSize = startLayout.sizes[id];
+    if (!currentSize || currentSize.heightPx === heightPx) return;
     layout.beginPreview(startLayout);
     layout.setPreviewSizes((sizes) => ({
       ...sizes,
-      [id]: { ...sizes[id], heightPx: null },
+      [id]: { ...currentSize, heightPx },
     }));
     layout.commitPreview();
+  }
+
+  function setShellToShrinkHeight(event: MouseEvent<HTMLButtonElement>, id: string) {
+    const naturalHeight = measureNaturalShellHeight(shellContentRefs.current[id]);
+    setShellHeight(event, id, naturalHeight < PAGE_SHELL_MIN_HEIGHT ? null : getPageShellShrinkHeight(naturalHeight));
+  }
+
+  function setShellToNaturalHeight(event: MouseEvent<HTMLButtonElement>, id: string) {
+    setShellHeight(event, id, null);
   }
 
   function updateInteraction(event: PointerEvent<HTMLButtonElement>) {
@@ -400,8 +414,9 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
 
     const deltaColumns = interaction.columnWidth > 0 ? Math.round((event.clientX - interaction.startX) / interaction.columnWidth) : 0;
     const span = normalizePageShellSpan(interaction.initialSize.span + deltaColumns, interaction.initialSize.span);
-    const initialHeight = interaction.initialSize.heightPx ?? interaction.naturalHeight;
-    const heightPx = snapPageShellHeight(initialHeight + (event.clientY - interaction.startY));
+    const heightPx = interaction.naturalHeight < PAGE_SHELL_MIN_HEIGHT
+      ? null
+      : clampPageShellHeight(interaction.initialHeight + (event.clientY - interaction.startY), interaction.naturalHeight);
     const currentSize = layout.sizes[interaction.id];
     if (currentSize?.span === span && currentSize.heightPx === heightPx) return;
     layout.setPreviewSizes((sizes) => ({
@@ -459,17 +474,24 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                 </button>
                 <span className="min-w-0 flex-1 truncate font-semibold">{shell.label}</span>
                 <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{size.span}/12 · {hasCustomHeight ? `${size.heightPx}px` : "Auto"}</span>
-                {hasCustomHeight ? (
-                  <button
-                    aria-label={`Use natural height for ${shell.label}`}
-                    className="shrink-0 rounded-md px-1.5 py-1 text-[10px] font-semibold text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
-                    onClick={(event) => setShellToNaturalHeight(event, shell.id)}
-                    title={`Use natural height for ${shell.label}`}
-                    type="button"
-                  >
-                    Auto
-                  </button>
-                ) : null}
+                <button
+                  aria-label={`Shrink ${shell.label}`}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
+                  onClick={(event) => setShellToShrinkHeight(event, shell.id)}
+                  title={`Shrink ${shell.label}`}
+                  type="button"
+                >
+                  <ArrowDownToLine aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  aria-label={`Expand ${shell.label}`}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
+                  onClick={(event) => setShellToNaturalHeight(event, shell.id)}
+                  title={`Expand ${shell.label}`}
+                  type="button"
+                >
+                  <ArrowUpToLine aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
               </div>
             ) : null}
             <div

@@ -196,7 +196,7 @@ import {
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
-import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { PageShell, PageShellBody, PageShellLayoutControls, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HEALTH_PAGE_SHELL_IDS, HEALTH_PAGE_SHELL_SIZE_DEFAULTS, getHealthPageShellKey } from "@/lib/page-shell-layout";
 import { HealthBarcodeScanner } from "./health-barcode-scanner";
@@ -3388,11 +3388,11 @@ export function HealthPage({
 
       {activeTab === "Journal" ? (
         <>
-          <ReorderablePageShells layout={pageShellLayout}>
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="mt-6 grid min-w-0 gap-5 xl:grid-cols-12">
           <PageShell id="journal-entry-history" label="Journal Entry and History">
             <HealthPanel
               aria-labelledby="health-tab-journal"
-              className="mt-6 min-w-0"
+              className="min-w-0"
               headerActions={(
                 <div className="flex flex-wrap items-center justify-end gap-1">
                   <div className="relative">
@@ -3808,7 +3808,7 @@ export function HealthPage({
 
           </PageShell>
           <PageShell id="journal-feeling-trends" label="Feeling Trends">
-          <HealthPanel className="mt-5 min-w-0" icon={<Activity />} shellSurface subtitle="Feelings" title="Feeling Trends">
+          <HealthPanel className="min-w-0" icon={<Activity />} shellSurface subtitle="Feelings" title="Feeling Trends">
             <div className="grid gap-4">
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                 <Field composite label="Feelings">
@@ -4378,10 +4378,8 @@ export function HealthPage({
 
           </PageShell>
 
-          <PageShell id="sleep-entry-and-sources" label="Sleep Entry and Sources">
-          <PageShellSurface>
-          <PageShellBody className="grid content-start gap-5">
-          <HealthPanel icon={<MoonStar />} subtitle="Manual entry" title="Log sleep">
+          <PageShell id="sleep-log" label="Log Sleep">
+          <HealthPanel icon={<MoonStar />} shellSurface subtitle="Manual entry" title="Log sleep">
             <SleepKindSelector onChange={(kind) => setManualSleepDraft((current) => ({ ...current, kind }))} value={manualSleepDraft.kind} />
             <SleepDraftFields draft={manualSleepDraft} onChange={(next) => setManualSleepDraft(next)} />
             {sleepFormError ? <p className="mt-3 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{sleepFormError}</p> : null}
@@ -4389,8 +4387,10 @@ export function HealthPage({
               <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveManualSleep(); }} type="button">Log Sleep</button>
             </div>
           </HealthPanel>
+          </PageShell>
 
-          <HealthPanel className="xl:order-2" icon={<Activity />} subtitle="Last 7 days" title="Sleep sources">
+          <PageShell id="sleep-sources" label="Sleep Sources">
+          <HealthPanel icon={<Activity />} shellSurface subtitle="Last 7 days" title="Sleep sources">
             <div className="grid gap-3 sm:grid-cols-3">
               <CompactStat detail="combined week" label="Total" value={formatHealthSleepDuration(recentSleepTotalMinutes)} />
               <CompactStat detail="Sleep Focus timers" label="Clock" value={formatHealthSleepDuration(recentSleepFocusMinutes)} />
@@ -4411,8 +4411,10 @@ export function HealthPage({
               ))}
             </div>
           </HealthPanel>
+          </PageShell>
 
-          <HealthPanel className="xl:order-1" icon={<Sparkles />} subtitle="Selected date" title="Sleep Ledger">
+          <PageShell id="sleep-focus-ledger" label="Sleep Ledger">
+          <HealthPanel icon={<Sparkles />} shellSurface subtitle="Selected date" title="Sleep Ledger">
             <div className="space-y-3">
               {selectedSleepFocusSessions.length === 0 ? (
                 <EmptyCopy text={`No Sleep Focus sessions logged for ${formatHealthDateLabel(sleepLedgerDate)}.`} />
@@ -4448,8 +4450,6 @@ export function HealthPage({
               )}
             </div>
           </HealthPanel>
-          </PageShellBody>
-          </PageShellSurface>
           </PageShell>
           </ReorderablePageShells>
         </div>

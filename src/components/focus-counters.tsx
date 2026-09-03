@@ -8,6 +8,7 @@ import {
   FOCUS_CLOCK_MOBILE_SCALE,
 } from "./focus-clocks";
 import { CategoryIcon } from "./task-app";
+import { PageShellBody, PageShellSurface } from "./ui-system/reorderable-page-shells";
 import type { FocusCounter, FocusCounterHistoryEntry } from "@/lib/types";
 
 function formatCounterDelta(delta: number) {
@@ -237,16 +238,18 @@ export function FocusCounterHistoryCard({
   }
 
   return (
-    <section className="mx-auto mt-6 w-full max-w-6xl">
-      <div className="rounded-[1.6rem] border border-[var(--border-soft)] bg-[var(--surface-elevated)] p-5 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <PageShellSurface className="mx-auto w-full max-w-6xl rounded-[1.6rem] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]">
+        <div className="shrink-0 p-5 pb-0">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Counter Activity</p>
             <h3 className="mt-2 text-2xl font-black tracking-tight text-[var(--text-primary)]">Recent Counter Changes</h3>
           </div>
           <p className="text-sm text-[var(--text-secondary)]">Separate from Focus timer history and minute totals.</p>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        </div>
+        <PageShellBody className="p-5 pt-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {history.slice(0, 8).map((entry) => {
             const counter = countersById.get(entry.counterId);
             return (
@@ -268,7 +271,7 @@ export function FocusCounterHistoryCard({
             );
           })}
         </div>
-      </div>
-    </section>
+        </PageShellBody>
+    </PageShellSurface>
   );
 }

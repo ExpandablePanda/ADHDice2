@@ -25,6 +25,12 @@ const PAGE_SHELL_LEGACY_ID_REPLACEMENTS: Readonly<Record<string, PageShellLegacy
   "health:food": {
     "food-daily-totals": ["food-daily-totals", "food-favorites-recent"],
   },
+  "health:sleep": {
+    "sleep-entry-and-sources": ["sleep-log", "sleep-sources", "sleep-focus-ledger"],
+  },
+  "health:water": {
+    "water-history": ["water-pending", "water-today", "water-history"],
+  },
 };
 
 const DEFAULT_PAGE_SHELL_SIZE: PageShellSize = { heightPx: null, span: 12 };
@@ -33,11 +39,11 @@ const FITNESS_HALF_SIZE: PageShellSize = { heightPx: null, span: 6 };
 export const HEALTH_PAGE_SHELL_IDS = {
   Today: ["today-snapshot", "today-quick-log", "today-timeline"],
   Food: ["food-meal-log", "food-daily-totals", "food-favorites-recent", "food-library"],
-  Water: ["water-log", "water-history"],
+  Water: ["water-log", "water-pending", "water-today", "water-history"],
   Fitness: ["fitness-active-workout", "fitness-today", "fitness-week", "fitness-goals", "fitness-plans", "fitness-workout-history"],
   Journal: ["journal-entry-history", "journal-library", "journal-feeling-trends"],
   Weight: ["weight-entry", "weight-trend"],
-  Sleep: ["sleep-ledger", "sleep-entry-and-sources"],
+  Sleep: ["sleep-ledger", "sleep-log", "sleep-sources", "sleep-focus-ledger"],
   Insights: ["insights-import", "insights-trends"],
   Awards: ["awards-content"],
   Settings: ["settings-content"],
@@ -59,6 +65,8 @@ export const HEALTH_PAGE_SHELL_SIZE_DEFAULTS: Record<HealthPageShellTab, PageShe
   },
   Water: {
     "water-log": FITNESS_HALF_SIZE,
+    "water-pending": FITNESS_HALF_SIZE,
+    "water-today": FITNESS_HALF_SIZE,
     "water-history": FITNESS_HALF_SIZE,
   },
   Fitness: {
@@ -80,7 +88,9 @@ export const HEALTH_PAGE_SHELL_SIZE_DEFAULTS: Record<HealthPageShellTab, PageShe
   },
   Sleep: {
     "sleep-ledger": FITNESS_HALF_SIZE,
-    "sleep-entry-and-sources": FITNESS_HALF_SIZE,
+    "sleep-log": FITNESS_HALF_SIZE,
+    "sleep-sources": FITNESS_HALF_SIZE,
+    "sleep-focus-ledger": FITNESS_HALF_SIZE,
   },
   Insights: {
     "insights-import": FITNESS_HALF_SIZE,
@@ -379,6 +389,21 @@ export const PAGE_SHELL_MIN_HEIGHT = 144;
 export function snapPageShellHeight(value: number) {
   const snapped = Math.max(PAGE_SHELL_MIN_HEIGHT, Math.round(value / PAGE_SHELL_HEIGHT_SNAP) * PAGE_SHELL_HEIGHT_SNAP);
   return snapped;
+}
+
+function getSafePageShellNaturalHeight(naturalHeight: number) {
+  return Number.isFinite(naturalHeight) && naturalHeight > 0 ? naturalHeight : PAGE_SHELL_MIN_HEIGHT;
+}
+
+/** Returns the smallest useful custom height without expanding a naturally short shell. */
+export function getPageShellShrinkHeight(naturalHeight: number) {
+  return Math.min(PAGE_SHELL_MIN_HEIGHT, getSafePageShellNaturalHeight(naturalHeight));
+}
+
+/** Snaps a manual resize while keeping the measured natural content height as its hard maximum. */
+export function clampPageShellHeight(value: number, naturalHeight: number) {
+  const safeValue = Number.isFinite(value) ? value : getSafePageShellNaturalHeight(naturalHeight);
+  return Math.min(snapPageShellHeight(safeValue), getSafePageShellNaturalHeight(naturalHeight));
 }
 
 function normalizePageShellHeight(value: unknown, fallback: number | null) {

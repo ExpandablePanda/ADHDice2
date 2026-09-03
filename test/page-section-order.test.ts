@@ -12,6 +12,8 @@ import {
   getPageShellInsertionIndex,
   getPageShellLayoutStorageKey,
   HEALTH_PAGE_SHELL_SIZE_DEFAULTS,
+  clampPageShellHeight,
+  getPageShellShrinkHeight,
   mergeVisiblePageShellOrder,
   normalizePageShellLayout,
   normalizePageShellSize,
@@ -39,6 +41,8 @@ const fitnessSource = readFileSync(new URL("../src/components/task-app/health-fi
 const todaySource = readFileSync(new URL("../src/components/task-app/health-today-tab.tsx", import.meta.url), "utf8");
 const waterSource = readFileSync(new URL("../src/components/task-app/health-water-panel.tsx", import.meta.url), "utf8");
 const focusSource = readFileSync(new URL("../src/components/focus-page.tsx", import.meta.url), "utf8");
+const focusGoalsSource = readFileSync(new URL("../src/components/focus-goals-panel.tsx", import.meta.url), "utf8");
+const focusCountersSource = readFileSync(new URL("../src/components/focus-counters.tsx", import.meta.url), "utf8");
 const headerSource = readFileSync(new URL("../src/components/task-app/page-shell-header.tsx", import.meta.url), "utf8");
 const shellSource = readFileSync(new URL("../src/components/ui-system/reorderable-page-shells.tsx", import.meta.url), "utf8");
 const collapsiblePanelSource = readFileSync(new URL("../src/components/task-app/health-collapsible-panel.tsx", import.meta.url), "utf8");
@@ -134,6 +138,37 @@ test("shell layout storage is user-scoped, page-independent, and resettable", ()
   assert.deepEqual(readPageShellLayout(store, key, "focus", FOCUS_PAGE_SHELL_IDS, {}).order, [...FOCUS_PAGE_SHELL_IDS]);
 });
 
+test("Water and Sleep legacy composite slots migrate their order and size to replacement shells", () => {
+  const store = storage();
+  const key = getPageShellLayoutStorageKey("user-shell-migration");
+  store.setItem(key, JSON.stringify({
+    "health:water": {
+      order: ["water-log", "water-history"],
+      sizes: { "water-history": { heightPx: 432, span: 8 } },
+    },
+    "health:sleep": {
+      order: ["sleep-entry-and-sources", "sleep-ledger"],
+      sizes: {
+        "sleep-entry-and-sources": { heightPx: 384, span: 7 },
+        "sleep-ledger": { heightPx: 288, span: 6 },
+      },
+    },
+  }));
+
+  const water = readPageShellLayout(store, key, "health:water", HEALTH_PAGE_SHELL_IDS.Water, HEALTH_PAGE_SHELL_SIZE_DEFAULTS.Water);
+  assert.deepEqual(water.order, ["water-log", "water-pending", "water-today", "water-history"]);
+  for (const id of ["water-pending", "water-today", "water-history"]) {
+    assert.deepEqual(water.sizes[id], { heightPx: 432, span: 8 });
+  }
+
+  const sleep = readPageShellLayout(store, key, "health:sleep", HEALTH_PAGE_SHELL_IDS.Sleep, HEALTH_PAGE_SHELL_SIZE_DEFAULTS.Sleep);
+  assert.deepEqual(sleep.order, ["sleep-log", "sleep-sources", "sleep-focus-ledger", "sleep-ledger"]);
+  for (const id of ["sleep-log", "sleep-sources", "sleep-focus-ledger"]) {
+    assert.deepEqual(sleep.sizes[id], { heightPx: 384, span: 7 });
+  }
+  assert.deepEqual(sleep.sizes["sleep-ledger"], { heightPx: 288, span: 6 });
+});
+
 test("corrupt page shell storage falls back to defaults", () => {
   const store = storage();
   const key = getPageShellLayoutStorageKey("user-1");
@@ -159,7 +194,8 @@ test("conditional shells disappear normally and become editable placeholders", (
   assert.match(editMarkup, /aria-label="Resize Conditional"/);
   assert.match(editMarkup, /data-page-shell-height="288"/);
   assert.match(editMarkup, /data-page-shell-size-span="6"/);
-  assert.match(editMarkup, /aria-label="Use natural height for Conditional"/);
+  assert.match(editMarkup, /aria-label="Shrink Conditional"/);
+  assert.match(editMarkup, /aria-label="Expand Conditional"/);
   assert.match(editMarkup, /6\/12 · 288px/);
 });
 
@@ -217,6 +253,13 @@ test("shell layout sizes and 2D insertion boundaries normalize defensively", () 
   assert.equal(snapPageShellHeight(400), snapPageShellHeight(400));
   assert.equal(snapPageShellHeight(800), 816);
   assert.equal(PAGE_SHELL_HEIGHT_SNAP, 48);
+  assert.equal(getPageShellShrinkHeight(400), PAGE_SHELL_MIN_HEIGHT);
+  assert.equal(getPageShellShrinkHeight(120), 120);
+  assert.equal(getPageShellShrinkHeight(PAGE_SHELL_MIN_HEIGHT), PAGE_SHELL_MIN_HEIGHT);
+  assert.equal(clampPageShellHeight(700, 500), 500);
+  assert.equal(clampPageShellHeight(100, 500), PAGE_SHELL_MIN_HEIGHT);
+  assert.equal(clampPageShellHeight(100, 120), 120);
+  assert.equal(clampPageShellHeight(700, 120), 120);
   const geometries = [
     { bottom: 100, id: "A", left: 0, right: 100, top: 0 },
     { bottom: 100, id: "B", left: 110, right: 210, top: 0 },
@@ -321,11 +364,11 @@ test("page-level layout controls are header actions and only render for two or m
 test("Health tabs use independent semantic shell IDs and preserve grouped internals", () => {
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Today], ["today-snapshot", "today-quick-log", "today-timeline"]);
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Food], ["food-meal-log", "food-daily-totals", "food-favorites-recent", "food-library"]);
-  assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Water], ["water-log", "water-history"]);
+  assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Water], ["water-log", "water-pending", "water-today", "water-history"]);
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Fitness], ["fitness-active-workout", "fitness-today", "fitness-week", "fitness-goals", "fitness-plans", "fitness-workout-history"]);
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Journal], ["journal-entry-history", "journal-library", "journal-feeling-trends"]);
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Weight], ["weight-entry", "weight-trend"]);
-  assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Sleep], ["sleep-ledger", "sleep-entry-and-sources"]);
+  assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Sleep], ["sleep-ledger", "sleep-log", "sleep-sources", "sleep-focus-ledger"]);
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Insights], ["insights-import", "insights-trends"]);
   assert.equal(getHealthPageShellKey("Fitness"), "health:fitness");
   assert.equal(HEALTH_PAGE_SHELL_SIZE_DEFAULTS.Fitness["fitness-today"].span, 6);
@@ -337,7 +380,17 @@ test("Health tabs use independent semantic shell IDs and preserve grouped intern
   assert.match(todaySource, /<PageShell id="today-quick-log"/);
   assert.match(todaySource, /<PageShell id="today-timeline"/);
   assert.match(waterSource, /<PageShell id="water-log"/);
+  assert.match(waterSource, /<PageShell hiddenDescription="Hidden until pending water exists" id="water-pending" label="Pending Water" visible=\{pendingEntries\.length > 0\}>/);
+  assert.match(waterSource, /<PageShell id="water-today" label="Today's Water">/);
   assert.match(waterSource, /<PageShell id="water-history"/);
+});
+
+test("Journal spacing belongs to the reorder grid while its shell surfaces stay margin-free", () => {
+  const journal = healthSource.slice(healthSource.indexOf('activeTab === "Journal"'), healthSource.indexOf('activeTab === "Food"'));
+  assert.match(journal, /<ReorderablePageShells layout=\{pageShellLayout\} shellsClassName="mt-6 grid min-w-0 gap-5 xl:grid-cols-12"/);
+  assert.doesNotMatch(journal, /className="mt-6 min-w-0"/);
+  assert.doesNotMatch(journal, /className="mt-5 min-w-0"/);
+  assert.match(journal, /<PageShell id="journal-library"/);
 });
 
 test("Fitness reorders whole shells while Today and This Week adapt inside their surfaces", () => {
@@ -408,7 +461,8 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /requestAnimationFrame\(runDragAutoScroll\)/);
   assert.match(shellSource, /cancelDragAutoScroll/);
   assert.match(shellSource, /window\.scrollTo\(\{ behavior: "auto", top: nextScrollTop \}\)/);
-  assert.match(shellSource, /heightPx: snapPageShellHeight\(initialHeight\)/);
+  assert.match(shellSource, /heightPx: naturalHeight < PAGE_SHELL_MIN_HEIGHT \? null : initialHeight/);
+  assert.match(shellSource, /clampPageShellHeight\(interaction\.initialHeight/);
   const moveUpdateSource = shellSource.slice(shellSource.indexOf('if (interaction.kind === "move")'), shellSource.indexOf("const deltaColumns"));
   assert.match(moveUpdateSource, /updateMovePreview/);
   assert.match(shellSource, /function updateMovePreview[\s\S]*layout\.setPreviewOrder/);
@@ -434,8 +488,11 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(globalSource, /@container page-shell \(max-width: 24rem\)/);
   assert.match(globalSource, /@container page-shell/);
   assert.match(globalSource, /\.page-shell-custom-height[\s\S]*height: auto !important/);
+  assert.match(shellSource, /setShellToShrinkHeight/);
   assert.match(shellSource, /setShellToNaturalHeight/);
-  assert.match(shellSource, /aria-label=\{`Use natural height for \$\{shell\.label\}`\}/);
+  assert.match(shellSource, /naturalHeight < PAGE_SHELL_MIN_HEIGHT \? null : getPageShellShrinkHeight/);
+  assert.match(shellSource, /aria-label=\{`Shrink \$\{shell\.label\}`\}/);
+  assert.match(shellSource, /aria-label=\{`Expand \$\{shell\.label\}`\}/);
   assert.match(shellSource, /\{size\.span\}\/12 · \{hasCustomHeight \? `\$\{size\.heightPx\}px` : "Auto"\}/);
   assert.match(shellSource, /xl:col-span-6/);
   assert.match(shellSource, /xl:col-span-3/);
@@ -452,8 +509,18 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.doesNotMatch(layoutHookSource, /setPreviewOrder[\s\S]{0,500}writePageShellLayout/);
 });
 
+test("remaining Focus shells use the shared surface/body contract", () => {
+  assert.match(focusSource, /<PageShell id="focus-timer-workspace"[\s\S]*<PageShellSurface>[\s\S]*<PageShellBody/);
+  assert.match(focusGoalsSource, /<PageShellSurface[\s\S]*<PageShellBody/);
+  assert.doesNotMatch(focusGoalsSource, /<section className="mx-auto mt-5/);
+  assert.match(focusCountersSource, /<PageShellSurface[\s\S]*<PageShellBody/);
+  assert.doesNotMatch(focusCountersSource, /<section className="mx-auto mt-6/);
+});
+
 test("Stats remains a multi-shell page with stable responsive shell layout", () => {
   assert.deepEqual([...STATS_PAGE_SHELL_IDS], ["stats-overview", "stats-economy", "stats-productivity", "stats-achievements", "stats-energy"]);
-  assert.match(statsSource, /<ReorderablePageShells layout=\{layout\}>/);
+  assert.match(statsSource, /<ReorderablePageShells layout=\{layout\} shellsClassName="grid min-w-0 gap-5">/);
+  assert.equal((statsSource.match(/<PageShellSurface/g) ?? []).length, 5);
+  assert.equal((statsSource.match(/<PageShellBody/g) ?? []).length, 5);
   for (const id of STATS_PAGE_SHELL_IDS) assert.match(statsSource, new RegExp(`id="${id}"`));
 });

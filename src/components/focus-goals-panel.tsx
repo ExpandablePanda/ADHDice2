@@ -16,6 +16,7 @@ import {
   TaskTableChipButton,
 } from "./ui/task-table-primitives";
 import { AdhdChip } from "./ui-system";
+import { PageShellBody, PageShellSurface } from "./ui-system/reorderable-page-shells";
 import { shouldShowManualDailySurplusAction } from "@/lib/focus-reallocation";
 
 type FocusGoalScope = "daily" | "weekly" | "monthly";
@@ -338,9 +339,8 @@ export function FocusGoalsPanel({
       : formatCompactDateRange(monthPlan.startDate, monthPlan.endDate);
 
   return (
-    <section className="mx-auto mt-5 w-full max-w-6xl px-3 sm:px-0">
-      <div className="w-full overflow-hidden rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]">
-        <div className="px-5 pb-5 pt-5 sm:px-6 sm:pb-6">
+    <PageShellSurface className="mx-auto w-full max-w-6xl rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]">
+        <div className="shrink-0 px-5 pb-5 pt-5 sm:px-6 sm:pb-6">
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -422,7 +422,7 @@ export function FocusGoalsPanel({
           </div>
         </div>
 
-        <div className="px-5 pb-5 sm:px-6 sm:pb-6">
+        <PageShellBody className="px-5 pb-5 sm:px-6 sm:pb-6">
           {selectedSummary ? (
             <div className="flex flex-col gap-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -507,8 +507,7 @@ export function FocusGoalsPanel({
               </div>
             </div>
           )}
-        </div>
-      </div>
-    </section>
+        </PageShellBody>
+    </PageShellSurface>
   );
 }

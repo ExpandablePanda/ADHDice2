@@ -10,7 +10,7 @@ import type { HistoricalFocusSession } from "@/lib/types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
 
 import { PageShellHeader } from "./page-shell-header";
-import { PageShell, PageShellLayoutControls, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { STATS_PAGE_SHELL_IDS, STATS_PAGE_SHELL_SIZE_DEFAULTS } from "@/lib/page-shell-layout";
 
@@ -88,8 +88,10 @@ export function StatsPage({
     <section className="px-4 pb-32">
       <PageShellHeader actions={<PageShellLayoutControls layout={layout} />} title="Stats" subtitle="Insights" />
 
-      <ReorderablePageShells layout={layout}>
+      <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5">
       <PageShell id="stats-overview" label="Overview">
+      <PageShellSurface>
+      <PageShellBody>
       <div className="mb-4 flex gap-3">
         {statCard("Today", String(todayDone), "tasks done")}
         {statCard("This Week", String(weekDone), "tasks done")}
@@ -98,10 +100,13 @@ export function StatsPage({
         {statCard("Streak", String(taskHistoryStats.currentStreak), taskHistoryStats.currentStreak === 1 ? "day" : "days")}
         {statCard("Focus Today", `${todayFocusMinutes}m`, "minutes logged")}
       </div>
+      </PageShellBody>
+      </PageShellSurface>
       </PageShell>
 
       <PageShell id="stats-economy" label="Economy">
-      <div className="mb-6 rounded-2xl bg-[#f7f5ff] px-5 py-4 dark:bg-white/5">
+      <PageShellSurface className="rounded-2xl bg-[#f7f5ff] dark:bg-white/5">
+      <PageShellBody className="px-5 py-4">
         <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40">
           Economy
         </p>
@@ -142,11 +147,13 @@ export function StatsPage({
             <p className="font-bold tabular-nums text-[#27304c] dark:text-white">{taskHistoryStats.doneRate}%</p>
           </div>
         </div>
-      </div>
+      </PageShellBody>
+      </PageShellSurface>
       </PageShell>
 
       <PageShell id="stats-productivity" label="7-Day Productivity">
-      <div className="mb-6 rounded-2xl bg-[#f7f5ff] px-5 py-4 dark:bg-white/5">
+      <PageShellSurface className="rounded-2xl bg-[#f7f5ff] dark:bg-white/5">
+      <PageShellBody className="px-5 py-4">
         <p className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40">
           7-Day Productivity
         </p>
@@ -168,11 +175,13 @@ export function StatsPage({
         <p className="mt-2 text-[10px] text-[#8e88a9] dark:text-white/30">
           Score = tasks × 10 + focus minutes
         </p>
-      </div>
+      </PageShellBody>
+      </PageShellSurface>
       </PageShell>
 
       <PageShell id="stats-achievements" label="Achievements">
-      <div className="mb-6 rounded-2xl border border-[#deebff] bg-[linear-gradient(135deg,#f8fbff_0%,#f7f5ff_55%,#fff7ef_100%)] px-5 py-4 shadow-[0_16px_42px_rgba(77,102,177,0.08)] dark:border-white/10 dark:bg-[linear-gradient(135deg,rgba(18,28,47,0.96),rgba(31,22,42,0.92))]">
+      <PageShellSurface className="rounded-2xl border border-[#deebff] bg-[linear-gradient(135deg,#f8fbff_0%,#f7f5ff_55%,#fff7ef_100%)] shadow-[0_16px_42px_rgba(77,102,177,0.08)] dark:border-white/10 dark:bg-[linear-gradient(135deg,rgba(18,28,47,0.96),rgba(31,22,42,0.92))]">
+      <PageShellBody className="px-5 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-widest text-[#6f7ea4] dark:text-white/40">
@@ -191,11 +200,13 @@ export function StatsPage({
             {statCard("Completion", achievementSummary.completionLabel, achievementSummary.isReady ? "all tiers" : "loading")}
           </div>
         </div>
-      </div>
+      </PageShellBody>
+      </PageShellSurface>
       </PageShell>
 
       <PageShell id="stats-energy" label="Active Task Energy">
-      <div className="rounded-2xl bg-[#f7f5ff] px-5 py-4 dark:bg-white/5">
+      <PageShellSurface className="rounded-2xl bg-[#f7f5ff] dark:bg-white/5">
+      <PageShellBody className="px-5 py-4">
         <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40">
           Active Task Energy
         </p>
@@ -216,7 +227,8 @@ export function StatsPage({
             </div>
           );
         })}
-      </div>
+      </PageShellBody>
+      </PageShellSurface>
       </PageShell>
       </ReorderablePageShells>
     </section>
