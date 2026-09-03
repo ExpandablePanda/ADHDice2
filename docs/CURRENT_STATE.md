@@ -5,13 +5,22 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.77`.
+- Current working app version: `7.12.78`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-03 7.12.78 Canonical Page-Shell Lane and Stack Representation
+
+Canonical page-shell metadata now supports independent lane groups whose shell
+IDs render inside one grouped grid item. Food, Water, and Sleep use grouped
+canonical lanes so one independent shell can sit beside a vertically stacked
+set of shells while the existing mutable editing layout remains flat and
+12-column based. Home, Settings, Notes, and Test page-shell expansion remains
+pending.
 
 ## 2026-09-03 7.12.77 Canonical Page-Shell Layout Reset and Editing Foundation
 

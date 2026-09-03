@@ -181,11 +181,22 @@ test("Reset Layout removes only the current preference and restores canonical or
 test("canonical Health metadata preserves pre-shell placement and proportions", () => {
   const food = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food;
   assert.equal(food.gridClassName, "xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]");
-  assert.equal(food.shellClassNames?.["food-meal-log"], "xl:col-start-1 xl:col-end-2");
-  assert.equal(food.shellClassNames?.["food-daily-totals"], "xl:col-start-2 xl:col-end-3");
-  assert.equal(food.shellClassNames?.["food-favorites-recent"], "xl:col-start-2 xl:col-end-3");
-  assert.equal(food.shellClassNames?.["food-library"], "xl:col-span-full");
+  assert.deepEqual(food.groups, [
+    { className: "xl:col-start-1 xl:col-end-2", shellIds: ["food-meal-log"] },
+    { className: "grid gap-5 xl:col-start-2 xl:col-end-3", shellIds: ["food-daily-totals", "food-favorites-recent"] },
+    { className: "xl:col-span-full", shellIds: ["food-library"] },
+  ]);
+  assert.equal(food.shellClassNames, undefined);
   assert.equal(food.sizes["food-meal-log"].heightPx, null);
+
+  for (const [tab, expectedGroups] of [
+    ["Water", [["water-log"], ["water-pending", "water-today", "water-history"]]],
+    ["Sleep", [["sleep-ledger"], ["sleep-log", "sleep-focus-ledger", "sleep-sources"]]],
+  ] as const) {
+    const layout = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS[tab];
+    assert.deepEqual(layout.groups?.map((group) => group.shellIds), expectedGroups);
+    assert.equal(layout.shellClassNames, undefined);
+  }
 
   const fitness = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Fitness;
   assert.equal(fitness.gridClassName, "xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]");
@@ -195,6 +206,32 @@ test("canonical Health metadata preserves pre-shell placement and proportions", 
   assert.equal(fitness.sizes["fitness-today"].span, 7);
   assert.equal(fitness.sizes["fitness-week"].span, 5);
   assert.equal(fitness.sizes["fitness-today"].heightPx, null);
+});
+
+test("canonical groups render independent lanes and vertically stacked shells", () => {
+  const food = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food;
+  const layout: PageShellLayoutState = {
+    ...staticShellLayout(false),
+    canonicalLayout: food,
+    isCanonical: true,
+    order: [...food.order],
+    pageKey: "health:food",
+    sizes: Object.fromEntries(Object.entries(food.sizes).map(([id, size]) => [id, { ...size }])),
+  };
+  const markup = renderToStaticMarkup(createElement(
+    ReorderablePageShells,
+    { layout },
+    createElement(PageShell, { id: "food-meal-log", label: "Meal Log" }, createElement("span", null, "meal")),
+    createElement(PageShell, { id: "food-daily-totals", label: "Daily Totals" }, createElement("span", null, "totals")),
+    createElement(PageShell, { id: "food-favorites-recent", label: "Favorites" }, createElement("span", null, "favorites")),
+    createElement(PageShell, { id: "food-library", label: "Food Library" }, createElement("span", null, "library")),
+  ));
+  assert.equal((markup.match(/data-page-shell-group=/g) ?? []).length, 3);
+  assert.match(markup, /class="[^"]*xl:col-start-1 xl:col-end-2[^"]*" data-page-shell-group="0"/);
+  assert.match(markup, /class="[^"]*grid gap-5 xl:col-start-2 xl:col-end-3[^"]*" data-page-shell-group="1"/);
+  assert.match(markup, /class="[^"]*xl:col-span-full[^"]*" data-page-shell-group="2"/);
+  const stackedGroup = markup.match(/data-page-shell-group="1"[\s\S]*?data-page-shell-group="2"/)?.[0] ?? "";
+  assert.match(stackedGroup, /data-page-shell-id="food-daily-totals"[\s\S]*data-page-shell-id="food-favorites-recent"/);
 });
 
 test("Health, Focus, and Stats canonical defaults are explicit and natural", () => {

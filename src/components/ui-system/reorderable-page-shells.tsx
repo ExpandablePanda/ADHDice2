@@ -16,6 +16,7 @@ import {
   PAGE_SHELL_ROW_ALIGNMENT_PX,
   reorderPageShellOrderAt,
   type PageShellGeometry,
+  type PageShellCanonicalGroup,
   type PageShellLayoutPreference,
   type PageShellSize,
 } from "@/lib/page-shell-layout";
@@ -66,6 +67,20 @@ type PageShellInsertionIndicatorStyle = {
   left: number;
   top: number;
   width: number;
+};
+
+type RenderedPageShell = {
+  className?: string;
+  hiddenDescription?: string;
+  id: string;
+  label: string;
+  node: ReactNode;
+  visible: boolean;
+};
+
+type RenderedPageShellGroup = {
+  className?: string;
+  shells: RenderedPageShell[];
 };
 
 const SHELL_SPAN_CLASSES: Record<number, string> = {
@@ -218,6 +233,21 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const shell = shellsById.get(id);
     return shell ? [shell] : [];
   });
+  const canonicalGroups = useMemo<RenderedPageShellGroup[] | null>(() => {
+    if (!layout.isCanonical || !layout.canonicalLayout.groups?.length) return null;
+    const assignedShellIds = new Set<string>();
+    const configuredGroups = layout.canonicalLayout.groups.flatMap((group: PageShellCanonicalGroup) => {
+      const groupShells = group.shellIds.flatMap((id) => {
+        const shell = shellsById.get(id);
+        if (!shell || assignedShellIds.has(id)) return [];
+        assignedShellIds.add(id);
+        return [shell];
+      });
+      return groupShells.length > 0 ? [{ className: group.className, shells: groupShells }] : [];
+    });
+    const ungroupedShells = orderedShells.filter((shell) => !assignedShellIds.has(shell.id));
+    return ungroupedShells.length > 0 ? [...configuredGroups, { shells: ungroupedShells }] : configuredGroups;
+  }, [layout.canonicalLayout.groups, layout.isCanonical, orderedShells, shellsById]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragInsertionIndex, setDragInsertionIndex] = useState<number | null>(null);
   const [resizingId, setResizingId] = useState<string | null>(null);
@@ -441,6 +471,94 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setResizingId(null);
   }
 
+  function renderShell(shell: RenderedPageShell) {
+    const size = layout.sizes[shell.id] ?? { heightPx: null, span: 12 as const };
+    const spanClass = SHELL_SPAN_CLASSES[size.span] ?? SHELL_SPAN_CLASSES[12];
+    const hasCustomHeight = size.heightPx !== null;
+    const shellPlacementClass = layout.isCanonical
+      ? layout.canonicalLayout.shellClassNames?.[shell.id] ?? ""
+      : spanClass;
+    return (
+      <div
+        className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
+        data-page-shell-id={shell.id}
+        data-page-shell-dragging={draggingId === shell.id ? "true" : "false"}
+        data-page-shell-resizing={resizingId === shell.id ? "true" : "false"}
+        data-page-shell-size-span={size.span}
+        key={shell.id}
+        ref={(element) => { shellRefs.current[shell.id] = element; }}
+      >
+        {layout.isEditing ? (
+          <div className="mb-1 flex min-h-7 items-center gap-1.5 rounded-lg border border-[#e4def8] bg-[#faf8ff]/90 px-1.5 py-1 text-xs text-[#6f57f6] dark:border-white/10 dark:bg-[#211a38]/90 dark:text-[#cabfff]" data-page-shell-layout-strip>
+            {layout.canReorder ? (
+              <button
+                aria-label={`Move ${shell.label}`}
+                className="flex h-6 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md hover:bg-[#eee9ff] active:cursor-grabbing dark:hover:bg-white/10"
+                onPointerCancel={(event) => endInteraction(event, true)}
+                onLostPointerCapture={(event) => endInteraction(event, true)}
+                onPointerDown={(event) => beginMove(event, shell.id)}
+                onPointerMove={updateInteraction}
+                onPointerUp={(event) => endInteraction(event, false)}
+                title={`Move ${shell.label}`}
+                type="button"
+              >
+                <GripVertical aria-hidden="true" className="h-4 w-4" />
+              </button>
+            ) : null}
+            <span className="min-w-0 flex-1 truncate font-semibold">{shell.label}</span>
+            <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{size.span}/12 · {hasCustomHeight ? `${size.heightPx}px` : "Auto"}</span>
+            <button
+              aria-label={`Shrink ${shell.label}`}
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
+              onClick={(event) => setShellToShrinkHeight(event, shell.id)}
+              title={`Shrink ${shell.label}`}
+              type="button"
+            >
+              <ArrowDownToLine aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+            <button
+              aria-label={`Expand ${shell.label}`}
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
+              onClick={(event) => setShellToNaturalHeight(event, shell.id)}
+              title={`Expand ${shell.label}`}
+              type="button"
+            >
+              <ArrowUpToLine aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : null}
+        <div
+          className={`relative min-w-0 ${hasCustomHeight ? "page-shell-custom-height" : ""}`}
+          data-page-shell-height={size.heightPx ?? "natural"}
+          ref={(element) => { shellContentRefs.current[shell.id] = element; }}
+          style={hasCustomHeight ? { height: `${size.heightPx}px` } : undefined}
+        >
+          {shell.visible ? shell.node : (
+            <div aria-label={`${shell.label} placeholder`} className="flex min-h-36 flex-col justify-center rounded-[1rem] border border-dashed border-[#d8d0f5] bg-[#faf8ff]/70 px-4 py-5 text-center dark:border-white/15 dark:bg-white/[0.04]" data-page-shell-placeholder>
+              <p className="text-sm font-semibold text-[#514779] dark:text-white/80">{shell.label}</p>
+              <p className="mt-1 text-xs text-[#8c84aa] dark:text-white/50">{shell.hiddenDescription ?? DEFAULT_HIDDEN_SHELL_DESCRIPTION}</p>
+            </div>
+          )}
+          {layout.isEditing ? (
+            <button
+              aria-label={`Resize ${shell.label}`}
+              className="absolute bottom-1 right-1 z-20 flex h-6 w-6 cursor-se-resize touch-none items-center justify-center rounded-md border border-[#d8d0f5] bg-[#faf8ff]/95 text-[#6f57f6] shadow-sm hover:bg-[#eee9ff] dark:border-white/15 dark:bg-[#211a38]/95 dark:text-[#cabfff] dark:hover:bg-white/10"
+              onPointerCancel={(event) => endInteraction(event, true)}
+              onLostPointerCapture={(event) => endInteraction(event, true)}
+              onPointerDown={(event) => beginResize(event, shell.id)}
+              onPointerMove={updateInteraction}
+              onPointerUp={(event) => endInteraction(event, false)}
+              title={`Resize ${shell.label}`}
+              type="button"
+            >
+              <CornerDownRight aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`${shellsClassName.replace(/\bxl:grid-cols-12\b/g, "").trim()} ${layout.isCanonical ? layout.canonicalLayout.gridClassName ?? "" : "xl:grid-cols-12"} relative`.trim()}
@@ -449,93 +567,11 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       data-page-shell-presentation={layout.isCanonical ? "canonical" : "custom"}
       ref={layoutRef}
     >
-      {orderedShells.map((shell) => {
-        const size = layout.sizes[shell.id] ?? { heightPx: null, span: 12 as const };
-        const spanClass = SHELL_SPAN_CLASSES[size.span] ?? SHELL_SPAN_CLASSES[12];
-        const hasCustomHeight = size.heightPx !== null;
-        const shellPlacementClass = layout.isCanonical
-          ? layout.canonicalLayout.shellClassNames?.[shell.id] ?? ""
-          : spanClass;
-        return (
-          <div
-            className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
-            data-page-shell-id={shell.id}
-            data-page-shell-dragging={draggingId === shell.id ? "true" : "false"}
-            data-page-shell-resizing={resizingId === shell.id ? "true" : "false"}
-            data-page-shell-size-span={size.span}
-            key={shell.id}
-            ref={(element) => { shellRefs.current[shell.id] = element; }}
-          >
-            {layout.isEditing ? (
-              <div className="mb-1 flex min-h-7 items-center gap-1.5 rounded-lg border border-[#e4def8] bg-[#faf8ff]/90 px-1.5 py-1 text-xs text-[#6f57f6] dark:border-white/10 dark:bg-[#211a38]/90 dark:text-[#cabfff]" data-page-shell-layout-strip>
-                {layout.canReorder ? (
-                  <button
-                    aria-label={`Move ${shell.label}`}
-                    className="flex h-6 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md hover:bg-[#eee9ff] active:cursor-grabbing dark:hover:bg-white/10"
-                    onPointerCancel={(event) => endInteraction(event, true)}
-                    onLostPointerCapture={(event) => endInteraction(event, true)}
-                    onPointerDown={(event) => beginMove(event, shell.id)}
-                    onPointerMove={updateInteraction}
-                    onPointerUp={(event) => endInteraction(event, false)}
-                    title={`Move ${shell.label}`}
-                    type="button"
-                  >
-                    <GripVertical aria-hidden="true" className="h-4 w-4" />
-                  </button>
-                ) : null}
-                <span className="min-w-0 flex-1 truncate font-semibold">{shell.label}</span>
-                <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{size.span}/12 · {hasCustomHeight ? `${size.heightPx}px` : "Auto"}</span>
-                <button
-                  aria-label={`Shrink ${shell.label}`}
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
-                  onClick={(event) => setShellToShrinkHeight(event, shell.id)}
-                  title={`Shrink ${shell.label}`}
-                  type="button"
-                >
-                  <ArrowDownToLine aria-hidden="true" className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  aria-label={`Expand ${shell.label}`}
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
-                  onClick={(event) => setShellToNaturalHeight(event, shell.id)}
-                  title={`Expand ${shell.label}`}
-                  type="button"
-                >
-                  <ArrowUpToLine aria-hidden="true" className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ) : null}
-            <div
-              className={`relative min-w-0 ${hasCustomHeight ? "page-shell-custom-height" : ""}`}
-              data-page-shell-height={size.heightPx ?? "natural"}
-              ref={(element) => { shellContentRefs.current[shell.id] = element; }}
-              style={hasCustomHeight ? { height: `${size.heightPx}px` } : undefined}
-            >
-              {shell.visible ? shell.node : (
-                <div aria-label={`${shell.label} placeholder`} className="flex min-h-36 flex-col justify-center rounded-[1rem] border border-dashed border-[#d8d0f5] bg-[#faf8ff]/70 px-4 py-5 text-center dark:border-white/15 dark:bg-white/[0.04]" data-page-shell-placeholder>
-                  <p className="text-sm font-semibold text-[#514779] dark:text-white/80">{shell.label}</p>
-                  <p className="mt-1 text-xs text-[#8c84aa] dark:text-white/50">{shell.hiddenDescription ?? DEFAULT_HIDDEN_SHELL_DESCRIPTION}</p>
-                </div>
-              )}
-              {layout.isEditing ? (
-                <button
-                  aria-label={`Resize ${shell.label}`}
-                  className="absolute bottom-1 right-1 z-20 flex h-6 w-6 cursor-se-resize touch-none items-center justify-center rounded-md border border-[#d8d0f5] bg-[#faf8ff]/95 text-[#6f57f6] shadow-sm hover:bg-[#eee9ff] dark:border-white/15 dark:bg-[#211a38]/95 dark:text-[#cabfff] dark:hover:bg-white/10"
-                  onPointerCancel={(event) => endInteraction(event, true)}
-                  onLostPointerCapture={(event) => endInteraction(event, true)}
-                  onPointerDown={(event) => beginResize(event, shell.id)}
-                  onPointerMove={updateInteraction}
-                  onPointerUp={(event) => endInteraction(event, false)}
-                  title={`Resize ${shell.label}`}
-                  type="button"
-                >
-                  <CornerDownRight aria-hidden="true" className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-            </div>
-          </div>
-        );
-      })}
+      {canonicalGroups ? canonicalGroups.map((group, index) => (
+        <div className={`min-w-0 ${group.className ?? ""}`.trim()} data-page-shell-group={index} key={`page-shell-group-${index}`}>
+          {group.shells.map(renderShell)}
+        </div>
+      )) : orderedShells.map(renderShell)}
       {draggingId && dragInsertionIndex !== null && dragIndicatorStyle ? (
         <div
           aria-hidden="true"

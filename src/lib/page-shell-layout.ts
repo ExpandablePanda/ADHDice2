@@ -11,8 +11,14 @@ export type PageShellSize = {
 
 export type PageShellSizeDefaults = Readonly<Record<string, PageShellSize>>;
 
+export type PageShellCanonicalGroup = {
+  className?: string;
+  shellIds: readonly string[];
+};
+
 export type PageShellCanonicalLayout = {
   gridClassName?: string;
+  groups?: readonly PageShellCanonicalGroup[];
   order: readonly string[];
   shellClassNames?: Readonly<Record<string, string>>;
   sizes: PageShellSizeDefaults;
@@ -95,12 +101,11 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
     "food-library": NATURAL_PAGE_SHELL_SIZE,
   }, {
     gridClassName: "xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]",
-    shellClassNames: {
-      "food-meal-log": "xl:col-start-1 xl:col-end-2",
-      "food-daily-totals": "xl:col-start-2 xl:col-end-3",
-      "food-favorites-recent": "xl:col-start-2 xl:col-end-3",
-      "food-library": "xl:col-span-full",
-    },
+    groups: [
+      { className: "xl:col-start-1 xl:col-end-2", shellIds: ["food-meal-log"] },
+      { className: "grid gap-5 xl:col-start-2 xl:col-end-3", shellIds: ["food-daily-totals", "food-favorites-recent"] },
+      { className: "xl:col-span-full", shellIds: ["food-library"] },
+    ],
   }),
   Water: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Water, {
     "water-log": CANONICAL_PAGE_SHELL_SIZE(5),
@@ -109,12 +114,10 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
     "water-history": CANONICAL_PAGE_SHELL_SIZE(7),
   }, {
     gridClassName: "xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]",
-    shellClassNames: {
-      "water-log": "xl:col-start-1 xl:col-end-2",
-      "water-pending": "xl:col-start-2 xl:col-end-3",
-      "water-today": "xl:col-start-2 xl:col-end-3",
-      "water-history": "xl:col-start-2 xl:col-end-3",
-    },
+    groups: [
+      { className: "xl:col-start-1 xl:col-end-2", shellIds: ["water-log"] },
+      { className: "grid gap-5 xl:col-start-2 xl:col-end-3", shellIds: ["water-pending", "water-today", "water-history"] },
+    ],
   }),
   Fitness: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Fitness, {
     "fitness-active-workout": NATURAL_PAGE_SHELL_SIZE,
@@ -156,12 +159,10 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
     "sleep-sources": CANONICAL_PAGE_SHELL_SIZE(6),
   }, {
     gridClassName: "xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]",
-    shellClassNames: {
-      "sleep-ledger": "xl:col-start-1 xl:col-end-2",
-      "sleep-log": "xl:col-start-2 xl:col-end-3",
-      "sleep-focus-ledger": "xl:col-start-2 xl:col-end-3",
-      "sleep-sources": "xl:col-start-2 xl:col-end-3",
-    },
+    groups: [
+      { className: "xl:col-start-1 xl:col-end-2", shellIds: ["sleep-ledger"] },
+      { className: "grid gap-5 xl:col-start-2 xl:col-end-3", shellIds: ["sleep-log", "sleep-focus-ledger", "sleep-sources"] },
+    ],
   }),
   Insights: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Insights, {
     "insights-import": CANONICAL_PAGE_SHELL_SIZE(6),
