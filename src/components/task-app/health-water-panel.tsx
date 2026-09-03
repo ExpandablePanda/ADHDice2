@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
-import { PageShell, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { PageShell, PageShellBody, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import type { HealthWaterEntry, HealthWaterUnit } from "@/lib/database.types";
 import {
@@ -194,7 +194,8 @@ export function HealthWaterPanel({
     <div aria-labelledby="health-tab-water" className="mt-6 min-w-0" id="health-panel-water" role="tabpanel">
       <ReorderablePageShells layout={layout} shellsClassName="grid gap-5 xl:grid-cols-12">
       <PageShell id="water-log" label="Water Log">
-      <div className="grid content-start gap-5">
+      <PageShellSurface>
+      <PageShellBody className="grid content-start gap-5">
         <HealthCollapsiblePanel
           header={(
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#eef5ff] text-[#4f73b8] dark:bg-[#17243a] dark:text-[#b7cdfd]">
@@ -288,11 +289,13 @@ export function HealthWaterPanel({
           </div>
         </HealthCollapsiblePanel>
         <HealthWaterLineChart history={waterHistory} waterGoalMl={waterGoalMl} />
-      </div>
+      </PageShellBody>
+      </PageShellSurface>
 
       </PageShell>
       <PageShell id="water-history" label="Water History">
-      <div className="grid content-start gap-5">
+      <PageShellSurface>
+      <PageShellBody className="grid content-start gap-5">
         {pendingEntries.length > 0 ? (
           <HealthCollapsiblePanel subtitle="These entries do not count toward totals until confirmed." title="Pending water">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -386,7 +389,8 @@ export function HealthWaterPanel({
             </div>
           )}
         </HealthCollapsiblePanel>
-      </div>
+      </PageShellBody>
+      </PageShellSurface>
       </PageShell>
       </ReorderablePageShells>
     </div>

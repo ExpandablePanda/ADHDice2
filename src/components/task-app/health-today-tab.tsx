@@ -25,7 +25,7 @@ import { formatQuantity, millilitersToWaterAmount } from "@/lib/health-library";
 import { buildHealthTodaySnapshot, buildHealthTodayTimeline, type HealthTodayTimelineEvent } from "@/lib/health-today";
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
-import { PageShell, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { PageShell, PageShellBody, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 
 type HealthTodayTabProps = {
@@ -111,6 +111,8 @@ export function HealthTodayTab({
 
       <ReorderablePageShells layout={layout}>
       <PageShell id="today-snapshot" label="Today Snapshot">
+      <PageShellSurface>
+      <PageShellBody>
       <section aria-labelledby="health-today-snapshot-heading" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <h3 className="sr-only" id="health-today-snapshot-heading">Today&apos;s Snapshot</h3>
         <HealthTodaySnapshotCard label="Journal" onClick={() => onNavigate("Journal")}>
@@ -143,9 +145,13 @@ export function HealthTodayTab({
           <MovementLine label="kcal" value={snapshot.movement.activeEnergyKcal} goal={profile.movement_goal_calories} />
         </HealthTodaySnapshotCard>
       </section>
+      </PageShellBody>
+      </PageShellSurface>
       </PageShell>
 
       <PageShell id="today-quick-log" label="Quick Log">
+      <PageShellSurface>
+      <PageShellBody>
       <section aria-labelledby="health-today-quick-log-heading" className="grid gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40" id="health-today-quick-log-heading">Quick Log</p>
         <div className="flex flex-wrap gap-2">
@@ -161,10 +167,16 @@ export function HealthTodayTab({
           ))}
         </div>
       </section>
+      </PageShellBody>
+      </PageShellSurface>
       </PageShell>
 
       <PageShell id="today-timeline" label="Today Timeline">
+      <PageShellSurface>
+      <PageShellBody>
       <HealthTodayTimeline events={timeline} onNavigate={onNavigate} />
+      </PageShellBody>
+      </PageShellSurface>
       </PageShell>
       </ReorderablePageShells>
     </div>

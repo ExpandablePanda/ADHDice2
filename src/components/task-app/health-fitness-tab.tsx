@@ -874,6 +874,7 @@ export function HealthFitnessTab({
         header={<Flame aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
         onOpenChange={setIsHistoryPanelOpen}
         open={isFormOpen || isHistoryPanelOpen}
+        shellSurface
         subtitle="Canonical workout ledger"
         title="Workout History"
       >

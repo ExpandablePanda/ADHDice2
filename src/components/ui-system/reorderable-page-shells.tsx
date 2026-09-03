@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, CornerDownRight, GripVertical, PanelsTopLeft, RotateCcw } from "lucide-react";
-import { Children, isValidElement, useEffect, useMemo, useRef, useState, type HTMLAttributes, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode } from "react";
+import { Children, isValidElement, useEffect, useMemo, useRef, useState, type HTMLAttributes, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, type Ref } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
@@ -66,6 +66,9 @@ type PageShellInsertionIndicatorStyle = {
 };
 
 const SHELL_SPAN_CLASSES: Record<number, string> = {
+  3: "xl:col-span-3",
+  4: "xl:col-span-4",
+  5: "xl:col-span-5",
   6: "xl:col-span-6",
   7: "xl:col-span-7",
   8: "xl:col-span-8",
@@ -141,9 +144,9 @@ export function PageShell({ children }: PageShellProps) {
   return <>{children}</>;
 }
 
-export function PageShellSurface({ children, className, ...props }: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
+export function PageShellSurface({ children, className, ref, ...props }: HTMLAttributes<HTMLDivElement> & { children: ReactNode; ref?: Ref<HTMLDivElement> }) {
   return (
-    <div className={`page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${className ?? ""}`} {...props}>
+    <div className={`page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${className ?? ""}`} ref={ref} {...props}>
       {children}
     </div>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { Activity, Apple, BookOpen, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, History, MoonStar, Pencil, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref } from "react";
 
 import type {
   HealthAchievementAward,
@@ -196,7 +196,7 @@ import {
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
-import { PageShell, PageShellLayoutControls, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HEALTH_PAGE_SHELL_IDS, HEALTH_PAGE_SHELL_SIZE_DEFAULTS, getHealthPageShellKey } from "@/lib/page-shell-layout";
 import { HealthBarcodeScanner } from "./health-barcode-scanner";
@@ -3390,9 +3390,9 @@ export function HealthPage({
         <>
           <ReorderablePageShells layout={pageShellLayout}>
           <PageShell id="journal-entry-history" label="Journal Entry and History">
-          <div aria-labelledby="health-tab-journal" className="mt-6 min-w-0" id={getHealthTabPanelId("Journal")} role="tabpanel">
             <HealthPanel
-              className="min-w-0"
+              aria-labelledby="health-tab-journal"
+              className="mt-6 min-w-0"
               headerActions={(
                 <div className="flex flex-wrap items-center justify-end gap-1">
                   <div className="relative">
@@ -3438,9 +3438,12 @@ export function HealthPage({
                   {journalWorkspaceMode === "history" ? <AdhdChip onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
                 </div>
               )}
+              id={getHealthTabPanelId("Journal")}
               icon={<HeartPulse />}
+              shellSurface
               subtitle="Journal"
               title="Journal"
+              role="tabpanel"
             >
             <div className={(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? "grid min-w-0 gap-5 md:grid-cols-2" : "min-w-0"}>
             {journalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? journalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
@@ -3708,12 +3711,10 @@ export function HealthPage({
             </div> : null}
             </div>
             </HealthPanel>
-          </div>
 
           </PageShell>
           <PageShell id="journal-library" label="Journal Library">
-          <div className="mt-5" id="journal-library-section" ref={journalLibraryRef} tabIndex={-1}>
-            <HealthPanel isOpen={isJournalLibraryOpen} onOpenChange={setIsJournalLibraryOpen} icon={<Sparkles />} subtitle={`Journal Library · ${activeSymptoms.length} Symptoms · ${activeJournalSignals.filter((signal) => signal.kind === "emotion").length} Emotions · ${activeJournalSignals.filter((signal) => signal.kind === "other").length} Other Feelings`} title="Manage Journal Library">
+            <HealthPanel id="journal-library-section" isOpen={isJournalLibraryOpen} onOpenChange={setIsJournalLibraryOpen} ref={journalLibraryRef} shellSurface tabIndex={-1} icon={<Sparkles />} subtitle={`Journal Library · ${activeSymptoms.length} Symptoms · ${activeJournalSignals.filter((signal) => signal.kind === "emotion").length} Emotions · ${activeJournalSignals.filter((signal) => signal.kind === "other").length} Other Feelings`} title="Manage Journal Library">
               <div className="grid gap-5">
                 <JournalSymptomLibrarySection
                   activeSymptoms={activeSymptoms}
@@ -3804,11 +3805,10 @@ export function HealthPage({
                 />
               </div>
             </HealthPanel>
-          </div>
 
           </PageShell>
           <PageShell id="journal-feeling-trends" label="Feeling Trends">
-          <HealthPanel className="mt-5 min-w-0" icon={<Activity />} subtitle="Feelings" title="Feeling Trends">
+          <HealthPanel className="mt-5 min-w-0" icon={<Activity />} shellSurface subtitle="Feelings" title="Feeling Trends">
             <div className="grid gap-4">
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                 <Field composite label="Feelings">
@@ -3871,13 +3871,13 @@ export function HealthPage({
         <div aria-labelledby="health-tab-food" className="mt-3 min-w-0" id={getHealthTabPanelId("Food")} role="tabpanel">
           <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-12">
           <PageShell id="food-meal-log" label="Meal Log">
-          <div className="grid min-w-0 content-start gap-5">
           <HealthPanel
             className="min-w-0"
             contentTopClassName="pt-1 sm:pt-1"
             headerChevronClassName="-translate-y-0.5"
             headerPaddingClassName="py-2 sm:py-2"
             icon={<Salad />}
+            shellSurface
             subtitle="Meal logging"
           >
             <div className="grid gap-3">
@@ -4100,15 +4100,14 @@ export function HealthPage({
                 })}
             </div>
           </HealthPanel>
-          </div>
 
           </PageShell>
-          <PageShell id="food-daily-totals" label="Daily Totals and Favorites">
-          <div className="grid min-w-0 content-start gap-5">
+          <PageShell id="food-daily-totals" label="Daily Totals">
           <HealthPanel
             headerActions={<FoodHistoryDateChip allowFuture date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
             className="min-w-0"
             icon={<Target />}
+            shellSurface
             subtitle="Daily totals"
           >
             <div className="grid gap-3 sm:grid-cols-2">
@@ -4155,8 +4154,10 @@ export function HealthPage({
             <HealthCalorieLineChart series={dailyCalorieSeries} targetSeries={dailyCalorieTargetSeries} />
           </HealthPanel>
 
-          <HealthPanel className="min-w-0" icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
-              <div className="adhdice-scrollbar max-h-[26rem] space-y-5 overflow-y-auto pr-1">
+          </PageShell>
+          <PageShell id="food-favorites-recent" label="Favorites & Recent Foods">
+          <HealthPanel className="min-w-0" icon={<Sparkles />} shellSurface subtitle="Food shortcuts" title="Favorites & Recent Foods">
+              <div className="space-y-5">
                 <section className="space-y-3" aria-labelledby="health-favorites-heading">
                   <SectionMiniTitle title="Favorites" />
                   <h3 className="sr-only" id="health-favorites-heading">Favorites</h3>
@@ -4235,7 +4236,6 @@ export function HealthPage({
                 </section>
               </div>
           </HealthPanel>
-          </div>
 
           </PageShell>
           <PageShell id="food-library" label="Food Library">
@@ -4249,6 +4249,7 @@ export function HealthPage({
             saveRecipe={saveRecipe}
             savedMeals={savedMeals}
             saveSavedMeal={saveSavedMeal}
+            shellSurface
           />
           </PageShell>
 
@@ -4274,7 +4275,7 @@ export function HealthPage({
         <div aria-labelledby="health-tab-weight" className="mt-6 min-w-0" id={getHealthTabPanelId("Weight")} role="tabpanel">
           <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-12">
           <PageShell id="weight-entry" label="Weigh-in">
-          <HealthPanel icon={<Scale />} subtitle="Weigh-in" title="Track trend, not perfection">
+          <HealthPanel icon={<Scale />} shellSurface subtitle="Weigh-in" title="Track trend, not perfection">
             <div className="grid gap-4 sm:grid-cols-[0.8fr_1.2fr]">
               <Field label={`Weight (${profile.preferred_weight_unit})`}>
                 <input className="health-input" inputMode="decimal" onChange={(event) => setWeightDraft(event.target.value)} placeholder={profile.preferred_weight_unit === "kg" ? "78.2" : "172.4"} value={weightDraft} />
@@ -4301,7 +4302,7 @@ export function HealthPage({
           </PageShell>
 
           <PageShell id="weight-trend" label="Recent Trend">
-          <HealthPanel icon={<Activity />} subtitle="30 days" title="Recent trend">
+          <HealthPanel icon={<Activity />} shellSurface subtitle="30 days" title="Recent trend">
             <div className="space-y-3">
               {weightTrend30.length === 0 ? (
                 <EmptyCopy text="Your trend will appear once you log a weight entry." />
@@ -4338,11 +4339,11 @@ export function HealthPage({
         <div aria-labelledby="health-tab-sleep" className="mt-6 min-w-0" id={getHealthTabPanelId("Sleep")} role="tabpanel">
           <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-12">
           <PageShell id="sleep-ledger" label="Health Sleep Totals">
-          <div className="grid content-start gap-5">
           <HealthPanel
             collapseAfterHeaderActions
             headerActions={<FoodHistoryDateChip ariaLabel="Sleep ledger date" date={sleepLedgerDate} dayStepper today={today} onChange={setSleepLedgerDate} />}
             icon={<MoonStar />}
+            shellSurface
             subtitle="Sleep ledger"
             title="Health sleep totals"
           >
@@ -4375,11 +4376,11 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          </div>
           </PageShell>
 
           <PageShell id="sleep-entry-and-sources" label="Sleep Entry and Sources">
-          <div className="grid content-start gap-5">
+          <PageShellSurface>
+          <PageShellBody className="grid content-start gap-5">
           <HealthPanel icon={<MoonStar />} subtitle="Manual entry" title="Log sleep">
             <SleepKindSelector onChange={(kind) => setManualSleepDraft((current) => ({ ...current, kind }))} value={manualSleepDraft.kind} />
             <SleepDraftFields draft={manualSleepDraft} onChange={(next) => setManualSleepDraft(next)} />
@@ -4447,7 +4448,8 @@ export function HealthPage({
               )}
             </div>
           </HealthPanel>
-          </div>
+          </PageShellBody>
+          </PageShellSurface>
           </PageShell>
           </ReorderablePageShells>
         </div>
@@ -4457,7 +4459,7 @@ export function HealthPage({
         <div aria-labelledby="health-tab-insights" className="mt-6 min-w-0" id={getHealthTabPanelId("Insights")} role="tabpanel">
           <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-12">
           <PageShell id="insights-import" label="Apple Health Import">
-          <HealthPanel icon={<Apple />} subtitle="Import pathway" title="Apple Health groundwork">
+          <HealthPanel icon={<Apple />} shellSurface subtitle="Import pathway" title="Apple Health groundwork">
             <div className="rounded-[1.5rem] border border-dashed border-[#d6def4] bg-[#fbfcff] p-5 dark:border-white/10 dark:bg-white/[0.03]">
               <p className="text-sm font-semibold text-[#22304b] dark:text-white">Upload an Apple Health export to preview what Health can import.</p>
               <p className="mt-2 text-sm leading-6 text-[#67728f] dark:text-white/60">
@@ -4531,7 +4533,7 @@ export function HealthPage({
 
           </PageShell>
           <PageShell id="insights-trends" label="Imported Trends">
-          <HealthPanel icon={<MoonStar />} subtitle="Imported trends" title="What will appear here">
+          <HealthPanel icon={<MoonStar />} shellSurface subtitle="Imported trends" title="What will appear here">
             <div className="space-y-3">
               {metricEntries.length === 0 ? (
                 <EmptyCopy text="Imported sleep, activity, energy, and Apple Health weight data will show up here when the import flow lands." />
@@ -4635,6 +4637,7 @@ export function HealthPage({
 }
 
 function HealthPanel({
+  "aria-labelledby": ariaLabelledBy,
   className,
   collapseAfterHeaderActions = false,
   children,
@@ -4643,11 +4646,17 @@ function HealthPanel({
   headerPaddingClassName = "py-4 sm:py-5",
   headerActions,
   icon,
+  id,
+  ref,
+  role,
+  shellSurface = false,
   subtitle,
+  tabIndex,
   title,
   isOpen: controlledIsOpen,
   onOpenChange,
 }: {
+  "aria-labelledby"?: string;
   className?: string;
   collapseAfterHeaderActions?: boolean;
   children: ReactNode;
@@ -4656,7 +4665,12 @@ function HealthPanel({
   headerPaddingClassName?: string;
   headerActions?: ReactNode;
   icon: ReactNode;
+  id?: string;
+  ref?: Ref<HTMLDivElement>;
+  role?: string;
+  shellSurface?: boolean;
   subtitle: string;
+  tabIndex?: number;
   title?: string;
   isOpen?: boolean;
   onOpenChange?: (isOpen: boolean) => void;
@@ -4707,9 +4721,10 @@ function HealthPanel({
   return (
     <div className={[
       "rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]",
+      shellSurface ? "page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden" : "",
       className,
-    ].filter(Boolean).join(" ")}>
-      <div className={["flex items-center gap-2 px-3 sm:px-5", headerPaddingClassName].filter(Boolean).join(" ")}>
+    ].filter(Boolean).join(" ")} aria-labelledby={ariaLabelledBy} id={id} ref={ref} role={role} tabIndex={tabIndex}>
+      <div className={["flex min-w-0 items-center gap-2 px-3 sm:px-5", shellSurface ? "shrink-0" : "", headerPaddingClassName].filter(Boolean).join(" ")}>
         {collapseAfterHeaderActions ? (
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
@@ -4738,7 +4753,7 @@ function HealthPanel({
         )}
         {collapseAfterHeaderActions ? collapseButton : headerActions}
       </div>
-      {isOpen ? <div className={`px-3 pb-4 sm:px-5 sm:pb-5 ${contentTopClassName}`}>{children}</div> : null}
+      {isOpen ? shellSurface ? <PageShellBody className={`px-3 pb-4 sm:px-5 sm:pb-5 ${contentTopClassName}`}>{children}</PageShellBody> : <div className={`px-3 pb-4 sm:px-5 sm:pb-5 ${contentTopClassName}`}>{children}</div> : null}
     </div>
   );
 }

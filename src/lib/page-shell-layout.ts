@@ -1,7 +1,7 @@
 export const PAGE_SHELL_LAYOUT_STORAGE_PREFIX = "adhdice-page-shell-layout-v1:";
 
 export type PageShellLayoutStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-export const PAGE_SHELL_SPAN_OPTIONS = [6, 7, 8, 9, 10, 11, 12] as const;
+export const PAGE_SHELL_SPAN_OPTIONS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 export type PageShellSpan = typeof PAGE_SHELL_SPAN_OPTIONS[number];
 
 export type PageShellSize = {
@@ -22,6 +22,9 @@ const PAGE_SHELL_LEGACY_ID_REPLACEMENTS: Readonly<Record<string, PageShellLegacy
   focus: {
     "focus-history": ["focus-activity-summary", "focus-activity-trend"],
   },
+  "health:food": {
+    "food-daily-totals": ["food-daily-totals", "food-favorites-recent"],
+  },
 };
 
 const DEFAULT_PAGE_SHELL_SIZE: PageShellSize = { heightPx: null, span: 12 };
@@ -29,7 +32,7 @@ const FITNESS_HALF_SIZE: PageShellSize = { heightPx: null, span: 6 };
 
 export const HEALTH_PAGE_SHELL_IDS = {
   Today: ["today-snapshot", "today-quick-log", "today-timeline"],
-  Food: ["food-meal-log", "food-daily-totals", "food-library"],
+  Food: ["food-meal-log", "food-daily-totals", "food-favorites-recent", "food-library"],
   Water: ["water-log", "water-history"],
   Fitness: ["fitness-active-workout", "fitness-today", "fitness-week", "fitness-goals", "fitness-plans", "fitness-workout-history"],
   Journal: ["journal-entry-history", "journal-library", "journal-feeling-trends"],
@@ -51,6 +54,7 @@ export const HEALTH_PAGE_SHELL_SIZE_DEFAULTS: Record<HealthPageShellTab, PageShe
   Food: {
     "food-meal-log": FITNESS_HALF_SIZE,
     "food-daily-totals": FITNESS_HALF_SIZE,
+    "food-favorites-recent": FITNESS_HALF_SIZE,
     "food-library": DEFAULT_PAGE_SHELL_SIZE,
   },
   Water: {

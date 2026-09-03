@@ -40,11 +40,11 @@ export function HealthCollapsiblePanel({
 
   return (
     <AdhdPanel
-      className={`${shellSurface ? "page-shell-surface flex h-full min-h-0 flex-col overflow-hidden" : ""} ${className ?? ""}`.trim()}
+      className={`${shellSurface ? "page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden" : ""} ${className ?? ""}`.trim()}
       header={(
         <button
           aria-expanded={isOpen}
-          className={`flex w-full items-start justify-between gap-3 text-left ${shellSurface ? "shrink-0" : ""}`}
+          className={`flex w-full min-w-0 items-start justify-between gap-3 text-left ${shellSurface ? "shrink-0" : ""}`}
           onClick={() => {
             const next = !isOpen;
             if (open === undefined) {

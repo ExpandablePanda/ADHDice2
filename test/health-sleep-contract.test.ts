@@ -92,11 +92,12 @@ test("Health stacked tabs use independent columns and preserve narrow-screen ord
   const food = health.slice(health.indexOf('activeTab === "Food"'), health.indexOf('activeTab === "Water"'));
   const sleep = health.slice(health.indexOf('activeTab === "Sleep"'), health.indexOf('activeTab === "Insights"'));
 
-  assert.equal((food.match(/className="grid min-w-0 content-start gap-5"/g) ?? []).length, 2);
+  assert.equal((food.match(/<PageShell id="food-/g) ?? []).length, 4);
   assert.match(food, /<HealthPanel[\s\S]*?subtitle="Meal logging"/);
   assert.match(food, /<HealthPanel[\s\S]*?subtitle="Daily totals"/);
   assert.match(food, /title="Favorites & Recent Foods"/);
-  assert.match(food, /<div className="order-4 min-w-0 xl:col-span-2 xl:order-none">\s*<HealthLibraryPanel/);
+  assert.match(food, /<PageShell id="food-favorites-recent" label="Favorites & Recent Foods">/);
+  assert.match(food, /<HealthLibraryPanel[\s\S]*shellSurface/);
   assert.equal((food.match(/subtitle="Meal logging"/g) ?? []).length, 1);
   assert.equal((food.match(/subtitle="Daily totals"/g) ?? []).length, 1);
   assert.equal((food.match(/title="Favorites & Recent Foods"/g) ?? []).length, 1);
@@ -104,18 +105,15 @@ test("Health stacked tabs use independent columns and preserve narrow-screen ord
   assert.ok(food.indexOf('subtitle="Meal logging"') < food.indexOf('subtitle="Daily totals"'));
   assert.ok(food.indexOf('title="Favorites & Recent Foods"') < food.indexOf("<HealthLibraryPanel"));
 
-  assert.equal((sleep.match(/className="grid content-start gap-5"/g) ?? []).length, 2);
+  assert.equal((sleep.match(/className="grid content-start gap-5"/g) ?? []).length, 1);
   assert.doesNotMatch(sleep, /contents xl:grid/);
-  const firstSleepColumnStart = sleep.indexOf('<div className="grid content-start gap-5">');
-  const secondSleepColumnStart = sleep.indexOf('<div className="grid content-start gap-5">', firstSleepColumnStart + 1);
-  const firstSleepColumn = sleep.slice(firstSleepColumnStart, secondSleepColumnStart);
-  const secondSleepColumn = sleep.slice(secondSleepColumnStart);
-  assert.match(firstSleepColumn, /title="Health sleep totals"/);
-  assert.doesNotMatch(firstSleepColumn, /subtitle="Manual entry"|title="Sleep sources"|title="Sleep Ledger"/);
-  assert.match(secondSleepColumn, /subtitle="Manual entry"[\s\S]*?className="xl:order-2"[\s\S]*?title="Sleep sources"[\s\S]*?className="xl:order-1"[\s\S]*?title="Sleep Ledger"/);
+  assert.match(sleep, /<PageShell id="sleep-ledger"[\s\S]*shellSurface[\s\S]*title="Health sleep totals"/);
+  assert.match(sleep, /<PageShell id="sleep-entry-and-sources"[\s\S]*<PageShellSurface>[\s\S]*<PageShellBody className="grid content-start gap-5"/);
+  assert.match(sleep, /subtitle="Manual entry"[\s\S]*?className="xl:order-2"[\s\S]*?title="Sleep sources"[\s\S]*?className="xl:order-1"[\s\S]*?title="Sleep Ledger"/);
   assert.equal((sleep.match(/<HealthPanel/g) ?? []).length, 4);
 
-  assert.equal((water.match(/<div className="grid content-start gap-5">/g) ?? []).length, 2);
+  assert.equal((water.match(/<PageShellSurface>/g) ?? []).length, 2);
+  assert.equal((water.match(/<PageShellBody className="grid content-start gap-5">/g) ?? []).length, 2);
 });
 
 test("Health descriptive rows let text wrap before responsive actions", async () => {
@@ -128,7 +126,8 @@ test("Health descriptive rows let text wrap before responsive actions", async ()
   assert.match(health, /<HealthBarcodeScanner[\s\S]*onDetected=\{handleMealBarcodeDetected\}/);
   assert.match(scanner, /<video[\s\S]*aria-label="Barcode camera preview"/);
   assert.match(health, /getHealthMealSummaryParts\(entry\)[\s\S]*?flex shrink-0 flex-wrap justify-end gap-2/);
-  assert.match(health, /title="Favorites & Recent Foods">[\s\S]*?max-h-\[26rem\] space-y-5 overflow-y-auto/);
+  assert.match(health, /title="Favorites & Recent Foods">[\s\S]*?<div className="space-y-5">/);
+  assert.doesNotMatch(health, /title="Favorites & Recent Foods">[\s\S]*?overflow-y-auto/);
   assert.match(health, /Sleep Focus Clock[\s\S]*?className="flex shrink-0 flex-nowrap items-center gap-2"/);
   assert.match(health, /resolveHealthSleepKind\(session,[\s\S]*?className="flex shrink-0 items-center gap-2"/);
   assert.match(health, /importPreview\.fileName[\s\S]*?className="shrink-0 rounded-full/);

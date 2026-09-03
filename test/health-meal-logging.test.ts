@@ -21,7 +21,7 @@ const lookupHandlerSource = source.slice(source.indexOf("function applyLookupRes
 
 test("the Food page no longer renders a global meal composer", () => {
   assert.doesNotMatch(source, /mealComposerRef/);
-  assert.doesNotMatch(source, /scrollIntoView/);
+  assert.doesNotMatch(foodSource, /scrollIntoView/);
   assert.doesNotMatch(source, /health-food-composer-input/);
   assert.doesNotMatch(foodSource, /Quick Add Food/);
   assert.doesNotMatch(foodSource, /Log Quick Entry/);
@@ -71,10 +71,15 @@ test("Meal Logging uses compact header/body spacing while other HealthPanel inst
   assert.match(healthPanelSource, /headerPaddingClassName = "py-4 sm:py-5"/);
   assert.match(healthPanelSource, /headerChevronClassName\?: string/);
   assert.match(healthPanelSource, /headerPaddingClassName\?: string/);
+  assert.match(healthPanelSource, /shellSurface = false/);
+  assert.match(healthPanelSource, /page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden/);
+  assert.match(healthPanelSource, /<PageShellBody className=\{`px-3 pb-4 sm:px-5 sm:pb-5/);
   assert.match(healthPanelSource, /headerPaddingClassName\].filter\(Boolean\).join\(" "\)/);
   assert.match(healthPanelSource, /className=\{`px-3 pb-4 sm:px-5 sm:pb-5 \$\{contentTopClassName\}`\}/);
   assert.match(foodSource, /<HealthPanel[\s\S]*?subtitle="Daily totals"/);
   assert.match(foodSource, /<HealthPanel[\s\S]*?title="Favorites & Recent Foods"/);
+  assert.match(foodSource, /<PageShell id="food-daily-totals" label="Daily Totals">[\s\S]*?<\/PageShell>\s*<PageShell id="food-favorites-recent" label="Favorites & Recent Foods">/);
+  assert.doesNotMatch(foodSource, /max-h-\[26rem\].*overflow-y-auto/);
 });
 
 test("Meal Logging keeps its date chip inline while SectionMiniTitle keeps default action alignment", () => {

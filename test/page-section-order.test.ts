@@ -19,6 +19,7 @@ import {
   PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX,
   PAGE_SHELL_HEIGHT_SNAP,
   PAGE_SHELL_MIN_HEIGHT,
+  PAGE_SHELL_SPAN_OPTIONS,
   readPageShellLayout,
   reorderPageShellOrder,
   reorderPageShellOrderAt,
@@ -33,6 +34,7 @@ import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
 const statsSource = readFileSync(new URL("../src/components/task-app/stats-page.tsx", import.meta.url), "utf8");
 const healthSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
+const activeWorkoutSource = readFileSync(new URL("../src/components/task-app/health-active-workout.tsx", import.meta.url), "utf8");
 const fitnessSource = readFileSync(new URL("../src/components/task-app/health-fitness-tab.tsx", import.meta.url), "utf8");
 const todaySource = readFileSync(new URL("../src/components/task-app/health-today-tab.tsx", import.meta.url), "utf8");
 const waterSource = readFileSync(new URL("../src/components/task-app/health-water-panel.tsx", import.meta.url), "utf8");
@@ -80,6 +82,16 @@ test("page shell normalization preserves valid order and appends new defaults", 
   assert.deepEqual(normalizePageShellOrder(["B"], ["A", "B", "C"]), ["B", "A", "C"]);
 });
 
+test("page shell spans support 3 through 12 columns and clamp narrower values", () => {
+  assert.deepEqual(PAGE_SHELL_SPAN_OPTIONS, [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  for (const span of PAGE_SHELL_SPAN_OPTIONS) {
+    assert.equal(normalizePageShellSize({ heightPx: null, span }).span, span);
+  }
+  assert.equal(normalizePageShellSize({ heightPx: null, span: 1 }).span, 3);
+  assert.equal(normalizePageShellSize({ heightPx: null, span: 2 }).span, 3);
+  assert.equal(normalizePageShellSize({ heightPx: null, span: 99 }).span, 12);
+});
+
 test("page shell reorder moves a semantic shell ID without using indexes", () => {
   assert.deepEqual(reorderPageShellOrder(["A", "B", "C"], "C", "A"), ["C", "A", "B"]);
   assert.deepEqual(reorderPageShellOrder(["A", "B", "C"], "A", "C"), ["B", "A", "C"]);
@@ -98,6 +110,17 @@ test("shell layout storage is user-scoped, page-independent, and resettable", ()
   writePageShellLayout(store, key, "health:fitness", { order: ["fitness-week", "fitness-today", ...fitnessDefaults.slice(0, 1), ...fitnessDefaults.slice(3)], sizes: { "fitness-today": { heightPx: 384, span: 8 } } });
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", fitnessDefaults, fitnessSizes).order, ["fitness-week", "fitness-today", "fitness-active-workout", "fitness-goals", "fitness-plans", "fitness-workout-history"]);
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", fitnessDefaults, fitnessSizes).sizes["fitness-today"], { heightPx: 384, span: 8 });
+  store.setItem(key, JSON.stringify({
+    focus: { order: ["focus-history", "focus-goals"], sizes: { "focus-history": { heightPx: 432, span: 6 } } },
+    "health:food": {
+      order: ["food-meal-log", "food-daily-totals", "food-library"],
+      sizes: { "food-daily-totals": { heightPx: 288, span: 4 } },
+    },
+  }));
+  const foodLayout = readPageShellLayout(store, key, "health:food", HEALTH_PAGE_SHELL_IDS.Food, HEALTH_PAGE_SHELL_SIZE_DEFAULTS.Food);
+  assert.deepEqual(foodLayout.order, ["food-meal-log", "food-daily-totals", "food-favorites-recent", "food-library"]);
+  assert.deepEqual(foodLayout.sizes["food-daily-totals"], { heightPx: 288, span: 4 });
+  assert.deepEqual(foodLayout.sizes["food-favorites-recent"], { heightPx: 288, span: 4 });
   const focusLayout = readPageShellLayout(store, key, "focus", FOCUS_PAGE_SHELL_IDS, {});
   assert.deepEqual(focusLayout.order, ["focus-activity-summary", "focus-activity-trend", "focus-goals", "focus-timer-workspace", "focus-counter-history"]);
   assert.deepEqual(focusLayout.sizes["focus-activity-summary"], { heightPx: 432, span: 6 });
@@ -156,7 +179,7 @@ test("shell surfaces keep the visual frame fixed while the body owns constrained
 
 test("Health collapsible shell surfaces keep collapse state canonical and scroll only their open body", () => {
   assert.match(collapsiblePanelSource, /shellSurface = false/);
-  assert.match(collapsiblePanelSource, /page-shell-surface flex h-full min-h-0 flex-col overflow-hidden/);
+  assert.match(collapsiblePanelSource, /page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden/);
   assert.match(collapsiblePanelSource, /<PageShellBody className="mt-4">\{children\}<\/PageShellBody>/);
   assert.match(collapsiblePanelSource, /aria-expanded=\{isOpen\}/);
   assert.match(collapsiblePanelSource, /if \(open === undefined\)/);
@@ -185,7 +208,7 @@ test("shell layout sizes and 2D insertion boundaries normalize defensively", () 
   assert.deepEqual(layout.order, ["C", "A", "B"]);
   assert.deepEqual(layout.sizes.C, { heightPx: 384, span: 7 });
   assert.deepEqual(layout.sizes.B, { heightPx: null, span: 6 });
-  assert.deepEqual(normalizePageShellSize({ heightPx: -1, span: 1 }), { heightPx: null, span: 6 });
+  assert.deepEqual(normalizePageShellSize({ heightPx: -1, span: 1 }), { heightPx: null, span: 3 });
   assert.deepEqual(normalizePageShellSize({ heightPx: 99, span: 99 }), { heightPx: PAGE_SHELL_MIN_HEIGHT, span: 12 });
   assert.deepEqual(normalizePageShellSize({ minHeight: 384, span: 8 }), { heightPx: 384, span: 8 });
   assert.deepEqual(normalizePageShellSize({ minHeight: 96, span: 8 }), { heightPx: PAGE_SHELL_MIN_HEIGHT, span: 8 });
@@ -297,7 +320,7 @@ test("page-level layout controls are header actions and only render for two or m
 
 test("Health tabs use independent semantic shell IDs and preserve grouped internals", () => {
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Today], ["today-snapshot", "today-quick-log", "today-timeline"]);
-  assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Food], ["food-meal-log", "food-daily-totals", "food-library"]);
+  assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Food], ["food-meal-log", "food-daily-totals", "food-favorites-recent", "food-library"]);
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Water], ["water-log", "water-history"]);
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Fitness], ["fitness-active-workout", "fitness-today", "fitness-week", "fitness-goals", "fitness-plans", "fitness-workout-history"]);
   assert.deepEqual([...HEALTH_PAGE_SHELL_IDS.Journal], ["journal-entry-history", "journal-library", "journal-feeling-trends"]);
@@ -327,6 +350,10 @@ test("Fitness reorders whole shells while Today and This Week adapt inside their
   assert.match(fitnessSource, /<PageShell id="fitness-goals"/);
   assert.match(fitnessSource, /<PageShell id="fitness-plans"/);
   assert.match(fitnessSource, /<PageShell id="fitness-workout-history"/);
+  const historyShell = fitnessSource.slice(fitnessSource.indexOf('<PageShell id="fitness-workout-history"'), fitnessSource.indexOf("</PageShell>", fitnessSource.indexOf('<PageShell id="fitness-workout-history"')));
+  assert.match(historyShell, /shellSurface/);
+  assert.match(activeWorkoutSource, /page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden/);
+  assert.match(activeWorkoutSource, /<PageShellBody className="grid gap-4 pt-4">/);
   assert.match(fitnessSource, /visible=\{Boolean\(activeWorkout\.runtime\)\}/);
   assert.match(fitnessSource, /hiddenDescription="Hidden until a workout is active"/);
   assert.match(todayShell, /shellSurface/);
@@ -411,6 +438,9 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /aria-label=\{`Use natural height for \$\{shell\.label\}`\}/);
   assert.match(shellSource, /\{size\.span\}\/12 · \{hasCustomHeight \? `\$\{size\.heightPx\}px` : "Auto"\}/);
   assert.match(shellSource, /xl:col-span-6/);
+  assert.match(shellSource, /xl:col-span-3/);
+  assert.match(shellSource, /xl:col-span-4/);
+  assert.match(shellSource, /xl:col-span-5/);
   assert.match(shellSource, /xl:col-span-12/);
   assert.equal((shellSource.match(/<GripVertical/g) ?? []).length, 1);
   assert.doesNotMatch(shellSource, /localStorage/);
