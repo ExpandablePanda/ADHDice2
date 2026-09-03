@@ -8,6 +8,7 @@ import {
   type AdhdPanelPadding,
   type AdhdPanelVariant,
 } from "@/components/ui-system/adhd-panel";
+import { PageShellBody } from "@/components/ui-system/reorderable-page-shells";
 
 export function HealthCollapsiblePanel({
   children,
@@ -17,6 +18,7 @@ export function HealthCollapsiblePanel({
   open,
   onOpenChange,
   padding,
+  shellSurface = false,
   subtitle,
   title,
   variant,
@@ -28,6 +30,7 @@ export function HealthCollapsiblePanel({
   open?: boolean;
   onOpenChange?: (isOpen: boolean) => void;
   padding?: AdhdPanelPadding;
+  shellSurface?: boolean;
   subtitle?: ReactNode;
   title: ReactNode;
   variant?: AdhdPanelVariant;
@@ -37,11 +40,11 @@ export function HealthCollapsiblePanel({
 
   return (
     <AdhdPanel
-      className={className}
+      className={`${shellSurface ? "page-shell-surface flex h-full min-h-0 flex-col overflow-hidden" : ""} ${className ?? ""}`.trim()}
       header={(
         <button
           aria-expanded={isOpen}
-          className="flex w-full items-start justify-between gap-3 text-left"
+          className={`flex w-full items-start justify-between gap-3 text-left ${shellSurface ? "shrink-0" : ""}`}
           onClick={() => {
             const next = !isOpen;
             if (open === undefined) {
@@ -73,7 +76,7 @@ export function HealthCollapsiblePanel({
       padding={padding}
       variant={variant}
     >
-      {isOpen ? <div className="mt-4">{children}</div> : null}
+      {isOpen ? shellSurface ? <PageShellBody className="mt-4">{children}</PageShellBody> : <div className="mt-4">{children}</div> : null}
     </AdhdPanel>
   );
 }

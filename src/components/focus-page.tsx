@@ -47,7 +47,7 @@ import { FocusBars, FocusBarsErrorBoundary } from "./focus-bars";
 import { FocusClockRow, FocusClockRowDesktop } from "./focus-clocks";
 import { FocusCounterHistoryCard, FocusCounterRow } from "./focus-counters";
 import { CategoryManager } from "./category-manager";
-import { DailyHistoryGallery } from "./focus-history";
+import { FocusActivityLineShell, FocusActivitySummaryShell, FocusHistoryProvider } from "./focus-history";
 import { SessionFinishModal, ManualEntryModal } from "./focus-modals";
 import { ModalShell } from "./modal-shell";
 import { FocusPillSelect } from "./focus-form-controls";
@@ -621,6 +621,14 @@ export function FocusPage({
         </div>
       </section>
 
+      <FocusHistoryProvider
+        categories={userCategories}
+        history={history}
+        labelOptions={labelOptions}
+        onDeleteEntry={onDeleteHistoryEntry}
+        onEditGoals={() => setShowGoalsEditor(true)}
+        onUpdateEntry={onUpdateHistoryEntry}
+      >
       <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 xl:grid-cols-12">
       <PageShell id="focus-timer-workspace" label="Focus Timer Workspace">
       <section className="mt-5 min-w-0 overflow-x-clip">
@@ -806,19 +814,14 @@ export function FocusPage({
         <FocusCounterHistoryCard countersById={countersById} history={counterHistory} />
       </PageShell>
 
-      <PageShell id="focus-history" label="Focus History">
-      <div className="mt-6 w-full pb-40 sm:mt-10 sm:pb-44 lg:pb-28">
-        <DailyHistoryGallery
-          categories={userCategories}
-          history={history}
-          labelOptions={labelOptions}
-          onDeleteEntry={onDeleteHistoryEntry}
-          onEditGoals={() => setShowGoalsEditor(true)}
-          onUpdateEntry={onUpdateHistoryEntry}
-        />
-      </div>
+      <PageShell id="focus-activity-summary" label="Focus Activity">
+        <FocusActivitySummaryShell />
+      </PageShell>
+      <PageShell id="focus-activity-trend" label="Focus Activity Trend">
+        <FocusActivityLineShell />
       </PageShell>
       </ReorderablePageShells>
+      </FocusHistoryProvider>
 
       {showCategoryManager ? (
         <CategoryManager

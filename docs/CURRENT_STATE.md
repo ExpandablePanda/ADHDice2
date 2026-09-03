@@ -5,13 +5,23 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.73`.
+- Current working app version: `7.12.74`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-02 7.12.74 Responsive Shell Surfaces and Adaptive Fitness Content
+
+Page shells now provide a reusable visual surface/body contract: explicit
+height keeps the outer frame and header stationary while only the body scrolls.
+Fitness Today and This Week use shell-width container queries for their metric
+grids, and Focus Activity Summary and Focus Activity Trend are independent
+reorderable shells. Legacy `focus-history` layouts migrate their saved slot and
+size to both new shells. No SQL, schema, persistence authority, or iOS changes
+were made.
 
 ## 2026-09-02 7.12.63 Health Report Nutrition Semantics and Presentation
 

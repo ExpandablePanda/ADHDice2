@@ -16,6 +16,14 @@ export type PageShellLayoutPreference = {
   sizes: Record<string, PageShellSize>;
 };
 
+export type PageShellLegacyIdReplacements = Readonly<Record<string, readonly string[]>>;
+
+const PAGE_SHELL_LEGACY_ID_REPLACEMENTS: Readonly<Record<string, PageShellLegacyIdReplacements>> = {
+  focus: {
+    "focus-history": ["focus-activity-summary", "focus-activity-trend"],
+  },
+};
+
 const DEFAULT_PAGE_SHELL_SIZE: PageShellSize = { heightPx: null, span: 12 };
 const FITNESS_HALF_SIZE: PageShellSize = { heightPx: null, span: 6 };
 
@@ -98,7 +106,8 @@ export const FOCUS_PAGE_SHELL_IDS = [
   "focus-timer-workspace",
   "focus-goals",
   "focus-counter-history",
-  "focus-history",
+  "focus-activity-summary",
+  "focus-activity-trend",
 ] as const;
 
 export const FOCUS_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = Object.fromEntries(
@@ -113,18 +122,27 @@ export function getPageShellLayoutStorageKey(userId: string) {
   return PAGE_SHELL_LAYOUT_STORAGE_PREFIX + userId;
 }
 
-export function normalizePageShellOrder(stored: unknown, defaults: readonly string[]) {
+export function normalizePageShellOrder(
+  stored: unknown,
+  defaults: readonly string[],
+  legacyIdReplacements: PageShellLegacyIdReplacements = {},
+) {
   const defaultIds = [...new Set(defaults.filter((id): id is string => typeof id === "string" && id.length > 0))];
   if (!Array.isArray(stored)) {
     return defaultIds;
   }
   const validIds = new Set(defaultIds);
   const seen = new Set<string>();
-  const normalized = stored.filter((id): id is string => {
-    if (typeof id !== "string" || !validIds.has(id) || seen.has(id)) return false;
-    seen.add(id);
-    return true;
-  });
+  const normalized: string[] = [];
+  for (const storedId of stored) {
+    if (typeof storedId !== "string") continue;
+    const replacementIds = legacyIdReplacements[storedId] ?? [storedId];
+    for (const id of replacementIds) {
+      if (!validIds.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      normalized.push(id);
+    }
+  }
   return [...normalized, ...defaultIds.filter((id) => !seen.has(id))];
 }
 
@@ -394,6 +412,7 @@ export function normalizePageShellLayout(
   stored: unknown,
   defaults: readonly string[],
   defaultSizes: PageShellSizeDefaults = {},
+  legacyIdReplacements: PageShellLegacyIdReplacements = {},
 ): PageShellLayoutPreference {
   const storedOrder = Array.isArray(stored)
     ? stored
@@ -403,10 +422,11 @@ export function normalizePageShellLayout(
   const storedSizes = isPageShellLayoutPreference(stored) && stored.sizes && typeof stored.sizes === "object" && !Array.isArray(stored.sizes)
     ? stored.sizes as Record<string, unknown>
     : {};
-  const order = normalizePageShellOrder(storedOrder, defaults);
+  const order = normalizePageShellOrder(storedOrder, defaults, legacyIdReplacements);
   const sizes = getDefaultPageShellSizes(order, defaultSizes);
   for (const id of order) {
-    sizes[id] = normalizePageShellSize(storedSizes[id], sizes[id]);
+    const legacyId = Object.entries(legacyIdReplacements).find(([, replacementIds]) => replacementIds.includes(id))?.[0];
+    sizes[id] = normalizePageShellSize(storedSizes[id] ?? (legacyId ? storedSizes[legacyId] : undefined), sizes[id]);
   }
   return { order, sizes };
 }
@@ -430,7 +450,12 @@ export function readPageShellLayout(
   defaults: readonly string[],
   defaultSizes: PageShellSizeDefaults = {},
 ) {
-  return normalizePageShellLayout(readStoredPageShellLayouts(storage, storageKey)[pageKey], defaults, defaultSizes);
+  return normalizePageShellLayout(
+    readStoredPageShellLayouts(storage, storageKey)[pageKey],
+    defaults,
+    defaultSizes,
+    PAGE_SHELL_LEGACY_ID_REPLACEMENTS[pageKey],
+  );
 }
 
 export function writePageShellLayout(

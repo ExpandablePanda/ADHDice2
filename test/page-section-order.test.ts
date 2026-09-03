@@ -27,7 +27,7 @@ import {
   snapPageShellHeight,
   writePageShellLayout,
 } from "@/lib/page-shell-layout";
-import { PageShell, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { PageShell, PageShellBody, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 
 const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
@@ -39,6 +39,7 @@ const waterSource = readFileSync(new URL("../src/components/task-app/health-wate
 const focusSource = readFileSync(new URL("../src/components/focus-page.tsx", import.meta.url), "utf8");
 const headerSource = readFileSync(new URL("../src/components/task-app/page-shell-header.tsx", import.meta.url), "utf8");
 const shellSource = readFileSync(new URL("../src/components/ui-system/reorderable-page-shells.tsx", import.meta.url), "utf8");
+const collapsiblePanelSource = readFileSync(new URL("../src/components/task-app/health-collapsible-panel.tsx", import.meta.url), "utf8");
 const layoutHookSource = readFileSync(new URL("../src/hooks/usePageShellLayout.ts", import.meta.url), "utf8");
 const globalSource = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8");
 
@@ -93,16 +94,21 @@ test("shell layout storage is user-scoped, page-independent, and resettable", ()
   store.setItem("adhdice-page-section-order:user-1", JSON.stringify({ "health:fitness": ["fitness-week", "fitness-today"] }));
   assert.equal(key, "adhdice-page-shell-layout-v1:user-1");
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", fitnessDefaults, fitnessSizes).order, [...fitnessDefaults]);
+  store.setItem(key, JSON.stringify({ focus: { order: ["focus-history", "focus-goals"], sizes: { "focus-history": { heightPx: 432, span: 6 } } } }));
   writePageShellLayout(store, key, "health:fitness", { order: ["fitness-week", "fitness-today", ...fitnessDefaults.slice(0, 1), ...fitnessDefaults.slice(3)], sizes: { "fitness-today": { heightPx: 384, span: 8 } } });
-  writePageShellLayout(store, key, "focus", { order: ["focus-goals", "focus-timer-workspace"], sizes: {} });
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", fitnessDefaults, fitnessSizes).order, ["fitness-week", "fitness-today", "fitness-active-workout", "fitness-goals", "fitness-plans", "fitness-workout-history"]);
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", fitnessDefaults, fitnessSizes).sizes["fitness-today"], { heightPx: 384, span: 8 });
-  assert.deepEqual(readPageShellLayout(store, key, "focus", ["focus-timer-workspace", "focus-goals"], {}).order, ["focus-goals", "focus-timer-workspace"]);
-  assert.deepEqual(readPageShellLayout(store, getPageShellLayoutStorageKey("user-2"), "focus", ["focus-timer-workspace", "focus-goals"], {}).order, ["focus-timer-workspace", "focus-goals"]);
+  const focusLayout = readPageShellLayout(store, key, "focus", FOCUS_PAGE_SHELL_IDS, {});
+  assert.deepEqual(focusLayout.order, ["focus-activity-summary", "focus-activity-trend", "focus-goals", "focus-timer-workspace", "focus-counter-history"]);
+  assert.deepEqual(focusLayout.sizes["focus-activity-summary"], { heightPx: 432, span: 6 });
+  assert.deepEqual(focusLayout.sizes["focus-activity-trend"], { heightPx: 432, span: 6 });
+  assert.equal(focusLayout.sizes["focus-history"], undefined);
+  assert.deepEqual(readPageShellLayout(store, getPageShellLayoutStorageKey("user-2"), "focus", FOCUS_PAGE_SHELL_IDS, {}).order, [...FOCUS_PAGE_SHELL_IDS]);
   removePageShellLayout(store, key, "health:fitness");
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", ["fitness-today", "fitness-week"], {}).order, ["fitness-today", "fitness-week"]);
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", ["fitness-today", "fitness-week"], {}).sizes["fitness-today"], { heightPx: null, span: 12 });
-  assert.deepEqual(readPageShellLayout(store, key, "focus", ["focus-timer-workspace", "focus-goals"], {}).order, ["focus-goals", "focus-timer-workspace"]);
+  removePageShellLayout(store, key, "focus");
+  assert.deepEqual(readPageShellLayout(store, key, "focus", FOCUS_PAGE_SHELL_IDS, {}).order, [...FOCUS_PAGE_SHELL_IDS]);
 });
 
 test("corrupt page shell storage falls back to defaults", () => {
@@ -132,6 +138,28 @@ test("conditional shells disappear normally and become editable placeholders", (
   assert.match(editMarkup, /data-page-shell-size-span="6"/);
   assert.match(editMarkup, /aria-label="Use natural height for Conditional"/);
   assert.match(editMarkup, /6\/12 · 288px/);
+});
+
+test("shell surfaces keep the visual frame fixed while the body owns constrained scrolling", () => {
+  const markup = renderToStaticMarkup(createElement(
+    PageShellSurface,
+    { "data-test-surface": true },
+    createElement(PageShellBody, { "data-test-body": true }, createElement("span", null, "content")),
+  ));
+  assert.match(markup, /data-test-surface/);
+  assert.match(markup, /page-shell-surface/);
+  assert.match(markup, /overflow-hidden/);
+  assert.match(markup, /data-test-body/);
+  assert.match(markup, /page-shell-body/);
+  assert.doesNotMatch(markup, /page-shell-body[^\"]*overflow-y-auto/);
+});
+
+test("Health collapsible shell surfaces keep collapse state canonical and scroll only their open body", () => {
+  assert.match(collapsiblePanelSource, /shellSurface = false/);
+  assert.match(collapsiblePanelSource, /page-shell-surface flex h-full min-h-0 flex-col overflow-hidden/);
+  assert.match(collapsiblePanelSource, /<PageShellBody className="mt-4">\{children\}<\/PageShellBody>/);
+  assert.match(collapsiblePanelSource, /aria-expanded=\{isOpen\}/);
+  assert.match(collapsiblePanelSource, /if \(open === undefined\)/);
 });
 
 test("legacy minHeight shell storage is read as a safe custom height", () => {
@@ -289,7 +317,7 @@ test("Health tabs use independent semantic shell IDs and preserve grouped intern
   assert.match(waterSource, /<PageShell id="water-history"/);
 });
 
-test("Fitness reorders whole shells while keeping Today cards and Week content together", () => {
+test("Fitness reorders whole shells while Today and This Week adapt inside their surfaces", () => {
   assert.doesNotMatch(fitnessSource, /fitness-day-week/);
   assert.match(fitnessSource, /shellsClassName="grid gap-5 xl:grid-cols-12"/);
   const todayShell = fitnessSource.slice(fitnessSource.indexOf('<PageShell id="fitness-today"'), fitnessSource.indexOf("</PageShell>", fitnessSource.indexOf('<PageShell id="fitness-today"')));
@@ -301,13 +329,29 @@ test("Fitness reorders whole shells while keeping Today cards and Week content t
   assert.match(fitnessSource, /<PageShell id="fitness-workout-history"/);
   assert.match(fitnessSource, /visible=\{Boolean\(activeWorkout\.runtime\)\}/);
   assert.match(fitnessSource, /hiddenDescription="Hidden until a workout is active"/);
+  assert.match(todayShell, /shellSurface/);
+  assert.match(weekShell, /shellSurface/);
+  assert.match(fitnessSource, /fitness-stat-grid grid gap-3/);
+  assert.match(fitnessSource, /fitness-week-grid grid gap-3/);
+  assert.match(fitnessSource, /fitness-stat-main flex min-w-0/);
+  assert.match(fitnessSource, /fitness-stat-progress mt-1 shrink-0/);
+  assert.doesNotMatch(fitnessSource, /sm:grid-cols-2 xl:grid-cols-4/);
+  assert.doesNotMatch(fitnessSource, /sm:grid-cols-2 xl:grid-cols-1/);
 });
 
 test("Focus reorders top-level workspace shells, not individual clocks or bars", () => {
-  assert.deepEqual([...FOCUS_PAGE_SHELL_IDS], ["focus-timer-workspace", "focus-goals", "focus-counter-history", "focus-history"]);
+  assert.deepEqual([...FOCUS_PAGE_SHELL_IDS], ["focus-timer-workspace", "focus-goals", "focus-counter-history", "focus-activity-summary", "focus-activity-trend"]);
   assert.match(focusSource, /<PageShell id="focus-timer-workspace"/);
   assert.match(focusSource, /<PageShell id="focus-goals"/);
-  assert.match(focusSource, /<PageShell id="focus-history"/);
+  assert.match(focusSource, /<PageShell id="focus-activity-summary" label="Focus Activity"/);
+  assert.match(focusSource, /<PageShell id="focus-activity-trend" label="Focus Activity Trend"/);
+  assert.match(focusSource, /<FocusHistoryProvider/);
+  assert.match(focusSource, /<FocusActivitySummaryShell \/>/);
+  assert.match(focusSource, /<FocusActivityLineShell \/>/);
+  assert.deepEqual(
+    reorderPageShellOrder([...FOCUS_PAGE_SHELL_IDS], "focus-activity-trend", "focus-activity-summary"),
+    ["focus-timer-workspace", "focus-goals", "focus-counter-history", "focus-activity-trend", "focus-activity-summary"],
+  );
   assert.match(focusSource, /visible=\{counterHistory\.length > 0\}/);
   assert.match(focusSource, /hiddenDescription="Hidden until counter history exists"/);
   assert.match(focusSource, /focusSandboxTabOrder/);
@@ -346,11 +390,22 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /aria-label=\{`Resize \$\{shell\.label\}`\}/);
   assert.match(shellSource, /measureNaturalShellHeight/);
   assert.match(shellSource, /data-page-shell-height=\{size\.heightPx \?\? "natural"\}/);
-  assert.match(shellSource, /adhdice-scrollbar page-shell-custom-height overflow-y-auto/);
-  assert.doesNotMatch(shellSource, /page-shell-custom-height overflow-y-auto overscroll-contain/);
+  assert.match(shellSource, /export function PageShellSurface/);
+  assert.match(shellSource, /export function PageShellBody/);
+  assert.match(shellSource, /page-shell-custom-height/);
+  assert.doesNotMatch(shellSource, /page-shell-custom-height[^\"]*overflow-y-auto/);
   assert.doesNotMatch(shellSource, /data-page-shell-min-height/);
   assert.doesNotMatch(shellSource, /minHeight: \$\{/);
   assert.match(globalSource, /@media \(max-width: 1279px\)/);
+  assert.match(globalSource, /\.page-shell-surface[\s\S]*container-type: inline-size/);
+  assert.match(globalSource, /\.page-shell-body[\s\S]*overflow-y: auto/);
+  assert.match(globalSource, /\.page-shell-chart-header/);
+  assert.match(globalSource, /\.fitness-stat-progress[\s\S]*max-width: 100%/);
+  assert.match(globalSource, /\.page-shell-custom-height:not\(:has\(> \.page-shell-surface\)\)[\s\S]*overflow-y: auto/);
+  assert.match(globalSource, /@container page-shell \(min-width: 36rem\)/);
+  assert.match(globalSource, /@container page-shell \(min-width: 64rem\)/);
+  assert.match(globalSource, /@container page-shell \(max-width: 24rem\)/);
+  assert.match(globalSource, /@container page-shell/);
   assert.match(globalSource, /\.page-shell-custom-height[\s\S]*height: auto !important/);
   assert.match(shellSource, /setShellToNaturalHeight/);
   assert.match(shellSource, /aria-label=\{`Use natural height for \$\{shell\.label\}`\}/);

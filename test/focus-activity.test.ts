@@ -132,9 +132,12 @@ test("Focus Activity Lines adapts its existing series into the shared chart card
   assert.match(source, /NumericLineChartSeries/);
   assert.match(source, /activityLineSeries/);
   assert.match(source, /formatRoundedMinuteDuration/);
+  assert.match(source, /shellSurface/);
   assert.doesNotMatch(source, /xSubpositionKey/);
   assert.doesNotMatch(source, /variant="embedded"/);
   assert.match(sharedChart, /NumericLineChartSeries/);
+  assert.match(sharedChart, /page-shell-chart-header/);
+  assert.match(sharedChart, /isPageShellSurface \? <div className="shrink-0/);
   assert.match(sharedChart, /onPointerMove/);
   assert.match(sharedChart, /onPointerUp/);
   assert.match(sharedChart, /strokeDasharray\?: string/);

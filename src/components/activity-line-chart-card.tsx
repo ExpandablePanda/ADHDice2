@@ -41,6 +41,7 @@ type ActivityLineChartCardProps = {
   maxValue?: number;
   referenceLines?: NumericLineChartReferenceLine[];
   series: NumericLineChartSeries[];
+  shellSurface?: boolean;
   subtitle: string;
   title: string;
   variant?: "standalone" | "embedded";
@@ -196,6 +197,7 @@ export function ActivityLineChartCard({
   maxValue: maxValueOverride,
   referenceLines = [],
   series,
+  shellSurface = false,
   subtitle,
   title,
   variant = "standalone",
@@ -263,6 +265,7 @@ export function ActivityLineChartCard({
     : [];
   const hasData = series.length > 0 && axisPoints.length > 0 && !(emptyWhenAllZero && series.every((item) => item.points.every((point) => point.value === 0)));
   const isEmbedded = variant === "embedded";
+  const isPageShellSurface = shellSurface && !isEmbedded;
   const plotClassName = compactPlot
     ? "min-w-[42rem]"
     : isEmbedded
@@ -277,28 +280,33 @@ export function ActivityLineChartCard({
     return nearestPointKey;
   }
 
+  const chartHeader = (
+    <div className={`page-shell-chart-header flex min-w-0 flex-col gap-3 ${isPageShellSurface ? "" : "lg:flex-row lg:items-start lg:justify-between"}`}>
+      <div className="min-w-0">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">{eyebrow}</p>
+        <h4 className={`mt-2 font-black tracking-tight text-[var(--text-primary)] ${isEmbedded ? "text-lg" : "text-2xl"}`} id={titleId}>{title}</h4>
+        <p className="mt-1 text-sm text-[var(--text-secondary)]">{subtitle}</p>
+      </div>
+      {series.length > 0 ? (
+        <div className="flex min-w-0 max-w-2xl flex-wrap gap-2 lg:justify-end">
+          {series.map((item) => (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[#e4deef] bg-[var(--surface-elevated)] px-2.5 py-1 text-[11px] font-semibold leading-none text-[#68738c] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/60" key={item.key}>
+              <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
+              {item.summaryLabel ?? item.label}
+              <span className="text-[var(--text-muted)]">{formatValue(item.totalValue)}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+
   return (
-    <div aria-labelledby={titleId} className={isEmbedded ? "w-full border-t border-[#eeeaf8] pt-4 dark:border-white/10" : "w-full overflow-hidden rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]"}>
-      <div className={isEmbedded ? "px-0 pb-0 pt-0" : "px-5 pb-5 pt-5 sm:px-6 sm:pb-6"}>
+    <div aria-labelledby={titleId} className={isEmbedded ? "w-full border-t border-[#eeeaf8] pt-4 dark:border-white/10" : isPageShellSurface ? "page-shell-surface flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]" : "w-full overflow-hidden rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]"}>
+      {isPageShellSurface ? <div className="shrink-0 px-5 pb-1 pt-5 sm:px-6">{chartHeader}</div> : null}
+      <div className={isEmbedded ? "px-0 pb-0 pt-0" : isPageShellSurface ? "page-shell-body px-5 pb-5 pt-5 sm:px-6 sm:pb-6" : "px-5 pb-5 pt-5 sm:px-6 sm:pb-6"}>
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">{eyebrow}</p>
-              <h4 className={`mt-2 font-black tracking-tight text-[var(--text-primary)] ${isEmbedded ? "text-lg" : "text-2xl"}`} id={titleId}>{title}</h4>
-              <p className="mt-1 text-sm text-[var(--text-secondary)]">{subtitle}</p>
-            </div>
-            {series.length > 0 ? (
-              <div className="flex max-w-2xl flex-wrap gap-2 lg:justify-end">
-                {series.map((item) => (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-[#e4deef] bg-[var(--surface-elevated)] px-2.5 py-1 text-[11px] font-semibold leading-none text-[#68738c] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/60" key={item.key}>
-                    <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
-                    {item.summaryLabel ?? item.label}
-                    <span className="text-[var(--text-muted)]">{formatValue(item.totalValue)}</span>
-                  </span>
-                ))}
-              </div>
-            ) : null}
-          </div>
+          {!isPageShellSurface ? chartHeader : null}
 
           {hasData ? (
             <div className="min-w-0 overflow-x-auto pb-2">

@@ -315,10 +315,81 @@ body::-webkit-scrollbar-thumb:hover,
   height: 0;
 }
 
+.page-shell-surface {
+  container-type: inline-size;
+  container-name: page-shell;
+}
+
+.page-shell-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+@container page-shell (min-width: 48rem) {
+  .page-shell-chart-header {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+}
+
 @media (max-width: 1279px) {
   .page-shell-custom-height {
     height: auto !important;
-    overflow-y: visible !important;
+  }
+}
+
+/* Legacy shells without a PageShellSurface keep bounded fallback scrolling until migrated. */
+.page-shell-custom-height:not(:has(> .page-shell-surface)) {
+  overflow-y: auto;
+}
+
+.fitness-stat-grid,
+.fitness-week-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container page-shell (min-width: 36rem) {
+  .fitness-stat-grid,
+  .fitness-week-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container page-shell (min-width: 64rem) {
+  .fitness-stat-grid,
+  .fitness-week-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.fitness-stat-card {
+  min-width: 0;
+}
+
+.fitness-stat-copy,
+.fitness-stat-value,
+.fitness-stat-detail {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fitness-stat-progress {
+  max-width: 100%;
+  width: 4rem;
+}
+
+@container page-shell (max-width: 24rem) {
+  .fitness-stat-main {
+    display: grid;
+    gap: 0.5rem;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fitness-stat-progress {
+    width: 100%;
   }
 }
 

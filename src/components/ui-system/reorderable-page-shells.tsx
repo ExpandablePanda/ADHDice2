@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, CornerDownRight, GripVertical, PanelsTopLeft, RotateCcw } from "lucide-react";
-import { Children, isValidElement, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode } from "react";
+import { Children, isValidElement, useEffect, useMemo, useRef, useState, type HTMLAttributes, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
@@ -139,6 +139,22 @@ function getPageScrollTop() {
 
 export function PageShell({ children }: PageShellProps) {
   return <>{children}</>;
+}
+
+export function PageShellSurface({ children, className, ...props }: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
+  return (
+    <div className={`page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${className ?? ""}`} {...props}>
+      {children}
+    </div>
+  );
+}
+
+export function PageShellBody({ children, className, ...props }: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
+  return (
+    <div className={`page-shell-body adhdice-scrollbar min-w-0 ${className ?? ""}`} {...props}>
+      {children}
+    </div>
+  );
 }
 
 export function PageShellLayoutControls({ layout }: { layout: PageShellLayoutState }) {
@@ -454,7 +470,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
               </div>
             ) : null}
             <div
-              className={`relative min-w-0 ${hasCustomHeight ? "adhdice-scrollbar page-shell-custom-height overflow-y-auto" : ""}`}
+              className={`relative min-w-0 ${hasCustomHeight ? "page-shell-custom-height overflow-hidden" : ""}`}
               data-page-shell-height={size.heightPx ?? "natural"}
               ref={(element) => { shellContentRefs.current[shell.id] = element; }}
               style={hasCustomHeight ? { height: `${size.heightPx}px` } : undefined}

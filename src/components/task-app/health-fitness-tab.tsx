@@ -751,6 +751,7 @@ export function HealthFitnessTab({
         <PageShell id="fitness-today" label="Today">
         <HealthCollapsiblePanel
           header={<Activity aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
+          shellSurface
           subtitle={formatHealthTimestampDate(`${selectedFitnessDate}T12:00:00`) ?? selectedFitnessDate}
           title={isCurrentFitnessDate ? "Today" : "Day"}
         >
@@ -771,7 +772,7 @@ export function HealthFitnessTab({
               <AdhdIconButton aria-label="Next day" disabled={isCurrentFitnessDate} onClick={() => moveFitnessDay(1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronRight aria-hidden="true" /></AdhdIconButton>
               {!isCurrentFitnessDate ? <AdhdChip onClick={() => setSelectedFitnessDate(today)} type="button">Today</AdhdChip> : null}
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="fitness-stat-grid grid gap-3">
               <FitnessStatCard
                 detail={profile.movement_goal === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal)}`}
                 label="Steps"
@@ -799,6 +800,7 @@ export function HealthFitnessTab({
         <PageShell id="fitness-week" label="This Week">
         <HealthCollapsiblePanel
           header={<Timer aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
+          shellSurface
           subtitle={`${formatHealthDateLabel(weeklySummary.startDate)} – ${formatHealthDateLabel(weeklySummary.endDate)}`}
           title={isCurrentWeek ? "This Week" : "Week"}
         >
@@ -819,7 +821,7 @@ export function HealthFitnessTab({
               <AdhdIconButton aria-label="Next week" disabled={isCurrentWeek} onClick={() => moveWeek(1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronRight aria-hidden="true" /></AdhdIconButton>
               {!isCurrentWeek ? <AdhdChip onClick={() => setWeekAnchorDate(today)} type="button">Today</AdhdChip> : null}
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+            <div className="fitness-week-grid grid gap-3">
               <FitnessStatCard detail="logged sessions" label="Workouts" value={String(weeklySummary.workouts)} />
               <FitnessStatCard detail="workout ledger" label="Workout Minutes" value={formatMinutes(weeklySummary.workoutMinutes)} />
               <FitnessStatCard detail="canonical Health Active Energy" label="Total Active Calories" value={`${formatWholeNumber(weeklyMovement.activeEnergyKcal)} kcal`} />
@@ -1000,15 +1002,15 @@ function WorkoutHistoryRow({
 
 function FitnessStatCard({ detail, label, progressPercent, value }: { detail: string; label: string; progressPercent?: number | null; value: string }) {
   return (
-    <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+    <div className="fitness-stat-card rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="fitness-stat-main flex min-w-0 items-start justify-between gap-3">
+        <div className="fitness-stat-copy min-w-0 flex-1">
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</p>
-          <p className="mt-1 text-2xl font-black text-[#1e2744] dark:text-white">{value}</p>
-          <p className="mt-1 text-xs text-[#73809c] dark:text-white/50">{detail}</p>
+          <p className="fitness-stat-value mt-1 text-2xl font-black text-[#1e2744] dark:text-white">{value}</p>
+          <p className="fitness-stat-detail mt-1 text-xs text-[#73809c] dark:text-white/50">{detail}</p>
         </div>
         {progressPercent === undefined || progressPercent === null ? null : (
-          <div aria-label={`${label} ${Math.round(progressPercent)}% of goal`} className="mt-1 w-16 shrink-0 rounded-full bg-[#ece8f8] p-1 dark:bg-white/10">
+          <div aria-label={`${label} ${Math.round(progressPercent)}% of goal`} className="fitness-stat-progress mt-1 shrink-0 rounded-full bg-[#ece8f8] p-1 dark:bg-white/10">
             <div className="h-2 rounded-full bg-[#6f57f6] transition-[width]" style={{ width: `${progressPercent}%` }} />
           </div>
         )}
