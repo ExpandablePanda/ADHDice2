@@ -335,12 +335,6 @@ body::-webkit-scrollbar-thumb:hover,
   }
 }
 
-@media (max-width: 1279px) {
-  .page-shell-custom-height {
-    height: auto !important;
-  }
-}
-
 .fitness-stat-grid,
 .fitness-week-grid {
   grid-template-columns: minmax(0, 1fr);

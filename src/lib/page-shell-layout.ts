@@ -1,4 +1,8 @@
 export const PAGE_SHELL_LAYOUT_STORAGE_PREFIX = "adhdice-page-shell-layout-v1:";
+export const PAGE_SHELL_VIEWS_STORAGE_PREFIX = "adhdice-page-shell-views-v1:";
+export const PAGE_SHELL_VIEWS_SCHEMA_VERSION = 1;
+export const PAGE_SHELL_EXPORT_SCHEMA = "adhdice-page-shell-layouts";
+export const PAGE_SHELL_EXPORT_SCHEMA_VERSION = 1;
 
 export type PageShellLayoutStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 export const PAGE_SHELL_SPAN_OPTIONS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
@@ -27,6 +31,42 @@ export type PageShellCanonicalLayout = {
 export type PageShellLayoutPreference = {
   order: string[];
   sizes: Record<string, PageShellSize>;
+};
+
+export type PageShellViewTarget = "web" | "iphone";
+
+export type PageShellViewport = {
+  height: number;
+  width: number;
+};
+
+export type PageShellView = {
+  createdAt: string;
+  id: string;
+  layout?: PageShellLayoutPreference;
+  name: string;
+  pageKey: string;
+  presentation: "canonical" | "custom";
+  target: PageShellViewTarget;
+  viewport: PageShellViewport;
+};
+
+export type PageShellRegisteredPage = {
+  canonicalLayout: PageShellCanonicalLayout;
+  pageKey: string;
+};
+
+export type PageShellLayoutExport = {
+  appVersion: string;
+  exportedAt: string;
+  pages: Array<{
+    layout?: PageShellLayoutPreference;
+    pageKey: string;
+    presentation: "canonical" | "custom";
+  }>;
+  schema: typeof PAGE_SHELL_EXPORT_SCHEMA;
+  schemaVersion: typeof PAGE_SHELL_EXPORT_SCHEMA_VERSION;
+  views: PageShellView[];
 };
 
 export type PageShellLegacyIdReplacements = Readonly<Record<string, readonly string[]>>;
@@ -190,6 +230,26 @@ export const FOCUS_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canon
   FOCUS_PAGE_SHELL_IDS.map((id) => [id, NATURAL_PAGE_SHELL_SIZE]),
 ));
 
+const PAGE_SHELL_PAGE_REGISTRY = new Map<string, PageShellRegisteredPage>();
+
+export function registerPageShellPage(pageKey: string, canonicalLayout: PageShellCanonicalLayout) {
+  if (!pageKey.trim()) return;
+  PAGE_SHELL_PAGE_REGISTRY.set(pageKey, {
+    canonicalLayout,
+    pageKey,
+  });
+}
+
+export function getRegisteredPageShellPages() {
+  return [...PAGE_SHELL_PAGE_REGISTRY.values()];
+}
+
+for (const [tab, layout] of Object.entries(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS) as Array<[HealthPageShellTab, PageShellCanonicalLayout]>) {
+  registerPageShellPage(getHealthPageShellKey(tab), layout);
+}
+registerPageShellPage("stats", STATS_PAGE_SHELL_CANONICAL_LAYOUT);
+registerPageShellPage("focus", FOCUS_PAGE_SHELL_CANONICAL_LAYOUT);
+
 /**
  * 12-column editing fallbacks are derived from the canonical layouts. The
  * canonical layouts above remain the source of truth for the no-preference
@@ -208,6 +268,17 @@ export function getHealthPageShellKey(tab: HealthPageShellTab) {
 
 export function getPageShellLayoutStorageKey(userId: string) {
   return PAGE_SHELL_LAYOUT_STORAGE_PREFIX + userId;
+}
+
+export function getPageShellViewsStorageKey(userId: string) {
+  return PAGE_SHELL_VIEWS_STORAGE_PREFIX + userId;
+}
+
+export function clonePageShellLayout(layout: PageShellLayoutPreference): PageShellLayoutPreference {
+  return {
+    order: [...layout.order],
+    sizes: Object.fromEntries(Object.entries(layout.sizes).map(([id, size]) => [id, { ...size }])),
+  };
 }
 
 export function normalizePageShellOrder(
@@ -465,6 +536,13 @@ export function snapPageShellHeight(value: number) {
   return snapped;
 }
 
+export function formatPageShellDimensions(span: PageShellSpan, heightPx: number | null, naturalHeight: number | null | undefined) {
+  const formatHeight = (value: number | null | undefined) => value === null || value === undefined || !Number.isFinite(value)
+    ? "—"
+    : String(Math.round(value));
+  return `W ${span}/12 · H ${formatHeight(heightPx ?? naturalHeight)}/${formatHeight(naturalHeight)}`;
+}
+
 function getSafePageShellNaturalHeight(naturalHeight: number) {
   return Number.isFinite(naturalHeight) && naturalHeight > 0 ? naturalHeight : PAGE_SHELL_MIN_HEIGHT;
 }
@@ -592,4 +670,168 @@ export function removePageShellLayout(storage: PageShellLayoutStorage, storageKe
   } catch {
     // Reset remains an in-memory operation when storage is unavailable.
   }
+}
+
+function normalizePageShellViewport(value: unknown): PageShellViewport {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const normalizeDimension = (candidate: unknown) => typeof candidate === "number" && Number.isFinite(candidate) && candidate >= 0
+    ? Math.round(candidate)
+    : 0;
+  return {
+    height: normalizeDimension(source.height),
+    width: normalizeDimension(source.width),
+  };
+}
+
+function normalizeStoredPageShellView(value: unknown): PageShellView | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const id = typeof source.id === "string" ? source.id.trim() : "";
+  const name = typeof source.name === "string" ? source.name.trim() : "";
+  const pageKey = typeof source.pageKey === "string" ? source.pageKey.trim() : "";
+  const target = source.target === "iphone" || source.target === "web" ? source.target : null;
+  const presentation = source.presentation === "canonical" || source.presentation === "custom" ? source.presentation : null;
+  const createdAt = typeof source.createdAt === "string" && source.createdAt.trim() ? source.createdAt : "";
+  if (!id || !name || !pageKey || !target || !presentation || !createdAt) return null;
+  const view: PageShellView = {
+    createdAt,
+    id,
+    name: name.slice(0, 120),
+    pageKey,
+    presentation,
+    target,
+    viewport: normalizePageShellViewport(source.viewport),
+  };
+  if (presentation === "custom") {
+    const layout = source.layout && typeof source.layout === "object" && !Array.isArray(source.layout)
+      ? source.layout as Record<string, unknown>
+      : null;
+    if (!layout) return null;
+    const order = Array.isArray(layout.order) ? layout.order.filter((id): id is string => typeof id === "string" && id.trim().length > 0) : [];
+    if (order.length === 0) return null;
+    view.layout = normalizePageShellLayout(layout, order);
+  }
+  return view;
+}
+
+function readStoredPageShellViews(storage: PageShellLayoutStorage, storageKey: string) {
+  try {
+    const raw = storage.getItem(storageKey);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    const source = parsed as Record<string, unknown>;
+    if (source.version !== PAGE_SHELL_VIEWS_SCHEMA_VERSION || !Array.isArray(source.views)) return [];
+    return source.views
+      .map(normalizeStoredPageShellView)
+      .filter((view): view is PageShellView => Boolean(view))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  } catch {
+    return [];
+  }
+}
+
+export function readPageShellViews(storage: PageShellLayoutStorage, storageKey: string, pageKey?: string) {
+  const views = readStoredPageShellViews(storage, storageKey);
+  return pageKey ? views.filter((view) => view.pageKey === pageKey) : views;
+}
+
+export function createPageShellViewId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return `view-${crypto.randomUUID()}`;
+  return `view-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+export function getCurrentPageShellViewport(): PageShellViewport {
+  if (typeof window === "undefined") return { height: 0, width: 0 };
+  return { height: Math.max(0, Math.round(window.innerHeight)), width: Math.max(0, Math.round(window.innerWidth)) };
+}
+
+export function getPageShellExportFilename(date = new Date()) {
+  return `adhdice-layout-templates-${date.toISOString().slice(0, 10)}.json`;
+}
+
+export function createPageShellView(input: Omit<PageShellView, "id"> & { id?: string }): PageShellView {
+  const view: PageShellView = {
+    ...input,
+    id: input.id ?? createPageShellViewId(),
+    name: input.name.trim().slice(0, 120),
+    viewport: normalizePageShellViewport(input.viewport),
+  };
+  if (view.presentation === "custom" && input.layout) view.layout = clonePageShellLayout(input.layout);
+  else delete view.layout;
+  return view;
+}
+
+export function writePageShellView(storage: PageShellLayoutStorage, storageKey: string, view: PageShellView) {
+  try {
+    const views = readStoredPageShellViews(storage, storageKey).filter((candidate) => candidate.id !== view.id);
+    views.unshift(createPageShellView(view));
+    storage.setItem(storageKey, JSON.stringify({ version: PAGE_SHELL_VIEWS_SCHEMA_VERSION, views }));
+  } catch {
+    // Saved views remain available in memory when storage is unavailable.
+  }
+}
+
+export function removePageShellView(storage: PageShellLayoutStorage, storageKey: string, viewId: string) {
+  try {
+    const views = readStoredPageShellViews(storage, storageKey).filter((view) => view.id !== viewId);
+    if (views.length === 0) storage.removeItem(storageKey);
+    else storage.setItem(storageKey, JSON.stringify({ version: PAGE_SHELL_VIEWS_SCHEMA_VERSION, views }));
+  } catch {
+    // Deletion remains an in-memory operation when storage is unavailable.
+  }
+}
+
+export function resolvePageShellViewLayout(view: PageShellView, canonicalLayout: PageShellCanonicalLayout) {
+  const canonical = normalizePageShellLayout(canonicalLayout, canonicalLayout.order, canonicalLayout.sizes);
+  return view.presentation === "canonical"
+    ? { layout: canonical, presentation: "canonical" as const }
+    : { layout: normalizePageShellLayout(view.layout, canonical.order, canonical.sizes), presentation: "custom" as const };
+}
+
+export function buildPageShellLayoutExport({
+  appVersion,
+  currentLayout,
+  currentPageKey,
+  currentPresentation,
+  exportedAt = new Date().toISOString(),
+  registeredPages = getRegisteredPageShellPages(),
+  savedViews,
+  storage,
+  storageKey,
+  viewsStorageKey,
+}: {
+  appVersion: string;
+  currentLayout: PageShellLayoutPreference;
+  currentPageKey: string;
+  currentPresentation: "canonical" | "custom";
+  exportedAt?: string;
+  registeredPages?: readonly PageShellRegisteredPage[];
+  savedViews?: readonly PageShellView[];
+  storage?: PageShellLayoutStorage;
+  storageKey?: string | null;
+  viewsStorageKey?: string | null;
+}): PageShellLayoutExport {
+  const pages = registeredPages.map(({ canonicalLayout, pageKey }) => {
+    const isCurrentPage = pageKey === currentPageKey;
+    const presentation = isCurrentPage
+      ? currentPresentation
+      : storage && storageKey && hasPageShellLayout(storage, storageKey, pageKey)
+        ? "custom"
+        : "canonical";
+    const layout = isCurrentPage
+      ? currentLayout
+      : storage && storageKey && presentation === "custom"
+        ? readPageShellLayout(storage, storageKey, pageKey, canonicalLayout.order, canonicalLayout.sizes)
+        : undefined;
+    return presentation === "custom" ? { layout, pageKey, presentation } : { pageKey, presentation };
+  });
+  return {
+    appVersion,
+    exportedAt,
+    pages,
+    schema: PAGE_SHELL_EXPORT_SCHEMA,
+    schemaVersion: PAGE_SHELL_EXPORT_SCHEMA_VERSION,
+    views: [...(savedViews ?? (storage && viewsStorageKey ? readPageShellViews(storage, viewsStorageKey) : []))].map((view) => createPageShellView(view)),
+  };
 }

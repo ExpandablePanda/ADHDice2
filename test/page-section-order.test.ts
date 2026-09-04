@@ -16,6 +16,12 @@ import {
   getPageShellLayoutStorageKey,
   hasPageShellLayout,
   clampPageShellHeight,
+  buildPageShellLayoutExport,
+  createPageShellView,
+  formatPageShellDimensions,
+  getPageShellExportFilename,
+  getPageShellViewsStorageKey,
+  getRegisteredPageShellPages,
   getPageShellShrinkHeight,
   mergeVisiblePageShellOrder,
   normalizePageShellLayout,
@@ -30,6 +36,13 @@ import {
   reorderPageShellOrderAt,
   removePageShellLayout,
   projectVisiblePageShellOrder,
+  readPageShellViews,
+  removePageShellView,
+  resolvePageShellViewLayout,
+  PAGE_SHELL_EXPORT_SCHEMA,
+  PAGE_SHELL_EXPORT_SCHEMA_VERSION,
+  PAGE_SHELL_VIEWS_SCHEMA_VERSION,
+  writePageShellView,
   snapPageShellHeight,
   writePageShellLayout,
 } from "@/lib/page-shell-layout";
@@ -64,6 +77,7 @@ function storage() {
 
 function staticShellLayout(isEditing: boolean): PageShellLayoutState {
   return {
+    applyView: () => undefined,
     beginPreview: () => undefined,
     canEdit: true,
     canReorder: true,
@@ -77,12 +91,15 @@ function staticShellLayout(isEditing: boolean): PageShellLayoutState {
     },
     cancelPreview: () => undefined,
     commitPreview: () => undefined,
+    deleteView: () => undefined,
+    exportLayouts: () => { throw new Error("not used in static render"); },
     finishEditing: () => undefined,
     isEditing,
     isCanonical: false,
     order: ["conditional", "regular"],
     pageKey: "test",
     reset: () => undefined,
+    saveView: () => null,
     setPreviewOrder: () => undefined,
     setPreviewSizes: () => undefined,
     sizes: {
@@ -90,6 +107,7 @@ function staticShellLayout(isEditing: boolean): PageShellLayoutState {
       regular: { heightPx: null, span: 12 },
     },
     startEditing: () => undefined,
+    views: [],
   };
 }
 
@@ -149,6 +167,125 @@ test("shell layout storage is user-scoped, page-independent, and resettable", ()
   assert.deepEqual(readPageShellLayout(store, key, "health:fitness", ["fitness-today", "fitness-week"], {}).sizes["fitness-today"], { heightPx: null, span: 12 });
   removePageShellLayout(store, key, "focus");
   assert.deepEqual(readPageShellLayout(store, key, "focus", FOCUS_PAGE_SHELL_IDS, {}).order, [...FOCUS_PAGE_SHELL_IDS]);
+});
+
+test("named page-shell views use a separate versioned local store and remain page-scoped", () => {
+  const store = storage();
+  const key = getPageShellViewsStorageKey("user-views");
+  const customLayout = {
+    order: ["food", "totals"],
+    sizes: {
+      food: { heightPx: 288, span: 6 as const },
+      totals: { heightPx: null, span: 6 as const },
+    },
+  };
+  writePageShellView(store, key, createPageShellView({
+    createdAt: "2026-09-04T10:00:00.000Z",
+    layout: customLayout,
+    name: "Desktop Food",
+    pageKey: "health:food",
+    presentation: "custom",
+    target: "web",
+    viewport: { height: 900, width: 1440 },
+  }));
+  writePageShellView(store, key, createPageShellView({
+    createdAt: "2026-09-04T11:00:00.000Z",
+    name: "Default Focus",
+    pageKey: "focus",
+    presentation: "canonical",
+    target: "iphone",
+    viewport: { height: 844, width: 390 },
+  }));
+
+  const raw = JSON.parse(store.values.get(key) ?? "null") as { version: number; views: unknown[] };
+  assert.equal(raw.version, PAGE_SHELL_VIEWS_SCHEMA_VERSION);
+  assert.equal(readPageShellViews(store, key, "health:food").length, 1);
+  assert.equal(readPageShellViews(store, key, "focus")[0]?.target, "iphone");
+  assert.deepEqual(readPageShellViews(store, key, "health:food")[0]?.layout, customLayout);
+  assert.equal(JSON.stringify(readPageShellViews(store, key)).includes("user-1"), false);
+
+  const foodView = readPageShellViews(store, key, "health:food")[0];
+  assert.ok(foodView);
+  removePageShellView(store, key, foodView.id);
+  assert.equal(readPageShellViews(store, key, "health:food").length, 0);
+  assert.equal(readPageShellViews(store, key, "focus").length, 1);
+});
+
+test("custom and canonical views resolve to the current page's layout without sharing pages", () => {
+  const canonical = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food;
+  const customView = createPageShellView({
+    createdAt: "2026-09-04T10:00:00.000Z",
+    layout: { order: ["food-library", "food-meal-log"], sizes: { "food-meal-log": { heightPx: 288, span: 6 } } },
+    name: "Compact Food",
+    pageKey: "health:food",
+    presentation: "custom",
+    target: "web",
+    viewport: { height: 800, width: 390 },
+  });
+  const custom = resolvePageShellViewLayout(customView, canonical);
+  assert.equal(custom.presentation, "custom");
+  assert.deepEqual(custom.layout.order, ["food-library", "food-meal-log", "food-daily-totals", "food-favorites-recent"]);
+  assert.deepEqual(custom.layout.sizes["food-meal-log"], { heightPx: 288, span: 6 });
+
+  const canonicalView = createPageShellView({
+    createdAt: "2026-09-04T10:00:00.000Z",
+    name: "My Default Food",
+    pageKey: "health:food",
+    presentation: "canonical",
+    target: "iphone",
+    viewport: { height: 844, width: 390 },
+  });
+  const resolvedCanonical = resolvePageShellViewLayout(canonicalView, canonical);
+  assert.equal(resolvedCanonical.presentation, "canonical");
+  assert.deepEqual(resolvedCanonical.layout.order, [...canonical.order]);
+  assert.deepEqual(resolvedCanonical.layout.sizes, canonical.sizes);
+  assert.equal(canonicalView.layout, undefined);
+});
+
+test("layout export includes registered canonical pages, customized pages, and metadata only", () => {
+  const store = storage();
+  const layoutKey = getPageShellLayoutStorageKey("export-user");
+  const viewsKey = "adhdice-page-shell-views-v1:export-user";
+  writePageShellLayout(store, layoutKey, "health:fitness", {
+    order: ["fitness-week", "fitness-today", "fitness-active-workout", "fitness-goals", "fitness-plans", "fitness-workout-history"],
+    sizes: { "fitness-today": { heightPx: 288, span: 7 } },
+  });
+  const view = createPageShellView({
+    createdAt: "2026-09-04T10:00:00.000Z",
+    layout: { order: ["fitness-week", "fitness-today"], sizes: { "fitness-today": { heightPx: 288, span: 7 } } },
+    name: "Compact Fitness",
+    pageKey: "health:fitness",
+    presentation: "custom",
+    target: "web",
+    viewport: { height: 900, width: 1200 },
+  });
+  writePageShellView(store, viewsKey, view);
+  const exported = buildPageShellLayoutExport({
+    appVersion: "7.12.79",
+    currentLayout: readPageShellLayout(store, layoutKey, "health:food", HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food.order, HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food.sizes),
+    currentPageKey: "health:food",
+    currentPresentation: "canonical",
+    exportedAt: "2026-09-04T12:00:00.000Z",
+    storage: store,
+    storageKey: layoutKey,
+    viewsStorageKey: viewsKey,
+  });
+  assert.equal(exported.schema, PAGE_SHELL_EXPORT_SCHEMA);
+  assert.equal(exported.schemaVersion, PAGE_SHELL_EXPORT_SCHEMA_VERSION);
+  assert.equal(exported.appVersion, "7.12.79");
+  assert.equal(exported.pages.find((page) => page.pageKey === "health:food")?.presentation, "canonical");
+  const fitness = exported.pages.find((page) => page.pageKey === "health:fitness");
+  assert.equal(fitness?.presentation, "custom");
+  assert.equal(fitness?.layout?.sizes["fitness-today"].heightPx, 288);
+  assert.equal(exported.views[0]?.target, "web");
+  assert.equal(exported.views[0]?.viewport.width, 1200);
+  for (const registeredPage of getRegisteredPageShellPages()) {
+    assert.ok(exported.pages.some((page) => page.pageKey === registeredPage.pageKey), registeredPage.pageKey);
+  }
+  const json = JSON.stringify(exported);
+  assert.doesNotMatch(json, /export-user|user_id|tasks|food records|personal notes/i);
+  assert.equal(exported.pages.some((page) => page.presentation === "canonical"), true);
+  assert.equal(exported.pages.some((page) => page.presentation === "custom"), true);
 });
 
 test("Reset Layout removes only the current preference and restores canonical order, width, and natural height", () => {
@@ -288,6 +425,19 @@ test("corrupt page shell storage falls back to defaults", () => {
   assert.deepEqual(readPageShellLayout(store, key, "stats", ["stats-overview", "stats-energy"], {}).order, ["stats-overview", "stats-energy"]);
 });
 
+test("shell height controls preserve the 144px floor, natural-short behavior, and natural maximum", () => {
+  assert.equal(getPageShellShrinkHeight(912), PAGE_SHELL_MIN_HEIGHT);
+  assert.equal(getPageShellShrinkHeight(120), 120);
+  assert.equal(clampPageShellHeight(PAGE_SHELL_MIN_HEIGHT, 912), PAGE_SHELL_MIN_HEIGHT);
+  assert.equal(clampPageShellHeight(5000, 912), 912);
+  assert.equal(clampPageShellHeight(5000, 120), 120);
+  assert.equal(formatPageShellDimensions(6, 288, 912), "W 6/12 · H 288/912");
+  assert.equal(formatPageShellDimensions(6, null, 912), "W 6/12 · H 912/912");
+  assert.equal(formatPageShellDimensions(6, 288, null), "W 6/12 · H 288/—");
+  assert.equal(getPageShellExportFilename(new Date("2026-09-04T12:00:00.000Z")), "adhdice-layout-templates-2026-09-04.json");
+  assert.doesNotMatch(globalSource, /@media \(max-width: 1279px\)[\s\S]*page-shell-custom-height/);
+});
+
 test("conditional shells disappear normally and become editable placeholders", () => {
   const children = [
     createElement(PageShell, { hiddenDescription: "Hidden until ready", id: "conditional", label: "Conditional", visible: false }, createElement("div", { "data-hidden-node": true }, "real content")),
@@ -305,10 +455,11 @@ test("conditional shells disappear normally and become editable placeholders", (
   assert.doesNotMatch(editMarkup, /data-hidden-node/);
   assert.match(editMarkup, /aria-label="Resize Conditional"/);
   assert.match(editMarkup, /data-page-shell-height="288"/);
+  assert.match(editMarkup, /style="height:288px"/);
   assert.match(editMarkup, /data-page-shell-size-span="6"/);
   assert.match(editMarkup, /aria-label="Shrink Conditional"/);
   assert.match(editMarkup, /aria-label="Expand Conditional"/);
-  assert.match(editMarkup, /6\/12 · 288px/);
+  assert.match(editMarkup, /W 6\/12 · H 288\/—/);
 });
 
 test("shell surfaces keep the visual frame fixed while the body owns constrained scrolling", () => {
@@ -632,7 +783,6 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.doesNotMatch(shellSource, /page-shell-custom-height[^\"]*overflow-y-auto/);
   assert.doesNotMatch(shellSource, /data-page-shell-min-height/);
   assert.doesNotMatch(shellSource, /minHeight: \$\{/);
-  assert.match(globalSource, /@media \(max-width: 1279px\)/);
   assert.match(globalSource, /\.page-shell-surface[\s\S]*container-type: inline-size/);
   assert.match(globalSource, /\.page-shell-body[\s\S]*overflow-y: auto/);
   assert.match(globalSource, /\.page-shell-chart-header/);
@@ -642,13 +792,21 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(globalSource, /@container page-shell \(min-width: 64rem\)/);
   assert.match(globalSource, /@container page-shell \(max-width: 24rem\)/);
   assert.match(globalSource, /@container page-shell/);
-  assert.match(globalSource, /\.page-shell-custom-height[\s\S]*height: auto !important/);
+  assert.doesNotMatch(globalSource, /\.page-shell-custom-height[\s\S]*height: auto !important/);
   assert.match(shellSource, /setShellToShrinkHeight/);
   assert.match(shellSource, /setShellToNaturalHeight/);
   assert.match(shellSource, /naturalHeight < PAGE_SHELL_MIN_HEIGHT \? null : getPageShellShrinkHeight/);
   assert.match(shellSource, /aria-label=\{`Shrink \$\{shell\.label\}`\}/);
   assert.match(shellSource, /aria-label=\{`Expand \$\{shell\.label\}`\}/);
-  assert.match(shellSource, /\{size\.span\}\/12 · \{hasCustomHeight \? `\$\{size\.heightPx\}px` : "Auto"\}/);
+  assert.match(shellSource, /formatPageShellDimensions\(size\.span, size\.heightPx, naturalHeight\)/);
+  assert.match(shellSource, /Save View/);
+  assert.match(shellSource, /Views/);
+  assert.match(shellSource, /Export Layouts/);
+  assert.match(shellSource, /useNativeIosPlatform/);
+  assert.match(shellSource, /setViewTarget\(isNativeIosPlatform \? "iphone" : "web"\)/);
+  assert.match(shellSource, /layout\.applyView/);
+  assert.match(shellSource, /layout\.deleteView/);
+  assert.match(shellSource, /layout\.exportLayouts/);
   assert.match(shellSource, /xl:col-span-6/);
   assert.match(shellSource, /xl:col-span-3/);
   assert.match(shellSource, /xl:col-span-4/);
@@ -661,6 +819,9 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(layoutHookSource, /writePageShellLayout/);
   assert.match(layoutHookSource, /commitPreview/);
   assert.match(layoutHookSource, /cancelPreview/);
+  assert.match(layoutHookSource, /getPageShellViewsStorageKey/);
+  assert.match(layoutHookSource, /registerPageShellPage/);
+  assert.match(layoutHookSource, /resolvePageShellViewLayout/);
   assert.doesNotMatch(layoutHookSource, /setPreviewOrder[\s\S]{0,500}writePageShellLayout/);
 });
 

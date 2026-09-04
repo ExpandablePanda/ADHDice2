@@ -1,14 +1,18 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, Check, CornerDownRight, GripVertical, PanelsTopLeft, RotateCcw } from "lucide-react";
-import { Children, isValidElement, useEffect, useMemo, useRef, useState, type HTMLAttributes, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, type Ref } from "react";
+import { ArrowDownToLine, ArrowUpToLine, Check, ChevronDown, CornerDownRight, Download, GripVertical, PanelsTopLeft, RotateCcw, Save } from "lucide-react";
+import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type HTMLAttributes, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, type Ref } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
+import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
+import { TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import {
   getPageShellInsertionIndex,
   getPageShellDragAutoScrollDelta,
   clampPageShellHeight,
+  formatPageShellDimensions,
+  getPageShellExportFilename,
   getPageShellShrinkHeight,
   mergeVisiblePageShellOrder,
   normalizePageShellSpan,
@@ -20,6 +24,7 @@ import {
   type PageShellLayoutPreference,
   type PageShellSize,
 } from "@/lib/page-shell-layout";
+import { useNativeIosPlatform } from "@/lib/platform";
 
 export type PageShellProps = {
   className?: string;
@@ -179,14 +184,100 @@ export function PageShellBody({ children, className, ...props }: HTMLAttributes<
 }
 
 export function PageShellLayoutControls({ layout }: { layout: PageShellLayoutState }) {
+  const isNativeIosPlatform = useNativeIosPlatform();
+  const [isSaveViewOpen, setIsSaveViewOpen] = useState(false);
+  const [isViewsOpen, setIsViewsOpen] = useState(false);
+  const [viewName, setViewName] = useState("");
+  const [viewTarget, setViewTarget] = useState<"web" | "iphone">("web");
+
   if (!layout.canEdit) return null;
   if (layout.isEditing) {
+    function toggleSaveView() {
+      setIsViewsOpen(false);
+      setViewTarget(isNativeIosPlatform ? "iphone" : "web");
+      setIsSaveViewOpen((current) => !current);
+    }
+
+    function handleSaveView(event: FormEvent<HTMLFormElement>) {
+      event.preventDefault();
+      if (!layout.saveView(viewName, viewTarget)) return;
+      setViewName("");
+      setIsSaveViewOpen(false);
+    }
+
+    function handleExportLayouts() {
+      if (typeof document === "undefined" || typeof URL === "undefined") return;
+      const content = JSON.stringify(layout.exportLayouts(), null, 2);
+      const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = getPageShellExportFilename();
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function handleFinishEditing() {
+      setIsSaveViewOpen(false);
+      setIsViewsOpen(false);
+      layout.finishEditing();
+    }
+
     return (
       <>
+        <div className="relative inline-flex">
+          <AdhdChip aria-expanded={isSaveViewOpen} aria-haspopup="dialog" icon={<Save aria-hidden="true" className="h-3.5 w-3.5" />} onClick={toggleSaveView} title="Save View" type="button">
+            Save View
+          </AdhdChip>
+          {isSaveViewOpen ? (
+            <AdhdDropdownPanel aria-label="Save page layout view" className="grid w-64 gap-3" role="dialog">
+              <form className="grid gap-3" onSubmit={handleSaveView}>
+                <label className="grid gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/45">View name</span>
+                  <input aria-label="View name" autoFocus className={`${TASK_TABLE_INPUT_CLASS} h-8 px-2.5 py-1 text-xs`} onChange={(event) => setViewName(event.target.value)} placeholder="Desktop Food" type="text" value={viewName} />
+                </label>
+                <div className="grid gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/45">Target</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    <AdhdChip onClick={() => setViewTarget("web")} selected={viewTarget === "web"} type="button">Web</AdhdChip>
+                    <AdhdChip onClick={() => setViewTarget("iphone")} selected={viewTarget === "iphone"} type="button">iPhone</AdhdChip>
+                  </div>
+                </div>
+                <AdhdChip disabled={!viewName.trim()} icon={<Save aria-hidden="true" className="h-3.5 w-3.5" />} tone="purple" type="submit">Save</AdhdChip>
+              </form>
+              <AdhdChip aria-label="Export Layouts" icon={<Download aria-hidden="true" className="h-3.5 w-3.5" />} onClick={handleExportLayouts} title="Export Layouts" type="button">Export Layouts</AdhdChip>
+            </AdhdDropdownPanel>
+          ) : null}
+        </div>
+        {layout.views.length > 0 ? (
+          <div className="relative inline-flex">
+            <AdhdChip aria-expanded={isViewsOpen} aria-haspopup="menu" icon={<ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { setIsSaveViewOpen(false); setIsViewsOpen((current) => !current); }} title="Saved Views" type="button">
+              Views
+            </AdhdChip>
+            {isViewsOpen ? (
+              <AdhdDropdownPanel aria-label="Saved page layout views" className="grid min-w-72 gap-2" role="menu">
+                <AdhdChip aria-label="Export Layouts" icon={<Download aria-hidden="true" className="h-3.5 w-3.5" />} onClick={handleExportLayouts} title="Export Layouts" type="button">Export Layouts</AdhdChip>
+                {layout.views.map((view) => (
+                  <div className="grid gap-2 rounded-xl border border-[#eee9f8] bg-[#fcfbff] p-2 dark:border-white/10 dark:bg-white/[0.03]" key={view.id}>
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      <span className="min-w-0 truncate text-xs font-semibold text-[#40385f] dark:text-white/80">{view.name}</span>
+                      <span className="shrink-0 text-[10px] text-[#9188b8] dark:text-white/45">{view.target === "iphone" ? "iPhone" : "Web"}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <AdhdChip onClick={() => layout.applyView(view.id)} tone="purple" type="button">Apply</AdhdChip>
+                      <AdhdChip onClick={() => layout.deleteView(view.id)} tone="danger" type="button">Delete</AdhdChip>
+                    </div>
+                  </div>
+                ))}
+              </AdhdDropdownPanel>
+            ) : null}
+          </div>
+        ) : null}
         <AdhdChip aria-label="Reset Layout" icon={<RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />} onClick={layout.reset} title="Reset Layout" type="button">
           Reset Layout
         </AdhdChip>
-        <AdhdChip aria-label="Done" icon={<Check aria-hidden="true" className="h-3.5 w-3.5" />} onClick={layout.finishEditing} tone="purple" title="Done" type="button">
+        <AdhdChip aria-label="Done" icon={<Check aria-hidden="true" className="h-3.5 w-3.5" />} onClick={handleFinishEditing} tone="purple" title="Done" type="button">
           Done
         </AdhdChip>
       </>
@@ -228,11 +319,11 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const autoScrollFrameRef = useRef<number | null>(null);
   const [dragStartVisibleOrder, setDragStartVisibleOrder] = useState<string[] | null>(null);
   const [dragIndicatorStyle, setDragIndicatorStyle] = useState<PageShellInsertionIndicatorStyle | null>(null);
-  const renderedShellOrder = dragStartVisibleOrder ?? layout.order;
-  const orderedShells = renderedShellOrder.flatMap((id) => {
+  const renderedShellOrderKey = dragStartVisibleOrder?.join("|") ?? layout.order.join("|");
+  const orderedShells = useMemo(() => renderedShellOrderKey.split("|").flatMap((id) => {
     const shell = shellsById.get(id);
     return shell ? [shell] : [];
-  });
+  }), [renderedShellOrderKey, shellsById]);
   const canonicalGroups = useMemo<RenderedPageShellGroup[] | null>(() => {
     if (!layout.isCanonical || !layout.canonicalLayout.groups?.length) return null;
     const assignedShellIds = new Set<string>();
@@ -251,6 +342,56 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragInsertionIndex, setDragInsertionIndex] = useState<number | null>(null);
   const [resizingId, setResizingId] = useState<string | null>(null);
+  const [naturalHeights, setNaturalHeights] = useState<Record<string, number>>({});
+
+  const measureNaturalShellHeights = useCallback(() => {
+    const next = Object.fromEntries(orderedShells.flatMap((shell) => {
+      const height = measureNaturalShellHeight(shellContentRefs.current[shell.id]);
+      return height > 0 ? [[shell.id, height]] : [];
+    }));
+    setNaturalHeights((current) => {
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+      if (currentKeys.length === nextKeys.length && nextKeys.every((id) => current[id] === next[id])) return current;
+      return next;
+    });
+  }, [orderedShells]);
+
+  useEffect(() => {
+    if (!layout.isEditing) return;
+    let frame: number | null = null;
+    const scheduleMeasurement = () => {
+      if (frame !== null && typeof window !== "undefined") window.cancelAnimationFrame(frame);
+      if (typeof window === "undefined") {
+        measureNaturalShellHeights();
+        return;
+      }
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        measureNaturalShellHeights();
+      });
+    };
+    scheduleMeasurement();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleMeasurement);
+    if (observer) {
+      orderedShells.forEach((shell) => {
+        const element = shellContentRefs.current[shell.id];
+        if (element) observer.observe(element);
+      });
+    }
+    const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(scheduleMeasurement);
+    if (mutationObserver) {
+      orderedShells.forEach((shell) => {
+        const element = shellContentRefs.current[shell.id];
+        if (element) mutationObserver.observe(element, { characterData: true, childList: true, subtree: true });
+      });
+    }
+    return () => {
+      if (frame !== null && typeof window !== "undefined") window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      mutationObserver?.disconnect();
+    };
+  }, [layout.isEditing, layout.isCanonical, measureNaturalShellHeights, orderedShells, renderedShellOrderKey]);
 
   useEffect(() => {
     if (!layout.isEditing && autoScrollFrameRef.current !== null && typeof window !== "undefined") {
@@ -475,6 +616,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const size = layout.sizes[shell.id] ?? { heightPx: null, span: 12 as const };
     const spanClass = SHELL_SPAN_CLASSES[size.span] ?? SHELL_SPAN_CLASSES[12];
     const hasCustomHeight = size.heightPx !== null;
+    const naturalHeight = naturalHeights[shell.id];
     const shellPlacementClass = layout.isCanonical
       ? layout.canonicalLayout.shellClassNames?.[shell.id] ?? ""
       : spanClass;
@@ -506,7 +648,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
               </button>
             ) : null}
             <span className="min-w-0 flex-1 truncate font-semibold">{shell.label}</span>
-            <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{size.span}/12 · {hasCustomHeight ? `${size.heightPx}px` : "Auto"}</span>
+            <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{formatPageShellDimensions(size.span, size.heightPx, naturalHeight)}</span>
             <button
               aria-label={`Shrink ${shell.label}`}
               className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"

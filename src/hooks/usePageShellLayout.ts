@@ -1,22 +1,37 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { APP_VERSION } from "@/lib/app-version";
 import {
+  buildPageShellLayoutExport,
+  clonePageShellLayout,
+  createPageShellView,
+  getCurrentPageShellViewport,
   getDefaultPageShellSizes,
   getPageShellLayoutStorageKey,
+  getPageShellViewsStorageKey,
   hasPageShellLayout,
   normalizePageShellLayout,
   readPageShellLayout,
+  readPageShellViews,
+  registerPageShellPage,
   removePageShellLayout,
+  removePageShellView,
+  resolvePageShellViewLayout,
   type PageShellCanonicalLayout,
+  type PageShellLayoutExport,
   type PageShellLayoutPreference,
   type PageShellSize,
   type PageShellSizeDefaults,
+  type PageShellView,
+  type PageShellViewTarget,
+  writePageShellView,
   writePageShellLayout,
 } from "@/lib/page-shell-layout";
 
 export type PageShellLayoutState = {
   beginPreview: (layout: PageShellLayoutPreference) => void;
+  applyView: (viewId: string) => void;
   canEdit: boolean;
   canReorder: boolean;
   canResize: boolean;
@@ -24,23 +39,20 @@ export type PageShellLayoutState = {
   cancelPreview: () => void;
   commitPreview: () => void;
   finishEditing: () => void;
+  deleteView: (viewId: string) => void;
+  exportLayouts: () => PageShellLayoutExport;
   isEditing: boolean;
   isCanonical: boolean;
   order: string[];
   pageKey: string;
   reset: () => void;
+  saveView: (name: string, target: PageShellViewTarget) => PageShellView | null;
   setPreviewOrder: (next: SetStateAction<string[]>) => void;
   setPreviewSizes: (next: SetStateAction<Record<string, PageShellSize>>) => void;
   sizes: Record<string, PageShellSize>;
   startEditing: () => void;
+  views: PageShellView[];
 };
-
-function clonePageShellLayout(layout: PageShellLayoutPreference): PageShellLayoutPreference {
-  return {
-    order: [...layout.order],
-    sizes: Object.fromEntries(Object.entries(layout.sizes).map(([id, size]) => [id, { ...size }])),
-  };
-}
 
 function pageShellLayoutsEqual(left: PageShellLayoutPreference, right: PageShellLayoutPreference) {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -55,6 +67,7 @@ export function usePageShellLayout(
 ): PageShellLayoutState {
   const defaultIdsKey = defaultShellIds.join("|");
   const storageKey = userId ? getPageShellLayoutStorageKey(userId) : null;
+  const viewsStorageKey = userId ? getPageShellViewsStorageKey(userId) : null;
   const defaults = useMemo(() => (defaultIdsKey ? defaultIdsKey.split("|") : []), [defaultIdsKey]);
   const resolvedCanonicalLayout = useMemo(() => {
     const order = normalizePageShellLayout(canonicalLayout?.order ?? defaults, defaults).order;
@@ -76,6 +89,7 @@ export function usePageShellLayout(
   const [hasCustomLayoutPreference, setHasCustomLayoutPreference] = useState(false);
   const [hydratedInstanceKey, setHydratedInstanceKey] = useState<string | null>(null);
   const [editingInstanceKey, setEditingInstanceKey] = useState<string | null>(null);
+  const [views, setViews] = useState<PageShellView[]>([]);
   const canEdit = defaults.length >= 1;
   const canResize = defaults.length >= 1;
   const canReorder = defaults.length >= 2;
@@ -93,12 +107,17 @@ export function usePageShellLayout(
         setCommittedLayout(readPageShellLayout(window.localStorage, storageKey, pageKey, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes));
         setHasCustomLayoutPreference(hasPageShellLayout(window.localStorage, storageKey, pageKey));
       }
+      setViews(viewsStorageKey && typeof window !== "undefined" ? readPageShellViews(window.localStorage, viewsStorageKey, pageKey) : []);
       setHydratedInstanceKey(instanceKey);
     });
     return () => {
       cancelled = true;
     };
-  }, [defaultLayout, instanceKey, pageKey, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes, storageKey]);
+  }, [defaultLayout, instanceKey, pageKey, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes, storageKey, viewsStorageKey]);
+
+  useEffect(() => {
+    registerPageShellPage(pageKey, resolvedCanonicalLayout);
+  }, [pageKey, resolvedCanonicalLayout]);
 
   useEffect(() => {
     if (hydratedInstanceKey !== instanceKey || !storageKey || typeof window === "undefined") {
@@ -170,7 +189,55 @@ export function usePageShellLayout(
   }, [defaultLayout, pageKey, storageKey]);
 
   const activeLayout = previewLayout ?? committedLayout;
+  const isCanonical = hydratedInstanceKey !== instanceKey || (!hasCustomLayoutPreference && previewLayout === null);
+  const saveView = useCallback((name: string, target: PageShellViewTarget) => {
+    if (!name.trim()) return null;
+    const view = createPageShellView({
+      createdAt: new Date().toISOString(),
+      layout: normalizePageShellLayout(activeLayout, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes),
+      name,
+      pageKey,
+      presentation: isCanonical ? "canonical" : "custom",
+      target,
+      viewport: getCurrentPageShellViewport(),
+    });
+    setViews((current) => [view, ...current.filter((candidate) => candidate.id !== view.id)]);
+    if (viewsStorageKey && typeof window !== "undefined") writePageShellView(window.localStorage, viewsStorageKey, view);
+    return view;
+  }, [activeLayout, isCanonical, pageKey, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes, viewsStorageKey]);
+
+  const deleteView = useCallback((viewId: string) => {
+    if (!views.some((view) => view.id === viewId)) return;
+    setViews((current) => current.filter((view) => view.id !== viewId));
+    if (viewsStorageKey && typeof window !== "undefined") removePageShellView(window.localStorage, viewsStorageKey, viewId);
+  }, [views, viewsStorageKey]);
+
+  const applyView = useCallback((viewId: string) => {
+    const view = views.find((candidate) => candidate.id === viewId);
+    if (!view) return;
+    const resolved = resolvePageShellViewLayout(view, resolvedCanonicalLayout);
+    previewRef.current = null;
+    setPreviewLayout(null);
+    setCommittedLayout(clonePageShellLayout(resolved.layout));
+    setHasCustomLayoutPreference(resolved.presentation === "custom");
+    if (resolved.presentation === "canonical") {
+      if (storageKey && typeof window !== "undefined") removePageShellLayout(window.localStorage, storageKey, pageKey);
+    }
+  }, [pageKey, resolvedCanonicalLayout, storageKey, views]);
+
+  const exportLayouts = useCallback(() => buildPageShellLayoutExport({
+    appVersion: APP_VERSION,
+    currentLayout: normalizePageShellLayout(activeLayout, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes),
+    currentPageKey: pageKey,
+    currentPresentation: isCanonical ? "canonical" : "custom",
+    savedViews: viewsStorageKey && typeof window !== "undefined" ? undefined : views,
+    storage: typeof window !== "undefined" ? window.localStorage : undefined,
+    storageKey,
+    viewsStorageKey,
+  }), [activeLayout, isCanonical, pageKey, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes, storageKey, views, viewsStorageKey]);
+
   return {
+    applyView,
     beginPreview,
     canEdit,
     canReorder,
@@ -178,15 +245,19 @@ export function usePageShellLayout(
     canonicalLayout: resolvedCanonicalLayout,
     cancelPreview,
     commitPreview,
+    deleteView,
+    exportLayouts,
     finishEditing,
     isEditing: canEdit && editingInstanceKey === instanceKey,
-    isCanonical: hydratedInstanceKey !== instanceKey || (!hasCustomLayoutPreference && previewLayout === null),
+    isCanonical,
     order: normalizePageShellLayout(activeLayout, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes).order,
     pageKey,
     reset,
+    saveView,
     setPreviewOrder,
     setPreviewSizes,
     sizes: normalizePageShellLayout(activeLayout, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes).sizes,
     startEditing,
+    views,
   };
 }

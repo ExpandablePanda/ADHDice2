@@ -5,13 +5,27 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.78`.
+- Current working app version: `7.12.79`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
+  - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-04 7.12.79 Page-shell shrinking and layout views
+
+Explicit page-shell heights now remain effective at every viewport width. Shrink
+and manual resize retain the 144px minimum for normally tall content, avoid
+enlarging naturally short shells, and cap downward enlargement at measured
+natural content height while PageShellSurface/PageShellBody keep frame and
+internal scrolling ownership. Edit Layout reports width and current/natural
+height. The shared shell hook now stores page-scoped named Web/iPhone layout
+views in `adhdice-page-shell-views-v1:<user>` and exports registered page keys,
+current layout presentation, saved views, target labels, and viewport metadata
+as layout-only JSON. No SQL, cloud sync, application content, or deferred page
+migrations were added.
 
 ## 2026-09-03 7.12.78 Canonical Page-Shell Lane and Stack Representation
 

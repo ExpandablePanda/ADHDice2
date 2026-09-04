@@ -2,7 +2,8 @@
 
 import dynamic from "next/dynamic";
 import Image from "next/image";
-import { Capacitor } from "@capacitor/core";
+import { APP_VERSION as CURRENT_APP_VERSION } from "@/lib/app-version";
+import { useNativeIosPlatform } from "@/lib/platform";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import {
   AlertCircle,
@@ -581,7 +582,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.12.78";
+const APP_VERSION = CURRENT_APP_VERSION;
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1137,26 +1138,6 @@ function findFinishedCountdownSession(activeSessions: Record<string, ActiveFocus
       && Boolean(session.countdownTargetSeconds)
       && getCountdownRemainingSeconds(session, nowMs) === 0
   )) ?? null;
-}
-
-function useNativeIosPlatform() {
-  return useSyncExternalStore(
-    subscribeToPlatformChanges,
-    getNativeIosPlatformSnapshot,
-    getWebPlatformSnapshot,
-  );
-}
-
-function subscribeToPlatformChanges() {
-  return () => {};
-}
-
-function getNativeIosPlatformSnapshot() {
-  return typeof window !== "undefined" && Capacitor.getPlatform() === "ios";
-}
-
-function getWebPlatformSnapshot() {
-  return false;
 }
 
 export function TaskApp() {

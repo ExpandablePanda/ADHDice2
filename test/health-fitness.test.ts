@@ -40,6 +40,7 @@ const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const packageLock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8")) as { version: string; packages: { "": { version: string } } };
 const appVersionSource = readFileSync(new URL("../public/app-version.json", import.meta.url), "utf8");
+const appVersionModuleSource = readFileSync(new URL("../src/lib/app-version.ts", import.meta.url), "utf8");
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const currentStateSource = readFileSync(new URL("../docs/CURRENT_STATE.md", import.meta.url), "utf8");
 
@@ -635,12 +636,13 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.12.77 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.12.77");
-  assert.equal(packageLock.version, "7.12.77");
-  assert.equal(packageLock.packages[""].version, "7.12.77");
-  assert.match(appVersionSource, /"version":\s*"7\.12\.77"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.77"/);
+test("all 7.12.79 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.12.79");
+  assert.equal(packageLock.version, "7.12.79");
+  assert.equal(packageLock.packages[""].version, "7.12.79");
+  assert.match(appVersionSource, /"version":\s*"7\.12\.79"/);
+  assert.match(appVersionModuleSource, /APP_VERSION = "7\.12\.79"/);
+  assert.match(taskAppSource, /const APP_VERSION = CURRENT_APP_VERSION/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
-  assert.match(currentStateSource, /Current working app version: `7\.12\.77`/);
+  assert.match(currentStateSource, /Current working app version: `7\.12\.79`/);
 });
