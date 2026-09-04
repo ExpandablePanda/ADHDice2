@@ -6,10 +6,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   FOCUS_PAGE_SHELL_IDS,
   FOCUS_PAGE_SHELL_CANONICAL_LAYOUT,
+  HOME_PAGE_SHELL_CANONICAL_LAYOUT,
+  HOME_PAGE_SHELL_IDS,
   HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS,
   HEALTH_PAGE_SHELL_IDS,
+  NOTES_PAGE_SHELL_CANONICAL_LAYOUT,
+  NOTES_PAGE_SHELL_IDS,
+  SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT,
+  SETTINGS_PAGE_SHELL_IDS,
   STATS_PAGE_SHELL_IDS,
   STATS_PAGE_SHELL_CANONICAL_LAYOUT,
+  TEST_PAGE_SHELL_CANONICAL_LAYOUT,
+  TEST_PAGE_SHELL_IDS,
   getPageShellDragAutoScrollDelta,
   getHealthPageShellKey,
   getPageShellInsertionIndex,
@@ -50,6 +58,9 @@ import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, Re
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 
 const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+const settingsPageSource = readFileSync(new URL("../src/components/task-app/settings-page.tsx", import.meta.url), "utf8");
+const notesSource = readFileSync(new URL("../src/components/task-app/notes-page.tsx", import.meta.url), "utf8");
+const testD20Source = readFileSync(new URL("../src/components/task-app/test-d20-face-mapper.tsx", import.meta.url), "utf8");
 const statsSource = readFileSync(new URL("../src/components/task-app/stats-page.tsx", import.meta.url), "utf8");
 const healthSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const activeWorkoutSource = readFileSync(new URL("../src/components/task-app/health-active-workout.tsx", import.meta.url), "utf8");
@@ -261,7 +272,7 @@ test("layout export includes registered canonical pages, customized pages, and m
   });
   writePageShellView(store, viewsKey, view);
   const exported = buildPageShellLayoutExport({
-    appVersion: "7.12.79",
+    appVersion: "7.12.80",
     currentLayout: readPageShellLayout(store, layoutKey, "health:food", HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food.order, HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food.sizes),
     currentPageKey: "health:food",
     currentPresentation: "canonical",
@@ -272,7 +283,7 @@ test("layout export includes registered canonical pages, customized pages, and m
   });
   assert.equal(exported.schema, PAGE_SHELL_EXPORT_SCHEMA);
   assert.equal(exported.schemaVersion, PAGE_SHELL_EXPORT_SCHEMA_VERSION);
-  assert.equal(exported.appVersion, "7.12.79");
+  assert.equal(exported.appVersion, "7.12.80");
   assert.equal(exported.pages.find((page) => page.pageKey === "health:food")?.presentation, "canonical");
   const fitness = exported.pages.find((page) => page.pageKey === "health:fitness");
   assert.equal(fitness?.presentation, "custom");
@@ -281,6 +292,9 @@ test("layout export includes registered canonical pages, customized pages, and m
   assert.equal(exported.views[0]?.viewport.width, 1200);
   for (const registeredPage of getRegisteredPageShellPages()) {
     assert.ok(exported.pages.some((page) => page.pageKey === registeredPage.pageKey), registeredPage.pageKey);
+  }
+  for (const pageKey of ["home", "settings", "notes", "test"]) {
+    assert.equal(exported.pages.find((page) => page.pageKey === pageKey)?.presentation, "canonical");
   }
   const json = JSON.stringify(exported);
   assert.doesNotMatch(json, /export-user|user_id|tasks|food records|personal notes/i);
@@ -642,9 +656,75 @@ test("side-by-side shells still use horizontal placement within one row", () => 
   assert.equal(getPageShellInsertionIndex(geometries, ["left", "right", "below"], "left", 800, 100), 1);
 });
 
-test("Home keeps Task Search and To-do content inside its canonical shell", () => {
-  assert.doesNotMatch(homeSource, /ReorderablePageShells|PageShell id=|home-task-search|home-todo-list/);
-  assert.match(homeSource, /<AdhdPanel/);
+test("Home, Settings, Notes, and Test register their intended semantic shells", () => {
+  assert.deepEqual([...HOME_PAGE_SHELL_IDS], ["home-todo"]);
+  assert.deepEqual([...SETTINGS_PAGE_SHELL_IDS], ["settings-appearance", "settings-day-reset", "settings-economy", "settings-import-export"]);
+  assert.deepEqual([...NOTES_PAGE_SHELL_IDS], ["notes-scratch-paper", "notes-library"]);
+  assert.deepEqual([...TEST_PAGE_SHELL_IDS], ["test-d20-sandbox", "test-d20-controls"]);
+  assert.equal(HOME_PAGE_SHELL_IDS.length >= 1, true);
+  assert.equal(HOME_PAGE_SHELL_IDS.length >= 2, false);
+  assert.equal(SETTINGS_PAGE_SHELL_IDS.length >= 2, true);
+  assert.equal(NOTES_PAGE_SHELL_IDS.length >= 2, true);
+  assert.equal(TEST_PAGE_SHELL_IDS.length >= 2, true);
+  assert.match(homeSource, /usePageShellLayout\(userId, "home", HOME_PAGE_SHELL_IDS/);
+  assert.match(homeSource, /<PageShell id="home-todo" label="Home To-do List">/);
+  assert.match(homeSource, /<PageShellHeader actions=\{<PageShellLayoutControls layout=\{layout\} \/>\}/);
+  assert.doesNotMatch(homeSource, /GripVertical|Move Home To-do List/);
+  assert.match(settingsPageSource, /usePageShellLayout\(userId \?\? null, "settings", SETTINGS_PAGE_SHELL_IDS/);
+  for (const [id, section] of [
+    ["settings-appearance", "appearance"],
+    ["settings-day-reset", "day-reset"],
+    ["settings-economy", "economy"],
+    ["settings-import-export", "import-export"],
+  ] as const) {
+    assert.match(settingsPageSource, new RegExp(`<PageShell id="${id}"`));
+    assert.match(settingsPageSource, new RegExp(`data-settings-section="${section}" id="settings-section-${section}"`));
+  }
+  assert.match(notesSource, /usePageShellLayout\(currentUser\.id, "notes", NOTES_PAGE_SHELL_IDS/);
+  assert.equal((notesSource.match(/<PageShell id="notes-/g) ?? []).length, 2);
+  assert.match(testD20Source, /usePageShellLayout\(userId, "test", TEST_PAGE_SHELL_IDS/);
+  assert.match(testD20Source, /<PageShell id="test-d20-sandbox" label="D20 Sandbox">/);
+  assert.match(testD20Source, /<PageShell id="test-d20-controls" label="Face Mapping Controls">/);
+});
+
+test("new page shells preserve editor boundaries, canonical placement, and shared surface bodies", () => {
+  const editorBranch = notesSource.slice(notesSource.indexOf("if (editing)"), notesSource.indexOf("return (\n    <section"));
+  assert.doesNotMatch(editorBranch, /PageShell/);
+  assert.match(notesSource, /<PageShell id="notes-scratch-paper"[\s\S]*<ScratchPaperPageSection/);
+  assert.match(notesSource, /<PageShell id="notes-library"[\s\S]*Quick capture/);
+  assert.match(testD20Source, /<ReorderablePageShells layout=\{layout\} shellsClassName="mt-6 grid gap-5 xl:grid-cols-12">/);
+  const sandboxShell = testD20Source.slice(testD20Source.indexOf('<PageShell id="test-d20-sandbox"'), testD20Source.indexOf("</PageShell>", testD20Source.indexOf('<PageShell id="test-d20-sandbox"')));
+  const controlsShell = testD20Source.slice(testD20Source.indexOf('<PageShell id="test-d20-controls"'), testD20Source.indexOf("</PageShell>", testD20Source.indexOf('<PageShell id="test-d20-controls"')));
+  assert.match(sandboxShell, /PageShellSurface[\s\S]*PageShellBody[\s\S]*D20CalibrationCanvas/);
+  assert.match(controlsShell, /PageShellSurface[\s\S]*PageShellBody[\s\S]*Face \{face\}[\s\S]*Export Mapping/);
+  for (const source of [homeSource, settingsPageSource, notesSource, testD20Source]) {
+    assert.match(source, /PageShellSurface/);
+    assert.match(source, /PageShellBody/);
+  }
+  assert.equal(TEST_PAGE_SHELL_CANONICAL_LAYOUT.gridClassName, "xl:grid-cols-[minmax(0,0.56fr)_minmax(20rem,0.44fr)]");
+  assert.equal(TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes["test-d20-sandbox"].span, 7);
+  assert.equal(TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes["test-d20-controls"].span, 5);
+  assert.deepEqual(TEST_PAGE_SHELL_CANONICAL_LAYOUT.order, ["test-d20-sandbox", "test-d20-controls"]);
+  assert.match(layoutHookSource, /const canEdit = defaults\.length >= 1/);
+  assert.match(layoutHookSource, /const canResize = defaults\.length >= 1/);
+  assert.match(layoutHookSource, /const canReorder = defaults\.length >= 2/);
+});
+
+test("new page canonical resets preserve pre-shell order and natural heights", () => {
+  for (const canonical of [
+    HOME_PAGE_SHELL_CANONICAL_LAYOUT,
+    SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT,
+    NOTES_PAGE_SHELL_CANONICAL_LAYOUT,
+    TEST_PAGE_SHELL_CANONICAL_LAYOUT,
+  ]) {
+    const reset = normalizePageShellLayout(null, canonical.order, canonical.sizes);
+    assert.deepEqual(reset.order, [...canonical.order]);
+    assert.deepEqual(reset.sizes, canonical.sizes);
+  }
+  assert.equal(HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes["home-todo"].heightPx, null);
+  assert.equal(SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT.sizes["settings-appearance"].heightPx, null);
+  assert.equal(NOTES_PAGE_SHELL_CANONICAL_LAYOUT.sizes["notes-scratch-paper"].heightPx, null);
+  assert.equal(TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes["test-d20-sandbox"].heightPx, null);
 });
 
 test("page-level layout controls are header actions and render for every valid shell layout", () => {
@@ -659,7 +739,10 @@ test("page-level layout controls are header actions and render for every valid s
   assert.match(statsSource, /PageShellHeader actions=\{<PageShellLayoutControls layout=\{layout\} \/>\}/);
   assert.match(healthSource, /PageShellHeader actions=\{<PageShellLayoutControls layout=\{pageShellLayout\} \/>\}/);
   assert.match(focusSource, /PageShellHeader actions=\{<PageShellLayoutControls layout=\{layout\} \/>\}/);
-  assert.doesNotMatch(homeSource, /Edit page layout|PageShellLayoutControls/);
+  assert.match(homeSource, /PageShellHeader actions=\{<PageShellLayoutControls layout=\{layout\} \/>\}/);
+  assert.match(settingsPageSource, /PageShellHeader actions=\{<PageShellLayoutControls layout=\{layout\} \/>\}/);
+  assert.match(notesSource, /PageShellHeader actions=\{<PageShellLayoutControls layout=\{layout\} \/>\}/);
+  assert.match(testD20Source, /PageShellLayoutControls layout=\{layout\}/);
   assert.equal(HEALTH_PAGE_SHELL_IDS.Awards.length, 1);
   assert.equal(HEALTH_PAGE_SHELL_IDS.Settings.length, 1);
   assert.match(healthSource, /HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS/);

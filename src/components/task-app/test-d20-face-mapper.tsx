@@ -3,6 +3,9 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 import { ErrorBoundary } from "../error-boundary";
 import { D20_FACE_ROTATION_PRESETS } from "../dice-3d";
+import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { usePageShellLayout } from "@/hooks/usePageShellLayout";
+import { TEST_PAGE_SHELL_CANONICAL_LAYOUT, TEST_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 
 const D20CalibrationCanvas = lazy(() => import("../dice-3d").then((module) => ({ default: module.D20CalibrationCanvas })));
 
@@ -76,9 +79,12 @@ function isRotationSaved(face: number, savedFaces: number[]) {
 
 export function TestD20FaceMapper({
   dark,
+  userId,
 }: {
   dark: boolean;
+  userId: string | null;
 }) {
+  const layout = usePageShellLayout(userId, "test", TEST_PAGE_SHELL_IDS, TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes, TEST_PAGE_SHELL_CANONICAL_LAYOUT);
   const [selectedFace, setSelectedFace] = useState<number>(1);
   const [savedRotations, setSavedRotations] = useState<Record<number, RotationTuple>>(() => createInitialRotations());
   const [savedFaces, setSavedFaces] = useState<number[]>(() => [...FACE_VALUES]);
@@ -132,17 +138,20 @@ export function TestD20FaceMapper({
 
   return (
     <div className="mx-auto mt-10 w-full max-w-6xl rounded-[2rem] border border-[#eee7ff] bg-[linear-gradient(180deg,#fcfbff_0%,#f8f4ff_100%)] p-6 text-left shadow-[0_28px_80px_rgba(116,88,255,0.12)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(35,28,58,0.95)_0%,rgba(25,20,43,0.98)_100%)]">
-      <div className="max-w-3xl">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#9b92be] dark:text-white/35">
-          D20 Face Mapper
-        </p>
-        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[#342d56] dark:text-white">
-          Drag the sandbox die and rebuild all 20 face targets
-        </h2>
-        <p className="mt-2 text-sm leading-6 text-[#726a96] dark:text-white/60">
-          Pick a face, rotate the D20 until that number is truly on top and camera-facing, then save it.
-          Work through all 20 faces and send me the export block when the set is complete.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-3xl">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#9b92be] dark:text-white/35">
+            D20 Face Mapper
+          </p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[#342d56] dark:text-white">
+            Drag the sandbox die and rebuild all 20 face targets
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-[#726a96] dark:text-white/60">
+            Pick a face, rotate the D20 until that number is truly on top and camera-facing, then save it.
+            Work through all 20 faces and send me the export block when the set is complete.
+          </p>
+        </div>
+        <PageShellLayoutControls layout={layout} />
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
@@ -154,8 +163,10 @@ export function TestD20FaceMapper({
         </span>
       </div>
 
-      <div className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,0.56fr)_minmax(20rem,0.44fr)]">
-        <div className="overflow-hidden rounded-[1.75rem] border border-[#ede6ff] bg-white/82 p-4 shadow-[0_18px_40px_rgba(121,93,255,0.08)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04]">
+      <ReorderablePageShells layout={layout} shellsClassName="mt-6 grid gap-5 xl:grid-cols-12">
+        <PageShell id="test-d20-sandbox" label="D20 Sandbox">
+        <PageShellSurface className="rounded-[1.75rem] border border-[#ede6ff] bg-white/82 p-4 shadow-[0_18px_40px_rgba(121,93,255,0.08)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04]">
+        <PageShellBody>
           <ErrorBoundary fallback={<div className="h-[420px] w-full rounded-2xl bg-[#f0ecff] dark:bg-[#130e24]" />}>
             <Suspense fallback={<div className="h-[420px] w-full rounded-2xl bg-[#f0ecff] dark:bg-[#130e24]" />}>
               <D20CalibrationCanvas
@@ -167,13 +178,17 @@ export function TestD20FaceMapper({
               />
             </Suspense>
           </ErrorBoundary>
-          <div className="mt-4 rounded-[1.25rem] bg-[#f7f4ff] px-4 py-3 text-sm text-[#675f8d] dark:bg-white/[0.05] dark:text-white/60">
-            Drag anywhere in the sandbox to rotate the die freely around the full 360.
-            {" "}Save once face <span className="font-semibold text-[#3c345d] dark:text-white">#{selectedFace}</span> is clearly the top result you want the roll to land on.
-          </div>
-        </div>
+            <div className="mt-4 rounded-[1.25rem] bg-[#f7f4ff] px-4 py-3 text-sm text-[#675f8d] dark:bg-white/[0.05] dark:text-white/60">
+              Drag anywhere in the sandbox to rotate the die freely around the full 360.
+              {" "}Save once face <span className="font-semibold text-[#3c345d] dark:text-white">#{selectedFace}</span> is clearly the top result you want the roll to land on.
+            </div>
+        </PageShellBody>
+        </PageShellSurface>
+        </PageShell>
 
-        <div className="rounded-[1.75rem] border border-[#ede6ff] bg-white/82 p-5 shadow-[0_18px_40px_rgba(121,93,255,0.08)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04]">
+        <PageShell id="test-d20-controls" label="Face Mapping Controls">
+        <PageShellSurface className="rounded-[1.75rem] border border-[#ede6ff] bg-white/82 p-5 shadow-[0_18px_40px_rgba(121,93,255,0.08)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04]">
+        <PageShellBody>
           <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
             {FACE_VALUES.map((face) => {
               const saved = isRotationSaved(face, savedFaces);
@@ -266,8 +281,10 @@ export function TestD20FaceMapper({
               {exportText}
             </pre>
           </div>
-        </div>
-      </div>
+        </PageShellBody>
+        </PageShellSurface>
+        </PageShell>
+      </ReorderablePageShells>
     </div>
   );
 }

@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Task } from "@/lib/database.types";
 import type { NavigatorSettingsSection } from "@/lib/navigator-search";
+import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { usePageShellLayout } from "@/hooks/usePageShellLayout";
+import { SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT, SETTINGS_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import { PageShellHeader } from "./page-shell-header";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -43,8 +46,10 @@ export function SettingsPage({
   tasks,
   theme,
   timeZone,
+  userId,
   requestedSection = null,
 }: SettingsPageProps) {
+  const layout = usePageShellLayout(userId ?? null, "settings", SETTINGS_PAGE_SHELL_IDS, SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT.sizes, SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT);
   const [importText, setImportText] = useState("");
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [isResettingEconomy, setIsResettingEconomy] = useState(false);
@@ -124,9 +129,12 @@ export function SettingsPage({
 
   return (
     <section className="mx-auto max-w-lg px-4 pb-32">
-      <PageShellHeader title="Settings" subtitle="Configuration" />
-      <p className={sectionTitle} data-settings-section="appearance" id="settings-section-appearance" ref={(element) => { sectionRefs.current.appearance = element; }}>Appearance</p>
-      <div className={sectionClass}>
+      <PageShellHeader actions={<PageShellLayoutControls layout={layout} />} title="Settings" subtitle="Configuration" />
+      <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5">
+      <PageShell id="settings-appearance" label="Appearance">
+      <PageShellSurface className={sectionClass}>
+      <PageShellBody>
+        <p className={sectionTitle} data-settings-section="appearance" id="settings-section-appearance" ref={(element) => { sectionRefs.current.appearance = element; }}>Appearance</p>
         <div className={row}>
           <span className={label}>Theme</span>
           <ThemeToggle theme={theme} onLowStimChange={onLowStimChange} onThemeChange={onThemeChange} lowStim={lowStim} />
@@ -139,21 +147,39 @@ export function SettingsPage({
             ))}
           </div>
         </div>
-      </div>
-      <p className={sectionTitle} data-settings-section="day-reset" id="settings-section-day-reset" ref={(element) => { sectionRefs.current["day-reset"] = element; }}>Day reset</p>
-      <div className={sectionClass}>
+      </PageShellBody>
+      </PageShellSurface>
+      </PageShell>
+
+      <PageShell id="settings-day-reset" label="Day Reset">
+      <PageShellSurface className={sectionClass}>
+      <PageShellBody>
+        <p className={sectionTitle} data-settings-section="day-reset" id="settings-section-day-reset" ref={(element) => { sectionRefs.current["day-reset"] = element; }}>Day reset</p>
         <div className={row}><span className={label}>Day starts at</span><input className="rounded-full bg-white px-3 py-2 text-sm font-semibold text-[#27304c] outline-none dark:bg-white/8 dark:text-white" onChange={(event) => onDayStartTimeChange(event.target.value)} type="time" value={dayStartTime} /></div>
         <div className={row}><span className={label}>Time zone</span><select className="max-w-[14rem] rounded-full bg-white px-3 py-2 text-sm font-semibold text-[#27304c] outline-none dark:bg-white/8 dark:text-white" onChange={(event) => onTimeZoneChange(event.target.value)} value={timeZone}>{timezoneOptions.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}</select></div>
-      </div>
-      <p className={sectionTitle} data-settings-section="economy" id="settings-section-economy" ref={(element) => { sectionRefs.current.economy = element; }}>Economy</p>
-      <div className={sectionClass}>
+      </PageShellBody>
+      </PageShellSurface>
+      </PageShell>
+
+      <PageShell id="settings-economy" label="Economy">
+      <PageShellSurface className={sectionClass}>
+      <PageShellBody>
+        <p className={sectionTitle} data-settings-section="economy" id="settings-section-economy" ref={(element) => { sectionRefs.current.economy = element; }}>Economy</p>
         <div className={`${row} gap-4`}><div><p className={label}>Reset XP, points, tokens, and free-roll bank</p><p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">Leaves task history in place and sets level back to 1.</p></div><button className="ui-pill-button-danger-light shrink-0 transition disabled:cursor-not-allowed disabled:opacity-60" disabled={isResettingEconomy} onClick={() => { void handleResetEconomy(); }} type="button">{isResettingEconomy ? "Resetting..." : "Reset economy"}</button></div>
         {economyStatus ? <div className="px-5 pb-4 text-xs text-[#7d88a1] dark:text-white/55">{economyStatus}</div> : null}
-      </div>
-      <p className={sectionTitle} data-settings-section="import-export" id="settings-section-import-export" ref={(element) => { sectionRefs.current["import-export"] = element; }}>Import / export</p>
-      <div className={`${sectionClass} overflow-hidden`}>
+      </PageShellBody>
+      </PageShellSurface>
+      </PageShell>
+
+      <PageShell id="settings-import-export" label="Import / Export">
+      <PageShellSurface className={`${sectionClass} overflow-hidden`}>
+      <PageShellBody>
+        <p className={sectionTitle} data-settings-section="import-export" id="settings-section-import-export" ref={(element) => { sectionRefs.current["import-export"] = element; }}>Import / export</p>
         <div className="px-5 py-4"><button className="ui-pill-button-strong-light" onClick={handleExportJSON} type="button">Export tasks JSON</button><textarea className="mt-4 min-h-40 w-full rounded-[1.2rem] bg-white px-4 py-3 text-sm text-[#27304c] outline-none dark:bg-white/8 dark:text-white" onChange={(event) => setImportText(event.target.value)} placeholder="Paste exported tasks JSON here..." value={importText} /><div className="mt-3 flex items-center justify-between gap-3"><button className="ui-pill-button-strong-light" onClick={() => { void handleImportJSON(); }} type="button">Import JSON</button>{importStatus ? <p className="text-right text-xs text-[#7d88a1] dark:text-white/55">{importStatus}</p> : null}</div></div>
-      </div>
+      </PageShellBody>
+      </PageShellSurface>
+      </PageShell>
+      </ReorderablePageShells>
     </section>
   );
 }

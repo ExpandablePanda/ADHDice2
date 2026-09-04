@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.79`.
+- Current working app version: `7.12.80`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,25 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-04 7.12.80 Expanded Page-Shell Editing
+
+Home now exposes one `home-todo` shell for the existing Home To-do List.
+The main Settings page exposes the four major `settings-appearance`,
+`settings-day-reset`, `settings-economy`, and `settings-import-export` shells
+while preserving its Navigator section anchors. Notes exposes
+`notes-scratch-paper` and `notes-library`; the full Note Editor remains an
+editor/workspace state without dashboard shell chrome. Test exposes
+`test-d20-sandbox` and `test-d20-controls` around the existing D20 mapper's
+side-by-side regions.
+
+All four pages inherit the generic page-shell editing, resizing, Reset Layout,
+saved Web/iPhone Views, and layout-only JSON export systems; the three
+multi-shell pages also inherit generic reorder. Home intentionally remains a
+single non-reorderable shell.
+Tasks / To-do, Roll, Achievements / Progress, and Games remain pending for the
+next expansion wave. No SQL, schema, cloud layout sync, application content,
+or iOS-specific changes were added.
 
 ## 2026-09-04 7.12.79 Page-shell shrinking and layout views
 

@@ -128,6 +128,19 @@ export const FOCUS_PAGE_SHELL_IDS = [
   "focus-activity-trend",
 ] as const;
 
+export const HOME_PAGE_SHELL_IDS = ["home-todo"] as const;
+
+export const SETTINGS_PAGE_SHELL_IDS = [
+  "settings-appearance",
+  "settings-day-reset",
+  "settings-economy",
+  "settings-import-export",
+] as const;
+
+export const NOTES_PAGE_SHELL_IDS = ["notes-scratch-paper", "notes-library"] as const;
+
+export const TEST_PAGE_SHELL_IDS = ["test-d20-sandbox", "test-d20-controls"] as const;
+
 export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, PageShellCanonicalLayout> = {
   Today: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Today, {
     "today-snapshot": NATURAL_PAGE_SHELL_SIZE,
@@ -230,6 +243,25 @@ export const FOCUS_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canon
   FOCUS_PAGE_SHELL_IDS.map((id) => [id, NATURAL_PAGE_SHELL_SIZE]),
 ));
 
+export const HOME_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canonicalLayout(HOME_PAGE_SHELL_IDS, {
+  "home-todo": NATURAL_PAGE_SHELL_SIZE,
+});
+
+export const SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canonicalLayout(SETTINGS_PAGE_SHELL_IDS, Object.fromEntries(
+  SETTINGS_PAGE_SHELL_IDS.map((id) => [id, NATURAL_PAGE_SHELL_SIZE]),
+));
+
+export const NOTES_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canonicalLayout(NOTES_PAGE_SHELL_IDS, Object.fromEntries(
+  NOTES_PAGE_SHELL_IDS.map((id) => [id, NATURAL_PAGE_SHELL_SIZE]),
+));
+
+export const TEST_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canonicalLayout(TEST_PAGE_SHELL_IDS, {
+  "test-d20-sandbox": CANONICAL_PAGE_SHELL_SIZE(7),
+  "test-d20-controls": CANONICAL_PAGE_SHELL_SIZE(5),
+}, {
+  gridClassName: "xl:grid-cols-[minmax(0,0.56fr)_minmax(20rem,0.44fr)]",
+});
+
 const PAGE_SHELL_PAGE_REGISTRY = new Map<string, PageShellRegisteredPage>();
 
 export function registerPageShellPage(pageKey: string, canonicalLayout: PageShellCanonicalLayout) {
@@ -249,6 +281,10 @@ for (const [tab, layout] of Object.entries(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS) 
 }
 registerPageShellPage("stats", STATS_PAGE_SHELL_CANONICAL_LAYOUT);
 registerPageShellPage("focus", FOCUS_PAGE_SHELL_CANONICAL_LAYOUT);
+registerPageShellPage("home", HOME_PAGE_SHELL_CANONICAL_LAYOUT);
+registerPageShellPage("settings", SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT);
+registerPageShellPage("notes", NOTES_PAGE_SHELL_CANONICAL_LAYOUT);
+registerPageShellPage("test", TEST_PAGE_SHELL_CANONICAL_LAYOUT);
 
 /**
  * 12-column editing fallbacks are derived from the canonical layouts. The
@@ -261,6 +297,10 @@ export const HEALTH_PAGE_SHELL_SIZE_DEFAULTS: Record<HealthPageShellTab, PageShe
 
 export const STATS_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = STATS_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
 export const FOCUS_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = FOCUS_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
+export const HOME_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
+export const SETTINGS_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
+export const NOTES_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = NOTES_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
+export const TEST_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
 
 export function getHealthPageShellKey(tab: HealthPageShellTab) {
   return `health:${tab.toLowerCase()}`;

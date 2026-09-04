@@ -7340,6 +7340,7 @@ export function TaskApp() {
             isDark={theme === "dark"}
             page={activePage}
             setActivePage={setActivePage}
+            userId={currentUser.id}
           />
         )}
         </ErrorBoundary>
@@ -8986,11 +8987,13 @@ function PagePlaceholder({
   isDark,
   page,
   setActivePage,
+  userId,
 }: {
   count: number;
   isDark: boolean;
   page: AppPage;
   setActivePage: (page: AppPage) => void;
+  userId: string | null;
 }) {
   return (
     <section className="flex flex-col items-center pt-[5px] text-center">
@@ -9044,7 +9047,7 @@ function PagePlaceholder({
           <TaskManagementTableV2 className="max-w-none p-0" title="Task Table #2" />
           </div>
           <ErrorBoundary fallback={<div className="rounded-[1.5rem] border border-[#ece8f8] bg-white p-5 text-sm font-medium text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">Test tools failed to load.</div>}>
-            <TestD20FaceMapper dark={isDark} />
+            <TestD20FaceMapper dark={isDark} userId={userId} />
             <TestDiceFaceMapper dark={isDark} />
             <TestDiceMaterialLab dark={isDark} />
             <TestTaskTablePrototype />

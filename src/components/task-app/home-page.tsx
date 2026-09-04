@@ -6,10 +6,13 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
-import { AdhdPanel } from "@/components/ui-system/adhd-panel";
+import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { usePageShellLayout } from "@/hooks/usePageShellLayout";
+import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import { SortableList } from "@/components/ui/sortable-list";
 import { useHomeTodoState } from "@/hooks/useHomeTodoState";
 import { TaskStatusCircleRail, formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
+import { PageShellHeader } from "./page-shell-header";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import type { Task, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
@@ -53,6 +56,7 @@ export function HomePage({
   tasks: Task[];
   userId: string | null;
 }) {
+  const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
   const { state, syncStatus, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -309,9 +313,11 @@ export function HomePage({
 
   return (
     <section className="-mx-[15px] w-auto max-w-4xl px-3 pb-32 pt-6 sm:mx-auto sm:px-4">
-      <AdhdPanel
-        header={(
-          <div className="flex flex-wrap items-start justify-between gap-2">
+      <PageShellHeader actions={<PageShellLayoutControls layout={layout} />} subtitle="Daily workspace" title="Home" />
+      <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5">
+      <PageShell id="home-todo" label="Home To-do List">
+      <PageShellSurface className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 text-[#5f5876] shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530] dark:text-white/78">
+        <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="flex items-start gap-2">
               <ListTodo aria-hidden="true" className="mt-0.5 h-5 w-5 text-[#6f57f6]" />
               <div>
@@ -358,9 +364,8 @@ export function HomePage({
                 {syncStatus === "saving" ? "Saving…" : syncStatus === "loading" ? "Loading…" : syncStatus === "synced" ? "Synced" : "Saved locally"}
               </span>
             </div>
-          </div>
-        )}
-      >
+        </div>
+        <PageShellBody>
         <div className="relative mt-2" ref={searchRef}>
           <div className="flex flex-wrap items-end justify-between gap-2">
             <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Search tasks</span>
@@ -492,7 +497,10 @@ export function HomePage({
               Search above to add the first task to your ordered list.
             </p>
           ) : null}
-      </AdhdPanel>
+        </PageShellBody>
+      </PageShellSurface>
+      </PageShell>
+      </ReorderablePageShells>
     </section>
   );
 }
