@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, Check, ChevronDown, CornerDownRight, Download, GripVertical, PanelsTopLeft, RotateCcw, Save } from "lucide-react";
-import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type HTMLAttributes, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, type Ref } from "react";
+import { ArrowDown, ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUp, ArrowUpToLine, Check, ChevronDown, CornerDownRight, Download, GripVertical, MoveHorizontal, PanelsTopLeft, RotateCcw, Save } from "lucide-react";
+import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, type Ref } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
@@ -9,6 +9,7 @@ import { TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import {
   getPageShellInsertionIndex,
+  getPageShellDirectionalInsertionIndex,
   getPageShellDragAutoScrollDelta,
   clampPageShellHeight,
   formatPageShellDimensions,
@@ -16,9 +17,11 @@ import {
   getPageShellShrinkHeight,
   mergeVisiblePageShellOrder,
   normalizePageShellSpan,
+  packPageShellLayout,
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
   reorderPageShellOrderAt,
+  type PageShellPackedPosition,
   type PageShellGeometry,
   type PageShellCanonicalGroup,
   type PageShellLayoutPreference,
@@ -58,7 +61,7 @@ type ShellResizeInteraction = {
   id: string;
   initialSize: PageShellSize;
   initialHeight: number;
-  kind: "resize";
+  kind: "resize" | "width-resize";
   naturalHeight: number;
   pointerId: number;
   startLayout: PageShellLayoutPreference;
@@ -343,11 +346,32 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const [dragInsertionIndex, setDragInsertionIndex] = useState<number | null>(null);
   const [resizingId, setResizingId] = useState<string | null>(null);
   const [naturalHeights, setNaturalHeights] = useState<Record<string, number>>({});
+  const [renderedWidths, setRenderedWidths] = useState<Record<string, number>>({});
+  const [positionDrafts, setPositionDrafts] = useState<Record<string, string>>({});
+  const [widthDrafts, setWidthDrafts] = useState<Record<string, string>>({});
+  const packedPositions = useMemo<Record<string, PageShellPackedPosition>>(
+    () => packPageShellLayout(
+      orderedShells.map((shell) => shell.id),
+      layout.sizes,
+      {
+        chromeHeightPx: layout.isEditing ? 32 : 0,
+        naturalHeights,
+      },
+    ),
+    [layout.isEditing, layout.sizes, naturalHeights, orderedShells],
+  );
+  // Canonical metadata owns the historical presentation. Once a user has a
+  // custom layout (including a live edit preview), derived packing takes over.
+  const usePackedPlacement = !layout.isCanonical;
 
   const measureNaturalShellHeights = useCallback(() => {
     const next = Object.fromEntries(orderedShells.flatMap((shell) => {
       const height = measureNaturalShellHeight(shellContentRefs.current[shell.id]);
       return height > 0 ? [[shell.id, height]] : [];
+    }));
+    const nextWidths = Object.fromEntries(orderedShells.flatMap((shell) => {
+      const width = shellRefs.current[shell.id]?.getBoundingClientRect().width ?? 0;
+      return width > 0 ? [[shell.id, Math.round(width)]] : [];
     }));
     setNaturalHeights((current) => {
       const currentKeys = Object.keys(current);
@@ -355,10 +379,15 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       if (currentKeys.length === nextKeys.length && nextKeys.every((id) => current[id] === next[id])) return current;
       return next;
     });
+    setRenderedWidths((current) => {
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(nextWidths);
+      if (currentKeys.length === nextKeys.length && nextKeys.every((id) => current[id] === nextWidths[id])) return current;
+      return nextWidths;
+    });
   }, [orderedShells]);
 
   useEffect(() => {
-    if (!layout.isEditing) return;
     let frame: number | null = null;
     const scheduleMeasurement = () => {
       if (frame !== null && typeof window !== "undefined") window.cancelAnimationFrame(frame);
@@ -377,6 +406,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       orderedShells.forEach((shell) => {
         const element = shellContentRefs.current[shell.id];
         if (element) observer.observe(element);
+        const shellElement = shellRefs.current[shell.id];
+        if (shellElement) observer?.observe(shellElement);
       });
     }
     const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(scheduleMeasurement);
@@ -391,7 +422,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       observer?.disconnect();
       mutationObserver?.disconnect();
     };
-  }, [layout.isEditing, layout.isCanonical, measureNaturalShellHeights, orderedShells, renderedShellOrderKey]);
+  }, [layout.isCanonical, measureNaturalShellHeights, orderedShells, renderedShellOrderKey]);
 
   useEffect(() => {
     if (!layout.isEditing && autoScrollFrameRef.current !== null && typeof window !== "undefined") {
@@ -546,6 +577,32 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
+  function beginWidthResize(event: PointerEvent<HTMLButtonElement>, id: string) {
+    if (!layout.isEditing || !layout.canResize) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startLayout = currentLayout();
+    const shellContent = shellContentRefs.current[id];
+    const layoutElement = layoutRef.current;
+    const initialSize = startLayout.sizes[id] ?? { heightPx: null, span: 12 as const };
+    const layoutWidth = layoutElement?.getBoundingClientRect().width ?? shellContent?.getBoundingClientRect().width ?? 0;
+    interactionRef.current = {
+      columnWidth: layoutWidth > 0 ? layoutWidth / 12 : Math.max(shellContent?.getBoundingClientRect().width ?? 1, 1),
+      id,
+      initialSize,
+      initialHeight: initialSize.heightPx ?? 0,
+      kind: "width-resize",
+      naturalHeight: 0,
+      pointerId: event.pointerId,
+      startLayout,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    layout.beginPreview(startLayout);
+    setResizingId(id);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
   function setShellHeight(event: MouseEvent<HTMLButtonElement>, id: string, heightPx: number | null) {
     if (!layout.isEditing || !layout.canResize || interactionRef.current) return;
     event.preventDefault();
@@ -570,6 +627,83 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setShellHeight(event, id, null);
   }
 
+  function setShellWidth(id: string, rawValue: string) {
+    const currentLayoutValue = currentLayout();
+    const currentSize = currentLayoutValue.sizes[id];
+    if (!currentSize || !rawValue.trim()) return;
+    const numericValue = Number(rawValue);
+    if (!Number.isFinite(numericValue)) return;
+    const span = normalizePageShellSpan(numericValue, currentSize.span);
+    if (currentSize.span === span) return;
+    layout.beginPreview(currentLayoutValue);
+    layout.setPreviewSizes((sizes) => ({
+      ...sizes,
+      [id]: { ...currentSize, span },
+    }));
+    layout.commitPreview();
+  }
+
+  function commitShellWidth(event: ChangeEvent<HTMLInputElement>, id: string) {
+    event.stopPropagation();
+    setShellWidth(id, event.currentTarget.value);
+    setWidthDrafts((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function commitShellPosition(id: string, rawValue: string) {
+    if (!rawValue.trim()) return;
+    const startLayout = currentLayout();
+    const startVisibleOrder = orderedShells.map((shell) => shell.id);
+    const currentIndex = startVisibleOrder.indexOf(id);
+    if (currentIndex < 0) return;
+    const numericValue = Number(rawValue);
+    if (!Number.isFinite(numericValue)) return;
+    const targetIndex = Math.max(0, Math.min(startVisibleOrder.length - 1, Math.round(numericValue) - 1));
+    const nextVisibleOrder = reorderPageShellOrderAt(startVisibleOrder, id, targetIndex);
+    const nextOrder = mergeVisiblePageShellOrder(startLayout.order, nextVisibleOrder, visibleShellIds);
+    if (layoutsHaveSameOrder(nextOrder, layout.order)) return;
+    layout.beginPreview(startLayout);
+    layout.setPreviewOrder(nextOrder);
+    layout.commitPreview();
+  }
+
+  function handlePositionCommit(event: ChangeEvent<HTMLInputElement>, id: string) {
+    event.stopPropagation();
+    commitShellPosition(id, event.currentTarget.value);
+    setPositionDrafts((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function handleNumericInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+  }
+
+  function moveShellDirection(event: MouseEvent<HTMLButtonElement>, id: string, direction: "down" | "left" | "right" | "up") {
+    if (!layout.isEditing || !layout.canReorder) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startLayout = currentLayout();
+    const startVisibleOrder = orderedShells.map((shell) => shell.id);
+    const targetIndex = getPageShellDirectionalInsertionIndex(captureShellGeometry(), startVisibleOrder, id, direction);
+    if (targetIndex === null) return;
+    const nextVisibleOrder = reorderPageShellOrderAt(startVisibleOrder, id, targetIndex);
+    const nextOrder = mergeVisiblePageShellOrder(startLayout.order, nextVisibleOrder, visibleShellIds);
+    if (layoutsHaveSameOrder(nextOrder, layout.order)) return;
+    layout.beginPreview(startLayout);
+    layout.setPreviewOrder(nextOrder);
+    layout.commitPreview();
+  }
+
   function updateInteraction(event: PointerEvent<HTMLButtonElement>) {
     const interaction = interactionRef.current;
     if (!interaction || interaction.pointerId !== event.pointerId) return;
@@ -585,6 +719,15 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
 
     const deltaColumns = interaction.columnWidth > 0 ? Math.round((event.clientX - interaction.startX) / interaction.columnWidth) : 0;
     const span = normalizePageShellSpan(interaction.initialSize.span + deltaColumns, interaction.initialSize.span);
+    if (interaction.kind === "width-resize") {
+      const currentSize = layout.sizes[interaction.id];
+      if (currentSize?.span === span) return;
+      layout.setPreviewSizes((sizes) => ({
+        ...sizes,
+        [interaction.id]: { ...(sizes[interaction.id] ?? interaction.initialSize), span },
+      }));
+      return;
+    }
     const heightPx = interaction.naturalHeight < PAGE_SHELL_MIN_HEIGHT
       ? null
       : clampPageShellHeight(interaction.initialHeight + (event.clientY - interaction.startY), interaction.naturalHeight);
@@ -617,6 +760,16 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const spanClass = SHELL_SPAN_CLASSES[size.span] ?? SHELL_SPAN_CLASSES[12];
     const hasCustomHeight = size.heightPx !== null;
     const naturalHeight = naturalHeights[shell.id];
+    const packedPosition = usePackedPlacement ? packedPositions[shell.id] : undefined;
+    const shellPosition = orderedShells.findIndex((candidate) => candidate.id === shell.id);
+    const packedStyle = packedPosition
+      ? {
+        "--page-shell-grid-column-span": packedPosition.columnSpan,
+        "--page-shell-grid-column-start": packedPosition.columnStart,
+        "--page-shell-grid-row-span": packedPosition.rowSpan,
+        "--page-shell-grid-row-start": packedPosition.rowStart,
+      } as CSSProperties
+      : undefined;
     const shellPlacementClass = layout.isCanonical
       ? layout.canonicalLayout.shellClassNames?.[shell.id] ?? ""
       : spanClass;
@@ -626,9 +779,11 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
         data-page-shell-id={shell.id}
         data-page-shell-dragging={draggingId === shell.id ? "true" : "false"}
         data-page-shell-resizing={resizingId === shell.id ? "true" : "false"}
+        data-page-shell-rendered-width={renderedWidths[shell.id] ?? undefined}
         data-page-shell-size-span={size.span}
         key={shell.id}
         ref={(element) => { shellRefs.current[shell.id] = element; }}
+        style={packedStyle}
       >
         {layout.isEditing ? (
           <div className="mb-1 flex min-h-7 items-center gap-1.5 rounded-lg border border-[#e4def8] bg-[#faf8ff]/90 px-1.5 py-1 text-xs text-[#6f57f6] dark:border-white/10 dark:bg-[#211a38]/90 dark:text-[#cabfff]" data-page-shell-layout-strip>
@@ -648,7 +803,66 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
               </button>
             ) : null}
             <span className="min-w-0 flex-1 truncate font-semibold">{shell.label}</span>
-            <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{formatPageShellDimensions(size.span, size.heightPx, naturalHeight)}</span>
+            <button
+              aria-label={`Resize ${shell.label} width`}
+              className="inline-flex h-6 w-6 shrink-0 cursor-ew-resize touch-none items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
+              onPointerCancel={(event) => endInteraction(event, true)}
+              onLostPointerCapture={(event) => endInteraction(event, true)}
+              onPointerDown={(event) => beginWidthResize(event, shell.id)}
+              onPointerMove={updateInteraction}
+              onPointerUp={(event) => endInteraction(event, false)}
+              title={`Resize ${shell.label} width`}
+              type="button"
+            >
+              <MoveHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+            <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
+              <span>W</span>
+              <input
+                aria-label={`Set ${shell.label} width in columns`}
+                className="h-6 w-7 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
+                inputMode="numeric"
+                max={12}
+                min={3}
+                onBlur={(event) => commitShellWidth(event, shell.id)}
+                onChange={(event) => { event.stopPropagation(); setWidthDrafts((current) => ({ ...current, [shell.id]: event.target.value })); }}
+                onKeyDown={handleNumericInputKeyDown}
+                onPointerDown={(event) => event.stopPropagation()}
+                step={1}
+                type="number"
+                value={widthDrafts[shell.id] ?? String(size.span)}
+              />
+              <span>/12</span>
+            </label>
+            <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{formatPageShellDimensions(size.span, size.heightPx, naturalHeight, renderedWidths[shell.id])}</span>
+            {layout.canReorder ? (
+              <>
+                <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
+                  <span>Pos</span>
+                  <input
+                    aria-label={`Set ${shell.label} position`}
+                    className="h-6 w-7 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
+                    inputMode="numeric"
+                    max={orderedShells.length}
+                    min={1}
+                    onBlur={(event) => handlePositionCommit(event, shell.id)}
+                    onChange={(event) => { event.stopPropagation(); setPositionDrafts((current) => ({ ...current, [shell.id]: event.target.value })); }}
+                    onKeyDown={handleNumericInputKeyDown}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    step={1}
+                    type="number"
+                    value={positionDrafts[shell.id] ?? String(shellPosition + 1)}
+                  />
+                  <span>/{orderedShells.length}</span>
+                </label>
+                <div className="flex shrink-0 items-center gap-0.5" aria-label={`${shell.label} movement controls`}>
+                  <button aria-label={`Move ${shell.label} up`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] dark:hover:bg-white/10" onClick={(event) => moveShellDirection(event, shell.id, "up")} title={`Move ${shell.label} up`} type="button"><ArrowUp aria-hidden="true" className="h-3.5 w-3.5" /></button>
+                  <button aria-label={`Move ${shell.label} down`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] dark:hover:bg-white/10" onClick={(event) => moveShellDirection(event, shell.id, "down")} title={`Move ${shell.label} down`} type="button"><ArrowDown aria-hidden="true" className="h-3.5 w-3.5" /></button>
+                  <button aria-label={`Move ${shell.label} left`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] dark:hover:bg-white/10" onClick={(event) => moveShellDirection(event, shell.id, "left")} title={`Move ${shell.label} left`} type="button"><ArrowLeft aria-hidden="true" className="h-3.5 w-3.5" /></button>
+                  <button aria-label={`Move ${shell.label} right`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] dark:hover:bg-white/10" onClick={(event) => moveShellDirection(event, shell.id, "right")} title={`Move ${shell.label} right`} type="button"><ArrowRight aria-hidden="true" className="h-3.5 w-3.5" /></button>
+                </div>
+              </>
+            ) : null}
             <button
               aria-label={`Shrink ${shell.label}`}
               className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
@@ -703,9 +917,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
 
   return (
     <div
-      className={`${shellsClassName.replace(/\bxl:grid-cols-12\b/g, "").trim()} ${layout.isCanonical ? layout.canonicalLayout.gridClassName ?? "" : "xl:grid-cols-12"} relative`.trim()}
+      className={`${shellsClassName.replace(/\bxl:grid-cols-12\b/g, "").trim()} ${layout.isCanonical ? layout.canonicalLayout.gridClassName ?? "" : "xl:grid-cols-12"} ${usePackedPlacement ? "page-shell-packed" : ""} relative`.trim()}
       data-page-shell-layout={layout.pageKey}
       data-page-shell-edit-mode={layout.isEditing ? "true" : "false"}
+      data-page-shell-packed={usePackedPlacement ? "true" : "false"}
       data-page-shell-presentation={layout.isCanonical ? "canonical" : "custom"}
       ref={layoutRef}
     >

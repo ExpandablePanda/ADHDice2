@@ -11,6 +11,7 @@ import {
   getPageShellLayoutStorageKey,
   getPageShellViewsStorageKey,
   hasPageShellLayout,
+  migrateLegacyTestD20Storage,
   normalizePageShellLayout,
   readPageShellLayout,
   readPageShellViews,
@@ -104,6 +105,7 @@ export function usePageShellLayout(
         setCommittedLayout(defaultLayout);
         setHasCustomLayoutPreference(false);
       } else {
+        if (pageKey === "test" || pageKey === "test:d20") migrateLegacyTestD20Storage(window.localStorage, storageKey, viewsStorageKey);
         setCommittedLayout(readPageShellLayout(window.localStorage, storageKey, pageKey, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes));
         setHasCustomLayoutPreference(hasPageShellLayout(window.localStorage, storageKey, pageKey));
       }

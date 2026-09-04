@@ -18,9 +18,12 @@ import {
   STATS_PAGE_SHELL_CANONICAL_LAYOUT,
   TEST_PAGE_SHELL_CANONICAL_LAYOUT,
   TEST_PAGE_SHELL_IDS,
+  TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT,
+  TEST_D20_PAGE_SHELL_IDS,
   getPageShellDragAutoScrollDelta,
   getHealthPageShellKey,
   getPageShellInsertionIndex,
+  getPageShellDirectionalInsertionIndex,
   getPageShellLayoutStorageKey,
   hasPageShellLayout,
   clampPageShellHeight,
@@ -31,10 +34,14 @@ import {
   getPageShellViewsStorageKey,
   getRegisteredPageShellPages,
   getPageShellShrinkHeight,
+  isLegacyTestD20LayoutPreference,
   mergeVisiblePageShellOrder,
   normalizePageShellLayout,
+  normalizePageShellSpan,
   normalizePageShellSize,
   normalizePageShellOrder,
+  migrateLegacyTestD20Storage,
+  packPageShellLayout,
   PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX,
   PAGE_SHELL_HEIGHT_SNAP,
   PAGE_SHELL_MIN_HEIGHT,
@@ -61,6 +68,7 @@ const homeSource = readFileSync(new URL("../src/components/task-app/home-page.ts
 const settingsPageSource = readFileSync(new URL("../src/components/task-app/settings-page.tsx", import.meta.url), "utf8");
 const notesSource = readFileSync(new URL("../src/components/task-app/notes-page.tsx", import.meta.url), "utf8");
 const testD20Source = readFileSync(new URL("../src/components/task-app/test-d20-face-mapper.tsx", import.meta.url), "utf8");
+const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const statsSource = readFileSync(new URL("../src/components/task-app/stats-page.tsx", import.meta.url), "utf8");
 const healthSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const activeWorkoutSource = readFileSync(new URL("../src/components/task-app/health-active-workout.tsx", import.meta.url), "utf8");
@@ -440,12 +448,15 @@ test("corrupt page shell storage falls back to defaults", () => {
 });
 
 test("shell height controls preserve the 144px floor, natural-short behavior, and natural maximum", () => {
+  assert.equal(normalizePageShellSpan(2), 3);
+  assert.equal(normalizePageShellSpan(12.6), 12);
   assert.equal(getPageShellShrinkHeight(912), PAGE_SHELL_MIN_HEIGHT);
   assert.equal(getPageShellShrinkHeight(120), 120);
   assert.equal(clampPageShellHeight(PAGE_SHELL_MIN_HEIGHT, 912), PAGE_SHELL_MIN_HEIGHT);
   assert.equal(clampPageShellHeight(5000, 912), 912);
   assert.equal(clampPageShellHeight(5000, 120), 120);
   assert.equal(formatPageShellDimensions(6, 288, 912), "W 6/12 · H 288/912");
+  assert.equal(formatPageShellDimensions(6, 288, 912, 842), "W 6/12 · 842px · H 288/912");
   assert.equal(formatPageShellDimensions(6, null, 912), "W 6/12 · H 912/912");
   assert.equal(formatPageShellDimensions(6, 288, null), "W 6/12 · H 288/—");
   assert.equal(getPageShellExportFilename(new Date("2026-09-04T12:00:00.000Z")), "adhdice-layout-templates-2026-09-04.json");
@@ -656,11 +667,121 @@ test("side-by-side shells still use horizontal placement within one row", () => 
   assert.equal(getPageShellInsertionIndex(geometries, ["left", "right", "below"], "left", 800, 100), 1);
 });
 
+test("packed placement fills vertical holes deterministically without overlap", () => {
+  const sizes = {
+    water: { heightPx: 700, span: 6 as const },
+    today: { heightPx: 144, span: 6 as const },
+    history: { heightPx: 144, span: 6 as const },
+    pending: { heightPx: 144, span: 6 as const },
+  };
+  const packed = packPageShellLayout(["water", "today", "history", "pending"], sizes);
+  assert.equal(packed.water.columnStart, 1);
+  assert.equal(packed.today.columnStart, 7);
+  assert.equal(packed.history.columnStart, 7);
+  assert.equal(packed.pending.columnStart, 7);
+  assert.ok(packed.history.rowStart > packed.today.rowStart);
+  assert.ok(packed.pending.rowStart > packed.history.rowStart);
+  assert.deepEqual(packed, packPageShellLayout(["water", "today", "history", "pending"], sizes));
+});
+
+test("packed placement supports mixed spans within the 12-column grid", () => {
+  const sizes = {
+    three: { heightPx: 144, span: 3 as const },
+    four: { heightPx: 192, span: 4 as const },
+    six: { heightPx: 240, span: 6 as const },
+    eight: { heightPx: 288, span: 8 as const },
+    full: { heightPx: 144, span: 12 as const },
+  };
+  const packed = packPageShellLayout(Object.keys(sizes), sizes);
+  const entries = Object.entries(packed);
+  for (const [id, left] of entries) {
+    assert.ok(left.columnStart >= 1 && left.columnStart + left.columnSpan - 1 <= 12, id);
+    for (const [otherId, right] of entries) {
+      if (id >= otherId) continue;
+      const columnsOverlap = left.columnStart < right.columnStart + right.columnSpan && right.columnStart < left.columnStart + left.columnSpan;
+      const rowsOverlap = left.rowStart < right.rowStart + right.rowSpan && right.rowStart < left.rowStart + left.rowSpan;
+      assert.equal(columnsOverlap && rowsOverlap, false, `${id} overlaps ${otherId}`);
+    }
+  }
+});
+
+test("directional movement resolves neighbors from packed geometry into the shared order", () => {
+  const geometries = [
+    { bottom: 700, id: "tall", left: 0, right: 480, top: 0 },
+    { bottom: 144, id: "small-a", left: 500, right: 960, top: 0 },
+    { bottom: 288, id: "small-b", left: 500, right: 960, top: 164 },
+    { bottom: 432, id: "small-c", left: 500, right: 960, top: 308 },
+  ];
+  assert.equal(getPageShellDirectionalInsertionIndex(geometries, ["tall", "small-a", "small-b", "small-c"], "small-c", "up"), 2);
+  assert.equal(getPageShellDirectionalInsertionIndex(geometries, ["tall", "small-a", "small-b", "small-c"], "small-c", "left"), 0);
+  assert.equal(getPageShellDirectionalInsertionIndex(geometries, ["tall", "small-a", "small-b", "small-c"], "small-c", "right"), null);
+});
+
+test("width-only editing keeps height out of the width preview path and uses shared persistence", () => {
+  const widthBranchStart = shellSource.indexOf('if (interaction.kind === "width-resize")');
+  const heightBranchStart = shellSource.indexOf("const heightPx", widthBranchStart);
+  assert.ok(widthBranchStart >= 0);
+  assert.ok(heightBranchStart > widthBranchStart);
+  assert.doesNotMatch(shellSource.slice(widthBranchStart, heightBranchStart), /heightPx:/);
+  assert.match(shellSource, /normalizePageShellSpan\(numericValue, currentSize\.span\)/);
+  assert.match(shellSource, /packedPositions[\s\S]*layout\.sizes/);
+  assert.match(shellSource, /data-page-shell-rendered-width/);
+  assert.match(shellSource, /formatPageShellDimensions\(size\.span, size\.heightPx, naturalHeight, renderedWidths/);
+  assert.match(shellSource, /layout\.setPreviewSizes/);
+  assert.match(shellSource, /layout\.commitPreview\(\)/);
+  assert.doesNotMatch(shellSource, /PageShellPackedPosition.*PageShellSize/);
+});
+
+test("Test D20 legacy layout and Views migrate to the nested namespace without overwriting valid data", () => {
+  const store = storage();
+  const layoutKey = getPageShellLayoutStorageKey("test-migration");
+  const viewsKey = getPageShellViewsStorageKey("test-migration");
+  const legacyLayout = {
+    order: ["test-d20-controls", "test-d20-sandbox"],
+    sizes: {
+      "test-d20-controls": { heightPx: 384, span: 5 },
+      "test-d20-sandbox": { heightPx: 432, span: 7 },
+    },
+  };
+  assert.equal(isLegacyTestD20LayoutPreference(legacyLayout), true);
+  writePageShellLayout(store, layoutKey, "test", legacyLayout);
+  writePageShellView(store, viewsKey, createPageShellView({
+    createdAt: "2026-09-04T10:00:00.000Z",
+    layout: legacyLayout,
+    name: "D20 Workbench",
+    pageKey: "test",
+    presentation: "custom",
+    target: "web",
+    viewport: { height: 900, width: 1440 },
+  }));
+  const existing = createPageShellView({
+    createdAt: "2026-09-04T11:00:00.000Z",
+    layout: { order: [...TEST_D20_PAGE_SHELL_IDS], sizes: TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.sizes },
+    name: "Existing D20",
+    pageKey: "test:d20",
+    presentation: "custom",
+    target: "iphone",
+    viewport: { height: 844, width: 390 },
+  });
+  writePageShellView(store, viewsKey, existing);
+
+  const result = migrateLegacyTestD20Storage(store, layoutKey, viewsKey);
+  assert.deepEqual(result, { layoutMigrated: true, viewsMigrated: true });
+  assert.equal(hasPageShellLayout(store, layoutKey, "test"), false);
+  assert.deepEqual(readPageShellLayout(store, layoutKey, "test:d20", TEST_D20_PAGE_SHELL_IDS, TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.sizes).order, ["test-d20-controls", "test-d20-sandbox"]);
+  assert.equal(readPageShellViews(store, viewsKey, "test").length, 0);
+  assert.equal(readPageShellViews(store, viewsKey, "test:d20").length, 2);
+  assert.deepEqual(readPageShellLayout(store, layoutKey, "test", TEST_PAGE_SHELL_IDS, TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes).order, [...TEST_PAGE_SHELL_IDS]);
+  const rerun = migrateLegacyTestD20Storage(store, layoutKey, viewsKey);
+  assert.deepEqual(rerun, { layoutMigrated: false, viewsMigrated: false });
+});
+
 test("Home, Settings, Notes, and Test register their intended semantic shells", () => {
   assert.deepEqual([...HOME_PAGE_SHELL_IDS], ["home-todo"]);
   assert.deepEqual([...SETTINGS_PAGE_SHELL_IDS], ["settings-appearance", "settings-day-reset", "settings-economy", "settings-import-export"]);
   assert.deepEqual([...NOTES_PAGE_SHELL_IDS], ["notes-scratch-paper", "notes-library"]);
-  assert.deepEqual([...TEST_PAGE_SHELL_IDS], ["test-d20-sandbox", "test-d20-controls"]);
+  assert.deepEqual([...TEST_PAGE_SHELL_IDS], ["test-task-table", "test-d20", "test-dice-face", "test-dice-material", "test-task-table-prototype", "test-bucket-tray", "test-rule-builder"]);
+  assert.deepEqual([...TEST_D20_PAGE_SHELL_IDS], ["test-d20-sandbox", "test-d20-controls"]);
   assert.equal(HOME_PAGE_SHELL_IDS.length >= 1, true);
   assert.equal(HOME_PAGE_SHELL_IDS.length >= 2, false);
   assert.equal(SETTINGS_PAGE_SHELL_IDS.length >= 2, true);
@@ -682,7 +803,9 @@ test("Home, Settings, Notes, and Test register their intended semantic shells", 
   }
   assert.match(notesSource, /usePageShellLayout\(currentUser\.id, "notes", NOTES_PAGE_SHELL_IDS/);
   assert.equal((notesSource.match(/<PageShell id="notes-/g) ?? []).length, 2);
-  assert.match(testD20Source, /usePageShellLayout\(userId, "test", TEST_PAGE_SHELL_IDS/);
+  assert.match(taskAppSource, /usePageShellLayout\(userId, "test", TEST_PAGE_SHELL_IDS/);
+  for (const id of TEST_PAGE_SHELL_IDS) assert.match(taskAppSource, new RegExp(`<PageShell id="${id}"`));
+  assert.match(testD20Source, /usePageShellLayout\(userId, "test:d20", TEST_D20_PAGE_SHELL_IDS/);
   assert.match(testD20Source, /<PageShell id="test-d20-sandbox" label="D20 Sandbox">/);
   assert.match(testD20Source, /<PageShell id="test-d20-controls" label="Face Mapping Controls">/);
 });
@@ -701,13 +824,31 @@ test("new page shells preserve editor boundaries, canonical placement, and share
     assert.match(source, /PageShellSurface/);
     assert.match(source, /PageShellBody/);
   }
-  assert.equal(TEST_PAGE_SHELL_CANONICAL_LAYOUT.gridClassName, "xl:grid-cols-[minmax(0,0.56fr)_minmax(20rem,0.44fr)]");
-  assert.equal(TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes["test-d20-sandbox"].span, 7);
-  assert.equal(TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes["test-d20-controls"].span, 5);
-  assert.deepEqual(TEST_PAGE_SHELL_CANONICAL_LAYOUT.order, ["test-d20-sandbox", "test-d20-controls"]);
+  assert.equal(TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.gridClassName, "xl:grid-cols-[minmax(0,0.56fr)_minmax(20rem,0.44fr)]");
+  assert.equal(TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.sizes["test-d20-sandbox"].span, 7);
+  assert.equal(TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.sizes["test-d20-controls"].span, 5);
+  assert.deepEqual(TEST_PAGE_SHELL_CANONICAL_LAYOUT.order, [...TEST_PAGE_SHELL_IDS]);
+  assert.deepEqual(TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.order, [...TEST_D20_PAGE_SHELL_IDS]);
   assert.match(layoutHookSource, /const canEdit = defaults\.length >= 1/);
   assert.match(layoutHookSource, /const canResize = defaults\.length >= 1/);
   assert.match(layoutHookSource, /const canReorder = defaults\.length >= 2/);
+});
+
+test("Settings Navigator resolves semantic sections to outer shells and resets inner body scroll", () => {
+  assert.match(settingsPageSource, /const shellIdBySection: Record<NavigatorSettingsSection, string>/);
+  for (const [section, shellId] of [
+    ["appearance", "settings-appearance"],
+    ["day-reset", "settings-day-reset"],
+    ["economy", "settings-economy"],
+    ["import-export", "settings-import-export"],
+  ] as const) {
+    const sourceKey = section.includes("-") ? `"${section}"` : section;
+    assert.match(settingsPageSource, new RegExp(`${sourceKey}: "${shellId}"`));
+  }
+  assert.match(settingsPageSource, /document\.querySelector<HTMLElement>\(\`\[data-page-shell-id=/);
+  assert.match(settingsPageSource, /body\.scrollTop = 0/);
+  assert.match(settingsPageSource, /shell\.scrollIntoView\(\{ block: "start" \}\)/);
+  assert.doesNotMatch(settingsPageSource, /settings-section-[^"`]+.*scrollIntoView/);
 });
 
 test("new page canonical resets preserve pre-shell order and natural heights", () => {
@@ -716,6 +857,7 @@ test("new page canonical resets preserve pre-shell order and natural heights", (
     SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT,
     NOTES_PAGE_SHELL_CANONICAL_LAYOUT,
     TEST_PAGE_SHELL_CANONICAL_LAYOUT,
+    TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT,
   ]) {
     const reset = normalizePageShellLayout(null, canonical.order, canonical.sizes);
     assert.deepEqual(reset.order, [...canonical.order]);
@@ -724,7 +866,7 @@ test("new page canonical resets preserve pre-shell order and natural heights", (
   assert.equal(HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes["home-todo"].heightPx, null);
   assert.equal(SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT.sizes["settings-appearance"].heightPx, null);
   assert.equal(NOTES_PAGE_SHELL_CANONICAL_LAYOUT.sizes["notes-scratch-paper"].heightPx, null);
-  assert.equal(TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes["test-d20-sandbox"].heightPx, null);
+  assert.equal(TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.sizes["test-d20-sandbox"].heightPx, null);
 });
 
 test("page-level layout controls are header actions and render for every valid shell layout", () => {
@@ -743,6 +885,7 @@ test("page-level layout controls are header actions and render for every valid s
   assert.match(settingsPageSource, /PageShellHeader actions=\{<PageShellLayoutControls layout=\{layout\} \/>\}/);
   assert.match(notesSource, /PageShellHeader actions=\{<PageShellLayoutControls layout=\{layout\} \/>\}/);
   assert.match(testD20Source, /PageShellLayoutControls layout=\{layout\}/);
+  assert.match(taskAppSource, /PageShellLayoutControls layout=\{layout\}/);
   assert.equal(HEALTH_PAGE_SHELL_IDS.Awards.length, 1);
   assert.equal(HEALTH_PAGE_SHELL_IDS.Settings.length, 1);
   assert.match(healthSource, /HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS/);
@@ -858,6 +1001,14 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.doesNotMatch(moveUpdateSource, /setDraggingId/);
   assert.match(shellSource, /if \(cancelled\) layout\.cancelPreview\(\);\s+else layout\.commitPreview\(\);/);
   assert.match(shellSource, /aria-label=\{`Resize \$\{shell\.label\}`\}/);
+  assert.match(shellSource, /aria-label=\{`Resize \$\{shell\.label\} width`\}/);
+  assert.match(shellSource, /MoveHorizontal/);
+  assert.match(shellSource, /Set \$\{shell\.label\} width in columns/);
+  assert.match(shellSource, /Set \$\{shell\.label\} position/);
+  for (const direction of ["up", "down", "left", "right"]) assert.match(shellSource, new RegExp(`moveShellDirection\\(event, shell\\.id, "${direction}"\\)`));
+  assert.match(shellSource, /getPageShellDirectionalInsertionIndex/);
+  assert.match(shellSource, /packPageShellLayout/);
+  assert.match(shellSource, /data-page-shell-packed/);
   assert.match(shellSource, /measureNaturalShellHeight/);
   assert.match(shellSource, /data-page-shell-height=\{size\.heightPx \?\? "natural"\}/);
   assert.match(shellSource, /export function PageShellSurface/);
@@ -881,7 +1032,7 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /naturalHeight < PAGE_SHELL_MIN_HEIGHT \? null : getPageShellShrinkHeight/);
   assert.match(shellSource, /aria-label=\{`Shrink \$\{shell\.label\}`\}/);
   assert.match(shellSource, /aria-label=\{`Expand \$\{shell\.label\}`\}/);
-  assert.match(shellSource, /formatPageShellDimensions\(size\.span, size\.heightPx, naturalHeight\)/);
+  assert.match(shellSource, /formatPageShellDimensions\(size\.span, size\.heightPx, naturalHeight, renderedWidths\[shell\.id\]\)/);
   assert.match(shellSource, /Save View/);
   assert.match(shellSource, /Views/);
   assert.match(shellSource, /Export Layouts/);

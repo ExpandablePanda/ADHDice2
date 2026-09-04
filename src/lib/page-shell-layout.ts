@@ -7,6 +7,7 @@ export const PAGE_SHELL_EXPORT_SCHEMA_VERSION = 1;
 export type PageShellLayoutStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 export const PAGE_SHELL_SPAN_OPTIONS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 export type PageShellSpan = typeof PAGE_SHELL_SPAN_OPTIONS[number];
+const PAGE_SHELL_OPTIONS_LAST = PAGE_SHELL_SPAN_OPTIONS[PAGE_SHELL_SPAN_OPTIONS.length - 1];
 
 export type PageShellSize = {
   heightPx: number | null;
@@ -139,7 +140,17 @@ export const SETTINGS_PAGE_SHELL_IDS = [
 
 export const NOTES_PAGE_SHELL_IDS = ["notes-scratch-paper", "notes-library"] as const;
 
-export const TEST_PAGE_SHELL_IDS = ["test-d20-sandbox", "test-d20-controls"] as const;
+export const TEST_PAGE_SHELL_IDS = [
+  "test-task-table",
+  "test-d20",
+  "test-dice-face",
+  "test-dice-material",
+  "test-task-table-prototype",
+  "test-bucket-tray",
+  "test-rule-builder",
+] as const;
+
+export const TEST_D20_PAGE_SHELL_IDS = ["test-d20-sandbox", "test-d20-controls"] as const;
 
 export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, PageShellCanonicalLayout> = {
   Today: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Today, {
@@ -256,6 +267,16 @@ export const NOTES_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canon
 ));
 
 export const TEST_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canonicalLayout(TEST_PAGE_SHELL_IDS, {
+  "test-task-table": CANONICAL_PAGE_SHELL_SIZE(12),
+  "test-d20": CANONICAL_PAGE_SHELL_SIZE(12),
+  "test-dice-face": CANONICAL_PAGE_SHELL_SIZE(6),
+  "test-dice-material": CANONICAL_PAGE_SHELL_SIZE(6),
+  "test-task-table-prototype": CANONICAL_PAGE_SHELL_SIZE(12),
+  "test-bucket-tray": CANONICAL_PAGE_SHELL_SIZE(6),
+  "test-rule-builder": CANONICAL_PAGE_SHELL_SIZE(6),
+});
+
+export const TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canonicalLayout(TEST_D20_PAGE_SHELL_IDS, {
   "test-d20-sandbox": CANONICAL_PAGE_SHELL_SIZE(7),
   "test-d20-controls": CANONICAL_PAGE_SHELL_SIZE(5),
 }, {
@@ -285,6 +306,7 @@ registerPageShellPage("home", HOME_PAGE_SHELL_CANONICAL_LAYOUT);
 registerPageShellPage("settings", SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT);
 registerPageShellPage("notes", NOTES_PAGE_SHELL_CANONICAL_LAYOUT);
 registerPageShellPage("test", TEST_PAGE_SHELL_CANONICAL_LAYOUT);
+registerPageShellPage("test:d20", TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT);
 
 /**
  * 12-column editing fallbacks are derived from the canonical layouts. The
@@ -301,6 +323,7 @@ export const HOME_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = HOME_PAGE_SH
 export const SETTINGS_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
 export const NOTES_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = NOTES_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
 export const TEST_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
+export const TEST_D20_PAGE_SHELL_SIZE_DEFAULTS: PageShellSizeDefaults = TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.sizes;
 
 export function getHealthPageShellKey(tab: HealthPageShellTab) {
   return `health:${tab.toLowerCase()}`;
@@ -413,10 +436,26 @@ export type PageShellGeometry = {
   top: number;
 };
 
+export type PageShellPackedPosition = {
+  columnSpan: PageShellSpan;
+  columnStart: number;
+  rowSpan: number;
+  rowStart: number;
+};
+
+export type PageShellPackedLayoutOptions = {
+  chromeHeightPx?: number;
+  gapPx?: number;
+  naturalHeights?: Readonly<Record<string, number>>;
+  rowUnitPx?: number;
+};
+
 export const PAGE_SHELL_POINTER_HYSTERESIS_PX = 8;
 export const PAGE_SHELL_ROW_ALIGNMENT_PX = 12;
 export const PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX = 80;
 export const PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX = 18;
+export const PAGE_SHELL_PACKING_GAP_PX = 20;
+export const PAGE_SHELL_PACKING_ROW_UNIT_PX = 4;
 
 export function getPageShellDragAutoScrollDelta(
   pointerY: number,
@@ -561,11 +600,124 @@ export function getPageShellInsertionIndex(
   return Math.min(orderWithoutSource.length, lastItemIndex + 1);
 }
 
+/**
+ * Packs shells in authoritative order into the earliest available 12-column
+ * position. Coordinates are derived at render time and are never persisted.
+ */
+export function packPageShellLayout(
+  order: readonly string[],
+  sizes: Readonly<Record<string, PageShellSize>>,
+  options: PageShellPackedLayoutOptions = {},
+) {
+  const gapPx = options.gapPx ?? PAGE_SHELL_PACKING_GAP_PX;
+  const rowUnitPx = Math.max(1, options.rowUnitPx ?? PAGE_SHELL_PACKING_ROW_UNIT_PX);
+  const chromeHeightPx = Math.max(0, options.chromeHeightPx ?? 0);
+  const naturalHeights = options.naturalHeights ?? {};
+  const occupied: boolean[][] = [];
+  const positions: Record<string, PageShellPackedPosition> = {};
+
+  const isOccupied = (row: number, column: number) => Boolean(occupied[row]?.[column]);
+  const canPlace = (row: number, column: number, rowSpan: number, columnSpan: number) => {
+    for (let occupiedRow = row; occupiedRow < row + rowSpan; occupiedRow += 1) {
+      for (let occupiedColumn = column; occupiedColumn < column + columnSpan; occupiedColumn += 1) {
+        if (isOccupied(occupiedRow, occupiedColumn)) return false;
+      }
+    }
+    return true;
+  };
+  const markOccupied = (row: number, column: number, rowSpan: number, columnSpan: number) => {
+    for (let occupiedRow = row; occupiedRow < row + rowSpan; occupiedRow += 1) {
+      occupied[occupiedRow] ??= [];
+      for (let occupiedColumn = column; occupiedColumn < column + columnSpan; occupiedColumn += 1) {
+        occupied[occupiedRow][occupiedColumn] = true;
+      }
+    }
+  };
+
+  for (const id of order) {
+    const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
+    const heightPx = size.heightPx ?? naturalHeights[id] ?? PAGE_SHELL_MIN_HEIGHT;
+    const rowSpan = Math.max(1, Math.ceil((Math.max(1, heightPx) + chromeHeightPx + gapPx) / rowUnitPx));
+    let row = 0;
+    let column = 0;
+    while (true) {
+      for (let candidateColumn = 0; candidateColumn <= 12 - size.span; candidateColumn += 1) {
+        if (canPlace(row, candidateColumn, rowSpan, size.span)) {
+          column = candidateColumn;
+          break;
+        }
+      }
+      if (canPlace(row, column, rowSpan, size.span)) break;
+      row += 1;
+    }
+    markOccupied(row, column, rowSpan, size.span);
+    positions[id] = {
+      columnSpan: size.span,
+      columnStart: column + 1,
+      rowSpan,
+      rowStart: row + 1,
+    };
+  }
+
+  return positions;
+}
+
+export type PageShellMoveDirection = "down" | "left" | "right" | "up";
+
+/**
+ * Finds the nearest rendered neighbor in a direction and returns the
+ * insertion index that keeps the move in the shared semantic order model.
+ */
+export function getPageShellDirectionalInsertionIndex(
+  geometries: readonly PageShellGeometry[],
+  order: readonly string[],
+  sourceId: string,
+  direction: PageShellMoveDirection,
+) {
+  const source = geometries.find((geometry) => geometry.id === sourceId);
+  if (!source) return null;
+  const sourceCenterX = (source.left + source.right) / 2;
+  const sourceCenterY = (source.top + source.bottom) / 2;
+  const candidates = geometries
+    .filter((geometry) => geometry.id !== sourceId && order.includes(geometry.id))
+    .flatMap((geometry) => {
+      const horizontalOverlap = Math.max(0, Math.min(source.right, geometry.right) - Math.max(source.left, geometry.left));
+      const verticalOverlap = Math.max(0, Math.min(source.bottom, geometry.bottom) - Math.max(source.top, geometry.top));
+      if (direction === "left" && geometry.right > source.left) return [];
+      if (direction === "right" && geometry.left < source.right) return [];
+      if (direction === "up" && geometry.bottom > source.top) return [];
+      if (direction === "down" && geometry.top < source.bottom) return [];
+      const primaryDistance = direction === "left"
+        ? source.left - geometry.right
+        : direction === "right"
+          ? geometry.left - source.right
+          : direction === "up"
+            ? source.top - geometry.bottom
+            : geometry.top - source.bottom;
+      const secondaryDistance = direction === "left" || direction === "right"
+        ? Math.abs(sourceCenterY - (geometry.top + geometry.bottom) / 2)
+        : Math.abs(sourceCenterX - (geometry.left + geometry.right) / 2);
+      return [{ geometry, horizontalOverlap, primaryDistance, secondaryDistance, verticalOverlap }];
+    })
+    .sort((left, right) => (
+      Number(right.verticalOverlap > 0 || right.horizontalOverlap > 0) - Number(left.verticalOverlap > 0 || left.horizontalOverlap > 0)
+      || left.primaryDistance - right.primaryDistance
+      || right.verticalOverlap - left.verticalOverlap
+      || right.horizontalOverlap - left.horizontalOverlap
+      || left.secondaryDistance - right.secondaryDistance
+      || order.indexOf(left.geometry.id) - order.indexOf(right.geometry.id)
+    ));
+  const target = candidates[0]?.geometry;
+  if (!target) return null;
+  const orderWithoutSource = order.filter((id) => id !== sourceId);
+  const targetIndex = orderWithoutSource.indexOf(target.id);
+  if (targetIndex < 0) return null;
+  return direction === "left" || direction === "up" ? targetIndex : targetIndex + 1;
+}
+
 export function normalizePageShellSpan(value: unknown, fallback: PageShellSpan = NATURAL_PAGE_SHELL_SIZE.span): PageShellSpan {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  return PAGE_SHELL_SPAN_OPTIONS.reduce((closest, option) => (
-    Math.abs(option - value) < Math.abs(closest - value) ? option : closest
-  ), fallback);
+  return Math.max(PAGE_SHELL_SPAN_OPTIONS[0], Math.min(PAGE_SHELL_OPTIONS_LAST, Math.round(value))) as PageShellSpan;
 }
 
 export const PAGE_SHELL_HEIGHT_SNAP = 48;
@@ -576,11 +728,19 @@ export function snapPageShellHeight(value: number) {
   return snapped;
 }
 
-export function formatPageShellDimensions(span: PageShellSpan, heightPx: number | null, naturalHeight: number | null | undefined) {
+export function formatPageShellDimensions(
+  span: PageShellSpan,
+  heightPx: number | null,
+  naturalHeight: number | null | undefined,
+  renderedWidth: number | null | undefined = undefined,
+) {
   const formatHeight = (value: number | null | undefined) => value === null || value === undefined || !Number.isFinite(value)
     ? "—"
     : String(Math.round(value));
-  return `W ${span}/12 · H ${formatHeight(heightPx ?? naturalHeight)}/${formatHeight(naturalHeight)}`;
+  const width = renderedWidth === undefined
+    ? ""
+    : ` · ${renderedWidth === null || !Number.isFinite(renderedWidth) ? "—" : `${Math.round(renderedWidth)}px`}`;
+  return `W ${span}/12${width} · H ${formatHeight(heightPx ?? naturalHeight)}/${formatHeight(naturalHeight)}`;
 }
 
 function getSafePageShellNaturalHeight(naturalHeight: number) {
@@ -774,6 +934,121 @@ function readStoredPageShellViews(storage: PageShellLayoutStorage, storageKey: s
 export function readPageShellViews(storage: PageShellLayoutStorage, storageKey: string, pageKey?: string) {
   const views = readStoredPageShellViews(storage, storageKey);
   return pageKey ? views.filter((view) => view.pageKey === pageKey) : views;
+}
+
+function isCompletePageShellPreference(value: unknown, shellIds: readonly string[]) {
+  if (!isPageShellLayoutPreference(value) || !Array.isArray(value.order)) return false;
+  const order = value.order as unknown[];
+  return shellIds.every((id) => order.includes(id));
+}
+
+function getTestD20MigrationMarkerKey(layoutStorageKey: string) {
+  return `${layoutStorageKey}:test-d20-migration-v1`;
+}
+
+/** Returns true only for the two-shell D20 preference written by 7.12.80. */
+export function isLegacyTestD20LayoutPreference(value: unknown) {
+  if (!isCompletePageShellPreference(value, TEST_D20_PAGE_SHELL_IDS)) return false;
+  const layout = value as { order: unknown[] };
+  return layout.order.length === TEST_D20_PAGE_SHELL_IDS.length
+    && new Set(layout.order).size === TEST_D20_PAGE_SHELL_IDS.length;
+}
+
+function pageShellViewsAreEquivalent(left: PageShellView, right: PageShellView) {
+  if (left.id === right.id) return true;
+  if (left.name !== right.name || left.target !== right.target || left.presentation !== right.presentation) return false;
+  return JSON.stringify(left.layout ?? null) === JSON.stringify(right.layout ?? null);
+}
+
+function isLegacyTestD20View(view: PageShellView) {
+  return view.pageKey === "test" && (view.presentation === "canonical" || isLegacyTestD20LayoutPreference(view.layout));
+}
+
+/**
+ * Moves the 7.12.80 D20 preference and Views out of the old `test` namespace.
+ * The operation is idempotent, preserves semantic layout data, and never
+ * replaces a valid `test:d20` preference or equivalent saved View.
+ */
+export function migrateLegacyTestD20Storage(
+  storage: PageShellLayoutStorage,
+  layoutStorageKey: string,
+  viewsStorageKey: string | null,
+) {
+  const migrationMarkerKey = getTestD20MigrationMarkerKey(layoutStorageKey);
+  let migrationComplete = false;
+  try {
+    migrationComplete = storage.getItem(migrationMarkerKey) === "complete";
+  } catch {
+    // Continue with the guarded migration reads below.
+  }
+  if (migrationComplete) {
+    return { layoutMigrated: false, viewsMigrated: false };
+  }
+  let layoutMigrated = false;
+  const layouts = readStoredPageShellLayouts(storage, layoutStorageKey);
+  const legacyLayout = layouts.test;
+  if (isLegacyTestD20LayoutPreference(legacyLayout)) {
+    if (!isCompletePageShellPreference(layouts["test:d20"], TEST_D20_PAGE_SHELL_IDS)) {
+      layouts["test:d20"] = normalizePageShellLayout(
+        legacyLayout,
+        TEST_D20_PAGE_SHELL_IDS,
+        TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.sizes,
+      );
+    }
+    delete layouts.test;
+    layoutMigrated = true;
+    try {
+      storage.setItem(layoutStorageKey, JSON.stringify(layouts));
+    } catch {
+      // The caller still receives an in-memory-safe result when storage is unavailable.
+    }
+  }
+
+  let viewsMigrated = false;
+  if (viewsStorageKey) {
+    const storedViews = readStoredPageShellViews(storage, viewsStorageKey);
+    const legacyViews = storedViews.filter(isLegacyTestD20View);
+    if (legacyViews.length > 0) {
+      const migratedViews: PageShellView[] = [];
+      for (const view of storedViews) {
+        if (!isLegacyTestD20View(view)) {
+          migratedViews.push(view);
+          continue;
+        }
+        const migratedView = createPageShellView({
+          ...view,
+          ...(view.presentation === "custom"
+            ? {
+              layout: normalizePageShellLayout(
+                view.layout,
+                TEST_D20_PAGE_SHELL_IDS,
+                TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.sizes,
+              ),
+            }
+            : { layout: undefined }),
+          pageKey: "test:d20",
+        });
+        if (!migratedViews.some((candidate) => pageShellViewsAreEquivalent(candidate, migratedView))) {
+          migratedViews.push(migratedView);
+        }
+      }
+      viewsMigrated = true;
+      try {
+        if (migratedViews.length === 0) storage.removeItem(viewsStorageKey);
+        else storage.setItem(viewsStorageKey, JSON.stringify({ version: PAGE_SHELL_VIEWS_SCHEMA_VERSION, views: migratedViews }));
+      } catch {
+        // The caller still receives an in-memory-safe result when storage is unavailable.
+      }
+    }
+  }
+
+  try {
+    storage.setItem(migrationMarkerKey, "complete");
+  } catch {
+    // A storage failure leaves the migration eligible for a later retry.
+  }
+
+  return { layoutMigrated, viewsMigrated };
 }
 
 export function createPageShellViewId() {

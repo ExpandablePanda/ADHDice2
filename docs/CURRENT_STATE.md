@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-04
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.80`.
+- Current working app version: `7.12.81`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,52 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-04 7.12.81 Shell Precision Controls, Packed Layouts, and Nested Test Scope
+
+The shared page-shell editor now provides a top width-only resize affordance,
+direct integer `W` span input clamped to 3/12 through 12/12, rendered pixel
+width in the runtime-only dimension readout, and compact Up/Down/Left/Right
+plus direct `Pos N/N` movement controls. Reorder controls remain hidden for a
+single-shell page. Width and height edits repack custom layouts through a
+deterministic earliest-fit 12-column occupancy algorithm: shells are processed
+in authoritative semantic order, then placed at the earliest available row and
+leftmost fitting column. Only semantic order, span, and height remain durable;
+generated row/column coordinates and measured width remain runtime-only.
+
+Food, Water, and Sleep canonical lane/group wrappers remain in place because
+the packed custom layout does not replace those canonical arrangements exactly;
+their Reset behavior and responsive grouping therefore remain protected. The
+Water tall-log / short-neighbor regression is covered by the packed-placement
+fixture.
+
+Settings Navigator now scrolls the requested outer shell into the document
+viewport and resets that shell body's internal scroll position, while retaining
+the existing `settings-section-*` semantic targets. Test now has editable outer
+shells `test-task-table`, `test-d20`, `test-dice-face`, `test-dice-material`,
+`test-task-table-prototype`, `test-bucket-tray`, and `test-rule-builder`. The
+D20 editor retains its nested `test-d20-sandbox` and `test-d20-controls` shells
+under the separate `test:d20` layout scope. Clearly legacy 7.12.80 D20-shaped
+`test` active preferences and saved Views migrate to `test:d20` without
+overwriting valid target data or changing the layout/View schema.
+
+Nested-shell source audit: Roll is a strong future candidate because its roll
+board, history, prize pool/manager, and Vault are major independently useful
+workspaces, but its reward persistence path remains outside this ticket.
+Achievements / Progress is a possible candidate, although its Achievements,
+Milestones, and Records regions are mutually exclusive tabs rather than
+simultaneous workspaces. Games should stay a single shell while its hub and
+modal games remain small; Focus already has the meaningful top-level timer,
+goals, counter-history, and activity shells; Health already has tab-specific
+major shells and protected Food/Water/Sleep grouping; Notes should retain its
+two dashboard shells and editor boundary; Home should retain its single
+`home-todo` shell; and Settings should retain its four major shells rather than
+making individual controls movable. Tasks, Roll, Achievements / Progress, and
+Games remain pending full page-shell migration.
+
+No SQL, schema, cloud layout sync, application content, reward logic,
+achievement calculations, Health calculations, Focus timer calculations, or
+iOS-specific changes were added.
 
 ## 2026-09-04 7.12.80 Expanded Page-Shell Editing
 

@@ -108,6 +108,7 @@ import {
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
+import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
 import { WorkspaceLoadingScreen } from "./workspace-loading-screen";
@@ -142,6 +143,7 @@ import { useTaskGridLayoutController } from "@/hooks/useTaskGridLayoutController
 import { useFocusSelectionPersistence } from "@/hooks/useFocusSelectionPersistence";
 import { useTaskPriorityRoutingController } from "@/hooks/useTaskPriorityRoutingController";
 import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportController";
+import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
@@ -186,6 +188,7 @@ import {
   type TaskGridLayoutItem,
 } from "@/lib/task-grid-layout";
 import { buildWidgetTypeGuard, resolveTaskGridLayout } from "@/lib/task-grid-parser";
+import { TEST_PAGE_SHELL_CANONICAL_LAYOUT, TEST_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import {
   isDueToday,
   isLater,
@@ -8982,6 +8985,92 @@ function TestRuleBuilderPreview() {
   );
 }
 
+function TestPageWorkspace({ isDark, userId }: { isDark: boolean; userId: string | null }) {
+  const layout = usePageShellLayout(userId, "test", TEST_PAGE_SHELL_IDS, TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes, TEST_PAGE_SHELL_CANONICAL_LAYOUT);
+
+  return (
+    <div className="w-full space-y-5 text-left">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#9b92be] dark:text-white/35">Test workspace</p>
+          <p className="mt-1 text-sm text-[#726a96] dark:text-white/60">Outer tools can be arranged independently; the D20 mapper has its own inner layout.</p>
+        </div>
+        <PageShellLayoutControls layout={layout} />
+      </div>
+
+      <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-12">
+        <PageShell id="test-task-table" label="Task Table #2">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 p-5 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody>
+              <div className="rounded-[1.75rem] border border-[#e9e1ff] bg-white/90 p-5 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+                <div className="flex flex-wrap items-center justify-between gap-3 px-3 pb-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#8e84b7] dark:text-white/45">Table #2 Test</p>
+                    <h2 className="mt-2 text-2xl font-semibold text-[#2a3250] dark:text-white">Server-style task management table</h2>
+                    <p className="mt-2 max-w-2xl text-sm leading-6 text-[#727a93] dark:text-white/60">
+                      Prototype sandbox for the richer task table treatment. This stays isolated to the Test page so we can
+                      tune layout, chips, and row actions without disrupting the real Tasks view.
+                    </p>
+                  </div>
+                </div>
+                <TaskManagementTableV2 className="max-w-none p-0" title="Task Table #2" />
+              </div>
+            </PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-d20" label="D20 Face Mapper">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody>
+              <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">D20 tools failed to load.</div>}>
+                <TestD20FaceMapper dark={isDark} userId={userId} />
+              </ErrorBoundary>
+            </PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-dice-face" label="Dice Face Mapper">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody>
+              <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">Dice face tools failed to load.</div>}>
+                <TestDiceFaceMapper dark={isDark} />
+              </ErrorBoundary>
+            </PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-dice-material" label="Dice Material Lab">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody>
+              <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">Dice material tools failed to load.</div>}>
+                <TestDiceMaterialLab dark={isDark} />
+              </ErrorBoundary>
+            </PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-task-table-prototype" label="Task Table Prototype">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody><TestTaskTablePrototype /></PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-bucket-tray" label="Bucket Tray">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody><TestBucketTrayPreview /></PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-rule-builder" label="Rule Builder">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody><TestRuleBuilderPreview /></PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+      </ReorderablePageShells>
+    </div>
+  );
+}
+
 function PagePlaceholder({
   count,
   isDark,
@@ -9028,33 +9117,7 @@ function PagePlaceholder({
         <OverviewStatCard detail="stays in bottom dock" label="Navigation" value="Persistent" />
       </div>
       {page === "Test" ? (
-        <div className="w-full space-y-10">
-          <div className="rounded-[32px] border border-[#e9e1ff] bg-white/90 p-5 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
-            <div className="flex flex-wrap items-center justify-between gap-3 px-3 pb-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#8e84b7] dark:text-white/45">
-                  Table #2 Test
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold text-[#2a3250] dark:text-white">
-                  Server-style task management table
-                </h2>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-[#727a93] dark:text-white/60">
-                  Prototype sandbox for the richer task table treatment. This stays isolated to the Test page so we can
-                  tune layout, chips, and row actions without disrupting the real Tasks view.
-                </p>
-              </div>
-          </div>
-          <TaskManagementTableV2 className="max-w-none p-0" title="Task Table #2" />
-          </div>
-          <ErrorBoundary fallback={<div className="rounded-[1.5rem] border border-[#ece8f8] bg-white p-5 text-sm font-medium text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">Test tools failed to load.</div>}>
-            <TestD20FaceMapper dark={isDark} userId={userId} />
-            <TestDiceFaceMapper dark={isDark} />
-            <TestDiceMaterialLab dark={isDark} />
-            <TestTaskTablePrototype />
-          </ErrorBoundary>
-          <TestBucketTrayPreview />
-          <TestRuleBuilderPreview />
-        </div>
+        <TestPageWorkspace isDark={isDark} userId={userId} />
       ) : null}
     </section>
   );

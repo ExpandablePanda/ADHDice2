@@ -5,7 +5,7 @@ import { ErrorBoundary } from "../error-boundary";
 import { D20_FACE_ROTATION_PRESETS } from "../dice-3d";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
-import { TEST_PAGE_SHELL_CANONICAL_LAYOUT, TEST_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
+import { TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT, TEST_D20_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 
 const D20CalibrationCanvas = lazy(() => import("../dice-3d").then((module) => ({ default: module.D20CalibrationCanvas })));
 
@@ -84,7 +84,7 @@ export function TestD20FaceMapper({
   dark: boolean;
   userId: string | null;
 }) {
-  const layout = usePageShellLayout(userId, "test", TEST_PAGE_SHELL_IDS, TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes, TEST_PAGE_SHELL_CANONICAL_LAYOUT);
+  const layout = usePageShellLayout(userId, "test:d20", TEST_D20_PAGE_SHELL_IDS, TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.sizes, TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT);
   const [selectedFace, setSelectedFace] = useState<number>(1);
   const [savedRotations, setSavedRotations] = useState<Record<number, RotationTuple>>(() => createInitialRotations());
   const [savedFaces, setSavedFaces] = useState<number[]>(() => [...FACE_VALUES]);

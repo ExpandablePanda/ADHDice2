@@ -327,6 +327,27 @@ body::-webkit-scrollbar-thumb:hover,
   overflow-y: auto;
 }
 
+/* Flat/custom shell layouts pack in semantic order; these coordinates are
+   runtime-only and are intentionally ignored on narrow single-column views. */
+.page-shell-packed > [data-page-shell-id] {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 80rem) {
+  .page-shell-packed {
+    grid-auto-rows: 4px;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    column-gap: 1.25rem;
+    row-gap: 0;
+  }
+
+  .page-shell-packed > [data-page-shell-id] {
+    align-self: start;
+    grid-column: var(--page-shell-grid-column-start) / span var(--page-shell-grid-column-span);
+    grid-row: var(--page-shell-grid-row-start) / span var(--page-shell-grid-row-span);
+  }
+}
+
 @container page-shell (min-width: 48rem) {
   .page-shell-chart-header {
     flex-direction: row;
