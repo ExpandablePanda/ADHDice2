@@ -45,6 +45,7 @@ export type PageShellLayoutState = {
   exportLayouts: () => PageShellLayoutExport;
   isEditing: boolean;
   isLayoutReady: boolean;
+  isPreviewing: boolean;
   isCanonical: boolean;
   order: string[];
   pageKey: string;
@@ -268,6 +269,7 @@ export function usePageShellLayout(
     finishEditing,
     isEditing: canEdit && editingInstanceKey === instanceKey,
     isLayoutReady: hydratedInstanceKey === instanceKey,
+    isPreviewing: previewLayout !== null,
     isCanonical,
     order: normalizePageShellLayout(activeLayout, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes).order,
     pageKey,

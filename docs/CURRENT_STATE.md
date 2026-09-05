@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.82`.
+- Current working app version: `7.12.83`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,29 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-04 7.12.83 Shell Pointer Lifecycle Hardening
+
+Browser QA found that packed shell reflow could cause the originating move or
+resize control to miss its release lifecycle, leaving the shared interaction
+ref armed. Later mouse movement could then continue changing a shell after
+physical release. `ReorderablePageShells` now centralizes move, width-only
+resize, and width-plus-height resize lifecycle handling through one active
+pointer ref and window-level capture-phase `pointermove`, `pointerup`, and
+`pointercancel` fallbacks. Pointer capture remains a defensive enhancement;
+capture and release are wrapped for controls that move or disappear during
+reflow.
+
+Matching `pointerup` clears the interaction and auto-scroll before committing
+the preview once. Matching `pointercancel`, window blur, edit-mode exit,
+preview invalidation from Reset/View application, and unmount cancel the
+uncertain preview and clear all interaction indicators. A mouse-only stale
+move with no pressed button also cancels; touch and pen button semantics are
+left unchanged. The 7.12.82 visual shell QA remains pending until Andrew
+passes the stuck-resize blocker checks.
+
+No nested shells, SQL, schema, cloud persistence, application-data, or iOS
+changes were added.
 
 ## 2026-09-04 7.12.82 Shell Growth, Semantic Placement, and Navigator Readiness
 

@@ -65,7 +65,7 @@ import {
   writePageShellLayout,
   placePageShellAtDrop,
 } from "@/lib/page-shell-layout";
-import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { isPageShellPointerMatch, isStalePageShellMouseMove, PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 
 const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
@@ -119,6 +119,7 @@ function staticShellLayout(isEditing: boolean): PageShellLayoutState {
     finishEditing: () => undefined,
     isEditing,
     isLayoutReady: true,
+    isPreviewing: false,
     isCanonical: false,
     order: ["conditional", "regular"],
     pageKey: "test",
@@ -552,6 +553,40 @@ test("two-or-more-shell layouts retain reorder capability", () => {
   assert.equal(staticShellLayout(false).canEdit, true);
   assert.equal(staticShellLayout(false).canResize, true);
   assert.equal(staticShellLayout(false).canReorder, true);
+});
+
+test("page shell pointer lifecycle finalizes only the active pointer and guards stale mouse movement", () => {
+  assert.equal(isPageShellPointerMatch(17, 17), true);
+  assert.equal(isPageShellPointerMatch(17, 18), false);
+  assert.equal(isStalePageShellMouseMove("mouse", 0), true);
+  assert.equal(isStalePageShellMouseMove("mouse", 1), false);
+  assert.equal(isStalePageShellMouseMove("touch", 0), false);
+  assert.equal(isStalePageShellMouseMove("pen", 0), false);
+  assert.match(shellSource, /const updateInteractionRef = useRef/);
+  assert.match(shellSource, /const endInteractionRef = useRef/);
+  assert.match(shellSource, /window\.addEventListener\("pointermove", handlePointerMove, listenerOptions\)/);
+  assert.match(shellSource, /window\.addEventListener\("pointerup", handlePointerUp, listenerOptions\)/);
+  assert.match(shellSource, /window\.addEventListener\("pointercancel", handlePointerCancel, listenerOptions\)/);
+  assert.match(shellSource, /window\.addEventListener\("blur", handleWindowBlur\)/);
+  assert.match(shellSource, /const listenerOptions = \{ capture: true \}/);
+  assert.match(shellSource, /endInteractionRef\.current\(event, false\)/);
+  assert.match(shellSource, /endInteractionRef\.current\(event, true\)/);
+  assert.match(shellSource, /endInteractionRef\.current\(null, true\)/);
+  assert.equal((shellSource.match(/onPointerDown=\{\(event\) => beginMove\(event, shell\.id\)\}/g) ?? []).length, 1);
+  assert.equal((shellSource.match(/onPointerDown=\{\(event\) => beginWidthResize\(event, shell\.id\)\}/g) ?? []).length, 1);
+  assert.equal((shellSource.match(/onPointerDown=\{\(event\) => beginResize\(event, shell\.id\)\}/g) ?? []).length, 1);
+  assert.equal((shellSource.match(/onPointerUp=\{\(event\) => endInteraction\(event, false\)\}/g) ?? []).length, 3);
+  assert.equal((shellSource.match(/onPointerMove=\{updateInteraction\}/g) ?? []).length, 0);
+  const endSource = shellSource.slice(shellSource.indexOf("function endInteraction"), shellSource.indexOf("useEffect(() => {", shellSource.indexOf("function endInteraction")));
+  assert.ok(endSource.indexOf("interactionRef.current = null") < endSource.indexOf("layout.commitPreview()"));
+  assert.match(endSource, /cancelDragAutoScroll\(\)/);
+  assert.match(shellSource, /function releasePointerCaptureSafely\(interaction: ShellInteraction\)/);
+  assert.match(endSource, /releasePointerCaptureSafely\(interaction\)/);
+  assert.match(endSource, /if \(cancelled\) layout\.cancelPreview\(\);\s+else layout\.commitPreview\(\);/);
+  assert.match(shellSource, /isStalePageShellMouseMove\(interaction\.pointerType, event\.buttons\)/);
+  assert.match(shellSource, /if \(layout\.isEditing && layout\.isPreviewing\) return/);
+  assert.match(shellSource, /window\.cancelAnimationFrame\(autoScrollFrameRef\.current\)/);
+  assert.match(shellSource, /if \(!interaction\) \{\s+if \(!event\) cancelDragAutoScroll\(\);/);
 });
 
 test("Health collapsible shell surfaces keep collapse state canonical and scroll only their open body", () => {

@@ -47,11 +47,13 @@ type ReorderablePageShellsProps = {
 };
 
 type ShellMoveInteraction = {
+  captureElement: HTMLButtonElement | null;
   geometries: PageShellGeometry[];
   id: string;
   kind: "move";
   packedPositions: Record<string, PageShellPackedPosition>;
   pointerId: number;
+  pointerType: string;
   pointerX: number;
   pointerY: number;
   startVisibleOrder: string[];
@@ -61,6 +63,7 @@ type ShellMoveInteraction = {
 };
 
 type ShellResizeInteraction = {
+  captureElement: HTMLButtonElement | null;
   columnWidth: number;
   id: string;
   initialSize: PageShellSize;
@@ -68,12 +71,22 @@ type ShellResizeInteraction = {
   kind: "resize" | "width-resize";
   naturalHeight: number;
   pointerId: number;
+  pointerType: string;
   startLayout: PageShellLayoutPreference;
   startX: number;
   startY: number;
 };
 
 type ShellInteraction = ShellMoveInteraction | ShellResizeInteraction;
+type ShellPointerEvent = {
+  buttons?: number;
+  clientX: number;
+  clientY: number;
+  pointerId: number;
+  pointerType: string;
+  preventDefault: () => void;
+  stopPropagation: () => void;
+};
 type PageShellInsertionIndicatorStyle = {
   height: number;
   left: number;
@@ -110,6 +123,14 @@ const SHELL_SPAN_CLASSES: Record<number, string> = {
 const DEFAULT_HIDDEN_SHELL_DESCRIPTION = "Hidden until available";
 function layoutsHaveSameOrder(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+export function isPageShellPointerMatch(activePointerId: number, pointerId: number) {
+  return activePointerId === pointerId;
+}
+
+export function isStalePageShellMouseMove(pointerType: string, buttons: number | undefined) {
+  return pointerType === "mouse" && buttons === 0;
 }
 
 function measureNaturalShellHeight(element: HTMLDivElement | null) {
@@ -186,6 +207,24 @@ function getInsertionIndicatorStyle(
 function getPageScrollTop() {
   if (typeof window === "undefined" || typeof document === "undefined") return 0;
   return Math.max(window.scrollY, document.scrollingElement?.scrollTop ?? 0);
+}
+
+function setPointerCaptureSafely(element: HTMLButtonElement, pointerId: number) {
+  try {
+    element.setPointerCapture(pointerId);
+  } catch {
+    // Pointer capture is an enhancement; window listeners own lifecycle safety.
+  }
+}
+
+function releasePointerCaptureSafely(interaction: ShellInteraction) {
+  try {
+    if (interaction.captureElement?.isConnected && interaction.captureElement.hasPointerCapture(interaction.pointerId)) {
+      interaction.captureElement.releasePointerCapture(interaction.pointerId);
+    }
+  } catch {
+    // The originating control may have been removed during packed reflow.
+  }
 }
 
 export function PageShell({ children }: PageShellProps) {
@@ -342,6 +381,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const shellContentRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const interactionRef = useRef<ShellInteraction | null>(null);
   const autoScrollFrameRef = useRef<number | null>(null);
+  const updateInteractionRef = useRef<(event: ShellPointerEvent) => void>(() => undefined);
+  const endInteractionRef = useRef<(event: ShellPointerEvent | null, cancelled: boolean) => void>(() => undefined);
   const [dragStartVisibleOrder, setDragStartVisibleOrder] = useState<string[] | null>(null);
   const [dragIndicatorStyle, setDragIndicatorStyle] = useState<PageShellInsertionIndicatorStyle | null>(null);
   const renderedShellOrderKey = dragStartVisibleOrder?.join("|") ?? layout.order.join("|");
@@ -447,26 +488,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     };
   }, [layout.isCanonical, measureNaturalShellHeights, orderedShells, renderedShellOrderKey]);
 
-  useEffect(() => {
-    if (!layout.isEditing && autoScrollFrameRef.current !== null && typeof window !== "undefined") {
-      window.cancelAnimationFrame(autoScrollFrameRef.current);
-      autoScrollFrameRef.current = null;
-    }
-    if (layout.isEditing || !interactionRef.current) return;
-    interactionRef.current = null;
-    setDraggingId(null);
-    setDragStartVisibleOrder(null);
-    setDragInsertionIndex(null);
-    setDragIndicatorStyle(null);
-    setResizingId(null);
-  }, [layout.isEditing]);
-
-  useEffect(() => () => {
-    if (autoScrollFrameRef.current !== null && typeof window !== "undefined") {
-      window.cancelAnimationFrame(autoScrollFrameRef.current);
-    }
-  }, []);
-
   function currentLayout(): PageShellLayoutPreference {
     return {
       order: [...layout.order],
@@ -552,11 +573,13 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const startLayout = currentLayout();
     const startVisibleOrder = orderedShells.map((shell) => shell.id);
     const moveInteraction: ShellMoveInteraction = {
+      captureElement: event.currentTarget,
       geometries: captureShellGeometry(),
       id,
       kind: "move",
       packedPositions: { ...packedPositions },
       pointerId: event.pointerId,
+      pointerType: event.pointerType,
       pointerX: event.clientX,
       pointerY: event.clientY,
       startVisibleOrder,
@@ -569,7 +592,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setDragStartVisibleOrder(startVisibleOrder);
     setDragInsertionIndex(Math.max(0, startVisibleOrder.indexOf(id)));
     setDragIndicatorStyle(getInsertionIndicatorStyle(moveInteraction, moveInteraction.targetIndex, layoutRef.current));
-    event.currentTarget.setPointerCapture(event.pointerId);
+    setPointerCaptureSafely(event.currentTarget, event.pointerId);
   }
 
   function beginResize(event: PointerEvent<HTMLButtonElement>, id: string) {
@@ -584,6 +607,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const initialSize = startLayout.sizes[id] ?? { heightPx: null, span: 12 };
     const initialHeight = clampPageShellHeight(initialSize.heightPx ?? naturalHeight, naturalHeight);
     interactionRef.current = {
+      captureElement: event.currentTarget,
       columnWidth: layoutWidth > 0 ? layoutWidth / 12 : Math.max(shellContent?.getBoundingClientRect().width ?? 1, 1),
       id,
       initialSize,
@@ -591,6 +615,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       kind: "resize",
       naturalHeight,
       pointerId: event.pointerId,
+      pointerType: event.pointerType,
       startLayout,
       startX: event.clientX,
       startY: event.clientY,
@@ -601,7 +626,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       [id]: { ...(sizes[id] ?? initialSize), heightPx: naturalHeight < PAGE_SHELL_MIN_HEIGHT ? null : initialHeight },
     }));
     setResizingId(id);
-    event.currentTarget.setPointerCapture(event.pointerId);
+    setPointerCaptureSafely(event.currentTarget, event.pointerId);
   }
 
   function beginWidthResize(event: PointerEvent<HTMLButtonElement>, id: string) {
@@ -614,6 +639,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const initialSize = startLayout.sizes[id] ?? { heightPx: null, span: 12 as const };
     const layoutWidth = layoutElement?.getBoundingClientRect().width ?? shellContent?.getBoundingClientRect().width ?? 0;
     interactionRef.current = {
+      captureElement: event.currentTarget,
       columnWidth: layoutWidth > 0 ? layoutWidth / 12 : Math.max(shellContent?.getBoundingClientRect().width ?? 1, 1),
       id,
       initialSize,
@@ -621,13 +647,14 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       kind: "width-resize",
       naturalHeight: 0,
       pointerId: event.pointerId,
+      pointerType: event.pointerType,
       startLayout,
       startX: event.clientX,
       startY: event.clientY,
     };
     layout.beginPreview(startLayout);
     setResizingId(id);
-    event.currentTarget.setPointerCapture(event.pointerId);
+    setPointerCaptureSafely(event.currentTarget, event.pointerId);
   }
 
   function setShellHeight(event: MouseEvent<HTMLButtonElement>, id: string, heightPx: number | null) {
@@ -759,11 +786,19 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     layout.commitPreview();
   }
 
-  function updateInteraction(event: PointerEvent<HTMLButtonElement>) {
+  function updateInteraction(event: ShellPointerEvent) {
     const interaction = interactionRef.current;
-    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    if (!interaction || !isPageShellPointerMatch(interaction.pointerId, event.pointerId)) return;
     event.preventDefault();
     event.stopPropagation();
+    if (!layout.isEditing || !layout.isPreviewing) {
+      endInteraction(null, true);
+      return;
+    }
+    if (isStalePageShellMouseMove(interaction.pointerType, event.buttons)) {
+      endInteraction(event, true);
+      return;
+    }
     if (interaction.kind === "move") {
       interaction.pointerX = event.clientX;
       interaction.pointerY = event.clientY;
@@ -794,13 +829,20 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     }));
   }
 
-  function endInteraction(event: PointerEvent<HTMLButtonElement>, cancelled: boolean) {
+  function endInteraction(event: ShellPointerEvent | null, cancelled: boolean) {
     const interaction = interactionRef.current;
-    if (!interaction || interaction.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    event.stopPropagation();
+    if (!interaction) {
+      if (!event) cancelDragAutoScroll();
+      return;
+    }
+    if (event && !isPageShellPointerMatch(interaction.pointerId, event.pointerId)) return;
     interactionRef.current = null;
     cancelDragAutoScroll();
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    releasePointerCaptureSafely(interaction);
     if (cancelled) layout.cancelPreview();
     else layout.commitPreview();
     setDraggingId(null);
@@ -809,6 +851,37 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setDragIndicatorStyle(null);
     setResizingId(null);
   }
+
+  useEffect(() => {
+    updateInteractionRef.current = updateInteraction;
+    endInteractionRef.current = endInteraction;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handlePointerMove = (event: globalThis.PointerEvent) => updateInteractionRef.current(event);
+    const handlePointerUp = (event: globalThis.PointerEvent) => endInteractionRef.current(event, false);
+    const handlePointerCancel = (event: globalThis.PointerEvent) => endInteractionRef.current(event, true);
+    const handleWindowBlur = () => endInteractionRef.current(null, true);
+    const listenerOptions = { capture: true };
+    window.addEventListener("pointermove", handlePointerMove, listenerOptions);
+    window.addEventListener("pointerup", handlePointerUp, listenerOptions);
+    window.addEventListener("pointercancel", handlePointerCancel, listenerOptions);
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove, listenerOptions);
+      window.removeEventListener("pointerup", handlePointerUp, listenerOptions);
+      window.removeEventListener("pointercancel", handlePointerCancel, listenerOptions);
+      window.removeEventListener("blur", handleWindowBlur);
+      endInteractionRef.current(null, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (layout.isEditing && layout.isPreviewing) return;
+    if (interactionRef.current) endInteractionRef.current(null, true);
+    else cancelDragAutoScroll();
+  }, [layout.isEditing, layout.isPreviewing]);
 
   function renderShell(shell: RenderedPageShell) {
     const size = layout.sizes[shell.id] ?? { heightPx: null, span: 12 as const };
@@ -849,7 +922,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                 onPointerCancel={(event) => endInteraction(event, true)}
                 onLostPointerCapture={(event) => endInteraction(event, true)}
                 onPointerDown={(event) => beginMove(event, shell.id)}
-                onPointerMove={updateInteraction}
                 onPointerUp={(event) => endInteraction(event, false)}
                 title={`Move ${shell.label}`}
                 type="button"
@@ -864,7 +936,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
               onPointerCancel={(event) => endInteraction(event, true)}
               onLostPointerCapture={(event) => endInteraction(event, true)}
               onPointerDown={(event) => beginWidthResize(event, shell.id)}
-              onPointerMove={updateInteraction}
               onPointerUp={(event) => endInteraction(event, false)}
               title={`Resize ${shell.label} width`}
               type="button"
@@ -957,7 +1028,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
               onPointerCancel={(event) => endInteraction(event, true)}
               onLostPointerCapture={(event) => endInteraction(event, true)}
               onPointerDown={(event) => beginResize(event, shell.id)}
-              onPointerMove={updateInteraction}
               onPointerUp={(event) => endInteraction(event, false)}
               title={`Resize ${shell.label}`}
               type="button"
