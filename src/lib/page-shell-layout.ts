@@ -745,6 +745,26 @@ function getPageShellCenteredColumnStart(span: PageShellSpan) {
   return Math.floor((12 - span) / 2) + 1;
 }
 
+function directDropFitsInsertionRow(
+  geometries: readonly PageShellGeometry[],
+  sourceId: string,
+  targetId: string | null,
+  pointerY: number,
+  candidate: PageShellGridColumnGeometry | null,
+) {
+  if (!targetId || !candidate) return false;
+  const targetGeometry = geometries.find((geometry) => geometry.id === targetId);
+  if (!targetGeometry
+    || pointerY < targetGeometry.top - PAGE_SHELL_POINTER_HYSTERESIS_PX
+    || pointerY > targetGeometry.bottom + PAGE_SHELL_POINTER_HYSTERESIS_PX) {
+    return false;
+  }
+  const candidateRight = candidate.left + candidate.width;
+  return geometries
+    .filter((geometry) => geometry.id !== sourceId && geometriesSharePageShellRow(targetGeometry, geometry))
+    .every((geometry) => candidateRight <= geometry.left || candidate.left >= geometry.right);
+}
+
 function placementsFromPackedPositions(
   order: readonly string[],
   sizes: Readonly<Record<string, PageShellSize>>,
@@ -799,12 +819,21 @@ export function getPageShellDropTarget(
   const intendedCenter = intendedLeft + sourceWidth / 2;
   const centerSnapZone = Math.max(PAGE_SHELL_CENTER_SNAP_ZONE_PX, trackWidth);
   const sourceIsCentered = isPageShellCenteredPlacement(placements[sourceId]);
-  const shouldCenter = sourceSpan < PAGE_SHELL_OPTIONS_LAST
-    && centeredGeometry !== null
-    && Math.abs(intendedCenter - workspaceCenter) <= centerSnapZone + (sourceIsCentered ? PAGE_SHELL_CENTER_SNAP_HYSTERESIS_PX : 0);
   const columnStart = gridBounds
     ? getPageShellGridStartFromPointer(gridBounds, pointerX, sourceSpan, grabOffsetX)
     : placements[sourceId]?.columnStart ?? packedPositions[sourceId]?.columnStart ?? 1;
+  const directGeometry = gridBounds ? getPageShellGridColumnGeometry(gridBounds, columnStart, sourceSpan) : null;
+  const directDropJoinsInsertionRow = directDropFitsInsertionRow(
+    geometries,
+    sourceId,
+    targetId,
+    pointerY,
+    directGeometry,
+  );
+  const shouldCenter = !directDropJoinsInsertionRow
+    && sourceSpan < PAGE_SHELL_OPTIONS_LAST
+    && centeredGeometry !== null
+    && Math.abs(intendedCenter - workspaceCenter) <= centerSnapZone + (sourceIsCentered ? PAGE_SHELL_CENTER_SNAP_HYSTERESIS_PX : 0);
   if (shouldCenter) {
     return { columnStart: centerStart, insertionIndex, laneOrder: 0, mode: "centered", targetId };
   }

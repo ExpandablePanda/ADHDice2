@@ -338,6 +338,49 @@ test("a drop beside an incompatible shell packs below it", () => {
   assert.ok(repacked.neighbor.rowStart > repacked.source.rowStart);
 });
 
+test("center snap yields a normal middle grid placement when three four-column shells fit one row", () => {
+  const order = ["left", "right", "source"];
+  const sizes = sizesFor({ left: 4, right: 4, source: 4 });
+  const placements = {
+    left: { columnStart: 1 },
+    right: { columnStart: 9 },
+    source: { columnStart: 1 },
+  };
+  const positions = positionsFor(order, sizes, placements);
+  const grid = { left: 0, width: 1200 };
+  const middleColumn = getPageShellGridColumnGeometry(grid, 5, 4);
+  assert.ok(middleColumn);
+  const target = getPageShellDropTargetForTest(order, placements, positions, middleColumn.left + 24, 80, grid, 24);
+  assert.equal(target.mode, undefined);
+  assert.equal(target.columnStart, 5);
+  const placed = placePageShellAtDrop({ order, sizes, placements }, order, "source", target);
+  const repacked = packPageShellLayout(placed.order, sizes, { placements: placed.placements });
+  assert.equal(repacked.left.rowStart, 1);
+  assert.equal(repacked.source.rowStart, 1);
+  assert.equal(repacked.right.rowStart, 1);
+});
+
+test("center snap does not turn an adjacent open-space drop into a row boundary", () => {
+  const order = ["left", "source"];
+  const sizes = sizesFor({ left: 4, source: 4 });
+  const placements = {
+    left: { columnStart: 1 },
+    source: { columnStart: 1 },
+  };
+  const positions = positionsFor(order, sizes, placements);
+  const grid = { left: 0, width: 1200 };
+  const rightColumn = getPageShellGridColumnGeometry(grid, 5, 4);
+  assert.ok(rightColumn);
+  const target = getPageShellDropTargetForTest(order, placements, positions, rightColumn.left + 24, 80, grid, 24);
+  assert.equal(target.mode, undefined);
+  assert.equal(target.columnStart, 5);
+  const placed = placePageShellAtDrop({ order, sizes, placements }, order, "source", target);
+  const repacked = packPageShellLayout(placed.order, sizes, { placements: placed.placements });
+  assert.equal(repacked.left.columnStart, 1);
+  assert.equal(repacked.source.columnStart, 5);
+  assert.equal(repacked.left.rowStart, repacked.source.rowStart);
+});
+
 function getPageShellDropTargetForTest(
   order: readonly string[],
   placements: Readonly<Record<string, { columnStart: number; laneOrder?: number; mode?: "centered" }>>,
@@ -544,7 +587,7 @@ test("export and import preserve snapped placement data", () => {
   layout.placements = { ...layout.placements, "water-log": { columnStart: 3 } };
   writePageShellLayout(store, layoutKey, "health:water", layout);
   const exported = buildPageShellLayoutExport({
-    appVersion: "7.12.97",
+    appVersion: "7.12.98",
     currentLayout: layout,
     currentPageKey: "health:water",
     currentPresentation: "custom",

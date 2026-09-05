@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.97`.
+- Current working app version: `7.12.98`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.98 Center-Snap Row Precedence
+
+Direct snapped placement now takes precedence over center snap when the
+snapped shell fits beside the shells in the pointer's insertion row. Center
+snap remains available for standalone row placement, so compatible 4/12
+shells can assemble into a shared 4 + 4 + 4 row without a centered row
+boundary interrupting the composition.
 
 ## 2026-09-05 7.12.97 Direct Snap-Grid Shell Placement
 
