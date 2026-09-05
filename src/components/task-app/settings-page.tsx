@@ -66,6 +66,9 @@ export function SettingsPage({
       handledSectionRef.current = null;
       return;
     }
+    if (!layout.isLayoutReady || typeof window === "undefined" || typeof document === "undefined") {
+      return;
+    }
     if (handledSectionRef.current === requestedSection) {
       return;
     }
@@ -75,16 +78,26 @@ export function SettingsPage({
       economy: "settings-economy",
       "import-export": "settings-import-export",
     };
-    const shell = document.querySelector<HTMLElement>(`[data-page-shell-id="${shellIdBySection[requestedSection]}"]`);
-    if (!shell) {
-      return;
-    }
-    const body = shell.querySelector<HTMLElement>(".page-shell-body");
-    if (body) body.scrollTop = 0;
-    shell.scrollIntoView({ block: "start" });
-    handledSectionRef.current = requestedSection;
-    onSectionRequestHandled?.(requestedSection);
-  }, [onSectionRequestHandled, requestedSection]);
+    let firstFrame: number | null = null;
+    let secondFrame: number | null = null;
+    firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const shell = document.querySelector<HTMLElement>(`[data-page-shell-id="${shellIdBySection[requestedSection]}"]`);
+        if (!shell || !shell.isConnected) return;
+        const rect = shell.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        const body = shell.querySelector<HTMLElement>(".page-shell-body");
+        if (body) body.scrollTop = 0;
+        shell.scrollIntoView({ block: "start" });
+        handledSectionRef.current = requestedSection;
+        onSectionRequestHandled?.(requestedSection);
+      });
+    });
+    return () => {
+      if (firstFrame !== null) window.cancelAnimationFrame(firstFrame);
+      if (secondFrame !== null) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [layout.isLayoutReady, onSectionRequestHandled, requestedSection]);
 
   function handleExportJSON() {
     const exportable = tasks.map((task) => {
@@ -130,7 +143,7 @@ export function SettingsPage({
   const sectionTitle = "mb-2 mt-8 px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40";
 
   return (
-    <section className="mx-auto max-w-lg px-4 pb-32">
+    <section className={`mx-auto w-full px-4 pb-32 ${layout.isCanonical ? "max-w-lg" : "max-w-none"}`}>
       <PageShellHeader actions={<PageShellLayoutControls layout={layout} />} title="Settings" subtitle="Configuration" />
       <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5">
       <PageShell id="settings-appearance" label="Appearance">

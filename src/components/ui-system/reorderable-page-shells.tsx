@@ -8,8 +8,8 @@ import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import {
-  getPageShellInsertionIndex,
   getPageShellDirectionalInsertionIndex,
+  getPageShellDropTarget,
   getPageShellDragAutoScrollDelta,
   clampPageShellHeight,
   formatPageShellDimensions,
@@ -17,6 +17,7 @@ import {
   getPageShellShrinkHeight,
   mergeVisiblePageShellOrder,
   normalizePageShellSpan,
+  placePageShellAtDrop,
   packPageShellLayout,
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
@@ -25,6 +26,7 @@ import {
   type PageShellGeometry,
   type PageShellCanonicalGroup,
   type PageShellLayoutPreference,
+  type PageShellDropTarget,
   type PageShellSize,
 } from "@/lib/page-shell-layout";
 import { useNativeIosPlatform } from "@/lib/platform";
@@ -48,11 +50,13 @@ type ShellMoveInteraction = {
   geometries: PageShellGeometry[];
   id: string;
   kind: "move";
+  packedPositions: Record<string, PageShellPackedPosition>;
   pointerId: number;
   pointerX: number;
   pointerY: number;
   startVisibleOrder: string[];
   startLayout: PageShellLayoutPreference;
+  target?: PageShellDropTarget;
   targetIndex: number;
 };
 
@@ -133,6 +137,7 @@ function getInsertionIndicatorStyle(
   interaction: ShellMoveInteraction,
   insertionIndex: number,
   container: HTMLDivElement | null,
+  dropTarget?: PageShellDropTarget,
 ) {
   const containerRect = container?.getBoundingClientRect();
   const scrollTop = getPageScrollTop();
@@ -143,6 +148,23 @@ function getInsertionIndicatorStyle(
   const after = insertionIndex < orderWithoutSource.length ? geometryById.get(orderWithoutSource[insertionIndex]) : undefined;
   const leftOffset = containerRect?.left ?? 0;
   const topOffset = (containerRect?.top ?? 0) + scrollTop;
+
+  if (dropTarget?.targetId) {
+    const targetGeometry = geometryById.get(dropTarget.targetId);
+    if (targetGeometry) {
+      const targetColumnShells = interaction.geometries
+        .filter((geometry) => geometry.id !== interaction.id && interaction.packedPositions[geometry.id]?.columnStart === dropTarget.columnStart)
+        .sort((left, right) => left.top - right.top);
+      const targetLane = targetColumnShells.findIndex((geometry) => geometry.id === dropTarget.targetId);
+      const insertAfter = dropTarget.laneOrder > targetLane;
+      return {
+        height: 4,
+        left: targetGeometry.left - leftOffset,
+        top: (insertAfter ? targetGeometry.bottom : targetGeometry.top) - topOffset - 2,
+        width: Math.max(4, targetGeometry.right - targetGeometry.left),
+      };
+    }
+  }
 
   if (before && after && geometriesShareRow(before, after)) {
     return {
@@ -356,9 +378,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       {
         chromeHeightPx: layout.isEditing ? 32 : 0,
         naturalHeights,
+        placements: layout.placements,
       },
     ),
-    [layout.isEditing, layout.sizes, naturalHeights, orderedShells],
+    [layout.isEditing, layout.placements, layout.sizes, naturalHeights, orderedShells],
   );
   // Canonical metadata owns the historical presentation. Once a user has a
   // custom layout (including a live edit preview), derived packing takes over.
@@ -447,6 +470,9 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   function currentLayout(): PageShellLayoutPreference {
     return {
       order: [...layout.order],
+      placements: layout.placements
+        ? Object.fromEntries(Object.entries(layout.placements).map(([id, placement]) => [id, { ...placement }]))
+        : undefined,
       sizes: Object.fromEntries(Object.entries(layout.sizes).map(([id, size]) => [id, { ...size }])),
     };
   }
@@ -462,20 +488,20 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   }
 
   function updateMovePreview(interaction: ShellMoveInteraction, pointerX: number, pointerY: number) {
-    const insertionIndex = getPageShellInsertionIndex(
+    const dropTarget = getPageShellDropTarget(
       interaction.geometries,
+      interaction.packedPositions,
       interaction.startVisibleOrder,
       interaction.id,
       pointerX,
       pointerY + getPageScrollTop(),
-      interaction.targetIndex,
     );
-    interaction.targetIndex = insertionIndex;
-    setDragInsertionIndex(insertionIndex);
-    setDragIndicatorStyle(getInsertionIndicatorStyle(interaction, insertionIndex, layoutRef.current));
-    const nextVisibleOrder = reorderPageShellOrderAt(interaction.startVisibleOrder, interaction.id, insertionIndex);
-    const nextOrder = mergeVisiblePageShellOrder(interaction.startLayout.order, nextVisibleOrder, visibleShellIds);
-    if (!layoutsHaveSameOrder(nextOrder, layout.order)) layout.setPreviewOrder(nextOrder);
+    interaction.target = dropTarget;
+    setDragInsertionIndex(dropTarget.insertionIndex);
+    setDragIndicatorStyle(getInsertionIndicatorStyle(interaction, dropTarget.insertionIndex, layoutRef.current, dropTarget));
+    const nextLayout = placePageShellAtDrop(interaction.startLayout, visibleShellIds, interaction.id, dropTarget);
+    if (!layoutsHaveSameOrder(nextLayout.order, layout.order)) layout.setPreviewOrder(nextLayout.order);
+    if (JSON.stringify(nextLayout.placements) !== JSON.stringify(layout.placements)) layout.setPreviewPlacements(nextLayout.placements);
   }
 
   function cancelDragAutoScroll() {
@@ -529,6 +555,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       geometries: captureShellGeometry(),
       id,
       kind: "move",
+      packedPositions: { ...packedPositions },
       pointerId: event.pointerId,
       pointerX: event.clientX,
       pointerY: event.clientY,
@@ -665,8 +692,16 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const nextVisibleOrder = reorderPageShellOrderAt(startVisibleOrder, id, targetIndex);
     const nextOrder = mergeVisiblePageShellOrder(startLayout.order, nextVisibleOrder, visibleShellIds);
     if (layoutsHaveSameOrder(nextOrder, layout.order)) return;
+    const resequencedPlacements = packPageShellLayout(nextOrder, startLayout.sizes);
+    const nextPlacements = Object.fromEntries(Object.entries(resequencedPlacements).map(([shellId, position]) => [shellId, {
+      columnStart: position.columnStart,
+      laneOrder: nextOrder
+        .filter((candidateId) => resequencedPlacements[candidateId]?.columnStart === position.columnStart)
+        .indexOf(shellId),
+    }]));
     layout.beginPreview(startLayout);
     layout.setPreviewOrder(nextOrder);
+    layout.setPreviewPlacements(nextPlacements);
     layout.commitPreview();
   }
 
@@ -696,11 +731,31 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const startVisibleOrder = orderedShells.map((shell) => shell.id);
     const targetIndex = getPageShellDirectionalInsertionIndex(captureShellGeometry(), startVisibleOrder, id, direction);
     if (targetIndex === null) return;
-    const nextVisibleOrder = reorderPageShellOrderAt(startVisibleOrder, id, targetIndex);
-    const nextOrder = mergeVisiblePageShellOrder(startLayout.order, nextVisibleOrder, visibleShellIds);
-    if (layoutsHaveSameOrder(nextOrder, layout.order)) return;
+    const orderWithoutSource = startVisibleOrder.filter((candidateId) => candidateId !== id);
+    const targetId = direction === "left" || direction === "up"
+      ? orderWithoutSource[targetIndex]
+      : orderWithoutSource[targetIndex - 1];
+    const targetPosition = targetId ? packedPositions[targetId] : undefined;
+    if (!targetId || !targetPosition) return;
+    const destinationColumnIds = startVisibleOrder
+      .filter((candidateId) => candidateId !== id && layout.placements?.[candidateId]?.columnStart === targetPosition.columnStart)
+      .sort((left, right) => (layout.placements?.[left]?.laneOrder ?? 0) - (layout.placements?.[right]?.laneOrder ?? 0));
+    const targetLane = Math.max(0, destinationColumnIds.indexOf(targetId) + (direction === "down" || direction === "right" ? 1 : 0));
+    const nextOrder = mergeVisiblePageShellOrder(
+      startLayout.order,
+      reorderPageShellOrderAt(startVisibleOrder, id, targetIndex),
+      visibleShellIds,
+    );
+    const nextLayout = placePageShellAtDrop(startLayout, visibleShellIds, id, {
+      columnStart: targetPosition.columnStart,
+      insertionIndex: targetIndex,
+      laneOrder: targetLane,
+      targetId,
+    });
+    if (layoutsHaveSameOrder(nextOrder, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
     layout.beginPreview(startLayout);
-    layout.setPreviewOrder(nextOrder);
+    layout.setPreviewOrder(nextLayout.order);
+    layout.setPreviewPlacements(nextLayout.placements);
     layout.commitPreview();
   }
 
@@ -820,7 +875,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
               <span>W</span>
               <input
                 aria-label={`Set ${shell.label} width in columns`}
-                className="h-6 w-7 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
+                className="page-shell-number-input h-6 min-w-10 w-10 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold tabular-nums text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
                 inputMode="numeric"
                 max={12}
                 min={3}
@@ -841,7 +896,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                   <span>Pos</span>
                   <input
                     aria-label={`Set ${shell.label} position`}
-                    className="h-6 w-7 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
+                    className="page-shell-number-input h-6 min-w-10 w-10 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold tabular-nums text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
                     inputMode="numeric"
                     max={orderedShells.length}
                     min={1}

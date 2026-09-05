@@ -14,6 +14,11 @@ export type PageShellSize = {
   span: PageShellSpan;
 };
 
+export type PageShellPlacement = {
+  columnStart: number;
+  laneOrder: number;
+};
+
 export type PageShellSizeDefaults = Readonly<Record<string, PageShellSize>>;
 
 export type PageShellCanonicalGroup = {
@@ -31,6 +36,7 @@ export type PageShellCanonicalLayout = {
 
 export type PageShellLayoutPreference = {
   order: string[];
+  placements?: Record<string, PageShellPlacement>;
   sizes: Record<string, PageShellSize>;
 };
 
@@ -340,6 +346,9 @@ export function getPageShellViewsStorageKey(userId: string) {
 export function clonePageShellLayout(layout: PageShellLayoutPreference): PageShellLayoutPreference {
   return {
     order: [...layout.order],
+    placements: layout.placements
+      ? Object.fromEntries(Object.entries(layout.placements).map(([id, placement]) => [id, { ...placement }]))
+      : undefined,
     sizes: Object.fromEntries(Object.entries(layout.sizes).map(([id, size]) => [id, { ...size }])),
   };
 }
@@ -447,7 +456,15 @@ export type PageShellPackedLayoutOptions = {
   chromeHeightPx?: number;
   gapPx?: number;
   naturalHeights?: Readonly<Record<string, number>>;
+  placements?: Readonly<Record<string, PageShellPlacement>>;
   rowUnitPx?: number;
+};
+
+export type PageShellDropTarget = {
+  columnStart: number;
+  insertionIndex: number;
+  laneOrder: number;
+  targetId: string | null;
 };
 
 export const PAGE_SHELL_POINTER_HYSTERESIS_PX = 8;
@@ -600,9 +617,143 @@ export function getPageShellInsertionIndex(
   return Math.min(orderWithoutSource.length, lastItemIndex + 1);
 }
 
+export function normalizePageShellPlacement(
+  stored: unknown,
+  span: PageShellSpan = PAGE_SHELL_OPTIONS_LAST,
+  fallback: PageShellPlacement = { columnStart: 1, laneOrder: 0 },
+): PageShellPlacement {
+  const source = stored && typeof stored === "object" && !Array.isArray(stored) ? stored as Record<string, unknown> : {};
+  const rawColumnStart = typeof source.columnStart === "number" && Number.isFinite(source.columnStart)
+    ? Math.round(source.columnStart)
+    : fallback.columnStart;
+  const rawLaneOrder = typeof source.laneOrder === "number" && Number.isFinite(source.laneOrder)
+    ? Math.round(source.laneOrder)
+    : fallback.laneOrder;
+  return {
+    columnStart: Math.max(1, Math.min(13 - span, rawColumnStart)),
+    laneOrder: Math.max(0, rawLaneOrder),
+  };
+}
+
+function placementsFromPackedPositions(
+  order: readonly string[],
+  positions: Readonly<Record<string, PageShellPackedPosition>>,
+) {
+  const laneCounts = new Map<number, number>();
+  const placements: Record<string, PageShellPlacement> = {};
+  for (const id of order) {
+    const position = positions[id];
+    if (!position) continue;
+    const laneOrder = laneCounts.get(position.columnStart) ?? 0;
+    laneCounts.set(position.columnStart, laneOrder + 1);
+    placements[id] = { columnStart: position.columnStart, laneOrder };
+  }
+  return placements;
+}
+
 /**
- * Packs shells in authoritative order into the earliest available 12-column
- * position. Coordinates are derived at render time and are never persisted.
+ * Resolves a pointer to a portable grid destination. The destination is
+ * expressed as a column start and lane order, never as a DOM coordinate.
+ */
+export function getPageShellDropTarget(
+  geometries: readonly PageShellGeometry[],
+  packedPositions: Readonly<Record<string, PageShellPackedPosition>>,
+  order: readonly string[],
+  sourceId: string,
+  pointerX: number,
+  pointerY: number,
+): PageShellDropTarget {
+  const candidates = geometries
+    .filter((geometry) => geometry.id !== sourceId && order.includes(geometry.id) && packedPositions[geometry.id])
+    .map((geometry) => {
+      const position = packedPositions[geometry.id];
+      return {
+        distanceX: pointerX < geometry.left ? geometry.left - pointerX : pointerX > geometry.right ? pointerX - geometry.right : 0,
+        geometry,
+        position,
+      };
+    });
+  const nearestColumnShell = candidates
+    .slice()
+    .sort((left, right) => left.distanceX - right.distanceX || left.geometry.top - right.geometry.top || order.indexOf(left.geometry.id) - order.indexOf(right.geometry.id))[0];
+  const columnStart = nearestColumnShell?.position.columnStart ?? packedPositions[sourceId]?.columnStart ?? 1;
+  const columnCandidates = candidates
+    .filter((candidate) => candidate.position.columnStart === columnStart)
+    .sort((left, right) => left.geometry.top - right.geometry.top || order.indexOf(left.geometry.id) - order.indexOf(right.geometry.id));
+  const orderWithoutSource = order.filter((id) => id !== sourceId);
+  if (columnCandidates.length === 0) {
+    return {
+      columnStart,
+      insertionIndex: orderWithoutSource.length,
+      laneOrder: 0,
+      targetId: null,
+    };
+  }
+
+  let target = columnCandidates[columnCandidates.length - 1];
+  let insertAfter = true;
+  for (const candidate of columnCandidates) {
+    const centerY = (candidate.geometry.top + candidate.geometry.bottom) / 2;
+    if (pointerY < candidate.geometry.top) {
+      target = candidate;
+      insertAfter = false;
+      break;
+    }
+    if (pointerY <= candidate.geometry.bottom) {
+      target = candidate;
+      insertAfter = pointerY >= centerY;
+      break;
+    }
+  }
+  const targetIndex = orderWithoutSource.indexOf(target.geometry.id);
+  const insertionIndex = targetIndex < 0
+    ? orderWithoutSource.length
+    : Math.max(0, Math.min(orderWithoutSource.length, targetIndex + (insertAfter ? 1 : 0)));
+  const laneOrder = columnCandidates.findIndex((candidate) => candidate.geometry.id === target.geometry.id) + (insertAfter ? 1 : 0);
+  return {
+    columnStart,
+    insertionIndex,
+    laneOrder,
+    targetId: target.geometry.id,
+  };
+}
+
+/**
+ * Applies a drop to the semantic order and lane model. Existing shells in the
+ * destination lane are re-ranked so the persisted composition cannot replace
+ * the shell that supplied the insertion target.
+ */
+export function placePageShellAtDrop(
+  layout: PageShellLayoutPreference,
+  visibleShellIds: readonly string[],
+  sourceId: string,
+  target: PageShellDropTarget,
+) {
+  const nextVisibleOrder = reorderPageShellOrderAt(
+    visibleShellIds,
+    sourceId,
+    target.insertionIndex,
+  );
+  const nextOrder = mergeVisiblePageShellOrder(layout.order, nextVisibleOrder, visibleShellIds);
+  const nextPlacements: Record<string, PageShellPlacement> = Object.fromEntries(
+    Object.entries(layout.placements ?? {}).map(([id, placement]) => [id, { ...placement }]),
+  );
+  const destinationIds = visibleShellIds
+    .filter((id) => id !== sourceId && nextPlacements[id]?.columnStart === target.columnStart)
+    .sort((left, right) => (
+      nextPlacements[left].laneOrder - nextPlacements[right].laneOrder
+      || nextOrder.indexOf(left) - nextOrder.indexOf(right)
+    ));
+  destinationIds.splice(Math.max(0, Math.min(target.laneOrder, destinationIds.length)), 0, sourceId);
+  destinationIds.forEach((id, laneOrder) => {
+    nextPlacements[id] = { columnStart: target.columnStart, laneOrder };
+  });
+  return { order: nextOrder, placements: nextPlacements };
+}
+
+/**
+ * Packs shells into the earliest available 12-column position while honoring
+ * semantic column/lane placement hints. Coordinates remain runtime-only.
  */
 export function packPageShellLayout(
   order: readonly string[],
@@ -613,6 +764,7 @@ export function packPageShellLayout(
   const rowUnitPx = Math.max(1, options.rowUnitPx ?? PAGE_SHELL_PACKING_ROW_UNIT_PX);
   const chromeHeightPx = Math.max(0, options.chromeHeightPx ?? 0);
   const naturalHeights = options.naturalHeights ?? {};
+  const placements = options.placements ?? {};
   const occupied: boolean[][] = [];
   const positions: Record<string, PageShellPackedPosition> = {};
 
@@ -634,21 +786,43 @@ export function packPageShellLayout(
     }
   };
 
-  for (const id of order) {
+  const explicitIds = order
+    .filter((id) => placements[id])
+    .sort((left, right) => (
+      placements[left].columnStart - placements[right].columnStart
+      || placements[left].laneOrder - placements[right].laneOrder
+      || order.indexOf(left) - order.indexOf(right)
+    ));
+  const automaticIds = order.filter((id) => !placements[id]);
+
+  for (const id of [...explicitIds, ...automaticIds]) {
     const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
     const heightPx = size.heightPx ?? naturalHeights[id] ?? PAGE_SHELL_MIN_HEIGHT;
     const rowSpan = Math.max(1, Math.ceil((Math.max(1, heightPx) + chromeHeightPx + gapPx) / rowUnitPx));
+    const placement = placements[id];
     let row = 0;
     let column = 0;
-    while (true) {
-      for (let candidateColumn = 0; candidateColumn <= 12 - size.span; candidateColumn += 1) {
-        if (canPlace(row, candidateColumn, rowSpan, size.span)) {
-          column = candidateColumn;
-          break;
+    if (placement) {
+      column = Math.max(0, Math.min(12 - size.span, placement.columnStart - 1));
+      const preceding = explicitIds
+        .filter((candidateId) => candidateId !== id && placements[candidateId].columnStart === placement.columnStart && placements[candidateId].laneOrder < placement.laneOrder)
+        .map((candidateId) => positions[candidateId])
+        .filter((position): position is PageShellPackedPosition => Boolean(position));
+      row = preceding.reduce((bottom, position) => Math.max(bottom, position.rowStart - 1 + position.rowSpan), 0);
+      while (!canPlace(row, column, rowSpan, size.span)) row += 1;
+    } else {
+      while (true) {
+        let foundColumn = false;
+        for (let candidateColumn = 0; candidateColumn <= 12 - size.span; candidateColumn += 1) {
+          if (canPlace(row, candidateColumn, rowSpan, size.span)) {
+            column = candidateColumn;
+            foundColumn = true;
+            break;
+          }
         }
+        if (foundColumn) break;
+        row += 1;
       }
-      if (canPlace(row, column, rowSpan, size.span)) break;
-      row += 1;
     }
     markOccupied(row, column, rowSpan, size.span);
     positions[id] = {
@@ -722,6 +896,7 @@ export function normalizePageShellSpan(value: unknown, fallback: PageShellSpan =
 
 export const PAGE_SHELL_HEIGHT_SNAP = 48;
 export const PAGE_SHELL_MIN_HEIGHT = 144;
+export const PAGE_SHELL_MAX_HEIGHT = 1536;
 
 export function snapPageShellHeight(value: number) {
   const snapped = Math.max(PAGE_SHELL_MIN_HEIGHT, Math.round(value / PAGE_SHELL_HEIGHT_SNAP) * PAGE_SHELL_HEIGHT_SNAP);
@@ -752,17 +927,19 @@ export function getPageShellShrinkHeight(naturalHeight: number) {
   return Math.min(PAGE_SHELL_MIN_HEIGHT, getSafePageShellNaturalHeight(naturalHeight));
 }
 
-/** Snaps a manual resize while keeping the measured natural content height as its hard maximum. */
+/** Snaps a manual resize within the shared custom-height safety bound. */
 export function clampPageShellHeight(value: number, naturalHeight: number) {
-  const safeValue = Number.isFinite(value) ? value : getSafePageShellNaturalHeight(naturalHeight);
-  return Math.min(snapPageShellHeight(safeValue), getSafePageShellNaturalHeight(naturalHeight));
+  const safeNaturalHeight = getSafePageShellNaturalHeight(naturalHeight);
+  if (safeNaturalHeight < PAGE_SHELL_MIN_HEIGHT) return safeNaturalHeight;
+  const safeValue = Number.isFinite(value) ? value : safeNaturalHeight;
+  return Math.min(snapPageShellHeight(safeValue), Math.max(PAGE_SHELL_MAX_HEIGHT, safeNaturalHeight));
 }
 
 function normalizePageShellHeight(value: unknown, fallback: number | null) {
   if (value === null) return null;
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return fallback;
   const snapped = Math.round(value / PAGE_SHELL_HEIGHT_SNAP) * PAGE_SHELL_HEIGHT_SNAP;
-  return Math.max(PAGE_SHELL_MIN_HEIGHT, snapped);
+  return Math.min(PAGE_SHELL_MAX_HEIGHT, Math.max(PAGE_SHELL_MIN_HEIGHT, snapped));
 }
 
 export function normalizePageShellSize(stored: unknown, fallback: PageShellSize = NATURAL_PAGE_SHELL_SIZE): PageShellSize {
@@ -785,7 +962,7 @@ export function getDefaultPageShellSizes(defaults: readonly string[], overrides:
   }, {});
 }
 
-function isPageShellLayoutPreference(value: unknown): value is { order?: unknown; sizes?: unknown } {
+function isPageShellLayoutPreference(value: unknown): value is { order?: unknown; placements?: unknown; sizes?: unknown } {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
@@ -809,7 +986,18 @@ export function normalizePageShellLayout(
     const legacyId = Object.entries(legacyIdReplacements).find(([, replacementIds]) => replacementIds.includes(id))?.[0];
     sizes[id] = normalizePageShellSize(storedSizes[id] ?? (legacyId ? storedSizes[legacyId] : undefined), sizes[id]);
   }
-  return { order, sizes };
+  const storedPlacements = isPageShellLayoutPreference(stored) && stored.placements && typeof stored.placements === "object" && !Array.isArray(stored.placements)
+    ? stored.placements as Record<string, unknown>
+    : {};
+  const placements: Record<string, PageShellPlacement> = {};
+  for (const id of order) {
+    if (Object.prototype.hasOwnProperty.call(storedPlacements, id)) {
+      placements[id] = normalizePageShellPlacement(storedPlacements[id], sizes[id]?.span);
+    }
+  }
+  const packedPositions = packPageShellLayout(order, sizes, { placements });
+  const derivedPlacements = placementsFromPackedPositions(order, packedPositions);
+  return { order, placements: derivedPlacements, sizes };
 }
 
 function readStoredPageShellLayouts(storage: PageShellLayoutStorage, storageKey: string) {
@@ -851,7 +1039,13 @@ export function writePageShellLayout(
 ) {
   try {
     const layouts = readStoredPageShellLayouts(storage, storageKey);
-    layouts[pageKey] = { order: [...layout.order], sizes: { ...layout.sizes } };
+    layouts[pageKey] = {
+      order: [...layout.order],
+      placements: layout.placements
+        ? Object.fromEntries(Object.entries(layout.placements).map(([id, placement]) => [id, { ...placement }]))
+        : undefined,
+      sizes: { ...layout.sizes },
+    };
     storage.setItem(storageKey, JSON.stringify(layouts));
   } catch {
     // Storage can be unavailable in private browsing or a restricted WebView.

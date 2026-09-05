@@ -5,14 +5,53 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.81`.
+- Current working app version: `7.12.82`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
-  - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+- visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-04 7.12.82 Shell Growth, Semantic Placement, and Navigator Readiness
+
+The shared page-shell engine now permits snapped custom heights above natural
+content up to a shared safety maximum, preserves internal body scrolling for
+short shells, and returns Expand to natural height. Custom layouts carry
+portable semantic placement hints (`columnStart` and `laneOrder`); runtime
+packing still fills gaps for unassigned shells, while drag/drop, directional
+movement, and saved layout round trips preserve deliberate column/lane
+placement. Legacy 7.12.79 through 7.12.81 layouts and saved Views derive the
+same deterministic placement representation when metadata is absent.
+
+Canonical Home and Settings widths remain unchanged. Custom shell workspaces
+can use the available application width, and Reset Layout returns the
+canonical width. Settings Navigator requests now wait for page-shell layout
+hydration and final animation-frame geometry before acknowledging the request.
+No SQL, schema, cloud persistence, or application-data changes were added.
+
+Nested-shell audit for the next phase only; these candidates are not
+implemented in 7.12.82:
+
+- Health → Water: Totals, Daily Goal, Log Water, Water Trend.
+- Health → Food → Favorites & Recent: Favorites, Recent Foods.
+- Health → Food → Daily Totals: Nutrition Summary, Nutrition Details, Calorie Trend.
+- Health → Journal → Journal Entry & History: Current Entry, Journal History.
+- Tasks → On-Time: Schedule Summary, Preparation List, Destination & Timing.
+- Tasks → Brainstorm → QA: Session Setup, Import Checklist, QA Checklist, Report/Results.
+- Progress → Records: Global Task Records, Streak Records, Focus Records, Per-task Records.
+- Test → D20 remains implemented and browser-QA passed.
+
+Possible later boundary decisions are Health Today Snapshot cards, Health
+Fitness Active Workout internals, Achievements, Task Report, and Brainstorm
+Questionnaire. Keep Home task rows/day groups, Settings individual controls,
+Notes individual note/search/tag controls, Stats mini-stat cards, Focus pager
+internals, active Games internals, PATHS nodes/canvas, individual
+Tasks/Steps/Substeps/table rows, and Roll internals out of generic nested
+shell coverage for now. Roll should receive a page-level shell migration
+first (Roll Station, Prize Board, Prize Basket, Recent Rolls) before any
+nested decision.
 
 ## 2026-09-04 7.12.81 Shell Precision Controls, Packed Layouts, and Nested Test Scope
 

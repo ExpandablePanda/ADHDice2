@@ -107,11 +107,15 @@ test("Health targets use the canonical shared tab preference", () => {
   assert.match(healthPreferenceSource, /export function persistHealthTabPreference/);
 });
 
-test("Settings targets request a mounted section once", () => {
+test("Settings targets remain pending through shell hydration and acknowledge after ready geometry", () => {
   assert.deepEqual(findTarget("timezone").action, { kind: "settings-section", page: "Settings", section: "day-reset" });
   assert.match(appSource, /setRequestedSettingsSection\(action\.section\)/);
   assert.match(appSource, /requestedSection=\{requestedSettingsSection\}/);
-  assert.match(settingsSource, /section\.scrollIntoView\(\{ block: "start" \}\)/);
+  assert.match(settingsSource, /shell\.scrollIntoView\(\{ block: "start" \}\)/);
+  assert.match(settingsSource, /!layout\.isLayoutReady/);
+  assert.match(settingsSource, /requestAnimationFrame/);
+  assert.ok(settingsSource.indexOf("shell.scrollIntoView") < settingsSource.indexOf("onSectionRequestHandled?."));
+  assert.match(settingsSource, /rect\.width <= 0 \|\| rect\.height <= 0/);
   assert.match(settingsSource, /onSectionRequestHandled\?\.\(requestedSection\)/);
   assert.match(settingsSource, /handledSectionRef\.current === requestedSection/);
 });

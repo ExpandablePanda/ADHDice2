@@ -312,7 +312,7 @@ export function HomePage({
   }, [isSearchOpen]);
 
   return (
-    <section className="-mx-[15px] w-auto max-w-4xl px-3 pb-32 pt-6 sm:mx-auto sm:px-4">
+    <section className={`-mx-[15px] w-auto px-3 pb-32 pt-6 sm:mx-auto sm:px-4 ${layout.isCanonical ? "max-w-4xl" : "max-w-none"}`}>
       <PageShellHeader actions={<PageShellLayoutControls layout={layout} />} subtitle="Daily workspace" title="Home" />
       <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5">
       <PageShell id="home-todo" label="Home To-do List">

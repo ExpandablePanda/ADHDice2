@@ -327,8 +327,18 @@ body::-webkit-scrollbar-thumb:hover,
   overflow-y: auto;
 }
 
-/* Flat/custom shell layouts pack in semantic order; these coordinates are
-   runtime-only and are intentionally ignored on narrow single-column views. */
+.page-shell-number-input {
+  -moz-appearance: textfield;
+}
+
+.page-shell-number-input::-webkit-inner-spin-button,
+.page-shell-number-input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+/* Custom shell layouts use portable semantic placement to derive these
+   runtime coordinates; narrow single-column views intentionally ignore them. */
 .page-shell-packed > [data-page-shell-id] {
   grid-column: 1 / -1;
 }

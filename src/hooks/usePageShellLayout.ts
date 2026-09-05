@@ -22,6 +22,7 @@ import {
   type PageShellCanonicalLayout,
   type PageShellLayoutExport,
   type PageShellLayoutPreference,
+  type PageShellPlacement,
   type PageShellSize,
   type PageShellSizeDefaults,
   type PageShellView,
@@ -43,12 +44,15 @@ export type PageShellLayoutState = {
   deleteView: (viewId: string) => void;
   exportLayouts: () => PageShellLayoutExport;
   isEditing: boolean;
+  isLayoutReady: boolean;
   isCanonical: boolean;
   order: string[];
   pageKey: string;
+  placements: Record<string, PageShellPlacement>;
   reset: () => void;
   saveView: (name: string, target: PageShellViewTarget) => PageShellView | null;
   setPreviewOrder: (next: SetStateAction<string[]>) => void;
+  setPreviewPlacements: (next: SetStateAction<Record<string, PageShellPlacement>>) => void;
   setPreviewSizes: (next: SetStateAction<Record<string, PageShellSize>>) => void;
   sizes: Record<string, PageShellSize>;
   startEditing: () => void;
@@ -168,6 +172,18 @@ export function usePageShellLayout(
     setPreviewLayout(updated);
   }, []);
 
+  const setPreviewPlacements = useCallback((next: SetStateAction<Record<string, PageShellPlacement>>) => {
+    const current = previewRef.current;
+    if (!current) return;
+    const nextPlacements = typeof next === "function" ? next(current.placements ?? {}) : next;
+    const updated = {
+      ...current,
+      placements: Object.fromEntries(Object.entries(nextPlacements).map(([id, placement]) => [id, { ...placement }])),
+    };
+    previewRef.current = updated;
+    setPreviewLayout(updated);
+  }, []);
+
   const setPreviewSizes = useCallback((next: SetStateAction<Record<string, PageShellSize>>) => {
     const current = previewRef.current;
     if (!current) return;
@@ -251,12 +267,15 @@ export function usePageShellLayout(
     exportLayouts,
     finishEditing,
     isEditing: canEdit && editingInstanceKey === instanceKey,
+    isLayoutReady: hydratedInstanceKey === instanceKey,
     isCanonical,
     order: normalizePageShellLayout(activeLayout, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes).order,
     pageKey,
+    placements: normalizePageShellLayout(activeLayout, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes).placements ?? {},
     reset,
     saveView,
     setPreviewOrder,
+    setPreviewPlacements,
     setPreviewSizes,
     sizes: normalizePageShellLayout(activeLayout, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes).sizes,
     startEditing,

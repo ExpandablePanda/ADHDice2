@@ -22,6 +22,7 @@ import {
   TEST_D20_PAGE_SHELL_IDS,
   getPageShellDragAutoScrollDelta,
   getHealthPageShellKey,
+  getPageShellDropTarget,
   getPageShellInsertionIndex,
   getPageShellDirectionalInsertionIndex,
   getPageShellLayoutStorageKey,
@@ -40,10 +41,12 @@ import {
   normalizePageShellSpan,
   normalizePageShellSize,
   normalizePageShellOrder,
+  normalizePageShellPlacement,
   migrateLegacyTestD20Storage,
   packPageShellLayout,
   PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX,
   PAGE_SHELL_HEIGHT_SNAP,
+  PAGE_SHELL_MAX_HEIGHT,
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_SPAN_OPTIONS,
   readPageShellLayout,
@@ -60,6 +63,7 @@ import {
   writePageShellView,
   snapPageShellHeight,
   writePageShellLayout,
+  placePageShellAtDrop,
 } from "@/lib/page-shell-layout";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
@@ -114,12 +118,18 @@ function staticShellLayout(isEditing: boolean): PageShellLayoutState {
     exportLayouts: () => { throw new Error("not used in static render"); },
     finishEditing: () => undefined,
     isEditing,
+    isLayoutReady: true,
     isCanonical: false,
     order: ["conditional", "regular"],
     pageKey: "test",
+    placements: {
+      conditional: { columnStart: 1, laneOrder: 0 },
+      regular: { columnStart: 7, laneOrder: 0 },
+    },
     reset: () => undefined,
     saveView: () => null,
     setPreviewOrder: () => undefined,
+    setPreviewPlacements: () => undefined,
     setPreviewSizes: () => undefined,
     sizes: {
       conditional: { heightPx: 288, span: 6 },
@@ -193,6 +203,10 @@ test("named page-shell views use a separate versioned local store and remain pag
   const key = getPageShellViewsStorageKey("user-views");
   const customLayout = {
     order: ["food", "totals"],
+    placements: {
+      food: { columnStart: 1, laneOrder: 0 },
+      totals: { columnStart: 7, laneOrder: 0 },
+    },
     sizes: {
       food: { heightPx: 288, span: 6 as const },
       totals: { heightPx: null, span: 6 as const },
@@ -447,13 +461,14 @@ test("corrupt page shell storage falls back to defaults", () => {
   assert.deepEqual(readPageShellLayout(store, key, "stats", ["stats-overview", "stats-energy"], {}).order, ["stats-overview", "stats-energy"]);
 });
 
-test("shell height controls preserve the 144px floor, natural-short behavior, and natural maximum", () => {
+test("shell height controls preserve the 144px floor, natural-short behavior, and allow intentional growth", () => {
   assert.equal(normalizePageShellSpan(2), 3);
   assert.equal(normalizePageShellSpan(12.6), 12);
   assert.equal(getPageShellShrinkHeight(912), PAGE_SHELL_MIN_HEIGHT);
   assert.equal(getPageShellShrinkHeight(120), 120);
   assert.equal(clampPageShellHeight(PAGE_SHELL_MIN_HEIGHT, 912), PAGE_SHELL_MIN_HEIGHT);
-  assert.equal(clampPageShellHeight(5000, 912), 912);
+  assert.equal(clampPageShellHeight(5000, 912), PAGE_SHELL_MAX_HEIGHT);
+  assert.ok(clampPageShellHeight(960, 912) > 912);
   assert.equal(clampPageShellHeight(5000, 120), 120);
   assert.equal(formatPageShellDimensions(6, 288, 912), "W 6/12 · H 288/912");
   assert.equal(formatPageShellDimensions(6, 288, 912, 842), "W 6/12 · 842px · H 288/912");
@@ -582,7 +597,7 @@ test("shell layout sizes and 2D insertion boundaries normalize defensively", () 
   assert.equal(getPageShellShrinkHeight(400), PAGE_SHELL_MIN_HEIGHT);
   assert.equal(getPageShellShrinkHeight(120), 120);
   assert.equal(getPageShellShrinkHeight(PAGE_SHELL_MIN_HEIGHT), PAGE_SHELL_MIN_HEIGHT);
-  assert.equal(clampPageShellHeight(700, 500), 500);
+  assert.equal(clampPageShellHeight(700, 500), 720);
   assert.equal(clampPageShellHeight(100, 500), PAGE_SHELL_MIN_HEIGHT);
   assert.equal(clampPageShellHeight(100, 120), 120);
   assert.equal(clampPageShellHeight(700, 120), 120);
@@ -703,6 +718,113 @@ test("packed placement supports mixed spans within the 12-column grid", () => {
       assert.equal(columnsOverlap && rowsOverlap, false, `${id} overlaps ${otherId}`);
     }
   }
+});
+
+test("semantic placement keeps the Water-style right lane stable through a persistence round trip", () => {
+  const sizes = {
+    water: { heightPx: 700, span: 6 as const },
+    a: { heightPx: 144, span: 6 as const },
+    b: { heightPx: 144, span: 6 as const },
+    c: { heightPx: 144, span: 6 as const },
+  };
+  const legacy = normalizePageShellLayout({ order: ["water", "a", "b", "c"], sizes }, Object.keys(sizes), sizes);
+  assert.deepEqual(legacy.placements, {
+    water: { columnStart: 1, laneOrder: 0 },
+    a: { columnStart: 7, laneOrder: 0 },
+    b: { columnStart: 7, laneOrder: 1 },
+    c: { columnStart: 7, laneOrder: 2 },
+  });
+
+  const dropped = placePageShellAtDrop(legacy, legacy.order, "b", {
+    columnStart: 7,
+    insertionIndex: 2,
+    laneOrder: 1,
+    targetId: "a",
+  });
+  assert.deepEqual(dropped.order, ["water", "a", "b", "c"]);
+  assert.deepEqual(dropped.placements?.b, { columnStart: 7, laneOrder: 1 });
+
+  const store = storage();
+  const key = getPageShellLayoutStorageKey("water-placement");
+  writePageShellLayout(store, key, "health:water", dropped);
+  const roundTrip = readPageShellLayout(store, key, "health:water", Object.keys(sizes), sizes);
+  assert.deepEqual(roundTrip.placements, dropped.placements);
+
+  const withNewShell = normalizePageShellLayout({
+    order: [...roundTrip.order, "d"],
+    placements: roundTrip.placements,
+    sizes: { ...sizes, d: { heightPx: 144, span: 6 as const } },
+  }, [...roundTrip.order, "d"], { ...sizes, d: { heightPx: 144, span: 6 as const } });
+  const packed = packPageShellLayout(withNewShell.order, withNewShell.sizes, { placements: withNewShell.placements });
+  assert.equal(packed.d.columnStart, 7);
+  assert.ok(packed.d.rowStart > packed.c.rowStart);
+});
+
+test("drop targeting agrees with rendered packed destination instead of replacing its preceding shell", () => {
+  const order = ["water", "a", "b", "c"];
+  const positions = packPageShellLayout(order, {
+    water: { heightPx: 700, span: 6 },
+    a: { heightPx: 144, span: 6 },
+    b: { heightPx: 144, span: 6 },
+    c: { heightPx: 144, span: 6 },
+  }, {
+    placements: {
+      water: { columnStart: 1, laneOrder: 0 },
+      a: { columnStart: 7, laneOrder: 0 },
+      b: { columnStart: 7, laneOrder: 1 },
+      c: { columnStart: 7, laneOrder: 2 },
+    },
+  });
+  const geometries = [
+    { bottom: 700, id: "water", left: 0, right: 480, top: 0 },
+    { bottom: 144, id: "a", left: 500, right: 960, top: 0 },
+    { bottom: 308, id: "b", left: 500, right: 960, top: 164 },
+    { bottom: 472, id: "c", left: 500, right: 960, top: 328 },
+  ];
+  const target = getPageShellDropTarget(geometries, positions, order, "b", 720, 130);
+  assert.deepEqual(target, { columnStart: 7, insertionIndex: 2, laneOrder: 1, targetId: "a" });
+  const result = placePageShellAtDrop({
+    order,
+    placements: {
+      water: { columnStart: 1, laneOrder: 0 },
+      a: { columnStart: 7, laneOrder: 0 },
+      b: { columnStart: 7, laneOrder: 1 },
+      c: { columnStart: 7, laneOrder: 2 },
+    },
+    sizes: {
+      water: { heightPx: 700, span: 6 },
+      a: { heightPx: 144, span: 6 },
+      b: { heightPx: 144, span: 6 },
+      c: { heightPx: 144, span: 6 },
+    },
+  }, order, "b", target);
+  assert.deepEqual(result.order, order);
+  assert.deepEqual(result.placements?.b, { columnStart: 7, laneOrder: 1 });
+});
+
+test("legacy layouts and saved Views without placement metadata derive deterministic portable placement", () => {
+  const store = storage();
+  const key = getPageShellLayoutStorageKey("legacy-placement");
+  const viewKey = getPageShellViewsStorageKey("legacy-placement");
+  const legacy = { order: ["left", "right"], sizes: { left: { heightPx: 600, span: 6 as const }, right: { heightPx: 144, span: 6 as const } } };
+  writePageShellLayout(store, key, "health:water", legacy);
+  const loaded = readPageShellLayout(store, key, "health:water", legacy.order, legacy.sizes);
+  assert.deepEqual(loaded.placements, {
+    left: { columnStart: 1, laneOrder: 0 },
+    right: { columnStart: 7, laneOrder: 0 },
+  });
+  writePageShellView(store, viewKey, createPageShellView({
+    createdAt: "2026-09-04T12:00:00.000Z",
+    layout: legacy,
+    name: "Legacy Water",
+    pageKey: "health:water",
+    presentation: "custom",
+    target: "web",
+    viewport: { height: 900, width: 1440 },
+  }));
+  const saved = readPageShellViews(store, viewKey, "health:water")[0];
+  assert.deepEqual(saved?.layout?.placements, loaded.placements);
+  assert.deepEqual(normalizePageShellPlacement({ columnStart: 99, laneOrder: -3 }, 6), { columnStart: 7, laneOrder: 0 });
 });
 
 test("directional movement resolves neighbors from packed geometry into the shared order", () => {
@@ -832,6 +954,7 @@ test("new page shells preserve editor boundaries, canonical placement, and share
   assert.match(layoutHookSource, /const canEdit = defaults\.length >= 1/);
   assert.match(layoutHookSource, /const canResize = defaults\.length >= 1/);
   assert.match(layoutHookSource, /const canReorder = defaults\.length >= 2/);
+  assert.match(layoutHookSource, /isLayoutReady: hydratedInstanceKey === instanceKey/);
 });
 
 test("Settings Navigator resolves semantic sections to outer shells and resets inner body scroll", () => {
@@ -848,7 +971,12 @@ test("Settings Navigator resolves semantic sections to outer shells and resets i
   assert.match(settingsPageSource, /document\.querySelector<HTMLElement>\(\`\[data-page-shell-id=/);
   assert.match(settingsPageSource, /body\.scrollTop = 0/);
   assert.match(settingsPageSource, /shell\.scrollIntoView\(\{ block: "start" \}\)/);
+  assert.match(settingsPageSource, /!layout\.isLayoutReady/);
+  assert.match(settingsPageSource, /requestAnimationFrame/);
+  assert.ok(settingsPageSource.indexOf("shell.scrollIntoView") < settingsPageSource.indexOf("onSectionRequestHandled?."));
   assert.doesNotMatch(settingsPageSource, /settings-section-[^"`]+.*scrollIntoView/);
+  assert.match(homeSource, /layout\.isCanonical \? "max-w-4xl" : "max-w-none"/);
+  assert.match(settingsPageSource, /layout\.isCanonical \? "max-w-lg" : "max-w-none"/);
 });
 
 test("new page canonical resets preserve pre-shell order and natural heights", () => {
@@ -982,11 +1110,12 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /layout\.beginPreview/);
   assert.match(shellSource, /layout\.commitPreview/);
   assert.match(shellSource, /layout\.cancelPreview/);
-  assert.match(shellSource, /getPageShellInsertionIndex/);
+  assert.match(shellSource, /getPageShellDropTarget/);
+  assert.match(shellSource, /placePageShellAtDrop/);
   assert.match(shellSource, /startVisibleOrder/);
   assert.match(shellSource, /mergeVisiblePageShellOrder/);
   assert.match(shellSource, /data-page-shell-insertion-indicator/);
-  assert.match(shellSource, /interaction\.targetIndex/);
+  assert.match(shellSource, /interaction\.target/);
   assert.match(shellSource, /renderedShellOrder/);
   assert.match(shellSource, /rect\.top \+ scrollTop/);
   assert.match(shellSource, /pointerY \+ getPageScrollTop\(\)/);
@@ -1033,6 +1162,7 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /aria-label=\{`Shrink \$\{shell\.label\}`\}/);
   assert.match(shellSource, /aria-label=\{`Expand \$\{shell\.label\}`\}/);
   assert.match(shellSource, /formatPageShellDimensions\(size\.span, size\.heightPx, naturalHeight, renderedWidths\[shell\.id\]\)/);
+  assert.match(shellSource, /page-shell-number-input/);
   assert.match(shellSource, /Save View/);
   assert.match(shellSource, /Views/);
   assert.match(shellSource, /Export Layouts/);
