@@ -381,6 +381,10 @@ body::-webkit-scrollbar-thumb:hover,
     grid-column: var(--page-shell-grid-column-start) / span var(--page-shell-grid-column-span);
     grid-row: var(--page-shell-grid-row-start) / span var(--page-shell-grid-row-span);
   }
+
+  .page-shell-packed > [data-page-shell-id][data-page-shell-centered="true"] {
+    transform: translateX(var(--page-shell-grid-center-offset, 0px));
+  }
 }
 
 @container page-shell (min-width: 48rem) {

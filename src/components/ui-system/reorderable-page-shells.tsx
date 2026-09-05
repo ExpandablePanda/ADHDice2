@@ -14,6 +14,7 @@ import {
   getPageShellColumnOptions,
   getPageShellColumnSlot,
   getPageShellGridColumnGeometry,
+  getPageShellRowOrder,
   isPageShellCenteredPlacement,
   clampPageShellHeight,
   formatPageShellDimensions,
@@ -1026,10 +1027,16 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const hasCustomHeight = size.heightPx !== null;
     const naturalHeight = naturalHeights[shell.id];
     const packedPosition = usePackedPlacement ? packedPositions[shell.id] : undefined;
+    const isFullWidth = size.span === 12;
+    const isCentered = isPageShellCenteredPlacement(layout.placements?.[shell.id]);
+    const centeredOffset = isCentered && size.span % 2 === 1
+      ? `calc((100% + 1.25rem) / ${size.span * 2})`
+      : "0px";
     const packedStyle = packedPosition
       ? {
         "--page-shell-grid-column-span": packedPosition.columnSpan,
         "--page-shell-grid-column-start": packedPosition.columnStart,
+        "--page-shell-grid-center-offset": centeredOffset,
         "--page-shell-grid-row-span": packedPosition.rowSpan,
         "--page-shell-grid-row-start": packedPosition.rowStart,
       } as CSSProperties
@@ -1038,20 +1045,24 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       ? spanClass
       : layout.canonicalLayout.shellClassNames?.[shell.id] ?? "";
     const columnOptions = pageShellColumnOptions.get(shell.id) ?? [];
-    const isFullWidth = size.span === 12;
-    const isCentered = isPageShellCenteredPlacement(layout.placements?.[shell.id]);
     const columnSlot = isFullWidth
       ? null
       : getPageShellColumnSlot(orderedShells.map((candidate) => candidate.id), layout.sizes, layout.placements, shell.id, visibleShellIds);
     const currentColumnLabel = isCentered ? "Center" : columnSlot ? `Col ${columnSlot.columnLabel}` : "Col A";
     const shellSlot = columnSlot?.slot ?? 1;
     const slotCount = columnSlot?.slotCount ?? 1;
+    const rowOrder = isCentered
+      ? getPageShellRowOrder(orderedShells.map((candidate) => candidate.id), layout.sizes, layout.placements, shell.id, visibleShellIds)
+      : null;
+    const movementIndex = rowOrder?.row ?? shellSlot - 1;
+    const movementCount = rowOrder?.rowCount ?? slotCount;
     return (
       <div
         className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
         data-page-shell-id={shell.id}
         data-page-shell-dragging={draggingId === shell.id ? "true" : "false"}
         data-page-shell-resizing={resizingId === shell.id ? "true" : "false"}
+        data-page-shell-centered={isCentered ? "true" : "false"}
         data-page-shell-rendered-width={renderedWidths[shell.id] ?? undefined}
         data-page-shell-size-span={size.span}
         key={shell.id}
@@ -1149,10 +1160,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                     <span>/{slotCount}</span>
                   </label>
                 ) : null}
-                {layout.canReorder && !isCentered ? (
-                  <div className="flex shrink-0 items-center gap-0.5" aria-label={`${shell.label} lane movement controls`}>
-                    <button aria-label={`Move ${shell.label} up`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellSlot <= 1} onClick={(event) => moveShellLane(event, shell.id, "up")} title={`Move ${shell.label} up`} type="button"><ArrowUp aria-hidden="true" className="h-3.5 w-3.5" /></button>
-                    <button aria-label={`Move ${shell.label} down`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellSlot >= slotCount} onClick={(event) => moveShellLane(event, shell.id, "down")} title={`Move ${shell.label} down`} type="button"><ArrowDown aria-hidden="true" className="h-3.5 w-3.5" /></button>
+                {layout.canReorder && !isFullWidth ? (
+                  <div className="flex shrink-0 items-center gap-0.5" aria-label={`${shell.label} ${isCentered ? "row" : "lane"} movement controls`}>
+                    <button aria-label={`Move ${shell.label} up`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={movementIndex <= 0} onClick={(event) => moveShellLane(event, shell.id, "up")} title={`Move ${shell.label} up`} type="button"><ArrowUp aria-hidden="true" className="h-3.5 w-3.5" /></button>
+                    <button aria-label={`Move ${shell.label} down`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={movementIndex >= movementCount - 1} onClick={(event) => moveShellLane(event, shell.id, "down")} title={`Move ${shell.label} down`} type="button"><ArrowDown aria-hidden="true" className="h-3.5 w-3.5" /></button>
                   </div>
                 ) : null}
                 <button

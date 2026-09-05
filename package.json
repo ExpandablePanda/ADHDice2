@@ -1,6 +1,6 @@
 {
   "name": "adhdice-clean-prototype",
-  "version": "7.12.94",
+  "version": "7.12.95",
   "private": true,
   "scripts": {
     "dev": "node --experimental-strip-types ./scripts/dev-server.mjs",

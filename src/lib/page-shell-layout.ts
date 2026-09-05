@@ -537,6 +537,11 @@ export type PageShellColumnSlot = {
   slotCount: number;
 };
 
+export type PageShellRowOrder = {
+  row: number;
+  rowCount: number;
+};
+
 export type PageShellColumnOption = {
   columnStart?: number;
   kind: "centered" | "existing" | "new-left" | "new-right";
@@ -746,6 +751,43 @@ function isPageShellRowBoundary(
   placements: Readonly<Record<string, PageShellPlacement>>,
 ) {
   return sizes[id]?.span === PAGE_SHELL_OPTIONS_LAST || isPageShellCenteredPlacement(placements[id]);
+}
+
+function getPageShellRowUnits(
+  order: readonly string[],
+  sizes: Readonly<Record<string, PageShellSize>>,
+  placements: Readonly<Record<string, PageShellPlacement>>,
+  visibleShellIds: readonly string[],
+) {
+  const visibleIds = new Set(visibleShellIds);
+  const rows: string[][] = [];
+  let region: string[] = [];
+  for (const id of order) {
+    if (!visibleIds.has(id)) continue;
+    if (isPageShellRowBoundary(id, sizes, placements)) {
+      if (region.length > 0) rows.push(region);
+      region = [];
+      rows.push([id]);
+    } else {
+      region.push(id);
+    }
+  }
+  if (region.length > 0) rows.push(region);
+  return rows;
+}
+
+/** Returns the presentation-only row coordinate for a centered shell. */
+export function getPageShellRowOrder(
+  order: readonly string[],
+  sizes: Readonly<Record<string, PageShellSize>>,
+  placements: Readonly<Record<string, PageShellPlacement>>,
+  sourceId: string,
+  visibleShellIds: readonly string[] = order,
+): PageShellRowOrder | null {
+  if (!isPageShellCenteredPlacement(placements[sourceId])) return null;
+  const rows = getPageShellRowUnits(order, sizes, placements, visibleShellIds);
+  const row = rows.findIndex((rowIds) => rowIds.includes(sourceId));
+  return row < 0 ? null : { row, rowCount: rows.length };
 }
 
 /** Runtime-only grid coordinate for a centered row; never a semantic column. */
@@ -1115,9 +1157,11 @@ function resequencePageShellPlacement(
   targetColumnStart: number,
   targetLane: number,
   orderForTieBreak: readonly string[],
+  preserveCenteredMode = false,
 ) {
   const nextPlacements = clonePageShellPlacements(layout.placements);
-  const sourceColumnStart = nextPlacements[sourceId]?.columnStart;
+  const sourcePlacement = nextPlacements[sourceId];
+  const sourceColumnStart = sourcePlacement?.columnStart;
   if (sourceColumnStart === undefined) return { order: [...layout.order], placements: nextPlacements };
   const destinationIds = visibleShellIds
     .filter((id) => id !== sourceId && !isPageShellCenteredPlacement(nextPlacements[id]) && nextPlacements[id]?.columnStart === targetColumnStart)
@@ -1127,10 +1171,17 @@ function resequencePageShellPlacement(
     ));
   destinationIds.splice(Math.max(0, Math.min(Math.round(targetLane), destinationIds.length)), 0, sourceId);
   const affectedColumnStarts = new Set<number>([targetColumnStart, sourceColumnStart]);
-  nextPlacements[sourceId] = { columnStart: targetColumnStart, laneOrder: 0 };
+  nextPlacements[sourceId] = {
+    columnStart: targetColumnStart,
+    laneOrder: 0,
+    ...(preserveCenteredMode && isPageShellCenteredPlacement(sourcePlacement) ? { mode: "centered" as const } : {}),
+  };
   destinationIds.forEach((id, laneOrder) => {
     nextPlacements[id] = { columnStart: targetColumnStart, laneOrder };
   });
+  if (preserveCenteredMode && isPageShellCenteredPlacement(sourcePlacement)) {
+    nextPlacements[sourceId] = { ...nextPlacements[sourceId], mode: "centered" };
+  }
   for (const columnStart of affectedColumnStarts) {
     const columnIds = visibleShellIds
       .filter((id) => !isPageShellCenteredPlacement(nextPlacements[id]) && nextPlacements[id]?.columnStart === columnStart && (columnStart === targetColumnStart || id !== sourceId))
@@ -1167,7 +1218,7 @@ export function placePageShellAtDrop(
     target.insertionIndex,
   );
   const mergedOrder = mergeVisiblePageShellOrder(layout.order, nextVisibleOrder, visibleShellIds);
-  return resequencePageShellPlacement(layout, visibleShellIds, sourceId, target.columnStart, target.laneOrder, mergedOrder);
+  return resequencePageShellPlacement(layout, visibleShellIds, sourceId, target.columnStart, target.laneOrder, mergedOrder, true);
 }
 
 /** Moves one non-full-width shell to an explicitly selected semantic column. */
@@ -1248,6 +1299,32 @@ export function movePageShellToSlot(
   return resequencePageShellPlacement(layout, visibleShellIds, sourceId, sourcePlacement.columnStart, targetSlot - 1, layout.order);
 }
 
+function movePageShellCenteredRow(
+  layout: PageShellLayoutPreference,
+  visibleShellIds: readonly string[],
+  sourceId: string,
+  direction: "up" | "down",
+) {
+  const placements = layout.placements ?? {};
+  if (!isPageShellCenteredPlacement(placements[sourceId])) {
+    return { order: [...layout.order], placements: clonePageShellPlacements(layout.placements) };
+  }
+  const visibleOrder = projectVisiblePageShellOrder(layout.order, visibleShellIds);
+  const rows = getPageShellRowUnits(visibleOrder, layout.sizes, placements, visibleShellIds);
+  const sourceRow = rows.findIndex((rowIds) => rowIds.includes(sourceId));
+  const targetRow = direction === "up" ? sourceRow - 1 : sourceRow + 1;
+  if (sourceRow < 0 || targetRow < 0 || targetRow >= rows.length) {
+    return { order: [...layout.order], placements: clonePageShellPlacements(layout.placements) };
+  }
+  [rows[sourceRow], rows[targetRow]] = [rows[targetRow], rows[sourceRow]];
+  const mergedOrder = mergeVisiblePageShellOrder(layout.order, rows.flat(), visibleShellIds);
+  const packedPositions = packPageShellLayout(mergedOrder, layout.sizes, { placements });
+  return {
+    order: derivePageShellVisualOrderFromPackedPositions(mergedOrder, layout.sizes, placements, packedPositions),
+    placements: clonePageShellPlacements(layout.placements),
+  };
+}
+
 /** Moves one shell lane earlier or later without consulting rendered geometry. */
 export function movePageShellOneLane(
   layout: PageShellLayoutPreference,
@@ -1257,6 +1334,9 @@ export function movePageShellOneLane(
 ) {
   const sourcePlacement = layout.placements?.[sourceId];
   if (!sourcePlacement) return { order: [...layout.order], placements: clonePageShellPlacements(layout.placements) };
+  if (isPageShellCenteredPlacement(sourcePlacement)) {
+    return movePageShellCenteredRow(layout, visibleShellIds, sourceId, direction);
+  }
   const column = derivePageShellColumns(visibleShellIds, layout.sizes, layout.placements ?? {}, visibleShellIds)
     .find((candidate) => candidate.columnStart === sourcePlacement.columnStart);
   const sourceSlot = column?.shellIds.indexOf(sourceId) ?? -1;

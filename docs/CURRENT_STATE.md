@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.94`.
+- Current working app version: `7.12.95`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.95 Centered Row Behavior Completion
+
+Centered shells retain `mode: "centered"` through drag/drop, regain Up/Down
+row-order controls, and use an exact half-track visual offset for odd widths
+such as 5/12 and 7/12. Centered shells still omit semantic Column and Slot
+controls, and Center → Column conversion remains a normal semantic placement.
 
 ## 2026-09-05 7.12.94 Centered Row Shell Placement
 

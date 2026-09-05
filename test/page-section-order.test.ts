@@ -39,6 +39,7 @@ import {
   getPageShellColumnSlot,
   getPageShellColumnOptions,
   getPageShellExportFilename,
+  getPageShellRowOrder,
   getPageShellViewsStorageKey,
   getRegisteredPageShellPages,
   getPageShellShrinkHeight,
@@ -722,10 +723,15 @@ test("shell editor presents a centered placement without Column or Slot controls
   ));
   const centeredShell = markup.match(/data-page-shell-id="center"[\s\S]*?data-page-shell-id="right"/)?.[0] ?? "";
   assert.match(centeredShell, /--page-shell-grid-column-start:4/);
+  assert.match(centeredShell, /data-page-shell-centered="true"/);
   assert.match(centeredShell, /<span>Center<\/span>/);
   assert.match(centeredShell, /aria-label="Set Centered Shell placement"/);
   assert.doesNotMatch(centeredShell, /aria-label="Set Centered Shell slot"/);
-  assert.doesNotMatch(centeredShell, /Centered Shell lane movement controls/);
+  assert.match(centeredShell, /Centered Shell row movement controls/);
+  assert.match(centeredShell, /aria-label="Move Centered Shell up"/);
+  assert.match(centeredShell, /aria-label="Move Centered Shell down"/);
+  assert.match(shellSource, /getPageShellRowOrder\(/);
+  assert.match(globalSource, /data-page-shell-centered="true"/);
 });
 
 test("shell editor keeps identity fixed and contains the complete tool row in a horizontal scroller", () => {
@@ -1274,6 +1280,21 @@ test("Center Row is a persisted placement mode and a semantic row boundary, not 
   assert.deepEqual(centered.placements?.center, placements.center);
   assert.deepEqual(movePageShellToColumn({ ...centered, sizes }, order, "center", 1).placements?.center, { columnStart: 1, laneOrder: 1 });
   assert.deepEqual(getPageShellColumnOptions(order, sizes, placements, "center").map((option) => option.label), ["Center row", "Column A", "Column B"]);
+  assert.deepEqual(getPageShellRowOrder(order, sizes, placements, "center"), { row: 1, rowCount: 3 });
+  const centeredDragged = placePageShellAtDrop({ order, placements, sizes }, order, "center", {
+    columnStart: 1,
+    insertionIndex: 1,
+    laneOrder: 1,
+    targetId: "left",
+  });
+  assert.equal(centeredDragged.placements?.center?.mode, "centered");
+  const centeredMovedUp = movePageShellOneLane({ order, placements, sizes }, order, "center", "up");
+  assert.equal(centeredMovedUp.order[0], "center");
+  assert.deepEqual(centeredMovedUp.placements?.center, placements.center);
+  assert.deepEqual(getPageShellRowOrder(centeredMovedUp.order, sizes, centeredMovedUp.placements ?? {}, "center"), { row: 0, rowCount: 2 });
+  const centeredMovedDown = movePageShellOneLane({ ...centeredMovedUp, sizes }, centeredMovedUp.order, "center", "down");
+  assert.equal(centeredMovedDown.order.at(-1), "center");
+  assert.deepEqual(centeredMovedDown.placements?.center, placements.center);
   assert.equal(
     getPageShellDropTarget(
       [
@@ -1291,6 +1312,39 @@ test("Center Row is a persisted placement mode and a semantic row boundary, not 
     ).columnStart,
     7,
   );
+});
+
+test("odd-width Center Row shells receive the exact half-track centering offset", () => {
+  const order = ["five", "seven"];
+  const sizes = {
+    five: { heightPx: 144, span: 5 as const },
+    seven: { heightPx: 144, span: 7 as const },
+  };
+  const placements = {
+    five: { columnStart: 1, laneOrder: 0, mode: "centered" as const },
+    seven: { columnStart: 1, laneOrder: 1, mode: "centered" as const },
+  };
+  const packed = packPageShellLayout(order, sizes, { placements });
+  assert.equal(packed.five.columnStart, 4);
+  assert.equal(packed.seven.columnStart, 3);
+  const layout: PageShellLayoutState = {
+    ...staticShellLayout(true),
+    canonicalLayout: { order, sizes },
+    isCanonical: false,
+    order,
+    placements,
+    sizes,
+  };
+  const markup = renderToStaticMarkup(createElement(
+    ReorderablePageShells,
+    { layout },
+    createElement(PageShell, { id: "five", label: "Five Shell" }, createElement("span", null, "five")),
+    createElement(PageShell, { id: "seven", label: "Seven Shell" }, createElement("span", null, "seven")),
+  ));
+  const fiveMarkup = markup.match(/data-page-shell-id="five"[\s\S]*?data-page-shell-id="seven"/)?.[0] ?? "";
+  const sevenMarkup = markup.match(/data-page-shell-id="seven"[\s\S]*$/)?.[0] ?? "";
+  assert.match(fiveMarkup, /--page-shell-grid-center-offset:calc\(\(100% \+ 1\.25rem\) \/ 10\)/);
+  assert.match(sevenMarkup, /--page-shell-grid-center-offset:calc\(\(100% \+ 1\.25rem\) \/ 14\)/);
 });
 
 test("Column + Slot coordinates derive from semantic placement and reorder only one column", () => {
