@@ -1573,6 +1573,7 @@ export function TaskApp() {
   const profile = useProfileStore();
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [requestedSettingsSection, setRequestedSettingsSection] = useState<NavigatorSettingsSection | null>(null);
+  const [requestedPageShell, setRequestedPageShell] = useState<Extract<NavigatorSearchAction, { kind: "page-shell" }> | null>(null);
   const [isListColumnMenuOpen, setIsListColumnMenuOpen] = useState(false);
   const [isKeyboardShortcutsMenuOpen, setIsKeyboardShortcutsMenuOpen] = useState(false);
   const [isTaskListSettingsOpen, setIsTaskListSettingsOpen] = useState(false);
@@ -4063,6 +4064,11 @@ export function TaskApp() {
       setRequestedSettingsSection(null);
       setActivePage("Health");
       persistHealthTabPreference(action.tab);
+    } else if (action.kind === "page-shell") {
+      setRequestedSettingsSection(null);
+      setRequestedPageShell(action);
+      setActivePage(action.page);
+      if (action.healthTab) persistHealthTabPreference(action.healthTab);
     } else {
       setActivePage("Settings");
       setRequestedSettingsSection(action.section);
@@ -4368,6 +4374,35 @@ export function TaskApp() {
   const shouldDeferPageRender = isRestoringPersistedUiState;
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
+
+  useEffect(() => {
+    const request = requestedPageShell;
+    if (!request || !isAuthenticatedAppBootReady || activePage !== request.page || (request.healthTab && activeHealthTab !== request.healthTab)) {
+      return;
+    }
+    let frame: number | null = null;
+    let attempts = 0;
+    const revealRequestedShell = () => {
+      frame = null;
+      const shell = document.querySelector<HTMLElement>(`[data-page-shell-id="${request.shellId}"]`);
+      if (shell?.isConnected) {
+        const rect = shell.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          const body = shell.querySelector<HTMLElement>(".page-shell-body");
+          if (body) body.scrollTop = 0;
+          shell.scrollIntoView({ block: "start" });
+          setRequestedPageShell(null);
+          return;
+        }
+      }
+      attempts += 1;
+      if (attempts < 12) frame = window.requestAnimationFrame(revealRequestedShell);
+    };
+    frame = window.requestAnimationFrame(revealRequestedShell);
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [activeHealthTab, activePage, isAuthenticatedAppBootReady, requestedPageShell]);
   const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
   const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string) => {
     const result = buildChildTaskCreationDraft({

@@ -36,6 +36,14 @@ function findTarget(query: string) {
 test("navigation search matches destination titles and aliases without searching user content", () => {
   assert.equal(searchNavigatorTargets("", targets).length, targets.length);
   assert.deepEqual(findTarget("fitness").breadcrumb, ["Health", "Fitness"]);
+  assert.deepEqual(findTarget("custom nutrition").action, {
+    kind: "page-shell",
+    page: "Health",
+    pageKey: "health:food",
+    shellId: "food-library",
+    healthTab: "Food",
+  });
+  assert.equal(targets.filter((target) => target.action.kind === "page-shell").length > 0, true);
   assert.deepEqual(findTarget("brain").breadcrumb, ["Tasks", "Brainstorm"]);
   assert.deepEqual(findTarget("timezone").breadcrumb, ["Settings", "Day Reset", "Time Zone"]);
   assert.doesNotMatch(readFileSync(new URL("../src/lib/navigator-search.ts", import.meta.url), "utf8"), /Task\[\]|supabase|from\("/);
@@ -118,6 +126,14 @@ test("Settings targets remain pending through shell hydration and acknowledge af
   assert.match(settingsSource, /rect\.width <= 0 \|\| rect\.height <= 0/);
   assert.match(settingsSource, /onSectionRequestHandled\?\.\(requestedSection\)/);
   assert.match(settingsSource, /handledSectionRef\.current === requestedSection/);
+});
+
+test("shell destinations route to their page and request direct shell reveal", () => {
+  assert.match(appSource, /action\.kind === "page-shell"/);
+  assert.match(appSource, /setRequestedPageShell\(action\)/);
+  assert.match(appSource, /data-page-shell-id=\"\$\{request\.shellId\}\"/);
+  assert.match(appSource, /persistHealthTabPreference\(action\.healthTab\)/);
+  assert.match(appSource, /shell\.scrollIntoView\(\{ block: "start" \}\)/);
 });
 
 test("inline search mode enters with an autofocused input and supports keyboard selection", () => {

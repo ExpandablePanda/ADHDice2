@@ -665,7 +665,14 @@ function placementsFromPackedPositions(
 ) {
   const laneCounts = new Map<number, number>();
   const placements: Record<string, PageShellPlacement> = {};
-  for (const id of order) {
+  const positionedIds = order
+    .filter((id) => positions[id])
+    .sort((left, right) => (
+      positions[left].columnStart - positions[right].columnStart
+      || positions[left].rowStart - positions[right].rowStart
+      || order.indexOf(left) - order.indexOf(right)
+    ));
+  for (const id of positionedIds) {
     const position = positions[id];
     if (!position) continue;
     const laneOrder = laneCounts.get(position.columnStart) ?? 0;
@@ -673,6 +680,75 @@ function placementsFromPackedPositions(
     placements[id] = { columnStart: position.columnStart, laneOrder };
   }
   return placements;
+}
+
+function comparePageShellVisualOrder(
+  leftId: string,
+  rightId: string,
+  order: readonly string[],
+  placements: Readonly<Record<string, PageShellPlacement>>,
+  positions: Readonly<Record<string, PageShellPackedPosition>>,
+) {
+  const leftPlacement = placements[leftId] ?? positions[leftId];
+  const rightPlacement = placements[rightId] ?? positions[rightId];
+  return (leftPlacement?.columnStart ?? Number.POSITIVE_INFINITY) - (rightPlacement?.columnStart ?? Number.POSITIVE_INFINITY)
+    || (placements[leftId]?.laneOrder ?? positions[leftId]?.rowStart ?? Number.POSITIVE_INFINITY)
+      - (placements[rightId]?.laneOrder ?? positions[rightId]?.rowStart ?? Number.POSITIVE_INFINITY)
+    || (positions[leftId]?.rowStart ?? Number.POSITIVE_INFINITY) - (positions[rightId]?.rowStart ?? Number.POSITIVE_INFINITY)
+    || order.indexOf(leftId) - order.indexOf(rightId);
+}
+
+/**
+ * Returns the stable visual reading order for an explicitly placed layout.
+ * Column and lane are the semantic ordering authority. Runtime packed rows
+ * only divide the sequence around full-width shells, which are vertical
+ * boundaries between packed regions.
+ */
+function derivePageShellVisualOrderFromPackedPositions(
+  order: readonly string[],
+  sizes: Readonly<Record<string, PageShellSize>>,
+  placements: Readonly<Record<string, PageShellPlacement>>,
+  positions: Readonly<Record<string, PageShellPackedPosition>>,
+) {
+  const remaining = new Set(order);
+  const visualOrder: string[] = [];
+  const boundaries = order
+    .filter((id) => sizes[id]?.span === PAGE_SHELL_OPTIONS_LAST && positions[id])
+    .sort((left, right) => (
+      positions[left].rowStart - positions[right].rowStart
+      || order.indexOf(left) - order.indexOf(right)
+    ));
+
+  for (const boundaryId of boundaries) {
+    const boundary = positions[boundaryId];
+    const regionIds = order.filter((id) => (
+      remaining.has(id)
+      && id !== boundaryId
+      && sizes[id]?.span !== PAGE_SHELL_OPTIONS_LAST
+      && positions[id]?.rowStart < boundary.rowStart
+    ));
+    regionIds.sort((left, right) => comparePageShellVisualOrder(left, right, order, placements, positions));
+    visualOrder.push(...regionIds);
+    regionIds.forEach((id) => remaining.delete(id));
+    visualOrder.push(boundaryId);
+    remaining.delete(boundaryId);
+  }
+
+  const trailingIds = order.filter((id) => remaining.has(id));
+  trailingIds.sort((left, right) => comparePageShellVisualOrder(left, right, order, placements, positions));
+  visualOrder.push(...trailingIds);
+  return visualOrder;
+}
+
+/** Derives a visual order from semantic placement without persisting DOM coordinates. */
+export function derivePageShellVisualOrder(
+  order: readonly string[],
+  sizes: Readonly<Record<string, PageShellSize>>,
+  placements: Readonly<Record<string, PageShellPlacement>>,
+) {
+  const positions = packPageShellLayout(order, sizes, { placements });
+  const derivedPlacements = placementsFromPackedPositions(order, positions);
+  return derivePageShellVisualOrderFromPackedPositions(order, sizes, derivedPlacements, positions);
 }
 
 /**
@@ -834,12 +910,13 @@ export function placePageShellAtDrop(
   sourceId: string,
   target: PageShellDropTarget,
 ) {
+  const currentVisibleOrder = projectVisiblePageShellOrder(layout.order, visibleShellIds);
   const nextVisibleOrder = reorderPageShellOrderAt(
-    visibleShellIds,
+    currentVisibleOrder,
     sourceId,
     target.insertionIndex,
   );
-  const nextOrder = mergeVisiblePageShellOrder(layout.order, nextVisibleOrder, visibleShellIds);
+  const mergedOrder = mergeVisiblePageShellOrder(layout.order, nextVisibleOrder, visibleShellIds);
   const nextPlacements: Record<string, PageShellPlacement> = Object.fromEntries(
     Object.entries(layout.placements ?? {}).map(([id, placement]) => [id, { ...placement }]),
   );
@@ -847,13 +924,77 @@ export function placePageShellAtDrop(
     .filter((id) => id !== sourceId && nextPlacements[id]?.columnStart === target.columnStart)
     .sort((left, right) => (
       nextPlacements[left].laneOrder - nextPlacements[right].laneOrder
-      || nextOrder.indexOf(left) - nextOrder.indexOf(right)
+      || mergedOrder.indexOf(left) - mergedOrder.indexOf(right)
     ));
   destinationIds.splice(Math.max(0, Math.min(target.laneOrder, destinationIds.length)), 0, sourceId);
   destinationIds.forEach((id, laneOrder) => {
     nextPlacements[id] = { columnStart: target.columnStart, laneOrder };
   });
-  return { order: nextOrder, placements: nextPlacements };
+  const packedPositions = packPageShellLayout(mergedOrder, layout.sizes, { placements: nextPlacements });
+  const completedPlacements = placementsFromPackedPositions(mergedOrder, packedPositions);
+  const nextOrder = derivePageShellVisualOrderFromPackedPositions(mergedOrder, layout.sizes, completedPlacements, packedPositions);
+  return { order: nextOrder, placements: completedPlacements };
+}
+
+/**
+ * Moves a shell to a displayed visual position while preserving existing
+ * semantic columns whenever that position can be represented within them.
+ * Positions outside the current column use the nearest resulting visual
+ * neighbor to infer a destination column before any broader reflow.
+ */
+export function movePageShellToVisualPosition(
+  layout: PageShellLayoutPreference,
+  visibleShellIds: readonly string[],
+  sourceId: string,
+  requestedPosition: number,
+) {
+  const visualOrder = derivePageShellVisualOrder(visibleShellIds, layout.sizes, layout.placements ?? {});
+  const sourceIndex = visualOrder.indexOf(sourceId);
+  const sourcePlacement = layout.placements?.[sourceId];
+  if (sourceIndex < 0 || !sourcePlacement) return { order: [...layout.order], placements: layout.placements ?? {} };
+
+  const targetIndex = Math.max(0, Math.min(visualOrder.length - 1, Math.round(requestedPosition) - 1));
+  let firstSameColumnIndex = sourceIndex;
+  let lastSameColumnIndex = sourceIndex;
+  while (firstSameColumnIndex > 0) {
+    const candidateId = visualOrder[firstSameColumnIndex - 1];
+    if (layout.sizes[candidateId]?.span === PAGE_SHELL_OPTIONS_LAST || layout.placements?.[candidateId]?.columnStart !== sourcePlacement.columnStart) break;
+    firstSameColumnIndex -= 1;
+  }
+  while (lastSameColumnIndex < visualOrder.length - 1) {
+    const candidateId = visualOrder[lastSameColumnIndex + 1];
+    if (layout.sizes[candidateId]?.span === PAGE_SHELL_OPTIONS_LAST || layout.placements?.[candidateId]?.columnStart !== sourcePlacement.columnStart) break;
+    lastSameColumnIndex += 1;
+  }
+  if (targetIndex >= firstSameColumnIndex && targetIndex <= lastSameColumnIndex) {
+    return placePageShellAtDrop(layout, visibleShellIds, sourceId, {
+      columnStart: sourcePlacement.columnStart,
+      insertionIndex: targetIndex,
+      laneOrder: targetIndex - firstSameColumnIndex,
+      targetId: null,
+    });
+  }
+
+  const nextVisualOrder = reorderPageShellOrderAt(visualOrder, sourceId, targetIndex);
+  const targetAfterId = nextVisualOrder[targetIndex + 1];
+  const targetBeforeId = nextVisualOrder[targetIndex - 1];
+  const targetAfterPlacement = targetAfterId ? layout.placements?.[targetAfterId] : undefined;
+  const targetBeforePlacement = targetBeforeId ? layout.placements?.[targetBeforeId] : undefined;
+  const destinationPlacement = targetAfterPlacement ?? targetBeforePlacement ?? sourcePlacement;
+  const destinationIds = visualOrder.filter((id) => (
+    id !== sourceId && layout.placements?.[id]?.columnStart === destinationPlacement.columnStart
+  ));
+  const referenceId = targetAfterPlacement ? targetAfterId : targetBeforeId;
+  const referenceIndex = referenceId ? destinationIds.indexOf(referenceId) : -1;
+  const laneOrder = referenceIndex < 0
+    ? destinationIds.length
+    : targetAfterPlacement ? referenceIndex : referenceIndex + 1;
+  return placePageShellAtDrop(layout, visibleShellIds, sourceId, {
+    columnStart: destinationPlacement.columnStart,
+    insertionIndex: targetIndex,
+    laneOrder,
+    targetId: referenceId ?? null,
+  });
 }
 
 /**
@@ -1020,7 +1161,7 @@ export function formatPageShellDimensions(
   const width = renderedWidth === undefined
     ? ""
     : ` · ${renderedWidth === null || !Number.isFinite(renderedWidth) ? "—" : `${Math.round(renderedWidth)}px`}`;
-  return `W ${span}/12${width} · H ${formatHeight(heightPx ?? naturalHeight)}/${formatHeight(naturalHeight)}`;
+  return `W ${span}/12${width} · H ${formatHeight(heightPx ?? naturalHeight)}px · Natural ${formatHeight(naturalHeight)}px`;
 }
 
 function getSafePageShellNaturalHeight(naturalHeight: number) {
@@ -1094,6 +1235,7 @@ export function normalizePageShellLayout(
   const storedPlacements = isPageShellLayoutPreference(stored) && stored.placements && typeof stored.placements === "object" && !Array.isArray(stored.placements)
     ? stored.placements as Record<string, unknown>
     : {};
+  const hasStoredPlacements = Object.keys(storedPlacements).length > 0;
   const placements: Record<string, PageShellPlacement> = {};
   for (const id of order) {
     if (Object.prototype.hasOwnProperty.call(storedPlacements, id)) {
@@ -1102,7 +1244,10 @@ export function normalizePageShellLayout(
   }
   const packedPositions = packPageShellLayout(order, sizes, { placements });
   const derivedPlacements = placementsFromPackedPositions(order, packedPositions);
-  return { order, placements: derivedPlacements, sizes };
+  const visualOrder = hasStoredPlacements
+    ? derivePageShellVisualOrderFromPackedPositions(order, sizes, derivedPlacements, packedPositions)
+    : order;
+  return { order: visualOrder, placements: derivedPlacements, sizes };
 }
 
 function readStoredPageShellLayouts(storage: PageShellLayoutStorage, storageKey: string) {

@@ -32,6 +32,7 @@ import {
   clampPageShellHeight,
   buildPageShellLayoutExport,
   createPageShellView,
+  derivePageShellVisualOrder,
   formatPageShellDimensions,
   getPageShellExportFilename,
   getPageShellViewsStorageKey,
@@ -39,6 +40,7 @@ import {
   getPageShellShrinkHeight,
   isLegacyTestD20LayoutPreference,
   mergeVisiblePageShellOrder,
+  movePageShellToVisualPosition,
   normalizePageShellLayout,
   normalizePageShellSpan,
   normalizePageShellSize,
@@ -473,10 +475,10 @@ test("shell height controls preserve the 144px floor, natural-short behavior, an
   assert.equal(clampPageShellHeight(5000, 912), PAGE_SHELL_MAX_HEIGHT);
   assert.ok(clampPageShellHeight(960, 912) > 912);
   assert.equal(clampPageShellHeight(5000, 120), 120);
-  assert.equal(formatPageShellDimensions(6, 288, 912), "W 6/12 · H 288/912");
-  assert.equal(formatPageShellDimensions(6, 288, 912, 842), "W 6/12 · 842px · H 288/912");
-  assert.equal(formatPageShellDimensions(6, null, 912), "W 6/12 · H 912/912");
-  assert.equal(formatPageShellDimensions(6, 288, null), "W 6/12 · H 288/—");
+  assert.equal(formatPageShellDimensions(6, 288, 912), "W 6/12 · H 288px · Natural 912px");
+  assert.equal(formatPageShellDimensions(6, 288, 912, 842), "W 6/12 · 842px · H 288px · Natural 912px");
+  assert.equal(formatPageShellDimensions(6, null, 912), "W 6/12 · H 912px · Natural 912px");
+  assert.equal(formatPageShellDimensions(6, 288, null), "W 6/12 · H 288px · Natural —px");
   assert.equal(getPageShellExportFilename(new Date("2026-09-04T12:00:00.000Z")), "adhdice-layout-templates-2026-09-04.json");
   assert.doesNotMatch(globalSource, /@media \(max-width: 1279px\)[\s\S]*page-shell-custom-height/);
 });
@@ -502,7 +504,7 @@ test("conditional shells disappear normally and become editable placeholders", (
   assert.match(editMarkup, /data-page-shell-size-span="6"/);
   assert.match(editMarkup, /aria-label="Shrink Conditional"/);
   assert.match(editMarkup, /aria-label="Expand Conditional"/);
-  assert.match(editMarkup, /W 6\/12 · H 288\/—/);
+  assert.match(editMarkup, /W 6\/12 · H 288px · Natural —px/);
 });
 
 test("shell surfaces keep the visual frame fixed while the body owns constrained scrolling", () => {
@@ -800,6 +802,133 @@ test("semantic placement keeps the Water-style right lane stable through a persi
   const packed = packPageShellLayout(withNewShell.order, withNewShell.sizes, { placements: withNewShell.placements });
   assert.equal(packed.d.columnStart, 7);
   assert.ok(packed.d.rowStart > packed.c.rowStart);
+});
+
+test("custom shell positions normalize from visual column-major placement", () => {
+  const sizes = {
+    A: { heightPx: 144, span: 6 as const },
+    B: { heightPx: 144, span: 6 as const },
+    C: { heightPx: 144, span: 6 as const },
+    D: { heightPx: 144, span: 6 as const },
+    E: { heightPx: 144, span: 6 as const },
+    F: { heightPx: 144, span: 3 as const },
+  };
+  const placements = {
+    A: { columnStart: 1, laneOrder: 0 },
+    B: { columnStart: 1, laneOrder: 1 },
+    C: { columnStart: 1, laneOrder: 2 },
+    D: { columnStart: 7, laneOrder: 0 },
+    E: { columnStart: 7, laneOrder: 1 },
+    F: { columnStart: 10, laneOrder: 0 },
+  };
+  const layout = normalizePageShellLayout({
+    order: ["A", "D", "B", "F", "C", "E"],
+    placements,
+    sizes,
+  }, Object.keys(sizes), sizes);
+  assert.deepEqual(layout.order, ["A", "B", "C", "D", "E", "F"]);
+  assert.deepEqual(derivePageShellVisualOrder(["A", "D", "B", "F", "C", "E"], sizes, placements), layout.order);
+});
+
+test("moving one shell across columns preserves its neighbors' physical column and lane relationship", () => {
+  const sizes = {
+    A: { heightPx: 144, span: 6 as const },
+    B: { heightPx: 144, span: 6 as const },
+    C: { heightPx: 144, span: 6 as const },
+    D: { heightPx: 144, span: 6 as const },
+  };
+  const placements = {
+    A: { columnStart: 1, laneOrder: 0 },
+    B: { columnStart: 7, laneOrder: 0 },
+    C: { columnStart: 7, laneOrder: 1 },
+    D: { columnStart: 7, laneOrder: 2 },
+  };
+  const result = placePageShellAtDrop(
+    { order: ["A", "B", "C", "D"], placements, sizes },
+    ["A", "B", "C", "D"],
+    "D",
+    { columnStart: 1, insertionIndex: 1, laneOrder: 1, targetId: null },
+  );
+  assert.deepEqual(result.order, ["A", "D", "B", "C"]);
+  assert.deepEqual(result.placements, {
+    A: { columnStart: 1, laneOrder: 0 },
+    D: { columnStart: 1, laneOrder: 1 },
+    B: { columnStart: 7, laneOrder: 0 },
+    C: { columnStart: 7, laneOrder: 1 },
+  });
+  const sourceOrderResult = placePageShellAtDrop(
+    { order: ["A", "B", "C", "D"], placements, sizes },
+    ["B", "C", "D", "A"],
+    "D",
+    { columnStart: 1, insertionIndex: 1, laneOrder: 1, targetId: null },
+  );
+  assert.deepEqual(sourceOrderResult.order, result.order);
+  assert.deepEqual(sourceOrderResult.placements, result.placements);
+});
+
+test("full-width shells divide visual column-major regions without taking column one early", () => {
+  const sizes = {
+    A: { heightPx: 144, span: 6 as const },
+    B: { heightPx: 144, span: 6 as const },
+    C: { heightPx: 144, span: 6 as const },
+    D: { heightPx: 144, span: 6 as const },
+    Library: { heightPx: 144, span: 12 as const },
+    E: { heightPx: 144, span: 6 as const },
+    F: { heightPx: 144, span: 6 as const },
+  };
+  const placements = {
+    A: { columnStart: 1, laneOrder: 0 },
+    B: { columnStart: 1, laneOrder: 1 },
+    C: { columnStart: 7, laneOrder: 0 },
+    D: { columnStart: 7, laneOrder: 1 },
+    Library: { columnStart: 1, laneOrder: 2 },
+    E: { columnStart: 1, laneOrder: 3 },
+    F: { columnStart: 7, laneOrder: 2 },
+  };
+  assert.deepEqual(
+    derivePageShellVisualOrder(Object.keys(sizes), sizes, placements),
+    ["A", "B", "C", "D", "Library", "E", "F"],
+  );
+});
+
+test("direct Pos uses the same visual order while preserving the current column when possible", () => {
+  const sizes = {
+    A: { heightPx: 144, span: 6 as const },
+    B: { heightPx: 144, span: 6 as const },
+    C: { heightPx: 144, span: 6 as const },
+    D: { heightPx: 144, span: 6 as const },
+    E: { heightPx: 144, span: 6 as const },
+    F: { heightPx: 144, span: 3 as const },
+  };
+  const placements = {
+    A: { columnStart: 1, laneOrder: 0 },
+    B: { columnStart: 1, laneOrder: 1 },
+    C: { columnStart: 1, laneOrder: 2 },
+    D: { columnStart: 7, laneOrder: 0 },
+    E: { columnStart: 7, laneOrder: 1 },
+    F: { columnStart: 10, laneOrder: 0 },
+  };
+  const result = movePageShellToVisualPosition(
+    { order: ["A", "B", "C", "D", "E", "F"], placements, sizes },
+    ["A", "B", "C", "D", "E", "F"],
+    "C",
+    4,
+  );
+  assert.deepEqual(result.order, ["A", "B", "D", "C", "E", "F"]);
+  assert.deepEqual(result.placements?.D, { columnStart: 7, laneOrder: 0 });
+  assert.deepEqual(result.placements?.C, { columnStart: 7, laneOrder: 1 });
+  assert.deepEqual(result.placements?.E, { columnStart: 7, laneOrder: 2 });
+
+  const crossColumnResult = movePageShellToVisualPosition(
+    { order: ["A", "B", "C", "D", "E", "F"], placements, sizes },
+    ["A", "B", "C", "D", "E", "F"],
+    "C",
+    1,
+  );
+  assert.deepEqual(crossColumnResult.order, ["C", "A", "B", "D", "E", "F"]);
+  assert.deepEqual(crossColumnResult.placements?.A, { columnStart: 1, laneOrder: 1 });
+  assert.deepEqual(crossColumnResult.placements?.B, { columnStart: 1, laneOrder: 2 });
+  assert.deepEqual(crossColumnResult.placements?.C, { columnStart: 1, laneOrder: 0 });
 });
 
 test("drop targeting agrees with rendered packed destination instead of replacing its preceding shell", () => {
@@ -1251,8 +1380,9 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /layout\.cancelPreview/);
   assert.match(shellSource, /getPageShellDropTarget/);
   assert.match(shellSource, /placePageShellAtDrop/);
+  assert.match(shellSource, /movePageShellToVisualPosition/);
   assert.match(shellSource, /startVisibleOrder/);
-  assert.match(shellSource, /mergeVisiblePageShellOrder/);
+  assert.doesNotMatch(shellSource, /mergeVisiblePageShellOrder/);
   assert.match(shellSource, /data-page-shell-insertion-indicator/);
   assert.match(shellSource, /interaction\.target/);
   assert.match(shellSource, /renderedShellOrder/);

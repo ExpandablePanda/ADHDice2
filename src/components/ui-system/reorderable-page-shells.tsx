@@ -14,16 +14,15 @@ import {
   getPageShellEmptyHorizontalColumnStart,
   getPageShellGridColumnGeometry,
   clampPageShellHeight,
+  movePageShellToVisualPosition,
   formatPageShellDimensions,
   getPageShellExportFilename,
   getPageShellShrinkHeight,
-  mergeVisiblePageShellOrder,
   normalizePageShellSpan,
   placePageShellAtDrop,
   packPageShellLayout,
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
-  reorderPageShellOrderAt,
   type PageShellPackedPosition,
   type PageShellGeometry,
   type PageShellGridBounds,
@@ -742,25 +741,13 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   function commitShellPosition(id: string, rawValue: string) {
     if (!rawValue.trim()) return;
     const startLayout = currentLayout();
-    const startVisibleOrder = orderedShells.map((shell) => shell.id);
-    const currentIndex = startVisibleOrder.indexOf(id);
-    if (currentIndex < 0) return;
     const numericValue = Number(rawValue);
     if (!Number.isFinite(numericValue)) return;
-    const targetIndex = Math.max(0, Math.min(startVisibleOrder.length - 1, Math.round(numericValue) - 1));
-    const nextVisibleOrder = reorderPageShellOrderAt(startVisibleOrder, id, targetIndex);
-    const nextOrder = mergeVisiblePageShellOrder(startLayout.order, nextVisibleOrder, visibleShellIds);
-    if (layoutsHaveSameOrder(nextOrder, layout.order)) return;
-    const resequencedPlacements = packPageShellLayout(nextOrder, startLayout.sizes);
-    const nextPlacements = Object.fromEntries(Object.entries(resequencedPlacements).map(([shellId, position]) => [shellId, {
-      columnStart: position.columnStart,
-      laneOrder: nextOrder
-        .filter((candidateId) => resequencedPlacements[candidateId]?.columnStart === position.columnStart)
-        .indexOf(shellId),
-    }]));
+    const nextLayout = movePageShellToVisualPosition(startLayout, visibleShellIds, id, numericValue);
+    if (layoutsHaveSameOrder(nextLayout.order, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
     layout.beginPreview(startLayout);
-    layout.setPreviewOrder(nextOrder);
-    layout.setPreviewPlacements(nextPlacements);
+    layout.setPreviewOrder(nextLayout.order);
+    layout.setPreviewPlacements(nextLayout.placements);
     layout.commitPreview();
   }
 
@@ -788,7 +775,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     event.stopPropagation();
     const startLayout = currentLayout();
     const startVisibleOrder = orderedShells.map((shell) => shell.id);
-    const targetIndex = getPageShellDirectionalInsertionIndex(captureShellGeometry(), startVisibleOrder, id, direction);
+    const shellGeometries = captureShellGeometry();
+    const sourceColumnStart = packedPositions[id]?.columnStart;
+    const directionalGeometries = direction === "up" || direction === "down"
+      ? shellGeometries.filter((geometry) => geometry.id === id || packedPositions[geometry.id]?.columnStart === sourceColumnStart)
+      : shellGeometries;
+    const targetIndex = getPageShellDirectionalInsertionIndex(directionalGeometries, startVisibleOrder, id, direction);
     const orderWithoutSource = startVisibleOrder.filter((candidateId) => candidateId !== id);
     const targetId = direction === "left" || direction === "up"
       ? targetIndex === null ? undefined : orderWithoutSource[targetIndex]
@@ -800,7 +792,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       : null;
     if (!targetPosition && emptyColumnStart === null) return;
     const columnStart = targetPosition?.columnStart ?? emptyColumnStart;
-    if (columnStart === undefined) return;
+    if (columnStart === undefined || columnStart === null) return;
     const destinationColumnIds = targetPosition && targetId
       ? startVisibleOrder
         .filter((candidateId) => candidateId !== id && layout.placements?.[candidateId]?.columnStart === targetPosition.columnStart)
@@ -810,18 +802,13 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       ? Math.max(0, destinationColumnIds.indexOf(targetId) + (direction === "down" || direction === "right" ? 1 : 0))
       : 0;
     const resolvedInsertionIndex = targetIndex ?? (direction === "left" ? 0 : orderWithoutSource.length);
-    const nextOrder = mergeVisiblePageShellOrder(
-      startLayout.order,
-      reorderPageShellOrderAt(startVisibleOrder, id, resolvedInsertionIndex),
-      visibleShellIds,
-    );
     const nextLayout = placePageShellAtDrop(startLayout, visibleShellIds, id, {
       columnStart,
       insertionIndex: resolvedInsertionIndex,
       laneOrder: targetLane,
       targetId: targetId ?? null,
     });
-    if (layoutsHaveSameOrder(nextOrder, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
+    if (layoutsHaveSameOrder(nextLayout.order, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
     layout.beginPreview(startLayout);
     layout.setPreviewOrder(nextLayout.order);
     layout.setPreviewPlacements(nextLayout.placements);
@@ -988,7 +975,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
               <span>W</span>
               <input
                 aria-label={`Set ${shell.label} width in columns`}
-                className="page-shell-number-input h-6 min-w-10 w-10 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold tabular-nums text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
+                className="page-shell-number-input h-6 min-w-9 w-9 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold tabular-nums text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
                 inputMode="numeric"
                 max={12}
                 min={3}
