@@ -88,8 +88,18 @@ export function usePageShellLayout(
   const canonicalSizesKey = resolvedCanonicalLayout.order
     .map((id) => `${id}:${resolvedCanonicalLayout.sizes[id]?.span ?? 12}:${resolvedCanonicalLayout.sizes[id]?.heightPx ?? "natural"}`)
     .join("|");
-  const instanceKey = [storageKey ?? "anonymous", pageKey, defaultIdsKey, resolvedCanonicalLayout.order.join("|"), canonicalSizesKey].join(":");
-  const defaultLayout = useMemo(() => ({ order: [...resolvedCanonicalLayout.order], sizes: resolvedCanonicalLayout.sizes }), [resolvedCanonicalLayout]);
+  const canonicalPlacementsKey = resolvedCanonicalLayout.order
+    .map((id) => `${id}:${resolvedCanonicalLayout.placements?.[id]?.columnStart ?? "auto"}:${resolvedCanonicalLayout.placements?.[id]?.laneOrder ?? "auto"}`)
+    .join("|");
+  const instanceKey = [storageKey ?? "anonymous", pageKey, defaultIdsKey, resolvedCanonicalLayout.order.join("|"), canonicalSizesKey, canonicalPlacementsKey].join(":");
+  const defaultLayout = useMemo(
+    () => normalizePageShellLayout({
+      order: resolvedCanonicalLayout.order,
+      placements: resolvedCanonicalLayout.placements,
+      sizes: resolvedCanonicalLayout.sizes,
+    }, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes),
+    [resolvedCanonicalLayout],
+  );
   const [committedLayout, setCommittedLayout] = useState<PageShellLayoutPreference>(defaultLayout);
   const [previewLayout, setPreviewLayout] = useState<PageShellLayoutPreference | null>(null);
   const previewRef = useRef<PageShellLayoutPreference | null>(null);
@@ -113,8 +123,11 @@ export function usePageShellLayout(
         setHasCustomLayoutPreference(false);
       } else {
         if (pageKey === "test" || pageKey === "test:d20") migrateLegacyTestD20Storage(window.localStorage, storageKey, viewsStorageKey);
-        setCommittedLayout(readPageShellLayout(window.localStorage, storageKey, pageKey, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes));
-        setHasCustomLayoutPreference(hasPageShellLayout(window.localStorage, storageKey, pageKey));
+        const hasStoredLayout = hasPageShellLayout(window.localStorage, storageKey, pageKey);
+        setCommittedLayout(hasStoredLayout
+          ? readPageShellLayout(window.localStorage, storageKey, pageKey, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes)
+          : defaultLayout);
+        setHasCustomLayoutPreference(hasStoredLayout);
       }
       setViews(viewsStorageKey && typeof window !== "undefined" ? readPageShellViews(window.localStorage, viewsStorageKey, pageKey) : []);
       setHydratedInstanceKey(instanceKey);

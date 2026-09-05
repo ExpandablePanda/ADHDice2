@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.90`.
+- Current working app version: `7.12.91`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,29 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.91 Canonical Semantic Layout Seed and Stable Edit Topology
+
+Canonical CSS grouping and the editable semantic placement model had drifted:
+Water visibly placed its log left and its three supporting shells right, while
+the editor derived those shells from an automatic pack and reported Today's
+Water as Column A. Canonical multi-column layouts now carry edit placements
+alongside their historical groups/classes. Water seeds `water-log` as A1 and
+`water-pending`, `water-today`, and `water-history` as B1, B2, and B3 using the
+5/12 + 7/12 split. Food, Fitness, Weight, Sleep, Insights, and Test D20 carry
+the equivalent existing 7/12 + 5/12 or 6/12 + 6/12 semantic seeds.
+
+The packed 12-column algorithm now treats each 12/12 shell in global semantic
+order as a true vertical boundary: it packs the preceding two-column region,
+places the full-width shell below the entire region, and starts the next region
+after it. Runtime row coordinates remain derived and are not persisted.
+
+Opening Edit Layout on a canonical page switches to this semantic packed DOM
+immediately, while the page remains canonical until an actual layout mutation
+commits. The canonical grouped DOM therefore does not disappear during a
+resize, so pointer capture safeguards remain unchanged and width previews can
+commit without snapping back. Nested shell expansion remains deferred pending
+QA.
 
 ## 2026-09-05 7.12.90 Semantic Column + Slot Shell Positioning
 

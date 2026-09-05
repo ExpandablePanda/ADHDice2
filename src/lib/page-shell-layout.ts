@@ -30,6 +30,7 @@ export type PageShellCanonicalLayout = {
   gridClassName?: string;
   groups?: readonly PageShellCanonicalGroup[];
   order: readonly string[];
+  placements?: Readonly<Record<string, PageShellPlacement>>;
   shellClassNames?: Readonly<Record<string, string>>;
   sizes: PageShellSizeDefaults;
 };
@@ -197,6 +198,11 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
       { className: "grid gap-5 xl:col-start-2 xl:col-end-3", shellIds: ["food-daily-totals", "food-favorites-recent"] },
       { className: "xl:col-span-full", shellIds: ["food-library"] },
     ],
+    placements: {
+      "food-meal-log": { columnStart: 1, laneOrder: 0 },
+      "food-daily-totals": { columnStart: 8, laneOrder: 0 },
+      "food-favorites-recent": { columnStart: 8, laneOrder: 1 },
+    },
   }),
   Water: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Water, {
     "water-log": CANONICAL_PAGE_SHELL_SIZE(5),
@@ -209,6 +215,12 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
       { className: "xl:col-start-1 xl:col-end-2", shellIds: ["water-log"] },
       { className: "grid gap-5 xl:col-start-2 xl:col-end-3", shellIds: ["water-pending", "water-today", "water-history"] },
     ],
+    placements: {
+      "water-log": { columnStart: 1, laneOrder: 0 },
+      "water-pending": { columnStart: 6, laneOrder: 0 },
+      "water-today": { columnStart: 6, laneOrder: 1 },
+      "water-history": { columnStart: 6, laneOrder: 2 },
+    },
   }),
   Fitness: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Fitness, {
     "fitness-active-workout": NATURAL_PAGE_SHELL_SIZE,
@@ -227,6 +239,10 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
       "fitness-plans": "xl:col-span-full",
       "fitness-workout-history": "xl:col-span-full",
     },
+    placements: {
+      "fitness-today": { columnStart: 1, laneOrder: 0 },
+      "fitness-week": { columnStart: 8, laneOrder: 0 },
+    },
   }),
   Journal: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Journal, {
     "journal-entry-history": NATURAL_PAGE_SHELL_SIZE,
@@ -242,6 +258,10 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
       "weight-entry": "xl:col-start-1 xl:col-end-2",
       "weight-trend": "xl:col-start-2 xl:col-end-3",
     },
+    placements: {
+      "weight-entry": { columnStart: 1, laneOrder: 0 },
+      "weight-trend": { columnStart: 7, laneOrder: 0 },
+    },
   }),
   Sleep: canonicalLayout(["sleep-ledger", "sleep-log", "sleep-focus-ledger", "sleep-sources"], {
     "sleep-ledger": CANONICAL_PAGE_SHELL_SIZE(6),
@@ -254,6 +274,12 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
       { className: "xl:col-start-1 xl:col-end-2", shellIds: ["sleep-ledger"] },
       { className: "grid gap-5 xl:col-start-2 xl:col-end-3", shellIds: ["sleep-log", "sleep-focus-ledger", "sleep-sources"] },
     ],
+    placements: {
+      "sleep-ledger": { columnStart: 1, laneOrder: 0 },
+      "sleep-log": { columnStart: 7, laneOrder: 0 },
+      "sleep-focus-ledger": { columnStart: 7, laneOrder: 1 },
+      "sleep-sources": { columnStart: 7, laneOrder: 2 },
+    },
   }),
   Insights: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Insights, {
     "insights-import": CANONICAL_PAGE_SHELL_SIZE(6),
@@ -263,6 +289,10 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
     shellClassNames: {
       "insights-import": "xl:col-start-1 xl:col-end-2",
       "insights-trends": "xl:col-start-2 xl:col-end-3",
+    },
+    placements: {
+      "insights-import": { columnStart: 1, laneOrder: 0 },
+      "insights-trends": { columnStart: 7, laneOrder: 0 },
     },
   }),
   Awards: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Awards, {
@@ -308,6 +338,10 @@ export const TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = ca
   "test-d20-controls": CANONICAL_PAGE_SHELL_SIZE(5),
 }, {
   gridClassName: "xl:grid-cols-[minmax(0,0.56fr)_minmax(20rem,0.44fr)]",
+  placements: {
+    "test-d20-sandbox": { columnStart: 1, laneOrder: 0 },
+    "test-d20-controls": { columnStart: 8, laneOrder: 0 },
+  },
 });
 
 const PAGE_SHELL_PAGE_REGISTRY = new Map<string, PageShellRegisteredPage>();
@@ -701,6 +735,7 @@ export function normalizePageShellPlacement(
 
 function placementsFromPackedPositions(
   order: readonly string[],
+  sizes: Readonly<Record<string, PageShellSize>>,
   positions: Readonly<Record<string, PageShellPackedPosition>>,
 ) {
   const laneCounts = new Map<number, number>();
@@ -715,6 +750,10 @@ function placementsFromPackedPositions(
   for (const id of positionedIds) {
     const position = positions[id];
     if (!position) continue;
+    if (sizes[id]?.span === PAGE_SHELL_OPTIONS_LAST) {
+      placements[id] = { columnStart: position.columnStart, laneOrder: 0 };
+      continue;
+    }
     const laneOrder = laneCounts.get(position.columnStart) ?? 0;
     laneCounts.set(position.columnStart, laneOrder + 1);
     placements[id] = { columnStart: position.columnStart, laneOrder };
@@ -787,7 +826,7 @@ export function derivePageShellVisualOrder(
   placements: Readonly<Record<string, PageShellPlacement>>,
 ) {
   const positions = packPageShellLayout(order, sizes, { placements });
-  const derivedPlacements = placementsFromPackedPositions(order, positions);
+  const derivedPlacements = placementsFromPackedPositions(order, sizes, positions);
   return derivePageShellVisualOrderFromPackedPositions(order, sizes, derivedPlacements, positions);
 }
 
@@ -1190,52 +1229,90 @@ export function packPageShellLayout(
     }
   };
 
-  const explicitIds = order
-    .filter((id) => placements[id])
-    .sort((left, right) => (
-      placements[left].columnStart - placements[right].columnStart
-      || placements[left].laneOrder - placements[right].laneOrder
-      || order.indexOf(left) - order.indexOf(right)
-    ));
-  const automaticIds = order.filter((id) => !placements[id]);
-
-  for (const id of [...explicitIds, ...automaticIds]) {
+  function getRowSpan(id: string) {
     const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
     const heightPx = size.heightPx ?? naturalHeights[id] ?? PAGE_SHELL_MIN_HEIGHT;
-    const rowSpan = Math.max(1, Math.ceil((Math.max(1, heightPx) + chromeHeightPx + gapPx) / rowUnitPx));
-    const placement = placements[id];
-    let row = 0;
-    let column = 0;
-    if (placement) {
-      column = Math.max(0, Math.min(12 - size.span, placement.columnStart - 1));
-      const preceding = explicitIds
-        .filter((candidateId) => candidateId !== id && placements[candidateId].columnStart === placement.columnStart && placements[candidateId].laneOrder < placement.laneOrder)
-        .map((candidateId) => positions[candidateId])
-        .filter((position): position is PageShellPackedPosition => Boolean(position));
-      row = preceding.reduce((bottom, position) => Math.max(bottom, position.rowStart - 1 + position.rowSpan), 0);
-      while (!canPlace(row, column, rowSpan, size.span)) row += 1;
-    } else {
-      while (true) {
-        let foundColumn = false;
-        for (let candidateColumn = 0; candidateColumn <= 12 - size.span; candidateColumn += 1) {
-          if (canPlace(row, candidateColumn, rowSpan, size.span)) {
-            column = candidateColumn;
-            foundColumn = true;
-            break;
-          }
-        }
-        if (foundColumn) break;
-        row += 1;
-      }
-    }
-    markOccupied(row, column, rowSpan, size.span);
-    positions[id] = {
-      columnSpan: size.span,
-      columnStart: column + 1,
-      rowSpan,
-      rowStart: row + 1,
-    };
+    return Math.max(1, Math.ceil((Math.max(1, heightPx) + chromeHeightPx + gapPx) / rowUnitPx));
   }
+
+  function packRegion(regionIds: readonly string[], regionStartRow: number) {
+    const explicitIds = regionIds
+      .filter((id) => placements[id])
+      .sort((left, right) => (
+        placements[left].columnStart - placements[right].columnStart
+        || placements[left].laneOrder - placements[right].laneOrder
+        || order.indexOf(left) - order.indexOf(right)
+      ));
+    const automaticIds = regionIds.filter((id) => !placements[id]);
+    let regionBottom = regionStartRow;
+
+    for (const id of [...explicitIds, ...automaticIds]) {
+      const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
+      const rowSpan = getRowSpan(id);
+      const placement = placements[id];
+      let row = regionStartRow;
+      let column = 0;
+      if (placement) {
+        column = Math.max(0, Math.min(12 - size.span, placement.columnStart - 1));
+        const preceding = explicitIds
+          .filter((candidateId) => candidateId !== id && placements[candidateId].columnStart === placement.columnStart && placements[candidateId].laneOrder < placement.laneOrder)
+          .map((candidateId) => positions[candidateId])
+          .filter((position): position is PageShellPackedPosition => Boolean(position));
+        row = preceding.reduce((bottom, position) => Math.max(bottom, position.rowStart - 1 + position.rowSpan), regionStartRow);
+        while (!canPlace(row, column, rowSpan, size.span)) row += 1;
+      } else {
+        while (true) {
+          let foundColumn = false;
+          for (let candidateColumn = 0; candidateColumn <= 12 - size.span; candidateColumn += 1) {
+            if (canPlace(row, candidateColumn, rowSpan, size.span)) {
+              column = candidateColumn;
+              foundColumn = true;
+              break;
+            }
+          }
+          if (foundColumn) break;
+          row += 1;
+        }
+      }
+      markOccupied(row, column, rowSpan, size.span);
+      positions[id] = {
+        columnSpan: size.span,
+        columnStart: column + 1,
+        rowSpan,
+        rowStart: row + 1,
+      };
+      regionBottom = Math.max(regionBottom, row + rowSpan);
+    }
+    return regionBottom;
+  }
+
+  let regionIds: string[] = [];
+  let nextRegionRow = 0;
+  const flushRegion = () => {
+    if (regionIds.length === 0) return;
+    nextRegionRow = packRegion(regionIds, nextRegionRow);
+    regionIds = [];
+  };
+
+  for (const id of order) {
+    const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
+    if (size.span !== PAGE_SHELL_OPTIONS_LAST) {
+      regionIds.push(id);
+      continue;
+    }
+
+    flushRegion();
+    const rowSpan = getRowSpan(id);
+    markOccupied(nextRegionRow, 0, rowSpan, PAGE_SHELL_OPTIONS_LAST);
+    positions[id] = {
+      columnSpan: PAGE_SHELL_OPTIONS_LAST,
+      columnStart: 1,
+      rowSpan,
+      rowStart: nextRegionRow + 1,
+    };
+    nextRegionRow += rowSpan;
+  }
+  flushRegion();
 
   return positions;
 }
@@ -1375,6 +1452,7 @@ export function normalizePageShellLayout(
   defaults: readonly string[],
   defaultSizes: PageShellSizeDefaults = {},
   legacyIdReplacements: PageShellLegacyIdReplacements = {},
+  defaultPlacements: Readonly<Record<string, PageShellPlacement>> = {},
 ): PageShellLayoutPreference {
   const storedOrder = Array.isArray(stored)
     ? stored
@@ -1393,16 +1471,18 @@ export function normalizePageShellLayout(
   const storedPlacements = isPageShellLayoutPreference(stored) && stored.placements && typeof stored.placements === "object" && !Array.isArray(stored.placements)
     ? stored.placements as Record<string, unknown>
     : {};
-  const hasStoredPlacements = Object.keys(storedPlacements).length > 0;
+  const placementDefaults = stored === null || stored === undefined ? defaultPlacements : {};
+  const placementSource = Object.keys(storedPlacements).length > 0 ? storedPlacements : placementDefaults;
+  const hasPlacements = Object.keys(placementSource).length > 0;
   const placements: Record<string, PageShellPlacement> = {};
   for (const id of order) {
-    if (Object.prototype.hasOwnProperty.call(storedPlacements, id)) {
-      placements[id] = normalizePageShellPlacement(storedPlacements[id], sizes[id]?.span);
+    if (Object.prototype.hasOwnProperty.call(placementSource, id)) {
+      placements[id] = normalizePageShellPlacement(placementSource[id], sizes[id]?.span);
     }
   }
   const packedPositions = packPageShellLayout(order, sizes, { placements });
-  const derivedPlacements = placementsFromPackedPositions(order, packedPositions);
-  const visualOrder = hasStoredPlacements
+  const derivedPlacements = placementsFromPackedPositions(order, sizes, packedPositions);
+  const visualOrder = hasPlacements
     ? derivePageShellVisualOrderFromPackedPositions(order, sizes, derivedPlacements, packedPositions)
     : order;
   return { order: visualOrder, placements: derivedPlacements, sizes };
@@ -1430,12 +1510,15 @@ export function readPageShellLayout(
   pageKey: string,
   defaults: readonly string[],
   defaultSizes: PageShellSizeDefaults = {},
+  defaultPlacements?: Readonly<Record<string, PageShellPlacement>>,
 ) {
+  const storedLayouts = readStoredPageShellLayouts(storage, storageKey);
   return normalizePageShellLayout(
-    readStoredPageShellLayouts(storage, storageKey)[pageKey],
+    storedLayouts[pageKey],
     defaults,
     defaultSizes,
     PAGE_SHELL_LEGACY_ID_REPLACEMENTS[pageKey],
+    defaultPlacements ?? PAGE_SHELL_PAGE_REGISTRY.get(pageKey)?.canonicalLayout.placements ?? {},
   );
 }
 

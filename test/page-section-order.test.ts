@@ -75,7 +75,7 @@ import {
   writePageShellLayout,
   placePageShellAtDrop,
 } from "@/lib/page-shell-layout";
-import { isPageShellPointerMatch, isStalePageShellMouseMove, PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { isPageShellPointerMatch, isStalePageShellMouseMove, PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells, shouldUsePageShellPackedPresentation } from "@/components/ui-system/reorderable-page-shells";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 
 const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
@@ -106,6 +106,14 @@ function storage() {
     setItem: (key: string, value: string) => { values.set(key, value); },
     values,
   };
+}
+
+function canonicalEditLayout(canonical: typeof HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food) {
+  return normalizePageShellLayout({
+    order: [...canonical.order],
+    placements: canonical.placements,
+    sizes: canonical.sizes,
+  }, canonical.order, canonical.sizes);
 }
 
 function staticShellLayout(isEditing: boolean): PageShellLayoutState {
@@ -283,6 +291,7 @@ test("custom and canonical views resolve to the current page's layout without sh
   assert.equal(resolvedCanonical.presentation, "canonical");
   assert.deepEqual(resolvedCanonical.layout.order, [...canonical.order]);
   assert.deepEqual(resolvedCanonical.layout.sizes, canonical.sizes);
+  assert.deepEqual(resolvedCanonical.layout.placements?.["food-daily-totals"], { columnStart: 8, laneOrder: 0 });
   assert.equal(canonicalView.layout, undefined);
 });
 
@@ -416,6 +425,118 @@ test("canonical groups render independent lanes and vertically stacked shells", 
   assert.match(markup, /class="[^"]*xl:col-span-full[^"]*" data-page-shell-group="2"/);
   const stackedGroup = markup.match(/data-page-shell-group="1"[\s\S]*?data-page-shell-group="2"/)?.[0] ?? "";
   assert.match(stackedGroup, /data-page-shell-id="food-daily-totals"[\s\S]*data-page-shell-id="food-favorites-recent"/);
+});
+
+test("canonical pages switch to packed edit topology before interaction", () => {
+  const canonical = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food;
+  const editLayout = canonicalEditLayout(canonical);
+  const children = [
+    createElement(PageShell, { id: "food-meal-log", label: "Meal Log" }, createElement("span", null, "meal")),
+    createElement(PageShell, { id: "food-daily-totals", label: "Daily Totals" }, createElement("span", null, "totals")),
+    createElement(PageShell, { id: "food-favorites-recent", label: "Favorites" }, createElement("span", null, "favorites")),
+    createElement(PageShell, { id: "food-library", label: "Food Library" }, createElement("span", null, "library")),
+  ];
+  const baseLayout = {
+    ...staticShellLayout(false),
+    canonicalLayout: canonical,
+    isCanonical: true,
+    order: [...editLayout.order],
+    placements: editLayout.placements ?? {},
+    sizes: editLayout.sizes,
+  };
+  const canonicalMarkup = renderToStaticMarkup(createElement(ReorderablePageShells, { layout: baseLayout }, children));
+  const editMarkup = renderToStaticMarkup(createElement(ReorderablePageShells, {
+    layout: { ...baseLayout, isEditing: true },
+  }, children));
+  const previewMarkup = renderToStaticMarkup(createElement(ReorderablePageShells, {
+    layout: { ...baseLayout, isEditing: true, isPreviewing: true },
+  }, children));
+
+  assert.equal((canonicalMarkup.match(/data-page-shell-group=/g) ?? []).length, 3);
+  assert.match(canonicalMarkup, /data-page-shell-packed="false"/);
+  for (const markup of [editMarkup, previewMarkup]) {
+    assert.equal((markup.match(/data-page-shell-group=/g) ?? []).length, 0);
+    assert.match(markup, /class="[^"]*page-shell-packed/);
+    assert.match(markup, /data-page-shell-edit-mode="true"/);
+    assert.match(markup, /data-page-shell-packed="true"/);
+    assert.match(markup, /data-page-shell-presentation="canonical"/);
+  }
+  assert.equal(shouldUsePageShellPackedPresentation(true, false), false);
+  assert.equal(shouldUsePageShellPackedPresentation(true, true), true);
+  assert.equal(shouldUsePageShellPackedPresentation(false, false), true);
+  assert.match(shellSource, /const usePackedPlacement = shouldUsePageShellPackedPresentation\(layout\.isCanonical, layout\.isEditing\)/);
+  assert.match(layoutHookSource, /setHasCustomLayoutPreference\(true\)/);
+  assert.match(layoutHookSource, /if \(!preview \|\| pageShellLayoutsEqual\(preview, committedLayout\)\) return;/);
+});
+
+test("canonical edit seeds match the visible left and right lanes", () => {
+  const water = canonicalEditLayout(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Water);
+  assert.deepEqual(
+    Object.fromEntries(["water-log", "water-pending", "water-today", "water-history"].map((id) => [
+      id,
+      getPageShellColumnSlot(water.order, water.sizes, water.placements ?? {}, id),
+    ])),
+    {
+      "water-log": { columnLabel: "A", columnStart: 1, slot: 1, slotCount: 1 },
+      "water-pending": { columnLabel: "B", columnStart: 6, slot: 1, slotCount: 3 },
+      "water-today": { columnLabel: "B", columnStart: 6, slot: 2, slotCount: 3 },
+      "water-history": { columnLabel: "B", columnStart: 6, slot: 3, slotCount: 3 },
+    },
+  );
+
+  for (const [canonical, expected] of [
+    [HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food, {
+      "food-meal-log": { columnLabel: "A", slot: 1 },
+      "food-daily-totals": { columnLabel: "B", slot: 1 },
+      "food-favorites-recent": { columnLabel: "B", slot: 2 },
+    }],
+    [HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Weight, {
+      "weight-entry": { columnLabel: "A", slot: 1 },
+      "weight-trend": { columnLabel: "B", slot: 1 },
+    }],
+    [HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Sleep, {
+      "sleep-ledger": { columnLabel: "A", slot: 1 },
+      "sleep-log": { columnLabel: "B", slot: 1 },
+      "sleep-focus-ledger": { columnLabel: "B", slot: 2 },
+      "sleep-sources": { columnLabel: "B", slot: 3 },
+    }],
+    [HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Insights, {
+      "insights-import": { columnLabel: "A", slot: 1 },
+      "insights-trends": { columnLabel: "B", slot: 1 },
+    }],
+    [TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT, {
+      "test-d20-sandbox": { columnLabel: "A", slot: 1 },
+      "test-d20-controls": { columnLabel: "B", slot: 1 },
+    }],
+  ] as const) {
+    const editLayout = canonicalEditLayout(canonical);
+    for (const [id, coordinate] of Object.entries(expected)) {
+      const actual = getPageShellColumnSlot(editLayout.order, editLayout.sizes, editLayout.placements ?? {}, id);
+      assert.equal(actual?.columnLabel, coordinate.columnLabel, id);
+      assert.equal(actual?.slot, coordinate.slot, id);
+    }
+  }
+});
+
+test("Fitness canonical side-by-side region survives full-width boundaries", () => {
+  const canonical = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Fitness;
+  const editLayout = canonicalEditLayout(canonical);
+  const positions = packPageShellLayout(canonical.order, canonical.sizes, { placements: canonical.placements });
+  const active = positions["fitness-active-workout"];
+  const today = positions["fitness-today"];
+  const week = positions["fitness-week"];
+  const goals = positions["fitness-goals"];
+  const plans = positions["fitness-plans"];
+  const history = positions["fitness-workout-history"];
+  assert.equal(today.columnStart, 1);
+  assert.equal(week.columnStart, 8);
+  assert.equal(today.rowStart, active.rowStart + active.rowSpan);
+  assert.equal(week.rowStart, today.rowStart);
+  assert.ok(goals.rowStart >= Math.max(today.rowStart + today.rowSpan, week.rowStart + week.rowSpan));
+  assert.ok(plans.rowStart >= goals.rowStart + goals.rowSpan);
+  assert.ok(history.rowStart >= plans.rowStart + plans.rowSpan);
+  assert.deepEqual(getPageShellColumnSlot(editLayout.order, editLayout.sizes, editLayout.placements ?? {}, "fitness-today")?.columnLabel, "A");
+  assert.deepEqual(getPageShellColumnSlot(editLayout.order, editLayout.sizes, editLayout.placements ?? {}, "fitness-week")?.columnLabel, "B");
 });
 
 test("Health, Focus, and Stats canonical defaults are explicit and natural", () => {
@@ -962,6 +1083,30 @@ test("full-width shells divide visual column-major regions without taking column
   );
 });
 
+test("full-width shells are vertical region boundaries for semantic packing", () => {
+  const order = ["active", "today", "week", "goals", "plans", "history"];
+  const sizes = {
+    active: { heightPx: 144, span: 12 as const },
+    today: { heightPx: 240, span: 7 as const },
+    week: { heightPx: 480, span: 5 as const },
+    goals: { heightPx: 144, span: 12 as const },
+    plans: { heightPx: 144, span: 12 as const },
+    history: { heightPx: 144, span: 12 as const },
+  };
+  const placements = {
+    today: { columnStart: 1, laneOrder: 0 },
+    week: { columnStart: 8, laneOrder: 0 },
+  };
+  const packed = packPageShellLayout(order, sizes, { placements });
+  assert.equal(packed.today.columnStart, 1);
+  assert.equal(packed.week.columnStart, 8);
+  assert.equal(packed.today.rowStart, packed.active.rowStart + packed.active.rowSpan);
+  assert.equal(packed.week.rowStart, packed.today.rowStart);
+  assert.ok(packed.goals.rowStart >= Math.max(packed.today.rowStart + packed.today.rowSpan, packed.week.rowStart + packed.week.rowSpan));
+  assert.ok(packed.plans.rowStart >= packed.goals.rowStart + packed.goals.rowSpan);
+  assert.ok(packed.history.rowStart >= packed.plans.rowStart + packed.plans.rowSpan);
+});
+
 test("Column + Slot coordinates derive from semantic placement and reorder only one column", () => {
   const sizes = {
     a: { heightPx: 144, span: 3 as const },
@@ -1391,6 +1536,10 @@ test("width-only editing keeps height out of the width preview path and uses sha
   assert.match(shellSource, /formatPageShellDimensions\(size\.span, size\.heightPx, naturalHeight, renderedWidths/);
   assert.match(shellSource, /layout\.setPreviewSizes/);
   assert.match(shellSource, /layout\.commitPreview\(\)/);
+  assert.match(shellSource, /function beginWidthResize[\s\S]*layout\.beginPreview\(startLayout\)/);
+  assert.match(shellSource, /kind: "width-resize"/);
+  assert.equal(normalizePageShellSpan(6 + 1), 7);
+  assert.match(shellSource, /onLostPointerCapture=\{\(event\) => endInteraction\(event, true\)\}/);
   assert.doesNotMatch(shellSource, /PageShellPackedPosition.*PageShellSize/);
 });
 

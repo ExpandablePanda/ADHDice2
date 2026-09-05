@@ -141,6 +141,10 @@ export function isStalePageShellMouseMove(pointerType: string, buttons: number |
   return pointerType === "mouse" && buttons === 0;
 }
 
+export function shouldUsePageShellPackedPresentation(isCanonical: boolean, isEditing: boolean) {
+  return isEditing || !isCanonical;
+}
+
 function measureNaturalShellHeight(element: HTMLDivElement | null) {
   if (!element) return 0;
   const currentHeight = element.style.height;
@@ -415,7 +419,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     return shell ? [shell] : [];
   }), [renderedShellOrderKey, shellsById]);
   const canonicalGroups = useMemo<RenderedPageShellGroup[] | null>(() => {
-    if (!layout.isCanonical || !layout.canonicalLayout.groups?.length) return null;
+    if (!layout.isCanonical || layout.isEditing || !layout.canonicalLayout.groups?.length) return null;
     const assignedShellIds = new Set<string>();
     const configuredGroups = layout.canonicalLayout.groups.flatMap((group: PageShellCanonicalGroup) => {
       const groupShells = group.shellIds.flatMap((id) => {
@@ -428,7 +432,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     });
     const ungroupedShells = orderedShells.filter((shell) => !assignedShellIds.has(shell.id));
     return ungroupedShells.length > 0 ? [...configuredGroups, { shells: ungroupedShells }] : configuredGroups;
-  }, [layout.canonicalLayout.groups, layout.isCanonical, orderedShells, shellsById]);
+  }, [layout.canonicalLayout.groups, layout.isCanonical, layout.isEditing, orderedShells, shellsById]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragInsertionIndex, setDragInsertionIndex] = useState<number | null>(null);
   const [resizingId, setResizingId] = useState<string | null>(null);
@@ -449,9 +453,9 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     ),
     [layout.isEditing, layout.placements, layout.sizes, naturalHeights, orderedShells],
   );
-  // Canonical metadata owns the historical presentation. Once a user has a
-  // custom layout (including a live edit preview), derived packing takes over.
-  const usePackedPlacement = !layout.isCanonical;
+  // Canonical metadata owns the historical presentation until Edit Layout is
+  // opened. Editing must enter the packed DOM before pointer capture begins.
+  const usePackedPlacement = shouldUsePageShellPackedPresentation(layout.isCanonical, layout.isEditing);
   const pageShellColumnOptions = useMemo(
     () => new Map(orderedShells.map((shell) => [
       shell.id,
@@ -974,9 +978,9 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
         "--page-shell-grid-row-start": packedPosition.rowStart,
       } as CSSProperties
       : undefined;
-    const shellPlacementClass = layout.isCanonical
-      ? layout.canonicalLayout.shellClassNames?.[shell.id] ?? ""
-      : spanClass;
+    const shellPlacementClass = usePackedPlacement
+      ? spanClass
+      : layout.canonicalLayout.shellClassNames?.[shell.id] ?? "";
     const columnOptions = pageShellColumnOptions.get(shell.id) ?? [];
     const isFullWidth = size.span === 12;
     const columnSlot = isFullWidth
@@ -1162,7 +1166,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
 
   return (
     <div
-      className={`${shellsClassName.replace(/\bxl:grid-cols-12\b/g, "").trim()} ${layout.isCanonical ? layout.canonicalLayout.gridClassName ?? "" : "xl:grid-cols-12"} ${usePackedPlacement ? "page-shell-packed" : ""} relative`.trim()}
+      className={`${shellsClassName.replace(/\bxl:grid-cols-12\b/g, "").trim()} ${usePackedPlacement ? "xl:grid-cols-12 page-shell-packed" : layout.canonicalLayout.gridClassName ?? ""} relative`.trim()}
       data-page-shell-layout={layout.pageKey}
       data-page-shell-edit-mode={layout.isEditing ? "true" : "false"}
       data-page-shell-packed={usePackedPlacement ? "true" : "false"}
