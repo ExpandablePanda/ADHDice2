@@ -23,6 +23,8 @@ import {
   getPageShellDragAutoScrollDelta,
   getHealthPageShellKey,
   getPageShellDropTarget,
+  getPageShellEmptyHorizontalColumnStart,
+  getPageShellGridColumnGeometry,
   getPageShellInsertionIndex,
   getPageShellDirectionalInsertionIndex,
   getPageShellLayoutStorageKey,
@@ -587,6 +589,11 @@ test("page shell pointer lifecycle finalizes only the active pointer and guards 
   assert.match(shellSource, /if \(layout\.isEditing && layout\.isPreviewing\) return/);
   assert.match(shellSource, /window\.cancelAnimationFrame\(autoScrollFrameRef\.current\)/);
   assert.match(shellSource, /if \(!interaction\) \{\s+if \(!event\) cancelDragAutoScroll\(\);/);
+  assert.match(shellSource, /grabOffsetX: sourceGeometry \? event\.clientX - sourceGeometry\.left : 0/);
+  assert.match(shellSource, /interaction\.grabOffsetX/);
+  assert.match(shellSource, /getPageShellEmptyHorizontalColumnStart/);
+  assert.match(shellSource, /dropTarget\?\.targetId === null/);
+  assert.match(shellSource, /getPageShellGridColumnGeometry/);
 });
 
 test("Health collapsible shell surfaces keep collapse state canonical and scroll only their open body", () => {
@@ -857,6 +864,81 @@ test("drop targeting maps empty horizontal grid space to a new semantic column",
   const result = placePageShellAtDrop({ order, placements, sizes }, order, "source", target);
   assert.deepEqual(result.order, ["left", "source"]);
   assert.deepEqual(result.placements?.source, { columnStart: 7, laneOrder: 0 });
+});
+
+test("drop targeting preserves the horizontal grab offset", () => {
+  const gridBounds = { left: 0, width: 1200 };
+  const order = ["source"];
+  const sizes = { source: { heightPx: 144, span: 3 as const } };
+  const placements = { source: { columnStart: 1, laneOrder: 0 } };
+  const positions = packPageShellLayout(order, sizes, { placements });
+  const geometries = [{ bottom: 144, id: "source", left: 0, right: 285, top: 0 }];
+  const initial = getPageShellDropTarget(geometries, positions, order, "source", 240, 72, gridBounds, 240);
+  assert.equal(initial.columnStart, 1);
+
+  const targetColumn = getPageShellGridColumnGeometry(gridBounds, 7, 3);
+  assert.ok(targetColumn);
+  const leftGrab = getPageShellDropTarget(geometries, positions, order, "source", targetColumn.left + 24, 72, gridBounds, 24);
+  const rightGrab = getPageShellDropTarget(geometries, positions, order, "source", targetColumn.left + 261, 72, gridBounds, 261);
+  assert.equal(leftGrab.columnStart, 7);
+  assert.equal(rightGrab.columnStart, 7);
+
+  const farRight = getPageShellDropTarget(geometries, positions, order, "source", 1600, 72, gridBounds, 0);
+  assert.equal(farRight.columnStart, 10);
+});
+
+test("empty horizontal movement chooses adjacent legal semantic columns and clamps span", () => {
+  const sixAtLeft = packPageShellLayout(["source"], { source: { heightPx: 144, span: 6 } }, {
+    placements: { source: { columnStart: 1, laneOrder: 0 } },
+  });
+  assert.equal(getPageShellEmptyHorizontalColumnStart(sixAtLeft, "source", "right"), 7);
+  assert.equal(getPageShellEmptyHorizontalColumnStart(sixAtLeft, "source", "left"), null);
+
+  const sixAtRight = packPageShellLayout(["source"], { source: { heightPx: 144, span: 6 } }, {
+    placements: { source: { columnStart: 7, laneOrder: 0 } },
+  });
+  assert.equal(getPageShellEmptyHorizontalColumnStart(sixAtRight, "source", "left"), 1);
+  assert.equal(getPageShellEmptyHorizontalColumnStart(sixAtRight, "source", "right"), null);
+
+  const sideBySide = packPageShellLayout(["source", "right"], {
+    source: { heightPx: 144, span: 6 },
+    right: { heightPx: 144, span: 6 },
+  }, { placements: { source: { columnStart: 1, laneOrder: 0 }, right: { columnStart: 7, laneOrder: 0 } } });
+  assert.equal(getPageShellEmptyHorizontalColumnStart(sideBySide, "source", "right"), null);
+});
+
+test("mixed shell spans retain explicit side-by-side and packed grid placements", () => {
+  const sixSix = packPageShellLayout(["left", "right"], {
+    left: { heightPx: 144, span: 6 },
+    right: { heightPx: 144, span: 6 },
+  }, { placements: { left: { columnStart: 1, laneOrder: 0 }, right: { columnStart: 7, laneOrder: 0 } } });
+  assert.deepEqual(
+    { left: sixSix.left.columnStart, right: sixSix.right.columnStart },
+    { left: 1, right: 7 },
+  );
+
+  const eightFour = packPageShellLayout(["wide", "narrow"], {
+    wide: { heightPx: 144, span: 8 },
+    narrow: { heightPx: 144, span: 4 },
+  }, { placements: { wide: { columnStart: 1, laneOrder: 0 }, narrow: { columnStart: 9, laneOrder: 0 } } });
+  assert.deepEqual(
+    { wide: eightFour.wide.columnStart, narrow: eightFour.narrow.columnStart },
+    { wide: 1, narrow: 9 },
+  );
+
+  const threeThreeSix = packPageShellLayout(["first", "second", "third"], {
+    first: { heightPx: 144, span: 3 },
+    second: { heightPx: 144, span: 3 },
+    third: { heightPx: 144, span: 6 },
+  }, { placements: {
+    first: { columnStart: 1, laneOrder: 0 },
+    second: { columnStart: 4, laneOrder: 0 },
+    third: { columnStart: 7, laneOrder: 0 },
+  } });
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(threeThreeSix).map(([id, position]) => [id, position.columnStart])),
+    { first: 1, second: 4, third: 7 },
+  );
 });
 
 test("legacy layouts and saved Views without placement metadata derive deterministic portable placement", () => {

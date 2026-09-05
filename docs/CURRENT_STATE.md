@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.84`.
+- Current working app version: `7.12.85`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,28 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-04 7.12.85 Complete Empty-Column Shell Placement
+
+Shell move previews retain the runtime-only horizontal grab offset, so the
+source shell's intended left edge—not the raw pointer position—drives the
+captured 12-column grid target. Empty horizontal destinations remain span-aware
+and flow through semantic `columnStart` / `laneOrder` placement and live packed
+reflow; no pointer pixel coordinates are persisted.
+
+Edit-mode Left/Right controls now use the shared semantic placement model even
+when no directional shell neighbor exists. They choose the nearest legal
+adjacent empty column in source-span steps, clamp within the 12-column grid,
+and place an empty destination in lane zero. Up/Down neighbor and lane
+semantics remain unchanged. Empty drag indicators use the same captured grid
+bounds, target column, and source span as the saved destination instead of a
+full-width unrelated insertion line.
+
+The focused page-shell suite covers grab offsets, empty horizontal movement,
+span clamping, mixed packed layouts, semantic persistence, and the existing
+pointer lifecycle. Browser QA for the remaining empty-column placement checks
+is still pending with Andrew. No nested shells, SQL, schema, cloud persistence,
+application-data, or iOS changes were added.
 
 ## 2026-09-04 7.12.84 Empty Packed-Column Drop Targeting
 

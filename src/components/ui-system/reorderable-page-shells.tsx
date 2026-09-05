@@ -11,6 +11,8 @@ import {
   getPageShellDirectionalInsertionIndex,
   getPageShellDropTarget,
   getPageShellDragAutoScrollDelta,
+  getPageShellEmptyHorizontalColumnStart,
+  getPageShellGridColumnGeometry,
   clampPageShellHeight,
   formatPageShellDimensions,
   getPageShellExportFilename,
@@ -49,6 +51,7 @@ type ReorderablePageShellsProps = {
 
 type ShellMoveInteraction = {
   captureElement: HTMLButtonElement | null;
+  grabOffsetX: number;
   geometries: PageShellGeometry[];
   gridBounds?: PageShellGridBounds;
   id: string;
@@ -185,6 +188,21 @@ function getInsertionIndicatorStyle(
         left: targetGeometry.left - leftOffset,
         top: (insertAfter ? targetGeometry.bottom : targetGeometry.top) - topOffset - 2,
         width: Math.max(4, targetGeometry.right - targetGeometry.left),
+      };
+    }
+  }
+
+  if (dropTarget?.targetId === null && interaction.gridBounds) {
+    const sourceSpan = interaction.packedPositions[interaction.id]?.columnSpan;
+    const targetGeometry = sourceSpan
+      ? getPageShellGridColumnGeometry(interaction.gridBounds, dropTarget.columnStart, sourceSpan)
+      : null;
+    if (targetGeometry) {
+      return {
+        height: 4,
+        left: targetGeometry.left - leftOffset,
+        top: -2,
+        width: Math.max(4, targetGeometry.width),
       };
     }
   }
@@ -525,6 +543,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       pointerX,
       pointerY + getPageScrollTop(),
       interaction.gridBounds,
+      interaction.grabOffsetX,
     );
     interaction.target = dropTarget;
     setDragInsertionIndex(dropTarget.insertionIndex);
@@ -581,9 +600,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     event.stopPropagation();
     const startLayout = currentLayout();
     const startVisibleOrder = orderedShells.map((shell) => shell.id);
+    const geometries = captureShellGeometry();
+    const sourceGeometry = geometries.find((geometry) => geometry.id === id);
     const moveInteraction: ShellMoveInteraction = {
       captureElement: event.currentTarget,
-      geometries: captureShellGeometry(),
+      geometries,
+      grabOffsetX: sourceGeometry ? event.clientX - sourceGeometry.left : 0,
       gridBounds: captureShellGridBounds(),
       id,
       kind: "move",
@@ -767,27 +789,37 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const startLayout = currentLayout();
     const startVisibleOrder = orderedShells.map((shell) => shell.id);
     const targetIndex = getPageShellDirectionalInsertionIndex(captureShellGeometry(), startVisibleOrder, id, direction);
-    if (targetIndex === null) return;
     const orderWithoutSource = startVisibleOrder.filter((candidateId) => candidateId !== id);
     const targetId = direction === "left" || direction === "up"
-      ? orderWithoutSource[targetIndex]
-      : orderWithoutSource[targetIndex - 1];
+      ? targetIndex === null ? undefined : orderWithoutSource[targetIndex]
+      : targetIndex === null ? undefined : orderWithoutSource[targetIndex - 1];
     const targetPosition = targetId ? packedPositions[targetId] : undefined;
-    if (!targetId || !targetPosition) return;
-    const destinationColumnIds = startVisibleOrder
-      .filter((candidateId) => candidateId !== id && layout.placements?.[candidateId]?.columnStart === targetPosition.columnStart)
-      .sort((left, right) => (layout.placements?.[left]?.laneOrder ?? 0) - (layout.placements?.[right]?.laneOrder ?? 0));
-    const targetLane = Math.max(0, destinationColumnIds.indexOf(targetId) + (direction === "down" || direction === "right" ? 1 : 0));
+    const isHorizontal = direction === "left" || direction === "right";
+    const emptyColumnStart = !targetPosition && isHorizontal
+      ? getPageShellEmptyHorizontalColumnStart(packedPositions, id, direction)
+      : null;
+    if (!targetPosition && emptyColumnStart === null) return;
+    const columnStart = targetPosition?.columnStart ?? emptyColumnStart;
+    if (columnStart === undefined) return;
+    const destinationColumnIds = targetPosition && targetId
+      ? startVisibleOrder
+        .filter((candidateId) => candidateId !== id && layout.placements?.[candidateId]?.columnStart === targetPosition.columnStart)
+        .sort((left, right) => (layout.placements?.[left]?.laneOrder ?? 0) - (layout.placements?.[right]?.laneOrder ?? 0))
+      : [];
+    const targetLane = targetPosition && targetId
+      ? Math.max(0, destinationColumnIds.indexOf(targetId) + (direction === "down" || direction === "right" ? 1 : 0))
+      : 0;
+    const resolvedInsertionIndex = targetIndex ?? (direction === "left" ? 0 : orderWithoutSource.length);
     const nextOrder = mergeVisiblePageShellOrder(
       startLayout.order,
-      reorderPageShellOrderAt(startVisibleOrder, id, targetIndex),
+      reorderPageShellOrderAt(startVisibleOrder, id, resolvedInsertionIndex),
       visibleShellIds,
     );
     const nextLayout = placePageShellAtDrop(startLayout, visibleShellIds, id, {
-      columnStart: targetPosition.columnStart,
-      insertionIndex: targetIndex,
+      columnStart,
+      insertionIndex: resolvedInsertionIndex,
       laneOrder: targetLane,
-      targetId,
+      targetId: targetId ?? null,
     });
     if (layoutsHaveSameOrder(nextOrder, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
     layout.beginPreview(startLayout);

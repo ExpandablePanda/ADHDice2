@@ -472,12 +472,31 @@ export type PageShellGridBounds = {
   width: number;
 };
 
+export type PageShellGridColumnGeometry = {
+  left: number;
+  width: number;
+};
+
 export const PAGE_SHELL_POINTER_HYSTERESIS_PX = 8;
 export const PAGE_SHELL_ROW_ALIGNMENT_PX = 12;
 export const PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX = 80;
 export const PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX = 18;
 export const PAGE_SHELL_PACKING_GAP_PX = 20;
 export const PAGE_SHELL_PACKING_ROW_UNIT_PX = 4;
+
+export function getPageShellGridColumnGeometry(
+  gridBounds: PageShellGridBounds,
+  columnStart: number,
+  columnSpan: PageShellSpan,
+): PageShellGridColumnGeometry | null {
+  const trackWidth = (gridBounds.width - PAGE_SHELL_PACKING_GAP_PX * 11) / 12;
+  if (trackWidth <= 0) return null;
+  const safeColumnStart = Math.max(1, Math.min(13 - columnSpan, Math.round(columnStart)));
+  return {
+    left: gridBounds.left + (safeColumnStart - 1) * (trackWidth + PAGE_SHELL_PACKING_GAP_PX),
+    width: trackWidth * columnSpan + PAGE_SHELL_PACKING_GAP_PX * (columnSpan - 1),
+  };
+}
 
 export function getPageShellDragAutoScrollDelta(
   pointerY: number,
@@ -668,7 +687,9 @@ export function getPageShellDropTarget(
   pointerX: number,
   pointerY: number,
   gridBounds?: PageShellGridBounds,
+  grabOffsetX = 0,
 ): PageShellDropTarget {
+  const intendedLeft = pointerX - (Number.isFinite(grabOffsetX) ? grabOffsetX : 0);
   const positionedGeometries = geometries
     .filter((geometry) => order.includes(geometry.id) && packedPositions[geometry.id])
     .map((geometry) => ({ geometry, position: packedPositions[geometry.id] }));
@@ -677,7 +698,7 @@ export function getPageShellDropTarget(
     .map((geometry) => {
       const position = packedPositions[geometry.id];
       return {
-        distanceX: pointerX < geometry.left ? geometry.left - pointerX : pointerX > geometry.right ? pointerX - geometry.right : 0,
+        distanceX: intendedLeft < geometry.left ? geometry.left - intendedLeft : intendedLeft > geometry.right ? intendedLeft - geometry.right : 0,
         geometry,
         position,
       };
@@ -708,9 +729,11 @@ export function getPageShellDropTarget(
     });
   }
   const occupiedColumn = [...occupiedColumns.entries()]
-    .find(([, bounds]) => pointerX >= bounds.left - PAGE_SHELL_POINTER_HYSTERESIS_PX && pointerX <= bounds.right + PAGE_SHELL_POINTER_HYSTERESIS_PX);
+    .find(([, bounds]) => intendedLeft >= bounds.left - PAGE_SHELL_POINTER_HYSTERESIS_PX && intendedLeft <= bounds.right + PAGE_SHELL_POINTER_HYSTERESIS_PX);
   const maxColumnStart = Math.max(1, 13 - sourceSpan);
-  const pointerColumn = columnWidth > 0 ? Math.floor((pointerX - gridLeft) / columnWidth) + 1 : undefined;
+  const pointerColumn = columnWidth > 0
+    ? Math.max(1, Math.min(maxColumnStart, Math.round((intendedLeft - gridLeft) / columnWidth) + 1))
+    : undefined;
   const occupiedColumnRanges = new Map<number, { end: number; start: number }>();
   for (const { position, geometry } of positionedGeometries) {
     if (geometry.id === sourceId) continue;
@@ -724,7 +747,7 @@ export function getPageShellDropTarget(
     .filter((columnStart) => ![...occupiedColumnRanges.values()].some((range) => (
       columnStart <= range.end && columnStart + sourceSpan - 1 >= range.start
     )));
-  const emptyColumnStart = pointerColumn !== undefined && pointerColumn >= 1 && pointerColumn <= 12
+  const emptyColumnStart = pointerColumn !== undefined
     ? emptyColumnStarts
       .filter((columnStart) => pointerColumn >= columnStart && pointerColumn <= columnStart + sourceSpan - 1)
       .sort((left, right) => Math.abs(left - pointerColumn) - Math.abs(right - pointerColumn) || left - right)[0]
@@ -769,6 +792,35 @@ export function getPageShellDropTarget(
     laneOrder,
     targetId: target.geometry.id,
   };
+}
+
+/** Finds the nearest adjacent empty semantic column for horizontal keyboard movement. */
+export function getPageShellEmptyHorizontalColumnStart(
+  packedPositions: Readonly<Record<string, PageShellPackedPosition>>,
+  sourceId: string,
+  direction: "left" | "right",
+) {
+  const source = packedPositions[sourceId];
+  if (!source) return null;
+  const maxColumnStart = 13 - source.columnSpan;
+  const firstColumnStart = direction === "right"
+    ? source.columnStart + source.columnSpan
+    : source.columnStart - source.columnSpan;
+  const step = direction === "right" ? 1 : -1;
+  const isInBounds = (columnStart: number) => direction === "right"
+    ? columnStart <= maxColumnStart
+    : columnStart >= 1;
+  const otherRanges = Object.entries(packedPositions)
+    .filter(([id]) => id !== sourceId)
+    .map(([, position]) => ({
+      end: position.columnStart + position.columnSpan - 1,
+      start: position.columnStart,
+    }));
+  for (let columnStart = firstColumnStart; isInBounds(columnStart); columnStart += step) {
+    const end = columnStart + source.columnSpan - 1;
+    if (!otherRanges.some((range) => columnStart <= range.end && end >= range.start)) return columnStart;
+  }
+  return null;
 }
 
 /**
