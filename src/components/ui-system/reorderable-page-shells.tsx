@@ -1,7 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Check, ChevronDown, CornerDownRight, Download, GripVertical, MoveHorizontal, PanelsTopLeft, RotateCcw, Save } from "lucide-react";
-import { createPortal } from "react-dom";
+import { ArrowDownToLine, ArrowUpToLine, Check, ChevronDown, CornerDownRight, Download, GripVertical, MoveHorizontal, PanelsTopLeft, RotateCcw, Save } from "lucide-react";
 import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, type Ref } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
@@ -11,22 +10,16 @@ import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import {
   getPageShellDropTarget,
   getPageShellDragAutoScrollDelta,
-  getPageShellColumnOptions,
-  getPageShellColumnSlot,
   getPageShellGridColumnGeometry,
-  getPageShellRowOrder,
   isPageShellCenteredPlacement,
   clampPageShellHeight,
   formatPageShellDimensions,
   getPageShellExportFilename,
   getPageShellShrinkHeight,
-  movePageShellOneLane,
-  movePageShellToCenterRow,
-  movePageShellToColumn,
-  movePageShellToSlot,
   normalizePageShellSpan,
   placePageShellAtDrop,
   packPageShellLayout,
+  PAGE_SHELL_PACKING_GAP_PX,
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
   projectVisiblePageShellOrder,
@@ -120,12 +113,6 @@ type RenderedPageShellGroup = {
   shells: RenderedPageShell[];
 };
 
-type PageShellColumnMenuPosition = {
-  shellId: string;
-  left: number;
-  top: number;
-};
-
 const SHELL_SPAN_CLASSES: Record<number, string> = {
   3: "xl:col-span-3",
   4: "xl:col-span-4",
@@ -192,33 +179,27 @@ function getInsertionIndicatorStyle(
   const leftOffset = containerRect?.left ?? 0;
   const topOffset = (containerRect?.top ?? 0) + scrollTop;
 
-  if (dropTarget?.targetId) {
-    const targetGeometry = geometryById.get(dropTarget.targetId);
-    if (targetGeometry) {
-      const targetColumnShells = interaction.currentGeometries
-        .filter((geometry) => geometry.id !== interaction.id && interaction.currentPackedPositions[geometry.id]?.columnStart === dropTarget.columnStart)
-        .sort((left, right) => left.top - right.top);
-      const targetLane = targetColumnShells.findIndex((geometry) => geometry.id === dropTarget.targetId);
-      const insertAfter = dropTarget.laneOrder > targetLane;
-      return {
-        height: 4,
-        left: targetGeometry.left - leftOffset,
-        top: (insertAfter ? targetGeometry.bottom : targetGeometry.top) - topOffset - 2,
-        width: Math.max(4, targetGeometry.right - targetGeometry.left),
-      };
-    }
-  }
-
-  if (dropTarget?.targetId === null && interaction.currentGridBounds) {
+  if (dropTarget && interaction.currentGridBounds) {
     const sourceSpan = interaction.currentPackedPositions[interaction.id]?.columnSpan;
-    const targetGeometry = sourceSpan && interaction.currentGridBounds
+    const targetGeometry = sourceSpan
       ? getPageShellGridColumnGeometry(interaction.currentGridBounds, dropTarget.columnStart, sourceSpan)
       : null;
     if (targetGeometry) {
+      const trackStep = (interaction.currentGridBounds.width - PAGE_SHELL_PACKING_GAP_PX * 11) / 12 + PAGE_SHELL_PACKING_GAP_PX;
+      const centerOffset = dropTarget.mode === "centered" && sourceSpan % 2 === 1 ? trackStep / 2 : 0;
+      if (before && after && geometriesShareRow(before, after)) {
+        return {
+          height: Math.max(before.bottom, after.bottom) - Math.min(before.top, after.top),
+          left: targetGeometry.left - leftOffset + centerOffset - 2,
+          top: Math.min(before.top, after.top) - topOffset,
+          width: 4,
+        };
+      }
+      const top = after?.top ?? before?.bottom ?? topOffset;
       return {
         height: 4,
-        left: targetGeometry.left - leftOffset,
-        top: -2,
+        left: targetGeometry.left - leftOffset + centerOffset,
+        top: top - topOffset - 2,
         width: Math.max(4, targetGeometry.width),
       };
     }
@@ -448,14 +429,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const [resizingId, setResizingId] = useState<string | null>(null);
   const [naturalHeights, setNaturalHeights] = useState<Record<string, number>>({});
   const [renderedWidths, setRenderedWidths] = useState<Record<string, number>>({});
-  const [slotDrafts, setSlotDrafts] = useState<Record<string, string>>({});
   const [widthDrafts, setWidthDrafts] = useState<Record<string, string>>({});
-  const [openColumnShellId, setOpenColumnShellId] = useState<string | null>(null);
-  const [columnMenuPosition, setColumnMenuPosition] = useState<PageShellColumnMenuPosition | null>(null);
-  const columnButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const packedPositions = useMemo<Record<string, PageShellPackedPosition>>(
     () => packPageShellLayout(
-      orderedShells.map((shell) => shell.id),
+      projectVisiblePageShellOrder(layout.order, visibleShellIds),
       layout.sizes,
       {
         chromeHeightPx: layout.isEditing ? 32 : 0,
@@ -463,19 +440,11 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
         placements: layout.placements,
       },
     ),
-    [layout.isEditing, layout.placements, layout.sizes, naturalHeights, orderedShells],
+    [layout.isEditing, layout.order, layout.placements, layout.sizes, naturalHeights, visibleShellIds],
   );
   // Canonical metadata owns the historical presentation until Edit Layout is
   // opened. Editing must enter the packed DOM before pointer capture begins.
   const usePackedPlacement = shouldUsePageShellPackedPresentation(layout.isCanonical, layout.isEditing);
-  const pageShellColumnOptions = useMemo(
-    () => new Map(orderedShells.map((shell) => [
-      shell.id,
-      getPageShellColumnOptions(visibleShellIds, layout.sizes, layout.placements, shell.id, packedPositions),
-    ])),
-    [layout.placements, layout.sizes, orderedShells, packedPositions, visibleShellIds],
-  );
-
   const measureNaturalShellHeights = useCallback(() => {
     const next = Object.fromEntries(orderedShells.flatMap((shell) => {
       const height = measureNaturalShellHeight(shellContentRefs.current[shell.id]);
@@ -787,6 +756,14 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setShellHeight(event, id, null);
   }
 
+  function clampPlacementForSpan(placement: PageShellLayoutState["placements"][string] | undefined, span: PageShellSize["span"]) {
+    if (!placement || isPageShellCenteredPlacement(placement)) return placement;
+    return {
+      ...placement,
+      columnStart: Math.max(1, Math.min(13 - span, Math.round(placement.columnStart))),
+    };
+  }
+
   function setShellWidth(id: string, rawValue: string) {
     const currentLayoutValue = currentLayout();
     const currentSize = currentLayoutValue.sizes[id];
@@ -800,6 +777,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       ...sizes,
       [id]: { ...currentSize, span },
     }));
+    const nextPlacement = clampPlacementForSpan(currentLayoutValue.placements?.[id], span);
+    if (nextPlacement) {
+      layout.setPreviewPlacements((placements) => ({ ...placements, [id]: nextPlacement }));
+    }
     layout.commitPreview();
   }
 
@@ -813,87 +794,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     });
   }
 
-  function commitShellSlot(id: string, rawValue: string) {
-    if (!rawValue.trim()) return;
-    const startLayout = currentLayout();
-    const numericValue = Number(rawValue);
-    if (!Number.isFinite(numericValue)) return;
-    const nextLayout = movePageShellToSlot(startLayout, visibleShellIds, id, numericValue);
-    if (layoutsHaveSameOrder(nextLayout.order, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
-    layout.beginPreview(startLayout);
-    layout.setPreviewOrder(nextLayout.order);
-    layout.setPreviewPlacements(nextLayout.placements);
-    layout.commitPreview();
-  }
-
-  function handleSlotCommit(event: ChangeEvent<HTMLInputElement>, id: string) {
-    event.stopPropagation();
-    commitShellSlot(id, event.currentTarget.value);
-    setSlotDrafts((current) => {
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
-  }
-
   function handleNumericInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     event.stopPropagation();
     if (event.key === "Enter") {
       event.preventDefault();
       event.currentTarget.blur();
     }
-  }
-
-  function commitShellColumn(event: MouseEvent<HTMLButtonElement>, id: string, columnStart: number) {
-    if (!layout.isEditing) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setOpenColumnShellId(null);
-    const startLayout = currentLayout();
-    const nextLayout = movePageShellToColumn(startLayout, visibleShellIds, id, columnStart);
-    if (layoutsHaveSameOrder(nextLayout.order, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
-    layout.beginPreview(startLayout);
-    layout.setPreviewOrder(nextLayout.order);
-    layout.setPreviewPlacements(nextLayout.placements);
-    layout.commitPreview();
-  }
-
-  function commitShellCenterRow(event: MouseEvent<HTMLButtonElement>, id: string) {
-    if (!layout.isEditing) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setOpenColumnShellId(null);
-    const startLayout = currentLayout();
-    const nextLayout = movePageShellToCenterRow(startLayout, visibleShellIds, id);
-    if (layoutsHaveSameOrder(nextLayout.order, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
-    layout.beginPreview(startLayout);
-    layout.setPreviewOrder(nextLayout.order);
-    layout.setPreviewPlacements(nextLayout.placements);
-    layout.commitPreview();
-  }
-
-  function toggleColumnMenu(event: MouseEvent<HTMLButtonElement>, id: string) {
-    event.stopPropagation();
-    if (openColumnShellId === id) {
-      setOpenColumnShellId(null);
-      return;
-    }
-    const buttonRect = event.currentTarget.getBoundingClientRect();
-    setColumnMenuPosition({ shellId: id, left: buttonRect.left, top: buttonRect.bottom + 8 });
-    setOpenColumnShellId(id);
-  }
-
-  function moveShellLane(event: MouseEvent<HTMLButtonElement>, id: string, direction: "down" | "up") {
-    if (!layout.isEditing || !layout.canReorder) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const startLayout = currentLayout();
-    const nextLayout = movePageShellOneLane(startLayout, visibleShellIds, id, direction);
-    if (layoutsHaveSameOrder(nextLayout.order, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
-    layout.beginPreview(startLayout);
-    layout.setPreviewOrder(nextLayout.order);
-    layout.setPreviewPlacements(nextLayout.placements);
-    layout.commitPreview();
   }
 
   function updateInteraction(event: ShellPointerEvent) {
@@ -926,6 +832,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
         ...sizes,
         [interaction.id]: { ...(sizes[interaction.id] ?? interaction.initialSize), span },
       }));
+      const nextPlacement = clampPlacementForSpan(interaction.startLayout.placements?.[interaction.id], span);
+      if (nextPlacement) {
+        layout.setPreviewPlacements((placements) => ({ ...placements, [interaction.id]: nextPlacement }));
+      }
       return;
     }
     const heightPx = clampPageShellHeight(interaction.initialHeight + (event.clientY - interaction.startY), interaction.naturalHeight);
@@ -935,6 +845,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       ...sizes,
       [interaction.id]: { heightPx, span },
     }));
+    const nextPlacement = clampPlacementForSpan(interaction.startLayout.placements?.[interaction.id], span);
+    if (nextPlacement) {
+      layout.setPreviewPlacements((placements) => ({ ...placements, [interaction.id]: nextPlacement }));
+    }
   }
 
   function endInteraction(event: ShellPointerEvent | null, cancelled: boolean) {
@@ -1000,27 +914,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     else cancelDragAutoScroll();
   }, [layout.isEditing, layout.isPreviewing]);
 
-  useEffect(() => {
-    if (!openColumnShellId || typeof window === "undefined") return undefined;
-    const updateColumnMenuPosition = () => {
-      const button = columnButtonRefs.current[openColumnShellId];
-      if (!button) {
-        setOpenColumnShellId(null);
-        setColumnMenuPosition(null);
-        return;
-      }
-      const buttonRect = button.getBoundingClientRect();
-      setColumnMenuPosition({ shellId: openColumnShellId, left: buttonRect.left, top: buttonRect.bottom + 8 });
-    };
-    updateColumnMenuPosition();
-    window.addEventListener("resize", updateColumnMenuPosition);
-    window.addEventListener("scroll", updateColumnMenuPosition, true);
-    return () => {
-      window.removeEventListener("resize", updateColumnMenuPosition);
-      window.removeEventListener("scroll", updateColumnMenuPosition, true);
-    };
-  }, [layout.placements, layout.sizes, openColumnShellId, visibleShellIds]);
-
   function renderShell(shell: RenderedPageShell) {
     const size = layout.sizes[shell.id] ?? { heightPx: null, span: 12 as const };
     const spanClass = SHELL_SPAN_CLASSES[size.span] ?? SHELL_SPAN_CLASSES[12];
@@ -1044,18 +937,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const shellPlacementClass = usePackedPlacement
       ? spanClass
       : layout.canonicalLayout.shellClassNames?.[shell.id] ?? "";
-    const columnOptions = pageShellColumnOptions.get(shell.id) ?? [];
-    const columnSlot = isFullWidth
-      ? null
-      : getPageShellColumnSlot(orderedShells.map((candidate) => candidate.id), layout.sizes, layout.placements, shell.id, visibleShellIds);
-    const currentColumnLabel = isCentered ? "Center" : columnSlot ? `Col ${columnSlot.columnLabel}` : "Col A";
-    const shellSlot = columnSlot?.slot ?? 1;
-    const slotCount = columnSlot?.slotCount ?? 1;
-    const rowOrder = isCentered
-      ? getPageShellRowOrder(orderedShells.map((candidate) => candidate.id), layout.sizes, layout.placements, shell.id, visibleShellIds)
-      : null;
-    const movementIndex = rowOrder?.row ?? shellSlot - 1;
-    const movementCount = rowOrder?.rowCount ?? slotCount;
     return (
       <div
         className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
@@ -1123,48 +1004,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                 <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{formatPageShellDimensions(size.span, size.heightPx, naturalHeight, renderedWidths[shell.id])}</span>
                 {isFullWidth ? (
                   <span className="shrink-0 rounded-md border border-[#ddd6fb] bg-white px-2 py-1 text-[10px] font-semibold text-[#5f47d8] dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]">Full</span>
-                ) : (
-                  <div className="relative shrink-0">
-                    <button
-                      aria-expanded={openColumnShellId === shell.id}
-                      aria-haspopup="listbox"
-                      aria-label={`Set ${shell.label} placement`}
-                      className="inline-flex h-6 items-center gap-1 rounded-md border border-[#ddd6fb] bg-white px-2 text-[10px] font-semibold text-[#5f47d8] outline-none hover:bg-[#f7f5ff] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff] dark:hover:bg-white/15"
-                      onClick={(event) => toggleColumnMenu(event, shell.id)}
-                      ref={(element) => { columnButtonRefs.current[shell.id] = element; }}
-                      title={`Set ${shell.label} placement`}
-                      type="button"
-                    >
-                      <span>{currentColumnLabel}</span>
-                      <ChevronDown aria-hidden="true" className={`h-3 w-3 transition-transform ${openColumnShellId === shell.id ? "rotate-180" : ""}`} />
-                    </button>
-                  </div>
-                )}
-                {!isFullWidth && !isCentered ? (
-                  <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
-                    <span>Slot</span>
-                    <input
-                      aria-label={`Set ${shell.label} slot`}
-                      className="page-shell-number-input h-6 min-w-10 w-10 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold tabular-nums text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
-                      inputMode="numeric"
-                      max={slotCount}
-                      min={1}
-                      onBlur={(event) => handleSlotCommit(event, shell.id)}
-                      onChange={(event) => { event.stopPropagation(); setSlotDrafts((current) => ({ ...current, [shell.id]: event.target.value })); }}
-                      onKeyDown={handleNumericInputKeyDown}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      step={1}
-                      type="number"
-                      value={slotDrafts[shell.id] ?? String(shellSlot)}
-                    />
-                    <span>/{slotCount}</span>
-                  </label>
-                ) : null}
-                {layout.canReorder && !isFullWidth ? (
-                  <div className="flex shrink-0 items-center gap-0.5" aria-label={`${shell.label} ${isCentered ? "row" : "lane"} movement controls`}>
-                    <button aria-label={`Move ${shell.label} up`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={movementIndex <= 0} onClick={(event) => moveShellLane(event, shell.id, "up")} title={`Move ${shell.label} up`} type="button"><ArrowUp aria-hidden="true" className="h-3.5 w-3.5" /></button>
-                    <button aria-label={`Move ${shell.label} down`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={movementIndex >= movementCount - 1} onClick={(event) => moveShellLane(event, shell.id, "down")} title={`Move ${shell.label} down`} type="button"><ArrowDown aria-hidden="true" className="h-3.5 w-3.5" /></button>
-                  </div>
                 ) : null}
                 <button
                   aria-label={`Shrink ${shell.label}`}
@@ -1186,31 +1025,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                 </button>
               </div>
             </div>
-            {!isFullWidth && openColumnShellId === shell.id && columnMenuPosition?.shellId === shell.id && typeof document !== "undefined" ? createPortal(
-              <AdhdDropdownPanel aria-label={`${shell.label} column`} className="z-50 min-w-36 p-1.5" role="listbox" style={{ left: columnMenuPosition.left, position: "fixed", top: columnMenuPosition.top }}>
-                {columnOptions.map((option) => {
-                  const isSelected = option.kind === "centered"
-                    ? isCentered
-                    : !isCentered && option.kind === "existing" && option.columnStart === layout.placements?.[shell.id]?.columnStart;
-                  return (
-                    <button
-                      aria-selected={isSelected}
-                      className={`flex w-full items-center rounded-[0.8rem] px-2 py-1.5 text-left text-[11px] leading-5 transition ${isSelected ? "bg-[#f1ecff] font-semibold text-[#5f4bd7] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : "text-[#5f5876] hover:bg-[#f7f5fb] dark:text-white/75 dark:hover:bg-white/8"}`}
-                      key={`${option.kind}-${option.columnStart ?? "row"}`}
-                      onClick={(event) => option.kind === "centered"
-                        ? commitShellCenterRow(event, shell.id)
-                        : commitShellColumn(event, shell.id, option.columnStart ?? 1)}
-                      onMouseDown={(event) => event.preventDefault()}
-                      role="option"
-                      type="button"
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </AdhdDropdownPanel>,
-              document.body,
-            ) : null}
           </div>
         ) : null}
         <div

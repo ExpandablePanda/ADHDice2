@@ -362,7 +362,7 @@ body::-webkit-scrollbar-thumb:hover,
   -webkit-appearance: none;
 }
 
-/* Custom shell layouts use portable semantic placement to derive these
+/* Custom shell layouts use portable snapped grid placement to derive these
    runtime coordinates; narrow single-column views intentionally ignore them. */
 .page-shell-packed > [data-page-shell-id] {
   grid-column: 1 / -1;

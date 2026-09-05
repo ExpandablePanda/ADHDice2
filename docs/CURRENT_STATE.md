@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.96`.
+- Current working app version: `7.12.97`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.97 Direct Snap-Grid Shell Placement
+
+The visible semantic Column/Slot editor has been retired. Desktop shell
+placement now uses direct 12-column snap-grid starts plus visual order:
+compatible widths share rows, collisions pack downward, and order is the
+vertical authority. Center is a drag snap target with exact odd-width
+centering; width/height resize, Natural/Shrink behavior, persistence, Views,
+export/import, canonical Reset Layout, and narrow single-column flow remain
+available. Legacy `columnStart`, optional `laneOrder`, and centered placement
+records remain readable for compatibility. No SQL or schema migration was
+needed.
 
 ## 2026-09-05 7.12.96 Centered Drag Semantic Isolation
 

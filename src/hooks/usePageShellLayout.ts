@@ -89,7 +89,7 @@ export function usePageShellLayout(
     .map((id) => `${id}:${resolvedCanonicalLayout.sizes[id]?.span ?? 12}:${resolvedCanonicalLayout.sizes[id]?.heightPx ?? "natural"}`)
     .join("|");
   const canonicalPlacementsKey = resolvedCanonicalLayout.order
-    .map((id) => `${id}:${resolvedCanonicalLayout.placements?.[id]?.columnStart ?? "auto"}:${resolvedCanonicalLayout.placements?.[id]?.laneOrder ?? "auto"}:${resolvedCanonicalLayout.placements?.[id]?.mode ?? "column"}`)
+    .map((id) => `${id}:${resolvedCanonicalLayout.placements?.[id]?.columnStart ?? "auto"}:${resolvedCanonicalLayout.placements?.[id]?.laneOrder ?? "auto"}:${resolvedCanonicalLayout.placements?.[id]?.mode ?? "normal"}`)
     .join("|");
   const instanceKey = [storageKey ?? "anonymous", pageKey, defaultIdsKey, resolvedCanonicalLayout.order.join("|"), canonicalSizesKey, canonicalPlacementsKey].join(":");
   const defaultLayout = useMemo(
