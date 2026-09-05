@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.91`.
+- Current working app version: `7.12.92`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.92 Scrollable Shell Edit Toolbars
+
+Narrow Edit Layout toolbars now keep the shell identity visible on the left
+while the editor tools horizontally scroll inside the shell. The intrinsic
+tool row remains unwrapped and controls retain their established sizes, so
+controls no longer overflow neighboring shells. Column menus escape the
+toolbar scroller by rendering the existing dropdown primitive through a local
+body portal; resize and shell-drag pointer lifecycles remain unchanged. This
+is a toolbar containment correction only: there is no shell layout or
+persistence model change.
 
 ## 2026-09-05 7.12.91 Canonical Semantic Layout Seed and Stable Edit Topology
 

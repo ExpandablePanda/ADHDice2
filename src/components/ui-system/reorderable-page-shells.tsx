@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Check, ChevronDown, CornerDownRight, Download, GripVertical, MoveHorizontal, PanelsTopLeft, RotateCcw, Save } from "lucide-react";
+import { createPortal } from "react-dom";
 import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, type Ref } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
@@ -114,6 +115,12 @@ type RenderedPageShell = {
 type RenderedPageShellGroup = {
   className?: string;
   shells: RenderedPageShell[];
+};
+
+type PageShellColumnMenuPosition = {
+  shellId: string;
+  left: number;
+  top: number;
 };
 
 const SHELL_SPAN_CLASSES: Record<number, string> = {
@@ -441,6 +448,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const [slotDrafts, setSlotDrafts] = useState<Record<string, string>>({});
   const [widthDrafts, setWidthDrafts] = useState<Record<string, string>>({});
   const [openColumnShellId, setOpenColumnShellId] = useState<string | null>(null);
+  const [columnMenuPosition, setColumnMenuPosition] = useState<PageShellColumnMenuPosition | null>(null);
+  const columnButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const packedPositions = useMemo<Record<string, PageShellPackedPosition>>(
     () => packPageShellLayout(
       orderedShells.map((shell) => shell.id),
@@ -845,6 +854,17 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     layout.commitPreview();
   }
 
+  function toggleColumnMenu(event: MouseEvent<HTMLButtonElement>, id: string) {
+    event.stopPropagation();
+    if (openColumnShellId === id) {
+      setOpenColumnShellId(null);
+      return;
+    }
+    const buttonRect = event.currentTarget.getBoundingClientRect();
+    setColumnMenuPosition({ shellId: id, left: buttonRect.left, top: buttonRect.bottom + 8 });
+    setOpenColumnShellId(id);
+  }
+
   function moveShellLane(event: MouseEvent<HTMLButtonElement>, id: string, direction: "down" | "up") {
     if (!layout.isEditing || !layout.canReorder) return;
     event.preventDefault();
@@ -964,6 +984,27 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     else cancelDragAutoScroll();
   }, [layout.isEditing, layout.isPreviewing]);
 
+  useEffect(() => {
+    if (!openColumnShellId || typeof window === "undefined") return undefined;
+    const updateColumnMenuPosition = () => {
+      const button = columnButtonRefs.current[openColumnShellId];
+      if (!button) {
+        setOpenColumnShellId(null);
+        setColumnMenuPosition(null);
+        return;
+      }
+      const buttonRect = button.getBoundingClientRect();
+      setColumnMenuPosition({ shellId: openColumnShellId, left: buttonRect.left, top: buttonRect.bottom + 8 });
+    };
+    updateColumnMenuPosition();
+    window.addEventListener("resize", updateColumnMenuPosition);
+    window.addEventListener("scroll", updateColumnMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateColumnMenuPosition);
+      window.removeEventListener("scroll", updateColumnMenuPosition, true);
+    };
+  }, [layout.placements, layout.sizes, openColumnShellId, visibleShellIds]);
+
   function renderShell(shell: RenderedPageShell) {
     const size = layout.sizes[shell.id] ?? { heightPx: null, span: 12 as const };
     const spanClass = SHELL_SPAN_CLASSES[size.span] ?? SHELL_SPAN_CLASSES[12];
@@ -1002,135 +1043,143 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
         style={packedStyle}
       >
         {layout.isEditing ? (
-          <div className="mb-1 flex min-h-7 items-center gap-1.5 rounded-lg border border-[#e4def8] bg-[#faf8ff]/90 px-1.5 py-1 text-xs text-[#6f57f6] dark:border-white/10 dark:bg-[#211a38]/90 dark:text-[#cabfff]" data-page-shell-layout-strip>
-            {layout.canReorder ? (
-              <button
-                aria-label={`Move ${shell.label}`}
-                className="flex h-6 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md hover:bg-[#eee9ff] active:cursor-grabbing dark:hover:bg-white/10"
-                onPointerCancel={(event) => endInteraction(event, true)}
-                onLostPointerCapture={(event) => endInteraction(event, true)}
-                onPointerDown={(event) => beginMove(event, shell.id)}
-                onPointerUp={(event) => endInteraction(event, false)}
-                title={`Move ${shell.label}`}
-                type="button"
-              >
-                <GripVertical aria-hidden="true" className="h-4 w-4" />
-              </button>
-            ) : null}
-            <span className="min-w-0 flex-1 truncate font-semibold">{shell.label}</span>
-            <button
-              aria-label={`Resize ${shell.label} width`}
-              className="inline-flex h-6 w-6 shrink-0 cursor-ew-resize touch-none items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
-              onPointerCancel={(event) => endInteraction(event, true)}
-              onLostPointerCapture={(event) => endInteraction(event, true)}
-              onPointerDown={(event) => beginWidthResize(event, shell.id)}
-              onPointerUp={(event) => endInteraction(event, false)}
-              title={`Resize ${shell.label} width`}
-              type="button"
-            >
-              <MoveHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
-            </button>
-            <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
-              <span>W</span>
-              <input
-                aria-label={`Set ${shell.label} width in columns`}
-                className="page-shell-number-input h-6 min-w-9 w-9 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold tabular-nums text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
-                inputMode="numeric"
-                max={12}
-                min={3}
-                onBlur={(event) => commitShellWidth(event, shell.id)}
-                onChange={(event) => { event.stopPropagation(); setWidthDrafts((current) => ({ ...current, [shell.id]: event.target.value })); }}
-                onKeyDown={handleNumericInputKeyDown}
-                onPointerDown={(event) => event.stopPropagation()}
-                step={1}
-                type="number"
-                value={widthDrafts[shell.id] ?? String(size.span)}
-              />
-              <span>/12</span>
-            </label>
-            <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{formatPageShellDimensions(size.span, size.heightPx, naturalHeight, renderedWidths[shell.id])}</span>
-            {isFullWidth ? (
-              <span className="shrink-0 rounded-md border border-[#ddd6fb] bg-white px-2 py-1 text-[10px] font-semibold text-[#5f47d8] dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]">Full</span>
-            ) : (
-              <div className="relative shrink-0">
+          <div className="mb-1 flex min-h-7 min-w-0 max-w-full items-center gap-1.5 overflow-hidden rounded-lg border border-[#e4def8] bg-[#faf8ff]/90 px-1.5 py-1 text-xs text-[#6f57f6] dark:border-white/10 dark:bg-[#211a38]/90 dark:text-[#cabfff]" data-page-shell-layout-strip>
+            <div className="flex min-w-0 flex-[0_1_auto] items-center gap-1.5" data-page-shell-layout-identity>
+              {layout.canReorder ? (
                 <button
-                  aria-expanded={openColumnShellId === shell.id}
-                  aria-haspopup="listbox"
-                  aria-label={`Set ${shell.label} column`}
-                  className="inline-flex h-6 items-center gap-1 rounded-md border border-[#ddd6fb] bg-white px-2 text-[10px] font-semibold text-[#5f47d8] outline-none hover:bg-[#f7f5ff] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff] dark:hover:bg-white/15"
-                  onClick={(event) => { event.stopPropagation(); setOpenColumnShellId((current) => current === shell.id ? null : shell.id); }}
-                  title={`Set ${shell.label} column`}
+                  aria-label={`Move ${shell.label}`}
+                  className="flex h-6 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md hover:bg-[#eee9ff] active:cursor-grabbing dark:hover:bg-white/10"
+                  onPointerCancel={(event) => endInteraction(event, true)}
+                  onLostPointerCapture={(event) => endInteraction(event, true)}
+                  onPointerDown={(event) => beginMove(event, shell.id)}
+                  onPointerUp={(event) => endInteraction(event, false)}
+                  title={`Move ${shell.label}`}
                   type="button"
                 >
-                  <span>{currentColumnLabel}</span>
-                  <ChevronDown aria-hidden="true" className={`h-3 w-3 transition-transform ${openColumnShellId === shell.id ? "rotate-180" : ""}`} />
+                  <GripVertical aria-hidden="true" className="h-4 w-4" />
                 </button>
-                {openColumnShellId === shell.id ? (
-                  <AdhdDropdownPanel aria-label={`${shell.label} column`} className="min-w-36 p-1.5" role="listbox">
-                    {columnOptions.map((option) => {
-                      const isSelected = option.kind === "existing" && option.columnStart === layout.placements?.[shell.id]?.columnStart;
-                      return (
-                        <button
-                          aria-selected={isSelected}
-                          className={`flex w-full items-center rounded-[0.8rem] px-2 py-1.5 text-left text-[11px] leading-5 transition ${isSelected ? "bg-[#f1ecff] font-semibold text-[#5f4bd7] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : "text-[#5f5876] hover:bg-[#f7f5fb] dark:text-white/75 dark:hover:bg-white/8"}`}
-                          key={`${option.kind}-${option.columnStart}`}
-                          onClick={(event) => commitShellColumn(event, shell.id, option.columnStart)}
-                          onMouseDown={(event) => event.preventDefault()}
-                          role="option"
-                          type="button"
-                        >
-                          {option.kind === "existing" ? option.label : option.label}
-                        </button>
-                      );
-                    })}
-                  </AdhdDropdownPanel>
+              ) : null}
+              <span className="min-w-0 truncate font-semibold">{shell.label}</span>
+            </div>
+            <div className="adhdice-scrollbar adhdice-horizontal-scroll min-w-0 flex-1 overflow-x-auto overflow-y-hidden touch-pan-x" data-page-shell-layout-tools-scroll>
+              <div className="flex w-max min-w-max flex-nowrap items-center gap-1.5" data-page-shell-layout-tools>
+                <button
+                  aria-label={`Resize ${shell.label} width`}
+                  className="inline-flex h-6 w-6 shrink-0 cursor-ew-resize touch-none items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
+                  onPointerCancel={(event) => endInteraction(event, true)}
+                  onLostPointerCapture={(event) => endInteraction(event, true)}
+                  onPointerDown={(event) => beginWidthResize(event, shell.id)}
+                  onPointerUp={(event) => endInteraction(event, false)}
+                  title={`Resize ${shell.label} width`}
+                  type="button"
+                >
+                  <MoveHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+                <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
+                  <span>W</span>
+                  <input
+                    aria-label={`Set ${shell.label} width in columns`}
+                    className="page-shell-number-input h-6 min-w-9 w-9 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold tabular-nums text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
+                    inputMode="numeric"
+                    max={12}
+                    min={3}
+                    onBlur={(event) => commitShellWidth(event, shell.id)}
+                    onChange={(event) => { event.stopPropagation(); setWidthDrafts((current) => ({ ...current, [shell.id]: event.target.value })); }}
+                    onKeyDown={handleNumericInputKeyDown}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    step={1}
+                    type="number"
+                    value={widthDrafts[shell.id] ?? String(size.span)}
+                  />
+                  <span>/12</span>
+                </label>
+                <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{formatPageShellDimensions(size.span, size.heightPx, naturalHeight, renderedWidths[shell.id])}</span>
+                {isFullWidth ? (
+                  <span className="shrink-0 rounded-md border border-[#ddd6fb] bg-white px-2 py-1 text-[10px] font-semibold text-[#5f47d8] dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]">Full</span>
+                ) : (
+                  <div className="relative shrink-0">
+                    <button
+                      aria-expanded={openColumnShellId === shell.id}
+                      aria-haspopup="listbox"
+                      aria-label={`Set ${shell.label} column`}
+                      className="inline-flex h-6 items-center gap-1 rounded-md border border-[#ddd6fb] bg-white px-2 text-[10px] font-semibold text-[#5f47d8] outline-none hover:bg-[#f7f5ff] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff] dark:hover:bg-white/15"
+                      onClick={(event) => toggleColumnMenu(event, shell.id)}
+                      ref={(element) => { columnButtonRefs.current[shell.id] = element; }}
+                      title={`Set ${shell.label} column`}
+                      type="button"
+                    >
+                      <span>{currentColumnLabel}</span>
+                      <ChevronDown aria-hidden="true" className={`h-3 w-3 transition-transform ${openColumnShellId === shell.id ? "rotate-180" : ""}`} />
+                    </button>
+                  </div>
+                )}
+                {!isFullWidth ? (
+                  <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
+                    <span>Slot</span>
+                    <input
+                      aria-label={`Set ${shell.label} slot`}
+                      className="page-shell-number-input h-6 min-w-10 w-10 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold tabular-nums text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
+                      inputMode="numeric"
+                      max={slotCount}
+                      min={1}
+                      onBlur={(event) => handleSlotCommit(event, shell.id)}
+                      onChange={(event) => { event.stopPropagation(); setSlotDrafts((current) => ({ ...current, [shell.id]: event.target.value })); }}
+                      onKeyDown={handleNumericInputKeyDown}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      step={1}
+                      type="number"
+                      value={slotDrafts[shell.id] ?? String(shellSlot)}
+                    />
+                    <span>/{slotCount}</span>
+                  </label>
                 ) : null}
+                {layout.canReorder ? (
+                  <div className="flex shrink-0 items-center gap-0.5" aria-label={`${shell.label} lane movement controls`}>
+                    <button aria-label={`Move ${shell.label} up`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellSlot <= 1} onClick={(event) => moveShellLane(event, shell.id, "up")} title={`Move ${shell.label} up`} type="button"><ArrowUp aria-hidden="true" className="h-3.5 w-3.5" /></button>
+                    <button aria-label={`Move ${shell.label} down`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellSlot >= slotCount} onClick={(event) => moveShellLane(event, shell.id, "down")} title={`Move ${shell.label} down`} type="button"><ArrowDown aria-hidden="true" className="h-3.5 w-3.5" /></button>
+                  </div>
+                ) : null}
+                <button
+                  aria-label={`Shrink ${shell.label}`}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
+                  onClick={(event) => setShellToShrinkHeight(event, shell.id)}
+                  title={`Shrink ${shell.label}`}
+                  type="button"
+                >
+                  <ArrowDownToLine aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  aria-label={`Expand ${shell.label}`}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
+                  onClick={(event) => setShellToNaturalHeight(event, shell.id)}
+                  title={`Expand ${shell.label}`}
+                  type="button"
+                >
+                  <ArrowUpToLine aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
               </div>
-            )}
-            {!isFullWidth ? (
-              <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
-                <span>Slot</span>
-                <input
-                  aria-label={`Set ${shell.label} slot`}
-                  className="page-shell-number-input h-6 min-w-10 w-10 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold tabular-nums text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
-                  inputMode="numeric"
-                  max={slotCount}
-                  min={1}
-                  onBlur={(event) => handleSlotCommit(event, shell.id)}
-                  onChange={(event) => { event.stopPropagation(); setSlotDrafts((current) => ({ ...current, [shell.id]: event.target.value })); }}
-                  onKeyDown={handleNumericInputKeyDown}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  step={1}
-                  type="number"
-                  value={slotDrafts[shell.id] ?? String(shellSlot)}
-                />
-                <span>/{slotCount}</span>
-              </label>
+            </div>
+            {!isFullWidth && openColumnShellId === shell.id && columnMenuPosition?.shellId === shell.id && typeof document !== "undefined" ? createPortal(
+              <AdhdDropdownPanel aria-label={`${shell.label} column`} className="z-50 min-w-36 p-1.5" role="listbox" style={{ left: columnMenuPosition.left, position: "fixed", top: columnMenuPosition.top }}>
+                {columnOptions.map((option) => {
+                  const isSelected = option.kind === "existing" && option.columnStart === layout.placements?.[shell.id]?.columnStart;
+                  return (
+                    <button
+                      aria-selected={isSelected}
+                      className={`flex w-full items-center rounded-[0.8rem] px-2 py-1.5 text-left text-[11px] leading-5 transition ${isSelected ? "bg-[#f1ecff] font-semibold text-[#5f4bd7] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : "text-[#5f5876] hover:bg-[#f7f5fb] dark:text-white/75 dark:hover:bg-white/8"}`}
+                      key={`${option.kind}-${option.columnStart}`}
+                      onClick={(event) => commitShellColumn(event, shell.id, option.columnStart)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      role="option"
+                      type="button"
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </AdhdDropdownPanel>,
+              document.body,
             ) : null}
-            {layout.canReorder ? (
-              <div className="flex shrink-0 items-center gap-0.5" aria-label={`${shell.label} lane movement controls`}>
-                <button aria-label={`Move ${shell.label} up`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellSlot <= 1} onClick={(event) => moveShellLane(event, shell.id, "up")} title={`Move ${shell.label} up`} type="button"><ArrowUp aria-hidden="true" className="h-3.5 w-3.5" /></button>
-                <button aria-label={`Move ${shell.label} down`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellSlot >= slotCount} onClick={(event) => moveShellLane(event, shell.id, "down")} title={`Move ${shell.label} down`} type="button"><ArrowDown aria-hidden="true" className="h-3.5 w-3.5" /></button>
-              </div>
-            ) : null}
-            <button
-              aria-label={`Shrink ${shell.label}`}
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
-              onClick={(event) => setShellToShrinkHeight(event, shell.id)}
-              title={`Shrink ${shell.label}`}
-              type="button"
-            >
-              <ArrowDownToLine aria-hidden="true" className="h-3.5 w-3.5" />
-            </button>
-            <button
-              aria-label={`Expand ${shell.label}`}
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"
-              onClick={(event) => setShellToNaturalHeight(event, shell.id)}
-              title={`Expand ${shell.label}`}
-              type="button"
-            >
-              <ArrowUpToLine aria-hidden="true" className="h-3.5 w-3.5" />
-            </button>
           </div>
         ) : null}
         <div

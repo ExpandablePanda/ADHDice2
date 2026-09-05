@@ -682,6 +682,58 @@ test("shell editor renders semantic Column + Slot controls and no global positio
   assert.doesNotMatch(markup, /aria-label="Set Full Shell (column|slot)"/);
 });
 
+test("shell editor keeps identity fixed and contains the complete tool row in a horizontal scroller", () => {
+  const layout: PageShellLayoutState = {
+    ...staticShellLayout(true),
+    canonicalLayout: {
+      order: ["narrow", "full"],
+      sizes: {
+        narrow: { heightPx: null, span: 3 },
+        full: { heightPx: null, span: 12 },
+      },
+    },
+    isCanonical: false,
+    order: ["narrow", "full"],
+    pageKey: "toolbar-scroll",
+    placements: {
+      narrow: { columnStart: 1, laneOrder: 0 },
+      full: { columnStart: 1, laneOrder: 1 },
+    },
+    sizes: {
+      narrow: { heightPx: null, span: 3 },
+      full: { heightPx: null, span: 12 },
+    },
+  };
+  const markup = renderToStaticMarkup(createElement(
+    ReorderablePageShells,
+    { layout },
+    createElement(PageShell, { id: "narrow", label: "Narrow Shell" }, createElement("span", null, "narrow")),
+    createElement(PageShell, { id: "full", label: "Full Shell" }, createElement("span", null, "full")),
+  ));
+  const narrowStrip = markup.match(/data-page-shell-id="narrow"[\s\S]*?data-page-shell-id="full"/)?.[0] ?? "";
+  assert.match(narrowStrip, /data-page-shell-layout-identity/);
+  assert.match(narrowStrip, /data-page-shell-layout-identity[\s\S]*data-page-shell-layout-tools-scroll/);
+  assert.match(narrowStrip, /adhdice-scrollbar[^<]*adhdice-horizontal-scroll[^<]*min-w-0[^<]*overflow-x-auto[^<]*touch-pan-x[^<]*data-page-shell-layout-tools-scroll/);
+  assert.match(narrowStrip, /flex w-max min-w-max flex-nowrap[^<]*data-page-shell-layout-tools/);
+  for (const control of [
+    'aria-label="Resize Narrow Shell width"',
+    'aria-label="Set Narrow Shell width in columns"',
+    'aria-label="Set Narrow Shell column"',
+    'aria-label="Set Narrow Shell slot"',
+    'aria-label="Move Narrow Shell up"',
+    'aria-label="Move Narrow Shell down"',
+    'aria-label="Shrink Narrow Shell"',
+    'aria-label="Expand Narrow Shell"',
+  ]) assert.match(narrowStrip, new RegExp(control));
+  assert.match(markup, /data-page-shell-id="full"[\s\S]*>Full<\/span>/);
+  assert.match(shellSource, /createPortal\([\s\S]*document\.body/);
+  assert.match(shellSource, /window\.addEventListener\("scroll", updateColumnMenuPosition, true\)/);
+  assert.match(shellSource, /function commitShellColumn[\s\S]*movePageShellToColumn/);
+  assert.match(shellSource, /!isFullWidth && openColumnShellId === shell\.id/);
+  assert.doesNotMatch(shellSource, /scrollLeft\s*=/);
+  assert.doesNotMatch(shellSource, /data-page-shell-layout-tools-scroll[\s\S]*beginMove/);
+});
+
 test("shell surfaces keep the visual frame fixed while the body owns constrained scrolling", () => {
   const markup = renderToStaticMarkup(createElement(
     PageShellSurface,
