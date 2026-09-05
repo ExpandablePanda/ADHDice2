@@ -1,18 +1,36 @@
 # Current State
 
-Last reviewed: 2026-09-04
+Last reviewed: 2026-09-05
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.85`.
+- Current working app version: `7.12.87`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
-- visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+  - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.87 Complete Navigator Shell Search and Reveal
+
+Navigator now exposes the registered page shells as normal destination results.
+The Food `food-library` shell supports direct nutrition, import, recipe, meal,
+and saved-food aliases without creating duplicate destinations; nested Test/D20
+shell destinations remain available under `test:d20`.
+
+Generic shell navigation keeps its semantic request pending until the relevant
+`pageKey` page-shell layout reports hydration readiness, then waits for the
+mounted shell to have usable geometry before revealing it with centered smooth
+scrolling. The resolved outer shell receives a temporary purple navigation
+highlight that is removed automatically, safely replaced by a later shell
+selection, and reduced to a static treatment for `prefers-reduced-motion`.
+
+This completion does not change shell placement/order, packed layout, Views,
+layout persistence, or shell dimensions. The dedicated Settings section
+navigation exact-position issue remains deferred.
 
 ## 2026-09-04 7.12.85 Complete Empty-Column Shell Placement
 

@@ -63,6 +63,27 @@ export type PageShellRegisteredPage = {
   pageKey: string;
 };
 
+type PageShellLayoutReadinessListener = () => void;
+
+const PAGE_SHELL_LAYOUT_READINESS = new Map<string, boolean>();
+const PAGE_SHELL_LAYOUT_READINESS_LISTENERS = new Set<PageShellLayoutReadinessListener>();
+
+export function subscribeToPageShellLayoutReadiness(listener: PageShellLayoutReadinessListener) {
+  PAGE_SHELL_LAYOUT_READINESS_LISTENERS.add(listener);
+  return () => PAGE_SHELL_LAYOUT_READINESS_LISTENERS.delete(listener);
+}
+
+export function isPageShellLayoutReady(pageKey: string) {
+  return PAGE_SHELL_LAYOUT_READINESS.get(pageKey) === true;
+}
+
+export function setPageShellLayoutReady(pageKey: string, ready: boolean) {
+  if (!pageKey.trim() || PAGE_SHELL_LAYOUT_READINESS.get(pageKey) === ready) return;
+  if (ready) PAGE_SHELL_LAYOUT_READINESS.set(pageKey, true);
+  else PAGE_SHELL_LAYOUT_READINESS.delete(pageKey);
+  PAGE_SHELL_LAYOUT_READINESS_LISTENERS.forEach((listener) => listener());
+}
+
 export type PageShellLayoutExport = {
   appVersion: string;
   exportedAt: string;

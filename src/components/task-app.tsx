@@ -188,7 +188,7 @@ import {
   type TaskGridLayoutItem,
 } from "@/lib/task-grid-layout";
 import { buildWidgetTypeGuard, resolveTaskGridLayout } from "@/lib/task-grid-parser";
-import { TEST_PAGE_SHELL_CANONICAL_LAYOUT, TEST_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
+import { isPageShellLayoutReady, subscribeToPageShellLayoutReadiness, TEST_PAGE_SHELL_CANONICAL_LAYOUT, TEST_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import {
   isDueToday,
   isLater,
@@ -1074,6 +1074,7 @@ const dockIcons: Record<AppPage, string> = {
   Test: "FlaskConical",
 };
 const navigatorSearchTargets = createNavigatorSearchTargets(dockItems, HEALTH_TABS);
+const PAGE_SHELL_NAVIGATION_HIGHLIGHT_MS = 1800;
 const TASK_GRID_MAX_COLUMNS = 4;
 const TASK_GRID_TABLET_COLUMNS = 2;
 const TASK_GRID_PHONE_COLUMNS = 1;
@@ -1574,6 +1575,27 @@ export function TaskApp() {
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [requestedSettingsSection, setRequestedSettingsSection] = useState<NavigatorSettingsSection | null>(null);
   const [requestedPageShell, setRequestedPageShell] = useState<Extract<NavigatorSearchAction, { kind: "page-shell" }> | null>(null);
+  const pageShellNavigationHighlightRef = useRef<HTMLElement | null>(null);
+  const pageShellNavigationHighlightTimerRef = useRef<number | null>(null);
+  const clearPageShellNavigationHighlight = useCallback(() => {
+    if (pageShellNavigationHighlightTimerRef.current !== null && typeof window !== "undefined") {
+      window.clearTimeout(pageShellNavigationHighlightTimerRef.current);
+    }
+    pageShellNavigationHighlightTimerRef.current = null;
+    pageShellNavigationHighlightRef.current?.removeAttribute("data-page-shell-navigation-target");
+    pageShellNavigationHighlightRef.current = null;
+  }, []);
+  const highlightPageShellNavigationTarget = useCallback((shell: HTMLElement) => {
+    clearPageShellNavigationHighlight();
+    shell.setAttribute("data-page-shell-navigation-target", "true");
+    pageShellNavigationHighlightRef.current = shell;
+    pageShellNavigationHighlightTimerRef.current = window.setTimeout(clearPageShellNavigationHighlight, PAGE_SHELL_NAVIGATION_HIGHLIGHT_MS);
+  }, [clearPageShellNavigationHighlight]);
+  const requestedPageShellLayoutReady = useSyncExternalStore(
+    subscribeToPageShellLayoutReadiness,
+    () => requestedPageShell ? isPageShellLayoutReady(requestedPageShell.pageKey) : false,
+    () => false,
+  );
   const [isListColumnMenuOpen, setIsListColumnMenuOpen] = useState(false);
   const [isKeyboardShortcutsMenuOpen, setIsKeyboardShortcutsMenuOpen] = useState(false);
   const [isTaskListSettingsOpen, setIsTaskListSettingsOpen] = useState(false);
@@ -4045,6 +4067,8 @@ export function TaskApp() {
 
   const handleNavigatorSearchTarget = useCallback((target: NavigatorSearchTarget) => {
     const action: NavigatorSearchAction = target.action;
+    clearPageShellNavigationHighlight();
+    if (action.kind !== "page-shell") setRequestedPageShell(null);
     if (action.kind === "page") {
       setRequestedSettingsSection(null);
       setActivePage(action.page);
@@ -4073,7 +4097,7 @@ export function TaskApp() {
       setActivePage("Settings");
       setRequestedSettingsSection(action.section);
     }
-  }, [handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, setActivePage, setTaskUiState]);
+  }, [clearPageShellNavigationHighlight, handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, setActivePage, setTaskUiState]);
 
   const openExistingTaskEditor = useCallback((task: Task) => {
     setSuppressDetachedListNoticeTaskId(null);
@@ -4377,7 +4401,7 @@ export function TaskApp() {
 
   useEffect(() => {
     const request = requestedPageShell;
-    if (!request || !isAuthenticatedAppBootReady || activePage !== request.page || (request.healthTab && activeHealthTab !== request.healthTab)) {
+    if (!request || !requestedPageShellLayoutReady || !isAuthenticatedAppBootReady || activePage !== request.page || (request.healthTab && activeHealthTab !== request.healthTab)) {
       return;
     }
     let frame: number | null = null;
@@ -4390,7 +4414,9 @@ export function TaskApp() {
         if (rect.width > 0 && rect.height > 0) {
           const body = shell.querySelector<HTMLElement>(".page-shell-body");
           if (body) body.scrollTop = 0;
-          shell.scrollIntoView({ block: "start" });
+          const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+          shell.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
+          highlightPageShellNavigationTarget(shell);
           setRequestedPageShell(null);
           return;
         }
@@ -4402,7 +4428,8 @@ export function TaskApp() {
     return () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [activeHealthTab, activePage, isAuthenticatedAppBootReady, requestedPageShell]);
+  }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, requestedPageShell, requestedPageShellLayoutReady]);
+  useEffect(() => () => clearPageShellNavigationHighlight(), [clearPageShellNavigationHighlight]);
   const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
   const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string) => {
     const result = buildChildTaskCreationDraft({

@@ -19,6 +19,7 @@ import {
   removePageShellLayout,
   removePageShellView,
   resolvePageShellViewLayout,
+  setPageShellLayoutReady,
   type PageShellCanonicalLayout,
   type PageShellLayoutExport,
   type PageShellLayoutPreference,
@@ -102,6 +103,7 @@ export function usePageShellLayout(
 
   useEffect(() => {
     let cancelled = false;
+    setPageShellLayoutReady(pageKey, false);
     queueMicrotask(() => {
       if (cancelled) return;
       previewRef.current = null;
@@ -116,9 +118,11 @@ export function usePageShellLayout(
       }
       setViews(viewsStorageKey && typeof window !== "undefined" ? readPageShellViews(window.localStorage, viewsStorageKey, pageKey) : []);
       setHydratedInstanceKey(instanceKey);
+      setPageShellLayoutReady(pageKey, true);
     });
     return () => {
       cancelled = true;
+      setPageShellLayoutReady(pageKey, false);
     };
   }, [defaultLayout, instanceKey, pageKey, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes, storageKey, viewsStorageKey]);
 

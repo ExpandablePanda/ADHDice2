@@ -134,7 +134,22 @@ const PAGE_SHELL_LABELS: Readonly<Record<string, string>> = {
 };
 
 const PAGE_SHELL_KEYWORDS: Readonly<Record<string, string[]>> = {
-  "food-library": ["food library", "foods", "nutrition", "custom food"],
+  "food-library": [
+    "food library",
+    "custom nutrition library",
+    "nutrition library",
+    "nutrition",
+    "nutrition import",
+    "import custom foods",
+    "food import",
+    "custom food import",
+    "custom foods",
+    "foods",
+    "recipes",
+    "custom recipes",
+    "custom meals",
+    "saved meals",
+  ],
 };
 
 function getPageShellTitle(shellId: string) {
@@ -264,9 +279,9 @@ export function createNavigatorSearchTargets(
     ...taskSurfaceTargets,
     ...taskViewTargets,
     ...healthTargets,
-    ...pageShellTargets,
     ...settingsSectionTargets,
     ...settingsChildTargets,
+    ...pageShellTargets,
   ];
 }
 
@@ -288,6 +303,13 @@ function getTargetSearchRank(target: NavigatorSearchTarget, normalizedQuery: str
   }
   if (normalizedTitle.includes(normalizedQuery)) {
     return 2;
+  }
+
+  const isExactFoodLibraryAlias = target.action.kind === "page-shell"
+    && target.action.shellId === "food-library"
+    && (PAGE_SHELL_KEYWORDS["food-library"] ?? []).some((keyword) => normalizeSearchText(keyword) === normalizedQuery);
+  if (isExactFoodLibraryAlias) {
+    return 1;
   }
 
   const secondaryText = [...target.breadcrumb, ...(target.keywords ?? [])]

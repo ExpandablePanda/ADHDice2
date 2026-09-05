@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createNavigatorSearchTargets, getNavigatorTaskSearchQuery, isNavigatorTaskSearchQuery, searchNavigatorTargets, toggleNavigatorTaskSearchQuery, type NavigatorSearchTarget } from "@/lib/navigator-search";
 import { searchNavigatorTasks } from "@/lib/navigator-task-search";
+import { isPageShellLayoutReady, setPageShellLayoutReady, subscribeToPageShellLayoutReadiness } from "@/lib/page-shell-layout";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 
 const dockItems = ["Home", "Tasks", "Focus", "Health", "Roll", "Achievements", "Games", "Stats", "Notes", "Settings", "Test"] as const;
@@ -13,6 +14,9 @@ const dockSource = readFileSync(new URL("../src/components/task-app/bottom-dock.
 const adapterSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("../src/components/task-app/settings-page.tsx", import.meta.url), "utf8");
+const layoutHookSource = readFileSync(new URL("../src/hooks/usePageShellLayout.ts", import.meta.url), "utf8");
+const pageShellLayoutSource = readFileSync(new URL("../src/lib/page-shell-layout.ts", import.meta.url), "utf8");
+const globalSource = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8");
 const healthPreferenceSource = readFileSync(new URL("../src/lib/health-tab-preference.ts", import.meta.url), "utf8");
 
 function taskEntity(id: string, title: string, ancestorIds: string[] = [], status: TaskSearchEntity["task"]["status"] = "pending"): TaskSearchEntity {
@@ -43,7 +47,37 @@ test("navigation search matches destination titles and aliases without searching
     shellId: "food-library",
     healthTab: "Food",
   });
-  assert.equal(targets.filter((target) => target.action.kind === "page-shell").length > 0, true);
+  const foodLibraryQueries = [
+    "food library",
+    "custom nutrition library",
+    "nutrition library",
+    "nutrition",
+    "nutrition import",
+    "import custom foods",
+    "food import",
+    "custom food import",
+    "custom foods",
+    "foods",
+    "recipes",
+    "custom recipes",
+    "custom meals",
+    "saved meals",
+  ];
+  for (const query of foodLibraryQueries) {
+    const match = findTarget(query);
+    assert.equal(match.title, "Custom Nutrition Library");
+    assert.deepEqual(match.action, {
+      kind: "page-shell",
+      page: "Health",
+      pageKey: "health:food",
+      shellId: "food-library",
+      healthTab: "Food",
+    });
+  }
+  assert.equal(targets.filter((target) => target.action.kind === "page-shell" && target.action.shellId === "food-library").length, 1);
+  const foodResults = searchNavigatorTargets("food", targets);
+  assert.equal(foodResults.some((target) => target.title === "Food"), true);
+  assert.equal(foodResults.some((target) => target.title === "Custom Nutrition Library"), true);
   assert.deepEqual(findTarget("brain").breadcrumb, ["Tasks", "Brainstorm"]);
   assert.deepEqual(findTarget("timezone").breadcrumb, ["Settings", "Day Reset", "Time Zone"]);
   assert.doesNotMatch(readFileSync(new URL("../src/lib/navigator-search.ts", import.meta.url), "utf8"), /Task\[\]|supabase|from\("/);
@@ -115,8 +149,23 @@ test("Health targets use the canonical shared tab preference", () => {
   assert.match(healthPreferenceSource, /export function persistHealthTabPreference/);
 });
 
+test("page-shell readiness is shared by page key and notifies pending navigation", () => {
+  const pageKey = "test:readiness-contract";
+  setPageShellLayoutReady(pageKey, false);
+  let notifications = 0;
+  const unsubscribe = subscribeToPageShellLayoutReadiness(() => { notifications += 1; });
+  assert.equal(isPageShellLayoutReady(pageKey), false);
+  setPageShellLayoutReady(pageKey, true);
+  assert.equal(isPageShellLayoutReady(pageKey), true);
+  setPageShellLayoutReady(pageKey, false);
+  assert.equal(isPageShellLayoutReady(pageKey), false);
+  assert.equal(notifications, 2);
+  unsubscribe();
+});
+
 test("Settings targets remain pending through shell hydration and acknowledge after ready geometry", () => {
   assert.deepEqual(findTarget("timezone").action, { kind: "settings-section", page: "Settings", section: "day-reset" });
+  assert.deepEqual(findTarget("appearance").action, { kind: "settings-section", page: "Settings", section: "appearance" });
   assert.match(appSource, /setRequestedSettingsSection\(action\.section\)/);
   assert.match(appSource, /requestedSection=\{requestedSettingsSection\}/);
   assert.match(settingsSource, /shell\.scrollIntoView\(\{ block: "start" \}\)/);
@@ -129,11 +178,36 @@ test("Settings targets remain pending through shell hydration and acknowledge af
 });
 
 test("shell destinations route to their page and request direct shell reveal", () => {
+  assert.deepEqual(findTarget("D20 Sandbox").action, {
+    kind: "page-shell",
+    page: "Test",
+    pageKey: "test:d20",
+    shellId: "test-d20-sandbox",
+  });
+  assert.deepEqual(findTarget("Face Mapping Controls").action, {
+    kind: "page-shell",
+    page: "Test",
+    pageKey: "test:d20",
+    shellId: "test-d20-controls",
+  });
   assert.match(appSource, /action\.kind === "page-shell"/);
   assert.match(appSource, /setRequestedPageShell\(action\)/);
   assert.match(appSource, /data-page-shell-id=\"\$\{request\.shellId\}\"/);
   assert.match(appSource, /persistHealthTabPreference\(action\.healthTab\)/);
-  assert.match(appSource, /shell\.scrollIntoView\(\{ block: "start" \}\)/);
+  assert.match(appSource, /const requestedPageShellLayoutReady = useSyncExternalStore/);
+  assert.match(appSource, /isPageShellLayoutReady\(requestedPageShell\.pageKey\)/);
+  assert.match(appSource, /!requestedPageShellLayoutReady/);
+  assert.match(appSource, /shell\.scrollIntoView\(\{ behavior: prefersReducedMotion \? "auto" : "smooth", block: "center" \}\)/);
+  assert.match(appSource, /highlightPageShellNavigationTarget\(shell\)/);
+  assert.match(appSource, /shell\.setAttribute\("data-page-shell-navigation-target", "true"\)/);
+  assert.match(appSource, /window\.setTimeout\(clearPageShellNavigationHighlight/);
+  assert.match(appSource, /window\.clearTimeout/);
+  assert.match(appSource, /clearPageShellNavigationHighlight\(\)/);
+  assert.match(layoutHookSource, /setPageShellLayoutReady\(pageKey, false\)/);
+  assert.match(layoutHookSource, /setPageShellLayoutReady\(pageKey, true\)/);
+  assert.match(pageShellLayoutSource, /subscribeToPageShellLayoutReadiness/);
+  assert.match(globalSource, /\[data-page-shell-navigation-target="true"\]/);
+  assert.match(globalSource, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
 test("inline search mode enters with an autofocused input and supports keyboard selection", () => {
