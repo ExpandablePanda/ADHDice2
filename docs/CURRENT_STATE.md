@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.89`.
+- Current working app version: `7.12.90`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,24 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.90 Semantic Column + Slot Shell Positioning
+
+The editable page-shell position model now matches the durable semantic
+placement fields directly. Non-full-width shells expose a presentation-only
+Column label derived from the sorted distinct `columnStart` values and a Slot
+control mapped to `laneOrder + 1` within that column. Slot changes, Up/Down
+shortcuts, and cross-column moves normalize affected lanes through the shared
+semantic lane helper; Up/Down call the same explicit-slot implementation.
+Cross-column moves preserve the approximate source slot when the destination
+has room. New-column controls continue to place the selected shell at Slot 1,
+and Column labels re-derive after structural changes.
+
+Editable global `Pos N/N` is removed. Global column-major `order` is derived
+only for compatibility, visual reading, Views/export, and persistence.
+Full-width shells continue to show `Full` without Column or Slot; drag remains
+an optional convenience and its semantic result is reflected by the same
+controls. Nested shell expansion remains deferred pending browser QA.
 
 ## 2026-09-05 7.12.89 Deterministic Shell Columns and Navigator Anchor Stabilization
 

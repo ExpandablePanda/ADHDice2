@@ -494,6 +494,13 @@ export type PageShellColumn = {
   shellIds: string[];
 };
 
+export type PageShellColumnSlot = {
+  columnLabel: string;
+  columnStart: number;
+  slot: number;
+  slotCount: number;
+};
+
 export type PageShellColumnOption = {
   columnStart: number;
   kind: "existing" | "new-left" | "new-right";
@@ -971,6 +978,28 @@ export function derivePageShellColumns(
     }));
 }
 
+/** Returns the presentation-only Column + Slot coordinate for one shell. */
+export function getPageShellColumnSlot(
+  order: readonly string[],
+  sizes: Readonly<Record<string, PageShellSize>>,
+  placements: Readonly<Record<string, PageShellPlacement>>,
+  sourceId: string,
+  visibleShellIds: readonly string[] = order,
+): PageShellColumnSlot | null {
+  const sourcePlacement = placements[sourceId];
+  if (!sourcePlacement || sizes[sourceId]?.span === PAGE_SHELL_OPTIONS_LAST) return null;
+  const column = derivePageShellColumns(order, sizes, placements, visibleShellIds)
+    .find((candidate) => candidate.columnStart === sourcePlacement.columnStart);
+  const sourceIndex = column?.shellIds.indexOf(sourceId) ?? -1;
+  if (!column || sourceIndex < 0) return null;
+  return {
+    columnLabel: column.label,
+    columnStart: column.columnStart,
+    slot: sourceIndex + 1,
+    slotCount: column.shellIds.length,
+  };
+}
+
 /** Returns existing semantic lanes plus at most one valid adjacent empty lane per side. */
 export function getPageShellColumnOptions(
   visibleShellIds: readonly string[],
@@ -1080,11 +1109,33 @@ export function movePageShellToColumn(
   const columns = derivePageShellColumns(visibleShellIds, layout.sizes, layout.placements ?? {}, visibleShellIds);
   const sourceColumn = columns.find((column) => column.columnStart === sourcePlacement.columnStart);
   const destinationColumn = columns.find((column) => column.columnStart === targetColumnStart);
-  const sourceLane = sourceColumn?.shellIds.indexOf(sourceId) ?? sourcePlacement.laneOrder;
-  const targetLane = destinationColumn && targetColumnStart !== sourcePlacement.columnStart
-    ? Math.min(Math.max(0, sourceLane), destinationColumn.shellIds.length)
-    : sourceLane;
-  return resequencePageShellPlacement(layout, visibleShellIds, sourceId, targetColumnStart, targetLane, layout.order);
+  const sourceSlot = (sourceColumn?.shellIds.indexOf(sourceId) ?? sourcePlacement.laneOrder) + 1;
+  const targetSlot = destinationColumn && targetColumnStart !== sourcePlacement.columnStart
+    ? Math.min(sourceSlot, destinationColumn.shellIds.length + 1)
+    : sourceSlot;
+  return resequencePageShellPlacement(layout, visibleShellIds, sourceId, targetColumnStart, targetSlot - 1, layout.order);
+}
+
+/** Moves one shell to an explicit contiguous slot in its current semantic column. */
+export function movePageShellToSlot(
+  layout: PageShellLayoutPreference,
+  visibleShellIds: readonly string[],
+  sourceId: string,
+  requestedSlot: number,
+) {
+  const sourceSize = layout.sizes[sourceId];
+  const sourcePlacement = layout.placements?.[sourceId];
+  if (!sourceSize || sourceSize.span === PAGE_SHELL_OPTIONS_LAST || !sourcePlacement) {
+    return { order: [...layout.order], placements: clonePageShellPlacements(layout.placements) };
+  }
+  const column = derivePageShellColumns(visibleShellIds, layout.sizes, layout.placements ?? {}, visibleShellIds)
+    .find((candidate) => candidate.columnStart === sourcePlacement.columnStart);
+  const sourceSlot = column ? column.shellIds.indexOf(sourceId) + 1 : sourcePlacement.laneOrder + 1;
+  if (!column || sourceSlot < 1 || !Number.isFinite(requestedSlot)) {
+    return { order: [...layout.order], placements: clonePageShellPlacements(layout.placements) };
+  }
+  const targetSlot = Math.max(1, Math.min(column.shellIds.length, Math.round(requestedSlot)));
+  return resequencePageShellPlacement(layout, visibleShellIds, sourceId, sourcePlacement.columnStart, targetSlot - 1, layout.order);
 }
 
 /** Moves one shell lane earlier or later without consulting rendered geometry. */
@@ -1094,80 +1145,14 @@ export function movePageShellOneLane(
   sourceId: string,
   direction: "up" | "down",
 ) {
-  const sourceSize = layout.sizes[sourceId];
   const sourcePlacement = layout.placements?.[sourceId];
-  if (!sourceSize || sourceSize.span === PAGE_SHELL_OPTIONS_LAST || !sourcePlacement) {
-    return { order: [...layout.order], placements: clonePageShellPlacements(layout.placements) };
-  }
+  if (!sourcePlacement) return { order: [...layout.order], placements: clonePageShellPlacements(layout.placements) };
   const column = derivePageShellColumns(visibleShellIds, layout.sizes, layout.placements ?? {}, visibleShellIds)
     .find((candidate) => candidate.columnStart === sourcePlacement.columnStart);
-  const sourceLane = column?.shellIds.indexOf(sourceId) ?? sourcePlacement.laneOrder;
-  const nextLane = direction === "up" ? sourceLane - 1 : sourceLane + 1;
-  if (!column || sourceLane < 0 || nextLane < 0 || nextLane >= column.shellIds.length) {
-    return { order: [...layout.order], placements: clonePageShellPlacements(layout.placements) };
-  }
-  return resequencePageShellPlacement(layout, visibleShellIds, sourceId, sourcePlacement.columnStart, nextLane, layout.order);
-}
-
-/**
- * Moves a shell to a displayed visual position while preserving existing
- * semantic columns whenever that position can be represented within them.
- * Positions outside the current column use the nearest resulting visual
- * neighbor to infer a destination column before any broader reflow.
- */
-export function movePageShellToVisualPosition(
-  layout: PageShellLayoutPreference,
-  visibleShellIds: readonly string[],
-  sourceId: string,
-  requestedPosition: number,
-) {
-  const visualOrder = derivePageShellVisualOrder(visibleShellIds, layout.sizes, layout.placements ?? {});
-  const sourceIndex = visualOrder.indexOf(sourceId);
-  const sourcePlacement = layout.placements?.[sourceId];
-  if (sourceIndex < 0 || !sourcePlacement) return { order: [...layout.order], placements: layout.placements ?? {} };
-
-  const targetIndex = Math.max(0, Math.min(visualOrder.length - 1, Math.round(requestedPosition) - 1));
-  let firstSameColumnIndex = sourceIndex;
-  let lastSameColumnIndex = sourceIndex;
-  while (firstSameColumnIndex > 0) {
-    const candidateId = visualOrder[firstSameColumnIndex - 1];
-    if (layout.sizes[candidateId]?.span === PAGE_SHELL_OPTIONS_LAST || layout.placements?.[candidateId]?.columnStart !== sourcePlacement.columnStart) break;
-    firstSameColumnIndex -= 1;
-  }
-  while (lastSameColumnIndex < visualOrder.length - 1) {
-    const candidateId = visualOrder[lastSameColumnIndex + 1];
-    if (layout.sizes[candidateId]?.span === PAGE_SHELL_OPTIONS_LAST || layout.placements?.[candidateId]?.columnStart !== sourcePlacement.columnStart) break;
-    lastSameColumnIndex += 1;
-  }
-  if (targetIndex >= firstSameColumnIndex && targetIndex <= lastSameColumnIndex) {
-    return placePageShellAtDrop(layout, visibleShellIds, sourceId, {
-      columnStart: sourcePlacement.columnStart,
-      insertionIndex: targetIndex,
-      laneOrder: targetIndex - firstSameColumnIndex,
-      targetId: null,
-    });
-  }
-
-  const nextVisualOrder = reorderPageShellOrderAt(visualOrder, sourceId, targetIndex);
-  const targetAfterId = nextVisualOrder[targetIndex + 1];
-  const targetBeforeId = nextVisualOrder[targetIndex - 1];
-  const targetAfterPlacement = targetAfterId ? layout.placements?.[targetAfterId] : undefined;
-  const targetBeforePlacement = targetBeforeId ? layout.placements?.[targetBeforeId] : undefined;
-  const destinationPlacement = targetAfterPlacement ?? targetBeforePlacement ?? sourcePlacement;
-  const destinationIds = visualOrder.filter((id) => (
-    id !== sourceId && layout.placements?.[id]?.columnStart === destinationPlacement.columnStart
-  ));
-  const referenceId = targetAfterPlacement ? targetAfterId : targetBeforeId;
-  const referenceIndex = referenceId ? destinationIds.indexOf(referenceId) : -1;
-  const laneOrder = referenceIndex < 0
-    ? destinationIds.length
-    : targetAfterPlacement ? referenceIndex : referenceIndex + 1;
-  return placePageShellAtDrop(layout, visibleShellIds, sourceId, {
-    columnStart: destinationPlacement.columnStart,
-    insertionIndex: targetIndex,
-    laneOrder,
-    targetId: referenceId ?? null,
-  });
+  const sourceSlot = column?.shellIds.indexOf(sourceId) ?? -1;
+  if (!column || sourceSlot < 0) return { order: [...layout.order], placements: clonePageShellPlacements(layout.placements) };
+  const targetSlot = direction === "up" ? sourceSlot : sourceSlot + 2;
+  return movePageShellToSlot(layout, visibleShellIds, sourceId, targetSlot);
 }
 
 /**

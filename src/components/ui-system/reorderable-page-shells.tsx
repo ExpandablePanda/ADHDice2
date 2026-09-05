@@ -11,7 +11,7 @@ import {
   getPageShellDropTarget,
   getPageShellDragAutoScrollDelta,
   getPageShellColumnOptions,
-  derivePageShellColumns,
+  getPageShellColumnSlot,
   getPageShellGridColumnGeometry,
   clampPageShellHeight,
   formatPageShellDimensions,
@@ -19,7 +19,7 @@ import {
   getPageShellShrinkHeight,
   movePageShellOneLane,
   movePageShellToColumn,
-  movePageShellToVisualPosition,
+  movePageShellToSlot,
   normalizePageShellSpan,
   placePageShellAtDrop,
   packPageShellLayout,
@@ -434,7 +434,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const [resizingId, setResizingId] = useState<string | null>(null);
   const [naturalHeights, setNaturalHeights] = useState<Record<string, number>>({});
   const [renderedWidths, setRenderedWidths] = useState<Record<string, number>>({});
-  const [positionDrafts, setPositionDrafts] = useState<Record<string, string>>({});
+  const [slotDrafts, setSlotDrafts] = useState<Record<string, string>>({});
   const [widthDrafts, setWidthDrafts] = useState<Record<string, string>>({});
   const [openColumnShellId, setOpenColumnShellId] = useState<string | null>(null);
   const packedPositions = useMemo<Record<string, PageShellPackedPosition>>(
@@ -452,10 +452,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   // Canonical metadata owns the historical presentation. Once a user has a
   // custom layout (including a live edit preview), derived packing takes over.
   const usePackedPlacement = !layout.isCanonical;
-  const pageShellColumns = useMemo(
-    () => derivePageShellColumns(orderedShells.map((shell) => shell.id), layout.sizes, layout.placements, visibleShellIds),
-    [layout.placements, layout.sizes, orderedShells, visibleShellIds],
-  );
   const pageShellColumnOptions = useMemo(
     () => new Map(orderedShells.map((shell) => [
       shell.id,
@@ -800,12 +796,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     });
   }
 
-  function commitShellPosition(id: string, rawValue: string) {
+  function commitShellSlot(id: string, rawValue: string) {
     if (!rawValue.trim()) return;
     const startLayout = currentLayout();
     const numericValue = Number(rawValue);
     if (!Number.isFinite(numericValue)) return;
-    const nextLayout = movePageShellToVisualPosition(startLayout, visibleShellIds, id, numericValue);
+    const nextLayout = movePageShellToSlot(startLayout, visibleShellIds, id, numericValue);
     if (layoutsHaveSameOrder(nextLayout.order, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
     layout.beginPreview(startLayout);
     layout.setPreviewOrder(nextLayout.order);
@@ -813,10 +809,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     layout.commitPreview();
   }
 
-  function handlePositionCommit(event: ChangeEvent<HTMLInputElement>, id: string) {
+  function handleSlotCommit(event: ChangeEvent<HTMLInputElement>, id: string) {
     event.stopPropagation();
-    commitShellPosition(id, event.currentTarget.value);
-    setPositionDrafts((current) => {
+    commitShellSlot(id, event.currentTarget.value);
+    setSlotDrafts((current) => {
       const next = { ...current };
       delete next[id];
       return next;
@@ -970,7 +966,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const hasCustomHeight = size.heightPx !== null;
     const naturalHeight = naturalHeights[shell.id];
     const packedPosition = usePackedPlacement ? packedPositions[shell.id] : undefined;
-    const shellPosition = orderedShells.findIndex((candidate) => candidate.id === shell.id);
     const packedStyle = packedPosition
       ? {
         "--page-shell-grid-column-span": packedPosition.columnSpan,
@@ -983,11 +978,13 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       ? layout.canonicalLayout.shellClassNames?.[shell.id] ?? ""
       : spanClass;
     const columnOptions = pageShellColumnOptions.get(shell.id) ?? [];
-    const currentColumnOption = columnOptions.find((option) => option.kind === "existing" && option.columnStart === layout.placements?.[shell.id]?.columnStart);
-    const currentColumnLabel = currentColumnOption?.label.replace(/^Column /, "Col ") ?? "Col A";
-    const currentColumn = pageShellColumns.find((column) => column.columnStart === layout.placements?.[shell.id]?.columnStart);
-    const shellLane = currentColumn?.shellIds.indexOf(shell.id) ?? -1;
     const isFullWidth = size.span === 12;
+    const columnSlot = isFullWidth
+      ? null
+      : getPageShellColumnSlot(orderedShells.map((candidate) => candidate.id), layout.sizes, layout.placements, shell.id, visibleShellIds);
+    const currentColumnLabel = columnSlot ? `Col ${columnSlot.columnLabel}` : "Col A";
+    const shellSlot = columnSlot?.slot ?? 1;
+    const slotCount = columnSlot?.slotCount ?? 1;
     return (
       <div
         className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
@@ -1048,26 +1045,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
               <span>/12</span>
             </label>
             <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{formatPageShellDimensions(size.span, size.heightPx, naturalHeight, renderedWidths[shell.id])}</span>
-            {layout.canReorder ? (
-              <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
-                  <span>Pos</span>
-                  <input
-                    aria-label={`Set ${shell.label} position`}
-                    className="page-shell-number-input h-6 min-w-10 w-10 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold tabular-nums text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
-                    inputMode="numeric"
-                    max={orderedShells.length}
-                    min={1}
-                    onBlur={(event) => handlePositionCommit(event, shell.id)}
-                    onChange={(event) => { event.stopPropagation(); setPositionDrafts((current) => ({ ...current, [shell.id]: event.target.value })); }}
-                    onKeyDown={handleNumericInputKeyDown}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    step={1}
-                    type="number"
-                    value={positionDrafts[shell.id] ?? String(shellPosition + 1)}
-                  />
-                  <span>/{orderedShells.length}</span>
-                </label>
-            ) : null}
             {isFullWidth ? (
               <span className="shrink-0 rounded-md border border-[#ddd6fb] bg-white px-2 py-1 text-[10px] font-semibold text-[#5f47d8] dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]">Full</span>
             ) : (
@@ -1106,10 +1083,30 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                 ) : null}
               </div>
             )}
+            {!isFullWidth ? (
+              <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
+                <span>Slot</span>
+                <input
+                  aria-label={`Set ${shell.label} slot`}
+                  className="page-shell-number-input h-6 min-w-10 w-10 rounded-md border border-[#ddd6fb] bg-white px-1 text-center text-[10px] font-semibold tabular-nums text-[#5f47d8] outline-none dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]"
+                  inputMode="numeric"
+                  max={slotCount}
+                  min={1}
+                  onBlur={(event) => handleSlotCommit(event, shell.id)}
+                  onChange={(event) => { event.stopPropagation(); setSlotDrafts((current) => ({ ...current, [shell.id]: event.target.value })); }}
+                  onKeyDown={handleNumericInputKeyDown}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  step={1}
+                  type="number"
+                  value={slotDrafts[shell.id] ?? String(shellSlot)}
+                />
+                <span>/{slotCount}</span>
+              </label>
+            ) : null}
             {layout.canReorder ? (
               <div className="flex shrink-0 items-center gap-0.5" aria-label={`${shell.label} lane movement controls`}>
-                <button aria-label={`Move ${shell.label} up`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellLane <= 0} onClick={(event) => moveShellLane(event, shell.id, "up")} title={`Move ${shell.label} up`} type="button"><ArrowUp aria-hidden="true" className="h-3.5 w-3.5" /></button>
-                <button aria-label={`Move ${shell.label} down`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellLane < 0 || shellLane >= (currentColumn?.shellIds.length ?? 0) - 1} onClick={(event) => moveShellLane(event, shell.id, "down")} title={`Move ${shell.label} down`} type="button"><ArrowDown aria-hidden="true" className="h-3.5 w-3.5" /></button>
+                <button aria-label={`Move ${shell.label} up`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellSlot <= 1} onClick={(event) => moveShellLane(event, shell.id, "up")} title={`Move ${shell.label} up`} type="button"><ArrowUp aria-hidden="true" className="h-3.5 w-3.5" /></button>
+                <button aria-label={`Move ${shell.label} down`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellSlot >= slotCount} onClick={(event) => moveShellLane(event, shell.id, "down")} title={`Move ${shell.label} down`} type="button"><ArrowDown aria-hidden="true" className="h-3.5 w-3.5" /></button>
               </div>
             ) : null}
             <button

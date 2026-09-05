@@ -36,6 +36,7 @@ import {
   derivePageShellColumns,
   formatPageShellDimensions,
   getPageShellColumnLabel,
+  getPageShellColumnSlot,
   getPageShellColumnOptions,
   getPageShellExportFilename,
   getPageShellViewsStorageKey,
@@ -45,7 +46,7 @@ import {
   mergeVisiblePageShellOrder,
   movePageShellOneLane,
   movePageShellToColumn,
-  movePageShellToVisualPosition,
+  movePageShellToSlot,
   normalizePageShellLayout,
   normalizePageShellSpan,
   normalizePageShellSize,
@@ -510,6 +511,54 @@ test("conditional shells disappear normally and become editable placeholders", (
   assert.match(editMarkup, /aria-label="Shrink Conditional"/);
   assert.match(editMarkup, /aria-label="Expand Conditional"/);
   assert.match(editMarkup, /W 6\/12 · H 288px · Natural —px/);
+  assert.match(editMarkup, /aria-label="Set Conditional column"/);
+  assert.match(editMarkup, /aria-label="Set Conditional slot"/);
+  assert.doesNotMatch(editMarkup, /Set Conditional position/);
+  assert.doesNotMatch(editMarkup, /Set Regular column/);
+  assert.doesNotMatch(editMarkup, /Set Regular slot/);
+  assert.match(editMarkup, /Full/);
+});
+
+test("shell editor renders semantic Column + Slot controls and no global position input", () => {
+  const layout: PageShellLayoutState = {
+    ...staticShellLayout(true),
+    canonicalLayout: {
+      order: ["a", "b", "c", "full"],
+      sizes: {
+        a: { heightPx: null, span: 6 },
+        b: { heightPx: null, span: 6 },
+        c: { heightPx: null, span: 6 },
+        full: { heightPx: null, span: 12 },
+      },
+    },
+    isCanonical: false,
+    order: ["a", "b", "c", "full"],
+    placements: {
+      a: { columnStart: 1, laneOrder: 0 },
+      b: { columnStart: 1, laneOrder: 1 },
+      c: { columnStart: 1, laneOrder: 2 },
+      full: { columnStart: 1, laneOrder: 3 },
+    },
+    sizes: {
+      a: { heightPx: null, span: 6 },
+      b: { heightPx: null, span: 6 },
+      c: { heightPx: null, span: 6 },
+      full: { heightPx: null, span: 12 },
+    },
+  };
+  const markup = renderToStaticMarkup(createElement(
+    ReorderablePageShells,
+    { layout },
+    createElement(PageShell, { id: "a", label: "Shell A" }, createElement("span", null, "a")),
+    createElement(PageShell, { id: "b", label: "Shell B" }, createElement("span", null, "b")),
+    createElement(PageShell, { id: "c", label: "Shell C" }, createElement("span", null, "c")),
+    createElement(PageShell, { id: "full", label: "Full Shell" }, createElement("span", null, "full")),
+  ));
+  assert.match(markup, /<span>Col A<\/span>/);
+  assert.match(markup, /aria-label="Set Shell B slot"[\s\S]*max="3"[\s\S]*value="2"/);
+  assert.match(markup, /<span>Slot<\/span>[\s\S]*<span>\/3<\/span>/);
+  assert.doesNotMatch(markup, /Pos|Set Shell [ABC] position/);
+  assert.doesNotMatch(markup, /aria-label="Set Full Shell (column|slot)"/);
 });
 
 test("shell surfaces keep the visual frame fixed while the body owns constrained scrolling", () => {
@@ -556,6 +605,9 @@ test("single-shell layouts can edit and resize without exposing reorder controls
   assert.match(markup, /aria-label="Shrink Only Shell"/);
   assert.match(markup, /aria-label="Expand Only Shell"/);
   assert.doesNotMatch(markup, /aria-label="Move Only Shell"/);
+  assert.match(markup, /Full/);
+  assert.doesNotMatch(markup, /Set Only Shell column/);
+  assert.doesNotMatch(markup, /Set Only Shell slot/);
 });
 
 test("two-or-more-shell layouts retain reorder capability", () => {
@@ -797,6 +849,7 @@ test("semantic placement keeps the Water-style right lane stable through a persi
   writePageShellLayout(store, key, "health:water", dropped);
   const roundTrip = readPageShellLayout(store, key, "health:water", Object.keys(sizes), sizes);
   assert.deepEqual(roundTrip.placements, dropped.placements);
+  assert.deepEqual(getPageShellColumnSlot(roundTrip.order, roundTrip.sizes, roundTrip.placements ?? {}, "c"), { columnLabel: "B", columnStart: 7, slot: 3, slotCount: 3 });
 
   const withNewShell = normalizePageShellLayout({
     order: [...roundTrip.order, "d"],
@@ -808,7 +861,7 @@ test("semantic placement keeps the Water-style right lane stable through a persi
   assert.ok(packed.d.rowStart > packed.c.rowStart);
 });
 
-test("custom shell positions normalize from visual column-major placement", () => {
+test("custom semantic placements normalize to visual column-major order", () => {
   const sizes = {
     A: { heightPx: 144, span: 6 as const },
     B: { heightPx: 144, span: 6 as const },
@@ -909,44 +962,117 @@ test("full-width shells divide visual column-major regions without taking column
   );
 });
 
-test("direct Pos uses the same visual order while preserving the current column when possible", () => {
+test("Column + Slot coordinates derive from semantic placement and reorder only one column", () => {
   const sizes = {
-    A: { heightPx: 144, span: 6 as const },
-    B: { heightPx: 144, span: 6 as const },
-    C: { heightPx: 144, span: 6 as const },
-    D: { heightPx: 144, span: 6 as const },
-    E: { heightPx: 144, span: 6 as const },
-    F: { heightPx: 144, span: 3 as const },
+    a: { heightPx: 144, span: 3 as const },
+    b: { heightPx: 144, span: 3 as const },
+    c: { heightPx: 144, span: 3 as const },
+    d: { heightPx: 144, span: 3 as const },
+    e: { heightPx: 144, span: 3 as const },
+    f: { heightPx: 144, span: 3 as const },
   };
   const placements = {
-    A: { columnStart: 1, laneOrder: 0 },
-    B: { columnStart: 1, laneOrder: 1 },
-    C: { columnStart: 1, laneOrder: 2 },
-    D: { columnStart: 7, laneOrder: 0 },
-    E: { columnStart: 7, laneOrder: 1 },
-    F: { columnStart: 10, laneOrder: 0 },
+    a: { columnStart: 1, laneOrder: 0 },
+    b: { columnStart: 1, laneOrder: 1 },
+    c: { columnStart: 1, laneOrder: 2 },
+    d: { columnStart: 5, laneOrder: 0 },
+    e: { columnStart: 5, laneOrder: 1 },
+    f: { columnStart: 9, laneOrder: 0 },
   };
-  const result = movePageShellToVisualPosition(
-    { order: ["A", "B", "C", "D", "E", "F"], placements, sizes },
-    ["A", "B", "C", "D", "E", "F"],
-    "C",
-    4,
-  );
-  assert.deepEqual(result.order, ["A", "B", "D", "C", "E", "F"]);
-  assert.deepEqual(result.placements?.D, { columnStart: 7, laneOrder: 0 });
-  assert.deepEqual(result.placements?.C, { columnStart: 7, laneOrder: 1 });
-  assert.deepEqual(result.placements?.E, { columnStart: 7, laneOrder: 2 });
+  const order = Object.keys(sizes);
+  const layout = { order, placements, sizes };
+  assert.deepEqual(getPageShellColumnSlot(order, sizes, placements, "a"), { columnLabel: "A", columnStart: 1, slot: 1, slotCount: 3 });
+  assert.deepEqual(getPageShellColumnSlot(order, sizes, placements, "c"), { columnLabel: "A", columnStart: 1, slot: 3, slotCount: 3 });
+  assert.deepEqual(getPageShellColumnSlot(order, sizes, placements, "d"), { columnLabel: "B", columnStart: 5, slot: 1, slotCount: 2 });
+  assert.deepEqual(getPageShellColumnSlot(order, sizes, placements, "f"), { columnLabel: "C", columnStart: 9, slot: 1, slotCount: 1 });
 
-  const crossColumnResult = movePageShellToVisualPosition(
-    { order: ["A", "B", "C", "D", "E", "F"], placements, sizes },
-    ["A", "B", "C", "D", "E", "F"],
-    "C",
-    1,
-  );
-  assert.deepEqual(crossColumnResult.order, ["C", "A", "B", "D", "E", "F"]);
-  assert.deepEqual(crossColumnResult.placements?.A, { columnStart: 1, laneOrder: 1 });
-  assert.deepEqual(crossColumnResult.placements?.B, { columnStart: 1, laneOrder: 2 });
-  assert.deepEqual(crossColumnResult.placements?.C, { columnStart: 1, laneOrder: 0 });
+  const movedToTop = movePageShellToSlot(layout, order, "c", 1);
+  assert.deepEqual(movedToTop.order, ["c", "a", "b", "d", "e", "f"]);
+  assert.deepEqual(movedToTop.placements, {
+    c: { columnStart: 1, laneOrder: 0 },
+    a: { columnStart: 1, laneOrder: 1 },
+    b: { columnStart: 1, laneOrder: 2 },
+    d: { columnStart: 5, laneOrder: 0 },
+    e: { columnStart: 5, laneOrder: 1 },
+    f: { columnStart: 9, laneOrder: 0 },
+  });
+  assert.deepEqual(getPageShellColumnSlot(movedToTop.order, sizes, movedToTop.placements, "c"), { columnLabel: "A", columnStart: 1, slot: 1, slotCount: 3 });
+
+  const movedToBottom = movePageShellToSlot({ ...movedToTop, sizes }, order, "c", 99);
+  assert.deepEqual(movedToBottom.order, order);
+  assert.deepEqual(movedToBottom.placements, placements);
+  assert.deepEqual(movePageShellToSlot(layout, order, "a", 0).placements, placements);
+  assert.deepEqual(movePageShellToSlot(layout, order, "a", Number.NaN).placements, placements);
+  assert.deepEqual(derivePageShellVisualOrder(movedToTop.order, sizes, movedToTop.placements ?? {}), movedToTop.order);
+});
+
+test("Column changes preserve the approximate Slot, normalize both lanes, and support direct A to C moves", () => {
+  const sizes = Object.fromEntries([
+    ["a1", { heightPx: 144, span: 3 as const }],
+    ["a2", { heightPx: 144, span: 3 as const }],
+    ["a3", { heightPx: 144, span: 3 as const }],
+    ["b1", { heightPx: 144, span: 3 as const }],
+    ["b2", { heightPx: 144, span: 3 as const }],
+    ["b3", { heightPx: 144, span: 3 as const }],
+    ["b4", { heightPx: 144, span: 3 as const }],
+    ["b5", { heightPx: 144, span: 3 as const }],
+    ["c1", { heightPx: 144, span: 3 as const }],
+  ]);
+  const order = Object.keys(sizes);
+  const placements = {
+    a1: { columnStart: 1, laneOrder: 0 },
+    a2: { columnStart: 1, laneOrder: 1 },
+    a3: { columnStart: 1, laneOrder: 2 },
+    b1: { columnStart: 5, laneOrder: 0 },
+    b2: { columnStart: 5, laneOrder: 1 },
+    b3: { columnStart: 5, laneOrder: 2 },
+    b4: { columnStart: 5, laneOrder: 3 },
+    b5: { columnStart: 5, laneOrder: 4 },
+    c1: { columnStart: 9, laneOrder: 0 },
+  };
+  const movedToB = movePageShellToColumn({ order, placements, sizes }, order, "a2", 5);
+  assert.deepEqual(movedToB.placements?.a1, { columnStart: 1, laneOrder: 0 });
+  assert.deepEqual(movedToB.placements?.a3, { columnStart: 1, laneOrder: 1 });
+  assert.deepEqual(movedToB.placements?.a2, { columnStart: 5, laneOrder: 1 });
+  assert.deepEqual(movedToB.placements?.b1, { columnStart: 5, laneOrder: 0 });
+  assert.deepEqual(movedToB.placements?.b2, { columnStart: 5, laneOrder: 2 });
+  assert.deepEqual(movedToB.placements?.c1, placements.c1);
+  assert.deepEqual(movedToB.order, ["a1", "a3", "b1", "a2", "b2", "b3", "b4", "b5", "c1"]);
+
+  const shortDestination = movePageShellToColumn({
+    order: ["a1", "a2", "a3", "b1", "c1"],
+    placements: {
+      a1: placements.a1,
+      a2: placements.a2,
+      a3: placements.a3,
+      b1: placements.b1,
+      c1: placements.c1,
+    },
+    sizes: { a1: sizes.a1, a2: sizes.a2, a3: sizes.a3, b1: sizes.b1, c1: sizes.c1 },
+  }, ["a1", "a2", "a3", "b1", "c1"], "a3", 5);
+  assert.deepEqual(shortDestination.placements?.a1, { columnStart: 1, laneOrder: 0 });
+  assert.deepEqual(shortDestination.placements?.a2, { columnStart: 1, laneOrder: 1 });
+  assert.deepEqual(shortDestination.placements?.b1, { columnStart: 5, laneOrder: 0 });
+  assert.deepEqual(shortDestination.placements?.a3, { columnStart: 5, laneOrder: 1 });
+  assert.deepEqual(shortDestination.placements?.c1, placements.c1);
+
+  const directToC = movePageShellToColumn({
+    order: ["a1", "b1", "c1"],
+    placements: { a1: placements.a1, b1: placements.b1, c1: placements.c1 },
+    sizes: { a1: sizes.a1, b1: sizes.b1, c1: sizes.c1 },
+  }, ["a1", "b1", "c1"], "a1", 9);
+  assert.deepEqual(directToC.placements?.a1, { columnStart: 9, laneOrder: 0 });
+  assert.deepEqual(directToC.placements?.b1, placements.b1);
+  assert.deepEqual(directToC.placements?.c1, { columnStart: 9, laneOrder: 1 });
+  assert.deepEqual(directToC.order, ["b1", "a1", "c1"]);
+
+  const relabeledAfterEmptyingA = movePageShellToColumn({
+    order: ["a1", "b1", "c1"],
+    placements: { a1: placements.a1, b1: placements.b1, c1: placements.c1 },
+    sizes: { a1: sizes.a1, b1: sizes.b1, c1: sizes.c1 },
+  }, ["a1", "b1", "c1"], "a1", 5);
+  assert.deepEqual(getPageShellColumnSlot(relabeledAfterEmptyingA.order, sizes, relabeledAfterEmptyingA.placements ?? {}, "b1"), { columnLabel: "A", columnStart: 5, slot: 2, slotCount: 2 });
+  assert.deepEqual(getPageShellColumnSlot(relabeledAfterEmptyingA.order, sizes, relabeledAfterEmptyingA.placements ?? {}, "c1"), { columnLabel: "B", columnStart: 9, slot: 1, slotCount: 1 });
 });
 
 test("semantic columns derive presentation labels from distinct column starts", () => {
@@ -1034,6 +1160,24 @@ test("new adjacent columns are offered only when the selected span fits, and ful
     order: ["source"],
     placements: fullPlacements,
   });
+
+  const newColumnLayout = {
+    order: ["first", "second"],
+    placements: {
+      first: { columnStart: 1, laneOrder: 0 },
+      second: { columnStart: 1, laneOrder: 1 },
+    },
+    sizes: {
+      first: { heightPx: 144, span: 6 as const },
+      second: { heightPx: 144, span: 6 as const },
+    },
+  };
+  const movedToNewColumn = movePageShellToColumn(newColumnLayout, newColumnLayout.order, "second", 7);
+  assert.deepEqual(movedToNewColumn.placements, {
+    first: { columnStart: 1, laneOrder: 0 },
+    second: { columnStart: 7, laneOrder: 0 },
+  });
+  assert.deepEqual(getPageShellColumnSlot(movedToNewColumn.order, newColumnLayout.sizes, movedToNewColumn.placements, "second"), { columnLabel: "B", columnStart: 7, slot: 1, slotCount: 1 });
 });
 
 test("up and down move only lane order inside the current semantic column", () => {
@@ -1049,9 +1193,11 @@ test("up and down move only lane order inside the current semantic column", () =
     c: { columnStart: 7, laneOrder: 0 },
   };
   const movedUp = movePageShellOneLane({ order, placements, sizes }, order, "b", "up");
+  assert.deepEqual(movedUp, movePageShellToSlot({ order, placements, sizes }, order, "b", 1));
   assert.deepEqual(movedUp.order, ["b", "a", "c"]);
   assert.deepEqual(movedUp.placements?.c, placements.c);
   const movedDown = movePageShellOneLane({ ...movedUp, sizes }, order, "b", "down");
+  assert.deepEqual(movedDown, movePageShellToSlot({ ...movedUp, sizes }, order, "b", 2));
   assert.deepEqual(movedDown, { order, placements });
   assert.deepEqual(movePageShellOneLane({ order, placements, sizes }, order, "a", "up"), { order, placements });
   assert.deepEqual(movePageShellOneLane({ order, placements, sizes }, order, "b", "down"), { order, placements });
@@ -1506,9 +1652,10 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /layout\.cancelPreview/);
   assert.match(shellSource, /getPageShellDropTarget/);
   assert.match(shellSource, /placePageShellAtDrop/);
-  assert.match(shellSource, /movePageShellToVisualPosition/);
+  assert.doesNotMatch(shellSource, /movePageShellToVisualPosition/);
   assert.match(shellSource, /getPageShellColumnOptions/);
   assert.match(shellSource, /movePageShellToColumn/);
+  assert.match(shellSource, /movePageShellToSlot/);
   assert.match(shellSource, /movePageShellOneLane/);
   assert.match(shellSource, /startVisibleOrder/);
   assert.match(shellSource, /currentVisibleOrder/);
@@ -1539,7 +1686,9 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /aria-label=\{`Resize \$\{shell\.label\} width`\}/);
   assert.match(shellSource, /MoveHorizontal/);
   assert.match(shellSource, /Set \$\{shell\.label\} width in columns/);
-  assert.match(shellSource, /Set \$\{shell\.label\} position/);
+  assert.match(shellSource, /Set \$\{shell\.label\} slot/);
+  assert.match(shellSource, /slotDrafts/);
+  assert.doesNotMatch(shellSource, /positionDrafts|handlePositionCommit|commitShellPosition/);
   assert.match(shellSource, /moveShellLane\(event, shell\.id, "up"\)/);
   assert.match(shellSource, /moveShellLane\(event, shell\.id, "down"\)/);
   const laneControlSource = shellSource.slice(shellSource.indexOf("function moveShellLane"), shellSource.indexOf("function updateInteraction"));
