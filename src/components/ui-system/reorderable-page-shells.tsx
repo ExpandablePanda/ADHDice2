@@ -14,11 +14,13 @@ import {
   getPageShellColumnOptions,
   getPageShellColumnSlot,
   getPageShellGridColumnGeometry,
+  isPageShellCenteredPlacement,
   clampPageShellHeight,
   formatPageShellDimensions,
   getPageShellExportFilename,
   getPageShellShrinkHeight,
   movePageShellOneLane,
+  movePageShellToCenterRow,
   movePageShellToColumn,
   movePageShellToSlot,
   normalizePageShellSpan,
@@ -588,6 +590,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       pointerY + getPageScrollTop(),
       interaction.currentGridBounds,
       interaction.grabOffsetX,
+      layout.placements,
     );
     interaction.target = dropTarget;
     setDragInsertionIndex(dropTarget.insertionIndex);
@@ -854,6 +857,20 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     layout.commitPreview();
   }
 
+  function commitShellCenterRow(event: MouseEvent<HTMLButtonElement>, id: string) {
+    if (!layout.isEditing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setOpenColumnShellId(null);
+    const startLayout = currentLayout();
+    const nextLayout = movePageShellToCenterRow(startLayout, visibleShellIds, id);
+    if (layoutsHaveSameOrder(nextLayout.order, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
+    layout.beginPreview(startLayout);
+    layout.setPreviewOrder(nextLayout.order);
+    layout.setPreviewPlacements(nextLayout.placements);
+    layout.commitPreview();
+  }
+
   function toggleColumnMenu(event: MouseEvent<HTMLButtonElement>, id: string) {
     event.stopPropagation();
     if (openColumnShellId === id) {
@@ -1022,10 +1039,11 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       : layout.canonicalLayout.shellClassNames?.[shell.id] ?? "";
     const columnOptions = pageShellColumnOptions.get(shell.id) ?? [];
     const isFullWidth = size.span === 12;
+    const isCentered = isPageShellCenteredPlacement(layout.placements?.[shell.id]);
     const columnSlot = isFullWidth
       ? null
       : getPageShellColumnSlot(orderedShells.map((candidate) => candidate.id), layout.sizes, layout.placements, shell.id, visibleShellIds);
-    const currentColumnLabel = columnSlot ? `Col ${columnSlot.columnLabel}` : "Col A";
+    const currentColumnLabel = isCentered ? "Center" : columnSlot ? `Col ${columnSlot.columnLabel}` : "Col A";
     const shellSlot = columnSlot?.slot ?? 1;
     const slotCount = columnSlot?.slotCount ?? 1;
     return (
@@ -1099,11 +1117,11 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                     <button
                       aria-expanded={openColumnShellId === shell.id}
                       aria-haspopup="listbox"
-                      aria-label={`Set ${shell.label} column`}
+                      aria-label={`Set ${shell.label} placement`}
                       className="inline-flex h-6 items-center gap-1 rounded-md border border-[#ddd6fb] bg-white px-2 text-[10px] font-semibold text-[#5f47d8] outline-none hover:bg-[#f7f5ff] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff] dark:hover:bg-white/15"
                       onClick={(event) => toggleColumnMenu(event, shell.id)}
                       ref={(element) => { columnButtonRefs.current[shell.id] = element; }}
-                      title={`Set ${shell.label} column`}
+                      title={`Set ${shell.label} placement`}
                       type="button"
                     >
                       <span>{currentColumnLabel}</span>
@@ -1111,7 +1129,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                     </button>
                   </div>
                 )}
-                {!isFullWidth ? (
+                {!isFullWidth && !isCentered ? (
                   <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
                     <span>Slot</span>
                     <input
@@ -1131,7 +1149,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                     <span>/{slotCount}</span>
                   </label>
                 ) : null}
-                {layout.canReorder ? (
+                {layout.canReorder && !isCentered ? (
                   <div className="flex shrink-0 items-center gap-0.5" aria-label={`${shell.label} lane movement controls`}>
                     <button aria-label={`Move ${shell.label} up`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellSlot <= 1} onClick={(event) => moveShellLane(event, shell.id, "up")} title={`Move ${shell.label} up`} type="button"><ArrowUp aria-hidden="true" className="h-3.5 w-3.5" /></button>
                     <button aria-label={`Move ${shell.label} down`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellSlot >= slotCount} onClick={(event) => moveShellLane(event, shell.id, "down")} title={`Move ${shell.label} down`} type="button"><ArrowDown aria-hidden="true" className="h-3.5 w-3.5" /></button>
@@ -1160,13 +1178,17 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
             {!isFullWidth && openColumnShellId === shell.id && columnMenuPosition?.shellId === shell.id && typeof document !== "undefined" ? createPortal(
               <AdhdDropdownPanel aria-label={`${shell.label} column`} className="z-50 min-w-36 p-1.5" role="listbox" style={{ left: columnMenuPosition.left, position: "fixed", top: columnMenuPosition.top }}>
                 {columnOptions.map((option) => {
-                  const isSelected = option.kind === "existing" && option.columnStart === layout.placements?.[shell.id]?.columnStart;
+                  const isSelected = option.kind === "centered"
+                    ? isCentered
+                    : !isCentered && option.kind === "existing" && option.columnStart === layout.placements?.[shell.id]?.columnStart;
                   return (
                     <button
                       aria-selected={isSelected}
                       className={`flex w-full items-center rounded-[0.8rem] px-2 py-1.5 text-left text-[11px] leading-5 transition ${isSelected ? "bg-[#f1ecff] font-semibold text-[#5f4bd7] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : "text-[#5f5876] hover:bg-[#f7f5fb] dark:text-white/75 dark:hover:bg-white/8"}`}
-                      key={`${option.kind}-${option.columnStart}`}
-                      onClick={(event) => commitShellColumn(event, shell.id, option.columnStart)}
+                      key={`${option.kind}-${option.columnStart ?? "row"}`}
+                      onClick={(event) => option.kind === "centered"
+                        ? commitShellCenterRow(event, shell.id)
+                        : commitShellColumn(event, shell.id, option.columnStart ?? 1)}
                       onMouseDown={(event) => event.preventDefault()}
                       role="option"
                       type="button"

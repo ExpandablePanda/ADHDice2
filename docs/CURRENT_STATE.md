@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.93`.
+- Current working app version: `7.12.94`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.94 Centered Row Shell Placement
+
+Page-shell layouts can now place a non-full-width shell as a centered row.
+This is an explicit `mode: "centered"` placement mode, not a semantic
+Column: the saved column and lane remain intact while runtime packing centers
+the shell and makes it a row boundary before normal semantic columns resume.
+The layout editor exposes Center row in the placement menu and removes Column
+Slot controls while it is active. Existing saved layouts and Views remain
+backward-compatible.
 
 ## 2026-09-05 7.12.93 Short Shell Expansion
 

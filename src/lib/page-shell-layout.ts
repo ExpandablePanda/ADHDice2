@@ -17,6 +17,8 @@ export type PageShellSize = {
 export type PageShellPlacement = {
   columnStart: number;
   laneOrder: number;
+  /** A row-boundary presentation mode; columnStart remains the semantic column. */
+  mode?: "centered";
 };
 
 export type PageShellSizeDefaults = Readonly<Record<string, PageShellSize>>;
@@ -536,8 +538,8 @@ export type PageShellColumnSlot = {
 };
 
 export type PageShellColumnOption = {
-  columnStart: number;
-  kind: "existing" | "new-left" | "new-right";
+  columnStart?: number;
+  kind: "centered" | "existing" | "new-left" | "new-right";
   label: string;
 };
 
@@ -730,13 +732,32 @@ export function normalizePageShellPlacement(
   return {
     columnStart: Math.max(1, Math.min(13 - span, rawColumnStart)),
     laneOrder: Math.max(0, rawLaneOrder),
+    ...(source.mode === "centered" ? { mode: "centered" as const } : {}),
   };
+}
+
+export function isPageShellCenteredPlacement(placement: PageShellPlacement | undefined) {
+  return placement?.mode === "centered";
+}
+
+function isPageShellRowBoundary(
+  id: string,
+  sizes: Readonly<Record<string, PageShellSize>>,
+  placements: Readonly<Record<string, PageShellPlacement>>,
+) {
+  return sizes[id]?.span === PAGE_SHELL_OPTIONS_LAST || isPageShellCenteredPlacement(placements[id]);
+}
+
+/** Runtime-only grid coordinate for a centered row; never a semantic column. */
+function getPageShellCenteredColumnStart(span: PageShellSpan) {
+  return Math.floor((12 - span) / 2) + 1;
 }
 
 function placementsFromPackedPositions(
   order: readonly string[],
   sizes: Readonly<Record<string, PageShellSize>>,
   positions: Readonly<Record<string, PageShellPackedPosition>>,
+  placementHints: Readonly<Record<string, PageShellPlacement>> = {},
 ) {
   const laneCounts = new Map<number, number>();
   const placements: Record<string, PageShellPlacement> = {};
@@ -750,6 +771,10 @@ function placementsFromPackedPositions(
   for (const id of positionedIds) {
     const position = positions[id];
     if (!position) continue;
+    if (isPageShellCenteredPlacement(placementHints[id])) {
+      placements[id] = { ...placementHints[id] };
+      continue;
+    }
     if (sizes[id]?.span === PAGE_SHELL_OPTIONS_LAST) {
       placements[id] = { columnStart: position.columnStart, laneOrder: 0 };
       continue;
@@ -792,7 +817,7 @@ function derivePageShellVisualOrderFromPackedPositions(
   const remaining = new Set(order);
   const visualOrder: string[] = [];
   const boundaries = order
-    .filter((id) => sizes[id]?.span === PAGE_SHELL_OPTIONS_LAST && positions[id])
+    .filter((id) => isPageShellRowBoundary(id, sizes, placements) && positions[id])
     .sort((left, right) => (
       positions[left].rowStart - positions[right].rowStart
       || order.indexOf(left) - order.indexOf(right)
@@ -803,7 +828,7 @@ function derivePageShellVisualOrderFromPackedPositions(
     const regionIds = order.filter((id) => (
       remaining.has(id)
       && id !== boundaryId
-      && sizes[id]?.span !== PAGE_SHELL_OPTIONS_LAST
+      && !isPageShellRowBoundary(id, sizes, placements)
       && positions[id]?.rowStart < boundary.rowStart
     ));
     regionIds.sort((left, right) => comparePageShellVisualOrder(left, right, order, placements, positions));
@@ -826,7 +851,7 @@ export function derivePageShellVisualOrder(
   placements: Readonly<Record<string, PageShellPlacement>>,
 ) {
   const positions = packPageShellLayout(order, sizes, { placements });
-  const derivedPlacements = placementsFromPackedPositions(order, sizes, positions);
+  const derivedPlacements = placementsFromPackedPositions(order, sizes, positions, placements);
   return derivePageShellVisualOrderFromPackedPositions(order, sizes, derivedPlacements, positions);
 }
 
@@ -843,13 +868,14 @@ export function getPageShellDropTarget(
   pointerY: number,
   gridBounds?: PageShellGridBounds,
   grabOffsetX = 0,
+  placements: Readonly<Record<string, PageShellPlacement>> = {},
 ): PageShellDropTarget {
   const intendedLeft = pointerX - (Number.isFinite(grabOffsetX) ? grabOffsetX : 0);
   const positionedGeometries = geometries
     .filter((geometry) => order.includes(geometry.id) && packedPositions[geometry.id])
     .map((geometry) => ({ geometry, position: packedPositions[geometry.id] }));
   const candidates = geometries
-    .filter((geometry) => geometry.id !== sourceId && order.includes(geometry.id) && packedPositions[geometry.id])
+    .filter((geometry) => geometry.id !== sourceId && order.includes(geometry.id) && packedPositions[geometry.id] && !isPageShellCenteredPlacement(placements[geometry.id]))
     .map((geometry) => {
       const position = packedPositions[geometry.id];
       return {
@@ -877,6 +903,7 @@ export function getPageShellDropTarget(
     : 0);
   const occupiedColumns = new Map<number, { left: number; right: number }>();
   for (const { geometry, position } of positionedGeometries) {
+    if (isPageShellCenteredPlacement(placements[geometry.id])) continue;
     const current = occupiedColumns.get(position.columnStart);
     occupiedColumns.set(position.columnStart, {
       left: Math.min(current?.left ?? geometry.left, geometry.left),
@@ -891,7 +918,7 @@ export function getPageShellDropTarget(
     : undefined;
   const occupiedColumnRanges = new Map<number, { end: number; start: number }>();
   for (const { position, geometry } of positionedGeometries) {
-    if (geometry.id === sourceId) continue;
+    if (geometry.id === sourceId || isPageShellCenteredPlacement(placements[geometry.id])) continue;
     const current = occupiedColumnRanges.get(position.columnStart);
     occupiedColumnRanges.set(position.columnStart, {
       end: Math.max(current?.end ?? 0, position.columnStart + position.columnSpan - 1),
@@ -907,7 +934,12 @@ export function getPageShellDropTarget(
       .filter((columnStart) => pointerColumn >= columnStart && pointerColumn <= columnStart + sourceSpan - 1)
       .sort((left, right) => Math.abs(left - pointerColumn) - Math.abs(right - pointerColumn) || left - right)[0]
     : undefined;
-  const columnStart = occupiedColumn?.[0] ?? emptyColumnStart ?? nearestColumnShell?.position.columnStart ?? packedPositions[sourceId]?.columnStart ?? 1;
+  const columnStart = occupiedColumn?.[0]
+    ?? emptyColumnStart
+    ?? nearestColumnShell?.position.columnStart
+    ?? placements[sourceId]?.columnStart
+    ?? packedPositions[sourceId]?.columnStart
+    ?? 1;
   const columnCandidates = candidates
     .filter((candidate) => candidate.position.columnStart === columnStart)
     .sort((left, right) => left.geometry.top - right.geometry.top || order.indexOf(left.geometry.id) - order.indexOf(right.geometry.id));
@@ -954,6 +986,7 @@ export function getPageShellEmptyHorizontalColumnStart(
   packedPositions: Readonly<Record<string, PageShellPackedPosition>>,
   sourceId: string,
   direction: "left" | "right",
+  placements: Readonly<Record<string, PageShellPlacement>> = {},
 ) {
   const source = packedPositions[sourceId];
   if (!source) return null;
@@ -966,7 +999,7 @@ export function getPageShellEmptyHorizontalColumnStart(
     ? columnStart <= maxColumnStart
     : columnStart >= 1;
   const otherRanges = Object.entries(packedPositions)
-    .filter(([id]) => id !== sourceId)
+    .filter(([id]) => id !== sourceId && !isPageShellCenteredPlacement(placements[id]))
     .map(([, position]) => ({
       end: position.columnStart + position.columnSpan - 1,
       start: position.columnStart,
@@ -999,7 +1032,7 @@ export function derivePageShellColumns(
   const visibleIds = new Set(visibleShellIds);
   const columnStarts = new Set<number>();
   for (const id of order) {
-    if (!visibleIds.has(id) || sizes[id]?.span === PAGE_SHELL_OPTIONS_LAST) continue;
+    if (!visibleIds.has(id) || sizes[id]?.span === PAGE_SHELL_OPTIONS_LAST || isPageShellCenteredPlacement(placements[id])) continue;
     const columnStart = placements[id]?.columnStart;
     if (typeof columnStart === "number" && Number.isFinite(columnStart)) columnStarts.add(columnStart);
   }
@@ -1009,7 +1042,7 @@ export function derivePageShellColumns(
       columnStart,
       label: getPageShellColumnLabel(index),
       shellIds: order
-        .filter((id) => visibleIds.has(id) && sizes[id]?.span !== PAGE_SHELL_OPTIONS_LAST && placements[id]?.columnStart === columnStart)
+        .filter((id) => visibleIds.has(id) && sizes[id]?.span !== PAGE_SHELL_OPTIONS_LAST && !isPageShellCenteredPlacement(placements[id]) && placements[id]?.columnStart === columnStart)
         .sort((left, right) => (
           (placements[left]?.laneOrder ?? Number.POSITIVE_INFINITY) - (placements[right]?.laneOrder ?? Number.POSITIVE_INFINITY)
           || order.indexOf(left) - order.indexOf(right)
@@ -1026,7 +1059,7 @@ export function getPageShellColumnSlot(
   visibleShellIds: readonly string[] = order,
 ): PageShellColumnSlot | null {
   const sourcePlacement = placements[sourceId];
-  if (!sourcePlacement || sizes[sourceId]?.span === PAGE_SHELL_OPTIONS_LAST) return null;
+  if (!sourcePlacement || sizes[sourceId]?.span === PAGE_SHELL_OPTIONS_LAST || isPageShellCenteredPlacement(sourcePlacement)) return null;
   const column = derivePageShellColumns(order, sizes, placements, visibleShellIds)
     .find((candidate) => candidate.columnStart === sourcePlacement.columnStart);
   const sourceIndex = column?.shellIds.indexOf(sourceId) ?? -1;
@@ -1049,14 +1082,22 @@ export function getPageShellColumnOptions(
 ): PageShellColumnOption[] {
   const sourceSize = sizes[sourceId];
   if (!sourceSize || sourceSize.span === PAGE_SHELL_OPTIONS_LAST || !packedPositions[sourceId]) return [];
-  const columns = derivePageShellColumns(visibleShellIds, sizes, placements, visibleShellIds);
+  const sourcePlacement = placements[sourceId];
+  const columnPlacements = isPageShellCenteredPlacement(sourcePlacement)
+    ? { ...placements, [sourceId]: { columnStart: sourcePlacement.columnStart, laneOrder: sourcePlacement.laneOrder } }
+    : placements;
+  const columnPackedPositions = isPageShellCenteredPlacement(sourcePlacement)
+    ? packPageShellLayout(visibleShellIds, sizes, { placements: columnPlacements })
+    : packedPositions;
+  const columns = derivePageShellColumns(visibleShellIds, sizes, columnPlacements, visibleShellIds);
   const maxColumnStart = 13 - sourceSize.span;
   const existingOptions = columns
     .filter((column) => column.columnStart <= maxColumnStart)
     .map((column) => ({ columnStart: column.columnStart, kind: "existing" as const, label: `Column ${column.label}` }));
-  const leftStart = getPageShellEmptyHorizontalColumnStart(packedPositions, sourceId, "left");
-  const rightStart = getPageShellEmptyHorizontalColumnStart(packedPositions, sourceId, "right");
+  const leftStart = getPageShellEmptyHorizontalColumnStart(columnPackedPositions, sourceId, "left", columnPlacements);
+  const rightStart = getPageShellEmptyHorizontalColumnStart(columnPackedPositions, sourceId, "right", columnPlacements);
   return [
+    { kind: "centered", label: "Center row" },
     ...(leftStart === null ? [] : [{ columnStart: leftStart, kind: "new-left" as const, label: "New column left" }]),
     ...existingOptions,
     ...(rightStart === null ? [] : [{ columnStart: rightStart, kind: "new-right" as const, label: "New column right" }]),
@@ -1079,7 +1120,7 @@ function resequencePageShellPlacement(
   const sourceColumnStart = nextPlacements[sourceId]?.columnStart;
   if (sourceColumnStart === undefined) return { order: [...layout.order], placements: nextPlacements };
   const destinationIds = visibleShellIds
-    .filter((id) => id !== sourceId && nextPlacements[id]?.columnStart === targetColumnStart)
+    .filter((id) => id !== sourceId && !isPageShellCenteredPlacement(nextPlacements[id]) && nextPlacements[id]?.columnStart === targetColumnStart)
     .sort((left, right) => (
       nextPlacements[left].laneOrder - nextPlacements[right].laneOrder
       || orderForTieBreak.indexOf(left) - orderForTieBreak.indexOf(right)
@@ -1092,7 +1133,7 @@ function resequencePageShellPlacement(
   });
   for (const columnStart of affectedColumnStarts) {
     const columnIds = visibleShellIds
-      .filter((id) => nextPlacements[id]?.columnStart === columnStart && (columnStart === targetColumnStart || id !== sourceId))
+      .filter((id) => !isPageShellCenteredPlacement(nextPlacements[id]) && nextPlacements[id]?.columnStart === columnStart && (columnStart === targetColumnStart || id !== sourceId))
       .sort((left, right) => (
         nextPlacements[left].laneOrder - nextPlacements[right].laneOrder
         || orderForTieBreak.indexOf(left) - orderForTieBreak.indexOf(right)
@@ -1148,11 +1189,41 @@ export function movePageShellToColumn(
   const columns = derivePageShellColumns(visibleShellIds, layout.sizes, layout.placements ?? {}, visibleShellIds);
   const sourceColumn = columns.find((column) => column.columnStart === sourcePlacement.columnStart);
   const destinationColumn = columns.find((column) => column.columnStart === targetColumnStart);
-  const sourceSlot = (sourceColumn?.shellIds.indexOf(sourceId) ?? sourcePlacement.laneOrder) + 1;
+  const sourceIndex = sourceColumn?.shellIds.indexOf(sourceId) ?? -1;
+  const sourceSlot = sourceIndex >= 0 ? sourceIndex + 1 : sourcePlacement.laneOrder + 1;
   const targetSlot = destinationColumn && targetColumnStart !== sourcePlacement.columnStart
     ? Math.min(sourceSlot, destinationColumn.shellIds.length + 1)
     : sourceSlot;
   return resequencePageShellPlacement(layout, visibleShellIds, sourceId, targetColumnStart, targetSlot - 1, layout.order);
+}
+
+/** Converts one shell into its own centered row without creating a semantic column. */
+export function movePageShellToCenterRow(
+  layout: PageShellLayoutPreference,
+  visibleShellIds: readonly string[],
+  sourceId: string,
+) {
+  const sourceSize = layout.sizes[sourceId];
+  const sourcePlacement = layout.placements?.[sourceId];
+  if (!sourceSize || sourceSize.span === PAGE_SHELL_OPTIONS_LAST || !sourcePlacement || isPageShellCenteredPlacement(sourcePlacement)) {
+    return { order: [...layout.order], placements: clonePageShellPlacements(layout.placements) };
+  }
+  const nextPlacements = clonePageShellPlacements(layout.placements);
+  nextPlacements[sourceId] = { ...sourcePlacement, mode: "centered" };
+  const sourceColumnIds = visibleShellIds
+    .filter((id) => id !== sourceId && !isPageShellCenteredPlacement(nextPlacements[id]) && nextPlacements[id]?.columnStart === sourcePlacement.columnStart)
+    .sort((left, right) => (
+      nextPlacements[left].laneOrder - nextPlacements[right].laneOrder
+      || layout.order.indexOf(left) - layout.order.indexOf(right)
+    ));
+  sourceColumnIds.forEach((id, laneOrder) => {
+    nextPlacements[id] = { ...nextPlacements[id], laneOrder };
+  });
+  const packedPositions = packPageShellLayout(layout.order, layout.sizes, { placements: nextPlacements });
+  return {
+    order: derivePageShellVisualOrderFromPackedPositions(layout.order, layout.sizes, nextPlacements, packedPositions),
+    placements: nextPlacements,
+  };
 }
 
 /** Moves one shell to an explicit contiguous slot in its current semantic column. */
@@ -1237,13 +1308,13 @@ export function packPageShellLayout(
 
   function packRegion(regionIds: readonly string[], regionStartRow: number) {
     const explicitIds = regionIds
-      .filter((id) => placements[id])
+      .filter((id) => placements[id] && !isPageShellCenteredPlacement(placements[id]))
       .sort((left, right) => (
         placements[left].columnStart - placements[right].columnStart
         || placements[left].laneOrder - placements[right].laneOrder
         || order.indexOf(left) - order.indexOf(right)
       ));
-    const automaticIds = regionIds.filter((id) => !placements[id]);
+    const automaticIds = regionIds.filter((id) => !placements[id] || isPageShellCenteredPlacement(placements[id]));
     let regionBottom = regionStartRow;
 
     for (const id of [...explicitIds, ...automaticIds]) {
@@ -1255,7 +1326,7 @@ export function packPageShellLayout(
       if (placement) {
         column = Math.max(0, Math.min(12 - size.span, placement.columnStart - 1));
         const preceding = explicitIds
-          .filter((candidateId) => candidateId !== id && placements[candidateId].columnStart === placement.columnStart && placements[candidateId].laneOrder < placement.laneOrder)
+          .filter((candidateId) => candidateId !== id && !isPageShellCenteredPlacement(placements[candidateId]) && placements[candidateId].columnStart === placement.columnStart && placements[candidateId].laneOrder < placement.laneOrder)
           .map((candidateId) => positions[candidateId])
           .filter((position): position is PageShellPackedPosition => Boolean(position));
         row = preceding.reduce((bottom, position) => Math.max(bottom, position.rowStart - 1 + position.rowSpan), regionStartRow);
@@ -1296,17 +1367,20 @@ export function packPageShellLayout(
 
   for (const id of order) {
     const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
-    if (size.span !== PAGE_SHELL_OPTIONS_LAST) {
+    const isCentered = isPageShellCenteredPlacement(placements[id]);
+    if (size.span !== PAGE_SHELL_OPTIONS_LAST && !isCentered) {
       regionIds.push(id);
       continue;
     }
 
     flushRegion();
     const rowSpan = getRowSpan(id);
-    markOccupied(nextRegionRow, 0, rowSpan, PAGE_SHELL_OPTIONS_LAST);
+    const columnStart = isCentered ? getPageShellCenteredColumnStart(size.span) : 1;
+    const columnSpan = isCentered ? size.span : PAGE_SHELL_OPTIONS_LAST;
+    markOccupied(nextRegionRow, columnStart - 1, rowSpan, columnSpan);
     positions[id] = {
-      columnSpan: PAGE_SHELL_OPTIONS_LAST,
-      columnStart: 1,
+      columnSpan,
+      columnStart,
       rowSpan,
       rowStart: nextRegionRow + 1,
     };
@@ -1481,7 +1555,7 @@ export function normalizePageShellLayout(
     }
   }
   const packedPositions = packPageShellLayout(order, sizes, { placements });
-  const derivedPlacements = placementsFromPackedPositions(order, sizes, packedPositions);
+  const derivedPlacements = placementsFromPackedPositions(order, sizes, packedPositions, placements);
   const visualOrder = hasPlacements
     ? derivePageShellVisualOrderFromPackedPositions(order, sizes, derivedPlacements, packedPositions)
     : order;

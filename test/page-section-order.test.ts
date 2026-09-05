@@ -45,6 +45,7 @@ import {
   isLegacyTestD20LayoutPreference,
   mergeVisiblePageShellOrder,
   movePageShellOneLane,
+  movePageShellToCenterRow,
   movePageShellToColumn,
   movePageShellToSlot,
   normalizePageShellLayout,
@@ -638,10 +639,10 @@ test("conditional shells disappear normally and become editable placeholders", (
   assert.match(editMarkup, /aria-label="Shrink Conditional"/);
   assert.match(editMarkup, /aria-label="Expand Conditional"/);
   assert.match(editMarkup, /W 6\/12 · H 288px · Natural —px/);
-  assert.match(editMarkup, /aria-label="Set Conditional column"/);
+  assert.match(editMarkup, /aria-label="Set Conditional placement"/);
   assert.match(editMarkup, /aria-label="Set Conditional slot"/);
   assert.doesNotMatch(editMarkup, /Set Conditional position/);
-  assert.doesNotMatch(editMarkup, /Set Regular column/);
+  assert.doesNotMatch(editMarkup, /Set Regular placement/);
   assert.doesNotMatch(editMarkup, /Set Regular slot/);
   assert.match(editMarkup, /Full/);
 });
@@ -688,6 +689,45 @@ test("shell editor renders semantic Column + Slot controls and no global positio
   assert.doesNotMatch(markup, /aria-label="Set Full Shell (column|slot)"/);
 });
 
+test("shell editor presents a centered placement without Column or Slot controls", () => {
+  const layout: PageShellLayoutState = {
+    ...staticShellLayout(true),
+    canonicalLayout: {
+      order: ["left", "center", "right"],
+      sizes: {
+        left: { heightPx: null, span: 6 },
+        center: { heightPx: null, span: 6 },
+        right: { heightPx: null, span: 6 },
+      },
+    },
+    isCanonical: false,
+    order: ["left", "center", "right"],
+    placements: {
+      left: { columnStart: 1, laneOrder: 0 },
+      center: { columnStart: 7, laneOrder: 1, mode: "centered" },
+      right: { columnStart: 7, laneOrder: 0 },
+    },
+    sizes: {
+      left: { heightPx: null, span: 6 },
+      center: { heightPx: null, span: 6 },
+      right: { heightPx: null, span: 6 },
+    },
+  };
+  const markup = renderToStaticMarkup(createElement(
+    ReorderablePageShells,
+    { layout },
+    createElement(PageShell, { id: "left", label: "Left Shell" }, createElement("span", null, "left")),
+    createElement(PageShell, { id: "center", label: "Centered Shell" }, createElement("span", null, "center")),
+    createElement(PageShell, { id: "right", label: "Right Shell" }, createElement("span", null, "right")),
+  ));
+  const centeredShell = markup.match(/data-page-shell-id="center"[\s\S]*?data-page-shell-id="right"/)?.[0] ?? "";
+  assert.match(centeredShell, /--page-shell-grid-column-start:4/);
+  assert.match(centeredShell, /<span>Center<\/span>/);
+  assert.match(centeredShell, /aria-label="Set Centered Shell placement"/);
+  assert.doesNotMatch(centeredShell, /aria-label="Set Centered Shell slot"/);
+  assert.doesNotMatch(centeredShell, /Centered Shell lane movement controls/);
+});
+
 test("shell editor keeps identity fixed and contains the complete tool row in a horizontal scroller", () => {
   const layout: PageShellLayoutState = {
     ...staticShellLayout(true),
@@ -724,7 +764,7 @@ test("shell editor keeps identity fixed and contains the complete tool row in a 
   for (const control of [
     'aria-label="Resize Narrow Shell width"',
     'aria-label="Set Narrow Shell width in columns"',
-    'aria-label="Set Narrow Shell column"',
+    'aria-label="Set Narrow Shell placement"',
     'aria-label="Set Narrow Shell slot"',
     'aria-label="Move Narrow Shell up"',
     'aria-label="Move Narrow Shell down"',
@@ -735,6 +775,7 @@ test("shell editor keeps identity fixed and contains the complete tool row in a 
   assert.match(shellSource, /createPortal\([\s\S]*document\.body/);
   assert.match(shellSource, /window\.addEventListener\("scroll", updateColumnMenuPosition, true\)/);
   assert.match(shellSource, /function commitShellColumn[\s\S]*movePageShellToColumn/);
+  assert.match(shellSource, /function commitShellCenterRow[\s\S]*movePageShellToCenterRow/);
   assert.match(shellSource, /!isFullWidth && openColumnShellId === shell\.id/);
   assert.doesNotMatch(shellSource, /scrollLeft\s*=/);
   assert.doesNotMatch(shellSource, /data-page-shell-layout-tools-scroll[\s\S]*beginMove/);
@@ -1191,6 +1232,67 @@ test("full-width shells are vertical region boundaries for semantic packing", ()
   assert.ok(packed.history.rowStart >= packed.plans.rowStart + packed.plans.rowSpan);
 });
 
+test("Center Row is a persisted placement mode and a semantic row boundary, not a Column", () => {
+  const order = ["left", "right", "center", "below-left", "below-right"];
+  const sizes = Object.fromEntries(order.map((id) => [id, { heightPx: 144, span: 6 as const }]));
+  const placements = {
+    left: { columnStart: 1, laneOrder: 0 },
+    right: { columnStart: 7, laneOrder: 0 },
+    center: { columnStart: 7, laneOrder: 1, mode: "centered" as const },
+    "below-left": { columnStart: 1, laneOrder: 1 },
+    "below-right": { columnStart: 7, laneOrder: 2 },
+  };
+  const packed = packPageShellLayout(order, sizes, { placements });
+  assert.equal(packed.center.columnStart, 4);
+  assert.equal(packed.center.columnSpan, 6);
+  assert.ok(packed.center.rowStart >= Math.max(
+    packed.left.rowStart + packed.left.rowSpan,
+    packed.right.rowStart + packed.right.rowSpan,
+  ));
+  assert.ok(packed["below-left"].rowStart >= packed.center.rowStart + packed.center.rowSpan);
+  assert.ok(packed["below-right"].rowStart >= packed.center.rowStart + packed.center.rowSpan);
+  assert.deepEqual(placements.center, { columnStart: 7, laneOrder: 1, mode: "centered" });
+  assert.deepEqual(derivePageShellColumns(order, sizes, placements), [
+    { columnStart: 1, label: "A", shellIds: ["left", "below-left"] },
+    { columnStart: 7, label: "B", shellIds: ["right", "below-right"] },
+  ]);
+  assert.equal(getPageShellColumnSlot(order, sizes, placements, "center"), null);
+  assert.deepEqual(derivePageShellVisualOrder(order, sizes, placements), order);
+  assert.deepEqual(normalizePageShellLayout({ order, placements, sizes }, order, sizes).placements?.center, placements.center);
+  const view = createPageShellView({
+    createdAt: "2026-09-05T00:00:00.000Z",
+    layout: { order, placements, sizes },
+    name: "Centered workspace",
+    pageKey: "test",
+    presentation: "custom",
+    target: "web",
+    viewport: { height: 900, width: 1440 },
+  });
+  assert.deepEqual(resolvePageShellViewLayout(view, { order, sizes }).layout.placements?.center, placements.center);
+
+  const centered = movePageShellToCenterRow({ order, placements: { ...placements, center: { columnStart: 7, laneOrder: 1 } }, sizes }, order, "center");
+  assert.deepEqual(centered.placements?.center, placements.center);
+  assert.deepEqual(movePageShellToColumn({ ...centered, sizes }, order, "center", 1).placements?.center, { columnStart: 1, laneOrder: 1 });
+  assert.deepEqual(getPageShellColumnOptions(order, sizes, placements, "center").map((option) => option.label), ["Center row", "Column A", "Column B"]);
+  assert.equal(
+    getPageShellDropTarget(
+      [
+        { bottom: 144, id: "left", left: 0, right: 590, top: 0 },
+        { bottom: 308, id: "center", left: 300, right: 900, top: 164 },
+      ],
+      packed,
+      order,
+      "left",
+      600,
+      236,
+      { left: 0, width: 1200 },
+      0,
+      placements,
+    ).columnStart,
+    7,
+  );
+});
+
 test("Column + Slot coordinates derive from semantic placement and reorder only one column", () => {
   const sizes = {
     a: { heightPx: 144, span: 3 as const },
@@ -1372,16 +1474,16 @@ test("column moves are deterministic across repeated A to C and back selections"
     c: { columnStart: 9, laneOrder: 0 },
   });
   assert.deepEqual(thrice, once);
-  assert.deepEqual(getPageShellColumnOptions(order, sizes, placements, "a").map((option) => option.label), ["Column A", "Column B", "Column C"]);
+  assert.deepEqual(getPageShellColumnOptions(order, sizes, placements, "a").map((option) => option.label), ["Center row", "Column A", "Column B", "Column C"]);
 });
 
 test("new adjacent columns are offered only when the selected span fits, and full-width shells have none", () => {
   const sixSizes = { source: { heightPx: 144, span: 6 as const } };
   const sixPlacements = { source: { columnStart: 1, laneOrder: 0 } };
-  assert.deepEqual(getPageShellColumnOptions(["source"], sixSizes, sixPlacements, "source").map((option) => option.label), ["Column A", "New column right"]);
+  assert.deepEqual(getPageShellColumnOptions(["source"], sixSizes, sixPlacements, "source").map((option) => option.label), ["Center row", "Column A", "New column right"]);
   const wideSizes = { source: { heightPx: 144, span: 8 as const } };
   const widePlacements = { source: { columnStart: 1, laneOrder: 0 } };
-  assert.deepEqual(getPageShellColumnOptions(["source"], wideSizes, widePlacements, "source").map((option) => option.label), ["Column A"]);
+  assert.deepEqual(getPageShellColumnOptions(["source"], wideSizes, widePlacements, "source").map((option) => option.label), ["Center row", "Column A"]);
   const fullSizes = { source: { heightPx: 144, span: 12 as const } };
   const fullPlacements = { source: { columnStart: 1, laneOrder: 0 } };
   assert.deepEqual(getPageShellColumnOptions(["source"], fullSizes, fullPlacements, "source"), []);
