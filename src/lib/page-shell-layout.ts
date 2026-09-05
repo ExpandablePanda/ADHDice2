@@ -804,11 +804,19 @@ export function getPageShellDropTarget(
   gridBounds?: PageShellGridBounds,
   grabOffsetX = 0,
   placements: Readonly<Record<string, PageShellPlacement>> = {},
+  previousInsertionIndex?: number,
 ): PageShellDropTarget {
   const intendedLeft = pointerX - (Number.isFinite(grabOffsetX) ? grabOffsetX : 0);
   const sourceSpan = packedPositions[sourceId]?.columnSpan ?? PAGE_SHELL_OPTIONS_LAST;
   const orderWithoutSource = order.filter((id) => id !== sourceId);
-  const insertionIndex = getPageShellInsertionIndex(geometries, order, sourceId, pointerX, pointerY);
+  const insertionIndex = getPageShellInsertionIndex(
+    geometries,
+    order,
+    sourceId,
+    pointerX,
+    pointerY,
+    previousInsertionIndex,
+  );
   const targetId = orderWithoutSource[insertionIndex] ?? orderWithoutSource[insertionIndex - 1] ?? null;
   const centerStart = getPageShellCenteredColumnStart(sourceSpan);
   const centeredGeometry = gridBounds ? getPageShellGridColumnGeometry(gridBounds, centerStart, sourceSpan) : null;

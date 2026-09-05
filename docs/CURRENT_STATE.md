@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.99`.
+- Current working app version: `7.12.100`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.100 Stabilized Snap-Grid Drag Interaction
+
+Shell drag hit testing now uses visible order, shell geometry, packed positions,
+grid bounds, and grab offset captured at pointer-down for the entire drag. Move
+previews update only the purple insertion/snap indicator; page layout no longer
+live-repacks while the pointer moves. The final target is applied to the starting
+layout once on successful release, then preview order and placements are committed
+once. Existing insertion hysteresis is wired through drop targeting, and auto-scroll
+continues to convert the client pointer Y into document coordinates against the
+stable reference geometry. Direct snap-grid semantics, sizing, persistence, Views,
+Reset, and narrow layouts are unchanged. No SQL or schema migration was needed.
 
 ## 2026-09-05 7.12.99 Odd-Width Special Center Mode
 

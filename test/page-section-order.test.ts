@@ -747,6 +747,71 @@ test("pointer lifecycle and drag auto-scroll contracts remain intact", () => {
   assert.equal(PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX, 18);
 });
 
+test("move preview keeps the pointer-down reference frame and commits order and placement only on release", () => {
+  const previewStart = shellSource.indexOf("  function updateMovePreview");
+  const commitStart = shellSource.indexOf("  function commitMovePreview");
+  const commitEnd = shellSource.indexOf("  function cancelMovePreview");
+  assert.ok(previewStart >= 0);
+  assert.ok(commitStart > previewStart);
+  assert.ok(commitEnd > commitStart);
+  const previewSource = shellSource.slice(previewStart, commitStart);
+  const commitSource = shellSource.slice(commitStart, commitEnd);
+
+  assert.match(shellSource, /const referenceFrame = captureMoveReferenceFrame\(\);/);
+  assert.match(shellSource, /referenceGeometries: referenceFrame\.referenceGeometries/);
+  assert.match(shellSource, /referenceGridBounds: referenceFrame\.referenceGridBounds/);
+  assert.match(shellSource, /referencePackedPositions: referenceFrame\.referencePackedPositions/);
+  assert.match(shellSource, /referenceVisibleOrder: referenceFrame\.referenceVisibleOrder/);
+  assert.doesNotMatch(previewSource, /captureMoveReferenceFrame|captureShellGeometry|captureShellGridBounds|packPageShellLayout/);
+  assert.doesNotMatch(previewSource, /placePageShellAtDrop|setPreviewOrder|setPreviewPlacements/);
+  assert.match(commitSource, /placePageShellAtDrop\([\s\S]*interaction\.startLayout/);
+  assert.equal((commitSource.match(/setPreviewOrder/g) ?? []).length, 1);
+  assert.equal((commitSource.match(/setPreviewPlacements/g) ?? []).length, 1);
+  assert.match(shellSource, /const previousInsertionIndex = interaction\.target\?\.insertionIndex \?\? interaction\.targetIndex/);
+});
+
+test("drop targeting passes the previous insertion index into the existing hysteresis", () => {
+  const order = ["source", "first", "second"];
+  const positions: Record<string, PageShellPackedPosition> = {
+    source: { columnSpan: 12, columnStart: 1, rowSpan: 1, rowStart: 1 },
+    first: { columnSpan: 12, columnStart: 1, rowSpan: 1, rowStart: 2 },
+    second: { columnSpan: 12, columnStart: 1, rowSpan: 1, rowStart: 3 },
+  };
+  const geometries: PageShellGeometry[] = [
+    { bottom: 160, id: "source", left: 0, right: 1200, top: 0 },
+    { bottom: 380, id: "first", left: 0, right: 1200, top: 220 },
+    { bottom: 600, id: "second", left: 0, right: 1200, top: 440 },
+  ];
+  const candidate = getPageShellDropTarget(geometries, positions, order, "source", 20, 300);
+  const stabilized = getPageShellDropTarget(geometries, positions, order, "source", 20, 300, undefined, 0, {}, 0);
+  assert.equal(candidate.insertionIndex, 1);
+  assert.equal(stabilized.insertionIndex, 0);
+});
+
+test("successful and cancelled pointer lifecycle paths preserve one commit or no partial destination", () => {
+  const endStart = shellSource.indexOf("  function endInteraction");
+  const effectStart = shellSource.indexOf("\n  useEffect", endStart);
+  assert.ok(endStart >= 0);
+  assert.ok(effectStart > endStart);
+  const endSource = shellSource.slice(endStart, effectStart);
+  assert.match(endSource, /updateMovePreview\(interaction, interaction\.pointerX, interaction\.pointerY\);\s*commitMovePreview\(interaction\);/);
+  assert.match(endSource, /if \(cancelled\) layout\.cancelPreview\(\);\s*else layout\.commitPreview\(\);/);
+  assert.match(shellSource, /onPointerCancel=\{\(event\) => endInteraction\(event, true\)\}/);
+  assert.match(shellSource, /onLostPointerCapture=\{\(event\) => endInteraction\(event, true\)\}/);
+  assert.match(shellSource, /const handleWindowBlur = \(\) => endInteractionRef\.current\(null, true\)/);
+  assert.match(shellSource, /pointerY \+ getPageScrollTop\(\)/);
+  assert.match(shellSource, /window\.scrollTo\(\{ behavior: "auto", top: nextScrollTop \}\)/);
+});
+
+test("width and height resize paths remain separate from move preview mechanics", () => {
+  assert.match(shellSource, /function beginResize\(event/);
+  assert.match(shellSource, /function beginWidthResize\(event/);
+  assert.match(shellSource, /interaction\.kind === "width-resize"/);
+  assert.match(shellSource, /interaction\.initialHeight \+ \(event\.clientY - interaction\.startY\)/);
+  assert.match(shellSource, /layout\.setPreviewSizes/);
+  assert.match(shellSource, /layout\.setPreviewPlacements/);
+});
+
 test("shared shell surface and body preserve the scrolling content boundary", () => {
   const surface = renderToStaticMarkup(createElement(PageShellSurface, null, createElement(PageShellBody, null, "content")));
   assert.match(surface, /page-shell-surface/);
