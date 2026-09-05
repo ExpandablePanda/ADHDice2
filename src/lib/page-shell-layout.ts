@@ -941,6 +941,7 @@ export function placePageShellAtDrop(
   const nextPlacements: Record<string, PageShellPlacement> = Object.fromEntries(
     Object.entries(layout.placements ?? {}).map(([id, placement]) => [id, { ...placement }]),
   );
+  const sourceColumnStart = nextPlacements[sourceId]?.columnStart;
   const destinationIds = visibleShellIds
     .filter((id) => id !== sourceId && nextPlacements[id]?.columnStart === target.columnStart)
     .sort((left, right) => (
@@ -948,13 +949,26 @@ export function placePageShellAtDrop(
       || mergedOrder.indexOf(left) - mergedOrder.indexOf(right)
     ));
   destinationIds.splice(Math.max(0, Math.min(target.laneOrder, destinationIds.length)), 0, sourceId);
+  const affectedColumnStarts = new Set<number>([target.columnStart]);
+  if (sourceColumnStart !== undefined) affectedColumnStarts.add(sourceColumnStart);
+  nextPlacements[sourceId] = { columnStart: target.columnStart, laneOrder: 0 };
   destinationIds.forEach((id, laneOrder) => {
     nextPlacements[id] = { columnStart: target.columnStart, laneOrder };
   });
+  for (const columnStart of affectedColumnStarts) {
+    const columnIds = visibleShellIds
+      .filter((id) => nextPlacements[id]?.columnStart === columnStart && (columnStart === target.columnStart || id !== sourceId))
+      .sort((left, right) => (
+        nextPlacements[left].laneOrder - nextPlacements[right].laneOrder
+        || mergedOrder.indexOf(left) - mergedOrder.indexOf(right)
+      ));
+    columnIds.forEach((id, laneOrder) => {
+      nextPlacements[id] = { columnStart, laneOrder };
+    });
+  }
   const packedPositions = packPageShellLayout(mergedOrder, layout.sizes, { placements: nextPlacements });
-  const completedPlacements = placementsFromPackedPositions(mergedOrder, packedPositions);
-  const nextOrder = derivePageShellVisualOrderFromPackedPositions(mergedOrder, layout.sizes, completedPlacements, packedPositions);
-  return { order: nextOrder, placements: completedPlacements };
+  const nextOrder = derivePageShellVisualOrderFromPackedPositions(mergedOrder, layout.sizes, nextPlacements, packedPositions);
+  return { order: nextOrder, placements: nextPlacements };
 }
 
 /**

@@ -4,6 +4,7 @@ import test from "node:test";
 import { createNavigatorSearchTargets, getNavigatorTaskSearchQuery, isNavigatorTaskSearchQuery, searchNavigatorTargets, toggleNavigatorTaskSearchQuery, type NavigatorSearchTarget } from "@/lib/navigator-search";
 import { searchNavigatorTasks } from "@/lib/navigator-task-search";
 import { isPageShellLayoutReady, setPageShellLayoutReady, subscribeToPageShellLayoutReadiness } from "@/lib/page-shell-layout";
+import { arePageShellNavigationRectsStable, getPageShellNavigationScrollTop, isPageShellNavigationRectUsable } from "@/lib/page-shell-navigation";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 
 const dockItems = ["Home", "Tasks", "Focus", "Health", "Roll", "Achievements", "Games", "Stats", "Notes", "Settings", "Test"] as const;
@@ -163,6 +164,25 @@ test("page-shell readiness is shared by page key and notifies pending navigation
   unsubscribe();
 });
 
+test("page-shell navigation waits for stable geometry and computes the measured-header target", () => {
+  const firstFrame = { height: 240, left: 24, top: 620, width: 560 };
+  const secondFrame = { ...firstFrame, top: 624 };
+  assert.equal(isPageShellNavigationRectUsable(firstFrame), true);
+  assert.equal(isPageShellNavigationRectUsable({ ...firstFrame, width: 0 }), false);
+  assert.equal(arePageShellNavigationRectsStable(firstFrame, secondFrame), false);
+  assert.equal(arePageShellNavigationRectsStable(firstFrame, { ...firstFrame, top: 620.5 }), true);
+
+  let stableComparisons = 0;
+  let previous = null as typeof firstFrame | null;
+  for (const [index, current] of [firstFrame, firstFrame, firstFrame].entries()) {
+    if (previous && arePageShellNavigationRectsStable(previous, current)) stableComparisons += 1;
+    previous = current;
+    assert.equal(stableComparisons, index);
+  }
+  assert.equal(stableComparisons, 2);
+  assert.equal(getPageShellNavigationScrollTop(400, 620, 80), 928);
+});
+
 test("Settings targets remain pending through shell hydration and acknowledge after ready geometry", () => {
   assert.deepEqual(findTarget("timezone").action, { kind: "settings-section", page: "Settings", section: "day-reset" });
   assert.deepEqual(findTarget("appearance").action, { kind: "settings-section", page: "Settings", section: "appearance" });
@@ -197,7 +217,19 @@ test("shell destinations route to their page and request direct shell reveal", (
   assert.match(appSource, /const requestedPageShellLayoutReady = useSyncExternalStore/);
   assert.match(appSource, /isPageShellLayoutReady\(requestedPageShell\.pageKey\)/);
   assert.match(appSource, /!requestedPageShellLayoutReady/);
-  assert.match(appSource, /shell\.scrollIntoView\(\{ behavior: prefersReducedMotion \? "auto" : "smooth", block: "center" \}\)/);
+  const shellNavigationSource = appSource.slice(appSource.indexOf("const request = requestedPageShell"), appSource.indexOf("useEffect(() => () => clearPageShellNavigationHighlight"));
+  assert.doesNotMatch(shellNavigationSource, /scrollIntoView/);
+  assert.match(shellNavigationSource, /data-app-fixed-header/);
+  assert.match(shellNavigationSource, /arePageShellNavigationRectsStable/);
+  assert.match(shellNavigationSource, /PAGE_SHELL_NAVIGATION_STABILITY_COMPARISONS/);
+  assert.match(shellNavigationSource, /PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS/);
+  assert.match(shellNavigationSource, /let correctionUsed = false/);
+  assert.match(shellNavigationSource, /if \(!correctionUsed &&/);
+  assert.match(shellNavigationSource, /correctionUsed = true/);
+  assert.match(shellNavigationSource, /window\.scrollTo\(\{[\s\S]*behavior: "auto"/);
+  assert.match(shellNavigationSource, /schedule\(verifyFinalLanding\)/);
+  assert.match(shellNavigationSource, /completeReveal\(shell\)/);
+  assert.match(shellNavigationSource, /window\.cancelAnimationFrame\(frame\)/);
   assert.match(appSource, /highlightPageShellNavigationTarget\(shell\)/);
   assert.match(appSource, /shell\.setAttribute\("data-page-shell-navigation-target", "true"\)/);
   assert.match(appSource, /window\.setTimeout\(clearPageShellNavigationHighlight/);

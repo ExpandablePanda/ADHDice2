@@ -189,6 +189,7 @@ import {
 } from "@/lib/task-grid-layout";
 import { buildWidgetTypeGuard, resolveTaskGridLayout } from "@/lib/task-grid-parser";
 import { isPageShellLayoutReady, subscribeToPageShellLayoutReadiness, TEST_PAGE_SHELL_CANONICAL_LAYOUT, TEST_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
+import { arePageShellNavigationRectsStable, getPageShellNavigationScrollTop, isPageShellNavigationRectUsable, PAGE_SHELL_NAVIGATION_GAP_PX, PAGE_SHELL_NAVIGATION_RECT_TOLERANCE_PX, type PageShellNavigationRect } from "@/lib/page-shell-navigation";
 import {
   isDueToday,
   isLater,
@@ -1075,6 +1076,8 @@ const dockIcons: Record<AppPage, string> = {
 };
 const navigatorSearchTargets = createNavigatorSearchTargets(dockItems, HEALTH_TABS);
 const PAGE_SHELL_NAVIGATION_HIGHLIGHT_MS = 1800;
+const PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS = 24;
+const PAGE_SHELL_NAVIGATION_STABILITY_COMPARISONS = 2;
 const TASK_GRID_MAX_COLUMNS = 4;
 const TASK_GRID_TABLET_COLUMNS = 2;
 const TASK_GRID_PHONE_COLUMNS = 1;
@@ -4406,25 +4409,94 @@ export function TaskApp() {
     }
     let frame: number | null = null;
     let attempts = 0;
-    const revealRequestedShell = () => {
-      frame = null;
-      const shell = document.querySelector<HTMLElement>(`[data-page-shell-id="${request.shellId}"]`);
-      if (shell?.isConnected) {
-        const rect = shell.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
-          const body = shell.querySelector<HTMLElement>(".page-shell-body");
-          if (body) body.scrollTop = 0;
-          const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-          shell.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
-          highlightPageShellNavigationTarget(shell);
-          setRequestedPageShell(null);
-          return;
-        }
-      }
-      attempts += 1;
-      if (attempts < 12) frame = window.requestAnimationFrame(revealRequestedShell);
+    let stableComparisons = 0;
+    let previousShellRect: PageShellNavigationRect | null = null;
+    let previousHeaderRect: PageShellNavigationRect | null = null;
+    let correctionUsed = false;
+    const readRect = (element: HTMLElement): PageShellNavigationRect => {
+      const rect = element.getBoundingClientRect();
+      return { height: rect.height, left: rect.left, top: rect.top, width: rect.width };
     };
-    frame = window.requestAnimationFrame(revealRequestedShell);
+    const schedule = (callback: () => void) => {
+      if (frame === null) frame = window.requestAnimationFrame(() => { frame = null; callback(); });
+    };
+    const retry = () => {
+      attempts += 1;
+      stableComparisons = 0;
+      previousShellRect = null;
+      previousHeaderRect = null;
+      if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) schedule(checkGeometry);
+    };
+    const completeReveal = (shell: HTMLElement) => {
+      if (!shell.isConnected) {
+        retry();
+        return;
+      }
+      highlightPageShellNavigationTarget(shell);
+      setRequestedPageShell(null);
+    };
+    const verifyFinalLanding = () => {
+      const shell = document.querySelector<HTMLElement>(`[data-page-shell-id="${request.shellId}"]`);
+      const header = document.querySelector<HTMLElement>("[data-app-fixed-header]");
+      if (!shell?.isConnected || !header?.isConnected) {
+        retry();
+        return;
+      }
+      const shellRect = readRect(shell);
+      const headerRect = readRect(header);
+      if (!isPageShellNavigationRectUsable(shellRect) || !isPageShellNavigationRectUsable(headerRect)) {
+        retry();
+        return;
+      }
+      const headerBottom = headerRect.top + headerRect.height;
+      const expectedTop = headerBottom + PAGE_SHELL_NAVIGATION_GAP_PX;
+      if (!correctionUsed && Math.abs(shellRect.top - expectedTop) > PAGE_SHELL_NAVIGATION_RECT_TOLERANCE_PX) {
+        correctionUsed = true;
+        window.scrollTo({
+          behavior: "auto",
+          top: getPageShellNavigationScrollTop(window.scrollY, shellRect.top, headerBottom),
+        });
+        schedule(verifyFinalLanding);
+        return;
+      }
+      completeReveal(shell);
+    };
+    function checkGeometry() {
+      const shell = document.querySelector<HTMLElement>(`[data-page-shell-id="${request.shellId}"]`);
+      const header = document.querySelector<HTMLElement>("[data-app-fixed-header]");
+      if (!shell?.isConnected || !header?.isConnected) {
+        retry();
+        return;
+      }
+      const shellRect = readRect(shell);
+      const headerRect = readRect(header);
+      if (!isPageShellNavigationRectUsable(shellRect) || !isPageShellNavigationRectUsable(headerRect)) {
+        retry();
+        return;
+      }
+      if (previousShellRect && previousHeaderRect
+        && arePageShellNavigationRectsStable(previousShellRect, shellRect)
+        && arePageShellNavigationRectsStable(previousHeaderRect, headerRect)) {
+        stableComparisons += 1;
+      } else {
+        stableComparisons = 0;
+      }
+      previousShellRect = shellRect;
+      previousHeaderRect = headerRect;
+      attempts += 1;
+      if (stableComparisons >= PAGE_SHELL_NAVIGATION_STABILITY_COMPARISONS) {
+        const body = shell.querySelector<HTMLElement>(".page-shell-body");
+        if (body) body.scrollTop = 0;
+        window.scrollTo({
+          behavior: "auto",
+          top: getPageShellNavigationScrollTop(window.scrollY, shellRect.top, headerRect.top + headerRect.height),
+        });
+        schedule(verifyFinalLanding);
+      } else if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) {
+        schedule(checkGeometry);
+      }
+    }
+    schedule(checkGeometry);
     return () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
@@ -6604,7 +6676,7 @@ export function TaskApp() {
           pendingRewards={activeRewardBankSession}
         />
       ) : null}
-      <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]">
+      <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]" data-app-fixed-header>
         <div className="w-full">
           <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
               <HudRuntimeClock active>

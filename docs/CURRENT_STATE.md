@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.87`.
+- Current working app version: `7.12.88`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,25 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.88 Live Drag Geometry and Exact Shell-Top Navigation
+
+The 7.12.87 drag regression came from continuing to hit-test against
+drag-start rectangles and packed positions after live preview reflow. Move
+previews now batch pointer updates through RAF, recapture the current rendered
+shell geometry, repack metadata for that same preview frame, and derive each
+preview from the immutable drag-start layout. Drop placement normalizes only
+the source and destination semantic columns, preserving unrelated column
+ownership while the visual global order is refreshed. Insertion indicators use
+the same current-frame geometry.
+
+Generic page-shell Navigator navigation now waits for consecutive stable shell
+and header geometry frames after page-shell hydration. It measures the
+rendered fixed top HUD wrapper, positions the requested shell top below that
+header with a small gap, verifies on the next RAF, and permits one bounded
+corrective scroll before starting the temporary highlight and clearing the
+pending request. Nested-shell expansion remains deferred pending browser QA.
+The dedicated Settings section exact-position issue remains deferred.
 
 ## 2026-09-05 7.12.87 Complete Navigator Shell Search and Reveal
 

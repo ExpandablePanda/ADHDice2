@@ -590,7 +590,7 @@ test("page shell pointer lifecycle finalizes only the active pointer and guards 
   assert.match(shellSource, /isStalePageShellMouseMove\(interaction\.pointerType, event\.buttons\)/);
   assert.match(shellSource, /if \(layout\.isEditing && layout\.isPreviewing\) return/);
   assert.match(shellSource, /window\.cancelAnimationFrame\(autoScrollFrameRef\.current\)/);
-  assert.match(shellSource, /if \(!interaction\) \{\s+if \(!event\) cancelDragAutoScroll\(\);/);
+  assert.match(shellSource, /if \(!interaction\) \{\s+if \(!event\) \{\s+cancelDragAutoScroll\(\);\s+cancelMovePreview\(\);/);
   assert.match(shellSource, /grabOffsetX: sourceGeometry \? event\.clientX - sourceGeometry\.left : 0/);
   assert.match(shellSource, /interaction\.grabOffsetX/);
   assert.match(shellSource, /getPageShellEmptyHorizontalColumnStart/);
@@ -864,6 +864,20 @@ test("moving one shell across columns preserves its neighbors' physical column a
   );
   assert.deepEqual(sourceOrderResult.order, result.order);
   assert.deepEqual(sourceOrderResult.placements, result.placements);
+
+  const movedBack = placePageShellAtDrop(
+    { ...result, sizes },
+    result.order,
+    "D",
+    { columnStart: 7, insertionIndex: 3, laneOrder: 2, targetId: "C" },
+  );
+  assert.deepEqual(movedBack.order, ["A", "B", "C", "D"]);
+  assert.deepEqual(movedBack.placements, {
+    A: { columnStart: 1, laneOrder: 0 },
+    B: { columnStart: 7, laneOrder: 0 },
+    C: { columnStart: 7, laneOrder: 1 },
+    D: { columnStart: 7, laneOrder: 2 },
+  });
 });
 
 test("full-width shells divide visual column-major regions without taking column one early", () => {
@@ -1382,6 +1396,14 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /placePageShellAtDrop/);
   assert.match(shellSource, /movePageShellToVisualPosition/);
   assert.match(shellSource, /startVisibleOrder/);
+  assert.match(shellSource, /currentVisibleOrder/);
+  assert.match(shellSource, /currentGeometries/);
+  assert.match(shellSource, /currentPackedPositions/);
+  assert.match(shellSource, /captureCurrentMoveFrame/);
+  assert.match(shellSource, /scheduleMovePreview/);
+  assert.match(shellSource, /cancelMovePreview/);
+  assert.match(shellSource, /placePageShellAtDrop\(interaction\.startLayout/);
+  assert.doesNotMatch(shellSource, /getPageShellDropTarget\(\s*interaction\.geometries/);
   assert.doesNotMatch(shellSource, /mergeVisiblePageShellOrder/);
   assert.match(shellSource, /data-page-shell-insertion-indicator/);
   assert.match(shellSource, /interaction\.target/);
@@ -1394,7 +1416,7 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /heightPx: naturalHeight < PAGE_SHELL_MIN_HEIGHT \? null : initialHeight/);
   assert.match(shellSource, /clampPageShellHeight\(interaction\.initialHeight/);
   const moveUpdateSource = shellSource.slice(shellSource.indexOf('if (interaction.kind === "move")'), shellSource.indexOf("const deltaColumns"));
-  assert.match(moveUpdateSource, /updateMovePreview/);
+  assert.match(moveUpdateSource, /scheduleMovePreview/);
   assert.match(shellSource, /function updateMovePreview[\s\S]*layout\.setPreviewOrder/);
   assert.doesNotMatch(moveUpdateSource, /setDraggingId/);
   assert.match(shellSource, /if \(cancelled\) layout\.cancelPreview\(\);\s+else layout\.commitPreview\(\);/);

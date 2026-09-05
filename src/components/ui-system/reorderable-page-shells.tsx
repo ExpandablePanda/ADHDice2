@@ -23,6 +23,7 @@ import {
   packPageShellLayout,
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
+  projectVisiblePageShellOrder,
   type PageShellPackedPosition,
   type PageShellGeometry,
   type PageShellGridBounds,
@@ -50,12 +51,13 @@ type ReorderablePageShellsProps = {
 
 type ShellMoveInteraction = {
   captureElement: HTMLButtonElement | null;
+  currentGeometries: PageShellGeometry[];
+  currentGridBounds?: PageShellGridBounds;
+  currentPackedPositions: Record<string, PageShellPackedPosition>;
+  currentVisibleOrder: string[];
   grabOffsetX: number;
-  geometries: PageShellGeometry[];
-  gridBounds?: PageShellGridBounds;
   id: string;
   kind: "move";
-  packedPositions: Record<string, PageShellPackedPosition>;
   pointerId: number;
   pointerType: string;
   pointerX: number;
@@ -167,8 +169,8 @@ function getInsertionIndicatorStyle(
   const containerRect = container?.getBoundingClientRect();
   const scrollTop = getPageScrollTop();
   const fallbackWidth = containerRect?.width ?? 0;
-  const geometryById = new Map(interaction.geometries.map((geometry) => [geometry.id, geometry]));
-  const orderWithoutSource = interaction.startVisibleOrder.filter((id) => id !== interaction.id);
+  const geometryById = new Map(interaction.currentGeometries.map((geometry) => [geometry.id, geometry]));
+  const orderWithoutSource = interaction.currentVisibleOrder.filter((id) => id !== interaction.id);
   const before = insertionIndex > 0 ? geometryById.get(orderWithoutSource[insertionIndex - 1]) : undefined;
   const after = insertionIndex < orderWithoutSource.length ? geometryById.get(orderWithoutSource[insertionIndex]) : undefined;
   const leftOffset = containerRect?.left ?? 0;
@@ -177,8 +179,8 @@ function getInsertionIndicatorStyle(
   if (dropTarget?.targetId) {
     const targetGeometry = geometryById.get(dropTarget.targetId);
     if (targetGeometry) {
-      const targetColumnShells = interaction.geometries
-        .filter((geometry) => geometry.id !== interaction.id && interaction.packedPositions[geometry.id]?.columnStart === dropTarget.columnStart)
+      const targetColumnShells = interaction.currentGeometries
+        .filter((geometry) => geometry.id !== interaction.id && interaction.currentPackedPositions[geometry.id]?.columnStart === dropTarget.columnStart)
         .sort((left, right) => left.top - right.top);
       const targetLane = targetColumnShells.findIndex((geometry) => geometry.id === dropTarget.targetId);
       const insertAfter = dropTarget.laneOrder > targetLane;
@@ -191,10 +193,10 @@ function getInsertionIndicatorStyle(
     }
   }
 
-  if (dropTarget?.targetId === null && interaction.gridBounds) {
-    const sourceSpan = interaction.packedPositions[interaction.id]?.columnSpan;
-    const targetGeometry = sourceSpan
-      ? getPageShellGridColumnGeometry(interaction.gridBounds, dropTarget.columnStart, sourceSpan)
+  if (dropTarget?.targetId === null && interaction.currentGridBounds) {
+    const sourceSpan = interaction.currentPackedPositions[interaction.id]?.columnSpan;
+    const targetGeometry = sourceSpan && interaction.currentGridBounds
+      ? getPageShellGridColumnGeometry(interaction.currentGridBounds, dropTarget.columnStart, sourceSpan)
       : null;
     if (targetGeometry) {
       return {
@@ -400,6 +402,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const shellContentRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const interactionRef = useRef<ShellInteraction | null>(null);
   const autoScrollFrameRef = useRef<number | null>(null);
+  const movePreviewFrameRef = useRef<number | null>(null);
   const updateInteractionRef = useRef<(event: ShellPointerEvent) => void>(() => undefined);
   const endInteractionRef = useRef<(event: ShellPointerEvent | null, cancelled: boolean) => void>(() => undefined);
   const [dragStartVisibleOrder, setDragStartVisibleOrder] = useState<string[] | null>(null);
@@ -533,15 +536,34 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     return rect && rect.width > 0 ? { left: rect.left, width: rect.width } : undefined;
   }
 
+  function captureCurrentMoveFrame() {
+    const currentVisibleOrder = projectVisiblePageShellOrder(layout.order, visibleShellIds);
+    return {
+      currentGeometries: captureShellGeometry(),
+      currentGridBounds: captureShellGridBounds(),
+      currentPackedPositions: packPageShellLayout(currentVisibleOrder, layout.sizes, {
+        chromeHeightPx: layout.isEditing ? 32 : 0,
+        naturalHeights,
+        placements: layout.placements,
+      }),
+      currentVisibleOrder,
+    };
+  }
+
   function updateMovePreview(interaction: ShellMoveInteraction, pointerX: number, pointerY: number) {
+    const currentFrame = captureCurrentMoveFrame();
+    interaction.currentGeometries = currentFrame.currentGeometries;
+    interaction.currentGridBounds = currentFrame.currentGridBounds;
+    interaction.currentPackedPositions = currentFrame.currentPackedPositions;
+    interaction.currentVisibleOrder = currentFrame.currentVisibleOrder;
     const dropTarget = getPageShellDropTarget(
-      interaction.geometries,
-      interaction.packedPositions,
-      interaction.startVisibleOrder,
+      interaction.currentGeometries,
+      interaction.currentPackedPositions,
+      interaction.currentVisibleOrder,
       interaction.id,
       pointerX,
       pointerY + getPageScrollTop(),
-      interaction.gridBounds,
+      interaction.currentGridBounds,
       interaction.grabOffsetX,
     );
     interaction.target = dropTarget;
@@ -550,6 +572,30 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const nextLayout = placePageShellAtDrop(interaction.startLayout, visibleShellIds, interaction.id, dropTarget);
     if (!layoutsHaveSameOrder(nextLayout.order, layout.order)) layout.setPreviewOrder(nextLayout.order);
     if (JSON.stringify(nextLayout.placements) !== JSON.stringify(layout.placements)) layout.setPreviewPlacements(nextLayout.placements);
+  }
+
+  function cancelMovePreview() {
+    if (movePreviewFrameRef.current !== null && typeof window !== "undefined") {
+      window.cancelAnimationFrame(movePreviewFrameRef.current);
+    }
+    movePreviewFrameRef.current = null;
+  }
+
+  function runMovePreview() {
+    movePreviewFrameRef.current = null;
+    const interaction = interactionRef.current;
+    if (!interaction || interaction.kind !== "move" || !layout.isEditing || !layout.isPreviewing) return;
+    updateMovePreview(interaction, interaction.pointerX, interaction.pointerY);
+  }
+
+  function scheduleMovePreview() {
+    if (typeof window === "undefined") {
+      runMovePreview();
+      return;
+    }
+    if (movePreviewFrameRef.current === null) {
+      movePreviewFrameRef.current = window.requestAnimationFrame(runMovePreview);
+    }
   }
 
   function cancelDragAutoScroll() {
@@ -572,6 +618,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const nextScrollTop = Math.max(0, Math.min(maxScrollTop, scrollTop + delta));
     if (nextScrollTop === scrollTop) return;
     window.scrollTo({ behavior: "auto", top: nextScrollTop });
+    cancelMovePreview();
     updateMovePreview(interaction, interaction.pointerX, interaction.pointerY);
     if (interactionRef.current === interaction) {
       autoScrollFrameRef.current = window.requestAnimationFrame(runDragAutoScroll);
@@ -599,16 +646,17 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     event.stopPropagation();
     const startLayout = currentLayout();
     const startVisibleOrder = orderedShells.map((shell) => shell.id);
-    const geometries = captureShellGeometry();
-    const sourceGeometry = geometries.find((geometry) => geometry.id === id);
+    const currentFrame = captureCurrentMoveFrame();
+    const sourceGeometry = currentFrame.currentGeometries.find((geometry) => geometry.id === id);
     const moveInteraction: ShellMoveInteraction = {
       captureElement: event.currentTarget,
-      geometries,
+      currentGeometries: currentFrame.currentGeometries,
+      currentGridBounds: currentFrame.currentGridBounds,
+      currentPackedPositions: currentFrame.currentPackedPositions,
+      currentVisibleOrder: currentFrame.currentVisibleOrder,
       grabOffsetX: sourceGeometry ? event.clientX - sourceGeometry.left : 0,
-      gridBounds: captureShellGridBounds(),
       id,
       kind: "move",
-      packedPositions: { ...packedPositions },
       pointerId: event.pointerId,
       pointerType: event.pointerType,
       pointerX: event.clientX,
@@ -831,7 +879,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     if (interaction.kind === "move") {
       interaction.pointerX = event.clientX;
       interaction.pointerY = event.clientY;
-      updateMovePreview(interaction, interaction.pointerX, interaction.pointerY);
+      scheduleMovePreview();
       scheduleDragAutoScroll();
       return;
     }
@@ -861,7 +909,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   function endInteraction(event: ShellPointerEvent | null, cancelled: boolean) {
     const interaction = interactionRef.current;
     if (!interaction) {
-      if (!event) cancelDragAutoScroll();
+      if (!event) {
+        cancelDragAutoScroll();
+        cancelMovePreview();
+      }
       return;
     }
     if (event && !isPageShellPointerMatch(interaction.pointerId, event.pointerId)) return;
@@ -870,6 +921,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     if (event) {
       event.preventDefault();
       event.stopPropagation();
+    }
+    if (!cancelled && interaction.kind === "move") {
+      cancelMovePreview();
+      updateMovePreview(interaction, interaction.pointerX, interaction.pointerY);
+    } else {
+      cancelMovePreview();
     }
     releasePointerCaptureSafely(interaction);
     if (cancelled) layout.cancelPreview();
