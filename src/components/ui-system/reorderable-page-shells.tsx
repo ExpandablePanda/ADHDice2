@@ -707,7 +707,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const naturalHeight = measureNaturalShellHeight(shellContent);
     const layoutWidth = layoutElement?.getBoundingClientRect().width ?? shellContent?.getBoundingClientRect().width ?? 0;
     const initialSize = startLayout.sizes[id] ?? { heightPx: null, span: 12 };
-    const initialHeight = clampPageShellHeight(initialSize.heightPx ?? naturalHeight, naturalHeight);
+    const initialHeight = clampPageShellHeight(initialSize.heightPx ?? naturalHeight, naturalHeight) ?? naturalHeight;
     interactionRef.current = {
       captureElement: event.currentTarget,
       columnWidth: layoutWidth > 0 ? layoutWidth / 12 : Math.max(shellContent?.getBoundingClientRect().width ?? 1, 1),
@@ -725,7 +725,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     layout.beginPreview(startLayout);
     layout.setPreviewSizes((sizes) => ({
       ...sizes,
-      [id]: { ...(sizes[id] ?? initialSize), heightPx: naturalHeight < PAGE_SHELL_MIN_HEIGHT ? null : initialHeight },
+      [id]: { ...(sizes[id] ?? initialSize), heightPx: initialSize.heightPx },
     }));
     setResizingId(id);
     setPointerCaptureSafely(event.currentTarget, event.pointerId);
@@ -910,9 +910,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       }));
       return;
     }
-    const heightPx = interaction.naturalHeight < PAGE_SHELL_MIN_HEIGHT
-      ? null
-      : clampPageShellHeight(interaction.initialHeight + (event.clientY - interaction.startY), interaction.naturalHeight);
+    const heightPx = clampPageShellHeight(interaction.initialHeight + (event.clientY - interaction.startY), interaction.naturalHeight);
     const currentSize = layout.sizes[interaction.id];
     if (currentSize?.span === span && currentSize.heightPx === heightPx) return;
     layout.setPreviewSizes((sizes) => ({

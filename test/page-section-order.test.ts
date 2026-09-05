@@ -593,15 +593,21 @@ test("corrupt page shell storage falls back to defaults", () => {
   assert.deepEqual(readPageShellLayout(store, key, "stats", ["stats-overview", "stats-energy"], {}).order, ["stats-overview", "stats-energy"]);
 });
 
-test("shell height controls preserve the 144px floor, natural-short behavior, and allow intentional growth", () => {
+test("shell height controls preserve the 144px floor and let short shells enter snapped custom heights", () => {
   assert.equal(normalizePageShellSpan(2), 3);
   assert.equal(normalizePageShellSpan(12.6), 12);
   assert.equal(getPageShellShrinkHeight(912), PAGE_SHELL_MIN_HEIGHT);
   assert.equal(getPageShellShrinkHeight(120), 120);
   assert.equal(clampPageShellHeight(PAGE_SHELL_MIN_HEIGHT, 912), PAGE_SHELL_MIN_HEIGHT);
   assert.equal(clampPageShellHeight(5000, 912), PAGE_SHELL_MAX_HEIGHT);
-  assert.ok(clampPageShellHeight(960, 912) > 912);
-  assert.equal(clampPageShellHeight(5000, 120), 120);
+  assert.ok((clampPageShellHeight(960, 912) ?? 0) > 912);
+  assert.equal(clampPageShellHeight(110, 114), null);
+  assert.equal(clampPageShellHeight(114, 114), null);
+  assert.equal(clampPageShellHeight(130, 114), PAGE_SHELL_MIN_HEIGHT);
+  assert.equal(clampPageShellHeight(170, 114), 192);
+  assert.equal(clampPageShellHeight(300, 114), 288);
+  assert.equal(clampPageShellHeight(360, 114), 384);
+  assert.equal(clampPageShellHeight(5000, 114), PAGE_SHELL_MAX_HEIGHT);
   assert.equal(formatPageShellDimensions(6, 288, 912), "W 6/12 · H 288px · Natural 912px");
   assert.equal(formatPageShellDimensions(6, 288, 912, 842), "W 6/12 · 842px · H 288px · Natural 912px");
   assert.equal(formatPageShellDimensions(6, null, 912), "W 6/12 · H 912px · Natural 912px");
@@ -872,8 +878,8 @@ test("shell layout sizes and 2D insertion boundaries normalize defensively", () 
   assert.equal(getPageShellShrinkHeight(PAGE_SHELL_MIN_HEIGHT), PAGE_SHELL_MIN_HEIGHT);
   assert.equal(clampPageShellHeight(700, 500), 720);
   assert.equal(clampPageShellHeight(100, 500), PAGE_SHELL_MIN_HEIGHT);
-  assert.equal(clampPageShellHeight(100, 120), 120);
-  assert.equal(clampPageShellHeight(700, 120), 120);
+  assert.equal(clampPageShellHeight(100, 120), null);
+  assert.equal(clampPageShellHeight(700, 120), 720);
   const geometries = [
     { bottom: 100, id: "A", left: 0, right: 100, top: 0 },
     { bottom: 100, id: "B", left: 110, right: 210, top: 0 },
@@ -1032,6 +1038,32 @@ test("semantic placement keeps the Water-style right lane stable through a persi
   const packed = packPageShellLayout(withNewShell.order, withNewShell.sizes, { placements: withNewShell.placements });
   assert.equal(packed.d.columnStart, 7);
   assert.ok(packed.d.rowStart > packed.c.rowStart);
+});
+
+test("short custom shell heights persist without changing Column or Slot", () => {
+  const sizes = {
+    water: { heightPx: 700, span: 6 as const },
+    today: { heightPx: clampPageShellHeight(300, 114), span: 6 as const },
+    history: { heightPx: null, span: 6 as const },
+  };
+  const placements = {
+    water: { columnStart: 1, laneOrder: 0 },
+    today: { columnStart: 7, laneOrder: 0 },
+    history: { columnStart: 7, laneOrder: 1 },
+  };
+  const layout = normalizePageShellLayout({ order: ["water", "today", "history"], placements, sizes }, Object.keys(sizes), sizes);
+  const beforeHeight = getPageShellColumnSlot(layout.order, layout.sizes, layout.placements ?? {}, "today");
+  const store = storage();
+  const key = getPageShellLayoutStorageKey("short-height-placement");
+  writePageShellLayout(store, key, "health:water", layout);
+  const restored = readPageShellLayout(store, key, "health:water", Object.keys(sizes), sizes);
+
+  assert.equal(restored.sizes.today.heightPx, 288);
+  assert.deepEqual(getPageShellColumnSlot(restored.order, restored.sizes, restored.placements ?? {}, "today"), beforeHeight);
+  assert.deepEqual(getPageShellColumnSlot(restored.order, restored.sizes, restored.placements ?? {}, "history"), { columnLabel: "B", columnStart: 7, slot: 2, slotCount: 2 });
+  const packed = packPageShellLayout(restored.order, restored.sizes, { placements: restored.placements, naturalHeights: { today: 114 } });
+  assert.equal(packed.today.columnStart, 7);
+  assert.ok(packed.history.rowStart > packed.today.rowStart);
 });
 
 test("custom semantic placements normalize to visual column-major order", () => {
@@ -1876,8 +1908,13 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /requestAnimationFrame\(runDragAutoScroll\)/);
   assert.match(shellSource, /cancelDragAutoScroll/);
   assert.match(shellSource, /window\.scrollTo\(\{ behavior: "auto", top: nextScrollTop \}\)/);
-  assert.match(shellSource, /heightPx: naturalHeight < PAGE_SHELL_MIN_HEIGHT \? null : initialHeight/);
-  assert.match(shellSource, /clampPageShellHeight\(interaction\.initialHeight/);
+  const resizeBeginSource = shellSource.slice(shellSource.indexOf("function beginResize"), shellSource.indexOf("function beginWidthResize"));
+  const resizeUpdateSource = shellSource.slice(shellSource.indexOf("const heightPx = clampPageShellHeight"), shellSource.indexOf("function endInteraction"));
+  assert.match(resizeBeginSource, /const initialHeight = clampPageShellHeight\(initialSize\.heightPx \?\? naturalHeight, naturalHeight\) \?\? naturalHeight/);
+  assert.match(resizeBeginSource, /heightPx: initialSize\.heightPx/);
+  assert.doesNotMatch(resizeBeginSource, /naturalHeight < PAGE_SHELL_MIN_HEIGHT/);
+  assert.match(resizeUpdateSource, /const heightPx = clampPageShellHeight\(interaction\.initialHeight/);
+  assert.doesNotMatch(resizeUpdateSource, /naturalHeight < PAGE_SHELL_MIN_HEIGHT/);
   const moveUpdateSource = shellSource.slice(shellSource.indexOf('if (interaction.kind === "move")'), shellSource.indexOf("const deltaColumns"));
   assert.match(moveUpdateSource, /scheduleMovePreview/);
   assert.match(shellSource, /function updateMovePreview[\s\S]*layout\.setPreviewOrder/);
@@ -1923,6 +1960,7 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /setShellToShrinkHeight/);
   assert.match(shellSource, /setShellToNaturalHeight/);
   assert.match(shellSource, /naturalHeight < PAGE_SHELL_MIN_HEIGHT \? null : getPageShellShrinkHeight/);
+  assert.match(shellSource, /function setShellToNaturalHeight[\s\S]*setShellHeight\(event, id, null\)/);
   assert.match(shellSource, /aria-label=\{`Shrink \$\{shell\.label\}`\}/);
   assert.match(shellSource, /aria-label=\{`Expand \$\{shell\.label\}`\}/);
   assert.match(shellSource, /formatPageShellDimensions\(size\.span, size\.heightPx, naturalHeight, renderedWidths\[shell\.id\]\)/);

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.92`.
+- Current working app version: `7.12.93`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.93 Short Shell Expansion
+
+Naturally short shells can now intentionally grow taller through the existing
+snapped resize interaction. `PAGE_SHELL_MIN_HEIGHT` remains the custom-height
+floor but no longer disables custom growth solely because natural content is
+short. Shrink and Natural still restore short shells to their natural height;
+the existing `heightPx` storage and semantic Column/Slot placement model are
+unchanged.
 
 ## 2026-09-05 7.12.92 Scrollable Shell Edit Toolbars
 

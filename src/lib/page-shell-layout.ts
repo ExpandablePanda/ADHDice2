@@ -1409,10 +1409,10 @@ export function getPageShellShrinkHeight(naturalHeight: number) {
 }
 
 /** Snaps a manual resize within the shared custom-height safety bound. */
-export function clampPageShellHeight(value: number, naturalHeight: number) {
+export function clampPageShellHeight(value: number, naturalHeight: number): number | null {
   const safeNaturalHeight = getSafePageShellNaturalHeight(naturalHeight);
-  if (safeNaturalHeight < PAGE_SHELL_MIN_HEIGHT) return safeNaturalHeight;
   const safeValue = Number.isFinite(value) ? value : safeNaturalHeight;
+  if (safeNaturalHeight < PAGE_SHELL_MIN_HEIGHT && safeValue <= safeNaturalHeight) return null;
   return Math.min(snapPageShellHeight(safeValue), Math.max(PAGE_SHELL_MAX_HEIGHT, safeNaturalHeight));
 }
 
