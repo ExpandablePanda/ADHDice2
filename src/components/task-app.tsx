@@ -1076,8 +1076,9 @@ const dockIcons: Record<AppPage, string> = {
 };
 const navigatorSearchTargets = createNavigatorSearchTargets(dockItems, HEALTH_TABS);
 const PAGE_SHELL_NAVIGATION_HIGHLIGHT_MS = 1800;
-const PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS = 24;
+const PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS = 120;
 const PAGE_SHELL_NAVIGATION_STABILITY_COMPARISONS = 2;
+const PAGE_SHELL_NAVIGATION_ANCHOR_STABLE_FRAMES = 16;
 const TASK_GRID_MAX_COLUMNS = 4;
 const TASK_GRID_TABLET_COLUMNS = 2;
 const TASK_GRID_PHONE_COLUMNS = 1;
@@ -4403,16 +4404,22 @@ export function TaskApp() {
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
 
   useEffect(() => {
-    const request = requestedPageShell;
-    if (!request || !requestedPageShellLayoutReady || !isAuthenticatedAppBootReady || activePage !== request.page || (request.healthTab && activeHealthTab !== request.healthTab)) {
+    const requestedNavigation = requestedPageShell;
+    if (!requestedNavigation) return;
+    if (!requestedPageShellLayoutReady || !isAuthenticatedAppBootReady || activePage !== requestedNavigation.page || (requestedNavigation.healthTab && activeHealthTab !== requestedNavigation.healthTab)) {
       return;
     }
+    const request = requestedNavigation;
+    const scrollingElement = document.scrollingElement as HTMLElement | null;
+    const previousOverflowAnchor = scrollingElement?.style.getPropertyValue("overflow-anchor") ?? "";
+    scrollingElement?.style.setProperty("overflow-anchor", "none");
     let frame: number | null = null;
     let attempts = 0;
     let stableComparisons = 0;
+    let stableAnchorFrames = 0;
     let previousShellRect: PageShellNavigationRect | null = null;
     let previousHeaderRect: PageShellNavigationRect | null = null;
-    let correctionUsed = false;
+    let restoredOverflowAnchor = false;
     const readRect = (element: HTMLElement): PageShellNavigationRect => {
       const rect = element.getBoundingClientRect();
       return { height: rect.height, left: rect.left, top: rect.top, width: rect.width };
@@ -4420,58 +4427,88 @@ export function TaskApp() {
     const schedule = (callback: () => void) => {
       if (frame === null) frame = window.requestAnimationFrame(() => { frame = null; callback(); });
     };
-    const retry = () => {
+    const restoreOverflowAnchor = () => {
+      if (restoredOverflowAnchor || !scrollingElement) return;
+      restoredOverflowAnchor = true;
+      if (previousOverflowAnchor) scrollingElement.style.setProperty("overflow-anchor", previousOverflowAnchor);
+      else scrollingElement.style.removeProperty("overflow-anchor");
+    };
+    const abortNavigation = () => {
+      restoreOverflowAnchor();
+      setRequestedPageShell(null);
+    };
+    const consumeAttempt = () => {
+      if (attempts >= PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) {
+        abortNavigation();
+        return false;
+      }
       attempts += 1;
+      return true;
+    };
+    const retryInitialGeometry = () => {
       stableComparisons = 0;
+      stableAnchorFrames = 0;
       previousShellRect = null;
       previousHeaderRect = null;
       if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) schedule(checkGeometry);
+      else abortNavigation();
     };
     const completeReveal = (shell: HTMLElement) => {
       if (!shell.isConnected) {
-        retry();
+        retryInitialGeometry();
         return;
       }
+      restoreOverflowAnchor();
       highlightPageShellNavigationTarget(shell);
       setRequestedPageShell(null);
     };
-    const verifyFinalLanding = () => {
+    function stabilizeAnchor() {
+      if (!consumeAttempt()) return;
       const shell = document.querySelector<HTMLElement>(`[data-page-shell-id="${request.shellId}"]`);
       const header = document.querySelector<HTMLElement>("[data-app-fixed-header]");
       if (!shell?.isConnected || !header?.isConnected) {
-        retry();
+        retryInitialGeometry();
         return;
       }
       const shellRect = readRect(shell);
       const headerRect = readRect(header);
       if (!isPageShellNavigationRectUsable(shellRect) || !isPageShellNavigationRectUsable(headerRect)) {
-        retry();
+        stableAnchorFrames = 0;
+        if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) schedule(stabilizeAnchor);
+        else abortNavigation();
         return;
       }
       const headerBottom = headerRect.top + headerRect.height;
       const expectedTop = headerBottom + PAGE_SHELL_NAVIGATION_GAP_PX;
-      if (!correctionUsed && Math.abs(shellRect.top - expectedTop) > PAGE_SHELL_NAVIGATION_RECT_TOLERANCE_PX) {
-        correctionUsed = true;
+      if (Math.abs(shellRect.top - expectedTop) > PAGE_SHELL_NAVIGATION_RECT_TOLERANCE_PX) {
+        stableAnchorFrames = 0;
         window.scrollTo({
           behavior: "auto",
           top: getPageShellNavigationScrollTop(window.scrollY, shellRect.top, headerBottom),
         });
-        schedule(verifyFinalLanding);
-        return;
+      } else {
+        stableAnchorFrames += 1;
       }
-      completeReveal(shell);
-    };
+      if (stableAnchorFrames >= PAGE_SHELL_NAVIGATION_ANCHOR_STABLE_FRAMES) {
+        completeReveal(shell);
+      } else if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) {
+        schedule(stabilizeAnchor);
+      } else {
+        abortNavigation();
+      }
+    }
     function checkGeometry() {
+      if (!consumeAttempt()) return;
       const shell = document.querySelector<HTMLElement>(`[data-page-shell-id="${request.shellId}"]`);
       const header = document.querySelector<HTMLElement>("[data-app-fixed-header]");
       if (!shell?.isConnected || !header?.isConnected) {
-        retry();
+        retryInitialGeometry();
         return;
       }
       const shellRect = readRect(shell);
       const headerRect = readRect(header);
       if (!isPageShellNavigationRectUsable(shellRect) || !isPageShellNavigationRectUsable(headerRect)) {
-        retry();
+        retryInitialGeometry();
         return;
       }
       if (previousShellRect && previousHeaderRect
@@ -4491,14 +4528,16 @@ export function TaskApp() {
           behavior: "auto",
           top: getPageShellNavigationScrollTop(window.scrollY, shellRect.top, headerRect.top + headerRect.height),
         });
-        schedule(verifyFinalLanding);
+        stableAnchorFrames = 0;
+        schedule(stabilizeAnchor);
       } else if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) {
         schedule(checkGeometry);
-      }
+      } else abortNavigation();
     }
     schedule(checkGeometry);
     return () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
+      restoreOverflowAnchor();
     };
   }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, requestedPageShell, requestedPageShellLayoutReady]);
   useEffect(() => () => clearPageShellNavigationHighlight(), [clearPageShellNavigationHighlight]);

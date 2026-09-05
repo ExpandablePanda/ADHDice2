@@ -185,7 +185,12 @@ test("page-shell navigation waits for stable geometry and computes the measured-
 
 test("Settings targets remain pending through shell hydration and acknowledge after ready geometry", () => {
   assert.deepEqual(findTarget("timezone").action, { kind: "settings-section", page: "Settings", section: "day-reset" });
-  assert.deepEqual(findTarget("appearance").action, { kind: "settings-section", page: "Settings", section: "appearance" });
+  assert.deepEqual(findTarget("appearance").action, {
+    kind: "page-shell",
+    page: "Settings",
+    pageKey: "settings",
+    shellId: "settings-appearance",
+  });
   assert.match(appSource, /setRequestedSettingsSection\(action\.section\)/);
   assert.match(appSource, /requestedSection=\{requestedSettingsSection\}/);
   assert.match(settingsSource, /shell\.scrollIntoView\(\{ block: "start" \}\)/);
@@ -217,17 +222,23 @@ test("shell destinations route to their page and request direct shell reveal", (
   assert.match(appSource, /const requestedPageShellLayoutReady = useSyncExternalStore/);
   assert.match(appSource, /isPageShellLayoutReady\(requestedPageShell\.pageKey\)/);
   assert.match(appSource, /!requestedPageShellLayoutReady/);
-  const shellNavigationSource = appSource.slice(appSource.indexOf("const request = requestedPageShell"), appSource.indexOf("useEffect(() => () => clearPageShellNavigationHighlight"));
+  const shellNavigationSource = appSource.slice(appSource.indexOf("const requestedNavigation = requestedPageShell"), appSource.indexOf("useEffect(() => () => clearPageShellNavigationHighlight"));
   assert.doesNotMatch(shellNavigationSource, /scrollIntoView/);
   assert.match(shellNavigationSource, /data-app-fixed-header/);
   assert.match(shellNavigationSource, /arePageShellNavigationRectsStable/);
   assert.match(shellNavigationSource, /PAGE_SHELL_NAVIGATION_STABILITY_COMPARISONS/);
   assert.match(shellNavigationSource, /PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS/);
-  assert.match(shellNavigationSource, /let correctionUsed = false/);
-  assert.match(shellNavigationSource, /if \(!correctionUsed &&/);
-  assert.match(shellNavigationSource, /correctionUsed = true/);
+  assert.match(shellNavigationSource, /PAGE_SHELL_NAVIGATION_ANCHOR_STABLE_FRAMES/);
+  assert.match(shellNavigationSource, /let stableAnchorFrames = 0/);
+  assert.match(shellNavigationSource, /stableAnchorFrames = 0/);
+  assert.match(shellNavigationSource, /stableAnchorFrames \+= 1/);
+  assert.match(shellNavigationSource, /overflow-anchor/);
+  assert.match(shellNavigationSource, /restoreOverflowAnchor/);
+  assert.match(shellNavigationSource, /consumeAttempt/);
+  assert.match(shellNavigationSource, /abortNavigation/);
+  assert.doesNotMatch(shellNavigationSource, /correctionUsed/);
   assert.match(shellNavigationSource, /window\.scrollTo\(\{[\s\S]*behavior: "auto"/);
-  assert.match(shellNavigationSource, /schedule\(verifyFinalLanding\)/);
+  assert.match(shellNavigationSource, /schedule\(stabilizeAnchor\)/);
   assert.match(shellNavigationSource, /completeReveal\(shell\)/);
   assert.match(shellNavigationSource, /window\.cancelAnimationFrame\(frame\)/);
   assert.match(appSource, /highlightPageShellNavigationTarget\(shell\)/);
@@ -309,6 +320,26 @@ test("expanded dock puts search first and swaps normal controls for inline searc
   assert.match(appSource, /onNavigateSearchTarget=\{handleNavigatorSearchTarget\}/);
   assert.doesNotMatch(appSource, /NavigatorSearchModal/);
   assert.doesNotMatch(inlineSource, /fixed inset-0/);
+});
+
+test("top-level Settings shell destinations replace duplicate legacy section results while children remain", () => {
+  for (const [query, shellId] of [
+    ["appearance", "settings-appearance"],
+    ["day reset", "settings-day-reset"],
+    ["economy", "settings-economy"],
+    ["import export", "settings-import-export"],
+  ] as const) {
+    const settingsMatches = searchNavigatorTargets(query, targets).filter((target) => target.page === "Settings" && target.title.toLocaleLowerCase().replace(/[^a-z]+/g, " ").trim() === query.replace(/[^a-z]+/g, " ").trim());
+    assert.equal(settingsMatches.length, 1, `${query} should have one Settings destination`);
+    assert.deepEqual(settingsMatches[0]?.action, {
+      kind: "page-shell",
+      page: "Settings",
+      pageKey: "settings",
+      shellId,
+    });
+  }
+  assert.deepEqual(findTarget("theme").action, { kind: "settings-section", page: "Settings", section: "appearance" });
+  assert.doesNotMatch(readFileSync(new URL("../src/lib/navigator-search.ts", import.meta.url), "utf8"), /id: `settings-section-\$\{id\}`/);
 });
 
 test("inline results remain attached to each supported dock placement", () => {

@@ -255,15 +255,6 @@ export function createNavigatorSearchTargets(
     title: tab,
   }));
 
-  const settingsSectionTargets = SETTINGS_SECTION_TARGETS.map(({ id, keywords, title }) => makeTarget({
-    action: { kind: "settings-section", page: "Settings", section: id },
-    breadcrumb: ["Settings", title],
-    id: `settings-section-${id}`,
-    keywords,
-    page: "Settings",
-    title,
-  }));
-
   const settingsChildTargets = SETTINGS_CHILD_TARGETS.map(({ id, keywords, section, title }) => makeTarget({
     action: { kind: "settings-section", page: "Settings", section },
     breadcrumb: ["Settings", SETTINGS_SECTION_TARGETS.find((target) => target.id === section)?.title ?? section, title],
@@ -279,7 +270,6 @@ export function createNavigatorSearchTargets(
     ...taskSurfaceTargets,
     ...taskViewTargets,
     ...healthTargets,
-    ...settingsSectionTargets,
     ...settingsChildTargets,
     ...pageShellTargets,
   ];

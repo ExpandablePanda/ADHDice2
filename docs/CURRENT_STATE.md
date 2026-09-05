@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.88`.
+- Current working app version: `7.12.89`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,25 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.89 Deterministic Shell Columns and Navigator Anchor Stabilization
+
+The page-shell editor now derives presentation-only Column A/B/C labels from
+distinct semantic `columnStart` values. Explicit Column movement changes only
+the selected shell's semantic column, preserves its lane where practical, and
+offers at most one valid adjacent empty column per side. Horizontal arrows are
+intentionally removed; Up/Down are lane-only semantic moves, Pos remains the
+global column-major visual position, and current-frame free drag is retained as
+an optional interaction.
+
+Generic page-shell Navigator navigation keeps the measured fixed-header exact
+top calculation, then holds a bounded post-landing anchor phase until the
+target remains aligned for a consecutive stable-frame run. Browser scroll
+anchoring is disabled only during that phase and restored on completion,
+cancellation, or unmount. The target highlight begins only after final
+stability. Top-level Settings search now uses the page-shell destinations once
+while preserving child section targets. Nested expansion remains deferred
+pending browser QA.
 
 ## 2026-09-05 7.12.88 Live Drag Geometry and Exact Shell-Top Navigation
 

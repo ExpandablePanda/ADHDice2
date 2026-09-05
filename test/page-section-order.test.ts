@@ -33,13 +33,18 @@ import {
   buildPageShellLayoutExport,
   createPageShellView,
   derivePageShellVisualOrder,
+  derivePageShellColumns,
   formatPageShellDimensions,
+  getPageShellColumnLabel,
+  getPageShellColumnOptions,
   getPageShellExportFilename,
   getPageShellViewsStorageKey,
   getRegisteredPageShellPages,
   getPageShellShrinkHeight,
   isLegacyTestD20LayoutPreference,
   mergeVisiblePageShellOrder,
+  movePageShellOneLane,
+  movePageShellToColumn,
   movePageShellToVisualPosition,
   normalizePageShellLayout,
   normalizePageShellSpan,
@@ -593,7 +598,6 @@ test("page shell pointer lifecycle finalizes only the active pointer and guards 
   assert.match(shellSource, /if \(!interaction\) \{\s+if \(!event\) \{\s+cancelDragAutoScroll\(\);\s+cancelMovePreview\(\);/);
   assert.match(shellSource, /grabOffsetX: sourceGeometry \? event\.clientX - sourceGeometry\.left : 0/);
   assert.match(shellSource, /interaction\.grabOffsetX/);
-  assert.match(shellSource, /getPageShellEmptyHorizontalColumnStart/);
   assert.match(shellSource, /dropTarget\?\.targetId === null/);
   assert.match(shellSource, /getPageShellGridColumnGeometry/);
 });
@@ -943,6 +947,114 @@ test("direct Pos uses the same visual order while preserving the current column 
   assert.deepEqual(crossColumnResult.placements?.A, { columnStart: 1, laneOrder: 1 });
   assert.deepEqual(crossColumnResult.placements?.B, { columnStart: 1, laneOrder: 2 });
   assert.deepEqual(crossColumnResult.placements?.C, { columnStart: 1, laneOrder: 0 });
+});
+
+test("semantic columns derive presentation labels from distinct column starts", () => {
+  const sizes = {
+    a: { heightPx: 144, span: 3 as const },
+    b: { heightPx: 144, span: 3 as const },
+    c: { heightPx: 144, span: 3 as const },
+    d: { heightPx: 144, span: 3 as const },
+  };
+  const placements = {
+    a: { columnStart: 1, laneOrder: 0 },
+    b: { columnStart: 7, laneOrder: 0 },
+    c: { columnStart: 7, laneOrder: 1 },
+    d: { columnStart: 1, laneOrder: 1 },
+  };
+  assert.deepEqual(derivePageShellColumns(["a", "d", "b", "c"], sizes, placements), [
+    { columnStart: 1, label: "A", shellIds: ["a", "d"] },
+    { columnStart: 7, label: "B", shellIds: ["b", "c"] },
+  ]);
+  assert.equal(getPageShellColumnLabel(0), "A");
+  assert.equal(getPageShellColumnLabel(25), "Z");
+  assert.equal(getPageShellColumnLabel(26), "AA");
+});
+
+test("explicit column moves change only the selected shell column and preserve its lane", () => {
+  const order = ["a", "d", "b", "c", "other"];
+  const sizes = Object.fromEntries(order.map((id) => [id, { heightPx: 144, span: 3 as const }]));
+  const placements = {
+    a: { columnStart: 1, laneOrder: 0 },
+    d: { columnStart: 1, laneOrder: 1 },
+    b: { columnStart: 7, laneOrder: 0 },
+    c: { columnStart: 7, laneOrder: 1 },
+    other: { columnStart: 10, laneOrder: 0 },
+  };
+  const moved = movePageShellToColumn({ order, placements, sizes }, order, "d", 7);
+  assert.deepEqual(moved.order, ["a", "b", "d", "c", "other"]);
+  assert.deepEqual(moved.placements, {
+    a: { columnStart: 1, laneOrder: 0 },
+    d: { columnStart: 7, laneOrder: 1 },
+    b: { columnStart: 7, laneOrder: 0 },
+    c: { columnStart: 7, laneOrder: 2 },
+    other: { columnStart: 10, laneOrder: 0 },
+  });
+  const movedBack = movePageShellToColumn({ ...moved, sizes }, order, "d", 1);
+  assert.deepEqual(movedBack.order, order);
+  assert.deepEqual(movedBack.placements, placements);
+});
+
+test("column moves are deterministic across repeated A to C and back selections", () => {
+  const order = ["a", "b", "c"];
+  const sizes = {
+    a: { heightPx: 144, span: 3 as const },
+    b: { heightPx: 144, span: 3 as const },
+    c: { heightPx: 144, span: 3 as const },
+  };
+  const placements = {
+    a: { columnStart: 1, laneOrder: 0 },
+    b: { columnStart: 5, laneOrder: 0 },
+    c: { columnStart: 9, laneOrder: 0 },
+  };
+  const layout = { order, placements, sizes };
+  const once = movePageShellToColumn(layout, order, "a", 9);
+  const twice = movePageShellToColumn({ ...once, sizes }, order, "a", 5);
+  const thrice = movePageShellToColumn({ ...twice, sizes }, order, "a", 9);
+  assert.deepEqual(twice.placements, {
+    a: { columnStart: 5, laneOrder: 0 },
+    b: { columnStart: 5, laneOrder: 1 },
+    c: { columnStart: 9, laneOrder: 0 },
+  });
+  assert.deepEqual(thrice, once);
+  assert.deepEqual(getPageShellColumnOptions(order, sizes, placements, "a").map((option) => option.label), ["Column A", "Column B", "Column C"]);
+});
+
+test("new adjacent columns are offered only when the selected span fits, and full-width shells have none", () => {
+  const sixSizes = { source: { heightPx: 144, span: 6 as const } };
+  const sixPlacements = { source: { columnStart: 1, laneOrder: 0 } };
+  assert.deepEqual(getPageShellColumnOptions(["source"], sixSizes, sixPlacements, "source").map((option) => option.label), ["Column A", "New column right"]);
+  const wideSizes = { source: { heightPx: 144, span: 8 as const } };
+  const widePlacements = { source: { columnStart: 1, laneOrder: 0 } };
+  assert.deepEqual(getPageShellColumnOptions(["source"], wideSizes, widePlacements, "source").map((option) => option.label), ["Column A"]);
+  const fullSizes = { source: { heightPx: 144, span: 12 as const } };
+  const fullPlacements = { source: { columnStart: 1, laneOrder: 0 } };
+  assert.deepEqual(getPageShellColumnOptions(["source"], fullSizes, fullPlacements, "source"), []);
+  assert.deepEqual(movePageShellToColumn({ order: ["source"], placements: fullPlacements, sizes: fullSizes }, ["source"], "source", 7), {
+    order: ["source"],
+    placements: fullPlacements,
+  });
+});
+
+test("up and down move only lane order inside the current semantic column", () => {
+  const order = ["a", "b", "c"];
+  const sizes = {
+    a: { heightPx: 144, span: 6 as const },
+    b: { heightPx: 144, span: 6 as const },
+    c: { heightPx: 144, span: 6 as const },
+  };
+  const placements = {
+    a: { columnStart: 1, laneOrder: 0 },
+    b: { columnStart: 1, laneOrder: 1 },
+    c: { columnStart: 7, laneOrder: 0 },
+  };
+  const movedUp = movePageShellOneLane({ order, placements, sizes }, order, "b", "up");
+  assert.deepEqual(movedUp.order, ["b", "a", "c"]);
+  assert.deepEqual(movedUp.placements?.c, placements.c);
+  const movedDown = movePageShellOneLane({ ...movedUp, sizes }, order, "b", "down");
+  assert.deepEqual(movedDown, { order, placements });
+  assert.deepEqual(movePageShellOneLane({ order, placements, sizes }, order, "a", "up"), { order, placements });
+  assert.deepEqual(movePageShellOneLane({ order, placements, sizes }, order, "b", "down"), { order, placements });
 });
 
 test("drop targeting agrees with rendered packed destination instead of replacing its preceding shell", () => {
@@ -1395,6 +1507,9 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /getPageShellDropTarget/);
   assert.match(shellSource, /placePageShellAtDrop/);
   assert.match(shellSource, /movePageShellToVisualPosition/);
+  assert.match(shellSource, /getPageShellColumnOptions/);
+  assert.match(shellSource, /movePageShellToColumn/);
+  assert.match(shellSource, /movePageShellOneLane/);
   assert.match(shellSource, /startVisibleOrder/);
   assert.match(shellSource, /currentVisibleOrder/);
   assert.match(shellSource, /currentGeometries/);
@@ -1425,8 +1540,16 @@ test("Focus reorders top-level workspace shells, not individual clocks or bars",
   assert.match(shellSource, /MoveHorizontal/);
   assert.match(shellSource, /Set \$\{shell\.label\} width in columns/);
   assert.match(shellSource, /Set \$\{shell\.label\} position/);
-  for (const direction of ["up", "down", "left", "right"]) assert.match(shellSource, new RegExp(`moveShellDirection\\(event, shell\\.id, "${direction}"\\)`));
-  assert.match(shellSource, /getPageShellDirectionalInsertionIndex/);
+  assert.match(shellSource, /moveShellLane\(event, shell\.id, "up"\)/);
+  assert.match(shellSource, /moveShellLane\(event, shell\.id, "down"\)/);
+  const laneControlSource = shellSource.slice(shellSource.indexOf("function moveShellLane"), shellSource.indexOf("function updateInteraction"));
+  assert.doesNotMatch(laneControlSource, /captureShellGeometry|packedPositions|Geometry/);
+  assert.doesNotMatch(shellSource, /Move \$\{shell\.label\} left/);
+  assert.doesNotMatch(shellSource, /Move \$\{shell\.label\} right/);
+  assert.doesNotMatch(shellSource, /getPageShellDirectionalInsertionIndex/);
+  assert.doesNotMatch(shellSource, /getPageShellEmptyHorizontalColumnStart/);
+  assert.match(shellSource, /aria-haspopup="listbox"/);
+  assert.match(shellSource, /Full/);
   assert.match(shellSource, /packPageShellLayout/);
   assert.match(shellSource, /data-page-shell-packed/);
   assert.match(shellSource, /measureNaturalShellHeight/);

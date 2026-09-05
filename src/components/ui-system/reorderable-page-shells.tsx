@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUp, ArrowUpToLine, Check, ChevronDown, CornerDownRight, Download, GripVertical, MoveHorizontal, PanelsTopLeft, RotateCcw, Save } from "lucide-react";
+import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Check, ChevronDown, CornerDownRight, Download, GripVertical, MoveHorizontal, PanelsTopLeft, RotateCcw, Save } from "lucide-react";
 import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, type Ref } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
@@ -8,16 +8,18 @@ import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import {
-  getPageShellDirectionalInsertionIndex,
   getPageShellDropTarget,
   getPageShellDragAutoScrollDelta,
-  getPageShellEmptyHorizontalColumnStart,
+  getPageShellColumnOptions,
+  derivePageShellColumns,
   getPageShellGridColumnGeometry,
   clampPageShellHeight,
-  movePageShellToVisualPosition,
   formatPageShellDimensions,
   getPageShellExportFilename,
   getPageShellShrinkHeight,
+  movePageShellOneLane,
+  movePageShellToColumn,
+  movePageShellToVisualPosition,
   normalizePageShellSpan,
   placePageShellAtDrop,
   packPageShellLayout,
@@ -434,6 +436,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const [renderedWidths, setRenderedWidths] = useState<Record<string, number>>({});
   const [positionDrafts, setPositionDrafts] = useState<Record<string, string>>({});
   const [widthDrafts, setWidthDrafts] = useState<Record<string, string>>({});
+  const [openColumnShellId, setOpenColumnShellId] = useState<string | null>(null);
   const packedPositions = useMemo<Record<string, PageShellPackedPosition>>(
     () => packPageShellLayout(
       orderedShells.map((shell) => shell.id),
@@ -449,6 +452,17 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   // Canonical metadata owns the historical presentation. Once a user has a
   // custom layout (including a live edit preview), derived packing takes over.
   const usePackedPlacement = !layout.isCanonical;
+  const pageShellColumns = useMemo(
+    () => derivePageShellColumns(orderedShells.map((shell) => shell.id), layout.sizes, layout.placements, visibleShellIds),
+    [layout.placements, layout.sizes, orderedShells, visibleShellIds],
+  );
+  const pageShellColumnOptions = useMemo(
+    () => new Map(orderedShells.map((shell) => [
+      shell.id,
+      getPageShellColumnOptions(visibleShellIds, layout.sizes, layout.placements, shell.id, packedPositions),
+    ])),
+    [layout.placements, layout.sizes, orderedShells, packedPositions, visibleShellIds],
+  );
 
   const measureNaturalShellHeights = useCallback(() => {
     const next = Object.fromEntries(orderedShells.flatMap((shell) => {
@@ -817,45 +831,26 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     }
   }
 
-  function moveShellDirection(event: MouseEvent<HTMLButtonElement>, id: string, direction: "down" | "left" | "right" | "up") {
+  function commitShellColumn(event: MouseEvent<HTMLButtonElement>, id: string, columnStart: number) {
+    if (!layout.isEditing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setOpenColumnShellId(null);
+    const startLayout = currentLayout();
+    const nextLayout = movePageShellToColumn(startLayout, visibleShellIds, id, columnStart);
+    if (layoutsHaveSameOrder(nextLayout.order, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
+    layout.beginPreview(startLayout);
+    layout.setPreviewOrder(nextLayout.order);
+    layout.setPreviewPlacements(nextLayout.placements);
+    layout.commitPreview();
+  }
+
+  function moveShellLane(event: MouseEvent<HTMLButtonElement>, id: string, direction: "down" | "up") {
     if (!layout.isEditing || !layout.canReorder) return;
     event.preventDefault();
     event.stopPropagation();
     const startLayout = currentLayout();
-    const startVisibleOrder = orderedShells.map((shell) => shell.id);
-    const shellGeometries = captureShellGeometry();
-    const sourceColumnStart = packedPositions[id]?.columnStart;
-    const directionalGeometries = direction === "up" || direction === "down"
-      ? shellGeometries.filter((geometry) => geometry.id === id || packedPositions[geometry.id]?.columnStart === sourceColumnStart)
-      : shellGeometries;
-    const targetIndex = getPageShellDirectionalInsertionIndex(directionalGeometries, startVisibleOrder, id, direction);
-    const orderWithoutSource = startVisibleOrder.filter((candidateId) => candidateId !== id);
-    const targetId = direction === "left" || direction === "up"
-      ? targetIndex === null ? undefined : orderWithoutSource[targetIndex]
-      : targetIndex === null ? undefined : orderWithoutSource[targetIndex - 1];
-    const targetPosition = targetId ? packedPositions[targetId] : undefined;
-    const isHorizontal = direction === "left" || direction === "right";
-    const emptyColumnStart = !targetPosition && isHorizontal
-      ? getPageShellEmptyHorizontalColumnStart(packedPositions, id, direction)
-      : null;
-    if (!targetPosition && emptyColumnStart === null) return;
-    const columnStart = targetPosition?.columnStart ?? emptyColumnStart;
-    if (columnStart === undefined || columnStart === null) return;
-    const destinationColumnIds = targetPosition && targetId
-      ? startVisibleOrder
-        .filter((candidateId) => candidateId !== id && layout.placements?.[candidateId]?.columnStart === targetPosition.columnStart)
-        .sort((left, right) => (layout.placements?.[left]?.laneOrder ?? 0) - (layout.placements?.[right]?.laneOrder ?? 0))
-      : [];
-    const targetLane = targetPosition && targetId
-      ? Math.max(0, destinationColumnIds.indexOf(targetId) + (direction === "down" || direction === "right" ? 1 : 0))
-      : 0;
-    const resolvedInsertionIndex = targetIndex ?? (direction === "left" ? 0 : orderWithoutSource.length);
-    const nextLayout = placePageShellAtDrop(startLayout, visibleShellIds, id, {
-      columnStart,
-      insertionIndex: resolvedInsertionIndex,
-      laneOrder: targetLane,
-      targetId: targetId ?? null,
-    });
+    const nextLayout = movePageShellOneLane(startLayout, visibleShellIds, id, direction);
     if (layoutsHaveSameOrder(nextLayout.order, layout.order) && JSON.stringify(nextLayout.placements) === JSON.stringify(layout.placements)) return;
     layout.beginPreview(startLayout);
     layout.setPreviewOrder(nextLayout.order);
@@ -987,6 +982,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const shellPlacementClass = layout.isCanonical
       ? layout.canonicalLayout.shellClassNames?.[shell.id] ?? ""
       : spanClass;
+    const columnOptions = pageShellColumnOptions.get(shell.id) ?? [];
+    const currentColumnOption = columnOptions.find((option) => option.kind === "existing" && option.columnStart === layout.placements?.[shell.id]?.columnStart);
+    const currentColumnLabel = currentColumnOption?.label.replace(/^Column /, "Col ") ?? "Col A";
+    const currentColumn = pageShellColumns.find((column) => column.columnStart === layout.placements?.[shell.id]?.columnStart);
+    const shellLane = currentColumn?.shellIds.indexOf(shell.id) ?? -1;
+    const isFullWidth = size.span === 12;
     return (
       <div
         className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
@@ -1048,8 +1049,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
             </label>
             <span className="shrink-0 text-[10px] font-medium text-[#9188b8] dark:text-white/45">{formatPageShellDimensions(size.span, size.heightPx, naturalHeight, renderedWidths[shell.id])}</span>
             {layout.canReorder ? (
-              <>
-                <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
+              <label className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-[#9188b8] dark:text-white/45">
                   <span>Pos</span>
                   <input
                     aria-label={`Set ${shell.label} position`}
@@ -1067,13 +1067,50 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
                   />
                   <span>/{orderedShells.length}</span>
                 </label>
-                <div className="flex shrink-0 items-center gap-0.5" aria-label={`${shell.label} movement controls`}>
-                  <button aria-label={`Move ${shell.label} up`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] dark:hover:bg-white/10" onClick={(event) => moveShellDirection(event, shell.id, "up")} title={`Move ${shell.label} up`} type="button"><ArrowUp aria-hidden="true" className="h-3.5 w-3.5" /></button>
-                  <button aria-label={`Move ${shell.label} down`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] dark:hover:bg-white/10" onClick={(event) => moveShellDirection(event, shell.id, "down")} title={`Move ${shell.label} down`} type="button"><ArrowDown aria-hidden="true" className="h-3.5 w-3.5" /></button>
-                  <button aria-label={`Move ${shell.label} left`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] dark:hover:bg-white/10" onClick={(event) => moveShellDirection(event, shell.id, "left")} title={`Move ${shell.label} left`} type="button"><ArrowLeft aria-hidden="true" className="h-3.5 w-3.5" /></button>
-                  <button aria-label={`Move ${shell.label} right`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] dark:hover:bg-white/10" onClick={(event) => moveShellDirection(event, shell.id, "right")} title={`Move ${shell.label} right`} type="button"><ArrowRight aria-hidden="true" className="h-3.5 w-3.5" /></button>
-                </div>
-              </>
+            ) : null}
+            {isFullWidth ? (
+              <span className="shrink-0 rounded-md border border-[#ddd6fb] bg-white px-2 py-1 text-[10px] font-semibold text-[#5f47d8] dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff]">Full</span>
+            ) : (
+              <div className="relative shrink-0">
+                <button
+                  aria-expanded={openColumnShellId === shell.id}
+                  aria-haspopup="listbox"
+                  aria-label={`Set ${shell.label} column`}
+                  className="inline-flex h-6 items-center gap-1 rounded-md border border-[#ddd6fb] bg-white px-2 text-[10px] font-semibold text-[#5f47d8] outline-none hover:bg-[#f7f5ff] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:border-white/15 dark:bg-white/10 dark:text-[#cabfff] dark:hover:bg-white/15"
+                  onClick={(event) => { event.stopPropagation(); setOpenColumnShellId((current) => current === shell.id ? null : shell.id); }}
+                  title={`Set ${shell.label} column`}
+                  type="button"
+                >
+                  <span>{currentColumnLabel}</span>
+                  <ChevronDown aria-hidden="true" className={`h-3 w-3 transition-transform ${openColumnShellId === shell.id ? "rotate-180" : ""}`} />
+                </button>
+                {openColumnShellId === shell.id ? (
+                  <AdhdDropdownPanel aria-label={`${shell.label} column`} className="min-w-36 p-1.5" role="listbox">
+                    {columnOptions.map((option) => {
+                      const isSelected = option.kind === "existing" && option.columnStart === layout.placements?.[shell.id]?.columnStart;
+                      return (
+                        <button
+                          aria-selected={isSelected}
+                          className={`flex w-full items-center rounded-[0.8rem] px-2 py-1.5 text-left text-[11px] leading-5 transition ${isSelected ? "bg-[#f1ecff] font-semibold text-[#5f4bd7] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : "text-[#5f5876] hover:bg-[#f7f5fb] dark:text-white/75 dark:hover:bg-white/8"}`}
+                          key={`${option.kind}-${option.columnStart}`}
+                          onClick={(event) => commitShellColumn(event, shell.id, option.columnStart)}
+                          onMouseDown={(event) => event.preventDefault()}
+                          role="option"
+                          type="button"
+                        >
+                          {option.kind === "existing" ? option.label : option.label}
+                        </button>
+                      );
+                    })}
+                  </AdhdDropdownPanel>
+                ) : null}
+              </div>
+            )}
+            {layout.canReorder ? (
+              <div className="flex shrink-0 items-center gap-0.5" aria-label={`${shell.label} lane movement controls`}>
+                <button aria-label={`Move ${shell.label} up`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellLane <= 0} onClick={(event) => moveShellLane(event, shell.id, "up")} title={`Move ${shell.label} up`} type="button"><ArrowUp aria-hidden="true" className="h-3.5 w-3.5" /></button>
+                <button aria-label={`Move ${shell.label} down`} className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10" disabled={isFullWidth || shellLane < 0 || shellLane >= (currentColumn?.shellIds.length ?? 0) - 1} onClick={(event) => moveShellLane(event, shell.id, "down")} title={`Move ${shell.label} down`} type="button"><ArrowDown aria-hidden="true" className="h-3.5 w-3.5" /></button>
+              </div>
             ) : null}
             <button
               aria-label={`Shrink ${shell.label}`}
