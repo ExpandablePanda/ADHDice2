@@ -467,6 +467,11 @@ export type PageShellDropTarget = {
   targetId: string | null;
 };
 
+export type PageShellGridBounds = {
+  left: number;
+  width: number;
+};
+
 export const PAGE_SHELL_POINTER_HYSTERESIS_PX = 8;
 export const PAGE_SHELL_ROW_ALIGNMENT_PX = 12;
 export const PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX = 80;
@@ -662,7 +667,11 @@ export function getPageShellDropTarget(
   sourceId: string,
   pointerX: number,
   pointerY: number,
+  gridBounds?: PageShellGridBounds,
 ): PageShellDropTarget {
+  const positionedGeometries = geometries
+    .filter((geometry) => order.includes(geometry.id) && packedPositions[geometry.id])
+    .map((geometry) => ({ geometry, position: packedPositions[geometry.id] }));
   const candidates = geometries
     .filter((geometry) => geometry.id !== sourceId && order.includes(geometry.id) && packedPositions[geometry.id])
     .map((geometry) => {
@@ -676,7 +685,51 @@ export function getPageShellDropTarget(
   const nearestColumnShell = candidates
     .slice()
     .sort((left, right) => left.distanceX - right.distanceX || left.geometry.top - right.geometry.top || order.indexOf(left.geometry.id) - order.indexOf(right.geometry.id))[0];
-  const columnStart = nearestColumnShell?.position.columnStart ?? packedPositions[sourceId]?.columnStart ?? 1;
+  const sourceSpan = packedPositions[sourceId]?.columnSpan ?? PAGE_SHELL_OPTIONS_LAST;
+  const measuredGeometry = positionedGeometries.find(({ geometry, position }) => geometry.right > geometry.left && position.columnSpan > 0);
+  const inferredColumnWidth = measuredGeometry
+    ? (measuredGeometry.geometry.right - measuredGeometry.geometry.left + PAGE_SHELL_PACKING_GAP_PX * (measuredGeometry.position.columnSpan - 1)) / measuredGeometry.position.columnSpan
+    : 0;
+  const columnWidth = gridBounds && gridBounds.width > PAGE_SHELL_PACKING_GAP_PX * 11
+    ? (gridBounds.width - PAGE_SHELL_PACKING_GAP_PX * 11) / 12 + PAGE_SHELL_PACKING_GAP_PX
+    : inferredColumnWidth;
+  const firstPositionedGeometry = positionedGeometries
+    .slice()
+    .sort((left, right) => left.position.columnStart - right.position.columnStart || left.geometry.left - right.geometry.left)[0];
+  const gridLeft = gridBounds?.left ?? (firstPositionedGeometry && columnWidth > 0
+    ? firstPositionedGeometry.geometry.left - (firstPositionedGeometry.position.columnStart - 1) * columnWidth
+    : 0);
+  const occupiedColumns = new Map<number, { left: number; right: number }>();
+  for (const { geometry, position } of positionedGeometries) {
+    const current = occupiedColumns.get(position.columnStart);
+    occupiedColumns.set(position.columnStart, {
+      left: Math.min(current?.left ?? geometry.left, geometry.left),
+      right: Math.max(current?.right ?? geometry.right, geometry.right),
+    });
+  }
+  const occupiedColumn = [...occupiedColumns.entries()]
+    .find(([, bounds]) => pointerX >= bounds.left - PAGE_SHELL_POINTER_HYSTERESIS_PX && pointerX <= bounds.right + PAGE_SHELL_POINTER_HYSTERESIS_PX);
+  const maxColumnStart = Math.max(1, 13 - sourceSpan);
+  const pointerColumn = columnWidth > 0 ? Math.floor((pointerX - gridLeft) / columnWidth) + 1 : undefined;
+  const occupiedColumnRanges = new Map<number, { end: number; start: number }>();
+  for (const { position, geometry } of positionedGeometries) {
+    if (geometry.id === sourceId) continue;
+    const current = occupiedColumnRanges.get(position.columnStart);
+    occupiedColumnRanges.set(position.columnStart, {
+      end: Math.max(current?.end ?? 0, position.columnStart + position.columnSpan - 1),
+      start: Math.min(current?.start ?? position.columnStart, position.columnStart),
+    });
+  }
+  const emptyColumnStarts = Array.from({ length: maxColumnStart }, (_, index) => index + 1)
+    .filter((columnStart) => ![...occupiedColumnRanges.values()].some((range) => (
+      columnStart <= range.end && columnStart + sourceSpan - 1 >= range.start
+    )));
+  const emptyColumnStart = pointerColumn !== undefined && pointerColumn >= 1 && pointerColumn <= 12
+    ? emptyColumnStarts
+      .filter((columnStart) => pointerColumn >= columnStart && pointerColumn <= columnStart + sourceSpan - 1)
+      .sort((left, right) => Math.abs(left - pointerColumn) - Math.abs(right - pointerColumn) || left - right)[0]
+    : undefined;
+  const columnStart = occupiedColumn?.[0] ?? emptyColumnStart ?? nearestColumnShell?.position.columnStart ?? packedPositions[sourceId]?.columnStart ?? 1;
   const columnCandidates = candidates
     .filter((candidate) => candidate.position.columnStart === columnStart)
     .sort((left, right) => left.geometry.top - right.geometry.top || order.indexOf(left.geometry.id) - order.indexOf(right.geometry.id));

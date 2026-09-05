@@ -837,6 +837,28 @@ test("drop targeting agrees with rendered packed destination instead of replacin
   assert.deepEqual(result.placements?.b, { columnStart: 7, laneOrder: 1 });
 });
 
+test("drop targeting maps empty horizontal grid space to a new semantic column", () => {
+  const order = ["source", "left"];
+  const sizes = {
+    source: { heightPx: 144, span: 3 as const },
+    left: { heightPx: 144, span: 3 as const },
+  };
+  const placements = {
+    source: { columnStart: 1, laneOrder: 0 },
+    left: { columnStart: 4, laneOrder: 0 },
+  };
+  const positions = packPageShellLayout(order, sizes, { placements });
+  const geometries = [
+    { bottom: 144, id: "source", left: 0, right: 285, top: 0 },
+    { bottom: 144, id: "left", left: 305, right: 590, top: 0 },
+  ];
+  const target = getPageShellDropTarget(geometries, positions, order, "source", 650, 72, { left: 0, width: 1200 });
+  assert.deepEqual(target, { columnStart: 7, insertionIndex: 1, laneOrder: 0, targetId: null });
+  const result = placePageShellAtDrop({ order, placements, sizes }, order, "source", target);
+  assert.deepEqual(result.order, ["left", "source"]);
+  assert.deepEqual(result.placements?.source, { columnStart: 7, laneOrder: 0 });
+});
+
 test("legacy layouts and saved Views without placement metadata derive deterministic portable placement", () => {
   const store = storage();
   const key = getPageShellLayoutStorageKey("legacy-placement");

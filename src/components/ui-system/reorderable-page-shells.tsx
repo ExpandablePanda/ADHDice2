@@ -24,6 +24,7 @@ import {
   reorderPageShellOrderAt,
   type PageShellPackedPosition,
   type PageShellGeometry,
+  type PageShellGridBounds,
   type PageShellCanonicalGroup,
   type PageShellLayoutPreference,
   type PageShellDropTarget,
@@ -49,6 +50,7 @@ type ReorderablePageShellsProps = {
 type ShellMoveInteraction = {
   captureElement: HTMLButtonElement | null;
   geometries: PageShellGeometry[];
+  gridBounds?: PageShellGridBounds;
   id: string;
   kind: "move";
   packedPositions: Record<string, PageShellPackedPosition>;
@@ -508,6 +510,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     });
   }
 
+  function captureShellGridBounds(): PageShellGridBounds | undefined {
+    if (typeof window === "undefined" || window.innerWidth < 1280) return undefined;
+    const rect = layoutRef.current?.getBoundingClientRect();
+    return rect && rect.width > 0 ? { left: rect.left, width: rect.width } : undefined;
+  }
+
   function updateMovePreview(interaction: ShellMoveInteraction, pointerX: number, pointerY: number) {
     const dropTarget = getPageShellDropTarget(
       interaction.geometries,
@@ -516,6 +524,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       interaction.id,
       pointerX,
       pointerY + getPageScrollTop(),
+      interaction.gridBounds,
     );
     interaction.target = dropTarget;
     setDragInsertionIndex(dropTarget.insertionIndex);
@@ -575,6 +584,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const moveInteraction: ShellMoveInteraction = {
       captureElement: event.currentTarget,
       geometries: captureShellGeometry(),
+      gridBounds: captureShellGridBounds(),
       id,
       kind: "move",
       packedPositions: { ...packedPositions },

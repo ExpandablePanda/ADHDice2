@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.83`.
+- Current working app version: `7.12.84`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-04 7.12.84 Empty Packed-Column Drop Targeting
+
+Custom shell dragging now maps the pointer into the captured 12-column grid
+instead of inheriting a `columnStart` only from the nearest occupied shell.
+Empty horizontal space can therefore create a new semantic right-hand (or
+other available) column, clamped to the dragged shell's span. Existing occupied
+columns still use their captured vertical lane geometry, and the resulting
+`columnStart` / `laneOrder` flows through the existing placement and packing
+authorities. Runtime grid bounds are captured only for the drag; no DOM
+coordinates are persisted.
+
+The regression is covered by the focused page-shell layout suite. No nested
+shells, pointer lifecycle changes, SQL, schema, cloud persistence,
+application-data, or iOS changes were added.
 
 ## 2026-09-04 7.12.83 Shell Pointer Lifecycle Hardening
 
