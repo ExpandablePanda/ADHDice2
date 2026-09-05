@@ -1157,11 +1157,9 @@ function resequencePageShellPlacement(
   targetColumnStart: number,
   targetLane: number,
   orderForTieBreak: readonly string[],
-  preserveCenteredMode = false,
 ) {
   const nextPlacements = clonePageShellPlacements(layout.placements);
-  const sourcePlacement = nextPlacements[sourceId];
-  const sourceColumnStart = sourcePlacement?.columnStart;
+  const sourceColumnStart = nextPlacements[sourceId]?.columnStart;
   if (sourceColumnStart === undefined) return { order: [...layout.order], placements: nextPlacements };
   const destinationIds = visibleShellIds
     .filter((id) => id !== sourceId && !isPageShellCenteredPlacement(nextPlacements[id]) && nextPlacements[id]?.columnStart === targetColumnStart)
@@ -1174,14 +1172,10 @@ function resequencePageShellPlacement(
   nextPlacements[sourceId] = {
     columnStart: targetColumnStart,
     laneOrder: 0,
-    ...(preserveCenteredMode && isPageShellCenteredPlacement(sourcePlacement) ? { mode: "centered" as const } : {}),
   };
   destinationIds.forEach((id, laneOrder) => {
     nextPlacements[id] = { columnStart: targetColumnStart, laneOrder };
   });
-  if (preserveCenteredMode && isPageShellCenteredPlacement(sourcePlacement)) {
-    nextPlacements[sourceId] = { ...nextPlacements[sourceId], mode: "centered" };
-  }
   for (const columnStart of affectedColumnStarts) {
     const columnIds = visibleShellIds
       .filter((id) => !isPageShellCenteredPlacement(nextPlacements[id]) && nextPlacements[id]?.columnStart === columnStart && (columnStart === targetColumnStart || id !== sourceId))
@@ -1218,7 +1212,13 @@ export function placePageShellAtDrop(
     target.insertionIndex,
   );
   const mergedOrder = mergeVisiblePageShellOrder(layout.order, nextVisibleOrder, visibleShellIds);
-  return resequencePageShellPlacement(layout, visibleShellIds, sourceId, target.columnStart, target.laneOrder, mergedOrder, true);
+  if (isPageShellCenteredPlacement(layout.placements?.[sourceId])) {
+    return {
+      order: mergedOrder,
+      placements: clonePageShellPlacements(layout.placements),
+    };
+  }
+  return resequencePageShellPlacement(layout, visibleShellIds, sourceId, target.columnStart, target.laneOrder, mergedOrder);
 }
 
 /** Moves one non-full-width shell to an explicitly selected semantic column. */

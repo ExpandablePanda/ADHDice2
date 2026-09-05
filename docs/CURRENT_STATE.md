@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.95`.
+- Current working app version: `7.12.96`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.96 Centered Drag Semantic Isolation
+
+Dragging a centered shell now changes only the visible row/order. Its
+remembered `columnStart` and `laneOrder` stay unchanged, and the targeted
+semantic column is not resequenced. Center → Column remains the explicit
+semantic conversion path.
 
 ## 2026-09-05 7.12.95 Centered Row Behavior Completion
 

@@ -1288,6 +1288,7 @@ test("Center Row is a persisted placement mode and a semantic row boundary, not 
     targetId: "left",
   });
   assert.equal(centeredDragged.placements?.center?.mode, "centered");
+  assert.deepEqual(centeredDragged.placements, placements);
   const centeredMovedUp = movePageShellOneLane({ order, placements, sizes }, order, "center", "up");
   assert.equal(centeredMovedUp.order[0], "center");
   assert.deepEqual(centeredMovedUp.placements?.center, placements.center);
