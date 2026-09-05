@@ -21,6 +21,8 @@ export type PageShellPlacement = {
   laneOrder?: number;
   /** Odd-width exact-center presentation mode; even widths use normal grid centering. */
   mode?: "centered";
+  /** Optional snapped vertical detent from the shell's normal packed row. */
+  rowOffsetSteps?: number;
 };
 
 export type PageShellSizeDefaults = Readonly<Record<string, PageShellSize>>;
@@ -519,11 +521,15 @@ export type PageShellPackedLayoutOptions = {
   rowUnitPx?: number;
 };
 
+export type PageShellDropRelationship = "before" | "after" | "left" | "right" | "replace";
+
 export type PageShellDropTarget = {
   columnStart: number;
   insertionIndex: number;
   laneOrder: number;
   mode?: "centered";
+  relationship?: PageShellDropRelationship;
+  rowOffsetSteps?: number;
   targetId: string | null;
 };
 
@@ -541,6 +547,12 @@ export const PAGE_SHELL_POINTER_HYSTERESIS_PX = 8;
 export const PAGE_SHELL_CENTER_SNAP_ZONE_PX = 48;
 export const PAGE_SHELL_CENTER_SNAP_HYSTERESIS_PX = 16;
 export const PAGE_SHELL_ROW_ALIGNMENT_PX = 12;
+export const PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX = 12;
+export const PAGE_SHELL_MAX_VERTICAL_OFFSET_STEPS = 128;
+export const PAGE_SHELL_DROP_ZONE_HYSTERESIS_PX = 12;
+export const PAGE_SHELL_DROP_TARGET_PROXIMITY_PX = 32;
+export const PAGE_SHELL_DROP_ZONE_EDGE_RATIO = 0.24;
+export const PAGE_SHELL_VERTICAL_ALIGNMENT_MAGNET_PX = 8;
 export const PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX = 80;
 export const PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX = 18;
 export const PAGE_SHELL_PACKING_GAP_PX = 20;
@@ -592,6 +604,40 @@ export function getPageShellDragAutoScrollDelta(
     return Math.min(maxScrollTop - scrollTop, Math.max(1, Math.round(strength * PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX)));
   }
   return 0;
+}
+
+export function normalizePageShellRowOffsetSteps(value: unknown, fallback = 0) {
+  const candidate = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  const raw = typeof candidate === "number" && Number.isFinite(candidate) ? candidate : 0;
+  return Math.max(0, Math.min(PAGE_SHELL_MAX_VERTICAL_OFFSET_STEPS, Math.round(raw)));
+}
+
+export function getPageShellPlacementRowOffsetSteps(placement: PageShellPlacement | undefined) {
+  if (!placement || placement.mode === "centered") return 0;
+  return normalizePageShellRowOffsetSteps(placement.rowOffsetSteps);
+}
+
+/** Maps a document-space intended top onto the durable 12px vertical detents. */
+export function getPageShellVerticalOffsetSteps(
+  intendedTop: number,
+  normalTop: number,
+  sourceHeight: number,
+  rowBottom = normalTop + Math.max(0, sourceHeight),
+) {
+  const safeIntendedTop = Number.isFinite(intendedTop) ? intendedTop : normalTop;
+  const safeNormalTop = Number.isFinite(normalTop) ? normalTop : 0;
+  const safeSourceHeight = Number.isFinite(sourceHeight) ? Math.max(0, sourceHeight) : 0;
+  const safeRowBottom = Number.isFinite(rowBottom) ? Math.max(safeNormalTop, rowBottom) : safeNormalTop + safeSourceHeight;
+  const regularSteps = Math.round((safeIntendedTop - safeNormalTop) / PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX);
+  const magneticSteps = [
+    0,
+    Math.round(((safeRowBottom - safeNormalTop - safeSourceHeight) / 2) / PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX),
+    Math.round((safeRowBottom - safeNormalTop - safeSourceHeight) / PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX),
+  ].map((steps) => normalizePageShellRowOffsetSteps(steps));
+  const magneticStep = magneticSteps.find((steps) => (
+    Math.abs(safeIntendedTop - (safeNormalTop + steps * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX)) <= PAGE_SHELL_VERTICAL_ALIGNMENT_MAGNET_PX
+  ));
+  return magneticStep === undefined ? normalizePageShellRowOffsetSteps(regularSteps) : magneticStep;
 }
 
 function verticalOverlap(left: PageShellGeometry, right: PageShellGeometry) {
@@ -731,12 +777,16 @@ export function normalizePageShellPlacement(
   const rawLaneOrder = typeof source.laneOrder === "number" && Number.isFinite(source.laneOrder)
     ? Math.round(source.laneOrder)
     : fallback.laneOrder ?? 0;
+  const rowOffsetSteps = normalizePageShellRowOffsetSteps(
+    Object.prototype.hasOwnProperty.call(source, "rowOffsetSteps") ? source.rowOffsetSteps : fallback.rowOffsetSteps,
+  );
   return {
     columnStart: isCentered && span % 2 === 0
       ? getPageShellCenteredColumnStart(span)
       : Math.max(1, Math.min(13 - span, rawColumnStart)),
     laneOrder: Math.max(0, rawLaneOrder),
     ...(isOddCentered ? { mode: "centered" as const } : {}),
+    ...(rowOffsetSteps > 0 && !isCentered ? { rowOffsetSteps } : {}),
   };
 }
 
@@ -789,10 +839,137 @@ function placementsFromPackedPositions(
   return placements;
 }
 
+function getPageShellDropZoneBands(geometry: PageShellGeometry) {
+  return {
+    horizontal: Math.max(28, Math.min(96, (geometry.right - geometry.left) * PAGE_SHELL_DROP_ZONE_EDGE_RATIO)),
+    vertical: Math.max(28, Math.min(72, (geometry.bottom - geometry.top) * PAGE_SHELL_DROP_ZONE_EDGE_RATIO)),
+  };
+}
+
+export function resolvePageShellDropRelationship(
+  geometry: PageShellGeometry,
+  pointerX: number,
+  pointerY: number,
+  previousRelationship?: PageShellDropRelationship,
+) {
+  const bands = getPageShellDropZoneBands(geometry);
+  const inLeftBand = pointerX <= geometry.left + bands.horizontal;
+  const inRightBand = pointerX >= geometry.right - bands.horizontal;
+  let relationship: PageShellDropRelationship;
+  if (pointerY <= geometry.top + bands.vertical && !inLeftBand && !inRightBand) relationship = "before";
+  else if (pointerY >= geometry.bottom - bands.vertical && !inLeftBand && !inRightBand) relationship = "after";
+  else if (inLeftBand) relationship = "left";
+  else if (inRightBand) relationship = "right";
+  else relationship = "replace";
+
+  if (!previousRelationship || previousRelationship === relationship) return relationship;
+  const hysteresis = PAGE_SHELL_DROP_ZONE_HYSTERESIS_PX;
+  const inStableZone = (() => {
+    switch (previousRelationship) {
+      case "before": return pointerY <= geometry.top + bands.vertical + hysteresis;
+      case "after": return pointerY >= geometry.bottom - bands.vertical - hysteresis;
+      case "left":
+        return pointerY >= geometry.top + bands.vertical - hysteresis
+          && pointerY <= geometry.bottom - bands.vertical + hysteresis
+          && pointerX <= geometry.left + bands.horizontal + hysteresis;
+      case "right":
+        return pointerY >= geometry.top + bands.vertical - hysteresis
+          && pointerY <= geometry.bottom - bands.vertical + hysteresis
+          && pointerX >= geometry.right - bands.horizontal - hysteresis;
+      case "replace":
+        return pointerY >= geometry.top + bands.vertical - hysteresis
+          && pointerY <= geometry.bottom - bands.vertical + hysteresis
+          && pointerX >= geometry.left + bands.horizontal - hysteresis
+          && pointerX <= geometry.right - bands.horizontal + hysteresis;
+    }
+  })();
+  return inStableZone ? previousRelationship : relationship;
+}
+
+function pageShellPointerDistanceToGeometry(geometry: PageShellGeometry, pointerX: number, pointerY: number) {
+  const horizontalDistance = Math.max(geometry.left - pointerX, 0, pointerX - geometry.right);
+  const verticalDistance = Math.max(geometry.top - pointerY, 0, pointerY - geometry.bottom);
+  return Math.hypot(horizontalDistance, verticalDistance);
+}
+
+function findPageShellDropGeometry(
+  geometries: readonly PageShellGeometry[],
+  order: readonly string[],
+  sourceId: string,
+  pointerX: number,
+  pointerY: number,
+  previousTargetId?: string | null,
+) {
+  const previous = previousTargetId
+    ? geometries.find((geometry) => geometry.id === previousTargetId && geometry.id !== sourceId)
+    : undefined;
+  if (previous) {
+    const proximity = PAGE_SHELL_DROP_TARGET_PROXIMITY_PX + PAGE_SHELL_DROP_ZONE_HYSTERESIS_PX;
+    if (pointerX >= previous.left - proximity
+      && pointerX <= previous.right + proximity
+      && pointerY >= previous.top - proximity
+      && pointerY <= previous.bottom + proximity) {
+      return previous;
+    }
+  }
+  return geometries
+    .filter((geometry) => geometry.id !== sourceId && order.includes(geometry.id))
+    .filter((geometry) => pageShellPointerDistanceToGeometry(geometry, pointerX, pointerY) <= PAGE_SHELL_DROP_TARGET_PROXIMITY_PX)
+    .sort((left, right) => (
+      pageShellPointerDistanceToGeometry(left, pointerX, pointerY) - pageShellPointerDistanceToGeometry(right, pointerX, pointerY)
+      || order.indexOf(left.id) - order.indexOf(right.id)
+    ))[0];
+}
+
+function getPageShellTargetInsertionIndex(
+  orderWithoutSource: readonly string[],
+  targetId: string,
+  relationship: PageShellDropRelationship,
+) {
+  const targetIndex = orderWithoutSource.indexOf(targetId);
+  if (targetIndex < 0) return undefined;
+  return relationship === "after" || relationship === "right" ? targetIndex + 1 : targetIndex;
+}
+
+function getPageShellTargetColumnStart(
+  relationship: PageShellDropRelationship,
+  targetId: string | null,
+  sourceSpan: PageShellSpan,
+  directColumnStart: number,
+  packedPositions: Readonly<Record<string, PageShellPackedPosition>>,
+) {
+  if (!targetId || (relationship !== "left" && relationship !== "right" && relationship !== "replace")) return directColumnStart;
+  const targetPosition = packedPositions[targetId];
+  if (!targetPosition) return directColumnStart;
+  if (relationship === "replace") return Math.max(1, Math.min(13 - sourceSpan, targetPosition.columnStart));
+  if (relationship === "left") {
+    const adjacentStart = targetPosition.columnStart - sourceSpan;
+    return adjacentStart >= 1 ? adjacentStart : directColumnStart;
+  }
+  const adjacentStart = targetPosition.columnStart + targetPosition.columnSpan;
+  return adjacentStart <= 13 - sourceSpan ? adjacentStart : directColumnStart;
+}
+
+function getPageShellSameRowVerticalBounds(
+  geometries: readonly PageShellGeometry[],
+  sourceId: string,
+  targetId: string | null,
+) {
+  if (!targetId) return null;
+  const target = geometries.find((geometry) => geometry.id === targetId);
+  if (!target) return null;
+  const rowGeometries = geometries.filter((geometry) => geometry.id !== sourceId && geometriesSharePageShellRow(target, geometry));
+  if (rowGeometries.length === 0) return null;
+  return {
+    bottom: Math.max(...rowGeometries.map((geometry) => geometry.bottom)),
+    top: Math.min(...rowGeometries.map((geometry) => geometry.top)),
+  };
+}
+
 /**
- * Resolves a pointer to a direct snap-grid destination. Horizontal intent is
- * taken from the pointer and vertical intent is taken from the existing
- * insertion geometry.
+ * Resolves a pointer to a direct snap-grid destination. The pointer-down
+ * geometry remains the reference frame; only the relationship and detent
+ * preview change while dragging.
  */
 export function getPageShellDropTarget(
   geometries: readonly PageShellGeometry[],
@@ -805,6 +982,8 @@ export function getPageShellDropTarget(
   grabOffsetX = 0,
   placements: Readonly<Record<string, PageShellPlacement>> = {},
   previousInsertionIndex?: number,
+  grabOffsetY = 0,
+  previousTarget?: PageShellDropTarget,
 ): PageShellDropTarget {
   const intendedLeft = pointerX - (Number.isFinite(grabOffsetX) ? grabOffsetX : 0);
   const sourceSpan = packedPositions[sourceId]?.columnSpan ?? PAGE_SHELL_OPTIONS_LAST;
@@ -817,7 +996,40 @@ export function getPageShellDropTarget(
     pointerY,
     previousInsertionIndex,
   );
-  const targetId = orderWithoutSource[insertionIndex] ?? orderWithoutSource[insertionIndex - 1] ?? null;
+  const fallbackTargetId = orderWithoutSource[insertionIndex] ?? orderWithoutSource[insertionIndex - 1] ?? null;
+  const directionalGeometry = findPageShellDropGeometry(
+    geometries,
+    order,
+    sourceId,
+    pointerX,
+    pointerY,
+    previousTarget?.targetId,
+  );
+  const directionalTargetId = directionalGeometry?.id ?? null;
+  const fallbackGeometry = fallbackTargetId ? geometries.find((geometry) => geometry.id === fallbackTargetId) : undefined;
+  const targetId = directionalTargetId ?? fallbackTargetId;
+  const resolvedDirectionalRelationship = directionalGeometry
+    ? resolvePageShellDropRelationship(
+      directionalGeometry,
+      pointerX,
+      pointerY,
+      previousTarget?.targetId === directionalTargetId ? previousTarget.relationship : undefined,
+    )
+    : fallbackGeometry && pointerY < fallbackGeometry.top
+      ? "before"
+      : fallbackGeometry && pointerY > fallbackGeometry.bottom
+        ? "after"
+        : "before";
+  const directionalTargetPosition = directionalTargetId ? packedPositions[directionalTargetId] : undefined;
+  const relationship = directionalTargetPosition
+    && directionalTargetPosition.columnSpan + sourceSpan > PAGE_SHELL_OPTIONS_LAST
+    && (resolvedDirectionalRelationship === "left" || resolvedDirectionalRelationship === "right")
+    ? "replace"
+    : resolvedDirectionalRelationship;
+  const targetInsertionIndex = directionalTargetId
+    ? getPageShellTargetInsertionIndex(orderWithoutSource, directionalTargetId, relationship)
+    : undefined;
+  const resolvedInsertionIndex = targetInsertionIndex ?? insertionIndex;
   const centerStart = getPageShellCenteredColumnStart(sourceSpan);
   const centeredGeometry = gridBounds ? getPageShellGridColumnGeometry(gridBounds, centerStart, sourceSpan) : null;
   const trackWidth = gridBounds
@@ -831,10 +1043,10 @@ export function getPageShellDropTarget(
   const intendedCenter = intendedLeft + sourceWidth / 2;
   const centerSnapZone = Math.max(PAGE_SHELL_CENTER_SNAP_ZONE_PX, trackWidth);
   const sourceIsCentered = isPageShellCenteredPlacement(placements[sourceId]);
-  const columnStart = gridBounds
+  const directColumnStart = gridBounds
     ? getPageShellGridStartFromPointer(gridBounds, pointerX, sourceSpan, grabOffsetX)
     : placements[sourceId]?.columnStart ?? packedPositions[sourceId]?.columnStart ?? 1;
-  const directGeometry = gridBounds ? getPageShellGridColumnGeometry(gridBounds, columnStart, sourceSpan) : null;
+  const directGeometry = gridBounds ? getPageShellGridColumnGeometry(gridBounds, directColumnStart, sourceSpan) : null;
   const directDropJoinsInsertionRow = directDropFitsInsertionRow(
     geometries,
     sourceId,
@@ -843,18 +1055,47 @@ export function getPageShellDropTarget(
     directGeometry,
   );
   const requiresHalfTrackCenter = sourceSpan % 2 === 1;
-  const shouldCenter = requiresHalfTrackCenter
+  const shouldCenter = !directionalGeometry
+    && requiresHalfTrackCenter
     && !directDropJoinsInsertionRow
     && sourceSpan < PAGE_SHELL_OPTIONS_LAST
     && centeredGeometry !== null
     && Math.abs(intendedCenter - workspaceCenter) <= centerSnapZone + (sourceIsCentered ? PAGE_SHELL_CENTER_SNAP_HYSTERESIS_PX : 0);
   if (shouldCenter) {
-    return { columnStart: centerStart, insertionIndex, laneOrder: 0, mode: "centered", targetId };
+    return {
+      columnStart: centerStart,
+      insertionIndex: resolvedInsertionIndex,
+      laneOrder: 0,
+      mode: "centered",
+      relationship,
+      rowOffsetSteps: 0,
+      targetId,
+    };
   }
+
+  const sameRowBounds = (relationship === "left" || relationship === "right" || relationship === "replace")
+    ? getPageShellSameRowVerticalBounds(geometries, sourceId, directionalTargetId)
+    : null;
+  const rowOffsetSteps = sameRowBounds && sourceGeometry && (relationship === "left" || relationship === "right")
+    ? getPageShellVerticalOffsetSteps(
+      pointerY - (Number.isFinite(grabOffsetY) ? grabOffsetY : 0),
+      sameRowBounds.top,
+      Math.max(0, sourceGeometry.bottom - sourceGeometry.top),
+      sameRowBounds.bottom,
+    )
+    : 0;
   return {
-    columnStart,
-    insertionIndex,
+    columnStart: getPageShellTargetColumnStart(
+      relationship,
+      directionalTargetId,
+      sourceSpan,
+      directColumnStart,
+      packedPositions,
+    ),
+    insertionIndex: resolvedInsertionIndex,
     laneOrder: 0,
+    relationship,
+    rowOffsetSteps,
     targetId,
   };
 }
@@ -870,23 +1111,53 @@ export function placePageShellAtDrop(
   target: PageShellDropTarget,
 ) {
   const currentVisibleOrder = projectVisiblePageShellOrder(layout.order, visibleShellIds);
-  const nextVisibleOrder = reorderPageShellOrderAt(
-    currentVisibleOrder,
-    sourceId,
-    target.insertionIndex,
-  );
+  let nextVisibleOrder: string[];
+  if (target.relationship === "replace" && target.targetId && currentVisibleOrder.includes(target.targetId)) {
+    nextVisibleOrder = [...currentVisibleOrder];
+    const sourceIndex = nextVisibleOrder.indexOf(sourceId);
+    const targetIndex = nextVisibleOrder.indexOf(target.targetId);
+    if (sourceIndex >= 0 && targetIndex >= 0) {
+      nextVisibleOrder[sourceIndex] = target.targetId;
+      nextVisibleOrder[targetIndex] = sourceId;
+    }
+  } else {
+    nextVisibleOrder = reorderPageShellOrderAt(
+      currentVisibleOrder,
+      sourceId,
+      target.insertionIndex,
+    );
+  }
   const mergedOrder = mergeVisiblePageShellOrder(layout.order, nextVisibleOrder, visibleShellIds);
   const nextPlacements = Object.fromEntries(Object.entries(layout.placements ?? {}).map(([id, placement]) => [id, { ...placement }])) as Record<string, PageShellPlacement>;
-  const existingPlacement = nextPlacements[sourceId] ?? { columnStart: 1, laneOrder: 0 };
+  const existingPlacement = normalizePageShellPlacement(nextPlacements[sourceId] ?? { columnStart: 1, laneOrder: 0 }, layout.sizes[sourceId]?.span);
   const sourceSpan = layout.sizes[sourceId]?.span;
   const targetIsCentered = target.mode === "centered" && sourceSpan !== undefined && sourceSpan % 2 === 1;
-  nextPlacements[sourceId] = {
+  const nextPlacement = {
     ...existingPlacement,
     columnStart: target.columnStart,
     laneOrder: 0,
     ...(targetIsCentered ? { mode: "centered" as const } : {}),
+    rowOffsetSteps: targetIsCentered ? 0 : target.rowOffsetSteps ?? 0,
   };
-  if (!targetIsCentered) delete nextPlacements[sourceId].mode;
+  if (!targetIsCentered) delete nextPlacement.mode;
+  nextPlacements[sourceId] = sourceSpan === undefined
+    ? nextPlacement
+    : normalizePageShellPlacement(nextPlacement, sourceSpan);
+  if (target.relationship === "replace" && target.targetId && sourceSpan !== undefined) {
+    const targetSpan = layout.sizes[target.targetId]?.span;
+    const existingTargetPlacement = nextPlacements[target.targetId];
+    if (targetSpan !== undefined && existingTargetPlacement) {
+      const swappedTargetPlacement = {
+        ...normalizePageShellPlacement(existingTargetPlacement, targetSpan),
+        columnStart: existingPlacement.columnStart,
+        laneOrder: existingPlacement.laneOrder ?? 0,
+        rowOffsetSteps: existingPlacement.rowOffsetSteps ?? 0,
+      };
+      if (existingPlacement.mode === "centered") swappedTargetPlacement.mode = "centered";
+      else delete swappedTargetPlacement.mode;
+      nextPlacements[target.targetId] = normalizePageShellPlacement(swappedTargetPlacement, targetSpan);
+    }
+  }
   return { order: mergedOrder, placements: nextPlacements };
 }
 
@@ -932,6 +1203,26 @@ export function packPageShellLayout(
     return Math.max(1, Math.ceil((Math.max(1, heightPx) + chromeHeightPx + gapPx) / rowUnitPx));
   }
 
+  function findNearestLegalRow(
+    baseRow: number,
+    requestedRow: number,
+    rowSpan: number,
+    column: number,
+    columnSpan: number,
+  ) {
+    const safeRequestedRow = Math.max(baseRow, requestedRow);
+    if (canPlace(safeRequestedRow, column, rowSpan, columnSpan)) return safeRequestedRow;
+    for (let distance = 1; distance <= PAGE_SHELL_MAX_VERTICAL_OFFSET_STEPS * 4; distance += 1) {
+      const upwardRow = safeRequestedRow - distance;
+      if (upwardRow >= baseRow && canPlace(upwardRow, column, rowSpan, columnSpan)) return upwardRow;
+      const downwardRow = safeRequestedRow + distance;
+      if (canPlace(downwardRow, column, rowSpan, columnSpan)) return downwardRow;
+    }
+    let fallbackRow = safeRequestedRow;
+    while (!canPlace(fallbackRow, column, rowSpan, columnSpan)) fallbackRow += 1;
+    return fallbackRow;
+  }
+
   function packRegion(regionIds: readonly string[], regionStartRow: number) {
     let regionBottom = regionStartRow;
 
@@ -944,25 +1235,29 @@ export function packPageShellLayout(
       const preferredColumn = placement && !isPageShellCenteredPlacement(placement)
         ? Math.max(0, Math.min(12 - size.span, Math.round(placement.columnStart) - 1))
         : null;
-      let row = regionStartRow;
+      let baseRow = regionStartRow;
       let column = 0;
       if (preferredColumn !== null) {
         column = preferredColumn;
-        while (!canPlace(row, column, rowSpan, size.span)) row += 1;
+        while (!canPlace(baseRow, column, rowSpan, size.span)) baseRow += 1;
       } else {
         while (true) {
           let foundColumn = false;
           for (let candidateColumn = 0; candidateColumn <= 12 - size.span; candidateColumn += 1) {
-            if (canPlace(row, candidateColumn, rowSpan, size.span)) {
+            if (canPlace(baseRow, candidateColumn, rowSpan, size.span)) {
               column = candidateColumn;
               foundColumn = true;
               break;
             }
           }
           if (foundColumn) break;
-          row += 1;
+          baseRow += 1;
         }
       }
+      const offsetRows = placement && !isPageShellCenteredPlacement(placement)
+        ? Math.round(getPageShellPlacementRowOffsetSteps(placement) * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX / rowUnitPx)
+        : 0;
+      const row = findNearestLegalRow(baseRow, baseRow + offsetRows, rowSpan, column, size.span);
       markOccupied(row, column, rowSpan, size.span);
       positions[id] = {
         columnSpan: size.span,

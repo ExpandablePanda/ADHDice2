@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.100`.
+- Current working app version: `7.12.101`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,24 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.101 Directional Targets and Vertical Snap Detents
+
+Page-shell dragging now resolves target-aware `above`, `below`, `left`,
+`right`, and non-destructive `replace` relationships. Above/below use a
+horizontal guide, left/right use a vertical guide, and replace highlights the
+existing target shell without deleting it. Horizontal placement still uses the
+12-column snap grid. Same-row shells can persist optional 12px vertical
+`rowOffsetSteps`, with defensive normalization and stronger top, vertical-center,
+and bottom magnetic alignments. The packer remains authoritative for collision
+safety and region bottoms include downward-offset shells. Odd-width special
+Center keeps a distinct full-width Center guide and ignores vertical offset;
+even widths retain ordinary grid centering. The stable pointer-down geometry and
+commit-on-release drag architecture remains in place, including auto-scroll and
+pointer cancellation safety. Narrow single-column presentation ignores saved
+horizontal and vertical custom placement values. Layout storage, Views, and
+export/import remain backward-compatible; no SQL or schema migration was
+needed.
 
 ## 2026-09-05 7.12.100 Stabilized Snap-Grid Drag Interaction
 

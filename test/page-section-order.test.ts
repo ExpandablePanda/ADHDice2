@@ -9,6 +9,7 @@ import {
   PAGE_SHELL_CENTER_SNAP_ZONE_PX,
   PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX,
   PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX,
+  PAGE_SHELL_DROP_ZONE_HYSTERESIS_PX,
   PAGE_SHELL_EXPORT_SCHEMA,
   PAGE_SHELL_EXPORT_SCHEMA_VERSION,
   PAGE_SHELL_HEIGHT_SNAP,
@@ -17,6 +18,8 @@ import {
   PAGE_SHELL_PACKING_GAP_PX,
   PAGE_SHELL_PACKING_ROW_UNIT_PX,
   PAGE_SHELL_SPAN_OPTIONS,
+  PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX,
+  PAGE_SHELL_MAX_VERTICAL_OFFSET_STEPS,
   PAGE_SHELL_VIEWS_SCHEMA_VERSION,
   buildPageShellLayoutExport,
   clampPageShellHeight,
@@ -27,19 +30,23 @@ import {
   getPageShellDropTarget,
   getPageShellGridColumnGeometry,
   getPageShellGridStartFromPointer,
+  getPageShellPlacementRowOffsetSteps,
   getPageShellInsertionIndex,
   getPageShellLayoutStorageKey,
   getPageShellViewsStorageKey,
   getPageShellShrinkHeight,
+  getPageShellVerticalOffsetSteps,
   hasPageShellLayout,
   isPageShellCenteredPlacement,
   normalizePageShellLayout,
   normalizePageShellPlacement,
+  normalizePageShellRowOffsetSteps,
   normalizePageShellSize,
   packPageShellLayout,
   placePageShellAtDrop,
   readPageShellLayout,
   readPageShellViews,
+  resolvePageShellDropRelationship,
   resolvePageShellViewLayout,
   snapPageShellHeight,
   writePageShellLayout,
@@ -56,6 +63,7 @@ import type {
   PageShellCanonicalLayout,
   PageShellGeometry,
   PageShellLayoutPreference,
+  PageShellPlacement,
   PageShellPackedPosition,
   PageShellSize,
   PageShellSpan,
@@ -86,7 +94,7 @@ function sizesFor(spans: Record<string, PageShellSpan>, heights: Record<string, 
 function positionsFor(
   order: readonly string[],
   sizes: Readonly<Record<string, PageShellSize>>,
-  placements: Readonly<Record<string, { columnStart: number; laneOrder?: number; mode?: "centered" }>> = {},
+  placements: Readonly<Record<string, PageShellPlacement>> = {},
 ) {
   return packPageShellLayout(order, sizes, { placements });
 }
@@ -308,7 +316,123 @@ test("pointer X clamps at the left edge and right legal edge", () => {
   assert.equal(getPageShellGridStartFromPointer(grid, 5000, 12, 0), 1);
 });
 
-test("drop targeting combines direct horizontal snapping with insertion order", () => {
+test("directional target zones resolve above, below, left, right, and replace", () => {
+  const targetGeometry: PageShellGeometry = { bottom: 500, id: "target", left: 100, right: 500, top: 100 };
+  assert.equal(resolvePageShellDropRelationship(targetGeometry, 300, 120), "before");
+  assert.equal(resolvePageShellDropRelationship(targetGeometry, 300, 480), "after");
+  assert.equal(resolvePageShellDropRelationship(targetGeometry, 120, 300), "left");
+  assert.equal(resolvePageShellDropRelationship(targetGeometry, 480, 300), "right");
+  assert.equal(resolvePageShellDropRelationship(targetGeometry, 300, 300), "replace");
+});
+
+test("directional target hysteresis holds a relationship through the edge band", () => {
+  const targetGeometry: PageShellGeometry = { bottom: 500, id: "target", left: 100, right: 500, top: 100 };
+  assert.equal(PAGE_SHELL_DROP_ZONE_HYSTERESIS_PX, 12);
+  assert.equal(resolvePageShellDropRelationship(targetGeometry, 195, 300), "left");
+  assert.equal(resolvePageShellDropRelationship(targetGeometry, 204, 300, "left"), "left");
+  assert.equal(resolvePageShellDropRelationship(targetGeometry, 220, 300, "left"), "replace");
+  assert.equal(resolvePageShellDropRelationship(targetGeometry, 300, 194, "replace"), "replace");
+  assert.equal(resolvePageShellDropRelationship(targetGeometry, 300, 150, "replace"), "before");
+});
+
+test("directional placement uses the target anchor and replace swaps without deleting it", () => {
+  const order = ["source", "target"];
+  const sizes = sizesFor({ source: 4, target: 4 });
+  const placements = { source: { columnStart: 1 }, target: { columnStart: 5 } };
+  const positions = positionsFor(order, sizes, placements);
+  const grid = { left: 0, width: 1200 };
+  const targetColumn = getPageShellGridColumnGeometry(grid, 5, 4);
+  assert.ok(targetColumn);
+  const geometries = geometriesFor(order, positions, grid);
+  const above = getPageShellDropTarget(geometries, positions, order, "source", targetColumn.left + targetColumn.width / 2, 20, grid, targetColumn.width / 2, placements);
+  assert.equal(above.relationship, "before");
+  assert.equal(above.targetId, "target");
+  const below = getPageShellDropTarget(geometries, positions, order, "source", targetColumn.left + targetColumn.width / 2, 140, grid, targetColumn.width / 2, placements);
+  assert.equal(below.relationship, "after");
+  assert.equal(below.insertionIndex, 1);
+  const left = getPageShellDropTarget(geometries, positions, order, "source", targetColumn.left + 20, 80, grid, 20, placements);
+  assert.equal(left.relationship, "left");
+  assert.equal(left.targetId, "target");
+  assert.equal(left.columnStart, 1);
+  assert.equal(left.insertionIndex, 0);
+  const right = getPageShellDropTarget(geometries, positions, order, "source", targetColumn.left + targetColumn.width - 20, 80, grid, 20, placements);
+  assert.equal(right.relationship, "right");
+  assert.equal(right.columnStart, 9);
+  assert.equal(right.insertionIndex, 1);
+  const replace = getPageShellDropTarget(geometries, positions, order, "source", targetColumn.left + targetColumn.width / 2, 80, grid, targetColumn.width / 2, placements);
+  assert.equal(replace.relationship, "replace");
+  assert.equal(replace.targetId, "target");
+  const placed = placePageShellAtDrop({ order, sizes, placements }, order, "source", replace);
+  assert.deepEqual(placed.order, ["target", "source"]);
+  assert.equal(Object.keys(placed.placements).length, 2);
+  assert.equal(placed.placements.target.columnStart, 1);
+  assert.equal(placed.placements.source.columnStart, 5);
+  assert.equal(placed.placements.source.rowOffsetSteps ?? 0, 0);
+});
+
+test("vertical placement normalization is optional, non-negative, integral, and bounded", () => {
+  assert.equal(normalizePageShellRowOffsetSteps(undefined), 0);
+  assert.equal(normalizePageShellRowOffsetSteps("bad"), 0);
+  assert.equal(normalizePageShellRowOffsetSteps(-4), 0);
+  assert.equal(normalizePageShellRowOffsetSteps(2.6), 3);
+  assert.equal(normalizePageShellRowOffsetSteps(999), PAGE_SHELL_MAX_VERTICAL_OFFSET_STEPS);
+  assert.deepEqual(normalizePageShellPlacement({ columnStart: 1 }, 5), { columnStart: 1, laneOrder: 0 });
+  assert.deepEqual(normalizePageShellPlacement({ columnStart: 1, rowOffsetSteps: -1 }, 5), { columnStart: 1, laneOrder: 0 });
+  assert.deepEqual(normalizePageShellPlacement({ columnStart: 1, rowOffsetSteps: 3.4 }, 5), { columnStart: 1, laneOrder: 0, rowOffsetSteps: 3 });
+  assert.equal(getPageShellPlacementRowOffsetSteps(undefined), 0);
+  assert.equal(getPageShellPlacementRowOffsetSteps({ columnStart: 1, rowOffsetSteps: 4 }), 4);
+});
+
+test("vertical detents honor grab offset and magnetic top, center, and bottom alignment", () => {
+  assert.equal(PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX, 12);
+  assert.equal(getPageShellVerticalOffsetSteps(0, 0, 192, 384), 0);
+  assert.equal(getPageShellVerticalOffsetSteps(12, 0, 192, 384), 1);
+  assert.equal(getPageShellVerticalOffsetSteps(24, 0, 192, 384), 2);
+  assert.equal(getPageShellVerticalOffsetSteps(96, 0, 192, 384), 8);
+  assert.equal(getPageShellVerticalOffsetSteps(192, 0, 192, 384), 16);
+  assert.equal(getPageShellVerticalOffsetSteps(-12, 0, 192, 384), 0);
+
+  const order = ["source", "tall"];
+  const sizes = sizesFor({ source: 4, tall: 8 }, { source: 192, tall: 384 });
+  const placements = { source: { columnStart: 1 }, tall: { columnStart: 5 } };
+  const positions = positionsFor(order, sizes, placements);
+  const grid = { left: 0, width: 1200 };
+  const geometries = geometriesFor(order, positions, grid).map((geometry) => geometry.id === "source"
+    ? { ...geometry, bottom: geometry.top + 192 }
+    : { ...geometry, bottom: geometry.top + 384 });
+  const tallGeometry = geometries.find((geometry) => geometry.id === "tall");
+  assert.ok(tallGeometry);
+  const pointerX = tallGeometry.left + 20;
+  const topDrop = getPageShellDropTarget(geometries, positions, order, "source", pointerX, tallGeometry.top + 30, grid, 20, placements, undefined, 30);
+  assert.equal(topDrop.relationship, "left");
+  assert.equal(topDrop.rowOffsetSteps, 0);
+  const centerDrop = getPageShellDropTarget(geometries, positions, order, "source", pointerX, tallGeometry.top + 126, grid, 20, placements, undefined, 30);
+  assert.equal(centerDrop.rowOffsetSteps, 8);
+  const bottomDrop = getPageShellDropTarget(geometries, positions, order, "source", pointerX, tallGeometry.top + 222, grid, 20, placements, undefined, 30);
+  assert.equal(bottomDrop.rowOffsetSteps, 16);
+});
+
+test("same-row vertical offsets remain side-by-side while intersecting tracks stay collision-safe", () => {
+  const sizes = sizesFor({ short: 4, tall: 8, next: 12 }, { short: 192, tall: 384, next: 144 });
+  const positions = positionsFor(["short", "tall", "next"], sizes, {
+    short: { columnStart: 1, rowOffsetSteps: 8 },
+    tall: { columnStart: 5 },
+    next: { columnStart: 1 },
+  });
+  assert.equal(positions.short.columnStart, 1);
+  assert.equal(positions.tall.columnStart, 5);
+  assert.ok(positions.short.rowStart > positions.tall.rowStart);
+  assert.ok(positions.next.rowStart > positions.short.rowStart);
+  assert.ok(positions.next.rowStart >= positions.short.rowStart + positions.short.rowSpan);
+
+  const intersecting = positionsFor(["first", "second"], sizesFor({ first: 6, second: 6 }, { first: 384, second: 192 }), {
+    first: { columnStart: 1 },
+    second: { columnStart: 1, rowOffsetSteps: 10 },
+  });
+  assert.ok(intersecting.second.rowStart >= intersecting.first.rowStart + intersecting.first.rowSpan);
+});
+
+test("left directional targeting keeps horizontal placement snapped beside the target", () => {
   const order = ["source", "neighbor"];
   const sizes = sizesFor({ source: 5, neighbor: 7 });
   const placements = { source: { columnStart: 1 }, neighbor: { columnStart: 6 } };
@@ -317,11 +441,13 @@ test("drop targeting combines direct horizontal snapping with insertion order", 
   const targetColumn = getPageShellGridColumnGeometry(grid, 6, 5);
   assert.ok(targetColumn);
   const target = getPageShellDropTargetForTest(order, placements, positions, targetColumn.left + 24, 80, grid, 24);
-  assert.equal(target.columnStart, 6);
+  assert.equal(target.relationship, "left");
+  assert.equal(target.targetId, "neighbor");
+  assert.equal(target.columnStart, 1);
   assert.equal(target.insertionIndex, 0);
   const placed = placePageShellAtDrop({ order, sizes, placements }, order, "source", target);
   assert.deepEqual(placed.order, order);
-  assert.equal(placed.placements.source.columnStart, 6);
+  assert.equal(placed.placements.source.columnStart, 1);
 });
 
 test("a drop beside an incompatible shell packs below it", () => {
@@ -395,7 +521,7 @@ test("center snap does not turn an adjacent open-space drop into a row boundary"
 
 function getPageShellDropTargetForTest(
   order: readonly string[],
-  placements: Readonly<Record<string, { columnStart: number; laneOrder?: number; mode?: "centered" }>>,
+  placements: Readonly<Record<string, PageShellPlacement>>,
   positions: Readonly<Record<string, PageShellPackedPosition>>,
   pointerX: number,
   pointerY: number,
@@ -513,7 +639,7 @@ test("centered width changes preserve center mode and recalculate exact placemen
 
 test("legacy even Center placements normalize safely through width changes", () => {
   assert.deepEqual(
-    normalizePageShellPlacement({ columnStart: 4, laneOrder: 2, mode: "centered" }, 6),
+    normalizePageShellPlacement({ columnStart: 4, laneOrder: 2, mode: "centered", rowOffsetSteps: 8 }, 6),
     { columnStart: 4, laneOrder: 2 },
   );
   assert.deepEqual(
@@ -521,7 +647,7 @@ test("legacy even Center placements normalize safely through width changes", () 
     { columnStart: 3, laneOrder: 2 },
   );
   assert.deepEqual(
-    normalizePageShellPlacement({ columnStart: 4, laneOrder: 2, mode: "centered" }, 7),
+    normalizePageShellPlacement({ columnStart: 4, laneOrder: 2, mode: "centered", rowOffsetSteps: 8 }, 7),
     { columnStart: 4, laneOrder: 2, mode: "centered" },
   );
   assert.deepEqual(
@@ -633,6 +759,7 @@ test("Reset Layout still resolves to the coded canonical layout", () => {
   assert.deepEqual(reset.order, [...canonical.order]);
   assert.equal(reset.placements?.["water-log"]?.columnStart, 1);
   assert.equal(reset.placements?.["water-pending"]?.columnStart, 6);
+  assert.equal(reset.placements?.["water-log"]?.rowOffsetSteps ?? 0, 0);
 });
 
 test("saved Views restore snapped starts and centered modes", () => {
@@ -642,7 +769,7 @@ test("saved Views restore snapped starts and centered modes", () => {
   const layout = canonicalEditLayout(canonical);
   layout.placements = {
     ...layout.placements,
-    "water-log": { columnStart: 4 },
+    "water-log": { columnStart: 4, rowOffsetSteps: 5 },
     "water-pending": { columnStart: 6, mode: "centered" },
   };
   const view = createPageShellView({
@@ -658,7 +785,9 @@ test("saved Views restore snapped starts and centered modes", () => {
   writePageShellView(store, key, view);
   const saved = readPageShellViews(store, key, "health:water")[0];
   assert.equal(saved.layout?.placements?.["water-log"]?.columnStart, 4);
+  assert.equal(saved.layout?.placements?.["water-log"]?.rowOffsetSteps, 5);
   assert.equal(resolvePageShellViewLayout(saved, canonical).layout.placements?.["water-pending"]?.mode, "centered");
+  assert.equal(resolvePageShellViewLayout(saved, canonical).layout.placements?.["water-log"]?.rowOffsetSteps, 5);
 });
 
 test("saved Views normalize legacy even Center placements while retaining odd Center", () => {
@@ -694,7 +823,7 @@ test("export and import preserve snapped placement data", () => {
   const layoutKey = getPageShellLayoutStorageKey("user-export");
   const canonical = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Water;
   const layout = canonicalEditLayout(canonical);
-  layout.placements = { ...layout.placements, "water-log": { columnStart: 3 } };
+  layout.placements = { ...layout.placements, "water-log": { columnStart: 3, rowOffsetSteps: 7 } };
   writePageShellLayout(store, layoutKey, "health:water", layout);
   const exported = buildPageShellLayoutExport({
     appVersion: "7.12.99",
@@ -710,7 +839,9 @@ test("export and import preserve snapped placement data", () => {
   assert.equal(exported.schemaVersion, PAGE_SHELL_EXPORT_SCHEMA_VERSION);
   const imported = exported.pages[0].layout;
   assert.equal(imported?.placements?.["water-log"]?.columnStart, 3);
+  assert.equal(imported?.placements?.["water-log"]?.rowOffsetSteps, 7);
   assert.equal(normalizePageShellLayout(imported, canonical.order, canonical.sizes).placements?.["water-log"]?.columnStart, 3);
+  assert.equal(normalizePageShellLayout(imported, canonical.order, canonical.sizes).placements?.["water-log"]?.rowOffsetSteps, 7);
 });
 
 test("view and layout storage keys retain their existing v1 namespaces", () => {
@@ -731,7 +862,7 @@ test("packed placement uses the shared 12-column geometry and direct order-first
   assert.match(layoutSource, /Order is the[\s\S]*vertical packing authority/);
   assert.match(layoutSource, /getPageShellGridStartFromPointer/);
   assert.match(shellSource, /getPageShellDropTarget/);
-  assert.match(shellSource, /PAGE_SHELL_PACKING_GAP_PX/);
+  assert.match(layoutSource, /PAGE_SHELL_PACKING_GAP_PX/);
   assert.equal(PAGE_SHELL_PACKING_GAP_PX, 20);
   assert.equal(PAGE_SHELL_PACKING_ROW_UNIT_PX, 4);
 });
@@ -768,6 +899,19 @@ test("move preview keeps the pointer-down reference frame and commits order and 
   assert.equal((commitSource.match(/setPreviewOrder/g) ?? []).length, 1);
   assert.equal((commitSource.match(/setPreviewPlacements/g) ?? []).length, 1);
   assert.match(shellSource, /const previousInsertionIndex = interaction\.target\?\.insertionIndex \?\? interaction\.targetIndex/);
+  assert.match(shellSource, /grabOffsetY: sourceGeometry \? event\.clientY \+ getPageScrollTop\(\) - sourceGeometry\.top : 0/);
+  assert.match(shellSource, /interaction\.grabOffsetY/);
+  assert.match(shellSource, /interaction\.target/);
+});
+
+test("directional drag feedback is target-aware and non-destructive", () => {
+  assert.match(layoutSource, /type PageShellDropRelationship = "before" \| "after" \| "left" \| "right" \| "replace"/);
+  assert.match(shellSource, /data-page-shell-drop-relationship/);
+  assert.match(shellSource, /data-page-shell-drop-target/);
+  assert.match(shellSource, /ring-2 ring-\[#6f57f6\]\/55/);
+  assert.match(shellSource, /pointer-events-none/);
+  assert.match(layoutSource, /target\.relationship === "replace"/);
+  assert.match(layoutSource, /nextVisibleOrder\[sourceIndex\] = target\.targetId/);
 });
 
 test("drop targeting passes the previous insertion index into the existing hysteresis", () => {
@@ -784,8 +928,11 @@ test("drop targeting passes the previous insertion index into the existing hyste
   ];
   const candidate = getPageShellDropTarget(geometries, positions, order, "source", 20, 300);
   const stabilized = getPageShellDropTarget(geometries, positions, order, "source", 20, 300, undefined, 0, {}, 0);
-  assert.equal(candidate.insertionIndex, 1);
+  assert.equal(candidate.relationship, "replace");
+  assert.equal(candidate.targetId, "first");
+  assert.equal(candidate.insertionIndex, 0);
   assert.equal(stabilized.insertionIndex, 0);
+  assert.equal(stabilized.relationship, "replace");
 });
 
 test("successful and cancelled pointer lifecycle paths preserve one commit or no partial destination", () => {

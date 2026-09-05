@@ -10,7 +10,6 @@ import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import {
   getPageShellDropTarget,
   getPageShellDragAutoScrollDelta,
-  getPageShellGridColumnGeometry,
   isPageShellCenteredPlacement,
   clampPageShellHeight,
   formatPageShellDimensions,
@@ -20,9 +19,9 @@ import {
   normalizePageShellSpan,
   placePageShellAtDrop,
   packPageShellLayout,
-  PAGE_SHELL_PACKING_GAP_PX,
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
+  type PageShellDropRelationship,
   projectVisiblePageShellOrder,
   type PageShellPackedPosition,
   type PageShellGeometry,
@@ -52,6 +51,7 @@ type ReorderablePageShellsProps = {
 type ShellMoveInteraction = {
   captureElement: HTMLButtonElement | null;
   grabOffsetX: number;
+  grabOffsetY: number;
   id: string;
   kind: "move";
   pointerId: number;
@@ -97,6 +97,11 @@ type PageShellInsertionIndicatorStyle = {
   left: number;
   top: number;
   width: number;
+};
+
+type PageShellDragIndicator = {
+  relationship: PageShellDropRelationship | "centered";
+  style: PageShellInsertionIndicatorStyle | null;
 };
 
 type RenderedPageShell = {
@@ -165,7 +170,7 @@ function getInsertionIndicatorStyle(
   insertionIndex: number,
   container: HTMLDivElement | null,
   dropTarget?: PageShellDropTarget,
-) {
+): PageShellDragIndicator {
   const containerRect = container?.getBoundingClientRect();
   const scrollTop = getPageScrollTop();
   const fallbackWidth = containerRect?.width ?? 0;
@@ -175,47 +180,58 @@ function getInsertionIndicatorStyle(
   const after = insertionIndex < orderWithoutSource.length ? geometryById.get(orderWithoutSource[insertionIndex]) : undefined;
   const leftOffset = containerRect?.left ?? 0;
   const topOffset = (containerRect?.top ?? 0) + scrollTop;
+  const relationship = dropTarget?.mode === "centered" ? "centered" : dropTarget?.relationship ?? "before";
+  if (relationship === "replace") return { relationship, style: null };
 
-  if (dropTarget && interaction.referenceGridBounds) {
-    const sourceSpan = interaction.referencePackedPositions[interaction.id]?.columnSpan;
-    const targetGeometry = sourceSpan
-      ? getPageShellGridColumnGeometry(interaction.referenceGridBounds, dropTarget.columnStart, sourceSpan)
-      : null;
-    if (targetGeometry) {
-      const trackStep = (interaction.referenceGridBounds.width - PAGE_SHELL_PACKING_GAP_PX * 11) / 12 + PAGE_SHELL_PACKING_GAP_PX;
-      const centerOffset = dropTarget.mode === "centered" && sourceSpan % 2 === 1 ? trackStep / 2 : 0;
-      if (before && after && geometriesShareRow(before, after)) {
-        return {
-          height: Math.max(before.bottom, after.bottom) - Math.min(before.top, after.top),
-          left: targetGeometry.left - leftOffset + centerOffset - 2,
-          top: Math.min(before.top, after.top) - topOffset,
-          width: 4,
-        };
-      }
-      const top = after?.top ?? before?.bottom ?? topOffset;
+  if (relationship === "centered") {
+    const top = after?.top ?? before?.bottom ?? topOffset;
+    return {
+      relationship,
+      style: { height: 4, left: 0, top: top - topOffset - 2, width: fallbackWidth },
+    };
+  }
+
+  const targetGeometry = dropTarget?.targetId ? geometryById.get(dropTarget.targetId) : undefined;
+  if (targetGeometry) {
+    if (relationship === "before" || relationship === "after") {
+      const top = relationship === "before" ? targetGeometry.top : targetGeometry.bottom;
       return {
-        height: 4,
-        left: targetGeometry.left - leftOffset + centerOffset,
-        top: top - topOffset - 2,
-        width: Math.max(4, targetGeometry.width),
+        relationship,
+        style: {
+          height: 4,
+          left: targetGeometry.left - leftOffset,
+          top: top - topOffset - 2,
+          width: Math.max(4, targetGeometry.right - targetGeometry.left),
+        },
       };
     }
+    const left = relationship === "left" ? targetGeometry.left : targetGeometry.right;
+    return {
+      relationship,
+      style: {
+        height: Math.max(4, targetGeometry.bottom - targetGeometry.top),
+        left: left - leftOffset - 2,
+        top: targetGeometry.top - topOffset,
+        width: 4,
+      },
+    };
   }
 
   if (before && after && geometriesShareRow(before, after)) {
     return {
-      height: Math.max(before.bottom, after.bottom) - Math.min(before.top, after.top),
-      left: (after.left - leftOffset) - 2,
-      top: Math.min(before.top, after.top) - topOffset,
-      width: 4,
+      relationship,
+      style: {
+        height: Math.max(before.bottom, after.bottom) - Math.min(before.top, after.top),
+        left: (after.left - leftOffset) - 2,
+        top: Math.min(before.top, after.top) - topOffset,
+        width: 4,
+      },
     };
   }
   const top = after?.top ?? before?.bottom ?? topOffset;
   return {
-    height: 4,
-    left: 0,
-    top: top - topOffset - 2,
-    width: fallbackWidth,
+    relationship,
+    style: { height: 4, left: 0, top: top - topOffset - 2, width: fallbackWidth },
   };
 }
 
@@ -400,7 +416,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const updateInteractionRef = useRef<(event: ShellPointerEvent) => void>(() => undefined);
   const endInteractionRef = useRef<(event: ShellPointerEvent | null, cancelled: boolean) => void>(() => undefined);
   const [dragStartVisibleOrder, setDragStartVisibleOrder] = useState<string[] | null>(null);
-  const [dragIndicatorStyle, setDragIndicatorStyle] = useState<PageShellInsertionIndicatorStyle | null>(null);
+  const [dragIndicator, setDragIndicator] = useState<PageShellDragIndicator | null>(null);
+  const [dragDropTarget, setDragDropTarget] = useState<PageShellDropTarget | null>(null);
   const renderedShellOrderKey = dragStartVisibleOrder?.join("|") ?? layout.order.join("|");
   const orderedShells = useMemo(() => renderedShellOrderKey.split("|").flatMap((id) => {
     const shell = shellsById.get(id);
@@ -555,10 +572,13 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       interaction.grabOffsetX,
       interaction.startLayout.placements ?? {},
       previousInsertionIndex,
+      interaction.grabOffsetY,
+      interaction.target,
     );
     interaction.target = dropTarget;
     setDragInsertionIndex(dropTarget.insertionIndex);
-    setDragIndicatorStyle(getInsertionIndicatorStyle(interaction, dropTarget.insertionIndex, layoutRef.current, dropTarget));
+    setDragDropTarget(dropTarget);
+    setDragIndicator(getInsertionIndicatorStyle(interaction, dropTarget.insertionIndex, layoutRef.current, dropTarget));
   }
 
   function commitMovePreview(interaction: ShellMoveInteraction) {
@@ -650,6 +670,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const moveInteraction: ShellMoveInteraction = {
       captureElement: event.currentTarget,
       grabOffsetX: sourceGeometry ? event.clientX - sourceGeometry.left : 0,
+      grabOffsetY: sourceGeometry ? event.clientY + getPageScrollTop() - sourceGeometry.top : 0,
       id,
       kind: "move",
       pointerId: event.pointerId,
@@ -668,7 +689,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setDraggingId(id);
     setDragStartVisibleOrder(startVisibleOrder);
     setDragInsertionIndex(Math.max(0, startVisibleOrder.indexOf(id)));
-    setDragIndicatorStyle(getInsertionIndicatorStyle(moveInteraction, moveInteraction.targetIndex, layoutRef.current));
+    setDragDropTarget(null);
+    setDragIndicator(getInsertionIndicatorStyle(moveInteraction, moveInteraction.targetIndex, layoutRef.current));
     setPointerCaptureSafely(event.currentTarget, event.pointerId);
   }
 
@@ -878,7 +900,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setDraggingId(null);
     setDragStartVisibleOrder(null);
     setDragInsertionIndex(null);
-    setDragIndicatorStyle(null);
+    setDragDropTarget(null);
+    setDragIndicator(null);
     setResizingId(null);
   }
 
@@ -938,11 +961,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       : layout.canonicalLayout.shellClassNames?.[shell.id] ?? "";
     return (
       <div
-        className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
+        className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${dragDropTarget?.targetId === shell.id && dragDropTarget.relationship === "replace" ? "ring-2 ring-[#6f57f6]/55 ring-offset-2 ring-offset-[#faf8ff] dark:ring-[#a99bff]/60 dark:ring-offset-[#171228]" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
         data-page-shell-id={shell.id}
         data-page-shell-dragging={draggingId === shell.id ? "true" : "false"}
         data-page-shell-resizing={resizingId === shell.id ? "true" : "false"}
         data-page-shell-centered={isCentered ? "true" : "false"}
+        data-page-shell-drop-target={dragDropTarget?.targetId === shell.id && dragDropTarget.relationship === "replace" ? "replace" : undefined}
         data-page-shell-rendered-width={renderedWidths[shell.id] ?? undefined}
         data-page-shell-size-span={size.span}
         key={shell.id}
@@ -1071,13 +1095,18 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
           {group.shells.map(renderShell)}
         </div>
       )) : orderedShells.map(renderShell)}
-      {draggingId && dragInsertionIndex !== null && dragIndicatorStyle ? (
+      {draggingId && dragInsertionIndex !== null && dragIndicator?.style ? (
         <div
           aria-hidden="true"
           className="pointer-events-none absolute z-30 rounded-full bg-[#6f57f6]/75 shadow-[0_0_0_3px_rgba(111,87,246,0.12)]"
+          data-page-shell-drop-relationship={dragIndicator.relationship}
           data-page-shell-insertion-indicator
-          style={dragIndicatorStyle}
-        />
+          style={dragIndicator.style}
+        >
+          {dragIndicator.relationship === "centered" ? (
+            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#6f57f6] px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">Center</span>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
