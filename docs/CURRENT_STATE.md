@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.98`.
+- Current working app version: `7.12.99`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-05 7.12.99 Odd-Width Special Center Mode
+
+Special `mode: "centered"` now exists only for odd-width shells that require
+the half-track render offset. Even widths use ordinary exact-centered grid
+starts: W4 at 5, W6 at 4, W8 at 3, W10 at 2, and W12 at 1. Legacy even
+centered placements normalize to those starts without changing order, size,
+height, or unrelated placements. Odd-to-even width changes exit special
+Center, while odd-to-odd centered changes preserve it. The 7.12.98 direct-row
+precedence behavior remains intact. No SQL or schema migration was needed.
 
 ## 2026-09-05 7.12.98 Center-Snap Row Precedence
 

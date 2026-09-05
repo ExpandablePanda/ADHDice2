@@ -16,6 +16,7 @@ import {
   formatPageShellDimensions,
   getPageShellExportFilename,
   getPageShellShrinkHeight,
+  normalizePageShellPlacement,
   normalizePageShellSpan,
   placePageShellAtDrop,
   packPageShellLayout,
@@ -757,11 +758,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   }
 
   function clampPlacementForSpan(placement: PageShellLayoutState["placements"][string] | undefined, span: PageShellSize["span"]) {
-    if (!placement || isPageShellCenteredPlacement(placement)) return placement;
-    return {
-      ...placement,
-      columnStart: Math.max(1, Math.min(13 - span, Math.round(placement.columnStart))),
-    };
+    return placement ? normalizePageShellPlacement(placement, span) : placement;
   }
 
   function setShellWidth(id: string, rawValue: string) {

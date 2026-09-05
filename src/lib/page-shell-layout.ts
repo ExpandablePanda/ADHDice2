@@ -19,7 +19,7 @@ export type PageShellPlacement = {
   columnStart: number;
   /** Legacy compatibility only; order now controls vertical packing. */
   laneOrder?: number;
-  /** Exact-center presentation mode; columnStart remains the preferred grid start. */
+  /** Odd-width exact-center presentation mode; even widths use normal grid centering. */
   mode?: "centered";
 };
 
@@ -723,6 +723,8 @@ export function normalizePageShellPlacement(
   fallback: PageShellPlacement = { columnStart: 1, laneOrder: 0 },
 ): PageShellPlacement {
   const source = stored && typeof stored === "object" && !Array.isArray(stored) ? stored as Record<string, unknown> : {};
+  const isCentered = source.mode === "centered";
+  const isOddCentered = isCentered && span % 2 === 1;
   const rawColumnStart = typeof source.columnStart === "number" && Number.isFinite(source.columnStart)
     ? Math.round(source.columnStart)
     : fallback.columnStart;
@@ -730,9 +732,11 @@ export function normalizePageShellPlacement(
     ? Math.round(source.laneOrder)
     : fallback.laneOrder ?? 0;
   return {
-    columnStart: Math.max(1, Math.min(13 - span, rawColumnStart)),
+    columnStart: isCentered && span % 2 === 0
+      ? getPageShellCenteredColumnStart(span)
+      : Math.max(1, Math.min(13 - span, rawColumnStart)),
     laneOrder: Math.max(0, rawLaneOrder),
-    ...(source.mode === "centered" ? { mode: "centered" as const } : {}),
+    ...(isOddCentered ? { mode: "centered" as const } : {}),
   };
 }
 
@@ -740,7 +744,7 @@ export function isPageShellCenteredPlacement(placement: PageShellPlacement | und
   return placement?.mode === "centered";
 }
 
-/** Runtime-only grid coordinate for an exact centered row. */
+/** Exact integer center start; odd-width special Center adds a half-track offset at render time. */
 function getPageShellCenteredColumnStart(span: PageShellSpan) {
   return Math.floor((12 - span) / 2) + 1;
 }
@@ -830,7 +834,9 @@ export function getPageShellDropTarget(
     pointerY,
     directGeometry,
   );
-  const shouldCenter = !directDropJoinsInsertionRow
+  const requiresHalfTrackCenter = sourceSpan % 2 === 1;
+  const shouldCenter = requiresHalfTrackCenter
+    && !directDropJoinsInsertionRow
     && sourceSpan < PAGE_SHELL_OPTIONS_LAST
     && centeredGeometry !== null
     && Math.abs(intendedCenter - workspaceCenter) <= centerSnapZone + (sourceIsCentered ? PAGE_SHELL_CENTER_SNAP_HYSTERESIS_PX : 0);
@@ -864,13 +870,15 @@ export function placePageShellAtDrop(
   const mergedOrder = mergeVisiblePageShellOrder(layout.order, nextVisibleOrder, visibleShellIds);
   const nextPlacements = Object.fromEntries(Object.entries(layout.placements ?? {}).map(([id, placement]) => [id, { ...placement }])) as Record<string, PageShellPlacement>;
   const existingPlacement = nextPlacements[sourceId] ?? { columnStart: 1, laneOrder: 0 };
+  const sourceSpan = layout.sizes[sourceId]?.span;
+  const targetIsCentered = target.mode === "centered" && sourceSpan !== undefined && sourceSpan % 2 === 1;
   nextPlacements[sourceId] = {
     ...existingPlacement,
     columnStart: target.columnStart,
     laneOrder: 0,
-    ...(target.mode === "centered" ? { mode: "centered" as const } : {}),
+    ...(targetIsCentered ? { mode: "centered" as const } : {}),
   };
-  if (target.mode !== "centered") delete nextPlacements[sourceId].mode;
+  if (!targetIsCentered) delete nextPlacements[sourceId].mode;
   return { order: mergedOrder, placements: nextPlacements };
 }
 
@@ -922,7 +930,9 @@ export function packPageShellLayout(
     for (const id of regionIds) {
       const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
       const rowSpan = getRowSpan(id);
-      const placement = placements[id];
+      const placement = placements[id]
+        ? normalizePageShellPlacement(placements[id], size.span)
+        : undefined;
       const preferredColumn = placement && !isPageShellCenteredPlacement(placement)
         ? Math.max(0, Math.min(12 - size.span, Math.round(placement.columnStart) - 1))
         : null;
@@ -967,7 +977,10 @@ export function packPageShellLayout(
 
   for (const id of order) {
     const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
-    const isCentered = isPageShellCenteredPlacement(placements[id]);
+    const placement = placements[id]
+      ? normalizePageShellPlacement(placements[id], size.span)
+      : undefined;
+    const isCentered = isPageShellCenteredPlacement(placement);
     if (size.span !== PAGE_SHELL_OPTIONS_LAST && !isCentered) {
       regionIds.push(id);
       continue;

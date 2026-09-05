@@ -183,9 +183,21 @@ test("page shell spans remain the 12-column 3-through-12 range", () => {
   assert.equal(normalizePageShellSize({ heightPx: null, span: 99 }).span, 12);
 });
 
-test("legacy placements normalize without losing preferred starts, lane data, or center mode", () => {
+test("legacy placements normalize odd Center mode and exact even center starts", () => {
   const normalized = normalizePageShellPlacement({ columnStart: 99, laneOrder: 4, mode: "centered" }, 5);
   assert.deepEqual(normalized, { columnStart: 8, laneOrder: 4, mode: "centered" });
+  const expectedEvenStarts: Array<[PageShellSpan, number]> = [[4, 5], [6, 4], [8, 3], [10, 2], [12, 1]];
+  expectedEvenStarts.forEach(([span, columnStart]) => {
+    assert.deepEqual(
+      normalizePageShellPlacement({ columnStart: 99, laneOrder: 4, mode: "centered" }, span),
+      { columnStart, laneOrder: 4 },
+    );
+    const packed = positionsFor(["source"], sizesFor({ source: span }), {
+      source: { columnStart: 99, mode: "centered" },
+    });
+    assert.equal(packed.source.columnStart, columnStart);
+    assert.equal(packed.source.rowStart, 1);
+  });
   assert.equal(normalizePageShellPlacement({ columnStart: 1 }, 6).laneOrder, 0);
 });
 
@@ -403,18 +415,49 @@ function getPageShellDropTargetForTest(
   );
 }
 
-test("center snapping activates near the exact workspace midpoint", () => {
-  const order = ["source", "other"];
-  const sizes = sizesFor({ source: 6, other: 6 });
-  const placements = { source: { columnStart: 1 }, other: { columnStart: 7 } };
-  const positions = positionsFor(order, sizes, placements);
+test("even-width center snaps remain ordinary placements at exact integer starts", () => {
   const grid = { left: 0, width: 1200 };
-  const centered = getPageShellGridColumnGeometry(grid, 4, 6);
-  assert.ok(centered);
-  const target = getPageShellDropTargetForTest(order, placements, positions, centered.left, 80, grid, 0);
-  assert.equal(target.mode, "centered");
-  assert.equal(target.columnStart, 4);
+  const expectedEvenStarts: Array<[PageShellSpan, number]> = [[4, 5], [6, 4], [8, 3], [10, 2], [12, 1]];
+  expectedEvenStarts.forEach(([span, columnStart]) => {
+    const order = ["source"];
+    const sizes = sizesFor({ source: span });
+    const placements = { source: { columnStart: 1 } };
+    const positions = positionsFor(order, sizes, placements);
+    const centered = getPageShellGridColumnGeometry(grid, columnStart, span);
+    assert.ok(centered);
+    const target = getPageShellDropTargetForTest(order, placements, positions, centered.left, 80, grid, 0);
+    assert.equal(target.mode, undefined);
+    assert.equal(target.columnStart, columnStart);
+  });
+  const placed = placePageShellAtDrop({
+    order: ["source"],
+    placements: { source: { columnStart: 1 } },
+    sizes: sizesFor({ source: 4 }),
+  }, ["source"], "source", {
+    columnStart: 5,
+    insertionIndex: 0,
+    laneOrder: 0,
+    mode: "centered",
+    targetId: null,
+  });
+  assert.deepEqual(placed.placements?.source, { columnStart: 5, laneOrder: 0 });
   assert.equal(Math.abs(PAGE_SHELL_CENTER_SNAP_ZONE_PX - 48), 0);
+});
+
+test("odd-width standalone center snaps retain special Center mode", () => {
+  const grid = { left: 0, width: 1200 };
+  const expectedOddStarts: Array<[PageShellSpan, number]> = [[3, 5], [5, 4], [7, 3], [9, 2], [11, 1]];
+  expectedOddStarts.forEach(([span, columnStart]) => {
+    const order = ["source"];
+    const sizes = sizesFor({ source: span });
+    const placements = { source: { columnStart: 1 } };
+    const positions = positionsFor(order, sizes, placements);
+    const centered = getPageShellGridColumnGeometry(grid, columnStart, span);
+    assert.ok(centered);
+    const target = getPageShellDropTargetForTest(order, placements, positions, centered.left, 80, grid, 0);
+    assert.equal(target.mode, "centered");
+    assert.equal(target.columnStart, columnStart);
+  });
 });
 
 test("centered mode persists through a centered drop and layout normalization", () => {
@@ -466,6 +509,45 @@ test("centered width changes preserve center mode and recalculate exact placemen
   assert.equal(placement.mode, "centered");
   const positions = positionsFor(["shell"], sizesFor({ shell: 7 }), { shell: placement });
   assert.equal(positions.shell.columnStart, 3);
+});
+
+test("legacy even Center placements normalize safely through width changes", () => {
+  assert.deepEqual(
+    normalizePageShellPlacement({ columnStart: 4, laneOrder: 2, mode: "centered" }, 6),
+    { columnStart: 4, laneOrder: 2 },
+  );
+  assert.deepEqual(
+    normalizePageShellPlacement({ columnStart: 3, laneOrder: 2, mode: "centered" }, 8),
+    { columnStart: 3, laneOrder: 2 },
+  );
+  assert.deepEqual(
+    normalizePageShellPlacement({ columnStart: 4, laneOrder: 2, mode: "centered" }, 7),
+    { columnStart: 4, laneOrder: 2, mode: "centered" },
+  );
+  assert.deepEqual(
+    normalizePageShellPlacement({ columnStart: 1, laneOrder: 2 }, 7),
+    { columnStart: 1, laneOrder: 2 },
+  );
+  assert.match(shellSource, /clampPlacementForSpan[\s\S]*normalizePageShellPlacement\(placement, span\)/);
+});
+
+test("layout normalization preserves order, dimensions, and unrelated placements while clearing even Center", () => {
+  const order = ["even", "odd", "other"];
+  const sizes = sizesFor({ even: 4, odd: 5, other: 6 }, { even: 288, odd: 336, other: 192 });
+  const normalized = normalizePageShellLayout({
+    order,
+    placements: {
+      even: { columnStart: 1, laneOrder: 3, mode: "centered" },
+      odd: { columnStart: 4, laneOrder: 2, mode: "centered" },
+      other: { columnStart: 7, laneOrder: 1 },
+    },
+    sizes,
+  }, order, sizes);
+  assert.deepEqual(normalized.order, order);
+  assert.deepEqual(normalized.sizes, sizes);
+  assert.deepEqual(normalized.placements?.even, { columnStart: 5, laneOrder: 3 });
+  assert.deepEqual(normalized.placements?.odd, { columnStart: 4, laneOrder: 2, mode: "centered" });
+  assert.deepEqual(normalized.placements?.other, { columnStart: 7, laneOrder: 1 });
 });
 
 test("height changes preserve horizontal placement while repacking below shells", () => {
@@ -579,6 +661,34 @@ test("saved Views restore snapped starts and centered modes", () => {
   assert.equal(resolvePageShellViewLayout(saved, canonical).layout.placements?.["water-pending"]?.mode, "centered");
 });
 
+test("saved Views normalize legacy even Center placements while retaining odd Center", () => {
+  const store = storage();
+  const key = getPageShellViewsStorageKey("user-legacy-even-center");
+  const order = ["four", "five"];
+  const sizes = sizesFor({ four: 4, five: 5 });
+  const view = createPageShellView({
+    createdAt: "2026-09-05T12:00:00.000Z",
+    id: "view-legacy-even-center",
+    layout: {
+      order,
+      placements: {
+        four: { columnStart: 1, mode: "centered" },
+        five: { columnStart: 4, mode: "centered" },
+      },
+      sizes,
+    },
+    name: "Legacy Center",
+    pageKey: "test:legacy-center",
+    presentation: "custom",
+    target: "web",
+    viewport: { height: 900, width: 1440 },
+  });
+  writePageShellView(store, key, view);
+  const saved = readPageShellViews(store, key, "test:legacy-center")[0];
+  assert.deepEqual(saved.layout?.placements?.four, { columnStart: 5, laneOrder: 0 });
+  assert.deepEqual(saved.layout?.placements?.five, { columnStart: 4, laneOrder: 0, mode: "centered" });
+});
+
 test("export and import preserve snapped placement data", () => {
   const store = storage();
   const layoutKey = getPageShellLayoutStorageKey("user-export");
@@ -587,7 +697,7 @@ test("export and import preserve snapped placement data", () => {
   layout.placements = { ...layout.placements, "water-log": { columnStart: 3 } };
   writePageShellLayout(store, layoutKey, "health:water", layout);
   const exported = buildPageShellLayoutExport({
-    appVersion: "7.12.98",
+    appVersion: "7.12.99",
     currentLayout: layout,
     currentPageKey: "health:water",
     currentPresentation: "custom",
