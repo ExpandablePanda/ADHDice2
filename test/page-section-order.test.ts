@@ -2130,7 +2130,7 @@ test("measured legacy migration is parity-gated and supports custom-height readi
   assert.deepEqual(after, before);
 });
 
-test("explicit planner compatibility finalization refreshes semantic rows after a legacy-style move", () => {
+test("explicit semantic moves preserve their rendered geometry after planning", () => {
   const order = ["a", "b", "c"];
   const sizes = sizesFor({ a: 4, b: 4, c: 4 });
   const layout = {
@@ -2154,7 +2154,275 @@ test("explicit planner compatibility finalization refreshes semantic rows after 
   }
 });
 
-test("7.12.110 keeps the legacy packer, planner, drag, and hydration authorities unchanged", () => {
+test("explicit directional targets use semantic rows and ignore packed row starts", () => {
+  const order = ["a", "b", "source", "hidden"];
+  const sizes = sizesFor({ a: 4, b: 4, source: 4, hidden: 4 });
+  const layout = {
+    order,
+    placements: {
+      a: { columnStart: 1, rowIndex: 0 },
+      b: { columnStart: 7, rowIndex: 0 },
+      source: { columnStart: 1, rowIndex: 2, rowOffsetSteps: 4 },
+      hidden: { columnStart: 1, rowIndex: 1 },
+    },
+    sizes,
+  };
+  const positions = {
+    a: { columnSpan: 4 as const, columnStart: 1, rowSpan: 20, rowStart: 60 },
+    b: { columnSpan: 4 as const, columnStart: 7, rowSpan: 20, rowStart: 60 },
+    source: { columnSpan: 4 as const, columnStart: 1, rowSpan: 20, rowStart: 1 + 4 * 3 },
+    hidden: { columnSpan: 4 as const, columnStart: 1, rowSpan: 20, rowStart: 120 },
+  };
+  const up = getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions: positions, sourceId: "source", visibleShellIds: ["a", "b", "source"] });
+  assert.equal(up?.destinationRowIndex, 0);
+  assert.equal(up?.targetId, "a");
+  assert.equal(up?.columnStart, 1);
+  assert.equal(up?.rowOffsetSteps, 0);
+  const down = getPageShellDirectionalMoveTarget({ direction: "down", layout, packedPositions: positions, sourceId: "a", visibleShellIds: ["a", "b", "source"] });
+  assert.equal(down?.destinationRowIndex, 2);
+  assert.equal(down?.targetId, "source");
+});
+
+test("explicit horizontal arrows swap semantic destinations deterministically and preserve gaps", () => {
+  const order = ["a", "b", "c"];
+  const sizes = sizesFor({ a: 4, b: 4, c: 4 });
+  let layout: PageShellLayoutPreference = {
+    order,
+    placements: {
+      a: { columnStart: 1, rowIndex: 0 },
+      b: { columnStart: 7, rowIndex: 0 },
+      c: { columnStart: 1, rowIndex: 1 },
+    },
+    sizes,
+  };
+  const move = (sourceId: string, direction: "left" | "right") => {
+    const positions = packPageShellLayout(layout.order, sizes, { placements: layout.placements });
+    const target = getPageShellDirectionalMoveTarget({ direction, layout, packedPositions: positions, sourceId, visibleShellIds: order });
+    assert.ok(target);
+    const plan = target && planPageShellMove({ layout, packedPositions: positions, sourceId, target, visibleShellIds: order });
+    assert.equal(plan?.valid, true);
+    if (plan?.valid) layout = plan.layout;
+  };
+  move("b", "left");
+  assert.deepEqual(layout.order, ["b", "a", "c"]);
+  assert.deepEqual([layout.placements?.b?.columnStart, layout.placements?.a?.columnStart], [1, 7]);
+  assert.deepEqual([layout.placements?.b?.rowIndex, layout.placements?.a?.rowIndex], [0, 0]);
+  move("b", "right");
+  assert.deepEqual(layout.order, order);
+  assert.deepEqual([layout.placements?.a?.columnStart, layout.placements?.b?.columnStart], [1, 7]);
+  assert.equal(getPageShellDirectionalMoveTarget({ direction: "left", layout, packedPositions: packPageShellLayout(layout.order, sizes, { placements: layout.placements }), sourceId: "a", visibleShellIds: order }), null);
+  assert.equal(getPageShellDirectionalMoveTarget({ direction: "right", layout, packedPositions: packPageShellLayout(layout.order, sizes, { placements: layout.placements }), sourceId: "b", visibleShellIds: order }), null);
+});
+
+test("explicit empty vertical moves write the destination row directly and compact the source row", () => {
+  const order = ["source", "peer"];
+  const sizes = sizesFor({ source: 4, peer: 4 });
+  const layout: PageShellLayoutPreference = {
+    order,
+    placements: {
+      source: { columnStart: 1, rowIndex: 0, rowOffsetSteps: 4 },
+      peer: { columnStart: 7, rowIndex: 1 },
+    },
+    sizes,
+  };
+  const positions = packPageShellLayout(order, sizes, { placements: layout.placements });
+  const target = getPageShellDirectionalMoveTarget({ direction: "down", layout, packedPositions: positions, sourceId: "source", visibleShellIds: order });
+  assert.equal(target?.targetId, null);
+  assert.equal(target?.destinationRowIndex, 1);
+  const plan = target && planPageShellMove({ layout, packedPositions: positions, sourceId: "source", target, visibleShellIds: order });
+  assert.equal(plan.valid, true);
+  if (plan.valid) {
+    assert.equal(plan.layout.placements?.source?.rowIndex, 0);
+    assert.equal(plan.layout.placements?.peer?.rowIndex, 0);
+    assert.equal(plan.layout.placements?.source?.columnStart, 1);
+    assert.equal(plan.layout.placements?.source?.rowOffsetSteps ?? 0, 0);
+    assert.equal(plan.layout.placements?.peer?.columnStart, 7);
+  }
+});
+
+test("explicit occupied vertical moves are true semantic swaps and validate both rows", () => {
+  const order = ["top", "source"];
+  const sizes = sizesFor({ top: 4, source: 4 });
+  const layout: PageShellLayoutPreference = {
+    order,
+    placements: { top: { columnStart: 5, rowIndex: 0 }, source: { columnStart: 7, rowIndex: 1 } },
+    sizes,
+  };
+  const positions = packPageShellLayout(order, sizes, { placements: layout.placements });
+  const target = getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions: positions, sourceId: "source", visibleShellIds: order });
+  assert.equal(target?.relationship, "replace");
+  const plan = target && planPageShellMove({ layout, packedPositions: positions, sourceId: "source", target, visibleShellIds: order });
+  assert.equal(plan.valid, true);
+  if (plan.valid) {
+    assert.deepEqual(plan.layout.order, ["source", "top"]);
+    assert.deepEqual(plan.layout.placements?.source, { columnStart: 5, rowIndex: 0, laneOrder: 0 });
+    assert.deepEqual(plan.layout.placements?.top, { columnStart: 7, rowIndex: 1, laneOrder: 0 });
+  }
+
+  const invalidOrder = ["a", "b", "c", "source"];
+  const invalidSizes = sizesFor({ a: 4, b: 4, c: 4, source: 8 });
+  const invalidLayout: PageShellLayoutPreference = {
+    order: invalidOrder,
+    placements: {
+      a: { columnStart: 1, rowIndex: 0 },
+      b: { columnStart: 5, rowIndex: 0 },
+      c: { columnStart: 9, rowIndex: 0 },
+      source: { columnStart: 1, rowIndex: 1 },
+    },
+    sizes: invalidSizes,
+  };
+  const invalidPositions = packPageShellLayout(invalidOrder, invalidSizes, { placements: invalidLayout.placements });
+  const invalidTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: invalidLayout, packedPositions: invalidPositions, sourceId: "source", visibleShellIds: invalidOrder });
+  const invalidPlan = invalidTarget && planPageShellMove({ layout: invalidLayout, packedPositions: invalidPositions, sourceId: "source", target: invalidTarget, visibleShellIds: invalidOrder });
+  assert.equal(invalidPlan?.valid, false);
+  assert.deepEqual(invalidLayout.placements?.source, { columnStart: 1, rowIndex: 1 });
+});
+
+test("explicit full-width and Center rows remain standalone through valid swaps", () => {
+  const order = ["full", "center", "normal"];
+  const sizes = sizesFor({ full: 12, center: 5, normal: 12 });
+  const placements = {
+    full: { columnStart: 1, rowIndex: 0 },
+    center: { columnStart: 4, rowIndex: 1, mode: "centered" as const },
+    normal: { columnStart: 1, rowIndex: 2 },
+  };
+  const layout: PageShellLayoutPreference = { order, placements, sizes };
+  const positions = packPageShellLayout(order, sizes, { placements });
+  const centerTarget = getPageShellDirectionalMoveTarget({ direction: "down", layout, packedPositions: positions, sourceId: "center", visibleShellIds: order });
+  const centerPlan = centerTarget && planPageShellMove({ layout, packedPositions: positions, sourceId: "center", target: centerTarget, visibleShellIds: order });
+  assert.equal(centerPlan?.valid, true);
+  if (centerPlan?.valid) {
+    assert.equal(centerPlan.layout.placements?.center?.mode, "centered");
+    assert.equal(centerPlan.layout.placements?.center?.rowIndex, 2);
+    assert.equal(centerPlan.layout.placements?.normal?.rowIndex, 1);
+  }
+
+  const fullOrder = ["full", "below"];
+  const fullSizes = sizesFor({ full: 12, below: 12 });
+  const fullPlacements = { full: { columnStart: 1, rowIndex: 0 }, below: { columnStart: 1, rowIndex: 1 } };
+  const fullLayout: PageShellLayoutPreference = { order: fullOrder, placements: fullPlacements, sizes: fullSizes };
+  const fullPositions = packPageShellLayout(fullOrder, fullSizes, { placements: fullPlacements });
+  const fullTarget = getPageShellDirectionalMoveTarget({ direction: "down", layout: fullLayout, packedPositions: fullPositions, sourceId: "full", visibleShellIds: fullOrder });
+  const fullPlan = fullTarget && planPageShellMove({ layout: fullLayout, packedPositions: fullPositions, sourceId: "full", target: fullTarget, visibleShellIds: fullOrder });
+  assert.equal(fullPlan?.valid, true);
+  if (fullPlan?.valid) assert.equal(fullPlan.layout.sizes.full.span, 12);
+
+  const invalidOrder = ["left", "right", "full"];
+  const invalidSizes = sizesFor({ left: 4, right: 4, full: 12 });
+  const invalidPlacements = {
+    left: { columnStart: 1, rowIndex: 0 },
+    right: { columnStart: 5, rowIndex: 0 },
+    full: { columnStart: 1, rowIndex: 1 },
+  };
+  const invalidLayout: PageShellLayoutPreference = { order: invalidOrder, placements: invalidPlacements, sizes: invalidSizes };
+  const invalidPositions = packPageShellLayout(invalidOrder, invalidSizes, { placements: invalidPlacements });
+  const invalidTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: invalidLayout, packedPositions: invalidPositions, sourceId: "full", visibleShellIds: invalidOrder });
+  const invalidPlan = invalidTarget && planPageShellMove({ layout: invalidLayout, packedPositions: invalidPositions, sourceId: "full", target: invalidTarget, visibleShellIds: invalidOrder });
+  assert.equal(invalidPlan?.valid, false);
+});
+
+test("explicit drag targets write semantic rows for edge insertion, swaps, empty space, and new rows", () => {
+  const order = ["a", "b", "c"];
+  const sizes = sizesFor({ a: 4, b: 4, c: 4 });
+  const placements = {
+    a: { columnStart: 1, rowIndex: 0 },
+    b: { columnStart: 5, rowIndex: 0 },
+    c: { columnStart: 9, rowIndex: 0 },
+  };
+  const layout: PageShellLayoutPreference = { order, placements, sizes };
+  const positions = packPageShellLayout(order, sizes, { placements });
+  const grid = { left: 0, width: 1200 };
+  const geometries = geometriesFor(order, positions, grid);
+  const cGeometry = geometries.find((geometry) => geometry.id === "c");
+  assert.ok(cGeometry);
+  const edgeTarget = getPageShellDropTarget(geometries, positions, order, "a", cGeometry.right - 8, cGeometry.top + 80, grid, 8, placements);
+  assert.equal(edgeTarget.relationship, "right");
+  assert.equal(edgeTarget.destinationRowIndex, 0);
+  const edgePlan = planPageShellMove({ layout, packedPositions: positions, sourceId: "a", target: edgeTarget, visibleShellIds: order });
+  assert.equal(edgePlan.valid, true);
+  if (edgePlan.valid) assert.deepEqual(edgePlan.layout.order, ["b", "c", "a"]);
+
+  const swapTarget = getPageShellDropTarget(geometries, positions, order, "a", cGeometry.left + (cGeometry.right - cGeometry.left) / 2, cGeometry.top + 80, grid, 0, placements);
+  assert.equal(swapTarget.relationship, "replace");
+  const swapPlan = planPageShellMove({ layout, packedPositions: positions, sourceId: "a", target: swapTarget, visibleShellIds: order });
+  assert.equal(swapPlan.valid, true);
+  if (swapPlan.valid) assert.deepEqual(swapPlan.layout.order, ["c", "b", "a"]);
+
+  const twoRowsOrder = ["left", "right", "source"];
+  const twoRowsSizes = sizesFor({ left: 4, right: 4, source: 4 });
+  const twoRowsPlacements = {
+    left: { columnStart: 1, rowIndex: 0 },
+    right: { columnStart: 9, rowIndex: 0 },
+    source: { columnStart: 1, rowIndex: 1 },
+  };
+  const twoRowsPositions = packPageShellLayout(twoRowsOrder, twoRowsSizes, { placements: twoRowsPlacements });
+  const twoRowsGeometries = geometriesFor(twoRowsOrder, twoRowsPositions, grid);
+  const rowZero = twoRowsGeometries.find((geometry) => geometry.id === "left");
+  assert.ok(rowZero);
+  const emptyTarget = getPageShellDropTarget(twoRowsGeometries, twoRowsPositions, twoRowsOrder, "source", getPageShellGridColumnGeometry(grid, 5, 4)!.left + 20, rowZero.top + 80, grid, 20, twoRowsPlacements);
+  assert.equal(emptyTarget.targetId, null);
+  assert.equal(emptyTarget.destinationRowIndex, 0);
+  const emptyPlan = planPageShellMove({ layout: { order: twoRowsOrder, placements: twoRowsPlacements, sizes: twoRowsSizes }, packedPositions: twoRowsPositions, sourceId: "source", target: emptyTarget, visibleShellIds: twoRowsOrder });
+  assert.equal(emptyPlan.valid, true);
+  if (emptyPlan.valid) assert.equal(emptyPlan.layout.placements?.source?.columnStart, 5);
+
+  const crossRowLayout: PageShellLayoutPreference = {
+    order: ["left", "target", "source"],
+    placements: {
+      left: { columnStart: 1, rowIndex: 0 },
+      target: { columnStart: 5, rowIndex: 0 },
+      source: { columnStart: 1, rowIndex: 1 },
+    },
+    sizes: sizesFor({ left: 4, target: 4, source: 4 }),
+  };
+  const crossRowPositions = packPageShellLayout(crossRowLayout.order, crossRowLayout.sizes, { placements: crossRowLayout.placements });
+  const crossEdgePlan = planPageShellMove({
+    layout: crossRowLayout,
+    packedPositions: crossRowPositions,
+    sourceId: "source",
+    target: { columnStart: 9, destinationRowIndex: 0, insertionIndex: 2, laneOrder: 0, relationship: "right", targetId: "target" },
+    visibleShellIds: crossRowLayout.order,
+  });
+  assert.equal(crossEdgePlan.valid, true);
+  if (crossEdgePlan.valid) {
+    assert.equal(crossEdgePlan.layout.placements?.source?.rowIndex, 0);
+    assert.equal(crossEdgePlan.layout.placements?.source?.columnStart, 9);
+    assert.equal(crossEdgePlan.layout.placements?.target?.columnStart, 5);
+  }
+
+  const gapOrder = ["first", "second", "source"];
+  const gapSizes = sizesFor({ first: 12, second: 12, source: 12 });
+  const gapPlacements = {
+    first: { columnStart: 1, rowIndex: 0 },
+    second: { columnStart: 1, rowIndex: 1 },
+    source: { columnStart: 1, rowIndex: 2 },
+  };
+  const gapPositions = packPageShellLayout(gapOrder, gapSizes, { placements: gapPlacements });
+  const gapGeometries = geometriesFor(gapOrder, gapPositions, grid);
+  const gapTarget = getPageShellDropTarget(gapGeometries, gapPositions, gapOrder, "source", 20, 500, grid, 20, gapPlacements);
+  assert.equal(gapTarget.targetId, null);
+  assert.equal(gapTarget.relationship, "before");
+  assert.equal(gapTarget.destinationRowIndex, 1);
+  const gapPlan = planPageShellMove({ layout: { order: gapOrder, placements: gapPlacements, sizes: gapSizes }, packedPositions: gapPositions, sourceId: "source", target: gapTarget, visibleShellIds: gapOrder });
+  assert.equal(gapPlan.valid, true);
+  if (gapPlan.valid) {
+    assert.deepEqual(gapPlan.layout.order, ["first", "source", "second"]);
+    assert.deepEqual(gapPlan.layout.order.map((id) => gapPlan.layout.placements?.[id]?.rowIndex), [0, 1, 2]);
+  }
+});
+
+test("explicit planning is isolated from legacy row inference and packing", () => {
+  const explicitStart = layoutSource.indexOf("function planPageShellExplicitMove");
+  const explicitEnd = layoutSource.indexOf("function packedPositionsForExplicitMove", explicitStart);
+  assert.ok(explicitStart >= 0);
+  assert.ok(explicitEnd > explicitStart);
+  const explicitSource = layoutSource.slice(explicitStart, explicitEnd);
+  assert.doesNotMatch(explicitSource, /packPageShellLayoutLegacy|inferPageShellRowsFromPackedLayout|finalizeLegacyCompatiblePageShellMove/);
+  assert.match(layoutSource, /isValidPageShellExplicitLayout\(input\.layout, input\.visibleShellIds\)/);
+  assert.match(layoutSource, /destinationRowIndex\?: number/);
+});
+
+test("7.12.112 keeps migration and legacy compatibility authorities unchanged", () => {
   const order = ["left", "right", "full"];
   const sizes = sizesFor({ left: 5, right: 7, full: 12 });
   const legacy = positionsFor(order, sizes, {
@@ -2168,10 +2436,9 @@ test("7.12.110 keeps the legacy packer, planner, drag, and hydration authorities
     full: { columnStart: 1, rowIndex: 9 },
   });
   assert.deepEqual(explicit, legacy);
-  const packStart = layoutSource.indexOf("export function packPageShellLayout");
-  const packEnd = layoutSource.indexOf("\nexport function normalizePageShellSpan", packStart);
-  assert.doesNotMatch(layoutSource.slice(packStart, packEnd), /rowIndex/);
   assert.doesNotMatch(hookSource, /inferPageShellRowsFromPackedLayout/);
+  assert.match(layoutSource, /function planPageShellLegacyMove/);
+  assert.match(layoutSource, /packPageShellLayoutLegacy/);
 });
 
 test("pointer lifecycle and drag auto-scroll contracts remain intact", () => {

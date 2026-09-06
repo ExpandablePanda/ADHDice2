@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.111`.
+- Current working app version: `7.12.112`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.112 Semantic-Row Shell Interaction Cutover
+
+Valid explicit shell layouts now mutate persisted semantic rows directly. Left
+and Right stay within one `rowIndex` and exchange exact horizontal destinations;
+Up and Down select adjacent visible semantic rows, preserve the requested
+snapped X for empty footprints, and exchange semantic destinations for occupied
+footprints. Successful moves compact empty source rows and maintain deterministic
+row-major order without making `order` the row authority. Explicit drag edge
+insertion, body swaps, empty-row placement, and new-row insertion write
+`rowIndex` directly and validate exact capacity, Center, and full-width rules.
+Explicit interactions no longer reconstruct rows through legacy packing or call
+the retired reconciliation bridge. Legacy or malformed layouts retain the
+compatibility planner. Measured migration, lazy View migration, persistence
+keys, and the explicit packer remain unchanged; no SQL or schema migration was
+added.
 
 ## 2026-09-06 7.12.111 Measured Semantic Row Migration and Explicit Packer Cutover
 
@@ -22,9 +38,9 @@ against the preserved legacy packer; layouts that fail parity remain on legacy
 compatibility packing and are not persisted as explicit. Valid explicit layouts
 use persisted semantic row packing, while malformed or incomplete layouts use
 legacy defensive recovery. Custom Views migrate lazily when applied and
-measured, retaining their View IDs. The planner still uses legacy targeting
-through a temporary row-reconciliation bridge; Phase 3 will replace that
-targeting. The known empty Up/Down destination bug remains a Phase 3 issue.
+measured, retaining their View IDs. Phase 3 now replaces the former legacy
+targeting bridge for valid explicit layouts while leaving legacy interactions
+compatible.
 No storage-key, SQL, or schema migration was added.
 
 ## 2026-09-06 7.12.110 Semantic Shell Row Compatibility Foundation
