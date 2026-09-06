@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, Check, ChevronDown, CornerDownRight, Download, GripVertical, MoveHorizontal, PanelsTopLeft, RotateCcw, Save } from "lucide-react";
+import { ArrowDown, ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUp, ArrowUpToLine, Check, ChevronDown, CornerDownRight, Download, GripVertical, MoveHorizontal, PanelsTopLeft, RotateCcw, Save } from "lucide-react";
 import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, type Ref } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
@@ -14,6 +14,7 @@ import {
   clampPageShellHeight,
   formatPageShellDimensions,
   getPageShellExportFilename,
+  getPageShellDirectionalMoveTarget,
   getPageShellShrinkHeight,
   normalizePageShellPlacement,
   normalizePageShellSpan,
@@ -23,6 +24,7 @@ import {
   PAGE_SHELL_ROW_ALIGNMENT_PX,
   resolvePageShellDragAxisIntent,
   type PageShellDropRelationship,
+  type PageShellDirectionalMoveDirection,
   type PageShellDragAxisIntent,
   projectVisiblePageShellOrder,
   type PageShellPackedPosition,
@@ -835,6 +837,38 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setShellHeight(event, id, null);
   }
 
+  function moveShellDirection(event: MouseEvent<HTMLButtonElement>, id: string, direction: PageShellDirectionalMoveDirection) {
+    if (!layout.isEditing || !layout.canReorder) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startLayout = currentLayout();
+    const target = getPageShellDirectionalMoveTarget({
+      direction,
+      layout: startLayout,
+      packedPositions,
+      sourceId: id,
+      visibleShellIds,
+    });
+    if (!target) return;
+    const plan = planPageShellMove({
+      chromeHeightPx: layout.isEditing ? 32 : 0,
+      layout: startLayout,
+      naturalHeights,
+      visibleShellIds,
+      sourceId: id,
+      target,
+      packedPositions,
+    });
+    if (!plan.valid) {
+      showDragMoveWarning(plan.message);
+      return;
+    }
+    layout.beginPreview(startLayout);
+    layout.setPreviewOrder(plan.layout.order);
+    layout.setPreviewPlacements(plan.layout.placements ?? {});
+    layout.commitPreview();
+  }
+
   function clampPlacementForSpan(placement: PageShellLayoutState["placements"][string] | undefined, span: PageShellSize["span"]) {
     return placement ? normalizePageShellPlacement(placement, span) : placement;
   }
@@ -1023,6 +1057,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const shellPlacementClass = usePackedPlacement
       ? spanClass
       : layout.canonicalLayout.shellClassNames?.[shell.id] ?? "";
+    const movementTargets = {
+      down: getPageShellDirectionalMoveTarget({ direction: "down", layout, packedPositions, sourceId: shell.id, visibleShellIds }),
+      left: getPageShellDirectionalMoveTarget({ direction: "left", layout, packedPositions, sourceId: shell.id, visibleShellIds }),
+      right: getPageShellDirectionalMoveTarget({ direction: "right", layout, packedPositions, sourceId: shell.id, visibleShellIds }),
+      up: getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions, sourceId: shell.id, visibleShellIds }),
+    };
     return (
       <div
         className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${dragDropTarget?.targetId === shell.id && dragDropTarget.relationship === "replace" ? (dragMovePlan?.valid === false ? "ring-2 ring-[#d65775]/70 ring-offset-2 ring-offset-[#fff8fa] dark:ring-[#ffb0c1]/70 dark:ring-offset-[#31141b]" : "ring-2 ring-[#6f57f6]/55 ring-offset-2 ring-offset-[#faf8ff] dark:ring-[#a99bff]/60 dark:ring-offset-[#171228]") : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
@@ -1058,6 +1098,48 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
             </div>
             <div className="adhdice-scrollbar adhdice-horizontal-scroll min-w-0 flex-1 overflow-x-auto overflow-y-hidden touch-pan-x" data-page-shell-layout-tools-scroll>
               <div className="flex w-max min-w-max flex-nowrap items-center gap-1.5" data-page-shell-layout-tools>
+                <div aria-label={`${shell.label} movement controls`} className="flex shrink-0 items-center gap-0.5" data-page-shell-movement-controls>
+                  <button
+                    aria-label={`Move ${shell.label} up`}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:text-[#cabfff] dark:hover:bg-white/10"
+                    disabled={!movementTargets.up}
+                    onClick={(event) => moveShellDirection(event, shell.id, "up")}
+                    title={`Move ${shell.label} up`}
+                    type="button"
+                  >
+                    <ArrowUp aria-hidden="true" className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    aria-label={`Move ${shell.label} down`}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:text-[#cabfff] dark:hover:bg-white/10"
+                    disabled={!movementTargets.down}
+                    onClick={(event) => moveShellDirection(event, shell.id, "down")}
+                    title={`Move ${shell.label} down`}
+                    type="button"
+                  >
+                    <ArrowDown aria-hidden="true" className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    aria-label={`Move ${shell.label} left`}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:text-[#cabfff] dark:hover:bg-white/10"
+                    disabled={!movementTargets.left}
+                    onClick={(event) => moveShellDirection(event, shell.id, "left")}
+                    title={`Move ${shell.label} left`}
+                    type="button"
+                  >
+                    <ArrowLeft aria-hidden="true" className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    aria-label={`Move ${shell.label} right`}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] disabled:cursor-not-allowed disabled:opacity-40 dark:text-[#cabfff] dark:hover:bg-white/10"
+                    disabled={!movementTargets.right}
+                    onClick={(event) => moveShellDirection(event, shell.id, "right")}
+                    title={`Move ${shell.label} right`}
+                    type="button"
+                  >
+                    <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
+                  </button>
+                </div>
                 <button
                   aria-label={`Resize ${shell.label} width`}
                   className="inline-flex h-6 w-6 shrink-0 cursor-ew-resize touch-none items-center justify-center rounded-md text-[#6f57f6] hover:bg-[#eee9ff] dark:text-[#cabfff] dark:hover:bg-white/10"

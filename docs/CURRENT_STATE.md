@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.105`.
+- Current working app version: `7.12.106`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,23 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.106 Authoritative Shell Targets and Directional Move Controls
+
+Direct page-shell hit testing now checks the captured real shell bounds before
+consulting the previous target's proximity/hysteresis region. Hysteresis still
+stabilizes ambiguous gaps and outside-shell space, while a shell physically
+under the pointer always becomes authoritative; repeated Center/body drops no
+longer retain an overlapping previous target and resolve true swaps reliably.
+
+Editable shell toolbars now restore compact Up, Down, Left, and Right controls
+inside the existing horizontally scrollable tool row. The controls resolve
+one same-row horizontal position or one adjacent structural row and pass a
+normal `PageShellDropTarget` through the current 12-column plan -> validate ->
+commit planner, not the retired Column/Slot architecture. Full-width shells
+remain standalone while supporting Up/Down, centered standalone shells retain
+Center for vertical moves, downstream reflow and strict row validation remain
+in force, and no SQL or schema migration was needed.
 
 ## 2026-09-06 7.12.105 Deterministic Pointer-Up Shell Drops
 

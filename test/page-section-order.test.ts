@@ -27,6 +27,7 @@ import {
   createPageShellView,
   formatPageShellDimensions,
   getHealthPageShellKey,
+  getPageShellDirectionalMoveTarget,
   getPageShellDragAutoScrollDelta,
   getPageShellDropTarget,
   getPageShellGridColumnGeometry,
@@ -59,7 +60,9 @@ import {
   isPageShellPointerMatch,
   isStalePageShellMouseMove,
   PageShellBody,
+  PageShell,
   PageShellLayoutControls,
+  ReorderablePageShells,
   PageShellSurface,
 } from "@/components/ui-system/reorderable-page-shells";
 import type {
@@ -68,6 +71,7 @@ import type {
   PageShellLayoutPreference,
   PageShellPlacement,
   PageShellPackedPosition,
+  PageShellDropTarget,
   PageShellSize,
   PageShellSpan,
 } from "@/lib/page-shell-layout";
@@ -347,6 +351,56 @@ test("directional target hysteresis holds a relationship through the edge band",
   assert.equal(resolvePageShellDropRelationship(targetGeometry, 300, 150, "replace"), "before");
 });
 
+test("a physical shell hit takes precedence over the previous target sticky region", () => {
+  const order = ["source", "b", "c"];
+  const positions: Record<string, PageShellPackedPosition> = {
+    source: { columnSpan: 4, columnStart: 1, rowSpan: 1, rowStart: 1 },
+    b: { columnSpan: 4, columnStart: 5, rowSpan: 1, rowStart: 1 },
+    c: { columnSpan: 4, columnStart: 9, rowSpan: 1, rowStart: 1 },
+  };
+  const geometries: PageShellGeometry[] = [
+    { bottom: 300, id: "source", left: 0, right: 100, top: 100 },
+    { bottom: 300, id: "b", left: 120, right: 220, top: 100 },
+    { bottom: 300, id: "c", left: 240, right: 340, top: 100 },
+  ];
+  const previousTarget: PageShellDropTarget = { columnStart: 5, insertionIndex: 1, laneOrder: 0, relationship: "replace", targetId: "b" };
+  const directCenter = getPageShellDropTarget(geometries, positions, order, "source", 290, 200, undefined, 0, {}, undefined, 0, previousTarget);
+  assert.equal(directCenter.targetId, "c");
+  assert.equal(directCenter.relationship, "replace");
+  const directPlan = planPageShellMove({
+    layout: { order, placements: { source: { columnStart: 1 }, b: { columnStart: 5 }, c: { columnStart: 9 } }, sizes: sizesFor({ source: 4, b: 4, c: 4 }) },
+    visibleShellIds: order,
+    sourceId: "source",
+    target: directCenter,
+    packedPositions: positions,
+  });
+  assert.equal(directPlan.valid, true);
+  if (directPlan.valid) assert.deepEqual(directPlan.layout.order, ["c", "b", "source"]);
+  assert.equal(getPageShellDropTarget(geometries, positions, order, "source", 230, 200, undefined, 0, {}, undefined, 0, previousTarget).targetId, "b");
+  assert.equal(getPageShellDropTarget(geometries, positions, order, "source", 290, 200, undefined, 0, {}, undefined, 0, previousTarget).targetId, "c");
+});
+
+test("direct shell bounds resolve every C edge relationship while gap hysteresis remains available", () => {
+  const order = ["source", "b", "c"];
+  const positions: Record<string, PageShellPackedPosition> = {
+    source: { columnSpan: 4, columnStart: 1, rowSpan: 1, rowStart: 1 },
+    b: { columnSpan: 4, columnStart: 5, rowSpan: 1, rowStart: 1 },
+    c: { columnSpan: 4, columnStart: 9, rowSpan: 1, rowStart: 1 },
+  };
+  const geometries: PageShellGeometry[] = [
+    { bottom: 300, id: "source", left: 0, right: 100, top: 100 },
+    { bottom: 300, id: "b", left: 120, right: 220, top: 100 },
+    { bottom: 300, id: "c", left: 240, right: 340, top: 100 },
+  ];
+  const targetAt = (x: number, y: number) => getPageShellDropTarget(geometries, positions, order, "source", x, y).relationship;
+  assert.equal(targetAt(290, 200), "replace");
+  assert.equal(targetAt(240, 200), "left");
+  assert.equal(targetAt(340, 200), "right");
+  assert.equal(targetAt(290, 100), "before");
+  assert.equal(targetAt(290, 300), "after");
+  assert.equal(getPageShellDropTarget(geometries, positions, order, "source", 230, 200, undefined, 0, {}, undefined, 0, { columnStart: 5, insertionIndex: 1, laneOrder: 0, relationship: "right", targetId: "b" }).targetId, "b");
+});
+
 test("directional placement uses the target anchor and replace swaps without deleting it", () => {
   const order = ["source", "target"];
   const sizes = sizesFor({ source: 4, target: 4 });
@@ -429,6 +483,146 @@ test("planned moves are pure, preserve widths, and lock directional semantics", 
     assert.ok(swap.layout.order.includes("c"));
   }
   assert.equal(JSON.stringify(layout), original);
+});
+
+test("directional arrows resolve one same-row position through the shared planner", () => {
+  const order = ["a", "b", "c"];
+  const sizes = sizesFor({ a: 4, b: 4, c: 4 });
+  const placements = { a: { columnStart: 1 }, b: { columnStart: 5 }, c: { columnStart: 9 } };
+  const layout = { order, placements, sizes };
+  const packedPositions = positionsFor(order, sizes, placements);
+  const leftTarget = getPageShellDirectionalMoveTarget({ direction: "left", layout, packedPositions, sourceId: "b", visibleShellIds: order });
+  assert.equal(leftTarget?.targetId, "a");
+  assert.equal(leftTarget?.relationship, "left");
+  const leftPlan = leftTarget && planPageShellMove({ layout, visibleShellIds: order, sourceId: "b", target: leftTarget, packedPositions });
+  assert.equal(leftPlan?.valid, true);
+  if (leftPlan?.valid) assert.deepEqual(leftPlan.layout.order, ["b", "a", "c"]);
+
+  const rightTarget = getPageShellDirectionalMoveTarget({ direction: "right", layout, packedPositions, sourceId: "b", visibleShellIds: order });
+  assert.equal(rightTarget?.targetId, "c");
+  assert.equal(rightTarget?.relationship, "right");
+  const rightPlan = rightTarget && planPageShellMove({ layout, visibleShellIds: order, sourceId: "b", target: rightTarget, packedPositions });
+  assert.equal(rightPlan?.valid, true);
+  if (rightPlan?.valid) assert.deepEqual(rightPlan.layout.order, ["a", "c", "b"]);
+  assert.equal(getPageShellDirectionalMoveTarget({ direction: "left", layout, packedPositions, sourceId: "a", visibleShellIds: order }), null);
+  assert.equal(getPageShellDirectionalMoveTarget({ direction: "right", layout, packedPositions, sourceId: "c", visibleShellIds: order }), null);
+});
+
+test("directional vertical arrows use the adjacent structural row and nearest horizontal peer", () => {
+  const order = ["a", "b", "c", "d", "e"];
+  const sizes = sizesFor({ a: 4, b: 4, c: 4, d: 4, e: 4 });
+  const placements = {
+    a: { columnStart: 1 },
+    b: { columnStart: 5 },
+    c: { columnStart: 1 },
+    d: { columnStart: 5 },
+    e: { columnStart: 1 },
+  };
+  const layout = { order, placements, sizes };
+  const packedPositions = positionsFor(order, sizes, placements);
+  const upTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions, sourceId: "e", visibleShellIds: order });
+  assert.equal(upTarget?.targetId, "c");
+  assert.equal(upTarget?.relationship, "before");
+  assert.equal(upTarget?.rowOffsetSteps, 0);
+  const upPlan = upTarget && planPageShellMove({ layout, visibleShellIds: order, sourceId: "e", target: upTarget, packedPositions });
+  assert.equal(upPlan?.valid, true);
+  if (upPlan?.valid) {
+    assert.deepEqual(upPlan.layout.order, ["a", "b", "e", "c", "d"]);
+    assert.deepEqual(upPlan.layout.sizes, sizes);
+  }
+  const downTarget = getPageShellDirectionalMoveTarget({ direction: "down", layout, packedPositions, sourceId: "a", visibleShellIds: order });
+  assert.equal(downTarget?.targetId, "c");
+  assert.equal(downTarget?.relationship, "after");
+  assert.equal(getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions, sourceId: "a", visibleShellIds: order }), null);
+  assert.equal(getPageShellDirectionalMoveTarget({ direction: "down", layout, packedPositions, sourceId: "e", visibleShellIds: order }), null);
+});
+
+test("vertical peer selection ties by stable visible order and ignores rendered offset differences", () => {
+  const tieOrder = ["a", "b", "source"];
+  const tieSizes = sizesFor({ a: 6, b: 6, source: 4 });
+  const tiePlacements = { a: { columnStart: 1 }, b: { columnStart: 7 }, source: { columnStart: 5 } };
+  const tieLayout = { order: tieOrder, placements: tiePlacements, sizes: tieSizes };
+  const tiePositions = positionsFor(tieOrder, tieSizes, tiePlacements);
+  const tieTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: tieLayout, packedPositions: tiePositions, sourceId: "source", visibleShellIds: tieOrder });
+  assert.equal(tieTarget?.targetId, "a");
+
+  const offsetOrder = ["a", "b", "below"];
+  const offsetSizes = sizesFor({ a: 4, b: 4, below: 12 });
+  const offsetPlacements = { a: { columnStart: 1 }, b: { columnStart: 5, rowOffsetSteps: 4 }, below: { columnStart: 1 } };
+  const offsetLayout = { order: offsetOrder, placements: offsetPlacements, sizes: offsetSizes };
+  const offsetPositions = positionsFor(offsetOrder, offsetSizes, offsetPlacements);
+  assert.notEqual(offsetPositions.a.rowStart, offsetPositions.b.rowStart);
+  const rightTarget = getPageShellDirectionalMoveTarget({ direction: "right", layout: offsetLayout, packedPositions: offsetPositions, sourceId: "a", visibleShellIds: offsetOrder });
+  assert.equal(rightTarget?.targetId, "b");
+  assert.equal(rightTarget?.rowOffsetSteps, 0);
+});
+
+test("full-width arrows remain structural rows, while centered standalone shells keep Center", () => {
+  const fullOrder = ["full", "below"];
+  const fullSizes = sizesFor({ full: 12, below: 12 });
+  const fullPlacements = { full: { columnStart: 1 }, below: { columnStart: 1 } };
+  const fullLayout = { order: fullOrder, placements: fullPlacements, sizes: fullSizes };
+  const fullPositions = positionsFor(fullOrder, fullSizes, fullPlacements);
+  const fullUp = getPageShellDirectionalMoveTarget({ direction: "up", layout: fullLayout, packedPositions: fullPositions, sourceId: "below", visibleShellIds: fullOrder });
+  const fullDown = getPageShellDirectionalMoveTarget({ direction: "down", layout: fullLayout, packedPositions: fullPositions, sourceId: "full", visibleShellIds: fullOrder });
+  assert.equal(fullUp?.targetId, "full");
+  assert.equal(fullDown?.targetId, "below");
+  assert.equal(getPageShellDirectionalMoveTarget({ direction: "left", layout: fullLayout, packedPositions: fullPositions, sourceId: "full", visibleShellIds: fullOrder }), null);
+  assert.equal(getPageShellDirectionalMoveTarget({ direction: "right", layout: fullLayout, packedPositions: fullPositions, sourceId: "full", visibleShellIds: fullOrder }), null);
+  const fullPlan = fullDown && planPageShellMove({ layout: fullLayout, visibleShellIds: fullOrder, sourceId: "full", target: fullDown, packedPositions: fullPositions });
+  assert.equal(fullPlan?.valid, true);
+  if (fullPlan?.valid) assert.equal(fullPlan.layout.sizes.full.span, 12);
+  const unmarkedFullPlan = fullDown && planPageShellMove({
+    layout: fullLayout,
+    visibleShellIds: fullOrder,
+    sourceId: "full",
+    target: { ...fullDown, structuralRow: undefined },
+    packedPositions: fullPositions,
+  });
+  assert.equal(unmarkedFullPlan?.valid, false);
+
+  const centeredOrder = ["above", "center", "below"];
+  const centeredSizes = sizesFor({ above: 12, center: 5, below: 12 });
+  const centeredPlacements = { above: { columnStart: 1 }, center: { columnStart: 4, mode: "centered" as const }, below: { columnStart: 1 } };
+  const centeredLayout = { order: centeredOrder, placements: centeredPlacements, sizes: centeredSizes };
+  const centeredPositions = positionsFor(centeredOrder, centeredSizes, centeredPlacements);
+  const centeredTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: centeredLayout, packedPositions: centeredPositions, sourceId: "center", visibleShellIds: centeredOrder });
+  assert.equal(centeredTarget?.targetId, "above");
+  assert.equal(centeredTarget?.mode, "centered");
+  assert.equal(centeredTarget?.columnStart, 4);
+  assert.equal(getPageShellDirectionalMoveTarget({ direction: "left", layout: centeredLayout, packedPositions: centeredPositions, sourceId: "center", visibleShellIds: centeredOrder }), null);
+  const centeredPlan = centeredTarget && planPageShellMove({ layout: centeredLayout, visibleShellIds: centeredOrder, sourceId: "center", target: centeredTarget, packedPositions: centeredPositions });
+  assert.equal(centeredPlan?.valid, true);
+  if (centeredPlan?.valid) assert.equal(centeredPlan.layout.placements?.center?.mode, "centered");
+});
+
+test("invalid directional plans stay unchanged while valid arrow moves retain downstream reflow", () => {
+  const invalidOrder = ["above-a", "above-b", "source"];
+  const invalidSizes = sizesFor({ "above-a": 8, "above-b": 4, source: 8 });
+  const invalidPlacements = { "above-a": { columnStart: 1 }, "above-b": { columnStart: 9 }, source: { columnStart: 1 } };
+  const invalidLayout = { order: invalidOrder, placements: invalidPlacements, sizes: invalidSizes };
+  const invalidPositions = positionsFor(invalidOrder, invalidSizes, invalidPlacements);
+  const invalidTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: invalidLayout, packedPositions: invalidPositions, sourceId: "source", visibleShellIds: invalidOrder });
+  assert.equal(invalidTarget?.targetId, "above-a");
+  const invalidPlan = invalidTarget && planPageShellMove({ layout: invalidLayout, visibleShellIds: invalidOrder, sourceId: "source", target: invalidTarget, packedPositions: invalidPositions });
+  assert.equal(invalidPlan?.valid, false);
+  if (invalidPlan && !invalidPlan.valid) assert.equal(invalidPlan.reason, "ROW_WIDTH_EXCEEDED");
+  assert.deepEqual(invalidLayout.order, invalidOrder);
+
+  const reflowOrder = ["a", "b", "source", "downstream"];
+  const reflowSizes = sizesFor({ a: 4, b: 4, source: 4, downstream: 12 }, { source: 480, a: 144, b: 144, downstream: 144 });
+  const reflowPlacements = { a: { columnStart: 1 }, b: { columnStart: 5 }, source: { columnStart: 1 }, downstream: { columnStart: 1 } };
+  const reflowLayout = { order: reflowOrder, placements: reflowPlacements, sizes: reflowSizes };
+  const reflowPositions = positionsFor(reflowOrder, reflowSizes, reflowPlacements);
+  const reflowTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: reflowLayout, packedPositions: reflowPositions, sourceId: "source", visibleShellIds: reflowOrder });
+  assert.equal(reflowTarget?.targetId, "a");
+  const reflowPlan = reflowTarget && planPageShellMove({ layout: reflowLayout, visibleShellIds: reflowOrder, sourceId: "source", target: reflowTarget, packedPositions: reflowPositions });
+  assert.equal(reflowPlan?.valid, true);
+  if (reflowPlan?.valid) {
+    const after = positionsFor(reflowPlan.layout.order, reflowPlan.layout.sizes, reflowPlan.layout.placements);
+    assert.ok(after.downstream.rowStart > after.source.rowStart);
+    assert.equal(after.source.columnSpan, 4);
+  }
 });
 
 test("planned row width failure reports the actual maximum and leaves no candidate", () => {
@@ -996,6 +1190,36 @@ test("the edit toolbar keeps direct manipulation controls and removes Column, Sl
   assert.match(markup, /Reset Layout/);
   assert.doesNotMatch(markup, /Col |Column|Slot|placement|slot/i);
   assert.doesNotMatch(markup, /Center row|Move .* (up|down)/i);
+});
+
+test("editable shell toolbars render all four directional controls inside the scrollable tools", () => {
+  const markup = renderToStaticMarkup(createElement(
+    ReorderablePageShells,
+    { layout: staticLayout(true) },
+    createElement(PageShell, { id: "conditional", label: "Conditional" }, "Conditional content"),
+    createElement(PageShell, { id: "regular", label: "Regular" }, "Regular content"),
+  ));
+  assert.match(markup, /data-page-shell-movement-controls/);
+  for (const label of ["Move Conditional up", "Move Conditional down", "Move Conditional left", "Move Conditional right", "Move Regular up", "Move Regular down", "Move Regular left", "Move Regular right"]) {
+    assert.match(markup, new RegExp(`aria-label="${label}"`));
+  }
+  assert.match(shellSource, /ArrowLeft/);
+  assert.match(shellSource, /ArrowRight/);
+  assert.match(shellSource, /aria-label=\{`\$\{shell\.label\} movement controls`\}/);
+});
+
+test("directional arrow actions use the normal planner and warning path", () => {
+  const moveStart = shellSource.indexOf("  function moveShellDirection");
+  const moveEnd = shellSource.indexOf("\n  function clampPlacementForSpan", moveStart);
+  assert.ok(moveStart >= 0);
+  assert.ok(moveEnd > moveStart);
+  const moveSource = shellSource.slice(moveStart, moveEnd);
+  assert.match(moveSource, /getPageShellDirectionalMoveTarget\(/);
+  assert.match(moveSource, /planPageShellMove\(/);
+  assert.match(moveSource, /layout\.beginPreview\(startLayout\)/);
+  assert.match(moveSource, /layout\.setPreviewOrder\(plan\.layout\.order\)/);
+  assert.match(moveSource, /layout\.setPreviewPlacements\(plan\.layout\.placements \?\? \{\}\)/);
+  assert.match(moveSource, /showDragMoveWarning\(plan\.message\)/);
 });
 
 test("the toolbar keeps fixed identity and horizontally scrollable tool regions", () => {
