@@ -11,6 +11,7 @@ import {
   getPageShellLayoutStorageKey,
   getPageShellViewsStorageKey,
   hasPageShellLayout,
+  isValidPageShellExplicitLayout,
   migrateLegacyTestD20Storage,
   normalizePageShellLayout,
   readPageShellLayout,
@@ -41,6 +42,7 @@ export type PageShellLayoutState = {
   canonicalLayout: PageShellCanonicalLayout;
   cancelPreview: () => void;
   commitPreview: () => void;
+  commitMeasuredRowMigration: (layout: PageShellLayoutPreference) => void;
   finishEditing: () => void;
   deleteView: (viewId: string) => void;
   exportLayouts: () => PageShellLayoutExport;
@@ -107,6 +109,7 @@ export function usePageShellLayout(
   const [hydratedInstanceKey, setHydratedInstanceKey] = useState<string | null>(null);
   const [editingInstanceKey, setEditingInstanceKey] = useState<string | null>(null);
   const [views, setViews] = useState<PageShellView[]>([]);
+  const pendingLegacyViewIdRef = useRef<string | null>(null);
   const canEdit = defaults.length >= 1;
   const canResize = defaults.length >= 1;
   const canReorder = defaults.length >= 2;
@@ -117,6 +120,7 @@ export function usePageShellLayout(
     queueMicrotask(() => {
       if (cancelled) return;
       previewRef.current = null;
+      pendingLegacyViewIdRef.current = null;
       setPreviewLayout(null);
       if (!storageKey || typeof window === "undefined") {
         setCommittedLayout(defaultLayout);
@@ -165,9 +169,24 @@ export function usePageShellLayout(
     previewRef.current = null;
     setPreviewLayout(null);
     if (!preview || pageShellLayoutsEqual(preview, committedLayout)) return;
+    pendingLegacyViewIdRef.current = null;
     setHasCustomLayoutPreference(true);
     setCommittedLayout(clonePageShellLayout(preview));
   }, [committedLayout]);
+
+  const commitMeasuredRowMigration = useCallback((nextLayout: PageShellLayoutPreference) => {
+    if (pageShellLayoutsEqual(nextLayout, committedLayout)) return;
+    setHasCustomLayoutPreference(true);
+    setCommittedLayout(clonePageShellLayout(nextLayout));
+    const viewId = pendingLegacyViewIdRef.current;
+    if (!viewId) return;
+    const view = views.find((candidate) => candidate.id === viewId);
+    if (!view || view.presentation !== "custom") return;
+    const migratedView: PageShellView = { ...view, layout: clonePageShellLayout(nextLayout) };
+    setViews((current) => current.map((candidate) => candidate.id === viewId ? migratedView : candidate));
+    if (viewsStorageKey && typeof window !== "undefined") writePageShellView(window.localStorage, viewsStorageKey, migratedView);
+    pendingLegacyViewIdRef.current = null;
+  }, [committedLayout, views, viewsStorageKey]);
 
   const finishEditing = useCallback(() => {
     cancelPreview();
@@ -216,6 +235,7 @@ export function usePageShellLayout(
 
   const reset = useCallback(() => {
     previewRef.current = null;
+    pendingLegacyViewIdRef.current = null;
     setPreviewLayout(null);
     setCommittedLayout(clonePageShellLayout(defaultLayout));
     setHasCustomLayoutPreference(false);
@@ -253,6 +273,10 @@ export function usePageShellLayout(
     if (!view) return;
     const resolved = resolvePageShellViewLayout(view, resolvedCanonicalLayout);
     previewRef.current = null;
+    pendingLegacyViewIdRef.current = resolved.presentation === "custom"
+      && !isValidPageShellExplicitLayout(resolved.layout, resolvedCanonicalLayout.order)
+      ? view.id
+      : null;
     setPreviewLayout(null);
     setCommittedLayout(clonePageShellLayout(resolved.layout));
     setHasCustomLayoutPreference(resolved.presentation === "custom");
@@ -280,6 +304,7 @@ export function usePageShellLayout(
     canResize,
     canonicalLayout: resolvedCanonicalLayout,
     cancelPreview,
+    commitMeasuredRowMigration,
     commitPreview,
     deleteView,
     exportLayouts,

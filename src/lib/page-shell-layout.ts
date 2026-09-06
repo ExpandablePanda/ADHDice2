@@ -19,7 +19,7 @@ export type PageShellPlacement = {
   columnStart: number;
   /** Persisted semantic row membership for explicit-row layouts. Zero-based; optional only for legacy compatibility. */
   rowIndex?: number;
-  /** Legacy compatibility only; rowIndex is future semantic authority and order still controls vertical packing. */
+  /** Legacy compatibility only; rowIndex is the explicit vertical authority when valid. */
   laneOrder?: number;
   /** Odd-width exact-center presentation mode; even widths use normal grid centering. */
   mode?: "centered";
@@ -958,6 +958,67 @@ export function getPageShellExplicitRows(
     }));
 }
 
+/** Returns structural errors for an arbitrary saved layout using only the supplied visible shells. */
+export function getPageShellExplicitLayoutValidationErrors(
+  layout: PageShellLayoutPreference,
+  shellIds: readonly string[] = layout.order,
+) {
+  const errors: string[] = [];
+  const ids = uniquePageShellIds(shellIds);
+  const rows = new Map<number, Array<{ centered: boolean; columnStart: number; id: string; span: PageShellSpan }>>();
+  for (const id of ids) {
+    const placement = layout.placements?.[id];
+    const size = layout.sizes[id];
+    const rowIndex = normalizePageShellRowIndex(placement?.rowIndex);
+    if (!placement || rowIndex === undefined) {
+      errors.push(`${id}: missing valid rowIndex`);
+      continue;
+    }
+    const span = size?.span;
+    if (!span || !PAGE_SHELL_SPAN_OPTIONS.includes(span)) {
+      errors.push(`${id}: invalid span`);
+      continue;
+    }
+    const rawColumnStart = placement.columnStart;
+    if (!Number.isInteger(rawColumnStart) || rawColumnStart < 1 || rawColumnStart + span - 1 > 12) {
+      errors.push(`${id}: invalid columnStart`);
+      continue;
+    }
+    const isCentered = placement.mode === "centered";
+    if (isCentered && (span % 2 === 0 || normalizePageShellRowOffsetSteps(placement.rowOffsetSteps) !== 0)) {
+      errors.push(`${id}: invalid Center row data`);
+    }
+    if (isCentered && placement.columnStart !== getPageShellCenteredColumnStart(span)) {
+      errors.push(`${id}: invalid Center column`);
+    }
+    const row = rows.get(rowIndex) ?? [];
+    row.push({ centered: isCentered, columnStart: rawColumnStart, id, span });
+    rows.set(rowIndex, row);
+  }
+  rows.forEach((row, rowIndex) => {
+    if (row.some((item) => item.span === 12) && row.length > 1) errors.push(`row ${rowIndex}: full-width shell shares a row`);
+    if (row.some((item) => item.centered) && row.length > 1) errors.push(`row ${rowIndex}: Center shell shares a row`);
+    const totalWidth = row.reduce((total, item) => total + item.span, 0);
+    if (totalWidth > 12) errors.push(`row ${rowIndex}: capacity exceeded`);
+    row.sort((left, right) => left.columnStart - right.columnStart || left.id.localeCompare(right.id));
+    row.slice(1).forEach((item, index) => {
+      const previous = row[index];
+      if (item.columnStart < previous.columnStart + previous.span) {
+        errors.push(`row ${rowIndex}: ${previous.id} overlaps ${item.id}`);
+      }
+    });
+  });
+  return errors;
+}
+
+export function isValidPageShellExplicitLayout(
+  layout: PageShellLayoutPreference,
+  shellIds: readonly string[] = layout.order,
+) {
+  return hasCompletePageShellRows(layout, shellIds)
+    && getPageShellExplicitLayoutValidationErrors(layout, shellIds).length === 0;
+}
+
 /** Rebuilds row-major visible order while preserving hidden shell positions in the full order. */
 export function getPageShellExplicitRowMajorOrder(
   layout: PageShellLayoutPreference,
@@ -993,12 +1054,73 @@ export function inferPageShellRowsFromPackedLayout({
   const baselineToRow = new Map(uniqueBaselines.map((baseline, index) => [baseline, index]));
   const next = clonePageShellLayout(layout);
   next.placements ??= {};
+  const nextPlacements = next.placements;
   ids.forEach((id, index) => {
     const packed = packedPositions[id];
-    const placement = next.placements?.[id] ?? { columnStart: packed.columnStart, laneOrder: 0 };
-    next.placements[id] = { ...placement, rowIndex: baselineToRow.get(baselines[index]) };
+    const placement = nextPlacements[id] ?? { columnStart: packed.columnStart, laneOrder: 0 };
+    nextPlacements[id] = { ...placement, rowIndex: baselineToRow.get(baselines[index]) };
   });
   return next;
+}
+
+export type PageShellMeasuredMigrationInput = {
+  chromeHeightPx?: number;
+  gapPx?: number;
+  layout: PageShellLayoutPreference;
+  naturalHeights?: Readonly<Record<string, number>>;
+  rowUnitPx?: number;
+  shellIds: readonly string[];
+};
+
+function pageShellPackedPositionsEqual(
+  left: Readonly<Record<string, PageShellPackedPosition>>,
+  right: Readonly<Record<string, PageShellPackedPosition>>,
+  shellIds: readonly string[],
+) {
+  return uniquePageShellIds(shellIds).every((id) => {
+    const leftPosition = left[id];
+    const rightPosition = right[id];
+    return Boolean(leftPosition && rightPosition)
+      && leftPosition.columnStart === rightPosition.columnStart
+      && leftPosition.columnSpan === rightPosition.columnSpan
+      && leftPosition.rowStart === rightPosition.rowStart
+      && leftPosition.rowSpan === rightPosition.rowSpan;
+  });
+}
+
+/** Performs one measured, parity-gated legacy-to-explicit conversion without persistence. */
+export function migratePageShellLayoutWithMeasuredParity({
+  chromeHeightPx,
+  gapPx,
+  layout,
+  naturalHeights,
+  rowUnitPx,
+  shellIds,
+}: PageShellMeasuredMigrationInput): PageShellLayoutPreference | null {
+  const ids = uniquePageShellIds(shellIds);
+  if (ids.length === 0 || isValidPageShellExplicitLayout(layout, ids)) return null;
+  const legacyPositions = packPageShellLayoutLegacy(projectVisiblePageShellOrder(layout.order, ids), layout.sizes, {
+    chromeHeightPx,
+    gapPx,
+    naturalHeights,
+    placements: layout.placements,
+    rowUnitPx,
+  });
+  const inferred = compactPageShellRows(inferPageShellRowsFromPackedLayout({
+    layout,
+    packedPositions: legacyPositions,
+    rowUnitPx,
+    shellIds: ids,
+  }), ids);
+  if (!isValidPageShellExplicitLayout(inferred, ids)) return null;
+  const explicitPositions = packPageShellLayoutExplicit(projectVisiblePageShellOrder(inferred.order, ids), inferred.sizes, {
+    chromeHeightPx,
+    gapPx,
+    naturalHeights,
+    placements: inferred.placements,
+    rowUnitPx,
+  });
+  return pageShellPackedPositionsEqual(legacyPositions, explicitPositions, ids) ? inferred : null;
 }
 
 /** Returns canonical row/footprint errors for focused validation and future callers. */
@@ -1727,11 +1849,40 @@ function packPageShellMoveCandidate(
   naturalHeights: Readonly<Record<string, number>> | undefined,
   chromeHeightPx: number | undefined,
 ) {
-  return packPageShellLayout(projectVisiblePageShellOrder(candidate.order, visibleShellIds), candidate.sizes, {
+  return packPageShellLayoutLegacy(projectVisiblePageShellOrder(candidate.order, visibleShellIds), candidate.sizes, {
     chromeHeightPx,
     naturalHeights,
     placements: candidate.placements,
   });
+}
+
+function finalizeLegacyCompatiblePageShellMove(
+  inputLayout: PageShellLayoutPreference,
+  candidate: PageShellLayoutPreference,
+  visibleShellIds: readonly string[],
+  naturalHeights: Readonly<Record<string, number>> | undefined,
+  chromeHeightPx: number | undefined,
+): PageShellMovePlan {
+  if (!isValidPageShellExplicitLayout(inputLayout, visibleShellIds)) return { valid: true, layout: candidate };
+  const ids = uniquePageShellIds(visibleShellIds);
+  const legacyPositions = packPageShellLayoutLegacy(projectVisiblePageShellOrder(candidate.order, ids), candidate.sizes, {
+    chromeHeightPx,
+    naturalHeights,
+    placements: candidate.placements,
+  });
+  const inferred = compactPageShellRows(inferPageShellRowsFromPackedLayout({
+    layout: candidate,
+    packedPositions: legacyPositions,
+    shellIds: ids,
+  }), ids);
+  if (!isValidPageShellExplicitLayout(inferred, ids)) return getPageShellMoveFailure("COLLISION");
+  const explicitPositions = packPageShellLayoutExplicit(projectVisiblePageShellOrder(inferred.order, ids), inferred.sizes, {
+    chromeHeightPx,
+    naturalHeights,
+    placements: inferred.placements,
+  });
+  if (!pageShellPackedPositionsEqual(legacyPositions, explicitPositions, ids)) return getPageShellMoveFailure("COLLISION");
+  return { valid: true, layout: inferred };
 }
 
 function validatePageShellRepackedRows(
@@ -1890,7 +2041,7 @@ export function planPageShellMove({
       sourceId,
       sourceSpan,
     });
-    return failure ?? { valid: true, layout: candidate };
+    return failure ?? finalizeLegacyCompatiblePageShellMove(layout, candidate, visibleShellIds, naturalHeights, chromeHeightPx);
   }
 
   if (target.mode === "centered" && sourceSpan % 2 === 1) {
@@ -1903,7 +2054,7 @@ export function planPageShellMove({
     if (!sourceCandidatePosition || sourceCandidatePosition.columnStart !== centeredStart) {
       return getPageShellMoveFailure("INVALID_CENTER_PLACEMENT");
     }
-    return { valid: true, layout: candidate };
+    return finalizeLegacyCompatiblePageShellMove(layout, candidate, visibleShellIds, naturalHeights, chromeHeightPx);
   }
 
   if (!targetPosition) {
@@ -1911,7 +2062,7 @@ export function planPageShellMove({
     if (candidatePositions[sourceId]?.columnStart !== target.columnStart) {
       return getPageShellMoveFailure("COLLISION");
     }
-    return { valid: true, layout: candidate };
+    return finalizeLegacyCompatiblePageShellMove(layout, candidate, visibleShellIds, naturalHeights, chromeHeightPx);
   }
   if (!targetId) return getPageShellMoveFailure("INVALID_TARGET");
 
@@ -1932,7 +2083,7 @@ export function planPageShellMove({
     if (!sourceCandidatePosition || !targetCandidatePosition || sourceCandidatePosition.columnStart !== 1 || !isOnRequestedSide) {
       return getPageShellMoveFailure("INVALID_VERTICAL_PLACEMENT");
     }
-    return { valid: true, layout: candidate };
+    return finalizeLegacyCompatiblePageShellMove(layout, candidate, visibleShellIds, naturalHeights, chromeHeightPx);
   }
 
   const targetStructuralRowStart = getPageShellStructuralRowStart(targetId, layout, packedPositions);
@@ -1969,7 +2120,7 @@ export function planPageShellMove({
       ? [Array.from(new Set([...destinationRowIds, ...sourceDestinationRowIds]))]
       : [destinationRowIds, sourceDestinationRowIds];
     const failure = validatePageShellRepackedRows(candidate, candidatePositions, affectedRows);
-    return failure ?? { valid: true, layout: candidate };
+    return failure ?? finalizeLegacyCompatiblePageShellMove(layout, candidate, visibleShellIds, naturalHeights, chromeHeightPx);
   }
 
   if (isStandaloneStructuralRowMove) {
@@ -1982,7 +2133,7 @@ export function planPageShellMove({
     }
     const candidatePositions = packPageShellMoveCandidate(candidate, visibleShellIds, naturalHeights, chromeHeightPx);
     const failure = validatePageShellRepackedRows(candidate, candidatePositions, [[...targetRowIds, sourceId]]);
-    return failure ?? { valid: true, layout: candidate };
+    return failure ?? finalizeLegacyCompatiblePageShellMove(layout, candidate, visibleShellIds, naturalHeights, chromeHeightPx);
   }
 
   const nextRowIds = [...targetRowIds];
@@ -2019,15 +2170,15 @@ export function planPageShellMove({
   };
   const candidatePositions = packPageShellMoveCandidate(candidate, visibleShellIds, naturalHeights, chromeHeightPx);
   const failure = validatePageShellRepackedRows(candidate, candidatePositions, [nextRowIds]);
-  return failure ?? { valid: true, layout: candidate };
+  return failure ?? finalizeLegacyCompatiblePageShellMove(layout, candidate, visibleShellIds, naturalHeights, chromeHeightPx);
 }
 
 /**
- * Packs shells into the earliest available 12-column position. Order is the
- * vertical packing authority; columnStart is only each shell's preferred
- * horizontal grid start. Coordinates remain runtime-only.
+ * The unchanged 7.12.110 packer retained for legacy rendering and compatibility
+ * planning. Order is the legacy vertical packing authority; columnStart is
+ * each shell's preferred horizontal grid start. Coordinates remain runtime-only.
  */
-export function packPageShellLayout(
+export function packPageShellLayoutLegacy(
   order: readonly string[],
   sizes: Readonly<Record<string, PageShellSize>>,
   options: PageShellPackedLayoutOptions = {},
@@ -2234,6 +2385,70 @@ export function packPageShellLayout(
   return positions;
 }
 
+/** Packs valid explicit semantic rows without inferring membership from order or geometry. */
+export function packPageShellLayoutExplicit(
+  order: readonly string[],
+  sizes: Readonly<Record<string, PageShellSize>>,
+  options: PageShellPackedLayoutOptions = {},
+) {
+  const gapPx = options.gapPx ?? PAGE_SHELL_PACKING_GAP_PX;
+  const rowUnitPx = Math.max(1, options.rowUnitPx ?? PAGE_SHELL_PACKING_ROW_UNIT_PX);
+  const chromeHeightPx = Math.max(0, options.chromeHeightPx ?? 0);
+  const naturalHeights = options.naturalHeights ?? {};
+  const placements = options.placements ?? {};
+  const layout: PageShellLayoutPreference = {
+    order: [...order],
+    placements: Object.fromEntries(Object.entries(placements).map(([id, placement]) => [id, { ...placement }])),
+    sizes: Object.fromEntries(Object.entries(sizes).map(([id, size]) => [id, { ...size }])),
+  };
+  if (!isValidPageShellExplicitLayout(layout, order)) return {};
+  const positions: Record<string, PageShellPackedPosition> = {};
+  const getRowSpan = (id: string) => {
+    const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
+    const heightPx = size.heightPx ?? naturalHeights[id] ?? PAGE_SHELL_MIN_HEIGHT;
+    return Math.max(1, Math.ceil((Math.max(1, heightPx) + chromeHeightPx + gapPx) / rowUnitPx));
+  };
+  let nextRow = 0;
+  for (const row of getPageShellExplicitRows(layout, order)) {
+    let rowBottom = nextRow;
+    for (const id of row.shellIds) {
+      const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
+      const placement = normalizePageShellPlacement(placements[id], size.span);
+      const offsetRows = getPageShellPlacementRowOffsetRows(placement, rowUnitPx);
+      const rowStart = nextRow + offsetRows;
+      const centered = isPageShellCenteredPlacement(placement);
+      const columnStart = centered ? getPageShellCenteredColumnStart(size.span) : placement.columnStart;
+      const rowSpan = getRowSpan(id);
+      positions[id] = {
+        columnSpan: size.span,
+        columnStart,
+        rowSpan,
+        rowStart: rowStart + 1,
+      };
+      rowBottom = Math.max(rowBottom, rowStart + rowSpan);
+    }
+    nextRow = rowBottom;
+  }
+  return positions;
+}
+
+/** Dispatches valid explicit layouts to semantic packing and everything else to legacy packing. */
+export function packPageShellLayout(
+  order: readonly string[],
+  sizes: Readonly<Record<string, PageShellSize>>,
+  options: PageShellPackedLayoutOptions = {},
+) {
+  const placements = options.placements ?? {};
+  const candidate: PageShellLayoutPreference = {
+    order: [...order],
+    placements: Object.fromEntries(Object.entries(placements).map(([id, placement]) => [id, { ...placement }])),
+    sizes: Object.fromEntries(Object.entries(sizes).map(([id, size]) => [id, { ...size }])),
+  };
+  return isValidPageShellExplicitLayout(candidate, order)
+    ? packPageShellLayoutExplicit(order, sizes, options)
+    : packPageShellLayoutLegacy(order, sizes, options);
+}
+
 export function normalizePageShellSpan(value: unknown, fallback: PageShellSpan = NATURAL_PAGE_SHELL_SIZE.span): PageShellSpan {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(PAGE_SHELL_SPAN_OPTIONS[0], Math.min(PAGE_SHELL_OPTIONS_LAST, Math.round(value))) as PageShellSpan;
@@ -2344,7 +2559,7 @@ export function normalizePageShellLayout(
       const legacyId = Object.entries(legacyIdReplacements).find(([, replacementIds]) => replacementIds.includes(id))?.[0];
       const legacyPlacement = legacyId ? placementSource[legacyId] : undefined;
       if (legacyPlacement && typeof legacyPlacement === "object" && !Array.isArray(legacyPlacement)) {
-        const replacementIds = legacyIdReplacements[legacyId] ?? [];
+        const replacementIds = legacyId === undefined ? [] : legacyIdReplacements[legacyId] ?? [];
         // A one-to-many replacement can preserve legacy placement hints, but
         // its old row is not safe to copy to multiple new shells.
         placementValue = replacementIds.length === 1

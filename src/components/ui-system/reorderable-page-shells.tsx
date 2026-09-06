@@ -18,6 +18,8 @@ import {
   getPageShellShrinkHeight,
   normalizePageShellPlacement,
   normalizePageShellSpan,
+  isValidPageShellExplicitLayout,
+  migratePageShellLayoutWithMeasuredParity,
   planPageShellMove,
   packPageShellLayout,
   PAGE_SHELL_MIN_HEIGHT,
@@ -459,6 +461,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const [renderedWidths, setRenderedWidths] = useState<Record<string, number>>({});
   const [widthDrafts, setWidthDrafts] = useState<Record<string, string>>({});
   const dragMoveWarningTimerRef = useRef<number | null>(null);
+  const rowMigrationFrameRef = useRef<number | null>(null);
+  const rowMigrationSignatureRef = useRef<string | null>(null);
+  const rowMigrationStableFramesRef = useRef(0);
+  const commitMeasuredRowMigration = layout.commitMeasuredRowMigration;
   const packedPositions = useMemo<Record<string, PageShellPackedPosition>>(
     () => packPageShellLayout(
       projectVisiblePageShellOrder(layout.order, visibleShellIds),
@@ -533,6 +539,65 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       mutationObserver?.disconnect();
     };
   }, [layout.isCanonical, measureNaturalShellHeights, orderedShells, renderedShellOrderKey]);
+
+  useEffect(() => {
+    if (rowMigrationFrameRef.current !== null && typeof window !== "undefined") {
+      window.cancelAnimationFrame(rowMigrationFrameRef.current);
+      rowMigrationFrameRef.current = null;
+    }
+    rowMigrationSignatureRef.current = null;
+    rowMigrationStableFramesRef.current = 0;
+    if (!layout.isEditing || layout.isCanonical || !layout.isLayoutReady || layout.isPreviewing) return undefined;
+
+    const shellIds = orderedShells.map((shell) => shell.id);
+    const currentLayout: PageShellLayoutPreference = {
+      order: [...layout.order],
+      placements: Object.fromEntries(Object.entries(layout.placements).map(([id, placement]) => [id, { ...placement }])),
+      sizes: Object.fromEntries(Object.entries(layout.sizes).map(([id, size]) => [id, { ...size }])),
+    };
+    if (isValidPageShellExplicitLayout(currentLayout, shellIds)) return undefined;
+
+    const measurementSignature = JSON.stringify({
+      chromeHeightPx: 32,
+      naturalHeights: Object.fromEntries(shellIds.map((id) => [id, naturalHeights[id] ?? 0])),
+      placements: shellIds.map((id) => [id, currentLayout.placements?.[id] ?? null]),
+      sizes: shellIds.map((id) => [id, currentLayout.sizes[id] ?? null]),
+      shellIds,
+    });
+    const measurementsReady = shellIds.every((id) => {
+      const size = currentLayout.sizes[id];
+      return Boolean(size?.heightPx && size.heightPx > 0) || (naturalHeights[id] ?? 0) > 0;
+    });
+    if (!measurementsReady) return undefined;
+
+    const checkStableMeasurement = () => {
+      rowMigrationFrameRef.current = null;
+      if (rowMigrationSignatureRef.current !== measurementSignature) {
+        rowMigrationSignatureRef.current = measurementSignature;
+        rowMigrationStableFramesRef.current = 1;
+      } else {
+        rowMigrationStableFramesRef.current += 1;
+      }
+      if (rowMigrationStableFramesRef.current < 2 || typeof window === "undefined") {
+        if (typeof window !== "undefined") rowMigrationFrameRef.current = window.requestAnimationFrame(checkStableMeasurement);
+        return;
+      }
+      const migrated = migratePageShellLayoutWithMeasuredParity({
+        chromeHeightPx: 32,
+        layout: currentLayout,
+        naturalHeights,
+        shellIds,
+      });
+      if (migrated) commitMeasuredRowMigration(migrated);
+    };
+    if (typeof window !== "undefined") rowMigrationFrameRef.current = window.requestAnimationFrame(checkStableMeasurement);
+    return () => {
+      if (rowMigrationFrameRef.current !== null && typeof window !== "undefined") {
+        window.cancelAnimationFrame(rowMigrationFrameRef.current);
+      }
+      rowMigrationFrameRef.current = null;
+    };
+  }, [commitMeasuredRowMigration, layout.isCanonical, layout.isEditing, layout.isLayoutReady, layout.isPreviewing, layout.order, layout.placements, layout.sizes, naturalHeights, orderedShells]);
 
   function currentLayout(): PageShellLayoutPreference {
     return {

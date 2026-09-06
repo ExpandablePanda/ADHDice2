@@ -53,15 +53,19 @@ import {
   getPageShellShrinkHeight,
   getPageShellVerticalOffsetSteps,
   getPageShellCanonicalLayoutValidationErrors,
+  getPageShellExplicitLayoutValidationErrors,
   getRegisteredPageShellPages,
   hasCompletePageShellRows,
   hasPageShellLayout,
+  isValidPageShellExplicitLayout,
   isPageShellCenteredPlacement,
   normalizePageShellLayout,
   normalizePageShellPlacement,
   normalizePageShellRowIndex,
   normalizePageShellRowOffsetSteps,
   normalizePageShellSize,
+  packPageShellLayoutExplicit,
+  packPageShellLayoutLegacy,
   packPageShellLayout,
   planPageShellMove,
   placePageShellAtDrop,
@@ -74,6 +78,7 @@ import {
   writePageShellLayout,
   writePageShellView,
   inferPageShellRowsFromPackedLayout,
+  migratePageShellLayoutWithMeasuredParity,
   isLegacyPageShellLayout,
 } from "@/lib/page-shell-layout";
 import {
@@ -2040,6 +2045,113 @@ test("packed placement uses the shared 12-column geometry and direct order-first
   assert.match(layoutSource, /PAGE_SHELL_PACKING_GAP_PX/);
   assert.equal(PAGE_SHELL_PACKING_GAP_PX, 20);
   assert.equal(PAGE_SHELL_PACKING_ROW_UNIT_PX, 4);
+});
+
+test("explicit packing uses semantic rows, stored columns, and stable intra-row order", () => {
+  const order = ["a", "b", "c"];
+  const sizes = sizesFor({ a: 4, b: 4, c: 4 });
+  const placements = {
+    a: { columnStart: 1, rowIndex: 0 },
+    b: { columnStart: 1, rowIndex: 1 },
+    c: { columnStart: 7, rowIndex: 0 },
+  };
+  const positions = packPageShellLayoutExplicit(order, sizes, { placements });
+  assert.equal(positions.a.columnStart, 1);
+  assert.equal(positions.c.columnStart, 7);
+  assert.equal(positions.a.rowStart, positions.c.rowStart);
+  assert.ok(positions.b.rowStart > positions.a.rowStart);
+  assert.deepEqual(packPageShellLayout(order, sizes, { placements }), positions);
+});
+
+test("explicit mixed-height rows reflow below the tallest offset member without changing columns", () => {
+  const order = ["tall", "short", "next"];
+  const sizes = sizesFor({ tall: 5, short: 5, next: 12 }, { tall: 480, short: 144, next: null });
+  const placements = {
+    tall: { columnStart: 1, rowIndex: 0 },
+    short: { columnStart: 7, rowIndex: 0, rowOffsetSteps: 2 },
+    next: { columnStart: 1, rowIndex: 1 },
+  };
+  const positions = packPageShellLayoutExplicit(order, sizes, { placements });
+  assert.equal(positions.short.columnStart, 7);
+  assert.equal(positions.short.rowStart > positions.tall.rowStart, true);
+  assert.equal(positions.next.rowStart > positions.tall.rowStart, true);
+  assert.equal(positions.next.rowStart > positions.short.rowStart, true);
+});
+
+test("explicit validation rejects overlap and full-width sharing while accepting horizontal gaps", () => {
+  const sizes = sizesFor({ left: 4, right: 4, full: 12 });
+  const valid = {
+    order: ["left", "right"],
+    placements: { left: { columnStart: 1, rowIndex: 0 }, right: { columnStart: 7, rowIndex: 0 } },
+    sizes: { left: sizes.left, right: sizes.right },
+  };
+  assert.deepEqual(getPageShellExplicitLayoutValidationErrors(valid, valid.order), []);
+  assert.equal(isValidPageShellExplicitLayout(valid, valid.order), true);
+  const invalid = {
+    order: ["left", "right", "full"],
+    placements: {
+      left: { columnStart: 1, rowIndex: 0 },
+      right: { columnStart: 4, rowIndex: 0 },
+      full: { columnStart: 1, rowIndex: 0 },
+    },
+    sizes,
+  };
+  assert.match(getPageShellExplicitLayoutValidationErrors(invalid, invalid.order).join(";"), /overlaps|full-width/);
+  assert.equal(isValidPageShellExplicitLayout(invalid, invalid.order), false);
+});
+
+test("malformed complete rows fall back to the unchanged legacy packer", () => {
+  const order = ["left", "right"];
+  const sizes = sizesFor({ left: 5, right: 7 });
+  const placements = {
+    left: { columnStart: 1, rowIndex: 0 },
+    right: { columnStart: 4, rowIndex: 0 },
+  };
+  assert.deepEqual(
+    packPageShellLayout(order, sizes, { placements }),
+    packPageShellLayoutLegacy(order, sizes, { placements }),
+  );
+});
+
+test("measured legacy migration is parity-gated and supports custom-height readiness", () => {
+  const order = ["water", "food", "sleep"];
+  const sizes = sizesFor({ water: 5, food: 7, sleep: 12 }, { food: 240 });
+  const layout = { order, placements: { water: { columnStart: 1 }, food: { columnStart: 6 }, sleep: { columnStart: 1 } }, sizes };
+  const migrated = migratePageShellLayoutWithMeasuredParity({
+    chromeHeightPx: 32,
+    layout,
+    naturalHeights: { water: 192, sleep: 320 },
+    shellIds: order,
+  });
+  assert.ok(migrated);
+  assert.equal(hasCompletePageShellRows(migrated, order), true);
+  const before = packPageShellLayoutLegacy(order, sizes, { chromeHeightPx: 32, naturalHeights: { water: 192, sleep: 320 }, placements: layout.placements });
+  const after = packPageShellLayoutExplicit(order, sizes, { chromeHeightPx: 32, naturalHeights: { water: 192, sleep: 320 }, placements: migrated?.placements });
+  assert.deepEqual(after, before);
+});
+
+test("explicit planner compatibility finalization refreshes semantic rows after a legacy-style move", () => {
+  const order = ["a", "b", "c"];
+  const sizes = sizesFor({ a: 4, b: 4, c: 4 });
+  const layout = {
+    order,
+    placements: {
+      a: { columnStart: 1, rowIndex: 0 },
+      b: { columnStart: 5, rowIndex: 0 },
+      c: { columnStart: 1, rowIndex: 1 },
+    },
+    sizes,
+  };
+  const positions = packPageShellLayout(order, sizes, { placements: layout.placements });
+  const target = getPageShellDirectionalMoveTarget({ direction: "right", layout, packedPositions: positions, sourceId: "a", visibleShellIds: order });
+  assert.ok(target);
+  const plan = target && planPageShellMove({ layout, packedPositions: positions, sourceId: "a", target, visibleShellIds: order });
+  assert.equal(plan.valid, true);
+  if (plan.valid) {
+    assert.equal(plan.layout.placements?.a?.rowIndex, 0);
+    assert.equal(plan.layout.placements?.b?.rowIndex, 0);
+    assert.deepEqual(packPageShellLayout(plan.layout.order, sizes, { placements: plan.layout.placements }), packPageShellLayoutLegacy(plan.layout.order, sizes, { placements: plan.layout.placements }));
+  }
 });
 
 test("7.12.110 keeps the legacy packer, planner, drag, and hydration authorities unchanged", () => {

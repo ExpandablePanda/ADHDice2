@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.110`.
+- Current working app version: `7.12.111`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.111 Measured Semantic Row Migration and Explicit Packer Cutover
+
+Measured semantic-row migration is active only after Edit Layout renders all
+registered shells with complete stable measurements. Migration is parity-gated
+against the preserved legacy packer; layouts that fail parity remain on legacy
+compatibility packing and are not persisted as explicit. Valid explicit layouts
+use persisted semantic row packing, while malformed or incomplete layouts use
+legacy defensive recovery. Custom Views migrate lazily when applied and
+measured, retaining their View IDs. The planner still uses legacy targeting
+through a temporary row-reconciliation bridge; Phase 3 will replace that
+targeting. The known empty Up/Down destination bug remains a Phase 3 issue.
+No storage-key, SQL, or schema migration was added.
 
 ## 2026-09-06 7.12.110 Semantic Shell Row Compatibility Foundation
 
