@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.106`.
+- Current working app version: `7.12.107`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.107 Unified Structural Rows for Shell Moves
+
+Directional controls and the explicit shell-move planner now share one
+structural-row definition: packed `rowStart` minus the intentional Y detent
+converted through the existing vertical-placement and packing-row constants.
+Intentional Y detents no longer split one logical row, so target-row and
+source-row discovery, `sourceWasInTargetRow`, row reconstruction, and width
+validation include every structural peer. Left and Right planner behavior is
+symmetrical, including sequential arrow moves that repack after each committed
+layout, while existing offset values remain preserved. Up/Down, full-width and
+Center behavior, downstream reflow, drag targeting, Views, and Reset remain
+unchanged. No persistence or schema change was needed.
 
 ## 2026-09-06 7.12.106 Authoritative Shell Targets and Directional Move Controls
 

@@ -35,6 +35,8 @@ import {
   getPageShellPlacementRowOffsetSteps,
   getPageShellInsertionIndex,
   getPageShellLayoutStorageKey,
+  getPageShellStructuralRowIds,
+  getPageShellStructuralRowStart,
   getPageShellViewsStorageKey,
   getPageShellShrinkHeight,
   getPageShellVerticalOffsetSteps,
@@ -555,6 +557,158 @@ test("vertical peer selection ties by stable visible order and ignores rendered 
   const rightTarget = getPageShellDirectionalMoveTarget({ direction: "right", layout: offsetLayout, packedPositions: offsetPositions, sourceId: "a", visibleShellIds: offsetOrder });
   assert.equal(rightTarget?.targetId, "b");
   assert.equal(rightTarget?.rowOffsetSteps, 0);
+});
+
+test("structural row baselines remove detents, keep Center unoffset, and sort peers deterministically", () => {
+  const order = ["a", "b", "c", "center"];
+  const sizes = sizesFor({ a: 4, b: 4, c: 4, center: 5 });
+  const placements = {
+    a: { columnStart: 5 },
+    b: { columnStart: 1, rowOffsetSteps: 4 },
+    c: { columnStart: 1 },
+    center: { columnStart: 4, mode: "centered" as const },
+  };
+  const layout = { order, placements, sizes };
+  const positions = positionsFor(order, sizes, placements);
+  const offsetRows = Math.round(4 * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX / PAGE_SHELL_PACKING_ROW_UNIT_PX);
+
+  assert.equal(getPageShellStructuralRowStart("b", layout, positions), positions.b.rowStart - offsetRows);
+  assert.equal(getPageShellStructuralRowStart("a", layout, positions), getPageShellStructuralRowStart("b", layout, positions));
+  assert.equal(getPageShellStructuralRowStart("center", layout, positions), positions.center.rowStart);
+
+  const tiedPositions = {
+    a: { columnSpan: 4 as const, columnStart: 5, rowSpan: 1, rowStart: 1 },
+    b: { columnSpan: 4 as const, columnStart: 1, rowSpan: 1, rowStart: 1 + offsetRows },
+    c: { columnSpan: 4 as const, columnStart: 1, rowSpan: 1, rowStart: 1 },
+  };
+  const tiedLayout = {
+    placements: {
+      a: { columnStart: 5 },
+      b: { columnStart: 1, rowOffsetSteps: 4 },
+      c: { columnStart: 1 },
+    },
+  };
+  assert.deepEqual(getPageShellStructuralRowIds(["a", "b", "c"], tiedLayout, tiedPositions, 1), ["b", "c", "a"]);
+});
+
+test("offset peers use one structural row for planner targets, sources, width, and symmetric arrows", () => {
+  const order = ["a", "b", "c"];
+  const sizes = sizesFor({ a: 4, b: 4, c: 4 });
+  const placements = {
+    a: { columnStart: 1 },
+    b: { columnStart: 5, rowOffsetSteps: 4 },
+    c: { columnStart: 9 },
+  };
+  const layout = { order, placements, sizes };
+  const packedPositions = positionsFor(order, sizes, placements);
+  const structuralRowStart = getPageShellStructuralRowStart("b", layout, packedPositions);
+  assert.equal(structuralRowStart, getPageShellStructuralRowStart("a", layout, packedPositions));
+  assert.equal(structuralRowStart, getPageShellStructuralRowStart("c", layout, packedPositions));
+  assert.deepEqual(getPageShellStructuralRowIds(order, layout, packedPositions, structuralRowStart ?? -1), ["a", "b", "c"]);
+
+  const leftTarget = getPageShellDirectionalMoveTarget({ direction: "left", layout, packedPositions, sourceId: "b", visibleShellIds: order });
+  assert.equal(leftTarget?.targetId, "a");
+  assert.equal(leftTarget?.rowOffsetSteps, 4);
+  const leftPlan = leftTarget && planPageShellMove({ layout, visibleShellIds: order, sourceId: "b", target: leftTarget, packedPositions });
+  assert.equal(leftPlan?.valid, true);
+  if (leftPlan?.valid) {
+    assert.deepEqual(leftPlan.layout.order, ["b", "a", "c"]);
+    assert.equal(leftPlan.layout.placements?.b?.rowOffsetSteps, 4);
+    const leftPositions = positionsFor(leftPlan.layout.order, sizes, leftPlan.layout.placements);
+    assert.deepEqual(getPageShellStructuralRowIds(leftPlan.layout.order, leftPlan.layout, leftPositions, getPageShellStructuralRowStart("b", leftPlan.layout, leftPositions) ?? -1), ["b", "a", "c"]);
+  }
+
+  const rightTarget = getPageShellDirectionalMoveTarget({ direction: "right", layout, packedPositions, sourceId: "b", visibleShellIds: order });
+  assert.equal(rightTarget?.targetId, "c");
+  assert.equal(rightTarget?.rowOffsetSteps, 4);
+  const rightPlan = rightTarget && planPageShellMove({ layout, visibleShellIds: order, sourceId: "b", target: rightTarget, packedPositions });
+  assert.equal(rightPlan?.valid, true);
+  if (rightPlan?.valid) {
+    assert.deepEqual(rightPlan.layout.order, ["a", "c", "b"]);
+    assert.equal(rightPlan.layout.placements?.b?.rowOffsetSteps, 4);
+    const rightPositions = positionsFor(rightPlan.layout.order, sizes, rightPlan.layout.placements);
+    assert.deepEqual(getPageShellStructuralRowIds(rightPlan.layout.order, rightPlan.layout, rightPositions, getPageShellStructuralRowStart("b", rightPlan.layout, rightPositions) ?? -1), ["a", "c", "b"]);
+  }
+});
+
+test("structural row width includes offset peers and rejects an over-wide destination", () => {
+  const validOrder = ["a", "b", "c"];
+  const validSizes = sizesFor({ a: 4, b: 4, c: 4 });
+  const validPlacements = {
+    a: { columnStart: 1 },
+    b: { columnStart: 5, rowOffsetSteps: 4 },
+    c: { columnStart: 9 },
+  };
+  const validLayout = { order: validOrder, placements: validPlacements, sizes: validSizes };
+  const validPositions = positionsFor(validOrder, validSizes, validPlacements);
+  const validTarget = getPageShellDirectionalMoveTarget({ direction: "right", layout: validLayout, packedPositions: validPositions, sourceId: "b", visibleShellIds: validOrder });
+  const validPlan = validTarget && planPageShellMove({ layout: validLayout, visibleShellIds: validOrder, sourceId: "b", target: validTarget, packedPositions: validPositions });
+  assert.equal(validPlan?.valid, true);
+
+  const invalidOrder = ["a", "b", "c"];
+  const invalidSizes = sizesFor({ a: 4, b: 7, c: 4 });
+  const invalidPlacements = {
+    a: { columnStart: 1 },
+    b: { columnStart: 5, rowOffsetSteps: 4 },
+    c: { columnStart: 1 },
+  };
+  const invalidLayout = { order: invalidOrder, placements: invalidPlacements, sizes: invalidSizes };
+  const invalidPositions = {
+    a: { columnSpan: 4 as const, columnStart: 1, rowSpan: 1, rowStart: 1 },
+    b: { columnSpan: 7 as const, columnStart: 5, rowSpan: 1, rowStart: 4 },
+    c: { columnSpan: 4 as const, columnStart: 1, rowSpan: 1, rowStart: 1 },
+  };
+  const invalidPlan = planPageShellMove({
+    layout: invalidLayout,
+    visibleShellIds: invalidOrder,
+    sourceId: "b",
+    target: { columnStart: 9, insertionIndex: 2, laneOrder: 0, relationship: "right", targetId: "c", rowOffsetSteps: 4 },
+    packedPositions: invalidPositions,
+  });
+  assert.equal(invalidPlan.valid, false);
+  if (!invalidPlan.valid) {
+    assert.equal(invalidPlan.reason, "ROW_WIDTH_EXCEEDED");
+    assert.equal(invalidPlan.targetRowWidth, 15);
+  }
+});
+
+test("alternating horizontal arrows repack each committed layout before the next target", () => {
+  const sizes = sizesFor({ a: 4, b: 4, c: 4 });
+  let layout: PageShellLayoutPreference = {
+    order: ["a", "b", "c"],
+    sizes,
+    placements: {
+      a: { columnStart: 1 },
+      b: { columnStart: 5, rowOffsetSteps: 4 },
+      c: { columnStart: 9 },
+    },
+  };
+
+  const move = (direction: "left" | "right") => {
+    const packedPositions = positionsFor(layout.order, sizes, layout.placements);
+    const target = getPageShellDirectionalMoveTarget({ direction, layout, packedPositions, sourceId: "b", visibleShellIds: layout.order });
+    assert.ok(target);
+    const plan = planPageShellMove({ layout, visibleShellIds: layout.order, sourceId: "b", target, packedPositions });
+    assert.equal(plan.valid, true);
+    if (plan.valid) {
+      layout = plan.layout;
+      const repacked = positionsFor(layout.order, sizes, layout.placements);
+      assert.equal(getPageShellStructuralRowStart("a", layout, repacked), getPageShellStructuralRowStart("b", layout, repacked));
+      assert.equal(getPageShellStructuralRowStart("b", layout, repacked), getPageShellStructuralRowStart("c", layout, repacked));
+      assert.equal(layout.placements?.b?.rowOffsetSteps, 4);
+    }
+  };
+
+  move("left");
+  assert.deepEqual(layout.order, ["b", "a", "c"]);
+  move("right");
+  assert.deepEqual(layout.order, ["a", "b", "c"]);
+  move("right");
+  assert.deepEqual(layout.order, ["a", "c", "b"]);
+  move("left");
+  assert.deepEqual(layout.order, ["a", "b", "c"]);
+  const finalPositions = positionsFor(layout.order, sizes, layout.placements);
+  assert.equal(getPageShellDirectionalMoveTarget({ direction: "right", layout, packedPositions: finalPositions, sourceId: "c", visibleShellIds: layout.order }), null);
 });
 
 test("full-width arrows remain structural rows, while centered standalone shells keep Center", () => {

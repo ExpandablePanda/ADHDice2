@@ -674,6 +674,14 @@ export function getPageShellPlacementRowOffsetSteps(placement: PageShellPlacemen
   return normalizePageShellRowOffsetSteps(placement.rowOffsetSteps);
 }
 
+function getPageShellPlacementRowOffsetRows(
+  placement: PageShellPlacement | undefined,
+  rowUnitPx = PAGE_SHELL_PACKING_ROW_UNIT_PX,
+) {
+  const safeRowUnitPx = Math.max(1, rowUnitPx);
+  return Math.round(getPageShellPlacementRowOffsetSteps(placement) * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX / safeRowUnitPx);
+}
+
 /** Maps a document-space intended top onto the durable 12px vertical detents. */
 export function getPageShellVerticalOffsetSteps(
   intendedTop: number,
@@ -1241,32 +1249,29 @@ function getPageShellRowWidth(
   return ids.reduce((total, id) => total + getPageShellSpanForMove(layout, id), 0);
 }
 
-function getPageShellRowIds(
-  ids: readonly string[],
-  positions: Readonly<Record<string, PageShellPackedPosition>>,
-  rowStart: number,
-  excludedId?: string,
-) {
-  return ids
-    .filter((id) => id !== excludedId && positions[id]?.rowStart === rowStart)
-    .sort((left, right) => (
-      (positions[left]?.columnStart ?? Number.MAX_SAFE_INTEGER) - (positions[right]?.columnStart ?? Number.MAX_SAFE_INTEGER)
-      || ids.indexOf(left) - ids.indexOf(right)
-    ));
-}
-
-function getPageShellStructuralRowKey(
+export function getPageShellStructuralRowStart(
   id: string,
   layout: Pick<PageShellLayoutPreference, "placements">,
   positions: Readonly<Record<string, PageShellPackedPosition>>,
 ) {
   const position = positions[id];
   if (!position) return undefined;
-  const placement = layout.placements?.[id];
-  const offsetRows = isPageShellCenteredPlacement(placement)
-    ? 0
-    : Math.round(getPageShellPlacementRowOffsetSteps(placement) * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX / PAGE_SHELL_PACKING_ROW_UNIT_PX);
-  return position.rowStart - offsetRows;
+  return position.rowStart - getPageShellPlacementRowOffsetRows(layout.placements?.[id]);
+}
+
+export function getPageShellStructuralRowIds(
+  ids: readonly string[],
+  layout: Pick<PageShellLayoutPreference, "placements">,
+  positions: Readonly<Record<string, PageShellPackedPosition>>,
+  structuralRowStart: number,
+  excludedId?: string,
+) {
+  return ids
+    .filter((id) => id !== excludedId && getPageShellStructuralRowStart(id, layout, positions) === structuralRowStart)
+    .sort((left, right) => (
+      (positions[left]?.columnStart ?? Number.MAX_SAFE_INTEGER) - (positions[right]?.columnStart ?? Number.MAX_SAFE_INTEGER)
+      || ids.indexOf(left) - ids.indexOf(right)
+    ));
 }
 
 function getPageShellStructuralRows(
@@ -1276,16 +1281,12 @@ function getPageShellStructuralRows(
 ) {
   const rows = new Map<number, string[]>();
   visibleShellIds.forEach((id) => {
-    const key = getPageShellStructuralRowKey(id, layout, positions);
+    const key = getPageShellStructuralRowStart(id, layout, positions);
     if (key === undefined) return;
     rows.set(key, [...(rows.get(key) ?? []), id]);
   });
-  const visibleOrder = new Map(visibleShellIds.map((id, index) => [id, index]));
-  return Array.from(rows, ([key, ids]) => ({
-    ids: ids.sort((left, right) => (
-      (positions[left]?.columnStart ?? Number.MAX_SAFE_INTEGER) - (positions[right]?.columnStart ?? Number.MAX_SAFE_INTEGER)
-      || (visibleOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (visibleOrder.get(right) ?? Number.MAX_SAFE_INTEGER)
-    )),
+  return Array.from(rows, ([key]) => ({
+    ids: getPageShellStructuralRowIds(visibleShellIds, layout, positions, key),
     key,
   })).sort((left, right) => left.key - right.key);
 }
@@ -1411,10 +1412,6 @@ function getPageShellMoveFailure(
   };
 }
 
-function getPageShellMovePlacementRowOffset(placement: PageShellPlacement | undefined) {
-  return getPageShellPlacementRowOffsetSteps(placement) * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX / PAGE_SHELL_PACKING_ROW_UNIT_PX;
-}
-
 function setPageShellPlannedRowStarts(
   plannedPositions: Record<string, PageShellPackedPosition>,
   rowIds: readonly string[],
@@ -1430,7 +1427,11 @@ function setPageShellPlannedRowStarts(
     const current = plannedPositions[id];
     if (!current) continue;
     const span = getPageShellSpanForMove(layout, id);
-    plannedPositions[id] = { ...current, columnStart, rowStart };
+    plannedPositions[id] = {
+      ...current,
+      columnStart,
+      rowStart: rowStart + getPageShellPlacementRowOffsetRows(layout.placements?.[id]),
+    };
     columnStart += span;
   }
 }
@@ -1458,7 +1459,7 @@ function validatePageShellRepackedRows(
     if (positions.some((position) => !position)) return getPageShellMoveFailure("INVALID_TARGET");
     const rowBaseline = Math.min(...rowIds.map((id) => {
       const placement = candidate.placements?.[id];
-      const offsetRows = isPageShellCenteredPlacement(placement) ? 0 : getPageShellMovePlacementRowOffset(placement);
+      const offsetRows = getPageShellPlacementRowOffsetRows(placement);
       return (candidatePositions[id]?.rowStart ?? Number.MAX_SAFE_INTEGER) - offsetRows;
     }));
     for (const id of rowIds) {
@@ -1466,7 +1467,7 @@ function validatePageShellRepackedRows(
       if (!position) return getPageShellMoveFailure("INVALID_TARGET");
       const placement = candidate.placements?.[id];
       const expectedColumnStart = placement?.columnStart;
-      const offsetRows = isPageShellCenteredPlacement(placement) ? 0 : getPageShellMovePlacementRowOffset(placement);
+      const offsetRows = getPageShellPlacementRowOffsetRows(placement);
       if (expectedColumnStart !== undefined && position.columnStart !== expectedColumnStart) {
         return getPageShellMoveFailure("COLLISION");
       }
@@ -1549,9 +1550,14 @@ export function planPageShellMove({
     return { valid: true, layout: candidate };
   }
 
-  const targetRowIds = getPageShellRowIds(visibleShellIds, packedPositions, targetPosition.rowStart, sourceId);
-  const sourceRowIds = getPageShellRowIds(visibleShellIds, packedPositions, sourcePosition.rowStart, sourceId);
-  const sourceWasInTargetRow = sourcePosition.rowStart === targetPosition.rowStart;
+  const targetStructuralRowStart = getPageShellStructuralRowStart(targetId, layout, packedPositions);
+  const sourceStructuralRowStart = getPageShellStructuralRowStart(sourceId, layout, packedPositions);
+  if (targetStructuralRowStart === undefined || sourceStructuralRowStart === undefined) {
+    return getPageShellMoveFailure("INVALID_TARGET");
+  }
+  const targetRowIds = getPageShellStructuralRowIds(visibleShellIds, layout, packedPositions, targetStructuralRowStart, sourceId);
+  const sourceRowIds = getPageShellStructuralRowIds(visibleShellIds, layout, packedPositions, sourceStructuralRowStart, sourceId);
+  const sourceWasInTargetRow = sourceStructuralRowStart === targetStructuralRowStart;
   const targetRowWithoutTarget = targetRowIds.filter((id) => id !== targetId);
 
   if (relationship === "replace") {
@@ -1596,7 +1602,7 @@ export function planPageShellMove({
     });
   }
 
-  setPageShellPlannedRowStarts(plannedPositions, nextRowIds, targetPosition.rowStart, candidate);
+  setPageShellPlannedRowStarts(plannedPositions, nextRowIds, targetStructuralRowStart, candidate);
   const plannedSourcePlacement = candidate.placements?.[sourceId] ?? { columnStart: target.columnStart, laneOrder: 0 };
   const nextPlacements = clonePageShellPlacements(candidate.placements);
   for (const id of nextRowIds) {
@@ -1611,7 +1617,7 @@ export function planPageShellMove({
   plannedPositions[sourceId] = {
     ...plannedPositions[sourceId],
     columnStart: plannedSourcePlacement.columnStart,
-    rowStart: targetPosition.rowStart + getPageShellMovePlacementRowOffset(plannedSourcePlacement),
+    rowStart: targetStructuralRowStart + getPageShellPlacementRowOffsetRows(plannedSourcePlacement),
   };
   const candidatePositions = packPageShellMoveCandidate(candidate, visibleShellIds, naturalHeights, chromeHeightPx);
   const failure = validatePageShellRepackedRows(candidate, candidatePositions, [nextRowIds]);
@@ -1737,9 +1743,7 @@ export function packPageShellLayout(
           baseRow += 1;
         }
       }
-      const offsetRows = placement && !isPageShellCenteredPlacement(placement)
-        ? Math.round(getPageShellPlacementRowOffsetSteps(placement) * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX / rowUnitPx)
-        : 0;
+      const offsetRows = getPageShellPlacementRowOffsetRows(placement, rowUnitPx);
       const row = findNearestLegalRow(baseRow, baseRow + offsetRows, rowSpan, column, size.span);
       markOccupied(row, column, rowSpan, size.span);
       positions[id] = {
@@ -1757,9 +1761,7 @@ export function packPageShellLayout(
         const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
         const preferred = getPreferredColumn(id);
         const placement = placements[id] ? normalizePageShellPlacement(placements[id], size.span) : undefined;
-        const offsetRows = placement && !isPageShellCenteredPlacement(placement)
-          ? Math.round(getPageShellPlacementRowOffsetSteps(placement) * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX / rowUnitPx)
-          : 0;
+        const offsetRows = getPageShellPlacementRowOffsetRows(placement, rowUnitPx);
         return preferred !== null && canPlace(row + offsetRows, preferred.column, getRowSpan(id), size.span);
       })) row += 1;
       let groupBottom = row;
@@ -1768,9 +1770,7 @@ export function packPageShellLayout(
         const preferred = getPreferredColumn(id);
         const placement = placements[id] ? normalizePageShellPlacement(placements[id], size.span) : undefined;
         if (!preferred) continue;
-        const offsetRows = placement && !isPageShellCenteredPlacement(placement)
-          ? Math.round(getPageShellPlacementRowOffsetSteps(placement) * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX / rowUnitPx)
-          : 0;
+        const offsetRows = getPageShellPlacementRowOffsetRows(placement, rowUnitPx);
         const placedRow = row + offsetRows;
         markOccupied(placedRow, preferred.column, getRowSpan(id), size.span);
         positions[id] = {
