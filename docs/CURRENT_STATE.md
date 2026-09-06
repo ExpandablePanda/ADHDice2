@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.108`.
+- Current working app version: `7.12.109`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.109 Direct Empty Vertical Shell Targets
+
+Occupied vertical destinations continue to use the existing deterministic
+`replace` swap planner. Empty Up/Down destinations now return a transient
+direct target with `targetId: null`, the exact adjacent structural-row
+baseline, and the source's snapped `columnStart`; unrelated peers are no
+longer used as fake anchors. A pure row insertion helper keeps the source
+inside the destination row's contiguous visible-order block, and the planner
+validates the exact row membership, X placement, widths, capacity, and
+non-overlap after real packing. Up and Down normalize `rowOffsetSteps` to zero
+and move one structural row; mixed-height Water-like packing and reverse
+movement are covered. Left/Right, drag, downstream reflow, Center, Views,
+Reset, and persistence remain unchanged. No SQL or schema migration was
+needed.
 
 ## 2026-09-06 7.12.108 Vertical Arrow Swaps for Occupied Shells
 

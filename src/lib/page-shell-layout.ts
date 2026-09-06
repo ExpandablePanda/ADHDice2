@@ -529,6 +529,8 @@ export type PageShellDragAxisIntent = "horizontal" | "vertical";
 
 export type PageShellDropTarget = {
   columnStart: number;
+  /** Transient exact structural-row baseline for an empty vertical destination. */
+  destinationStructuralRowStart?: number;
   insertionIndex: number;
   laneOrder: number;
   mode?: "centered";
@@ -1274,6 +1276,44 @@ export function getPageShellStructuralRowIds(
     ));
 }
 
+/**
+ * Returns the visible-order insertion point for joining a structural row at a
+ * requested snapped column. The row itself, rather than an unrelated shell,
+ * is the destination authority.
+ */
+export function getPageShellStructuralRowInsertionIndex(
+  visibleShellIds: readonly string[],
+  sourceId: string,
+  structuralRowIds: readonly string[],
+  positions: Readonly<Record<string, PageShellPackedPosition>>,
+  columnStart: number,
+) {
+  const orderWithoutSource = visibleShellIds.filter((id) => id !== sourceId);
+  const visibleOrder = new Map(orderWithoutSource.map((id, index) => [id, index]));
+  const rowIds = structuralRowIds
+    .filter((id) => id !== sourceId && orderWithoutSource.includes(id) && positions[id])
+    .sort((left, right) => (
+      (positions[left]?.columnStart ?? Number.MAX_SAFE_INTEGER) - (positions[right]?.columnStart ?? Number.MAX_SAFE_INTEGER)
+      || (visibleOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (visibleOrder.get(right) ?? Number.MAX_SAFE_INTEGER)
+    ));
+  if (rowIds.length === 0) return undefined;
+
+  const rowIndices = rowIds
+    .map((id) => orderWithoutSource.indexOf(id))
+    .filter((index) => index >= 0);
+  if (rowIndices.length === 0) return undefined;
+  const sortedRowIndices = [...rowIndices].sort((left, right) => left - right);
+  const rowStartIndex = sortedRowIndices[0];
+  if (sortedRowIndices.some((index, offset) => index !== rowStartIndex + offset)) return undefined;
+  const rowEndIndex = sortedRowIndices[sortedRowIndices.length - 1];
+  const nextRightId = rowIds.find((id) => (positions[id]?.columnStart ?? Number.MAX_SAFE_INTEGER) > columnStart);
+  const referenceId = nextRightId ?? rowIds[rowIds.length - 1];
+  const referenceIndex = orderWithoutSource.indexOf(referenceId);
+  if (referenceIndex < 0) return undefined;
+  const requestedIndex = nextRightId ? referenceIndex : referenceIndex + 1;
+  return Math.max(rowStartIndex, Math.min(rowEndIndex + 1, requestedIndex));
+}
+
 function getPageShellStructuralRows(
   visibleShellIds: readonly string[],
   layout: Pick<PageShellLayoutPreference, "placements">,
@@ -1398,7 +1438,27 @@ export function getPageShellDirectionalMoveTarget({
         - Math.abs((packedPositions[right]?.columnStart ?? 0) + (packedPositions[right]?.columnSpan ?? 0) / 2 - sourceCenter)
         || (visibleOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (visibleOrder.get(right) ?? Number.MAX_SAFE_INTEGER)
       ))[0];
-    relationship = overlappingTargetIds.length > 0 ? "replace" : direction === "up" ? "before" : "after";
+    if (overlappingTargetIds.length === 0) {
+      const insertionIndex = getPageShellStructuralRowInsertionIndex(
+        visibleShellIds,
+        sourceId,
+        targetRow.ids,
+        packedPositions,
+        intendedColumnStart,
+      );
+      if (insertionIndex === undefined) return null;
+      return {
+        columnStart: intendedColumnStart,
+        destinationStructuralRowStart: targetRow.key,
+        insertionIndex,
+        laneOrder: 0,
+        ...(sourceIsOddCentered ? { mode: "centered" as const } : {}),
+        rowOffsetSteps: 0,
+        structuralRow: direction === "up" ? "above" : "below",
+        targetId: null,
+      };
+    }
+    relationship = "replace";
   }
 
   if (!targetId) return null;
@@ -1522,6 +1582,76 @@ function validatePageShellRepackedRows(
   return null;
 }
 
+function validatePageShellDirectStructuralRowMove({
+  candidate,
+  candidatePositions,
+  destinationRowIds,
+  originalPositions,
+  requestedColumnStart,
+  sourceId,
+  sourceSpan,
+}: {
+  candidate: PageShellLayoutPreference;
+  candidatePositions: Readonly<Record<string, PageShellPackedPosition>>;
+  destinationRowIds: readonly string[];
+  originalPositions: Readonly<Record<string, PageShellPackedPosition>>;
+  requestedColumnStart: number;
+  sourceId: string;
+  sourceSpan: PageShellSpan;
+}) {
+  const sourceCandidatePosition = candidatePositions[sourceId];
+  const sourcePlacement = candidate.placements?.[sourceId];
+  const destinationIds = [...destinationRowIds, sourceId];
+  const destinationStructuralRowStart = getPageShellStructuralRowStart(sourceId, candidate, candidatePositions);
+  if (!sourceCandidatePosition || destinationStructuralRowStart === undefined) {
+    return getPageShellMoveFailure("INVALID_VERTICAL_PLACEMENT");
+  }
+  if (
+    sourceCandidatePosition.columnStart !== requestedColumnStart
+    || sourceCandidatePosition.columnSpan !== sourceSpan
+    || getPageShellPlacementRowOffsetSteps(sourcePlacement) !== 0
+  ) {
+    return getPageShellMoveFailure("COLLISION");
+  }
+
+  const destinationPositions = destinationIds.map((id) => candidatePositions[id]);
+  if (destinationPositions.some((position) => !position)) {
+    return getPageShellMoveFailure("INVALID_VERTICAL_PLACEMENT");
+  }
+  const destinationWidth = destinationIds.reduce((total, id) => total + getPageShellSpanForMove(candidate, id), 0);
+  if (destinationWidth > 12) {
+    return getPageShellMoveFailure("ROW_WIDTH_EXCEEDED", {
+      maxWidth: 12 - getPageShellRowWidth(destinationRowIds, candidate),
+      targetRowWidth: destinationWidth,
+    });
+  }
+
+  for (const id of destinationRowIds) {
+    const originalPosition = originalPositions[id];
+    const candidatePosition = candidatePositions[id];
+    if (!originalPosition || !candidatePosition) return getPageShellMoveFailure("INVALID_VERTICAL_PLACEMENT");
+    if (
+      candidatePosition.columnStart !== originalPosition.columnStart
+      || candidatePosition.columnSpan !== originalPosition.columnSpan
+      || getPageShellStructuralRowStart(id, candidate, candidatePositions) !== destinationStructuralRowStart
+    ) {
+      return getPageShellMoveFailure("COLLISION");
+    }
+  }
+
+  const orderedPositions = destinationIds
+    .map((id) => candidatePositions[id])
+    .sort((left, right) => left.columnStart - right.columnStart);
+  for (let index = 1; index < orderedPositions.length; index += 1) {
+    const previous = orderedPositions[index - 1];
+    const current = orderedPositions[index];
+    if (current.columnStart < previous.columnStart + previous.columnSpan) {
+      return getPageShellMoveFailure("COLLISION");
+    }
+  }
+  return null;
+}
+
 /**
  * Plans and validates one explicit shell move. The general packer is not used
  * as a fallback here: a direct move either fits the requested structure or
@@ -1551,6 +1681,35 @@ export function planPageShellMove({
   candidate.placements = clonePageShellPlacements(placed.placements);
   const plannedPositions = Object.fromEntries(Object.entries(packedPositions).map(([id, position]) => [id, { ...position }])) as Record<string, PageShellPackedPosition>;
   const relationship = target.relationship ?? "before";
+
+  if (targetId === null && target.destinationStructuralRowStart !== undefined) {
+    const sourceStructuralRowStart = getPageShellStructuralRowStart(sourceId, layout, packedPositions);
+    const rows = getPageShellStructuralRows(visibleShellIds, layout, packedPositions);
+    const sourceRowIndex = rows.findIndex((row) => row.key === sourceStructuralRowStart && row.ids.includes(sourceId));
+    const destinationRowIndex = rows.findIndex((row) => row.key === target.destinationStructuralRowStart);
+    const expectedDestinationRowIndex = target.structuralRow === "above" ? sourceRowIndex - 1 : sourceRowIndex + 1;
+    const destinationRow = rows[destinationRowIndex];
+    if (
+      sourceRowIndex < 0
+      || destinationRowIndex < 0
+      || destinationRowIndex !== expectedDestinationRowIndex
+      || target.insertionIndex < 0
+      || !Number.isFinite(target.insertionIndex)
+    ) {
+      return getPageShellMoveFailure("INVALID_TARGET");
+    }
+    const candidatePositions = packPageShellMoveCandidate(candidate, visibleShellIds, naturalHeights, chromeHeightPx);
+    const failure = validatePageShellDirectStructuralRowMove({
+      candidate,
+      candidatePositions,
+      destinationRowIds: destinationRow.ids,
+      originalPositions: packedPositions,
+      requestedColumnStart: target.columnStart,
+      sourceId,
+      sourceSpan,
+    });
+    return failure ?? { valid: true, layout: candidate };
+  }
 
   if (target.mode === "centered" && sourceSpan % 2 === 1) {
     const centeredStart = getPageShellCenteredColumnStart(sourceSpan);

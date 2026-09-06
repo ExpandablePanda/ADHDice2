@@ -34,6 +34,7 @@ import {
   getPageShellGridStartFromPointer,
   getPageShellPlacementRowOffsetSteps,
   getPageShellInsertionIndex,
+  getPageShellStructuralRowInsertionIndex,
   getPageShellLayoutStorageKey,
   getPageShellStructuralRowIds,
   getPageShellStructuralRowStart,
@@ -541,7 +542,7 @@ test("directional vertical arrows swap with the best overlapping adjacent-row sh
   assert.equal(getPageShellDirectionalMoveTarget({ direction: "down", layout, packedPositions, sourceId: "e", visibleShellIds: order }), null);
 });
 
-test("vertical arrows keep an empty adjacent footprint at the source X and do not swap an unrelated peer", () => {
+test("vertical arrows target empty adjacent space directly at the source X", () => {
   const order = ["a", "source"];
   const sizes = sizesFor({ a: 4, source: 4 });
   const placements = { a: { columnStart: 1 }, source: { columnStart: 7 } };
@@ -551,17 +552,22 @@ test("vertical arrows keep an empty adjacent footprint at the source X and do no
     source: { columnSpan: 4 as const, columnStart: 7, rowSpan: 41, rowStart: 42 },
   };
   const target = getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions, sourceId: "source", visibleShellIds: order });
-  assert.equal(target?.targetId, "a");
-  assert.equal(target?.relationship, "before");
+  assert.equal(target?.targetId, null);
+  assert.equal(target?.relationship, undefined);
+  assert.equal(target?.destinationStructuralRowStart, 1);
+  assert.equal(target?.insertionIndex, 1);
   assert.equal(target?.columnStart, 7);
-  assert.notEqual(target?.relationship, "replace");
+  assert.equal(target?.structuralRow, "above");
   const plan = target && planPageShellMove({ layout, visibleShellIds: order, sourceId: "source", target, packedPositions });
   assert.equal(plan?.valid, true);
   if (plan?.valid) {
-    assert.deepEqual(plan.layout.order, ["source", "a"]);
+    assert.deepEqual(plan.layout.order, ["a", "source"]);
     assert.equal(plan.layout.placements?.source?.columnStart, 7);
     assert.equal(plan.layout.placements?.a?.columnStart, 1);
     assert.deepEqual(plan.layout.sizes, sizes);
+    const repacked = positionsFor(plan.layout.order, plan.layout.sizes, plan.layout.placements);
+    assert.equal(repacked.source.columnStart, 7);
+    assert.equal(repacked.source.rowStart, repacked.a.rowStart);
   }
 
   const offsetLayout = {
@@ -574,11 +580,145 @@ test("vertical arrows keep an empty adjacent footprint at the source X and do no
     source: { columnSpan: 4 as const, columnStart: 7, rowSpan: 41, rowStart: 54 },
   };
   const offsetTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: offsetLayout, packedPositions: offsetPositions, sourceId: "source", visibleShellIds: order });
-  assert.equal(offsetTarget?.relationship, "before");
+  assert.equal(offsetTarget?.targetId, null);
+  assert.equal(offsetTarget?.destinationStructuralRowStart, 1);
   assert.equal(offsetTarget?.rowOffsetSteps, 0);
   const offsetPlan = offsetTarget && planPageShellMove({ layout: offsetLayout, visibleShellIds: order, sourceId: "source", target: offsetTarget, packedPositions: offsetPositions });
   assert.equal(offsetPlan?.valid, true);
   if (offsetPlan?.valid) assert.equal(offsetPlan.layout.placements?.source?.rowOffsetSteps ?? 0, 0);
+});
+
+test("empty vertical targets insert inside the destination row by snapped column", () => {
+  const positions = {
+    left: { columnSpan: 3 as const, columnStart: 1, rowSpan: 1, rowStart: 1 },
+    right: { columnSpan: 3 as const, columnStart: 10, rowSpan: 1, rowStart: 1 },
+    middle: { columnSpan: 4 as const, columnStart: 5, rowSpan: 1, rowStart: 42 },
+    source: { columnSpan: 4 as const, columnStart: 5, rowSpan: 1, rowStart: 42 },
+  };
+  assert.equal(getPageShellStructuralRowInsertionIndex(
+    ["left", "right", "middle", "source"],
+    "source",
+    ["left", "right"],
+    positions,
+    5,
+  ), 1);
+});
+
+test("Water-like mixed-height empty movement uses real packing and preserves downstream X", () => {
+  const order = ["water-log", "water-today", "water-history"];
+  const sizes = sizesFor(
+    { "water-log": 4, "water-today": 4, "water-history": 4 },
+    { "water-log": 240, "water-today": 520, "water-history": 192 },
+  );
+  const placements = {
+    "water-log": { columnStart: 1 },
+    "water-today": { columnStart: 1 },
+    "water-history": { columnStart: 7 },
+  };
+  const packOptions = {
+    chromeHeightPx: 28,
+    naturalHeights: { "water-log": 240, "water-today": 520, "water-history": 192 },
+    placements,
+  };
+  const layout = { order, placements, sizes };
+  const packedPositions = packPageShellLayout(order, sizes, packOptions);
+  assert.notEqual(getPageShellStructuralRowStart("water-log", layout, packedPositions), getPageShellStructuralRowStart("water-history", layout, packedPositions));
+  assert.equal(packedPositions["water-history"]?.columnStart, 7);
+
+  const target = getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions, sourceId: "water-history", visibleShellIds: order });
+  assert.equal(target?.targetId, null);
+  assert.equal(target?.columnStart, 7);
+  assert.equal(target?.destinationStructuralRowStart, getPageShellStructuralRowStart("water-log", layout, packedPositions));
+  assert.equal(target?.insertionIndex, 1);
+
+  const plan = target && planPageShellMove({
+    chromeHeightPx: packOptions.chromeHeightPx,
+    layout,
+    naturalHeights: packOptions.naturalHeights,
+    packedPositions,
+    sourceId: "water-history",
+    target,
+    visibleShellIds: order,
+  });
+  assert.equal(plan?.valid, true);
+  if (!plan?.valid) return;
+  const after = packPageShellLayout(plan.layout.order, plan.layout.sizes, {
+    ...packOptions,
+    placements: plan.layout.placements,
+  });
+  assert.equal(after["water-log"]?.columnStart, 1);
+  assert.equal(after["water-history"]?.columnStart, 7);
+  assert.equal(getPageShellStructuralRowStart("water-log", plan.layout, after), getPageShellStructuralRowStart("water-history", plan.layout, after));
+  assert.ok((after["water-today"]?.rowStart ?? 0) > (after["water-history"]?.rowStart ?? 0));
+  assert.equal(after["water-today"]?.columnStart, 1);
+  assert.deepEqual(plan.layout.sizes, sizes);
+
+  const downPositions = packPageShellLayout(plan.layout.order, plan.layout.sizes, {
+    ...packOptions,
+    placements: plan.layout.placements,
+  });
+  const downTarget = getPageShellDirectionalMoveTarget({
+    direction: "down",
+    layout: plan.layout,
+    packedPositions: downPositions,
+    sourceId: "water-history",
+    visibleShellIds: plan.layout.order,
+  });
+  assert.equal(downTarget?.targetId, null);
+  assert.equal(downTarget?.columnStart, 7);
+  const downPlan = downTarget && planPageShellMove({
+    chromeHeightPx: packOptions.chromeHeightPx,
+    layout: plan.layout,
+    naturalHeights: packOptions.naturalHeights,
+    packedPositions: downPositions,
+    sourceId: "water-history",
+    target: downTarget,
+    visibleShellIds: plan.layout.order,
+  });
+  assert.equal(downPlan?.valid, true);
+  if (downPlan?.valid) {
+    assert.deepEqual(downPlan.layout.order, order);
+    assert.equal(downPlan.layout.placements?.["water-history"]?.columnStart, 7);
+    assert.equal(downPlan.layout.placements?.["water-history"]?.rowOffsetSteps ?? 0, 0);
+  }
+});
+
+test("empty vertical planning rejects a wrong row, changed X, and overlap without mutating the layout", () => {
+  const order = ["peer", "source"];
+  const sizes = sizesFor({ peer: 4, source: 4 });
+  const placements = { peer: { columnStart: 1 }, source: { columnStart: 7 } };
+  const layout = { order, placements, sizes };
+  const packedPositions = {
+    peer: { columnSpan: 4 as const, columnStart: 1, rowSpan: 41, rowStart: 1 },
+    source: { columnSpan: 4 as const, columnStart: 7, rowSpan: 41, rowStart: 42 },
+  };
+  const directTarget = {
+    columnStart: 7,
+    destinationStructuralRowStart: 1,
+    insertionIndex: 1,
+    laneOrder: 0,
+    rowOffsetSteps: 0,
+    structuralRow: "above" as const,
+    targetId: null,
+  };
+  const before = JSON.stringify(layout);
+  const wrongRow = planPageShellMove({
+    layout,
+    packedPositions,
+    sourceId: "source",
+    target: { ...directTarget, destinationStructuralRowStart: 42 },
+    visibleShellIds: order,
+  });
+  assert.equal(wrongRow.valid, false);
+  if (!wrongRow.valid) assert.equal(wrongRow.reason, "INVALID_TARGET");
+
+  const changedX = planPageShellMove({ layout, packedPositions, sourceId: "source", target: { ...directTarget, columnStart: 10 }, visibleShellIds: order });
+  assert.equal(changedX.valid, false);
+  if (!changedX.valid) assert.equal(changedX.reason, "COLLISION");
+
+  const overlap = planPageShellMove({ layout, packedPositions, sourceId: "source", target: { ...directTarget, columnStart: 3 }, visibleShellIds: order });
+  assert.equal(overlap.valid, false);
+  assert.equal(JSON.stringify(layout), before);
 });
 
 test("vertical occupancy uses partial overlap and deterministic overlap, center, and visible-order tie breaks", () => {
