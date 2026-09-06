@@ -17,7 +17,7 @@ import {
   getPageShellShrinkHeight,
   normalizePageShellPlacement,
   normalizePageShellSpan,
-  placePageShellAtDrop,
+  planPageShellMove,
   packPageShellLayout,
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
@@ -29,6 +29,7 @@ import {
   type PageShellCanonicalGroup,
   type PageShellLayoutPreference,
   type PageShellDropTarget,
+  type PageShellMovePlan,
   type PageShellSize,
 } from "@/lib/page-shell-layout";
 import { useNativeIosPlatform } from "@/lib/platform";
@@ -63,6 +64,7 @@ type ShellMoveInteraction = {
   referencePackedPositions: Record<string, PageShellPackedPosition>;
   referenceVisibleOrder: string[];
   startLayout: PageShellLayoutPreference;
+  plan?: PageShellMovePlan;
   target?: PageShellDropTarget;
   targetIndex: number;
 };
@@ -102,6 +104,7 @@ type PageShellInsertionIndicatorStyle = {
 type PageShellDragIndicator = {
   relationship: PageShellDropRelationship | "centered";
   style: PageShellInsertionIndicatorStyle | null;
+  valid?: boolean;
 };
 
 type RenderedPageShell = {
@@ -440,10 +443,13 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   }, [layout.canonicalLayout.groups, layout.isCanonical, layout.isEditing, orderedShells, shellsById]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragInsertionIndex, setDragInsertionIndex] = useState<number | null>(null);
+  const [dragMovePlan, setDragMovePlan] = useState<PageShellMovePlan | null>(null);
+  const [dragMoveWarning, setDragMoveWarning] = useState<string | null>(null);
   const [resizingId, setResizingId] = useState<string | null>(null);
   const [naturalHeights, setNaturalHeights] = useState<Record<string, number>>({});
   const [renderedWidths, setRenderedWidths] = useState<Record<string, number>>({});
   const [widthDrafts, setWidthDrafts] = useState<Record<string, string>>({});
+  const dragMoveWarningTimerRef = useRef<number | null>(null);
   const packedPositions = useMemo<Record<string, PageShellPackedPosition>>(
     () => packPageShellLayout(
       projectVisiblePageShellOrder(layout.order, visibleShellIds),
@@ -576,21 +582,41 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       interaction.target,
     );
     interaction.target = dropTarget;
+    const plan = planPageShellMove({
+      layout: interaction.startLayout,
+      visibleShellIds: interaction.referenceVisibleOrder,
+      sourceId: interaction.id,
+      target: dropTarget,
+      packedPositions: interaction.referencePackedPositions,
+    });
+    interaction.plan = plan;
     setDragInsertionIndex(dropTarget.insertionIndex);
     setDragDropTarget(dropTarget);
-    setDragIndicator(getInsertionIndicatorStyle(interaction, dropTarget.insertionIndex, layoutRef.current, dropTarget));
+    setDragMovePlan(plan);
+    setDragIndicator({
+      ...getInsertionIndicatorStyle(interaction, dropTarget.insertionIndex, layoutRef.current, dropTarget),
+      valid: plan.valid,
+    });
   }
 
   function commitMovePreview(interaction: ShellMoveInteraction) {
-    if (!interaction.target) return;
-    const nextLayout = placePageShellAtDrop(
-      interaction.startLayout,
-      interaction.referenceVisibleOrder,
-      interaction.id,
-      interaction.target,
-    );
-    layout.setPreviewOrder(nextLayout.order);
-    layout.setPreviewPlacements(nextLayout.placements);
+    if (!interaction.plan?.valid) return false;
+    layout.setPreviewOrder(interaction.plan.layout.order);
+    layout.setPreviewPlacements(interaction.plan.layout.placements ?? {});
+    return true;
+  }
+
+  function showDragMoveWarning(message: string) {
+    if (dragMoveWarningTimerRef.current !== null && typeof window !== "undefined") {
+      window.clearTimeout(dragMoveWarningTimerRef.current);
+    }
+    setDragMoveWarning(message);
+    if (typeof window !== "undefined") {
+      dragMoveWarningTimerRef.current = window.setTimeout(() => {
+        dragMoveWarningTimerRef.current = null;
+        setDragMoveWarning(null);
+      }, 3500);
+    }
   }
 
   function cancelMovePreview() {
@@ -687,6 +713,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     interactionRef.current = moveInteraction;
     layout.beginPreview(startLayout);
     setDraggingId(id);
+    setDragMoveWarning(null);
+    setDragMovePlan(null);
     setDragStartVisibleOrder(startVisibleOrder);
     setDragInsertionIndex(Math.max(0, startVisibleOrder.indexOf(id)));
     setDragDropTarget(null);
@@ -887,21 +915,24 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       event.preventDefault();
       event.stopPropagation();
     }
+    let shouldCommitPreview = !cancelled;
     if (!cancelled && interaction.kind === "move") {
       cancelMovePreview();
       updateMovePreview(interaction, interaction.pointerX, interaction.pointerY);
-      commitMovePreview(interaction);
+      shouldCommitPreview = commitMovePreview(interaction);
+      if (!shouldCommitPreview && interaction.plan?.valid === false) showDragMoveWarning(interaction.plan.message);
     } else {
       cancelMovePreview();
     }
     releasePointerCaptureSafely(interaction);
-    if (cancelled) layout.cancelPreview();
+    if (cancelled || !shouldCommitPreview) layout.cancelPreview();
     else layout.commitPreview();
     setDraggingId(null);
     setDragStartVisibleOrder(null);
     setDragInsertionIndex(null);
     setDragDropTarget(null);
     setDragIndicator(null);
+    setDragMovePlan(null);
     setResizingId(null);
   }
 
@@ -936,6 +967,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     else cancelDragAutoScroll();
   }, [layout.isEditing, layout.isPreviewing]);
 
+  useEffect(() => () => {
+    if (dragMoveWarningTimerRef.current !== null && typeof window !== "undefined") {
+      window.clearTimeout(dragMoveWarningTimerRef.current);
+    }
+  }, []);
+
   function renderShell(shell: RenderedPageShell) {
     const size = layout.sizes[shell.id] ?? { heightPx: null, span: 12 as const };
     const spanClass = SHELL_SPAN_CLASSES[size.span] ?? SHELL_SPAN_CLASSES[12];
@@ -961,12 +998,12 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       : layout.canonicalLayout.shellClassNames?.[shell.id] ?? "";
     return (
       <div
-        className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${dragDropTarget?.targetId === shell.id && dragDropTarget.relationship === "replace" ? "ring-2 ring-[#6f57f6]/55 ring-offset-2 ring-offset-[#faf8ff] dark:ring-[#a99bff]/60 dark:ring-offset-[#171228]" : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
+        className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${dragDropTarget?.targetId === shell.id && dragDropTarget.relationship === "replace" ? (dragMovePlan?.valid === false ? "ring-2 ring-[#d65775]/70 ring-offset-2 ring-offset-[#fff8fa] dark:ring-[#ffb0c1]/70 dark:ring-offset-[#31141b]" : "ring-2 ring-[#6f57f6]/55 ring-offset-2 ring-offset-[#faf8ff] dark:ring-[#a99bff]/60 dark:ring-offset-[#171228]") : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
         data-page-shell-id={shell.id}
         data-page-shell-dragging={draggingId === shell.id ? "true" : "false"}
         data-page-shell-resizing={resizingId === shell.id ? "true" : "false"}
         data-page-shell-centered={isCentered ? "true" : "false"}
-        data-page-shell-drop-target={dragDropTarget?.targetId === shell.id && dragDropTarget.relationship === "replace" ? "replace" : undefined}
+        data-page-shell-drop-target={dragDropTarget?.targetId === shell.id && dragDropTarget.relationship === "replace" ? (dragMovePlan?.valid === false ? "replace-invalid" : "replace") : undefined}
         data-page-shell-rendered-width={renderedWidths[shell.id] ?? undefined}
         data-page-shell-size-span={size.span}
         key={shell.id}
@@ -1098,14 +1135,19 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       {draggingId && dragInsertionIndex !== null && dragIndicator?.style ? (
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute z-30 rounded-full bg-[#6f57f6]/75 shadow-[0_0_0_3px_rgba(111,87,246,0.12)]"
+          className={`pointer-events-none absolute z-30 rounded-full ${dragIndicator.valid === false ? "bg-[#d65775]/80 shadow-[0_0_0_3px_rgba(214,87,117,0.16)]" : "bg-[#6f57f6]/75 shadow-[0_0_0_3px_rgba(111,87,246,0.12)]"}`}
           data-page-shell-drop-relationship={dragIndicator.relationship}
           data-page-shell-insertion-indicator
           style={dragIndicator.style}
         >
           {dragIndicator.relationship === "centered" ? (
-            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#6f57f6] px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">Center</span>
+            <span className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm ${dragIndicator.valid === false ? "bg-[#d65775]" : "bg-[#6f57f6]"}`}>{dragIndicator.valid === false ? "Doesn't fit" : "Center"}</span>
           ) : null}
+        </div>
+      ) : null}
+      {dragMoveWarning ? (
+        <div aria-live="assertive" className="pointer-events-none absolute bottom-2 left-1/2 z-40 -translate-x-1/2 rounded-lg border border-[#ffd8df] bg-[#fff2f4] px-3 py-2 text-xs font-semibold text-[#bd4057] shadow-sm dark:border-[#5b2430] dark:bg-[#31141b] dark:text-[#ffb3bf]" data-page-shell-move-warning role="alert">
+          {dragMoveWarning}
         </div>
       ) : null}
     </div>

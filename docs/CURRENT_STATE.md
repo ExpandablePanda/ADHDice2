@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.101`.
+- Current working app version: `7.12.102`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.102 Strict Planned Shell Moves
+
+Explicit page-shell dragging now follows plan → validate → commit. Left and
+right targets mean insert before and after; center targets perform true swaps.
+Every affected row is checked against the 12-column capacity before commit, and
+invalid moves no longer fall back to automatic downward packing. The planner
+exposes a calculated maximum source width when a destination row is too wide.
+Valid previews remain purple; invalid previews use the danger treatment, and an
+invalid release leaves the layout unchanged while showing a short accessible
+warning. Automatic packing remains available for canonical layout generation,
+normal layout calculation, legacy normalization, and defensive recovery.
+Vertical offsets and special odd-width Center placement are validated as exact
+destinations; even-width centering remains ordinary grid placement. Layout
+storage, Views, Reset, narrow behavior, and auto-scroll remain backward
+compatible. No SQL or schema migration was needed.
 
 ## 2026-09-05 7.12.101 Directional Targets and Vertical Snap Detents
 

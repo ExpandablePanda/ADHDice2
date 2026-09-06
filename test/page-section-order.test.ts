@@ -43,6 +43,7 @@ import {
   normalizePageShellRowOffsetSteps,
   normalizePageShellSize,
   packPageShellLayout,
+  planPageShellMove,
   placePageShellAtDrop,
   readPageShellLayout,
   readPageShellViews,
@@ -370,6 +371,183 @@ test("directional placement uses the target anchor and replace swaps without del
   assert.equal(placed.placements.source.rowOffsetSteps ?? 0, 0);
 });
 
+test("planned moves are pure, preserve widths, and lock directional semantics", () => {
+  const order = ["a", "b", "c"];
+  const sizes = sizesFor({ a: 4, b: 4, c: 4 });
+  const placements = { a: { columnStart: 1 }, b: { columnStart: 5 }, c: { columnStart: 9 } };
+  const layout = { order, placements, sizes };
+  const packedPositions = positionsFor(order, sizes, placements);
+  const original = JSON.stringify(layout);
+  const right = planPageShellMove({
+    layout,
+    visibleShellIds: order,
+    sourceId: "a",
+    target: { columnStart: 9, insertionIndex: 2, laneOrder: 0, relationship: "right", targetId: "c" },
+    packedPositions,
+  });
+  assert.equal(right.valid, true);
+  if (right.valid) {
+    assert.deepEqual(right.layout.order, ["b", "c", "a"]);
+    assert.deepEqual(right.layout.sizes, sizes);
+    assert.deepEqual(packPageShellLayout(right.layout.order, right.layout.sizes, { placements: right.layout.placements }), {
+      a: { columnSpan: 4, columnStart: 9, rowSpan: packedPositions.a.rowSpan, rowStart: 1 },
+      b: { columnSpan: 4, columnStart: 1, rowSpan: packedPositions.b.rowSpan, rowStart: 1 },
+      c: { columnSpan: 4, columnStart: 5, rowSpan: packedPositions.c.rowSpan, rowStart: 1 },
+    });
+  }
+  const left = planPageShellMove({
+    layout,
+    visibleShellIds: order,
+    sourceId: "c",
+    target: { columnStart: 1, insertionIndex: 0, laneOrder: 0, relationship: "left", targetId: "a" },
+    packedPositions,
+  });
+  assert.equal(left.valid, true);
+  if (left.valid) assert.deepEqual(left.layout.order, ["c", "a", "b"]);
+  const swap = planPageShellMove({
+    layout,
+    visibleShellIds: order,
+    sourceId: "a",
+    target: { columnStart: 9, insertionIndex: 2, laneOrder: 0, relationship: "replace", targetId: "c" },
+    packedPositions,
+  });
+  assert.equal(swap.valid, true);
+  if (swap.valid) {
+    assert.deepEqual(swap.layout.order, ["c", "b", "a"]);
+    assert.deepEqual(swap.layout.placements, { a: { columnStart: 9, laneOrder: 0 }, b: { columnStart: 5 }, c: { columnStart: 1, laneOrder: 0 } });
+    assert.ok(swap.layout.order.includes("c"));
+  }
+  assert.equal(JSON.stringify(layout), original);
+});
+
+test("planned row width failure reports the actual maximum and leaves no candidate", () => {
+  const order = ["aa", "ab", "ac", "ba", "bb"];
+  const sizes = sizesFor({ aa: 4, ab: 4, ac: 4, ba: 5, bb: 7 });
+  const placements = {
+    aa: { columnStart: 1 },
+    ab: { columnStart: 5 },
+    ac: { columnStart: 9 },
+    ba: { columnStart: 1 },
+    bb: { columnStart: 6 },
+  };
+  const layout = { order, placements, sizes };
+  const before = JSON.stringify(layout);
+  const plan = planPageShellMove({
+    layout,
+    visibleShellIds: order,
+    sourceId: "bb",
+    target: { columnStart: 5, insertionIndex: 1, laneOrder: 0, relationship: "replace", targetId: "ab" },
+    packedPositions: positionsFor(order, sizes, placements),
+  });
+  assert.equal(plan.valid, false);
+  assert.equal(JSON.stringify(layout), before);
+  if (!plan.valid) {
+    assert.equal(plan.reason, "ROW_WIDTH_EXCEEDED");
+    assert.equal(plan.maxWidth, 4);
+    assert.equal(plan.targetRowWidth, 15);
+    assert.match(plan.message, /4\/12/);
+  }
+});
+
+test("cross-row swap validates both rows and valid cross-row placement remains exact", () => {
+  const invalidOrder = ["aa", "ab", "ac", "ba", "bb"];
+  const invalidSizes = sizesFor({ aa: 4, ab: 4, ac: 4, ba: 5, bb: 7 });
+  const invalidPlacements = {
+    aa: { columnStart: 1 },
+    ab: { columnStart: 5 },
+    ac: { columnStart: 9 },
+    ba: { columnStart: 1 },
+    bb: { columnStart: 6 },
+  };
+  const invalidLayout = { order: invalidOrder, placements: invalidPlacements, sizes: invalidSizes };
+  const invalid = planPageShellMove({
+    layout: invalidLayout,
+    visibleShellIds: invalidOrder,
+    sourceId: "bb",
+    target: { columnStart: 5, insertionIndex: 1, laneOrder: 0, relationship: "replace", targetId: "ab" },
+    packedPositions: positionsFor(invalidOrder, invalidSizes, invalidPlacements),
+  });
+  assert.equal(invalid.valid, false);
+
+  const order = ["aa", "ab", "boundary", "source"];
+  const sizes = sizesFor({ aa: 4, ab: 4, boundary: 12, source: 4 });
+  const placements = { aa: { columnStart: 1 }, ab: { columnStart: 5 }, boundary: { columnStart: 1 }, source: { columnStart: 9 } };
+  const layout = { order, placements, sizes };
+  const plan = planPageShellMove({
+    layout,
+    visibleShellIds: order,
+    sourceId: "source",
+    target: { columnStart: 5, insertionIndex: 1, laneOrder: 0, relationship: "replace", targetId: "ab" },
+    packedPositions: positionsFor(order, sizes, placements),
+  });
+  assert.equal(plan.valid, true);
+  if (plan.valid) {
+    assert.deepEqual(plan.layout.order, ["aa", "source", "boundary", "ab"]);
+    assert.equal(plan.layout.sizes.source.span, 4);
+    assert.deepEqual(plan.layout.placements?.boundary, placements.boundary);
+    assert.equal(packPageShellLayout(plan.layout.order, plan.layout.sizes, { placements: plan.layout.placements }).source.rowStart, 1);
+    assert.equal(packPageShellLayout(plan.layout.order, plan.layout.sizes, { placements: plan.layout.placements }).ab.rowStart, 83);
+  }
+});
+
+test("invalid direct insertion and vertical collision never fall back to another row", () => {
+  const order = ["source", "target"];
+  const sizes = sizesFor({ source: 8, target: 7 });
+  const placements = { source: { columnStart: 1 }, target: { columnStart: 6 } };
+  const layout = { order, placements, sizes };
+  const plan = planPageShellMove({
+    layout,
+    visibleShellIds: order,
+    sourceId: "source",
+    target: { columnStart: 6, insertionIndex: 1, laneOrder: 0, relationship: "right", targetId: "target" },
+    packedPositions: positionsFor(order, sizes, placements),
+  });
+  assert.equal(plan.valid, false);
+  if (!plan.valid) assert.equal(plan.reason, "ROW_WIDTH_EXCEEDED");
+
+  const collisionOrder = ["target", "other", "boundary", "blocker", "source"];
+  const collisionSizes = sizesFor({ target: 4, other: 4, boundary: 12, blocker: 4, source: 4 }, { source: 192, blocker: 192 });
+  const collisionPlacements = { target: { columnStart: 5 }, other: { columnStart: 9 }, boundary: { columnStart: 1 }, blocker: { columnStart: 1 }, source: { columnStart: 5 } };
+  const collisionLayout = { order: collisionOrder, placements: collisionPlacements, sizes: collisionSizes };
+  const collisionPlan = planPageShellMove({
+    layout: collisionLayout,
+    visibleShellIds: collisionOrder,
+    sourceId: "source",
+    target: { columnStart: 1, insertionIndex: 0, laneOrder: 0, relationship: "left", rowOffsetSteps: 16, targetId: "target" },
+    packedPositions: positionsFor(collisionOrder, collisionSizes, collisionPlacements),
+  });
+  assert.equal(collisionPlan.valid, false);
+  if (!collisionPlan.valid) assert.equal(collisionPlan.reason, "COLLISION");
+});
+
+test("Center plans are exact, odd Center remains special, and even Center stays ordinary", () => {
+  const oddOrder = ["source", "other"];
+  const oddSizes = sizesFor({ source: 5, other: 7 });
+  const oddPlacements = { source: { columnStart: 1 }, other: { columnStart: 6 } };
+  const oddLayout = { order: oddOrder, placements: oddPlacements, sizes: oddSizes };
+  const oddPlan = planPageShellMove({
+    layout: oddLayout,
+    visibleShellIds: oddOrder,
+    sourceId: "source",
+    target: { columnStart: 4, insertionIndex: 0, laneOrder: 0, mode: "centered", targetId: null },
+    packedPositions: positionsFor(oddOrder, oddSizes, oddPlacements),
+  });
+  assert.equal(oddPlan.valid, true);
+  if (oddPlan.valid) assert.equal(oddPlan.layout.placements?.source?.mode, "centered");
+
+  const evenSizes = sizesFor({ source: 4 });
+  const evenLayout = { order: ["source"], placements: { source: { columnStart: 1 } }, sizes: evenSizes };
+  const evenPlan = planPageShellMove({
+    layout: evenLayout,
+    visibleShellIds: ["source"],
+    sourceId: "source",
+    target: { columnStart: 5, insertionIndex: 0, laneOrder: 0, mode: "centered", targetId: null },
+    packedPositions: positionsFor(["source"], evenSizes, evenLayout.placements),
+  });
+  assert.equal(evenPlan.valid, true);
+  if (evenPlan.valid) assert.equal(evenPlan.layout.placements?.source?.mode, undefined);
+});
+
 test("vertical placement normalization is optional, non-negative, integral, and bounded", () => {
   assert.equal(normalizePageShellRowOffsetSteps(undefined), 0);
   assert.equal(normalizePageShellRowOffsetSteps("bad"), 0);
@@ -450,7 +628,7 @@ test("left directional targeting keeps horizontal placement snapped beside the t
   assert.equal(placed.placements.source.columnStart, 1);
 });
 
-test("a drop beside an incompatible shell packs below it", () => {
+test("a drop beside an incompatible shell is rejected instead of packing below it", () => {
   const order = ["source", "neighbor"];
   const sizes = sizesFor({ source: 8, neighbor: 7 });
   const placements = { source: { columnStart: 1 }, neighbor: { columnStart: 6 } };
@@ -470,10 +648,15 @@ test("a drop beside an incompatible shell packs below it", () => {
     12,
     placements,
   );
-  const placed = placePageShellAtDrop({ order, sizes, placements }, order, "source", target);
-  const repacked = packPageShellLayout(placed.order, sizes, { placements: placed.placements });
-  assert.equal(repacked.source.rowStart, 1);
-  assert.ok(repacked.neighbor.rowStart > repacked.source.rowStart);
+  const plan = planPageShellMove({
+    layout: { order, sizes, placements },
+    visibleShellIds: order,
+    sourceId: "source",
+    target,
+    packedPositions: positions,
+  });
+  assert.equal(plan.valid, false);
+  if (!plan.valid) assert.equal(plan.reason, "ROW_WIDTH_EXCEEDED");
 });
 
 test("center snap yields a normal middle grid placement when three four-column shells fit one row", () => {
@@ -895,7 +1078,8 @@ test("move preview keeps the pointer-down reference frame and commits order and 
   assert.match(shellSource, /referenceVisibleOrder: referenceFrame\.referenceVisibleOrder/);
   assert.doesNotMatch(previewSource, /captureMoveReferenceFrame|captureShellGeometry|captureShellGridBounds|packPageShellLayout/);
   assert.doesNotMatch(previewSource, /placePageShellAtDrop|setPreviewOrder|setPreviewPlacements/);
-  assert.match(commitSource, /placePageShellAtDrop\([\s\S]*interaction\.startLayout/);
+  assert.match(previewSource, /planPageShellMove\([\s\S]*interaction\.startLayout/);
+  assert.match(commitSource, /interaction\.plan\?\.valid/);
   assert.equal((commitSource.match(/setPreviewOrder/g) ?? []).length, 1);
   assert.equal((commitSource.match(/setPreviewPlacements/g) ?? []).length, 1);
   assert.match(shellSource, /const previousInsertionIndex = interaction\.target\?\.insertionIndex \?\? interaction\.targetIndex/);
@@ -906,9 +1090,14 @@ test("move preview keeps the pointer-down reference frame and commits order and 
 
 test("directional drag feedback is target-aware and non-destructive", () => {
   assert.match(layoutSource, /type PageShellDropRelationship = "before" \| "after" \| "left" \| "right" \| "replace"/);
+  assert.match(layoutSource, /export function planPageShellMove/);
   assert.match(shellSource, /data-page-shell-drop-relationship/);
   assert.match(shellSource, /data-page-shell-drop-target/);
+  assert.match(shellSource, /planPageShellMove\(/);
+  assert.match(shellSource, /dragIndicator\.valid === false/);
+  assert.match(shellSource, /data-page-shell-move-warning/);
   assert.match(shellSource, /ring-2 ring-\[#6f57f6\]\/55/);
+  assert.match(shellSource, /ring-2 ring-\[#d65775\]/);
   assert.match(shellSource, /pointer-events-none/);
   assert.match(layoutSource, /target\.relationship === "replace"/);
   assert.match(layoutSource, /nextVisibleOrder\[sourceIndex\] = target\.targetId/);
@@ -928,11 +1117,11 @@ test("drop targeting passes the previous insertion index into the existing hyste
   ];
   const candidate = getPageShellDropTarget(geometries, positions, order, "source", 20, 300);
   const stabilized = getPageShellDropTarget(geometries, positions, order, "source", 20, 300, undefined, 0, {}, 0);
-  assert.equal(candidate.relationship, "replace");
+  assert.equal(candidate.relationship, "left");
   assert.equal(candidate.targetId, "first");
   assert.equal(candidate.insertionIndex, 0);
   assert.equal(stabilized.insertionIndex, 0);
-  assert.equal(stabilized.relationship, "replace");
+  assert.equal(stabilized.relationship, "left");
 });
 
 test("successful and cancelled pointer lifecycle paths preserve one commit or no partial destination", () => {
@@ -941,8 +1130,8 @@ test("successful and cancelled pointer lifecycle paths preserve one commit or no
   assert.ok(endStart >= 0);
   assert.ok(effectStart > endStart);
   const endSource = shellSource.slice(endStart, effectStart);
-  assert.match(endSource, /updateMovePreview\(interaction, interaction\.pointerX, interaction\.pointerY\);\s*commitMovePreview\(interaction\);/);
-  assert.match(endSource, /if \(cancelled\) layout\.cancelPreview\(\);\s*else layout\.commitPreview\(\);/);
+  assert.match(endSource, /updateMovePreview\(interaction, interaction\.pointerX, interaction\.pointerY\);\s*shouldCommitPreview = commitMovePreview\(interaction\);/);
+  assert.match(endSource, /if \(cancelled \|\| !shouldCommitPreview\) layout\.cancelPreview\(\);\s*else layout\.commitPreview\(\);/);
   assert.match(shellSource, /onPointerCancel=\{\(event\) => endInteraction\(event, true\)\}/);
   assert.match(shellSource, /onLostPointerCapture=\{\(event\) => endInteraction\(event, true\)\}/);
   assert.match(shellSource, /const handleWindowBlur = \(\) => endInteractionRef\.current\(null, true\)/);
