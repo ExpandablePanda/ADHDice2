@@ -27,10 +27,11 @@ import {
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_PACKING_GAP_PX,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
-  resolvePageShellDragAxisTransition,
+  createPageShellDragDirectionTurnState,
+  resolvePageShellDragDirectionTurn,
   type PageShellDropRelationship,
   type PageShellDirectionalMoveDirection,
-  type PageShellDragAxisIntent,
+  type PageShellDragDirectionTurnState,
   projectVisiblePageShellOrder,
   type PageShellPackedPosition,
   type PageShellGeometry,
@@ -79,9 +80,7 @@ type ShellMoveInteraction = {
   startPointerX: number;
   startPointerY: number;
   startLayout: PageShellLayoutPreference;
-  axisIntent: PageShellDragAxisIntent | null;
-  axisSwitchAnchorX: number;
-  axisSwitchAnchorY: number;
+  directionTurnState: PageShellDragDirectionTurnState;
   heldColumnStart: number;
   heldDestinationRowIndex?: number;
   heldRowOffsetSteps: number;
@@ -310,7 +309,7 @@ function getDetentRuler(
   container: HTMLDivElement | null,
   valid: boolean,
 ): PageShellDetentRuler | null {
-  if (interaction.axisIntent !== "vertical" || dropTarget?.rowOffsetSteps === undefined || dropTarget.rowOffsetSteps < 0) return null;
+  if (interaction.directionTurnState.axis !== "vertical" || dropTarget?.rowOffsetSteps === undefined || dropTarget.rowOffsetSteps < 0) return null;
   const destinationRowIndex = dropTarget.destinationRowIndex ?? (
     dropTarget.targetId === null ? undefined : normalizePageShellPlacement(
       interaction.startLayout.placements?.[dropTarget.targetId],
@@ -351,7 +350,7 @@ function getHorizontalRuler(
   container: HTMLDivElement | null,
   valid: boolean,
 ): PageShellHorizontalRuler | null {
-  if (interaction.axisIntent !== "horizontal" || !dropTarget || !interaction.referenceGridBounds) return null;
+  if (interaction.directionTurnState.axis !== "horizontal" || !dropTarget || !interaction.referenceGridBounds) return null;
   const sourceSpan = interaction.referencePackedPositions[interaction.id]?.columnSpan ?? 12;
   const state = getPageShellHorizontalRulerState(dropTarget.columnStart, sourceSpan, valid);
   const gridBounds = interaction.referenceGridBounds;
@@ -786,19 +785,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   }
 
   function updateMovePreview(interaction: ShellMoveInteraction, pointerX: number, pointerY: number) {
-    const transition = resolvePageShellDragAxisTransition(
-      interaction.axisIntent,
-      interaction.axisSwitchAnchorX,
-      interaction.axisSwitchAnchorY,
-      pointerX,
-      pointerY,
-    );
-    if (transition.switched) {
-      interaction.axisIntent = transition.axis;
-      interaction.axisSwitchAnchorX = pointerX;
-      interaction.axisSwitchAnchorY = pointerY;
-    }
-    const axisIntent = interaction.axisIntent ?? "horizontal";
+    const axisIntent = interaction.directionTurnState.axis ?? "horizontal";
     const coordinateConstraint: PageShellDragCoordinateConstraint = axisIntent === "vertical"
       ? { columnStart: interaction.heldColumnStart }
       : interaction.heldDestinationRowIndex === undefined
@@ -851,8 +838,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     );
     if (axisIntent === "horizontal" && plannedPlacement.columnStart !== interaction.heldColumnStart) {
       interaction.heldColumnStart = plannedPlacement.columnStart;
-      interaction.axisSwitchAnchorX = pointerX;
-      interaction.axisSwitchAnchorY = pointerY;
     }
     if (axisIntent === "vertical") {
       const nextRowOffsetSteps = getPageShellPlacementRowOffsetSteps(plannedPlacement);
@@ -861,10 +846,16 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       if (rowChanged || offsetChanged) {
         interaction.heldDestinationRowIndex = plannedPlacement.rowIndex;
         interaction.heldRowOffsetSteps = nextRowOffsetSteps;
-        interaction.axisSwitchAnchorX = pointerX;
-        interaction.axisSwitchAnchorY = pointerY;
       }
     }
+  }
+
+  function updateMoveDirection(interaction: ShellMoveInteraction, pointerX: number, pointerY: number) {
+    interaction.directionTurnState = resolvePageShellDragDirectionTurn(
+      interaction.directionTurnState,
+      pointerX,
+      pointerY,
+    ).state;
   }
 
   function commitMovePreview(interaction: ShellMoveInteraction) {
@@ -984,9 +975,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       startPointerX: event.clientX,
       startPointerY: event.clientY,
       startLayout,
-      axisIntent: null,
-      axisSwitchAnchorX: event.clientX,
-      axisSwitchAnchorY: event.clientY,
+      directionTurnState: createPageShellDragDirectionTurnState(event.clientX, event.clientY),
       heldColumnStart: sourcePlacement.columnStart,
       heldDestinationRowIndex: sourcePlacement.rowIndex,
       heldRowOffsetSteps: getPageShellPlacementRowOffsetSteps(sourcePlacement),
@@ -1180,6 +1169,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     if (interaction.kind === "move") {
       interaction.pointerX = event.clientX;
       interaction.pointerY = event.clientY;
+      updateMoveDirection(interaction, event.clientX, event.clientY);
       scheduleMovePreview();
       scheduleDragAutoScroll();
       return;
@@ -1232,6 +1222,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     let shouldCommitPreview = !cancelled && event !== null;
     if (!cancelled && interaction.kind === "move" && event) {
       cancelMovePreview();
+      updateMoveDirection(interaction, event.clientX, event.clientY);
       updateMovePreview(interaction, event.clientX, event.clientY);
       shouldCommitPreview = commitMovePreview(interaction);
       if (!shouldCommitPreview && interaction.plan?.valid === false) showDragMoveWarning(interaction.plan.message);

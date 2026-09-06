@@ -562,6 +562,17 @@ export type PageShellDragCoordinateConstraint = {
   rowOffsetSteps?: number;
 };
 
+export type PageShellDragDirectionTurnState = {
+  axis: PageShellDragAxisIntent | null;
+  previousPointerX: number;
+  previousPointerY: number;
+  startPointerX: number;
+  startPointerY: number;
+  turnAccumulationX: number;
+  turnAccumulationY: number;
+  turnCandidateAxis: PageShellDragAxisIntent | null;
+};
+
 export type PageShellDropTarget = {
   columnStart: number;
   /** Transient semantic row destination for explicit layouts. */
@@ -704,39 +715,104 @@ export function resolvePageShellDragAxisIntent(
   return deltaX > deltaY ? "horizontal" : "vertical";
 }
 
-/** Resolves a deliberate local turn without reusing the original pointer-down delta. */
-export function resolvePageShellDragAxisTransition(
-  currentAxis: PageShellDragAxisIntent | null,
-  anchorX: number,
-  anchorY: number,
+export function createPageShellDragDirectionTurnState(
+  startPointerX: number,
+  startPointerY: number,
+): PageShellDragDirectionTurnState {
+  return {
+    axis: null,
+    previousPointerX: startPointerX,
+    previousPointerY: startPointerY,
+    startPointerX,
+    startPointerY,
+    turnAccumulationX: 0,
+    turnAccumulationY: 0,
+    turnCandidateAxis: null,
+  };
+}
+
+function resetPageShellDragDirectionTurnState(
+  state: PageShellDragDirectionTurnState,
+  axis = state.axis,
+): PageShellDragDirectionTurnState {
+  return {
+    ...state,
+    axis,
+    turnAccumulationX: 0,
+    turnAccumulationY: 0,
+    turnCandidateAxis: null,
+  };
+}
+
+/** Resolves a deliberate local turn from recent pointer deltas, not pointer-down distance. */
+export function resolvePageShellDragDirectionTurn(
+  state: PageShellDragDirectionTurnState,
   pointerX: number,
   pointerY: number,
   switchThreshold = PAGE_SHELL_DRAG_AXIS_SWITCH_PX,
   dominanceMargin = PAGE_SHELL_DRAG_AXIS_SWITCH_DOMINANCE_PX,
 ) {
-  if (currentAxis === null) {
+  const nextState = {
+    ...state,
+    previousPointerX: pointerX,
+    previousPointerY: pointerY,
+  };
+  if (state.axis === null) {
     const axis = resolvePageShellDragAxisIntent(
-      anchorX,
-      anchorY,
+      state.startPointerX,
+      state.startPointerY,
       pointerX,
       pointerY,
       PAGE_SHELL_DRAG_AXIS_LOCK_PX,
     );
-    return { axis, switched: axis !== null };
+    return {
+      axis,
+      state: resetPageShellDragDirectionTurnState({ ...nextState, axis }),
+      switched: axis !== null,
+    };
   }
-  const deltaX = Math.abs(pointerX - anchorX);
-  const deltaY = Math.abs(pointerY - anchorY);
   const safeThreshold = Number.isFinite(switchThreshold) ? Math.max(0, switchThreshold) : PAGE_SHELL_DRAG_AXIS_SWITCH_PX;
   const safeMargin = Number.isFinite(dominanceMargin)
     ? Math.max(0, dominanceMargin)
     : PAGE_SHELL_DRAG_AXIS_SWITCH_DOMINANCE_PX;
-  if (Math.max(deltaX, deltaY) < safeThreshold || Math.abs(deltaX - deltaY) < safeMargin) {
-    return { axis: currentAxis, switched: false };
+  const deltaX = Math.abs(pointerX - state.previousPointerX);
+  const deltaY = Math.abs(pointerY - state.previousPointerY);
+  if (deltaX === 0 && deltaY === 0) {
+    return { axis: state.axis, state: nextState, switched: false };
   }
-  const nextAxis = currentAxis === "horizontal"
-    ? deltaY > deltaX + safeMargin ? "vertical" : currentAxis
-    : deltaX > deltaY + safeMargin ? "horizontal" : currentAxis;
-  return { axis: nextAxis, switched: nextAxis !== currentAxis };
+
+  const oppositeAxis = state.axis === "horizontal" ? "vertical" : "horizontal";
+  let turnAccumulationX = state.turnAccumulationX;
+  let turnAccumulationY = state.turnAccumulationY;
+  let turnCandidateAxis = state.turnCandidateAxis;
+  if (turnCandidateAxis === null || turnCandidateAxis === state.axis) {
+    if ((state.axis === "horizontal" ? deltaY : deltaX) === 0) {
+      return { axis: state.axis, state: nextState, switched: false };
+    }
+    turnAccumulationX = deltaX;
+    turnAccumulationY = deltaY;
+    turnCandidateAxis = oppositeAxis;
+  } else {
+    turnAccumulationX += deltaX;
+    turnAccumulationY += deltaY;
+  }
+
+  const candidateDistance = turnCandidateAxis === "horizontal" ? turnAccumulationX : turnAccumulationY;
+  const currentAxisDistance = state.axis === "horizontal" ? turnAccumulationX : turnAccumulationY;
+  const candidateState = {
+    ...nextState,
+    turnAccumulationX,
+    turnAccumulationY,
+    turnCandidateAxis,
+  };
+  if (currentAxisDistance > candidateDistance + safeMargin) {
+    return { axis: state.axis, state: resetPageShellDragDirectionTurnState(candidateState), switched: false };
+  }
+  if (candidateDistance < safeThreshold || candidateDistance <= currentAxisDistance + safeMargin) {
+    return { axis: state.axis, state: candidateState, switched: false };
+  }
+  const switchedState = resetPageShellDragDirectionTurnState(candidateState, oppositeAxis);
+  return { axis: oppositeAxis, state: switchedState, switched: true };
 }
 
 export function normalizePageShellRowOffsetSteps(value: unknown, fallback = 0) {

@@ -77,8 +77,9 @@ import {
   readPageShellLayout,
   readPageShellViews,
   resolvePageShellDropRelationship,
+  createPageShellDragDirectionTurnState,
   resolvePageShellDragAxisIntent,
-  resolvePageShellDragAxisTransition,
+  resolvePageShellDragDirectionTurn,
   resolvePageShellViewLayout,
   snapPageShellHeight,
   writePageShellLayout,
@@ -122,6 +123,18 @@ function storage() {
     removeItem: (key: string) => { values.delete(key); },
     setItem: (key: string, value: string) => { values.set(key, value); },
   };
+}
+
+function resolveDirectionTurnSequence(
+  axis: "horizontal" | "vertical",
+  points: readonly [number, number][],
+) {
+  let state = { ...createPageShellDragDirectionTurnState(0, 0), axis };
+  return points.map(([pointerX, pointerY]) => {
+    const result = resolvePageShellDragDirectionTurn(state, pointerX, pointerY);
+    state = result.state;
+    return result;
+  });
 }
 
 function sizesFor(spans: Record<string, PageShellSpan>, heights: Record<string, number | null> = {}) {
@@ -527,17 +540,84 @@ test("drag axis intent waits for movement, then locks to the dominant axis", () 
   assert.equal(resolvePageShellDragAxisIntent(100, 100, 118, 110, 20), null);
 });
 
-test("drag axis transitions use local hysteresis and support repeated deliberate turns", () => {
+test("drag direction turns use recent accumulation and preserve the existing thresholds", () => {
   assert.equal(PAGE_SHELL_DRAG_AXIS_SWITCH_PX, 20);
   assert.equal(PAGE_SHELL_DRAG_AXIS_SWITCH_DOMINANCE_PX, 8);
-  assert.deepEqual(resolvePageShellDragAxisTransition(null, 100, 100, 108, 108), { axis: null, switched: false });
-  assert.deepEqual(resolvePageShellDragAxisTransition(null, 100, 100, 124, 116), { axis: "horizontal", switched: true });
-  assert.deepEqual(resolvePageShellDragAxisTransition(null, 100, 100, 116, 124), { axis: "vertical", switched: true });
-  assert.deepEqual(resolvePageShellDragAxisTransition("horizontal", 500, 200, 510, 212), { axis: "horizontal", switched: false });
-  assert.deepEqual(resolvePageShellDragAxisTransition("horizontal", 500, 200, 505, 223), { axis: "vertical", switched: true });
-  assert.deepEqual(resolvePageShellDragAxisTransition("vertical", 505, 223, 517, 233), { axis: "vertical", switched: false });
-  assert.deepEqual(resolvePageShellDragAxisTransition("vertical", 505, 223, 529, 228), { axis: "horizontal", switched: true });
-  assert.deepEqual(resolvePageShellDragAxisTransition("horizontal", 529, 228, 536, 251), { axis: "vertical", switched: true });
+  let state = createPageShellDragDirectionTurnState(100, 100);
+  let result = resolvePageShellDragDirectionTurn(state, 108, 108);
+  assert.equal(result.axis, null);
+  state = result.state;
+  result = resolvePageShellDragDirectionTurn(state, 124, 116);
+  assert.equal(result.axis, "horizontal");
+  assert.equal(result.switched, true);
+
+  const horizontalToVertical = resolveDirectionTurnSequence("horizontal", [[500, 200], [505, 207], [510, 214], [512, 222], [512, 225]]);
+  assert.equal(horizontalToVertical.at(-1)?.axis, "vertical");
+  assert.equal(horizontalToVertical.some((result) => result.switched), true);
+
+  const verticalToHorizontal = resolveDirectionTurnSequence("vertical", [[500, 200], [507, 205], [514, 210], [522, 212], [525, 212]]);
+  assert.equal(verticalToHorizontal.at(-1)?.axis, "horizontal");
+  assert.equal(verticalToHorizontal.some((result) => result.switched), true);
+});
+
+test("direction-turn accumulation survives repeated active-axis snap movement", () => {
+  const horizontalToVertical = resolveDirectionTurnSequence("horizontal", [
+    [3, 6],
+    [6, 12],
+    [9, 18],
+    [12, 25],
+  ]);
+  assert.equal(horizontalToVertical.at(-1)?.axis, "vertical");
+  assert.equal(horizontalToVertical.at(-1)?.switched, true);
+
+  const verticalToHorizontal = resolveDirectionTurnSequence("vertical", [
+    [6, 3],
+    [12, 6],
+    [18, 9],
+    [25, 12],
+  ]);
+  assert.equal(verticalToHorizontal.at(-1)?.axis, "horizontal");
+  assert.equal(verticalToHorizontal.at(-1)?.switched, true);
+});
+
+test("direction-turn hysteresis holds against jitter and cancels a false turn", () => {
+  const horizontalJitter = resolveDirectionTurnSequence("horizontal", [
+    [10, 2],
+    [20, 4],
+    [30, 6],
+    [40, 8],
+    [50, 10],
+  ]);
+  assert.equal(horizontalJitter.every((result) => result.axis === "horizontal" && !result.switched), true);
+
+  const verticalJitter = resolveDirectionTurnSequence("vertical", [
+    [2, 10],
+    [4, 20],
+    [6, 30],
+    [8, 40],
+    [10, 50],
+  ]);
+  assert.equal(verticalJitter.every((result) => result.axis === "vertical" && !result.switched), true);
+
+  const falseHorizontalTurn = resolveDirectionTurnSequence("vertical", [[4, 0], [4, 10], [4, 20]]);
+  assert.equal(falseHorizontalTurn.at(-1)?.axis, "vertical");
+  assert.equal(falseHorizontalTurn.at(-1)?.state.turnCandidateAxis, null);
+
+  const falseVerticalTurn = resolveDirectionTurnSequence("horizontal", [[0, 4], [10, 4], [20, 4]]);
+  assert.equal(falseVerticalTurn.at(-1)?.axis, "horizontal");
+  assert.equal(falseVerticalTurn.at(-1)?.state.turnCandidateAxis, null);
+});
+
+test("direction turns stay local after long movement and reset cleanly for multiple switches", () => {
+  const horizontalToVertical = resolveDirectionTurnSequence("horizontal", [[500, 0], [500, 25]]);
+  assert.equal(horizontalToVertical.at(-1)?.axis, "vertical");
+  assert.equal(horizontalToVertical.at(-1)?.switched, true);
+  assert.equal(horizontalToVertical.at(-1)?.state.turnAccumulationX, 0);
+  assert.equal(horizontalToVertical.at(-1)?.state.turnAccumulationY, 0);
+
+  const multipleSwitches = resolveDirectionTurnSequence("horizontal", [[0, 25], [25, 25], [25, 50], [0, 50], [0, 75]]);
+  assert.deepEqual(multipleSwitches.map((result) => result.axis), ["vertical", "horizontal", "vertical", "horizontal", "vertical"]);
+  assert.equal(multipleSwitches.every((result) => result.switched), true);
 });
 
 test("directional target zones resolve above, below, left, right, and replace", () => {
@@ -2843,7 +2923,7 @@ test("explicit planning is isolated from legacy row inference and packing", () =
   assert.match(layoutSource, /destinationRowIndex\?: number/);
 });
 
-test("7.12.115 keeps migration and legacy compatibility authorities unchanged", () => {
+test("7.12.116 keeps migration and legacy compatibility authorities unchanged", () => {
   const order = ["left", "right", "full"];
   const sizes = sizesFor({ left: 5, right: 7, full: 12 });
   const legacy = positionsFor(order, sizes, {
@@ -2881,6 +2961,7 @@ test("move preview keeps the pointer-down reference frame and commits order and 
   assert.ok(commitStart > previewStart);
   assert.ok(commitEnd > commitStart);
   const previewSource = shellSource.slice(previewStart, commitStart);
+  const previewBody = previewSource.slice(0, previewSource.indexOf("\n  function updateMoveDirection"));
   const commitSource = shellSource.slice(commitStart, commitEnd);
 
   assert.match(shellSource, /const referenceFrame = captureMoveReferenceFrame\(\);/);
@@ -2897,13 +2978,20 @@ test("move preview keeps the pointer-down reference frame and commits order and 
   assert.match(shellSource, /const previousInsertionIndex = interaction\.target\?\.insertionIndex \?\? interaction\.targetIndex/);
   assert.match(shellSource, /grabOffsetY: sourceGeometry \? event\.clientY \+ getPageScrollTop\(\) - sourceGeometry\.top : 0/);
   assert.match(shellSource, /interaction\.grabOffsetY/);
-  assert.match(shellSource, /resolvePageShellDragAxisTransition\(/);
-  assert.match(shellSource, /axisSwitchAnchorX/);
+  assert.match(shellSource, /resolvePageShellDragDirectionTurn\(/);
+  assert.match(shellSource, /directionTurnState/);
+  assert.doesNotMatch(shellSource, /axisSwitchAnchor[XY]/);
+  const updateInteractionStart = shellSource.indexOf("  function updateInteraction");
+  const updateInteractionEnd = shellSource.indexOf("\n  function endInteraction", updateInteractionStart);
+  assert.ok(updateInteractionStart >= 0);
+  assert.ok(updateInteractionEnd > updateInteractionStart);
+  assert.match(shellSource.slice(updateInteractionStart, updateInteractionEnd), /updateMoveDirection\(interaction, event\.clientX, event\.clientY\)/);
+  assert.doesNotMatch(previewBody, /resolvePageShellDragDirectionTurn|updateMoveDirection/);
   assert.match(shellSource, /heldColumnStart/);
   assert.match(shellSource, /coordinateConstraint/);
   assert.match(shellSource, /startPointerX: event\.clientX/);
   assert.match(shellSource, /startPointerY: event\.clientY/);
-  assert.match(previewSource, /interaction\.axisIntent \?\? "horizontal"/);
+  assert.match(previewSource, /interaction\.directionTurnState\.axis \?\? "horizontal"/);
   assert.match(shellSource, /interaction\.target/);
 });
 
@@ -2955,7 +3043,7 @@ test("horizontal snap feedback exposes the frozen 12-column footprint and validi
   assert.match(shellSource, /C{dragIndicator\.horizontalRuler\.currentColumn}/);
   assert.match(shellSource, /data-page-shell-horizontal-footprint/);
   assert.match(shellSource, /horizontalRuler: getHorizontalRuler\(interaction, dropTarget, layoutRef\.current, plan\.valid\)/);
-  assert.match(shellSource, /interaction\.axisIntent !== "horizontal"/);
+  assert.match(shellSource, /interaction\.directionTurnState\.axis !== "horizontal"/);
   assert.match(shellSource, /grabOffsetX/);
 });
 
@@ -2988,6 +3076,7 @@ test("successful pointer-up uses release coordinates while cancelled paths prese
   const endSource = shellSource.slice(endStart, effectStart);
   assert.match(endSource, /let shouldCommitPreview = !cancelled && event !== null;/);
   assert.match(endSource, /if \(!cancelled && interaction\.kind === "move" && event\) \{[\s\S]*updateMovePreview\(interaction, event\.clientX, event\.clientY\);\s*shouldCommitPreview = commitMovePreview\(interaction\);/);
+  assert.match(endSource, /updateMoveDirection\(interaction, event\.clientX, event\.clientY\)/);
   assert.doesNotMatch(endSource, /updateMovePreview\(interaction, interaction\.pointerX, interaction\.pointerY\)/);
   assert.match(endSource, /if \(cancelled \|\| !shouldCommitPreview\) layout\.cancelPreview\(\);\s*else layout\.commitPreview\(\);/);
   assert.match(shellSource, /onPointerCancel=\{\(event\) => endInteraction\(event, true\)\}/);

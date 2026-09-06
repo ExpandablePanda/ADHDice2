@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.115`.
+- Current working app version: `7.12.116`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.116 Reliable Direction-Turn Detection
+
+The 7.12.115 dynamic two-axis drag switch could still be intermittent because
+each active-axis snap advanced both local switch anchors and erased accumulated
+movement toward the opposite axis. Direction turns now use recent pointer
+movement with independent opposite-axis accumulation: active-axis snap
+advancement no longer erases turn intent, while current-axis dominance can
+cancel a false candidate and prevent jitter. The 12px activation threshold,
+20px switch threshold, and 8px dominance margin remain unchanged.
+
+Held coordinates and both rulers remain unchanged. Pointer-down reference
+geometry, pointer-up final planning, auto-scroll, grab offsets, stacking
+corridor, 2D collision validation, structural rows, migration, persistence,
+storage keys, Views, and schema remain unchanged.
 
 ## 2026-09-06 7.12.114 Stacking Corridor and Two-Axis Snap Feedback
 
