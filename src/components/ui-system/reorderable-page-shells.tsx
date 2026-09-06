@@ -37,6 +37,7 @@ import {
   type PageShellDropTarget,
   type PageShellMovePlan,
   type PageShellSize,
+  PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX,
 } from "@/lib/page-shell-layout";
 import { useNativeIosPlatform } from "@/lib/platform";
 
@@ -115,7 +116,17 @@ type PageShellInsertionIndicatorStyle = {
 type PageShellDragIndicator = {
   relationship: PageShellDropRelationship | "centered";
   style: PageShellInsertionIndicatorStyle | null;
+  verticalRuler?: PageShellDetentRuler | null;
   valid?: boolean;
+};
+
+type PageShellDetentRuler = {
+  currentStep: number;
+  height: number;
+  left: number;
+  steps: number[];
+  top: number;
+  valid: boolean;
 };
 
 type RenderedPageShell = {
@@ -156,6 +167,16 @@ export function isStalePageShellMouseMove(pointerType: string, buttons: number |
 
 export function shouldUsePageShellPackedPresentation(isCanonical: boolean, isEditing: boolean) {
   return isEditing || !isCanonical;
+}
+
+export function getPageShellDetentRulerState(currentStep: number, valid: boolean, maxStep = 12) {
+  const safeCurrentStep = Number.isFinite(currentStep) ? Math.max(0, Math.round(currentStep)) : 0;
+  const safeMaxStep = Math.max(safeCurrentStep, Math.min(24, Math.max(0, Math.round(maxStep))));
+  return {
+    currentStep: safeCurrentStep,
+    steps: Array.from({ length: safeMaxStep + 1 }, (_, step) => step),
+    valid,
+  };
 }
 
 function measureNaturalShellHeight(element: HTMLDivElement | null) {
@@ -246,6 +267,47 @@ function getInsertionIndicatorStyle(
   return {
     relationship,
     style: { height: 4, left: 0, top: top - topOffset - 2, width: fallbackWidth },
+  };
+}
+
+function getDetentRuler(
+  interaction: ShellMoveInteraction,
+  dropTarget: PageShellDropTarget | undefined,
+  container: HTMLDivElement | null,
+  valid: boolean,
+): PageShellDetentRuler | null {
+  if (interaction.axisIntent !== "vertical" || dropTarget?.rowOffsetSteps === undefined || dropTarget.rowOffsetSteps < 0) return null;
+  const destinationRowIndex = dropTarget.destinationRowIndex ?? (
+    dropTarget.targetId === null ? undefined : normalizePageShellPlacement(
+      interaction.startLayout.placements?.[dropTarget.targetId],
+      interaction.startLayout.sizes[dropTarget.targetId]?.span,
+    ).rowIndex
+  );
+  if (destinationRowIndex === undefined) return null;
+  const rowGeometries = interaction.referenceVisibleOrder
+    .filter((id) => normalizePageShellPlacement(
+      interaction.startLayout.placements?.[id],
+      interaction.startLayout.sizes[id]?.span,
+    ).rowIndex === destinationRowIndex)
+    .map((id) => interaction.referenceGeometries.find((geometry) => geometry.id === id))
+    .filter((geometry): geometry is PageShellGeometry => Boolean(geometry));
+  if (rowGeometries.length === 0) return null;
+  const sourceGeometry = interaction.referenceGeometries.find((geometry) => geometry.id === interaction.id);
+  const containerRect = container?.getBoundingClientRect();
+  const leftOffset = containerRect?.left ?? 0;
+  const topOffset = (containerRect?.top ?? 0) + getPageScrollTop();
+  const rowTop = Math.min(...rowGeometries.map((geometry) => geometry.top));
+  const rowBottom = Math.max(...rowGeometries.map((geometry) => geometry.bottom));
+  const state = getPageShellDetentRulerState(
+    dropTarget.rowOffsetSteps,
+    valid,
+    Math.ceil(Math.max(0, rowBottom - rowTop) / PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX),
+  );
+  return {
+    ...state,
+    height: Math.max(24, 16 + state.steps.length * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX),
+    left: Math.max(4, (sourceGeometry?.left ?? rowGeometries[0].left) - leftOffset - 18),
+    top: rowTop - topOffset,
   };
 }
 
@@ -684,6 +746,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setDragMovePlan(plan);
     setDragIndicator({
       ...getInsertionIndicatorStyle(interaction, dropTarget.insertionIndex, layoutRef.current, dropTarget),
+      verticalRuler: getDetentRuler(interaction, dropTarget, layoutRef.current, plan.valid),
       valid: plan.valid,
     });
   }
@@ -1306,6 +1369,44 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
           {group.shells.map(renderShell)}
         </div>
       )) : orderedShells.map(renderShell)}
+      {draggingId && dragIndicator?.verticalRuler ? (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute z-40 ${dragIndicator.verticalRuler.valid ? "text-[#6f57f6]" : "text-[#d65775]"}`}
+          data-page-shell-detent-ruler
+          data-page-shell-detent-step={dragIndicator.verticalRuler.currentStep}
+          data-page-shell-detent-valid={dragIndicator.verticalRuler.valid ? "true" : "false"}
+          style={{
+            height: dragIndicator.verticalRuler.height,
+            left: dragIndicator.verticalRuler.left,
+            top: dragIndicator.verticalRuler.top,
+            width: 42,
+          }}
+        >
+          {dragIndicator.verticalRuler.steps.map((step) => {
+            const isCurrent = step === dragIndicator.verticalRuler?.currentStep;
+            return (
+              <span
+                className={`absolute left-0 rounded-full ${isCurrent ? "bg-current" : "bg-current/60"}`}
+                data-page-shell-detent-mark={step}
+                key={step}
+                style={{
+                  height: isCurrent ? 3 : 2,
+                  top: 8 + step * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX,
+                  width: isCurrent ? 18 : 10,
+                }}
+              />
+            );
+          })}
+          <span
+            className="absolute left-5 rounded bg-current px-1 py-0.5 text-[9px] font-semibold leading-none text-white shadow-sm"
+            data-page-shell-detent-current
+            style={{ top: Math.max(0, 3 + dragIndicator.verticalRuler.currentStep * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX) }}
+          >
+            {dragIndicator.verticalRuler.currentStep === 0 ? "0" : `+${dragIndicator.verticalRuler.currentStep}`}
+          </span>
+        </div>
+      ) : null}
       {draggingId && dragInsertionIndex !== null && dragIndicator?.style ? (
         <div
           aria-hidden="true"

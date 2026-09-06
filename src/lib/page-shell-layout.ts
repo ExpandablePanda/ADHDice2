@@ -534,6 +534,13 @@ export type PageShellPackedPosition = {
   rowStart: number;
 };
 
+export type PageShellExplicitOccupiedRect = {
+  bottom: number;
+  left: number;
+  right: number;
+  top: number;
+};
+
 export type PageShellPackedLayoutOptions = {
   chromeHeightPx?: number;
   gapPx?: number;
@@ -986,6 +993,12 @@ export function getPageShellExplicitLayoutValidationErrors(
       errors.push(`${id}: invalid columnStart`);
       continue;
     }
+    const rawRowOffsetSteps = placement.rowOffsetSteps;
+    if (rawRowOffsetSteps !== undefined && (!Number.isInteger(rawRowOffsetSteps)
+      || rawRowOffsetSteps < 0
+      || rawRowOffsetSteps > PAGE_SHELL_MAX_VERTICAL_OFFSET_STEPS)) {
+      errors.push(`${id}: invalid rowOffsetSteps`);
+    }
     const isCentered = placement.mode === "centered";
     if (isCentered && (span % 2 === 0 || normalizePageShellRowOffsetSteps(placement.rowOffsetSteps) !== 0)) {
       errors.push(`${id}: invalid Center row data`);
@@ -1000,15 +1013,6 @@ export function getPageShellExplicitLayoutValidationErrors(
   rows.forEach((row, rowIndex) => {
     if (row.some((item) => item.span === 12) && row.length > 1) errors.push(`row ${rowIndex}: full-width shell shares a row`);
     if (row.some((item) => item.centered) && row.length > 1) errors.push(`row ${rowIndex}: Center shell shares a row`);
-    const totalWidth = row.reduce((total, item) => total + item.span, 0);
-    if (totalWidth > 12) errors.push(`row ${rowIndex}: capacity exceeded`);
-    row.sort((left, right) => left.columnStart - right.columnStart || left.id.localeCompare(right.id));
-    row.slice(1).forEach((item, index) => {
-      const previous = row[index];
-      if (item.columnStart < previous.columnStart + previous.span) {
-        errors.push(`row ${rowIndex}: ${previous.id} overlaps ${item.id}`);
-      }
-    });
   });
   return errors;
 }
@@ -1019,6 +1023,61 @@ export function isValidPageShellExplicitLayout(
 ) {
   return hasCompletePageShellRows(layout, shellIds)
     && getPageShellExplicitLayoutValidationErrors(layout, shellIds).length === 0;
+}
+
+export function getPageShellExplicitOccupiedRect(
+  id: string,
+  positions: Readonly<Record<string, PageShellPackedPosition>>,
+): PageShellExplicitOccupiedRect | null {
+  const position = positions[id];
+  if (!position) return null;
+  return {
+    bottom: position.rowStart + position.rowSpan,
+    left: position.columnStart,
+    right: position.columnStart + position.columnSpan,
+    top: position.rowStart,
+  };
+}
+
+export function pageShellExplicitRectsOverlap(
+  left: PageShellExplicitOccupiedRect,
+  right: PageShellExplicitOccupiedRect,
+) {
+  return left.left < right.right
+    && right.left < left.right
+    && left.top < right.bottom
+    && right.top < left.bottom;
+}
+
+/** Validates measured/packed geometry separately from durable row structure. */
+export function getPageShellExplicitLayoutGeometryValidationErrors(
+  layout: PageShellLayoutPreference,
+  shellIds: readonly string[] = layout.order,
+  options: PageShellPackedLayoutOptions = {},
+) {
+  const ids = uniquePageShellIds(shellIds);
+  if (!isValidPageShellExplicitLayout(layout, ids)) return [];
+  const positions = packPageShellLayoutExplicit(ids, layout.sizes, {
+    ...options,
+    placements: layout.placements,
+  });
+  if (ids.some((id) => !positions[id])) return ids.filter((id) => !positions[id]).map((id) => `${id}: missing packed geometry`);
+  const errors: string[] = [];
+  for (const row of getPageShellExplicitRows(layout, ids)) {
+    for (let leftIndex = 0; leftIndex < row.shellIds.length; leftIndex += 1) {
+      const leftId = row.shellIds[leftIndex];
+      const leftRect = getPageShellExplicitOccupiedRect(leftId, positions);
+      if (!leftRect) continue;
+      for (let rightIndex = leftIndex + 1; rightIndex < row.shellIds.length; rightIndex += 1) {
+        const rightId = row.shellIds[rightIndex];
+        const rightRect = getPageShellExplicitOccupiedRect(rightId, positions);
+        if (rightRect && pageShellExplicitRectsOverlap(leftRect, rightRect)) {
+          errors.push(`row ${row.rowIndex}: ${leftId} overlaps ${rightId}`);
+        }
+      }
+    }
+  }
+  return errors;
 }
 
 /** Rebuilds row-major visible order while preserving hidden shell positions in the full order. */
@@ -1401,10 +1460,8 @@ function getPageShellExplicitRowInsertionIndex(
 function getPageShellExplicitRowGeometry(
   row: PageShellExplicitRow,
   geometries: readonly PageShellGeometry[],
-  excludedId?: string,
 ) {
   const rowGeometries = row.shellIds
-    .filter((id) => id !== excludedId)
     .map((id) => geometries.find((geometry) => geometry.id === id))
     .filter((geometry): geometry is PageShellGeometry => Boolean(geometry));
   if (rowGeometries.length === 0) return null;
@@ -1418,9 +1475,8 @@ function getPageShellExplicitDropGap(
   rows: readonly PageShellExplicitRow[],
   geometries: readonly PageShellGeometry[],
   pointerY: number,
-  excludedId?: string,
 ) {
-  const rowGeometry = rows.map((row) => ({ ...row, geometry: getPageShellExplicitRowGeometry(row, geometries, excludedId) }))
+  const rowGeometry = rows.map((row) => ({ ...row, geometry: getPageShellExplicitRowGeometry(row, geometries) }))
     .filter((row): row is PageShellExplicitRow & { geometry: { bottom: number; top: number } } => Boolean(row.geometry));
   if (rowGeometry.length === 0) return null;
   const threshold = PAGE_SHELL_DROP_ZONE_HYSTERESIS_PX;
@@ -1520,7 +1576,8 @@ export function getPageShellDropTarget(
   const directGeometry = gridBounds ? getPageShellGridColumnGeometry(gridBounds, directColumnStart, sourceSpan) : null;
   const hasExplicitRows = hasCompletePageShellRows({ placements }, order);
   const explicitRows = hasExplicitRows
-    ? getPageShellExplicitRows({ order: [...order], placements }, orderWithoutSource)
+    ? getPageShellExplicitRows({ order: [...order], placements }, order)
+      .filter((row) => row.shellIds.length > 1 || row.shellIds[0] !== sourceId)
     : [];
   const physicalTargetHit = geometries.some((geometry) => (
     geometry.id !== sourceId
@@ -1530,40 +1587,39 @@ export function getPageShellDropTarget(
       && pointerY <= geometry.bottom
   ));
   const pointerRow = explicitRows.find((row) => {
-    const geometry = getPageShellExplicitRowGeometry(row, geometries, sourceId);
+    const geometry = getPageShellExplicitRowGeometry(row, geometries);
     return geometry
       && pointerY >= geometry.top - PAGE_SHELL_POINTER_HYSTERESIS_PX
       && pointerY <= geometry.bottom + PAGE_SHELL_POINTER_HYSTERESIS_PX;
   });
-  if (hasExplicitRows && pointerRow && !physicalTargetHit && directGeometry) {
-    const rowGeometries = pointerRow.shellIds
-      .filter((id) => id !== sourceId)
-      .map((id) => geometries.find((geometry) => geometry.id === id))
-      .filter((geometry): geometry is PageShellGeometry => Boolean(geometry));
-    const directRight = directGeometry.left + directGeometry.width;
-    const directFits = sourceSpan === PAGE_SHELL_OPTIONS_LAST
-      ? rowGeometries.length === 0
-      : rowGeometries.every((geometry) => directRight <= geometry.left || directGeometry.left >= geometry.right);
-    if (directFits) {
-      return {
-        columnStart: directColumnStart,
-        destinationRowIndex: pointerRow.rowIndex,
-        insertionIndex: getPageShellExplicitRowInsertionIndex(
-          { order: [...order], placements },
-          packedPositions,
-          order,
-          sourceId,
-          pointerRow.rowIndex,
-          directColumnStart,
-        ),
-        laneOrder: 0,
-        rowOffsetSteps: 0,
-        targetId: null,
-      };
-    }
+  if (hasExplicitRows && pointerRow && !physicalTargetHit && directGeometry && sourceGeometry) {
+    const pointerRowGeometry = getPageShellExplicitRowGeometry(pointerRow, geometries);
+    const rowOffsetSteps = axisIntent === "vertical" && pointerRowGeometry
+      ? getPageShellVerticalOffsetSteps(
+        pointerY - (Number.isFinite(grabOffsetY) ? grabOffsetY : 0),
+        pointerRowGeometry.top,
+        Math.max(0, sourceGeometry.bottom - sourceGeometry.top),
+        pointerRowGeometry.bottom,
+      )
+      : 0;
+    return {
+      columnStart: directColumnStart,
+      destinationRowIndex: pointerRow.rowIndex,
+      insertionIndex: getPageShellExplicitRowInsertionIndex(
+        { order: [...order], placements },
+        packedPositions,
+        order,
+        sourceId,
+        pointerRow.rowIndex,
+        directColumnStart,
+      ),
+      laneOrder: 0,
+      rowOffsetSteps,
+      targetId: null,
+    };
   }
   if (hasExplicitRows && !physicalTargetHit && !pointerRow) {
-    const gap = getPageShellExplicitDropGap(explicitRows, geometries, pointerY, sourceId);
+    const gap = getPageShellExplicitDropGap(explicitRows, geometries, pointerY);
     if (gap) {
       const boundaryReference = explicitRows[gap.rowPosition]?.shellIds[0]
         ?? explicitRows[Math.max(0, gap.rowPosition - 1)]?.shellIds[0];
@@ -2116,7 +2172,7 @@ function getPageShellMoveFailure(
     : reason === "INVALID_VERTICAL_PLACEMENT"
       ? "Planned vertical position is blocked."
       : reason === "COLLISION"
-        ? "Planned move collides with another shell."
+        ? "Planned move overlaps another shell."
         : "Planned move is not available here.";
   return {
     valid: false,
@@ -2273,6 +2329,12 @@ function finalizeExplicitPageShellMove(
   const compacted = compactPageShellRows(candidate, compactIds);
   compacted.order = getPageShellExplicitRowMajorOrder(compacted, visibleShellIds);
   if (!isValidPageShellExplicitLayout(compacted, visibleShellIds)) return getPageShellMoveFailure("COLLISION");
+  if (getPageShellExplicitLayoutGeometryValidationErrors(compacted, visibleShellIds, {
+    chromeHeightPx,
+    naturalHeights,
+  }).length > 0) {
+    return getPageShellMoveFailure("COLLISION");
+  }
   const positions = packPageShellLayoutExplicit(projectVisiblePageShellOrder(compacted.order, visibleShellIds), compacted.sizes, {
     chromeHeightPx,
     naturalHeights,
@@ -2464,7 +2526,7 @@ function planPageShellExplicitMove({
   setExplicitRowPlacement(candidate, sourceId, {
     columnStart: target.columnStart,
     rowIndex: destinationRowIndex,
-    rowOffsetSteps: 0,
+    rowOffsetSteps: target.rowOffsetSteps ?? 0,
   });
   return finalizeExplicitPageShellMove(candidate, visibleShellIds, naturalHeights, chromeHeightPx);
 }
@@ -2879,6 +2941,22 @@ export function packPageShellLayoutLegacy(
   return positions;
 }
 
+export function getPageShellExplicitRowSpan(
+  size: PageShellSize | undefined,
+  options: {
+    chromeHeightPx?: number;
+    gapPx?: number;
+    naturalHeight?: number;
+    rowUnitPx?: number;
+  } = {},
+) {
+  const gapPx = options.gapPx ?? PAGE_SHELL_PACKING_GAP_PX;
+  const rowUnitPx = Math.max(1, options.rowUnitPx ?? PAGE_SHELL_PACKING_ROW_UNIT_PX);
+  const chromeHeightPx = Math.max(0, options.chromeHeightPx ?? 0);
+  const heightPx = size?.heightPx ?? options.naturalHeight ?? PAGE_SHELL_MIN_HEIGHT;
+  return Math.max(1, Math.ceil((Math.max(1, heightPx) + chromeHeightPx + gapPx) / rowUnitPx));
+}
+
 /** Packs valid explicit semantic rows without inferring membership from order or geometry. */
 export function packPageShellLayoutExplicit(
   order: readonly string[],
@@ -2897,11 +2975,6 @@ export function packPageShellLayoutExplicit(
   };
   if (!isValidPageShellExplicitLayout(layout, order)) return {};
   const positions: Record<string, PageShellPackedPosition> = {};
-  const getRowSpan = (id: string) => {
-    const size = sizes[id] ?? { heightPx: null, span: 12 as PageShellSpan };
-    const heightPx = size.heightPx ?? naturalHeights[id] ?? PAGE_SHELL_MIN_HEIGHT;
-    return Math.max(1, Math.ceil((Math.max(1, heightPx) + chromeHeightPx + gapPx) / rowUnitPx));
-  };
   let nextRow = 0;
   for (const row of getPageShellExplicitRows(layout, order)) {
     let rowBottom = nextRow;
@@ -2912,7 +2985,12 @@ export function packPageShellLayoutExplicit(
       const rowStart = nextRow + offsetRows;
       const centered = isPageShellCenteredPlacement(placement);
       const columnStart = centered ? getPageShellCenteredColumnStart(size.span) : placement.columnStart;
-      const rowSpan = getRowSpan(id);
+      const rowSpan = getPageShellExplicitRowSpan(size, {
+        chromeHeightPx,
+        gapPx,
+        naturalHeight: naturalHeights[id],
+        rowUnitPx,
+      });
       positions[id] = {
         columnSpan: size.span,
         columnStart,

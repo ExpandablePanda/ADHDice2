@@ -41,6 +41,8 @@ import {
   getPageShellDropTarget,
   getPageShellExplicitRows,
   getPageShellExplicitRowMajorOrder,
+  getPageShellExplicitLayoutGeometryValidationErrors,
+  getPageShellExplicitOccupiedRect,
   getPageShellGridColumnGeometry,
   getPageShellGridStartFromPointer,
   getPageShellPlacementRowOffsetSteps,
@@ -67,6 +69,7 @@ import {
   packPageShellLayoutExplicit,
   packPageShellLayoutLegacy,
   packPageShellLayout,
+  pageShellExplicitRectsOverlap,
   planPageShellMove,
   placePageShellAtDrop,
   readPageShellLayout,
@@ -89,6 +92,7 @@ import {
   PageShellLayoutControls,
   ReorderablePageShells,
   PageShellSurface,
+  getPageShellDetentRulerState,
 } from "@/components/ui-system/reorderable-page-shells";
 import type {
   PageShellCanonicalLayout,
@@ -2100,17 +2104,96 @@ test("explicit validation rejects overlap and full-width sharing while accepting
   assert.equal(isValidPageShellExplicitLayout(invalid, invalid.order), false);
 });
 
-test("malformed complete rows fall back to the unchanged legacy packer", () => {
+test("structural rows permit shared columns while packed geometry reports a collision", () => {
   const order = ["left", "right"];
   const sizes = sizesFor({ left: 5, right: 7 });
   const placements = {
     left: { columnStart: 1, rowIndex: 0 },
     right: { columnStart: 4, rowIndex: 0 },
   };
+  const layout = { order, placements, sizes };
+  assert.deepEqual(getPageShellExplicitLayoutGeometryValidationErrors(layout, order), ["row 0: left overlaps right"]);
+  assert.equal(isValidPageShellExplicitLayout(layout, order), true);
   assert.deepEqual(
     packPageShellLayout(order, sizes, { placements }),
-    packPageShellLayoutLegacy(order, sizes, { placements }),
+    packPageShellLayoutExplicit(order, sizes, { placements }),
   );
+});
+
+test("explicit 2D collision validation separates horizontal and vertical overlap", () => {
+  const sizes = sizesFor({ a: 6, b: 6, c: 6 }, { a: 120, b: 120, c: 240 });
+  const collision = {
+    order: ["a", "b"],
+    placements: {
+      a: { columnStart: 1, rowIndex: 0, rowOffsetSteps: 0 },
+      b: { columnStart: 1, rowIndex: 0, rowOffsetSteps: 0 },
+    },
+    sizes: { a: sizes.a, b: sizes.b },
+  };
+  assert.deepEqual(getPageShellExplicitLayoutGeometryValidationErrors(collision, collision.order), ["row 0: a overlaps b"]);
+
+  const verticalGap = {
+    ...collision,
+    placements: {
+      ...collision.placements,
+      b: { columnStart: 1, rowIndex: 0, rowOffsetSteps: 40 },
+    },
+  };
+  assert.deepEqual(getPageShellExplicitLayoutGeometryValidationErrors(verticalGap, verticalGap.order), []);
+
+  const horizontalGap = {
+    ...collision,
+    placements: {
+      ...collision.placements,
+      b: { columnStart: 7, rowIndex: 0, rowOffsetSteps: 0 },
+    },
+  };
+  assert.deepEqual(getPageShellExplicitLayoutGeometryValidationErrors(horizontalGap, horizontalGap.order), []);
+
+  const stackedWithNeighbor = {
+    order: ["a", "b", "c"],
+    placements: {
+      a: { columnStart: 1, rowIndex: 0, rowOffsetSteps: 0 },
+      b: { columnStart: 1, rowIndex: 0, rowOffsetSteps: 40 },
+      c: { columnStart: 7, rowIndex: 0, rowOffsetSteps: 0 },
+    },
+    sizes,
+  };
+  assert.equal(isValidPageShellExplicitLayout(stackedWithNeighbor, stackedWithNeighbor.order), true);
+  assert.deepEqual(getPageShellExplicitLayoutGeometryValidationErrors(stackedWithNeighbor, stackedWithNeighbor.order), []);
+  assert.equal(getPageShellExplicitLayoutValidationErrors({
+    ...stackedWithNeighbor,
+    placements: { ...stackedWithNeighbor.placements, c: { columnStart: 8, rowIndex: 0 } },
+  }, stackedWithNeighbor.order).some((error) => error.includes("invalid columnStart")), true);
+  assert.equal(getPageShellExplicitLayoutValidationErrors({
+    ...stackedWithNeighbor,
+    placements: { ...stackedWithNeighbor.placements, b: { columnStart: 1, rowIndex: 0, rowOffsetSteps: 2.5 } },
+  }, stackedWithNeighbor.order).some((error) => error.includes("invalid rowOffsetSteps")), true);
+});
+
+test("explicit packed rectangles include custom, natural, chrome, gap, and offset footprints", () => {
+  const sizes = sizesFor({ custom: 6, natural: 6, next: 12 }, { custom: 120, natural: null, next: 144 });
+  const layout = {
+    order: ["custom", "natural", "next"],
+    placements: {
+      custom: { columnStart: 1, rowIndex: 0, rowOffsetSteps: 0 },
+      natural: { columnStart: 1, rowIndex: 0, rowOffsetSteps: 40 },
+      next: { columnStart: 1, rowIndex: 1 },
+    },
+    sizes,
+  };
+  const positions = packPageShellLayoutExplicit(layout.order, layout.sizes, {
+    chromeHeightPx: 32,
+    gapPx: 20,
+    naturalHeights: { natural: 240 },
+    placements: layout.placements,
+  });
+  const customRect = getPageShellExplicitOccupiedRect("custom", positions);
+  const naturalRect = getPageShellExplicitOccupiedRect("natural", positions);
+  assert.ok(customRect && naturalRect);
+  assert.equal(pageShellExplicitRectsOverlap(customRect, naturalRect), false);
+  assert.equal(positions.next.rowStart >= naturalRect.bottom, true);
+  assert.equal(positions.natural.rowStart > positions.custom.rowStart, true);
 });
 
 test("measured legacy migration is parity-gated and supports custom-height readiness", () => {
@@ -2411,6 +2494,137 @@ test("explicit drag targets write semantic rows for edge insertion, swaps, empty
   }
 });
 
+test("empty space inside a mixed-height semantic row resolves deliberate vertical detents", () => {
+  const order = ["short", "tall", "source"];
+  const sizes = sizesFor({ short: 6, tall: 6, source: 6 }, { short: 120, tall: 480, source: 120 });
+  const placements = {
+    short: { columnStart: 1, rowIndex: 0 },
+    tall: { columnStart: 7, rowIndex: 0 },
+    source: { columnStart: 1, rowIndex: 1 },
+  };
+  const layout = { order, placements, sizes } satisfies PageShellLayoutPreference;
+  const positions = packPageShellLayoutExplicit(order, sizes, { chromeHeightPx: 32, placements });
+  const grid = { left: 0, width: 1200 };
+  const geometries = geometriesFor(order, positions, grid).map((geometry) => {
+    const height = geometry.id === "tall" ? 480 : 120;
+    return { ...geometry, bottom: geometry.top + height };
+  });
+  const shortGeometry = geometries.find((geometry) => geometry.id === "short");
+  assert.ok(shortGeometry);
+  const sourceX = getPageShellGridColumnGeometry(grid, 1, 6)!.left + 20;
+  const target = getPageShellDropTarget(
+    geometries,
+    positions,
+    order,
+    "source",
+    sourceX,
+    shortGeometry.bottom + 140,
+    grid,
+    20,
+    placements,
+    undefined,
+    20,
+    undefined,
+    "vertical",
+  );
+  assert.equal(target.targetId, null);
+  assert.equal(target.destinationRowIndex, 0);
+  assert.equal(target.rowOffsetSteps, 20);
+  const plan = planPageShellMove({
+    layout,
+    chromeHeightPx: 32,
+    naturalHeights: {},
+    packedPositions: positions,
+    sourceId: "source",
+    target,
+    visibleShellIds: order,
+  });
+  assert.equal(plan.valid, true);
+  if (plan.valid) {
+    assert.equal(plan.layout.placements?.source?.rowIndex, 0);
+    assert.equal(plan.layout.placements?.source?.rowOffsetSteps, 20);
+  }
+
+  const collisionTarget = getPageShellDropTarget(
+    geometries,
+    positions,
+    order,
+    "source",
+    sourceX,
+    shortGeometry.bottom + 20,
+    grid,
+    20,
+    placements,
+    undefined,
+    100,
+    undefined,
+    "vertical",
+  );
+  assert.equal(collisionTarget.destinationRowIndex, 0);
+  assert.equal(collisionTarget.rowOffsetSteps, 3);
+  const collisionPlan = planPageShellMove({ layout, packedPositions: positions, sourceId: "source", target: collisionTarget, visibleShellIds: order, chromeHeightPx: 32 });
+  assert.equal(collisionPlan.valid, false);
+  if (!collisionPlan.valid) {
+    assert.equal(collisionPlan.reason, "COLLISION");
+    assert.match(collisionPlan.message, /overlaps another shell/);
+  }
+});
+
+test("cross-row edge insertion is symmetric, exact, and height-independent", () => {
+  const order = ["target", "source"];
+  const sizes = sizesFor({ target: 4, source: 4 }, { target: 480, source: 144 });
+  const baseLayout: PageShellLayoutPreference = {
+    order,
+    placements: {
+      target: { columnStart: 5, rowIndex: 0 },
+      source: { columnStart: 1, rowIndex: 1 },
+    },
+    sizes,
+  };
+  const positions = packPageShellLayoutExplicit(order, sizes, { chromeHeightPx: 32, placements: baseLayout.placements });
+  const rightTarget: PageShellDropTarget = {
+    columnStart: 9,
+    destinationRowIndex: 0,
+    insertionIndex: 1,
+    laneOrder: 0,
+    relationship: "right",
+    targetId: "target",
+  };
+  const rightPlan = planPageShellMove({ layout: baseLayout, packedPositions: positions, sourceId: "source", target: rightTarget, visibleShellIds: order, chromeHeightPx: 32 });
+  assert.equal(rightPlan.valid, true);
+  if (rightPlan.valid) {
+    assert.equal(rightPlan.layout.placements?.source?.rowIndex, 0);
+    assert.equal(rightPlan.layout.placements?.source?.columnStart, 9);
+    assert.equal(rightPlan.layout.placements?.target?.columnStart, 5);
+  }
+
+  const leftLayout: PageShellLayoutPreference = {
+    ...baseLayout,
+    placements: {
+      target: { columnStart: 5, rowIndex: 0 },
+      source: { columnStart: 9, rowIndex: 1 },
+    },
+  };
+  const leftPositions = packPageShellLayoutExplicit(order, sizes, { chromeHeightPx: 32, placements: leftLayout.placements });
+  const leftTarget: PageShellDropTarget = {
+    columnStart: 1,
+    destinationRowIndex: 0,
+    insertionIndex: 0,
+    laneOrder: 0,
+    relationship: "left",
+    targetId: "target",
+  };
+  const leftPlan = planPageShellMove({ layout: leftLayout, packedPositions: leftPositions, sourceId: "source", target: leftTarget, visibleShellIds: order, chromeHeightPx: 32 });
+  assert.equal(leftPlan.valid, true);
+  if (leftPlan.valid) {
+    assert.equal(leftPlan.layout.placements?.source?.rowIndex, 0);
+    assert.equal(leftPlan.layout.placements?.source?.columnStart, 1);
+    assert.equal(leftPlan.layout.placements?.target?.columnStart, 5);
+  }
+  const repeat = planPageShellMove({ layout: baseLayout, packedPositions: positions, sourceId: "source", target: rightTarget, visibleShellIds: order, chromeHeightPx: 32 });
+  assert.deepEqual(repeat, rightPlan);
+});
+
 test("explicit planning is isolated from legacy row inference and packing", () => {
   const explicitStart = layoutSource.indexOf("function planPageShellExplicitMove");
   const explicitEnd = layoutSource.indexOf("function packedPositionsForExplicitMove", explicitStart);
@@ -2422,7 +2636,7 @@ test("explicit planning is isolated from legacy row inference and packing", () =
   assert.match(layoutSource, /destinationRowIndex\?: number/);
 });
 
-test("7.12.112 keeps migration and legacy compatibility authorities unchanged", () => {
+test("7.12.113 keeps migration and legacy compatibility authorities unchanged", () => {
   const order = ["left", "right", "full"];
   const sizes = sizesFor({ left: 5, right: 7, full: 12 });
   const legacy = positionsFor(order, sizes, {
@@ -2496,6 +2710,21 @@ test("directional drag feedback is target-aware and non-destructive", () => {
   assert.match(shellSource, /pointer-events-none/);
   assert.match(layoutSource, /target\.relationship === "replace"/);
   assert.match(layoutSource, /nextVisibleOrder\[sourceIndex\] = target\.targetId/);
+});
+
+test("detent feedback exposes zero, positive, invalid, and 12px ruler states", () => {
+  const zero = getPageShellDetentRulerState(0, true);
+  const positive = getPageShellDetentRulerState(3, true);
+  const invalid = getPageShellDetentRulerState(3, false);
+  assert.deepEqual(zero.steps.slice(0, 3), [0, 1, 2]);
+  assert.equal(zero.currentStep, 0);
+  assert.equal(positive.currentStep, 3);
+  assert.equal(positive.steps[1] - positive.steps[0], 1);
+  assert.equal(invalid.valid, false);
+  assert.equal(PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX, 12);
+  assert.match(shellSource, /data-page-shell-detent-ruler/);
+  assert.match(shellSource, /data-page-shell-detent-current/);
+  assert.match(shellSource, /step \* PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX/);
 });
 
 test("drop targeting passes the previous insertion index into the existing hysteresis", () => {

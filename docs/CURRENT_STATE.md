@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.112`.
+- Current working app version: `7.12.113`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,20 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.113 2D Shell Stacking and Detent Feedback
+
+Same-row explicit shell collision validation is now geometric: normal shells may
+share horizontal columns when their packed vertical occupied footprints do not
+overlap, while actual two-axis overlap remains rejected. `rowOffsetSteps`
+supports deliberate vertical detents into empty space, and mixed-height row
+targeting uses stable semantic row bands rather than only visible shell bottoms.
+True inter-row gaps and above/below workspace placement still create rows, while
+ordinary whitespace inside a row remains in that row. Cross-row left/right edge
+insertion is deterministic and preserves the target footprint. Vertical drag
+feedback now shows a 12px detent ruler, current tick, and invalid-candidate
+feedback. Migration timing, storage keys, persisted authorities, Views, and SQL
+schema remain unchanged.
 
 ## 2026-09-06 7.12.112 Semantic-Row Shell Interaction Cutover
 
