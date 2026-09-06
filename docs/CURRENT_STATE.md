@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-05
+Last reviewed: 2026-09-06
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.102`.
+- Current working app version: `7.12.103`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.103 Axis-Intent-Locked Shell Dragging
+
+Shell dragging now locks intent relative to pointer-down movement. Horizontal
+or neutral movement changes structural order and snapped X placement without
+deriving a new vertical offset from pointer Y. A deliberate vertical gesture
+must clear the 12px axis threshold with vertical movement dominant; only then
+do left/right targets calculate 12px `rowOffsetSteps` detents. The axis choice
+is sticky for the gesture, so a horizontal reorder cannot acquire an accidental
+vertical nudge later. Existing plan → validate → commit behavior, vertical
+collision validation, auto-scroll, persistence, Views, Reset, narrow layouts,
+and Center behavior remain unchanged. No SQL or schema migration was needed.
 
 ## 2026-09-06 7.12.102 Strict Planned Shell Moves
 

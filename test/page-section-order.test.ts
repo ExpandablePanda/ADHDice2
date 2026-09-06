@@ -7,6 +7,7 @@ import {
   HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS,
   PAGE_SHELL_CENTER_SNAP_HYSTERESIS_PX,
   PAGE_SHELL_CENTER_SNAP_ZONE_PX,
+  PAGE_SHELL_DRAG_AXIS_LOCK_PX,
   PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX,
   PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX,
   PAGE_SHELL_DROP_ZONE_HYSTERESIS_PX,
@@ -48,6 +49,7 @@ import {
   readPageShellLayout,
   readPageShellViews,
   resolvePageShellDropRelationship,
+  resolvePageShellDragAxisIntent,
   resolvePageShellViewLayout,
   snapPageShellHeight,
   writePageShellLayout,
@@ -317,6 +319,15 @@ test("pointer X clamps at the left edge and right legal edge", () => {
   assert.equal(getPageShellGridStartFromPointer(grid, 5000, 12, 0), 1);
 });
 
+test("drag axis intent waits for movement, then locks to the dominant axis", () => {
+  assert.equal(PAGE_SHELL_DRAG_AXIS_LOCK_PX, 12);
+  assert.equal(resolvePageShellDragAxisIntent(100, 100, 108, 108), null);
+  assert.equal(resolvePageShellDragAxisIntent(100, 100, 112, 112), null);
+  assert.equal(resolvePageShellDragAxisIntent(100, 100, 124, 116), "horizontal");
+  assert.equal(resolvePageShellDragAxisIntent(100, 100, 116, 124), "vertical");
+  assert.equal(resolvePageShellDragAxisIntent(100, 100, 118, 110, 20), null);
+});
+
 test("directional target zones resolve above, below, left, right, and replace", () => {
   const targetGeometry: PageShellGeometry = { bottom: 500, id: "target", left: 100, right: 500, top: 100 };
   assert.equal(resolvePageShellDropRelationship(targetGeometry, 300, 120), "before");
@@ -581,13 +592,29 @@ test("vertical detents honor grab offset and magnetic top, center, and bottom al
   const tallGeometry = geometries.find((geometry) => geometry.id === "tall");
   assert.ok(tallGeometry);
   const pointerX = tallGeometry.left + 20;
-  const topDrop = getPageShellDropTarget(geometries, positions, order, "source", pointerX, tallGeometry.top + 30, grid, 20, placements, undefined, 30);
+  const topDrop = getPageShellDropTarget(geometries, positions, order, "source", pointerX, tallGeometry.top + 30, grid, 20, placements, undefined, 30, undefined, "vertical");
   assert.equal(topDrop.relationship, "left");
   assert.equal(topDrop.rowOffsetSteps, 0);
-  const centerDrop = getPageShellDropTarget(geometries, positions, order, "source", pointerX, tallGeometry.top + 126, grid, 20, placements, undefined, 30);
+  const centerDrop = getPageShellDropTarget(geometries, positions, order, "source", pointerX, tallGeometry.top + 126, grid, 20, placements, undefined, 30, undefined, "vertical");
   assert.equal(centerDrop.rowOffsetSteps, 8);
-  const bottomDrop = getPageShellDropTarget(geometries, positions, order, "source", pointerX, tallGeometry.top + 222, grid, 20, placements, undefined, 30);
+  const bottomDrop = getPageShellDropTarget(geometries, positions, order, "source", pointerX, tallGeometry.top + 222, grid, 20, placements, undefined, 30, undefined, "vertical");
   assert.equal(bottomDrop.rowOffsetSteps, 16);
+});
+
+test("horizontal drag intent preserves the source vertical offset", () => {
+  const order = ["source", "target"];
+  const sizes = sizesFor({ source: 4, target: 8 }, { source: 192, target: 384 });
+  const placements = { source: { columnStart: 1, rowOffsetSteps: 4 }, target: { columnStart: 5 } };
+  const positions = positionsFor(order, sizes, placements);
+  const grid = { left: 0, width: 1200 };
+  const targetGeometry = geometriesFor(order, positions, grid).find((geometry) => geometry.id === "target");
+  assert.ok(targetGeometry);
+  const pointerX = targetGeometry.left + 20;
+  const horizontal = getPageShellDropTarget(geometriesFor(order, positions, grid), positions, order, "source", pointerX, targetGeometry.top + 180, grid, 20, placements, undefined, 0, undefined, "horizontal");
+  const vertical = getPageShellDropTarget(geometriesFor(order, positions, grid), positions, order, "source", pointerX, targetGeometry.top + 180, grid, 20, placements, undefined, 0, undefined, "vertical");
+  assert.equal(horizontal.relationship, "left");
+  assert.equal(horizontal.rowOffsetSteps, 4);
+  assert.equal(vertical.rowOffsetSteps, 15);
 });
 
 test("same-row vertical offsets remain side-by-side while intersecting tracks stay collision-safe", () => {
@@ -1085,6 +1112,10 @@ test("move preview keeps the pointer-down reference frame and commits order and 
   assert.match(shellSource, /const previousInsertionIndex = interaction\.target\?\.insertionIndex \?\? interaction\.targetIndex/);
   assert.match(shellSource, /grabOffsetY: sourceGeometry \? event\.clientY \+ getPageScrollTop\(\) - sourceGeometry\.top : 0/);
   assert.match(shellSource, /interaction\.grabOffsetY/);
+  assert.match(shellSource, /resolvePageShellDragAxisIntent\(/);
+  assert.match(shellSource, /startPointerX: event\.clientX/);
+  assert.match(shellSource, /startPointerY: event\.clientY/);
+  assert.match(previewSource, /interaction\.axisIntent \?\? "horizontal"/);
   assert.match(shellSource, /interaction\.target/);
 });
 

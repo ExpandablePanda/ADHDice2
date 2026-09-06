@@ -21,7 +21,9 @@ import {
   packPageShellLayout,
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
+  resolvePageShellDragAxisIntent,
   type PageShellDropRelationship,
+  type PageShellDragAxisIntent,
   projectVisiblePageShellOrder,
   type PageShellPackedPosition,
   type PageShellGeometry,
@@ -63,7 +65,10 @@ type ShellMoveInteraction = {
   referenceGridBounds?: PageShellGridBounds;
   referencePackedPositions: Record<string, PageShellPackedPosition>;
   referenceVisibleOrder: string[];
+  startPointerX: number;
+  startPointerY: number;
   startLayout: PageShellLayoutPreference;
+  axisIntent: PageShellDragAxisIntent | null;
   plan?: PageShellMovePlan;
   target?: PageShellDropTarget;
   targetIndex: number;
@@ -566,6 +571,15 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   }
 
   function updateMovePreview(interaction: ShellMoveInteraction, pointerX: number, pointerY: number) {
+    if (interaction.axisIntent === null) {
+      const axisIntent = resolvePageShellDragAxisIntent(
+        interaction.startPointerX,
+        interaction.startPointerY,
+        pointerX,
+        pointerY,
+      );
+      if (axisIntent) interaction.axisIntent = axisIntent;
+    }
     const previousInsertionIndex = interaction.target?.insertionIndex ?? interaction.targetIndex;
     const dropTarget = getPageShellDropTarget(
       interaction.referenceGeometries,
@@ -580,6 +594,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       previousInsertionIndex,
       interaction.grabOffsetY,
       interaction.target,
+      interaction.axisIntent ?? "horizontal",
     );
     interaction.target = dropTarget;
     const plan = planPageShellMove({
@@ -707,7 +722,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       referenceGridBounds: referenceFrame.referenceGridBounds,
       referencePackedPositions: referenceFrame.referencePackedPositions,
       referenceVisibleOrder: referenceFrame.referenceVisibleOrder,
+      startPointerX: event.clientX,
+      startPointerY: event.clientY,
       startLayout,
+      axisIntent: null,
       targetIndex: Math.max(0, startVisibleOrder.indexOf(id)),
     };
     interactionRef.current = moveInteraction;

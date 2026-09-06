@@ -523,6 +523,8 @@ export type PageShellPackedLayoutOptions = {
 
 export type PageShellDropRelationship = "before" | "after" | "left" | "right" | "replace";
 
+export type PageShellDragAxisIntent = "horizontal" | "vertical";
+
 export type PageShellDropTarget = {
   columnStart: number;
   insertionIndex: number;
@@ -572,6 +574,7 @@ export type PageShellGridColumnGeometry = {
 };
 
 export const PAGE_SHELL_POINTER_HYSTERESIS_PX = 8;
+export const PAGE_SHELL_DRAG_AXIS_LOCK_PX = 12;
 export const PAGE_SHELL_CENTER_SNAP_ZONE_PX = 48;
 export const PAGE_SHELL_CENTER_SNAP_HYSTERESIS_PX = 16;
 export const PAGE_SHELL_ROW_ALIGNMENT_PX = 12;
@@ -632,6 +635,26 @@ export function getPageShellDragAutoScrollDelta(
     return Math.min(maxScrollTop - scrollTop, Math.max(1, Math.round(strength * PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX)));
   }
   return 0;
+}
+
+/**
+ * Classifies deliberate drag intent once movement clears the small pointer
+ * jitter threshold. Equal diagonal movement remains neutral so the next
+ * sample can establish the dominant axis; callers should treat neutral as
+ * horizontal for placement purposes.
+ */
+export function resolvePageShellDragAxisIntent(
+  startX: number,
+  startY: number,
+  pointerX: number,
+  pointerY: number,
+  threshold = PAGE_SHELL_DRAG_AXIS_LOCK_PX,
+): PageShellDragAxisIntent | null {
+  const deltaX = Math.abs(pointerX - startX);
+  const deltaY = Math.abs(pointerY - startY);
+  const safeThreshold = Number.isFinite(threshold) ? Math.max(0, threshold) : PAGE_SHELL_DRAG_AXIS_LOCK_PX;
+  if (Math.max(deltaX, deltaY) < safeThreshold || deltaX === deltaY) return null;
+  return deltaX > deltaY ? "horizontal" : "vertical";
 }
 
 export function normalizePageShellRowOffsetSteps(value: unknown, fallback = 0) {
@@ -1012,6 +1035,7 @@ export function getPageShellDropTarget(
   previousInsertionIndex?: number,
   grabOffsetY = 0,
   previousTarget?: PageShellDropTarget,
+  axisIntent: PageShellDragAxisIntent = "horizontal",
 ): PageShellDropTarget {
   const intendedLeft = pointerX - (Number.isFinite(grabOffsetX) ? grabOffsetX : 0);
   const sourceSpan = packedPositions[sourceId]?.columnSpan ?? PAGE_SHELL_OPTIONS_LAST;
@@ -1100,12 +1124,14 @@ export function getPageShellDropTarget(
     ? getPageShellSameRowVerticalBounds(geometries, sourceId, directionalTargetId)
     : null;
   const rowOffsetSteps = sameRowBounds && sourceGeometry && (relationship === "left" || relationship === "right")
-    ? getPageShellVerticalOffsetSteps(
-      pointerY - (Number.isFinite(grabOffsetY) ? grabOffsetY : 0),
-      sameRowBounds.top,
-      Math.max(0, sourceGeometry.bottom - sourceGeometry.top),
-      sameRowBounds.bottom,
-    )
+    ? axisIntent === "vertical"
+      ? getPageShellVerticalOffsetSteps(
+        pointerY - (Number.isFinite(grabOffsetY) ? grabOffsetY : 0),
+        sameRowBounds.top,
+        Math.max(0, sourceGeometry.bottom - sourceGeometry.top),
+        sameRowBounds.bottom,
+      )
+      : getPageShellPlacementRowOffsetSteps(placements[sourceId])
     : 0;
   return {
     columnStart: getPageShellTargetColumnStart(
