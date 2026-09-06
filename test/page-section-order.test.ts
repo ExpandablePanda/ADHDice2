@@ -4,7 +4,14 @@ import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  FOCUS_PAGE_SHELL_CANONICAL_LAYOUT,
   HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS,
+  HOME_PAGE_SHELL_CANONICAL_LAYOUT,
+  NOTES_PAGE_SHELL_CANONICAL_LAYOUT,
+  SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT,
+  STATS_PAGE_SHELL_CANONICAL_LAYOUT,
+  TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT,
+  TEST_PAGE_SHELL_CANONICAL_LAYOUT,
   PAGE_SHELL_CENTER_SNAP_HYSTERESIS_PX,
   PAGE_SHELL_CENTER_SNAP_ZONE_PX,
   PAGE_SHELL_DRAG_AXIS_LOCK_PX,
@@ -24,12 +31,16 @@ import {
   PAGE_SHELL_VIEWS_SCHEMA_VERSION,
   buildPageShellLayoutExport,
   clampPageShellHeight,
+  clonePageShellLayout,
+  compactPageShellRows,
   createPageShellView,
   formatPageShellDimensions,
   getHealthPageShellKey,
   getPageShellDirectionalMoveTarget,
   getPageShellDragAutoScrollDelta,
   getPageShellDropTarget,
+  getPageShellExplicitRows,
+  getPageShellExplicitRowMajorOrder,
   getPageShellGridColumnGeometry,
   getPageShellGridStartFromPointer,
   getPageShellPlacementRowOffsetSteps,
@@ -41,10 +52,14 @@ import {
   getPageShellViewsStorageKey,
   getPageShellShrinkHeight,
   getPageShellVerticalOffsetSteps,
+  getPageShellCanonicalLayoutValidationErrors,
+  getRegisteredPageShellPages,
+  hasCompletePageShellRows,
   hasPageShellLayout,
   isPageShellCenteredPlacement,
   normalizePageShellLayout,
   normalizePageShellPlacement,
+  normalizePageShellRowIndex,
   normalizePageShellRowOffsetSteps,
   normalizePageShellSize,
   packPageShellLayout,
@@ -58,6 +73,8 @@ import {
   snapPageShellHeight,
   writePageShellLayout,
   writePageShellView,
+  inferPageShellRowsFromPackedLayout,
+  isLegacyPageShellLayout,
 } from "@/lib/page-shell-layout";
 import {
   isPageShellPointerMatch,
@@ -195,6 +212,140 @@ test("normalization keeps persisted order as the vertical authority", () => {
   assert.equal(result.placements?.B?.columnStart, 7);
 });
 
+test("semantic rowIndex normalization is additive and rejects malformed values", () => {
+  assert.equal(normalizePageShellRowIndex(0), 0);
+  assert.equal(normalizePageShellRowIndex(7), 7);
+  assert.equal(normalizePageShellRowIndex(2.5), undefined);
+  assert.equal(normalizePageShellRowIndex(-1), undefined);
+  assert.equal(normalizePageShellRowIndex(Number.NaN), undefined);
+  assert.equal(normalizePageShellRowIndex(Number.POSITIVE_INFINITY), undefined);
+  assert.equal(normalizePageShellRowIndex("2"), undefined);
+  assert.equal(normalizePageShellRowIndex(undefined), undefined);
+  assert.deepEqual(normalizePageShellPlacement({ columnStart: 7, rowIndex: 2 }, 6), { columnStart: 7, rowIndex: 2, laneOrder: 0 });
+  assert.deepEqual(normalizePageShellPlacement({ columnStart: 7 }, 6), { columnStart: 7, laneOrder: 0 });
+  assert.deepEqual(normalizePageShellPlacement({ columnStart: 7, rowIndex: 2.5 }, 6), { columnStart: 7, laneOrder: 0 });
+});
+
+test("explicit row detection distinguishes complete, legacy, filtered, and malformed layouts", () => {
+  const complete = {
+    order: ["hidden", "a", "b"],
+    placements: {
+      hidden: { columnStart: 1 },
+      a: { columnStart: 1, rowIndex: 0 },
+      b: { columnStart: 7, rowIndex: 1 },
+    },
+    sizes: sizesFor({ hidden: 12, a: 6, b: 6 }),
+  } satisfies PageShellLayoutPreference;
+  assert.equal(hasCompletePageShellRows(complete, ["a", "b"]), true);
+  assert.equal(hasCompletePageShellRows(complete, ["hidden", "a", "b"]), false);
+  assert.equal(isLegacyPageShellLayout(complete, ["a", "b"]), false);
+  assert.equal(isLegacyPageShellLayout({ ...complete, placements: { ...complete.placements, b: { columnStart: 7 } } }, ["a", "b"]), true);
+  assert.equal(hasCompletePageShellRows({ ...complete, placements: { ...complete.placements, b: { columnStart: 7, rowIndex: -1 } } }, ["a", "b"]), false);
+});
+
+test("explicit row compaction preserves membership and placement fields without mutation", () => {
+  const layout: PageShellLayoutPreference = {
+    order: ["a", "b", "c", "d"],
+    placements: {
+      a: { columnStart: 1, rowIndex: 2, rowOffsetSteps: 3 },
+      b: { columnStart: 7, rowIndex: 2, mode: "centered" },
+      c: { columnStart: 1, rowIndex: 7 },
+      d: { columnStart: 5, rowIndex: 10 },
+    },
+    sizes: sizesFor({ a: 5, b: 5, c: 7, d: 8 }),
+  };
+  const before = clonePageShellLayout(layout);
+  const compacted = compactPageShellRows(layout);
+  assert.deepEqual(compacted.placements, {
+    a: { columnStart: 1, rowIndex: 0, rowOffsetSteps: 3 },
+    b: { columnStart: 7, rowIndex: 0, mode: "centered" },
+    c: { columnStart: 1, rowIndex: 1 },
+    d: { columnStart: 5, rowIndex: 2 },
+  });
+  assert.deepEqual(layout, before);
+  assert.deepEqual(compacted.sizes, layout.sizes);
+});
+
+test("explicit grouping is row ordered, layout-order stable, and independent of packed coordinates", () => {
+  const layout: PageShellLayoutPreference = {
+    order: ["b", "a", "d", "c"],
+    placements: {
+      a: { columnStart: 9, rowIndex: 2 },
+      b: { columnStart: 1, rowIndex: 2 },
+      c: { columnStart: 1, rowIndex: 0 },
+      d: { columnStart: 7, rowIndex: 0 },
+    },
+    sizes: sizesFor({ a: 3, b: 3, c: 6, d: 6 }),
+  };
+  assert.deepEqual(getPageShellExplicitRows(layout), [
+    { rowIndex: 0, shellIds: ["d", "c"] },
+    { rowIndex: 2, shellIds: ["b", "a"] },
+  ]);
+  assert.deepEqual(getPageShellExplicitRowMajorOrder(layout), ["d", "c", "b", "a"]);
+  assert.deepEqual(getPageShellExplicitRows({ ...layout, placements: { ...layout.placements, c: { columnStart: 1 } } }), []);
+});
+
+test("measured legacy row inference subtracts visual offsets and is idempotent", () => {
+  const layout: PageShellLayoutPreference = {
+    order: ["a", "b", "c", "d"],
+    placements: {
+      a: { columnStart: 1, rowOffsetSteps: 0 },
+      b: { columnStart: 7, rowOffsetSteps: 3 },
+      c: { columnStart: 1, rowOffsetSteps: 0 },
+      d: { columnStart: 1, mode: "centered", rowOffsetSteps: 0 },
+    },
+    sizes: sizesFor({ a: 5, b: 7, c: 12, d: 5 }),
+  };
+  const packedPositions = {
+    a: { columnStart: 1, columnSpan: 5, rowStart: 1, rowSpan: 20 },
+    b: { columnStart: 7, columnSpan: 7, rowStart: 1 + 3 * 3, rowSpan: 15 },
+    c: { columnStart: 1, columnSpan: 12, rowStart: 40, rowSpan: 20 },
+    d: { columnStart: 4, columnSpan: 5, rowStart: 61, rowSpan: 20 },
+  } satisfies Record<string, PageShellPackedPosition>;
+  const inferred = inferPageShellRowsFromPackedLayout({ layout, packedPositions, shellIds: layout.order });
+  assert.deepEqual(layout.placements && Object.fromEntries(Object.entries(inferred.placements ?? {}).map(([id, placement]) => [id, placement.rowIndex])), {
+    a: 0,
+    b: 0,
+    c: 1,
+    d: 2,
+  });
+  assert.equal(inferred.placements?.b?.columnStart, 7);
+  assert.equal(inferred.placements?.b?.rowOffsetSteps, 3);
+  assert.equal(inferred.placements?.d?.mode, "centered");
+  assert.deepEqual(inferPageShellRowsFromPackedLayout({ layout: inferred, packedPositions, shellIds: layout.order }), inferred);
+  assert.deepEqual(layout.placements?.a, { columnStart: 1, rowOffsetSteps: 0 });
+});
+
+test("all registered canonical layouts have valid explicit rows and preserve approved compositions", () => {
+  for (const { canonicalLayout } of getRegisteredPageShellPages()) {
+    assert.deepEqual(getPageShellCanonicalLayoutValidationErrors(canonicalLayout), [], canonicalLayout.order.join(","));
+    assert.equal(hasCompletePageShellRows(canonicalLayout, canonicalLayout.order), true);
+  }
+  const water = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Water.placements ?? {};
+  assert.deepEqual([
+    [water["water-log"]?.columnStart, water["water-log"]?.rowIndex],
+    [water["water-pending"]?.columnStart, water["water-pending"]?.rowIndex],
+    [water["water-today"]?.columnStart, water["water-today"]?.rowIndex],
+    [water["water-history"]?.columnStart, water["water-history"]?.rowIndex],
+  ], [[1, 0], [6, 0], [6, 1], [6, 2]]);
+  const food = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Food.placements ?? {};
+  assert.deepEqual([
+    [food["food-meal-log"]?.columnStart, food["food-meal-log"]?.rowIndex],
+    [food["food-daily-totals"]?.columnStart, food["food-daily-totals"]?.rowIndex],
+    [food["food-favorites-recent"]?.columnStart, food["food-favorites-recent"]?.rowIndex],
+    [food["food-library"]?.columnStart, food["food-library"]?.rowIndex],
+  ], [[1, 0], [8, 0], [8, 1], [1, 2]]);
+  const fitness = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Fitness.placements ?? {};
+  assert.deepEqual([fitness["fitness-active-workout"]?.rowIndex, fitness["fitness-today"]?.rowIndex, fitness["fitness-week"]?.rowIndex, fitness["fitness-goals"]?.rowIndex, fitness["fitness-plans"]?.rowIndex, fitness["fitness-workout-history"]?.rowIndex], [0, 1, 1, 2, 3, 4]);
+  assert.equal(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Weight.placements?.["weight-entry"]?.rowIndex, 0);
+  assert.equal(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Weight.placements?.["weight-trend"]?.rowIndex, 0);
+  assert.equal(TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.placements?.["test-d20-sandbox"]?.rowIndex, 0);
+  assert.equal(TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT.placements?.["test-d20-controls"]?.rowIndex, 0);
+  for (const layout of [FOCUS_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_CANONICAL_LAYOUT, NOTES_PAGE_SHELL_CANONICAL_LAYOUT, SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT, STATS_PAGE_SHELL_CANONICAL_LAYOUT, TEST_PAGE_SHELL_CANONICAL_LAYOUT]) {
+    assert.equal(hasCompletePageShellRows(layout, layout.order), true);
+  }
+});
+
 test("page shell spans remain the 12-column 3-through-12 range", () => {
   assert.deepEqual(PAGE_SHELL_SPAN_OPTIONS, [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   assert.equal(normalizePageShellSize({ heightPx: null, span: 2 }).span, 3);
@@ -234,6 +385,34 @@ test("storage remains user-scoped and resettable without a schema migration", ()
   assert.equal(getHealthPageShellKey("Water"), "health:water");
   assert.deepEqual(readPageShellLayout(store, key, "health:water", canonical.order, canonical.sizes).order, custom.order);
   assert.equal(readPageShellLayout(store, key, "health:water", canonical.order, canonical.sizes).placements?.["water-pending"]?.columnStart, 5);
+  assert.equal(readPageShellLayout(store, key, "health:water", canonical.order, canonical.sizes).placements?.["water-log"]?.rowIndex, 0);
+
+  const legacyKey = getPageShellLayoutStorageKey("legacy-user");
+  store.setItem(legacyKey, JSON.stringify({ "health:water": { order: canonical.order, placements: { "water-log": { columnStart: 1 } }, sizes: canonical.sizes } }));
+  const legacy = readPageShellLayout(store, legacyKey, "health:water", canonical.order, canonical.sizes);
+  assert.equal(legacy.placements?.["water-log"]?.rowIndex, undefined);
+  assert.equal(isLegacyPageShellLayout(legacy, canonical.order), true);
+});
+
+test("legacy ID replacements preserve one-to-one placement metadata without inventing rows", () => {
+  const sizes = sizesFor({ old: 6, next: 6, first: 5, second: 7 });
+  const oneToOne = normalizePageShellLayout({
+    order: ["old"],
+    placements: { old: { columnStart: 7, rowIndex: 4, rowOffsetSteps: 2, laneOrder: 3 } },
+    sizes,
+  }, ["next"], sizes, { old: ["next"] });
+  assert.deepEqual(oneToOne.placements?.next, { columnStart: 7, rowIndex: 4, laneOrder: 3, rowOffsetSteps: 2 });
+
+  const oneToMany = normalizePageShellLayout({
+    order: ["old"],
+    placements: { old: { columnStart: 7, rowIndex: 4, rowOffsetSteps: 2, laneOrder: 3 } },
+    sizes,
+  }, ["first", "second"], sizes, { old: ["first", "second"] });
+  assert.equal(oneToMany.placements?.first?.columnStart, 7);
+  assert.equal(oneToMany.placements?.second?.columnStart, 6);
+  assert.equal(oneToMany.placements?.first?.rowIndex, undefined);
+  assert.equal(oneToMany.placements?.second?.rowIndex, undefined);
+  assert.equal(isLegacyPageShellLayout(oneToMany, ["first", "second"]), true);
 });
 
 test("5 plus 7 compatible shells share one row", () => {
@@ -1751,6 +1930,7 @@ test("Reset Layout still resolves to the coded canonical layout", () => {
   assert.deepEqual(reset.order, [...canonical.order]);
   assert.equal(reset.placements?.["water-log"]?.columnStart, 1);
   assert.equal(reset.placements?.["water-pending"]?.columnStart, 6);
+  assert.equal(reset.placements?.["water-log"]?.rowIndex, 0);
   assert.equal(reset.placements?.["water-log"]?.rowOffsetSteps ?? 0, 0);
 });
 
@@ -1761,8 +1941,8 @@ test("saved Views restore snapped starts and centered modes", () => {
   const layout = canonicalEditLayout(canonical);
   layout.placements = {
     ...layout.placements,
-    "water-log": { columnStart: 4, rowOffsetSteps: 5 },
-    "water-pending": { columnStart: 6, mode: "centered" },
+    "water-log": { columnStart: 4, rowIndex: 0, rowOffsetSteps: 5 },
+    "water-pending": { columnStart: 6, rowIndex: 0, mode: "centered" },
   };
   const view = createPageShellView({
     id: "view-grid",
@@ -1777,6 +1957,7 @@ test("saved Views restore snapped starts and centered modes", () => {
   writePageShellView(store, key, view);
   const saved = readPageShellViews(store, key, "health:water")[0];
   assert.equal(saved.layout?.placements?.["water-log"]?.columnStart, 4);
+  assert.equal(saved.layout?.placements?.["water-log"]?.rowIndex, 0);
   assert.equal(saved.layout?.placements?.["water-log"]?.rowOffsetSteps, 5);
   assert.equal(resolvePageShellViewLayout(saved, canonical).layout.placements?.["water-pending"]?.mode, "centered");
   assert.equal(resolvePageShellViewLayout(saved, canonical).layout.placements?.["water-log"]?.rowOffsetSteps, 5);
@@ -1815,7 +1996,7 @@ test("export and import preserve snapped placement data", () => {
   const layoutKey = getPageShellLayoutStorageKey("user-export");
   const canonical = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Water;
   const layout = canonicalEditLayout(canonical);
-  layout.placements = { ...layout.placements, "water-log": { columnStart: 3, rowOffsetSteps: 7 } };
+  layout.placements = { ...layout.placements, "water-log": { columnStart: 3, rowIndex: 0, rowOffsetSteps: 7 } };
   writePageShellLayout(store, layoutKey, "health:water", layout);
   const exported = buildPageShellLayoutExport({
     appVersion: "7.12.99",
@@ -1831,8 +2012,10 @@ test("export and import preserve snapped placement data", () => {
   assert.equal(exported.schemaVersion, PAGE_SHELL_EXPORT_SCHEMA_VERSION);
   const imported = exported.pages[0].layout;
   assert.equal(imported?.placements?.["water-log"]?.columnStart, 3);
+  assert.equal(imported?.placements?.["water-log"]?.rowIndex, 0);
   assert.equal(imported?.placements?.["water-log"]?.rowOffsetSteps, 7);
   assert.equal(normalizePageShellLayout(imported, canonical.order, canonical.sizes).placements?.["water-log"]?.columnStart, 3);
+  assert.equal(normalizePageShellLayout(imported, canonical.order, canonical.sizes).placements?.["water-log"]?.rowIndex, 0);
   assert.equal(normalizePageShellLayout(imported, canonical.order, canonical.sizes).placements?.["water-log"]?.rowOffsetSteps, 7);
 });
 
@@ -1857,6 +2040,26 @@ test("packed placement uses the shared 12-column geometry and direct order-first
   assert.match(layoutSource, /PAGE_SHELL_PACKING_GAP_PX/);
   assert.equal(PAGE_SHELL_PACKING_GAP_PX, 20);
   assert.equal(PAGE_SHELL_PACKING_ROW_UNIT_PX, 4);
+});
+
+test("7.12.110 keeps the legacy packer, planner, drag, and hydration authorities unchanged", () => {
+  const order = ["left", "right", "full"];
+  const sizes = sizesFor({ left: 5, right: 7, full: 12 });
+  const legacy = positionsFor(order, sizes, {
+    left: { columnStart: 1 },
+    right: { columnStart: 6 },
+    full: { columnStart: 1 },
+  });
+  const explicit = positionsFor(order, sizes, {
+    left: { columnStart: 1, rowIndex: 4 },
+    right: { columnStart: 6, rowIndex: 4 },
+    full: { columnStart: 1, rowIndex: 9 },
+  });
+  assert.deepEqual(explicit, legacy);
+  const packStart = layoutSource.indexOf("export function packPageShellLayout");
+  const packEnd = layoutSource.indexOf("\nexport function normalizePageShellSpan", packStart);
+  assert.doesNotMatch(layoutSource.slice(packStart, packEnd), /rowIndex/);
+  assert.doesNotMatch(hookSource, /inferPageShellRowsFromPackedLayout/);
 });
 
 test("pointer lifecycle and drag auto-scroll contracts remain intact", () => {

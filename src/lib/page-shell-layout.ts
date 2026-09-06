@@ -17,7 +17,9 @@ export type PageShellSize = {
 export type PageShellPlacement = {
   /** Compatibility field: the user's preferred snapped 12-column grid start. */
   columnStart: number;
-  /** Legacy compatibility only; order now controls vertical packing. */
+  /** Persisted semantic row membership for explicit-row layouts. Zero-based; optional only for legacy compatibility. */
+  rowIndex?: number;
+  /** Legacy compatibility only; rowIndex is future semantic authority and order still controls vertical packing. */
   laneOrder?: number;
   /** Odd-width exact-center presentation mode; even widths use normal grid centering. */
   mode?: "centered";
@@ -129,7 +131,11 @@ function canonicalLayout(
   sizes: PageShellSizeDefaults,
   options: Omit<PageShellCanonicalLayout, "order" | "sizes"> = {},
 ): PageShellCanonicalLayout {
-  return { ...options, order, sizes };
+  const placements = Object.fromEntries(order.map((id, index) => [
+    id,
+    options.placements?.[id] ?? { columnStart: 1, rowIndex: index },
+  ]));
+  return { ...options, order, placements, sizes };
 }
 
 export const HEALTH_PAGE_SHELL_IDS = {
@@ -205,9 +211,10 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
       { className: "xl:col-span-full", shellIds: ["food-library"] },
     ],
     placements: {
-      "food-meal-log": { columnStart: 1, laneOrder: 0 },
-      "food-daily-totals": { columnStart: 8, laneOrder: 0 },
-      "food-favorites-recent": { columnStart: 8, laneOrder: 1 },
+      "food-meal-log": { columnStart: 1, rowIndex: 0, laneOrder: 0 },
+      "food-daily-totals": { columnStart: 8, rowIndex: 0, laneOrder: 0 },
+      "food-favorites-recent": { columnStart: 8, rowIndex: 1, laneOrder: 1 },
+      "food-library": { columnStart: 1, rowIndex: 2 },
     },
   }),
   Water: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Water, {
@@ -222,10 +229,10 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
       { className: "grid gap-5 xl:col-start-2 xl:col-end-3", shellIds: ["water-pending", "water-today", "water-history"] },
     ],
     placements: {
-      "water-log": { columnStart: 1, laneOrder: 0 },
-      "water-pending": { columnStart: 6, laneOrder: 0 },
-      "water-today": { columnStart: 6, laneOrder: 1 },
-      "water-history": { columnStart: 6, laneOrder: 2 },
+      "water-log": { columnStart: 1, rowIndex: 0, laneOrder: 0 },
+      "water-pending": { columnStart: 6, rowIndex: 0, laneOrder: 0 },
+      "water-today": { columnStart: 6, rowIndex: 1, laneOrder: 1 },
+      "water-history": { columnStart: 6, rowIndex: 2, laneOrder: 2 },
     },
   }),
   Fitness: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Fitness, {
@@ -246,8 +253,12 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
       "fitness-workout-history": "xl:col-span-full",
     },
     placements: {
-      "fitness-today": { columnStart: 1, laneOrder: 0 },
-      "fitness-week": { columnStart: 8, laneOrder: 0 },
+      "fitness-active-workout": { columnStart: 1, rowIndex: 0 },
+      "fitness-today": { columnStart: 1, rowIndex: 1, laneOrder: 0 },
+      "fitness-week": { columnStart: 8, rowIndex: 1, laneOrder: 0 },
+      "fitness-goals": { columnStart: 1, rowIndex: 2 },
+      "fitness-plans": { columnStart: 1, rowIndex: 3 },
+      "fitness-workout-history": { columnStart: 1, rowIndex: 4 },
     },
   }),
   Journal: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Journal, {
@@ -265,8 +276,8 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
       "weight-trend": "xl:col-start-2 xl:col-end-3",
     },
     placements: {
-      "weight-entry": { columnStart: 1, laneOrder: 0 },
-      "weight-trend": { columnStart: 7, laneOrder: 0 },
+      "weight-entry": { columnStart: 1, rowIndex: 0, laneOrder: 0 },
+      "weight-trend": { columnStart: 7, rowIndex: 0, laneOrder: 0 },
     },
   }),
   Sleep: canonicalLayout(["sleep-ledger", "sleep-log", "sleep-focus-ledger", "sleep-sources"], {
@@ -281,10 +292,10 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
       { className: "grid gap-5 xl:col-start-2 xl:col-end-3", shellIds: ["sleep-log", "sleep-focus-ledger", "sleep-sources"] },
     ],
     placements: {
-      "sleep-ledger": { columnStart: 1, laneOrder: 0 },
-      "sleep-log": { columnStart: 7, laneOrder: 0 },
-      "sleep-focus-ledger": { columnStart: 7, laneOrder: 1 },
-      "sleep-sources": { columnStart: 7, laneOrder: 2 },
+      "sleep-ledger": { columnStart: 1, rowIndex: 0, laneOrder: 0 },
+      "sleep-log": { columnStart: 7, rowIndex: 0, laneOrder: 0 },
+      "sleep-focus-ledger": { columnStart: 7, rowIndex: 1, laneOrder: 1 },
+      "sleep-sources": { columnStart: 7, rowIndex: 2, laneOrder: 2 },
     },
   }),
   Insights: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Insights, {
@@ -297,8 +308,8 @@ export const HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS: Record<HealthPageShellTab, Pag
       "insights-trends": "xl:col-start-2 xl:col-end-3",
     },
     placements: {
-      "insights-import": { columnStart: 1, laneOrder: 0 },
-      "insights-trends": { columnStart: 7, laneOrder: 0 },
+      "insights-import": { columnStart: 1, rowIndex: 0, laneOrder: 0 },
+      "insights-trends": { columnStart: 7, rowIndex: 0, laneOrder: 0 },
     },
   }),
   Awards: canonicalLayout(HEALTH_PAGE_SHELL_IDS.Awards, {
@@ -337,6 +348,16 @@ export const TEST_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canoni
   "test-task-table-prototype": CANONICAL_PAGE_SHELL_SIZE(12),
   "test-bucket-tray": CANONICAL_PAGE_SHELL_SIZE(6),
   "test-rule-builder": CANONICAL_PAGE_SHELL_SIZE(6),
+}, {
+  placements: {
+    "test-task-table": { columnStart: 1, rowIndex: 0 },
+    "test-d20": { columnStart: 1, rowIndex: 1 },
+    "test-dice-face": { columnStart: 1, rowIndex: 2 },
+    "test-dice-material": { columnStart: 7, rowIndex: 2 },
+    "test-task-table-prototype": { columnStart: 1, rowIndex: 3 },
+    "test-bucket-tray": { columnStart: 1, rowIndex: 4 },
+    "test-rule-builder": { columnStart: 7, rowIndex: 4 },
+  },
 });
 
 export const TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = canonicalLayout(TEST_D20_PAGE_SHELL_IDS, {
@@ -345,8 +366,8 @@ export const TEST_D20_PAGE_SHELL_CANONICAL_LAYOUT: PageShellCanonicalLayout = ca
 }, {
   gridClassName: "xl:grid-cols-[minmax(0,0.56fr)_minmax(20rem,0.44fr)]",
   placements: {
-    "test-d20-sandbox": { columnStart: 1, laneOrder: 0 },
-    "test-d20-controls": { columnStart: 8, laneOrder: 0 },
+    "test-d20-sandbox": { columnStart: 1, rowIndex: 0, laneOrder: 0 },
+    "test-d20-controls": { columnStart: 8, rowIndex: 0, laneOrder: 0 },
   },
 });
 
@@ -671,6 +692,13 @@ export function normalizePageShellRowOffsetSteps(value: unknown, fallback = 0) {
   return Math.max(0, Math.min(PAGE_SHELL_MAX_VERTICAL_OFFSET_STEPS, Math.round(raw)));
 }
 
+/** Returns a durable zero-based semantic row, or undefined for legacy/malformed metadata. */
+export function normalizePageShellRowIndex(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
 export function getPageShellPlacementRowOffsetSteps(placement: PageShellPlacement | undefined) {
   if (!placement || placement.mode === "centered") return 0;
   return normalizePageShellRowOffsetSteps(placement.rowOffsetSteps);
@@ -844,6 +872,9 @@ export function normalizePageShellPlacement(
   const rawLaneOrder = typeof source.laneOrder === "number" && Number.isFinite(source.laneOrder)
     ? Math.round(source.laneOrder)
     : fallback.laneOrder ?? 0;
+  const rowIndex = normalizePageShellRowIndex(
+    Object.prototype.hasOwnProperty.call(source, "rowIndex") ? source.rowIndex : fallback.rowIndex,
+  );
   const rowOffsetSteps = normalizePageShellRowOffsetSteps(
     Object.prototype.hasOwnProperty.call(source, "rowOffsetSteps") ? source.rowOffsetSteps : fallback.rowOffsetSteps,
   );
@@ -851,10 +882,161 @@ export function normalizePageShellPlacement(
     columnStart: isCentered && span % 2 === 0
       ? getPageShellCenteredColumnStart(span)
       : Math.max(1, Math.min(13 - span, rawColumnStart)),
+    ...(rowIndex === undefined ? {} : { rowIndex }),
     laneOrder: Math.max(0, rawLaneOrder),
     ...(isOddCentered ? { mode: "centered" as const } : {}),
     ...(rowOffsetSteps > 0 && !isCentered ? { rowOffsetSteps } : {}),
   };
+}
+
+export type PageShellExplicitRow = {
+  rowIndex: number;
+  shellIds: string[];
+};
+
+function uniquePageShellIds(shellIds: readonly string[]) {
+  return [...new Set(shellIds.filter((id): id is string => typeof id === "string" && id.length > 0))];
+}
+
+/** True only when every requested shell has valid persisted semantic row metadata. */
+export function hasCompletePageShellRows(
+  layout: Pick<PageShellLayoutPreference, "placements"> | null | undefined,
+  shellIds: readonly string[],
+) {
+  return uniquePageShellIds(shellIds).every((id) => normalizePageShellRowIndex(layout?.placements?.[id]?.rowIndex) !== undefined);
+}
+
+/** A partially migrated or row-less layout remains legacy until measured migration completes. */
+export function isLegacyPageShellLayout(
+  layout: Pick<PageShellLayoutPreference, "placements"> | null | undefined,
+  shellIds: readonly string[],
+) {
+  return !hasCompletePageShellRows(layout, shellIds);
+}
+
+/** Compacts explicit semantic rows without changing any other placement field. */
+export function compactPageShellRows(
+  layout: PageShellLayoutPreference,
+  shellIds: readonly string[] = layout.order,
+): PageShellLayoutPreference {
+  const ids = uniquePageShellIds(shellIds);
+  if (!hasCompletePageShellRows(layout, ids)) return clonePageShellLayout(layout);
+  const rowIndices = [...new Set(ids.map((id) => normalizePageShellRowIndex(layout.placements?.[id]?.rowIndex)!))].sort((left, right) => left - right);
+  const rowMap = new Map(rowIndices.map((rowIndex, index) => [rowIndex, index]));
+  const next = clonePageShellLayout(layout);
+  for (const id of ids) {
+    const placement = next.placements?.[id];
+    const rowIndex = placement && normalizePageShellRowIndex(placement.rowIndex);
+    if (!placement || rowIndex === undefined) continue;
+    placement.rowIndex = rowMap.get(rowIndex);
+  }
+  return next;
+}
+
+/** Groups explicit rows by semantic rowIndex; packed rowStart is deliberately ignored. */
+export function getPageShellExplicitRows(
+  layout: PageShellLayoutPreference,
+  shellIds: readonly string[] = layout.order,
+): PageShellExplicitRow[] {
+  const ids = uniquePageShellIds(shellIds);
+  if (!hasCompletePageShellRows(layout, ids)) return [];
+  const orderIndex = new Map(layout.order.map((id, index) => [id, index]));
+  const rows = new Map<number, string[]>();
+  for (const id of ids) {
+    const rowIndex = normalizePageShellRowIndex(layout.placements?.[id]?.rowIndex);
+    if (rowIndex === undefined) continue;
+    rows.set(rowIndex, [...(rows.get(rowIndex) ?? []), id]);
+  }
+  return [...rows.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([rowIndex, rowShellIds]) => ({
+      rowIndex,
+      shellIds: rowShellIds.sort((left, right) => (
+        (orderIndex.get(left) ?? Number.MAX_SAFE_INTEGER) - (orderIndex.get(right) ?? Number.MAX_SAFE_INTEGER)
+        || left.localeCompare(right)
+      )),
+    }));
+}
+
+/** Rebuilds row-major visible order while preserving hidden shell positions in the full order. */
+export function getPageShellExplicitRowMajorOrder(
+  layout: PageShellLayoutPreference,
+  shellIds: readonly string[] = layout.order,
+) {
+  const ids = uniquePageShellIds(shellIds);
+  const rows = getPageShellExplicitRows(layout, ids);
+  if (rows.length === 0 && ids.length > 0) return [...layout.order];
+  return mergeVisiblePageShellOrder(layout.order, rows.flatMap((row) => row.shellIds), ids);
+}
+
+export type InferPageShellRowsFromPackedLayoutInput = {
+  layout: PageShellLayoutPreference;
+  packedPositions: Readonly<Record<string, PageShellPackedPosition>>;
+  shellIds: readonly string[];
+  rowUnitPx?: number;
+};
+
+/**
+ * Converts measured legacy packed positions into explicit rows. The packed
+ * result is supplied by the caller; this helper never measures or persists.
+ */
+export function inferPageShellRowsFromPackedLayout({
+  layout,
+  packedPositions,
+  shellIds,
+  rowUnitPx = PAGE_SHELL_PACKING_ROW_UNIT_PX,
+}: InferPageShellRowsFromPackedLayoutInput) {
+  const ids = uniquePageShellIds(shellIds);
+  if (ids.some((id) => !packedPositions[id])) return clonePageShellLayout(layout);
+  const baselines = ids.map((id) => packedPositions[id].rowStart - getPageShellPlacementRowOffsetRows(layout.placements?.[id], rowUnitPx));
+  const uniqueBaselines = [...new Set(baselines)].sort((left, right) => left - right);
+  const baselineToRow = new Map(uniqueBaselines.map((baseline, index) => [baseline, index]));
+  const next = clonePageShellLayout(layout);
+  next.placements ??= {};
+  ids.forEach((id, index) => {
+    const packed = packedPositions[id];
+    const placement = next.placements?.[id] ?? { columnStart: packed.columnStart, laneOrder: 0 };
+    next.placements[id] = { ...placement, rowIndex: baselineToRow.get(baselines[index]) };
+  });
+  return next;
+}
+
+/** Returns canonical row/footprint errors for focused validation and future callers. */
+export function getPageShellCanonicalLayoutValidationErrors(layout: PageShellCanonicalLayout) {
+  const errors: string[] = [];
+  const rows = new Map<number, Array<{ columnStart: number; id: string; span: PageShellSpan }>>();
+  layout.order.forEach((id) => {
+    const placement = layout.placements?.[id];
+    const rowIndex = normalizePageShellRowIndex(placement?.rowIndex);
+    if (!placement || rowIndex === undefined) {
+      errors.push(`${id}: missing valid rowIndex`);
+      return;
+    }
+    const size = layout.sizes[id];
+    const span = normalizePageShellSpan(size?.span, PAGE_SHELL_OPTIONS_LAST);
+    const normalizedPlacement = normalizePageShellPlacement(placement, span);
+    if (placement.mode === "centered" && (span % 2 === 0 || (placement.rowOffsetSteps ?? 0) !== 0)) {
+      errors.push(`${id}: invalid Center row data`);
+    }
+    const row = rows.get(rowIndex) ?? [];
+    row.push({ columnStart: normalizedPlacement.columnStart, id, span });
+    rows.set(rowIndex, row);
+  });
+  const rowIndices = [...rows.keys()].sort((left, right) => left - right);
+  rowIndices.forEach((rowIndex, expectedIndex) => {
+    if (rowIndex !== expectedIndex) errors.push(`row gap before ${rowIndex}`);
+    const row = rows.get(rowIndex) ?? [];
+    if (row.reduce((total, item) => total + item.span, 0) > 12) errors.push(`row ${rowIndex}: capacity exceeded`);
+    if (row.some((item) => item.span === 12) && row.length > 1) errors.push(`row ${rowIndex}: full-width shell shares a row`);
+    row.sort((left, right) => left.columnStart - right.columnStart || left.id.localeCompare(right.id));
+    row.slice(1).forEach((item, index) => {
+      const previous = row[index];
+      if (item.columnStart < previous.columnStart + previous.span) {
+        errors.push(`row ${rowIndex}: ${previous.id} overlaps ${item.id}`);
+      }
+    });
+  });
+  return errors;
 }
 
 export function isPageShellCenteredPlacement(placement: PageShellPlacement | undefined) {
@@ -2157,9 +2339,20 @@ export function normalizePageShellLayout(
   const placementSource = Object.keys(storedPlacements).length > 0 ? storedPlacements : placementDefaults;
   const placements: Record<string, PageShellPlacement> = {};
   for (const id of order) {
-    if (Object.prototype.hasOwnProperty.call(placementSource, id)) {
-      placements[id] = normalizePageShellPlacement(placementSource[id], sizes[id]?.span);
+    let placementValue = placementSource[id];
+    if (placementValue === undefined) {
+      const legacyId = Object.entries(legacyIdReplacements).find(([, replacementIds]) => replacementIds.includes(id))?.[0];
+      const legacyPlacement = legacyId ? placementSource[legacyId] : undefined;
+      if (legacyPlacement && typeof legacyPlacement === "object" && !Array.isArray(legacyPlacement)) {
+        const replacementIds = legacyIdReplacements[legacyId] ?? [];
+        // A one-to-many replacement can preserve legacy placement hints, but
+        // its old row is not safe to copy to multiple new shells.
+        placementValue = replacementIds.length === 1
+          ? legacyPlacement
+          : Object.fromEntries(Object.entries(legacyPlacement).filter(([key]) => key !== "rowIndex"));
+      }
     }
+    if (placementValue !== undefined) placements[id] = normalizePageShellPlacement(placementValue, sizes[id]?.span);
   }
   const packedPositions = packPageShellLayout(order, sizes, { placements });
   const derivedPlacements = placementsFromPackedPositions(order, sizes, packedPositions, placements);

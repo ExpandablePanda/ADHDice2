@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.109`.
+- Current working app version: `7.12.110`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,20 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.110 Semantic Shell Row Compatibility Foundation
+
+Explicit semantic shell rows have begun. `PageShellPlacement.rowIndex` is
+additive compatibility metadata: it is zero-based, durable, and required
+only for complete explicit layouts; legacy saved layouts may omit it. All
+registered canonical layouts now define semantic rows, including the
+approved Water, Food, Fitness, Weight, and Test D20 mappings. Missing rows
+are not fabricated during localStorage hydration, and the measured legacy
+row inference helper is available but is not automatically invoked or
+persisted yet. The current legacy `packPageShellLayout()` remains the live
+rendering authority; planner/arrows and drag behavior are unchanged. Phase 2
+will connect measured migration and later explicit-row packer cutover. No SQL
+or schema migration was added.
 
 ## 2026-09-06 7.12.109 Direct Empty Vertical Shell Targets
 
