@@ -942,10 +942,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       event.preventDefault();
       event.stopPropagation();
     }
-    let shouldCommitPreview = !cancelled;
-    if (!cancelled && interaction.kind === "move") {
+    let shouldCommitPreview = !cancelled && event !== null;
+    if (!cancelled && interaction.kind === "move" && event) {
       cancelMovePreview();
-      updateMovePreview(interaction, interaction.pointerX, interaction.pointerY);
+      updateMovePreview(interaction, event.clientX, event.clientY);
       shouldCommitPreview = commitMovePreview(interaction);
       if (!shouldCommitPreview && interaction.plan?.valid === false) showDragMoveWarning(interaction.plan.message);
     } else {

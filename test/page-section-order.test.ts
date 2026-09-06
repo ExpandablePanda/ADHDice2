@@ -1230,13 +1230,15 @@ test("drop targeting passes the previous insertion index into the existing hyste
   assert.equal(stabilized.relationship, "left");
 });
 
-test("successful and cancelled pointer lifecycle paths preserve one commit or no partial destination", () => {
+test("successful pointer-up uses release coordinates while cancelled paths preserve no partial destination", () => {
   const endStart = shellSource.indexOf("  function endInteraction");
   const effectStart = shellSource.indexOf("\n  useEffect", endStart);
   assert.ok(endStart >= 0);
   assert.ok(effectStart > endStart);
   const endSource = shellSource.slice(endStart, effectStart);
-  assert.match(endSource, /updateMovePreview\(interaction, interaction\.pointerX, interaction\.pointerY\);\s*shouldCommitPreview = commitMovePreview\(interaction\);/);
+  assert.match(endSource, /let shouldCommitPreview = !cancelled && event !== null;/);
+  assert.match(endSource, /if \(!cancelled && interaction\.kind === "move" && event\) \{[\s\S]*updateMovePreview\(interaction, event\.clientX, event\.clientY\);\s*shouldCommitPreview = commitMovePreview\(interaction\);/);
+  assert.doesNotMatch(endSource, /updateMovePreview\(interaction, interaction\.pointerX, interaction\.pointerY\)/);
   assert.match(endSource, /if \(cancelled \|\| !shouldCommitPreview\) layout\.cancelPreview\(\);\s*else layout\.commitPreview\(\);/);
   assert.match(shellSource, /onPointerCancel=\{\(event\) => endInteraction\(event, true\)\}/);
   assert.match(shellSource, /onLostPointerCapture=\{\(event\) => endInteraction\(event, true\)\}/);

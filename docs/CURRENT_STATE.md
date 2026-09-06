@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.104`.
+- Current working app version: `7.12.105`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.105 Deterministic Pointer-Up Shell Drops
+
+Successful shell drops now resolve their final target from the actual
+pointer-up `clientX` and `clientY`, so a stale last `pointermove` no longer
+determines the committed relationship. Preview and final commit continue
+through the same target resolver, hysteresis, plan → validate → commit flow,
+with stable pointer-down geometry, cancellation safety, downstream reflow,
+Views, and Reset unchanged. No SQL or schema migration was needed.
 
 ## 2026-09-06 7.12.104 Deterministic Downstream Shell Reflow
 
