@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.114`.
+- Current working app version: `7.12.115`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -32,6 +32,23 @@ current `C<n>` column label, the snapped shell footprint, and purple/invalid-red
 state. Grab-offset-aware target planning drives the displayed column, including
 cross-row left/right edge insertion. Persistence, schema, storage keys,
 migration, and Views are unchanged.
+
+## 2026-09-06 7.12.115 Dynamic Two-Axis Shell Dragging
+
+Shell drag axis intent is now dynamically switchable during one pointer
+gesture. The inactive snapped coordinate is held while the active coordinate
+changes: horizontal-to-vertical movement preserves `columnStart`, and
+vertical-to-horizontal movement preserves `rowIndex` plus `rowOffsetSteps`.
+Local switch anchors, a 20px switch threshold, and an 8px dominance margin
+prevent small diagonal jitter from flickering the active axis. The horizontal
+12-column ruler and vertical 12px detent ruler switch emphasis with the active
+axis while the larger structural insertion guide remains available.
+
+Held-coordinate targeting continues to use the frozen pointer-down reference
+frame, grab offsets, the existing stacking corridor, and the authoritative 2D
+collision validator. Structural new-row creation remains available in genuine
+vertical gaps. Persistence, storage keys, schema, migration, and Views are
+unchanged.
 
 ## 2026-09-06 7.12.113 2D Shell Stacking and Detent Feedback
 

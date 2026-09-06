@@ -17,6 +17,7 @@ import {
   getPageShellExportFilename,
   getPageShellDirectionalMoveTarget,
   getPageShellShrinkHeight,
+  getPageShellPlacementRowOffsetSteps,
   normalizePageShellPlacement,
   normalizePageShellSpan,
   isValidPageShellExplicitLayout,
@@ -26,7 +27,7 @@ import {
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_PACKING_GAP_PX,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
-  resolvePageShellDragAxisIntent,
+  resolvePageShellDragAxisTransition,
   type PageShellDropRelationship,
   type PageShellDirectionalMoveDirection,
   type PageShellDragAxisIntent,
@@ -37,6 +38,7 @@ import {
   type PageShellCanonicalGroup,
   type PageShellLayoutPreference,
   type PageShellDropTarget,
+  type PageShellDragCoordinateConstraint,
   type PageShellMovePlan,
   type PageShellSize,
   PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX,
@@ -78,6 +80,11 @@ type ShellMoveInteraction = {
   startPointerY: number;
   startLayout: PageShellLayoutPreference;
   axisIntent: PageShellDragAxisIntent | null;
+  axisSwitchAnchorX: number;
+  axisSwitchAnchorY: number;
+  heldColumnStart: number;
+  heldDestinationRowIndex?: number;
+  heldRowOffsetSteps: number;
   plan?: PageShellMovePlan;
   target?: PageShellDropTarget;
   targetIndex: number;
@@ -779,15 +786,27 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   }
 
   function updateMovePreview(interaction: ShellMoveInteraction, pointerX: number, pointerY: number) {
-    if (interaction.axisIntent === null) {
-      const axisIntent = resolvePageShellDragAxisIntent(
-        interaction.startPointerX,
-        interaction.startPointerY,
-        pointerX,
-        pointerY,
-      );
-      if (axisIntent) interaction.axisIntent = axisIntent;
+    const transition = resolvePageShellDragAxisTransition(
+      interaction.axisIntent,
+      interaction.axisSwitchAnchorX,
+      interaction.axisSwitchAnchorY,
+      pointerX,
+      pointerY,
+    );
+    if (transition.switched) {
+      interaction.axisIntent = transition.axis;
+      interaction.axisSwitchAnchorX = pointerX;
+      interaction.axisSwitchAnchorY = pointerY;
     }
+    const axisIntent = interaction.axisIntent ?? "horizontal";
+    const coordinateConstraint: PageShellDragCoordinateConstraint = axisIntent === "vertical"
+      ? { columnStart: interaction.heldColumnStart }
+      : interaction.heldDestinationRowIndex === undefined
+        ? {}
+        : {
+            destinationRowIndex: interaction.heldDestinationRowIndex,
+            rowOffsetSteps: interaction.heldRowOffsetSteps,
+          };
     const previousInsertionIndex = interaction.target?.insertionIndex ?? interaction.targetIndex;
     const dropTarget = getPageShellDropTarget(
       interaction.referenceGeometries,
@@ -802,7 +821,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       previousInsertionIndex,
       interaction.grabOffsetY,
       interaction.target,
-      interaction.axisIntent ?? "horizontal",
+      axisIntent,
+      coordinateConstraint,
     );
     interaction.target = dropTarget;
     const plan = planPageShellMove({
@@ -824,6 +844,27 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       verticalRuler: getDetentRuler(interaction, dropTarget, layoutRef.current, plan.valid),
       valid: plan.valid,
     });
+    if (!plan.valid) return;
+    const plannedPlacement = normalizePageShellPlacement(
+      plan.layout.placements?.[interaction.id],
+      interaction.startLayout.sizes[interaction.id]?.span,
+    );
+    if (axisIntent === "horizontal" && plannedPlacement.columnStart !== interaction.heldColumnStart) {
+      interaction.heldColumnStart = plannedPlacement.columnStart;
+      interaction.axisSwitchAnchorX = pointerX;
+      interaction.axisSwitchAnchorY = pointerY;
+    }
+    if (axisIntent === "vertical") {
+      const nextRowOffsetSteps = getPageShellPlacementRowOffsetSteps(plannedPlacement);
+      const rowChanged = plannedPlacement.rowIndex !== interaction.heldDestinationRowIndex;
+      const offsetChanged = nextRowOffsetSteps !== interaction.heldRowOffsetSteps;
+      if (rowChanged || offsetChanged) {
+        interaction.heldDestinationRowIndex = plannedPlacement.rowIndex;
+        interaction.heldRowOffsetSteps = nextRowOffsetSteps;
+        interaction.axisSwitchAnchorX = pointerX;
+        interaction.axisSwitchAnchorY = pointerY;
+      }
+    }
   }
 
   function commitMovePreview(interaction: ShellMoveInteraction) {
@@ -920,6 +961,10 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     const referenceFrame = captureMoveReferenceFrame();
     const startVisibleOrder = referenceFrame.referenceVisibleOrder;
     const sourceGeometry = referenceFrame.referenceGeometries.find((geometry) => geometry.id === id);
+    const sourcePlacement = normalizePageShellPlacement(
+      startLayout.placements?.[id],
+      startLayout.sizes[id]?.span,
+    );
     const moveInteraction: ShellMoveInteraction = {
       captureElement: event.currentTarget,
       grabOffsetX: sourceGeometry ? event.clientX - sourceGeometry.left : 0,
@@ -940,6 +985,11 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       startPointerY: event.clientY,
       startLayout,
       axisIntent: null,
+      axisSwitchAnchorX: event.clientX,
+      axisSwitchAnchorY: event.clientY,
+      heldColumnStart: sourcePlacement.columnStart,
+      heldDestinationRowIndex: sourcePlacement.rowIndex,
+      heldRowOffsetSteps: getPageShellPlacementRowOffsetSteps(sourcePlacement),
       targetIndex: Math.max(0, startVisibleOrder.indexOf(id)),
     };
     interactionRef.current = moveInteraction;

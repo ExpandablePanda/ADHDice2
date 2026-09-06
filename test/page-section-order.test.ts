@@ -15,6 +15,8 @@ import {
   PAGE_SHELL_CENTER_SNAP_HYSTERESIS_PX,
   PAGE_SHELL_CENTER_SNAP_ZONE_PX,
   PAGE_SHELL_DRAG_AXIS_LOCK_PX,
+  PAGE_SHELL_DRAG_AXIS_SWITCH_DOMINANCE_PX,
+  PAGE_SHELL_DRAG_AXIS_SWITCH_PX,
   PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX,
   PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX,
   PAGE_SHELL_DROP_ZONE_HYSTERESIS_PX,
@@ -76,6 +78,7 @@ import {
   readPageShellViews,
   resolvePageShellDropRelationship,
   resolvePageShellDragAxisIntent,
+  resolvePageShellDragAxisTransition,
   resolvePageShellViewLayout,
   snapPageShellHeight,
   writePageShellLayout,
@@ -522,6 +525,19 @@ test("drag axis intent waits for movement, then locks to the dominant axis", () 
   assert.equal(resolvePageShellDragAxisIntent(100, 100, 124, 116), "horizontal");
   assert.equal(resolvePageShellDragAxisIntent(100, 100, 116, 124), "vertical");
   assert.equal(resolvePageShellDragAxisIntent(100, 100, 118, 110, 20), null);
+});
+
+test("drag axis transitions use local hysteresis and support repeated deliberate turns", () => {
+  assert.equal(PAGE_SHELL_DRAG_AXIS_SWITCH_PX, 20);
+  assert.equal(PAGE_SHELL_DRAG_AXIS_SWITCH_DOMINANCE_PX, 8);
+  assert.deepEqual(resolvePageShellDragAxisTransition(null, 100, 100, 108, 108), { axis: null, switched: false });
+  assert.deepEqual(resolvePageShellDragAxisTransition(null, 100, 100, 124, 116), { axis: "horizontal", switched: true });
+  assert.deepEqual(resolvePageShellDragAxisTransition(null, 100, 100, 116, 124), { axis: "vertical", switched: true });
+  assert.deepEqual(resolvePageShellDragAxisTransition("horizontal", 500, 200, 510, 212), { axis: "horizontal", switched: false });
+  assert.deepEqual(resolvePageShellDragAxisTransition("horizontal", 500, 200, 505, 223), { axis: "vertical", switched: true });
+  assert.deepEqual(resolvePageShellDragAxisTransition("vertical", 505, 223, 517, 233), { axis: "vertical", switched: false });
+  assert.deepEqual(resolvePageShellDragAxisTransition("vertical", 505, 223, 529, 228), { axis: "horizontal", switched: true });
+  assert.deepEqual(resolvePageShellDragAxisTransition("horizontal", 529, 228, 536, 251), { axis: "vertical", switched: true });
 });
 
 test("directional target zones resolve above, below, left, right, and replace", () => {
@@ -2495,6 +2511,66 @@ test("explicit drag targets write semantic rows for edge insertion, swaps, empty
   }
 });
 
+test("dynamic drag target constraints hold the inactive coordinate across axis switches", () => {
+  const grid = { left: 0, width: 1200 };
+  const layout: PageShellLayoutPreference = {
+    order: ["a", "target", "source"],
+    placements: {
+      a: { columnStart: 1, rowIndex: 0 },
+      target: { columnStart: 7, rowIndex: 0 },
+      source: { columnStart: 1, rowIndex: 1 },
+    },
+    sizes: sizesFor({ a: 6, target: 4, source: 4 }, { a: 120, target: 120, source: 120 }),
+  };
+  const positions = packPageShellLayoutExplicit(layout.order, layout.sizes, { chromeHeightPx: 32, placements: layout.placements });
+  const aColumn = getPageShellGridColumnGeometry(grid, 1, 6)!;
+  const targetColumn = getPageShellGridColumnGeometry(grid, 7, 4)!;
+  const geometries: PageShellGeometry[] = [
+    { bottom: 120, id: "a", left: aColumn.left, right: aColumn.left + aColumn.width, top: 0 },
+    { bottom: 120, id: "target", left: targetColumn.left, right: targetColumn.left + targetColumn.width, top: 0 },
+    { bottom: 340, id: "source", left: aColumn.left, right: aColumn.left + getPageShellGridColumnGeometry(grid, 1, 4)!.width, top: 220 },
+  ];
+
+  const horizontalTarget = getPageShellDropTarget(
+    geometries,
+    positions,
+    layout.order,
+    "source",
+    targetColumn.left + 20,
+    320,
+    grid,
+    20,
+    layout.placements,
+    undefined,
+    100,
+    undefined,
+    "horizontal",
+    { destinationRowIndex: 0, rowOffsetSteps: 0 },
+  );
+  assert.equal(horizontalTarget.destinationRowIndex, 0);
+  assert.equal(horizontalTarget.targetId, "target");
+
+  const verticalTarget = getPageShellDropTarget(
+    geometries,
+    positions,
+    layout.order,
+    "source",
+    targetColumn.left + 20,
+    180,
+    grid,
+    20,
+    layout.placements,
+    undefined,
+    20,
+    undefined,
+    "vertical",
+    { columnStart: 1 },
+  );
+  assert.equal(verticalTarget.columnStart, 1);
+  assert.equal(verticalTarget.destinationRowIndex, 0);
+  assert.equal(verticalTarget.rowOffsetSteps > 0, true);
+});
+
 test("empty space inside a mixed-height semantic row resolves deliberate vertical detents", () => {
   const order = ["short", "tall", "source"];
   const sizes = sizesFor({ short: 6, tall: 6, source: 6 }, { short: 120, tall: 480, source: 120 });
@@ -2767,7 +2843,7 @@ test("explicit planning is isolated from legacy row inference and packing", () =
   assert.match(layoutSource, /destinationRowIndex\?: number/);
 });
 
-test("7.12.114 keeps migration and legacy compatibility authorities unchanged", () => {
+test("7.12.115 keeps migration and legacy compatibility authorities unchanged", () => {
   const order = ["left", "right", "full"];
   const sizes = sizesFor({ left: 5, right: 7, full: 12 });
   const legacy = positionsFor(order, sizes, {
@@ -2821,7 +2897,10 @@ test("move preview keeps the pointer-down reference frame and commits order and 
   assert.match(shellSource, /const previousInsertionIndex = interaction\.target\?\.insertionIndex \?\? interaction\.targetIndex/);
   assert.match(shellSource, /grabOffsetY: sourceGeometry \? event\.clientY \+ getPageScrollTop\(\) - sourceGeometry\.top : 0/);
   assert.match(shellSource, /interaction\.grabOffsetY/);
-  assert.match(shellSource, /resolvePageShellDragAxisIntent\(/);
+  assert.match(shellSource, /resolvePageShellDragAxisTransition\(/);
+  assert.match(shellSource, /axisSwitchAnchorX/);
+  assert.match(shellSource, /heldColumnStart/);
+  assert.match(shellSource, /coordinateConstraint/);
   assert.match(shellSource, /startPointerX: event\.clientX/);
   assert.match(shellSource, /startPointerY: event\.clientY/);
   assert.match(previewSource, /interaction\.axisIntent \?\? "horizontal"/);

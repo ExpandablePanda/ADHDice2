@@ -555,6 +555,13 @@ export type PageShellDirectionalMoveDirection = "up" | "down" | "left" | "right"
 
 export type PageShellDragAxisIntent = "horizontal" | "vertical";
 
+/** Transient coordinate holds used while a drag edits one axis at a time. */
+export type PageShellDragCoordinateConstraint = {
+  columnStart?: number;
+  destinationRowIndex?: number;
+  rowOffsetSteps?: number;
+};
+
 export type PageShellDropTarget = {
   columnStart: number;
   /** Transient semantic row destination for explicit layouts. */
@@ -613,6 +620,8 @@ export type PageShellGridColumnGeometry = {
 
 export const PAGE_SHELL_POINTER_HYSTERESIS_PX = 8;
 export const PAGE_SHELL_DRAG_AXIS_LOCK_PX = 12;
+export const PAGE_SHELL_DRAG_AXIS_SWITCH_PX = 20;
+export const PAGE_SHELL_DRAG_AXIS_SWITCH_DOMINANCE_PX = 8;
 export const PAGE_SHELL_CENTER_SNAP_ZONE_PX = 48;
 export const PAGE_SHELL_CENTER_SNAP_HYSTERESIS_PX = 16;
 export const PAGE_SHELL_ROW_ALIGNMENT_PX = 12;
@@ -693,6 +702,41 @@ export function resolvePageShellDragAxisIntent(
   const safeThreshold = Number.isFinite(threshold) ? Math.max(0, threshold) : PAGE_SHELL_DRAG_AXIS_LOCK_PX;
   if (Math.max(deltaX, deltaY) < safeThreshold || deltaX === deltaY) return null;
   return deltaX > deltaY ? "horizontal" : "vertical";
+}
+
+/** Resolves a deliberate local turn without reusing the original pointer-down delta. */
+export function resolvePageShellDragAxisTransition(
+  currentAxis: PageShellDragAxisIntent | null,
+  anchorX: number,
+  anchorY: number,
+  pointerX: number,
+  pointerY: number,
+  switchThreshold = PAGE_SHELL_DRAG_AXIS_SWITCH_PX,
+  dominanceMargin = PAGE_SHELL_DRAG_AXIS_SWITCH_DOMINANCE_PX,
+) {
+  if (currentAxis === null) {
+    const axis = resolvePageShellDragAxisIntent(
+      anchorX,
+      anchorY,
+      pointerX,
+      pointerY,
+      PAGE_SHELL_DRAG_AXIS_LOCK_PX,
+    );
+    return { axis, switched: axis !== null };
+  }
+  const deltaX = Math.abs(pointerX - anchorX);
+  const deltaY = Math.abs(pointerY - anchorY);
+  const safeThreshold = Number.isFinite(switchThreshold) ? Math.max(0, switchThreshold) : PAGE_SHELL_DRAG_AXIS_SWITCH_PX;
+  const safeMargin = Number.isFinite(dominanceMargin)
+    ? Math.max(0, dominanceMargin)
+    : PAGE_SHELL_DRAG_AXIS_SWITCH_DOMINANCE_PX;
+  if (Math.max(deltaX, deltaY) < safeThreshold || Math.abs(deltaX - deltaY) < safeMargin) {
+    return { axis: currentAxis, switched: false };
+  }
+  const nextAxis = currentAxis === "horizontal"
+    ? deltaY > deltaX + safeMargin ? "vertical" : currentAxis
+    : deltaX > deltaY + safeMargin ? "horizontal" : currentAxis;
+  return { axis: nextAxis, switched: nextAxis !== currentAxis };
 }
 
 export function normalizePageShellRowOffsetSteps(value: unknown, fallback = 0) {
@@ -1392,6 +1436,95 @@ function getPageShellTargetColumnStart(
   return adjacentStart <= 13 - sourceSpan ? adjacentStart : directColumnStart;
 }
 
+/** Keeps horizontal movement inside the semantic row selected by the other axis. */
+function getPageShellHeldHorizontalRowTarget(
+  row: PageShellExplicitRow,
+  geometries: readonly PageShellGeometry[],
+  order: readonly string[],
+  sourceId: string,
+  pointerX: number,
+  directColumnStart: number,
+  sourceSpan: PageShellSpan,
+  rowOffsetSteps: number,
+  layout: Pick<PageShellLayoutPreference, "order" | "placements">,
+  packedPositions: Readonly<Record<string, PageShellPackedPosition>>,
+  gridBounds?: PageShellGridBounds,
+  grabOffsetX = 0,
+  sourceGeometry?: PageShellGeometry,
+  sourceIsCentered = false,
+  previousTarget?: PageShellDropTarget,
+) {
+  const rowGeometry = getPageShellExplicitRowGeometry(row, geometries);
+  const rowCenter = rowGeometry ? (rowGeometry.top + rowGeometry.bottom) / 2 : 0;
+  const rowGeometries = geometries.filter((geometry) => row.shellIds.includes(geometry.id));
+  const previousTargetId = previousTarget?.targetId && row.shellIds.includes(previousTarget.targetId)
+    ? previousTarget.targetId
+    : undefined;
+  const targetGeometry = findPageShellDropGeometry(
+    rowGeometries,
+    row.shellIds,
+    sourceId,
+    pointerX,
+    rowCenter,
+    previousTargetId,
+  );
+  const rawRelationship = targetGeometry
+    ? resolvePageShellDropRelationship(
+      targetGeometry,
+      pointerX,
+      rowCenter,
+      previousTargetId === targetGeometry.id ? previousTarget?.relationship : undefined,
+    )
+    : undefined;
+  const relationship = rawRelationship === "left" || rawRelationship === "right" || rawRelationship === "replace"
+    ? rawRelationship
+    : targetGeometry
+      ? "replace"
+      : undefined;
+  const targetId = targetGeometry?.id ?? null;
+  const centerStart = getPageShellCenteredColumnStart(sourceSpan);
+  const centeredGeometry = gridBounds ? getPageShellGridColumnGeometry(gridBounds, centerStart, sourceSpan) : null;
+  const trackWidth = gridBounds
+    ? (gridBounds.width - PAGE_SHELL_PACKING_GAP_PX * 11) / 12
+    : 0;
+  const sourceWidth = sourceGeometry && sourceGeometry.right > sourceGeometry.left
+    ? sourceGeometry.right - sourceGeometry.left
+    : centeredGeometry?.width ?? 0;
+  const intendedCenter = pointerX - (Number.isFinite(grabOffsetX) ? grabOffsetX : 0) + sourceWidth / 2;
+  const workspaceCenter = gridBounds ? gridBounds.left + gridBounds.width / 2 : 0;
+  const centerSnapZone = Math.max(PAGE_SHELL_CENTER_SNAP_ZONE_PX, trackWidth);
+  const shouldCenter = !targetGeometry
+    && rowOffsetSteps === 0
+    && sourceSpan % 2 === 1
+    && sourceSpan < PAGE_SHELL_OPTIONS_LAST
+    && centeredGeometry !== null
+    && Math.abs(intendedCenter - workspaceCenter) <= centerSnapZone
+      + (sourceIsCentered ? PAGE_SHELL_CENTER_SNAP_HYSTERESIS_PX : 0);
+  const insertionIndex = targetId && relationship
+    ? getPageShellTargetInsertionIndex(order.filter((id) => id !== sourceId), targetId, relationship)
+    : undefined;
+  const targetColumnStart = relationship
+    ? getPageShellTargetColumnStart(relationship, targetId, sourceSpan, directColumnStart, packedPositions)
+    : shouldCenter ? centerStart : directColumnStart;
+  return {
+    columnStart: targetColumnStart,
+    destinationRowIndex: row.rowIndex,
+    insertionIndex: insertionIndex ?? getPageShellExplicitRowInsertionIndex(
+      layout,
+      packedPositions,
+      order,
+      sourceId,
+      row.rowIndex,
+      targetColumnStart,
+    ),
+    laneOrder: 0,
+    ...(shouldCenter ? { mode: "centered" as const } : {}),
+    ...(relationship ? { relationship } : {}),
+    rowOffsetSteps: shouldCenter ? 0 : rowOffsetSteps,
+    targetId,
+  } satisfies PageShellDropTarget;
+}
+
 function getPageShellSameRowVerticalBounds(
   geometries: readonly PageShellGeometry[],
   sourceId: string,
@@ -1596,6 +1729,7 @@ export function getPageShellDropTarget(
   grabOffsetY = 0,
   previousTarget?: PageShellDropTarget,
   axisIntent: PageShellDragAxisIntent = "horizontal",
+  coordinateConstraint?: PageShellDragCoordinateConstraint,
 ): PageShellDropTarget {
   const intendedLeft = pointerX - (Number.isFinite(grabOffsetX) ? grabOffsetX : 0);
   const sourceSpan = packedPositions[sourceId]?.columnSpan ?? PAGE_SHELL_OPTIONS_LAST;
@@ -1650,8 +1784,11 @@ export function getPageShellDropTarget(
   const intendedCenter = intendedLeft + sourceWidth / 2;
   const centerSnapZone = Math.max(PAGE_SHELL_CENTER_SNAP_ZONE_PX, trackWidth);
   const sourceIsCentered = isPageShellCenteredPlacement(placements[sourceId]);
+  const heldColumnStart = axisIntent === "vertical" && coordinateConstraint?.columnStart !== undefined
+    ? Math.max(1, Math.min(13 - sourceSpan, Math.round(coordinateConstraint.columnStart)))
+    : undefined;
   const directColumnStart = gridBounds
-    ? getPageShellGridStartFromPointer(gridBounds, pointerX, sourceSpan, grabOffsetX)
+    ? heldColumnStart ?? getPageShellGridStartFromPointer(gridBounds, pointerX, sourceSpan, grabOffsetX)
     : placements[sourceId]?.columnStart ?? packedPositions[sourceId]?.columnStart ?? 1;
   const directGeometry = gridBounds ? getPageShellGridColumnGeometry(gridBounds, directColumnStart, sourceSpan) : null;
   const hasExplicitRows = hasCompletePageShellRows({ placements }, order);
@@ -1662,6 +1799,28 @@ export function getPageShellDropTarget(
     ? allExplicitRows
       .filter((row) => row.shellIds.length > 1 || row.shellIds[0] !== sourceId)
     : [];
+  const heldHorizontalRow = axisIntent === "horizontal" && coordinateConstraint?.destinationRowIndex !== undefined
+    ? allExplicitRows.find((row) => row.rowIndex === coordinateConstraint.destinationRowIndex)
+    : undefined;
+  if (heldHorizontalRow) {
+    return getPageShellHeldHorizontalRowTarget(
+      heldHorizontalRow,
+      geometries,
+      order,
+      sourceId,
+      pointerX,
+      directColumnStart,
+      sourceSpan,
+      normalizePageShellRowOffsetSteps(coordinateConstraint?.rowOffsetSteps),
+      { order: [...order], placements },
+      packedPositions,
+      gridBounds,
+      grabOffsetX,
+      sourceGeometry,
+      sourceIsCentered,
+      previousTarget,
+    );
+  }
   const physicalTargetHit = geometries.some((geometry) => (
     geometry.id !== sourceId
       && pointerX >= geometry.left
@@ -1744,6 +1903,7 @@ export function getPageShellDropTarget(
   );
   const requiresHalfTrackCenter = sourceSpan % 2 === 1;
   const shouldCenter = !directionalGeometry
+    && axisIntent !== "vertical"
     && requiresHalfTrackCenter
     && !directDropJoinsInsertionRow
     && sourceSpan < PAGE_SHELL_OPTIONS_LAST
@@ -1778,13 +1938,13 @@ export function getPageShellDropTarget(
       : getPageShellPlacementRowOffsetSteps(placements[sourceId])
     : 0;
   return {
-    columnStart: getPageShellTargetColumnStart(
-      relationship,
-      directionalTargetId,
-      sourceSpan,
-      directColumnStart,
-      packedPositions,
-    ),
+    columnStart: heldColumnStart ?? getPageShellTargetColumnStart(
+        relationship,
+        directionalTargetId,
+        sourceSpan,
+        directColumnStart,
+        packedPositions,
+      ),
     ...(hasExplicitRows && targetId && normalizePageShellRowIndex(placements[targetId]?.rowIndex) !== undefined
       ? { destinationRowIndex: placements[targetId]?.rowIndex }
       : {}),
