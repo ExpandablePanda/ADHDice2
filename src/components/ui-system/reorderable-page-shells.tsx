@@ -10,6 +10,7 @@ import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import {
   getPageShellDropTarget,
   getPageShellDragAutoScrollDelta,
+  getPageShellGridColumnGeometry,
   isPageShellCenteredPlacement,
   clampPageShellHeight,
   formatPageShellDimensions,
@@ -23,6 +24,7 @@ import {
   planPageShellMove,
   packPageShellLayout,
   PAGE_SHELL_MIN_HEIGHT,
+  PAGE_SHELL_PACKING_GAP_PX,
   PAGE_SHELL_ROW_ALIGNMENT_PX,
   resolvePageShellDragAxisIntent,
   type PageShellDropRelationship,
@@ -114,10 +116,24 @@ type PageShellInsertionIndicatorStyle = {
 };
 
 type PageShellDragIndicator = {
+  horizontalRuler?: PageShellHorizontalRuler | null;
   relationship: PageShellDropRelationship | "centered";
   style: PageShellInsertionIndicatorStyle | null;
   verticalRuler?: PageShellDetentRuler | null;
   valid?: boolean;
+};
+
+type PageShellHorizontalRuler = {
+  columns: number[];
+  currentColumn: number;
+  footprintEnd: number;
+  footprintLeft: number;
+  footprintWidth: number;
+  left: number;
+  marks: Array<{ column: number; left: number }>;
+  top: number;
+  valid: boolean;
+  width: number;
 };
 
 type PageShellDetentRuler = {
@@ -175,6 +191,17 @@ export function getPageShellDetentRulerState(currentStep: number, valid: boolean
   return {
     currentStep: safeCurrentStep,
     steps: Array.from({ length: safeMaxStep + 1 }, (_, step) => step),
+    valid,
+  };
+}
+
+export function getPageShellHorizontalRulerState(currentColumn: number, sourceSpan: number, valid: boolean) {
+  const safeCurrentColumn = Number.isFinite(currentColumn) ? Math.max(1, Math.min(12, Math.round(currentColumn))) : 1;
+  const safeSourceSpan = Number.isFinite(sourceSpan) ? Math.max(1, Math.min(12, Math.round(sourceSpan))) : 12;
+  return {
+    columns: Array.from({ length: 12 }, (_, index) => index + 1),
+    currentColumn: safeCurrentColumn,
+    footprintEnd: Math.min(12, safeCurrentColumn + safeSourceSpan - 1),
     valid,
   };
 }
@@ -308,6 +335,53 @@ function getDetentRuler(
     height: Math.max(24, 16 + state.steps.length * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX),
     left: Math.max(4, (sourceGeometry?.left ?? rowGeometries[0].left) - leftOffset - 18),
     top: rowTop - topOffset,
+  };
+}
+
+function getHorizontalRuler(
+  interaction: ShellMoveInteraction,
+  dropTarget: PageShellDropTarget | undefined,
+  container: HTMLDivElement | null,
+  valid: boolean,
+): PageShellHorizontalRuler | null {
+  if (interaction.axisIntent !== "horizontal" || !dropTarget || !interaction.referenceGridBounds) return null;
+  const sourceSpan = interaction.referencePackedPositions[interaction.id]?.columnSpan ?? 12;
+  const state = getPageShellHorizontalRulerState(dropTarget.columnStart, sourceSpan, valid);
+  const gridBounds = interaction.referenceGridBounds;
+  const containerRect = container?.getBoundingClientRect();
+  const leftOffset = containerRect?.left ?? 0;
+  const topOffset = (containerRect?.top ?? 0) + getPageScrollTop();
+  const sourceGeometry = interaction.referenceGeometries.find((geometry) => geometry.id === interaction.id);
+  const destinationRowIndex = dropTarget.destinationRowIndex;
+  const destinationRowGeometry = destinationRowIndex === undefined
+    ? undefined
+    : interaction.referenceVisibleOrder
+      .filter((id) => normalizePageShellPlacement(
+        interaction.startLayout.placements?.[id],
+        interaction.startLayout.sizes[id]?.span,
+      ).rowIndex === destinationRowIndex)
+      .map((id) => interaction.referenceGeometries.find((geometry) => geometry.id === id))
+      .filter((geometry): geometry is PageShellGeometry => Boolean(geometry))
+      .sort((left, right) => left.top - right.top)[0];
+  const targetGeometry = dropTarget.targetId
+    ? interaction.referenceGeometries.find((geometry) => geometry.id === dropTarget.targetId)
+    : destinationRowGeometry;
+  const topAnchor = targetGeometry?.top ?? sourceGeometry?.top ?? topOffset;
+  const footprintGeometry = getPageShellGridColumnGeometry(gridBounds, state.currentColumn, sourceSpan);
+  const trackWidth = (gridBounds.width - PAGE_SHELL_PACKING_GAP_PX * 11) / 12;
+  const trackStep = trackWidth + PAGE_SHELL_PACKING_GAP_PX;
+  const marks = state.columns.map((column) => ({
+    column,
+    left: trackWidth > 0 ? (column - 1) * trackStep : 0,
+  }));
+  return {
+    ...state,
+    footprintLeft: (footprintGeometry?.left ?? gridBounds.left) - gridBounds.left,
+    footprintWidth: footprintGeometry?.width ?? 0,
+    left: gridBounds.left - leftOffset,
+    marks,
+    top: Math.max(4, topAnchor - topOffset - 30),
+    width: gridBounds.width,
   };
 }
 
@@ -746,6 +820,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setDragMovePlan(plan);
     setDragIndicator({
       ...getInsertionIndicatorStyle(interaction, dropTarget.insertionIndex, layoutRef.current, dropTarget),
+      horizontalRuler: getHorizontalRuler(interaction, dropTarget, layoutRef.current, plan.valid),
       verticalRuler: getDetentRuler(interaction, dropTarget, layoutRef.current, plan.valid),
       valid: plan.valid,
     });
@@ -1369,6 +1444,53 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
           {group.shells.map(renderShell)}
         </div>
       )) : orderedShells.map(renderShell)}
+      {draggingId && dragIndicator?.horizontalRuler ? (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute z-40 ${dragIndicator.horizontalRuler.valid ? "text-[#6f57f6]" : "text-[#d65775]"}`}
+          data-page-shell-horizontal-ruler
+          data-page-shell-horizontal-column={dragIndicator.horizontalRuler.currentColumn}
+          data-page-shell-horizontal-valid={dragIndicator.horizontalRuler.valid ? "true" : "false"}
+          style={{
+            height: 30,
+            left: dragIndicator.horizontalRuler.left,
+            top: dragIndicator.horizontalRuler.top,
+            width: dragIndicator.horizontalRuler.width,
+          }}
+        >
+          <span
+            className="absolute top-3 rounded-full bg-current/20"
+            data-page-shell-horizontal-footprint
+            style={{
+              height: 6,
+              left: dragIndicator.horizontalRuler.footprintLeft,
+              width: dragIndicator.horizontalRuler.footprintWidth,
+            }}
+          />
+          {dragIndicator.horizontalRuler.marks.map((mark) => {
+            const isCurrent = mark.column === dragIndicator.horizontalRuler?.currentColumn;
+            return (
+              <span
+                className={`absolute top-2 rounded-full ${isCurrent ? "bg-current" : "bg-current/55"}`}
+                data-page-shell-horizontal-mark={mark.column}
+                key={mark.column}
+                style={{
+                  height: isCurrent ? 12 : 9,
+                  left: mark.left - (isCurrent ? 1 : 0),
+                  width: isCurrent ? 3 : 2,
+                }}
+              />
+            );
+          })}
+          <span
+            className="absolute top-0 rounded bg-current px-1 py-0.5 text-[9px] font-semibold leading-none text-white shadow-sm"
+            data-page-shell-horizontal-current
+            style={{ left: Math.max(0, (dragIndicator.horizontalRuler.marks.find((mark) => mark.column === dragIndicator.horizontalRuler?.currentColumn)?.left ?? 0) - 7) }}
+          >
+            C{dragIndicator.horizontalRuler.currentColumn}
+          </span>
+        </div>
+      ) : null}
       {draggingId && dragIndicator?.verticalRuler ? (
         <div
           aria-hidden="true"

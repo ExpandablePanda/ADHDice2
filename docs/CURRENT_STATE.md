@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.113`.
+- Current working app version: `7.12.114`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,25 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.114 Stacking Corridor and Two-Axis Snap Feedback
+
+Explicit vertical drags with a meaningfully aligned snapped X footprint now use
+a bounded continuation corridor inside the existing semantic row before generic
+new-row creation. The corridor uses the frozen pointer-down geometry, grab
+offset, source height, 12px detents, and the midpoint before the next real row;
+valid stacking targets therefore win over generic below-row insertion while real
+gaps and above/below workspace placement still create rows. The 7.12.113
+geometric collision validator remains authoritative, so early overlapping ticks
+stay invalid and later non-colliding ticks remain selectable. Tall neighboring
+shells beside a stack remain supported.
+
+The existing vertical 12px ruler is retained. Horizontal dragging now shows
+frozen 12-column snap feedback aligned to the real page-shell grid, including a
+current `C<n>` column label, the snapped shell footprint, and purple/invalid-red
+state. Grab-offset-aware target planning drives the displayed column, including
+cross-row left/right edge insertion. Persistence, schema, storage keys,
+migration, and Views are unchanged.
 
 ## 2026-09-06 7.12.113 2D Shell Stacking and Detent Feedback
 

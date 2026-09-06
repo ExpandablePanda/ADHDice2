@@ -1471,6 +1471,86 @@ function getPageShellExplicitRowGeometry(
   };
 }
 
+function getPageShellHorizontalGeometryOverlap(
+  left: { left: number; right: number },
+  right: { left: number; right: number },
+) {
+  return Math.max(0, Math.min(left.right, right.right) - Math.max(left.left, right.left));
+}
+
+/**
+ * Finds a bounded continuation below an existing semantic row. The row owns
+ * the target only when the snapped X footprint overlaps a shell in that row;
+ * the next real row's midpoint (or a source-height-sized final continuation)
+ * is the corridor boundary.
+ */
+function getPageShellStackingCorridor(
+  rows: readonly PageShellExplicitRow[],
+  geometries: readonly PageShellGeometry[],
+  sourceId: string,
+  candidate: PageShellGridColumnGeometry | null,
+  pointerY: number,
+  grabOffsetY: number,
+  sourceHeight: number,
+  directColumnStart: number,
+  layout: Pick<PageShellLayoutPreference, "order" | "placements">,
+  packedPositions: Readonly<Record<string, PageShellPackedPosition>>,
+) {
+  if (!candidate || !Number.isFinite(pointerY)) return null;
+  const safeSourceHeight = Number.isFinite(sourceHeight) ? Math.max(0, sourceHeight) : 0;
+  const intendedTop = pointerY - (Number.isFinite(grabOffsetY) ? grabOffsetY : 0);
+  for (let rowPosition = 0; rowPosition < rows.length; rowPosition += 1) {
+    const row = rows[rowPosition];
+    const rowShells = row.shellIds
+      .filter((id) => id !== sourceId)
+      .map((id) => geometries.find((geometry) => geometry.id === id))
+      .filter((geometry): geometry is PageShellGeometry => Boolean(geometry));
+    if (rowShells.length === 0) continue;
+    const alignedShells = rowShells.filter((geometry) => {
+      const overlap = getPageShellHorizontalGeometryOverlap(
+        { left: candidate.left, right: candidate.left + candidate.width },
+        geometry,
+      );
+      return overlap > Math.max(4, Math.min(candidate.width, geometry.right - geometry.left) * 0.2);
+    });
+    if (alignedShells.length === 0) continue;
+    const rowGeometry = {
+      bottom: Math.max(...rowShells.map((geometry) => geometry.bottom)),
+      top: Math.min(...rowShells.map((geometry) => geometry.top)),
+    };
+    const alignedBottom = Math.max(...alignedShells.map((geometry) => geometry.bottom));
+    const nextRow = rows.slice(rowPosition + 1)
+      .map((next) => getPageShellExplicitRowGeometry(next, geometries))
+      .find((geometry): geometry is { bottom: number; top: number } => Boolean(geometry));
+    const boundary = nextRow
+      ? (rowGeometry.bottom + nextRow.top) / 2
+      : alignedBottom + Math.max(PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX, safeSourceHeight) + PAGE_SHELL_PACKING_GAP_PX;
+    if (intendedTop > boundary || intendedTop < alignedBottom - PAGE_SHELL_POINTER_HYSTERESIS_PX) continue;
+    const rowOffsetSteps = getPageShellVerticalOffsetSteps(
+      intendedTop,
+      rowGeometry.top,
+      safeSourceHeight,
+      alignedBottom,
+    );
+    return {
+      columnStart: directColumnStart,
+      destinationRowIndex: row.rowIndex,
+      insertionIndex: getPageShellExplicitRowInsertionIndex(
+        layout,
+        packedPositions,
+        layout.order,
+        sourceId,
+        row.rowIndex,
+        directColumnStart,
+      ),
+      laneOrder: 0,
+      rowOffsetSteps,
+      targetId: null,
+    } satisfies PageShellDropTarget;
+  }
+  return null;
+}
+
 function getPageShellExplicitDropGap(
   rows: readonly PageShellExplicitRow[],
   geometries: readonly PageShellGeometry[],
@@ -1575,8 +1655,11 @@ export function getPageShellDropTarget(
     : placements[sourceId]?.columnStart ?? packedPositions[sourceId]?.columnStart ?? 1;
   const directGeometry = gridBounds ? getPageShellGridColumnGeometry(gridBounds, directColumnStart, sourceSpan) : null;
   const hasExplicitRows = hasCompletePageShellRows({ placements }, order);
-  const explicitRows = hasExplicitRows
+  const allExplicitRows = hasExplicitRows
     ? getPageShellExplicitRows({ order: [...order], placements }, order)
+    : [];
+  const explicitRows = hasExplicitRows
+    ? allExplicitRows
       .filter((row) => row.shellIds.length > 1 || row.shellIds[0] !== sourceId)
     : [];
   const physicalTargetHit = geometries.some((geometry) => (
@@ -1617,6 +1700,23 @@ export function getPageShellDropTarget(
       rowOffsetSteps,
       targetId: null,
     };
+  }
+  const hasExplicitHorizontalRelationship = axisIntent === "horizontal" && directionalGeometry
+    && (relationship === "left" || relationship === "right" || relationship === "replace");
+  if (hasExplicitRows && !physicalTargetHit && !pointerRow && axisIntent === "vertical" && !hasExplicitHorizontalRelationship) {
+    const stackingTarget = getPageShellStackingCorridor(
+      allExplicitRows,
+      geometries,
+      sourceId,
+      directGeometry,
+      pointerY,
+      grabOffsetY,
+      Math.max(0, (sourceGeometry?.bottom ?? 0) - (sourceGeometry?.top ?? 0)),
+      directColumnStart,
+      { order: [...order], placements },
+      packedPositions,
+    );
+    if (stackingTarget) return stackingTarget;
   }
   if (hasExplicitRows && !physicalTargetHit && !pointerRow) {
     const gap = getPageShellExplicitDropGap(explicitRows, geometries, pointerY);

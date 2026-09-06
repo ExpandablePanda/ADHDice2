@@ -93,6 +93,7 @@ import {
   ReorderablePageShells,
   PageShellSurface,
   getPageShellDetentRulerState,
+  getPageShellHorizontalRulerState,
 } from "@/components/ui-system/reorderable-page-shells";
 import type {
   PageShellCanonicalLayout,
@@ -2570,6 +2571,136 @@ test("empty space inside a mixed-height semantic row resolves deliberate vertica
   }
 });
 
+test("same-X short-shell drops use a bounded stacking corridor before generic new-row insertion", () => {
+  const grid = { left: 0, width: 1200 };
+  const aColumn = getPageShellGridColumnGeometry(grid, 1, 6)!;
+  const layout: PageShellLayoutPreference = {
+    order: ["a", "source"],
+    placements: {
+      a: { columnStart: 1, rowIndex: 0 },
+      source: { columnStart: 1, rowIndex: 1 },
+    },
+    sizes: sizesFor({ a: 6, source: 6 }, { a: 120, source: 120 }),
+  };
+  const positions = packPageShellLayoutExplicit(layout.order, layout.sizes, { chromeHeightPx: 32, placements: layout.placements });
+  const geometries: PageShellGeometry[] = [
+    { bottom: 172, id: "a", left: aColumn.left, right: aColumn.left + aColumn.width, top: 0 },
+    { bottom: 340, id: "source", left: aColumn.left, right: aColumn.left + aColumn.width, top: 220 },
+  ];
+  const target = getPageShellDropTarget(
+    geometries,
+    positions,
+    layout.order,
+    "source",
+    aColumn.left + 20,
+    200,
+    grid,
+    20,
+    layout.placements,
+    undefined,
+    20,
+    undefined,
+    "vertical",
+  );
+  assert.equal(target.targetId, null);
+  assert.equal(target.destinationRowIndex, 0);
+  assert.equal(target.relationship, undefined);
+  assert.equal(target.columnStart, 1);
+  assert.equal(target.rowOffsetSteps > 0, true);
+  const plan = planPageShellMove({ layout, packedPositions: positions, sourceId: "source", target, visibleShellIds: layout.order, chromeHeightPx: 32 });
+  assert.equal(plan.valid, true);
+  if (plan.valid) {
+    assert.equal(plan.layout.placements?.a?.rowIndex, 0);
+    assert.equal(plan.layout.placements?.source?.rowIndex, 0);
+    assert.equal(plan.layout.placements?.source?.rowOffsetSteps, target.rowOffsetSteps);
+    assert.equal(plan.layout.placements?.source?.columnStart, 1);
+    assert.equal(plan.layout.order.length, 2);
+  }
+
+  const collisionTarget = getPageShellDropTarget(
+    geometries,
+    positions,
+    layout.order,
+    "source",
+    aColumn.left + 20,
+    160,
+    grid,
+    20,
+    layout.placements,
+    undefined,
+    20,
+    undefined,
+    "vertical",
+  );
+  assert.equal(collisionTarget.destinationRowIndex, 0);
+  const collisionPlan = planPageShellMove({ layout, packedPositions: positions, sourceId: "source", target: collisionTarget, visibleShellIds: layout.order, chromeHeightPx: 32 });
+  assert.equal(collisionPlan.valid, false);
+  if (!collisionPlan.valid) assert.equal(collisionPlan.reason, "COLLISION");
+});
+
+test("stacking corridors honor X alignment, actual row boundaries, and tall neighbors", () => {
+  const grid = { left: 0, width: 1200 };
+  const leftSix = getPageShellGridColumnGeometry(grid, 1, 6)!;
+  const lowerLayout: PageShellLayoutPreference = {
+    order: ["a", "lower", "source"],
+    placements: {
+      a: { columnStart: 1, rowIndex: 0 },
+      lower: { columnStart: 1, rowIndex: 1 },
+      source: { columnStart: 1, rowIndex: 2 },
+    },
+    sizes: sizesFor({ a: 6, lower: 6, source: 6 }, { a: 120, lower: 120, source: 120 }),
+  };
+  const lowerPositions = packPageShellLayoutExplicit(lowerLayout.order, lowerLayout.sizes, { chromeHeightPx: 32, placements: lowerLayout.placements });
+  const lowerGeometries: PageShellGeometry[] = [
+    { bottom: 120, id: "a", left: leftSix.left, right: leftSix.left + leftSix.width, top: 0 },
+    { bottom: 340, id: "lower", left: leftSix.left, right: leftSix.left + leftSix.width, top: 220 },
+    { bottom: 560, id: "source", left: leftSix.left, right: leftSix.left + leftSix.width, top: 440 },
+  ];
+  const inGutter = getPageShellDropTarget(lowerGeometries, lowerPositions, lowerLayout.order, "source", leftSix.left + 20, 200, grid, 20, lowerLayout.placements, undefined, 20, undefined, "vertical");
+  assert.equal(inGutter.destinationRowIndex, 1);
+  assert.equal(inGutter.relationship, "before");
+  const inNextRow = getPageShellDropTarget(lowerGeometries, lowerPositions, lowerLayout.order, "source", leftSix.left + 300, 250, grid, 300, lowerLayout.placements, undefined, 20, undefined, "vertical");
+  assert.equal(inNextRow.destinationRowIndex, 1);
+  assert.equal(inNextRow.targetId, "lower");
+  assert.equal(inNextRow.relationship, "replace");
+
+  const noAlignmentLayout: PageShellLayoutPreference = {
+    order: ["a", "source"],
+    placements: { a: { columnStart: 1, rowIndex: 0 }, source: { columnStart: 7, rowIndex: 1 } },
+    sizes: sizesFor({ a: 6, source: 6 }, { a: 120, source: 120 }),
+  };
+  const noAlignmentPositions = packPageShellLayoutExplicit(noAlignmentLayout.order, noAlignmentLayout.sizes, { chromeHeightPx: 32, placements: noAlignmentLayout.placements });
+  const rightSix = getPageShellGridColumnGeometry(grid, 7, 6)!;
+  const noAlignmentGeometries: PageShellGeometry[] = [
+    { bottom: 120, id: "a", left: leftSix.left, right: leftSix.left + leftSix.width, top: 0 },
+    { bottom: 340, id: "source", left: rightSix.left, right: rightSix.left + rightSix.width, top: 220 },
+  ];
+  const noAlignment = getPageShellDropTarget(noAlignmentGeometries, noAlignmentPositions, noAlignmentLayout.order, "source", rightSix.left + 20, 160, grid, 20, noAlignmentLayout.placements, undefined, 20, undefined, "vertical");
+  assert.equal(noAlignment.relationship, "after");
+  assert.equal(noAlignment.rowOffsetSteps ?? 0, 0);
+
+  const tallLayout: PageShellLayoutPreference = {
+    order: ["a", "tall", "source"],
+    placements: {
+      a: { columnStart: 1, rowIndex: 0 },
+      tall: { columnStart: 7, rowIndex: 0 },
+      source: { columnStart: 1, rowIndex: 1 },
+    },
+    sizes: sizesFor({ a: 6, tall: 6, source: 6 }, { a: 120, tall: 120, source: 120 }),
+  };
+  const tallPositions = packPageShellLayoutExplicit(tallLayout.order, tallLayout.sizes, { chromeHeightPx: 32, placements: tallLayout.placements });
+  const tallColumn = getPageShellGridColumnGeometry(grid, 7, 6)!;
+  const tallGeometries: PageShellGeometry[] = [
+    { bottom: 120, id: "a", left: leftSix.left, right: leftSix.left + leftSix.width, top: 0 },
+    { bottom: 480, id: "tall", left: tallColumn.left, right: tallColumn.left + tallColumn.width, top: 0 },
+    { bottom: 700, id: "source", left: leftSix.left, right: leftSix.left + leftSix.width, top: 500 },
+  ];
+  const tallStack = getPageShellDropTarget(tallGeometries, tallPositions, tallLayout.order, "source", leftSix.left + 20, 300, grid, 20, tallLayout.placements, undefined, 20, undefined, "vertical");
+  assert.equal(tallStack.destinationRowIndex, 0);
+  const tallPlan = planPageShellMove({ layout: tallLayout, packedPositions: tallPositions, sourceId: "source", target: tallStack, visibleShellIds: tallLayout.order, chromeHeightPx: 32 });
+  assert.equal(tallPlan.valid, true);
+});
+
 test("cross-row edge insertion is symmetric, exact, and height-independent", () => {
   const order = ["target", "source"];
   const sizes = sizesFor({ target: 4, source: 4 }, { target: 480, source: 144 });
@@ -2636,7 +2767,7 @@ test("explicit planning is isolated from legacy row inference and packing", () =
   assert.match(layoutSource, /destinationRowIndex\?: number/);
 });
 
-test("7.12.113 keeps migration and legacy compatibility authorities unchanged", () => {
+test("7.12.114 keeps migration and legacy compatibility authorities unchanged", () => {
   const order = ["left", "right", "full"];
   const sizes = sizesFor({ left: 5, right: 7, full: 12 });
   const legacy = positionsFor(order, sizes, {
@@ -2725,6 +2856,28 @@ test("detent feedback exposes zero, positive, invalid, and 12px ruler states", (
   assert.match(shellSource, /data-page-shell-detent-ruler/);
   assert.match(shellSource, /data-page-shell-detent-current/);
   assert.match(shellSource, /step \* PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX/);
+});
+
+test("horizontal snap feedback exposes the frozen 12-column footprint and validity", () => {
+  const valid = getPageShellHorizontalRulerState(4, 4, true);
+  const invalid = getPageShellHorizontalRulerState(10, 4, false);
+  assert.deepEqual(valid.columns, Array.from({ length: 12 }, (_, index) => index + 1));
+  assert.equal(valid.currentColumn, 4);
+  assert.equal(valid.footprintEnd, 7);
+  assert.equal(valid.valid, true);
+  assert.equal(invalid.currentColumn, 10);
+  assert.equal(invalid.footprintEnd, 12);
+  assert.equal(invalid.valid, false);
+  assert.match(shellSource, /referenceGridBounds: referenceFrame\.referenceGridBounds/);
+  assert.match(shellSource, /getPageShellGridColumnGeometry\(gridBounds, state\.currentColumn, sourceSpan\)/);
+  assert.match(shellSource, /data-page-shell-horizontal-ruler/);
+  assert.match(shellSource, /data-page-shell-horizontal-mark={mark\.column}/);
+  assert.match(shellSource, /data-page-shell-horizontal-current/);
+  assert.match(shellSource, /C{dragIndicator\.horizontalRuler\.currentColumn}/);
+  assert.match(shellSource, /data-page-shell-horizontal-footprint/);
+  assert.match(shellSource, /horizontalRuler: getHorizontalRuler\(interaction, dropTarget, layoutRef\.current, plan\.valid\)/);
+  assert.match(shellSource, /interaction\.axisIntent !== "horizontal"/);
+  assert.match(shellSource, /grabOffsetX/);
 });
 
 test("drop targeting passes the previous insertion index into the existing hysteresis", () => {
