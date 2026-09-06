@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.103`.
+- Current working app version: `7.12.104`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.104 Deterministic Downstream Shell Reflow
+
+Valid explicit shell moves now distinguish requested-destination collisions
+from downstream vertical flow. The destination row remains strict: width
+overflow, same-row geometric collisions, impossible vertical offsets, and
+invalid Center placement still reject with the existing red preview and
+warning. When the requested row is valid, the normal packer may move later
+shells downward to clear a taller row, while preserving their horizontal
+columns, widths, and relative order. Plan → validate → commit remains
+authoritative; no arbitrary `rowStart` or Y coordinates are persisted. No SQL
+or schema migration was needed.
 
 ## 2026-09-06 7.12.103 Axis-Intent-Locked Shell Dragging
 

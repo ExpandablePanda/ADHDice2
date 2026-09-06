@@ -62,7 +62,9 @@ type ShellMoveInteraction = {
   pointerX: number;
   pointerY: number;
   referenceGeometries: PageShellGeometry[];
+  referenceChromeHeightPx: number;
   referenceGridBounds?: PageShellGridBounds;
+  referenceNaturalHeights: Record<string, number>;
   referencePackedPositions: Record<string, PageShellPackedPosition>;
   referenceVisibleOrder: string[];
   startPointerX: number;
@@ -558,14 +560,17 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
 
   function captureMoveReferenceFrame() {
     const referenceVisibleOrder = projectVisiblePageShellOrder(layout.order, visibleShellIds);
+    const referenceChromeHeightPx = layout.isEditing ? 32 : 0;
     return {
+      referenceChromeHeightPx,
       referenceGeometries: captureShellGeometry(),
       referenceGridBounds: captureShellGridBounds(),
       referencePackedPositions: packPageShellLayout(referenceVisibleOrder, layout.sizes, {
-        chromeHeightPx: layout.isEditing ? 32 : 0,
+        chromeHeightPx: referenceChromeHeightPx,
         naturalHeights,
         placements: layout.placements,
       }),
+      referenceNaturalHeights: { ...naturalHeights },
       referenceVisibleOrder,
     };
   }
@@ -599,6 +604,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     interaction.target = dropTarget;
     const plan = planPageShellMove({
       layout: interaction.startLayout,
+      chromeHeightPx: interaction.referenceChromeHeightPx,
+      naturalHeights: interaction.referenceNaturalHeights,
       visibleShellIds: interaction.referenceVisibleOrder,
       sourceId: interaction.id,
       target: dropTarget,
@@ -719,7 +726,9 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       pointerX: event.clientX,
       pointerY: event.clientY,
       referenceGeometries: referenceFrame.referenceGeometries,
+      referenceChromeHeightPx: referenceFrame.referenceChromeHeightPx,
       referenceGridBounds: referenceFrame.referenceGridBounds,
+      referenceNaturalHeights: referenceFrame.referenceNaturalHeights,
       referencePackedPositions: referenceFrame.referencePackedPositions,
       referenceVisibleOrder: referenceFrame.referenceVisibleOrder,
       startPointerX: event.clientX,

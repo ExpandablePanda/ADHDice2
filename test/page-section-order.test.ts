@@ -460,6 +460,41 @@ test("planned row width failure reports the actual maximum and leaves no candida
   }
 });
 
+test("a valid tall same-row reorder allows a later row to reflow downward", () => {
+  const order = ["source", "left", "target", "downstream"];
+  const sizes = sizesFor(
+    { source: 4, left: 4, target: 4, downstream: 12 },
+    { source: 480, left: 144, target: 144, downstream: 144 },
+  );
+  const placements = {
+    source: { columnStart: 1 },
+    left: { columnStart: 5 },
+    target: { columnStart: 9 },
+    downstream: { columnStart: 1 },
+  };
+  const layout = { order, placements, sizes };
+  const packedPositions = positionsFor(order, sizes, placements);
+  const originalDownstream = packedPositions.downstream;
+  packedPositions.downstream = { ...originalDownstream, rowStart: 2 };
+  const plan = planPageShellMove({
+    layout,
+    visibleShellIds: order,
+    sourceId: "source",
+    target: { columnStart: 9, insertionIndex: 2, laneOrder: 0, relationship: "right", targetId: "target" },
+    packedPositions,
+  });
+  assert.equal(plan.valid, true);
+  if (!plan.valid) return;
+  const repacked = positionsFor(plan.layout.order, plan.layout.sizes, plan.layout.placements);
+  assert.deepEqual(plan.layout.order, ["left", "target", "source", "downstream"]);
+  assert.equal(repacked.source.columnStart, 9);
+  assert.equal(repacked.source.rowStart, repacked.left.rowStart);
+  assert.equal(repacked.target.columnStart, 5);
+  assert.ok(repacked.downstream.rowStart > repacked.source.rowStart);
+  assert.equal(repacked.downstream.columnStart, 1);
+  assert.equal(repacked.downstream.columnSpan, 12);
+});
+
 test("cross-row swap validates both rows and valid cross-row placement remains exact", () => {
   const invalidOrder = ["aa", "ab", "ac", "ba", "bb"];
   const invalidSizes = sizesFor({ aa: 4, ab: 4, ac: 4, ba: 5, bb: 7 });
@@ -501,6 +536,46 @@ test("cross-row swap validates both rows and valid cross-row placement remains e
   }
 });
 
+test("a valid tall cross-row swap permits multiple downstream rows to reflow without changing X placement", () => {
+  const order = ["target", "peer", "source", "other", "later", "final"];
+  const sizes = sizesFor(
+    { target: 4, peer: 8, source: 4, other: 8, later: 12, final: 12 },
+    { target: 144, peer: 144, source: 480, other: 144, later: 144, final: 144 },
+  );
+  const placements = {
+    target: { columnStart: 1 },
+    peer: { columnStart: 5 },
+    source: { columnStart: 1 },
+    other: { columnStart: 5 },
+    later: { columnStart: 1 },
+    final: { columnStart: 1 },
+  };
+  const layout = { order, placements, sizes };
+  const before = positionsFor(order, sizes, placements);
+  const plan = planPageShellMove({
+    layout,
+    visibleShellIds: order,
+    sourceId: "source",
+    target: { columnStart: 1, insertionIndex: 0, laneOrder: 0, relationship: "replace", targetId: "target" },
+    packedPositions: before,
+  });
+  assert.equal(plan.valid, true);
+  if (!plan.valid) return;
+  const after = positionsFor(plan.layout.order, plan.layout.sizes, plan.layout.placements);
+  assert.deepEqual(plan.layout.order, ["source", "peer", "target", "other", "later", "final"]);
+  assert.equal(after.source.columnStart, before.target.columnStart);
+  assert.equal(after.source.rowStart, after.peer.rowStart);
+  assert.equal(after.target.columnStart, before.source.columnStart);
+  assert.equal(after.other.columnStart, before.other.columnStart);
+  assert.equal(after.other.columnSpan, before.other.columnSpan);
+  assert.ok(after.target.rowStart > before.target.rowStart);
+  assert.ok(after.other.rowStart > before.other.rowStart);
+  assert.ok(after.later.rowStart > after.other.rowStart);
+  assert.ok(after.final.rowStart > after.later.rowStart);
+  assert.equal(after.later.columnStart, before.later.columnStart);
+  assert.equal(after.final.columnStart, before.final.columnStart);
+});
+
 test("invalid direct insertion and vertical collision never fall back to another row", () => {
   const order = ["source", "target"];
   const sizes = sizesFor({ source: 8, target: 7 });
@@ -516,15 +591,15 @@ test("invalid direct insertion and vertical collision never fall back to another
   assert.equal(plan.valid, false);
   if (!plan.valid) assert.equal(plan.reason, "ROW_WIDTH_EXCEEDED");
 
-  const collisionOrder = ["target", "other", "boundary", "blocker", "source"];
-  const collisionSizes = sizesFor({ target: 4, other: 4, boundary: 12, blocker: 4, source: 4 }, { source: 192, blocker: 192 });
-  const collisionPlacements = { target: { columnStart: 5 }, other: { columnStart: 9 }, boundary: { columnStart: 1 }, blocker: { columnStart: 1 }, source: { columnStart: 5 } };
+  const collisionOrder = ["source", "target", "peer"];
+  const collisionSizes = sizesFor({ source: 5, target: 4, peer: 3 }, { source: 144, target: 144, peer: 480 });
+  const collisionPlacements = { source: { columnStart: 1 }, target: { columnStart: 6 }, peer: { columnStart: 10 } };
   const collisionLayout = { order: collisionOrder, placements: collisionPlacements, sizes: collisionSizes };
   const collisionPlan = planPageShellMove({
     layout: collisionLayout,
     visibleShellIds: collisionOrder,
     sourceId: "source",
-    target: { columnStart: 1, insertionIndex: 0, laneOrder: 0, relationship: "left", rowOffsetSteps: 16, targetId: "target" },
+    target: { columnStart: 6, insertionIndex: 1, laneOrder: 0, relationship: "replace", targetId: "target" },
     packedPositions: positionsFor(collisionOrder, collisionSizes, collisionPlacements),
   });
   assert.equal(collisionPlan.valid, false);
