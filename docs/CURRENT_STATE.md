@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.107`.
+- Current working app version: `7.12.108`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.108 Vertical Arrow Swaps for Occupied Shells
+
+Vertical arrow destinations now inspect exactly the adjacent structural row
+and compare snapped 12-column footprints. An overlapping destination selects a
+deterministic target and uses the existing true `replace` swap planner;
+different-width and full-width swaps remain valid only when both resulting rows
+fit the strict 12-column capacity. An empty intended footprint keeps the
+source's current snapped X and existing one-structural-row move behavior,
+including vertical offset normalization. Center mode remains special and
+preserved where normalized placement allows it. Up and Down are symmetrical,
+repack after each committed move, and do not alter Left/Right or drag behavior.
+No persistence or schema change was needed.
 
 ## 2026-09-06 7.12.107 Unified Structural Rows for Shell Moves
 

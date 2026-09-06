@@ -510,7 +510,7 @@ test("directional arrows resolve one same-row position through the shared planne
   assert.equal(getPageShellDirectionalMoveTarget({ direction: "right", layout, packedPositions, sourceId: "c", visibleShellIds: order }), null);
 });
 
-test("directional vertical arrows use the adjacent structural row and nearest horizontal peer", () => {
+test("directional vertical arrows swap with the best overlapping adjacent-row shell", () => {
   const order = ["a", "b", "c", "d", "e"];
   const sizes = sizesFor({ a: 4, b: 4, c: 4, d: 4, e: 4 });
   const placements = {
@@ -524,19 +524,203 @@ test("directional vertical arrows use the adjacent structural row and nearest ho
   const packedPositions = positionsFor(order, sizes, placements);
   const upTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions, sourceId: "e", visibleShellIds: order });
   assert.equal(upTarget?.targetId, "c");
-  assert.equal(upTarget?.relationship, "before");
+  assert.equal(upTarget?.relationship, "replace");
   assert.equal(upTarget?.rowOffsetSteps, 0);
   const upPlan = upTarget && planPageShellMove({ layout, visibleShellIds: order, sourceId: "e", target: upTarget, packedPositions });
   assert.equal(upPlan?.valid, true);
   if (upPlan?.valid) {
-    assert.deepEqual(upPlan.layout.order, ["a", "b", "e", "c", "d"]);
+    assert.deepEqual(upPlan.layout.order, ["a", "b", "e", "d", "c"]);
     assert.deepEqual(upPlan.layout.sizes, sizes);
+    assert.equal(upPlan.layout.placements?.e?.columnStart, 1);
+    assert.equal(upPlan.layout.placements?.c?.columnStart, 1);
   }
   const downTarget = getPageShellDirectionalMoveTarget({ direction: "down", layout, packedPositions, sourceId: "a", visibleShellIds: order });
   assert.equal(downTarget?.targetId, "c");
-  assert.equal(downTarget?.relationship, "after");
+  assert.equal(downTarget?.relationship, "replace");
   assert.equal(getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions, sourceId: "a", visibleShellIds: order }), null);
   assert.equal(getPageShellDirectionalMoveTarget({ direction: "down", layout, packedPositions, sourceId: "e", visibleShellIds: order }), null);
+});
+
+test("vertical arrows keep an empty adjacent footprint at the source X and do not swap an unrelated peer", () => {
+  const order = ["a", "source"];
+  const sizes = sizesFor({ a: 4, source: 4 });
+  const placements = { a: { columnStart: 1 }, source: { columnStart: 7 } };
+  const layout = { order, placements, sizes };
+  const packedPositions = {
+    a: { columnSpan: 4 as const, columnStart: 1, rowSpan: 41, rowStart: 1 },
+    source: { columnSpan: 4 as const, columnStart: 7, rowSpan: 41, rowStart: 42 },
+  };
+  const target = getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions, sourceId: "source", visibleShellIds: order });
+  assert.equal(target?.targetId, "a");
+  assert.equal(target?.relationship, "before");
+  assert.equal(target?.columnStart, 7);
+  assert.notEqual(target?.relationship, "replace");
+  const plan = target && planPageShellMove({ layout, visibleShellIds: order, sourceId: "source", target, packedPositions });
+  assert.equal(plan?.valid, true);
+  if (plan?.valid) {
+    assert.deepEqual(plan.layout.order, ["source", "a"]);
+    assert.equal(plan.layout.placements?.source?.columnStart, 7);
+    assert.equal(plan.layout.placements?.a?.columnStart, 1);
+    assert.deepEqual(plan.layout.sizes, sizes);
+  }
+
+  const offsetLayout = {
+    order,
+    placements: { a: { columnStart: 1 }, source: { columnStart: 7, rowOffsetSteps: 4 } },
+    sizes,
+  };
+  const offsetPositions = {
+    a: { columnSpan: 4 as const, columnStart: 1, rowSpan: 41, rowStart: 1 },
+    source: { columnSpan: 4 as const, columnStart: 7, rowSpan: 41, rowStart: 54 },
+  };
+  const offsetTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: offsetLayout, packedPositions: offsetPositions, sourceId: "source", visibleShellIds: order });
+  assert.equal(offsetTarget?.relationship, "before");
+  assert.equal(offsetTarget?.rowOffsetSteps, 0);
+  const offsetPlan = offsetTarget && planPageShellMove({ layout: offsetLayout, visibleShellIds: order, sourceId: "source", target: offsetTarget, packedPositions: offsetPositions });
+  assert.equal(offsetPlan?.valid, true);
+  if (offsetPlan?.valid) assert.equal(offsetPlan.layout.placements?.source?.rowOffsetSteps ?? 0, 0);
+});
+
+test("vertical occupancy uses partial overlap and deterministic overlap, center, and visible-order tie breaks", () => {
+  const overlapOrder = ["left", "right", "source"];
+  const overlapSizes = sizesFor({ left: 6, right: 6, source: 6 });
+  const overlapPlacements = { left: { columnStart: 1 }, right: { columnStart: 7 }, source: { columnStart: 5 } };
+  const overlapLayout = { order: overlapOrder, placements: overlapPlacements, sizes: overlapSizes };
+  const overlapPositions = positionsFor(overlapOrder, overlapSizes, overlapPlacements);
+  const overlapTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: overlapLayout, packedPositions: overlapPositions, sourceId: "source", visibleShellIds: overlapOrder });
+  assert.equal(overlapTarget?.targetId, "right");
+  assert.equal(overlapTarget?.relationship, "replace");
+  assert.equal(overlapTarget?.columnStart, 7);
+  const overlapPlan = overlapTarget && planPageShellMove({ layout: overlapLayout, visibleShellIds: overlapOrder, sourceId: "source", target: overlapTarget, packedPositions: overlapPositions });
+  assert.equal(overlapPlan?.valid, true);
+  if (overlapPlan?.valid) {
+    assert.equal(overlapPlan.layout.placements?.source?.columnStart, 7);
+    assert.equal(overlapPlan.layout.placements?.right?.columnStart, 5);
+  }
+
+  const tieOrder = ["left", "right", "source"];
+  const tieSizes = sizesFor({ left: 6, right: 6, source: 6 });
+  const tiePlacements = { left: { columnStart: 1 }, right: { columnStart: 7 }, source: { columnStart: 4 } };
+  const tieLayout = { order: tieOrder, placements: tiePlacements, sizes: tieSizes };
+  const tiePositions = positionsFor(tieOrder, tieSizes, tiePlacements);
+  const tieTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: tieLayout, packedPositions: tiePositions, sourceId: "source", visibleShellIds: tieOrder });
+  assert.equal(tieTarget?.targetId, "left");
+  assert.equal(tieTarget?.relationship, "replace");
+
+  const visibleTieOrder = ["right", "left", "source"];
+  const visibleTieLayout = { order: visibleTieOrder, placements: tiePlacements, sizes: tieSizes };
+  const visibleTiePositions = positionsFor(visibleTieOrder, tieSizes, tiePlacements);
+  const visibleTieTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: visibleTieLayout, packedPositions: visibleTiePositions, sourceId: "source", visibleShellIds: visibleTieOrder });
+  assert.equal(visibleTieTarget?.targetId, "right");
+});
+
+test("vertical replace planning exchanges exact logical destinations without changing widths", () => {
+  const order = ["a", "b"];
+  const sizes = sizesFor({ a: 7, b: 5 });
+  const placements = { a: { columnStart: 1 }, b: { columnStart: 1 } };
+  const layout = { order, placements, sizes };
+  const packedPositions = positionsFor(order, sizes, placements);
+  const target = getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions, sourceId: "b", visibleShellIds: order });
+  assert.equal(target?.relationship, "replace");
+  const plan = target && planPageShellMove({ layout, visibleShellIds: order, sourceId: "b", target, packedPositions });
+  assert.equal(plan?.valid, true);
+  if (plan?.valid) {
+    assert.deepEqual(plan.layout.order, ["b", "a"]);
+    assert.deepEqual(plan.layout.sizes, sizes);
+    assert.equal(plan.layout.placements?.a?.columnStart, 1);
+    assert.equal(plan.layout.placements?.b?.columnStart, 1);
+  }
+});
+
+test("invalid vertical replace leaves both rows unchanged and reports strict capacity failure", () => {
+  const order = ["aa", "ab", "ac", "source"];
+  const sizes = sizesFor({ aa: 4, ab: 4, ac: 4, source: 8 });
+  const placements = { aa: { columnStart: 1 }, ab: { columnStart: 5 }, ac: { columnStart: 9 }, source: { columnStart: 1 } };
+  const layout = { order, placements, sizes };
+  const before = JSON.stringify(layout);
+  const packedPositions = positionsFor(order, sizes, placements);
+  const target = getPageShellDirectionalMoveTarget({ direction: "up", layout, packedPositions, sourceId: "source", visibleShellIds: order });
+  assert.equal(target?.targetId, "aa");
+  assert.equal(target?.relationship, "replace");
+  const plan = target && planPageShellMove({ layout, visibleShellIds: order, sourceId: "source", target, packedPositions });
+  assert.equal(plan?.valid, false);
+  if (plan && !plan.valid) {
+    assert.equal(plan.reason, "ROW_WIDTH_EXCEEDED");
+    assert.equal(plan.targetRowWidth, 16);
+    assert.match(plan.message, /4\/12/);
+  }
+  assert.equal(JSON.stringify(layout), before);
+});
+
+test("vertical arrows swap full-width standalone shells and retain Center semantics", () => {
+  const fullOrder = ["a", "b"];
+  const fullSizes = sizesFor({ a: 12, b: 12 });
+  const fullPlacements = { a: { columnStart: 1 }, b: { columnStart: 1 } };
+  const fullLayout = { order: fullOrder, placements: fullPlacements, sizes: fullSizes };
+  const fullPositions = positionsFor(fullOrder, fullSizes, fullPlacements);
+  const fullTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: fullLayout, packedPositions: fullPositions, sourceId: "b", visibleShellIds: fullOrder });
+  assert.equal(fullTarget?.relationship, "replace");
+  const fullPlan = fullTarget && planPageShellMove({ layout: fullLayout, visibleShellIds: fullOrder, sourceId: "b", target: fullTarget, packedPositions: fullPositions });
+  assert.equal(fullPlan?.valid, true);
+  if (fullPlan?.valid) assert.deepEqual(fullPlan.layout.order, ["b", "a"]);
+
+  const occupiedFullOrder = ["left", "right", "source"];
+  const occupiedFullSizes = sizesFor({ left: 6, right: 6, source: 12 });
+  const occupiedFullPlacements = { left: { columnStart: 1 }, right: { columnStart: 7 }, source: { columnStart: 1 } };
+  const occupiedFullLayout = { order: occupiedFullOrder, placements: occupiedFullPlacements, sizes: occupiedFullSizes };
+  const occupiedFullPositions = positionsFor(occupiedFullOrder, occupiedFullSizes, occupiedFullPlacements);
+  const occupiedFullTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: occupiedFullLayout, packedPositions: occupiedFullPositions, sourceId: "source", visibleShellIds: occupiedFullOrder });
+  assert.equal(occupiedFullTarget?.relationship, "replace");
+  const occupiedFullPlan = occupiedFullTarget && planPageShellMove({ layout: occupiedFullLayout, visibleShellIds: occupiedFullOrder, sourceId: "source", target: occupiedFullTarget, packedPositions: occupiedFullPositions });
+  assert.equal(occupiedFullPlan?.valid, false);
+  if (occupiedFullPlan && !occupiedFullPlan.valid) assert.equal(occupiedFullPlan.reason, "ROW_WIDTH_EXCEEDED");
+
+  const centeredOrder = ["above", "center", "below"];
+  const centeredSizes = sizesFor({ above: 12, center: 5, below: 12 });
+  const centeredPlacements = { above: { columnStart: 1 }, center: { columnStart: 4, mode: "centered" as const }, below: { columnStart: 1 } };
+  const centeredLayout = { order: centeredOrder, placements: centeredPlacements, sizes: centeredSizes };
+  const centeredPositions = positionsFor(centeredOrder, centeredSizes, centeredPlacements);
+  const centeredTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: centeredLayout, packedPositions: centeredPositions, sourceId: "center", visibleShellIds: centeredOrder });
+  assert.equal(centeredTarget?.relationship, "replace");
+  assert.equal(centeredTarget?.mode, "centered");
+  assert.equal(centeredTarget?.columnStart, 4);
+  const centeredPlan = centeredTarget && planPageShellMove({ layout: centeredLayout, visibleShellIds: centeredOrder, sourceId: "center", target: centeredTarget, packedPositions: centeredPositions });
+  assert.equal(centeredPlan?.valid, true);
+  if (centeredPlan?.valid) {
+    assert.equal(centeredPlan.layout.placements?.center?.mode, "centered");
+    assert.equal(centeredPlan.layout.placements?.center?.columnStart, 4);
+  }
+});
+
+test("vertical arrows are symmetric and repack after each committed swap", () => {
+  const sizes = sizesFor({ a: 4, b: 4, c: 4 });
+  let layout: PageShellLayoutPreference = {
+    order: ["a", "b", "c"],
+    sizes,
+    placements: { a: { columnStart: 1 }, b: { columnStart: 1 }, c: { columnStart: 1 } },
+  };
+
+  const move = (sourceId: string, direction: "up" | "down") => {
+    const packedPositions = positionsFor(layout.order, sizes, layout.placements);
+    const target = getPageShellDirectionalMoveTarget({ direction, layout, packedPositions, sourceId, visibleShellIds: layout.order });
+    assert.equal(target?.relationship, "replace");
+    const plan = target && planPageShellMove({ layout, visibleShellIds: layout.order, sourceId, target, packedPositions });
+    assert.equal(plan?.valid, true);
+    if (plan?.valid) layout = plan.layout;
+  };
+
+  move("b", "up");
+  assert.deepEqual(layout.order, ["b", "a", "c"]);
+  move("b", "down");
+  assert.deepEqual(layout.order, ["a", "b", "c"]);
+  move("c", "up");
+  assert.deepEqual(layout.order, ["a", "c", "b"]);
+  move("c", "up");
+  assert.deepEqual(layout.order, ["c", "a", "b"]);
+  move("c", "down");
+  assert.deepEqual(layout.order, ["a", "c", "b"]);
+  move("c", "down");
+  assert.deepEqual(layout.order, ["a", "b", "c"]);
 });
 
 test("vertical peer selection ties by stable visible order and ignores rendered offset differences", () => {
@@ -733,7 +917,7 @@ test("full-width arrows remain structural rows, while centered standalone shells
     target: { ...fullDown, structuralRow: undefined },
     packedPositions: fullPositions,
   });
-  assert.equal(unmarkedFullPlan?.valid, false);
+  assert.equal(unmarkedFullPlan?.valid, true);
 
   const centeredOrder = ["above", "center", "below"];
   const centeredSizes = sizesFor({ above: 12, center: 5, below: 12 });
@@ -751,9 +935,14 @@ test("full-width arrows remain structural rows, while centered standalone shells
 });
 
 test("invalid directional plans stay unchanged while valid arrow moves retain downstream reflow", () => {
-  const invalidOrder = ["above-a", "above-b", "source"];
-  const invalidSizes = sizesFor({ "above-a": 8, "above-b": 4, source: 8 });
-  const invalidPlacements = { "above-a": { columnStart: 1 }, "above-b": { columnStart: 9 }, source: { columnStart: 1 } };
+  const invalidOrder = ["above-a", "above-b", "above-c", "source"];
+  const invalidSizes = sizesFor({ "above-a": 4, "above-b": 4, "above-c": 4, source: 8 });
+  const invalidPlacements = {
+    "above-a": { columnStart: 1 },
+    "above-b": { columnStart: 5 },
+    "above-c": { columnStart: 9 },
+    source: { columnStart: 1 },
+  };
   const invalidLayout = { order: invalidOrder, placements: invalidPlacements, sizes: invalidSizes };
   const invalidPositions = positionsFor(invalidOrder, invalidSizes, invalidPlacements);
   const invalidTarget = getPageShellDirectionalMoveTarget({ direction: "up", layout: invalidLayout, packedPositions: invalidPositions, sourceId: "source", visibleShellIds: invalidOrder });
