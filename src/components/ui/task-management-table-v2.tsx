@@ -1230,6 +1230,7 @@ type TaskManagementTableV2Props = {
   pursuits?: Pursuit[];
   pursuitAttentionById?: ReadonlyMap<string, PursuitAttention>;
   pursuitSearch?: string;
+  pursuitTimezone?: string;
   onOpenPursuit?: (pursuitId: string) => void;
   onMarkDonePursuit?: (pursuitId: string) => void;
   primaryBadgeLabel?: string;
@@ -2636,6 +2637,7 @@ export function TaskManagementTableV2({
   pursuits = [],
   pursuitAttentionById,
   pursuitSearch = "",
+  pursuitTimezone = "UTC",
   onOpenPursuit,
   onMarkDonePursuit,
   shellClassName = "",
@@ -3283,6 +3285,7 @@ export function TaskManagementTableV2({
       onMarkDoneToday={onMarkDonePursuit ?? (() => undefined)}
       onOpen={onOpenPursuit ?? (() => undefined)}
       pursuit={pursuit}
+      timezone={pursuitTimezone}
     />
   ));
   useLayoutEffect(() => {
@@ -9783,6 +9786,7 @@ export function TaskManagementTableV2({
                         onMarkDoneToday={onMarkDonePursuit ?? (() => undefined)}
                         onOpen={onOpenPursuit ?? (() => undefined)}
                         pursuit={pursuit}
+                        timezone={pursuitTimezone}
                       />
                     ))}
                   </div>

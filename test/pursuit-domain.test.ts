@@ -6,10 +6,13 @@ import {
   buildPursuitWorkspaceIndex,
   canSetPursuitParent,
   derivePursuitCompletionSummary,
+  derivePursuitNextTargetLogicalDay,
   derivePursuitAttention,
   filterPursuitsForTaskWorkspace,
   filterPursuitsByTitle,
   formatPursuitLastCompletion,
+  formatPursuitAttentionReason,
+  formatPursuitTargetLabel,
   getPursuitLogicalDay,
   getPursuitSearchContextTaskIds,
   getPursuitTimestampForLogicalDay,
@@ -84,6 +87,42 @@ test("a target interval is exceeded only after the target day", () => {
   const result = derivePursuitAttention(pursuit({ revisit_interval_days: 5 }), [], CONTEXT);
   assert.equal(result.needsAttention, true);
   assert.equal(result.attentionRatio, 1.8);
+});
+
+test("next target is absent without a revisit interval", () => {
+  const result = derivePursuitAttention(pursuit(), [], CONTEXT);
+  assert.equal(result.nextTargetLogicalDay, null);
+});
+
+test("never-completed Pursuits derive their target from the creation logical day", () => {
+  const target = derivePursuitNextTargetLogicalDay(
+    pursuit({ created_at: "2026-09-05T09:30:00.000Z", revisit_interval_days: 5 }),
+    { lastCompletedLogicalDay: null },
+    CONTEXT,
+  );
+  assert.equal(target, "2026-09-09");
+});
+
+test("completed Pursuits derive their target from the last completed logical day", () => {
+  const target = derivePursuitNextTargetLogicalDay(
+    pursuit({ revisit_interval_days: 7 }),
+    { lastCompletedLogicalDay: "2026-09-08" },
+    CONTEXT,
+  );
+  assert.equal(target, "2026-09-15");
+});
+
+test("target labels distinguish today, future, and past logical days", () => {
+  assert.equal(formatPursuitTargetLabel("2026-09-10", "2026-09-10", CONTEXT.timezone), "Target Sep 10");
+  assert.equal(formatPursuitTargetLabel("2026-09-14", "2026-09-10", CONTEXT.timezone), "Target in 4d");
+  assert.equal(formatPursuitTargetLabel("2026-09-08", "2026-09-10", CONTEXT.timezone), "Target Sep 8");
+});
+
+test("target presentation preserves the logical day across timezone offsets", () => {
+  assert.equal(formatPursuitTargetLabel("2026-09-10", "2026-09-10", "Pacific/Kiritimati"), "Target Sep 10");
+  assert.equal(formatPursuitTargetLabel("2026-09-08", "2026-09-10", "Pacific/Pago_Pago"), "Target Sep 8");
+  const attention = derivePursuitAttention(pursuit({ revisit_interval_days: 5 }), [], CONTEXT);
+  assert.equal(formatPursuitAttentionReason(attention, CONTEXT.timezone), "Target Sep 6 · 4 days past target");
 });
 
 test("paused and archived Pursuits never surface as attention", () => {

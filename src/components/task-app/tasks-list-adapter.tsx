@@ -356,6 +356,7 @@ type TasksTableSourceProps = {
   pursuits?: Pursuit[];
   pursuitAttentionById?: ReadonlyMap<string, PursuitAttention>;
   pursuitSearch?: string;
+  pursuitTimezone?: string;
   onOpenPursuit?: (pursuitId: string) => void;
   onMarkDonePursuit?: (pursuitId: string) => void;
   selectedTaskIds?: string[];
@@ -653,6 +654,7 @@ export function TasksTableAdapter({
           pursuits={tableProps.pursuits}
           pursuitAttentionById={tableProps.pursuitAttentionById}
           pursuitSearch={tableProps.pursuitSearch}
+          pursuitTimezone={tableProps.pursuitTimezone}
           onOpenPursuit={tableProps.onOpenPursuit}
           onMarkDonePursuit={tableProps.onMarkDonePursuit}
           onOpenBatchDelete={tableProps.onOpenBatchDelete}
@@ -3026,6 +3028,7 @@ function TasksSimpleList({
               pursuits={tableProps.pursuits}
               pursuitAttentionById={tableProps.pursuitAttentionById}
               pursuitSearch={tableProps.pursuitSearch}
+              pursuitTimezone={tableProps.pursuitTimezone}
               onOpenPursuit={tableProps.onOpenPursuit}
               onMarkDonePursuit={tableProps.onMarkDonePursuit}
               onCreateTaskList={tableProps.onCreateTaskList}
@@ -3719,6 +3722,7 @@ function TasksSimpleList({
                 onMarkDoneToday={tableProps.onMarkDonePursuit ?? (() => undefined)}
                 onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
                 pursuit={pursuit}
+                timezone={tableProps.pursuitTimezone ?? "UTC"}
               />
             )) : null}
           </div>
@@ -3732,6 +3736,7 @@ function TasksSimpleList({
               onMarkDoneToday={tableProps.onMarkDonePursuit ?? (() => undefined)}
               onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
               pursuit={pursuit}
+              timezone={tableProps.pursuitTimezone ?? "UTC"}
             />
           ))}
           {windowedTasks.length < tasks.length ? <div aria-hidden="true" className="h-px" ref={loadMoreListRowsRef} /> : null}

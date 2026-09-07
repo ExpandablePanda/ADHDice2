@@ -25,7 +25,8 @@ test("creation and child-step routing keep Task and Pursuit paths separate", () 
   assert.match(headerSource, /onOpenPursuitComposer\(\)/);
   assert.match(tableSource, /ChildTypeChooser/);
   assert.match(tableSource, /onCreateChildPursuit/);
-  assert.match(appSource, /onCreateChildPursuit=\{openNewPursuitEditor\}/);
+  assert.match(appSource, /onCreateChildPursuit=\{openNewPursuitEditorFromTaskEditor\}/);
+  assert.match(appSource, /onCreateChildPursuit: openNewPursuitEditor/);
   assert.match(appSource, /initialParentTaskId=\{pursuitEditorState\.parentTaskId\}/);
   assert.match(appSource, /onCreate=\{pursuitData\.createPursuit\}/);
 });
@@ -41,8 +42,17 @@ test("Table/List use a dedicated Pursuit rendering path and searchable domain ro
   assert.match(editorSource, /Mark Done Today/);
   assert.match(editorSource, /Pursuit calendar/);
   assert.match(editorSource, /Pursuit history/);
+  assert.match(rowSource, /Compass/);
+  assert.doesNotMatch(rowSource, /Infinity/);
+  assert.doesNotMatch(editorSource, /Infinity/);
+  assert.match(editorSource, /onOpenPursuit\?\.\(child\.id\)/);
+  assert.match(editorSource, /Next target/);
   assert.doesNotMatch(editorSource, /Log Activity|durationMinutes|Duration minutes|session-oriented/i);
   assert.match(appSource, /onOpenPursuit: openPursuitEditor/);
+  assert.match(appSource, /returnToTaskEditorId/);
+  assert.match(appSource, /openPursuitEditorFromTaskEditor/);
+  assert.match(appSource, /openNewPursuitEditorFromTaskEditor/);
+  assert.match(appSource, /onClose=\{closePursuitEditor\}/);
 });
 
 test("Pursuit presentation follows Task disclosure and search context without becoming a Task match", () => {
@@ -65,6 +75,15 @@ test("Pursuit presentation wiring does not feed rows into Task completion inputs
   assert.doesNotMatch(rowSource, /TaskStatus|TaskHistory|occurrence|adhdice_clean_tasks/);
   assert.match(rowSource, /onMarkDoneToday/);
   assert.doesNotMatch(rowSource, /session|duration|activity-time/i);
+  assert.match(rowSource, /selected=\{completedToday\}/);
+  assert.doesNotMatch(rowSource, /gridTemplateColumns: `\$\{gridTemplateColumns\} 2\.5rem`/);
+});
+
+test("Pursuit target derivation stays outside Task due and completion authorities", () => {
+  assert.match(appSource, /buildPursuitAttentionMap/);
+  assert.match(appSource, /togglePursuitDoneToday/);
+  assert.doesNotMatch(appSource, /pursuit.*due_on|due_on.*pursuit/i);
+  assert.doesNotMatch(pursuitHookSource, /adhdice_task_history|adhdice_focus|reward/i);
 });
 
 test("all Task child controls share the Task/Pursuit chooser authority", () => {
@@ -72,7 +91,8 @@ test("all Task child controls share the Task/Pursuit chooser authority", () => {
   assert.match(tableSource, /onChoosePursuit=\{onCreateChildPursuit/);
   assert.match(tableSource, /onCreateChildPursuit=\{onCreateChildPursuit\}/);
   assert.match(listSource, /ChildTypeChooser/);
-  assert.match(appSource, /onCreateChildPursuit=\{openNewPursuitEditor\}/);
+  assert.match(appSource, /onCreateChildPursuit=\{openNewPursuitEditorFromTaskEditor\}/);
+  assert.match(appSource, /onCreateChildPursuit: openNewPursuitEditor/);
 });
 
 test("Pursuit completion writes a nullable check-in event without Task or Focus side effects", () => {

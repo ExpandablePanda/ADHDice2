@@ -11,7 +11,9 @@ export type PursuitAttention = {
   lastActivityAt: string | null;
   needsAttention: boolean;
   completionSummary: PursuitCompletionSummary;
+  nextTargetLogicalDay: string | null;
   pursuit: Pursuit;
+  todayKey: string;
 };
 
 export type PursuitAttentionContext = {
@@ -242,6 +244,42 @@ export function buildPursuitCompletionSummaryMap(
   );
 }
 
+export function derivePursuitNextTargetLogicalDay(
+  pursuit: Pick<Pursuit, "created_at" | "revisit_interval_days">,
+  completionSummary: Pick<PursuitCompletionSummary, "lastCompletedLogicalDay">,
+  context: Pick<PursuitAttentionContext, "dayStartTime" | "timezone">,
+) {
+  const revisitIntervalDays = pursuit.revisit_interval_days;
+  if (revisitIntervalDays === null || revisitIntervalDays <= 0) return null;
+
+  const baselineLogicalDay = completionSummary.lastCompletedLogicalDay
+    ?? getPursuitLogicalDay(pursuit.created_at, context);
+  return shiftDateKey(baselineLogicalDay, revisitIntervalDays);
+}
+
+export function formatPursuitTargetDate(logicalDay: string, timezone: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    timeZone: timezone,
+  }).format(new Date(getPursuitTimestampForLogicalDay(logicalDay, { dayStartTime: "12:00", timezone })));
+}
+
+export function formatPursuitTargetLabel(
+  nextTargetLogicalDay: string | null | undefined,
+  todayKey: string | undefined,
+  timezone: string,
+) {
+  if (!nextTargetLogicalDay) return "No revisit target";
+  const targetDate = formatPursuitTargetDate(nextTargetLogicalDay, timezone);
+  if (!todayKey) return `Target ${targetDate}`;
+
+  const daysUntilTarget = daysBetween(todayKey, nextTargetLogicalDay);
+  return daysUntilTarget > 0 && daysUntilTarget <= 7
+    ? `Target in ${daysUntilTarget}d`
+    : `Target ${targetDate}`;
+}
+
 export function formatPursuitLastCompletion(summary: PursuitCompletionSummary) {
   if (summary.lastCompletedLogicalDay === null) return "Never done";
   if (summary.daysSinceCompletion === 0) return "Done today";
@@ -291,6 +329,7 @@ export function derivePursuitAttention(
   const todayKey = context.todayKey ?? getPursuitLogicalDay(context.now, context);
   const baselineDayKey = getPursuitLogicalDay(baselineAt, context);
   const daysSinceBaseline = Math.max(0, daysBetween(baselineDayKey, todayKey));
+  const nextTargetLogicalDay = derivePursuitNextTargetLogicalDay(pursuit, completionSummary, context);
   const target = pursuit.revisit_interval_days;
   const needsAttention = pursuit.status === "active"
     && target !== null
@@ -306,7 +345,9 @@ export function derivePursuitAttention(
     lastActivityAt: recentActivity?.occurred_at ?? null,
     needsAttention,
     completionSummary,
+    nextTargetLogicalDay,
     pursuit,
+    todayKey,
   };
 }
 
@@ -340,13 +381,13 @@ export function sortPursuitsByAttention(rows: ReadonlyArray<PursuitAttention>) {
     ));
 }
 
-export function formatPursuitAttentionReason(row: PursuitAttention) {
-  const daysLabel = `${row.daysSinceBaseline} day${row.daysSinceBaseline === 1 ? "" : "s"}`;
-  const baselineLabel = row.baselineKind === "activity" ? "since completion" : "since created";
-  const target = row.pursuit.revisit_interval_days;
-  return target === null
-    ? `${daysLabel} ${baselineLabel}`
-    : `${daysLabel} ${baselineLabel} · target ${target} day${target === 1 ? "" : "s"}`;
+export function formatPursuitAttentionReason(row: PursuitAttention, timezone = "UTC") {
+  if (!row.nextTargetLogicalDay) return "No revisit target";
+  const targetDate = formatPursuitTargetDate(row.nextTargetLogicalDay, timezone);
+  const daysPastTarget = daysBetween(row.nextTargetLogicalDay, row.todayKey);
+  return daysPastTarget > 0
+    ? `Target ${targetDate} · ${daysPastTarget} day${daysPastTarget === 1 ? "" : "s"} past target`
+    : `Target ${targetDate}`;
 }
 
 export function formatPursuitLastActivity(row: PursuitAttention, timezone: string) {
