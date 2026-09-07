@@ -91,6 +91,7 @@ import { MilestoneInspectorSection } from "./task-app/milestone-detail-section";
 import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-app/milestone-lifecycle-modal";
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { AttentionWorkspace } from "./task-app/attention-workspace";
+import { PursuitActivityModal, PursuitEditorModal } from "./task-app/pursuits-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { TaskCalendarView } from "./task-app/task-calendar-view";
@@ -149,6 +150,7 @@ import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
 import { usePursuits } from "@/hooks/usePursuits";
+import { buildPursuitAttentionMap } from "@/lib/pursuit-domain";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
 import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
@@ -1620,6 +1622,14 @@ export function TaskApp() {
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
+  const [pursuitEditorState, setPursuitEditorState] = useState<{ pursuitId: string | null; parentTaskId: string | null } | null>(null);
+  const [pursuitActivityId, setPursuitActivityId] = useState<string | null>(null);
+  const openNewPursuitEditor = useCallback((parentTaskId: string | null = null) => {
+    setPursuitEditorState({ parentTaskId, pursuitId: null });
+  }, []);
+  const openPursuitEditor = useCallback((pursuitId: string) => {
+    setPursuitEditorState({ parentTaskId: null, pursuitId });
+  }, []);
   const [milestoneSetupTaskId, setMilestoneSetupTaskId] = useState<string | null>(null);
   const [milestoneCorrectionId, setMilestoneCorrectionId] = useState<string | null>(null);
   const [pendingDetachMilestoneTaskId, setPendingDetachMilestoneTaskId] = useState<string | null>(null);
@@ -3200,6 +3210,14 @@ export function TaskApp() {
     urgentTasks,
     visibleListCounts,
   } = derivedData;
+  const pursuitAttentionMap = useMemo(
+    () => buildPursuitAttentionMap(pursuitData.pursuits, pursuitData.activities, {
+      dayStartTime,
+      now: new Date(logicalDayNow),
+      timezone: userTimeZone,
+    }),
+    [dayStartTime, logicalDayNow, pursuitData.activities, pursuitData.pursuits, userTimeZone],
+  );
   const [sharedEditorRowModelCache] = useState(createStableTaskRowModelCache);
   const sharedTaskEditorRows = useMemo(
     () => sharedTaskEditorOverlayTaskId
@@ -5096,6 +5114,12 @@ export function TaskApp() {
   const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
     ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
     : null;
+  const pursuitEditorTarget = pursuitEditorState?.pursuitId
+    ? pursuitData.pursuits.find((pursuit) => pursuit.id === pursuitEditorState.pursuitId) ?? null
+    : null;
+  const pursuitActivityTarget = pursuitActivityId
+    ? pursuitData.pursuits.find((pursuit) => pursuit.id === pursuitActivityId) ?? null
+    : null;
   const effectiveTaskUiState = { ...taskUiState, duplicateTitleMode: duplicateTitleModeActive };
   const toggleDuplicateTitleMode = () => {
     setTaskUiState((prev) => {
@@ -6398,7 +6422,8 @@ export function TaskApp() {
     openFolderRails: taskListRailStructureOptions.openFolderRails,
     metric: momentumMetric,
     onCycleMomentum: () => setMomentumView(getNextMomentumView(momentumView)),
-    onOpenComposer: openInlineNewListTaskComposer,
+    onOpenTaskComposer: openInlineNewListTaskComposer,
+    onOpenPursuitComposer: () => openNewPursuitEditor(),
     onOpenFocusPlanner: openFocusPlanner,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
@@ -6560,6 +6585,29 @@ export function TaskApp() {
       data-lowstim={lowStim ? "" : undefined}
       className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
     >
+      {pursuitEditorState ? (
+        <PursuitEditorModal
+          initialParentTaskId={pursuitEditorState.parentTaskId}
+          onClose={() => setPursuitEditorState(null)}
+          onCreate={pursuitData.createPursuit}
+          onLogActivity={pursuitEditorTarget ? () => {
+            setPursuitEditorState(null);
+            setPursuitActivityId(pursuitEditorTarget.id);
+          } : undefined}
+          onUpdate={pursuitData.updatePursuit}
+          pursuit={pursuitEditorTarget}
+          pursuits={pursuitData.pursuits}
+          taskOptions={tasks.map((task) => ({ id: task.id, title: task.title }))}
+          timezone={userTimeZone}
+        />
+      ) : null}
+      {pursuitActivityTarget ? (
+        <PursuitActivityModal
+          onClose={() => setPursuitActivityId(null)}
+          onLogActivity={pursuitData.logActivity}
+          pursuit={pursuitActivityTarget}
+        />
+      ) : null}
       {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
         <TaskManagementTableV2
           allListOptions={availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name }))}
@@ -6574,6 +6622,7 @@ export function TaskApp() {
           milestoneDetachPromotionTaskIds={milestoneDetachPromotionTaskIds}
           milestonePromotionTaskIds={milestonePromotionTaskIds}
           onCreateChildTask={createChildTaskFromPreview}
+          onCreateChildPursuit={openNewPursuitEditor}
           onCreateTaskList={async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null })}
           onDetachAndPromoteTaskToMilestone={requestDetachAndPromoteMilestone}
           onDiscardTaskTimer={requestTaskTimerDiscard}
@@ -6882,18 +6931,17 @@ export function TaskApp() {
             )}
             attentionWorkspacePanel={(
               <AttentionWorkspace
-                activities={pursuitData.activities}
-                dayStartTime={dayStartTime}
+                attentionMap={pursuitAttentionMap}
                 dueOnByTaskId={taskDisplayDueOnByTaskId}
                 error={pursuitData.error}
                 isLoading={pursuitData.isLoading}
-                now={new Date(logicalDayNow)}
                 onCreate={pursuitData.createPursuit}
                 onLogActivity={pursuitData.logActivity}
                 onOpenTask={openTaskInSharedTasksEditorFromPaths}
                 onRefresh={pursuitData.refresh}
                 onUpdate={pursuitData.updatePursuit}
                 pursuits={pursuitData.pursuits}
+                taskOptions={tasks.map((task) => ({ id: task.id, title: task.title }))}
                 statusesByTaskId={taskDisplayStatusByTaskId}
                 tasks={tasksForActiveStatusRead}
                 todayKey={todayKey}
@@ -7000,6 +7048,14 @@ export function TaskApp() {
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
                   allTasks: tasksForActiveStatusRead,
+                  pursuits: pursuitData.pursuits,
+                  pursuitAttentionById: pursuitAttentionMap,
+                  pursuitSearch: taskUiState.search,
+                  onOpenPursuit: openPursuitEditor,
+                  onLogPursuitActivity: (pursuitId: string) => {
+                    setPursuitActivityId(pursuitId);
+                  },
+                  pursuitTimezone: userTimeZone,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
                   columnFilters: taskUiState.tableColumnFilters,
@@ -7026,6 +7082,7 @@ export function TaskApp() {
                   overlayNode: null,
                   onCreateTaskList: async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null }),
                   onCreateChildTask: createChildTaskFromPreview,
+                  onCreateChildPursuit: openNewPursuitEditor,
                   onClearSelection: clearListTaskSelection,
                   onNextTaskTimer: () => cycleHudTaskTimer("next"),
                   onOpenBatchDelete: openBatchDeleteModal,
@@ -7170,6 +7227,14 @@ export function TaskApp() {
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
                   allTasks: tasksForActiveStatusRead,
+                  pursuits: pursuitData.pursuits,
+                  pursuitAttentionById: pursuitAttentionMap,
+                  pursuitSearch: taskUiState.search,
+                  onOpenPursuit: openPursuitEditor,
+                  onLogPursuitActivity: (pursuitId: string) => {
+                    setPursuitActivityId(pursuitId);
+                  },
+                  pursuitTimezone: userTimeZone,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
                   columnFilters: taskUiState.tableColumnFilters,
@@ -7194,6 +7259,7 @@ export function TaskApp() {
                   overlayNode: null,
                   onCreateTaskList: async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null }),
                   onCreateChildTask: createChildTaskFromPreview,
+                  onCreateChildPursuit: openNewPursuitEditor,
                   onClearSelection: clearListTaskSelection,
                   onNextTaskTimer: () => cycleHudTaskTimer("next"),
                   onOpenBatchDelete: openBatchDeleteModal,

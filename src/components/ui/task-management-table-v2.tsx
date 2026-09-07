@@ -32,7 +32,7 @@ import {
   Trophy,
   X,
 } from "lucide-react";
-import type { TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
+import type { Pursuit, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
@@ -55,6 +55,8 @@ import {
 import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
 import { TaskHierarchyChevronButton } from "@/components/task-app/task-hierarchy-chevron-button";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
+import { buildPursuitWorkspaceIndex, filterPursuitsByTitle, type PursuitAttention } from "@/lib/pursuit-domain";
+import { PursuitTableWorkspaceRow } from "@/components/task-app/pursuit-workspace-row";
 import {
   formatRepeatFrequencyLabel,
   formatRepeatSummary,
@@ -1162,6 +1164,7 @@ type TaskManagementTableV2Props = {
   showHeader?: boolean;
   onClearSelection?: () => void;
   onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onCreateChildPursuit?: (parentTaskId: string) => void;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenBatchDelete?: () => void;
   onOpenBatchEdit?: () => void;
@@ -1221,6 +1224,12 @@ type TaskManagementTableV2Props = {
   onTaskTitleChange?: (taskId: string, title: string) => void;
   onToggleTaskSelection?: (taskId: string, options?: { additive?: boolean; range?: boolean; visibleTaskIds?: string[] }) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
+  pursuits?: Pursuit[];
+  pursuitAttentionById?: ReadonlyMap<string, PursuitAttention>;
+  pursuitSearch?: string;
+  onOpenPursuit?: (pursuitId: string) => void;
+  onLogPursuitActivity?: (pursuitId: string) => void;
+  pursuitTimezone?: string;
   primaryBadgeLabel?: string;
   rows?: PrototypeTaskRow[];
   runningTaskTimers?: RunningTaskTimer[];
@@ -1871,17 +1880,70 @@ export function getFullEditorChildSectionLabels(depth: number) {
     : { action: "Add Substep", heading: "Substeps" };
 }
 
+export function ChildTypeChooser({
+  "aria-label": ariaLabel,
+  childLabel,
+  onChoosePursuit,
+  onChooseTask,
+}: {
+  "aria-label"?: string;
+  childLabel: "Step" | "Substep";
+  onChoosePursuit?: () => void;
+  onChooseTask: () => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  if (!onChoosePursuit) {
+    return (
+      <button
+        aria-label={ariaLabel ?? `Add ${childLabel}`}
+        className={ROW_ACTION_ICON_BUTTON_CLASS}
+        onClick={(event) => {
+          event.stopPropagation();
+          onChooseTask();
+        }}
+        onPointerDown={stopRowActionPointerEvent}
+        type="button"
+      >
+        <Footprints className="h-3.5 w-3.5" />
+      </button>
+    );
+  }
+
+  return (
+    <div className="relative" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        aria-label={ariaLabel ?? `Add ${childLabel}`}
+        className={ROW_ACTION_ICON_BUTTON_CLASS}
+        onClick={() => setIsOpen((current) => !current)}
+        type="button"
+      >
+        <Footprints className="h-3.5 w-3.5" />
+      </button>
+      {isOpen ? (
+        <div className="absolute right-0 top-full z-40 mt-1 grid min-w-28 gap-1 rounded-[0.8rem] border border-[#ddd2ff] bg-white p-1.5 text-left shadow-[0_12px_32px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]" role="menu">
+          <button className="rounded-[0.55rem] px-2 py-1.5 text-left text-xs font-semibold text-[#4e4865] hover:bg-[#f1ecff] dark:text-white/80 dark:hover:bg-white/10" onClick={() => { setIsOpen(false); onChooseTask(); }} role="menuitem" type="button">Task</button>
+          <button className="rounded-[0.55rem] px-2 py-1.5 text-left text-xs font-semibold text-[#6f57f6] hover:bg-[#f1ecff] dark:text-[#cabfff] dark:hover:bg-white/10" onClick={() => { setIsOpen(false); onChoosePursuit(); }} role="menuitem" type="button">Pursuit</button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SameTableStepCreationControl({
   childLabel = "Step",
   creationBlocked,
   iconOnly = false,
   onCreateChildTask,
+  onCreateChildPursuit,
   parentTaskId,
 }: {
   childLabel?: "Step" | "Substep";
   creationBlocked?: boolean;
   iconOnly?: boolean;
   onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onCreateChildPursuit?: (parentTaskId: string) => void;
   parentTaskId: string;
 }) {
   const childLabelLower = childLabel.toLowerCase();
@@ -1941,7 +2003,16 @@ function SameTableStepCreationControl({
 
   if (!isCreating) {
     if (iconOnly) {
-      return (
+      return onCreateChildPursuit ? (
+        <ChildTypeChooser
+          childLabel={childLabel}
+          onChoosePursuit={() => onCreateChildPursuit(parentTaskId)}
+          onChooseTask={() => {
+            setCreationError(null);
+            setIsCreating(true);
+          }}
+        />
+      ) : (
         <button
           aria-label={`Add ${childLabel}`}
           className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
@@ -1957,7 +2028,16 @@ function SameTableStepCreationControl({
       );
     }
 
-    return (
+    return onCreateChildPursuit ? (
+      <ChildTypeChooser
+        childLabel={childLabel}
+        onChoosePursuit={() => onCreateChildPursuit(parentTaskId)}
+        onChooseTask={() => {
+          setCreationError(null);
+          setIsCreating(true);
+        }}
+      />
+    ) : (
       <button
         aria-label={`Add ${childLabel}`}
         className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
@@ -2491,6 +2571,7 @@ export function TaskManagementTableV2({
   onInspectorClose,
   onClearSelection,
   onCreateChildTask,
+  onCreateChildPursuit,
   onCreateTaskList,
   onOpenBatchDelete,
   onOpenBatchEdit,
@@ -2549,6 +2630,12 @@ export function TaskManagementTableV2({
   onTaskTitleChange,
   onToggleTaskSelection,
   onToggleTaskList,
+  pursuits = [],
+  pursuitAttentionById,
+  pursuitSearch = "",
+  onOpenPursuit,
+  onLogPursuitActivity,
+  pursuitTimezone = "UTC",
   shellClassName = "",
   primaryBadgeLabel = "Inspired by server table UI",
   rows = DEFAULT_ROWS,
@@ -3176,6 +3263,23 @@ export function TaskManagementTableV2({
     () => effectiveDisplayedTasks.slice(0, renderedTaskCount),
     [effectiveDisplayedTasks, renderedTaskCount],
   );
+  const pursuitWorkspaceIndex = useMemo(
+    () => buildPursuitWorkspaceIndex(filterPursuitsByTitle(pursuits, pursuitSearch)),
+    [pursuitSearch, pursuits],
+  );
+  const renderPursuitRows = (rowsToRender: ReadonlyArray<{ depth: number; pursuit: Pursuit }>) => rowsToRender.map(({ depth, pursuit }) => (
+    <PursuitTableWorkspaceRow
+      attention={pursuitAttentionById?.get(pursuit.id)}
+      columns={visibleHeaderColumns.map((column) => column.id)}
+      depth={depth}
+      gridTemplateColumns={gridTemplateColumns}
+      key={`pursuit:${pursuit.id}`}
+      onLogActivity={onLogPursuitActivity ?? (() => undefined)}
+      onOpen={onOpenPursuit ?? (() => undefined)}
+      pursuit={pursuit}
+      timezone={pursuitTimezone}
+    />
+  ));
   useLayoutEffect(() => {
     startTableScrollTopHoldFrames(true);
   }, [displayedTasks, renderedTasks.length, startTableScrollTopHoldFrames]);
@@ -6957,18 +7061,11 @@ export function TaskManagementTableV2({
                 </button>
               ) : null}
               {onCreateChildTask ? (
-                <button
-                  aria-label="Add Step"
-                  className={ROW_ACTION_ICON_BUTTON_CLASS}
-                  onPointerDown={stopRowActionPointerEvent}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    beginTableStepDraft(task.id);
-                  }}
-                  type="button"
-                >
-                  <Footprints className="h-3.5 w-3.5" />
-                </button>
+                <ChildTypeChooser
+                  childLabel="Step"
+                  onChoosePursuit={onCreateChildPursuit ? () => onCreateChildPursuit(task.id) : undefined}
+                  onChooseTask={() => beginTableStepDraft(task.id)}
+                />
               ) : null}
               {onOpenTaskHistory ? (
                 <button
@@ -7528,19 +7625,14 @@ export function TaskManagementTableV2({
                   </div>
                   <div className="flex flex-none items-center gap-0.5">
                     {onCreateChildTask && !childTaskCreationBlockedTaskIds.includes(item.id) ? (
-                      <button
-                        aria-label={`Add substep to ${item.title || "Untitled step"}`}
-                        className={ROW_ACTION_ICON_BUTTON_CLASS}
-                        data-same-table-step-add={item.id}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          beginTableStepDraft(item.id, "Substep");
-                        }}
-                        onPointerDown={stopRowActionPointerEvent}
-                        type="button"
-                      >
-                        <Footprints className="h-3.5 w-3.5" />
-                      </button>
+                      <div data-same-table-step-add={item.id}>
+                        <ChildTypeChooser
+                          aria-label={`Add substep to ${item.title || "Untitled step"}`}
+                          childLabel="Substep"
+                          onChoosePursuit={onCreateChildPursuit ? () => onCreateChildPursuit(item.id) : undefined}
+                          onChooseTask={() => beginTableStepDraft(item.id, "Substep")}
+                        />
+                      </div>
                     ) : null}
                     {onReorderChildTask ? (
                       <button
@@ -7920,19 +8012,11 @@ export function TaskManagementTableV2({
           </div>
           <div className="flex shrink-0 items-center gap-0 [&>button]:h-6 [&>button]:w-6">
             {onCreateChildTask ? (
-              <button
-                aria-label={`Add substep to ${item.title || "Untitled step"}`}
-                className={ROW_ACTION_ICON_BUTTON_CLASS}
-                data-same-table-step-add={item.id}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  beginTableStepDraft(item.id);
-                }}
-                onPointerDown={stopRowActionPointerEvent}
-                type="button"
-              >
-                <Footprints className="h-3.5 w-3.5" />
-              </button>
+              <ChildTypeChooser
+                childLabel="Step"
+                onChoosePursuit={onCreateChildPursuit ? () => onCreateChildPursuit(item.id) : undefined}
+                onChooseTask={() => beginTableStepDraft(item.id)}
+              />
             ) : null}
             {onTaskPinToggle ? (
               <button
@@ -8841,7 +8925,7 @@ export function TaskManagementTableV2({
               </div>
             ) : null}
 
-            {effectiveDisplayedTasks.length === 0 ? (
+            {effectiveDisplayedTasks.length === 0 && pursuitWorkspaceIndex.topLevel.length === 0 ? (
               <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} rounded-[1.25rem] border border-dashed border-[#ddd6fb] bg-[#fbfaff] px-6 py-10 text-center ${BODY_MUTED_VALUE_CLASS}`}>
                 No rows match the current table filters.
               </div>
@@ -8985,9 +9069,11 @@ export function TaskManagementTableV2({
                       {renderSourceStepMiniRows(task, visibleSubtasks)}
                     </motion.div>
                   ) : null}
+                  {renderPursuitRows(pursuitWorkspaceIndex.byTaskId.get(task.id) ?? [])}
                 </div>
               );
             })}
+            {renderPursuitRows(pursuitWorkspaceIndex.topLevel)}
             {remainingRenderedTaskCount > 0 || hasMoreRows ? (
               <div
                 aria-hidden="true"
@@ -9682,6 +9768,7 @@ export function TaskManagementTableV2({
                           creationBlocked={childTaskCreationBlockedTaskIds.includes(selectedTask.id)}
                           iconOnly
                           onCreateChildTask={onCreateChildTask}
+                          onCreateChildPursuit={onCreateChildPursuit}
                           parentTaskId={selectedTask.id}
                         />
                       </div>

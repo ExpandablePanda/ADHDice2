@@ -9,12 +9,12 @@ import type {
   PursuitInsert,
   PursuitUpdate,
 } from "@/lib/database.types";
-import { canSetPursuitParent } from "@/lib/pursuit-domain";
+import { validatePursuitParentSelection } from "@/lib/pursuit-domain";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type Message = { text: string; tone: "neutral" | "good" | "warn" };
 
-export type PursuitCreateInput = Pick<PursuitInsert, "notes" | "parent_pursuit_id" | "revisit_interval_days" | "title">;
+export type PursuitCreateInput = Pick<PursuitInsert, "notes" | "parent_pursuit_id" | "parent_task_id" | "revisit_interval_days" | "title">;
 export type PursuitActivityInput = Omit<Pick<PursuitActivityInsert, "duration_seconds" | "notes" | "occurred_at" | "pursuit_id">, "occurred_at"> & {
   occurred_at?: string;
 };
@@ -33,6 +33,16 @@ function getPursuitErrorMessage(error: unknown) {
     return error.message;
   }
   return String(error ?? "Unknown Pursuit error");
+}
+
+async function hasOwnedTask(client: SupabaseClient, userId: string, taskId: string) {
+  const result = await client
+    .from("adhdice_clean_tasks")
+    .select("id")
+    .eq("id", taskId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return !result.error && Boolean(result.data);
 }
 
 export function usePursuits(
@@ -113,14 +123,22 @@ export function usePursuits(
       reportError("A Pursuit title is required.");
       return null;
     }
-    if (input.parent_pursuit_id && !canSetPursuitParent(pursuits, "", input.parent_pursuit_id)) {
-      reportError("That Pursuit parent would create a hierarchy cycle.");
+    const parentPursuitId = input.parent_pursuit_id ?? null;
+    const parentTaskId = input.parent_task_id ?? null;
+    const validationError = validatePursuitParentSelection(pursuits, "", parentPursuitId, parentTaskId);
+    if (validationError) {
+      reportError(validationError);
+      return null;
+    }
+    if (parentTaskId && !(await hasOwnedTask(client, userId, parentTaskId))) {
+      reportError("That Task parent does not belong to this user or no longer exists.");
       return null;
     }
 
     const payload: PursuitInsert = {
       user_id: userId,
-      parent_pursuit_id: input.parent_pursuit_id ?? null,
+      parent_pursuit_id: parentPursuitId,
+      parent_task_id: parentTaskId,
       title,
       notes: input.notes?.trim() || null,
       status: "active",
@@ -145,13 +163,26 @@ export function usePursuits(
       reportError("A Pursuit title is required.");
       return null;
     }
-    if (input.parent_pursuit_id !== undefined && !canSetPursuitParent(pursuits, pursuitId, input.parent_pursuit_id)) {
-      reportError("A Pursuit cannot be its own parent or a child of its descendants.");
+    const nextParentPursuitId = input.parent_pursuit_id !== undefined
+      ? input.parent_pursuit_id
+      : input.parent_task_id !== undefined ? null : existing.parent_pursuit_id;
+    const nextParentTaskId = input.parent_task_id !== undefined
+      ? input.parent_task_id
+      : input.parent_pursuit_id !== undefined ? null : existing.parent_task_id;
+    const validationError = validatePursuitParentSelection(pursuits, pursuitId, nextParentPursuitId, nextParentTaskId);
+    if (validationError) {
+      reportError(validationError);
+      return null;
+    }
+    if (nextParentTaskId && !(await hasOwnedTask(client, userId, nextParentTaskId))) {
+      reportError("That Task parent does not belong to this user or no longer exists.");
       return null;
     }
 
     const payload: PursuitUpdate = {
       ...input,
+      parent_pursuit_id: nextParentPursuitId,
+      parent_task_id: nextParentTaskId,
       ...(input.title !== undefined ? { title: input.title.trim() } : {}),
       ...(input.notes !== undefined ? { notes: input.notes?.trim() || null } : {}),
     };

@@ -5522,6 +5522,7 @@ create table if not exists public.adhdice_pursuits (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   parent_pursuit_id uuid,
+  parent_task_id uuid,
   title text not null check (char_length(trim(title)) > 0),
   notes text,
   status text not null default 'active' check (status in ('active', 'paused', 'archived')),
@@ -5533,7 +5534,13 @@ create table if not exists public.adhdice_pursuits (
   constraint adhdice_pursuits_parent_fk
     foreign key (user_id, parent_pursuit_id)
     references public.adhdice_pursuits (user_id, id)
-    on delete restrict
+    on delete restrict,
+  constraint adhdice_pursuits_parent_task_fk
+    foreign key (user_id, parent_task_id)
+    references public.adhdice_clean_tasks (user_id, id)
+    on delete set null (parent_task_id),
+  constraint adhdice_pursuits_parent_kind_ck
+    check (not (parent_pursuit_id is not null and parent_task_id is not null))
 );
 
 create table if not exists public.adhdice_pursuit_activities (
@@ -5554,6 +5561,8 @@ create table if not exists public.adhdice_pursuit_activities (
 
 create index if not exists adhdice_pursuits_user_parent_idx
   on public.adhdice_pursuits (user_id, parent_pursuit_id, sort_order, created_at desc);
+create index if not exists adhdice_pursuits_user_task_parent_idx
+  on public.adhdice_pursuits (user_id, parent_task_id, sort_order, created_at desc);
 create index if not exists adhdice_pursuits_user_status_idx
   on public.adhdice_pursuits (user_id, status, sort_order, created_at desc);
 create index if not exists adhdice_pursuit_activities_user_recent_idx

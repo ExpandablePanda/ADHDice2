@@ -1345,7 +1345,8 @@ export function TaskOperationsHeader({
   metric,
   onCycleMomentum,
   onOpenArchive,
-  onOpenComposer,
+  onOpenPursuitComposer,
+  onOpenTaskComposer,
   onOpenFocusPlanner,
   onOpenImport,
   onOpenListSettings,
@@ -1403,7 +1404,8 @@ export function TaskOperationsHeader({
   };
   onCycleMomentum: () => void;
   onOpenArchive: () => void;
-  onOpenComposer: () => void;
+  onOpenPursuitComposer: () => void;
+  onOpenTaskComposer: () => void;
   onOpenFocusPlanner: () => void;
   onOpenImport: () => void;
   onOpenListSettings: () => void;
@@ -1439,6 +1441,7 @@ export function TaskOperationsHeader({
   view: TaskViewMode;
 }) {
   const [isAllListsOpen, setIsAllListsOpen] = useState(false);
+  const [isNewMenuOpen, setIsNewMenuOpen] = useState(false);
   const [allListsSearch, setAllListsSearch] = useState("");
   const matchingDirectoryEntries = allListDirectoryEntries.filter((entry) => {
     const query = allListsSearch.trim().toLocaleLowerCase();
@@ -1523,9 +1526,20 @@ export function TaskOperationsHeader({
               <TaskChipButton onClick={onOpenImport}>
                 Import
               </TaskChipButton>
-              <TaskChipButton onClick={onOpenComposer} tone="primary">
-                New Task
-              </TaskChipButton>
+              <div className="relative">
+                <TaskChipButton onClick={() => setIsNewMenuOpen((current) => !current)} tone="primary">
+                  New
+                  <ChevronDown className={`h-3.5 w-3.5 transition ${isNewMenuOpen ? "rotate-180" : ""}`} />
+                </TaskChipButton>
+                {isNewMenuOpen ? (
+                  <AdhdDropdownPanel className="p-1.5" widthClassName="min-w-32">
+                    <div className="grid gap-1" role="menu">
+                      <button className={MENU_ROW_ACTION_CLASS + " rounded-[0.6rem] px-2.5 py-2 text-left hover:bg-[#f1ecff] dark:hover:bg-white/10"} onClick={() => { setIsNewMenuOpen(false); onOpenTaskComposer(); }} role="menuitem" type="button">Task</button>
+                      <button className={MENU_ROW_ACTION_CLASS + " rounded-[0.6rem] px-2.5 py-2 text-left text-[#6f57f6] hover:bg-[#f1ecff] dark:text-[#cabfff] dark:hover:bg-white/10"} onClick={() => { setIsNewMenuOpen(false); onOpenPursuitComposer(); }} role="menuitem" type="button">Pursuit</button>
+                    </div>
+                  </AdhdDropdownPanel>
+                ) : null}
+              </div>
               {selectedBucket === "milestones" && onOpenCompletedMilestones ? <TaskChipButton onClick={onOpenCompletedMilestones}>Completed Milestones</TaskChipButton> : null}
               <TaskChipButton active={selectedBucket === "archive"} onClick={() => startTransition(onOpenArchive)}>
                 <span className="inline-flex items-center gap-2">

@@ -4,29 +4,28 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Pencil, Plus, Sparkles } from "lucide-react";
 import { ModalShell } from "@/components/modal-shell";
 import { AdhdCard, AdhdChip, AdhdIconButton, AdhdPanel } from "@/components/ui-system";
-import type { Pursuit, PursuitActivity, PursuitStatus, PursuitUpdate } from "@/lib/database.types";
+import type { Pursuit, PursuitActivity, PursuitStatus, PursuitUpdate, Task } from "@/lib/database.types";
 import {
-  buildPursuitAttentionMap,
   canSetPursuitParent,
   formatPursuitAttentionReason,
   formatPursuitLastActivity,
   getPursuitDepth,
   sortPursuitsByAttention,
   sortPursuitsForManagement,
+  type PursuitAttention,
 } from "@/lib/pursuit-domain";
 import type { PursuitActivityInput, PursuitCreateInput } from "@/hooks/usePursuits";
 
 export type PursuitsWorkspaceProps = {
-  activities: PursuitActivity[];
-  dayStartTime: string;
+  attentionMap: ReadonlyMap<string, PursuitAttention>;
   error: string | null;
   isLoading: boolean;
-  now: Date | string;
   onCreate: (input: PursuitCreateInput) => Promise<Pursuit | null>;
   onLogActivity: (input: PursuitActivityInput) => Promise<PursuitActivity | null>;
   onRefresh: () => Promise<boolean>;
   onUpdate: (pursuitId: string, input: PursuitUpdate) => Promise<Pursuit | null>;
   pursuits: Pursuit[];
+  taskOptions: Array<Pick<Task, "id" | "title">>;
   timezone: string;
 };
 
@@ -45,16 +44,15 @@ function getStatusTone(status: PursuitStatus) {
 }
 
 export function PursuitsWorkspace({
-  activities,
-  dayStartTime,
+  attentionMap,
   error,
   isLoading,
-  now,
   onCreate,
   onLogActivity,
   onRefresh,
   onUpdate,
   pursuits,
+  taskOptions,
   timezone,
 }: PursuitsWorkspaceProps) {
   const [isManagerOpen, setIsManagerOpen] = useState(false);
@@ -62,17 +60,10 @@ export function PursuitsWorkspace({
   const [editingPursuitId, setEditingPursuitId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [loggingPursuitId, setLoggingPursuitId] = useState<string | null>(null);
-  const attentionRows = useMemo(() => {
-    const attentionMap = buildPursuitAttentionMap(pursuits, activities, { dayStartTime, now, timezone });
-    return sortPursuitsByAttention(Array.from(attentionMap.values()));
-  }, [activities, dayStartTime, now, pursuits, timezone]);
+  const attentionRows = useMemo(() => sortPursuitsByAttention(Array.from(attentionMap.values())), [attentionMap]);
   const visibleAttentionRows = showAllAttention ? attentionRows : attentionRows.slice(0, 3);
   const managementRows = useMemo(() => sortPursuitsForManagement(pursuits), [pursuits]);
   const pursuitsById = useMemo(() => new Map(pursuits.map((pursuit) => [pursuit.id, pursuit])), [pursuits]);
-  const attentionMap = useMemo(
-    () => buildPursuitAttentionMap(pursuits, activities, { dayStartTime, now, timezone }),
-    [activities, dayStartTime, now, pursuits, timezone],
-  );
   const editingPursuit = editingPursuitId ? pursuitsById.get(editingPursuitId) ?? null : null;
   const loggingPursuit = loggingPursuitId ? pursuitsById.get(loggingPursuitId) ?? null : null;
 
@@ -169,23 +160,25 @@ export function PursuitsWorkspace({
       ) : null}
 
       {isCreating ? (
-        <PursuitFormModal
+        <PursuitEditorModal
           key="new-pursuit"
           onClose={() => setIsCreating(false)}
           onCreate={onCreate}
           onUpdate={onUpdate}
           pursuits={pursuits}
+          taskOptions={taskOptions}
           timezone={timezone}
         />
       ) : null}
       {editingPursuit ? (
-        <PursuitFormModal
+        <PursuitEditorModal
           key={editingPursuit.id}
           onClose={() => setEditingPursuitId(null)}
           onCreate={onCreate}
           onUpdate={onUpdate}
           pursuit={editingPursuit}
           pursuits={pursuits}
+          taskOptions={taskOptions}
           timezone={timezone}
         />
       ) : null}
@@ -230,23 +223,33 @@ function PursuitAttentionRow({
   );
 }
 
-function PursuitFormModal({
+export function PursuitEditorModal({
   onClose,
   onCreate,
+  onLogActivity,
   onUpdate,
   pursuit = null,
   pursuits,
+  taskOptions,
+  initialParentTaskId = null,
 }: {
   onClose: () => void;
   onCreate: PursuitsWorkspaceProps["onCreate"];
+  onLogActivity?: () => void;
   onUpdate: PursuitsWorkspaceProps["onUpdate"];
   pursuit?: Pursuit | null;
   pursuits: Pursuit[];
+  taskOptions: Array<Pick<Task, "id" | "title">>;
+  initialParentTaskId?: string | null;
   timezone: string;
 }) {
   const [title, setTitle] = useState(pursuit?.title ?? "");
   const [notes, setNotes] = useState(pursuit?.notes ?? "");
   const [parentPursuitId, setParentPursuitId] = useState(pursuit?.parent_pursuit_id ?? "");
+  const [parentTaskId, setParentTaskId] = useState(pursuit?.parent_task_id ?? initialParentTaskId ?? "");
+  const [parentKind, setParentKind] = useState<"none" | "pursuit" | "task">(
+    pursuit?.parent_task_id || initialParentTaskId ? "task" : pursuit?.parent_pursuit_id ? "pursuit" : "none",
+  );
   const [status, setStatus] = useState<PursuitStatus>(pursuit?.status ?? "active");
   const [revisitInterval, setRevisitInterval] = useState(pursuit?.revisit_interval_days?.toString() ?? "");
   const [isPending, setIsPending] = useState(false);
@@ -269,7 +272,7 @@ function PursuitFormModal({
       setFormError("Revisit interval must be a positive whole number of days.");
       return;
     }
-    if (parentPursuitId && !canSetPursuitParent(pursuits, pursuit?.id ?? "", parentPursuitId)) {
+    if (parentKind === "pursuit" && parentPursuitId && !canSetPursuitParent(pursuits, pursuit?.id ?? "", parentPursuitId)) {
       setFormError("That parent would create a cycle.");
       return;
     }
@@ -278,14 +281,16 @@ function PursuitFormModal({
     const result = pursuit
       ? await onUpdate(pursuit.id, {
         notes: notes.trim() || null,
-        parent_pursuit_id: parentPursuitId || null,
+        parent_pursuit_id: parentKind === "pursuit" ? parentPursuitId || null : null,
+        parent_task_id: parentKind === "task" ? parentTaskId || null : null,
         revisit_interval_days: parsedInterval,
         status,
         title: trimmedTitle,
       })
       : await onCreate({
         notes: notes.trim() || null,
-        parent_pursuit_id: parentPursuitId || null,
+        parent_pursuit_id: parentKind === "pursuit" ? parentPursuitId || null : null,
+        parent_task_id: parentKind === "task" ? parentTaskId || null : null,
         revisit_interval_days: parsedInterval,
         title: trimmedTitle,
       });
@@ -306,13 +311,21 @@ function PursuitFormModal({
         <label className="text-xs font-semibold text-[#655d7d] dark:text-white/68">Title<input className={INPUT_CLASS} onChange={(event) => setTitle(event.target.value)} required value={title} /></label>
         <label className="text-xs font-semibold text-[#655d7d] dark:text-white/68">Notes<textarea className={`${INPUT_CLASS} min-h-20 resize-y`} onChange={(event) => setNotes(event.target.value)} value={notes} /></label>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-xs font-semibold text-[#655d7d] dark:text-white/68">Parent Pursuit<select className={INPUT_CLASS} onChange={(event) => setParentPursuitId(event.target.value)} value={parentPursuitId}><option value="">None</option>{parentOptions.map((candidate) => <option key={candidate.id} value={candidate.id}>{getPursuitDepth(candidate, pursuitsById) > 0 ? "↳ " : ""}{candidate.title}</option>)}</select></label>
+          <label className="text-xs font-semibold text-[#655d7d] dark:text-white/68">Parent type<select className={INPUT_CLASS} onChange={(event) => {
+            const nextKind = event.target.value as "none" | "pursuit" | "task";
+            setParentKind(nextKind);
+            if (nextKind !== "pursuit") setParentPursuitId("");
+            if (nextKind !== "task") setParentTaskId("");
+          }} value={parentKind}><option value="none">None</option><option value="pursuit">Pursuit</option><option value="task">Task</option></select></label>
+          {parentKind === "pursuit" ? <label className="text-xs font-semibold text-[#655d7d] dark:text-white/68">Parent Pursuit<select className={INPUT_CLASS} onChange={(event) => setParentPursuitId(event.target.value)} value={parentPursuitId}><option value="">Choose a Pursuit</option>{parentOptions.map((candidate) => <option key={candidate.id} value={candidate.id}>{getPursuitDepth(candidate, pursuitsById) > 0 ? "↳ " : ""}{candidate.title}</option>)}</select></label> : null}
+          {parentKind === "task" ? <label className="text-xs font-semibold text-[#655d7d] dark:text-white/68">Parent Task<select className={INPUT_CLASS} onChange={(event) => setParentTaskId(event.target.value)} value={parentTaskId}><option value="">Choose a Task</option>{taskOptions.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></label> : null}
           <label className="text-xs font-semibold text-[#655d7d] dark:text-white/68">Revisit every (days)<input className={INPUT_CLASS} min="1" onChange={(event) => setRevisitInterval(event.target.value)} placeholder="No target" type="number" value={revisitInterval} /></label>
         </div>
         {pursuit ? <label className="text-xs font-semibold text-[#655d7d] dark:text-white/68">Lifecycle<select className={INPUT_CLASS} onChange={(event) => setStatus(event.target.value as PursuitStatus)} value={status}><option value="active">Active</option><option value="paused">Paused</option><option value="archived">Archived</option></select></label> : null}
         {formError ? <p className="rounded-[0.9rem] bg-[#fff3f5] px-3 py-2 text-xs text-[#a24e67] dark:bg-[#32161d] dark:text-[#ffb5c3]">{formError}</p> : null}
         <div className="flex justify-end gap-2">
           <button className={SECONDARY_BUTTON_CLASS} disabled={isPending} onClick={onClose} type="button">Cancel</button>
+          {pursuit && onLogActivity ? <button className={SECONDARY_BUTTON_CLASS} disabled={isPending} onClick={onLogActivity} type="button"><Sparkles className="h-3.5 w-3.5" />Log Activity</button> : null}
           <button className={PRIMARY_BUTTON_CLASS} disabled={isPending} type="submit">{isPending ? "Saving..." : "Save Pursuit"}</button>
         </div>
       </form>
@@ -320,7 +333,7 @@ function PursuitFormModal({
   );
 }
 
-function PursuitActivityModal({
+export function PursuitActivityModal({
   onClose,
   onLogActivity,
   pursuit,

@@ -20,6 +20,41 @@ export type PursuitAttentionContext = {
   todayKey?: string;
 };
 
+export type PursuitWorkspaceRow = {
+  depth: number;
+  pursuit: Pursuit;
+};
+
+export type PursuitWorkspaceIndex = {
+  byTaskId: ReadonlyMap<string, PursuitWorkspaceRow[]>;
+  topLevel: PursuitWorkspaceRow[];
+};
+
+export function filterPursuitsByTitle(pursuits: Pursuit[], query: string): Pursuit[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return pursuits;
+
+  const byId = new Map(pursuits.map((pursuit) => [pursuit.id, pursuit]));
+  const visibleIds = new Set(
+    pursuits
+      .filter((pursuit) => pursuit.title.toLocaleLowerCase().includes(normalizedQuery))
+      .map((pursuit) => pursuit.id),
+  );
+
+  for (const pursuit of pursuits.filter((candidate) => visibleIds.has(candidate.id))) {
+    let parentId = pursuit.parent_pursuit_id;
+    const visited = new Set<string>();
+    while (parentId) {
+      if (visited.has(parentId) || !byId.has(parentId)) break;
+      visited.add(parentId);
+      visibleIds.add(parentId);
+      parentId = byId.get(parentId)?.parent_pursuit_id ?? null;
+    }
+  }
+
+  return pursuits.filter((pursuit) => visibleIds.has(pursuit.id));
+}
+
 export function getMostRecentPursuitActivity(
   activities: ReadonlyArray<PursuitActivity>,
 ): PursuitActivity | null {
@@ -143,6 +178,76 @@ export function canSetPursuitParent(
     cursor = byId.get(cursor)?.parent_pursuit_id ?? null;
   }
   return byId.has(parentPursuitId);
+}
+
+export function validatePursuitParentSelection(
+  pursuits: ReadonlyArray<Pursuit>,
+  pursuitId: string,
+  parentPursuitId: string | null,
+  parentTaskId: string | null,
+  ownedTaskIds?: ReadonlySet<string>,
+) {
+  if (parentPursuitId !== null && parentTaskId !== null) {
+    return "A Pursuit can have a Pursuit parent or a Task parent, not both.";
+  }
+  if (parentTaskId !== null && ownedTaskIds && !ownedTaskIds.has(parentTaskId)) {
+    return "That Task parent does not belong to this user or no longer exists.";
+  }
+  if (parentPursuitId !== null && !canSetPursuitParent(pursuits, pursuitId, parentPursuitId)) {
+    return "A Pursuit cannot be its own parent or a child of its descendants.";
+  }
+  return null;
+}
+
+export function buildPursuitWorkspaceRows(
+  pursuits: ReadonlyArray<Pursuit>,
+  parentTaskId: string | null,
+) {
+  const byParentPursuitId = new Map<string | null, Pursuit[]>();
+  for (const pursuit of pursuits) {
+    const current = byParentPursuitId.get(pursuit.parent_pursuit_id) ?? [];
+    current.push(pursuit);
+    byParentPursuitId.set(pursuit.parent_pursuit_id, current);
+  }
+
+  const rows: PursuitWorkspaceRow[] = [];
+  const visited = new Set<string>();
+  const visit = (parentPursuitId: string | null, depth: number) => {
+    const children = [...(byParentPursuitId.get(parentPursuitId) ?? [])].sort((left, right) => (
+      left.sort_order - right.sort_order
+      || left.title.localeCompare(right.title)
+      || left.id.localeCompare(right.id)
+    ));
+    for (const pursuit of children) {
+      if (visited.has(pursuit.id)) continue;
+      visited.add(pursuit.id);
+      rows.push({ depth, pursuit });
+      visit(pursuit.id, depth + 1);
+    }
+  };
+
+  const roots = [...(byParentPursuitId.get(null) ?? [])].filter((pursuit) => pursuit.parent_task_id === parentTaskId);
+  for (const root of roots.sort((left, right) => (
+    left.sort_order - right.sort_order
+    || left.title.localeCompare(right.title)
+    || left.id.localeCompare(right.id)
+  ))) {
+    if (visited.has(root.id)) continue;
+    visited.add(root.id);
+    rows.push({ depth: 0, pursuit: root });
+    visit(root.id, 1);
+  }
+  return rows;
+}
+
+export function buildPursuitWorkspaceIndex(pursuits: ReadonlyArray<Pursuit>): PursuitWorkspaceIndex {
+  const byTaskId = new Map<string, PursuitWorkspaceRow[]>();
+  const topLevel = buildPursuitWorkspaceRows(pursuits, null);
+  const taskIds = new Set(pursuits.map((pursuit) => pursuit.parent_task_id).filter((id): id is string => id !== null));
+  for (const taskId of taskIds) {
+    byTaskId.set(taskId, buildPursuitWorkspaceRows(pursuits, taskId));
+  }
+  return { byTaskId, topLevel };
 }
 
 export function getPursuitDepth(

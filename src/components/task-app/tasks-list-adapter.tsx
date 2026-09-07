@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, CirclePaus
 import {
   buildMoveIntoParentOptions,
   buildTaskRowContextMenuState,
+  ChildTypeChooser,
   PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE,
   TaskManagementTableV2,
   TaskTitleDraftInput,
@@ -19,7 +20,7 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
+import type { Pursuit, Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
@@ -66,6 +67,8 @@ import {
   type ListSortPreference,
 } from "@/lib/task-list-sort";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
+import { buildPursuitWorkspaceIndex, filterPursuitsByTitle, type PursuitAttention } from "@/lib/pursuit-domain";
+import { PursuitListWorkspaceRow } from "./pursuit-workspace-row";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 
@@ -287,6 +290,7 @@ type TasksTableSourceProps = {
   overlayNode?: ReactNode;
   overlayOnly?: boolean;
   onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onCreateChildPursuit?: (parentTaskId: string) => void;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenFocusTimer?: (taskId: string) => void;
   onOpenNote?: (noteId: string) => void;
@@ -347,6 +351,12 @@ type TasksTableSourceProps = {
   onStopTaskTimer?: (taskId: string) => void;
   onDiscardTaskTimer?: (taskId: string) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
+  pursuits?: Pursuit[];
+  pursuitAttentionById?: ReadonlyMap<string, PursuitAttention>;
+  pursuitSearch?: string;
+  onOpenPursuit?: (pursuitId: string) => void;
+  onLogPursuitActivity?: (pursuitId: string) => void;
+  pursuitTimezone?: string;
   selectedTaskIds?: string[];
   requestedOpenTaskId?: string | null;
   runningTaskTimers?: RunningTaskTimer[];
@@ -563,7 +573,7 @@ export function TasksTableAdapter({
       : null,
     [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
   );
-  if (tableProps.tasks.length === 0 && !tableProps.requestedOpenTask) {
+  if (tableProps.tasks.length === 0 && (tableProps.pursuits?.length ?? 0) === 0 && !tableProps.requestedOpenTask) {
     return (
       <TasksListViewPanel
         {...panelProps}
@@ -633,6 +643,13 @@ export function TasksTableAdapter({
           overlayOnly={tableProps.overlayOnly}
           onCreateTaskList={tableProps.onCreateTaskList}
           onCreateChildTask={tableProps.onCreateChildTask}
+          onCreateChildPursuit={tableProps.onCreateChildPursuit}
+          pursuits={tableProps.pursuits}
+          pursuitAttentionById={tableProps.pursuitAttentionById}
+          pursuitSearch={tableProps.pursuitSearch}
+          onOpenPursuit={tableProps.onOpenPursuit}
+          onLogPursuitActivity={tableProps.onLogPursuitActivity}
+          pursuitTimezone={tableProps.pursuitTimezone}
           onOpenBatchDelete={tableProps.onOpenBatchDelete}
           onOpenBatchEdit={tableProps.onOpenBatchEdit}
           onOpenDeleteTask={tableProps.onOpenDeleteTask}
@@ -947,6 +964,7 @@ function StepsCardPreview({
   listDefinitions,
   listMembershipsByTaskId,
   onCreateChildTask,
+  onCreateChildPursuit,
   onDeleteStep,
   onOpenHistory,
   onOpenStep,
@@ -998,6 +1016,7 @@ function StepsCardPreview({
   listDefinitions: TaskListDefinition[];
   listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
   onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onCreateChildPursuit?: (parentTaskId: string) => void;
   onDeleteStep?: (taskId: string) => void;
   onOpenHistory?: (taskId: string) => void;
   onOpenStep: (taskId: string) => void;
@@ -1441,20 +1460,17 @@ function StepsCardPreview({
                               </>
                             ) : null}
                             {onCreateChildTask ? (
-                              <button
-                                aria-label={`Add substep to ${item.title || "Untitled step"}`}
-                                className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#6f57f6] opacity-78 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
-                                data-same-table-step-add={item.id}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
-                                  setSubstepDraftParentId(item.id);
-                                }}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                type="button"
-                              >
-                                <Footprints className="h-3.5 w-3.5" />
-                              </button>
+                              <div data-same-table-step-add={item.id}>
+                                <ChildTypeChooser
+                                  aria-label={`Add substep to ${item.title || "Untitled step"}`}
+                                  childLabel="Substep"
+                                  onChoosePursuit={onCreateChildPursuit ? () => onCreateChildPursuit(item.id) : undefined}
+                                  onChooseTask={() => {
+                                    setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
+                                    setSubstepDraftParentId(item.id);
+                                  }}
+                                />
+                              </div>
                             ) : null}
                             {onTogglePinned ? (
                               <AdhdIconButton
@@ -1527,20 +1543,17 @@ function StepsCardPreview({
                           </>
                         ) : null}
                         {onCreateChildTask ? (
-                          <button
-                            aria-label={`Add substep to ${item.title || "Untitled step"}`}
-                            className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#6f57f6] opacity-78 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
-                            data-same-table-step-add={item.id}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
-                              setSubstepDraftParentId(item.id);
-                            }}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            type="button"
-                          >
-                            <Footprints className="h-3.5 w-3.5" />
-                          </button>
+                          <div data-same-table-step-add={item.id}>
+                            <ChildTypeChooser
+                              aria-label={`Add substep to ${item.title || "Untitled step"}`}
+                              childLabel="Substep"
+                              onChoosePursuit={onCreateChildPursuit ? () => onCreateChildPursuit(item.id) : undefined}
+                              onChooseTask={() => {
+                                setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
+                                setSubstepDraftParentId(item.id);
+                              }}
+                            />
+                          </div>
                         ) : null}
                         {onTogglePinned ? (
                           <AdhdIconButton
@@ -2558,6 +2571,10 @@ function TasksSimpleList({
     }),
     [listSortPreference, tableProps.rowContext.taskDisplayStatusByTaskId, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.taskHistoryStreakSummaryByTaskId, tableProps.rowContext.todayDateKey, tableProps.tasks],
   );
+  const pursuitWorkspaceIndex = useMemo(
+    () => buildPursuitWorkspaceIndex(filterPursuitsByTitle(tableProps.pursuits ?? [], tableProps.pursuitSearch ?? "")),
+    [tableProps.pursuitSearch, tableProps.pursuits],
+  );
   const committedResultRevision = useMemo(
     () => tasks.map((task) => `${task.id}:${task.revision}`).join("|"),
     [tasks],
@@ -2945,7 +2962,7 @@ function TasksSimpleList({
     });
   }
 
-  if (tasks.length === 0 && !tableProps.requestedOpenTask) {
+  if (tasks.length === 0 && pursuitWorkspaceIndex.topLevel.length === 0 && !tableProps.requestedOpenTask) {
     return (
       <TasksListViewPanel
         {...panelProps}
@@ -2990,6 +3007,13 @@ function TasksSimpleList({
               getFollowTaskDestination={tableProps.getFollowTaskDestination}
               onClearSelection={tableProps.onClearSelection}
               onCreateChildTask={tableProps.onCreateChildTask}
+              onCreateChildPursuit={tableProps.onCreateChildPursuit}
+              pursuits={tableProps.pursuits}
+              pursuitAttentionById={tableProps.pursuitAttentionById}
+              pursuitSearch={tableProps.pursuitSearch}
+              onOpenPursuit={tableProps.onOpenPursuit}
+              onLogPursuitActivity={tableProps.onLogPursuitActivity}
+              pursuitTimezone={tableProps.pursuitTimezone}
               onCreateTaskList={tableProps.onCreateTaskList}
               onDismissDetachedTask={tableProps.onDismissDetachedTask}
               onDuplicateTask={tableProps.onDuplicateTask}
@@ -3072,7 +3096,7 @@ function TasksSimpleList({
               visibleColumns={OVERLAY_VISIBLE_COLUMNS}
             />
           ) : null}
-          {windowedTasks.map((task) => {
+            {windowedTasks.map((task) => {
         const displayStatus = rowContext.taskDisplayStatusByTaskId[task.id] ?? task.status;
         const dueLabel = formatListDueDateChip(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
@@ -3281,25 +3305,37 @@ function TasksSimpleList({
                       </AdhdIconButton>
                     ) : null}
                     {tableProps.onCreateChildTask ? (
-                      <AdhdIconButton
-                        aria-label={`Add step to ${task.title}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          closeQuickPanel();
-                          setRowContextMenu(null);
-                          setCollapsedStepSectionsByTaskId((current) => ({
-                            ...current,
-                            [task.id]: false,
-                          }));
-                          setParentStepCreationErrors((current) => ({ ...current, [task.id]: null }));
-                          setParentStepTitleDrafts((current) => ({ ...current, [task.id]: current[task.id] ?? "" }));
-                          setParentStepDraftTaskId(task.id);
-                        }}
-                        size="sm"
-                        variant="rowToolbar"
-                      >
-                        <Footprints className="h-3.5 w-3.5" />
-                      </AdhdIconButton>
+                      tableProps.onCreateChildPursuit ? (
+                        <ChildTypeChooser
+                          childLabel="Step"
+                          onChoosePursuit={() => tableProps.onCreateChildPursuit?.(task.id)}
+                          onChooseTask={() => {
+                            closeQuickPanel();
+                            setRowContextMenu(null);
+                            setCollapsedStepSectionsByTaskId((current) => ({ ...current, [task.id]: false }));
+                            setParentStepCreationErrors((current) => ({ ...current, [task.id]: null }));
+                            setParentStepTitleDrafts((current) => ({ ...current, [task.id]: current[task.id] ?? "" }));
+                            setParentStepDraftTaskId(task.id);
+                          }}
+                        />
+                      ) : (
+                        <AdhdIconButton
+                          aria-label={`Add step to ${task.title}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            closeQuickPanel();
+                            setRowContextMenu(null);
+                            setCollapsedStepSectionsByTaskId((current) => ({ ...current, [task.id]: false }));
+                            setParentStepCreationErrors((current) => ({ ...current, [task.id]: null }));
+                            setParentStepTitleDrafts((current) => ({ ...current, [task.id]: current[task.id] ?? "" }));
+                            setParentStepDraftTaskId(task.id);
+                          }}
+                          size="sm"
+                          variant="rowToolbar"
+                        >
+                          <Footprints className="h-3.5 w-3.5" />
+                        </AdhdIconButton>
+                      )
                     ) : null}
                     {tableProps.onOpenTaskHistory ? (
                       <AdhdIconButton
@@ -3573,6 +3609,7 @@ function TasksSimpleList({
                 listDefinitions={rowContext.listDefinitions}
                 listMembershipsByTaskId={rowContext.listMembershipsByTaskId}
                 onCreateChildTask={tableProps.onCreateChildTask}
+                onCreateChildPursuit={tableProps.onCreateChildPursuit}
                 onDeleteStep={tableProps.onOpenDeleteTask}
                 onOpenHistory={tableProps.onOpenTaskHistory}
                 onDelayTaskUntil={tableProps.onDelayTaskUntil}
@@ -3636,9 +3673,31 @@ function TasksSimpleList({
                 visibleMetadataTaskIds={visibleMetadataTaskIds}
               />
             ) : null}
+            {(pursuitWorkspaceIndex.byTaskId.get(task.id) ?? []).map(({ depth, pursuit }) => (
+              <PursuitListWorkspaceRow
+                attention={tableProps.pursuitAttentionById?.get(pursuit.id)}
+                depth={depth + 1}
+                key={`pursuit:${pursuit.id}`}
+                onLogActivity={tableProps.onLogPursuitActivity ?? (() => undefined)}
+                onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
+                pursuit={pursuit}
+                timezone={tableProps.pursuitTimezone ?? "UTC"}
+              />
+            ))}
           </div>
         );
       })}
+          {pursuitWorkspaceIndex.topLevel.map(({ depth, pursuit }) => (
+            <PursuitListWorkspaceRow
+              attention={tableProps.pursuitAttentionById?.get(pursuit.id)}
+              depth={depth}
+              key={`pursuit:${pursuit.id}`}
+              onLogActivity={tableProps.onLogPursuitActivity ?? (() => undefined)}
+              onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
+              pursuit={pursuit}
+              timezone={tableProps.pursuitTimezone ?? "UTC"}
+            />
+          ))}
           {windowedTasks.length < tasks.length ? <div aria-hidden="true" className="h-px" ref={loadMoreListRowsRef} /> : null}
           {rowContextMenu && rowContextMenuTask ? (
             <TaskRowContextMenu

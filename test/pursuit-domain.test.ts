@@ -3,9 +3,12 @@ import test from "node:test";
 import type { Pursuit, PursuitActivity } from "@/lib/database.types";
 import {
   buildPursuitAttentionMap,
+  buildPursuitWorkspaceIndex,
   canSetPursuitParent,
   derivePursuitAttention,
+  filterPursuitsByTitle,
   sortPursuitsByAttention,
+  validatePursuitParentSelection,
 } from "@/lib/pursuit-domain";
 
 const CONTEXT = {
@@ -20,6 +23,7 @@ function pursuit(overrides: Partial<Pursuit> = {}): Pursuit {
     id: "pursuit-1",
     user_id: "user-1",
     parent_pursuit_id: null,
+    parent_task_id: null,
     title: "Guitar",
     notes: null,
     status: "active",
@@ -122,4 +126,37 @@ test("attention map derives independent rows for each Pursuit", () => {
   assert.equal(rows.get("one")?.activityCount, 1);
   assert.equal(rows.get("two")?.activityCount, 0);
   assert.equal(rows.get("two")?.needsAttention, false);
+});
+
+test("Pursuit parent validation keeps parent kinds mutually exclusive and task-owned", () => {
+  const pursuits = [pursuit({ id: "root" })];
+  assert.equal(
+    validatePursuitParentSelection(pursuits, "child", "root", "task-1", new Set(["task-1"])),
+    "A Pursuit can have a Pursuit parent or a Task parent, not both.",
+  );
+  assert.equal(
+    validatePursuitParentSelection(pursuits, "child", null, "other-user-task", new Set(["task-1"])),
+    "That Task parent does not belong to this user or no longer exists.",
+  );
+  assert.equal(validatePursuitParentSelection(pursuits, "child", null, "task-1", new Set(["task-1"])), null);
+});
+
+test("mixed Pursuit workspace rows preserve Task parents and recursive Pursuit descendants", () => {
+  const rows = buildPursuitWorkspaceIndex([
+    pursuit({ id: "top", title: "Guitar" }),
+    pursuit({ id: "top-child", title: "Technique", parent_pursuit_id: "top" }),
+    pursuit({ id: "task-child", title: "Improve technique", parent_task_id: "task-1" }),
+    pursuit({ id: "task-grandchild", title: "Breath control", parent_pursuit_id: "task-child" }),
+  ]);
+  assert.deepEqual(rows.topLevel.map((row) => [row.pursuit.id, row.depth]), [["top", 0], ["top-child", 1]]);
+  assert.deepEqual(rows.byTaskId.get("task-1")?.map((row) => [row.pursuit.id, row.depth]), [["task-child", 0], ["task-grandchild", 1]]);
+});
+
+test("Pursuit title search keeps matching rows and their Pursuit ancestors", () => {
+  const results = filterPursuitsByTitle([
+    pursuit({ id: "root", title: "Guitar" }),
+    pursuit({ id: "child", title: "Fingerstyle", parent_pursuit_id: "root" }),
+    pursuit({ id: "other", title: "Piano" }),
+  ], "finger");
+  assert.deepEqual(results.map((entry) => entry.id), ["root", "child"]);
 });
