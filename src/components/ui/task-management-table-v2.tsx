@@ -55,8 +55,8 @@ import {
 import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
 import { TaskHierarchyChevronButton } from "@/components/task-app/task-hierarchy-chevron-button";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
-import { buildPursuitWorkspaceIndex, filterPursuitsByTitle, shouldRenderTaskPursuitChildren, type PursuitAttention } from "@/lib/pursuit-domain";
-import { PursuitTableWorkspaceRow } from "@/components/task-app/pursuit-workspace-row";
+import { buildPursuitWorkspaceIndex, filterPursuitsForTaskWorkspace, shouldRenderTaskPursuitChildren, type PursuitAttention } from "@/lib/pursuit-domain";
+import { PursuitListWorkspaceRow, PursuitTableWorkspaceRow } from "@/components/task-app/pursuit-workspace-row";
 import {
   formatRepeatFrequencyLabel,
   formatRepeatSummary,
@@ -852,6 +852,7 @@ function InlineSubtaskEditor({
   autofocusSubtaskId,
   drafts,
   onAddChild,
+  onCreateChildPursuit,
   onAutofocusHandled,
   onCommitTitle,
   onDelete,
@@ -863,6 +864,7 @@ function InlineSubtaskEditor({
   autofocusSubtaskId?: string | null;
   drafts: Record<string, string>;
   onAddChild?: (subtaskId: string) => void;
+  onCreateChildPursuit?: (parentTaskId: string) => void;
   onAutofocusHandled?: () => void;
   onCommitTitle?: (subtaskId: string) => void;
   onDelete?: (subtaskId: string) => void;
@@ -915,13 +917,12 @@ function InlineSubtaskEditor({
                 value={drafts[subtask.id] ?? subtask.title}
               />
               <div className="flex flex-none items-center gap-1">
-                <button
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
-                  onClick={() => onAddChild?.(subtask.id)}
-                  type="button"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
+                <ChildTypeChooser
+                  aria-label={`Add child to ${subtask.title || "step"}`}
+                  childLabel="Substep"
+                  onChoosePursuit={onCreateChildPursuit ? () => onCreateChildPursuit(subtask.id) : undefined}
+                  onChooseTask={() => onAddChild?.(subtask.id)}
+                />
                 <button
                   className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
                   onClick={() => onDelete?.(subtask.id)}
@@ -958,6 +959,7 @@ function InlineSubtaskEditor({
                 autofocusSubtaskId={autofocusSubtaskId}
                 drafts={drafts}
                 onAddChild={onAddChild}
+                onCreateChildPursuit={onCreateChildPursuit}
                 onAutofocusHandled={onAutofocusHandled}
                 onCommitTitle={onCommitTitle}
                 onDelete={onDelete}
@@ -1229,8 +1231,7 @@ type TaskManagementTableV2Props = {
   pursuitAttentionById?: ReadonlyMap<string, PursuitAttention>;
   pursuitSearch?: string;
   onOpenPursuit?: (pursuitId: string) => void;
-  onLogPursuitActivity?: (pursuitId: string) => void;
-  pursuitTimezone?: string;
+  onMarkDonePursuit?: (pursuitId: string) => void;
   primaryBadgeLabel?: string;
   rows?: PrototypeTaskRow[];
   runningTaskTimers?: RunningTaskTimer[];
@@ -2636,8 +2637,7 @@ export function TaskManagementTableV2({
   pursuitAttentionById,
   pursuitSearch = "",
   onOpenPursuit,
-  onLogPursuitActivity,
-  pursuitTimezone = "UTC",
+  onMarkDonePursuit,
   shellClassName = "",
   primaryBadgeLabel = "Inspired by server table UI",
   rows = DEFAULT_ROWS,
@@ -3270,8 +3270,8 @@ export function TaskManagementTableV2({
     [effectiveDisplayedTasks, renderedTaskCount],
   );
   const pursuitWorkspaceIndex = useMemo(
-    () => buildPursuitWorkspaceIndex(filterPursuitsByTitle(pursuits, pursuitSearch)),
-    [pursuitSearch, pursuits],
+    () => buildPursuitWorkspaceIndex(filterPursuitsForTaskWorkspace(pursuits, pursuitSearch, new Set(highlightedTaskIds))),
+    [highlightedTaskIds, pursuitSearch, pursuits],
   );
   const renderPursuitRows = (rowsToRender: ReadonlyArray<{ depth: number; pursuit: Pursuit }>) => rowsToRender.map(({ depth, pursuit }) => (
     <PursuitTableWorkspaceRow
@@ -3280,10 +3280,9 @@ export function TaskManagementTableV2({
       depth={depth}
       gridTemplateColumns={gridTemplateColumns}
       key={`pursuit:${pursuit.id}`}
-      onLogActivity={onLogPursuitActivity ?? (() => undefined)}
+      onMarkDoneToday={onMarkDonePursuit ?? (() => undefined)}
       onOpen={onOpenPursuit ?? (() => undefined)}
       pursuit={pursuit}
-      timezone={pursuitTimezone}
     />
   ));
   useLayoutEffect(() => {
@@ -8951,10 +8950,10 @@ export function TaskManagementTableV2({
               const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
               const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
               const pursuitRows = pursuitWorkspaceIndex.byTaskId.get(task.id) ?? [];
-              const hasPursuitRows = pursuitRows.length > 0;
               const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false)
                 || activeHierarchyParentTaskIdSet.has(task.id)
-                || pursuitSearchContextTaskIdSet.has(task.id);
+                || pursuitSearchContextTaskIdSet.has(task.id)
+                || highlightedTaskIdSet.has(task.id);
               const hasTableStepDraft = tableStepDraftParentId === task.id;
               const sourceStepsExpanded = hasStepPreview
                 ? stepsExpanded
@@ -9771,7 +9770,23 @@ export function TaskManagementTableV2({
                 const childTaskPreviewGroup = overlayMode === "full" ? childTaskPreviewByParentTaskId[selectedTask.id] : undefined;
                 const hasSameTableStepRows = Boolean(childTaskPreviewGroup && (childTaskPreviewGroup.items.length > 0 || childTaskPreviewGroup.summary.hasInvalidDescendants));
                 const sameTableStepRowsNode = overlayMode === "full" ? renderEditorChildTaskRows(selectedTask.id, childTaskPreviewGroup) : null;
-                const hasUnifiedStepRows = hasSameTableStepRows || selectedTaskVisibleSubtasks.length > 0;
+                const selectedTaskPursuitRows = overlayMode === "full" ? (pursuitWorkspaceIndex.byTaskId.get(selectedTask.id) ?? []) : [];
+                const hasUnifiedStepRows = hasSameTableStepRows || selectedTaskVisibleSubtasks.length > 0 || selectedTaskPursuitRows.length > 0;
+                const pursuitEditorRowsNode = selectedTaskPursuitRows.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Pursuits</p>
+                    {selectedTaskPursuitRows.map(({ depth, pursuit }) => (
+                      <PursuitListWorkspaceRow
+                        attention={pursuitAttentionById?.get(pursuit.id)}
+                        depth={depth}
+                        key={`editor-pursuit:${pursuit.id}`}
+                        onMarkDoneToday={onMarkDonePursuit ?? (() => undefined)}
+                        onOpen={onOpenPursuit ?? (() => undefined)}
+                        pursuit={pursuit}
+                      />
+                    ))}
+                  </div>
+                ) : null;
                 const selectedTaskHierarchyDepth = selectedTaskParentInfo?.depth ?? 0;
                 const fullEditorChildSectionLabels = getFullEditorChildSectionLabels(selectedTaskHierarchyDepth);
                 const showNestedStepsEditor = overlayMode === "full";
@@ -9799,11 +9814,13 @@ export function TaskManagementTableV2({
                     {hasUnifiedStepRows ? (
                       <div className="mt-3 space-y-3">
                         {sameTableStepRowsNode}
+                        {pursuitEditorRowsNode}
                         {selectedTaskVisibleSubtasks.length > 0 ? (
                           <InlineSubtaskEditor
                             autofocusSubtaskId={autofocusSubtaskId}
                             drafts={subtaskTitleDrafts}
                             onAddChild={(subtaskId) => { void handleTaskSubtaskAddChild(subtaskId); }}
+                            onCreateChildPursuit={onCreateChildPursuit}
                             onAutofocusHandled={() => setAutofocusSubtaskId(null)}
                             onCommitTitle={commitSubtaskTitle}
                             onDelete={handleTaskSubtaskDelete}

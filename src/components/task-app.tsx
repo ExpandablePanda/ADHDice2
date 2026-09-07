@@ -91,7 +91,7 @@ import { MilestoneInspectorSection } from "./task-app/milestone-detail-section";
 import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-app/milestone-lifecycle-modal";
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { AttentionWorkspace } from "./task-app/attention-workspace";
-import { PursuitActivityModal, PursuitEditorModal } from "./task-app/pursuits-workspace";
+import { PursuitEditorModal } from "./task-app/pursuits-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { TaskCalendarView } from "./task-app/task-calendar-view";
@@ -1353,7 +1353,6 @@ export function TaskApp() {
   }
   const currentUserId = session?.user?.id ?? null;
   const scratchNotes = useScratchNotes(supabase, currentUserId);
-  const pursuitData = usePursuits(supabase, currentUserId, setMessage, activePage === "Tasks");
   const sleepCategory = useMemo(
     () => focusCategories.find((category) => isSleepCategory(category)) ?? null,
     [focusCategories],
@@ -1623,7 +1622,6 @@ export function TaskApp() {
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
   const [pursuitEditorState, setPursuitEditorState] = useState<{ pursuitId: string | null; parentTaskId: string | null } | null>(null);
-  const [pursuitActivityId, setPursuitActivityId] = useState<string | null>(null);
   const openNewPursuitEditor = useCallback((parentTaskId: string | null = null) => {
     setPursuitEditorState({ parentTaskId, pursuitId: null });
   }, []);
@@ -1677,6 +1675,13 @@ export function TaskApp() {
   });
   const [dayStartTime, setDayStartTime] = useState<string>("06:00");
   const [userTimeZone, setUserTimeZone] = useState<string>(getBrowserTimeZone());
+  const pursuitData = usePursuits(
+    supabase,
+    currentUserId,
+    setMessage,
+    activePage === "Tasks",
+    { dayStartTime, timezone: userTimeZone },
+  );
   const onTimePlan = useOnTimePlan(
     currentUserId,
     userTimeZone,
@@ -5133,9 +5138,6 @@ export function TaskApp() {
   const pursuitEditorTarget = pursuitEditorState?.pursuitId
     ? pursuitData.pursuits.find((pursuit) => pursuit.id === pursuitEditorState.pursuitId) ?? null
     : null;
-  const pursuitActivityTarget = pursuitActivityId
-    ? pursuitData.pursuits.find((pursuit) => pursuit.id === pursuitActivityId) ?? null
-    : null;
   const effectiveTaskUiState = { ...taskUiState, duplicateTitleMode: duplicateTitleModeActive };
   const toggleDuplicateTitleMode = () => {
     setTaskUiState((prev) => {
@@ -6603,25 +6605,20 @@ export function TaskApp() {
     >
       {pursuitEditorState ? (
         <PursuitEditorModal
+          completionSummary={pursuitEditorTarget ? pursuitAttentionMap.get(pursuitEditorTarget.id)?.completionSummary : undefined}
+          dayStartTime={dayStartTime}
           initialParentTaskId={pursuitEditorState.parentTaskId}
           onClose={() => setPursuitEditorState(null)}
           onCreate={pursuitData.createPursuit}
-          onLogActivity={pursuitEditorTarget ? () => {
-            setPursuitEditorState(null);
-            setPursuitActivityId(pursuitEditorTarget.id);
-          } : undefined}
+          onMarkCompletedOnLogicalDay={pursuitData.markCompletedOnLogicalDay}
+          onMarkDoneToday={pursuitData.markDoneToday}
+          onRemoveCompletionOnLogicalDay={pursuitData.removeCompletionOnLogicalDay}
           onUpdate={pursuitData.updatePursuit}
           pursuit={pursuitEditorTarget}
           pursuits={pursuitData.pursuits}
           taskOptions={tasks.map((task) => ({ id: task.id, title: task.title }))}
+          todayKey={todayKey}
           timezone={userTimeZone}
-        />
-      ) : null}
-      {pursuitActivityTarget ? (
-        <PursuitActivityModal
-          onClose={() => setPursuitActivityId(null)}
-          onLogActivity={pursuitData.logActivity}
-          pursuit={pursuitActivityTarget}
         />
       ) : null}
       {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
@@ -6952,10 +6949,13 @@ export function TaskApp() {
                 error={pursuitData.error}
                 isLoading={pursuitData.isLoading}
                 onCreate={pursuitData.createPursuit}
-                onLogActivity={pursuitData.logActivity}
+                onMarkCompletedOnLogicalDay={pursuitData.markCompletedOnLogicalDay}
+                onMarkDoneToday={pursuitData.markDoneToday}
+                onRemoveCompletionOnLogicalDay={pursuitData.removeCompletionOnLogicalDay}
                 onOpenTask={openTaskInSharedTasksEditorFromPaths}
                 onRefresh={pursuitData.refresh}
                 onUpdate={pursuitData.updatePursuit}
+                dayStartTime={dayStartTime}
                 pursuits={pursuitData.pursuits}
                 taskOptions={tasks.map((task) => ({ id: task.id, title: task.title }))}
                 statusesByTaskId={taskDisplayStatusByTaskId}
@@ -7070,10 +7070,7 @@ export function TaskApp() {
                   pursuitAttentionById: pursuitAttentionMap,
                   pursuitSearch: effectiveSearchQuery,
                   onOpenPursuit: openPursuitEditor,
-                  onLogPursuitActivity: (pursuitId: string) => {
-                    setPursuitActivityId(pursuitId);
-                  },
-                  pursuitTimezone: userTimeZone,
+                  onMarkDonePursuit: (pursuitId: string) => { void pursuitData.markDoneToday(pursuitId); },
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
                   columnFilters: taskUiState.tableColumnFilters,
@@ -7251,10 +7248,7 @@ export function TaskApp() {
                   pursuitAttentionById: pursuitAttentionMap,
                   pursuitSearch: effectiveSearchQuery,
                   onOpenPursuit: openPursuitEditor,
-                  onLogPursuitActivity: (pursuitId: string) => {
-                    setPursuitActivityId(pursuitId);
-                  },
-                  pursuitTimezone: userTimeZone,
+                  onMarkDonePursuit: (pursuitId: string) => { void pursuitData.markDoneToday(pursuitId); },
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
                   columnFilters: taskUiState.tableColumnFilters,

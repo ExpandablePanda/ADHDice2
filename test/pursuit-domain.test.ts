@@ -5,9 +5,14 @@ import {
   buildPursuitAttentionMap,
   buildPursuitWorkspaceIndex,
   canSetPursuitParent,
+  derivePursuitCompletionSummary,
   derivePursuitAttention,
+  filterPursuitsForTaskWorkspace,
   filterPursuitsByTitle,
+  formatPursuitLastCompletion,
+  getPursuitLogicalDay,
   getPursuitSearchContextTaskIds,
+  getPursuitTimestampForLogicalDay,
   mergeTaskRowsWithPursuitSearchContext,
   shouldRenderTaskPursuitChildren,
   sortPursuitsByAttention,
@@ -190,4 +195,63 @@ test("Task disclosure controls Task-owned Pursuit children while preserving recu
   assert.equal(shouldRenderTaskPursuitChildren(false, rows), false);
   assert.equal(shouldRenderTaskPursuitChildren(true, rows), true);
   assert.deepEqual(rows.map((row) => row.pursuit.id), ["task-root", "task-child"]);
+});
+
+test("a direct Task match preserves all Task-owned Pursuit descendants as context", () => {
+  const results = filterPursuitsForTaskWorkspace([
+    pursuit({ id: "root", title: "Improve guitar", parent_task_id: "task-1" }),
+    pursuit({ id: "child", title: "Fingerstyle", parent_pursuit_id: "root" }),
+    pursuit({ id: "grandchild", title: "Arpeggios", parent_pursuit_id: "child" }),
+    pursuit({ id: "other", title: "Piano", parent_task_id: "task-2" }),
+  ], "record demo", new Set(["task-1"]));
+  assert.deepEqual(results.map((entry) => entry.id), ["root", "child", "grandchild"]);
+});
+
+function activityOn(logicalDay: string, id: string) {
+  return activity({
+    id,
+    occurred_at: `${logicalDay}T12:00:00.000Z`,
+    created_at: `${logicalDay}T12:00:00.000Z`,
+    updated_at: `${logicalDay}T12:00:00.000Z`,
+  });
+}
+
+test("Pursuit completion summary counts unique logical days and derives streaks", () => {
+  const summary = derivePursuitCompletionSummary([
+    activityOn("2026-09-08", "old"),
+    activityOn("2026-09-09", "yesterday"),
+    activityOn("2026-09-10", "today-1"),
+    activityOn("2026-09-10", "today-2"),
+    activityOn("2026-09-11", "future"),
+  ], CONTEXT);
+  assert.equal(summary.lastCompletedLogicalDay, "2026-09-10");
+  assert.equal(summary.completedToday, true);
+  assert.equal(summary.currentStreak, 3);
+  assert.equal(summary.bestStreak, 3);
+  assert.equal(summary.totalCompletedDays, 3);
+  assert.deepEqual(summary.completedLogicalDays, ["2026-09-08", "2026-09-09", "2026-09-10"]);
+  assert.equal(formatPursuitLastCompletion(summary), "Done today");
+});
+
+test("Pursuit streaks break across missing logical days and never use creation as completion", () => {
+  const summary = derivePursuitCompletionSummary([
+    activityOn("2026-09-05", "first"),
+    activityOn("2026-09-06", "second"),
+    activityOn("2026-09-08", "third"),
+  ], CONTEXT);
+  assert.equal(summary.currentStreak, 0);
+  assert.equal(summary.bestStreak, 2);
+  assert.equal(summary.daysSinceCompletion, 2);
+  assert.equal(formatPursuitLastCompletion(summary), "Last done 2 days ago");
+  const never = derivePursuitCompletionSummary([], CONTEXT);
+  assert.equal(never.lastCompletedLogicalDay, null);
+  assert.equal(never.daysSinceCompletion, null);
+  assert.equal(formatPursuitLastCompletion(never), "Never done");
+});
+
+test("Pursuit completion correction timestamps round-trip through the logical day", () => {
+  const timestamp = getPursuitTimestampForLogicalDay("2026-09-09", CONTEXT);
+  assert.equal(getPursuitLogicalDay(timestamp, CONTEXT), "2026-09-09");
+  assert.equal(getPursuitLogicalDay("2026-09-11T09:30:00.000Z", CONTEXT), "2026-09-10");
+  assert.equal(getPursuitLogicalDay("2026-09-11T10:01:00.000Z", CONTEXT), "2026-09-11");
 });

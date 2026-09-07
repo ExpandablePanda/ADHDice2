@@ -67,7 +67,7 @@ export function AttentionWorkspace({
         onOpenTask={onOpenTask}
       />
 
-      <PursuitsWorkspace {...pursuitProps} />
+      <PursuitsWorkspace {...pursuitProps} todayKey={todayKey} />
 
       <AdhdPanel title="Coming Up" subtitle="Future Tasks remain awareness, not urgency.">
         {visibleComingUp.length === 0 ? (

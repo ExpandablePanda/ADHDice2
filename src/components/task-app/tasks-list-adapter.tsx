@@ -67,7 +67,7 @@ import {
   type ListSortPreference,
 } from "@/lib/task-list-sort";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
-import { buildPursuitWorkspaceIndex, filterPursuitsByTitle, mergeTaskRowsWithPursuitSearchContext, shouldRenderTaskPursuitChildren, type PursuitAttention } from "@/lib/pursuit-domain";
+import { buildPursuitWorkspaceIndex, filterPursuitsForTaskWorkspace, mergeTaskRowsWithPursuitSearchContext, shouldRenderTaskPursuitChildren, type PursuitAttention } from "@/lib/pursuit-domain";
 import { PursuitListWorkspaceRow } from "./pursuit-workspace-row";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
@@ -357,8 +357,7 @@ type TasksTableSourceProps = {
   pursuitAttentionById?: ReadonlyMap<string, PursuitAttention>;
   pursuitSearch?: string;
   onOpenPursuit?: (pursuitId: string) => void;
-  onLogPursuitActivity?: (pursuitId: string) => void;
-  pursuitTimezone?: string;
+  onMarkDonePursuit?: (pursuitId: string) => void;
   selectedTaskIds?: string[];
   requestedOpenTaskId?: string | null;
   runningTaskTimers?: RunningTaskTimer[];
@@ -655,8 +654,7 @@ export function TasksTableAdapter({
           pursuitAttentionById={tableProps.pursuitAttentionById}
           pursuitSearch={tableProps.pursuitSearch}
           onOpenPursuit={tableProps.onOpenPursuit}
-          onLogPursuitActivity={tableProps.onLogPursuitActivity}
-          pursuitTimezone={tableProps.pursuitTimezone}
+          onMarkDonePursuit={tableProps.onMarkDonePursuit}
           onOpenBatchDelete={tableProps.onOpenBatchDelete}
           onOpenBatchEdit={tableProps.onOpenBatchEdit}
           onOpenDeleteTask={tableProps.onOpenDeleteTask}
@@ -2583,8 +2581,8 @@ function TasksSimpleList({
     [listSortPreference, presentationTasks, tableProps.rowContext.taskDisplayStatusByTaskId, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.taskHistoryStreakSummaryByTaskId, tableProps.rowContext.todayDateKey],
   );
   const pursuitWorkspaceIndex = useMemo(
-    () => buildPursuitWorkspaceIndex(filterPursuitsByTitle(tableProps.pursuits ?? [], tableProps.pursuitSearch ?? "")),
-    [tableProps.pursuitSearch, tableProps.pursuits],
+    () => buildPursuitWorkspaceIndex(filterPursuitsForTaskWorkspace(tableProps.pursuits ?? [], tableProps.pursuitSearch ?? "", new Set(tableProps.highlightedTaskIds ?? []))),
+    [tableProps.highlightedTaskIds, tableProps.pursuitSearch, tableProps.pursuits],
   );
   const committedResultRevision = useMemo(
     () => tasks.map((task) => `${task.id}:${task.revision}`).join("|"),
@@ -3029,8 +3027,7 @@ function TasksSimpleList({
               pursuitAttentionById={tableProps.pursuitAttentionById}
               pursuitSearch={tableProps.pursuitSearch}
               onOpenPursuit={tableProps.onOpenPursuit}
-              onLogPursuitActivity={tableProps.onLogPursuitActivity}
-              pursuitTimezone={tableProps.pursuitTimezone}
+              onMarkDonePursuit={tableProps.onMarkDonePursuit}
               onCreateTaskList={tableProps.onCreateTaskList}
               onDismissDetachedTask={tableProps.onDismissDetachedTask}
               onDuplicateTask={tableProps.onDuplicateTask}
@@ -3178,6 +3175,7 @@ function TasksSimpleList({
           : searchMatchedChildTaskIdSet;
         const isStepSectionExpanded = activeHierarchyParentMatch
           || pursuitSearchContextTaskIdSet.has(task.id)
+          || highlightedTaskIdSet.has(task.id)
           || parentStepDraftTaskId === task.id
           || collapsedStepSectionsByTaskId[task.id] === false;
         const hasVisibleRenderedDescendants = Boolean(
@@ -3718,10 +3716,9 @@ function TasksSimpleList({
                 attention={tableProps.pursuitAttentionById?.get(pursuit.id)}
                 depth={depth + 1}
                 key={`pursuit:${pursuit.id}`}
-                onLogActivity={tableProps.onLogPursuitActivity ?? (() => undefined)}
+                onMarkDoneToday={tableProps.onMarkDonePursuit ?? (() => undefined)}
                 onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
                 pursuit={pursuit}
-                timezone={tableProps.pursuitTimezone ?? "UTC"}
               />
             )) : null}
           </div>
@@ -3732,10 +3729,9 @@ function TasksSimpleList({
               attention={tableProps.pursuitAttentionById?.get(pursuit.id)}
               depth={depth}
               key={`pursuit:${pursuit.id}`}
-              onLogActivity={tableProps.onLogPursuitActivity ?? (() => undefined)}
+              onMarkDoneToday={tableProps.onMarkDonePursuit ?? (() => undefined)}
               onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
               pursuit={pursuit}
-              timezone={tableProps.pursuitTimezone ?? "UTC"}
             />
           ))}
           {windowedTasks.length < tasks.length ? <div aria-hidden="true" className="h-px" ref={loadMoreListRowsRef} /> : null}

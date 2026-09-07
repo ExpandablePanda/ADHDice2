@@ -1,6 +1,6 @@
 import type { Pursuit, PursuitActivity, PursuitStatus, Task } from "@/lib/database.types";
 import { getLogicalDayKey } from "@/lib/logical-day";
-import { daysBetween } from "@/lib/task-state-engine/calendar";
+import { daysBetween, shiftDateKey } from "@/lib/task-state-engine/calendar";
 
 export type PursuitAttention = {
   activityCount: number;
@@ -10,6 +10,7 @@ export type PursuitAttention = {
   daysSinceBaseline: number;
   lastActivityAt: string | null;
   needsAttention: boolean;
+  completionSummary: PursuitCompletionSummary;
   pursuit: Pursuit;
 };
 
@@ -28,6 +29,21 @@ export type PursuitWorkspaceRow = {
 export type PursuitWorkspaceIndex = {
   byTaskId: ReadonlyMap<string, PursuitWorkspaceRow[]>;
   topLevel: PursuitWorkspaceRow[];
+};
+
+export type PursuitCompletionContext = Pick<PursuitAttentionContext, "dayStartTime" | "timezone"> & {
+  now?: Date | string;
+  todayKey?: string;
+};
+
+export type PursuitCompletionSummary = {
+  bestStreak: number;
+  completedToday: boolean;
+  completedLogicalDays: string[];
+  currentStreak: number;
+  daysSinceCompletion: number | null;
+  lastCompletedLogicalDay: string | null;
+  totalCompletedDays: number;
 };
 
 export function filterPursuitsByTitle(pursuits: ReadonlyArray<Pursuit>, query: string): Pursuit[] {
@@ -52,6 +68,48 @@ export function filterPursuitsByTitle(pursuits: ReadonlyArray<Pursuit>, query: s
     }
   }
 
+  return pursuits.filter((pursuit) => visibleIds.has(pursuit.id));
+}
+
+function addPursuitDescendants(
+  pursuits: ReadonlyArray<Pursuit>,
+  parentIds: ReadonlySet<string>,
+  visibleIds: Set<string>,
+) {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pursuit of pursuits) {
+      if (pursuit.parent_pursuit_id && parentIds.has(pursuit.parent_pursuit_id) && !visibleIds.has(pursuit.id)) {
+        visibleIds.add(pursuit.id);
+        parentIds = new Set([...parentIds, pursuit.id]);
+        changed = true;
+      }
+    }
+  }
+}
+
+/**
+ * Filters the Pursuit projection while preserving Task-match hierarchy context.
+ * The Task match IDs are presentation evidence only; Task search remains owned
+ * by the canonical Task search projection.
+ */
+export function filterPursuitsForTaskWorkspace(
+  pursuits: ReadonlyArray<Pursuit>,
+  query: string,
+  directlyMatchedTaskIds: ReadonlySet<string> = new Set(),
+): Pursuit[] {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return [...pursuits];
+
+  const visibleIds = new Set(filterPursuitsByTitle(pursuits, normalizedQuery).map((pursuit) => pursuit.id));
+  const taskOwnedRootIds = new Set(
+    pursuits
+      .filter((pursuit) => pursuit.parent_task_id !== null && directlyMatchedTaskIds.has(pursuit.parent_task_id))
+      .map((pursuit) => pursuit.id),
+  );
+  for (const pursuitId of taskOwnedRootIds) visibleIds.add(pursuitId);
+  addPursuitDescendants(pursuits, taskOwnedRootIds, visibleIds);
   return pursuits.filter((pursuit) => visibleIds.has(pursuit.id));
 }
 
@@ -112,12 +170,122 @@ export function getPursuitLogicalDay(
   );
 }
 
+function getPursuitCompletionDayKeys(
+  activities: ReadonlyArray<PursuitActivity>,
+  context: PursuitCompletionContext,
+) {
+  const todayKey = context.todayKey ?? getPursuitLogicalDay(context.now ?? new Date(), context);
+  return Array.from(new Set(
+    activities
+      .filter((activity) => Boolean(activity.occurred_at))
+      .map((activity) => getPursuitLogicalDay(activity.occurred_at, context))
+      .filter((dayKey) => dayKey <= todayKey),
+  )).sort();
+}
+
+export function derivePursuitCompletionSummary(
+  activities: ReadonlyArray<PursuitActivity>,
+  context: PursuitCompletionContext,
+): PursuitCompletionSummary {
+  const todayKey = context.todayKey ?? getPursuitLogicalDay(context.now ?? new Date(), context);
+  const completedLogicalDays = getPursuitCompletionDayKeys(activities, { ...context, todayKey });
+  const completedDaySet = new Set(completedLogicalDays);
+  const lastCompletedLogicalDay = completedLogicalDays.at(-1) ?? null;
+  const currentStart = completedDaySet.has(todayKey)
+    ? todayKey
+    : completedDaySet.has(shiftDateKey(todayKey, -1))
+      ? shiftDateKey(todayKey, -1)
+      : null;
+  let currentStreak = 0;
+  if (currentStart) {
+    for (let cursor = currentStart; completedDaySet.has(cursor); cursor = shiftDateKey(cursor, -1)) {
+      currentStreak += 1;
+    }
+  }
+
+  let bestStreak = 0;
+  let runningStreak = 0;
+  let previousDay: string | null = null;
+  for (const dayKey of completedLogicalDays) {
+    runningStreak = previousDay && shiftDateKey(previousDay, 1) === dayKey ? runningStreak + 1 : 1;
+    bestStreak = Math.max(bestStreak, runningStreak);
+    previousDay = dayKey;
+  }
+
+  return {
+    bestStreak,
+    completedToday: completedDaySet.has(todayKey),
+    completedLogicalDays,
+    currentStreak,
+    daysSinceCompletion: lastCompletedLogicalDay ? Math.max(0, daysBetween(lastCompletedLogicalDay, todayKey)) : null,
+    lastCompletedLogicalDay,
+    totalCompletedDays: completedLogicalDays.length,
+  };
+}
+
+export function buildPursuitCompletionSummaryMap(
+  pursuits: ReadonlyArray<Pursuit>,
+  activities: ReadonlyArray<PursuitActivity>,
+  context: PursuitCompletionContext,
+) {
+  const activitiesByPursuitId = new Map<string, PursuitActivity[]>();
+  for (const activity of activities) {
+    const current = activitiesByPursuitId.get(activity.pursuit_id) ?? [];
+    current.push(activity);
+    activitiesByPursuitId.set(activity.pursuit_id, current);
+  }
+  return new Map(
+    pursuits.map((pursuit) => [
+      pursuit.id,
+      derivePursuitCompletionSummary(activitiesByPursuitId.get(pursuit.id) ?? [], context),
+    ]),
+  );
+}
+
+export function formatPursuitLastCompletion(summary: PursuitCompletionSummary) {
+  if (summary.lastCompletedLogicalDay === null) return "Never done";
+  if (summary.daysSinceCompletion === 0) return "Done today";
+  if (summary.daysSinceCompletion === 1) return "Last done yesterday";
+  return `Last done ${summary.daysSinceCompletion} days ago`;
+}
+
+export function getPursuitTimestampForLogicalDay(
+  logicalDay: string,
+  context: Pick<PursuitCompletionContext, "dayStartTime" | "timezone">,
+) {
+  const [year, month, day] = logicalDay.split("-").map(Number);
+  const [hour, minute] = context.dayStartTime.split(":").map(Number);
+  const desiredLocalMs = Date.UTC(year, month - 1, day, hour, minute, 0, 0) + 60_000;
+  let candidate = new Date(desiredLocalMs);
+  for (let index = 0; index < 3; index += 1) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      day: "2-digit",
+      hour: "2-digit",
+      hourCycle: "h23",
+      minute: "2-digit",
+      month: "2-digit",
+      second: "2-digit",
+      timeZone: context.timezone,
+      year: "numeric",
+    }).formatToParts(candidate);
+    const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    const actualLocalMs = Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day), Number(values.hour), Number(values.minute), Number(values.second));
+    candidate = new Date(desiredLocalMs - (actualLocalMs - candidate.getTime()));
+  }
+  return candidate.toISOString();
+}
+
 export function derivePursuitAttention(
   pursuit: Pursuit,
   activities: ReadonlyArray<PursuitActivity>,
   context: PursuitAttentionContext,
 ): PursuitAttention {
-  const recentActivity = getMostRecentPursuitActivity(activities);
+  const completionSummary = derivePursuitCompletionSummary(activities, context);
+  const recentActivity = completionSummary.lastCompletedLogicalDay
+    ? getMostRecentPursuitActivity(activities.filter((activity) => (
+      getPursuitLogicalDay(activity.occurred_at, context) === completionSummary.lastCompletedLogicalDay
+    )))
+    : null;
   const baselineAt = recentActivity?.occurred_at ?? pursuit.created_at;
   const baselineKind = recentActivity ? "activity" : "created";
   const todayKey = context.todayKey ?? getPursuitLogicalDay(context.now, context);
@@ -137,6 +305,7 @@ export function derivePursuitAttention(
     daysSinceBaseline,
     lastActivityAt: recentActivity?.occurred_at ?? null,
     needsAttention,
+    completionSummary,
     pursuit,
   };
 }
@@ -173,7 +342,7 @@ export function sortPursuitsByAttention(rows: ReadonlyArray<PursuitAttention>) {
 
 export function formatPursuitAttentionReason(row: PursuitAttention) {
   const daysLabel = `${row.daysSinceBaseline} day${row.daysSinceBaseline === 1 ? "" : "s"}`;
-  const baselineLabel = row.baselineKind === "activity" ? "since activity" : "since created";
+  const baselineLabel = row.baselineKind === "activity" ? "since completion" : "since created";
   const target = row.pursuit.revisit_interval_days;
   return target === null
     ? `${daysLabel} ${baselineLabel}`
@@ -181,13 +350,12 @@ export function formatPursuitAttentionReason(row: PursuitAttention) {
 }
 
 export function formatPursuitLastActivity(row: PursuitAttention, timezone: string) {
-  if (!row.lastActivityAt) {
-    return "No activity yet";
-  }
-  return `Last activity ${new Intl.DateTimeFormat(undefined, {
+  if (!row.completionSummary.lastCompletedLogicalDay) return "Never done";
+  if (row.completionSummary.daysSinceCompletion === 0) return "Done today";
+  return `Last done ${new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeZone: timezone,
-  }).format(new Date(row.lastActivityAt))}`;
+  }).format(new Date(`${row.completionSummary.lastCompletedLogicalDay}T12:00:00`))}`;
 }
 
 export function canSetPursuitParent(
