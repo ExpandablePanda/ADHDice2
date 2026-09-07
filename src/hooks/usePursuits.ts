@@ -15,7 +15,7 @@ type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type RequiredSupabaseClient = NonNullable<SupabaseClient>;
 type Message = { text: string; tone: "neutral" | "good" | "warn" };
 
-export type PursuitCreateInput = Pick<PursuitInsert, "notes" | "parent_pursuit_id" | "parent_task_id" | "revisit_interval_days" | "title">;
+export type PursuitCreateInput = Pick<PursuitInsert, "notes" | "parent_pursuit_id" | "parent_task_id" | "revisit_interval_days" | "tags" | "title">;
 export type PursuitLogicalDaySettings = { dayStartTime: string; timezone: string };
 
 export function isMissingPursuitTableError(error: unknown) {
@@ -142,6 +142,7 @@ export function usePursuits(
       parent_task_id: parentTaskId,
       title,
       notes: input.notes?.trim() || null,
+      tags: input.tags ?? [],
       status: "active",
       revisit_interval_days: input.revisit_interval_days ?? null,
       sort_order: pursuits.length,

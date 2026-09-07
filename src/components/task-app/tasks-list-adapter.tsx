@@ -1924,13 +1924,15 @@ function QuickChipOption({
   );
 }
 
-function TagsQuickPanel({
+export function TagsQuickPanel({
   allTagOptions,
+  entityLabel = "task",
   onClose,
   onSave,
   tags,
 }: {
   allTagOptions: string[];
+  entityLabel?: string;
   onClose: () => void;
   onSave: (tags: string[]) => void;
   tags: string[];
@@ -1964,7 +1966,7 @@ function TagsQuickPanel({
       <div className="space-y-3">
         <div>
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#938ab8] dark:text-white/45">
-            On this task
+            {`On this ${entityLabel}`}
           </p>
           <div className="flex flex-wrap gap-2">
             {tags.length > 0 ? tags.map((tag) => (
@@ -1977,7 +1979,7 @@ function TagsQuickPanel({
                 <X className="ml-1 h-3.5 w-3.5" />
               </TaskTableChipButton>
             )) : (
-              <span className="text-sm text-[#7d7597] dark:text-white/55">No tags on this task yet.</span>
+              <span className="text-sm text-[#7d7597] dark:text-white/55">{`No tags on this ${entityLabel} yet.`}</span>
             )}
           </div>
         </div>

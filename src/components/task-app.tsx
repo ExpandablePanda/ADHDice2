@@ -3238,6 +3238,17 @@ export function TaskApp() {
     }),
     [dayStartTime, logicalDayNow, pursuitData.activities, pursuitData.pursuits, todayKey, userTimeZone],
   );
+  const allPursuitTags = useMemo(
+    () => Array.from(new Set([
+      ...allTaskTags,
+      ...pursuitData.pursuits.flatMap((pursuit) => pursuit.tags ?? []),
+    ])).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" })),
+    [allTaskTags, pursuitData.pursuits],
+  );
+  const pursuitCompletionSummaryMap = useMemo(
+    () => new Map(Array.from(pursuitAttentionMap.entries()).map(([id, row]) => [id, row.completionSummary])),
+    [pursuitAttentionMap],
+  );
   const togglePursuitDoneToday = (pursuitId: string) => {
     if (pursuitAttentionMap.get(pursuitId)?.completionSummary.completedToday) {
       void pursuitData.removeCompletionOnLogicalDay(pursuitId, todayKey);
@@ -6627,6 +6638,8 @@ export function TaskApp() {
     >
       {pursuitEditorState ? (
         <PursuitEditorModal
+          allTagOptions={allPursuitTags}
+          completionSummaryByPursuitId={pursuitCompletionSummaryMap}
           completionSummary={pursuitEditorTarget ? pursuitAttentionMap.get(pursuitEditorTarget.id)?.completionSummary : undefined}
           dayStartTime={dayStartTime}
           initialParentTaskId={pursuitEditorState.parentTaskId}
@@ -6977,6 +6990,8 @@ export function TaskApp() {
                 dueOnByTaskId={taskDisplayDueOnByTaskId}
                 error={pursuitData.error}
                 isLoading={pursuitData.isLoading}
+                allTagOptions={allPursuitTags}
+                completionSummaryByPursuitId={pursuitCompletionSummaryMap}
                 onCreate={pursuitData.createPursuit}
                 onMarkCompletedOnLogicalDay={pursuitData.markCompletedOnLogicalDay}
                 onMarkDoneToday={pursuitData.markDoneToday}

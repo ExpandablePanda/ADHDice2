@@ -81,6 +81,7 @@ export type Pursuit = {
   parent_task_id: string | null;
   title: string;
   notes: string | null;
+  tags: string[];
   status: PursuitStatus;
   revisit_interval_days: number | null;
   sort_order: number;
@@ -88,13 +89,14 @@ export type Pursuit = {
   updated_at: string;
 };
 
-export type PursuitInsert = Omit<Pursuit, "created_at" | "id" | "updated_at"> & {
+export type PursuitInsert = Omit<Pursuit, "created_at" | "id" | "tags" | "updated_at"> & {
   created_at?: string;
   id?: string;
+  tags?: string[];
   updated_at?: string;
 };
 
-export type PursuitUpdate = Partial<Pick<Pursuit, "notes" | "parent_pursuit_id" | "parent_task_id" | "revisit_interval_days" | "sort_order" | "status" | "title">>;
+export type PursuitUpdate = Partial<Pick<Pursuit, "notes" | "parent_pursuit_id" | "parent_task_id" | "revisit_interval_days" | "sort_order" | "status" | "tags" | "title">>;
 
 export type PursuitActivity = {
   id: string;

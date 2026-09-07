@@ -257,12 +257,30 @@ export function derivePursuitNextTargetLogicalDay(
   return shiftDateKey(baselineLogicalDay, revisitIntervalDays);
 }
 
-export function formatPursuitTargetDate(logicalDay: string, timezone: string) {
-  return new Intl.DateTimeFormat(undefined, {
+export function formatPursuitTargetDate(logicalDay: string, timezone: string, referenceLogicalDay?: string) {
+  const date = new Date(getPursuitTimestampForLogicalDay(logicalDay, { dayStartTime: "12:00", timezone }));
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
     day: "numeric",
     month: "short",
     timeZone: timezone,
-  }).format(new Date(getPursuitTimestampForLogicalDay(logicalDay, { dayStartTime: "12:00", timezone })));
+    weekday: "short",
+    year: "numeric",
+  }).formatToParts(date).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  const referenceYear = referenceLogicalDay?.slice(0, 4)
+    ?? new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric" }).format(new Date());
+  const month = parts.month === "Sep" ? "Sept" : parts.month;
+  const day = Number(parts.day);
+  const ordinalSuffix = day % 100 >= 11 && day % 100 <= 13
+    ? "th"
+    : day % 10 === 1
+      ? "st"
+      : day % 10 === 2
+        ? "nd"
+        : day % 10 === 3
+          ? "rd"
+          : "th";
+  const dateLabel = `${parts.weekday} ${month} ${parts.day}${ordinalSuffix}`;
+  return parts.year === referenceYear ? dateLabel : `${dateLabel}, ${parts.year}`;
 }
 
 export function formatPursuitTargetLabel(
@@ -270,14 +288,34 @@ export function formatPursuitTargetLabel(
   todayKey: string | undefined,
   timezone: string,
 ) {
-  if (!nextTargetLogicalDay) return "No revisit target";
-  const targetDate = formatPursuitTargetDate(nextTargetLogicalDay, timezone);
-  if (!todayKey) return `Target ${targetDate}`;
+  if (!nextTargetLogicalDay) return "No target";
+  const targetDate = formatPursuitTargetDate(nextTargetLogicalDay, timezone, todayKey);
+  if (!todayKey) return `Next target ${targetDate}`;
 
   const daysUntilTarget = daysBetween(todayKey, nextTargetLogicalDay);
-  return daysUntilTarget > 0 && daysUntilTarget <= 7
-    ? `Target in ${daysUntilTarget}d`
-    : `Target ${targetDate}`;
+  return daysUntilTarget < 0 ? `Target was ${targetDate}` : `Next target ${targetDate}`;
+}
+
+export function formatPursuitRevisitCadence(revisitIntervalDays: number | null | undefined) {
+  if (!revisitIntervalDays || revisitIntervalDays <= 0) return "No repeat";
+  return revisitIntervalDays === 1 ? "Daily" : `Every ${revisitIntervalDays} days`;
+}
+
+export function formatPursuitLastCompletionDate(
+  summary: Pick<PursuitCompletionSummary, "daysSinceCompletion" | "lastCompletedLogicalDay">,
+  timezone = "UTC",
+) {
+  if (!summary.lastCompletedLogicalDay) return "Never done";
+  if (summary.daysSinceCompletion === 0) return "Today";
+  if (summary.daysSinceCompletion === 1) return "Yesterday";
+  const date = new Date(getPursuitTimestampForLogicalDay(summary.lastCompletedLogicalDay, { dayStartTime: "12:00", timezone }));
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "short",
+    timeZone: timezone,
+    year: "numeric",
+  }).formatToParts(date).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${parts.month === "Sep" ? "Sept" : parts.month} ${parts.day}, ${parts.year}`;
 }
 
 export function formatPursuitLastCompletion(summary: PursuitCompletionSummary) {
@@ -382,12 +420,12 @@ export function sortPursuitsByAttention(rows: ReadonlyArray<PursuitAttention>) {
 }
 
 export function formatPursuitAttentionReason(row: PursuitAttention, timezone = "UTC") {
-  if (!row.nextTargetLogicalDay) return "No revisit target";
-  const targetDate = formatPursuitTargetDate(row.nextTargetLogicalDay, timezone);
+  if (!row.nextTargetLogicalDay) return "No target";
+  const targetDate = formatPursuitTargetDate(row.nextTargetLogicalDay, timezone, row.todayKey);
   const daysPastTarget = daysBetween(row.nextTargetLogicalDay, row.todayKey);
   return daysPastTarget > 0
-    ? `Target ${targetDate} · ${daysPastTarget} day${daysPastTarget === 1 ? "" : "s"} past target`
-    : `Target ${targetDate}`;
+    ? `Target was ${targetDate} · ${daysPastTarget} day${daysPastTarget === 1 ? "" : "s"} past target`
+    : `Next target ${targetDate}`;
 }
 
 export function formatPursuitLastActivity(row: PursuitAttention, timezone: string) {
@@ -507,6 +545,36 @@ export function getPursuitDepth(
     cursor = pursuitsById.get(cursor)?.parent_pursuit_id ?? null;
   }
   return depth;
+}
+
+export function buildPursuitDescendantRows(
+  pursuits: ReadonlyArray<Pursuit>,
+  parentPursuitId: string,
+) {
+  const byParent = new Map<string, Pursuit[]>();
+  for (const pursuit of pursuits) {
+    if (!pursuit.parent_pursuit_id) continue;
+    const current = byParent.get(pursuit.parent_pursuit_id) ?? [];
+    current.push(pursuit);
+    byParent.set(pursuit.parent_pursuit_id, current);
+  }
+  const rows: PursuitWorkspaceRow[] = [];
+  const visited = new Set<string>([parentPursuitId]);
+  const visit = (parentId: string, depth: number) => {
+    const children = [...(byParent.get(parentId) ?? [])].sort((left, right) => (
+      left.sort_order - right.sort_order
+      || left.title.localeCompare(right.title)
+      || left.id.localeCompare(right.id)
+    ));
+    for (const child of children) {
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
+      rows.push({ depth, pursuit: child });
+      visit(child.id, depth + 1);
+    }
+  };
+  visit(parentPursuitId, 0);
+  return rows;
 }
 
 export function sortPursuitsForManagement(pursuits: ReadonlyArray<Pursuit>) {

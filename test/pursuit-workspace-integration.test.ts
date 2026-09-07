@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const migration = readFileSync(new URL("../supabase/add_pursuit_task_parent_7_13_1.sql", import.meta.url), "utf8");
+const tagsMigration = readFileSync(new URL("../supabase/add_pursuit_tags_7_13_5.sql", import.meta.url), "utf8");
+const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+const databaseTypesSource = readFileSync(new URL("../src/lib/database.types.ts", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const headerSource = readFileSync(new URL("../src/components/task-app/tasks-page.tsx", import.meta.url), "utf8");
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
@@ -17,6 +20,14 @@ test("7.13.1 migration preserves Task-owned Pursuits on parent deletion", () => 
   assert.match(migration, /on delete set null \(parent_task_id\)/);
   assert.match(migration, /check \(not \(parent_pursuit_id is not null and parent_task_id is not null\)\)/);
   assert.match(migration, /adhdice_pursuits_user_task_parent_idx/);
+});
+
+test("7.13.5 Pursuit tags migration is additive and does not add Task semantics", () => {
+  assert.match(tagsMigration, /add column if not exists tags text\[\] not null default '\{\}'/);
+  assert.doesNotMatch(tagsMigration, /due_on|repeat_frequency|next_target_date|occurrence/i);
+  assert.match(schemaSource, /tags text\[\] not null default '\{\}'/);
+  assert.match(databaseTypesSource, /tags: string\[\];/);
+  assert.match(pursuitHookSource, /tags: input\.tags \?\? \[\]/);
 });
 
 test("creation and child-step routing keep Task and Pursuit paths separate", () => {
@@ -53,6 +64,23 @@ test("Table/List use a dedicated Pursuit rendering path and searchable domain ro
   assert.match(appSource, /openPursuitEditorFromTaskEditor/);
   assert.match(appSource, /openNewPursuitEditorFromTaskEditor/);
   assert.match(appSource, /onClose=\{closePursuitEditor\}/);
+});
+
+test("Pursuit table metadata reuses Task authorities and keeps the title row compact", () => {
+  assert.match(rowSource, /TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS/);
+  assert.match(rowSource, /TaskCurrentStreakChip/);
+  assert.match(rowSource, /formatPursuitLastCompletionDate/);
+  assert.match(rowSource, /formatPursuitRevisitCadence/);
+  assert.match(rowSource, /formatTaskTableEntryTimestamp/);
+  assert.match(rowSource, /TASK_TABLE_TAG_CHIP_CLASS/);
+  assert.doesNotMatch(rowSource, /Needs attention/);
+  assert.doesNotMatch(rowSource, /formatPursuitLastCompletion\(/);
+  assert.match(editorSource, /TagsQuickPanel/);
+  assert.match(editorSource, /buildPursuitDescendantRows/);
+  assert.match(editorSource, /Footprints/);
+  assert.match(editorSource, /setChildEditorParentId\(child\.id\)/);
+  assert.match(editorSource, /AdhdDropdownSelect/);
+  assert.doesNotMatch(editorSource, /<select/);
 });
 
 test("Pursuit presentation follows Task disclosure and search context without becoming a Task match", () => {

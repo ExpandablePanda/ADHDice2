@@ -3,6 +3,7 @@ import test from "node:test";
 import type { Pursuit, PursuitActivity, Task } from "@/lib/database.types";
 import {
   buildPursuitAttentionMap,
+  buildPursuitDescendantRows,
   buildPursuitWorkspaceIndex,
   canSetPursuitParent,
   derivePursuitCompletionSummary,
@@ -11,8 +12,11 @@ import {
   filterPursuitsForTaskWorkspace,
   filterPursuitsByTitle,
   formatPursuitLastCompletion,
+  formatPursuitLastCompletionDate,
+  formatPursuitRevisitCadence,
   formatPursuitAttentionReason,
   formatPursuitTargetLabel,
+  formatPursuitTargetDate,
   getPursuitLogicalDay,
   getPursuitSearchContextTaskIds,
   getPursuitTimestampForLogicalDay,
@@ -37,6 +41,7 @@ function pursuit(overrides: Partial<Pursuit> = {}): Pursuit {
     parent_task_id: null,
     title: "Guitar",
     notes: null,
+    tags: [],
     status: "active",
     revisit_interval_days: null,
     sort_order: 0,
@@ -113,16 +118,44 @@ test("completed Pursuits derive their target from the last completed logical day
 });
 
 test("target labels distinguish today, future, and past logical days", () => {
-  assert.equal(formatPursuitTargetLabel("2026-09-10", "2026-09-10", CONTEXT.timezone), "Target Sep 10");
-  assert.equal(formatPursuitTargetLabel("2026-09-14", "2026-09-10", CONTEXT.timezone), "Target in 4d");
-  assert.equal(formatPursuitTargetLabel("2026-09-08", "2026-09-10", CONTEXT.timezone), "Target Sep 8");
+  assert.equal(formatPursuitTargetLabel("2026-09-10", "2026-09-10", CONTEXT.timezone), "Next target Thu Sept 10th");
+  assert.equal(formatPursuitTargetLabel("2026-09-14", "2026-09-10", CONTEXT.timezone), "Next target Mon Sept 14th");
+  assert.equal(formatPursuitTargetLabel("2026-09-08", "2026-09-10", CONTEXT.timezone), "Target was Tue Sept 8th");
 });
 
 test("target presentation preserves the logical day across timezone offsets", () => {
-  assert.equal(formatPursuitTargetLabel("2026-09-10", "2026-09-10", "Pacific/Kiritimati"), "Target Sep 10");
-  assert.equal(formatPursuitTargetLabel("2026-09-08", "2026-09-10", "Pacific/Pago_Pago"), "Target Sep 8");
+  assert.equal(formatPursuitTargetLabel("2026-09-10", "2026-09-10", "Pacific/Kiritimati"), "Next target Thu Sept 10th");
+  assert.equal(formatPursuitTargetLabel("2026-09-08", "2026-09-10", "Pacific/Pago_Pago"), "Target was Tue Sept 8th");
   const attention = derivePursuitAttention(pursuit({ revisit_interval_days: 5 }), [], CONTEXT);
-  assert.equal(formatPursuitAttentionReason(attention, CONTEXT.timezone), "Target Sep 6 · 4 days past target");
+  assert.equal(formatPursuitAttentionReason(attention, CONTEXT.timezone), "Target was Sun Sept 6th · 4 days past target");
+});
+
+test("target dates use abbreviated weekday/month and correct ordinal suffixes", () => {
+  const cases = [
+    ["2026-01-01", "Thu Jan 1st"],
+    ["2026-02-02", "Mon Feb 2nd"],
+    ["2026-03-03", "Tue Mar 3rd"],
+    ["2026-04-04", "Sat Apr 4th"],
+    ["2026-05-11", "Mon May 11th"],
+    ["2026-06-12", "Fri Jun 12th"],
+    ["2026-07-13", "Mon Jul 13th"],
+    ["2026-08-21", "Fri Aug 21st"],
+    ["2026-09-22", "Tue Sept 22nd"],
+    ["2026-10-23", "Fri Oct 23rd"],
+    ["2026-12-31", "Thu Dec 31st"],
+  ] as const;
+  for (const [logicalDay, expected] of cases) {
+    assert.equal(formatPursuitTargetDate(logicalDay, CONTEXT.timezone, logicalDay), expected);
+  }
+});
+
+test("Pursuit cadence and Last Done presentation stay native to Pursuit data", () => {
+  assert.equal(formatPursuitRevisitCadence(null), "No repeat");
+  assert.equal(formatPursuitRevisitCadence(1), "Daily");
+  assert.equal(formatPursuitRevisitCadence(3), "Every 3 days");
+  assert.equal(formatPursuitLastCompletionDate({ daysSinceCompletion: 0, lastCompletedLogicalDay: "2026-09-10" }, CONTEXT.timezone), "Today");
+  assert.equal(formatPursuitLastCompletionDate({ daysSinceCompletion: 1, lastCompletedLogicalDay: "2026-09-09" }, CONTEXT.timezone), "Yesterday");
+  assert.equal(formatPursuitLastCompletionDate({ daysSinceCompletion: 5, lastCompletedLogicalDay: "2026-09-05" }, CONTEXT.timezone), "Sept 5, 2026");
 });
 
 test("paused and archived Pursuits never surface as attention", () => {
@@ -162,6 +195,22 @@ test("self-parenting and cyclic Pursuit hierarchy changes are rejected", () => {
   assert.equal(canSetPursuitParent(pursuits, "parent", "parent"), false);
   assert.equal(canSetPursuitParent(pursuits, "parent", "child"), false);
   assert.equal(canSetPursuitParent(pursuits, "child", null), true);
+});
+
+test("Pursuit editor descendants render recursively and stop at cycles", () => {
+  const rows = buildPursuitDescendantRows([
+    pursuit({ id: "root", title: "Guitar", parent_pursuit_id: "cycle" }),
+    pursuit({ id: "child", title: "Technique", parent_pursuit_id: "root" }),
+    pursuit({ id: "grandchild", title: "Picking", parent_pursuit_id: "child" }),
+    pursuit({ id: "deep", title: "Speed", parent_pursuit_id: "grandchild" }),
+    pursuit({ id: "cycle", title: "Cycle", parent_pursuit_id: "deep" }),
+  ], "root");
+  assert.deepEqual(rows.map((row) => [row.pursuit.id, row.depth]), [
+    ["child", 0],
+    ["grandchild", 1],
+    ["deep", 2],
+    ["cycle", 3],
+  ]);
 });
 
 test("attention map derives independent rows for each Pursuit", () => {

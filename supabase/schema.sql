@@ -5525,6 +5525,7 @@ create table if not exists public.adhdice_pursuits (
   parent_task_id uuid,
   title text not null check (char_length(trim(title)) > 0),
   notes text,
+  tags text[] not null default '{}',
   status text not null default 'active' check (status in ('active', 'paused', 'archived')),
   revisit_interval_days integer check (revisit_interval_days is null or revisit_interval_days > 0),
   sort_order integer not null default 0,

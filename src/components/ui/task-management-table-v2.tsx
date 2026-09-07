@@ -81,7 +81,9 @@ import {
   TASK_TABLE_TITLE_CELL_CLASS as TITLE_CELL_CLASS,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS as VISIBLE_TITLE_TEXT_CLASS,
   CompactRepeatCadenceControls,
+  formatTaskTableEntryTimestamp,
   ScrollUpButton,
+  TaskCurrentStreakChip,
   TaskHierarchySearchChip,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
@@ -1811,21 +1813,6 @@ function formatClockTime(value: string) {
   const suffix = hour >= 12 ? "pm" : "am";
   const hour12 = hour % 12 === 0 ? 12 : hour % 12;
   return `${hour12}:${String(minute).padStart(2, "0")}${suffix}`;
-}
-
-function formatEntryTimestamp(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString([], {
-    month: "numeric",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 function formatDue(dueOn: string, dueTime: string) {
@@ -6756,12 +6743,7 @@ export function TaskManagementTableV2({
       return wrapMeasuredContent(
         task.currentStreak > 0 || task.missedStreak > 0 ? (
           <span className="inline-flex flex-wrap items-center justify-center gap-1">
-            {task.currentStreak > 0 ? (
-              <span className={`${CHIP_BASE} gap-1 border-[#ffd8be] bg-[#fff1e7] px-2 text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]`}>
-                <Flame className="h-3 w-3" />
-                {task.currentStreak}
-              </span>
-            ) : null}
+            <TaskCurrentStreakChip currentStreak={task.currentStreak} />
             {task.missedStreak > 0 ? (
               <span className={`${CHIP_BASE} gap-1 border-[#ffd6de] bg-[#fff1f3] px-2 text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]`}>
                 <Skull className="h-3 w-3" />
@@ -7226,7 +7208,7 @@ export function TaskManagementTableV2({
       return wrapMeasuredContent(
         <div>
           <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>
-            {formatEntryTimestamp(task.createdAt)}
+            {formatTaskTableEntryTimestamp(task.createdAt)}
           </span>
         </div>
       );
@@ -7236,7 +7218,7 @@ export function TaskManagementTableV2({
       return wrapMeasuredContent(
         <div>
           <span className={`${CHIP_BASE} ${task.completedAt ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
-            {task.completedAt ? formatEntryTimestamp(task.completedAt) : "Not completed"}
+            {task.completedAt ? formatTaskTableEntryTimestamp(task.completedAt) : "Not completed"}
           </span>
         </div>
       );
@@ -7247,7 +7229,7 @@ export function TaskManagementTableV2({
       return wrapMeasuredContent(
         <div>
           <span className={`${CHIP_BASE} ${lastDoneValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
-            {task.lastDoneAt ? formatEntryTimestamp(task.lastDoneAt) : task.lastDoneDate ? formatCalendarDate(task.lastDoneDate) : "No done yet"}
+            {task.lastDoneAt ? formatTaskTableEntryTimestamp(task.lastDoneAt) : task.lastDoneDate ? formatCalendarDate(task.lastDoneDate) : "No done yet"}
           </span>
         </div>
       );
@@ -7258,7 +7240,7 @@ export function TaskManagementTableV2({
       return wrapMeasuredContent(
         <div>
           <span className={`${CHIP_BASE} ${lastHandledValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
-            {task.lastHandledAt ? formatEntryTimestamp(task.lastHandledAt) : task.lastHandledDate ? formatCalendarDate(task.lastHandledDate) : "No handled"}
+            {task.lastHandledAt ? formatTaskTableEntryTimestamp(task.lastHandledAt) : task.lastHandledDate ? formatCalendarDate(task.lastHandledDate) : "No handled"}
           </span>
         </div>
       );
@@ -8137,7 +8119,7 @@ export function TaskManagementTableV2({
       return (
         <div>
           <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>
-            {formatEntryTimestamp(item.createdAt)}
+            {formatTaskTableEntryTimestamp(item.createdAt)}
           </span>
         </div>
       );
@@ -8148,7 +8130,7 @@ export function TaskManagementTableV2({
       return (
         <div>
           <span className={`${CHIP_BASE} ${lastDoneValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
-            {item.lastDoneAt ? formatEntryTimestamp(item.lastDoneAt) : item.lastDoneDate ? formatCalendarDate(item.lastDoneDate) : "No done yet"}
+            {item.lastDoneAt ? formatTaskTableEntryTimestamp(item.lastDoneAt) : item.lastDoneDate ? formatCalendarDate(item.lastDoneDate) : "No done yet"}
           </span>
         </div>
       );
@@ -8159,7 +8141,7 @@ export function TaskManagementTableV2({
       return (
         <div>
           <span className={`${CHIP_BASE} ${lastHandledValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
-            {item.lastHandledAt ? formatEntryTimestamp(item.lastHandledAt) : item.lastHandledDate ? formatCalendarDate(item.lastHandledDate) : "No handled"}
+            {item.lastHandledAt ? formatTaskTableEntryTimestamp(item.lastHandledAt) : item.lastHandledDate ? formatCalendarDate(item.lastHandledDate) : "No handled"}
           </span>
         </div>
       );

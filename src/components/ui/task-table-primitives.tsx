@@ -1,5 +1,6 @@
 "use client";
 
+import { Flame } from "lucide-react";
 import type { TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal } from "@/lib/database.types";
 import type { ButtonHTMLAttributes, InputHTMLAttributes } from "react";
 
@@ -25,6 +26,29 @@ export const TASK_TABLE_INACTIVE_CHIP_CLASS = "border border-[#e4deef] bg-[#f4f5
 export const TASK_TABLE_INPUT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_TEXT_CLASS} w-full rounded-[0.95rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-[#2f294a] outline-none placeholder:text-[#9b92be] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/35`;
 export const TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} shrink-0 text-[#7a7592] dark:text-white/58`;
 export const TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} h-[26px] w-[56px] min-w-[56px] max-w-[56px] shrink-0 rounded-full border border-[#e4deef] bg-[#f4f5f8] px-2 text-center text-[#68738c] outline-none transition placeholder:text-[#9b92be] focus:border-[#c9bcff] focus:bg-white focus:text-[#595378] dark:border-white/10 dark:bg-white/8 dark:text-white/60 dark:placeholder:text-white/35 dark:focus:border-[#6d56d6] dark:focus:bg-[#22193f]`;
+export const TASK_TABLE_CURRENT_STREAK_CHIP_CLASS = `${TASK_TABLE_CHIP_BASE_CLASS} gap-1 border-[#ffd8be] bg-[#fff1e7] px-2 text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]`;
+
+export function formatTaskTableEntryTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString([], {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export function TaskCurrentStreakChip({ className, currentStreak }: { className?: string; currentStreak: number }) {
+  if (currentStreak <= 0) return null;
+  return (
+    <span className={joinClasses(TASK_TABLE_CURRENT_STREAK_CHIP_CLASS, className)}>
+      <Flame className="h-3 w-3" />
+      {currentStreak}
+    </span>
+  );
+}
 
 type TaskTableChipButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   toneClassName?: string;
