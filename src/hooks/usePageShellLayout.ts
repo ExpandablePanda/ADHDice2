@@ -34,6 +34,7 @@ import {
 } from "@/lib/page-shell-layout";
 
 export type PageShellLayoutState = {
+  activeViewId: string | null;
   beginPreview: (layout: PageShellLayoutPreference) => void;
   applyView: (viewId: string) => void;
   canEdit: boolean;
@@ -54,6 +55,7 @@ export type PageShellLayoutState = {
   pageKey: string;
   placements: Record<string, PageShellPlacement>;
   reset: () => void;
+  saveCurrentView: () => PageShellView | null;
   saveView: (name: string, target: PageShellViewTarget) => PageShellView | null;
   setPreviewOrder: (next: SetStateAction<string[]>) => void;
   setPreviewPlacements: (next: SetStateAction<Record<string, PageShellPlacement>>) => void;
@@ -109,6 +111,7 @@ export function usePageShellLayout(
   const [hydratedInstanceKey, setHydratedInstanceKey] = useState<string | null>(null);
   const [editingInstanceKey, setEditingInstanceKey] = useState<string | null>(null);
   const [views, setViews] = useState<PageShellView[]>([]);
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const pendingLegacyViewIdRef = useRef<string | null>(null);
   const canEdit = defaults.length >= 1;
   const canResize = defaults.length >= 1;
@@ -122,6 +125,7 @@ export function usePageShellLayout(
       previewRef.current = null;
       pendingLegacyViewIdRef.current = null;
       setPreviewLayout(null);
+      setActiveViewId(null);
       if (!storageKey || typeof window === "undefined") {
         setCommittedLayout(defaultLayout);
         setHasCustomLayoutPreference(false);
@@ -237,6 +241,7 @@ export function usePageShellLayout(
     previewRef.current = null;
     pendingLegacyViewIdRef.current = null;
     setPreviewLayout(null);
+    setActiveViewId(null);
     setCommittedLayout(clonePageShellLayout(defaultLayout));
     setHasCustomLayoutPreference(false);
     if (storageKey && typeof window !== "undefined") {
@@ -257,21 +262,43 @@ export function usePageShellLayout(
       target,
       viewport: getCurrentPageShellViewport(),
     });
+    setActiveViewId(view.id);
     setViews((current) => [view, ...current.filter((candidate) => candidate.id !== view.id)]);
     if (viewsStorageKey && typeof window !== "undefined") writePageShellView(window.localStorage, viewsStorageKey, view);
     return view;
   }, [activeLayout, isCanonical, pageKey, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes, viewsStorageKey]);
 
+  const saveCurrentView = useCallback(() => {
+    if (!activeViewId) return null;
+    const currentView = views.find((candidate) => candidate.id === activeViewId);
+    if (!currentView) return null;
+    const view = createPageShellView({
+      createdAt: currentView.createdAt,
+      id: currentView.id,
+      layout: normalizePageShellLayout(activeLayout, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes),
+      name: currentView.name,
+      pageKey: currentView.pageKey,
+      presentation: isCanonical ? "canonical" : "custom",
+      target: currentView.target,
+      viewport: getCurrentPageShellViewport(),
+    });
+    setViews((current) => current.map((candidate) => candidate.id === view.id ? view : candidate));
+    if (viewsStorageKey && typeof window !== "undefined") writePageShellView(window.localStorage, viewsStorageKey, view);
+    return view;
+  }, [activeLayout, activeViewId, isCanonical, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes, views, viewsStorageKey]);
+
   const deleteView = useCallback((viewId: string) => {
     if (!views.some((view) => view.id === viewId)) return;
+    if (activeViewId === viewId) setActiveViewId(null);
     setViews((current) => current.filter((view) => view.id !== viewId));
     if (viewsStorageKey && typeof window !== "undefined") removePageShellView(window.localStorage, viewsStorageKey, viewId);
-  }, [views, viewsStorageKey]);
+  }, [activeViewId, views, viewsStorageKey]);
 
   const applyView = useCallback((viewId: string) => {
     const view = views.find((candidate) => candidate.id === viewId);
     if (!view) return;
     const resolved = resolvePageShellViewLayout(view, resolvedCanonicalLayout);
+    setActiveViewId(view.id);
     previewRef.current = null;
     pendingLegacyViewIdRef.current = resolved.presentation === "custom"
       && !isValidPageShellExplicitLayout(resolved.layout, resolvedCanonicalLayout.order)
@@ -298,6 +325,7 @@ export function usePageShellLayout(
 
   return {
     applyView,
+    activeViewId,
     beginPreview,
     canEdit,
     canReorder,
@@ -317,6 +345,7 @@ export function usePageShellLayout(
     pageKey,
     placements: normalizePageShellLayout(activeLayout, resolvedCanonicalLayout.order, resolvedCanonicalLayout.sizes).placements ?? {},
     reset,
+    saveCurrentView,
     saveView,
     setPreviewOrder,
     setPreviewPlacements,

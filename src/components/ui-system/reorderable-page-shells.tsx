@@ -443,24 +443,39 @@ export function PageShellBody({ children, className, ...props }: HTMLAttributes<
 
 export function PageShellLayoutControls({ layout }: { layout: PageShellLayoutState }) {
   const isNativeIosPlatform = useNativeIosPlatform();
-  const [isSaveViewOpen, setIsSaveViewOpen] = useState(false);
+  const [isSaveMenuOpen, setIsSaveMenuOpen] = useState(false);
+  const [isAddViewOpen, setIsAddViewOpen] = useState(false);
   const [isViewsOpen, setIsViewsOpen] = useState(false);
   const [viewName, setViewName] = useState("");
   const [viewTarget, setViewTarget] = useState<"web" | "iphone">("web");
+  const activeView = layout.activeViewId ? layout.views.find((view) => view.id === layout.activeViewId) ?? null : null;
 
   if (!layout.canEdit) return null;
   if (layout.isEditing) {
-    function toggleSaveView() {
+    function toggleSaveMenu() {
       setIsViewsOpen(false);
+      setIsAddViewOpen(false);
       setViewTarget(isNativeIosPlatform ? "iphone" : "web");
-      setIsSaveViewOpen((current) => !current);
+      setIsSaveMenuOpen((current) => !current);
+    }
+
+    function openAddView() {
+      setViewTarget(isNativeIosPlatform ? "iphone" : "web");
+      setIsAddViewOpen(true);
+    }
+
+    function handleSaveCurrentView() {
+      if (!layout.saveCurrentView()) return;
+      setIsSaveMenuOpen(false);
+      setIsAddViewOpen(false);
     }
 
     function handleSaveView(event: FormEvent<HTMLFormElement>) {
       event.preventDefault();
       if (!layout.saveView(viewName, viewTarget)) return;
       setViewName("");
-      setIsSaveViewOpen(false);
+      setIsSaveMenuOpen(false);
+      setIsAddViewOpen(false);
     }
 
     function handleExportLayouts() {
@@ -477,7 +492,8 @@ export function PageShellLayoutControls({ layout }: { layout: PageShellLayoutSta
     }
 
     function handleFinishEditing() {
-      setIsSaveViewOpen(false);
+      setIsSaveMenuOpen(false);
+      setIsAddViewOpen(false);
       setIsViewsOpen(false);
       layout.finishEditing();
     }
@@ -485,32 +501,44 @@ export function PageShellLayoutControls({ layout }: { layout: PageShellLayoutSta
     return (
       <>
         <div className="relative inline-flex">
-          <AdhdChip aria-expanded={isSaveViewOpen} aria-haspopup="dialog" icon={<Save aria-hidden="true" className="h-3.5 w-3.5" />} onClick={toggleSaveView} title="Save View" type="button">
-            Save View
+          <AdhdChip aria-expanded={isSaveMenuOpen} aria-haspopup="menu" icon={<Save aria-hidden="true" className="h-3.5 w-3.5" />} onClick={toggleSaveMenu} title="Save" type="button">
+            Save
           </AdhdChip>
-          {isSaveViewOpen ? (
-            <AdhdDropdownPanel aria-label="Save page layout view" className="grid w-64 gap-3" role="dialog">
-              <form className="grid gap-3" onSubmit={handleSaveView}>
-                <label className="grid gap-1.5">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/45">View name</span>
-                  <input aria-label="View name" autoFocus className={`${TASK_TABLE_INPUT_CLASS} h-8 px-2.5 py-1 text-xs`} onChange={(event) => setViewName(event.target.value)} placeholder="Desktop Food" type="text" value={viewName} />
-                </label>
-                <div className="grid gap-1.5">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/45">Target</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    <AdhdChip onClick={() => setViewTarget("web")} selected={viewTarget === "web"} type="button">Web</AdhdChip>
-                    <AdhdChip onClick={() => setViewTarget("iphone")} selected={viewTarget === "iphone"} type="button">iPhone</AdhdChip>
+          {isSaveMenuOpen ? (
+            <AdhdDropdownPanel aria-label="Save page layout" className="grid w-64 gap-2" role="menu">
+              {isAddViewOpen ? (
+                <form className="grid gap-3" onSubmit={handleSaveView}>
+                  <label className="grid gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/45">View name</span>
+                    <input aria-label="View name" autoFocus className={`${TASK_TABLE_INPUT_CLASS} h-8 px-2.5 py-1 text-xs`} onChange={(event) => setViewName(event.target.value)} placeholder="Desktop Food" type="text" value={viewName} />
+                  </label>
+                  <div className="grid gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/45">Target</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      <AdhdChip onClick={() => setViewTarget("web")} selected={viewTarget === "web"} type="button">Web</AdhdChip>
+                      <AdhdChip onClick={() => setViewTarget("iphone")} selected={viewTarget === "iphone"} type="button">iPhone</AdhdChip>
+                    </div>
                   </div>
-                </div>
-                <AdhdChip disabled={!viewName.trim()} icon={<Save aria-hidden="true" className="h-3.5 w-3.5" />} tone="purple" type="submit">Save</AdhdChip>
-              </form>
+                  <AdhdChip disabled={!viewName.trim()} icon={<Save aria-hidden="true" className="h-3.5 w-3.5" />} tone="purple" type="submit">Add View</AdhdChip>
+                </form>
+              ) : (
+                <>
+                  <AdhdChip aria-label={activeView ? `Save Current View ${activeView.name}` : "Save Current View"} disabled={!activeView} icon={<Save aria-hidden="true" className="h-3.5 w-3.5" />} onClick={handleSaveCurrentView} type="button">
+                    <span className="grid text-left leading-tight">
+                      <span>Save Current View</span>
+                      {activeView ? <span className="text-[10px] font-normal opacity-70">{activeView.name}</span> : null}
+                    </span>
+                  </AdhdChip>
+                  <AdhdChip onClick={openAddView} type="button">Add View</AdhdChip>
+                </>
+              )}
               <AdhdChip aria-label="Export Layouts" icon={<Download aria-hidden="true" className="h-3.5 w-3.5" />} onClick={handleExportLayouts} title="Export Layouts" type="button">Export Layouts</AdhdChip>
             </AdhdDropdownPanel>
           ) : null}
         </div>
         {layout.views.length > 0 ? (
           <div className="relative inline-flex">
-            <AdhdChip aria-expanded={isViewsOpen} aria-haspopup="menu" icon={<ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { setIsSaveViewOpen(false); setIsViewsOpen((current) => !current); }} title="Saved Views" type="button">
+            <AdhdChip aria-expanded={isViewsOpen} aria-haspopup="menu" icon={<ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { setIsSaveMenuOpen(false); setIsViewsOpen((current) => !current); }} title="Saved Views" type="button">
               Views
             </AdhdChip>
             {isViewsOpen ? (
@@ -519,7 +547,10 @@ export function PageShellLayoutControls({ layout }: { layout: PageShellLayoutSta
                 {layout.views.map((view) => (
                   <div className="grid gap-2 rounded-xl border border-[#eee9f8] bg-[#fcfbff] p-2 dark:border-white/10 dark:bg-white/[0.03]" key={view.id}>
                     <div className="flex min-w-0 items-center justify-between gap-2">
-                      <span className="min-w-0 truncate text-xs font-semibold text-[#40385f] dark:text-white/80">{view.name}</span>
+                      <span className="flex min-w-0 items-center gap-1.5 truncate text-xs font-semibold text-[#40385f] dark:text-white/80">
+                        {layout.activeViewId === view.id ? <Check aria-label="Current" className="h-3.5 w-3.5 shrink-0 text-[#6f57f6]" /> : null}
+                        <span className="truncate">{view.name}</span>
+                      </span>
                       <span className="shrink-0 text-[10px] text-[#9188b8] dark:text-white/45">{view.target === "iphone" ? "iPhone" : "Web"}</span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">

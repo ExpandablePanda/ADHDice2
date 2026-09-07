@@ -194,6 +194,7 @@ function staticLayout(isEditing: boolean): PageShellLayoutState {
     },
   };
   return {
+    activeViewId: null,
     applyView: () => undefined,
     beginPreview: () => undefined,
     canEdit: true,
@@ -218,6 +219,7 @@ function staticLayout(isEditing: boolean): PageShellLayoutState {
       regular: { columnStart: 7 },
     },
     reset: () => undefined,
+    saveCurrentView: () => null,
     saveView: () => null,
     setPreviewOrder: () => undefined,
     setPreviewPlacements: () => undefined,
@@ -1957,10 +1959,97 @@ test("short-shell height, Natural, Shrink, and dimension formatting remain intac
 
 test("the edit toolbar keeps direct manipulation controls and removes Column, Slot, and placement UI", () => {
   const markup = renderToStaticMarkup(createElement(PageShellLayoutControls, { layout: staticLayout(true) }));
-  assert.match(markup, /Save View/);
+  assert.match(markup, />Save<\/span>/);
   assert.match(markup, /Reset Layout/);
   assert.doesNotMatch(markup, /Col |Column|Slot|placement|slot/i);
   assert.doesNotMatch(markup, /Center row|Move .* (up|down)/i);
+});
+
+test("7.12.119 tracks saved View association as transient hook state", () => {
+  assert.match(hookSource, /activeViewId: string \| null/);
+  assert.match(hookSource, /useState<string \| null>\(null\)/);
+  assert.match(hookSource, /setActiveViewId\(view\.id\)/);
+  assert.match(hookSource, /setActiveViewId\(null\)/);
+  assert.match(hookSource, /if \(activeViewId === viewId\) setActiveViewId\(null\)/);
+  assert.match(hookSource, /pendingLegacyViewIdRef\.current = resolved\.presentation/);
+  const saveViewStart = hookSource.indexOf("const saveView = useCallback");
+  const saveViewEnd = hookSource.indexOf("const saveCurrentView", saveViewStart);
+  assert.match(hookSource.slice(saveViewStart, saveViewEnd), /setActiveViewId\(view\.id\)/);
+  const applyViewStart = hookSource.indexOf("const applyView = useCallback");
+  const applyViewEnd = hookSource.indexOf("const exportLayouts", applyViewStart);
+  assert.match(hookSource.slice(applyViewStart, applyViewEnd), /setActiveViewId\(view\.id\)/);
+  assert.doesNotMatch(hookSource.slice(hookSource.indexOf("const cancelPreview"), hookSource.indexOf("const commitPreview")), /setActiveViewId/);
+  assert.doesNotMatch(hookSource.slice(hookSource.indexOf("const commitPreview"), hookSource.indexOf("const commitMeasuredRowMigration")), /setActiveViewId/);
+  assert.match(hookSource, /activeViewId,\n    beginPreview/);
+  assert.doesNotMatch(hookSource, /localStorage.*activeViewId|activeViewId.*localStorage/);
+});
+
+test("7.12.119 Save Current View updates the active record without creating a duplicate", () => {
+  assert.match(hookSource, /saveCurrentView: \(\) => PageShellView \| null/);
+  assert.match(hookSource, /const saveCurrentView = useCallback\(\(\) => \{/);
+  assert.match(hookSource, /if \(!activeViewId\) return null/);
+  assert.match(hookSource, /const currentView = views\.find\(\(candidate\) => candidate\.id === activeViewId\)/);
+  assert.match(hookSource, /createdAt: currentView\.createdAt/);
+  assert.match(hookSource, /id: currentView\.id/);
+  assert.match(hookSource, /name: currentView\.name/);
+  assert.match(hookSource, /target: currentView\.target/);
+  assert.match(hookSource, /presentation: isCanonical \? "canonical" : "custom"/);
+  assert.match(hookSource, /viewport: getCurrentPageShellViewport\(\)/);
+  assert.match(hookSource, /setViews\(\(current\) => current\.map\(\(candidate\) => candidate\.id === view\.id \? view : candidate\)\)/);
+  assert.match(hookSource, /writePageShellView\(window\.localStorage, viewsStorageKey, view\)/);
+  assert.match(hookSource, /return view;/);
+});
+
+test("7.12.119 View persistence replaces an existing ID in place and keeps Add View ordering", () => {
+  const store = storage();
+  const key = getPageShellViewsStorageKey("user-view-update");
+  const layout = canonicalEditLayout(HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS.Water);
+  const view = (id: string, createdAt: string, name: string, columnStart: number) => createPageShellView({
+    createdAt,
+    id,
+    layout: { ...layout, placements: { ...layout.placements, "water-log": { columnStart } } },
+    name,
+    pageKey: "health:water",
+    presentation: "custom",
+    target: "web",
+    viewport: { height: 900, width: 1440 },
+  });
+  writePageShellView(store, key, view("view-a", "2026-09-06T12:00:00.000Z", "A", 1));
+  writePageShellView(store, key, view("view-b", "2026-09-06T11:00:00.000Z", "B", 4));
+  writePageShellView(store, key, view("view-c", "2026-09-06T10:00:00.000Z", "C", 7));
+  writePageShellView(store, key, view("view-b", "2026-09-06T11:00:00.000Z", "B", 6));
+  const saved = readPageShellViews(store, key, "health:water");
+  assert.deepEqual(saved.map((candidate) => candidate.id), ["view-a", "view-b", "view-c"]);
+  assert.equal(saved[1]?.layout?.placements?.["water-log"]?.columnStart, 6);
+  assert.equal(saved[1]?.name, "B");
+  assert.equal(saved[1]?.target, "web");
+  assert.equal(saved[1]?.createdAt, "2026-09-06T11:00:00.000Z");
+  assert.deepEqual(saved[1]?.viewport, { height: 900, width: 1440 });
+  assert.equal(saved.length, 3);
+  assert.match(layoutSource, /const existingIndex = views\.findIndex\(\(candidate\) => candidate\.id === view\.id\)/);
+});
+
+test("7.12.119 Save menu separates current updates from Add View and keeps the existing form fields", () => {
+  assert.match(shellSource, /Save Current View/);
+  assert.match(shellSource, /Add View/);
+  assert.match(shellSource, /Export Layouts/);
+  assert.match(shellSource, /disabled=\{!activeView\}/);
+  assert.match(shellSource, /aria-label=\{activeView \? `Save Current View \$\{activeView\.name\}` : "Save Current View"\}/);
+  assert.match(shellSource, /aria-label="View name"/);
+  assert.match(shellSource, />Web<\/AdhdChip>/);
+  assert.match(shellSource, />iPhone<\/AdhdChip>/);
+  assert.match(shellSource, /onSubmit=\{handleSaveView\}/);
+  assert.match(shellSource, /layout\.saveCurrentView\(\)/);
+});
+
+test("7.12.119 keeps View migration, export, and storage schemas unchanged", () => {
+  assert.match(hookSource, /commitMeasuredRowMigration/);
+  assert.match(hookSource, /writePageShellView\(window\.localStorage, viewsStorageKey, migratedView\)/);
+  assert.match(hookSource, /savedViews: viewsStorageKey && typeof window !== "undefined" \? undefined : views/);
+  assert.equal(PAGE_SHELL_VIEWS_SCHEMA_VERSION, 1);
+  assert.equal(PAGE_SHELL_EXPORT_SCHEMA_VERSION, 1);
+  assert.doesNotMatch(layoutSource, /updatedAt/);
+  assert.doesNotMatch(layoutSource, /activeViewId/);
 });
 
 test("editable shell toolbars render all four directional controls inside the scrollable tools", () => {

@@ -4033,8 +4033,11 @@ export function createPageShellView(input: Omit<PageShellView, "id"> & { id?: st
 
 export function writePageShellView(storage: PageShellLayoutStorage, storageKey: string, view: PageShellView) {
   try {
-    const views = readStoredPageShellViews(storage, storageKey).filter((candidate) => candidate.id !== view.id);
-    views.unshift(createPageShellView(view));
+    const views = readStoredPageShellViews(storage, storageKey);
+    const nextView = createPageShellView(view);
+    const existingIndex = views.findIndex((candidate) => candidate.id === view.id);
+    if (existingIndex >= 0) views[existingIndex] = nextView;
+    else views.unshift(nextView);
     storage.setItem(storageKey, JSON.stringify({ version: PAGE_SHELL_VIEWS_SCHEMA_VERSION, views }));
   } catch {
     // Saved views remain available in memory when storage is unavailable.

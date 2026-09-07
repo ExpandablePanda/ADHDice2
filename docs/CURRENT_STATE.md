@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.118`.
+- Current working app version: `7.12.119`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.119 Saved View Editing
+
+Saved Views now distinguish `Add View` from `Save Current View`. Applying or
+creating a View establishes a transient `activeViewId` for the current session;
+editing the layout does not clear that association. `Save Current View`
+overwrites the same View ID, preserving its name, target, and `createdAt` while
+refreshing the current layout or canonical/custom presentation and viewport.
+Reset and deletion of the active View clear the association; deleting another
+View does not. Measured legacy View migration continues updating the same ID.
+
+The active selection is intentionally session-only. Saved-View schema version,
+storage keys, persistence and export format remain unchanged, and no SQL/schema
+change is involved. The existing shell interaction engine (semantic rows,
+packing, drag, resize, arrows, and migration architecture) is unchanged.
 
 ## 2026-09-06 7.12.118 Sticky Semantic-Row Ownership During Shell Dragging
 
