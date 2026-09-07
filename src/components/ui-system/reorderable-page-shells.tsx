@@ -10,6 +10,7 @@ import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 import {
   getPageShellDropTarget,
   getPageShellDragAutoScrollDelta,
+  getPageShellDragGrid,
   getPageShellGridColumnGeometry,
   isPageShellCenteredPlacement,
   clampPageShellHeight,
@@ -36,6 +37,7 @@ import {
   type PageShellPackedPosition,
   type PageShellGeometry,
   type PageShellGridBounds,
+  type PageShellDragGrid,
   type PageShellCanonicalGroup,
   type PageShellLayoutPreference,
   type PageShellDropTarget,
@@ -73,6 +75,8 @@ type ShellMoveInteraction = {
   pointerY: number;
   referenceGeometries: PageShellGeometry[];
   referenceChromeHeightPx: number;
+  referenceContainerLeft: number;
+  referenceContainerTop: number;
   referenceGridBounds?: PageShellGridBounds;
   referenceNaturalHeights: Record<string, number>;
   referencePackedPositions: Record<string, PageShellPackedPosition>;
@@ -122,6 +126,8 @@ type PageShellInsertionIndicatorStyle = {
 };
 
 type PageShellDragIndicator = {
+  grid?: PageShellDragGrid | null;
+  gridOrigin?: { left: number; top: number };
   horizontalRuler?: PageShellHorizontalRuler | null;
   relationship: PageShellDropRelationship | "centered";
   style: PageShellInsertionIndicatorStyle | null;
@@ -770,7 +776,11 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   function captureMoveReferenceFrame() {
     const referenceVisibleOrder = projectVisiblePageShellOrder(layout.order, visibleShellIds);
     const referenceChromeHeightPx = layout.isEditing ? 32 : 0;
+    const containerRect = layoutRef.current?.getBoundingClientRect();
+    const scrollTop = getPageScrollTop();
     return {
+      referenceContainerLeft: containerRect?.left ?? 0,
+      referenceContainerTop: (containerRect?.top ?? 0) + scrollTop,
       referenceChromeHeightPx,
       referenceGeometries: captureShellGeometry(),
       referenceGridBounds: captureShellGridBounds(),
@@ -782,6 +792,27 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       referenceNaturalHeights: { ...naturalHeights },
       referenceVisibleOrder,
     };
+  }
+
+  function getDragGrid(
+    interaction: ShellMoveInteraction,
+    target?: PageShellDropTarget,
+    candidateValid = false,
+  ) {
+    if (!interaction.referenceGridBounds) return null;
+    return getPageShellDragGrid({
+      candidateValid,
+      chromeHeightPx: interaction.referenceChromeHeightPx,
+      geometries: interaction.referenceGeometries,
+      gridBounds: interaction.referenceGridBounds,
+      naturalHeights: interaction.referenceNaturalHeights,
+      order: interaction.referenceVisibleOrder,
+      packedPositions: interaction.referencePackedPositions,
+      placements: interaction.startLayout.placements,
+      sizes: interaction.startLayout.sizes,
+      sourceId: interaction.id,
+      target,
+    });
   }
 
   function updateMovePreview(interaction: ShellMoveInteraction, pointerX: number, pointerY: number) {
@@ -827,6 +858,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     setDragMovePlan(plan);
     setDragIndicator({
       ...getInsertionIndicatorStyle(interaction, dropTarget.insertionIndex, layoutRef.current, dropTarget),
+      grid: getDragGrid(interaction, dropTarget, plan.valid),
+      gridOrigin: { left: interaction.referenceContainerLeft, top: interaction.referenceContainerTop },
       horizontalRuler: getHorizontalRuler(interaction, dropTarget, layoutRef.current, plan.valid),
       verticalRuler: getDetentRuler(interaction, dropTarget, layoutRef.current, plan.valid),
       valid: plan.valid,
@@ -968,6 +1001,8 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       pointerY: event.clientY,
       referenceGeometries: referenceFrame.referenceGeometries,
       referenceChromeHeightPx: referenceFrame.referenceChromeHeightPx,
+      referenceContainerLeft: referenceFrame.referenceContainerLeft,
+      referenceContainerTop: referenceFrame.referenceContainerTop,
       referenceGridBounds: referenceFrame.referenceGridBounds,
       referenceNaturalHeights: referenceFrame.referenceNaturalHeights,
       referencePackedPositions: referenceFrame.referencePackedPositions,
@@ -983,13 +1018,25 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     };
     interactionRef.current = moveInteraction;
     layout.beginPreview(startLayout);
+    const initialTarget: PageShellDropTarget = {
+      columnStart: sourcePlacement.columnStart,
+      destinationRowIndex: sourcePlacement.rowIndex,
+      insertionIndex: Math.max(0, startVisibleOrder.indexOf(id)),
+      laneOrder: 0,
+      rowOffsetSteps: getPageShellPlacementRowOffsetSteps(sourcePlacement),
+      targetId: null,
+    };
     setDraggingId(id);
     setDragMoveWarning(null);
     setDragMovePlan(null);
     setDragStartVisibleOrder(startVisibleOrder);
     setDragInsertionIndex(Math.max(0, startVisibleOrder.indexOf(id)));
-    setDragDropTarget(null);
-    setDragIndicator(getInsertionIndicatorStyle(moveInteraction, moveInteraction.targetIndex, layoutRef.current));
+    setDragDropTarget(initialTarget);
+    setDragIndicator({
+      ...getInsertionIndicatorStyle(moveInteraction, moveInteraction.targetIndex, layoutRef.current),
+      grid: getDragGrid(moveInteraction, initialTarget, true),
+      gridOrigin: { left: moveInteraction.referenceContainerLeft, top: moveInteraction.referenceContainerTop },
+    });
     setPointerCaptureSafely(event.currentTarget, event.pointerId);
   }
 
@@ -1471,6 +1518,11 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     );
   }
 
+  const dragGrid = draggingId ? dragIndicator?.grid : null;
+  const dragGridOrigin = dragIndicator?.gridOrigin;
+  const dragGridLeft = dragGrid && dragGridOrigin ? dragGrid.bounds.left - dragGridOrigin.left : 0;
+  const dragGridTop = dragGridOrigin?.top ?? 0;
+
   return (
     <div
       className={`${shellsClassName.replace(/\bxl:grid-cols-12\b/g, "").trim()} ${usePackedPlacement ? "xl:grid-cols-12 page-shell-packed" : layout.canonicalLayout.gridClassName ?? ""} relative`.trim()}
@@ -1485,6 +1537,120 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
           {group.shells.map(renderShell)}
         </div>
       )) : orderedShells.map(renderShell)}
+      {dragGrid ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-20 overflow-visible"
+          data-page-shell-drag-grid
+          data-page-shell-drag-grid-valid={dragGrid.candidateRect?.valid ? "true" : dragGrid.candidateRect ? "false" : undefined}
+        >
+          {dragGrid.availableRegions.map((region) => (
+            <div
+              className="absolute rounded-xl border border-[#8f7bf6]/20 bg-[#8f7bf6]/[0.045] dark:border-[#a99bff]/20 dark:bg-[#a99bff]/[0.06]"
+              data-page-shell-drag-row-available={region.rowIndex}
+              key={`page-shell-drag-row-available-${region.rowIndex}`}
+              style={{
+                height: Math.max(1, region.bottom - region.top),
+                left: region.left - (dragGridOrigin?.left ?? 0),
+                top: region.top - dragGridTop,
+                width: region.right - region.left,
+              }}
+            />
+          ))}
+          {dragGrid.rows.map((row) => (
+            <div
+              className="absolute border-t border-dashed border-[#6f57f6]/35 dark:border-[#cabfff]/30"
+              data-page-shell-drag-row={row.rowIndex}
+              key={`page-shell-drag-row-${row.rowIndex}`}
+              style={{
+                left: dragGridLeft,
+                top: row.top - dragGridTop,
+                width: dragGrid.bounds.width,
+              }}
+            >
+              <span className="absolute -top-4 left-1 rounded bg-[#faf8ff]/90 px-1 text-[9px] font-semibold text-[#6f57f6] dark:bg-[#211a38]/90 dark:text-[#cabfff]">Row {row.rowIndex + 1}</span>
+            </div>
+          ))}
+          {dragGrid.columns.map((column) => (
+            <span
+              className="absolute border-l border-dashed border-[#6f57f6]/20 dark:border-[#cabfff]/20"
+              data-page-shell-drag-column={column.column}
+              key={`page-shell-drag-column-${column.column}`}
+              style={{
+                height: Math.max(1, dragGrid.availableRegions.reduce((bottom, region) => Math.max(bottom, region.bottom), 0) - Math.min(...dragGrid.rows.map((row) => row.top), 0)),
+                left: column.left - (dragGridOrigin?.left ?? 0),
+                top: Math.min(...dragGrid.rows.map((row) => row.top), 0) - dragGridTop,
+              }}
+            />
+          ))}
+          {dragGrid.candidateRect ? [-2, -1, 0, 1, 2].map((delta) => (
+            <span
+              className={`absolute border-t border-dashed ${delta === 0 ? "border-[#6f57f6]/65 dark:border-[#cabfff]/65" : "border-[#6f57f6]/25 dark:border-[#cabfff]/25"}`}
+              data-page-shell-drag-detent={dragGrid.candidateRect.rowOffsetSteps + delta}
+              key={`page-shell-drag-detent-${delta}`}
+              style={{
+                left: dragGridLeft,
+                top: dragGrid.candidateRect.top - dragGridTop + delta * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX,
+                width: dragGrid.bounds.width,
+              }}
+            />
+          )) : null}
+          {dragGrid.occupiedRects.map((rect) => (
+            <div
+              className="absolute rounded-lg border border-slate-400/35 bg-slate-500/[0.045] dark:border-slate-300/25 dark:bg-slate-300/[0.045]"
+              data-page-shell-drag-occupied={rect.id}
+              key={`page-shell-drag-occupied-${rect.id}`}
+              style={{
+                height: Math.max(1, rect.bottom - rect.top),
+                left: rect.left - (dragGridOrigin?.left ?? 0),
+                top: rect.top - dragGridTop,
+                width: Math.max(1, rect.right - rect.left),
+              }}
+            />
+          ))}
+          {dragGrid.newRowZones.map((zone) => {
+            const active = dragDropTarget?.newRow
+              && dragDropTarget.relationship === (zone.position === "below" ? "after" : "before")
+              && dragDropTarget.destinationRowIndex === zone.anchorRowIndex;
+            return (
+              <div
+                className={`absolute flex items-center justify-center rounded-lg border ${active ? "border-[#3c82c4] bg-[#3c82c4]/20 text-[#23669e] shadow-[0_0_0_3px_rgba(60,130,196,0.14)] dark:border-[#8bc4f4] dark:bg-[#8bc4f4]/20 dark:text-[#c1e2ff]" : "border-[#5b9bd5]/55 bg-[#5b9bd5]/[0.09] text-[#3975ab] dark:border-[#8bc4f4]/50 dark:bg-[#8bc4f4]/[0.10] dark:text-[#b9dcfb]"}`}
+                data-page-shell-new-row-zone={zone.position}
+                data-page-shell-new-row-active={active ? "true" : "false"}
+                key={`page-shell-new-row-zone-${zone.position}-${zone.insertionRowIndex}`}
+                style={{
+                  left: dragGridLeft,
+                  top: zone.top - dragGridTop,
+                  width: dragGrid.bounds.width,
+                  height: Math.max(1, zone.bottom - zone.top),
+                }}
+              >
+                <span className="rounded-full bg-white/75 px-2 py-0.5 text-[10px] font-semibold shadow-sm dark:bg-[#211a38]/80">+ New Row {zone.position === "above" ? "above" : zone.position === "below" ? "below" : "here"}</span>
+              </div>
+            );
+          })}
+          {dragGrid.candidateRect ? (
+            <div
+              className={`absolute rounded-xl border-2 ${dragGrid.candidateRect.valid ? "border-[#6f57f6] bg-[#6f57f6]/20 shadow-[0_0_0_3px_rgba(111,87,246,0.16)] dark:border-[#b5a9ff] dark:bg-[#a99bff]/20" : "border-[#d65775] bg-[#d65775]/18 shadow-[0_0_0_3px_rgba(214,87,117,0.16)] dark:border-[#ffb0c1] dark:bg-[#ffb0c1]/20"}`}
+              data-page-shell-drag-candidate
+              data-page-shell-drag-candidate-column={dragGrid.candidateRect.columnStart}
+              data-page-shell-drag-candidate-offset={dragGrid.candidateRect.rowOffsetSteps}
+              data-page-shell-drag-candidate-row={dragGrid.candidateRect.rowIndex}
+              data-page-shell-drag-candidate-valid={dragGrid.candidateRect.valid ? "true" : "false"}
+              style={{
+                height: Math.max(1, dragGrid.candidateRect.bottom - dragGrid.candidateRect.top),
+                left: dragGrid.candidateRect.left - (dragGridOrigin?.left ?? 0),
+                top: dragGrid.candidateRect.top - dragGridTop,
+                width: Math.max(1, dragGrid.candidateRect.right - dragGrid.candidateRect.left),
+              }}
+            >
+              <span className="absolute -top-5 left-1 rounded bg-current px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white shadow-sm">
+                {dragGrid.candidateRect.valid ? "Drop here" : "Blocked"}
+              </span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {draggingId && dragIndicator?.horizontalRuler ? (
         <div
           aria-hidden="true"

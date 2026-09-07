@@ -587,6 +587,8 @@ export type PageShellDropTarget = {
   /** Transient toolbar intent for a standalone structural row move. */
   structuralRow?: "above" | "below";
   targetId: string | null;
+  /** True only for a visible explicit new-row insertion zone. */
+  newRow?: boolean;
 };
 
 export type PageShellMoveFailureReason =
@@ -629,6 +631,64 @@ export type PageShellGridColumnGeometry = {
   width: number;
 };
 
+export type PageShellDragGridRect = {
+  bottom: number;
+  id?: string;
+  left: number;
+  right: number;
+  rowIndex?: number;
+  rowOffsetSteps?: number;
+  top: number;
+};
+
+export type PageShellDragGridRow = {
+  availableBottom: number;
+  bottom: number;
+  rowIndex: number;
+  shellIds: string[];
+  top: number;
+};
+
+export type PageShellDragGridNewRowZone = {
+  anchorRowIndex?: number;
+  bottom: number;
+  insertionIndex: number;
+  insertionRowIndex: number;
+  kind: "new-row";
+  position: "above" | "between" | "below";
+  top: number;
+};
+
+export type PageShellDragGridCandidate = PageShellDragGridRect & {
+  columnStart: number;
+  span: PageShellSpan;
+  valid: boolean;
+};
+
+export type PageShellDragGrid = {
+  availableRegions: PageShellDragGridRect[];
+  bounds: PageShellGridBounds;
+  candidateRect: PageShellDragGridCandidate | null;
+  columns: Array<PageShellGridColumnGeometry & { column: number }>;
+  newRowZones: PageShellDragGridNewRowZone[];
+  occupiedRects: PageShellDragGridRect[];
+  rows: PageShellDragGridRow[];
+};
+
+export type PageShellDragGridInput = {
+  candidateValid?: boolean;
+  chromeHeightPx?: number;
+  geometries: readonly PageShellGeometry[];
+  gridBounds: PageShellGridBounds;
+  naturalHeights?: Readonly<Record<string, number>>;
+  order: readonly string[];
+  packedPositions: Readonly<Record<string, PageShellPackedPosition>>;
+  placements?: Readonly<Record<string, PageShellPlacement>>;
+  sizes?: Readonly<Record<string, PageShellSize>>;
+  sourceId?: string;
+  target?: PageShellDropTarget;
+};
+
 export const PAGE_SHELL_POINTER_HYSTERESIS_PX = 8;
 export const PAGE_SHELL_DRAG_AXIS_LOCK_PX = 12;
 export const PAGE_SHELL_DRAG_AXIS_SWITCH_PX = 20;
@@ -642,6 +702,9 @@ export const PAGE_SHELL_DROP_ZONE_HYSTERESIS_PX = 12;
 export const PAGE_SHELL_DROP_TARGET_PROXIMITY_PX = 32;
 export const PAGE_SHELL_DROP_ZONE_EDGE_RATIO = 0.24;
 export const PAGE_SHELL_VERTICAL_ALIGNMENT_MAGNET_PX = 8;
+export const PAGE_SHELL_VERTICAL_MAGNET_ZONE_PX = 24;
+export const PAGE_SHELL_NEW_ROW_ZONE_HEIGHT_PX = 32;
+export const PAGE_SHELL_NEW_ROW_ZONE_GAP_PX = 4;
 export const PAGE_SHELL_DRAG_AUTO_SCROLL_EDGE_PX = 80;
 export const PAGE_SHELL_DRAG_AUTO_SCROLL_MAX_PX = 18;
 export const PAGE_SHELL_PACKING_GAP_PX = 20;
@@ -862,6 +925,26 @@ export function getPageShellVerticalOffsetSteps(
     Math.abs(safeIntendedTop - (safeNormalTop + steps * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX)) <= PAGE_SHELL_VERTICAL_ALIGNMENT_MAGNET_PX
   ));
   return magneticStep === undefined ? normalizePageShellRowOffsetSteps(regularSteps) : magneticStep;
+}
+
+/** Returns the first snapped offset whose shell clears a target by the normal gap. */
+export function getPageShellImmediateVerticalMagnetOffsetSteps(
+  direction: "above" | "below",
+  targetBoundary: number,
+  rowTop: number,
+  sourceHeight: number,
+  gapPx = PAGE_SHELL_PACKING_GAP_PX,
+) {
+  const safeTargetBoundary = Number.isFinite(targetBoundary) ? targetBoundary : rowTop;
+  const safeRowTop = Number.isFinite(rowTop) ? rowTop : 0;
+  const safeSourceHeight = Number.isFinite(sourceHeight) ? Math.max(0, sourceHeight) : 0;
+  const safeGap = Number.isFinite(gapPx) ? Math.max(0, gapPx) : PAGE_SHELL_PACKING_GAP_PX;
+  const desiredTop = direction === "below"
+    ? safeTargetBoundary + safeGap
+    : safeTargetBoundary - safeGap - safeSourceHeight;
+  const rawSteps = (desiredTop - safeRowTop) / PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX;
+  const snappedSteps = direction === "below" ? Math.ceil(rawSteps) : Math.floor(rawSteps);
+  return normalizePageShellRowOffsetSteps(snappedSteps);
 }
 
 function verticalOverlap(left: PageShellGeometry, right: PageShellGeometry) {
@@ -1680,6 +1763,195 @@ function getPageShellExplicitRowGeometry(
   };
 }
 
+function getPageShellDragGridRows(
+  input: PageShellDragGridInput,
+): PageShellDragGridRow[] {
+  const layout = { order: [...input.order], placements: input.placements };
+  const explicitRows = hasCompletePageShellRows(layout, input.order)
+    ? getPageShellExplicitRows(layout, input.order)
+    : getPageShellStructuralRows(input.order, layout, input.packedPositions).map((row, rowIndex) => ({
+        rowIndex,
+        shellIds: row.ids,
+      }));
+  return explicitRows.flatMap((row) => {
+    const geometry = getPageShellExplicitRowGeometry(row, input.geometries);
+    if (!geometry) return [];
+    return [{ ...geometry, availableBottom: geometry.bottom, rowIndex: row.rowIndex, shellIds: [...row.shellIds] }];
+  });
+}
+
+function getPageShellDragGridNewRowZones(
+  rows: readonly PageShellDragGridRow[],
+  order: readonly string[],
+  sourceId?: string,
+  sourceHeight = 0,
+) {
+  if (rows.length === 0) return [];
+  const visibleWithoutSource = order.filter((id) => id !== sourceId);
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  const rowStartIndex = (row: PageShellDragGridRow) => {
+    const firstId = row.shellIds.find((id) => id !== sourceId);
+    const index = firstId ? visibleWithoutSource.indexOf(firstId) : -1;
+    return index < 0 ? visibleWithoutSource.length : index;
+  };
+  const zones: PageShellDragGridNewRowZone[] = [{
+    anchorRowIndex: first.rowIndex,
+    bottom: first.top - PAGE_SHELL_NEW_ROW_ZONE_GAP_PX,
+    insertionIndex: 0,
+    insertionRowIndex: 0,
+    kind: "new-row",
+    position: "above",
+    top: first.top - PAGE_SHELL_NEW_ROW_ZONE_HEIGHT_PX - PAGE_SHELL_NEW_ROW_ZONE_GAP_PX,
+  }];
+  for (let index = 0; index < rows.length - 1; index += 1) {
+    const current = rows[index];
+    const next = rows[index + 1];
+    const separatorHeight = next.top - current.bottom;
+    const height = Math.max(20, Math.min(PAGE_SHELL_NEW_ROW_ZONE_HEIGHT_PX, separatorHeight - PAGE_SHELL_NEW_ROW_ZONE_GAP_PX * 2));
+    const center = (current.bottom + next.top) / 2;
+    zones.push({
+      anchorRowIndex: next.rowIndex,
+      bottom: center + height / 2,
+      insertionIndex: rowStartIndex(next),
+      insertionRowIndex: index + 1,
+      kind: "new-row",
+      position: "between",
+      top: center - height / 2,
+    });
+  }
+  zones.push({
+    anchorRowIndex: last.rowIndex,
+    bottom: last.bottom
+      + PAGE_SHELL_NEW_ROW_ZONE_GAP_PX
+      + Math.max(PAGE_SHELL_NEW_ROW_ZONE_HEIGHT_PX, sourceHeight + PAGE_SHELL_NEW_ROW_ZONE_GAP_PX)
+      + PAGE_SHELL_NEW_ROW_ZONE_HEIGHT_PX,
+    insertionIndex: visibleWithoutSource.length,
+    insertionRowIndex: rows.length,
+    kind: "new-row",
+    position: "below",
+    top: last.bottom
+      + PAGE_SHELL_NEW_ROW_ZONE_GAP_PX
+      + Math.max(PAGE_SHELL_NEW_ROW_ZONE_HEIGHT_PX, sourceHeight + PAGE_SHELL_NEW_ROW_ZONE_GAP_PX),
+  });
+  return zones;
+}
+
+function getPageShellDragGridSourceHeight(
+  input: PageShellDragGridInput,
+) {
+  const sourceGeometry = input.sourceId
+    ? input.geometries.find((geometry) => geometry.id === input.sourceId)
+    : undefined;
+  if (sourceGeometry && sourceGeometry.bottom > sourceGeometry.top) return sourceGeometry.bottom - sourceGeometry.top;
+  const sourceSize = input.sourceId ? input.sizes?.[input.sourceId] : undefined;
+  if (!sourceSize) return PAGE_SHELL_MIN_HEIGHT;
+  return Math.max(1, getPageShellExplicitRowSpan(sourceSize, {
+    chromeHeightPx: input.chromeHeightPx,
+    gapPx: PAGE_SHELL_PACKING_GAP_PX,
+    naturalHeight: input.naturalHeights?.[input.sourceId ?? ""],
+  }) * PAGE_SHELL_PACKING_ROW_UNIT_PX - PAGE_SHELL_PACKING_GAP_PX);
+}
+
+/** Builds the transient visual drag model from frozen runtime geometry. */
+export function getPageShellDragGrid(input: PageShellDragGridInput): PageShellDragGrid {
+  const rows = getPageShellDragGridRows(input);
+  const sourceHeight = getPageShellDragGridSourceHeight(input);
+  const newRowZones = getPageShellDragGridNewRowZones(rows, input.order, input.sourceId, sourceHeight);
+  const rowForPlacement = (rowIndex: number | undefined) => rows.find((row) => row.rowIndex === rowIndex);
+  const sourcePlacement = input.sourceId ? input.placements?.[input.sourceId] : undefined;
+  const sourceSpan = input.sourceId
+    ? input.packedPositions[input.sourceId]?.columnSpan ?? input.sizes?.[input.sourceId]?.span ?? PAGE_SHELL_OPTIONS_LAST
+    : PAGE_SHELL_OPTIONS_LAST;
+  const targetRowIndex = input.target?.destinationRowIndex
+    ?? normalizePageShellRowIndex(sourcePlacement?.rowIndex);
+  const resolvedTargetZone = input.target?.newRow
+    ? newRowZones.find((zone) => (
+      input.target?.relationship === "after"
+        ? zone.position === "below"
+        : zone.anchorRowIndex === input.target?.destinationRowIndex
+    ))
+    : undefined;
+  const candidateRowIndex = resolvedTargetZone?.insertionRowIndex ?? targetRowIndex;
+  const candidateRow = rowForPlacement(targetRowIndex);
+  const candidateColumnStart = input.target?.columnStart
+    ?? normalizePageShellPlacement(sourcePlacement, sourceSpan).columnStart;
+  const candidateColumn = getPageShellGridColumnGeometry(input.gridBounds, candidateColumnStart, sourceSpan);
+  const candidateTop = resolvedTargetZone
+    ? resolvedTargetZone.insertionRowIndex > 0
+      ? (rows[resolvedTargetZone.insertionRowIndex - 1]?.bottom ?? resolvedTargetZone.top) + PAGE_SHELL_PACKING_GAP_PX
+      : rows[0]?.top ?? resolvedTargetZone.top
+    : candidateRow
+      ? candidateRow.top + normalizePageShellRowOffsetSteps(input.target?.rowOffsetSteps) * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX
+      : undefined;
+  const occupiedRects = input.geometries.flatMap((geometry) => {
+    if (geometry.id === input.sourceId) return [];
+    const placement = input.placements?.[geometry.id];
+    const packedPosition = input.packedPositions[geometry.id];
+    const span = packedPosition?.columnSpan ?? input.sizes?.[geometry.id]?.span;
+    if (!span) return [];
+    const columnStart = placement?.mode === "centered" && span % 2 === 1
+      ? getPageShellCenteredColumnStart(span)
+      : placement?.columnStart ?? packedPosition?.columnStart;
+    const column = columnStart === undefined
+      ? null
+      : getPageShellGridColumnGeometry(input.gridBounds, columnStart, span);
+    if (!column) return [];
+    const rowIndex = normalizePageShellRowIndex(placement?.rowIndex)
+      ?? rows.find((row) => row.shellIds.includes(geometry.id))?.rowIndex;
+    return [{
+      bottom: geometry.bottom,
+      id: geometry.id,
+      left: column.left,
+      right: column.left + column.width,
+      rowIndex,
+      top: geometry.top,
+    }];
+  });
+  const availableRegions = rows.map((row, index) => {
+    const next = rows[index + 1];
+    const nextZone = next
+      ? newRowZones.find((zone) => zone.position === "between" && zone.anchorRowIndex === next.rowIndex)
+      : newRowZones.find((zone) => zone.position === "below");
+    const availableBottom = nextZone
+      ? Math.max(row.bottom, nextZone.top - PAGE_SHELL_NEW_ROW_ZONE_GAP_PX)
+      : row.bottom + Math.max(PAGE_SHELL_NEW_ROW_ZONE_HEIGHT_PX, sourceHeight + PAGE_SHELL_PACKING_GAP_PX);
+    row.availableBottom = availableBottom;
+    return {
+      bottom: availableBottom,
+      left: input.gridBounds.left,
+      right: input.gridBounds.left + input.gridBounds.width,
+      rowIndex: row.rowIndex,
+      top: row.top,
+    };
+  });
+  const candidateRect = input.target && candidateColumn && candidateTop !== undefined
+    ? {
+        bottom: candidateTop + sourceHeight,
+        columnStart: candidateColumnStart,
+        left: candidateColumn.left,
+        right: candidateColumn.left + candidateColumn.width,
+        rowIndex: candidateRowIndex,
+        rowOffsetSteps: input.target.newRow ? 0 : normalizePageShellRowOffsetSteps(input.target.rowOffsetSteps),
+        span: sourceSpan,
+        top: candidateTop,
+        valid: input.candidateValid === true,
+      }
+    : null;
+  return {
+    availableRegions,
+    bounds: input.gridBounds,
+    candidateRect,
+    columns: Array.from({ length: 12 }, (_, index) => {
+      const column = getPageShellGridColumnGeometry(input.gridBounds, index + 1, 1);
+      return { column: index + 1, left: column?.left ?? input.gridBounds.left, width: column?.width ?? 0 };
+    }),
+    newRowZones,
+    occupiedRects,
+    rows,
+  };
+}
+
 function getPageShellHorizontalGeometryOverlap(
   left: { left: number; right: number },
   right: { left: number; right: number },
@@ -1687,13 +1959,8 @@ function getPageShellHorizontalGeometryOverlap(
   return Math.max(0, Math.min(left.right, right.right) - Math.max(left.left, right.left));
 }
 
-/**
- * Finds a bounded continuation below an existing semantic row. The row owns
- * the target only when the snapped X footprint overlaps a shell in that row;
- * the next real row's midpoint (or a source-height-sized final continuation)
- * is the corridor boundary.
- */
-function getPageShellStackingCorridor(
+/** Finds a direct under/above target without changing semantic-row ownership. */
+function getPageShellDirectVerticalMagnet(
   rows: readonly PageShellExplicitRow[],
   geometries: readonly PageShellGeometry[],
   sourceId: string,
@@ -1708,42 +1975,47 @@ function getPageShellStackingCorridor(
   if (!candidate || !Number.isFinite(pointerY)) return null;
   const safeSourceHeight = Number.isFinite(sourceHeight) ? Math.max(0, sourceHeight) : 0;
   const intendedTop = pointerY - (Number.isFinite(grabOffsetY) ? grabOffsetY : 0);
-  for (let rowPosition = 0; rowPosition < rows.length; rowPosition += 1) {
-    const row = rows[rowPosition];
+  const candidates = rows.flatMap((row) => {
     const rowShells = row.shellIds
       .filter((id) => id !== sourceId)
       .map((id) => geometries.find((geometry) => geometry.id === id))
       .filter((geometry): geometry is PageShellGeometry => Boolean(geometry));
-    if (rowShells.length === 0) continue;
-    const alignedShells = rowShells.filter((geometry) => {
+    if (rowShells.length === 0) return [];
+    const alignedShells = rowShells.flatMap((geometry) => {
       const overlap = getPageShellHorizontalGeometryOverlap(
         { left: candidate.left, right: candidate.left + candidate.width },
         geometry,
       );
-      return overlap > Math.max(4, Math.min(candidate.width, geometry.right - geometry.left) * 0.2);
+      return overlap > Math.max(4, Math.min(candidate.width, geometry.right - geometry.left) * 0.2)
+        ? [geometry]
+        : [];
     });
-    if (alignedShells.length === 0) continue;
+    if (alignedShells.length === 0) return [];
     const rowGeometry = {
       bottom: Math.max(...rowShells.map((geometry) => geometry.bottom)),
       top: Math.min(...rowShells.map((geometry) => geometry.top)),
     };
-    const alignedBottom = Math.max(...alignedShells.map((geometry) => geometry.bottom));
-    const nextRow = rows.slice(rowPosition + 1)
-      .map((next) => getPageShellExplicitRowGeometry(next, geometries))
-      .find((geometry): geometry is { bottom: number; top: number } => Boolean(geometry));
-    const boundary = nextRow
-      ? (rowGeometry.bottom + nextRow.top) / 2
-      : alignedBottom + Math.max(PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX, safeSourceHeight) + PAGE_SHELL_PACKING_GAP_PX;
-    if (intendedTop > boundary || intendedTop < alignedBottom - PAGE_SHELL_POINTER_HYSTERESIS_PX) continue;
-    const rowOffsetSteps = getPageShellVerticalOffsetSteps(
-      intendedTop,
+    const rowBottom = Math.max(...alignedShells.map((geometry) => geometry.bottom));
+    const belowTop = rowBottom + PAGE_SHELL_PACKING_GAP_PX;
+    const aboveTop = Math.min(...alignedShells.map((geometry) => geometry.top))
+      - PAGE_SHELL_PACKING_GAP_PX
+      - safeSourceHeight;
+    const belowDistance = Math.abs(intendedTop - belowTop);
+    const aboveDistance = Math.abs(intendedTop - aboveTop);
+    const direction = belowDistance <= aboveDistance ? "below" : "above";
+    const distance = Math.min(belowDistance, aboveDistance);
+    if (distance > PAGE_SHELL_VERTICAL_MAGNET_ZONE_PX) return [];
+    const boundary = direction === "below" ? rowBottom : Math.min(...alignedShells.map((geometry) => geometry.top));
+    const rowOffsetSteps = getPageShellImmediateVerticalMagnetOffsetSteps(
+      direction,
+      boundary,
       rowGeometry.top,
       safeSourceHeight,
-      alignedBottom,
     );
-    return {
+    return [{
       columnStart: directColumnStart,
       destinationRowIndex: row.rowIndex,
+      distance,
       insertionIndex: getPageShellExplicitRowInsertionIndex(
         layout,
         packedPositions,
@@ -1755,35 +2027,9 @@ function getPageShellStackingCorridor(
       laneOrder: 0,
       rowOffsetSteps,
       targetId: null,
-    } satisfies PageShellDropTarget;
-  }
-  return null;
-}
-
-function getPageShellExplicitDropGap(
-  rows: readonly PageShellExplicitRow[],
-  geometries: readonly PageShellGeometry[],
-  pointerY: number,
-) {
-  const rowGeometry = rows.map((row) => ({ ...row, geometry: getPageShellExplicitRowGeometry(row, geometries) }))
-    .filter((row): row is PageShellExplicitRow & { geometry: { bottom: number; top: number } } => Boolean(row.geometry));
-  if (rowGeometry.length === 0) return null;
-  const threshold = PAGE_SHELL_DROP_ZONE_HYSTERESIS_PX;
-  if (pointerY < rowGeometry[0].geometry.top - threshold) {
-    return { boundary: "before" as const, rowIndex: rowGeometry[0].rowIndex, rowPosition: 0 };
-  }
-  for (let index = 0; index < rowGeometry.length - 1; index += 1) {
-    const current = rowGeometry[index];
-    const next = rowGeometry[index + 1];
-    if (pointerY > current.geometry.bottom + threshold && pointerY < next.geometry.top - threshold) {
-      return { boundary: "before" as const, rowIndex: next.rowIndex, rowPosition: index + 1 };
-    }
-  }
-  const last = rowGeometry[rowGeometry.length - 1];
-  if (pointerY > last.geometry.bottom + threshold) {
-    return { boundary: "after" as const, rowIndex: last.rowIndex, rowPosition: rowGeometry.length };
-  }
-  return null;
+    } satisfies PageShellDropTarget & { distance: number }];
+  });
+  return candidates.sort((left, right) => left.distance - right.distance)[0] ?? null;
 }
 
 /**
@@ -1871,10 +2117,20 @@ export function getPageShellDropTarget(
   const allExplicitRows = hasExplicitRows
     ? getPageShellExplicitRows({ order: [...order], placements }, order)
     : [];
-  const explicitRows = hasExplicitRows
-    ? allExplicitRows
-      .filter((row) => row.shellIds.length > 1 || row.shellIds[0] !== sourceId)
-    : [];
+  const explicitRowGeometries = allExplicitRows.flatMap((row) => {
+    const geometry = getPageShellExplicitRowGeometry(row, geometries);
+    return geometry ? [{ ...row, ...geometry }] : [];
+  });
+  const dragGridRows = explicitRowGeometries.map((row) => ({
+    ...row,
+    availableBottom: row.bottom,
+  }));
+  const newRowZones = getPageShellDragGridNewRowZones(
+    dragGridRows,
+    order,
+    sourceId,
+    Math.max(0, (sourceGeometry?.bottom ?? 0) - (sourceGeometry?.top ?? 0)),
+  );
   const heldHorizontalRow = axisIntent === "horizontal" && coordinateConstraint?.destinationRowIndex !== undefined
     ? allExplicitRows.find((row) => row.rowIndex === coordinateConstraint.destinationRowIndex)
     : undefined;
@@ -1904,20 +2160,48 @@ export function getPageShellDropTarget(
       && pointerY >= geometry.top
       && pointerY <= geometry.bottom
   ));
-  const pointerRow = explicitRows.find((row) => {
-    const geometry = getPageShellExplicitRowGeometry(row, geometries);
-    return geometry
-      && pointerY >= geometry.top - PAGE_SHELL_POINTER_HYSTERESIS_PX
-      && pointerY <= geometry.bottom + PAGE_SHELL_POINTER_HYSTERESIS_PX;
-  });
+  const directVerticalMagnet = hasExplicitRows && axisIntent === "vertical" && directGeometry && sourceGeometry
+    ? getPageShellDirectVerticalMagnet(
+      allExplicitRows,
+      geometries,
+      sourceId,
+      directGeometry,
+      pointerY,
+      grabOffsetY,
+      Math.max(0, sourceGeometry.bottom - sourceGeometry.top),
+      directColumnStart,
+      { order: [...order], placements },
+      packedPositions,
+    )
+    : null;
+  if (directVerticalMagnet) return directVerticalMagnet;
+  const intendedTop = pointerY - (Number.isFinite(grabOffsetY) ? grabOffsetY : 0);
+  const pointerRow = explicitRowGeometries.find((row) => (
+    intendedTop >= row.top - PAGE_SHELL_POINTER_HYSTERESIS_PX
+      && intendedTop <= row.bottom + PAGE_SHELL_POINTER_HYSTERESIS_PX
+  ));
+  const newRowZone = hasExplicitRows && axisIntent === "vertical" && !physicalTargetHit
+    ? newRowZones.find((zone) => intendedTop >= zone.top && intendedTop <= zone.bottom)
+    : undefined;
+  if (newRowZone) {
+    return {
+      columnStart: directColumnStart,
+      destinationRowIndex: newRowZone.anchorRowIndex,
+      insertionIndex: newRowZone.insertionIndex,
+      laneOrder: 0,
+      newRow: true,
+      relationship: newRowZone.position === "below" ? "after" : "before",
+      rowOffsetSteps: 0,
+      targetId: null,
+    };
+  }
   if (hasExplicitRows && pointerRow && !physicalTargetHit && directGeometry && sourceGeometry) {
-    const pointerRowGeometry = getPageShellExplicitRowGeometry(pointerRow, geometries);
-    const rowOffsetSteps = axisIntent === "vertical" && pointerRowGeometry
+    const rowOffsetSteps = axisIntent === "vertical"
       ? getPageShellVerticalOffsetSteps(
-        pointerY - (Number.isFinite(grabOffsetY) ? grabOffsetY : 0),
-        pointerRowGeometry.top,
+        intendedTop,
+        pointerRow.top,
         Math.max(0, sourceGeometry.bottom - sourceGeometry.top),
-        pointerRowGeometry.bottom,
+        pointerRow.bottom,
       )
       : 0;
     return {
@@ -1936,39 +2220,30 @@ export function getPageShellDropTarget(
       targetId: null,
     };
   }
-  const hasExplicitHorizontalRelationship = axisIntent === "horizontal" && directionalGeometry
-    && (relationship === "left" || relationship === "right" || relationship === "replace");
-  if (hasExplicitRows && !physicalTargetHit && !pointerRow && axisIntent === "vertical" && !hasExplicitHorizontalRelationship) {
-    const stackingTarget = getPageShellStackingCorridor(
-      allExplicitRows,
-      geometries,
-      sourceId,
-      directGeometry,
-      pointerY,
-      grabOffsetY,
-      Math.max(0, (sourceGeometry?.bottom ?? 0) - (sourceGeometry?.top ?? 0)),
-      directColumnStart,
-      { order: [...order], placements },
-      packedPositions,
-    );
-    if (stackingTarget) return stackingTarget;
-  }
-  if (hasExplicitRows && !physicalTargetHit && !pointerRow) {
-    const gap = getPageShellExplicitDropGap(explicitRows, geometries, pointerY);
-    if (gap) {
-      const boundaryReference = explicitRows[gap.rowPosition]?.shellIds[0]
-        ?? explicitRows[Math.max(0, gap.rowPosition - 1)]?.shellIds[0];
-      const boundaryIndex = boundaryReference ? orderWithoutSource.indexOf(boundaryReference) : insertionIndex;
-      return {
-        columnStart: directColumnStart,
-        destinationRowIndex: gap.rowIndex,
-        insertionIndex: gap.boundary === "after" ? Math.max(0, boundaryIndex + 1) : Math.max(0, boundaryIndex),
-        laneOrder: 0,
-        relationship: gap.boundary,
-        rowOffsetSteps: 0,
-        targetId: null,
-      };
-    }
+  if (hasExplicitRows && axisIntent === "vertical" && !physicalTargetHit && explicitRowGeometries.length > 0) {
+    const fallbackRow = explicitRowGeometries.reduce((closest, row) => (
+      Math.abs(row.top - intendedTop) < Math.abs(closest.top - intendedTop) ? row : closest
+    ));
+    return {
+      columnStart: directColumnStart,
+      destinationRowIndex: fallbackRow.rowIndex,
+      insertionIndex: getPageShellExplicitRowInsertionIndex(
+        { order: [...order], placements },
+        packedPositions,
+        order,
+        sourceId,
+        fallbackRow.rowIndex,
+        directColumnStart,
+      ),
+      laneOrder: 0,
+      rowOffsetSteps: getPageShellVerticalOffsetSteps(
+        intendedTop,
+        fallbackRow.top,
+        Math.max(0, (sourceGeometry?.bottom ?? 0) - (sourceGeometry?.top ?? 0)),
+        fallbackRow.bottom,
+      ),
+      targetId: null,
+    };
   }
   const directDropJoinsInsertionRow = directDropFitsInsertionRow(
     geometries,
@@ -2848,7 +3123,7 @@ function planPageShellExplicitMove({
     return finalizeExplicitPageShellMove(candidate, visibleShellIds, naturalHeights, chromeHeightPx);
   }
 
-  if (target.mode === "centered" || relationship === "before" || relationship === "after") {
+  if (target.mode === "centered" || target.newRow) {
     if (!planPageShellExplicitNewRow(candidate, visibleShellIds, sourceId, target)) {
       return getPageShellMoveFailure("INVALID_CENTER_PLACEMENT");
     }

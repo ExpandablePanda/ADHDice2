@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.116`.
+- Current working app version: `7.12.117`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,41 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.117 Visual Drag Grid, Sub-Row Placement, and Explicit New-Row Zones
+
+The user-facing sub-row concept is backed by the existing durable
+`rowOffsetSteps`; no `subRowIndex`, pixel coordinate, storage-key, View, or
+schema field was added. Dragging directly beneath or above a meaningfully
+overlapping shell keeps the destination in the same semantic `rowIndex` and
+uses the first valid 12px detent after the normal shell gap. The above and
+below magnets are symmetric conveniences; ordinary valid free vertical
+detents remain available, and the authoritative 2D validator still rejects
+exact X+Y collisions without relocating unrelated shells.
+
+Desktop editing now renders a transient drag grid from frozen pointer-down
+geometry: the real `referenceGridBounds` supplies all 12 columns, while
+frozen packed shell geometry supplies semantic row boundaries, row bottoms,
+individual offsets, custom or natural heights, edit chrome, gaps, occupied
+footprints, and the exact candidate footprint. Existing-row space is a subtle
+purple treatment, occupied footprints are a light neutral overlay, and the
+candidate is the strongest purple valid or red invalid treatment. The
+horizontal `C1`-`C12` ruler and vertical 12px `0`/`+n` ruler remain in place;
+dynamic H-to-V and V-to-H axis switching still holds the inactive coordinate.
+
+Visible blue insertion bands now exist above the first row, between semantic
+rows, and below the last row. A new semantic row is created only when the
+current candidate targets one of those explicit zones; ordinary vertical
+distance no longer triggers hidden midpoint or generic new-row transitions.
+The former bounded stacking-corridor classifier and invisible midpoint gap
+classifier were simplified away in favor of existing-row ownership, explicit
+zones, direct shell magnets, and the shared planner. Body swaps, left/right
+edge insertion, toolbar arrows, Center, and conservative W12 behavior remain
+unchanged.
+
+Persistence, saved Views, measured legacy migration, storage namespaces, and
+SQL/schema are unchanged. Stacked arrangements continue to round-trip through
+`rowIndex`, `columnStart`, `rowOffsetSteps`, `span`, and `heightPx`.
 
 ## 2026-09-06 7.12.116 Reliable Direction-Turn Detection
 

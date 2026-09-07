@@ -30,6 +30,7 @@ import {
   PAGE_SHELL_SPAN_OPTIONS,
   PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX,
   PAGE_SHELL_MAX_VERTICAL_OFFSET_STEPS,
+  PAGE_SHELL_NEW_ROW_ZONE_HEIGHT_PX,
   PAGE_SHELL_VIEWS_SCHEMA_VERSION,
   buildPageShellLayoutExport,
   clampPageShellHeight,
@@ -41,6 +42,8 @@ import {
   getPageShellDirectionalMoveTarget,
   getPageShellDragAutoScrollDelta,
   getPageShellDropTarget,
+  getPageShellDragGrid,
+  getPageShellImmediateVerticalMagnetOffsetSteps,
   getPageShellExplicitRows,
   getPageShellExplicitRowMajorOrder,
   getPageShellExplicitLayoutGeometryValidationErrors,
@@ -2579,8 +2582,10 @@ test("explicit drag targets write semantic rows for edge insertion, swaps, empty
   };
   const gapPositions = packPageShellLayout(gapOrder, gapSizes, { placements: gapPlacements });
   const gapGeometries = geometriesFor(gapOrder, gapPositions, grid);
-  const gapTarget = getPageShellDropTarget(gapGeometries, gapPositions, gapOrder, "source", 20, 500, grid, 20, gapPlacements);
+  const gapTargetY = ((gapGeometries[0].bottom ?? 0) + (gapGeometries[1].top ?? 0)) / 2;
+  const gapTarget = getPageShellDropTarget(gapGeometries, gapPositions, gapOrder, "source", 20, gapTargetY, grid, 20, gapPlacements, undefined, 0, undefined, "vertical");
   assert.equal(gapTarget.targetId, null);
+  assert.equal(gapTarget.newRow, true);
   assert.equal(gapTarget.relationship, "before");
   assert.equal(gapTarget.destinationRowIndex, 1);
   const gapPlan = planPageShellMove({ layout: { order: gapOrder, placements: gapPlacements, sizes: gapSizes }, packedPositions: gapPositions, sourceId: "source", target: gapTarget, visibleShellIds: gapOrder });
@@ -2727,7 +2732,7 @@ test("empty space inside a mixed-height semantic row resolves deliberate vertica
   }
 });
 
-test("same-X short-shell drops use a bounded stacking corridor before generic new-row insertion", () => {
+test("same-X short-shell drops stay in the explicit semantic row until a new-row zone is targeted", () => {
   const grid = { left: 0, width: 1200 };
   const aColumn = getPageShellGridColumnGeometry(grid, 1, 6)!;
   const layout: PageShellLayoutPreference = {
@@ -2794,7 +2799,7 @@ test("same-X short-shell drops use a bounded stacking corridor before generic ne
   if (!collisionPlan.valid) assert.equal(collisionPlan.reason, "COLLISION");
 });
 
-test("stacking corridors honor X alignment, actual row boundaries, and tall neighbors", () => {
+test("explicit row ownership honors X alignment, visible zones, and tall neighbors", () => {
   const grid = { left: 0, width: 1200 };
   const leftSix = getPageShellGridColumnGeometry(grid, 1, 6)!;
   const lowerLayout: PageShellLayoutPreference = {
@@ -2812,9 +2817,10 @@ test("stacking corridors honor X alignment, actual row boundaries, and tall neig
     { bottom: 340, id: "lower", left: leftSix.left, right: leftSix.left + leftSix.width, top: 220 },
     { bottom: 560, id: "source", left: leftSix.left, right: leftSix.left + leftSix.width, top: 440 },
   ];
-  const inGutter = getPageShellDropTarget(lowerGeometries, lowerPositions, lowerLayout.order, "source", leftSix.left + 20, 200, grid, 20, lowerLayout.placements, undefined, 20, undefined, "vertical");
-  assert.equal(inGutter.destinationRowIndex, 1);
-  assert.equal(inGutter.relationship, "before");
+  const inGutter = getPageShellDropTarget(lowerGeometries, lowerPositions, lowerLayout.order, "source", leftSix.left + 20, 160, grid, 20, lowerLayout.placements, undefined, 20, undefined, "vertical");
+  assert.equal(inGutter.destinationRowIndex, 0);
+  assert.equal(inGutter.newRow, undefined);
+  assert.ok((inGutter.rowOffsetSteps ?? 0) > 0);
   const inNextRow = getPageShellDropTarget(lowerGeometries, lowerPositions, lowerLayout.order, "source", leftSix.left + 300, 250, grid, 300, lowerLayout.placements, undefined, 20, undefined, "vertical");
   assert.equal(inNextRow.destinationRowIndex, 1);
   assert.equal(inNextRow.targetId, "lower");
@@ -2832,7 +2838,8 @@ test("stacking corridors honor X alignment, actual row boundaries, and tall neig
     { bottom: 340, id: "source", left: rightSix.left, right: rightSix.left + rightSix.width, top: 220 },
   ];
   const noAlignment = getPageShellDropTarget(noAlignmentGeometries, noAlignmentPositions, noAlignmentLayout.order, "source", rightSix.left + 20, 160, grid, 20, noAlignmentLayout.placements, undefined, 20, undefined, "vertical");
-  assert.equal(noAlignment.relationship, "after");
+  assert.equal(noAlignment.destinationRowIndex, 1);
+  assert.equal(noAlignment.relationship, undefined);
   assert.equal(noAlignment.rowOffsetSteps ?? 0, 0);
 
   const tallLayout: PageShellLayoutPreference = {
@@ -2912,6 +2919,161 @@ test("cross-row edge insertion is symmetric, exact, and height-independent", () 
   assert.deepEqual(repeat, rightPlan);
 });
 
+test("visual drag grid uses frozen 12-column bounds, semantic rows, occupied geometry, and real shell sizes", () => {
+  const order = ["a", "tall", "source", "later"];
+  const sizes = sizesFor({ a: 6, tall: 6, source: 4, later: 12 }, { a: 240, source: 144, later: 192 });
+  const placements = {
+    a: { columnStart: 1, rowIndex: 0 },
+    tall: { columnStart: 7, rowIndex: 0 },
+    source: { columnStart: 1, rowIndex: 1 },
+    later: { columnStart: 1, rowIndex: 2 },
+  };
+  const gridBounds = { left: 80, width: 1200 };
+  const packedPositions = packPageShellLayoutExplicit(order, sizes, {
+    chromeHeightPx: 32,
+    naturalHeights: { tall: 360 },
+    placements,
+  });
+  const aColumn = getPageShellGridColumnGeometry(gridBounds, 1, 6)!;
+  const tallColumn = getPageShellGridColumnGeometry(gridBounds, 7, 6)!;
+  const sourceColumn = getPageShellGridColumnGeometry(gridBounds, 1, 4)!;
+  const geometries: PageShellGeometry[] = [
+    { bottom: 292, id: "a", left: aColumn.left, right: aColumn.left + aColumn.width, top: 0 },
+    { bottom: 412, id: "tall", left: tallColumn.left, right: tallColumn.left + tallColumn.width, top: 0 },
+    { bottom: 644, id: "source", left: sourceColumn.left, right: sourceColumn.left + sourceColumn.width, top: 500 },
+    { bottom: 920, id: "later", left: gridBounds.left, right: gridBounds.left + gridBounds.width, top: 700 },
+  ];
+  const target: PageShellDropTarget = {
+    columnStart: 1,
+    destinationRowIndex: 0,
+    insertionIndex: 0,
+    laneOrder: 0,
+    rowOffsetSteps: 18,
+    targetId: null,
+  };
+  const dragGrid = getPageShellDragGrid({
+    candidateValid: true,
+    chromeHeightPx: 32,
+    geometries,
+    gridBounds,
+    naturalHeights: { tall: 360 },
+    order,
+    packedPositions,
+    placements,
+    sizes,
+    sourceId: "source",
+    target,
+  });
+  assert.equal(dragGrid.columns.length, 12);
+  assert.deepEqual(dragGrid.columns.map((column) => column.column), Array.from({ length: 12 }, (_, index) => index + 1));
+  assert.equal(dragGrid.columns[0].left, aColumn.left);
+  assert.equal(dragGrid.rows.length, 3);
+  assert.equal(dragGrid.rows[0].top, 0);
+  assert.equal(dragGrid.rows[0].bottom, 412);
+  assert.equal(dragGrid.occupiedRects.some((rect) => rect.id === "source"), false);
+  assert.equal(dragGrid.occupiedRects.find((rect) => rect.id === "tall")?.bottom, 412);
+  assert.equal(dragGrid.availableRegions.find((region) => region.rowIndex === 0)?.bottom, 436);
+  assert.equal(dragGrid.candidateRect?.columnStart, target.columnStart);
+  assert.equal(dragGrid.candidateRect?.rowIndex, target.destinationRowIndex);
+  assert.equal(dragGrid.candidateRect?.rowOffsetSteps, target.rowOffsetSteps);
+  assert.equal(dragGrid.candidateRect?.left, sourceColumn.left);
+  assert.equal(dragGrid.candidateRect?.bottom, 18 * PAGE_SHELL_VERTICAL_PLACEMENT_SNAP_PX + 144);
+  assert.equal(dragGrid.candidateRect?.valid, true);
+});
+
+test("explicit drag grid exposes above, between, and below new-row zones without hiding sub-row space", () => {
+  const order = ["first", "second", "source"];
+  const sizes = sizesFor({ first: 6, second: 6, source: 4 });
+  const placements = {
+    first: { columnStart: 1, rowIndex: 0 },
+    second: { columnStart: 7, rowIndex: 1 },
+    source: { columnStart: 1, rowIndex: 2 },
+  };
+  const gridBounds = { left: 0, width: 1200 };
+  const packedPositions = packPageShellLayoutExplicit(order, sizes, { placements });
+  const firstColumn = getPageShellGridColumnGeometry(gridBounds, 1, 6)!;
+  const secondColumn = getPageShellGridColumnGeometry(gridBounds, 7, 6)!;
+  const geometries: PageShellGeometry[] = [
+    { bottom: 160, id: "first", left: firstColumn.left, right: firstColumn.left + firstColumn.width, top: 0 },
+    { bottom: 380, id: "second", left: secondColumn.left, right: secondColumn.left + secondColumn.width, top: 220 },
+    { bottom: 600, id: "source", left: firstColumn.left, right: firstColumn.left + getPageShellGridColumnGeometry(gridBounds, 1, 4)!.width, top: 440 },
+  ];
+  const dragGrid = getPageShellDragGrid({ geometries, gridBounds, order, packedPositions, placements, sizes, sourceId: "source" });
+  assert.equal(dragGrid.newRowZones.length, 4);
+  assert.deepEqual(dragGrid.newRowZones.map((zone) => zone.position), ["above", "between", "between", "below"]);
+  assert.ok(dragGrid.newRowZones[1].top >= geometries[0].bottom);
+  assert.ok(dragGrid.newRowZones[1].bottom <= geometries[1].top);
+  assert.ok(dragGrid.newRowZones[2].top > geometries[1].bottom);
+  assert.equal(PAGE_SHELL_NEW_ROW_ZONE_HEIGHT_PX, 32);
+  assert.ok(dragGrid.availableRegions.some((region) => region.rowIndex === 0));
+});
+
+test("direct under and above magnets choose first snapped detents in the same semantic row", () => {
+  const order = ["base", "target", "source"];
+  const sizes = sizesFor({ base: 6, target: 6, source: 4 }, { source: 144 });
+  const placements = {
+    base: { columnStart: 7, rowIndex: 0 },
+    target: { columnStart: 1, rowIndex: 0 },
+    source: { columnStart: 1, rowIndex: 1 },
+  };
+  const grid = { left: 0, width: 1200 };
+  const positions = packPageShellLayoutExplicit(order, sizes, { placements });
+  const targetColumn = getPageShellGridColumnGeometry(grid, 1, 6)!;
+  const baseColumn = getPageShellGridColumnGeometry(grid, 7, 6)!;
+  const sourceColumn = getPageShellGridColumnGeometry(grid, 1, 4)!;
+  const geometries: PageShellGeometry[] = [
+    { bottom: 120, id: "base", left: baseColumn.left, right: baseColumn.left + baseColumn.width, top: 0 },
+    { bottom: 360, id: "target", left: targetColumn.left, right: targetColumn.left + targetColumn.width, top: 200 },
+    { bottom: 584, id: "source", left: sourceColumn.left, right: sourceColumn.left + sourceColumn.width, top: 400 },
+  ];
+  const under = getPageShellDropTarget(geometries, positions, order, "source", targetColumn.left + 20, 380, grid, 20, placements, undefined, 20, undefined, "vertical");
+  assert.equal(under.targetId, null);
+  assert.equal(under.destinationRowIndex, 0);
+  assert.equal(under.rowOffsetSteps, getPageShellImmediateVerticalMagnetOffsetSteps("below", 360, 0, 184));
+  assert.ok((under.rowOffsetSteps ?? 0) > 0);
+
+  const above = getPageShellDropTarget(geometries, positions, order, "source", targetColumn.left + 20, 16, grid, 20, placements, undefined, 20, undefined, "vertical");
+  assert.equal(above.targetId, null);
+  assert.equal(above.destinationRowIndex, 0);
+  assert.equal(above.rowOffsetSteps, getPageShellImmediateVerticalMagnetOffsetSteps("above", 200, 0, 184));
+  assert.equal(above.rowOffsetSteps, 0);
+});
+
+test("explicit new-row targeting is required and planner inserts the selected row", () => {
+  const order = ["first", "second", "source"];
+  const sizes = sizesFor({ first: 6, second: 6, source: 4 });
+  const placements = {
+    first: { columnStart: 1, rowIndex: 0 },
+    second: { columnStart: 7, rowIndex: 1 },
+    source: { columnStart: 1, rowIndex: 2 },
+  };
+  const layout = { order, placements, sizes } satisfies PageShellLayoutPreference;
+  const positions = packPageShellLayoutExplicit(order, sizes, { placements });
+  const grid = { left: 0, width: 1200 };
+  const firstColumn = getPageShellGridColumnGeometry(grid, 1, 6)!;
+  const secondColumn = getPageShellGridColumnGeometry(grid, 7, 6)!;
+  const geometries: PageShellGeometry[] = [
+    { bottom: 160, id: "first", left: firstColumn.left, right: firstColumn.left + firstColumn.width, top: 0 },
+    { bottom: 380, id: "second", left: secondColumn.left, right: secondColumn.left + secondColumn.width, top: 220 },
+    { bottom: 600, id: "source", left: firstColumn.left, right: firstColumn.left + getPageShellGridColumnGeometry(grid, 1, 4)!.width, top: 440 },
+  ];
+  const zonePointerY = 190;
+  const stacking = getPageShellDropTarget(geometries, positions, order, "source", firstColumn.left + 20, zonePointerY, grid, 20, placements, undefined, 20, undefined, "vertical");
+  assert.equal(stacking.newRow, undefined);
+  assert.equal(stacking.destinationRowIndex, 0);
+  const betweenZonePointerY = 205;
+  const explicitZone = getPageShellDropTarget(geometries, positions, order, "source", secondColumn.left + 20, betweenZonePointerY, grid, 20, placements, undefined, 20, undefined, "vertical");
+  assert.equal(explicitZone.newRow, true);
+  assert.equal(explicitZone.relationship, "before");
+  const plan = planPageShellMove({ chromeHeightPx: 32, layout, packedPositions: positions, sourceId: "source", target: explicitZone, visibleShellIds: order });
+  assert.equal(plan.valid, true);
+  if (plan.valid) {
+    assert.deepEqual(plan.layout.order.map((id) => plan.layout.placements?.[id]?.rowIndex), [0, 1, 2]);
+    assert.equal(plan.layout.placements?.source?.rowIndex, 1);
+    assert.equal(plan.layout.placements?.source?.rowOffsetSteps ?? 0, 0);
+  }
+});
+
 test("explicit planning is isolated from legacy row inference and packing", () => {
   const explicitStart = layoutSource.indexOf("function planPageShellExplicitMove");
   const explicitEnd = layoutSource.indexOf("function packedPositionsForExplicitMove", explicitStart);
@@ -2923,7 +3085,7 @@ test("explicit planning is isolated from legacy row inference and packing", () =
   assert.match(layoutSource, /destinationRowIndex\?: number/);
 });
 
-test("7.12.116 keeps migration and legacy compatibility authorities unchanged", () => {
+test("7.12.117 keeps migration and legacy compatibility authorities unchanged", () => {
   const order = ["left", "right", "full"];
   const sizes = sizesFor({ left: 5, right: 7, full: 12 });
   const legacy = positionsFor(order, sizes, {
@@ -2940,6 +3102,13 @@ test("7.12.116 keeps migration and legacy compatibility authorities unchanged", 
   assert.doesNotMatch(hookSource, /inferPageShellRowsFromPackedLayout/);
   assert.match(layoutSource, /function planPageShellLegacyMove/);
   assert.match(layoutSource, /packPageShellLayoutLegacy/);
+  assert.match(layoutSource, /export function getPageShellDragGrid/);
+  assert.match(layoutSource, /newRow\?: boolean/);
+  assert.doesNotMatch(layoutSource, /function getPageShellStackingCorridor/);
+  assert.doesNotMatch(layoutSource, /function getPageShellExplicitDropGap/);
+  assert.match(shellSource, /data-page-shell-drag-grid/);
+  assert.match(shellSource, /data-page-shell-new-row-zone/);
+  assert.match(shellSource, /data-page-shell-drag-candidate/);
 });
 
 test("pointer lifecycle and drag auto-scroll contracts remain intact", () => {
