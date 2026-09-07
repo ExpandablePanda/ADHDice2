@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildTaskHistoryFacts } from "../src/lib/task-history.ts";
 import { buildManualMembershipMap, evaluateTaskListMemberships, getBuiltInTaskLists, parseTaskListRules, taskBelongsToList, type TaskListDefinition } from "../src/lib/task-lists.ts";
-import { createTask, getTaskBucket } from "../src/lib/task-buckets.ts";
+import { createTask, getTaskBucket, isPursuitVisibleInTaskWorkspace } from "../src/lib/task-buckets.ts";
 
 function createTaskListEvaluationContext(
   overrides: Partial<Parameters<typeof evaluateTaskListMemberships>[2]> = {},
@@ -44,6 +44,13 @@ test("task bucket logic keeps inbox and quick wins semantics", () => {
 
   assert.equal(getTaskBucket(inboxTask, { focusedTaskIds: new Set(), routing: {} }), "inbox");
   assert.equal(getTaskBucket(quickWinTask, { focusedTaskIds: new Set(), routing: { [quickWinTask.id]: "quick_wins" } }), "quick_wins");
+});
+
+test("Pursuit Task-workspace visibility is limited to the canonical broad inventory", () => {
+  assert.equal(isPursuitVisibleInTaskWorkspace("all"), true);
+  for (const selectedBucket of ["trash", "archive", "done", "missed", "today", "list:custom"]) {
+    assert.equal(isPursuitVisibleInTaskWorkspace(selectedBucket), false, selectedBucket);
+  }
 });
 
 test("task list evaluation honors manual memberships and date-added rules", () => {

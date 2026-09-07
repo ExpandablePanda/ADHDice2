@@ -150,7 +150,7 @@ import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
 import { usePursuits } from "@/hooks/usePursuits";
-import { buildPursuitAttentionMap } from "@/lib/pursuit-domain";
+import { buildPursuitAttentionMap, getPursuitSearchContextTaskIds } from "@/lib/pursuit-domain";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
 import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
@@ -174,7 +174,7 @@ import { persistHealthTabPreference, readHealthTabPreference, subscribeToHealthT
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { getLevelProgress } from "@/lib/economy-levels";
 import { buildHealthReminderTemplate, HEALTH_TABS, type HealthReminderTemplateKey, type HealthSleepKind } from "@/lib/health-utils";
-import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
+import { isPursuitVisibleInTaskWorkspace, isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { sortTasksForUi } from "@/lib/task-sorting";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "@/lib/task-filter-state";
@@ -3218,6 +3218,22 @@ export function TaskApp() {
     }),
     [dayStartTime, logicalDayNow, pursuitData.activities, pursuitData.pursuits, userTimeZone],
   );
+  const taskWorkspacePursuits = useMemo(
+    () => isPursuitVisibleInTaskWorkspace(taskUiState.selectedBucket) ? pursuitData.pursuits : [],
+    [pursuitData.pursuits, taskUiState.selectedBucket],
+  );
+  const pursuitSearchContextTaskIds = useMemo(
+    () => getPursuitSearchContextTaskIds(taskWorkspacePursuits, effectiveSearchQuery),
+    [effectiveSearchQuery, taskWorkspacePursuits],
+  );
+  const pursuitSearchContextTasks = useMemo(() => {
+    if (pursuitSearchContextTaskIds.length === 0) return [] as Task[];
+
+    const visibleRootTaskIds = new Set(canonicalVisibleRootTasksSorted.map((task) => task.id));
+    return pursuitSearchContextTaskIds
+      .map((taskId) => stableCanonicalTaskIndex.taskById.get(taskId))
+      .filter((task): task is Task => Boolean(task && visibleRootTaskIds.has(task.id)));
+  }, [canonicalVisibleRootTasksSorted, pursuitSearchContextTaskIds, stableCanonicalTaskIndex]);
   const [sharedEditorRowModelCache] = useState(createStableTaskRowModelCache);
   const sharedTaskEditorRows = useMemo(
     () => sharedTaskEditorOverlayTaskId
@@ -7048,9 +7064,11 @@ export function TaskApp() {
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
                   allTasks: tasksForActiveStatusRead,
-                  pursuits: pursuitData.pursuits,
+                  pursuits: taskWorkspacePursuits,
+                  pursuitSearchContextTaskIds,
+                  pursuitSearchContextTasks,
                   pursuitAttentionById: pursuitAttentionMap,
-                  pursuitSearch: taskUiState.search,
+                  pursuitSearch: effectiveSearchQuery,
                   onOpenPursuit: openPursuitEditor,
                   onLogPursuitActivity: (pursuitId: string) => {
                     setPursuitActivityId(pursuitId);
@@ -7227,9 +7245,11 @@ export function TaskApp() {
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
                   allTasks: tasksForActiveStatusRead,
-                  pursuits: pursuitData.pursuits,
+                  pursuits: taskWorkspacePursuits,
+                  pursuitSearchContextTaskIds,
+                  pursuitSearchContextTasks,
                   pursuitAttentionById: pursuitAttentionMap,
-                  pursuitSearch: taskUiState.search,
+                  pursuitSearch: effectiveSearchQuery,
                   onOpenPursuit: openPursuitEditor,
                   onLogPursuitActivity: (pursuitId: string) => {
                     setPursuitActivityId(pursuitId);

@@ -55,7 +55,7 @@ import {
 import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
 import { TaskHierarchyChevronButton } from "@/components/task-app/task-hierarchy-chevron-button";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
-import { buildPursuitWorkspaceIndex, filterPursuitsByTitle, type PursuitAttention } from "@/lib/pursuit-domain";
+import { buildPursuitWorkspaceIndex, filterPursuitsByTitle, shouldRenderTaskPursuitChildren, type PursuitAttention } from "@/lib/pursuit-domain";
 import { PursuitTableWorkspaceRow } from "@/components/task-app/pursuit-workspace-row";
 import {
   formatRepeatFrequencyLabel,
@@ -1143,6 +1143,7 @@ type TaskManagementTableV2Props = {
   onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
   searchMatchedStepParentTaskIds?: string[];
   searchMatchedChildTaskIds?: string[];
+  pursuitSearchContextTaskIds?: string[];
   statusMatchedChildTaskIds?: string[];
   statusMatchedStepParentTaskIds?: string[];
   statusFilterActive?: boolean;
@@ -2552,6 +2553,7 @@ export function TaskManagementTableV2({
   onVisibleSearchMatchIdsChange,
   searchMatchedStepParentTaskIds = [],
   searchMatchedChildTaskIds = [],
+  pursuitSearchContextTaskIds = [],
   statusMatchedChildTaskIds = [],
   statusMatchedStepParentTaskIds = [],
   statusFilterActive = false,
@@ -3036,6 +3038,10 @@ export function TaskManagementTableV2({
   const searchMatchedChildTaskIdSet = useMemo(
     () => new Set(searchMatchedChildTaskIds),
     [searchMatchedChildTaskIds],
+  );
+  const pursuitSearchContextTaskIdSet = useMemo(
+    () => new Set(pursuitSearchContextTaskIds),
+    [pursuitSearchContextTaskIds],
   );
   const statusMatchedChildTaskIdSet = useMemo(
     () => new Set(statusMatchedChildTaskIds),
@@ -6687,11 +6693,15 @@ export function TaskManagementTableV2({
       const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
       const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
       const hasSourceSteps = filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds).length > 0;
-      if (!hasStepPreview && !hasSourceSteps) return [];
+      const hasPursuits = (pursuitWorkspaceIndex.byTaskId.get(task.id) ?? []).length > 0;
+      if (!hasStepPreview && !hasSourceSteps && !hasPursuits) return [];
       const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false)
-        || activeHierarchyParentTaskIdSet.has(task.id);
+        || activeHierarchyParentTaskIdSet.has(task.id)
+        || pursuitSearchContextTaskIdSet.has(task.id);
       return [{
-        expanded: hasStepPreview ? stepsExpanded : (expandedSubtasksByTaskId[task.id] ?? false),
+        expanded: hasStepPreview
+          ? stepsExpanded
+          : (expandedSubtasksByTaskId[task.id] ?? false) || pursuitSearchContextTaskIdSet.has(task.id),
         taskId: task.id,
       }];
     });
@@ -6703,7 +6713,10 @@ export function TaskManagementTableV2({
       return next;
     }, { ...current }));
     setExpandedSubtasksByTaskId((current) => renderedTasks.reduce<Record<string, boolean>>((next, task) => {
-      if (eligibleTaskIdSet.has(task.id) && filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds).length > 0) next[task.id] = expandAll;
+      if (eligibleTaskIdSet.has(task.id) && (
+        filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds).length > 0
+        || (pursuitWorkspaceIndex.byTaskId.get(task.id) ?? []).length > 0
+      )) next[task.id] = expandAll;
       return next;
     }, { ...current }));
   }
@@ -6934,16 +6947,19 @@ export function TaskManagementTableV2({
     if (columnId === "title") {
       const hasDescription = task.notes.trim().length > 0;
       const hasSubtasks = visibleSubtasks.length > 0;
+      const hasPursuits = (pursuitWorkspaceIndex.byTaskId.get(task.id) ?? []).length > 0;
       const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
       const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
-      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || activeHierarchyParentTaskIdSet.has(task.id);
+      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false)
+        || activeHierarchyParentTaskIdSet.has(task.id)
+        || pursuitSearchContextTaskIdSet.has(task.id);
       const subtasksExpanded = expandedSubtasksByTaskId[task.id] ?? false;
-      const hasUnifiedSteps = hasStepPreview || hasSubtasks;
-      const unifiedStepsExpanded = hasStepPreview ? stepsExpanded : subtasksExpanded;
+      const hasUnifiedSteps = hasStepPreview || hasSubtasks || hasPursuits;
+      const unifiedStepsExpanded = hasStepPreview ? stepsExpanded : subtasksExpanded || pursuitSearchContextTaskIdSet.has(task.id);
       const activeHierarchyParentMatch = statusFilterActive
         ? statusMatchedStepParentTaskIdSet.has(task.id)
         : searchMatchedStepParentTaskIdSet.has(task.id);
-      const hasSecondaryContent = hasDescription || hasStepPreview || hasSubtasks;
+      const hasSecondaryContent = hasDescription || hasStepPreview || hasSubtasks || hasPursuits;
       const isRenamingTitle = editingTaskTitleId === task.id;
       const titleDraft = titleDraftsRef.current[task.id] ?? task.title;
       const isPinned = Boolean(task.pinnedAt);
@@ -7138,7 +7154,7 @@ export function TaskManagementTableV2({
                           });
                         }
                       }
-                      if (hasSubtasks) {
+                      if (hasSubtasks || hasPursuits) {
                         setExpandedSubtasksByTaskId((current) => ({
                           ...current,
                           [task.id]: nextSourceStepsExpanded,
@@ -8934,9 +8950,15 @@ export function TaskManagementTableV2({
               const hasSourceStepRows = visibleSubtasks.length > 0;
               const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
               const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
-              const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || activeHierarchyParentTaskIdSet.has(task.id);
+              const pursuitRows = pursuitWorkspaceIndex.byTaskId.get(task.id) ?? [];
+              const hasPursuitRows = pursuitRows.length > 0;
+              const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false)
+                || activeHierarchyParentTaskIdSet.has(task.id)
+                || pursuitSearchContextTaskIdSet.has(task.id);
               const hasTableStepDraft = tableStepDraftParentId === task.id;
-              const sourceStepsExpanded = hasStepPreview ? stepsExpanded : (expandedSubtasksByTaskId[task.id] ?? false);
+              const sourceStepsExpanded = hasStepPreview
+                ? stepsExpanded
+                : (expandedSubtasksByTaskId[task.id] ?? false) || pursuitSearchContextTaskIdSet.has(task.id);
               const activeHierarchyParentMatch = statusFilterActive
                 ? statusMatchedStepParentTaskIdSet.has(task.id)
                 : searchMatchedStepParentTaskIdSet.has(task.id);
@@ -8954,7 +8976,8 @@ export function TaskManagementTableV2({
                 || (hasStepPreview && stepsExpanded && (visibleStepPreviewItems.length > 0 || stepPreviewGroup?.summary.hasInvalidDescendants)),
               );
               const hasRenderedSourceStepRows = hasSourceStepRows && sourceStepsExpanded;
-              const hasRenderedDescendants = hasRenderedStepPreviewRows || hasRenderedSourceStepRows;
+              const hasRenderedPursuitRows = shouldRenderTaskPursuitChildren(sourceStepsExpanded, pursuitRows);
+              const hasRenderedDescendants = hasRenderedStepPreviewRows || hasRenderedSourceStepRows || hasRenderedPursuitRows;
               const showInlineAccordion = allowInlineInspector
                 && selectedTaskId === task.id
                 && isInlineAccordionMode(overlayMode);
@@ -9069,7 +9092,7 @@ export function TaskManagementTableV2({
                       {renderSourceStepMiniRows(task, visibleSubtasks)}
                     </motion.div>
                   ) : null}
-                  {renderPursuitRows(pursuitWorkspaceIndex.byTaskId.get(task.id) ?? [])}
+                  {hasRenderedPursuitRows ? renderPursuitRows(pursuitRows) : null}
                 </div>
               );
             })}

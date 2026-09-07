@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Pursuit, PursuitActivity } from "@/lib/database.types";
+import type { Pursuit, PursuitActivity, Task } from "@/lib/database.types";
 import {
   buildPursuitAttentionMap,
   buildPursuitWorkspaceIndex,
   canSetPursuitParent,
   derivePursuitAttention,
   filterPursuitsByTitle,
+  getPursuitSearchContextTaskIds,
+  mergeTaskRowsWithPursuitSearchContext,
+  shouldRenderTaskPursuitChildren,
   sortPursuitsByAttention,
   validatePursuitParentSelection,
 } from "@/lib/pursuit-domain";
@@ -159,4 +162,32 @@ test("Pursuit title search keeps matching rows and their Pursuit ancestors", () 
     pursuit({ id: "other", title: "Piano" }),
   ], "finger");
   assert.deepEqual(results.map((entry) => entry.id), ["root", "child"]);
+});
+
+test("Pursuit title search preserves the minimum owning Task context without matching the Task", () => {
+  const results = [
+    pursuit({ id: "task-root", title: "Improve Vocal Technique", parent_task_id: "task-1" }),
+    pursuit({ id: "task-child", title: "Breath control", parent_pursuit_id: "task-root" }),
+    pursuit({ id: "other-task", title: "Piano practice", parent_task_id: "task-2" }),
+  ];
+
+  assert.deepEqual(getPursuitSearchContextTaskIds(results, "vocal"), ["task-1"]);
+  assert.deepEqual(
+    mergeTaskRowsWithPursuitSearchContext(
+      [{ id: "task-2" } as Task],
+      [{ id: "task-1" } as Task],
+    ).map((task) => task.id),
+    ["task-2", "task-1"],
+  );
+});
+
+test("Task disclosure controls Task-owned Pursuit children while preserving recursive rows", () => {
+  const rows = buildPursuitWorkspaceIndex([
+    pursuit({ id: "task-root", parent_task_id: "task-1" }),
+    pursuit({ id: "task-child", parent_pursuit_id: "task-root" }),
+  ]).byTaskId.get("task-1") ?? [];
+
+  assert.equal(shouldRenderTaskPursuitChildren(false, rows), false);
+  assert.equal(shouldRenderTaskPursuitChildren(true, rows), true);
+  assert.deepEqual(rows.map((row) => row.pursuit.id), ["task-root", "task-child"]);
 });

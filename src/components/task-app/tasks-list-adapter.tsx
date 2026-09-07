@@ -67,7 +67,7 @@ import {
   type ListSortPreference,
 } from "@/lib/task-list-sort";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
-import { buildPursuitWorkspaceIndex, filterPursuitsByTitle, type PursuitAttention } from "@/lib/pursuit-domain";
+import { buildPursuitWorkspaceIndex, filterPursuitsByTitle, mergeTaskRowsWithPursuitSearchContext, shouldRenderTaskPursuitChildren, type PursuitAttention } from "@/lib/pursuit-domain";
 import { PursuitListWorkspaceRow } from "./pursuit-workspace-row";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
@@ -274,6 +274,8 @@ type TasksTableSourceProps = {
   onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
   searchMatchedStepParentTaskIds?: string[];
   searchMatchedChildTaskIds?: string[];
+  pursuitSearchContextTaskIds?: string[];
+  pursuitSearchContextTasks?: Task[];
   statusMatchedChildTaskIds?: string[];
   statusMatchedStepParentTaskIds?: string[];
   statusFilterActive?: boolean;
@@ -477,6 +479,10 @@ export function TasksTableAdapter({
   panelProps,
 }: TasksTableAdapterProps) {
   const [rowModelCache] = useState(createStableTaskRowModelCache);
+  const presentationTasks = useMemo(
+    () => mergeTaskRowsWithPursuitSearchContext(tableProps.tasks, tableProps.pursuitSearchContextTasks ?? []),
+    [tableProps.pursuitSearchContextTasks, tableProps.tasks],
+  );
   const canRemoveFromCurrentList = (taskId: string) => canRemoveTaskFromCurrentList(
     taskId,
     tableProps.currentListId,
@@ -484,23 +490,23 @@ export function TasksTableAdapter({
     tableProps.rowContext.manualMembershipsByTaskId,
   );
   const committedResultRevision = useMemo(
-    () => tableProps.tasks.map((task) => `${task.id}:${task.revision}`).join("|"),
-    [tableProps.tasks],
+    () => presentationTasks.map((task) => `${task.id}:${task.revision}`).join("|"),
+    [presentationTasks],
   );
   const [rowWindow, setRowWindow] = useState({ count: ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN, revision: committedResultRevision });
   const rowWindowCount = rowWindow.revision === committedResultRevision
     ? rowWindow.count
     : ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN;
   const windowedTasks = useMemo(
-    () => tableProps.tasks.slice(0, rowWindowCount),
-    [rowWindowCount, tableProps.tasks],
+    () => presentationTasks.slice(0, rowWindowCount),
+    [presentationTasks, rowWindowCount],
   );
   useEffect(() => {
     if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
       return;
     }
 
-    const targetIndex = tableProps.tasks.findIndex((task) => task.id === tableProps.highlightedActiveTaskId);
+    const targetIndex = presentationTasks.findIndex((task) => task.id === tableProps.highlightedActiveTaskId);
     if (targetIndex < rowWindowCount) {
       return;
     }
@@ -512,9 +518,9 @@ export function TasksTableAdapter({
       }));
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [committedResultRevision, rowWindowCount, tableProps.highlightedActiveTaskId, tableProps.highlightedScrollToken, tableProps.tasks]);
+  }, [committedResultRevision, presentationTasks, rowWindowCount, tableProps.highlightedActiveTaskId, tableProps.highlightedScrollToken]);
   function buildStatusScrollAnchorTaskIds(taskId: string) {
-    const visibleTaskIds = tableProps.tasks.map((task) => task.id);
+    const visibleTaskIds = presentationTasks.map((task) => task.id);
     const taskIndex = visibleTaskIds.indexOf(taskId);
     if (taskIndex < 0) {
       return [taskId];
@@ -541,7 +547,7 @@ export function TasksTableAdapter({
       }));
 
     },
-    [rowModelCache, tableProps.rowContext, tableProps.tasks.length, windowedTasks],
+    [rowModelCache, tableProps.rowContext, windowedTasks],
   );
   const visibleColumns = useMemo<TaskManagementTableColumnId[]>(
     () => [
@@ -573,7 +579,7 @@ export function TasksTableAdapter({
       : null,
     [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
   );
-  if (tableProps.tasks.length === 0 && (tableProps.pursuits?.length ?? 0) === 0 && !tableProps.requestedOpenTask) {
+  if (presentationTasks.length === 0 && (tableProps.pursuits?.length ?? 0) === 0 && !tableProps.requestedOpenTask) {
     return (
       <TasksListViewPanel
         {...panelProps}
@@ -618,6 +624,7 @@ export function TasksTableAdapter({
           onVisibleSearchMatchIdsChange={tableProps.onVisibleSearchMatchIdsChange}
           searchMatchedStepParentTaskIds={tableProps.searchMatchedStepParentTaskIds}
           searchMatchedChildTaskIds={tableProps.searchMatchedChildTaskIds}
+          pursuitSearchContextTaskIds={tableProps.pursuitSearchContextTaskIds}
           statusMatchedChildTaskIds={tableProps.statusMatchedChildTaskIds}
           statusMatchedStepParentTaskIds={tableProps.statusMatchedStepParentTaskIds}
           statusFilterActive={tableProps.statusFilterActive}
@@ -691,7 +698,7 @@ export function TasksTableAdapter({
           onTaskPinToggle={tableProps.onTogglePinned}
           onTaskRepeatChange={tableProps.onSetRepeat}
           onTaskStatusChange={(taskId, status, scrollAnchorTaskIds, options) => {
-            const expectedTask = tableProps.tasks.find((task) => task.id === taskId) ?? null;
+            const expectedTask = presentationTasks.find((task) => task.id === taskId) ?? null;
             tableProps.onSetStatus?.(
               taskId,
               status,
@@ -713,9 +720,9 @@ export function TasksTableAdapter({
           onToggleTaskList={tableProps.onToggleTaskList}
           primaryBadgeLabel="Live task table"
           rows={rows}
-          hasMoreRows={windowedTasks.length < tableProps.tasks.length}
+          hasMoreRows={windowedTasks.length < presentationTasks.length}
           onLoadMoreRows={() => setRowWindow((current) => ({
-            count: Math.min((current.revision === committedResultRevision ? current.count : rowWindowCount) + ROW_MODEL_WINDOW_BATCH, tableProps.tasks.length),
+            count: Math.min((current.revision === committedResultRevision ? current.count : rowWindowCount) + ROW_MODEL_WINDOW_BATCH, presentationTasks.length),
             revision: committedResultRevision,
           }))}
           runningTaskTimers={tableProps.runningTaskTimers}
@@ -2562,14 +2569,18 @@ function TasksSimpleList({
   const parentStepDraftInputRef = useRef<HTMLInputElement | null>(null);
   const lastBuildTaskTableRowCountRef = useRef(snapshotBuildTaskTableRowDebugCount());
   const getShowAllSearchStepsKey = (taskId: string) => `${tableProps.hierarchyScopeKey ?? ""}:${taskId}`;
+  const presentationTasks = useMemo(
+    () => mergeTaskRowsWithPursuitSearchContext(tableProps.tasks, tableProps.pursuitSearchContextTasks ?? []),
+    [tableProps.pursuitSearchContextTasks, tableProps.tasks],
+  );
   const tasks = useMemo(
-    () => sortListParentTasks(tableProps.tasks, listSortPreference, {
+    () => sortListParentTasks(presentationTasks, listSortPreference, {
       taskDisplayStatusByTaskId: tableProps.rowContext.taskDisplayStatusByTaskId,
       taskHistoryByTaskId: tableProps.rowContext.taskHistoryByTaskId,
       taskHistoryStreakSummaryByTaskId: tableProps.rowContext.taskHistoryStreakSummaryByTaskId,
       todayDateKey: tableProps.rowContext.todayDateKey,
     }),
-    [listSortPreference, tableProps.rowContext.taskDisplayStatusByTaskId, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.taskHistoryStreakSummaryByTaskId, tableProps.rowContext.todayDateKey, tableProps.tasks],
+    [listSortPreference, presentationTasks, tableProps.rowContext.taskDisplayStatusByTaskId, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.taskHistoryStreakSummaryByTaskId, tableProps.rowContext.todayDateKey],
   );
   const pursuitWorkspaceIndex = useMemo(
     () => buildPursuitWorkspaceIndex(filterPursuitsByTitle(tableProps.pursuits ?? [], tableProps.pursuitSearch ?? "")),
@@ -2692,6 +2703,10 @@ function TasksSimpleList({
   const searchMatchedChildTaskIdSet = useMemo(
     () => new Set(tableProps.searchMatchedChildTaskIds ?? []),
     [tableProps.searchMatchedChildTaskIds],
+  );
+  const pursuitSearchContextTaskIdSet = useMemo(
+    () => new Set(tableProps.pursuitSearchContextTaskIds ?? []),
+    [tableProps.pursuitSearchContextTaskIds],
   );
   const statusMatchedChildTaskIdSet = useMemo(
     () => new Set(tableProps.statusMatchedChildTaskIds ?? []),
@@ -2946,9 +2961,11 @@ function TasksSimpleList({
     setCollapsedStepSectionsByTaskId((current) => {
       const eligibleGroups = tasks.flatMap((task) => {
         const group = tableProps.childTaskPreviewByParentTaskId?.[task.id];
-        if (!group || group.items.length === 0) return [];
+        const hasPursuits = (pursuitWorkspaceIndex.byTaskId.get(task.id) ?? []).length > 0;
+        if ((!group || group.items.length === 0) && !hasPursuits) return [];
         return [{
           expanded: searchMatchedStepParentTaskIdSet.has(task.id)
+            || pursuitSearchContextTaskIdSet.has(task.id)
             || parentStepDraftTaskId === task.id
             || current[task.id] === false,
           taskId: task.id,
@@ -3151,6 +3168,8 @@ function TasksSimpleList({
             },
           }
           : null);
+        const pursuitRows = pursuitWorkspaceIndex.byTaskId.get(task.id) ?? [];
+        const hasPursuitRows = pursuitRows.length > 0;
         const activeHierarchyParentMatch = tableProps.statusFilterActive
           ? statusMatchedStepParentTaskIdSet.has(task.id)
           : searchMatchedStepParentTaskIdSet.has(task.id);
@@ -3158,12 +3177,14 @@ function TasksSimpleList({
           ? statusMatchedChildTaskIdSet
           : searchMatchedChildTaskIdSet;
         const isStepSectionExpanded = activeHierarchyParentMatch
+          || pursuitSearchContextTaskIdSet.has(task.id)
           || parentStepDraftTaskId === task.id
           || collapsedStepSectionsByTaskId[task.id] === false;
         const hasVisibleRenderedDescendants = Boolean(
-          isStepSectionExpanded
-          && effectiveStepPreviewGroup
-          && (effectiveStepPreviewGroup.items.length > 0 || parentStepDraftTaskId === task.id),
+          isStepSectionExpanded && (
+            (effectiveStepPreviewGroup && (effectiveStepPreviewGroup.items.length > 0 || parentStepDraftTaskId === task.id))
+            || hasPursuitRows
+          ),
         );
         return (
           <div className="space-y-3" data-task-list-hierarchy-group={task.id} key={task.id}>
@@ -3639,7 +3660,7 @@ function TasksSimpleList({
                 onTogglePinned={tableProps.onTogglePinned}
                 onToggleTaskList={tableProps.onToggleTaskList}
                 onToggleExpanded={() => {
-                  if (searchMatchedStepParentTaskIdSet.has(task.id)) {
+                  if (searchMatchedStepParentTaskIdSet.has(task.id) || pursuitSearchContextTaskIdSet.has(task.id)) {
                     return;
                   }
                   setCollapsedStepSectionsByTaskId((current) => ({
@@ -3673,7 +3694,26 @@ function TasksSimpleList({
                 visibleMetadataTaskIds={visibleMetadataTaskIds}
               />
             ) : null}
-            {(pursuitWorkspaceIndex.byTaskId.get(task.id) ?? []).map(({ depth, pursuit }) => (
+            {!effectiveStepPreviewGroup && hasPursuitRows ? (
+              <section className="mt-3 border-t border-[#f0ebfb] pt-3 dark:border-white/10">
+                <div className="flex items-center gap-1.5">
+                  <span className={TASK_TABLE_TITLE_CELL_CLASS}>Pursuits</span>
+                  <TaskHierarchyChevronButton
+                    buttonClassName="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#9b92be] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/35 dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                    expanded={isStepSectionExpanded}
+                    onToggle={() => {
+                      if (pursuitSearchContextTaskIdSet.has(task.id)) return;
+                      setCollapsedStepSectionsByTaskId((current) => ({
+                        ...current,
+                        [task.id]: current[task.id] === false,
+                      }));
+                    }}
+                    onToggleAll={toggleAllRenderedStepSections}
+                  />
+                </div>
+              </section>
+            ) : null}
+            {shouldRenderTaskPursuitChildren(isStepSectionExpanded, pursuitRows) ? pursuitRows.map(({ depth, pursuit }) => (
               <PursuitListWorkspaceRow
                 attention={tableProps.pursuitAttentionById?.get(pursuit.id)}
                 depth={depth + 1}
@@ -3683,7 +3723,7 @@ function TasksSimpleList({
                 pursuit={pursuit}
                 timezone={tableProps.pursuitTimezone ?? "UTC"}
               />
-            ))}
+            )) : null}
           </div>
         );
       })}

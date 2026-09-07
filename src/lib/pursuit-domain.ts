@@ -1,4 +1,4 @@
-import type { Pursuit, PursuitActivity, PursuitStatus } from "@/lib/database.types";
+import type { Pursuit, PursuitActivity, PursuitStatus, Task } from "@/lib/database.types";
 import { getLogicalDayKey } from "@/lib/logical-day";
 import { daysBetween } from "@/lib/task-state-engine/calendar";
 
@@ -30,9 +30,9 @@ export type PursuitWorkspaceIndex = {
   topLevel: PursuitWorkspaceRow[];
 };
 
-export function filterPursuitsByTitle(pursuits: Pursuit[], query: string): Pursuit[] {
+export function filterPursuitsByTitle(pursuits: ReadonlyArray<Pursuit>, query: string): Pursuit[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  if (!normalizedQuery) return pursuits;
+  if (!normalizedQuery) return [...pursuits];
 
   const byId = new Map(pursuits.map((pursuit) => [pursuit.id, pursuit]));
   const visibleIds = new Set(
@@ -53,6 +53,41 @@ export function filterPursuitsByTitle(pursuits: Pursuit[], query: string): Pursu
   }
 
   return pursuits.filter((pursuit) => visibleIds.has(pursuit.id));
+}
+
+export function getPursuitSearchContextTaskIds(
+  pursuits: ReadonlyArray<Pursuit>,
+  query: string,
+): string[] {
+  if (!query.trim()) return [];
+
+  return Array.from(new Set(
+    filterPursuitsByTitle(pursuits, query)
+      .map((pursuit) => pursuit.parent_task_id)
+      .filter((taskId): taskId is string => taskId !== null),
+  ));
+}
+
+export function mergeTaskRowsWithPursuitSearchContext(
+  tasks: ReadonlyArray<Task>,
+  contextTasks: ReadonlyArray<Task>,
+): Task[] {
+  const taskIds = new Set(tasks.map((task) => task.id));
+  return [
+    ...tasks,
+    ...contextTasks.filter((task) => {
+      if (taskIds.has(task.id)) return false;
+      taskIds.add(task.id);
+      return true;
+    }),
+  ];
+}
+
+export function shouldRenderTaskPursuitChildren(
+  isTaskHierarchyExpanded: boolean,
+  pursuitRows: ReadonlyArray<PursuitWorkspaceRow>,
+) {
+  return isTaskHierarchyExpanded && pursuitRows.length > 0;
 }
 
 export function getMostRecentPursuitActivity(

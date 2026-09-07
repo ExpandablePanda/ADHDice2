@@ -40,10 +40,20 @@ test("Table/List use a dedicated Pursuit rendering path and searchable domain ro
   assert.match(appSource, /onOpenPursuit: openPursuitEditor/);
 });
 
+test("Pursuit presentation follows Task disclosure and search context without becoming a Task match", () => {
+  assert.match(tableSource, /shouldRenderTaskPursuitChildren\(sourceStepsExpanded, pursuitRows\)/);
+  assert.match(tableSource, /pursuitSearchContextTaskIdSet\.has\(task\.id\)/);
+  assert.match(listSource, /shouldRenderTaskPursuitChildren\(isStepSectionExpanded, pursuitRows\)/);
+  assert.match(listSource, /pursuitSearchContextTaskIdSet\.has\(task\.id\)/);
+  assert.match(appSource, /pursuitSearchContextTasks/);
+  assert.match(appSource, /pursuits: taskWorkspacePursuits/);
+});
+
 test("Pursuit presentation wiring does not feed rows into Task completion inputs", () => {
   assert.match(tableSource, /buildPursuitWorkspaceIndex/);
   assert.match(tableSource, /renderPursuitRows\(pursuitWorkspaceIndex/);
   assert.match(appSource, /tasks: tasksForActiveStatusRead/);
-  assert.match(appSource, /pursuits: pursuitData\.pursuits/);
+  assert.match(appSource, /pursuits: taskWorkspacePursuits/);
+  assert.doesNotMatch(appSource, /adhdice_task_list_manual_memberships.*pursuit/i);
   assert.doesNotMatch(rowSource, /TaskStatus|TaskHistory|occurrence|adhdice_clean_tasks/);
 });

@@ -49,6 +49,10 @@ export function isTaskVisibleInPrimaryViews(task: Task) {
   return !shouldHideTaskFromPrimaryViews(task);
 }
 
+export function isPursuitVisibleInTaskWorkspace(selectedBucket: string) {
+  return selectedBucket === "all";
+}
+
 export function isTaskUrgent(task: Task) {
   return isTaskOpen(task) && getTaskPriorityLevel(task) === 5;
 }
