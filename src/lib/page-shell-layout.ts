@@ -559,6 +559,8 @@ export type PageShellDragAxisIntent = "horizontal" | "vertical";
 export type PageShellDragCoordinateConstraint = {
   columnStart?: number;
   destinationRowIndex?: number;
+  /** Existing semantic row owned by the active drag; never a transient new-row index. */
+  ownedRowIndex?: number;
   rowOffsetSteps?: number;
 };
 
@@ -1837,6 +1839,24 @@ function getPageShellDragGridNewRowZones(
   return zones;
 }
 
+function getPageShellDragGridAvailableRegions(
+  rows: readonly PageShellDragGridRow[],
+  newRowZones: readonly PageShellDragGridNewRowZone[],
+  sourceHeight: number,
+) {
+  return rows.map((row, index) => {
+    const next = rows[index + 1];
+    const nextZone = next
+      ? newRowZones.find((zone) => zone.position === "between" && zone.anchorRowIndex === next.rowIndex)
+      : newRowZones.find((zone) => zone.position === "below");
+    const availableBottom = nextZone
+      ? Math.max(row.bottom, nextZone.top - PAGE_SHELL_NEW_ROW_ZONE_GAP_PX)
+      : row.bottom + Math.max(PAGE_SHELL_NEW_ROW_ZONE_HEIGHT_PX, sourceHeight + PAGE_SHELL_PACKING_GAP_PX);
+    row.availableBottom = availableBottom;
+    return { bottom: availableBottom, rowIndex: row.rowIndex, top: row.top };
+  });
+}
+
 function getPageShellDragGridSourceHeight(
   input: PageShellDragGridInput,
 ) {
@@ -1908,23 +1928,11 @@ export function getPageShellDragGrid(input: PageShellDragGridInput): PageShellDr
       top: geometry.top,
     }];
   });
-  const availableRegions = rows.map((row, index) => {
-    const next = rows[index + 1];
-    const nextZone = next
-      ? newRowZones.find((zone) => zone.position === "between" && zone.anchorRowIndex === next.rowIndex)
-      : newRowZones.find((zone) => zone.position === "below");
-    const availableBottom = nextZone
-      ? Math.max(row.bottom, nextZone.top - PAGE_SHELL_NEW_ROW_ZONE_GAP_PX)
-      : row.bottom + Math.max(PAGE_SHELL_NEW_ROW_ZONE_HEIGHT_PX, sourceHeight + PAGE_SHELL_PACKING_GAP_PX);
-    row.availableBottom = availableBottom;
-    return {
-      bottom: availableBottom,
-      left: input.gridBounds.left,
-      right: input.gridBounds.left + input.gridBounds.width,
-      rowIndex: row.rowIndex,
-      top: row.top,
-    };
-  });
+  const availableRegions = getPageShellDragGridAvailableRegions(rows, newRowZones, sourceHeight).map((region) => ({
+    ...region,
+    left: input.gridBounds.left,
+    right: input.gridBounds.left + input.gridBounds.width,
+  }));
   const candidateRect = input.target && candidateColumn && candidateTop !== undefined
     ? {
         bottom: candidateTop + sourceHeight,
@@ -2106,6 +2114,7 @@ export function getPageShellDropTarget(
   const intendedCenter = intendedLeft + sourceWidth / 2;
   const centerSnapZone = Math.max(PAGE_SHELL_CENTER_SNAP_ZONE_PX, trackWidth);
   const sourceIsCentered = isPageShellCenteredPlacement(placements[sourceId]);
+  const sourceHeight = Math.max(0, (sourceGeometry?.bottom ?? 0) - (sourceGeometry?.top ?? 0));
   const heldColumnStart = axisIntent === "vertical" && coordinateConstraint?.columnStart !== undefined
     ? Math.max(1, Math.min(13 - sourceSpan, Math.round(coordinateConstraint.columnStart)))
     : undefined;
@@ -2129,7 +2138,7 @@ export function getPageShellDropTarget(
     dragGridRows,
     order,
     sourceId,
-    Math.max(0, (sourceGeometry?.bottom ?? 0) - (sourceGeometry?.top ?? 0)),
+    sourceHeight,
   );
   const heldHorizontalRow = axisIntent === "horizontal" && coordinateConstraint?.destinationRowIndex !== undefined
     ? allExplicitRows.find((row) => row.rowIndex === coordinateConstraint.destinationRowIndex)
@@ -2168,7 +2177,7 @@ export function getPageShellDropTarget(
       directGeometry,
       pointerY,
       grabOffsetY,
-      Math.max(0, sourceGeometry.bottom - sourceGeometry.top),
+      sourceHeight,
       directColumnStart,
       { order: [...order], placements },
       packedPositions,
@@ -2176,10 +2185,6 @@ export function getPageShellDropTarget(
     : null;
   if (directVerticalMagnet) return directVerticalMagnet;
   const intendedTop = pointerY - (Number.isFinite(grabOffsetY) ? grabOffsetY : 0);
-  const pointerRow = explicitRowGeometries.find((row) => (
-    intendedTop >= row.top - PAGE_SHELL_POINTER_HYSTERESIS_PX
-      && intendedTop <= row.bottom + PAGE_SHELL_POINTER_HYSTERESIS_PX
-  ));
   const newRowZone = hasExplicitRows && axisIntent === "vertical" && !physicalTargetHit
     ? newRowZones.find((zone) => intendedTop >= zone.top && intendedTop <= zone.bottom)
     : undefined;
@@ -2195,53 +2200,46 @@ export function getPageShellDropTarget(
       targetId: null,
     };
   }
-  if (hasExplicitRows && pointerRow && !physicalTargetHit && directGeometry && sourceGeometry) {
+  const ownedRow = hasExplicitRows && axisIntent === "vertical"
+    ? explicitRowGeometries.find((row) => row.rowIndex === (
+      coordinateConstraint?.ownedRowIndex
+        ?? normalizePageShellRowIndex(placements[sourceId]?.rowIndex)
+    ))
+    : undefined;
+  const visibleAvailableRow = hasExplicitRows && axisIntent === "vertical" && !physicalTargetHit
+    ? getPageShellDragGridAvailableRegions(
+      dragGridRows,
+      newRowZones,
+      sourceHeight,
+    ).find((region) => {
+      return intendedTop >= region.top && intendedTop + sourceHeight <= region.bottom;
+    })
+    : undefined;
+  const destinationRow = visibleAvailableRow
+    ? explicitRowGeometries.find((row) => row.rowIndex === visibleAvailableRow.rowIndex)
+    : ownedRow;
+  if (hasExplicitRows && destinationRow && !physicalTargetHit && directGeometry && sourceGeometry) {
     const rowOffsetSteps = axisIntent === "vertical"
       ? getPageShellVerticalOffsetSteps(
         intendedTop,
-        pointerRow.top,
-        Math.max(0, sourceGeometry.bottom - sourceGeometry.top),
-        pointerRow.bottom,
+        destinationRow.top,
+        sourceHeight,
+        destinationRow.bottom,
       )
       : 0;
     return {
       columnStart: directColumnStart,
-      destinationRowIndex: pointerRow.rowIndex,
+      destinationRowIndex: destinationRow.rowIndex,
       insertionIndex: getPageShellExplicitRowInsertionIndex(
         { order: [...order], placements },
         packedPositions,
         order,
         sourceId,
-        pointerRow.rowIndex,
+        destinationRow.rowIndex,
         directColumnStart,
       ),
       laneOrder: 0,
       rowOffsetSteps,
-      targetId: null,
-    };
-  }
-  if (hasExplicitRows && axisIntent === "vertical" && !physicalTargetHit && explicitRowGeometries.length > 0) {
-    const fallbackRow = explicitRowGeometries.reduce((closest, row) => (
-      Math.abs(row.top - intendedTop) < Math.abs(closest.top - intendedTop) ? row : closest
-    ));
-    return {
-      columnStart: directColumnStart,
-      destinationRowIndex: fallbackRow.rowIndex,
-      insertionIndex: getPageShellExplicitRowInsertionIndex(
-        { order: [...order], placements },
-        packedPositions,
-        order,
-        sourceId,
-        fallbackRow.rowIndex,
-        directColumnStart,
-      ),
-      laneOrder: 0,
-      rowOffsetSteps: getPageShellVerticalOffsetSteps(
-        intendedTop,
-        fallbackRow.top,
-        Math.max(0, (sourceGeometry?.bottom ?? 0) - (sourceGeometry?.top ?? 0)),
-        fallbackRow.bottom,
-      ),
       targetId: null,
     };
   }

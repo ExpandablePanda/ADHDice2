@@ -3074,6 +3074,138 @@ test("explicit new-row targeting is required and planner inserts the selected ro
   }
 });
 
+test("7.12.118 keeps semantic row ownership sticky until a valid explicit transfer", () => {
+  const order = ["a", "source", "c"];
+  const sizes = sizesFor({ a: 6, source: 6, c: 6 }, { a: 120, source: 120, c: 120 });
+  const placements = {
+    a: { columnStart: 1, rowIndex: 0 },
+    source: { columnStart: 7, rowIndex: 0 },
+    c: { columnStart: 7, rowIndex: 1 },
+  };
+  const layout = { order, placements, sizes } satisfies PageShellLayoutPreference;
+  const positions = packPageShellLayoutExplicit(order, sizes, { chromeHeightPx: 32, placements });
+  const grid = { left: 0, width: 1200 };
+  const firstColumn = getPageShellGridColumnGeometry(grid, 1, 6)!;
+  const secondColumn = getPageShellGridColumnGeometry(grid, 7, 6)!;
+  const geometries: PageShellGeometry[] = [
+    { bottom: 120, id: "a", left: firstColumn.left, right: firstColumn.left + firstColumn.width, top: 0 },
+    { bottom: 120, id: "source", left: secondColumn.left, right: secondColumn.left + secondColumn.width, top: 0 },
+    { bottom: 420, id: "c", left: secondColumn.left, right: secondColumn.left + secondColumn.width, top: 300 },
+  ];
+  const vertical = (pointerX: number, pointerY: number, ownedRowIndex: number, columnStart: number) => getPageShellDropTarget(
+    geometries,
+    positions,
+    order,
+    "source",
+    pointerX,
+    pointerY,
+    grid,
+    20,
+    placements,
+    undefined,
+    0,
+    undefined,
+    "vertical",
+    { columnStart, ownedRowIndex },
+  );
+
+  const underA = vertical(firstColumn.left + 20, 140, 0, 1);
+  assert.equal(underA.destinationRowIndex, 0);
+  assert.ok((underA.rowOffsetSteps ?? 0) > 0);
+
+  const farDown = vertical(firstColumn.left + 20, 260, 0, 1);
+  assert.equal(farDown.destinationRowIndex, 0);
+  assert.equal(farDown.newRow, undefined);
+  assert.ok((farDown.rowOffsetSteps ?? 0) > (underA.rowOffsetSteps ?? 0));
+
+  const upWithinOwnedRow = vertical(secondColumn.left + 20, 100, 0, 7);
+  assert.equal(upWithinOwnedRow.destinationRowIndex, 0);
+  assert.equal(upWithinOwnedRow.newRow, undefined);
+
+  const visibleRowTransfer = vertical(firstColumn.left + 20, 320, 0, 1);
+  assert.equal(visibleRowTransfer.destinationRowIndex, 1);
+  assert.equal(visibleRowTransfer.targetId, null);
+  const transferPlan = planPageShellMove({
+    chromeHeightPx: 32,
+    layout,
+    naturalHeights: {},
+    packedPositions: positions,
+    sourceId: "source",
+    target: visibleRowTransfer,
+    visibleShellIds: order,
+  });
+  assert.equal(transferPlan.valid, true);
+
+  const stickyAfterTransfer = vertical(firstColumn.left + 20, 260, 1, 1);
+  assert.equal(stickyAfterTransfer.destinationRowIndex, 1);
+  assert.equal(stickyAfterTransfer.newRow, undefined);
+
+  const betweenZone = getPageShellDragGrid({
+    geometries,
+    gridBounds: grid,
+    order,
+    packedPositions: positions,
+    placements,
+    sizes,
+    sourceId: "source",
+  }).newRowZones.find((zone) => zone.position === "between");
+  assert.ok(betweenZone);
+  const blueTarget = vertical(firstColumn.left + 20, (betweenZone?.top ?? 0) + 16, 0, 1);
+  assert.equal(blueTarget.newRow, true);
+  const afterBlue = vertical(firstColumn.left + 20, 260, 0, 1);
+  assert.equal(afterBlue.destinationRowIndex, 0);
+  assert.equal(afterBlue.newRow, undefined);
+  const bluePlan = planPageShellMove({ chromeHeightPx: 32, layout, packedPositions: positions, sourceId: "source", target: blueTarget, visibleShellIds: order });
+  assert.equal(bluePlan.valid, true);
+  if (bluePlan.valid) assert.notEqual(bluePlan.layout.placements?.source?.rowIndex, 0);
+
+  const invalidLayout = {
+    order: ["a", "source", "c", "d"],
+    placements: {
+      a: { columnStart: 1, rowIndex: 0 },
+      source: { columnStart: 7, rowIndex: 0 },
+      c: { columnStart: 1, rowIndex: 1 },
+      d: { columnStart: 9, rowIndex: 1 },
+    },
+    sizes: sizesFor({ a: 6, source: 6, c: 8, d: 4 }, { a: 120, source: 120, c: 120, d: 120 }),
+  } satisfies PageShellLayoutPreference;
+  const invalidPositions = packPageShellLayoutExplicit(invalidLayout.order, invalidLayout.sizes, { placements: invalidLayout.placements });
+  const invalidGeometries: PageShellGeometry[] = [
+    { bottom: 120, id: "a", left: firstColumn.left, right: firstColumn.left + firstColumn.width, top: 0 },
+    { bottom: 120, id: "source", left: secondColumn.left, right: secondColumn.left + secondColumn.width, top: 0 },
+    { bottom: 420, id: "c", left: getPageShellGridColumnGeometry(grid, 1, 8)!.left, right: grid.left + grid.width * 0.67, top: 300 },
+    { bottom: 420, id: "d", left: getPageShellGridColumnGeometry(grid, 9, 4)!.left, right: grid.left + grid.width, top: 300 },
+  ];
+  const invalidTarget = getPageShellDropTarget(
+    invalidGeometries,
+    invalidPositions,
+    invalidLayout.order,
+    "source",
+    invalidGeometries.find((geometry) => geometry.id === "c")!.left + 40,
+    360,
+    grid,
+    0,
+    invalidLayout.placements,
+    undefined,
+    0,
+    undefined,
+    "vertical",
+    { columnStart: 7, ownedRowIndex: 0 },
+  );
+  const invalidPlan = planPageShellMove({ chromeHeightPx: 32, layout: invalidLayout, packedPositions: invalidPositions, sourceId: "source", target: invalidTarget, visibleShellIds: invalidLayout.order });
+  assert.equal(invalidTarget.destinationRowIndex, 1);
+  assert.equal(invalidPlan.valid, false);
+  assert.match(invalidPlan.message, /overlap|collision|capacity|placement/i);
+
+  assert.doesNotMatch(layoutSource, /const fallbackRow = explicitRowGeometries\.reduce/);
+  assert.doesNotMatch(layoutSource, /Math\.abs\(row\.top - intendedTop\)/);
+  assert.match(shellSource, /ownedRowIndex: sourcePlacement\.rowIndex/);
+  assert.match(shellSource, /axisIntent === "vertical" && !dropTarget\.newRow/);
+  assert.match(shellSource, /ownedRowIndex: interaction\.ownedRowIndex/);
+  assert.match(shellSource, /destinationRowIndex: interaction\.ownedRowIndex/);
+  assert.doesNotMatch(hookSource, /ownedRowIndex/);
+});
+
 test("explicit planning is isolated from legacy row inference and packing", () => {
   const explicitStart = layoutSource.indexOf("function planPageShellExplicitMove");
   const explicitEnd = layoutSource.indexOf("function packedPositionsForExplicitMove", explicitStart);
@@ -3085,7 +3217,7 @@ test("explicit planning is isolated from legacy row inference and packing", () =
   assert.match(layoutSource, /destinationRowIndex\?: number/);
 });
 
-test("7.12.117 keeps migration and legacy compatibility authorities unchanged", () => {
+test("7.12.118 keeps migration and legacy compatibility authorities unchanged", () => {
   const order = ["left", "right", "full"];
   const sizes = sizesFor({ left: 5, right: 7, full: 12 });
   const legacy = positionsFor(order, sizes, {

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.117`.
+- Current working app version: `7.12.118`.
 - Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,26 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.118 Sticky Semantic-Row Ownership During Shell Dragging
+
+Vertical shell dragging no longer chooses an existing semantic row from the
+nearest row top or any other distance fallback. Runtime ownership starts from
+the source shell's `rowIndex` and remains sticky during free vertical movement;
+it changes only after a valid plan for a deliberate direct shell/magnet target
+or a candidate fully inside another row's visible available region. Invalid
+existing-row candidates do not transfer ownership.
+
+Blue `New Row` bands remain a separate transient structural override. Hovering a
+blue band does not replace existing-row ownership, leaving it restores the
+previously owned row, and a new semantic row is committed only by releasing in
+the active blue zone. The selected existing row receives a subtle stronger row
+guide while dragging.
+
+The 12-column drag grid, dynamic axes, sub-row offsets, 2D geometry and
+collision validation, direct magnets, body swaps, edge insertion, toolbar
+arrows, Center/W12 behavior, packer math, migration, storage keys, saved Views,
+and SQL/schema remain unchanged.
 
 ## 2026-09-06 7.12.117 Visual Drag Grid, Sub-Row Placement, and Explicit New-Row Zones
 

@@ -86,7 +86,8 @@ type ShellMoveInteraction = {
   startLayout: PageShellLayoutPreference;
   directionTurnState: PageShellDragDirectionTurnState;
   heldColumnStart: number;
-  heldDestinationRowIndex?: number;
+  /** Runtime-only existing semantic row ownership; blue new-row candidates never replace it. */
+  ownedRowIndex?: number;
   heldRowOffsetSteps: number;
   plan?: PageShellMovePlan;
   target?: PageShellDropTarget;
@@ -601,6 +602,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     return ungroupedShells.length > 0 ? [...configuredGroups, { shells: ungroupedShells }] : configuredGroups;
   }, [layout.canonicalLayout.groups, layout.isCanonical, layout.isEditing, orderedShells, shellsById]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOwnedRowIndex, setDragOwnedRowIndex] = useState<number | undefined>(undefined);
   const [dragInsertionIndex, setDragInsertionIndex] = useState<number | null>(null);
   const [dragMovePlan, setDragMovePlan] = useState<PageShellMovePlan | null>(null);
   const [dragMoveWarning, setDragMoveWarning] = useState<string | null>(null);
@@ -818,11 +820,11 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   function updateMovePreview(interaction: ShellMoveInteraction, pointerX: number, pointerY: number) {
     const axisIntent = interaction.directionTurnState.axis ?? "horizontal";
     const coordinateConstraint: PageShellDragCoordinateConstraint = axisIntent === "vertical"
-      ? { columnStart: interaction.heldColumnStart }
-      : interaction.heldDestinationRowIndex === undefined
+      ? { columnStart: interaction.heldColumnStart, ownedRowIndex: interaction.ownedRowIndex }
+      : interaction.ownedRowIndex === undefined
         ? {}
         : {
-            destinationRowIndex: interaction.heldDestinationRowIndex,
+            destinationRowIndex: interaction.ownedRowIndex,
             rowOffsetSteps: interaction.heldRowOffsetSteps,
           };
     const previousInsertionIndex = interaction.target?.insertionIndex ?? interaction.targetIndex;
@@ -872,13 +874,14 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     if (axisIntent === "horizontal" && plannedPlacement.columnStart !== interaction.heldColumnStart) {
       interaction.heldColumnStart = plannedPlacement.columnStart;
     }
-    if (axisIntent === "vertical") {
+    if (axisIntent === "vertical" && !dropTarget.newRow) {
       const nextRowOffsetSteps = getPageShellPlacementRowOffsetSteps(plannedPlacement);
-      const rowChanged = plannedPlacement.rowIndex !== interaction.heldDestinationRowIndex;
+      const rowChanged = plannedPlacement.rowIndex !== interaction.ownedRowIndex;
       const offsetChanged = nextRowOffsetSteps !== interaction.heldRowOffsetSteps;
       if (rowChanged || offsetChanged) {
-        interaction.heldDestinationRowIndex = plannedPlacement.rowIndex;
+        interaction.ownedRowIndex = plannedPlacement.rowIndex;
         interaction.heldRowOffsetSteps = nextRowOffsetSteps;
+        setDragOwnedRowIndex(plannedPlacement.rowIndex);
       }
     }
   }
@@ -1012,7 +1015,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       startLayout,
       directionTurnState: createPageShellDragDirectionTurnState(event.clientX, event.clientY),
       heldColumnStart: sourcePlacement.columnStart,
-      heldDestinationRowIndex: sourcePlacement.rowIndex,
+      ownedRowIndex: sourcePlacement.rowIndex,
       heldRowOffsetSteps: getPageShellPlacementRowOffsetSteps(sourcePlacement),
       targetIndex: Math.max(0, startVisibleOrder.indexOf(id)),
     };
@@ -1027,6 +1030,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       targetId: null,
     };
     setDraggingId(id);
+    setDragOwnedRowIndex(sourcePlacement.rowIndex);
     setDragMoveWarning(null);
     setDragMovePlan(null);
     setDragStartVisibleOrder(startVisibleOrder);
@@ -1280,6 +1284,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     if (cancelled || !shouldCommitPreview) layout.cancelPreview();
     else layout.commitPreview();
     setDraggingId(null);
+    setDragOwnedRowIndex(undefined);
     setDragStartVisibleOrder(null);
     setDragInsertionIndex(null);
     setDragDropTarget(null);
@@ -1522,6 +1527,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
   const dragGridOrigin = dragIndicator?.gridOrigin;
   const dragGridLeft = dragGrid && dragGridOrigin ? dragGrid.bounds.left - dragGridOrigin.left : 0;
   const dragGridTop = dragGridOrigin?.top ?? 0;
+  const ownedDragRowIndex = draggingId ? dragOwnedRowIndex : undefined;
 
   return (
     <div
@@ -1559,8 +1565,9 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
           ))}
           {dragGrid.rows.map((row) => (
             <div
-              className="absolute border-t border-dashed border-[#6f57f6]/35 dark:border-[#cabfff]/30"
+              className={`absolute border-t border-dashed ${row.rowIndex === ownedDragRowIndex ? "border-[#6f57f6]/65 dark:border-[#cabfff]/60" : "border-[#6f57f6]/35 dark:border-[#cabfff]/30"}`}
               data-page-shell-drag-row={row.rowIndex}
+              data-page-shell-drag-row-owned={row.rowIndex === ownedDragRowIndex ? "true" : "false"}
               key={`page-shell-drag-row-${row.rowIndex}`}
               style={{
                 left: dragGridLeft,
