@@ -90,6 +90,7 @@ import { DetachAndPromoteMilestoneModal, MilestoneCorrectionModal, MilestoneSetu
 import { MilestoneInspectorSection } from "./task-app/milestone-detail-section";
 import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-app/milestone-lifecycle-modal";
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
+import { AttentionWorkspace } from "./task-app/attention-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { TaskCalendarView } from "./task-app/task-calendar-view";
@@ -147,6 +148,7 @@ import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
+import { usePursuits } from "@/hooks/usePursuits";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
 import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
@@ -1349,6 +1351,7 @@ export function TaskApp() {
   }
   const currentUserId = session?.user?.id ?? null;
   const scratchNotes = useScratchNotes(supabase, currentUserId);
+  const pursuitData = usePursuits(supabase, currentUserId, setMessage, activePage === "Tasks");
   const sleepCategory = useMemo(
     () => focusCategories.find((category) => isSleepCategory(category)) ?? null,
     [focusCategories],
@@ -6875,6 +6878,26 @@ export function TaskApp() {
                 state={brainstormState.state}
                 syncState={brainstormState.syncState}
                 updateState={brainstormState.updateState}
+              />
+            )}
+            attentionWorkspacePanel={(
+              <AttentionWorkspace
+                activities={pursuitData.activities}
+                dayStartTime={dayStartTime}
+                dueOnByTaskId={taskDisplayDueOnByTaskId}
+                error={pursuitData.error}
+                isLoading={pursuitData.isLoading}
+                now={new Date(logicalDayNow)}
+                onCreate={pursuitData.createPursuit}
+                onLogActivity={pursuitData.logActivity}
+                onOpenTask={openTaskInSharedTasksEditorFromPaths}
+                onRefresh={pursuitData.refresh}
+                onUpdate={pursuitData.updatePursuit}
+                pursuits={pursuitData.pursuits}
+                statusesByTaskId={taskDisplayStatusByTaskId}
+                tasks={tasksForActiveStatusRead}
+                todayKey={todayKey}
+                timezone={userTimeZone}
               />
             )}
             completedMilestonesWorkspacePanel={(

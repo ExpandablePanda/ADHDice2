@@ -7,7 +7,7 @@ import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout
 import { normalizeListSortBySurface, type ListSortBySurface } from "@/lib/task-list-sort";
 
 export type TaskViewMode = "table" | "list" | "cards" | "matrix" | "grid" | "calendar";
-export type TasksSurface = "tasks" | "paths" | "report" | "on_time" | "brainstorm" | "completed_milestones";
+export type TasksSurface = "tasks" | "attention" | "paths" | "report" | "on_time" | "brainstorm" | "completed_milestones";
 export type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused";
 export type TaskTableTextFilterColumnId = "title" | "lists" | "tags" | "link" | "notes";
 export type TaskTableColumnFilters = {
@@ -240,7 +240,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
         ? state.tableColumnFilters.text
         : {},
     },
-    tasksSurface: state.tasksSurface === "paths" || state.tasksSurface === "report" || state.tasksSurface === "on_time" || state.tasksSurface === "brainstorm" || state.tasksSurface === "completed_milestones"
+    tasksSurface: state.tasksSurface === "attention" || state.tasksSurface === "paths" || state.tasksSurface === "report" || state.tasksSurface === "on_time" || state.tasksSurface === "brainstorm" || state.tasksSurface === "completed_milestones"
       ? state.tasksSurface
       : "tasks",
     view: nextView,

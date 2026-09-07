@@ -1,0 +1,196 @@
+import type { Pursuit, PursuitActivity, PursuitStatus } from "@/lib/database.types";
+import { getLogicalDayKey } from "@/lib/logical-day";
+import { daysBetween } from "@/lib/task-state-engine/calendar";
+
+export type PursuitAttention = {
+  activityCount: number;
+  attentionRatio: number | null;
+  baselineAt: string;
+  baselineKind: "activity" | "created";
+  daysSinceBaseline: number;
+  lastActivityAt: string | null;
+  needsAttention: boolean;
+  pursuit: Pursuit;
+};
+
+export type PursuitAttentionContext = {
+  dayStartTime: string;
+  now: Date | string;
+  timezone: string;
+  todayKey?: string;
+};
+
+export function getMostRecentPursuitActivity(
+  activities: ReadonlyArray<PursuitActivity>,
+): PursuitActivity | null {
+  return [...activities]
+    .filter((activity) => Boolean(activity.occurred_at))
+    .sort((left, right) => (
+      right.occurred_at.localeCompare(left.occurred_at)
+      || right.created_at.localeCompare(left.created_at)
+      || right.id.localeCompare(left.id)
+    ))[0] ?? null;
+}
+
+export function getPursuitLogicalDay(
+  timestamp: Date | string,
+  context: Pick<PursuitAttentionContext, "dayStartTime" | "timezone">,
+) {
+  return getLogicalDayKey(
+    timestamp instanceof Date ? timestamp : new Date(timestamp),
+    { dayStartTime: context.dayStartTime, timezone: context.timezone },
+  );
+}
+
+export function derivePursuitAttention(
+  pursuit: Pursuit,
+  activities: ReadonlyArray<PursuitActivity>,
+  context: PursuitAttentionContext,
+): PursuitAttention {
+  const recentActivity = getMostRecentPursuitActivity(activities);
+  const baselineAt = recentActivity?.occurred_at ?? pursuit.created_at;
+  const baselineKind = recentActivity ? "activity" : "created";
+  const todayKey = context.todayKey ?? getPursuitLogicalDay(context.now, context);
+  const baselineDayKey = getPursuitLogicalDay(baselineAt, context);
+  const daysSinceBaseline = Math.max(0, daysBetween(baselineDayKey, todayKey));
+  const target = pursuit.revisit_interval_days;
+  const needsAttention = pursuit.status === "active"
+    && target !== null
+    && target > 0
+    && daysSinceBaseline > target;
+
+  return {
+    activityCount: activities.length,
+    attentionRatio: needsAttention && target ? daysSinceBaseline / target : null,
+    baselineAt,
+    baselineKind,
+    daysSinceBaseline,
+    lastActivityAt: recentActivity?.occurred_at ?? null,
+    needsAttention,
+    pursuit,
+  };
+}
+
+export function buildPursuitAttentionMap(
+  pursuits: ReadonlyArray<Pursuit>,
+  activities: ReadonlyArray<PursuitActivity>,
+  context: PursuitAttentionContext,
+) {
+  const activitiesByPursuitId = new Map<string, PursuitActivity[]>();
+  for (const activity of activities) {
+    const current = activitiesByPursuitId.get(activity.pursuit_id) ?? [];
+    current.push(activity);
+    activitiesByPursuitId.set(activity.pursuit_id, current);
+  }
+
+  return new Map(
+    pursuits.map((pursuit) => [
+      pursuit.id,
+      derivePursuitAttention(pursuit, activitiesByPursuitId.get(pursuit.id) ?? [], context),
+    ]),
+  );
+}
+
+export function sortPursuitsByAttention(rows: ReadonlyArray<PursuitAttention>) {
+  return [...rows]
+    .filter((row) => row.needsAttention && row.attentionRatio !== null)
+    .sort((left, right) => (
+      (right.attentionRatio ?? 0) - (left.attentionRatio ?? 0)
+      || left.pursuit.title.localeCompare(right.pursuit.title)
+      || left.pursuit.id.localeCompare(right.pursuit.id)
+    ));
+}
+
+export function formatPursuitAttentionReason(row: PursuitAttention) {
+  const daysLabel = `${row.daysSinceBaseline} day${row.daysSinceBaseline === 1 ? "" : "s"}`;
+  const baselineLabel = row.baselineKind === "activity" ? "since activity" : "since created";
+  const target = row.pursuit.revisit_interval_days;
+  return target === null
+    ? `${daysLabel} ${baselineLabel}`
+    : `${daysLabel} ${baselineLabel} · target ${target} day${target === 1 ? "" : "s"}`;
+}
+
+export function formatPursuitLastActivity(row: PursuitAttention, timezone: string) {
+  if (!row.lastActivityAt) {
+    return "No activity yet";
+  }
+  return `Last activity ${new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeZone: timezone,
+  }).format(new Date(row.lastActivityAt))}`;
+}
+
+export function canSetPursuitParent(
+  pursuits: ReadonlyArray<Pursuit>,
+  pursuitId: string,
+  parentPursuitId: string | null,
+) {
+  if (parentPursuitId === null) {
+    return true;
+  }
+  if (pursuitId === parentPursuitId) {
+    return false;
+  }
+
+  const byId = new Map(pursuits.map((pursuit) => [pursuit.id, pursuit]));
+  const visited = new Set<string>();
+  let cursor: string | null = parentPursuitId;
+  while (cursor) {
+    if (cursor === pursuitId || visited.has(cursor)) {
+      return false;
+    }
+    visited.add(cursor);
+    cursor = byId.get(cursor)?.parent_pursuit_id ?? null;
+  }
+  return byId.has(parentPursuitId);
+}
+
+export function getPursuitDepth(
+  pursuit: Pursuit,
+  pursuitsById: ReadonlyMap<string, Pursuit>,
+) {
+  let depth = 0;
+  let cursor = pursuit.parent_pursuit_id;
+  const visited = new Set<string>();
+  while (cursor && !visited.has(cursor)) {
+    visited.add(cursor);
+    depth += 1;
+    cursor = pursuitsById.get(cursor)?.parent_pursuit_id ?? null;
+  }
+  return depth;
+}
+
+export function sortPursuitsForManagement(pursuits: ReadonlyArray<Pursuit>) {
+  const byParent = new Map<string | null, Pursuit[]>();
+  for (const pursuit of pursuits) {
+    const current = byParent.get(pursuit.parent_pursuit_id) ?? [];
+    current.push(pursuit);
+    byParent.set(pursuit.parent_pursuit_id, current);
+  }
+  const result: Pursuit[] = [];
+  const visited = new Set<string>();
+  const visit = (parentId: string | null) => {
+    const children = [...(byParent.get(parentId) ?? [])].sort((left, right) => (
+      left.sort_order - right.sort_order
+      || left.title.localeCompare(right.title)
+      || left.id.localeCompare(right.id)
+    ));
+    for (const child of children) {
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
+      result.push(child);
+      visit(child.id);
+    }
+  };
+  visit(null);
+  for (const pursuit of pursuits) {
+    if (!result.some((entry) => entry.id === pursuit.id)) {
+      result.push(pursuit);
+    }
+  }
+  return result;
+}
+
+export function isPursuitStatus(value: unknown): value is PursuitStatus {
+  return value === "active" || value === "paused" || value === "archived";
+}

@@ -73,6 +73,46 @@ export type TaskEnergy = "none" | "low" | "medium" | "high";
 export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
 export type TaskRepeatMonthlyMode = "day_of_month" | "ordinal_weekday";
 export type TaskRepeatMonthlyOrdinal = "first" | "second" | "third" | "fourth" | "last";
+export type PursuitStatus = "active" | "paused" | "archived";
+export type Pursuit = {
+  id: string;
+  user_id: string;
+  parent_pursuit_id: string | null;
+  title: string;
+  notes: string | null;
+  status: PursuitStatus;
+  revisit_interval_days: number | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PursuitInsert = Omit<Pursuit, "created_at" | "id" | "updated_at"> & {
+  created_at?: string;
+  id?: string;
+  updated_at?: string;
+};
+
+export type PursuitUpdate = Partial<Pick<Pursuit, "notes" | "parent_pursuit_id" | "revisit_interval_days" | "sort_order" | "status" | "title">>;
+
+export type PursuitActivity = {
+  id: string;
+  user_id: string;
+  pursuit_id: string;
+  occurred_at: string;
+  duration_seconds: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PursuitActivityInsert = Omit<PursuitActivity, "created_at" | "id" | "updated_at"> & {
+  created_at?: string;
+  id?: string;
+  updated_at?: string;
+};
+
+export type PursuitActivityUpdate = Partial<Pick<PursuitActivity, "duration_seconds" | "notes" | "occurred_at">>;
 export type FocusType = string;
 export type FocusSubtype = string;
 export type TaskFocusDay = {
@@ -2575,6 +2615,18 @@ export type Database = {
         Row: MilestoneReminder;
         Insert: MilestoneReminderInsert;
         Update: MilestoneReminderUpdate;
+        Relationships: [];
+      };
+      adhdice_pursuits: {
+        Row: Pursuit;
+        Insert: PursuitInsert;
+        Update: PursuitUpdate;
+        Relationships: [];
+      };
+      adhdice_pursuit_activities: {
+        Row: PursuitActivity;
+        Insert: PursuitActivityInsert;
+        Update: PursuitActivityUpdate;
         Relationships: [];
       };
       adhdice_task_focus_days: {

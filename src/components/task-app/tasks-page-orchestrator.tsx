@@ -17,6 +17,7 @@ import type { TaskWorkspaceTab, TasksSurface, TaskViewMode } from "@/lib/task-ui
 type TasksPageOrchestratorProps = {
   activeTabId: string;
   alternateViewPanel: ReactNode;
+  attentionWorkspacePanel: ReactNode;
   brainstormWorkspacePanel: ReactNode;
   completedMilestonesWorkspacePanel: ReactNode;
   listViewPanel: ReactNode;
@@ -40,6 +41,7 @@ type TasksPageOrchestratorProps = {
 export function TasksWorkspace({
   activeTabId,
   alternateViewPanel,
+  attentionWorkspacePanel,
   brainstormWorkspacePanel,
   completedMilestonesWorkspacePanel,
   listViewPanel,
@@ -151,6 +153,7 @@ export function TasksWorkspace({
     <>
       <TaskPage
         alternateViewPanel={alternateViewPanel}
+        attentionWorkspacePanel={attentionWorkspacePanel}
         brainstormWorkspacePanel={brainstormWorkspacePanel}
         completedMilestonesWorkspacePanel={completedMilestonesWorkspacePanel}
         listViewPanel={listViewPanel}

@@ -5,8 +5,8 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.119`.
-- Current release group: `7.12.x` overnight Quick Fix bundle.
+- Current working app version: `7.13.0`.
+- Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
