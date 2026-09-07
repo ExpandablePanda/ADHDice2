@@ -1,17 +1,1255 @@
 # Current State
 
-Last reviewed: 2026-08-28
+Last reviewed: 2026-09-06
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.6`.
-- Current release group: `7.11.x` Meal Planning + Done to Actual.
+- Current working app version: `7.12.119`.
+- Current release group: `7.12.x` overnight Quick Fix bundle.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
-- `public/app-version.json`
+  - `public/app-version.json`
+  - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-06 7.12.119 Saved View Editing
+
+Saved Views now distinguish `Add View` from `Save Current View`. Applying or
+creating a View establishes a transient `activeViewId` for the current session;
+editing the layout does not clear that association. `Save Current View`
+overwrites the same View ID, preserving its name, target, and `createdAt` while
+refreshing the current layout or canonical/custom presentation and viewport.
+Reset and deletion of the active View clear the association; deleting another
+View does not. Measured legacy View migration continues updating the same ID.
+
+The active selection is intentionally session-only. Saved-View schema version,
+storage keys, persistence and export format remain unchanged, and no SQL/schema
+change is involved. The existing shell interaction engine (semantic rows,
+packing, drag, resize, arrows, and migration architecture) is unchanged.
+
+## 2026-09-06 7.12.118 Sticky Semantic-Row Ownership During Shell Dragging
+
+Vertical shell dragging no longer chooses an existing semantic row from the
+nearest row top or any other distance fallback. Runtime ownership starts from
+the source shell's `rowIndex` and remains sticky during free vertical movement;
+it changes only after a valid plan for a deliberate direct shell/magnet target
+or a candidate fully inside another row's visible available region. Invalid
+existing-row candidates do not transfer ownership.
+
+Blue `New Row` bands remain a separate transient structural override. Hovering a
+blue band does not replace existing-row ownership, leaving it restores the
+previously owned row, and a new semantic row is committed only by releasing in
+the active blue zone. The selected existing row receives a subtle stronger row
+guide while dragging.
+
+The 12-column drag grid, dynamic axes, sub-row offsets, 2D geometry and
+collision validation, direct magnets, body swaps, edge insertion, toolbar
+arrows, Center/W12 behavior, packer math, migration, storage keys, saved Views,
+and SQL/schema remain unchanged.
+
+## 2026-09-06 7.12.117 Visual Drag Grid, Sub-Row Placement, and Explicit New-Row Zones
+
+The user-facing sub-row concept is backed by the existing durable
+`rowOffsetSteps`; no `subRowIndex`, pixel coordinate, storage-key, View, or
+schema field was added. Dragging directly beneath or above a meaningfully
+overlapping shell keeps the destination in the same semantic `rowIndex` and
+uses the first valid 12px detent after the normal shell gap. The above and
+below magnets are symmetric conveniences; ordinary valid free vertical
+detents remain available, and the authoritative 2D validator still rejects
+exact X+Y collisions without relocating unrelated shells.
+
+Desktop editing now renders a transient drag grid from frozen pointer-down
+geometry: the real `referenceGridBounds` supplies all 12 columns, while
+frozen packed shell geometry supplies semantic row boundaries, row bottoms,
+individual offsets, custom or natural heights, edit chrome, gaps, occupied
+footprints, and the exact candidate footprint. Existing-row space is a subtle
+purple treatment, occupied footprints are a light neutral overlay, and the
+candidate is the strongest purple valid or red invalid treatment. The
+horizontal `C1`-`C12` ruler and vertical 12px `0`/`+n` ruler remain in place;
+dynamic H-to-V and V-to-H axis switching still holds the inactive coordinate.
+
+Visible blue insertion bands now exist above the first row, between semantic
+rows, and below the last row. A new semantic row is created only when the
+current candidate targets one of those explicit zones; ordinary vertical
+distance no longer triggers hidden midpoint or generic new-row transitions.
+The former bounded stacking-corridor classifier and invisible midpoint gap
+classifier were simplified away in favor of existing-row ownership, explicit
+zones, direct shell magnets, and the shared planner. Body swaps, left/right
+edge insertion, toolbar arrows, Center, and conservative W12 behavior remain
+unchanged.
+
+Persistence, saved Views, measured legacy migration, storage namespaces, and
+SQL/schema are unchanged. Stacked arrangements continue to round-trip through
+`rowIndex`, `columnStart`, `rowOffsetSteps`, `span`, and `heightPx`.
+
+## 2026-09-06 7.12.116 Reliable Direction-Turn Detection
+
+The 7.12.115 dynamic two-axis drag switch could still be intermittent because
+each active-axis snap advanced both local switch anchors and erased accumulated
+movement toward the opposite axis. Direction turns now use recent pointer
+movement with independent opposite-axis accumulation: active-axis snap
+advancement no longer erases turn intent, while current-axis dominance can
+cancel a false candidate and prevent jitter. The 12px activation threshold,
+20px switch threshold, and 8px dominance margin remain unchanged.
+
+Held coordinates and both rulers remain unchanged. Pointer-down reference
+geometry, pointer-up final planning, auto-scroll, grab offsets, stacking
+corridor, 2D collision validation, structural rows, migration, persistence,
+storage keys, Views, and schema remain unchanged.
+
+## 2026-09-06 7.12.114 Stacking Corridor and Two-Axis Snap Feedback
+
+Explicit vertical drags with a meaningfully aligned snapped X footprint now use
+a bounded continuation corridor inside the existing semantic row before generic
+new-row creation. The corridor uses the frozen pointer-down geometry, grab
+offset, source height, 12px detents, and the midpoint before the next real row;
+valid stacking targets therefore win over generic below-row insertion while real
+gaps and above/below workspace placement still create rows. The 7.12.113
+geometric collision validator remains authoritative, so early overlapping ticks
+stay invalid and later non-colliding ticks remain selectable. Tall neighboring
+shells beside a stack remain supported.
+
+The existing vertical 12px ruler is retained. Horizontal dragging now shows
+frozen 12-column snap feedback aligned to the real page-shell grid, including a
+current `C<n>` column label, the snapped shell footprint, and purple/invalid-red
+state. Grab-offset-aware target planning drives the displayed column, including
+cross-row left/right edge insertion. Persistence, schema, storage keys,
+migration, and Views are unchanged.
+
+## 2026-09-06 7.12.115 Dynamic Two-Axis Shell Dragging
+
+Shell drag axis intent is now dynamically switchable during one pointer
+gesture. The inactive snapped coordinate is held while the active coordinate
+changes: horizontal-to-vertical movement preserves `columnStart`, and
+vertical-to-horizontal movement preserves `rowIndex` plus `rowOffsetSteps`.
+Local switch anchors, a 20px switch threshold, and an 8px dominance margin
+prevent small diagonal jitter from flickering the active axis. The horizontal
+12-column ruler and vertical 12px detent ruler switch emphasis with the active
+axis while the larger structural insertion guide remains available.
+
+Held-coordinate targeting continues to use the frozen pointer-down reference
+frame, grab offsets, the existing stacking corridor, and the authoritative 2D
+collision validator. Structural new-row creation remains available in genuine
+vertical gaps. Persistence, storage keys, schema, migration, and Views are
+unchanged.
+
+## 2026-09-06 7.12.113 2D Shell Stacking and Detent Feedback
+
+Same-row explicit shell collision validation is now geometric: normal shells may
+share horizontal columns when their packed vertical occupied footprints do not
+overlap, while actual two-axis overlap remains rejected. `rowOffsetSteps`
+supports deliberate vertical detents into empty space, and mixed-height row
+targeting uses stable semantic row bands rather than only visible shell bottoms.
+True inter-row gaps and above/below workspace placement still create rows, while
+ordinary whitespace inside a row remains in that row. Cross-row left/right edge
+insertion is deterministic and preserves the target footprint. Vertical drag
+feedback now shows a 12px detent ruler, current tick, and invalid-candidate
+feedback. Migration timing, storage keys, persisted authorities, Views, and SQL
+schema remain unchanged.
+
+## 2026-09-06 7.12.112 Semantic-Row Shell Interaction Cutover
+
+Valid explicit shell layouts now mutate persisted semantic rows directly. Left
+and Right stay within one `rowIndex` and exchange exact horizontal destinations;
+Up and Down select adjacent visible semantic rows, preserve the requested
+snapped X for empty footprints, and exchange semantic destinations for occupied
+footprints. Successful moves compact empty source rows and maintain deterministic
+row-major order without making `order` the row authority. Explicit drag edge
+insertion, body swaps, empty-row placement, and new-row insertion write
+`rowIndex` directly and validate exact capacity, Center, and full-width rules.
+Explicit interactions no longer reconstruct rows through legacy packing or call
+the retired reconciliation bridge. Legacy or malformed layouts retain the
+compatibility planner. Measured migration, lazy View migration, persistence
+keys, and the explicit packer remain unchanged; no SQL or schema migration was
+added.
+
+## 2026-09-06 7.12.111 Measured Semantic Row Migration and Explicit Packer Cutover
+
+Measured semantic-row migration is active only after Edit Layout renders all
+registered shells with complete stable measurements. Migration is parity-gated
+against the preserved legacy packer; layouts that fail parity remain on legacy
+compatibility packing and are not persisted as explicit. Valid explicit layouts
+use persisted semantic row packing, while malformed or incomplete layouts use
+legacy defensive recovery. Custom Views migrate lazily when applied and
+measured, retaining their View IDs. Phase 3 now replaces the former legacy
+targeting bridge for valid explicit layouts while leaving legacy interactions
+compatible.
+No storage-key, SQL, or schema migration was added.
+
+## 2026-09-06 7.12.110 Semantic Shell Row Compatibility Foundation
+
+Explicit semantic shell rows have begun. `PageShellPlacement.rowIndex` is
+additive compatibility metadata: it is zero-based, durable, and required
+only for complete explicit layouts; legacy saved layouts may omit it. All
+registered canonical layouts now define semantic rows, including the
+approved Water, Food, Fitness, Weight, and Test D20 mappings. Missing rows
+are not fabricated during localStorage hydration, and the measured legacy
+row inference helper is available but is not automatically invoked or
+persisted yet. The current legacy `packPageShellLayout()` remains the live
+rendering authority; planner/arrows and drag behavior are unchanged. Phase 2
+will connect measured migration and later explicit-row packer cutover. No SQL
+or schema migration was added.
+
+## 2026-09-06 7.12.109 Direct Empty Vertical Shell Targets
+
+Occupied vertical destinations continue to use the existing deterministic
+`replace` swap planner. Empty Up/Down destinations now return a transient
+direct target with `targetId: null`, the exact adjacent structural-row
+baseline, and the source's snapped `columnStart`; unrelated peers are no
+longer used as fake anchors. A pure row insertion helper keeps the source
+inside the destination row's contiguous visible-order block, and the planner
+validates the exact row membership, X placement, widths, capacity, and
+non-overlap after real packing. Up and Down normalize `rowOffsetSteps` to zero
+and move one structural row; mixed-height Water-like packing and reverse
+movement are covered. Left/Right, drag, downstream reflow, Center, Views,
+Reset, and persistence remain unchanged. No SQL or schema migration was
+needed.
+
+## 2026-09-06 7.12.108 Vertical Arrow Swaps for Occupied Shells
+
+Vertical arrow destinations now inspect exactly the adjacent structural row
+and compare snapped 12-column footprints. An overlapping destination selects a
+deterministic target and uses the existing true `replace` swap planner;
+different-width and full-width swaps remain valid only when both resulting rows
+fit the strict 12-column capacity. An empty intended footprint keeps the
+source's current snapped X and existing one-structural-row move behavior,
+including vertical offset normalization. Center mode remains special and
+preserved where normalized placement allows it. Up and Down are symmetrical,
+repack after each committed move, and do not alter Left/Right or drag behavior.
+No persistence or schema change was needed.
+
+## 2026-09-06 7.12.107 Unified Structural Rows for Shell Moves
+
+Directional controls and the explicit shell-move planner now share one
+structural-row definition: packed `rowStart` minus the intentional Y detent
+converted through the existing vertical-placement and packing-row constants.
+Intentional Y detents no longer split one logical row, so target-row and
+source-row discovery, `sourceWasInTargetRow`, row reconstruction, and width
+validation include every structural peer. Left and Right planner behavior is
+symmetrical, including sequential arrow moves that repack after each committed
+layout, while existing offset values remain preserved. Up/Down, full-width and
+Center behavior, downstream reflow, drag targeting, Views, and Reset remain
+unchanged. No persistence or schema change was needed.
+
+## 2026-09-06 7.12.106 Authoritative Shell Targets and Directional Move Controls
+
+Direct page-shell hit testing now checks the captured real shell bounds before
+consulting the previous target's proximity/hysteresis region. Hysteresis still
+stabilizes ambiguous gaps and outside-shell space, while a shell physically
+under the pointer always becomes authoritative; repeated Center/body drops no
+longer retain an overlapping previous target and resolve true swaps reliably.
+
+Editable shell toolbars now restore compact Up, Down, Left, and Right controls
+inside the existing horizontally scrollable tool row. The controls resolve
+one same-row horizontal position or one adjacent structural row and pass a
+normal `PageShellDropTarget` through the current 12-column plan -> validate ->
+commit planner, not the retired Column/Slot architecture. Full-width shells
+remain standalone while supporting Up/Down, centered standalone shells retain
+Center for vertical moves, downstream reflow and strict row validation remain
+in force, and no SQL or schema migration was needed.
+
+## 2026-09-06 7.12.105 Deterministic Pointer-Up Shell Drops
+
+Successful shell drops now resolve their final target from the actual
+pointer-up `clientX` and `clientY`, so a stale last `pointermove` no longer
+determines the committed relationship. Preview and final commit continue
+through the same target resolver, hysteresis, plan → validate → commit flow,
+with stable pointer-down geometry, cancellation safety, downstream reflow,
+Views, and Reset unchanged. No SQL or schema migration was needed.
+
+## 2026-09-06 7.12.104 Deterministic Downstream Shell Reflow
+
+Valid explicit shell moves now distinguish requested-destination collisions
+from downstream vertical flow. The destination row remains strict: width
+overflow, same-row geometric collisions, impossible vertical offsets, and
+invalid Center placement still reject with the existing red preview and
+warning. When the requested row is valid, the normal packer may move later
+shells downward to clear a taller row, while preserving their horizontal
+columns, widths, and relative order. Plan → validate → commit remains
+authoritative; no arbitrary `rowStart` or Y coordinates are persisted. No SQL
+or schema migration was needed.
+
+## 2026-09-06 7.12.103 Axis-Intent-Locked Shell Dragging
+
+Shell dragging now locks intent relative to pointer-down movement. Horizontal
+or neutral movement changes structural order and snapped X placement without
+deriving a new vertical offset from pointer Y. A deliberate vertical gesture
+must clear the 12px axis threshold with vertical movement dominant; only then
+do left/right targets calculate 12px `rowOffsetSteps` detents. The axis choice
+is sticky for the gesture, so a horizontal reorder cannot acquire an accidental
+vertical nudge later. Existing plan → validate → commit behavior, vertical
+collision validation, auto-scroll, persistence, Views, Reset, narrow layouts,
+and Center behavior remain unchanged. No SQL or schema migration was needed.
+
+## 2026-09-06 7.12.102 Strict Planned Shell Moves
+
+Explicit page-shell dragging now follows plan → validate → commit. Left and
+right targets mean insert before and after; center targets perform true swaps.
+Every affected row is checked against the 12-column capacity before commit, and
+invalid moves no longer fall back to automatic downward packing. The planner
+exposes a calculated maximum source width when a destination row is too wide.
+Valid previews remain purple; invalid previews use the danger treatment, and an
+invalid release leaves the layout unchanged while showing a short accessible
+warning. Automatic packing remains available for canonical layout generation,
+normal layout calculation, legacy normalization, and defensive recovery.
+Vertical offsets and special odd-width Center placement are validated as exact
+destinations; even-width centering remains ordinary grid placement. Layout
+storage, Views, Reset, narrow behavior, and auto-scroll remain backward
+compatible. No SQL or schema migration was needed.
+
+## 2026-09-05 7.12.101 Directional Targets and Vertical Snap Detents
+
+Page-shell dragging now resolves target-aware `above`, `below`, `left`,
+`right`, and non-destructive `replace` relationships. Above/below use a
+horizontal guide, left/right use a vertical guide, and replace highlights the
+existing target shell without deleting it. Horizontal placement still uses the
+12-column snap grid. Same-row shells can persist optional 12px vertical
+`rowOffsetSteps`, with defensive normalization and stronger top, vertical-center,
+and bottom magnetic alignments. The packer remains authoritative for collision
+safety and region bottoms include downward-offset shells. Odd-width special
+Center keeps a distinct full-width Center guide and ignores vertical offset;
+even widths retain ordinary grid centering. The stable pointer-down geometry and
+commit-on-release drag architecture remains in place, including auto-scroll and
+pointer cancellation safety. Narrow single-column presentation ignores saved
+horizontal and vertical custom placement values. Layout storage, Views, and
+export/import remain backward-compatible; no SQL or schema migration was
+needed.
+
+## 2026-09-05 7.12.100 Stabilized Snap-Grid Drag Interaction
+
+Shell drag hit testing now uses visible order, shell geometry, packed positions,
+grid bounds, and grab offset captured at pointer-down for the entire drag. Move
+previews update only the purple insertion/snap indicator; page layout no longer
+live-repacks while the pointer moves. The final target is applied to the starting
+layout once on successful release, then preview order and placements are committed
+once. Existing insertion hysteresis is wired through drop targeting, and auto-scroll
+continues to convert the client pointer Y into document coordinates against the
+stable reference geometry. Direct snap-grid semantics, sizing, persistence, Views,
+Reset, and narrow layouts are unchanged. No SQL or schema migration was needed.
+
+## 2026-09-05 7.12.99 Odd-Width Special Center Mode
+
+Special `mode: "centered"` now exists only for odd-width shells that require
+the half-track render offset. Even widths use ordinary exact-centered grid
+starts: W4 at 5, W6 at 4, W8 at 3, W10 at 2, and W12 at 1. Legacy even
+centered placements normalize to those starts without changing order, size,
+height, or unrelated placements. Odd-to-even width changes exit special
+Center, while odd-to-odd centered changes preserve it. The 7.12.98 direct-row
+precedence behavior remains intact. No SQL or schema migration was needed.
+
+## 2026-09-05 7.12.98 Center-Snap Row Precedence
+
+Direct snapped placement now takes precedence over center snap when the
+snapped shell fits beside the shells in the pointer's insertion row. Center
+snap remains available for standalone row placement, so compatible 4/12
+shells can assemble into a shared 4 + 4 + 4 row without a centered row
+boundary interrupting the composition.
+
+## 2026-09-05 7.12.97 Direct Snap-Grid Shell Placement
+
+The visible semantic Column/Slot editor has been retired. Desktop shell
+placement now uses direct 12-column snap-grid starts plus visual order:
+compatible widths share rows, collisions pack downward, and order is the
+vertical authority. Center is a drag snap target with exact odd-width
+centering; width/height resize, Natural/Shrink behavior, persistence, Views,
+export/import, canonical Reset Layout, and narrow single-column flow remain
+available. Legacy `columnStart`, optional `laneOrder`, and centered placement
+records remain readable for compatibility. No SQL or schema migration was
+needed.
+
+## 2026-09-05 7.12.96 Centered Drag Semantic Isolation
+
+Dragging a centered shell now changes only the visible row/order. Its
+remembered `columnStart` and `laneOrder` stay unchanged, and the targeted
+semantic column is not resequenced. Center → Column remains the explicit
+semantic conversion path.
+
+## 2026-09-05 7.12.95 Centered Row Behavior Completion
+
+Centered shells retain `mode: "centered"` through drag/drop, regain Up/Down
+row-order controls, and use an exact half-track visual offset for odd widths
+such as 5/12 and 7/12. Centered shells still omit semantic Column and Slot
+controls, and Center → Column conversion remains a normal semantic placement.
+
+## 2026-09-05 7.12.94 Centered Row Shell Placement
+
+Page-shell layouts can now place a non-full-width shell as a centered row.
+This is an explicit `mode: "centered"` placement mode, not a semantic
+Column: the saved column and lane remain intact while runtime packing centers
+the shell and makes it a row boundary before normal semantic columns resume.
+The layout editor exposes Center row in the placement menu and removes Column
+Slot controls while it is active. Existing saved layouts and Views remain
+backward-compatible.
+
+## 2026-09-05 7.12.93 Short Shell Expansion
+
+Naturally short shells can now intentionally grow taller through the existing
+snapped resize interaction. `PAGE_SHELL_MIN_HEIGHT` remains the custom-height
+floor but no longer disables custom growth solely because natural content is
+short. Shrink and Natural still restore short shells to their natural height;
+the existing `heightPx` storage and semantic Column/Slot placement model are
+unchanged.
+
+## 2026-09-05 7.12.92 Scrollable Shell Edit Toolbars
+
+Narrow Edit Layout toolbars now keep the shell identity visible on the left
+while the editor tools horizontally scroll inside the shell. The intrinsic
+tool row remains unwrapped and controls retain their established sizes, so
+controls no longer overflow neighboring shells. Column menus escape the
+toolbar scroller by rendering the existing dropdown primitive through a local
+body portal; resize and shell-drag pointer lifecycles remain unchanged. This
+is a toolbar containment correction only: there is no shell layout or
+persistence model change.
+
+## 2026-09-05 7.12.91 Canonical Semantic Layout Seed and Stable Edit Topology
+
+Canonical CSS grouping and the editable semantic placement model had drifted:
+Water visibly placed its log left and its three supporting shells right, while
+the editor derived those shells from an automatic pack and reported Today's
+Water as Column A. Canonical multi-column layouts now carry edit placements
+alongside their historical groups/classes. Water seeds `water-log` as A1 and
+`water-pending`, `water-today`, and `water-history` as B1, B2, and B3 using the
+5/12 + 7/12 split. Food, Fitness, Weight, Sleep, Insights, and Test D20 carry
+the equivalent existing 7/12 + 5/12 or 6/12 + 6/12 semantic seeds.
+
+The packed 12-column algorithm now treats each 12/12 shell in global semantic
+order as a true vertical boundary: it packs the preceding two-column region,
+places the full-width shell below the entire region, and starts the next region
+after it. Runtime row coordinates remain derived and are not persisted.
+
+Opening Edit Layout on a canonical page switches to this semantic packed DOM
+immediately, while the page remains canonical until an actual layout mutation
+commits. The canonical grouped DOM therefore does not disappear during a
+resize, so pointer capture safeguards remain unchanged and width previews can
+commit without snapping back. Nested shell expansion remains deferred pending
+QA.
+
+## 2026-09-05 7.12.90 Semantic Column + Slot Shell Positioning
+
+The editable page-shell position model now matches the durable semantic
+placement fields directly. Non-full-width shells expose a presentation-only
+Column label derived from the sorted distinct `columnStart` values and a Slot
+control mapped to `laneOrder + 1` within that column. Slot changes, Up/Down
+shortcuts, and cross-column moves normalize affected lanes through the shared
+semantic lane helper; Up/Down call the same explicit-slot implementation.
+Cross-column moves preserve the approximate source slot when the destination
+has room. New-column controls continue to place the selected shell at Slot 1,
+and Column labels re-derive after structural changes.
+
+Editable global `Pos N/N` is removed. Global column-major `order` is derived
+only for compatibility, visual reading, Views/export, and persistence.
+Full-width shells continue to show `Full` without Column or Slot; drag remains
+an optional convenience and its semantic result is reflected by the same
+controls. Nested shell expansion remains deferred pending browser QA.
+
+## 2026-09-05 7.12.89 Deterministic Shell Columns and Navigator Anchor Stabilization
+
+The page-shell editor now derives presentation-only Column A/B/C labels from
+distinct semantic `columnStart` values. Explicit Column movement changes only
+the selected shell's semantic column, preserves its lane where practical, and
+offers at most one valid adjacent empty column per side. Horizontal arrows are
+intentionally removed; Up/Down are lane-only semantic moves, Pos remains the
+global column-major visual position, and current-frame free drag is retained as
+an optional interaction.
+
+Generic page-shell Navigator navigation keeps the measured fixed-header exact
+top calculation, then holds a bounded post-landing anchor phase until the
+target remains aligned for a consecutive stable-frame run. Browser scroll
+anchoring is disabled only during that phase and restored on completion,
+cancellation, or unmount. The target highlight begins only after final
+stability. Top-level Settings search now uses the page-shell destinations once
+while preserving child section targets. Nested expansion remains deferred
+pending browser QA.
+
+## 2026-09-05 7.12.88 Live Drag Geometry and Exact Shell-Top Navigation
+
+The 7.12.87 drag regression came from continuing to hit-test against
+drag-start rectangles and packed positions after live preview reflow. Move
+previews now batch pointer updates through RAF, recapture the current rendered
+shell geometry, repack metadata for that same preview frame, and derive each
+preview from the immutable drag-start layout. Drop placement normalizes only
+the source and destination semantic columns, preserving unrelated column
+ownership while the visual global order is refreshed. Insertion indicators use
+the same current-frame geometry.
+
+Generic page-shell Navigator navigation now waits for consecutive stable shell
+and header geometry frames after page-shell hydration. It measures the
+rendered fixed top HUD wrapper, positions the requested shell top below that
+header with a small gap, verifies on the next RAF, and permits one bounded
+corrective scroll before starting the temporary highlight and clearing the
+pending request. Nested-shell expansion remains deferred pending browser QA.
+The dedicated Settings section exact-position issue remains deferred.
+
+## 2026-09-05 7.12.87 Complete Navigator Shell Search and Reveal
+
+Navigator now exposes the registered page shells as normal destination results.
+The Food `food-library` shell supports direct nutrition, import, recipe, meal,
+and saved-food aliases without creating duplicate destinations; nested Test/D20
+shell destinations remain available under `test:d20`.
+
+Generic shell navigation keeps its semantic request pending until the relevant
+`pageKey` page-shell layout reports hydration readiness, then waits for the
+mounted shell to have usable geometry before revealing it with centered smooth
+scrolling. The resolved outer shell receives a temporary purple navigation
+highlight that is removed automatically, safely replaced by a later shell
+selection, and reduced to a static treatment for `prefers-reduced-motion`.
+
+This completion does not change shell placement/order, packed layout, Views,
+layout persistence, or shell dimensions. The dedicated Settings section
+navigation exact-position issue remains deferred.
+
+## 2026-09-04 7.12.85 Complete Empty-Column Shell Placement
+
+Shell move previews retain the runtime-only horizontal grab offset, so the
+source shell's intended left edge—not the raw pointer position—drives the
+captured 12-column grid target. Empty horizontal destinations remain span-aware
+and flow through semantic `columnStart` / `laneOrder` placement and live packed
+reflow; no pointer pixel coordinates are persisted.
+
+Edit-mode Left/Right controls now use the shared semantic placement model even
+when no directional shell neighbor exists. They choose the nearest legal
+adjacent empty column in source-span steps, clamp within the 12-column grid,
+and place an empty destination in lane zero. Up/Down neighbor and lane
+semantics remain unchanged. Empty drag indicators use the same captured grid
+bounds, target column, and source span as the saved destination instead of a
+full-width unrelated insertion line.
+
+The focused page-shell suite covers grab offsets, empty horizontal movement,
+span clamping, mixed packed layouts, semantic persistence, and the existing
+pointer lifecycle. Browser QA for the remaining empty-column placement checks
+is still pending with Andrew. No nested shells, SQL, schema, cloud persistence,
+application-data, or iOS changes were added.
+
+## 2026-09-04 7.12.84 Empty Packed-Column Drop Targeting
+
+Custom shell dragging now maps the pointer into the captured 12-column grid
+instead of inheriting a `columnStart` only from the nearest occupied shell.
+Empty horizontal space can therefore create a new semantic right-hand (or
+other available) column, clamped to the dragged shell's span. Existing occupied
+columns still use their captured vertical lane geometry, and the resulting
+`columnStart` / `laneOrder` flows through the existing placement and packing
+authorities. Runtime grid bounds are captured only for the drag; no DOM
+coordinates are persisted.
+
+The regression is covered by the focused page-shell layout suite. No nested
+shells, pointer lifecycle changes, SQL, schema, cloud persistence,
+application-data, or iOS changes were added.
+
+## 2026-09-04 7.12.83 Shell Pointer Lifecycle Hardening
+
+Browser QA found that packed shell reflow could cause the originating move or
+resize control to miss its release lifecycle, leaving the shared interaction
+ref armed. Later mouse movement could then continue changing a shell after
+physical release. `ReorderablePageShells` now centralizes move, width-only
+resize, and width-plus-height resize lifecycle handling through one active
+pointer ref and window-level capture-phase `pointermove`, `pointerup`, and
+`pointercancel` fallbacks. Pointer capture remains a defensive enhancement;
+capture and release are wrapped for controls that move or disappear during
+reflow.
+
+Matching `pointerup` clears the interaction and auto-scroll before committing
+the preview once. Matching `pointercancel`, window blur, edit-mode exit,
+preview invalidation from Reset/View application, and unmount cancel the
+uncertain preview and clear all interaction indicators. A mouse-only stale
+move with no pressed button also cancels; touch and pen button semantics are
+left unchanged. The 7.12.82 visual shell QA remains pending until Andrew
+passes the stuck-resize blocker checks.
+
+No nested shells, SQL, schema, cloud persistence, application-data, or iOS
+changes were added.
+
+## 2026-09-04 7.12.82 Shell Growth, Semantic Placement, and Navigator Readiness
+
+The shared page-shell engine now permits snapped custom heights above natural
+content up to a shared safety maximum, preserves internal body scrolling for
+short shells, and returns Expand to natural height. Custom layouts carry
+portable semantic placement hints (`columnStart` and `laneOrder`); runtime
+packing still fills gaps for unassigned shells, while drag/drop, directional
+movement, and saved layout round trips preserve deliberate column/lane
+placement. Legacy 7.12.79 through 7.12.81 layouts and saved Views derive the
+same deterministic placement representation when metadata is absent.
+
+Canonical Home and Settings widths remain unchanged. Custom shell workspaces
+can use the available application width, and Reset Layout returns the
+canonical width. Settings Navigator requests now wait for page-shell layout
+hydration and final animation-frame geometry before acknowledging the request.
+No SQL, schema, cloud persistence, or application-data changes were added.
+
+Nested-shell audit for the next phase only; these candidates are not
+implemented in 7.12.82:
+
+- Health → Water: Totals, Daily Goal, Log Water, Water Trend.
+- Health → Food → Favorites & Recent: Favorites, Recent Foods.
+- Health → Food → Daily Totals: Nutrition Summary, Nutrition Details, Calorie Trend.
+- Health → Journal → Journal Entry & History: Current Entry, Journal History.
+- Tasks → On-Time: Schedule Summary, Preparation List, Destination & Timing.
+- Tasks → Brainstorm → QA: Session Setup, Import Checklist, QA Checklist, Report/Results.
+- Progress → Records: Global Task Records, Streak Records, Focus Records, Per-task Records.
+- Test → D20 remains implemented and browser-QA passed.
+
+Possible later boundary decisions are Health Today Snapshot cards, Health
+Fitness Active Workout internals, Achievements, Task Report, and Brainstorm
+Questionnaire. Keep Home task rows/day groups, Settings individual controls,
+Notes individual note/search/tag controls, Stats mini-stat cards, Focus pager
+internals, active Games internals, PATHS nodes/canvas, individual
+Tasks/Steps/Substeps/table rows, and Roll internals out of generic nested
+shell coverage for now. Roll should receive a page-level shell migration
+first (Roll Station, Prize Board, Prize Basket, Recent Rolls) before any
+nested decision.
+
+## 2026-09-04 7.12.81 Shell Precision Controls, Packed Layouts, and Nested Test Scope
+
+The shared page-shell editor now provides a top width-only resize affordance,
+direct integer `W` span input clamped to 3/12 through 12/12, rendered pixel
+width in the runtime-only dimension readout, and compact Up/Down/Left/Right
+plus direct `Pos N/N` movement controls. Reorder controls remain hidden for a
+single-shell page. Width and height edits repack custom layouts through a
+deterministic earliest-fit 12-column occupancy algorithm: shells are processed
+in authoritative semantic order, then placed at the earliest available row and
+leftmost fitting column. Only semantic order, span, and height remain durable;
+generated row/column coordinates and measured width remain runtime-only.
+
+Food, Water, and Sleep canonical lane/group wrappers remain in place because
+the packed custom layout does not replace those canonical arrangements exactly;
+their Reset behavior and responsive grouping therefore remain protected. The
+Water tall-log / short-neighbor regression is covered by the packed-placement
+fixture.
+
+Settings Navigator now scrolls the requested outer shell into the document
+viewport and resets that shell body's internal scroll position, while retaining
+the existing `settings-section-*` semantic targets. Test now has editable outer
+shells `test-task-table`, `test-d20`, `test-dice-face`, `test-dice-material`,
+`test-task-table-prototype`, `test-bucket-tray`, and `test-rule-builder`. The
+D20 editor retains its nested `test-d20-sandbox` and `test-d20-controls` shells
+under the separate `test:d20` layout scope. Clearly legacy 7.12.80 D20-shaped
+`test` active preferences and saved Views migrate to `test:d20` without
+overwriting valid target data or changing the layout/View schema.
+
+Nested-shell source audit: Roll is a strong future candidate because its roll
+board, history, prize pool/manager, and Vault are major independently useful
+workspaces, but its reward persistence path remains outside this ticket.
+Achievements / Progress is a possible candidate, although its Achievements,
+Milestones, and Records regions are mutually exclusive tabs rather than
+simultaneous workspaces. Games should stay a single shell while its hub and
+modal games remain small; Focus already has the meaningful top-level timer,
+goals, counter-history, and activity shells; Health already has tab-specific
+major shells and protected Food/Water/Sleep grouping; Notes should retain its
+two dashboard shells and editor boundary; Home should retain its single
+`home-todo` shell; and Settings should retain its four major shells rather than
+making individual controls movable. Tasks, Roll, Achievements / Progress, and
+Games remain pending full page-shell migration.
+
+No SQL, schema, cloud layout sync, application content, reward logic,
+achievement calculations, Health calculations, Focus timer calculations, or
+iOS-specific changes were added.
+
+## 2026-09-04 7.12.80 Expanded Page-Shell Editing
+
+Home now exposes one `home-todo` shell for the existing Home To-do List.
+The main Settings page exposes the four major `settings-appearance`,
+`settings-day-reset`, `settings-economy`, and `settings-import-export` shells
+while preserving its Navigator section anchors. Notes exposes
+`notes-scratch-paper` and `notes-library`; the full Note Editor remains an
+editor/workspace state without dashboard shell chrome. Test exposes
+`test-d20-sandbox` and `test-d20-controls` around the existing D20 mapper's
+side-by-side regions.
+
+All four pages inherit the generic page-shell editing, resizing, Reset Layout,
+saved Web/iPhone Views, and layout-only JSON export systems; the three
+multi-shell pages also inherit generic reorder. Home intentionally remains a
+single non-reorderable shell.
+Tasks / To-do, Roll, Achievements / Progress, and Games remain pending for the
+next expansion wave. No SQL, schema, cloud layout sync, application content,
+or iOS-specific changes were added.
+
+## 2026-09-04 7.12.79 Page-shell shrinking and layout views
+
+Explicit page-shell heights now remain effective at every viewport width. Shrink
+and manual resize retain the 144px minimum for normally tall content, avoid
+enlarging naturally short shells, and cap downward enlargement at measured
+natural content height while PageShellSurface/PageShellBody keep frame and
+internal scrolling ownership. Edit Layout reports width and current/natural
+height. The shared shell hook now stores page-scoped named Web/iPhone layout
+views in `adhdice-page-shell-views-v1:<user>` and exports registered page keys,
+current layout presentation, saved views, target labels, and viewport metadata
+as layout-only JSON. No SQL, cloud sync, application content, or deferred page
+migrations were added.
+
+## 2026-09-03 7.12.78 Canonical Page-Shell Lane and Stack Representation
+
+Canonical page-shell metadata now supports independent lane groups whose shell
+IDs render inside one grouped grid item. Food, Water, and Sleep use grouped
+canonical lanes so one independent shell can sit beside a vertically stacked
+set of shells while the existing mutable editing layout remains flat and
+12-column based. Home, Settings, Notes, and Test page-shell expansion remains
+pending.
+
+## 2026-09-03 7.12.77 Canonical Page-Shell Layout Reset and Editing Foundation
+
+Reset Layout now removes the current page/tab preference and returns Health
+Today, Food, Water, Fitness, Journal, Weight, Sleep, Insights, Awards, and
+Health Settings, plus Focus and Stats, to explicit pre-shell canonical layout metadata.
+Food, Water, Fitness, Sleep, Weight, and Insights retain their original
+placement/grouping and column relationships; natural height remains separate
+from mutable custom order/span/height preferences. Custom-height shell slots no
+longer clip the shell surface shadow; the visible surface owns its frame and
+the shell body owns internal scrolling. Layout editing and resizing are
+available for one valid shell, while reorder controls remain limited to pages
+with at least two valid shells. Expansion of page-shell support to Home, Tasks,
+Roll, Achievements, Games, Notes, the main Settings page, and Test remains pending.
+
+## 2026-09-02 7.12.74 Responsive Shell Surfaces and Adaptive Fitness Content
+
+Page shells now provide a reusable visual surface/body contract: explicit
+height keeps the outer frame and header stationary while only the body scrolls.
+Fitness Today and This Week use shell-width container queries for their metric
+grids, and Focus Activity Summary and Focus Activity Trend are independent
+reorderable shells. Legacy `focus-history` layouts migrate their saved slot and
+size to both new shells. No SQL, schema, persistence authority, or iOS changes
+were made.
+
+## 2026-09-02 7.12.63 Health Report Nutrition Semantics and Presentation
+
+Health Report nutrition target comparisons are descriptive: above target,
+below target, or at target, without generic success/failure wording.
+Incomplete macro coverage remains explicit, with null nutrients unknown and
+numeric zero preserved as known data. Feeling/Symptom occurrence grammar is
+singular or plural as appropriate, and Current Health Goals formats Sleep
+with the shared human-readable duration formatter. Underlying Food/provider
+nutrition anomalies are intentionally not repaired by Reports. No SQL,
+schema, or persistence changes were made.
+
+## 2026-09-02 7.12.62 Detailed Report Due Authority
+
+Detailed ADHDice Report `Due` now uses the canonical presentation `due_on`
+projection also shown by Table/List. Internal `active_occurrence_due_on` no
+longer overrides the user-facing Due field. No Health reporting behavior
+changed, and no SQL, schema, or persistence changes were made.
+
+## 2026-09-02 7.12.61 ADHDice Report Health and Task Metadata
+
+The existing Tasks -> Reports workspace now extends the copied/previewed
+ADHDice Report with range-specific Health read data from persisted authority:
+Food/Nutrition, confirmed Water, Journal, Feelings, Symptoms, Weight,
+Movement, the Health sleep selector, and Workouts. Current Health goals and
+settings are included as context and are not represented as historical goal
+snapshots. Health Awards and Fitness Plans remain deferred from the behavioral
+report.
+
+All Available now includes dates from the fetched Health domains. Summary stays
+compact and analytical; Detailed adds user-facing Health records and current
+Task metadata including canonical Due, time, Energy, estimates, actual time,
+Lists, Tags, links, and Notes. Task list names use the current membership
+projection and retain the warning that historical membership is unavailable.
+Health reads are independent of Health page activation, paginated for
+unbounded ranges, and report domain failures as warnings without fabricating
+zero data. No SQL, schema change, Health persistence change, Task State
+authority change, report persistence, or Calendar work was added; Calendar
+remains paused.
+
+## 2026-09-01 7.12.59 Recurring Success Occurrence Identity
+
+Recurring Done, Did My Best, and Complete outcomes now resolve and persist the
+occurrence they actually satisfy through the canonical Task State authority.
+Fixed recurrence targets the nearest scheduled occurrence on or after the
+handled date; rolling recurrence resolves the current rolling obligation and
+advances from its canonical cursor. Legacy identity-less successful History
+facts self-heal during in-memory canonical read/replay when a prior Missed fact
+makes the target safe to infer. Historical Missed facts remain preserved, and
+Table/List, Calendar, and other projections continue to consume the shared
+canonical result. No SQL, schema migration, or manual production-row repair
+was used.
+
+## 2026-09-02 7.12.60 Canonical Due Projection and Rolling Missed-Streak Read
+
+Canonical current Due now travels through the shared Task read projection
+alongside Active Status, so Table/List and related task surfaces no longer
+rely on stale compatibility `due_on` when the engine derives a different
+cursor. The projection revision includes canonical Due changes. Legacy rolling
+success replay handles an already-advanced task cursor and closes the prior
+active Missed streak while preserving historical Missed facts. The Play New
+Game production Task was manually rescheduled by the user and was not altered
+or repaired by this ticket. No SQL, schema change, or manual production data
+repair was used.
+
+## 2026-09-01 7.12.58 Metadata Home Navigation and Description Placement
+
+Completed full-editor metadata edits now return to Summary after explicit
+Save, Apply, terminal choice, or submit-key actions. Multi-select,
+intermediate, textarea-blur, and ongoing timer interactions remain open until
+Back; full-editor Delay returns to Summary after successful Apply without
+closing Edit Task. Parent Description moved from the left column to the right
+metadata card and follows the active Parent, Step, or Substep target. No SQL,
+schema, or persistence changes were made.
+
+## 2026-09-01 7.12.57 Edit Task Metadata Summary Navigation
+
+The Metadata Summary is now the full-editor metadata home screen. The redundant
+horizontal Metadata navigator was removed; existing property rows still open
+the existing editors, and each non-Summary property editor provides a Back to
+Summary control. Summary uses a compact responsive one-, two-, and three-column
+layout. No persistence, schema, or SQL changes were made.
+
+## 2026-09-01 7.12.56 Edit Task Metadata Summary
+
+The full Edit Task inspector now defaults to a presentation-only Summary for
+each newly opened Task, Step, or supported Substep metadata target. Summary
+covers Title, Status, Priority, Energy, Due, Repeat, Estimated, Actual, Lists,
+Tags, Link, and Notes; each property row routes into its existing editor.
+Manual property selection remains open for the current target, while explicit
+property focus requests still override the Summary default. No SQL, schema, or
+persistence changes were made.
+
+## 2026-09-01 7.12.55 Health Today Timeline
+
+Health Today now adds a chronological Timeline beneath the existing Snapshot
+and Quick Log. Timeline rows derive Food, Water, Feeling, Workout, Weight,
+Journal, and precise Sleep events from canonical Health records, with no Today
+persistence authority. Aggregate movement metrics and imported Sleep totals do
+not receive fabricated activity times. No SQL or schema changes were made.
+
+## 2026-09-01 7.12.54 Health Today Snapshot foundation
+
+Health Today now provides a canonical-record-derived Snapshot for Journal,
+Food, Water, Sleep, and Movement, plus Quick Log routes into the existing
+Health tabs and forms. No Today database or persistence authority was added;
+the chronological Today Timeline remains next. No SQL or schema changes were
+made.
+
+## 2026-09-01 7.12.53 Logged food calorie emphasis correction
+
+Logged-food calories are emphasized inline within the existing metadata summary;
+the standalone calorie line introduced in 7.12.52 was removed. The
+snapshot-first calorie authority remains shared by logged cards and meal
+totals, while planned food cards remain unchanged. No SQL or schema changes
+were made.
+
+## 2026-09-01 7.12.52 Logged food calorie readability
+
+Individual logged foods in Health > Food now expose calories as a dedicated,
+prominent line using the existing snapshot-first meal calorie authority. Meal
+section totals and logged meal nutrition remain unchanged; planned food cards
+are unchanged. The logged-card summary omits its calorie portion to avoid
+duplicate display. No SQL or schema changes were made.
+
+## 2026-09-01 7.12.51 Health Settings tab
+
+Health Settings is now the final Health tab. The existing Health Settings
+panel moved intact into that tab and no longer renders beneath every Health
+section. The existing `profileDraft` and `saveProfile` profile persistence
+authority remains unchanged. No SQL or schema changes were made.
+
+## 2026-09-01 7.12.48 Journal QA and Feeling Trends UX
+
+Journal History cards now keep Logged metadata collapsed independently per
+entry, with `created_at` as the immutable Logged timestamp authority and
+`MM/DD/YYYY` plus 12-hour AM/PM display when expanded. Core ratings and custom
+Daily Template Feelings now flow through one responsive grid: one column on
+mobile, two at medium widths, and three in the normal wide desktop Journal
+pane; split mode remains at two columns for readability.
+
+Feeling Trends now uses a grouped multi-select for All Feelings, category-all
+groups, and individual cross-category blends. Selected no-history Feelings stay
+selectable without zero-filled series, while active and archived-with-history
+definition visibility remains unchanged. Successful Journal Save and Update
+actions reuse `startNewJournalEntry()` to open a fresh entry while preserving
+the selected Journal date and split workspace mode. No SQL, migration, or
+schema changes were made.
+
+## 2026-09-01 7.12.49 Journal rating cards, trend averages, and History dates
+
+Journal core ratings and custom Feelings now use one shared rating-card design;
+core cards show their scale descriptors, and the nested custom Feeling
+`Not logged` shell is removed. Feeling Trends chips show a range-sensitive
+visible-point average per Feeling, formatted as `Avg. N/10`, while selected
+no-history Feelings still produce no chart line or zero chip. Journal History
+date groups are independently collapsible by canonical `entry_date`, with
+per-entry Logged metadata disclosure remaining independent. No SQL, migration,
+schema, or persistence-model changes were made.
+
+## 2026-09-01 7.12.50 Feeling Trends range polish
+
+Feeling Trends now offers `1D`, `3D`, `7D`, `30D`, `90D`, and `All` in that
+order. The 1D range is limited to the as-of date, the 3D range includes the
+as-of date and prior two calendar dates, and existing longer/all-range
+semantics remain unchanged. Existing per-Feeling visible-point averages and
+no-zero-fill behavior apply automatically to the new ranges. No SQL or schema
+changes were made.
+
+## 2026-09-01 7.12.45 Journal UX correction
+
+Journal now uses one responsive History/Journal toggle: short press switches
+between Entry and History, while desktop long press or `ArrowDown` opens the
+compact History Left/Right dock menu. Split History remains desktop-only, and
+History mode keeps `+ New Entry`. Logged Date/Time metadata is collapsed behind
+a chevron; Logged Date uses `MM/DD/YYYY`, and Logged Time reuses the compact
+read-only AM/PM treatment. Core ratings and custom Daily Template Feelings now
+share one `How are you feeling?` section, and all Journal scale pickers can be
+closed without selecting a score. Feeling Trends include every active Feeling,
+retain archived Feelings with occurrence history, and show occurrence notes in
+History hashtag popovers. No SQL or schema changes were made.
+
+## 2026-09-01 7.12.46 Journal metadata sizing correction
+
+Journal and Logged Time now share one fixed compact `8.5rem × 32px` control
+contract through `HealthStandardTimeInput` in both editable and read-only modes,
+while retaining normalized storage and 12-hour AM/PM display. Journal Date and
+Logged Date retain matching compact width, height, border, spacing, and responsive
+typography; Logged Date remains read-only and uses `MM/DD/YYYY`. No SQL or schema
+changes were made.
+
+## 2026-09-01 7.12.47 Journal unsaved metadata sizing correction
+
+Unsaved Logged Time now uses the shared read-only `HealthStandardTimeInput`
+placeholder treatment, so `When saved` has the same compact `8.5rem × 32px`
+control size as Journal Time and saved Logged Time without presenting a fake
+timestamp. Unsaved Logged Date remains `When saved` with matching Journal Date
+sizing. No SQL or schema changes were made.
+
+## 2026-09-01 7.12.44 Journal workspace QA corrections
+
+Journal workspace split controls (`History Left` and `History Right`) are now
+desktop-only at `md+`; narrow screens retain the normal History single-pane
+action. History-only mode now exposes `+ New Entry` in the workspace header and
+uses the existing `startNewJournalEntry()` authority, while split-mode Entry
+actions continue to preserve split mode. No SQL, schema, or migration changes
+were made.
+
+## 2026-09-01 7.12.43 Journal Feeling ownership, time display, and workspace
+
+Journal is now the only rendered workspace for Feeling Occurrences. Symptom
+occurrences are Journal-owned by required `journal_entry_id`; the authored-only
+`supabase/enforce_health_feeling_journal_ownership_7_12_43.sql` removes known
+orphan test rows, enforces the constraint, and verifies the cascade FK. It has
+NOT been applied remotely.
+
+Journal displays Journal Date/Time separately from immutable Logged Date/Time,
+using the shared compact 12-hour AM/PM control for Journal and occurrence
+times. Entry and History are one responsive workspace with exact-ID editing,
+desktop History Left/Right split options, and a mobile single-pane fallback.
+
+Feeling Trends graph raw timestamped occurrences for Symptoms, Emotions, and
+Other Feelings as separate colored series, including archived definitions;
+Daily Log snapshot ratings are excluded. Focused source/tests were updated.
+Browser, live Supabase, deployment, full build, typecheck, and full-suite
+verification remain outstanding.
+
+## 2026-08-31 7.12.41 Journal snapshots and Feeling Occurrences
+
+Journal Entries are now identified by row `id`, so multiple timestamped
+snapshots may share one `entry_date`. Each snapshot requires an `entry_time`,
+while immutable `created_at` remains the actual Logged time. The Journal editor
+now combines core metrics and explicit Journal Library `in_template` Feelings
+under `How are you feeling?` / `Your Daily Template`. Snapshot ratings remain
+separate per Journal Entry and retain 0 versus Not logged semantics.
+
+Symptoms, Emotions, and Other Feelings are presented as unified `Feeling
+Occurrences`. Hashtags create occurrence drafts only; they do not add template
+Feelings or snapshot ratings. Canonical symptom occurrences continue using
+`adhdice_health_symptom_entries`; Emotion and Other Feeling occurrences persist
+through `adhdice_health_journal_signal_occurrences` with 1–10 scores and
+occurrence timestamps. The authored migration is
+`supabase/add_health_journal_multiple_entries_7_12_41.sql`; it has NOT been
+applied remotely. No schema deployment was performed. Browser, live Supabase,
+and deployment verification remain outstanding.
+
+## 2026-09-01 7.12.42 Journal persistence hardening
+
+The approved 7.12.41 Journal architecture is preserved. Its authored-only
+migration is hardened before live deployment with idempotent occurrence-table
+policies/triggers, and database validation now restricts native Feeling
+Occurrences to Emotion and Other signals. The migration remains NOT remotely
+applied; no live schema deployment was performed. Focused source and
+persistence checks cover the guard and preserve canonical symptom occurrence
+storage.
+
+## 2026-08-31 7.12.40 Journal Feeling overlay color picker
+
+The Your Day post-hashtag rating overlay now exposes the existing shared color
+control for Emotion and Other Feeling tags beside the compact `Skip` action.
+Both controls use the anchored `HealthColorControl` / `HealthAccentColorPalette`
+treatment and persist through the existing `HealthJournalSignal.color` and
+`updateJournalSignal` authority. Symptom occurrence overlays remain on the
+canonical `HealthSymptom.color` and `setSymptomColor` path. No SQL or schema
+change was made. Multiple Journal Entries per day is deferred to 7.12.41.
+Browser, live Supabase, and deployment verification remain outstanding.
+
+## 2026-08-31 7.12.39 Journal History hashtag interaction and overlay stabilization
+
+Journal History now preserves reflection prose while rendering recognized current
+canonical Symptom, Emotion, and Other Feeling hashtags as accessible interactive
+tags. Each tag opens a compact read-only detail popover: symptom tags show only
+timestamped occurrences owned by that Journal Entry and canonical symptom,
+repeated same-symptom tags show the same complete occurrence set, and a separate
+Daily Log overall score is shown when present. Emotion and Other Feeling tags
+show their Journal Entry rating or `Not logged` using the persisted scale labels.
+Tag accents use the canonical symptom or Journal Feeling color. The Your Day
+hashtag overlay remains floating and does not autofocus or scroll the page;
+closing it restores the reflection caret with `preventScroll: true`. The
+symptom occurrence overlay reuses the canonical symptom color picker, so color
+changes update the HealthSymptom everywhere. The independent symptom-history
+surface now uses softened user-facing terminology. No SQL or schema change was
+made. Multiple Journal Entries per day is deferred to 7.12.41. Browser, live
+Supabase, and deployment verification remain outstanding.
+
+## 2026-08-31 7.12.38 Journal hashtag occurrence overlay and color correction
+
+Journal hashtag selection still captures the active query before asynchronous
+symptom-wrapper creation and replaces only that query in the latest controlled
+reflection state, preserving newer prose and earlier tags. Symptom hashtag
+selection adds or reuses one Daily Log row, then opens a compact floating
+occurrence overlay with 1–10 severity and a time input. Saving appends a new
+`journalOccurrences` draft with no database ID; repeated same-symptom hashtags
+remain independent timestamped occurrences, while the Daily Log overall score
+stays separate. Emotion and Other Feeling hashtags retain their 0–10,
+0-versus-Not-logged Daily Log behavior through the same overlay authority.
+Symptom, Emotion, and Other Feeling color controls now use the same anchored
+palette popover treatment while preserving their existing color authorities.
+There is no schema or SQL change. Multiple Journal Entries per day remains
+deferred to 7.12.40. Browser, live Supabase, and deployment verification remain
+outstanding.
+
+## 2026-08-30 7.12.36 Journal readability/layout polish
+
+Journal expanded scales now use readable two-column layouts with full labels.
+Core metrics remain 1–10 with a separate `Not logged` action; custom Feelings
+show an explicit score-0 `None` option while preserving null as Not logged.
+Your Day fills the Journal Entry column, and the Journal Library now creates
+Emotions and Other Feelings from compact section-local rows using default
+labels. The hashtag picker keeps its existing behavior with clearer spacing
+between Symptoms, Emotions, and Other Feelings. No SQL, schema, persistence,
+History, native, or iOS behavior changed; browser verification remains
+outstanding.
+
+## 2026-08-30 7.12.35 Journal Feeling UX and unified Symptoms Library
+
+Journal now presents user-facing Journal signals as Feelings and exposes one
+Symptoms Library backed by canonical Health symptoms. Symptom-backed Journal
+wrappers remain internal and are created or reused only when Journal behavior
+needs them; canonical renames flow through to Journal display names, while
+archived symptoms are excluded from new templates, Add, and hashtag choices.
+Journal Feelings use normalized eleven-label 0–10 scales with legacy endpoint
+compatibility, compact collapsed score controls, readable core metric labels,
+and full-label editing. The Journal Library header is always visible and
+manually collapsible; Manage Journal Library expands, scrolls, and focuses it.
+Symptom color palettes use a full-width Library row. Typing `#` in Your Day
+opens a keyboard-accessible picker that adds a selected Feeling to the current
+Daily Log without assigning a score or synchronizing deletion from reflection
+text. The authored migration is
+`supabase/add_health_journal_scale_labels_7_12_35.sql`; it has not been
+applied. Focused source/logic tests and diff checks passed; browser, live
+Supabase, and deployment verification remain outstanding.
+
+## 2026-08-30 7.12.34 Journal Entry and customizable Daily Log foundation
+
+Health Journal now has one date-unique Journal Entry editor with nullable Mood,
+Energy, Stress, and Mental Clarity scores, reflection text, a persistent
+per-user Journal Library, and a customizable Daily Log template. Signals are
+stored independently from entries, support symptom-backed canonical names plus
+emotion and other labels, preserve stable template order, and use explicit
+0/Not logged semantics. Journal-owned symptom occurrences retain their own
+timestamped severity rows and cascade with the parent entry; standalone symptom
+history remains separate. Legacy symptom tags remain readable but are no longer
+written by the Journal editor. The migration
+`supabase/add_health_journal_daily_log_7_12_34.sql` is live; this 7.12.35
+refinement follows its browser QA findings, while live deployment verification
+for the refinement remains outstanding.
+
+## 2026-08-30 7.12.31 Tasks Calendar Month View
+
+Tasks now includes a first-class Calendar Month View with a Monday-through-Sunday
+grid, compact timed and untimed task rows, and a collapsed No Due Date section.
+Calendar placement is a live projection of each visible Task's `due_on` and
+`due_time`, including the current resolved metadata for recurring Tasks; future
+recurrence projection and drag-to-reschedule remain intentionally deferred.
+Calendar uses the existing Tasks workspace scope, filters, hierarchy visibility,
+Include Steps preference, Task editor, and Add Task flow. No SQL, schema,
+Calendar-specific persistence, or independent recurrence behavior was added;
+browser QA remains outstanding.
+
+## 2026-08-30 7.12.32 Calendar TaskApp hook-order correction
+
+The Calendar Tasks derivation now runs in TaskApp's unconditional derived-data
+section before the boot and authentication render guards. This preserves the
+React Rules-of-Hooks ordering across loading, signed-out, and ready renders.
+Calendar UI, filtering, metadata authority, recurrence behavior, and persistence
+are unchanged; browser QA remains outstanding.
+
+## 2026-08-30 7.12.33 shared Task editor retirement
+
+The obsolete `TaskEditorModal` and its modal-only state, flow contract, and
+restore path are retired. `TaskManagementTableV2` is now the sole active Task
+editor. Calendar Add, normal New Task, Scratch-created Tasks, and Health
+reminder templates use canonical Task creation and immediately open the
+persisted row in the shared editor; Calendar dates are stored as the real
+`due_on` value. Existing Calendar metadata authority, filters, Include Steps,
+No Due Date, and recurrence behavior are unchanged. Future recurrence
+projection and drag-to-reschedule remain deferred. No SQL or schema change was
+made; browser QA remains outstanding.
+
+## 2026-08-30 7.12.23 Health Journal symptom management
+
+Symptom Trends now supports an `All Symptoms` view with one persisted-color
+series per symptom that has visible timestamped entries, including archived
+symptoms with history. The shared activity chart derives date-axis labels from
+the combined date domain, while preserving raw points and same-day positions.
+Symptom Library now supports definition-only creation and reuses the approved
+symptom color palette for persistent color editing. No schema, SQL, Supabase,
+native, or iOS behavior changed; browser verification remains outstanding.
+
+## 2026-08-30 7.12.24 Health Journal trend collision and Library row polish
+
+Journal trend points that share a calendar date and severity now receive a small
+timestamp-ordered visual micro-spread around the canonical date position, while
+axis labels remain calendar dates and paths, circles, pointer selection, and
+active markers share the adjusted coordinates. Opt-in Journal collision details
+show every collided symptom entry together; Focus and Nutrition retain their
+existing detail behavior. Symptom Library creation controls now share a compact
+wrapping row on wider screens. No SQL, schema, persistence, native, or iOS
+behavior changed; browser verification remains outstanding.
+
+## 2026-08-30 7.12.25 Symptom Library create row sizing
+
+The Symptom Library definition-creation row now lets its input fill the
+available desktop/tablet width while keeping Cancel and Save compact at the
+right edge. The row still wraps naturally on narrow mobile screens. Journal
+trend, chart collision, symptom color, and persistence behavior are unchanged;
+browser verification remains outstanding.
+
+## 2026-08-30 7.12.26 overnight Quick Fix bundle
+
+The Task Table Edit Task surface now selects visible Steps and Substeps as
+metadata targets while retaining the parent editor root. HUD and Task Table
+layout cloud freshness now arbitrate independently inside the existing account
+settings envelope, including legacy timestamp fallback. Home Todo edge arrows
+move within the current visible day or Later section. Water now supplements
+its existing controls and history with the shared daily fl oz line chart, and
+Nutrition calorie plus Sleep charts show their existing persisted goals as
+optional shared reference lines. No SQL, schema, native, or iOS changes were
+made; browser and cross-device verification remain outstanding.
+
+## 2026-08-30 7.12.30 Water UI polish
+
+Water new-entry amount and Daily Water Goal controls now use compact Health
+input sizing. New-entry Date and Time share a compact wrapping row, while
+historical Water entries use full-width expanded rows with readable compact
+Amount, Unit, Date, and Time edit controls. Historical confirmed entries now
+reuse the existing Delete action. Water goal controls stay on one row at
+desktop/tablet widths and wrap on narrow mobile. Water persistence, Pending /
+Confirm semantics, calculations, analytics, graphs, SQL, schema, native, and
+iOS behavior are unchanged; browser QA remains outstanding.
+
+## 2026-08-30 7.12.29 QA corrections and UI polish
+
+Step/Substep title handoff now targets the active metadata child and starts
+inline rename as one interaction, including when an earlier child rename
+blurs. The desktop Edit Task metadata card keeps its natural height while
+staying sticky in the existing editor scroller. Water entry controls now
+separate Confirmed/Pending status from Fl oz/Cups/Custom mode, use 5/10/20 fl
+oz or 1-cup presets, and pass the selected local date and time into new
+entries. The Daily Water Goal editor is compact and collapsible, and Water
+point details show current-goal over/under context. Navigator Search raises
+only the active dock layer above sticky Table headers. No SQL, migration,
+schema, native, or iOS changes were made; browser QA remains outstanding.
+
+## 2026-08-30 7.12.28 QA failure corrections
+
+Step/Substep title clicks in the current parent Edit Task surface now target
+the clicked child in the existing metadata pane and begin the existing inline
+rename, while the parent remains the editor root. Health Page now destructures
+the existing Water confirmation callback, preventing the Water-page runtime
+ReferenceError. No SQL, migration, schema, persistence, or Supabase changes
+were made; browser QA remains outstanding.
+
+## 2026-08-30 7.12.27 QA corrections and Water/import workflow
+
+Edit Task source Step/Substep rows now use the existing current-editor routing
+for neutral row clicks while preserving nested controls. Home Todo arrows now
+move tasks to the absolute durable first/last positions and assign Today/Later
+edge offsets. Water adds a persisted positive `water_goal_ml`, a shared-chart
+goal line, and nullable `confirmed_at` Pending/Confirm semantics with
+confirmed-only totals and history. The shared Import Tasks adapter now reports
+real recursive persistence progress, including failed or skipped descendants.
+The authored-only `supabase/add_health_water_goal_and_confirmation_7_12_27.sql`
+migration was applied manually; browser, cross-device, and live SQL
+verification remain outstanding.
+
+## 2026-08-30 7.12.22 Health Journal color picker Safari correction
+
+Health Journal symptom color actions and palette buttons now prevent pointer
+focus transfer before click, keeping the parent `HealthDropdown` open while
+the color action runs. Keyboard activation remains available, and symptom
+selection still closes the parent dropdown. No schema, SQL, Supabase,
+persistence, chart, native, or iOS behavior changed.
+
+## 2026-08-30 7.12.21 Health Journal symptom colors
+
+Health Journal symptom definitions now persist an approved accent color with a
+purple fallback for legacy rows. Both Journal symptom dropdowns expose a
+compact per-symptom palette action without nesting controls inside a label or
+selecting the symptom. Symptom Trends passes the selected definition color to
+the existing shared chart. The authored-only
+`supabase/add_health_journal_symptom_colors_7_12_21.sql` migration must be
+applied manually; no production SQL, browser, native, or iOS verification was
+performed.
+
+## 2026-08-30 7.12.20 Health Journal dropdown structure correction
+
+Health Journal `HealthDropdown` controls now use neutral composite field wrappers
+so Safari label activation cannot reopen a closed option panel after a pointer
+selection. Focus and Nutrition chart defaults, symptom trends, symptom
+persistence, and other Health UI behavior are unchanged.
+
+## 2026-08-30 7.12.19 Health Journal trend QA corrections
+
+Health → Journal Symptom Trends now uses the approved compact plot proportions,
+groups same-day entries on one calendar-date X position without collapsing raw
+points, and prevents pointer selection from reopening `HealthDropdown` after a
+symptom choice. Focus and Nutrition chart defaults, symptom persistence, and
+other Health UI behavior are unchanged.
+
+## 2026-08-30 7.12.18 Health Journal trend summary correction
+
+Health → Journal Symptom Trends now labels the graph summary `Latest` and
+shows the severity from the last plotted timestamped entry in the selected
+range. Raw entries remain separate points; symptom severities are not summed,
+averaged, or otherwise aggregated. No persistence, schema, SQL, recovery,
+dropdown, Focus, Nutrition, or browser behavior changed.
+
+## 2026-08-30 7.12.17 Health Journal symptom trends
+
+Health → Journal now includes a read-only Symptom Trends section backed by the
+timestamped symptom-entry ledger. Users can select active symptoms or archived
+symptoms with history, view 7D/30D/90D/All ranges (30D by default), and inspect
+each severity 1–10 entry as its own chronological graph point, including
+multiple entries on the same day. The graph reuses `ActivityLineChartCard`,
+including its existing responsive, hover, keyboard, and pinning behavior. No
+schema, SQL, persistence, mutation, native, Realtime, or browser work changed.
+
+## 2026-08-29 7.12.8 Health Journal symptom recovery
+
+Health symptom definitions and timestamped entries now reconcile local-only
+rows into Supabase before successful remote hydration replaces the visible
+snapshot. Definitions are recovered before dependent entries, recovery is
+stable-ID based and idempotent, and local rows remain visible if either
+recovery step fails. The existing 7.12.7 migration filename is unchanged;
+symptom tables are not added to Realtime because no subscriber exists. No
+production SQL, browser, native, or iOS verification was performed.
+Journal Trends/Graphs were deferred here and are delivered in 7.12.17.
+
+## 2026-08-28 7.12.7 Health Journal symptom tracking foundation
+
+Health → Journal now keeps the existing daily check-in authority for Mood,
+Energy, Signals, and Reflection, with Mood and Energy expanded to 1–10. A
+separate user-owned symptom library and timestamped severity ledger support
+multiple measurements of the same symptom on one day, including notes and
+edit/delete controls. Definitions archive rather than being removed, so
+historical entries continue to resolve their names. Symptom persistence has a
+narrow local fallback boundary while the authored-only
+`supabase/add_health_journal_symptom_tracking_7_12_7.sql` migration is pending;
+no production SQL, browser, native, or iOS verification was performed.
 
 ## 2026-08-28 7.11.96 Commit-time Fitness scope invalidation
 

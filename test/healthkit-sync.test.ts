@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { HealthMetricEntry, HealthWeightEntry } from "../src/lib/database.types.ts";
-import { calculateHealthDailyCalorieAllowance, sumMetricValueForDate } from "../src/lib/health-utils.ts";
+import { calculateHealthDailyCalorieBudget, sumMetricValueForDate } from "../src/lib/health-utils.ts";
 import {
   buildHealthKitMetricInputs,
   buildHealthKitWeightInputs,
@@ -83,7 +83,7 @@ test("live Apple Health metrics take precedence over XML imports without suppres
   assert.equal(sumMetricValueForDate([metric({ id: "manual-only", metric_value: 5 }), metric({ id: "xml-only", metric_value: 100, source: "apple_health_import" })], "2026-08-28", ["steps"]), 105);
 });
 
-test("calorie allowance consumes canonical Active Energy for the selected date", () => {
+test("calorie budget consumes canonical Active Energy for the selected date", () => {
   const entries = [
     metric({ id: "selected-live", metric_date: "2026-08-27", metric_type: "active_energy_kcal", metric_value: 250, source: "apple_health" }),
     metric({ id: "selected-import", metric_date: "2026-08-27", metric_type: "active_energy_kcal", metric_value: 100, source: "apple_health_import" }),
@@ -93,8 +93,8 @@ test("calorie allowance consumes canonical Active Energy for the selected date",
   const selectedActiveEnergy = sumMetricValueForDate(entries, "2026-08-27", ["active_energy_kcal"]);
 
   assert.equal(selectedActiveEnergy, 275);
-  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: selectedActiveEnergy, addActiveEnergy: true, baseCalorieGoal: 1800 }), 2075);
-  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: sumMetricValueForDate(entries, "2026-08-28", ["active_energy_kcal"]), addActiveEnergy: true, baseCalorieGoal: 1800 }), 2700);
+  assert.equal(calculateHealthDailyCalorieBudget(1800, selectedActiveEnergy), 2075);
+  assert.equal(calculateHealthDailyCalorieBudget(1800, sumMetricValueForDate(entries, "2026-08-28", ["active_energy_kcal"])), 2700);
 });
 
 test("HealthKit weights use UUID identity and device-local sample date", () => {

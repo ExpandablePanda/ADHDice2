@@ -49,7 +49,7 @@ test("Health Sleep selected date controls the ledger totals and graph range", as
     readFile(new URL("../src/lib/health-utils.ts", import.meta.url), "utf8"),
   ]);
   assert.match(health, /const \[sleepLedgerDate, setSleepLedgerDate\] = useState\(todayHealthDate\(\)\)/);
-  assert.match(health, /ariaLabel="Sleep ledger date"[\s\S]*?max=\{today\}/);
+  assert.match(health, /ariaLabel="Sleep ledger date"[\s\S]*?today=\{today\}/);
   assert.match(health, /onChange=\{setSleepLedgerDate\}/);
   assert.match(health, /dayStepper/);
   assert.match(health, /aria-label="Previous sleep date"[\s\S]*?shiftHealthDate\(date, -1\)/);
@@ -67,11 +67,13 @@ test("Health Sleep selected date controls the ledger totals and graph range", as
   assert.match(health, /kind: resolveHealthSleepKind\(session, session\.categoryId \? focusCategories\.find/);
   assert.doesNotMatch(health, /normalizeHealthSleepKind\(session\.focusSubtype\)/);
   assert.doesNotMatch(health, /selectedSleepFocusSessions\.slice\(/);
-  assert.match(health, /<HealthSleepLineChart series=\{sleepActivitySeries\} \/>/);
+  assert.match(health, /<HealthSleepLineChart series=\{sleepActivitySeries\} sleepGoalMinutes=\{profile\.sleep_goal_minutes\} \/>/);
   assert.match(utils, /buildHealthDailySleepSeries\([\s\S]*?getHealthSleepDayTotal/);
   assert.match(chart, /ActivityLineChartCard/);
   assert.match(chart, /variant="embedded"/);
   assert.match(chart, /value: point\.totalMinutes/);
+  assert.match(chart, /referenceLines=\{sleepGoalMinutes && sleepGoalMinutes > 0/);
+  assert.match(chart, /key: "sleep-goal", label: "Goal", value: sleepGoalMinutes/);
   assert.doesNotMatch(chart, /<svg/);
 });
 
@@ -90,11 +92,12 @@ test("Health stacked tabs use independent columns and preserve narrow-screen ord
   const food = health.slice(health.indexOf('activeTab === "Food"'), health.indexOf('activeTab === "Water"'));
   const sleep = health.slice(health.indexOf('activeTab === "Sleep"'), health.indexOf('activeTab === "Insights"'));
 
-  assert.equal((food.match(/className="grid min-w-0 content-start gap-5"/g) ?? []).length, 2);
+  assert.equal((food.match(/<PageShell id="food-/g) ?? []).length, 4);
   assert.match(food, /<HealthPanel[\s\S]*?subtitle="Meal logging"/);
   assert.match(food, /<HealthPanel[\s\S]*?subtitle="Daily totals"/);
   assert.match(food, /title="Favorites & Recent Foods"/);
-  assert.match(food, /<div className="order-4 min-w-0 xl:col-span-2 xl:order-none">\s*<HealthLibraryPanel/);
+  assert.match(food, /<PageShell id="food-favorites-recent" label="Favorites & Recent Foods">/);
+  assert.match(food, /<HealthLibraryPanel[\s\S]*shellSurface/);
   assert.equal((food.match(/subtitle="Meal logging"/g) ?? []).length, 1);
   assert.equal((food.match(/subtitle="Daily totals"/g) ?? []).length, 1);
   assert.equal((food.match(/title="Favorites & Recent Foods"/g) ?? []).length, 1);
@@ -102,18 +105,22 @@ test("Health stacked tabs use independent columns and preserve narrow-screen ord
   assert.ok(food.indexOf('subtitle="Meal logging"') < food.indexOf('subtitle="Daily totals"'));
   assert.ok(food.indexOf('title="Favorites & Recent Foods"') < food.indexOf("<HealthLibraryPanel"));
 
-  assert.equal((sleep.match(/className="grid content-start gap-5"/g) ?? []).length, 2);
   assert.doesNotMatch(sleep, /contents xl:grid/);
-  const firstSleepColumnStart = sleep.indexOf('<div className="grid content-start gap-5">');
-  const secondSleepColumnStart = sleep.indexOf('<div className="grid content-start gap-5">', firstSleepColumnStart + 1);
-  const firstSleepColumn = sleep.slice(firstSleepColumnStart, secondSleepColumnStart);
-  const secondSleepColumn = sleep.slice(secondSleepColumnStart);
-  assert.match(firstSleepColumn, /title="Health sleep totals"/);
-  assert.doesNotMatch(firstSleepColumn, /subtitle="Manual entry"|title="Sleep sources"|title="Sleep Ledger"/);
-  assert.match(secondSleepColumn, /subtitle="Manual entry"[\s\S]*?className="xl:order-2"[\s\S]*?title="Sleep sources"[\s\S]*?className="xl:order-1"[\s\S]*?title="Sleep Ledger"/);
+  assert.match(sleep, /<PageShell id="sleep-ledger"[\s\S]*shellSurface[\s\S]*title="Health sleep totals"/);
+  assert.match(sleep, /<PageShell id="sleep-log" label="Log Sleep">[\s\S]*<HealthPanel[\s\S]*shellSurface[\s\S]*title="Log sleep"/);
+  assert.match(sleep, /<PageShell id="sleep-sources" label="Sleep Sources">[\s\S]*<HealthPanel[\s\S]*shellSurface[\s\S]*title="Sleep sources"/);
+  assert.match(sleep, /<PageShell id="sleep-focus-ledger" label="Sleep Ledger">[\s\S]*<HealthPanel[\s\S]*shellSurface[\s\S]*title="Sleep Ledger"/);
+  assert.doesNotMatch(sleep, /sleep-entry-and-sources/);
   assert.equal((sleep.match(/<HealthPanel/g) ?? []).length, 4);
+  assert.equal((sleep.match(/shellSurface/g) ?? []).length, 4);
 
-  assert.equal((water.match(/<div className="grid content-start gap-5">/g) ?? []).length, 2);
+  assert.equal((water.match(/<PageShell[^>]*id="water-/g) ?? []).length, 4);
+  assert.match(water, /<PageShell id="water-log"[\s\S]*<HealthCollapsiblePanel[\s\S]*shellSurface/);
+  assert.match(water, /<PageShell hiddenDescription="Hidden until pending water exists" id="water-pending"[\s\S]*<HealthCollapsiblePanel[\s\S]*shellSurface/);
+  assert.match(water, /<PageShell id="water-today"[\s\S]*<HealthCollapsiblePanel[\s\S]*shellSurface/);
+  assert.match(water, /<PageShell id="water-history"[\s\S]*<HealthCollapsiblePanel[\s\S]*shellSurface/);
+  assert.equal((water.match(/shellSurface/g) ?? []).length, 4);
+  assert.doesNotMatch(water, /<PageShellSurface>|<PageShellBody/);
 });
 
 test("Health descriptive rows let text wrap before responsive actions", async () => {
@@ -125,8 +132,9 @@ test("Health descriptive rows let text wrap before responsive actions", async ()
   ]);
   assert.match(health, /<HealthBarcodeScanner[\s\S]*onDetected=\{handleMealBarcodeDetected\}/);
   assert.match(scanner, /<video[\s\S]*aria-label="Barcode camera preview"/);
-  assert.match(health, /formatHealthMealSummary\(entry\)[\s\S]*?flex shrink-0 flex-wrap justify-end gap-2/);
-  assert.match(health, /title="Favorites & Recent Foods">[\s\S]*?max-h-\[26rem\] space-y-5 overflow-y-auto/);
+  assert.match(health, /getHealthMealSummaryParts\(entry\)[\s\S]*?flex shrink-0 flex-wrap justify-end gap-2/);
+  assert.match(health, /title="Favorites & Recent Foods">[\s\S]*?<div className="space-y-5">/);
+  assert.doesNotMatch(health, /title="Favorites & Recent Foods">[\s\S]*?overflow-y-auto/);
   assert.match(health, /Sleep Focus Clock[\s\S]*?className="flex shrink-0 flex-nowrap items-center gap-2"/);
   assert.match(health, /resolveHealthSleepKind\(session,[\s\S]*?className="flex shrink-0 items-center gap-2"/);
   assert.match(health, /importPreview\.fileName[\s\S]*?className="shrink-0 rounded-full/);

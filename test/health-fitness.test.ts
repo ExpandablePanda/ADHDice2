@@ -8,6 +8,11 @@ import {
   addHealthWorkoutTitleOption,
   buildHealthWorkoutFormPayload,
   getHealthDailyMovementMetrics,
+  getHealthWorkoutActiveCaloriesForDate,
+  getHealthWorkoutDisplayTitle,
+  getHealthWorkoutImportAliasKey,
+  getHealthWeekBounds,
+  getHealthWeeklyMovementMetrics,
   getHealthWeeklyWorkoutSummary,
   HEALTH_WORKOUT_TYPES,
   moveFitnessOption,
@@ -18,7 +23,7 @@ import {
   renameHealthWorkoutTitleOption,
   sortHealthWorkouts,
 } from "@/lib/health-fitness";
-import { HEALTH_TABS, normalizeHealthProfile } from "@/lib/health-utils";
+import { HEALTH_TABS, formatHealthTimestampDate, normalizeHealthProfile, normalizeHealthWorkoutImportAliases, shiftHealthDate } from "@/lib/health-utils";
 
 const fitnessSource = readFileSync(new URL("../src/components/task-app/health-fitness-tab.tsx", import.meta.url), "utf8");
 const reorderSource = readFileSync(new URL("../src/components/task-app/health-fitness-reorder-list.tsx", import.meta.url), "utf8");
@@ -30,6 +35,7 @@ const healthTabPreferenceSource = readFileSync(new URL("../src/lib/health-tab-pr
 const migrationSource = readFileSync(new URL("../supabase/add_health_fitness_foundation_7_11_33.sql", import.meta.url), "utf8");
 const titleOptionsMigrationSource = readFileSync(new URL("../supabase/add_health_workout_title_options_7_11_34.sql", import.meta.url), "utf8");
 const typeOptionsMigrationSource = readFileSync(new URL("../supabase/add_health_workout_type_options_7_11_35.sql", import.meta.url), "utf8");
+const importAliasesMigrationSource = readFileSync(new URL("../supabase/add_health_workout_import_aliases_7_12_68.sql", import.meta.url), "utf8");
 const healthTablesSource = readFileSync(new URL("../supabase/add_health_tables.sql", import.meta.url), "utf8");
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 const databaseTypesSource = readFileSync(new URL("../src/lib/database.types.ts", import.meta.url), "utf8");
@@ -37,6 +43,7 @@ const activeEnergyCalorieGoalMigrationSource = readFileSync(new URL("../supabase
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const packageLock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8")) as { version: string; packages: { "": { version: string } } };
 const appVersionSource = readFileSync(new URL("../public/app-version.json", import.meta.url), "utf8");
+const appVersionModuleSource = readFileSync(new URL("../src/lib/app-version.ts", import.meta.url), "utf8");
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const currentStateSource = readFileSync(new URL("../docs/CURRENT_STATE.md", import.meta.url), "utf8");
 
@@ -60,8 +67,8 @@ function workout(overrides: Partial<HealthWorkout> = {}): HealthWorkout {
   };
 }
 
-test("Fitness is a Health tab after Water", () => {
-  assert.deepEqual(HEALTH_TABS, ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards"]);
+test("Fitness is a Health tab after Water and Settings is final", () => {
+  assert.deepEqual(HEALTH_TABS, ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards", "Settings"]);
 });
 
 test("Standing is a workout category without changing the existing types", () => {
@@ -81,6 +88,7 @@ test("Standing is a workout category without changing the existing types", () =>
 test("existing Health profiles safely receive the default workout type list", () => {
   const profile = normalizeHealthProfile({ user_id: "user-1" }, "user-1");
   assert.deepEqual(profile.workout_type_options, [...HEALTH_WORKOUT_TYPES]);
+  assert.deepEqual(profile.workout_import_aliases, {});
   assert.match(healthTablesSource, /workout_type_options text\[\] not null default array\['Walking'.*'Standing'.*'Other'\]/);
   assert.match(schemaSource, /workout_type_options text\[\] not null default array\['Walking'.*'Standing'.*'Other'\]/);
   assert.match(typeOptionsMigrationSource, /add column if not exists workout_type_options text\[\]/);
@@ -107,6 +115,26 @@ test("workout type options trim, reject empty and duplicates, rename, remove, an
   assert.deepEqual(renameHealthWorkoutTypeOption(["Walking", "Hiking"], "Hiking", "  Trail Run ").value, ["Walking", "Trail Run"]);
   assert.deepEqual(removeHealthWorkoutTypeOption(["Walking", "Trail Run"], "Trail Run").value, ["Walking"]);
   assert.equal(removeHealthWorkoutTypeOption(["Walking"], "Walking").error, "Keep at least one workout type.");
+});
+
+test("imported workout aliases are presentation-only and normalize safely", () => {
+  const imported = workout({ source: "apple_health_import", title: "Activity 53", workout_type: "Other", active_calories: 320 });
+  assert.equal(getHealthWorkoutImportAliasKey(imported), "Activity 53");
+  assert.equal(getHealthWorkoutDisplayTitle(imported), "Activity 53");
+  assert.equal(getHealthWorkoutDisplayTitle(imported, { "Activity 53": "  Aquatic Movement " }), "Aquatic Movement");
+  assert.equal(getHealthWorkoutDisplayTitle(workout({ title: "My workout" }), { "My workout": "Changed" }), "My workout");
+  assert.deepEqual(normalizeHealthWorkoutImportAliases({ " Activity 53 ": " Aquatic Movement ", empty: " ", bad: 42, nested: {} }), { "Activity 53": "Aquatic Movement" });
+  assert.equal(imported.title, "Activity 53");
+  assert.equal(imported.workout_type, "Other");
+  assert.equal(imported.active_calories, 320);
+});
+
+test("imported workout aliases use an object-constrained profile migration and never rewrite workouts", () => {
+  assert.match(importAliasesMigrationSource, /add column if not exists workout_import_aliases jsonb/);
+  assert.match(importAliasesMigrationSource, /jsonb_typeof\(workout_import_aliases\) <> 'object'/);
+  assert.match(importAliasesMigrationSource, /set not null/);
+  assert.match(importAliasesMigrationSource, /workout_import_aliases_object_check/);
+  assert.doesNotMatch(importAliasesMigrationSource, /adhdice_health_workouts/);
 });
 
 test("Fitness option reorder moves first-to-last and last-to-first without mutation", () => {
@@ -484,6 +512,80 @@ test("weekly workout totals count sessions, seconds-derived minutes, and non-nul
   assert.equal(summary.workoutActiveCalories, 250);
 });
 
+test("Fitness week bounds use the selected anchor date and stop next-week navigation at the current week", () => {
+  assert.deepEqual(getHealthWeekBounds("2026-08-27"), { endDate: "2026-08-30", startDate: "2026-08-24" });
+  assert.equal(getHealthWeekBounds("2026-08-27").startDate, getHealthWeekBounds("2026-08-24").startDate);
+  assert.equal(getHealthWeekBounds("2026-09-03").startDate, "2026-08-31");
+  assert.match(fitnessSource, /const \[weekAnchorDate, setWeekAnchorDate\] = useState\(today\)/);
+  assert.match(fitnessSource, /aria-label="Previous week"[\s\S]*?moveWeek\(-1\)/);
+  assert.match(fitnessSource, /aria-label="Next week" disabled=\{isCurrentWeek\}/);
+  assert.match(fitnessSource, /setWeekAnchorDate\(today\)/);
+  assert.match(fitnessSource, /aria-label="Fitness week date"/);
+  assert.match(fitnessSource, /title=\{isCurrentWeek \? "This Week" : "Week"\}/);
+});
+
+test("Fitness Today has independent historical day navigation and uses the selected date for every daily card", () => {
+  assert.equal(shiftHealthDate("2026-09-02", -1), "2026-09-01");
+  assert.equal(shiftHealthDate("2026-09-01", 1), "2026-09-02");
+  assert.equal(formatHealthTimestampDate("2026-09-01T12:00:00"), "Sep 1, 2026");
+  assert.match(fitnessSource, /const \[selectedFitnessDate, setSelectedFitnessDate\] = useState\(today\)/);
+  assert.match(fitnessSource, /getHealthDailyMovementMetrics\(metricEntries, selectedFitnessDate\)/);
+  assert.match(fitnessSource, /getHealthWorkoutActiveCaloriesForDate\(workouts, selectedFitnessDate\)/);
+  assert.match(fitnessSource, /aria-label="Previous day"[\s\S]*?moveFitnessDay\(-1\)/);
+  assert.match(fitnessSource, /aria-label="Next day" disabled=\{isCurrentFitnessDate\}/);
+  assert.match(fitnessSource, /if \(direction > 0 && nextDate > today\)/);
+  assert.match(fitnessSource, /aria-label="Fitness day date"/);
+  assert.match(fitnessSource, /max=\{today\}/);
+  assert.match(fitnessSource, /setSelectedFitnessDate\(today\)/);
+  assert.match(fitnessSource, /title=\{isCurrentFitnessDate \? "Today" : "Day"\}/);
+  assert.match(fitnessSource, /formatHealthTimestampDate\(`\$\{selectedFitnessDate\}T12:00:00`\)/);
+  const dailyProjectionSection = fitnessSource.slice(fitnessSource.indexOf("const dailyMovement"), fitnessSource.indexOf("const currentWeek"));
+  assert.doesNotMatch(dailyProjectionSection, /weekAnchorDate/);
+});
+
+test("Fitness Today keeps canonical Total Active Calories separate from workout ledger calories", () => {
+  const metrics = [
+    { created_at: "", id: "energy", metric_date: "2026-08-23", metric_type: "active_energy_kcal", metric_value: 356.8, source: "manual", source_fingerprint: "energy", updated_at: "", user_id: "user-1" },
+  ] as HealthMetricEntry[];
+  const workouts = [
+    workout({ active_calories: 276.3, id: "today-workout", workout_date: "2026-08-23" }),
+    workout({ active_calories: 900, id: "other-day", workout_date: "2026-08-22" }),
+  ];
+  const totalActiveCalories = getHealthDailyMovementMetrics(metrics, "2026-08-23").activeEnergyKcal;
+  const workoutActiveCalories = getHealthWorkoutActiveCaloriesForDate(workouts, "2026-08-23");
+  assert.equal(totalActiveCalories, 356.8);
+  assert.equal(workoutActiveCalories, 276.3);
+  assert.notEqual(totalActiveCalories + workoutActiveCalories, totalActiveCalories);
+  assert.match(fitnessSource, /label="Total Active Calories"/);
+  assert.match(fitnessSource, /label="Workout Active Calories"/);
+  assert.match(fitnessSource, /detail="workout ledger"/);
+  assert.doesNotMatch(fitnessSource, /dailyMovement\.activeEnergyKcal \+ dailyWorkoutActiveCalories/);
+});
+
+test("Fitness Week totals use canonical daily Active Energy and do not infer missing dates from workouts", () => {
+  const metrics = [
+    { created_at: "", id: "monday", metric_date: "2026-08-24", metric_type: "active_energy_kcal", metric_value: 100, source: "manual", source_fingerprint: "monday", updated_at: "", user_id: "user-1" },
+    { created_at: "", id: "wednesday", metric_date: "2026-08-26", metric_type: "active_energy_kcal", metric_value: 250.5, source: "manual", source_fingerprint: "wednesday", updated_at: "", user_id: "user-1" },
+  ] as HealthMetricEntry[];
+  const weeklyMovement = getHealthWeeklyMovementMetrics(metrics, "2026-08-27");
+  const weeklyWorkoutSummary = getHealthWeeklyWorkoutSummary([
+    workout({ active_calories: 276.3, id: "ledger-only", workout_date: "2026-08-25" }),
+  ], "2026-08-27");
+  assert.deepEqual(weeklyMovement, { activeEnergyKcal: 350.5, endDate: "2026-08-30", startDate: "2026-08-24" });
+  assert.equal(weeklyWorkoutSummary.workoutActiveCalories, 276.3);
+  assert.match(fitnessSource, /getHealthWeeklyMovementMetrics\(metricEntries, weekAnchorDate\)/);
+  assert.match(fitnessSource, /label="Total Active Calories" value=\{`\$\{formatWholeNumber\(weeklyMovement\.activeEnergyKcal\)\} kcal`\}/);
+  assert.match(fitnessSource, /label="Workout Active Calories" value=\{`\$\{formatWholeNumber\(weeklySummary\.workoutActiveCalories\)\} kcal`\}/);
+  assert.doesNotMatch(fitnessSource, /weeklyMovement\.activeEnergyKcal \+ weeklySummary\.workoutActiveCalories/);
+  assert.match(fitnessSource, /getHealthWeeklyWorkoutSummary\(workouts, weekAnchorDate\)/);
+  assert.match(fitnessSource, /getHealthWeeklyMovementMetrics\(metricEntries, weekAnchorDate\)/);
+  assert.doesNotMatch(dailyProjectionSectionForTest(fitnessSource), /weekAnchorDate/);
+});
+
+function dailyProjectionSectionForTest(source: string) {
+  return source.slice(source.indexOf("const dailyMovement"), source.indexOf("const currentWeek"));
+}
+
 test("daily Fitness cards read the existing steps, active energy, and exercise metric authorities", () => {
   const metrics = [
     { created_at: "", id: "steps", metric_date: "2026-08-23", metric_type: "steps", metric_value: 5000, source: "manual", source_fingerprint: "steps", updated_at: "", user_id: "user-1" },
@@ -558,12 +660,13 @@ test("Fitness migration is idempotent, text-typed, owner-scoped, and future-sour
   assert.doesNotMatch(migrationSource, /create type .*workout/i);
 });
 
-test("all 7.12.6 release version surfaces stay aligned", () => {
-  assert.equal(packageJson.version, "7.12.6");
-  assert.equal(packageLock.version, "7.12.6");
-  assert.equal(packageLock.packages[""].version, "7.12.6");
-  assert.match(appVersionSource, /"version":\s*"7\.12\.6"/);
-  assert.match(taskAppSource, /const APP_VERSION = "7\.12\.6"/);
+test("all 7.12.119 release version surfaces stay aligned", () => {
+  assert.equal(packageJson.version, "7.12.119");
+  assert.equal(packageLock.version, "7.12.119");
+  assert.equal(packageLock.packages[""].version, "7.12.119");
+  assert.match(appVersionSource, /"version":\s*"7\.12\.119"/);
+  assert.match(appVersionModuleSource, /APP_VERSION = "7\.12\.119"/);
+  assert.match(currentStateSource, /Current working app version: `7\.12\.119`/);
+  assert.match(taskAppSource, /const APP_VERSION = CURRENT_APP_VERSION/);
   assert.match(taskAppSource, /const HUD_VERSION = APP_VERSION/);
-  assert.match(currentStateSource, /Current working app version: `7\.12\.6`/);
 });

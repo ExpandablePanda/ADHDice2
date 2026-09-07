@@ -19,6 +19,7 @@ import {
   getHealthFoodIdentityKey,
   buildHealthDailyCalorieSeries,
   buildHealthFoodLogHistoryIndex,
+  buildHealthWaterHistory,
   normalizeHealthFoodLibraryInput,
   normalizeHealthFoodLibraryItem,
   searchHealthFoodLibrary,
@@ -117,7 +118,8 @@ test("Food Logging picker exposes custom Foods, Recipes, and Saved Meals by name
   assert.match(source, /provider: "saved_meal"/);
   assert.match(dropdown, /onSelect\?\.\(suggestion\)/);
   assert.match(dropdown, /event\.key === "Enter"[\s\S]*chooseSuggestion\(highlightedIndex\)/);
-  assert.match(dropdown, /scrollIntoView\(\{ block: "nearest" \}\)/);
+  assert.match(dropdown, /revealDropdownOptionWithinPanel\(highlightedOptionRef\.current, panelRef\.current\)/);
+  assert.doesNotMatch(dropdown, /scrollIntoView/);
 });
 
 test("custom food serving fields compose a backward-compatible label", () => {
@@ -232,6 +234,7 @@ test("water totals preserve cup and fluid-ounce conversions", () => {
     {
       amount: 1,
       amount_ml: cupMl,
+      confirmed_at: "",
       created_at: "",
       entry_date: "2026-07-27",
       id: "water-1",
@@ -242,6 +245,7 @@ test("water totals preserve cup and fluid-ounce conversions", () => {
     {
       amount: 8,
       amount_ml: ounceMl,
+      confirmed_at: "",
       created_at: "",
       entry_date: "2026-07-27",
       id: "water-2",
@@ -254,6 +258,16 @@ test("water totals preserve cup and fluid-ounce conversions", () => {
   const totals = sumWaterForDate(entries, "2026-07-27");
   assert.equal(totals.cups, 2);
   assert.equal(totals.fluidOunces, 16);
+});
+
+test("pending Water stays out of totals and history until confirmed", () => {
+  const entries = [
+    { amount: 8, amount_ml: waterAmountToMilliliters(8, "fl_oz"), confirmed_at: null, created_at: "2026-08-28T09:00:00.000Z", entry_date: "2026-08-28", id: "pending", logged_at: "2026-08-28T09:00:00.000Z", unit: "fl_oz" as const, user_id: "user-1" },
+    { amount: 1, amount_ml: waterAmountToMilliliters(1, "cup"), confirmed_at: "2026-08-28T10:00:00.000Z", created_at: "2026-08-28T10:00:00.000Z", entry_date: "2026-08-28", id: "confirmed", logged_at: "2026-08-28T10:00:00.000Z", unit: "cup" as const, user_id: "user-1" },
+  ];
+  assert.equal(sumWaterForDate(entries, "2026-08-28").fluidOunces, 8);
+  assert.deepEqual(buildHealthWaterHistory(entries, "2026-08-29")[0]?.entries.map((entry) => entry.id), ["confirmed"]);
+  assert.equal(buildHealthWaterHistory([entries[0]!], "2026-08-29").length, 0);
 });
 
 test("food library identity prefers provider ids and dedupes exact manual foods", () => {
@@ -496,7 +510,7 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(source, /getHealthFoodIdentityKey/);
   assert.match(source, /readHealthTabPreference/);
   assert.match(source, /HEALTH_TABS/);
-  assert.match(source, /adhdice-scrollbar max-h-\[26rem\].*overflow-y-auto/);
+  assert.match(source, /adhdice-scrollbar max-h-\[min\(32rem,calc\(100dvh-2rem\)\)\] overflow-y-auto/);
   assert.match(source, /adhdice-scrollbar max-h-24 overflow-y-auto/);
   assert.match(library, /grid min-w-0 items-start gap-5 xl:grid-cols-\[minmax\(0,0\.9fr\)_minmax\(0,1\.1fr\)\]/);
   assert.match(library, /adhdice-scrollbar min-w-0 max-h-\[36rem\] overflow-y-auto/);
@@ -511,31 +525,48 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(source, /expandedFavoriteId/);
   assert.match(chart, /ActivityLineChartCard/);
   assert.match(chart, /buildHealthDailyCalorieSeries|HealthDailyCaloriePoint/);
+  assert.doesNotMatch(chart, /xSubpositionKey/);
   assert.doesNotMatch(chart, /<svg/);
   assert.match(sharedChart, /aria-label=\{ariaLabel\}/);
   assert.match(sharedChart, /<svg/);
   assert.match(sharedChart, /emptyText/);
   assert.match(sharedChart, /Clear pin/);
-  assert.match(source, /<HealthCalorieLineChart series=\{dailyCalorieSeries\} \/>/);
-  assert.match(source, /subtitle="Daily totals"[\s\S]*?<HealthCalorieLineChart series=\{dailyCalorieSeries\} \/>[\s\S]*?<\/HealthPanel>/);
+  assert.match(sharedChart, /strokeDasharray\?: string/);
+  assert.match(sharedChart, /strokeDasharray=\{item\.strokeDasharray\}/);
+  assert.match(sharedChart, /strokeLinecap="round"/);
+  assert.match(source, /calculateHealthDailyCalorieBudget/);
+  assert.match(source, /buildHealthDailyCalorieTargetSeries/);
+  assert.match(source, /const dailyCalorieTargetSeries = useMemo/);
+  assert.match(source, /const selectedCalorieBudget = useMemo/);
+  assert.match(source, /const selectedActiveEnergyKcal = useMemo\([\s\S]*?sumMetricValueForDate\(metricEntries, foodHistoryDate, \["active_energy_kcal"\]\)/);
+  assert.match(source, /calculateHealthDailyCalorieBudget\([\s\S]*?selectedActiveEnergyKcal/);
+  assert.match(source, /const selectedCalorieTargetDetail = selectedCalorieBudget === null/);
+  assert.match(source, /formatHealthCalorieTarget\(selectedCalorieBudget\)/);
+  assert.match(source, /selectedActiveEnergyKcal > 0 \? ` \(\+\$\{formatHealthCalorieTarget\(selectedActiveEnergyKcal\)\} active kcal\)`/);
+  const calorieBudgetSection = source.slice(source.indexOf("const selectedActiveEnergyKcal"), source.indexOf("const selectedMealPlans"));
+  assert.doesNotMatch(calorieBudgetSection, /workouts|active_calories/);
+  assert.match(source, /<HealthCalorieLineChart series=\{dailyCalorieSeries\} targetSeries=\{dailyCalorieTargetSeries\} \/>/);
+  assert.match(source, /subtitle="Daily totals"[\s\S]*?<HealthCalorieLineChart series=\{dailyCalorieSeries\} targetSeries=\{dailyCalorieTargetSeries\} \/>[\s\S]*?<\/HealthPanel>/);
   assert.doesNotMatch(source, /<div className="xl:col-span-2">\s*<HealthCalorieLineChart/);
   assert.match(chart, /variant="embedded"/);
   assert.match(sharedChart, /variant\?: "standalone" \| "embedded"/);
   assert.match(sharedChart, /variant = "standalone"/);
   assert.match(chart, /No calories logged in this 7-day range/);
   assert.match(chart, /series\.map/);
+  assert.match(chart, /key: "calories"/);
+  assert.match(chart, /label: "Adjusted Target"/);
+  assert.match(chart, /strokeDasharray: "1 7"/);
+  assert.doesNotMatch(chart.slice(chart.indexOf("const calorieSeries"), chart.indexOf("const chartSeries")), /strokeDasharray/);
+  assert.match(chart, /targetSeries\.map/);
+  assert.doesNotMatch(chart, /referenceLines|calorieGoal/);
   assert.doesNotMatch(source, /Recent Foods[\s\S]{0,2500}FavoriteFoodHistoryInlay/);
-  assert.match(source, /calculateHealthDailyCalorieAllowance/);
-  assert.match(source, /sumMetricValueForDate\(metricEntries, foodHistoryDate, \["active_energy_kcal"\]\)/);
-  assert.match(source, /progressPercent=\{selectedCalorieAllowance === null/);
-  assert.match(source, /Add Active Energy to calorie allowance/);
-  assert.match(source, /profileDraft\.add_active_energy_to_calorie_goal/);
+  assert.match(source, /progressPercent=\{selectedCalorieBudget/);
   assert.match(source, /setFavoriteFoodStatus\(item\.id, false\)/);
   assert.match(source, /getHealthFoodMeasurementOptions/);
   assert.match(source, /calculateHealthFoodNutrition/);
   assert.match(source, /formatHealthFoodQuantityUnit/);
   assert.match(source, /composeHealthFoodServingDefinition/);
-  assert.match(source, /formatHealthMealSummary\(entry\)/);
+  assert.match(source, /getHealthMealSummaryParts\(entry\)/);
   assert.doesNotMatch(source, /mealDraft\.measurement === "serving"/);
   assert.match(source, /nutrition_snapshot: calculation\.nutrientTotals/);
   assert.match(source, /mode: "legacy"/);

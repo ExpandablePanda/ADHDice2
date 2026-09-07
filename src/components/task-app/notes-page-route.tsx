@@ -6,7 +6,6 @@ import type { Task } from "@/lib/database.types";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
 import { NotesPageComponent } from "./notes-page";
-import { PageShellHeader } from "./page-shell-header";
 import type { ScratchPaperData } from "./scratch-paper";
 
 type NotesPageRouteProps = {
@@ -22,7 +21,6 @@ export function NotesPageRoute(props: NotesPageRouteProps) {
   return (
     <NotesPageComponent
       {...props}
-      headerNode={<PageShellHeader subtitle="Scratch Paper + Knowledge Base" title="Notes" />}
     />
   );
 }

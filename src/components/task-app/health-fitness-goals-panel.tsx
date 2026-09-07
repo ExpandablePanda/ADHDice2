@@ -212,6 +212,7 @@ export function HealthFitnessGoalsPanel({
   return (
     <HealthCollapsiblePanel
       header={<Target aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
+      shellSurface
       subtitle="Derived from your canonical workout observations"
       title="Fitness Goals"
     >

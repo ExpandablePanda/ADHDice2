@@ -3,19 +3,23 @@ import assert from "node:assert/strict";
 
 import {
   buildHealthMealLoggedAt,
+  buildHealthDailyCalorieTargetSeries,
   buildDefaultHealthProfile,
   buildWeightGoalForecast,
   buildHealthCoachMessage,
   buildHealthReminderTemplate,
+  calculateHealthDailyCalorieBudget,
+  formatHealthCalorieTarget,
   displayWeightToKilograms,
   formatEditableWeight,
   formatHealthMealSummary,
   formatHealthNutritionNumber,
+  getHealthMealNutritionValue,
+  getHealthMealSummaryParts,
   formatHealthSleepDuration,
   formatMealLoggedTime,
   buildHealthSleepTimestamps,
   buildHealthDailySleepSeries,
-  calculateHealthDailyCalorieAllowance,
   getHealthSleepElapsedSeconds,
   getHealthSleepStartTimestamp,
   getCurrentHealthDateTimeInputs,
@@ -34,21 +38,48 @@ import {
   sumMealNutritionForDate,
 } from "../src/lib/health-utils.ts";
 
-test("daily calorie allowance adds only non-negative finite Active Energy when enabled", () => {
-  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: 350, addActiveEnergy: true, baseCalorieGoal: 1800 }), 2150);
-  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: 350, addActiveEnergy: false, baseCalorieGoal: 1800 }), 1800);
-  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: 350, addActiveEnergy: true, baseCalorieGoal: null }), null);
-  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: 0, addActiveEnergy: true, baseCalorieGoal: 1800 }), 1800);
-  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: -50, addActiveEnergy: true, baseCalorieGoal: 1800 }), 1800);
-  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: Number.NaN, addActiveEnergy: true, baseCalorieGoal: 1800 }), 1800);
-  assert.equal(calculateHealthDailyCalorieAllowance({ activeEnergyKcal: Number.POSITIVE_INFINITY, addActiveEnergy: true, baseCalorieGoal: 1800 }), 1800);
+test("daily calorie budget adds only the date's canonical Active Energy", () => {
+  assert.equal(calculateHealthDailyCalorieBudget(1900, 356.8), 2256.8);
+  assert.equal(calculateHealthDailyCalorieBudget(1900, 0), 1900);
+  assert.equal(calculateHealthDailyCalorieBudget(1900, null), 1900);
+  assert.equal(calculateHealthDailyCalorieBudget(1900, undefined), 1900);
+  assert.equal(calculateHealthDailyCalorieBudget(1900, Number.NaN), 1900);
+  assert.equal(calculateHealthDailyCalorieBudget(1900, -25), 1900);
 });
 
-test("Health profile normalization defaults the Active Energy allowance setting safely", () => {
-  assert.equal(normalizeHealthProfile({ user_id: "user-1" }, "user-1").add_active_energy_to_calorie_goal, false);
-  assert.equal(normalizeHealthProfile({ add_active_energy_to_calorie_goal: true, user_id: "user-1" }, "user-1").add_active_energy_to_calorie_goal, true);
-  assert.equal(normalizeHealthProfile({ add_active_energy_to_calorie_goal: false, user_id: "user-1" }, "user-1").add_active_energy_to_calorie_goal, false);
-  assert.equal(buildDefaultHealthProfile("user-1").add_active_energy_to_calorie_goal, false);
+test("daily calorie target presentation shows positive Active Energy without inventing zero data", () => {
+  assert.equal(formatHealthCalorieTarget(calculateHealthDailyCalorieBudget(1900, 100)), "2,000");
+  assert.equal(formatHealthCalorieTarget(calculateHealthDailyCalorieBudget(1900, 0)), "1,900");
+  assert.equal(formatHealthCalorieTarget(calculateHealthDailyCalorieBudget(1900, null)), "1,900");
+  assert.equal(formatHealthCalorieTarget(calculateHealthDailyCalorieBudget(1900, 276.3)), "2,176.3");
+});
+
+test("daily calorie target series keeps each date's adjusted target separate", () => {
+  const points = [
+    { date: "2026-08-26", label: "Wed" },
+    { date: "2026-08-27", label: "Thu" },
+    { date: "2026-08-28", label: "Fri" },
+    { date: "2026-08-29", label: "Sat" },
+    { date: "2026-08-30", label: "Sun" },
+    { date: "2026-08-31", label: "Mon" },
+    { date: "2026-09-01", label: "Tue" },
+  ];
+  const metricEntries = [
+    { id: "energy-1", user_id: "user-1", metric_type: "active_energy_kcal" as const, metric_date: "2026-09-01", metric_value: 356.8, source: "manual" as const, source_fingerprint: "energy-1", created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+    { id: "energy-2", user_id: "user-1", metric_type: "active_energy_kcal" as const, metric_date: "2026-08-31", metric_value: 180, source: "manual" as const, source_fingerprint: "energy-2", created_at: "2026-08-31T00:00:00.000Z", updated_at: "2026-08-31T00:00:00.000Z" },
+    { id: "energy-3", user_id: "user-1", metric_type: "active_energy_kcal" as const, metric_date: "2026-08-30", metric_value: 0, source: "manual" as const, source_fingerprint: "energy-3", created_at: "2026-08-30T00:00:00.000Z", updated_at: "2026-08-30T00:00:00.000Z" },
+  ];
+
+  assert.deepEqual(buildHealthDailyCalorieTargetSeries({ baseCalorieGoal: 1900, metricEntries, points }), [
+    { date: "2026-08-26", label: "Wed", target: 1900 },
+    { date: "2026-08-27", label: "Thu", target: 1900 },
+    { date: "2026-08-28", label: "Fri", target: 1900 },
+    { date: "2026-08-29", label: "Sat", target: 1900 },
+    { date: "2026-08-30", label: "Sun", target: 1900 },
+    { date: "2026-08-31", label: "Mon", target: 2080 },
+    { date: "2026-09-01", label: "Tue", target: 2256.8 },
+  ]);
+  assert.deepEqual(buildHealthDailyCalorieTargetSeries({ baseCalorieGoal: null, metricEntries, points }), []);
 });
 
 test("health weight conversion helpers round-trip between pounds and kilograms", () => {
@@ -148,8 +179,37 @@ test("structured meal summaries use logged quantity and calculated nutrition", (
     user_id: "user-1",
   }, "en-US");
 
-  assert.match(summary, /^Breakfast \/ 60 Crackers \/ 153 kcal \/ Protein 3\.27g \/ Carbs 21\.82g \/ Fat 5\.45g \/ \d{1,2}:10/);
+  assert.match(summary, /^Breakfast \/ 60 Crackers \/ 152\.73 kcal \/ Protein 3\.27g \/ Carbs 21\.82g \/ Fat 5\.45g \/ \d{1,2}:10/);
   assert.doesNotMatch(summary, /55 Crackers|30 g/);
+  assert.equal(getHealthMealNutritionValue({
+    calories: 280,
+    nutrition_snapshot: { calories: 152.5 },
+  } as never, "calories"), 152.5);
+});
+
+test("structured meal summary parts preserve order and identify only calories for emphasis", () => {
+  const parts = getHealthMealSummaryParts({
+    attribution: null,
+    barcode: null,
+    brand_name: null,
+    calories: 280,
+    carbs_g: 0,
+    created_at: "2026-08-04T12:00:00.000Z",
+    entry_date: "2026-08-04",
+    fat_g: 0,
+    food_name: "Chicken Breast",
+    id: "meal-card",
+    logged_at: "2026-08-04T12:35:00",
+    meal_slot: "lunch",
+    protein_g: 0,
+    provider: "manual",
+    provider_item_id: null,
+    serving_label: "6 oz",
+    updated_at: "2026-08-04T12:00:00.000Z",
+    user_id: "user-1",
+  });
+  assert.deepEqual(parts.map((part) => part.kind), ["meal", "serving", "calories", "protein", "carbs", "fat", "time"]);
+  assert.equal(parts.find((part) => part.kind === "calories")?.text, "280 kcal");
 });
 
 test("legacy meal summaries fall back safely when structured quantity data is absent", () => {

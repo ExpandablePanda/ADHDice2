@@ -222,7 +222,7 @@ export function resolveRecurringLiveStatusFromNextDueDate(
   return normalizedDueMinutes > normalizedCurrentMinutes ? "upcoming" : "pending";
 }
 
-export function formatRepeatSummary(task: Task) {
+export function formatRepeatSummary(task: Pick<Task, "repeat_frequency" | "repeat_interval" | "repeat_days_of_week" | "repeat_day_of_month" | "repeat_monthly_mode" | "repeat_monthly_ordinal" | "repeat_monthly_weekday">) {
   if (task.repeat_frequency === "none") return null;
 
   if (task.repeat_frequency === "daily_until_complete") {

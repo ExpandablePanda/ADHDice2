@@ -15,6 +15,7 @@ export type ActiveStatusAuthority = "engine";
 export type ActiveStatusReadResult = {
   authority: ActiveStatusAuthority;
   statusesByTaskId: TaskDisplayStatusByTaskId;
+  dueOnByTaskId: Record<string, string | null>;
 };
 
 type ActiveStatusReadTask = Task & Partial<CanonicalTaskStateColumns> & { canonical_schedule_boundary?: CanonicalProjectedTaskState["canonical_schedule_boundary"] };
@@ -29,6 +30,7 @@ type ActiveStatusReadInput = {
 
 function resolveTaskStatuses(input: ActiveStatusReadInput, compatibilityOnly: boolean): ActiveStatusReadResult {
   const statusesByTaskId: TaskDisplayStatusByTaskId = {};
+  const dueOnByTaskId: Record<string, string | null> = {};
   for (const task of input.tasks) {
     const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.historyByTaskId[task.id] ?? []);
     if (isCanonicalArchivedOrTrashed(task)) {
@@ -41,10 +43,11 @@ function resolveTaskStatuses(input: ActiveStatusReadInput, compatibilityOnly: bo
       timezone: input.timezone,
       logicalDayRollover: input.logicalDayRollover,
     });
-    const evaluatedStatus = evaluateTaskState(engineInput).activeStatus;
-    statusesByTaskId[task.id] = evaluatedStatus;
+    const evaluated = evaluateTaskState(engineInput);
+    statusesByTaskId[task.id] = evaluated.activeStatus;
+    dueOnByTaskId[task.id] = evaluated.nextDueDate;
   }
-  return { authority: "engine", statusesByTaskId };
+  return { authority: "engine", dueOnByTaskId, statusesByTaskId };
 }
 
 /** The production shared Active Status authority. */
@@ -58,11 +61,24 @@ export function resolveCompatibilityTaskStatuses(input: ActiveStatusReadInput): 
 }
 
 /** Presentation-only copies; never pass these to a persistence mutation. */
-export function projectTasksForActiveStatusRead(tasks: Task[], statusesByTaskId: TaskDisplayStatusByTaskId) {
+export function projectTasksForActiveStatusRead(
+  tasks: Task[],
+  statusesByTaskId: TaskDisplayStatusByTaskId,
+  dueOnByTaskId: Record<string, string | null> = {},
+) {
   return tasks.map((task) => {
-    const status = statusesByTaskId[task.id] ?? task.status;
+    const hasCanonicalStatus = Object.hasOwn(statusesByTaskId, task.id);
+    const hasCanonicalDueOn = Object.hasOwn(dueOnByTaskId, task.id);
+    const status = hasCanonicalStatus ? statusesByTaskId[task.id]! : task.status;
+    const projectedStatus = status === "unscheduled" ? task.status : status;
+    const dueOn = hasCanonicalDueOn ? dueOnByTaskId[task.id] ?? null : task.due_on;
     // The database-backed Task row remains valid when the engine-only display
     // status is unscheduled. Callers must consume the map for presentation.
-    return status === task.status || status === "unscheduled" ? task : { ...task, status };
+    if (projectedStatus === task.status && dueOn === task.due_on) return task;
+    return {
+      ...task,
+      ...(projectedStatus !== task.status ? { status: projectedStatus } : {}),
+      ...(hasCanonicalDueOn ? { due_on: dueOn } : {}),
+    };
   });
 }

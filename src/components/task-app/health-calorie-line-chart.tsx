@@ -2,15 +2,16 @@
 
 import { ActivityLineChartCard, type NumericLineChartSeries } from "../activity-line-chart-card";
 import type { HealthDailyCaloriePoint } from "@/lib/health-library";
+import type { HealthDailyCalorieTargetPoint } from "@/lib/health-utils";
 
-export function HealthCalorieLineChart({ series }: { series: HealthDailyCaloriePoint[] }) {
+export function HealthCalorieLineChart({ series, targetSeries }: { series: HealthDailyCaloriePoint[]; targetSeries: HealthDailyCalorieTargetPoint[] }) {
   const firstDate = series[0]?.date ?? "";
   const lastDate = series.at(-1)?.date ?? firstDate;
   const formatDate = (dateKey: string) => {
     const date = new Date(`${dateKey}T12:00:00`);
     return Number.isNaN(date.getTime()) ? dateKey : date.toLocaleDateString(undefined, { month: "numeric", day: "numeric", year: "numeric" });
   };
-  const chartSeries: NumericLineChartSeries[] = [{
+  const calorieSeries: NumericLineChartSeries = {
     color: "#7c5cff",
     key: "calories",
     label: "Calories",
@@ -18,10 +19,28 @@ export function HealthCalorieLineChart({ series }: { series: HealthDailyCalorieP
       detailLabel: formatDate(point.date),
       key: point.date,
       label: point.label,
+      xDomainKey: point.date,
       value: point.calories,
     })),
     totalValue: series.reduce((total, point) => total + point.calories, 0),
-  }];
+  };
+  const chartSeries: NumericLineChartSeries[] = [calorieSeries];
+  if (series.some((point) => point.calories !== 0) && targetSeries.length > 0) {
+    chartSeries.push({
+      color: "#d38b56",
+      key: "adjusted-calorie-target",
+      label: "Adjusted Target",
+      points: targetSeries.map((point) => ({
+        detailLabel: formatDate(point.date),
+        key: point.date,
+        label: point.label,
+        xDomainKey: point.date,
+        value: point.target,
+      })),
+      strokeDasharray: "1 7",
+      totalValue: targetSeries.reduce((total, point) => total + point.target, 0),
+    });
+  }
   return (
     <ActivityLineChartCard
       activePointContext={`${formatDate(firstDate)} – ${formatDate(lastDate)}`}

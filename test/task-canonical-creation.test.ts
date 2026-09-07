@@ -480,6 +480,64 @@ test("Import routes parents, Steps, and Substeps through canonical creation and 
   assert.notEqual(revealCalls[0], tasks[2]?.id);
 });
 
+test("Import progress is optional, monotonic, and reaches the recursive total after skips", async () => {
+  const progress: Array<{ processed: number; total: number }> = [];
+  let calls = 0;
+  const action = useTaskCrudActions({
+    canonicalCommandsEnabled: true,
+    canonicalTaskCreator: async (payload) => {
+      calls += 1;
+      if (calls === 1) {
+        return { data: null, error: { message: "parent insert failed" }, usedEnergyFallback: false, usedActualSecondsFallback: false as const };
+      }
+      const rowId = `00000000-0000-4000-8000-${String(calls).padStart(12, "0")}`;
+      return {
+        data: canonicalTask({ id: rowId, parent_task_id: payload.parent_task_id ?? null, title: payload.title }),
+        error: null,
+        usedEnergyFallback: false,
+        usedActualSecondsFallback: false as const,
+      };
+    },
+    client: noDirectTaskInsertClient(),
+    currentUserId: ownerId,
+    deleteTaskRow: async () => ({ data: null, error: null, conflict: null }),
+    setMessage: () => {},
+    setTaskRouting: () => {},
+    setTasks: () => {},
+    shouldRouteTaskToInbox: () => false,
+    sortTasksForUi: (value) => value,
+    tasks: [],
+    updateTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, conflict: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false }),
+  });
+
+  const result = await action.importTasks([
+    "Failed parent",
+    "- Skipped step",
+    "-- Skipped substep",
+    "Working parent",
+    "- Saved step",
+  ], { onProgress: (value) => progress.push(value) });
+
+  assert.equal(result.importedCount, 1);
+  assert.equal(result.errorCount, 1);
+  assert.deepEqual(progress[0], { processed: 0, total: 5 });
+  assert.deepEqual(progress.at(-1), { processed: 5, total: 5 });
+  assert.equal(progress.every((value, index) => index === 0 || value.processed >= progress[index - 1]!.processed), true);
+  assert.equal(progress.every((value) => value.processed <= value.total), true);
+  assert.equal(calls, 3);
+
+  const optionalResult = await action.importTasks(["Optional callback"]);
+  assert.equal(optionalResult.importedCount, 1);
+
+  const adapterSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
+  assert.match(adapterSource, /Preparing import…/);
+  assert.match(adapterSource, /Importing tasks/);
+  assert.match(adapterSource, /importProgress\.processed} of \{importProgress\.total\}/);
+  assert.match(adapterSource, /importProgress\.processed \/ Math\.max\(importProgress\.total, 1\)/);
+  assert.match(adapterSource, /onProgress: \(progress\) => setImportProgress\(progress\)/);
+  assert.match(adapterSource, /disabled=\{nonEmptyLineCount === 0 \|\| isSubmitting\}/);
+});
+
 test("unsafe imported snapshot status fails closed instead of guessing provenance", async () => {
   let planError: unknown = null;
   const revealCalls: string[] = [];

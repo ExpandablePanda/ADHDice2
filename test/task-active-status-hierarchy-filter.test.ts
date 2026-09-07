@@ -32,7 +32,6 @@ function derive(
     focusedTaskIds: [],
     listColumnPickerOrder: [],
     listVisibleColumns: [],
-    taskEditorTaskId: null,
     taskGridLayout: [],
     taskGridWidgetTypes: [],
     taskHistoryByTaskId: {},

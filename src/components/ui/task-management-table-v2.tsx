@@ -3,6 +3,7 @@
 import { Children, Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
+  ArrowLeft,
   ArrowUp,
   ArrowDown,
   CalendarDays,
@@ -56,6 +57,7 @@ import { TaskHierarchyChevronButton } from "@/components/task-app/task-hierarchy
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import {
   formatRepeatFrequencyLabel,
+  formatRepeatSummary,
   getTaskRepeatCategory,
   REPEAT_MONTHLY_MODE_OPTIONS,
   REPEAT_MONTHLY_ORDINAL_OPTIONS,
@@ -156,7 +158,7 @@ type StructuredFilters = {
 };
 type OverlayMode = "actual" | "delay" | "due" | "energy" | "estimated" | "full" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type OverlaySectionId = "actual" | "due" | "energyStatus" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "tags";
-type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
+export type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "summary" | "tags";
 type ColumnAlignment = "center" | "left" | "right";
 export type RowContextMenuState = { left: number; taskId: string; top: number };
 type ColumnMenuPosition = { left: number; maxHeight: number; placement: "down" | "up"; top: number };
@@ -1105,6 +1107,22 @@ function isKeyboardEventFromEditableTarget(
   }
 
   return false;
+}
+
+export function isTaskTableChildRowInteractiveTarget(
+  target: EventTarget | null,
+  options?: { isTextEditingActive?: boolean },
+) {
+  if (isKeyboardEventFromEditableTarget(target, options)) {
+    return true;
+  }
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return Boolean(target.closest(
+    "a, button, input, textarea, select, summary, [role=menuitem], [role=option], [aria-haspopup=true], [draggable=true], [data-drag-handle], [data-task-table-action]",
+  ));
 }
 
 type TaskManagementTableV2Props = {
@@ -2095,6 +2113,49 @@ function formatEnergyLabel(energy: TaskEnergy) {
   return ENERGY_OPTIONS.find((option) => option.value === energy)?.label ?? energy;
 }
 
+export type TaskMetadataSummaryRow = {
+  label: string;
+  panelId: MetadataPanelId | null;
+  value: string;
+};
+
+export function buildTaskMetadataSummary(
+  task: Pick<PrototypeTaskRow, "actualSeconds" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "status" | "tags" | "title">,
+  actualSeconds: number,
+): TaskMetadataSummaryRow[] {
+  const priority = getTaskPrioritySelection(task.priorities);
+  const notesPreview = task.notes.trim().replace(/\s+/g, " ");
+  const linkedNotesLabel = task.linkedNotes.length === 1 ? "1 linked note" : `${task.linkedNotes.length} linked notes`;
+  const notesValue = notesPreview
+    ? `${notesPreview.slice(0, 96)}${notesPreview.length > 96 ? "…" : ""}${task.linkedNotes.length > 0 ? ` · ${linkedNotesLabel}` : ""}`
+    : task.linkedNotes.length > 0 ? linkedNotesLabel : "None";
+  const linkValue = task.linkLabel.trim() || task.linkUrl.trim() || "None";
+  const repeatValue = formatRepeatSummary({
+    repeat_day_of_month: task.repeatDayOfMonth,
+    repeat_days_of_week: task.repeatDaysOfWeek,
+    repeat_frequency: task.repeat,
+    repeat_interval: task.repeatInterval,
+    repeat_monthly_mode: task.repeatMonthlyMode,
+    repeat_monthly_ordinal: task.repeatMonthlyOrdinal,
+    repeat_monthly_weekday: task.repeatMonthlyWeekday,
+  }) ?? "No repeat";
+
+  return [
+    { label: "Title", panelId: null, value: task.title.trim() || "Untitled task" },
+    { label: "Status", panelId: "status", value: formatTaskStatusLabel(task.status) },
+    { label: "Priority", panelId: "priority", value: priority ? formatPriorityLabel(priority) : "None" },
+    { label: "Energy", panelId: "energy", value: task.energy === "none" ? "None" : formatEnergyLabel(task.energy) },
+    { label: "Due", panelId: "due", value: formatDue(task.dueOn, task.dueTime) },
+    { label: "Repeat", panelId: "repeat", value: repeatValue },
+    { label: "Estimated", panelId: "estimated", value: task.estimatedMinutes && task.estimatedMinutes > 0 ? formatDuration(task.estimatedMinutes) : "None" },
+    { label: "Actual", panelId: "actual", value: formatActual(actualSeconds) },
+    { label: "Lists", panelId: "lists", value: task.lists.length > 0 ? task.lists.join(" · ") : "None" },
+    { label: "Tags", panelId: "tags", value: task.tags.length > 0 ? task.tags.map((tag) => `#${tag.replace(/^#+/, "")}`).join(" · ") : "None" },
+    { label: "Link", panelId: "link", value: linkValue },
+    { label: "Notes", panelId: "notes", value: notesValue },
+  ];
+}
+
 function statusSortValue(status: TaskDisplayStatus) {
   return STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
 }
@@ -2141,6 +2202,16 @@ function lastHandledSortValue(task: PrototypeTaskRow) {
 
 export function stopRowActionPointerEvent(event: ReactPointerEvent<HTMLElement>) {
   event.stopPropagation();
+}
+
+export function performEditorChildTitleRenameHandoff(
+  taskId: string,
+  title: string,
+  openTaskInCurrentEditor: (taskId: string) => void,
+  beginInlineTaskTitleRename: (taskId: string, title: string) => void,
+) {
+  openTaskInCurrentEditor(taskId);
+  beginInlineTaskTitleRename(taskId, title);
 }
 
 export function TaskTitleDraftInput({
@@ -2648,6 +2719,9 @@ export function TaskManagementTableV2({
       ? current
       : { ...current, [taskId]: panelId });
   }, []);
+  const returnMetadataToSummary = useCallback((taskId: string) => {
+    selectMetadataPanel(taskId, "summary");
+  }, [selectMetadataPanel]);
   const effectiveRunningTimers = runningTaskTimers ?? localRunningTimers;
   const effectiveActiveTimerIndex = activeTaskTimerIndex ?? localActiveTimerIndex;
   const effectiveTimerNow = taskTimerNow ?? localTimerNow;
@@ -3269,7 +3343,7 @@ export function TaskManagementTableV2({
     const resolvedMetadataTask = metadataTargetTask ?? selectedTask;
     const input = estimatedTimeInputRef.current;
     const phase = resolveTaskEditorFocusPhase({
-      activeMetadataPanel: resolvedMetadataTask ? activeMetadataPanelByTaskId[resolvedMetadataTask.id] ?? "due" : null,
+      activeMetadataPanel: resolvedMetadataTask ? activeMetadataPanelByTaskId[resolvedMetadataTask.id] ?? "summary" : null,
       handled: requestedEditorFocus ? handledEditorFocusTokensRef.current.has(requestedEditorFocus.token) : false,
       inputMounted: Boolean(input),
       inputOwnsFocus: Boolean(input && typeof document !== "undefined" && document.activeElement === input),
@@ -4509,10 +4583,14 @@ export function TaskManagementTableV2({
     clearStatusRailLongPress();
   }
 
-  async function applyTaskDelay(taskId: string, nextDueOn: string) {
+  async function applyTaskDelay(taskId: string, nextDueOn: string, options?: { returnToSummary?: boolean }) {
     const didDelay = await onDelayTaskUntil?.(taskId, nextDueOn);
     if (didDelay !== false) {
-      closeInspector();
+      if (options?.returnToSummary) {
+        returnMetadataToSummary(taskId);
+      } else {
+        closeInspector();
+      }
     }
   }
 
@@ -5154,6 +5232,12 @@ export function TaskManagementTableV2({
   }
 
   function openTaskInCurrentEditor(taskId: string) {
+    if (selectedTaskId && overlayMode === "full" && childTaskParentInfoByTaskId.has(taskId)) {
+      if (revealChildTaskInParentEditor(taskId)) {
+        return;
+      }
+    }
+
     if (onOpenTaskEditor) {
       onOpenTaskEditor(taskId);
       return;
@@ -6058,10 +6142,6 @@ export function TaskManagementTableV2({
     }, { ...current }));
   }
 
-  function isStepTitleEditTarget(target: EventTarget | null) {
-    return target instanceof HTMLElement && Boolean(target.closest("[data-step-title-edit]"));
-  }
-
   function beginInlineTaskTitleRename(taskId: string, title: string) {
     setEditingTaskTitleId(taskId);
     setTitleDraft(taskId, title);
@@ -6069,7 +6149,7 @@ export function TaskManagementTableV2({
 
   function handoffEditorChildTitleRename(taskId: string, title: string) {
     pendingEditorChildTitleRenameRef.current = null;
-    beginInlineTaskTitleRename(taskId, title);
+    performEditorChildTitleRenameHandoff(taskId, title, openTaskInCurrentEditor, beginInlineTaskTitleRename);
   }
 
   useEffect(() => {
@@ -7342,17 +7422,14 @@ export function TaskManagementTableV2({
               onDragOver={(event) => updateChildTaskDropTarget(event, item)}
               onDrop={(event) => dropChildTaskOnItem(event, item)}
               onClick={canSelectChildTask ? (event) => {
-                if (isStepTitleEditTarget(event.target)) {
+                if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
                   return;
                 }
                 event.stopPropagation();
                 openTaskInCurrentEditor(item.id);
               } : undefined}
               onKeyDown={canSelectChildTask ? (event) => {
-                if (isStepTitleEditTarget(event.target)) {
-                  return;
-                }
-                if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
                   return;
                 }
                 if (event.key === "Enter" || event.key === " ") {
@@ -8318,7 +8395,7 @@ export function TaskManagementTableV2({
                   onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                   onDrop={(event) => dropChildTaskOnItem(event, item)}
                   onClick={canOpenStepActions ? (event) => {
-                    if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                    if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
                       return;
                     }
                     event.stopPropagation();
@@ -8342,7 +8419,7 @@ export function TaskManagementTableV2({
                     openRowContextMenu(item.id, event.clientX, event.clientY);
                   }}
                   onKeyDown={canOpenStepActions ? (event) => {
-                    if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                    if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
                       return;
                     }
                     if (event.key === "Enter" || event.key === " ") {
@@ -8447,7 +8524,25 @@ export function TaskManagementTableV2({
             className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${getHighlightedRowClassName(row.subtask.id)}`}
             data-same-table-step-row={row.subtask.id}
             key={row.subtask.id}
-            onClick={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                return;
+              }
+              event.stopPropagation();
+              openTaskInCurrentEditor(row.subtask.id);
+            }}
+            onKeyDown={(event) => {
+              if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                return;
+              }
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                event.stopPropagation();
+                openTaskInCurrentEditor(row.subtask.id);
+              }
+            }}
+            role="button"
+            tabIndex={0}
           >
             <div
               className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-transparent py-0.5 pl-[3px] pr-0 text-center transition dark:bg-transparent`}
@@ -9123,58 +9218,34 @@ export function TaskManagementTableV2({
                 const estimatedMinutesDraft = metadataEstimatedMinutesDraft;
                 const tagDraft = metadataTagDraft;
                 const listDraft = metadataListDraft;
+                const isFullMetadataEditor = overlayMode === "full";
+                const returnFullMetadataToSummary = () => {
+                  if (isFullMetadataEditor) {
+                    returnMetadataToSummary(metadataTask.id);
+                  }
+                };
                 const selectedTaskVisibleSubtasks = filterPrototypeSubtasks(selectedTask.subtasks, hiddenSubtaskIds);
-                const activeMetadataPanel = activeMetadataPanelByTaskId[metadataTask.id] ?? "due";
+                const activeMetadataPanel = activeMetadataPanelByTaskId[metadataTask.id] ?? "summary";
                 const metadataPanelId: MetadataPanelId = overlayMode === "full"
                   ? activeMetadataPanel
                   : overlayMode;
-                const metadataPanelOptions: Array<{ id: MetadataPanelId; label: string }> = [
-                  { id: "delay", label: "Delay" },
-                  { id: "due", label: "Due" },
-                  { id: "status", label: "Status" },
-                  { id: "estimated", label: "Estimated Time" },
-                  { id: "actual", label: "Actual Time" },
-                  { id: "priority", label: "Priority" },
-                  { id: "repeat", label: "Repeat" },
-                  { id: "energy", label: "Energy" },
-                  { id: "lists", label: "Lists" },
-                  { id: "tags", label: "Tags" },
-                  { id: "link", label: "Link" },
-                  { id: "notes", label: "Notes" },
-                ];
-                function metadataFieldHasValue(id: MetadataPanelId) {
-                  switch (id) {
-                    case "delay":
-                      return metadataTask.status === "delayed";
-                    case "due":
-                      return Boolean(metadataTask.dueOn || metadataTask.dueTime);
-                    case "estimated":
-                      return metadataTask.estimatedMinutes !== null;
-                    case "actual":
-                      return getDisplayedActualSeconds(metadataTask) > 0;
-                    case "priority":
-                      return metadataTask.priorities.length > 0;
-                    case "repeat":
-                      return metadataTask.repeat !== "none";
-                    case "energy":
-                      return metadataTask.energy !== "none";
-                    case "status":
-                      return metadataTask.status !== "pending";
-                    case "lists":
-                      return metadataTask.lists.length > 0;
-                    case "tags":
-                      return metadataTask.tags.length > 0;
-                    case "link":
-                      return Boolean(metadataTask.linkLabel || metadataTask.linkUrl);
-                    case "notes":
-                      return Boolean(metadataTask.notes.trim() || metadataTask.linkedNotes.length > 0);
-                    default:
-                      return false;
-                  }
-                }
-                const activeMetadataPanelLabel = metadataPanelId === "status"
-                  ? "Status"
-                  : metadataPanelOptions.find((option) => option.id === metadataPanelId)?.label ?? "Meta Data";
+                const metadataPanelLabels: Record<MetadataPanelId, string> = {
+                  actual: "Actual Time",
+                  delay: "Delay",
+                  due: "Due",
+                  energy: "Energy",
+                  estimated: "Estimated Time",
+                  link: "Link",
+                  lists: "Lists",
+                  notes: "Notes",
+                  priority: "Priority",
+                  repeat: "Repeat",
+                  status: "Status",
+                  summary: "Summary",
+                  tags: "Tags",
+                };
+                const metadataSummaryRows = buildTaskMetadataSummary(metadataTask, getDisplayedActualSeconds(metadataTask));
+                const activeMetadataPanelLabel = metadataPanelLabels[metadataPanelId] ?? "Meta Data";
                 function renderInlineTextChoices<T extends string>(
                   options: Array<{ label: string; value: T }>,
                   selectedValues: T[],
@@ -9204,14 +9275,48 @@ export function TaskManagementTableV2({
                 const mobileDateFieldWrapperClass = "min-w-0 w-full max-w-[11.5rem]";
                 const mobileTimeFieldWrapperClass = "min-w-0 w-full max-w-[9rem]";
                 const mobileDaysFieldWrapperClass = "min-w-0 w-full max-w-[6.5rem]";
+                function saveMetadataDueDraft() {
+                  const draft = dueDrafts[metadataTask.id] ?? { dueOn: metadataTask.dueOn, dueTime: metadataTask.dueTime };
+                  setTaskDue(metadataTask.id, draft.dueOn, draft.dueTime);
+                  returnFullMetadataToSummary();
+                }
+                function applyMetadataEstimatedMinutes() {
+                  setTaskEstimatedMinutes(metadataTask.id, metadataEstimatedMinutesDraft ? Number.parseInt(metadataEstimatedMinutesDraft, 10) : null);
+                  returnFullMetadataToSummary();
+                }
                 let metadataPanelContent: ReactNode = null;
-                if (metadataPanelId === "due") {
+                if (metadataPanelId === "summary") {
+                  metadataPanelContent = (
+                    <div className="grid min-w-0 grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-3">
+                      {metadataSummaryRows.map((row) => row.panelId ? (
+                        <button
+                          aria-label={`Edit ${row.label}`}
+                          className="min-w-0 rounded-[0.8rem] border border-transparent px-2.5 py-1.5 text-left transition hover:border-[#e5dcfb] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:focus-visible:ring-[#3b2f68]/90"
+                          key={row.label}
+                          onClick={() => selectMetadataPanel(metadataTask.id, row.panelId as MetadataPanelId)}
+                          type="button"
+                        >
+                          <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-[#9b92be] dark:text-white/35">{row.label}</span>
+                          <span className="mt-0.5 block min-w-0 break-words text-sm text-[#4e476f] dark:text-white/75">{row.value}</span>
+                        </button>
+                      ) : (
+                        <div className="min-w-0 rounded-[0.8rem] px-2.5 py-1.5" key={row.label}>
+                          <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-[#9b92be] dark:text-white/35">{row.label}</span>
+                          <span className="mt-0.5 block min-w-0 break-words text-sm text-[#2f294a] dark:text-white">{row.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                } else if (metadataPanelId === "due") {
                   metadataPanelContent = (
                     <>
                       {renderInlineTextChoices(
                         DUE_PRESETS.map((preset) => ({ label: preset.label, value: preset.value })),
                         metadataTask.dueOn ? [metadataTask.dueOn] : [],
-                        (value) => setTaskDue(metadataTask.id, value, value ? metadataTask.dueTime : ""),
+                        (value) => {
+                          setTaskDue(metadataTask.id, value, value ? metadataTask.dueTime : "");
+                          returnFullMetadataToSummary();
+                        },
                       )}
                       <div className={`mt-3 grid min-w-0 gap-2 ${useMobileFullOverlay ? "grid-cols-1 justify-items-start" : "sm:grid-cols-2"}`}>
                         <div className={useMobileFullOverlay ? mobileDateFieldWrapperClass : "min-w-0 max-w-full"}>
@@ -9219,6 +9324,11 @@ export function TaskManagementTableV2({
                             <div className="relative min-w-0 max-w-full">
                               <input
                                 className={mobileDueInputClass}
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Enter") return;
+                                  event.preventDefault();
+                                  saveMetadataDueDraft();
+                                }}
                                 onChange={(event) => setDueDrafts((current) => ({
                                   ...current,
                                   [metadataTask.id]: {
@@ -9234,6 +9344,11 @@ export function TaskManagementTableV2({
                           ) : (
                             <input
                               className={`${OVERLAY_INPUT_CLASS} min-w-0 w-full box-border`}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter") return;
+                                event.preventDefault();
+                                saveMetadataDueDraft();
+                              }}
                               onChange={(event) => setDueDrafts((current) => ({
                                 ...current,
                                 [metadataTask.id]: {
@@ -9251,6 +9366,11 @@ export function TaskManagementTableV2({
                             <div className="relative min-w-0 max-w-full">
                               <input
                                 className={mobileDueInputClass}
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Enter") return;
+                                  event.preventDefault();
+                                  saveMetadataDueDraft();
+                                }}
                                 onChange={(event) => setDueDrafts((current) => ({
                                   ...current,
                                   [metadataTask.id]: {
@@ -9266,6 +9386,11 @@ export function TaskManagementTableV2({
                           ) : (
                             <input
                               className={`${OVERLAY_INPUT_CLASS} min-w-0 w-full box-border`}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter") return;
+                                event.preventDefault();
+                                saveMetadataDueDraft();
+                              }}
                               onChange={(event) => setDueDrafts((current) => ({
                                 ...current,
                                 [metadataTask.id]: {
@@ -9280,11 +9405,9 @@ export function TaskManagementTableV2({
                         </div>
                       </div>
                       <div className="mt-3 flex flex-wrap justify-end gap-2">
-                        <TaskTableChipButton onClick={() => setTaskDue(metadataTask.id, "", "")} toneClassName={INACTIVE_CHIP_CLASS}>Clear</TaskTableChipButton>
+                        <TaskTableChipButton onClick={() => { setTaskDue(metadataTask.id, "", ""); returnFullMetadataToSummary(); }} toneClassName={INACTIVE_CHIP_CLASS}>Clear</TaskTableChipButton>
                         <TaskTableChipButton onClick={() => {
-                          const draft = dueDrafts[metadataTask.id];
-                          if (!draft) return;
-                          setTaskDue(metadataTask.id, draft.dueOn, draft.dueTime);
+                          saveMetadataDueDraft();
                         }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save date + time</TaskTableChipButton>
                       </div>
                     </>
@@ -9299,7 +9422,7 @@ export function TaskManagementTableV2({
                       daysFieldWrapperClass={mobileDaysFieldWrapperClass}
                       daysInputClassName={useMobileFullOverlay ? mobileDueNumericInputClass : undefined}
                       inputClassName={useMobileFullOverlay ? mobileDueInputClass : OVERLAY_INPUT_CLASS}
-                      onSave={(nextDueOn) => applyTaskDelay(metadataTask.id, nextDueOn)}
+                      onSave={(nextDueOn) => applyTaskDelay(metadataTask.id, nextDueOn, { returnToSummary: isFullMetadataEditor })}
                       primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
                       saveLabel="Apply delay"
                     />
@@ -9316,11 +9439,12 @@ export function TaskManagementTableV2({
                         (value) => {
                           const minutes = Number.parseInt(value, 10);
                           setTaskEstimatedMinutes(metadataTask.id, metadataTask.estimatedMinutes === minutes ? null : minutes);
+                          returnFullMetadataToSummary();
                         },
                       )}
                       <div className="mt-3 flex gap-2">
-                        <input ref={estimatedTimeInputRef} aria-label="Estimated Time" className={OVERLAY_INPUT_CLASS} inputMode="numeric" name="estimated_time" onChange={(event) => setEstimatedMinutesDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "") }))} placeholder="Custom minutes" type="text" value={metadataEstimatedMinutesDraft} />
-                        <TaskTableChipButton onClick={() => setTaskEstimatedMinutes(metadataTask.id, metadataEstimatedMinutesDraft ? Number.parseInt(metadataEstimatedMinutesDraft, 10) : null)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
+                        <input ref={estimatedTimeInputRef} aria-label="Estimated Time" className={OVERLAY_INPUT_CLASS} inputMode="numeric" name="estimated_time" onChange={(event) => setEstimatedMinutesDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "") }))} onKeyDown={(event) => { if (event.key !== "Enter") return; event.preventDefault(); applyMetadataEstimatedMinutes(); }} placeholder="Custom minutes" type="text" value={metadataEstimatedMinutesDraft} />
+                        <TaskTableChipButton onClick={applyMetadataEstimatedMinutes} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
                       </div>
                     </>
                   );
@@ -9353,9 +9477,9 @@ export function TaskManagementTableV2({
                     <div className="flex flex-wrap gap-2">
                       {PRIORITY_OPTIONS.map((option, optionIndex) => {
                         const selected = getTaskPrioritySelection(metadataTask.priorities) === option.value;
-                        return <TaskTableChipButton key={`${option.value || "priority-option"}-${optionIndex}`} onClick={() => setTaskPriorities(metadataTask.id, [option.value])} toneClassName={selected ? getSelectedTaskPriorityToneClass(option.value) : priorityTone(option.value)}>{option.label}</TaskTableChipButton>;
+                        return <TaskTableChipButton key={`${option.value || "priority-option"}-${optionIndex}`} onClick={() => { setTaskPriorities(metadataTask.id, [option.value]); returnFullMetadataToSummary(); }} toneClassName={selected ? getSelectedTaskPriorityToneClass(option.value) : priorityTone(option.value)}>{option.label}</TaskTableChipButton>;
                       })}
-                      <TaskTableChipButton onClick={() => setTaskPriorities(metadataTask.id, [])} toneClassName={INACTIVE_CHIP_CLASS}>Clear all</TaskTableChipButton>
+                      <TaskTableChipButton onClick={() => { setTaskPriorities(metadataTask.id, []); returnFullMetadataToSummary(); }} toneClassName={INACTIVE_CHIP_CLASS}>Clear all</TaskTableChipButton>
                     </div>
                   );
                 } else if (metadataPanelId === "repeat") {
@@ -9364,7 +9488,12 @@ export function TaskManagementTableV2({
                       {renderInlineTextChoices(
                         REPEAT_OPTIONS,
                         [metadataTask.repeat],
-                        (value) => setTaskRepeat(metadataTask.id, value),
+                        (value) => {
+                          setTaskRepeat(metadataTask.id, value);
+                          if (value === "none" || value === "daily" || value === "daily_until_complete") {
+                            returnFullMetadataToSummary();
+                          }
+                        },
                         (value, selected) => selected ? repeatTone(value) : INACTIVE_CHIP_CLASS,
                       )}
                       <div className="mt-2">
@@ -9372,6 +9501,7 @@ export function TaskManagementTableV2({
                           onClick={() => {
                             setTaskRepeat(metadataTask.id, "weekly", { repeatDaysOfWeek: [...WEEKDAYS_REPEAT_DAYS], repeatInterval: 1 });
                             setRepeatIntervalDrafts((current) => ({ ...current, [metadataTask.id]: "1" }));
+                            returnFullMetadataToSummary();
                           }}
                           toneClassName={isWeekdaysRepeatSelection(metadataTask.repeat, metadataTask.repeatDaysOfWeek, metadataTask.repeatInterval) ? repeatTone("weekly") : INACTIVE_CHIP_CLASS}
                         >
@@ -9429,7 +9559,7 @@ export function TaskManagementTableV2({
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
                       {ENERGY_OPTIONS.map((option, optionIndex) => (
-                        <TaskTableChipButton key={`${option.value || "energy-option"}-${optionIndex}`} onClick={() => setTaskEnergy(metadataTask.id, option.value)} toneClassName={metadataTask.energy === option.value ? energyTone(option.value) : INACTIVE_CHIP_CLASS}>{option.label}</TaskTableChipButton>
+                        <TaskTableChipButton key={`${option.value || "energy-option"}-${optionIndex}`} onClick={() => { setTaskEnergy(metadataTask.id, option.value); returnFullMetadataToSummary(); }} toneClassName={metadataTask.energy === option.value ? energyTone(option.value) : INACTIVE_CHIP_CLASS}>{option.label}</TaskTableChipButton>
                       ))}
                     </div>
                   );
@@ -9445,6 +9575,7 @@ export function TaskManagementTableV2({
                             return;
                           }
                           setTaskDisplayStatus(metadataTask.id, status);
+                          returnFullMetadataToSummary();
                         }} toneClassName={metadataTask.status === status ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}>{renderTaskStatusCircle(status, "sm", { inverted: metadataTask.status === status })}<span>{formatTaskStatusLabel(status)}</span></TaskTableChipButton>
                       ))}
                     </div>
@@ -9513,9 +9644,9 @@ export function TaskManagementTableV2({
                 } else if (metadataPanelId === "link") {
                   metadataPanelContent = (
                     <div className="space-y-2">
-                      <input className={OVERLAY_INPUT_CLASS} onBlur={() => commitTaskLink(metadataTask.id)} onChange={(event) => setLinkDrafts((current) => ({ ...current, [metadataTask.id]: { ...(current[metadataTask.id] ?? metadataLinkDraft), label: event.target.value } }))} placeholder="Link label" type="text" value={metadataLinkDraft.label} />
-                      <input className={OVERLAY_INPUT_CLASS} onBlur={() => commitTaskLink(metadataTask.id)} onChange={(event) => setLinkDrafts((current) => ({ ...current, [metadataTask.id]: { ...(current[metadataTask.id] ?? metadataLinkDraft), url: event.target.value } }))} placeholder="https://example.com" type="url" value={metadataLinkDraft.url} />
-                      <div className="flex justify-end gap-2"><TaskTableChipButton onClick={() => clearTaskLink(metadataTask.id)} toneClassName={INACTIVE_CHIP_CLASS}>Clear link</TaskTableChipButton><TaskTableChipButton onClick={() => commitTaskLink(metadataTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save link</TaskTableChipButton></div>
+                      <input className={OVERLAY_INPUT_CLASS} onBlur={() => commitTaskLink(metadataTask.id)} onChange={(event) => setLinkDrafts((current) => ({ ...current, [metadataTask.id]: { ...(current[metadataTask.id] ?? metadataLinkDraft), label: event.target.value } }))} onKeyDown={(event) => { if (event.key !== "Enter") return; event.preventDefault(); commitTaskLink(metadataTask.id); returnFullMetadataToSummary(); }} placeholder="Link label" type="text" value={metadataLinkDraft.label} />
+                      <input className={OVERLAY_INPUT_CLASS} onBlur={() => commitTaskLink(metadataTask.id)} onChange={(event) => setLinkDrafts((current) => ({ ...current, [metadataTask.id]: { ...(current[metadataTask.id] ?? metadataLinkDraft), url: event.target.value } }))} onKeyDown={(event) => { if (event.key !== "Enter") return; event.preventDefault(); commitTaskLink(metadataTask.id); returnFullMetadataToSummary(); }} placeholder="https://example.com" type="url" value={metadataLinkDraft.url} />
+                      <div className="flex justify-end gap-2"><TaskTableChipButton onClick={() => { clearTaskLink(metadataTask.id); returnFullMetadataToSummary(); }} toneClassName={INACTIVE_CHIP_CLASS}>Clear link</TaskTableChipButton><TaskTableChipButton onClick={() => { commitTaskLink(metadataTask.id); returnFullMetadataToSummary(); }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save link</TaskTableChipButton></div>
                     </div>
                   );
                 } else if (metadataPanelId === "notes") {
@@ -9524,7 +9655,7 @@ export function TaskManagementTableV2({
                       {metadataTask.linkedNotes.length > 0 ? <div className="mb-3 flex flex-wrap gap-2">{metadataTask.linkedNotes.map((note, noteIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${LIST_CHIP_CLASS}`} key={`${note.id || "linked-note"}-${noteIndex}`} onClick={() => openLinkedNote(note.id)} type="button">{note.title}</button>)}</div> : null}
                       <TaskTableChipButton className="mb-3" onClick={() => setNotePickerOpenByTaskId((current) => ({ ...current, [metadataTask.id]: !current[metadataTask.id] }))} toneClassName={INACTIVE_CHIP_CLASS}>{notePickerOpenByTaskId[metadataTask.id] ? "Hide saved notes" : "Connect existing note"}</TaskTableChipButton>
                       {notePickerOpenByTaskId[metadataTask.id] ? <div className="mb-3 flex flex-wrap gap-2">{allNoteOptions.map((note, noteIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${metadataLinkedNoteDraft.includes(note.id) ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${note.id || "note-option"}-${noteIndex}`} onClick={() => { const nextLinked = metadataLinkedNoteDraft.includes(note.id) ? metadataLinkedNoteDraft.filter((id) => id !== note.id) : [...metadataLinkedNoteDraft, note.id]; setLinkedNoteDrafts((current) => ({ ...current, [metadataTask.id]: nextLinked })); setTaskLinkedNoteIds(metadataTask.id, nextLinked); }} type="button">{note.title}</button>)}</div> : null}
-                      <div className="space-y-2"><textarea className={`${OVERLAY_INPUT_CLASS} min-h-[120px] resize-none py-3`} onBlur={() => commitTaskNotes(metadataTask.id)} onChange={(event) => setNotesDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value }))} placeholder="Add notes" value={metadataNotesDraft} /><div className="flex justify-end gap-2"><TaskTableChipButton onClick={() => clearTaskNotes(metadataTask.id)} toneClassName={INACTIVE_CHIP_CLASS}>Clear notes</TaskTableChipButton><TaskTableChipButton onClick={() => commitTaskNotes(metadataTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save notes</TaskTableChipButton></div></div>
+                      <div className="space-y-2"><textarea className={`${OVERLAY_INPUT_CLASS} min-h-[120px] resize-none py-3`} onBlur={() => commitTaskNotes(metadataTask.id)} onChange={(event) => setNotesDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value }))} placeholder="Add notes" value={metadataNotesDraft} /><div className="flex justify-end gap-2"><TaskTableChipButton onClick={() => { clearTaskNotes(metadataTask.id); returnFullMetadataToSummary(); }} toneClassName={INACTIVE_CHIP_CLASS}>Clear notes</TaskTableChipButton><TaskTableChipButton onClick={() => { commitTaskNotes(metadataTask.id); returnFullMetadataToSummary(); }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save notes</TaskTableChipButton></div></div>
                     </>
                   );
                 }
@@ -9630,11 +9761,8 @@ export function TaskManagementTableV2({
                   : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530]";
                 const fullMetadataCardClass = useMobileFullOverlay
                   ? "min-w-0 w-full max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
-                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4";
+                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4 lg:self-start";
                 const titleInputClass = `${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] ${useMobileFullOverlay ? "text-[17px]" : "text-[18px]"}`;
-                const metadataTabRowClass = useMobileFullOverlay
-                  ? "mt-3 flex min-w-0 flex-wrap gap-x-3 gap-y-2 text-[13px] leading-5"
-                  : "mt-3 flex flex-wrap items-center gap-y-1.5 text-sm";
                 const metadataPanelClass = useMobileFullOverlay
                   ? "mt-5 min-w-0 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]"
                   : "mt-4 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]";
@@ -9698,21 +9826,6 @@ export function TaskManagementTableV2({
                           />
                         </label>
                       </div>
-                      <label className="mt-2 block">
-                        <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">
-                          Description
-                        </span>
-                        <textarea
-                          className={`${OVERLAY_INPUT_CLASS} min-h-[88px] resize-none py-3 text-sm leading-6`}
-                          onBlur={() => commitTaskNotes(selectedTask.id)}
-                          onChange={(event) => setNotesDrafts((current) => ({
-                            ...current,
-                            [selectedTask.id]: event.target.value,
-                          }))}
-                          placeholder="Add a short description"
-                          value={notesDraft}
-                        />
-                      </label>
                       {detachedTaskNotice ? <div className="mt-3">{detachedTaskNotice}</div> : null}
                       {stepsEditorNode}
                     </div>
@@ -9728,47 +9841,36 @@ export function TaskManagementTableV2({
                           ) : null}
                         </div>
                       </div>
-                      {isEditingStepMetadata ? (
-                        <label className="mt-3 block">
-                          <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">
-                            Description
-                          </span>
-                          <textarea
-                            className={`${OVERLAY_INPUT_CLASS} min-h-[88px] resize-none py-3 text-sm leading-6`}
-                            onBlur={() => commitTaskNotes(metadataTask.id)}
-                            onChange={(event) => setNotesDrafts((current) => ({
-                              ...current,
-                              [metadataTask.id]: event.target.value,
-                            }))}
-                            placeholder="Add a short description"
-                            value={metadataDescriptionDraft}
-                          />
-                        </label>
-                      ) : null}
-                      <div className={metadataTabRowClass}>
-                        {metadataPanelOptions.map((option, index) => (
-                          <div className={useMobileFullOverlay ? "min-w-0" : "flex items-center"} key={`${option.id || "metadata-panel"}-${index}`}>
-                            {!useMobileFullOverlay && index > 0 ? <span className="px-2 text-[#c9c0e2] dark:text-white/18">|</span> : null}
+                      <label className="mt-3 block">
+                        <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">
+                          Description
+                        </span>
+                        <textarea
+                          className={`${OVERLAY_INPUT_CLASS} min-h-[88px] resize-none py-3 text-sm leading-6`}
+                          onBlur={() => commitTaskNotes(metadataTask.id)}
+                          onChange={(event) => setNotesDrafts((current) => ({
+                            ...current,
+                            [metadataTask.id]: event.target.value,
+                          }))}
+                          placeholder="Add a short description"
+                          value={metadataDescriptionDraft}
+                        />
+                      </label>
+                      <div className={metadataPanelClass}>
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div className="text-xs font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">
+                            {activeMetadataPanelLabel}
+                          </div>
+                          {metadataPanelId !== "summary" ? (
                             <button
-                              className={`inline-flex min-w-0 items-center gap-1.5 transition ${
-                                activeMetadataPanel === option.id
-                                  ? "text-[#6f57f6] dark:text-[#cabfff]"
-                                  : "text-[#8d87a7] hover:text-[#6f57f6] dark:text-white/45 dark:hover:text-[#cabfff]"
-                              }`}
-                              onClick={() => selectMetadataPanel(metadataTask.id, option.id)}
+                              aria-label="Back to Summary"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#e4deef] bg-white/92 text-[#8a82a7] shadow-sm transition hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:border-white/10 dark:bg-[#201936]/92 dark:text-white/55 dark:hover:text-[#cabfff] dark:focus-visible:ring-[#3b2f68]/90"
+                              onClick={() => selectMetadataPanel(metadataTask.id, "summary")}
                               type="button"
                             >
-                              <span>{option.label}</span>
-                              {metadataFieldHasValue(option.id) ? (
-                                <span className={`h-1.5 w-1.5 rounded-full ${activeMetadataPanel === option.id ? "bg-[#6f57f6] dark:bg-[#cabfff]" : "bg-[#a99de4] dark:bg-white/45"}`} />
-                              ) : null}
+                              <ArrowLeft className="h-4 w-4" />
                             </button>
-                          </div>
-                        ))}
-                      </div>
-                      <div className={metadataPanelClass}>
-                        <div className="mb-3 text-xs font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">
-                          {activeMetadataPanelLabel}
+                          ) : null}
                         </div>
                         {metadataPanelContent}
                       </div>

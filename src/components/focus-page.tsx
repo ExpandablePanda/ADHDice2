@@ -40,16 +40,22 @@ import {
 } from "@/lib/focus-goals";
 import { getDisplayFocusCategories, isSystemCountdownCategoryId, SYSTEM_COUNTDOWN_CATEGORY_ID } from "@/lib/focus-utils";
 import { classifyFocusSandboxSwipe, getBoundedFocusSandboxPage } from "@/lib/focus-bars";
+import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
+import { resolveFocusTimerPickerChevronAction } from "@/lib/focus-timer-picker";
 import { FocusGoalsPanel } from "./focus-goals-panel";
 import { FocusBars, FocusBarsErrorBoundary } from "./focus-bars";
 import { FocusClockRow, FocusClockRowDesktop } from "./focus-clocks";
 import { FocusCounterHistoryCard, FocusCounterRow } from "./focus-counters";
 import { CategoryManager } from "./category-manager";
-import { DailyHistoryGallery } from "./focus-history";
+import { FocusActivityLineShell, FocusActivitySummaryShell, FocusHistoryProvider } from "./focus-history";
 import { SessionFinishModal, ManualEntryModal } from "./focus-modals";
 import { ModalShell } from "./modal-shell";
 import { FocusPillSelect } from "./focus-form-controls";
 import { CategoryIcon } from "./task-app";
+import { PageShellHeader } from "./task-app/page-shell-header";
+import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "./ui-system/reorderable-page-shells";
+import { usePageShellLayout } from "@/hooks/usePageShellLayout";
+import { FOCUS_PAGE_SHELL_CANONICAL_LAYOUT, FOCUS_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import {
   TASKS_SURFACE_ACTIVE_CHIP_CLASS,
   TASKS_SURFACE_GROUP_CLASS,
@@ -135,6 +141,11 @@ function FocusTimerPicker({
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const listboxId = useId();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const pointerActivationRef = useRef(false);
+  const pointerOpenStateRef = useRef(false);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const highlightedOptionRef = useRef<HTMLDivElement | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
   const categoryOptions = categories
     .filter((category) => !activeSessions[category.id])
@@ -164,6 +175,13 @@ function FocusTimerPicker({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    revealDropdownOptionWithinPanel(highlightedOptionRef.current, panelRef.current);
+  }, [isOpen, options.length, highlightedIndex, query]);
+
   const closePicker = () => {
     setQuery("");
     setHighlightedIndex(0);
@@ -180,7 +198,15 @@ function FocusTimerPicker({
   };
 
   return (
-    <div className="relative w-[min(12rem,calc(100vw-2rem))] text-left" ref={rootRef}>
+    <div
+      className="relative w-[min(12rem,calc(100vw-2rem))] text-left"
+      onBlur={(event) => {
+        if (shouldCloseDropdownOnFocusLeave(rootRef.current, event.relatedTarget)) {
+          setIsOpen(false);
+        }
+      }}
+      ref={rootRef}
+    >
       <label className="sr-only" htmlFor={`${listboxId}-input`}>Add a focus timer</label>
       <div className={`ui-pill-button-strong-light flex items-center gap-1.5 transition hover:-translate-y-0.5 ${FOCUS_TOOLBAR_CHIP_TONE_CLASS}`}>
         <input
@@ -195,6 +221,7 @@ function FocusTimerPicker({
             setHighlightedIndex(0);
             setIsOpen(true);
           }}
+          onClick={() => focusDropdownControl(inputRef.current)}
           onFocus={() => setIsOpen(true)}
           onKeyDown={(event) => {
             if (event.key === "ArrowDown") {
@@ -208,24 +235,55 @@ function FocusTimerPicker({
             } else if (event.key === "Enter" && isOpen && options[safeHighlightedIndex]) {
               event.preventDefault();
               selectOption(options[safeHighlightedIndex]);
+            } else if (shouldCloseDropdownOnTab(event.key, isOpen)) {
+              setIsOpen(false);
             } else if (event.key === "Escape") {
               setIsOpen(false);
             }
           }}
           placeholder="Add focus timer..."
+          ref={inputRef}
           role="combobox"
           type="text"
           value={query}
           />
-        <svg aria-hidden="true" className="pointer-events-none h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-          <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        <button
+          aria-controls={listboxId}
+          aria-expanded={isOpen}
+          aria-label="Toggle focus timer options"
+          className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/40"
+          onPointerDown={() => {
+            pointerActivationRef.current = true;
+            pointerOpenStateRef.current = isOpen;
+          }}
+          onClick={() => {
+            const action = resolveFocusTimerPickerChevronAction({
+              currentIsOpen: isOpen,
+              pointerOpenState: pointerActivationRef.current ? pointerOpenStateRef.current : null,
+            });
+            pointerActivationRef.current = false;
+
+            if (action === "close") {
+              setIsOpen(false);
+              return;
+            }
+
+            focusDropdownControl(inputRef.current);
+            setIsOpen(true);
+          }}
+          type="button"
+        >
+          <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
 
       {isOpen ? (
         <div
           className="adhdice-scrollbar absolute left-0 right-0 z-40 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-[#e7e0f7] bg-white p-2 shadow-[0_18px_45px_rgba(70,50,145,0.16)] dark:border-white/10 dark:bg-[#1b1630] dark:shadow-[0_18px_45px_rgba(0,0,0,0.35)]"
           id={listboxId}
+          ref={panelRef}
           role="listbox"
         >
           {options.length ? options.map((option, index) => (
@@ -237,6 +295,7 @@ function FocusTimerPicker({
               onClick={() => selectOption(option)}
               onMouseDown={(event) => event.preventDefault()}
               onMouseEnter={() => setHighlightedIndex(index)}
+              ref={index === safeHighlightedIndex ? highlightedOptionRef : undefined}
               role="option"
             >
               {option.kind === "countdown" ? (
@@ -284,7 +343,9 @@ export function FocusPage({
   onDismissDailyGoalSurplus,
   onSaveDailyGoalAdjustment,
   onSetFocusReallocationMode,
+  userId,
 }: {
+  userId: string | null;
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
   counters: FocusCounter[];
@@ -312,6 +373,7 @@ export function FocusPage({
   onSaveDailyGoalAdjustment: (input: { adjustmentDate: string; sourceCategoryId: string; targetCategoryId: string; sourceSessionId?: string | null; reductionSeconds: number; reason?: string }) => Promise<boolean>;
   onSetFocusReallocationMode: (mode: FocusReallocationMode) => void;
 }) {
+  const layout = usePageShellLayout(userId, "focus", FOCUS_PAGE_SHELL_IDS, FOCUS_PAGE_SHELL_CANONICAL_LAYOUT.sizes, FOCUS_PAGE_SHELL_CANONICAL_LAYOUT);
   const [countdownPickerOpenRequest, setCountdownPickerOpenRequest] = useState(0);
   const [focusSandboxPage, setFocusSandboxPage] = useState(0);
   const [focusSandboxTabOrder, setFocusSandboxTabOrder] = useState<number[]>(readFocusSandboxTabOrder);
@@ -514,10 +576,8 @@ export function FocusPage({
 
   return (
     <>
-      <section className="flex flex-col items-center pt-5 text-center sm:pt-6">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
-          Focus Timers
-        </p>
+      <PageShellHeader actions={<PageShellLayoutControls layout={layout} />} subtitle="Focus Timers" title="Focus" />
+      <section className="flex flex-col items-center text-center">
 
         <div className="mt-3 flex flex-wrap items-center justify-center gap-3 sm:mt-4">
           <button
@@ -561,7 +621,19 @@ export function FocusPage({
         </div>
       </section>
 
-      <section className="mt-5 min-w-0 overflow-x-clip">
+      <FocusHistoryProvider
+        categories={userCategories}
+        history={history}
+        labelOptions={labelOptions}
+        onDeleteEntry={onDeleteHistoryEntry}
+        onEditGoals={() => setShowGoalsEditor(true)}
+        onUpdateEntry={onUpdateHistoryEntry}
+      >
+      <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-12">
+      <PageShell id="focus-timer-workspace" label="Focus Timer Workspace">
+      <PageShellSurface>
+      <PageShellBody className="min-w-0 overflow-x-clip">
+      <section className="min-w-0">
         <div className="mb-3 flex justify-center" data-focus-pager-alignment="centered-sandbox">
           <nav
             aria-label="Focus sandbox pages"
@@ -718,7 +790,11 @@ export function FocusPage({
           )}
         </div>
       </section>
+      </PageShellBody>
+      </PageShellSurface>
+      </PageShell>
 
+      <PageShell id="focus-goals" label="Focus Goals">
       <FocusGoalsPanel
         activeSessions={activeSessions}
         adjustments={adjustments}
@@ -730,21 +806,25 @@ export function FocusPage({
         manualDailySurplusOpportunity={manualDailySurplusOpportunity}
       />
 
-      <FocusCounterHistoryCard
-        countersById={countersById}
-        history={counterHistory}
-      />
+      </PageShell>
 
-      <div className="mt-6 w-full pb-40 sm:mt-10 sm:pb-44 lg:pb-28">
-        <DailyHistoryGallery
-          categories={userCategories}
-          history={history}
-          labelOptions={labelOptions}
-          onDeleteEntry={onDeleteHistoryEntry}
-          onEditGoals={() => setShowGoalsEditor(true)}
-          onUpdateEntry={onUpdateHistoryEntry}
-        />
-      </div>
+      <PageShell
+        hiddenDescription="Hidden until counter history exists"
+        id="focus-counter-history"
+        label="Counter History"
+        visible={counterHistory.length > 0}
+      >
+        <FocusCounterHistoryCard countersById={countersById} history={counterHistory} />
+      </PageShell>
+
+      <PageShell id="focus-activity-summary" label="Focus Activity">
+        <FocusActivitySummaryShell />
+      </PageShell>
+      <PageShell id="focus-activity-trend" label="Focus Activity Trend">
+        <FocusActivityLineShell />
+      </PageShell>
+      </ReorderablePageShells>
+      </FocusHistoryProvider>
 
       {showCategoryManager ? (
         <CategoryManager

@@ -139,6 +139,7 @@ type HealthLibraryPanelProps = {
   favorites: HealthFoodLibraryItem[];
   recipes: HealthRecipe[];
   savedMeals: HealthSavedMeal[];
+  shellSurface?: boolean;
   deleteFood: (id: string) => Promise<boolean>;
   deleteRecipe: (id: string) => Promise<boolean>;
   deleteSavedMeal: (id: string) => Promise<boolean>;
@@ -185,6 +186,7 @@ export function HealthLibraryPanel({
   favorites,
   recipes,
   savedMeals,
+  shellSurface = false,
   deleteFood,
   deleteRecipe,
   deleteSavedMeal,
@@ -476,6 +478,7 @@ export function HealthLibraryPanel({
   return (
     <HealthCollapsiblePanel
       className="min-w-0"
+      shellSurface={shellSurface}
       subtitle="Create reusable foods, combine ingredients into recipes, or bundle foods and recipes into one-tap meals."
       title="Custom nutrition library"
     >

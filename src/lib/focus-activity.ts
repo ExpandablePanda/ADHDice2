@@ -1,3 +1,10 @@
+export function upsertFocusHistoryEntry<TEntry extends { id: string }>(
+  history: readonly TEntry[],
+  entry: TEntry,
+): TEntry[] {
+  return [entry, ...history.filter((candidate) => candidate.id !== entry.id)];
+}
+
 export function attachDailyOverallGoalSeconds<
   TBar extends { key: string },
   TSession extends { id: string },

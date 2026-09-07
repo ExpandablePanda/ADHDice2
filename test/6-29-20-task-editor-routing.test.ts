@@ -33,7 +33,7 @@ test("Home and Table request the shared overlay without changing the active page
     source("../src/components/task-app.tsx"),
     source("../src/components/ui/task-management-table-v2.tsx"),
   ]);
-  const homeBranch = app.slice(app.indexOf('activePage === "Home"'), app.indexOf('activePage === "Achievements"'));
+  const homeBranch = app.slice(app.lastIndexOf('activePage === "Home"'), app.lastIndexOf('activePage === "Achievements"'));
   const tableProps = app.slice(app.indexOf("tableViewPanel={"), app.indexOf("listViewPanel={"));
   const detailsAction = table.slice(table.indexOf("function openTaskDetailsFromContextMenu"), table.indexOf("function clearPendingRowClick"));
   const rowAction = table.slice(table.indexOf("function openRowPrimaryAction"), table.indexOf("function renderFocusTimerDial"));
@@ -49,10 +49,12 @@ test("Home and Table request the shared overlay without changing the active page
 test("inline New Task routes the created parent to the shared full editor", async () => {
   const app = await source("../src/components/task-app.tsx");
   const composer = app.slice(app.indexOf("const openInlineNewListTaskComposer"), app.indexOf("const duplicateTaskInPlace"));
-  assert.match(composer, /routeTask\(createdTask\.id, taskUiState\.selectedBucket\)/);
-  assert.match(composer, /openExistingTaskEditor\(createdTask\)/);
+  assert.match(composer, /createTaskAndOpenSharedEditor\(buildNewTaskDraft\("New Task"\)/);
+  assert.match(composer, /routeToCurrentBucket: true/);
+  const helper = app.slice(app.indexOf("const createTaskAndOpenSharedEditor"), app.indexOf("const openCalendarDateTaskEditor"));
+  assert.match(helper, /openExistingTaskEditor\(createdTask\)/);
   assert.doesNotMatch(composer, /setRequestedListOverlayTaskId\(createdTask\.id\)/);
-  assert.match(composer, /\}, \[addTask, openExistingTaskEditor, routeTask, taskUiState\.selectedBucket\]\);/);
+  assert.match(composer, /\}, \[createTaskAndOpenSharedEditor\]\);/);
 });
 
 test("normal and explicit field opens keep task identity separate from monotonic focus identity", async () => {
@@ -95,7 +97,7 @@ test("manual and automatic metadata selection share the render-resolved selector
   const table = await source("../src/components/ui/task-management-table-v2.tsx");
   assert.match(table, /const selectMetadataPanel = useCallback/);
   assert.match(table, /selectMetadataPanel\(resolvedMetadataTask\.id, "estimated"\)/);
-  assert.match(table, /onClick=\{\(\) => selectMetadataPanel\(metadataTask\.id, option\.id\)\}/);
+  assert.match(table, /onClick=\{\(\) => selectMetadataPanel\(metadataTask\.id, row\.panelId as MetadataPanelId\)\}/);
 });
 
 test("desktop and mobile share one semantic Estimated Time input and unchanged Apply mutation", async () => {
@@ -104,7 +106,7 @@ test("desktop and mobile share one semantic Estimated Time input and unchanged A
   assert.match(table, /name="estimated_time"/);
   assert.match(table, /const useMobileFullOverlay = overlayMode === "full" && isCompactViewport/);
   assert.equal((table.match(/ref=\{estimatedTimeInputRef\}/g) ?? []).length, 1);
-  assert.match(table, /onClick=\{\(\) => setTaskEstimatedMinutes\(metadataTask\.id, metadataEstimatedMinutesDraft \? Number\.parseInt\(metadataEstimatedMinutesDraft, 10\) : null\)\}/);
+  assert.match(table, /onClick=\{applyMetadataEstimatedMinutes\}/);
 });
 
 test("overlay close clears unhandled focus without creating task writes", async () => {

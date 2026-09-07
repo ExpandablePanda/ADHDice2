@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
 import { type FocusCategory, type FocusType, type FocusSubtype, type FocusLabelOptions } from "@/lib/types";
 import { getLogicalDayKey } from "@/lib/logical-day";
 import { CategoryIcon } from "./task-app";
@@ -222,6 +223,9 @@ function SearchableManualPillSelect({
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const activeOptionRef = useRef<HTMLButtonElement | null>(null);
   const selectedLabel = options.find((option) => option.value === value)?.label ?? "";
   const filteredOptions = options.filter((option) => option.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
 
@@ -234,8 +238,21 @@ function SearchableManualPillSelect({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    revealDropdownOptionWithinPanel(activeOptionRef.current, panelRef.current);
+  }, [activeIndex, filteredOptions.length, isOpen, query]);
+
   return (
-    <div className="grid gap-2" ref={rootRef}>
+    <div
+      className="grid gap-2"
+      onBlur={(event) => {
+        if (shouldCloseDropdownOnFocusLeave(rootRef.current, event.relatedTarget)) {
+          setIsOpen(false);
+        }
+      }}
+      ref={rootRef}
+    >
       <FieldLabel>{label}</FieldLabel>
       <div className="relative">
         <input
@@ -247,6 +264,7 @@ function SearchableManualPillSelect({
             setActiveIndex(0);
             setIsOpen(true);
           }}
+          onClick={() => focusDropdownControl(inputRef.current)}
           onFocus={() => {
             setQuery("");
             setActiveIndex(Math.max(0, options.findIndex((option) => option.value === value)));
@@ -269,18 +287,24 @@ function SearchableManualPillSelect({
               onChange(filteredOptions[activeIndex].value);
               setQuery("");
               setIsOpen(false);
+              return;
+            }
+            if (shouldCloseDropdownOnTab(event.key, isOpen)) {
+              setIsOpen(false);
             }
           }}
           placeholder={selectedLabel}
+          ref={inputRef}
           value={query}
         />
         <ChevronDown className={`pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
         {isOpen ? (
-          <div className="absolute left-0 top-[calc(100%+0.5rem)] z-30 max-h-64 w-full overflow-y-auto rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
+          <div className="adhdice-scrollbar absolute left-0 top-[calc(100%+0.5rem)] z-30 max-h-64 w-full overflow-y-auto rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]" ref={panelRef}>
             {filteredOptions.map((option, index) => (
               <button
                 className={`flex w-full items-center rounded-[0.9rem] px-3 py-2 text-left text-sm font-semibold ${index === activeIndex || option.value === value ? "bg-[#f2edff] text-[#6f57f6] dark:bg-[#312555] dark:text-[#cabfff]" : "text-[#3a4260] hover:bg-[#f7f4ff] dark:text-white/80 dark:hover:bg-white/8"}`}
                 key={option.value}
+                onMouseDown={(event) => event.preventDefault()}
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => {
                   onChange(option.value);
@@ -288,6 +312,8 @@ function SearchableManualPillSelect({
                   setIsOpen(false);
                 }}
                 type="button"
+                ref={index === activeIndex ? activeOptionRef : undefined}
+                tabIndex={-1}
               >
                 {option.label}
               </button>

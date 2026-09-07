@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { NavigatorSearchTarget } from "@/lib/navigator-search";
+import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import { NavigatorSearchInline, type NavigatorSearchPlacement } from "./navigator-search-inline";
 
 type DockPlacement = NavigatorSearchPlacement;
@@ -15,6 +16,7 @@ type BottomDockProps<TPage extends string> = {
   onNavigateSearchTarget: (target: NavigatorSearchTarget) => void;
   renderIcon: (name: string) => ReactNode;
   searchTargets: readonly NavigatorSearchTarget[];
+  taskSearchEntities: readonly TaskSearchEntity[];
 };
 
 export function BottomDockComponent<TPage extends string>({
@@ -25,6 +27,7 @@ export function BottomDockComponent<TPage extends string>({
   onNavigateSearchTarget,
   renderIcon,
   searchTargets,
+  taskSearchEntities,
 }: BottomDockProps<TPage>) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isSearchMode, setIsSearchMode] = useState(false);
@@ -229,11 +232,12 @@ export function BottomDockComponent<TPage extends string>({
   }
 
   const isVertical = renderedDockPlacement !== "bottom";
+  const dockZIndexClass = isSearchMode ? "z-40" : "z-10";
   const dockPositionClass = renderedDockPlacement === "bottom"
-    ? "fixed inset-x-0 z-10 min-w-0 px-4"
+    ? `fixed inset-x-0 ${dockZIndexClass} min-w-0 px-4`
     : renderedDockPlacement === "left"
-      ? "fixed left-4 top-4 bottom-4 z-10 flex items-center"
-      : "fixed right-4 top-4 bottom-4 z-10 flex items-center";
+      ? `fixed left-4 top-4 bottom-4 ${dockZIndexClass} flex items-center`
+      : `fixed right-4 top-4 bottom-4 ${dockZIndexClass} flex items-center`;
   const dockPositionStyle = renderedDockPlacement === "bottom"
     ? { bottom: "calc(1.25rem + env(safe-area-inset-bottom))" }
     : undefined;
@@ -260,6 +264,7 @@ export function BottomDockComponent<TPage extends string>({
             placement={renderedDockPlacement}
             renderIcon={renderIcon}
             targets={searchTargets}
+            taskSearchEntities={taskSearchEntities}
           />
         ) : (
           <>

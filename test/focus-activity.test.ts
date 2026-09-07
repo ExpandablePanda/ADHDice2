@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { attachDailyOverallGoalSeconds } from "../src/lib/focus-activity.ts";
+import { attachDailyOverallGoalSeconds, upsertFocusHistoryEntry } from "../src/lib/focus-activity.ts";
 import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "../src/lib/focus-activity-scroll.ts";
 import { ALL_FOCUS_ACTIVITY_FILTER, filterFocusActivityHistory, getFocusActivitySubtypeOptions, getFocusActivityTypeOptions } from "../src/lib/focus-activity-filters.ts";
 
@@ -35,6 +35,27 @@ const activityHistory = [
   { id: "work-study", date: "2026-08-19", durationSeconds: 1800, focusType: "Productive", focusSubtype: "Study" },
   { id: "personal", date: "2026-08-19", durationSeconds: 900, focusType: "Personal", focusSubtype: "Errands" },
 ] as const;
+
+test("Focus history upserts keep chart identities unique without removing separate sessions", () => {
+  const replacement = { id: "session-1", title: "Updated session" };
+  const result = upsertFocusHistoryEntry(
+    [
+      { id: "session-1", title: "Realtime session" },
+      { id: "session-1", title: "Stale duplicate" },
+      { id: "session-2", title: "Separate session" },
+    ],
+    replacement,
+  );
+
+  assert.deepEqual(result, [replacement, { id: "session-2", title: "Separate session" }]);
+  assert.equal(result.filter((entry) => entry.id === replacement.id).length, 1);
+
+  const renderedPointKeys = result.map((entry) => `focus-category:${entry.id}`);
+  const accessiblePointKeys = renderedPointKeys.map((key) => `accessible-${key}`);
+  assert.equal(new Set(renderedPointKeys).size, renderedPointKeys.length);
+  assert.equal(new Set(accessiblePointKeys).size, accessiblePointKeys.length);
+  assert.equal(result.some((entry) => entry.id === "session-2"), true);
+});
 
 test("Activity Summary filters sessions and subtype choices by Focus Type", () => {
   assert.deepEqual(getFocusActivityTypeOptions([...activityHistory] as never[]), ["Personal", "Productive"]);
@@ -111,10 +132,16 @@ test("Focus Activity Lines adapts its existing series into the shared chart card
   assert.match(source, /NumericLineChartSeries/);
   assert.match(source, /activityLineSeries/);
   assert.match(source, /formatRoundedMinuteDuration/);
+  assert.match(source, /shellSurface/);
+  assert.doesNotMatch(source, /xSubpositionKey/);
   assert.doesNotMatch(source, /variant="embedded"/);
   assert.match(sharedChart, /NumericLineChartSeries/);
+  assert.match(sharedChart, /page-shell-chart-header/);
+  assert.match(sharedChart, /isPageShellSurface \? <div className="shrink-0/);
   assert.match(sharedChart, /onPointerMove/);
   assert.match(sharedChart, /onPointerUp/);
+  assert.match(sharedChart, /strokeDasharray\?: string/);
+  assert.doesNotMatch(source, /strokeDasharray/);
 });
 
 test("shared line chart hover uses scaled X/Y distance for the nearest point", () => {
@@ -124,6 +151,30 @@ test("shared line chart hover uses scaled X/Y distance for the nearest point", (
   assert.match(sharedChart, /left: 68/);
   assert.match(sharedChart, /min-h-\[3\.5rem\]/);
   assert.match(sharedChart, /Hover over a point to see its details/);
+});
+
+test("shared line chart uses one collision-adjusted X map for paths, circles, and active markers", () => {
+  assert.match(sharedChart, /const pointXPositions = useMemo/);
+  assert.match(sharedChart, /pointXPositions\.get\(pointKey\)/);
+  assert.match(sharedChart, /pointXPositions\.get\(`\$\{item\.key\}:\$\{point\.key\}`\)/);
+  assert.match(sharedChart, /x: PADDING\.left \+ position\.x/);
+  assert.match(sharedChart, /x1=\{activePoint\.x\} x2=\{activePoint\.x\}/);
+  assert.match(sharedChart, /getNearestNumericLineChartPoint\(interactivePoints/);
+});
+
+test("shared line chart reference lines scale with the data plot and stay non-interactive", () => {
+  assert.match(sharedChart, /export type NumericLineChartReferenceLine/);
+  assert.match(sharedChart, /referenceLines\?: NumericLineChartReferenceLine\[\]/);
+  assert.match(sharedChart, /const numericReferenceLines = referenceLines\.filter/);
+  assert.match(sharedChart, /numericReferenceLines\.map\(\(line\) => line\.value\)/);
+  assert.match(sharedChart, /data-reference-line=\{referenceLine\.key\}/);
+  assert.match(sharedChart, /strokeDasharray="6 5"/);
+  assert.match(sharedChart, /referenceLine\.label\} \{formatValue\(referenceLine\.value\)\}/);
+  const referenceLineMarkup = sharedChart.slice(
+    sharedChart.indexOf("{numericReferenceLines.map"),
+    sharedChart.indexOf("{series.map", sharedChart.indexOf("{numericReferenceLines.map")),
+  );
+  assert.doesNotMatch(referenceLineMarkup, /onClick|role="button"|tabIndex/);
 });
 
 test("Focus config preserves a plain zero axis label and duration values", () => {

@@ -7,6 +7,8 @@ import type {
   HealthMetricEntry,
   HealthNutritionDetails,
   HealthProfile,
+  HealthSymptom,
+  HealthSymptomEntry,
   Task,
   HealthWeightEntry,
 } from "@/lib/database.types";
@@ -15,18 +17,25 @@ import { formatHealthFoodQuantityUnit } from "@/lib/health-library";
 import { aggregateHealthNutritionDetails, type HealthNutritionCoverage } from "@/lib/health-nutrition";
 import { HEALTH_WORKOUT_TYPES, normalizeHealthWorkoutOptionValues } from "@/lib/health-workout-options";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
+import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
 
-export type HealthTab = "Today" | "Food" | "Water" | "Fitness" | "Journal" | "Weight" | "Sleep" | "Insights" | "Awards";
+export type HealthTab = "Today" | "Food" | "Water" | "Fitness" | "Journal" | "Weight" | "Sleep" | "Insights" | "Awards" | "Settings";
 export type HealthMealSlot = HealthMealEntry["meal_slot"];
 export type WeightUnit = HealthProfile["preferred_weight_unit"];
 export type HealthAchievementCode = HealthAchievementAward["achievement_code"];
 export type HealthReminderTemplateKey = "daily_check_in" | "meal_log" | "weigh_in" | "movement_intention";
 export type HealthSleepKind = "CPAP Sleep" | "CPAP Nap" | "Sleep" | "Nap";
 
-export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards"];
+export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards", "Settings"];
 export const HEALTH_MEAL_SLOTS: HealthMealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
 export const HEALTH_SLEEP_KINDS: readonly HealthSleepKind[] = ["CPAP Sleep", "CPAP Nap", "Sleep", "Nap"];
-export const HEALTH_MOOD_OPTIONS = [1, 2, 3, 4, 5] as const;
+export const HEALTH_SCALE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+export const HEALTH_MOOD_OPTIONS = HEALTH_SCALE_OPTIONS;
+export const HEALTH_SEVERITY_OPTIONS = HEALTH_SCALE_OPTIONS;
+export const HEALTH_SYMPTOM_TREND_RANGES = ["7D", "30D", "90D", "All"] as const;
+export type HealthSymptomTrendRange = (typeof HEALTH_SYMPTOM_TREND_RANGES)[number];
+export const ALL_HEALTH_SYMPTOMS_VALUE = "__all_symptoms__";
+export const DEFAULT_HEALTH_SYMPTOM_COLOR = ADHDICE_ACCENT_COLORS[0];
 export const HEALTH_SYMPTOM_TAGS = [
   "Calm",
   "Stressed",
@@ -219,12 +228,28 @@ export const DEFAULT_HEALTH_PROFILE: Omit<HealthProfile, "created_at" | "updated
   preferred_weight_unit: "lb",
   protein_goal_grams: 140,
   sleep_goal_minutes: 480,
+  water_goal_ml: null,
   target_weight_kg: null,
   workout_type_options: [...HEALTH_WORKOUT_TYPES],
   workout_title_options: [],
+  workout_import_aliases: {},
   user_id: "",
   fat_goal_grams: 75,
 };
+
+export function normalizeHealthWorkoutImportAliases(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return Object.entries(value).reduce<Record<string, string>>((aliases, [rawKey, rawAlias]) => {
+    const key = rawKey.trim();
+    const alias = typeof rawAlias === "string" ? rawAlias.trim() : "";
+    if (key && alias) {
+      aliases[key] = alias;
+    }
+    return aliases;
+  }, {});
+}
 
 export function buildDefaultHealthProfile(userId: string): HealthProfile {
   const now = new Date().toISOString();
@@ -242,13 +267,21 @@ export function normalizeHealthProfile(profile: Partial<HealthProfile> | null | 
     ? profile.workout_title_options.filter((title): title is string => typeof title === "string")
     : [];
   const workoutTypeOptions = normalizeHealthWorkoutOptionValues(profile?.workout_type_options);
+  const workoutImportAliases = normalizeHealthWorkoutImportAliases(profile?.workout_import_aliases);
+  const waterGoalMl = Number(profile?.water_goal_ml);
   return {
     ...fallback,
     ...profile,
     add_active_energy_to_calorie_goal: profile?.add_active_energy_to_calorie_goal === true,
     user_id: userId,
+    water_goal_ml: profile?.water_goal_ml === null
+      ? null
+      : Number.isFinite(waterGoalMl) && waterGoalMl > 0
+        ? waterGoalMl
+        : null,
     workout_type_options: workoutTypeOptions.length > 0 ? workoutTypeOptions : [...HEALTH_WORKOUT_TYPES],
     workout_title_options: workoutTitleOptions,
+    workout_import_aliases: workoutImportAliases,
   };
 }
 
@@ -264,6 +297,180 @@ export function getCurrentHealthDateTimeInputs(now = new Date()) {
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   return { date, time };
+}
+
+export function normalizeHealthSymptomName(name: string) {
+  return name.trim().replace(/\s+/g, " ");
+}
+
+export function normalizeHealthSymptomColor(color: string | null | undefined) {
+  const normalized = color?.trim().toLowerCase() ?? "";
+  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : DEFAULT_HEALTH_SYMPTOM_COLOR;
+}
+
+export function normalizeHealthSymptom(symptom: HealthSymptom): HealthSymptom {
+  return {
+    ...symptom,
+    color: normalizeHealthSymptomColor(symptom.color),
+  };
+}
+
+export function normalizeHealthSymptomNote(note: string | null | undefined) {
+  const normalized = note?.trim() ?? "";
+  return normalized.length > 0 ? normalized : null;
+}
+
+export function sortHealthSymptoms(symptoms: HealthSymptom[]) {
+  return [...symptoms].sort((left, right) => {
+    if ((left.archived_at === null) !== (right.archived_at === null)) {
+      return left.archived_at === null ? -1 : 1;
+    }
+    return left.name.localeCompare(right.name) || left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id);
+  });
+}
+
+export function sortHealthSymptomEntries(entries: HealthSymptomEntry[]) {
+  return [...entries].sort((left, right) =>
+    right.logged_at.localeCompare(left.logged_at)
+    || right.created_at.localeCompare(left.created_at)
+    || right.id.localeCompare(left.id));
+}
+
+function compareHealthSymptomEntriesChronologically(left: HealthSymptomEntry, right: HealthSymptomEntry) {
+  const leftTimestamp = Date.parse(left.logged_at);
+  const rightTimestamp = Date.parse(right.logged_at);
+  if (Number.isFinite(leftTimestamp) && Number.isFinite(rightTimestamp) && leftTimestamp !== rightTimestamp) {
+    return leftTimestamp - rightTimestamp;
+  }
+  return left.logged_at.localeCompare(right.logged_at)
+    || left.created_at.localeCompare(right.created_at)
+    || left.id.localeCompare(right.id);
+}
+
+export function getSelectableHealthSymptoms(symptoms: HealthSymptom[], entries: HealthSymptomEntry[]) {
+  const symptomIdsWithHistory = new Set(entries.map((entry) => entry.symptom_id));
+  return sortHealthSymptoms(symptoms.filter((symptom) => symptom.archived_at === null || symptomIdsWithHistory.has(symptom.id)));
+}
+
+export function getDefaultHealthSymptomId(symptoms: HealthSymptom[], entries: HealthSymptomEntry[]) {
+  const selectableSymptoms = getSelectableHealthSymptoms(symptoms, entries);
+  const selectableSymptomIds = new Set(selectableSymptoms.map((symptom) => symptom.id));
+  const latestEntry = [...entries]
+    .filter((entry) => selectableSymptomIds.has(entry.symptom_id))
+    .sort(compareHealthSymptomEntriesChronologically)
+    .at(-1);
+  return latestEntry?.symptom_id ?? selectableSymptoms[0]?.id ?? "";
+}
+
+export function getHealthSymptomTrendRangeStartDate(range: HealthSymptomTrendRange, asOfDate: string) {
+  if (range === "All") {
+    return null;
+  }
+  const days = range === "7D" ? 7 : range === "30D" ? 30 : 90;
+  return shiftHealthDate(asOfDate, -(days - 1));
+}
+
+export function getHealthSymptomTrendEntries({
+  asOfDate,
+  entries,
+  range,
+  symptomId,
+}: {
+  asOfDate: string;
+  entries: HealthSymptomEntry[];
+  range: HealthSymptomTrendRange;
+  symptomId: string;
+}) {
+  if (!symptomId) {
+    return [];
+  }
+  const rangeStartDate = getHealthSymptomTrendRangeStartDate(range, asOfDate);
+  return entries
+    .filter((entry) => (
+      entry.symptom_id === symptomId
+      && (rangeStartDate === null || (entry.entry_date >= rangeStartDate && entry.entry_date <= asOfDate))
+    ))
+    .sort(compareHealthSymptomEntriesChronologically);
+}
+
+export function getHealthSymptomTrendEntriesBySymptom({
+  asOfDate,
+  entries,
+  range,
+  symptoms,
+}: {
+  asOfDate: string;
+  entries: HealthSymptomEntry[];
+  range: HealthSymptomTrendRange;
+  symptoms: HealthSymptom[];
+}) {
+  return symptoms
+    .map((symptom) => ({
+      entries: getHealthSymptomTrendEntries({ asOfDate, entries, range, symptomId: symptom.id }),
+      symptom,
+    }))
+    .filter(({ entries: symptomEntries }) => symptomEntries.length > 0);
+}
+
+export function getLatestHealthSymptomTrendSeverity(entries: HealthSymptomEntry[]) {
+  return entries.at(-1)?.severity ?? null;
+}
+
+export function reconcileHealthSymptoms(
+  localSymptoms: HealthSymptom[],
+  remoteSymptoms: HealthSymptom[],
+  localEntries: HealthSymptomEntry[],
+  remoteEntries: HealthSymptomEntry[],
+) {
+  const normalizedLocalSymptoms = localSymptoms.map(normalizeHealthSymptom);
+  const normalizedRemoteSymptoms = remoteSymptoms.map(normalizeHealthSymptom);
+  const remoteSymptomIds = new Set(normalizedRemoteSymptoms.map((symptom) => symptom.id));
+  const remoteActiveSymptomsByName = new Map<string, HealthSymptom>();
+  normalizedRemoteSymptoms.forEach((symptom) => {
+    if (symptom.archived_at === null) {
+      const normalizedName = normalizeHealthSymptomName(symptom.name).toLowerCase();
+      if (!remoteActiveSymptomsByName.has(normalizedName)) {
+        remoteActiveSymptomsByName.set(normalizedName, symptom);
+      }
+    }
+  });
+  const canonicalSymptomIdByLocalId = new Map<string, string>();
+  normalizedLocalSymptoms.forEach((symptom) => {
+    if (symptom.archived_at !== null) {
+      return;
+    }
+    const remoteSymptom = remoteActiveSymptomsByName.get(normalizeHealthSymptomName(symptom.name).toLowerCase());
+    if (remoteSymptom && remoteSymptom.id !== symptom.id) {
+      canonicalSymptomIdByLocalId.set(symptom.id, remoteSymptom.id);
+    }
+  });
+  const unreconciledLocalSymptoms = normalizedLocalSymptoms.filter((symptom) =>
+    !remoteSymptomIds.has(symptom.id) && !canonicalSymptomIdByLocalId.has(symptom.id));
+  const mergedSymptoms = sortHealthSymptoms([...normalizedRemoteSymptoms, ...unreconciledLocalSymptoms]);
+  const remoteEntryIds = new Set(remoteEntries.map((entry) => entry.id));
+  const localOnlyEntries = localEntries.filter((entry) => !remoteEntryIds.has(entry.id));
+  const remappedLocalOnlyEntries = localOnlyEntries.map((entry) => {
+    const canonicalSymptomId = canonicalSymptomIdByLocalId.get(entry.symptom_id);
+    return canonicalSymptomId ? { ...entry, symptom_id: canonicalSymptomId } : entry;
+  });
+  const unreconciledLocalEntries = remappedLocalOnlyEntries.filter((entry) => remoteSymptomIds.has(entry.symptom_id));
+
+  return {
+    mergedEntries: sortHealthSymptomEntries([...remoteEntries, ...remappedLocalOnlyEntries]),
+    mergedSymptoms,
+    unreconciledLocalEntries,
+    unreconciledLocalSymptoms,
+  };
+}
+
+export function groupHealthSymptomEntriesByDate(entries: HealthSymptomEntry[]) {
+  const groups = new Map<string, HealthSymptomEntry[]>();
+  sortHealthSymptomEntries(entries).forEach((entry) => {
+    const group = groups.get(entry.entry_date) ?? [];
+    group.push(entry);
+    groups.set(entry.entry_date, group);
+  });
+  return [...groups.entries()].map(([date, groupedEntries]) => ({ date, entries: groupedEntries }));
 }
 
 export function normalizeHealthSleepKind(value: string | null | undefined): HealthSleepKind {
@@ -476,6 +683,41 @@ export function formatMealLoggedTime(value: string, locale?: string) {
   return new Intl.DateTimeFormat(locale, { hour: "numeric", hour12: true, minute: "2-digit" }).format(timestamp);
 }
 
+export function formatHealthStandardTime(value: string | null | undefined, locale?: string) {
+  const normalizedTime = normalizeHealthMealTime(value ?? "");
+  if (!normalizedTime) return null;
+  const [hours, minutes] = normalizedTime.split(":").map((part) => Number.parseInt(part, 10));
+  const date = new Date(2000, 0, 1, hours, minutes);
+  return new Intl.DateTimeFormat(locale, { hour: "numeric", hour12: true, minute: "2-digit" }).format(date);
+}
+
+export function formatHealthTimestampTime(value: string | null | undefined, locale?: string) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Intl.DateTimeFormat(locale, { hour: "numeric", hour12: true, minute: "2-digit" }).format(timestamp);
+}
+
+export function formatHealthJournalDate(value: string, locale?: string) {
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric" }).format(date);
+}
+
+export function formatHealthTimestampDate(value: string | null | undefined, locale?: string) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric" }).format(timestamp);
+}
+
+export function formatHealthJournalMetadataDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00`) : new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}/${date.getFullYear()}`;
+}
+
 export function formatHealthNutritionNumber(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return "—";
@@ -483,28 +725,19 @@ export function formatHealthNutritionNumber(value: number | null | undefined) {
   return String(Number(value.toFixed(2)));
 }
 
-export function calculateHealthDailyCalorieAllowance({
-  activeEnergyKcal,
-  addActiveEnergy,
-  baseCalorieGoal,
-}: {
-  activeEnergyKcal: number | null | undefined;
-  addActiveEnergy: boolean;
-  baseCalorieGoal: number | null;
-}) {
-  if (baseCalorieGoal === null) {
-    return null;
+export function formatHealthCalorieTarget(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "—";
   }
-  if (!addActiveEnergy) {
-    return baseCalorieGoal;
-  }
-  const safeActiveEnergy = typeof activeEnergyKcal === "number" && Number.isFinite(activeEnergyKcal)
-    ? activeEnergyKcal
-    : 0;
-  return baseCalorieGoal + Math.max(0, safeActiveEnergy);
+  return Number(value.toFixed(2)).toLocaleString();
 }
 
-export function formatHealthMealSummary(entry: HealthMealEntry, locale?: string) {
+export type HealthMealSummaryPart = {
+  kind: "meal" | "serving" | "calories" | "protein" | "carbs" | "fat" | "time";
+  text: string;
+};
+
+export function getHealthMealSummaryParts(entry: HealthMealEntry, locale?: string): HealthMealSummaryPart[] {
   const loggedQuantity = typeof entry.consumed_quantity === "number"
     && Number.isFinite(entry.consumed_quantity)
     && entry.consumed_quantity > 0
@@ -513,16 +746,22 @@ export function formatHealthMealSummary(entry: HealthMealEntry, locale?: string)
     : null;
   const serving = loggedQuantity ?? (entry.serving_label?.trim() || "No serving");
   const loggedTime = formatMealLoggedTime(entry.logged_at, locale);
-  const parts = [
-    getMealSlotLabel(entry.meal_slot),
-    serving,
-    `${formatHealthNutritionNumber(entry.calories)} kcal`,
-    `Protein ${formatHealthNutritionNumber(mealNutritionValue(entry, "protein_g"))}g`,
-    `Carbs ${formatHealthNutritionNumber(mealNutritionValue(entry, "carbs_g"))}g`,
-    `Fat ${formatHealthNutritionNumber(mealNutritionValue(entry, "fat_g"))}g`,
-    loggedTime,
+  const parts: HealthMealSummaryPart[] = [
+    { kind: "meal", text: getMealSlotLabel(entry.meal_slot) },
+    { kind: "serving", text: serving },
+    { kind: "calories", text: `${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "calories"))} kcal` },
+    { kind: "protein", text: `Protein ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "protein_g"))}g` },
+    { kind: "carbs", text: `Carbs ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "carbs_g"))}g` },
+    { kind: "fat", text: `Fat ${formatHealthNutritionNumber(getHealthMealNutritionValue(entry, "fat_g"))}g` },
   ];
-  return parts.filter((part): part is string => Boolean(part)).join(" / ");
+  if (loggedTime) {
+    parts.push({ kind: "time", text: loggedTime });
+  }
+  return parts;
+}
+
+export function formatHealthMealSummary(entry: HealthMealEntry, locale?: string) {
+  return getHealthMealSummaryParts(entry, locale).map((part) => part.text).join(" / ");
 }
 
 export function formatWeight(weightKg: number | null, unit: WeightUnit) {
@@ -540,6 +779,43 @@ export function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+export function calculateHealthDailyCalorieBudget(
+  baseCalorieGoal: number | null | undefined,
+  activeEnergyKcal: number | null | undefined,
+) {
+  if (typeof baseCalorieGoal !== "number" || !Number.isFinite(baseCalorieGoal)) {
+    return null;
+  }
+  const activityAdjustment = typeof activeEnergyKcal === "number" && Number.isFinite(activeEnergyKcal) && activeEnergyKcal > 0
+    ? activeEnergyKcal
+    : 0;
+  return baseCalorieGoal + activityAdjustment;
+}
+
+export type HealthDailyCalorieTargetPoint = {
+  date: string;
+  label: string;
+  target: number;
+};
+
+export function buildHealthDailyCalorieTargetSeries({
+  baseCalorieGoal,
+  metricEntries,
+  points,
+}: {
+  baseCalorieGoal: number | null | undefined;
+  metricEntries: HealthMetricEntry[];
+  points: ReadonlyArray<Pick<HealthDailyCalorieTargetPoint, "date" | "label">>;
+}) {
+  return points.flatMap(({ date, label }) => {
+    const target = calculateHealthDailyCalorieBudget(
+      baseCalorieGoal,
+      sumMetricValueForDate(metricEntries, date, ["active_energy_kcal"]),
+    );
+    return target === null ? [] : [{ date, label, target }];
+  });
+}
+
 export type HealthDailyNutritionTotals = {
   calories: number;
   carbs: number;
@@ -553,11 +829,10 @@ export function sumMealNutritionForDate(entries: HealthMealEntry[], entryDate: s
   const datedEntries = entries.filter((entry) => entry.entry_date === entryDate);
   const totals = datedEntries.reduce(
     (accumulator, entry) => {
-      const snapshot = entry.nutrition_snapshot;
-      accumulator.calories += finiteOrFallback(snapshot?.calories, entry.calories);
-      accumulator.protein += finiteOrFallback(snapshot?.protein_g, entry.protein_g ?? 0);
-      accumulator.carbs += finiteOrFallback(snapshot?.carbs_g, entry.carbs_g ?? 0);
-      accumulator.fat += finiteOrFallback(snapshot?.fat_g, entry.fat_g ?? 0);
+      accumulator.calories += getHealthMealNutritionValue(entry, "calories");
+      accumulator.protein += getHealthMealNutritionValue(entry, "protein_g");
+      accumulator.carbs += getHealthMealNutritionValue(entry, "carbs_g");
+      accumulator.fat += getHealthMealNutritionValue(entry, "fat_g");
       return accumulator;
     },
     { calories: 0, carbs: 0, fat: 0, protein: 0 },
@@ -574,11 +849,7 @@ export function sumMealNutritionForDate(entries: HealthMealEntry[], entryDate: s
     : totals;
 }
 
-function finiteOrFallback(value: number | null | undefined, fallback: number) {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function mealNutritionValue(entry: HealthMealEntry, key: "calories" | "protein_g" | "carbs_g" | "fat_g") {
+export function getHealthMealNutritionValue(entry: HealthMealEntry, key: "calories" | "protein_g" | "carbs_g" | "fat_g") {
   const snapshotValue = entry.nutrition_snapshot?.[key];
   if (typeof snapshotValue === "number" && Number.isFinite(snapshotValue)) {
     return snapshotValue;

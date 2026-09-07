@@ -21,7 +21,7 @@ const lookupHandlerSource = source.slice(source.indexOf("function applyLookupRes
 
 test("the Food page no longer renders a global meal composer", () => {
   assert.doesNotMatch(source, /mealComposerRef/);
-  assert.doesNotMatch(source, /scrollIntoView/);
+  assert.doesNotMatch(foodSource, /scrollIntoView/);
   assert.doesNotMatch(source, /health-food-composer-input/);
   assert.doesNotMatch(foodSource, /Quick Add Food/);
   assert.doesNotMatch(foodSource, /Log Quick Entry/);
@@ -71,10 +71,15 @@ test("Meal Logging uses compact header/body spacing while other HealthPanel inst
   assert.match(healthPanelSource, /headerPaddingClassName = "py-4 sm:py-5"/);
   assert.match(healthPanelSource, /headerChevronClassName\?: string/);
   assert.match(healthPanelSource, /headerPaddingClassName\?: string/);
+  assert.match(healthPanelSource, /shellSurface = false/);
+  assert.match(healthPanelSource, /page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden/);
+  assert.match(healthPanelSource, /<PageShellBody className=\{`px-3 pb-4 sm:px-5 sm:pb-5/);
   assert.match(healthPanelSource, /headerPaddingClassName\].filter\(Boolean\).join\(" "\)/);
   assert.match(healthPanelSource, /className=\{`px-3 pb-4 sm:px-5 sm:pb-5 \$\{contentTopClassName\}`\}/);
   assert.match(foodSource, /<HealthPanel[\s\S]*?subtitle="Daily totals"/);
   assert.match(foodSource, /<HealthPanel[\s\S]*?title="Favorites & Recent Foods"/);
+  assert.match(foodSource, /<PageShell id="food-daily-totals" label="Daily Totals">[\s\S]*?<\/PageShell>\s*<PageShell id="food-favorites-recent" label="Favorites & Recent Foods">/);
+  assert.doesNotMatch(foodSource, /max-h-\[26rem\].*overflow-y-auto/);
 });
 
 test("Meal Logging keeps its date chip inline while SectionMiniTitle keeps default action alignment", () => {
@@ -339,4 +344,27 @@ test("canonical persistence, editing, deletion, and totals remain unchanged", ()
   assert.match(source, /function startEditingMeal\(entry: HealthMealEntry\)/);
   assert.match(source, /deleteMealEntry\(entry\.id\)/);
   assert.match(source, /sumMealNutritionForDate\(mealEntries, foodHistoryDate\)/);
+});
+
+test("logged food cards expose one prominent effective-calorie line and preserve planned cards", () => {
+  const loggedCard = foodSource.slice(foodSource.indexOf("{slotMeals.length === 0"), foodSource.indexOf("{editingMealId === entry.id"));
+  assert.match(loggedCard, /getHealthMealSummaryParts\(entry\)\.map\(\(part, index\) =>/);
+  assert.match(loggedCard, /part\.kind === "calories" \? <strong className="font-semibold text-\[#4f5872\] dark:text-white\/70">\{part\.text\}<\/strong> : part\.text/);
+  assert.doesNotMatch(loggedCard, /formatHealthNutritionNumber\(getHealthMealNutritionValue\(entry, "calories"\)\).*kcal/);
+  assert.doesNotMatch(loggedCard, /mt-3 text-sm font-semibold/);
+  assert.match(loggedCard, /NutritionDetailsDisclosure details=\{entry\.nutrition_snapshot\?\.nutrition_details\}/);
+  assert.match(loggedCard, /startEditingMeal\(entry\)/);
+  assert.match(loggedCard, /handleSaveFavoriteFromMeal\(entry\)/);
+  assert.match(loggedCard, /deleteMealEntry\(entry\.id\)/);
+  assert.match(foodSource, /plan\.nutrition_snapshot\?\.calories \?\? plan\.calories\)\} kcal · \{formatPlanTime/);
+});
+
+test("logged cards and meal-slot totals share the snapshot-first calorie authority", () => {
+  assert.match(source, /const slotCaloriesTotal = slotMeals\.reduce\(\(total, entry\) => total \+ getHealthMealNutritionValue\(entry, "calories"\), 0\)/);
+  assert.match(healthUtilsSource, /export function getHealthMealNutritionValue\(entry: HealthMealEntry/);
+  assert.match(healthUtilsSource, /export function getHealthMealSummaryParts\(entry: HealthMealEntry/);
+  assert.match(healthUtilsSource, /kind: "calories", text: `\$\{formatHealthNutritionNumber\(getHealthMealNutritionValue\(entry, "calories"\)\)\} kcal`/);
+  assert.match(healthUtilsSource, /getHealthMealNutritionValue\(entry, "calories"\)/);
+  assert.doesNotMatch(source, /formatHealthMealSummary\(entry, undefined/);
+  assert.doesNotMatch(source, /includeCalories/);
 });

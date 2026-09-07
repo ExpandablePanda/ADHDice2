@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Check, Flame, Pencil, Plus, Settings2, Timer, Trash2, X } from "lucide-react";
+import { Activity, CalendarDays, Check, ChevronLeft, ChevronRight, Flame, Pencil, Plus, Settings2, Timer, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -38,6 +38,11 @@ import {
   addHealthWorkoutTypeOption,
   addHealthWorkoutTitleOption,
   getHealthDailyMovementMetrics,
+  getHealthWorkoutActiveCaloriesForDate,
+  getHealthWorkoutDisplayTitle,
+  getHealthWorkoutImportAliasKey,
+  getHealthWeekBounds,
+  getHealthWeeklyMovementMetrics,
   getHealthWeeklyWorkoutSummary,
   HEALTH_WORKOUT_TYPES,
   HEALTH_WORKOUT_OPTION_MAX_LENGTH,
@@ -55,10 +60,13 @@ import { saveHealthWorkoutBundle } from "@/lib/health-workout-save";
 import {
   clampPercent,
   formatHealthDateLabel,
+  formatHealthTimestampDate,
   formatMealLoggedTime,
   getCurrentHealthDateTimeInputs,
+  shiftHealthDate,
   todayHealthDate,
 } from "@/lib/health-utils";
+import { TASK_TABLE_CHIP_BASE_CLASS, TASK_TABLE_LIST_CHIP_CLASS } from "@/components/ui/task-table-primitives";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { FitnessPlanAssociationPicker, HealthFitnessPlansPanel } from "./health-fitness-plans-panel";
@@ -67,6 +75,8 @@ import { HealthFitnessGoalsPanel } from "./health-fitness-goals-panel";
 import { HealthFitnessReorderList } from "./health-fitness-reorder-list";
 import { HealthFitnessSessionEditor } from "./health-fitness-session-editor";
 import { HealthActiveWorkout } from "./health-active-workout";
+import { PageShell, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 
 type HealthFitnessTabProps = {
   addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<HealthWorkout | null>;
@@ -111,6 +121,7 @@ type HealthFitnessTabProps = {
   workoutExercises: HealthWorkoutExercise[];
   workoutSets: HealthWorkoutSet[];
   workouts: HealthWorkout[];
+  layout: PageShellLayoutState;
 };
 
 function createDefaultWorkoutDraft(workoutTypes: readonly string[] = HEALTH_WORKOUT_TYPES, plannedItem?: HealthFitnessPlanItem): HealthWorkoutFormInput {
@@ -169,6 +180,7 @@ export function HealthFitnessTab({
   workoutExercises,
   workoutSets,
   workouts,
+  layout,
 }: HealthFitnessTabProps) {
   const today = todayHealthDate();
   const [draft, setDraft] = useState<HealthWorkoutFormInput>(() => createDefaultWorkoutDraft());
@@ -178,6 +190,8 @@ export function HealthFitnessTab({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [selectedFitnessDate, setSelectedFitnessDate] = useState(today);
+  const [weekAnchorDate, setWeekAnchorDate] = useState(today);
   const [selectedPlanItemIds, setSelectedPlanItemIds] = useState<string[]>([]);
   const [revealRequest, setRevealRequest] = useState(0);
   const [workoutTypeDraft, setWorkoutTypeDraft] = useState("");
@@ -189,11 +203,17 @@ export function HealthFitnessTab({
   const [editingSavedTitle, setEditingSavedTitle] = useState<string | null>(null);
   const [editingSavedTitleDraft, setEditingSavedTitleDraft] = useState("");
   const [isSavingTitleOptions, setIsSavingTitleOptions] = useState(false);
+  const [workoutAliasDrafts, setWorkoutAliasDrafts] = useState<Record<string, string>>({});
   const workoutFormRef = useRef<HTMLFormElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const pendingRevealRef = useRef(false);
-  const dailyMovement = useMemo(() => getHealthDailyMovementMetrics(metricEntries, today), [metricEntries, today]);
-  const weeklySummary = useMemo(() => getHealthWeeklyWorkoutSummary(workouts, today), [today, workouts]);
+  const dailyMovement = useMemo(() => getHealthDailyMovementMetrics(metricEntries, selectedFitnessDate), [metricEntries, selectedFitnessDate]);
+  const dailyWorkoutActiveCalories = useMemo(() => getHealthWorkoutActiveCaloriesForDate(workouts, selectedFitnessDate), [selectedFitnessDate, workouts]);
+  const currentWeek = useMemo(() => getHealthWeekBounds(today), [today]);
+  const weeklySummary = useMemo(() => getHealthWeeklyWorkoutSummary(workouts, weekAnchorDate), [weekAnchorDate, workouts]);
+  const weeklyMovement = useMemo(() => getHealthWeeklyMovementMetrics(metricEntries, weekAnchorDate), [metricEntries, weekAnchorDate]);
+  const isCurrentFitnessDate = selectedFitnessDate === today;
+  const isCurrentWeek = weeklySummary.startDate === currentWeek.startDate;
   const orderedWorkouts = useMemo(() => sortHealthWorkouts(workouts), [workouts]);
   const structuredSummaries = useMemo(
     () => new Map(orderedWorkouts.map((workout) => [workout.id, getHealthWorkoutStructuredSummary(workout.id, workoutExercises, workoutSets)])),
@@ -211,6 +231,36 @@ export function HealthFitnessTab({
     return options;
   }, [draft.workoutType, editingWorkoutId, workoutTypes]);
   const savedWorkoutTitles = profile.workout_title_options ?? [];
+  const importedWorkoutNames = useMemo(
+    () => [...new Set(workouts.filter((workout) => workout.source !== "manual").map(getHealthWorkoutImportAliasKey).filter(Boolean))].sort((left, right) => left.localeCompare(right)),
+    [workouts],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setWorkoutAliasDrafts(profile.workout_import_aliases ?? {});
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile.workout_import_aliases]);
+
+  async function saveWorkoutImportAlias(sourceName: string, rawAlias = workoutAliasDrafts[sourceName] ?? "") {
+    const alias = rawAlias.trim();
+    const nextAliases = { ...(profile.workout_import_aliases ?? {}) };
+    if (alias) {
+      nextAliases[sourceName] = alias;
+    } else {
+      delete nextAliases[sourceName];
+    }
+    const saved = await saveProfile({ workout_import_aliases: nextAliases });
+    if (saved) {
+      setWorkoutAliasDrafts((current) => ({ ...current, [sourceName]: alias }));
+    }
+  }
   const activeWorkout = useActiveFitnessWorkout({
     addWorkout,
     saveWorkoutPlanItemLinks,
@@ -219,6 +269,30 @@ export function HealthFitnessTab({
     userId: profile.user_id,
     workoutTypes,
   });
+
+  function moveWeek(direction: -1 | 1) {
+    const nextAnchorDate = shiftHealthDate(weekAnchorDate, direction * 7);
+    if (direction > 0 && getHealthWeekBounds(nextAnchorDate).startDate > currentWeek.startDate) {
+      return;
+    }
+    setWeekAnchorDate(nextAnchorDate);
+  }
+
+  function moveFitnessDay(direction: -1 | 1) {
+    const nextDate = shiftHealthDate(selectedFitnessDate, direction);
+    if (direction > 0 && nextDate > today) {
+      return;
+    }
+    setSelectedFitnessDate(nextDate);
+  }
+
+  function handleFitnessDateChange(date: string) {
+    setSelectedFitnessDate(date && date <= today ? date : today);
+  }
+
+  function handleWeekDateChange(date: string) {
+    setWeekAnchorDate(date && date <= today ? date : today);
+  }
 
   useEffect(() => {
     if (!isFormOpen || !pendingRevealRef.current) {
@@ -621,6 +695,36 @@ export function HealthFitnessTab({
                 )}
               </section>
 
+              <section className="grid gap-2 border-t border-[#eeeaf8] pt-4 dark:border-white/10" aria-labelledby="fitness-settings-import-aliases">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-[#6f57f6] dark:text-[#cabfff]" id="fitness-settings-import-aliases">Imported Workout Aliases</h3>
+                  <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">Rename imported workout names for every matching existing and future workout. Apple Health values stay unchanged.</p>
+                </div>
+                {importedWorkoutNames.length === 0 ? (
+                  <p className="text-xs text-[#8d87a7] dark:text-white/40">No imported workout names are available yet.</p>
+                ) : importedWorkoutNames.map((sourceName) => (
+                  <div className="grid gap-2 rounded-[1rem] border border-[#eeeaf8] bg-white/80 p-3 dark:border-white/10 dark:bg-white/[0.03]" key={sourceName}>
+                    <p className="text-sm font-semibold text-[#4a5470] dark:text-white/80">{sourceName}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="min-w-0 flex-1">
+                        <span className="sr-only">Display imported workout as</span>
+                        <input
+                          aria-label="Imported workout display alias"
+                          className={HEALTH_COMPACT_INPUT_CLASS}
+                          disabled={isSavingTitleOptions}
+                          onChange={(event) => setWorkoutAliasDrafts((current) => ({ ...current, [sourceName]: event.target.value }))}
+                          placeholder={sourceName}
+                          type="text"
+                          value={workoutAliasDrafts[sourceName] ?? ""}
+                        />
+                      </label>
+                      <AdhdChip aria-label="Save imported workout alias" disabled={isSavingTitleOptions} onClick={() => { void saveWorkoutImportAlias(sourceName); }} tone="purple" type="button">Save</AdhdChip>
+                      <AdhdChip aria-label="Clear imported workout alias" disabled={isSavingTitleOptions || !(workoutAliasDrafts[sourceName] ?? "").trim()} onClick={() => { setWorkoutAliasDrafts((current) => ({ ...current, [sourceName]: "" })); void saveWorkoutImportAlias(sourceName, ""); }} type="button">Clear</AdhdChip>
+                    </div>
+                  </div>
+                ))}
+              </section>
+
               <HealthFitnessExerciseLibrary
                 archiveExercise={archiveExercise}
                 createExercise={createExercise}
@@ -635,49 +739,98 @@ export function HealthFitnessTab({
         </div>
       </div>
 
-      <HealthActiveWorkout controller={activeWorkout} exerciseLibrary={exerciseLibrary} planItems={planItems} plans={plans} workoutTypes={workoutTypes} />
-
-      <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
+      <ReorderablePageShells layout={layout} shellsClassName="grid gap-5 xl:grid-cols-12">
+        <PageShell
+          hiddenDescription="Hidden until a workout is active"
+          id="fitness-active-workout"
+          label="Active Workout"
+          visible={Boolean(activeWorkout.runtime)}
+        >
+          <HealthActiveWorkout controller={activeWorkout} exerciseLibrary={exerciseLibrary} planItems={planItems} plans={plans} workoutTypes={workoutTypes} />
+        </PageShell>
+        <PageShell id="fitness-today" label="Today">
         <HealthCollapsiblePanel
           header={<Activity aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
-          subtitle="Existing daily movement goals"
-          title="Today"
+          shellSurface
+          subtitle={formatHealthTimestampDate(`${selectedFitnessDate}T12:00:00`) ?? selectedFitnessDate}
+          title={isCurrentFitnessDate ? "Today" : "Day"}
         >
-          <div className="grid gap-3 sm:grid-cols-3">
-            <FitnessStatCard
-              detail={profile.movement_goal === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal)}`}
-              label="Steps"
-              progressPercent={progressForGoal(dailyMovement.steps, profile.movement_goal)}
-              value={formatWholeNumber(dailyMovement.steps)}
-            />
-            <FitnessStatCard
-              detail={profile.movement_goal_calories === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal_calories)} kcal`}
-              label="Active Calories"
-              progressPercent={progressForGoal(dailyMovement.activeEnergyKcal, profile.movement_goal_calories)}
-              value={`${formatWholeNumber(dailyMovement.activeEnergyKcal)} kcal`}
-            />
-            <FitnessStatCard
-              detail={profile.movement_goal_minutes === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal_minutes)} min`}
-              label="Exercise"
-              progressPercent={progressForGoal(dailyMovement.exerciseMinutes, profile.movement_goal_minutes)}
-              value={`${formatWholeNumber(dailyMovement.exerciseMinutes)} min`}
-            />
+          <div className="grid gap-3">
+            <div aria-label="Fitness day navigation" className="flex flex-wrap items-center gap-1.5" role="group">
+              <AdhdIconButton aria-label="Previous day" onClick={() => moveFitnessDay(-1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronLeft aria-hidden="true" /></AdhdIconButton>
+              <label className="relative inline-flex items-center">
+                <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-[#6f57f6]" />
+                <input
+                  aria-label="Fitness day date"
+                  className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS} h-[26px] min-h-[26px] min-w-[9.5rem] pl-7 text-[13px] leading-none`}
+                  max={today}
+                  onChange={(event) => handleFitnessDateChange(event.target.value)}
+                  type="date"
+                  value={selectedFitnessDate}
+                />
+              </label>
+              <AdhdIconButton aria-label="Next day" disabled={isCurrentFitnessDate} onClick={() => moveFitnessDay(1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronRight aria-hidden="true" /></AdhdIconButton>
+              {!isCurrentFitnessDate ? <AdhdChip onClick={() => setSelectedFitnessDate(today)} type="button">Today</AdhdChip> : null}
+            </div>
+            <div className="fitness-stat-grid grid gap-3">
+              <FitnessStatCard
+                detail={profile.movement_goal === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal)}`}
+                label="Steps"
+                progressPercent={progressForGoal(dailyMovement.steps, profile.movement_goal)}
+                value={formatWholeNumber(dailyMovement.steps)}
+              />
+              <FitnessStatCard
+                detail={profile.movement_goal_calories === null ? "canonical Health Active Energy" : `canonical Health Active Energy · goal ${formatWholeNumber(profile.movement_goal_calories)} kcal`}
+                label="Total Active Calories"
+                progressPercent={progressForGoal(dailyMovement.activeEnergyKcal, profile.movement_goal_calories)}
+                value={`${formatWholeNumber(dailyMovement.activeEnergyKcal)} kcal`}
+              />
+              <FitnessStatCard detail="workout ledger" label="Workout Active Calories" value={`${formatWholeNumber(dailyWorkoutActiveCalories)} kcal`} />
+              <FitnessStatCard
+                detail={profile.movement_goal_minutes === null ? "No goal set" : `goal ${formatWholeNumber(profile.movement_goal_minutes)} min`}
+                label="Exercise"
+                progressPercent={progressForGoal(dailyMovement.exerciseMinutes, profile.movement_goal_minutes)}
+                value={`${formatWholeNumber(dailyMovement.exerciseMinutes)} min`}
+              />
+            </div>
           </div>
         </HealthCollapsiblePanel>
 
+        </PageShell>
+        <PageShell id="fitness-week" label="This Week">
         <HealthCollapsiblePanel
           header={<Timer aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
+          shellSurface
           subtitle={`${formatHealthDateLabel(weeklySummary.startDate)} – ${formatHealthDateLabel(weeklySummary.endDate)}`}
-          title="This Week"
+          title={isCurrentWeek ? "This Week" : "Week"}
         >
-          <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-            <FitnessStatCard detail="logged sessions" label="Workouts" value={String(weeklySummary.workouts)} />
-            <FitnessStatCard detail="workout ledger only" label="Workout Minutes" value={formatMinutes(weeklySummary.workoutMinutes)} />
-            <FitnessStatCard detail="workout ledger only" label="Workout Active Calories" value={`${formatWholeNumber(weeklySummary.workoutActiveCalories)} kcal`} />
+          <div className="grid gap-3">
+            <div aria-label="Fitness week navigation" className="flex flex-wrap items-center gap-1.5" role="group">
+              <AdhdIconButton aria-label="Previous week" onClick={() => moveWeek(-1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronLeft aria-hidden="true" /></AdhdIconButton>
+              <label className="relative inline-flex items-center">
+                <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-[#6f57f6]" />
+                <input
+                  aria-label="Fitness week date"
+                  className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS} h-[26px] min-h-[26px] min-w-[9.5rem] pl-7 text-[13px] leading-none`}
+                  max={today}
+                  onChange={(event) => handleWeekDateChange(event.target.value)}
+                  type="date"
+                  value={weekAnchorDate}
+                />
+              </label>
+              <AdhdIconButton aria-label="Next week" disabled={isCurrentWeek} onClick={() => moveWeek(1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronRight aria-hidden="true" /></AdhdIconButton>
+              {!isCurrentWeek ? <AdhdChip onClick={() => setWeekAnchorDate(today)} type="button">Today</AdhdChip> : null}
+            </div>
+            <div className="fitness-week-grid grid gap-3">
+              <FitnessStatCard detail="logged sessions" label="Workouts" value={String(weeklySummary.workouts)} />
+              <FitnessStatCard detail="workout ledger" label="Workout Minutes" value={formatMinutes(weeklySummary.workoutMinutes)} />
+              <FitnessStatCard detail="canonical Health Active Energy" label="Total Active Calories" value={`${formatWholeNumber(weeklyMovement.activeEnergyKcal)} kcal`} />
+              <FitnessStatCard detail="workout ledger" label="Workout Active Calories" value={`${formatWholeNumber(weeklySummary.workoutActiveCalories)} kcal`} />
+            </div>
           </div>
         </HealthCollapsiblePanel>
-      </div>
-
+        </PageShell>
+        <PageShell id="fitness-goals" label="Fitness Goals">
       <HealthFitnessGoalsPanel
         archiveGoal={archiveGoal}
         createGoal={createGoal}
@@ -695,7 +848,9 @@ export function HealthFitnessTab({
         workoutSets={workoutSets}
         workouts={workouts}
       />
+        </PageShell>
 
+        <PageShell id="fitness-plans" label="Fitness Plans">
       <HealthFitnessPlansPanel
         archivePlan={archivePlan}
         archivePlanItem={archivePlanItem}
@@ -712,11 +867,14 @@ export function HealthFitnessTab({
         workoutPlanItemLinks={workoutPlanItemLinks}
         workouts={workouts}
       />
+        </PageShell>
 
+        <PageShell id="fitness-workout-history" label="Workout History">
       <HealthCollapsiblePanel
         header={<Flame aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
         onOpenChange={setIsHistoryPanelOpen}
         open={isFormOpen || isHistoryPanelOpen}
+        shellSurface
         subtitle="Canonical workout ledger"
         title="Workout History"
       >
@@ -776,33 +934,39 @@ export function HealthFitnessTab({
         ) : (
           <div className="grid gap-3">
             {orderedWorkouts.map((workout) => (
-              <WorkoutHistoryRow key={workout.id} onDelete={deleteWorkout} onEdit={openEditForm} structuredSummary={structuredSummaries.get(workout.id) ?? []} workout={workout} />
+              <WorkoutHistoryRow aliases={profile.workout_import_aliases} key={workout.id} onDelete={deleteWorkout} onEdit={openEditForm} structuredSummary={structuredSummaries.get(workout.id) ?? []} workout={workout} />
             ))}
           </div>
         )}
       </HealthCollapsiblePanel>
+        </PageShell>
+      </ReorderablePageShells>
     </div>
   );
 }
 
 function WorkoutHistoryRow({
+  aliases,
   onDelete,
   onEdit,
   structuredSummary,
   workout,
 }: {
+  aliases: Readonly<Record<string, string>>;
   onDelete: (workoutId: string) => Promise<boolean>;
   onEdit: (workout: HealthWorkout) => void;
   structuredSummary: ReturnType<typeof getHealthWorkoutStructuredSummary>;
   workout: HealthWorkout;
 }) {
   const startTime = formatMealLoggedTime(workout.started_at ?? "");
+  const displayTitle = getHealthWorkoutDisplayTitle(workout, aliases);
+  const importedName = getHealthWorkoutImportAliasKey(workout);
   return (
     <article className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-base font-bold text-[#26324f] dark:text-white">{workout.title}</h3>
+            <h3 className="truncate text-base font-bold text-[#26324f] dark:text-white">{displayTitle}</h3>
             <AdhdChip className="pointer-events-none" tone="purple" type="button">{workout.workout_type}</AdhdChip>
           </div>
           <p className="mt-1 text-xs text-[#74809b] dark:text-white/50">
@@ -823,31 +987,31 @@ function WorkoutHistoryRow({
         </div>
         {workout.source === "manual" ? (
           <div className="flex shrink-0 items-center gap-1">
-            <AdhdIconButton aria-label={`Edit ${workout.title}`} onClick={() => onEdit(workout)} size="sm" variant="rowToolbar">
+            <AdhdIconButton aria-label={`Edit ${displayTitle}`} onClick={() => onEdit(workout)} size="sm" variant="rowToolbar">
               <Pencil aria-hidden="true" />
             </AdhdIconButton>
-            <AdhdIconButton aria-label={`Delete ${workout.title}`} onClick={() => void onDelete(workout.id)} size="sm" tone="danger" variant="rowToolbar">
+            <AdhdIconButton aria-label={`Delete ${displayTitle}`} onClick={() => void onDelete(workout.id)} size="sm" tone="danger" variant="rowToolbar">
               <Trash2 aria-hidden="true" />
             </AdhdIconButton>
           </div>
         ) : null}
       </div>
-      {workout.source !== "manual" ? <p className="mt-2 text-[11px] font-medium text-[#8d87a7] dark:text-white/40">Imported workout · editing unavailable</p> : null}
+      {workout.source !== "manual" ? <p className="mt-2 text-[11px] font-medium text-[#8d87a7] dark:text-white/40">Apple Health · {importedName || workout.workout_type || "Imported workout"} · editing unavailable</p> : null}
     </article>
   );
 }
 
 function FitnessStatCard({ detail, label, progressPercent, value }: { detail: string; label: string; progressPercent?: number | null; value: string }) {
   return (
-    <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+    <div className="fitness-stat-card rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="fitness-stat-main flex min-w-0 items-start justify-between gap-3">
+        <div className="fitness-stat-copy min-w-0 flex-1">
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</p>
-          <p className="mt-1 text-2xl font-black text-[#1e2744] dark:text-white">{value}</p>
-          <p className="mt-1 text-xs text-[#73809c] dark:text-white/50">{detail}</p>
+          <p className="fitness-stat-value mt-1 text-2xl font-black text-[#1e2744] dark:text-white">{value}</p>
+          <p className="fitness-stat-detail mt-1 text-xs text-[#73809c] dark:text-white/50">{detail}</p>
         </div>
         {progressPercent === undefined || progressPercent === null ? null : (
-          <div aria-label={`${label} ${Math.round(progressPercent)}% of goal`} className="mt-1 w-16 shrink-0 rounded-full bg-[#ece8f8] p-1 dark:bg-white/10">
+          <div aria-label={`${label} ${Math.round(progressPercent)}% of goal`} className="fitness-stat-progress mt-1 shrink-0 rounded-full bg-[#ece8f8] p-1 dark:bg-white/10">
             <div className="h-2 rounded-full bg-[#6f57f6] transition-[width]" style={{ width: `${progressPercent}%` }} />
           </div>
         )}

@@ -2,8 +2,9 @@
 
 import dynamic from "next/dynamic";
 import Image from "next/image";
-import { Capacitor } from "@capacitor/core";
 import { App } from "@capacitor/app";
+import { APP_VERSION as CURRENT_APP_VERSION } from "@/lib/app-version";
+import { useNativeIosPlatform } from "@/lib/platform";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import {
   AlertCircle,
@@ -92,26 +93,23 @@ import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-a
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
+import { TaskCalendarView } from "./task-app/task-calendar-view";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
 import { TaskActiveTimersTray } from "./task-app/task-active-timers-tray";
 import { ScratchPaperWidget, type ScratchPaperData } from "./task-app/scratch-paper";
 import { formatTaskStatusLabel } from "./task-app/task-status-ui";
 import {
-  applyTaskEditorDraftOverrides,
   buildNewTaskDraft,
-  createTaskEditorDraft,
-  emptyToNull,
+  createTaskSubtaskDrafts,
   parseDayOfMonth,
   parsePositiveInteger,
   type TaskDraft,
-  type TaskEditorDraft,
-  type TaskEditorMode,
-  type TaskSubtaskDraft,
 } from "./task-app/task-editor-model";
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
+import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
 import { WorkspaceLoadingScreen } from "./workspace-loading-screen";
@@ -150,6 +148,7 @@ import { useTaskGridLayoutController } from "@/hooks/useTaskGridLayoutController
 import { useFocusSelectionPersistence } from "@/hooks/useFocusSelectionPersistence";
 import { useTaskPriorityRoutingController } from "@/hooks/useTaskPriorityRoutingController";
 import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportController";
+import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
@@ -186,6 +185,7 @@ import {
   type NavigatorSearchTarget,
   type NavigatorSettingsSection,
 } from "@/lib/navigator-search";
+import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import { appendTaskListRuleRow, removeTaskListRuleRow, summarizeTaskListRules, updateTaskListRuleRow, updateTaskListRuleRowConnector } from "@/lib/task-list-rule-editor";
 import {
   normalizeTaskGridLayout,
@@ -193,6 +193,8 @@ import {
   type TaskGridLayoutItem,
 } from "@/lib/task-grid-layout";
 import { buildWidgetTypeGuard, resolveTaskGridLayout } from "@/lib/task-grid-parser";
+import { isPageShellLayoutReady, subscribeToPageShellLayoutReadiness, TEST_PAGE_SHELL_CANONICAL_LAYOUT, TEST_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
+import { arePageShellNavigationRectsStable, getPageShellNavigationScrollTop, isPageShellNavigationRectUsable, PAGE_SHELL_NAVIGATION_GAP_PX, PAGE_SHELL_NAVIGATION_RECT_TOLERANCE_PX, type PageShellNavigationRect } from "@/lib/page-shell-navigation";
 import {
   isDueToday,
   isLater,
@@ -244,7 +246,7 @@ import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
-import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
+import { createTaskStateReplayIdentity, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 import type { CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/types";
@@ -392,13 +394,8 @@ type Message = {
 };
 
 type PendingCompleteAction = {
-  focusToday?: boolean;
-  linkedNoteIds?: string[];
   onTimeOrigin?: OnTimeLinkedItemOrigin;
-  source: "editor" | "status";
-  subtasks?: TaskSubtaskDraft[];
   taskId: string;
-  values?: TaskUpdate;
 };
 
 type HudNotificationItem = {
@@ -594,7 +591,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.12.6";
+const APP_VERSION = CURRENT_APP_VERSION;
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1083,6 +1080,10 @@ const dockIcons: Record<AppPage, string> = {
   Test: "FlaskConical",
 };
 const navigatorSearchTargets = createNavigatorSearchTargets(dockItems, HEALTH_TABS);
+const PAGE_SHELL_NAVIGATION_HIGHLIGHT_MS = 1800;
+const PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS = 120;
+const PAGE_SHELL_NAVIGATION_STABILITY_COMPARISONS = 2;
+const PAGE_SHELL_NAVIGATION_ANCHOR_STABLE_FRAMES = 16;
 const TASK_GRID_MAX_COLUMNS = 4;
 const TASK_GRID_TABLET_COLUMNS = 2;
 const TASK_GRID_PHONE_COLUMNS = 1;
@@ -1152,26 +1153,6 @@ function findFinishedCountdownSession(activeSessions: Record<string, ActiveFocus
   )) ?? null;
 }
 
-function useNativeIosPlatform() {
-  return useSyncExternalStore(
-    subscribeToPlatformChanges,
-    getNativeIosPlatformSnapshot,
-    getWebPlatformSnapshot,
-  );
-}
-
-function subscribeToPlatformChanges() {
-  return () => {};
-}
-
-function getNativeIosPlatformSnapshot() {
-  return typeof window !== "undefined" && Capacitor.getPlatform() === "ios";
-}
-
-function getWebPlatformSnapshot() {
-  return false;
-}
-
 export function TaskApp() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
   const isNativeIosPlatform = useNativeIosPlatform();
@@ -1204,10 +1185,6 @@ export function TaskApp() {
   const countdownAlarmGainRef = useRef<GainNode | null>(null);
   const countdownAlarmOscillatorRef = useRef<OscillatorNode | null>(null);
   const countdownAlarmPulseIntervalRef = useRef<number | null>(null);
-  const [isTaskEditorOpen, setIsTaskEditorOpen] = useState(false);
-  const [taskEditorMode, setTaskEditorMode] = useState<TaskEditorMode>("create");
-  const [taskEditorTaskId, setTaskEditorTaskId] = useState<string | null>(null);
-  const [taskEditorInitialDraft, setTaskEditorInitialDraft] = useState<Partial<TaskEditorDraft> | null>(null);
   const normalizePersistedTaskGridLayout = useMemo(
     () => (layout: TaskGridItem[]) =>
       normalizeTaskGridLayout(layout, isTaskGridWidgetType, TASK_GRID_MAX_COLUMNS, TASK_GRID_MAX_DISPLAY_ROWS),
@@ -1223,7 +1200,6 @@ export function TaskApp() {
     isDailyPlanningCollapsed,
     isRestoringPersistedUiState,
     isTaskFiltersOpen,
-    pendingTaskEditorRestore,
     renameTaskWorkspaceTab,
     reorderTaskWorkspaceTab,
     setActivePage,
@@ -1234,7 +1210,6 @@ export function TaskApp() {
     setTaskTableLayoutPreferences,
     setIsDailyPlanningCollapsed,
     setIsTaskFiltersOpen,
-    setPendingTaskEditorRestore,
     setTaskGridLayout,
     setTaskRouting,
     setTaskUiState,
@@ -1244,12 +1219,9 @@ export function TaskApp() {
     taskWorkspaceTabsState,
     taskUiState,
   } = useTaskUiState({
-    isTaskEditorOpen,
     normalizeTaskGridLayout: normalizePersistedTaskGridLayout,
     supabase,
     taskGridStarterLayout: TASK_GRID_STARTER_LAYOUT,
-    taskEditorMode,
-    taskEditorTaskId,
     userId: session?.user?.id,
   });
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
@@ -1273,6 +1245,17 @@ export function TaskApp() {
   const {
     awards: healthAwards,
     checkIns: healthCheckIns,
+    journalSignals: healthJournalSignals,
+    journalSignalValues: healthJournalSignalValues,
+    journalSignalOccurrences: healthJournalSignalOccurrences,
+    saveJournalEntry,
+    createJournalSignal,
+    updateJournalSignal,
+    setJournalSignalTemplate,
+    archiveJournalSignal,
+    deleteJournalSignal,
+    reorderJournalSignals,
+    deleteJournalEntry,
     deleteFavoriteFood,
     deleteMealEntry,
     deleteRecipe: deleteHealthRecipe,
@@ -1288,6 +1271,12 @@ export function TaskApp() {
     syncIncrementalAppleHealthData,
     mealEntries: healthMealEntries,
     mealPlanEntries: healthMealPlanEntries,
+    symptoms: healthSymptoms,
+    symptomEntries: healthSymptomEntries,
+    createSymptom: createHealthSymptom,
+    renameSymptom: renameHealthSymptom,
+    setSymptomColor: setHealthSymptomColor,
+    archiveSymptom: archiveHealthSymptom,
     addMealPlanEntry: addHealthMealPlanEntry,
     updateMealPlanEntry: updateHealthMealPlanEntry,
     deleteMealPlanEntry: deleteHealthMealPlanEntry,
@@ -1295,7 +1284,6 @@ export function TaskApp() {
     metricEntries: healthMetricEntries,
     profile: healthProfile,
     recipes: healthRecipes,
-    saveCheckIn,
     saveFavoriteFood,
     setFavoriteFoodStatus,
     saveRecipe: saveHealthRecipe,
@@ -1304,6 +1292,7 @@ export function TaskApp() {
     saveProfile: saveHealthProfile,
     addMealEntry: addHealthMealEntry,
     addWaterEntry: addHealthWaterEntry,
+    confirmWaterEntry: confirmHealthWaterEntry,
     addWeightEntry: addHealthWeightEntry,
     addWorkout: addHealthWorkout,
     updateMealEntry: updateHealthMealEntry,
@@ -1668,6 +1657,28 @@ export function TaskApp() {
   const profile = useProfileStore();
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [requestedSettingsSection, setRequestedSettingsSection] = useState<NavigatorSettingsSection | null>(null);
+  const [requestedPageShell, setRequestedPageShell] = useState<Extract<NavigatorSearchAction, { kind: "page-shell" }> | null>(null);
+  const pageShellNavigationHighlightRef = useRef<HTMLElement | null>(null);
+  const pageShellNavigationHighlightTimerRef = useRef<number | null>(null);
+  const clearPageShellNavigationHighlight = useCallback(() => {
+    if (pageShellNavigationHighlightTimerRef.current !== null && typeof window !== "undefined") {
+      window.clearTimeout(pageShellNavigationHighlightTimerRef.current);
+    }
+    pageShellNavigationHighlightTimerRef.current = null;
+    pageShellNavigationHighlightRef.current?.removeAttribute("data-page-shell-navigation-target");
+    pageShellNavigationHighlightRef.current = null;
+  }, []);
+  const highlightPageShellNavigationTarget = useCallback((shell: HTMLElement) => {
+    clearPageShellNavigationHighlight();
+    shell.setAttribute("data-page-shell-navigation-target", "true");
+    pageShellNavigationHighlightRef.current = shell;
+    pageShellNavigationHighlightTimerRef.current = window.setTimeout(clearPageShellNavigationHighlight, PAGE_SHELL_NAVIGATION_HIGHLIGHT_MS);
+  }, [clearPageShellNavigationHighlight]);
+  const requestedPageShellLayoutReady = useSyncExternalStore(
+    subscribeToPageShellLayoutReadiness,
+    () => requestedPageShell ? isPageShellLayoutReady(requestedPageShell.pageKey) : false,
+    () => false,
+  );
   const [isListColumnMenuOpen, setIsListColumnMenuOpen] = useState(false);
   const [isKeyboardShortcutsMenuOpen, setIsKeyboardShortcutsMenuOpen] = useState(false);
   const [isTaskListSettingsOpen, setIsTaskListSettingsOpen] = useState(false);
@@ -1682,11 +1693,6 @@ export function TaskApp() {
   const setTaskUpdateMessage = useCallback<typeof setMessage>((value) => {
     setMessage(value);
   }, []);
-  const [taskEditorStatusResetSignal, setTaskEditorStatusResetSignal] = useState<{
-    status: TaskStatus;
-    taskId: string;
-    token: number;
-  } | null>(null);
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
@@ -1997,10 +2003,6 @@ export function TaskApp() {
     return refreshTaskHistoryStreakSummary(taskId, nextTaskHistory, nextTask);
   }, [refreshTaskHistoryStreakSummary, updateTaskHistoryForTask]);
 
-  useEffect(() => {
-    if (isTaskEditorOpen) void loadTaskNotes();
-  }, [isTaskEditorOpen, loadTaskNotes]);
-
   const isRefreshBusy = refreshStatus === "updating" || isSoftWorkspaceRefreshing;
 
   async function fetchDeployedAppVersion() {
@@ -2112,10 +2114,6 @@ export function TaskApp() {
         setAvailableTaskNotes([]);
         setIsGridEditMode(false);
         setSelectedGridWidgetId(null);
-        setIsTaskEditorOpen(false);
-        setTaskEditorMode("create");
-        setTaskEditorTaskId(null);
-        setPendingTaskEditorRestore(null);
         saveProfile(DEFAULT_PROFILE);
       }
       if (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED" || event === "PASSWORD_RECOVERY") {
@@ -2226,44 +2224,6 @@ export function TaskApp() {
   }, [selectedGridWidgetId, taskGridLayout]);
 
   useEffect(() => {
-    if (isWorkspaceLoading || !taskEditorTaskId || taskEditorMode !== "edit") {
-      return;
-    }
-
-    if (!tasks.some((task) => task.id === taskEditorTaskId)) {
-      setTaskEditorTaskId(null);
-      setIsTaskEditorOpen(false);
-      setTaskEditorMode("create");
-    }
-  }, [isWorkspaceLoading, taskEditorMode, taskEditorTaskId, tasks]);
-
-  useEffect(() => {
-    if (!pendingTaskEditorRestore || isWorkspaceLoading) {
-      return;
-    }
-
-    if (!pendingTaskEditorRestore.isOpen) {
-      setIsTaskEditorOpen(false);
-      setTaskEditorMode("create");
-      setTaskEditorTaskId(null);
-      setPendingTaskEditorRestore(null);
-      return;
-    }
-
-    if (pendingTaskEditorRestore.mode === "edit") {
-      if (!pendingTaskEditorRestore.taskId || !tasks.some((task) => task.id === pendingTaskEditorRestore.taskId)) {
-        setPendingTaskEditorRestore(null);
-        return;
-      }
-    }
-
-    setTaskEditorMode(pendingTaskEditorRestore.mode);
-    setTaskEditorTaskId(pendingTaskEditorRestore.taskId);
-    setIsTaskEditorOpen(true);
-    setPendingTaskEditorRestore(null);
-  }, [isWorkspaceLoading, pendingTaskEditorRestore, tasks]);
-
-  useEffect(() => {
     if (!session?.user?.id) {
       profileSettingsHydratedRef.current = false;
       return;
@@ -2291,14 +2251,7 @@ export function TaskApp() {
     saveLogicalDaySettings({ dayStartTime, timezone: userTimeZone });
   }, [dayStartTime, userTimeZone]);
 
-  useEffect(() => {
-    if (typeof window === "undefined" || isRestoringPersistedUiState) {
-      return;
-    }
-    const requestedTaskId = new URLSearchParams(window.location.search).get(OPEN_TASK_QUERY_PARAM);
-    if (!requestedTaskId) {
-      return;
-    }
+  const openTaskFromExternalNavigation = useCallback((taskId: string) => {
     const nextTaskWorkspaceTabId = taskWorkspaceTabsState.tabs.find((tab) => !isReportTaskWorkspaceTab(tab))?.id
       ?? taskWorkspaceTabsState.activeTabId;
     setActivePage("Tasks");
@@ -2308,12 +2261,25 @@ export function TaskApp() {
         ? current
         : { ...current, tasksSurface: "tasks" }
     ));
+    setRequestedListOverlayTaskId(null);
     setSuppressDetachedListNoticeTaskId(null);
-    setRequestedListOverlayTaskId(requestedTaskId);
+    setTaskEditorFocusRequest(null);
+    setSharedTaskEditorOverlayTaskId(taskId);
+  }, [setActivePage, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.activeTabId, taskWorkspaceTabsState.tabs]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || isRestoringPersistedUiState) {
+      return;
+    }
+    const requestedTaskId = new URLSearchParams(window.location.search).get(OPEN_TASK_QUERY_PARAM);
+    if (!requestedTaskId) {
+      return;
+    }
+    openTaskFromExternalNavigation(requestedTaskId);
     const nextUrl = new URL(window.location.href);
     nextUrl.searchParams.delete(OPEN_TASK_QUERY_PARAM);
     window.history.replaceState({}, "", `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
-  }, [isRestoringPersistedUiState, setActivePage, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.activeTabId, taskWorkspaceTabsState.tabs]);
+  }, [isRestoringPersistedUiState, openTaskFromExternalNavigation]);
 
   useEffect(() => {
     focusAlarmAudioRef.current = new Audio(withBasePath("/calm-alarm.wav"));
@@ -2643,7 +2609,6 @@ export function TaskApp() {
     };
   }, [isTaskHistoryLoaded, runDayReset, session?.user?.id, supabase]);
   const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(tasks), [tasks]);
-  const rawTaskSubtasksByTaskId = taskSubtasksByTaskId;
   const hasStepsByTaskId = useMemo(
     () => {
       const sameTableChildrenByParentId = buildTaskHierarchyAdapter(tasks).childrenByParentId;
@@ -2845,18 +2810,22 @@ export function TaskApp() {
     [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache],
   );
   const taskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId ?? persistedTaskDisplayStatusByTaskId;
+  const taskDisplayDueOnByTaskId = activeStatusRead?.dueOnByTaskId ?? {};
   const activeStatusRevision = useMemo(
-    () => createProjectionDomainRevision("active-status", taskDisplayStatusByTaskId),
-    [taskDisplayStatusByTaskId],
+    () => createProjectionDomainRevision("active-task-read", {
+      dueOnByTaskId: taskDisplayDueOnByTaskId,
+      statusesByTaskId: taskDisplayStatusByTaskId,
+    }),
+    [taskDisplayDueOnByTaskId, taskDisplayStatusByTaskId],
   );
   const canonicalEntityRevision = combineProjectionRevisions(taskDomainRevision, activeStatusRevision);
   const tasksForActiveStatusRead = useMemo(
     () => projectionCache.getOrCreate(
       "canonical-entities",
       canonicalEntityRevision,
-      () => projectTasksForActiveStatusRead(tasks, taskDisplayStatusByTaskId),
+      () => projectTasksForActiveStatusRead(tasks, taskDisplayStatusByTaskId, taskDisplayDueOnByTaskId),
     ),
-    // Equivalent Task/status revisions deliberately retain canonical entity identity.
+    // Equivalent Task/status/due revisions deliberately retain canonical entity identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [canonicalEntityRevision, projectionCache],
   );
@@ -3116,6 +3085,18 @@ export function TaskApp() {
       tableColumnFilters: taskUiStateForDerivedData.tableColumnFilters,
     },
   ), [focusedTaskIds, stableCanonicalTaskIndex, taskUiStateForDerivedData]);
+  const navigatorTaskSearchEntities = useMemo<readonly TaskSearchEntity[]>(
+    () => Array.from(stableCanonicalTaskIndex.entityFactsById.values()).map((fact) => ({
+      ancestorIds: fact.ancestorIds,
+      displayStatus: fact.displayStatus,
+      id: fact.id,
+      listIds: fact.listMemberships.map((membership) => membership.id),
+      rootParentId: fact.rootParentId,
+      searchDocument: fact.searchDocument,
+      task: fact.task,
+    })),
+    [stableCanonicalTaskIndex],
+  );
   const taskSearchSelection = useMemo(() => {
     if (!shouldRunTaskSearch(activePage)) return null;
     const result = queryTaskSearch(
@@ -3197,7 +3178,6 @@ export function TaskApp() {
           milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
           milestoneTaskIds: milestoneData.milestoneTaskIds,
           taskAppStructuralData,
-          taskEditorTaskId: null,
           taskGridLayout,
           taskHistoryByTaskId,
           taskListEvaluationContext,
@@ -3213,7 +3193,6 @@ export function TaskApp() {
             focusedTaskIds,
             milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
             milestoneTaskIds: milestoneData.milestoneTaskIds,
-            taskEditorTaskId,
             taskGridLayout,
             taskUiStateForDerivedData,
             todayKey,
@@ -3232,7 +3211,6 @@ export function TaskApp() {
       listVisibleColumns: taskUiState.visibleColumnsByView.table,
       milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
       milestoneTaskIds: milestoneData.milestoneTaskIds,
-      taskEditorTaskId: null,
       taskGridLayout,
       taskGridWidgetTypes: Object.keys(TASK_GRID_WIDGET_LABELS) as TaskGridWidgetType[],
       taskHistoryByTaskId,
@@ -3299,10 +3277,6 @@ export function TaskApp() {
     visibleListCounts,
   } = derivedData;
   const [sharedEditorRowModelCache] = useState(createStableTaskRowModelCache);
-  const selectedTaskForEditor = useMemo(
-    () => taskEditorTaskId ? tasksForActiveStatusRead.find((task) => task.id === taskEditorTaskId) ?? null : null,
-    [taskEditorTaskId, tasksForActiveStatusRead],
-  );
   const sharedTaskEditorRows = useMemo(
     () => sharedTaskEditorOverlayTaskId
       ? tasksForActiveStatusRead.map((task) => sharedEditorRowModelCache.getOrCreate(task, {
@@ -3447,6 +3421,23 @@ export function TaskApp() {
     urgentTasks,
   }, momentumView);
   const selectedBucketTasks = taskSearchSelection?.visibleTasks ?? canonicalVisibleRootTasksSorted;
+  const calendarTasks = useMemo(() => {
+    const tasksById = new Map(tasksForActiveStatusRead.map((task) => [task.id, task] as const));
+    const selectedTasksById = new Map(selectedBucketTasks.map((task) => [task.id, task] as const));
+
+    if (taskUiState.includeStepsByView.calendar) {
+      for (const group of Object.values(childTaskPreviewByParentTaskId)) {
+        for (const item of group.items) {
+          const task = tasksById.get(item.id);
+          if (task) {
+            selectedTasksById.set(task.id, task);
+          }
+        }
+      }
+    }
+
+    return Array.from(selectedTasksById.values());
+  }, [childTaskPreviewByParentTaskId, selectedBucketTasks, taskUiState.includeStepsByView.calendar, tasksForActiveStatusRead]);
   const searchMatchedChildTaskIds = taskSearchSelection
     ? Array.from(taskSearchSelection.matchingDescendantIdsByRootParentId.values())
       .flatMap((descendantIds) => Array.from(descendantIds))
@@ -3800,7 +3791,6 @@ export function TaskApp() {
     deleteTasks,
     importTasks,
     renameTaskSubtask,
-    replaceTaskSubtasks,
     routeTask,
     saveTaskEditor,
     saveTaskListDefinition,
@@ -4069,9 +4059,7 @@ export function TaskApp() {
     }
   }
   const {
-    closeTaskEditor,
     deleteSelectedListTasks,
-    openNewTaskEditor,
     openTaskImportPanel,
     setTaskDuePreset,
     setTaskEnergy,
@@ -4083,11 +4071,8 @@ export function TaskApp() {
     selectedListTaskIds,
     setIsBatchDeleteModalOpen,
     setIsImportWidgetMenuOpen,
-    setIsTaskEditorOpen,
     setMessage,
     setSelectedGridWidgetId,
-    setTaskEditorMode,
-    setTaskEditorTaskId,
     setTaskUiState,
     taskGridLayout,
     taskUiView: taskUiState.view,
@@ -4165,6 +4150,8 @@ export function TaskApp() {
 
   const handleNavigatorSearchTarget = useCallback((target: NavigatorSearchTarget) => {
     const action: NavigatorSearchAction = target.action;
+    clearPageShellNavigationHighlight();
+    if (action.kind !== "page-shell") setRequestedPageShell(null);
     if (action.kind === "page") {
       setRequestedSettingsSection(null);
       setActivePage(action.page);
@@ -4177,21 +4164,23 @@ export function TaskApp() {
       setActivePage("Tasks");
       handleTaskWorkspaceSurfaceChange("tasks");
       setTaskUiState((prev) => ({ ...prev, view: action.view }));
+    } else if (action.kind === "task") {
+      setRequestedSettingsSection(null);
+      openTaskFromExternalNavigation(action.taskId);
     } else if (action.kind === "health-tab") {
       setRequestedSettingsSection(null);
       setActivePage("Health");
       persistHealthTabPreference(action.tab);
+    } else if (action.kind === "page-shell") {
+      setRequestedSettingsSection(null);
+      setRequestedPageShell(action);
+      setActivePage(action.page);
+      if (action.healthTab) persistHealthTabPreference(action.healthTab);
     } else {
       setActivePage("Settings");
       setRequestedSettingsSection(action.section);
     }
-  }, [handleTaskWorkspaceSurfaceChange, setActivePage, setTaskUiState]);
-
-  const openBlankTaskEditor = useCallback(() => {
-    setSuppressDetachedListNoticeTaskId(null);
-    setTaskEditorInitialDraft(null);
-    openNewTaskEditor();
-  }, [openNewTaskEditor]);
+  }, [clearPageShellNavigationHighlight, handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, setActivePage, setTaskUiState]);
 
   const openExistingTaskEditor = useCallback((task: Task) => {
     setSuppressDetachedListNoticeTaskId(null);
@@ -4199,25 +4188,42 @@ export function TaskApp() {
     setTaskEditorFocusRequest(null);
   }, []);
 
-  const openInlineNewListTaskComposer = useCallback(async () => {
-    const createdTask = await addTask(buildNewTaskDraft("New Task"));
-
+  const createTaskAndOpenSharedEditor = useCallback(async (
+    initialTaskValues: TaskDraft,
+    options?: { routeToCurrentBucket?: boolean },
+  ) => {
+    const createdTask = await addTask(initialTaskValues);
     if (!createdTask) {
-      return;
+      return null;
     }
 
-    if (
-      taskUiState.selectedBucket === "inbox"
-      || taskUiState.selectedBucket === "today"
-      || taskUiState.selectedBucket === "quick_wins"
-      || taskUiState.selectedBucket === "waiting"
-      || taskUiState.selectedBucket === "later"
-    ) {
-      routeTask(createdTask.id, taskUiState.selectedBucket);
+    if (options?.routeToCurrentBucket) {
+      const selectedBucket = taskUiState.selectedBucket;
+      if (
+        selectedBucket === "inbox"
+        || selectedBucket === "today"
+        || selectedBucket === "quick_wins"
+        || selectedBucket === "waiting"
+        || selectedBucket === "later"
+      ) {
+        routeTask(createdTask.id, selectedBucket);
+      }
     }
 
     openExistingTaskEditor(createdTask);
+    return createdTask;
   }, [addTask, openExistingTaskEditor, routeTask, taskUiState.selectedBucket]);
+
+  const openCalendarDateTaskEditor = useCallback((dueOn: string) => (
+    createTaskAndOpenSharedEditor(
+      { ...buildNewTaskDraft("New Task"), due_on: dueOn },
+      { routeToCurrentBucket: true },
+    )
+  ), [createTaskAndOpenSharedEditor]);
+
+  const openInlineNewListTaskComposer = useCallback(async () => {
+    await createTaskAndOpenSharedEditor(buildNewTaskDraft("New Task"), { routeToCurrentBucket: true });
+  }, [createTaskAndOpenSharedEditor]);
 
   const duplicateTaskInPlace = useCallback(async (task: Task) => {
     const duplicateValues: TaskDraft = {
@@ -4246,7 +4252,7 @@ export function TaskApp() {
       focusToday: false,
       linkedNoteIds: (taskLinkedNotesByTaskId[task.id] ?? []).map((note) => note.id),
       sortOrder: task.sort_order + 1,
-      subtasks: createTaskEditorDraft(task, false, taskSubtasksByTaskId[task.id] ?? []).subtasks,
+      subtasks: createTaskSubtaskDrafts(task.id, taskSubtasksByTaskId[task.id] ?? []),
     });
 
     if (!duplicateTask) {
@@ -4261,32 +4267,23 @@ export function TaskApp() {
     }
   }, [saveTaskEditor, taskLinkedNotesByTaskId, taskListMembershipsByTaskId, taskSubtasksByTaskId, toggleTaskManualListMembership]);
 
-  const closeTaskEditorWithReset = useCallback(() => {
-    setTaskEditorInitialDraft(null);
-    closeTaskEditor();
-  }, [closeTaskEditor]);
-
   const openHealthReminderTemplate = useCallback((templateKey: HealthReminderTemplateKey) => {
     const template = buildHealthReminderTemplate(templateKey, todayISO());
-    setTaskEditorInitialDraft({
-      estimatedMinutes: template.estimatedMinutes ? String(template.estimatedMinutes) : "",
-      focusToday: false,
+    return createTaskAndOpenSharedEditor({
+      ...buildNewTaskDraft(template.title),
+      estimated_minutes: template.estimatedMinutes,
       notes: template.notes,
-      priorityLevel: "0",
-      repeatDayOfMonth: template.repeatDayOfMonth ? String(template.repeatDayOfMonth) : "",
-      repeatDaysOfWeek: template.repeatDaysOfWeek,
-      repeatFrequency: template.repeatFrequency,
-      repeatInterval: String(template.repeatInterval),
+      repeat_day_of_month: template.repeatDayOfMonth,
+      repeat_days_of_week: template.repeatDaysOfWeek,
+      repeat_frequency: template.repeatFrequency,
+      repeat_interval: template.repeatInterval,
       tags: template.tags,
-      title: template.title,
     });
-    openNewTaskEditor();
-  }, [openNewTaskEditor]);
+  }, [createTaskAndOpenSharedEditor]);
 
-  const openScratchLinkedTaskTemplate = useCallback((title: string) => {
-    setTaskEditorInitialDraft({ title });
-    openNewTaskEditor();
-  }, [openNewTaskEditor]);
+  const openScratchLinkedTaskTemplate = useCallback((title: string) => (
+    createTaskAndOpenSharedEditor(buildNewTaskDraft(title))
+  ), [createTaskAndOpenSharedEditor]);
 
   const {
     deferTask,
@@ -4484,6 +4481,145 @@ export function TaskApp() {
   const shouldDeferPageRender = isRestoringPersistedUiState;
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
+
+  useEffect(() => {
+    const requestedNavigation = requestedPageShell;
+    if (!requestedNavigation) return;
+    if (!requestedPageShellLayoutReady || !isAuthenticatedAppBootReady || activePage !== requestedNavigation.page || (requestedNavigation.healthTab && activeHealthTab !== requestedNavigation.healthTab)) {
+      return;
+    }
+    const request = requestedNavigation;
+    const scrollingElement = document.scrollingElement as HTMLElement | null;
+    const previousOverflowAnchor = scrollingElement?.style.getPropertyValue("overflow-anchor") ?? "";
+    scrollingElement?.style.setProperty("overflow-anchor", "none");
+    let frame: number | null = null;
+    let attempts = 0;
+    let stableComparisons = 0;
+    let stableAnchorFrames = 0;
+    let previousShellRect: PageShellNavigationRect | null = null;
+    let previousHeaderRect: PageShellNavigationRect | null = null;
+    let restoredOverflowAnchor = false;
+    const readRect = (element: HTMLElement): PageShellNavigationRect => {
+      const rect = element.getBoundingClientRect();
+      return { height: rect.height, left: rect.left, top: rect.top, width: rect.width };
+    };
+    const schedule = (callback: () => void) => {
+      if (frame === null) frame = window.requestAnimationFrame(() => { frame = null; callback(); });
+    };
+    const restoreOverflowAnchor = () => {
+      if (restoredOverflowAnchor || !scrollingElement) return;
+      restoredOverflowAnchor = true;
+      if (previousOverflowAnchor) scrollingElement.style.setProperty("overflow-anchor", previousOverflowAnchor);
+      else scrollingElement.style.removeProperty("overflow-anchor");
+    };
+    const abortNavigation = () => {
+      restoreOverflowAnchor();
+      setRequestedPageShell(null);
+    };
+    const consumeAttempt = () => {
+      if (attempts >= PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) {
+        abortNavigation();
+        return false;
+      }
+      attempts += 1;
+      return true;
+    };
+    const retryInitialGeometry = () => {
+      stableComparisons = 0;
+      stableAnchorFrames = 0;
+      previousShellRect = null;
+      previousHeaderRect = null;
+      if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) schedule(checkGeometry);
+      else abortNavigation();
+    };
+    const completeReveal = (shell: HTMLElement) => {
+      if (!shell.isConnected) {
+        retryInitialGeometry();
+        return;
+      }
+      restoreOverflowAnchor();
+      highlightPageShellNavigationTarget(shell);
+      setRequestedPageShell(null);
+    };
+    function stabilizeAnchor() {
+      if (!consumeAttempt()) return;
+      const shell = document.querySelector<HTMLElement>(`[data-page-shell-id="${request.shellId}"]`);
+      const header = document.querySelector<HTMLElement>("[data-app-fixed-header]");
+      if (!shell?.isConnected || !header?.isConnected) {
+        retryInitialGeometry();
+        return;
+      }
+      const shellRect = readRect(shell);
+      const headerRect = readRect(header);
+      if (!isPageShellNavigationRectUsable(shellRect) || !isPageShellNavigationRectUsable(headerRect)) {
+        stableAnchorFrames = 0;
+        if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) schedule(stabilizeAnchor);
+        else abortNavigation();
+        return;
+      }
+      const headerBottom = headerRect.top + headerRect.height;
+      const expectedTop = headerBottom + PAGE_SHELL_NAVIGATION_GAP_PX;
+      if (Math.abs(shellRect.top - expectedTop) > PAGE_SHELL_NAVIGATION_RECT_TOLERANCE_PX) {
+        stableAnchorFrames = 0;
+        window.scrollTo({
+          behavior: "auto",
+          top: getPageShellNavigationScrollTop(window.scrollY, shellRect.top, headerBottom),
+        });
+      } else {
+        stableAnchorFrames += 1;
+      }
+      if (stableAnchorFrames >= PAGE_SHELL_NAVIGATION_ANCHOR_STABLE_FRAMES) {
+        completeReveal(shell);
+      } else if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) {
+        schedule(stabilizeAnchor);
+      } else {
+        abortNavigation();
+      }
+    }
+    function checkGeometry() {
+      if (!consumeAttempt()) return;
+      const shell = document.querySelector<HTMLElement>(`[data-page-shell-id="${request.shellId}"]`);
+      const header = document.querySelector<HTMLElement>("[data-app-fixed-header]");
+      if (!shell?.isConnected || !header?.isConnected) {
+        retryInitialGeometry();
+        return;
+      }
+      const shellRect = readRect(shell);
+      const headerRect = readRect(header);
+      if (!isPageShellNavigationRectUsable(shellRect) || !isPageShellNavigationRectUsable(headerRect)) {
+        retryInitialGeometry();
+        return;
+      }
+      if (previousShellRect && previousHeaderRect
+        && arePageShellNavigationRectsStable(previousShellRect, shellRect)
+        && arePageShellNavigationRectsStable(previousHeaderRect, headerRect)) {
+        stableComparisons += 1;
+      } else {
+        stableComparisons = 0;
+      }
+      previousShellRect = shellRect;
+      previousHeaderRect = headerRect;
+      attempts += 1;
+      if (stableComparisons >= PAGE_SHELL_NAVIGATION_STABILITY_COMPARISONS) {
+        const body = shell.querySelector<HTMLElement>(".page-shell-body");
+        if (body) body.scrollTop = 0;
+        window.scrollTo({
+          behavior: "auto",
+          top: getPageShellNavigationScrollTop(window.scrollY, shellRect.top, headerRect.top + headerRect.height),
+        });
+        stableAnchorFrames = 0;
+        schedule(stabilizeAnchor);
+      } else if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) {
+        schedule(checkGeometry);
+      } else abortNavigation();
+    }
+    schedule(checkGeometry);
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      restoreOverflowAnchor();
+    };
+  }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, requestedPageShell, requestedPageShellLayoutReady]);
+  useEffect(() => () => clearPageShellNavigationHighlight(), [clearPageShellNavigationHighlight]);
   const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
   const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string) => {
     const result = buildChildTaskCreationDraft({
@@ -4607,7 +4743,7 @@ export function TaskApp() {
         milestone={milestone}
         nowMs={logicalDayNow}
         onAbandon={() => milestone && setPendingMilestoneLifecycle({ action: "abandon", milestoneId: milestone.id })}
-        onComplete={() => requestTaskComplete(task, { source: "status" })}
+        onComplete={() => requestTaskComplete(task)}
         onCorrect={() => milestone && setMilestoneCorrectionId(milestone.id)}
         onPromote={() => openMilestoneSetup(task.id)}
         onReverse={() => milestone && setPendingMilestoneLifecycle({ action: "reverse", milestoneId: milestone.id })}
@@ -5022,6 +5158,14 @@ export function TaskApp() {
       tasks={selectedBucketTasks}
     />
   );
+  const calendarContentNode = (
+    <TaskCalendarView
+      onAddTask={openCalendarDateTaskEditor}
+      onOpenTask={openExistingTaskEditor}
+      taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
+      tasks={calendarTasks}
+    />
+  );
   const requestedOpenListTask = requestedListOverlayTaskId
     ? tasks.find((task) => task.id === requestedListOverlayTaskId) ?? null
     : null;
@@ -5142,85 +5286,10 @@ export function TaskApp() {
     });
   }
 
-  async function handleTaskEditorSave(draft: {
-    focusToday: boolean;
-    linkedNoteIds: string[];
-    subtasks: TaskSubtaskDraft[];
-    values: Parameters<typeof saveTaskEditor>[0];
-  }) {
-    if (selectedTaskForEditor && draft.values.status === "complete") {
-      requestTaskComplete(selectedTaskForEditor, {
-        focusToday: draft.focusToday,
-        linkedNoteIds: draft.linkedNoteIds,
-        source: "editor",
-        subtasks: draft.subtasks,
-        values: draft.values,
-      });
-      return;
-    }
-
-    if (
-      selectedTaskForEditor
-      && draft.values.status !== undefined
-      && draft.values.status !== selectedTaskForEditor.status
-      && isTaskStateRuntimeLifecycleTransition(selectedTaskForEditor, draft.values.status)
-    ) {
-      const lifecycleAction = classifyTaskStateRuntimeAction({
-        task: selectedTaskForEditor as TaskStateRuntimeLocalTask,
-        values: draft.values,
-      });
-      if (lifecycleAction.kind !== "canonical_action"
-        || !["archive_task", "trash_task", "restore_task"].includes(lifecycleAction.actionType)) {
-        setMessage({ tone: "warn", text: lifecycleAction.kind === "unsupported_state_mutation"
-          ? lifecycleAction.reason
-          : "The canonical editor lifecycle action could not be classified." });
-        return;
-      }
-      const updated = await updateTaskStatus(selectedTaskForEditor, draft.values.status);
-      if (updated) closeTaskEditorWithReset();
-      return;
-    }
-
-    const requestedEngineOutcome = selectedTaskForEditor
-      && draft.values.status !== selectedTaskForEditor.status
-      && (draft.values.status === "done" || draft.values.status === "did_my_best" || draft.values.status === "missed")
-      ? draft.values.status
-      : null;
-    const values = requestedEngineOutcome && selectedTaskForEditor
-      ? { ...draft.values, status: selectedTaskForEditor.status }
-      : draft.values;
-
-    const savedTask = await saveTaskEditor(values, {
-      focusToday: draft.focusToday,
-      linkedNoteIds: draft.linkedNoteIds,
-      subtasks: draft.subtasks,
-      taskId: selectedTaskForEditor?.id ?? null,
-    });
-
-    if (savedTask && requestedEngineOutcome) {
-      const updated = await updateTaskStatus(savedTask, requestedEngineOutcome);
-      if (updated) closeTaskEditorWithReset();
-      return;
-    }
-
-    if (savedTask) {
-      closeTaskEditorWithReset();
-    }
-  }
-
-  function openSelectedTaskHistory() {
-    if (selectedTaskForEditor) {
-      setTaskHistoryModalTaskId(selectedTaskForEditor.id);
-      void loadTaskHistoryForTask(selectedTaskForEditor.id, { force: true });
-      void loadTaskCalendarOverridesForTask(selectedTaskForEditor.id);
-    }
-  }
-
   function openTaskHistoryForTask(taskId: string) {
     setTaskHistoryModalTaskId(taskId);
     void loadTaskHistoryForTask(taskId, { force: true });
     void loadTaskCalendarOverridesForTask(taskId);
-    const task = tasks.find((entry) => entry.id === taskId);
   }
 
   function openBatchDeleteModal() {
@@ -5315,35 +5384,18 @@ export function TaskApp() {
   function requestTaskComplete(
     task: Task,
     options?: {
-      focusToday?: boolean;
-      linkedNoteIds?: string[];
       onTimeOrigin?: OnTimeLinkedItemOrigin;
-      source?: "editor" | "status";
-      subtasks?: TaskSubtaskDraft[];
-      values?: TaskUpdate;
     },
   ) {
     const eligibility = canTaskBeMarkedComplete(task.id, tasks);
     if (!eligibility.canComplete) {
-      if (options?.source === "editor") {
-        setTaskEditorStatusResetSignal({
-          status: task.status,
-          taskId: task.id,
-          token: Date.now(),
-        });
-      }
       setMessage({ tone: "warn", text: COMPLETE_BLOCKED_MESSAGE });
       return false;
     }
 
     setPendingCompleteAction({
-      focusToday: options?.focusToday,
-      linkedNoteIds: options?.linkedNoteIds,
       onTimeOrigin: options?.onTimeOrigin,
-      source: options?.source ?? "status",
-      subtasks: options?.subtasks,
       taskId: task.id,
-      values: options?.values,
     });
     return true;
   }
@@ -5381,17 +5433,6 @@ export function TaskApp() {
       const canonicalCommitted = await updateTask(task.id, { status: "complete" }, { expectedTask: task });
       if (!canonicalCommitted) return false;
 
-      const linkedNoteIds = completeAction.linkedNoteIds ?? [];
-      const subtasks = completeAction.subtasks ?? [];
-      if (subtasks.length > 0) {
-        const subtasksResult = await replaceTaskSubtasks(task.id, subtasks);
-        if (!subtasksResult.saved) return fail("Task was completed canonically, but its Steps could not be saved.");
-      }
-      if (completeAction.source === "editor") {
-        const linkedNotesSaved = await syncTaskNoteLinks(task.id, linkedNoteIds);
-        if (!linkedNotesSaved) return fail("Task was completed canonically, but its linked notes could not be saved.");
-        closeTaskEditorWithReset();
-      }
       routeTask(task.id, null);
       if (focusedTaskIds.includes(task.id)) void saveFocusSelection(focusedTaskIds.filter((id) => id !== task.id));
       setPendingCompleteAction(null);
@@ -5417,16 +5458,6 @@ export function TaskApp() {
       milestoneOperationIdsRef.current.delete(operationKey);
       const completedTask = completion.result.task_row;
       setTasks((current) => sortTasksForUi(mergeAuthoritativeMilestoneTask(current, completedTask)));
-      const linkedNoteIds = completeAction.linkedNoteIds ?? [];
-      const subtasks = completeAction.subtasks ?? [];
-      if (subtasks.length > 0) {
-        const subtasksResult = await replaceTaskSubtasks(task.id, subtasks);
-        if (!subtasksResult.saved) return fail("The Milestone completed, but its Steps could not be saved.");
-      }
-      if (completeAction.source === "editor") {
-        const linkedNotesSaved = await syncTaskNoteLinks(task.id, linkedNoteIds);
-        if (!linkedNotesSaved) return fail("The Milestone completed, but its linked notes could not be saved.");
-      }
       if (completion.result.canonicalHistoryFactId) {
         const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];
         if (!historyLoad || historyLoad.status !== "ready") {
@@ -5444,7 +5475,6 @@ export function TaskApp() {
           task: completedTask,
         }]);
       }
-      if (completeAction.source === "editor") closeTaskEditorWithReset();
       if (selectedListTaskIds.includes(task.id)) clearListTaskSelection();
       setPendingCompleteAction(null);
       setMessage({ tone: "good", text: `“${completedTask.title}” completed. ${activeMilestone.current_tier[0]!.toUpperCase() + activeMilestone.current_tier.slice(1)} trophy awarded.` });
@@ -5469,7 +5499,7 @@ export function TaskApp() {
       return fail(completeAuthority.validationErrors[0] ?? "This task cannot be completed.");
     }
     const completeUpdateValues: TaskUpdate = {
-      ...buildCompleteTaskUpdateValues(task, completeAction.values),
+      ...buildCompleteTaskUpdateValues(task),
       ...(completeAuthority?.persistableTaskPatch.status ? { status: completeAuthority.persistableTaskPatch.status } : {}),
       ...(Object.hasOwn(completeAuthority?.persistableTaskPatch ?? {}, "dueOn") ? { due_on: completeAuthority!.persistableTaskPatch.dueOn } : {}),
       ...(Object.hasOwn(completeAuthority?.persistableTaskPatch ?? {}, "completedAt") ? { completed_at: completeAuthority!.persistableTaskPatch.completedAt } : {}),
@@ -5493,8 +5523,6 @@ export function TaskApp() {
       return fail("Task completion succeeded, but no updated task row came back from Supabase.");
     }
 
-    const linkedNoteIds = completeAction.linkedNoteIds ?? [];
-    const subtasks = completeAction.subtasks ?? [];
     const historyEntries = completeAuthority?.mutationPlan.historyIntents.length
       ? completeAuthority.mutationPlan.historyIntents
       : [buildCompleteHistoryPayload({
@@ -5522,20 +5550,6 @@ export function TaskApp() {
       return fail("Task was updated, but its History could not be saved.");
     }
 
-    if (subtasks.length > 0) {
-      const subtasksResult = await replaceTaskSubtasks(task.id, subtasks);
-      if (!subtasksResult.saved) {
-        return fail("Task was marked Complete, but its Steps could not be saved.");
-      }
-    }
-
-    if (completeAction.source === "editor") {
-      const linkedNotesSaved = await syncTaskNoteLinks(task.id, linkedNoteIds);
-      if (!linkedNotesSaved) {
-        return fail("Task was marked Complete, but its linked notes could not be saved.");
-      }
-    }
-
     setTasks((current) => sortTasksForUi(current.map((currentTask) => currentTask.id === task.id ? data : currentTask)));
     routeTask(task.id, null);
     if (focusedTaskIds.includes(task.id)) {
@@ -5549,9 +5563,6 @@ export function TaskApp() {
       task: data,
     }]);
 
-    if (completeAction.source === "editor") {
-      closeTaskEditorWithReset();
-    }
     if (selectedListTaskIds.includes(task.id)) {
       clearListTaskSelection();
     }
@@ -5655,7 +5666,7 @@ export function TaskApp() {
       return false;
     }
     if (status === "complete") {
-      requestTaskComplete(task, { onTimeOrigin, source: "status" });
+      requestTaskComplete(task, { onTimeOrigin });
       return false;
     }
 
@@ -6061,22 +6072,6 @@ export function TaskApp() {
     onClose: closeMomentumDetails,
     remainingTasks: momentumMetric.remainingTasks,
     title: momentumMetric.label,
-  } : null;
-
-  const taskEditorFlow = isTaskEditorOpen ? {
-    allTags: allTaskTags,
-    client,
-    currentUser,
-    focusedToday: focusedTaskIds,
-    mode: taskEditorMode,
-    initialDraftOverride: taskEditorInitialDraft,
-    onClose: closeTaskEditorWithReset,
-    onOpenHistory: selectedTaskForEditor ? openSelectedTaskHistory : undefined,
-    onSave: handleTaskEditorSave,
-    statusResetSignal: taskEditorStatusResetSignal,
-    subtasks: selectedTaskForEditor ? rawTaskSubtasksByTaskId[selectedTaskForEditor.id] ?? [] : [],
-    task: selectedTaskForEditor,
-    todayDateKey: todayKey,
   } : null;
 
   const taskHistoryModalTask = taskHistoryModalTaskId
@@ -6588,7 +6583,6 @@ export function TaskApp() {
         })()}
         focusPlannerFlow={focusPlannerFlow}
         momentumFlow={momentumFlow}
-        taskEditorFlow={taskEditorFlow}
         taskHistoryFlow={taskHistoryFlow}
       />
       {milestoneSetupTask ? (
@@ -6781,8 +6775,8 @@ export function TaskApp() {
               <ImportWidgetCard
                 embeddedInModal
                 message={message}
-                onImport={async (lines) => {
-                  const result = await importTasks(lines);
+                onImport={async (lines, options) => {
+                  const result = await importTasks(lines, options);
                   if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
                     setIsImportWidgetMenuOpen(false);
                   }
@@ -6800,7 +6794,7 @@ export function TaskApp() {
           pendingRewards={activeRewardBankSession}
         />
       ) : null}
-      <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]">
+      <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]" data-app-fixed-header>
         <div className="w-full">
           <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
               <HudRuntimeClock active>
@@ -7383,6 +7377,7 @@ export function TaskApp() {
             )}
             alternateViewPanel={(
               <TasksNonListShell
+                calendarNode={calendarContentNode}
                 cardsNode={cardsContentNode}
                 dailyPlanningNode={nonListDailyPlanningNode}
                 filterRowsNode={nonListFilterRowsNode}
@@ -7436,6 +7431,7 @@ export function TaskApp() {
             pendingDailyGoalSurplus={pendingDailyGoalSurplus}
             focusReallocationMode={focusReallocationMode}
             onSetFocusReallocationMode={setFocusReallocationMode}
+            userId={currentUserId}
           />
         ) : activePage === "Health" ? (
           <TaskHealthPage
@@ -7444,6 +7440,17 @@ export function TaskApp() {
             archivePlan={archiveFitnessPlan}
             archivePlanItem={archiveFitnessPlanItem}
             checkIns={healthCheckIns}
+            journalSignals={healthJournalSignals}
+            journalSignalValues={healthJournalSignalValues}
+            journalSignalOccurrences={healthJournalSignalOccurrences}
+            saveJournalEntry={saveJournalEntry}
+            createJournalSignal={createJournalSignal}
+            updateJournalSignal={updateJournalSignal}
+            setJournalSignalTemplate={setJournalSignalTemplate}
+            archiveJournalSignal={archiveJournalSignal}
+            deleteJournalSignal={deleteJournalSignal}
+            reorderJournalSignals={reorderJournalSignals}
+            deleteJournalEntry={deleteJournalEntry}
             createPlan={createFitnessPlan}
             createPlanItem={createFitnessPlanItem}
             createGoal={createFitnessGoal}
@@ -7489,6 +7496,12 @@ export function TaskApp() {
             syncIncrementalAppleHealthData={healthKitLifecycleCoordinator.runManualSync}
             mealEntries={healthMealEntries}
             mealPlanEntries={healthMealPlanEntries}
+            symptoms={healthSymptoms}
+            symptomEntries={healthSymptomEntries}
+            createSymptom={createHealthSymptom}
+            renameSymptom={renameHealthSymptom}
+            setSymptomColor={setHealthSymptomColor}
+            archiveSymptom={archiveHealthSymptom}
             metricEntries={healthMetricEntries}
             onOpenReminderTemplate={openHealthReminderTemplate}
             sleepCategory={sleepCategory}
@@ -7499,7 +7512,6 @@ export function TaskApp() {
             onUpdateSleepSession={onUpdateSleepSession}
             profile={healthProfile}
             recipes={healthRecipes}
-            saveCheckIn={saveCheckIn}
             saveFavoriteFood={saveFavoriteFood}
             setFavoriteFoodStatus={setFavoriteFoodStatus}
             saveRecipe={saveHealthRecipe}
@@ -7513,6 +7525,7 @@ export function TaskApp() {
             deleteMealPlanEntry={deleteHealthMealPlanEntry}
             confirmMealPlanEntry={confirmHealthMealPlanEntry}
             addWaterEntry={addHealthWaterEntry}
+            confirmWaterEntry={confirmHealthWaterEntry}
             addWeightEntry={addHealthWeightEntry}
             addWorkout={addHealthWorkout}
             storageMode={healthStorageMode}
@@ -7542,6 +7555,7 @@ export function TaskApp() {
             taskHistoryStats={taskHistoryStats}
             tasks={tasksForActiveStatusRead}
             todayDateKey={todayKey}
+            userId={currentUserId}
           />
         ) : activePage === "Notes" ? (
           <NotesPage
@@ -7584,6 +7598,7 @@ export function TaskApp() {
             isDark={theme === "dark"}
             page={activePage}
             setActivePage={setActivePage}
+            userId={currentUser.id}
           />
         )}
         </ErrorBoundary>
@@ -7599,6 +7614,7 @@ export function TaskApp() {
           onNavigateSearchTarget={handleNavigatorSearchTarget}
           renderIcon={(name) => <CategoryIcon className="h-6 w-6" name={name} />}
           searchTargets={navigatorSearchTargets}
+          taskSearchEntities={navigatorTaskSearchEntities}
         />
       </div>
       <TaskActiveTimersTray
@@ -9224,16 +9240,104 @@ function TestRuleBuilderPreview() {
   );
 }
 
+function TestPageWorkspace({ isDark, userId }: { isDark: boolean; userId: string | null }) {
+  const layout = usePageShellLayout(userId, "test", TEST_PAGE_SHELL_IDS, TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes, TEST_PAGE_SHELL_CANONICAL_LAYOUT);
+
+  return (
+    <div className="w-full space-y-5 text-left">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#9b92be] dark:text-white/35">Test workspace</p>
+          <p className="mt-1 text-sm text-[#726a96] dark:text-white/60">Outer tools can be arranged independently; the D20 mapper has its own inner layout.</p>
+        </div>
+        <PageShellLayoutControls layout={layout} />
+      </div>
+
+      <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-12">
+        <PageShell id="test-task-table" label="Task Table #2">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 p-5 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody>
+              <div className="rounded-[1.75rem] border border-[#e9e1ff] bg-white/90 p-5 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+                <div className="flex flex-wrap items-center justify-between gap-3 px-3 pb-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#8e84b7] dark:text-white/45">Table #2 Test</p>
+                    <h2 className="mt-2 text-2xl font-semibold text-[#2a3250] dark:text-white">Server-style task management table</h2>
+                    <p className="mt-2 max-w-2xl text-sm leading-6 text-[#727a93] dark:text-white/60">
+                      Prototype sandbox for the richer task table treatment. This stays isolated to the Test page so we can
+                      tune layout, chips, and row actions without disrupting the real Tasks view.
+                    </p>
+                  </div>
+                </div>
+                <TaskManagementTableV2 className="max-w-none p-0" title="Task Table #2" />
+              </div>
+            </PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-d20" label="D20 Face Mapper">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody>
+              <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">D20 tools failed to load.</div>}>
+                <TestD20FaceMapper dark={isDark} userId={userId} />
+              </ErrorBoundary>
+            </PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-dice-face" label="Dice Face Mapper">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody>
+              <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">Dice face tools failed to load.</div>}>
+                <TestDiceFaceMapper dark={isDark} />
+              </ErrorBoundary>
+            </PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-dice-material" label="Dice Material Lab">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody>
+              <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">Dice material tools failed to load.</div>}>
+                <TestDiceMaterialLab dark={isDark} />
+              </ErrorBoundary>
+            </PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-task-table-prototype" label="Task Table Prototype">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody><TestTaskTablePrototype /></PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-bucket-tray" label="Bucket Tray">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody><TestBucketTrayPreview /></PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+
+        <PageShell id="test-rule-builder" label="Rule Builder">
+          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+            <PageShellBody><TestRuleBuilderPreview /></PageShellBody>
+          </PageShellSurface>
+        </PageShell>
+      </ReorderablePageShells>
+    </div>
+  );
+}
+
 function PagePlaceholder({
   count,
   isDark,
   page,
   setActivePage,
+  userId,
 }: {
   count: number;
   isDark: boolean;
   page: AppPage;
   setActivePage: (page: AppPage) => void;
+  userId: string | null;
 }) {
   return (
     <section className="flex flex-col items-center pt-[5px] text-center">
@@ -9268,33 +9372,7 @@ function PagePlaceholder({
         <OverviewStatCard detail="stays in bottom dock" label="Navigation" value="Persistent" />
       </div>
       {page === "Test" ? (
-        <div className="w-full space-y-10">
-          <div className="rounded-[32px] border border-[#e9e1ff] bg-white/90 p-5 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
-            <div className="flex flex-wrap items-center justify-between gap-3 px-3 pb-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#8e84b7] dark:text-white/45">
-                  Table #2 Test
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold text-[#2a3250] dark:text-white">
-                  Server-style task management table
-                </h2>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-[#727a93] dark:text-white/60">
-                  Prototype sandbox for the richer task table treatment. This stays isolated to the Test page so we can
-                  tune layout, chips, and row actions without disrupting the real Tasks view.
-                </p>
-              </div>
-          </div>
-          <TaskManagementTableV2 className="max-w-none p-0" title="Task Table #2" />
-          </div>
-          <ErrorBoundary fallback={<div className="rounded-[1.5rem] border border-[#ece8f8] bg-white p-5 text-sm font-medium text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">Test tools failed to load.</div>}>
-            <TestD20FaceMapper dark={isDark} />
-            <TestDiceFaceMapper dark={isDark} />
-            <TestDiceMaterialLab dark={isDark} />
-            <TestTaskTablePrototype />
-          </ErrorBoundary>
-          <TestBucketTrayPreview />
-          <TestRuleBuilderPreview />
-        </div>
+        <TestPageWorkspace isDark={isDark} userId={userId} />
       ) : null}
     </section>
   );

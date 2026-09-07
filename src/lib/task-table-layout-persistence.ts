@@ -8,6 +8,19 @@ export type TaskTableLayoutPreferences = {
   sortState?: TaskTableLayoutSortState;
 };
 
+export type TaskUiSettingsSyncMetadata = {
+  hudUpdatedAt: string | null;
+  taskTableLayoutUpdatedAt: string | null;
+};
+
+export type TaskUiSettingsSnapshot = {
+  hasHudUiState: boolean;
+  hasTaskTableLayout: boolean;
+  hudUiStateValue: unknown;
+  syncMetadata: TaskUiSettingsSyncMetadata;
+  taskTableLayoutPreferences: TaskTableLayoutPreferences;
+};
+
 export const TASK_TABLE_LAYOUT_STORAGE_KEY = "adhdice-task-table-layout";
 
 export function normalizeStoredTaskTableLayoutPreferences(value: unknown): TaskTableLayoutPreferences {
@@ -98,7 +111,34 @@ export function resolveTaskTableLayoutPublishDecision({
   };
 }
 
-export function splitTaskUiSettingsEnvelope(value: unknown) {
+function normalizeSyncTimestamp(value: unknown) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? null : new Date(timestamp).toISOString();
+}
+
+export function normalizeTaskUiSettingsSyncMetadata(
+  value: unknown,
+  fallbackUpdatedAt: string | null = null,
+): TaskUiSettingsSyncMetadata {
+  const fallback = normalizeSyncTimestamp(fallbackUpdatedAt);
+  if (!value || typeof value !== "object") {
+    return { hudUpdatedAt: fallback, taskTableLayoutUpdatedAt: fallback };
+  }
+
+  const candidate = value as {
+    hudUpdatedAt?: unknown;
+    taskTableLayoutUpdatedAt?: unknown;
+  };
+  return {
+    hudUpdatedAt: normalizeSyncTimestamp(candidate.hudUpdatedAt) ?? fallback,
+    taskTableLayoutUpdatedAt: normalizeSyncTimestamp(candidate.taskTableLayoutUpdatedAt) ?? fallback,
+  };
+}
+
+export function splitTaskUiSettingsEnvelope(value: unknown, fallbackUpdatedAt: string | null = null): TaskUiSettingsSnapshot {
   if (
     value
     && typeof value === "object"
@@ -107,15 +147,22 @@ export function splitTaskUiSettingsEnvelope(value: unknown) {
     const candidate = value as {
       hudUiState?: unknown;
       taskTableLayout?: unknown;
+      syncMetadata?: unknown;
     };
     return {
+      hasHudUiState: Object.prototype.hasOwnProperty.call(candidate, "hudUiState"),
+      hasTaskTableLayout: Object.prototype.hasOwnProperty.call(candidate, "taskTableLayout"),
       hudUiStateValue: candidate.hudUiState,
+      syncMetadata: normalizeTaskUiSettingsSyncMetadata(candidate.syncMetadata, fallbackUpdatedAt),
       taskTableLayoutPreferences: normalizeStoredTaskTableLayoutPreferences(candidate.taskTableLayout),
     };
   }
 
   return {
+    hasHudUiState: true,
+    hasTaskTableLayout: false,
     hudUiStateValue: value,
+    syncMetadata: normalizeTaskUiSettingsSyncMetadata(null, fallbackUpdatedAt),
     taskTableLayoutPreferences: {},
   };
 }
@@ -123,9 +170,65 @@ export function splitTaskUiSettingsEnvelope(value: unknown) {
 export function buildTaskUiSettingsEnvelope(
   hudUiState: unknown,
   taskTableLayoutPreferences: TaskTableLayoutPreferences,
+  syncMetadata: Partial<TaskUiSettingsSyncMetadata> = {},
 ) {
   return {
     hudUiState,
     taskTableLayout: taskTableLayoutPreferences,
+    syncMetadata: normalizeTaskUiSettingsSyncMetadata(syncMetadata),
+  };
+}
+
+function isNewerTimestamp(remoteTimestamp: string | null, localTimestamp: string | null) {
+  if (!remoteTimestamp) {
+    return false;
+  }
+  if (!localTimestamp) {
+    return true;
+  }
+  return Date.parse(remoteTimestamp) > Date.parse(localTimestamp);
+}
+
+export function resolveTaskUiSettingsReconciliation({
+  local,
+  remote,
+}: {
+  local: TaskUiSettingsSnapshot;
+  remote: TaskUiSettingsSnapshot | null;
+}) {
+  if (!remote) {
+    return {
+      hasLocalHudUiState: local.hasHudUiState,
+      hasLocalTaskTableLayout: local.hasTaskTableLayout,
+      hudUiStateValue: local.hudUiStateValue,
+      localHudWins: local.hasHudUiState,
+      localTaskTableLayoutWins: local.hasTaskTableLayout,
+      shouldPush: local.hasHudUiState || local.hasTaskTableLayout,
+      syncMetadata: local.syncMetadata,
+      taskTableLayoutPreferences: local.taskTableLayoutPreferences,
+    };
+  }
+
+  const remoteHudWins = remote.hasHudUiState
+    && (!local.hasHudUiState || isNewerTimestamp(remote.syncMetadata.hudUpdatedAt, local.syncMetadata.hudUpdatedAt));
+  const remoteTaskTableLayoutWins = remote.hasTaskTableLayout
+    && (!local.hasTaskTableLayout || isNewerTimestamp(remote.syncMetadata.taskTableLayoutUpdatedAt, local.syncMetadata.taskTableLayoutUpdatedAt));
+  const localHudWins = local.hasHudUiState && !remoteHudWins;
+  const localTaskTableLayoutWins = local.hasTaskTableLayout && !remoteTaskTableLayoutWins;
+
+  return {
+    hasLocalHudUiState: local.hasHudUiState,
+    hasLocalTaskTableLayout: local.hasTaskTableLayout,
+    hudUiStateValue: remoteHudWins ? remote.hudUiStateValue : local.hudUiStateValue,
+    localHudWins,
+    localTaskTableLayoutWins,
+    shouldPush: localHudWins || localTaskTableLayoutWins,
+    syncMetadata: {
+      hudUpdatedAt: remoteHudWins ? remote.syncMetadata.hudUpdatedAt : local.syncMetadata.hudUpdatedAt,
+      taskTableLayoutUpdatedAt: remoteTaskTableLayoutWins ? remote.syncMetadata.taskTableLayoutUpdatedAt : local.syncMetadata.taskTableLayoutUpdatedAt,
+    },
+    taskTableLayoutPreferences: remoteTaskTableLayoutWins
+      ? remote.taskTableLayoutPreferences
+      : local.taskTableLayoutPreferences,
   };
 }

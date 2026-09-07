@@ -1,6 +1,6 @@
 "use client";
 
-import type { HTMLAttributes, ReactNode } from "react";
+import { forwardRef, type HTMLAttributes, type ReactNode } from "react";
 
 function joinClasses(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -11,12 +11,12 @@ export type AdhdDropdownPanelProps = HTMLAttributes<HTMLDivElement> & {
   widthClassName?: string;
 };
 
-export function AdhdDropdownPanel({
+export const AdhdDropdownPanel = forwardRef<HTMLDivElement, AdhdDropdownPanelProps>(function AdhdDropdownPanel({
   children,
   className,
   widthClassName,
   ...props
-}: AdhdDropdownPanelProps) {
+}, ref) {
   return (
     <div
       className={joinClasses(
@@ -24,9 +24,10 @@ export function AdhdDropdownPanel({
         widthClassName,
         className,
       )}
+      ref={ref}
       {...props}
     >
       {children}
     </div>
   );
-}
+});

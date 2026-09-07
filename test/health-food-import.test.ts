@@ -158,7 +158,7 @@ test("Deleting a custom food leaves meal rows and snapshot-backed editing indepe
   assert.doesNotMatch(schema, /source_food_id text\s+references\s+public\.adhdice_health_food_library/);
   assert.match(page, /const snapshot = entry\.food_snapshot/);
   assert.match(page, /sourceFoodId: entry\.source_food_id \?\? snapshot\.source_food_id/);
-  assert.match(page, /formatHealthMealSummary\(entry\)/);
+  assert.match(page, /getHealthMealSummaryParts\(entry\)/);
 });
 
 test("Health meal logger uses the selected ledger date and active section through insert and edit paths", () => {

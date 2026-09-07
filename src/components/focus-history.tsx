@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { ChevronLeft, ChevronRight, TrendingUp } from "lucide-react";
 import { ModalShell } from "./modal-shell";
@@ -10,10 +10,12 @@ import {
 import { attachDailyOverallGoalSeconds } from "@/lib/focus-activity";
 import { ALL_FOCUS_ACTIVITY_FILTER, filterFocusActivityHistory, getFocusActivitySubtypeOptions, getFocusActivityTypeOptions } from "@/lib/focus-activity-filters";
 import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "@/lib/focus-activity-scroll";
+import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { type FocusCategory, type HistoricalFocusSession, type FocusLabelOptions, type FocusSubtype, type FocusType } from "@/lib/types";
 import { formatLocalDate } from "@/lib/utils";
 import { ActivityLineChartCard, type NumericLineChartSeries } from "@/components/activity-line-chart-card";
+import { PageShellBody, PageShellSurface } from "@/components/ui-system/reorderable-page-shells";
 
 type TimeScope = "daily" | "weekly" | "monthly";
 
@@ -1077,21 +1079,64 @@ function buildFocusHistoryDerived(
   };
 }
 
-export function DailyHistoryGallery({
-  categories,
-  history,
-  labelOptions,
-  onDeleteEntry,
-  onEditGoals,
-  onUpdateEntry,
-}: {
+type FocusHistoryGalleryProps = {
   categories: FocusCategory[];
   history: HistoricalFocusSession[];
   labelOptions: FocusLabelOptions;
   onDeleteEntry: (entryId: string) => Promise<void>;
   onEditGoals: () => void;
   onUpdateEntry: (entryId: string, data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; completionTime?: string; notes: string }) => Promise<void>;
-}) {
+};
+
+type FocusHistoryContextValue = {
+  summaryProps: {
+    allHistory: HistoricalFocusSession[];
+    categoryBars: DistributionBar[];
+    categories: FocusCategory[];
+    currentDate: string;
+    deletingId: string | null;
+    focusSubtypeOptions: string[];
+    focusTypeOptions: string[];
+    historyEntries: HistoricalFocusSession[];
+    onDateChange: (date: string) => void;
+    onDeleteEntry: (entryId: string) => void;
+    onEditGoals: () => void;
+    onEditHistoryEntry: (entry: HistoricalFocusSession) => void;
+    onFocusSubtypeChange: (value: string) => void;
+    onFocusTypeChange: (value: string) => void;
+    onScopeChange: (scope: TimeScope) => void;
+    onShiftPeriod: (direction: number) => void;
+    overallBars: DistributionBar[];
+    selectedFocusSubtype: string;
+    selectedFocusType: string;
+    scope: TimeScope;
+    totalLabel: string;
+    trend: ActivityTrendSummary | null;
+  };
+  lineProps: {
+    range: ScopeRange;
+    scope: TimeScope;
+    series: ActivityLineSeries[];
+  };
+};
+
+const FocusHistoryContext = createContext<FocusHistoryContextValue | null>(null);
+
+function useFocusHistoryContext() {
+  const context = useContext(FocusHistoryContext);
+  if (!context) throw new Error("Focus activity shells must be rendered inside FocusHistoryProvider.");
+  return context;
+}
+
+export function FocusHistoryProvider({
+  categories,
+  children,
+  history,
+  labelOptions,
+  onDeleteEntry,
+  onEditGoals,
+  onUpdateEntry,
+}: FocusHistoryGalleryProps & { children: ReactNode }) {
   const [activityScope, setActivityScope] = useState<TimeScope>("daily");
   const [activityDate, setActivityDate] = useState(todayLocalISO());
   const [activityFocusType, setActivityFocusType] = useState(ALL_FOCUS_ACTIVITY_FILTER);
@@ -1252,41 +1297,41 @@ export function DailyHistoryGallery({
   };
   const shouldShowLowerFocusAnalytics = false;
 
+  const contextValue: FocusHistoryContextValue = {
+    lineProps: {
+      range: activityRange,
+      scope: activityScope,
+      series: activityDerived.activityLineSeries,
+    },
+    summaryProps: {
+      allHistory: history,
+      categoryBars: activityDerived.activityCategoryBars,
+      categories,
+      currentDate: activityDate,
+      deletingId,
+      focusSubtypeOptions: activityFocusSubtypeOptions,
+      focusTypeOptions: activityFocusTypeOptions,
+      historyEntries: activityDerived.sessionsByDate,
+      onDateChange: setActivityDate,
+      onDeleteEntry: deleteEntry,
+      onEditGoals,
+      onEditHistoryEntry: openEdit,
+      onFocusSubtypeChange: setActivityFocusSubtype,
+      onFocusTypeChange: changeActivityFocusType,
+      onScopeChange: setActivityScope,
+      onShiftPeriod: shiftActivityPeriod,
+      overallBars: activityDerived.activityOverallBars,
+      selectedFocusSubtype: selectedActivityFocusSubtype,
+      selectedFocusType: selectedActivityFocusType,
+      scope: activityScope,
+      totalLabel: formatCompactDuration(activityDerived.totalScopedSeconds),
+      trend: activityDerived.activityTrend,
+    },
+  };
+
   return (
-    <>
-      <section className="mx-auto mb-4 w-full max-w-6xl sm:mb-6">
-        <div className="flex flex-col gap-4">
-          <FocusActivitySummaryCard
-            allHistory={history}
-            categoryBars={activityDerived.activityCategoryBars}
-            categories={categories}
-            currentDate={activityDate}
-            deletingId={deletingId}
-            focusSubtypeOptions={activityFocusSubtypeOptions}
-            focusTypeOptions={activityFocusTypeOptions}
-            historyEntries={activityDerived.sessionsByDate}
-            onDateChange={setActivityDate}
-            onDeleteEntry={deleteEntry}
-            onEditGoals={onEditGoals}
-            onEditHistoryEntry={openEdit}
-            onFocusSubtypeChange={setActivityFocusSubtype}
-            onFocusTypeChange={changeActivityFocusType}
-            onShiftPeriod={shiftActivityPeriod}
-            onScopeChange={setActivityScope}
-            overallBars={activityDerived.activityOverallBars}
-            selectedFocusSubtype={selectedActivityFocusSubtype}
-            selectedFocusType={selectedActivityFocusType}
-            scope={activityScope}
-            totalLabel={formatCompactDuration(activityDerived.totalScopedSeconds)}
-            trend={activityDerived.activityTrend}
-          />
-          <FocusActivityLineCard
-            range={activityRange}
-            scope={activityScope}
-            series={activityDerived.activityLineSeries}
-          />
-        </div>
-      </section>
+    <FocusHistoryContext.Provider value={contextValue}>
+      {children}
 
       {/* Lower Focus analytics temporarily hidden while Activity card direction is reviewed. */}
       {shouldShowLowerFocusAnalytics ? (
@@ -1537,7 +1582,30 @@ export function DailyHistoryGallery({
               </div>
             </ModalShell>
       ) : null}
-    </>
+    </FocusHistoryContext.Provider>
+  );
+}
+
+export function FocusActivitySummaryShell() {
+  const { summaryProps } = useFocusHistoryContext();
+  return <FocusActivitySummaryCard {...summaryProps} />;
+}
+
+export function FocusActivityLineShell() {
+  const { lineProps } = useFocusHistoryContext();
+  return <FocusActivityLineCard {...lineProps} />;
+}
+
+export function DailyHistoryGallery(props: FocusHistoryGalleryProps) {
+  return (
+    <FocusHistoryProvider {...props}>
+      <section className="mx-auto mb-4 w-full max-w-6xl sm:mb-6">
+        <div className="flex flex-col gap-4">
+          <FocusActivitySummaryShell />
+          <FocusActivityLineShell />
+        </div>
+      </section>
+    </FocusHistoryProvider>
   );
 }
 
@@ -1720,6 +1788,7 @@ function FocusActivityLineCard({
       formatAxisValue={(value) => value === 0 ? "0" : formatRoundedMinuteDuration(value)}
       formatValue={formatRoundedMinuteDuration}
       series={chartSeries}
+      shellSurface
       subtitle={`${range.label} • ${scope === "daily" ? "session points" : scope === "weekly" ? "daily points" : "weekly buckets"}`}
       title="Focus Activity Lines"
     />
@@ -1776,6 +1845,7 @@ function FocusActivitySummaryCard({
   const [selectedMode, setSelectedMode] = useState<ActivitySummaryMode>("overall");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isRangePickerOpen, setIsRangePickerOpen] = useState(false);
+  const rangeRootRef = useRef<HTMLDivElement | null>(null);
   const rangeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const rangePickerRef = useRef<HTMLDivElement | null>(null);
   const selectedRangeOptionRef = useRef<HTMLButtonElement | null>(null);
@@ -1893,7 +1963,7 @@ function FocusActivitySummaryCard({
         return;
       }
       setIsRangePickerOpen(false);
-      rangeTriggerRef.current?.focus();
+      focusDropdownControl(rangeTriggerRef.current);
     };
 
     window.addEventListener("pointerdown", handlePointerDown);
@@ -1911,7 +1981,7 @@ function FocusActivitySummaryCard({
     }
 
     const frame = window.requestAnimationFrame(() => {
-      selectedRangeOptionRef.current?.scrollIntoView({ block: "nearest" });
+      revealDropdownOptionWithinPanel(selectedRangeOptionRef.current, rangePickerRef.current);
     });
 
     return () => window.cancelAnimationFrame(frame);
@@ -1920,15 +1990,15 @@ function FocusActivitySummaryCard({
   const selectRangeOption = (optionDate: string) => {
     onDateChange(optionDate);
     setIsRangePickerOpen(false);
-    rangeTriggerRef.current?.focus();
+    focusDropdownControl(rangeTriggerRef.current);
   };
 
   return (
-    <div
+      <PageShellSurface
       aria-labelledby="activity-card-title"
-      className="w-full overflow-visible rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]"
+      className="w-full rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]"
     >
-      <div className="px-5 pb-3 pt-5 sm:px-6">
+      <div className="shrink-0 px-5 pb-3 pt-5 sm:px-6">
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
@@ -1940,13 +2010,29 @@ function FocusActivitySummaryCard({
                     <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </TaskTableChipButton>
-                <div className="relative">
+                <div
+                  className="relative"
+                  onBlur={(event) => {
+                    if (shouldCloseDropdownOnFocusLeave(rangeRootRef.current, event.relatedTarget)) {
+                      setIsRangePickerOpen(false);
+                    }
+                  }}
+                  ref={rangeRootRef}
+                >
                   <button
                     aria-controls="focus-activity-range-picker"
                     aria-expanded={isRangePickerOpen}
                     aria-haspopup="listbox"
                     className="inline-flex h-7 min-h-0 items-center gap-1 overflow-hidden rounded-full border border-[#e4deef] bg-[var(--surface-elevated)] px-3 py-0 text-[#5f6b83] shadow-none transition hover:border-[#ddd2ff] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b6a7ff] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-white/10 dark:bg-white/[0.03] dark:text-white/70 dark:hover:border-white/20 dark:hover:bg-white/[0.06] dark:focus-visible:ring-[#7f67ff] dark:focus-visible:ring-offset-[#140f26]"
-                    onClick={() => setIsRangePickerOpen((current) => !current)}
+                    onClick={() => {
+                      focusDropdownControl(rangeTriggerRef.current);
+                      setIsRangePickerOpen((current) => !current);
+                    }}
+                    onKeyDown={(event) => {
+                      if (shouldCloseDropdownOnTab(event.key, isRangePickerOpen)) {
+                        setIsRangePickerOpen(false);
+                      }
+                    }}
                     ref={rangeTriggerRef}
                     type="button"
                   >
@@ -1973,6 +2059,7 @@ function FocusActivitySummaryCard({
                           onClick={() => selectRangeOption(option.date)}
                           ref={option.isSelected ? selectedRangeOptionRef : undefined}
                           role="option"
+                          tabIndex={-1}
                           type="button"
                         >
                           <span className="text-sm font-bold leading-tight">{option.label}</span>
@@ -2057,7 +2144,7 @@ function FocusActivitySummaryCard({
         </div>
       </div>
 
-      <div className="px-5 pb-5 sm:px-6 sm:pb-6">
+      <PageShellBody className="px-5 pb-5 sm:px-6 sm:pb-6">
         <div className="flex flex-col items-start gap-5">
           <div className="flex flex-col">
             <p className="text-5xl font-bold tracking-tighter text-[var(--text-primary)]">
@@ -2235,8 +2322,8 @@ function FocusActivitySummaryCard({
             ) : null}
           </section>
         </div>
-      </div>
-    </div>
+      </PageShellBody>
+      </PageShellSurface>
   );
 }
 

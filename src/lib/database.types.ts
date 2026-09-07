@@ -1309,9 +1309,11 @@ export type HealthProfile = {
   movement_goal_calories: number | null;
   movement_goal_minutes: number | null;
   sleep_goal_minutes: number | null;
+  water_goal_ml: number | null;
   target_weight_kg: number | null;
   workout_type_options: string[];
   workout_title_options: string[];
+  workout_import_aliases: Record<string, string>;
   created_at: string;
   updated_at: string;
 };
@@ -1328,9 +1330,11 @@ export type HealthProfileInsert = {
   movement_goal_calories?: number | null;
   movement_goal_minutes?: number | null;
   sleep_goal_minutes?: number | null;
+  water_goal_ml?: number | null;
   target_weight_kg?: number | null;
   workout_type_options?: string[];
   workout_title_options?: string[];
+  workout_import_aliases?: Record<string, string>;
 };
 
 export type HealthProfileUpdate = Partial<
@@ -1346,9 +1350,11 @@ export type HealthProfileUpdate = Partial<
     | "movement_goal_calories"
     | "movement_goal_minutes"
     | "sleep_goal_minutes"
+    | "water_goal_ml"
     | "target_weight_kg"
     | "workout_type_options"
     | "workout_title_options"
+    | "workout_import_aliases"
   >
 >;
 
@@ -1356,8 +1362,11 @@ export type HealthCheckIn = {
   id: string;
   user_id: string;
   entry_date: string;
+  entry_time: string;
   mood_score: number | null;
   energy_score: number | null;
+  stress_score: number | null;
+  clarity_score: number | null;
   symptom_tags: string[];
   reflection: string;
   created_at: string;
@@ -1368,14 +1377,161 @@ export type HealthCheckInInsert = {
   id?: string;
   user_id: string;
   entry_date: string;
+  entry_time: string;
   mood_score?: number | null;
   energy_score?: number | null;
+  stress_score?: number | null;
+  clarity_score?: number | null;
   symptom_tags?: string[];
   reflection?: string;
 };
 
 export type HealthCheckInUpdate = Partial<
-  Pick<HealthCheckIn, "mood_score" | "energy_score" | "symptom_tags" | "reflection">
+  Pick<HealthCheckIn, "entry_date" | "entry_time" | "mood_score" | "energy_score" | "stress_score" | "clarity_score" | "symptom_tags" | "reflection">
+>;
+
+export type HealthJournalSignalKind = "symptom" | "emotion" | "other";
+
+export type HealthJournalSignal = {
+  id: string;
+  user_id: string;
+  kind: HealthJournalSignalKind;
+  symptom_id: string | null;
+  name: string | null;
+  color: string | null;
+  low_label: string;
+  high_label: string;
+  scale_labels: string[];
+  in_template: boolean;
+  template_sort_order: number | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthJournalSignalInsert = {
+  id?: string;
+  user_id: string;
+  kind: HealthJournalSignalKind;
+  symptom_id?: string | null;
+  name?: string | null;
+  color?: string | null;
+  low_label?: string;
+  high_label?: string;
+  scale_labels?: string[];
+  in_template?: boolean;
+  template_sort_order?: number | null;
+  archived_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthJournalSignalUpdate = Partial<
+  Pick<HealthJournalSignal, "kind" | "symptom_id" | "name" | "color" | "low_label" | "high_label" | "scale_labels" | "in_template" | "template_sort_order" | "archived_at">
+>;
+
+export type HealthJournalSignalValue = {
+  id: string;
+  user_id: string;
+  journal_entry_id: string;
+  signal_id: string;
+  score: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthJournalSignalValueInsert = {
+  id?: string;
+  user_id: string;
+  journal_entry_id: string;
+  signal_id: string;
+  score: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthJournalSignalValueUpdate = Partial<Pick<HealthJournalSignalValue, "score">>;
+
+export type HealthJournalSignalOccurrence = {
+  id: string;
+  user_id: string;
+  journal_entry_id: string;
+  signal_id: string;
+  entry_date: string;
+  occurred_at: string;
+  score: number;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthJournalSignalOccurrenceInsert = {
+  id?: string;
+  user_id: string;
+  journal_entry_id: string;
+  signal_id: string;
+  entry_date: string;
+  occurred_at: string;
+  score: number;
+  note?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthJournalSignalOccurrenceUpdate = Partial<
+  Pick<HealthJournalSignalOccurrence, "journal_entry_id" | "signal_id" | "entry_date" | "occurred_at" | "score" | "note">
+>;
+
+export type HealthSymptom = {
+  id: string;
+  user_id: string;
+  name: string;
+  color: string;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthSymptomInsert = {
+  id?: string;
+  user_id: string;
+  name: string;
+  color?: string;
+  archived_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthSymptomUpdate = Partial<Pick<HealthSymptom, "name" | "color" | "archived_at">>;
+
+export type HealthSymptomEntry = {
+  id: string;
+  user_id: string;
+  symptom_id: string;
+  journal_entry_id: string;
+  entry_date: string;
+  logged_at: string;
+  severity: number;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthSymptomEntryInsert = {
+  id?: string;
+  user_id: string;
+  symptom_id: string;
+  journal_entry_id: string;
+  entry_date: string;
+  logged_at?: string;
+  severity: number;
+  note?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthSymptomEntryUpdate = Partial<
+  Pick<HealthSymptomEntry, "symptom_id" | "journal_entry_id" | "entry_date" | "logged_at" | "severity" | "note">
 >;
 
 export type HealthFoodLibraryItem = {
@@ -1545,6 +1701,7 @@ export type HealthWaterEntry = {
   amount: number;
   unit: HealthWaterUnit;
   amount_ml: number;
+  confirmed_at: string | null;
   created_at: string;
 };
 
@@ -1556,10 +1713,11 @@ export type HealthWaterEntryInsert = {
   amount: number;
   unit: HealthWaterUnit;
   amount_ml: number;
+  confirmed_at?: string | null;
 };
 
 export type HealthWaterEntryUpdate = Partial<
-  Pick<HealthWaterEntry, "entry_date" | "logged_at" | "amount" | "unit" | "amount_ml">
+  Pick<HealthWaterEntry, "entry_date" | "logged_at" | "amount" | "unit" | "amount_ml" | "confirmed_at">
 >;
 
 export type HealthMealEntry = {
@@ -2608,6 +2766,36 @@ export type Database = {
         Row: HealthCheckIn;
         Insert: HealthCheckInInsert;
         Update: HealthCheckInUpdate;
+        Relationships: [];
+      };
+      adhdice_health_journal_signals: {
+        Row: HealthJournalSignal;
+        Insert: HealthJournalSignalInsert;
+        Update: HealthJournalSignalUpdate;
+        Relationships: [];
+      };
+      adhdice_health_journal_signal_values: {
+        Row: HealthJournalSignalValue;
+        Insert: HealthJournalSignalValueInsert;
+        Update: HealthJournalSignalValueUpdate;
+        Relationships: [];
+      };
+      adhdice_health_journal_signal_occurrences: {
+        Row: HealthJournalSignalOccurrence;
+        Insert: HealthJournalSignalOccurrenceInsert;
+        Update: HealthJournalSignalOccurrenceUpdate;
+        Relationships: [];
+      };
+      adhdice_health_symptoms: {
+        Row: HealthSymptom;
+        Insert: HealthSymptomInsert;
+        Update: HealthSymptomUpdate;
+        Relationships: [];
+      };
+      adhdice_health_symptom_entries: {
+        Row: HealthSymptomEntry;
+        Insert: HealthSymptomEntryInsert;
+        Update: HealthSymptomEntryUpdate;
         Relationships: [];
       };
       adhdice_health_food_library: {

@@ -1,17 +1,36 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { createNavigatorSearchTargets, searchNavigatorTargets, type NavigatorSearchTarget } from "@/lib/navigator-search";
+import { createNavigatorSearchTargets, getNavigatorTaskSearchQuery, isNavigatorTaskSearchQuery, searchNavigatorTargets, toggleNavigatorTaskSearchQuery, type NavigatorSearchTarget } from "@/lib/navigator-search";
+import { searchNavigatorTasks } from "@/lib/navigator-task-search";
+import { isPageShellLayoutReady, setPageShellLayoutReady, subscribeToPageShellLayoutReadiness } from "@/lib/page-shell-layout";
+import { arePageShellNavigationRectsStable, getPageShellNavigationScrollTop, isPageShellNavigationRectUsable } from "@/lib/page-shell-navigation";
+import type { TaskSearchEntity } from "@/lib/task-search-selector";
 
 const dockItems = ["Home", "Tasks", "Focus", "Health", "Roll", "Achievements", "Games", "Stats", "Notes", "Settings", "Test"] as const;
-const healthTabs = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards"] as const;
+const healthTabs = ["Today", "Food", "Water", "Fitness", "Journal", "Weight", "Sleep", "Insights", "Awards", "Settings"] as const;
 const targets = createNavigatorSearchTargets(dockItems, healthTabs);
 const inlineSource = readFileSync(new URL("../src/components/task-app/navigator-search-inline.tsx", import.meta.url), "utf8");
 const dockSource = readFileSync(new URL("../src/components/task-app/bottom-dock.tsx", import.meta.url), "utf8");
 const adapterSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("../src/components/task-app/settings-page.tsx", import.meta.url), "utf8");
+const layoutHookSource = readFileSync(new URL("../src/hooks/usePageShellLayout.ts", import.meta.url), "utf8");
+const pageShellLayoutSource = readFileSync(new URL("../src/lib/page-shell-layout.ts", import.meta.url), "utf8");
+const globalSource = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8");
 const healthPreferenceSource = readFileSync(new URL("../src/lib/health-tab-preference.ts", import.meta.url), "utf8");
+
+function taskEntity(id: string, title: string, ancestorIds: string[] = [], status: TaskSearchEntity["task"]["status"] = "pending"): TaskSearchEntity {
+  return {
+    ancestorIds,
+    displayStatus: status,
+    id,
+    listIds: ["different-list"],
+    rootParentId: ancestorIds[0] ?? id,
+    searchDocument: title.toLowerCase(),
+    task: { id, status, title, permanently_deleted_at: null } as TaskSearchEntity["task"],
+  };
+}
 
 function findTarget(query: string) {
   const target = searchNavigatorTargets(query, targets)[0];
@@ -22,9 +41,79 @@ function findTarget(query: string) {
 test("navigation search matches destination titles and aliases without searching user content", () => {
   assert.equal(searchNavigatorTargets("", targets).length, targets.length);
   assert.deepEqual(findTarget("fitness").breadcrumb, ["Health", "Fitness"]);
+  assert.deepEqual(findTarget("custom nutrition").action, {
+    kind: "page-shell",
+    page: "Health",
+    pageKey: "health:food",
+    shellId: "food-library",
+    healthTab: "Food",
+  });
+  const foodLibraryQueries = [
+    "food library",
+    "custom nutrition library",
+    "nutrition library",
+    "nutrition",
+    "nutrition import",
+    "import custom foods",
+    "food import",
+    "custom food import",
+    "custom foods",
+    "foods",
+    "recipes",
+    "custom recipes",
+    "custom meals",
+    "saved meals",
+  ];
+  for (const query of foodLibraryQueries) {
+    const match = findTarget(query);
+    assert.equal(match.title, "Custom Nutrition Library");
+    assert.deepEqual(match.action, {
+      kind: "page-shell",
+      page: "Health",
+      pageKey: "health:food",
+      shellId: "food-library",
+      healthTab: "Food",
+    });
+  }
+  assert.equal(targets.filter((target) => target.action.kind === "page-shell" && target.action.shellId === "food-library").length, 1);
+  const foodResults = searchNavigatorTargets("food", targets);
+  assert.equal(foodResults.some((target) => target.title === "Food"), true);
+  assert.equal(foodResults.some((target) => target.title === "Custom Nutrition Library"), true);
   assert.deepEqual(findTarget("brain").breadcrumb, ["Tasks", "Brainstorm"]);
   assert.deepEqual(findTarget("timezone").breadcrumb, ["Settings", "Day Reset", "Time Zone"]);
   assert.doesNotMatch(readFileSync(new URL("../src/lib/navigator-search.ts", import.meta.url), "utf8"), /Task\[\]|supabase|from\("/);
+});
+
+test("Navigator query syntax selects destination search versus task search", () => {
+  assert.equal(searchNavigatorTargets("fitness", targets)[0]?.action.kind, "health-tab");
+  assert.equal(isNavigatorTaskSearchQuery("milk"), false);
+  assert.equal(isNavigatorTaskSearchQuery("#milk"), true);
+  assert.equal(isNavigatorTaskSearchQuery("# milk"), true);
+  assert.equal(isNavigatorTaskSearchQuery("  #milk"), true);
+  assert.equal(getNavigatorTaskSearchQuery("#milk"), "milk");
+  assert.equal(getNavigatorTaskSearchQuery("# milk"), "milk");
+  assert.equal(getNavigatorTaskSearchQuery("  #  milk"), "milk");
+  assert.equal(isNavigatorTaskSearchQuery(getNavigatorTaskSearchQuery("#milk")), false);
+});
+
+test("all-task Navigator search is query-gated and includes the complete canonical hierarchy", () => {
+  const entities = [
+    taskEntity("parent", "Practice guitar"),
+    taskEntity("step", "Change strings", ["parent"]),
+    taskEntity("substep", "Order strings online", ["parent", "step"]),
+    taskEntity("complete", "Completed practice", [], "complete"),
+    taskEntity("archived", "Archived practice", [], "archived"),
+    taskEntity("trash", "Trashed practice", [], "trashed"),
+    taskEntity("trash-child", "Trashed child practice", ["trash"]),
+  ];
+  assert.deepEqual(searchNavigatorTasks("", entities), []);
+  assert.deepEqual(searchNavigatorTasks("practice guitar", entities)[0]?.action, { kind: "task", page: "Tasks", taskId: "parent" });
+  assert.deepEqual(searchNavigatorTasks("change strings", entities)[0]?.breadcrumb, ["Practice guitar"]);
+  assert.deepEqual(searchNavigatorTasks("order strings", entities)[0]?.breadcrumb, ["Practice guitar", "Change strings"]);
+  assert.equal(searchNavigatorTasks("completed practice", entities)[0]?.action.kind, "task");
+  assert.equal(searchNavigatorTasks("archived practice", entities)[0]?.action.kind, "task");
+  assert.equal(searchNavigatorTasks("trashed", entities).length, 0);
+  assert.equal(searchNavigatorTasks("trashed child", entities).length, 0);
 });
 
 test("exact title ranking outranks a keyword-only match", () => {
@@ -61,25 +150,151 @@ test("Health targets use the canonical shared tab preference", () => {
   assert.match(healthPreferenceSource, /export function persistHealthTabPreference/);
 });
 
-test("Settings targets request a mounted section once", () => {
+test("page-shell readiness is shared by page key and notifies pending navigation", () => {
+  const pageKey = "test:readiness-contract";
+  setPageShellLayoutReady(pageKey, false);
+  let notifications = 0;
+  const unsubscribe = subscribeToPageShellLayoutReadiness(() => { notifications += 1; });
+  assert.equal(isPageShellLayoutReady(pageKey), false);
+  setPageShellLayoutReady(pageKey, true);
+  assert.equal(isPageShellLayoutReady(pageKey), true);
+  setPageShellLayoutReady(pageKey, false);
+  assert.equal(isPageShellLayoutReady(pageKey), false);
+  assert.equal(notifications, 2);
+  unsubscribe();
+});
+
+test("page-shell navigation waits for stable geometry and computes the measured-header target", () => {
+  const firstFrame = { height: 240, left: 24, top: 620, width: 560 };
+  const secondFrame = { ...firstFrame, top: 624 };
+  assert.equal(isPageShellNavigationRectUsable(firstFrame), true);
+  assert.equal(isPageShellNavigationRectUsable({ ...firstFrame, width: 0 }), false);
+  assert.equal(arePageShellNavigationRectsStable(firstFrame, secondFrame), false);
+  assert.equal(arePageShellNavigationRectsStable(firstFrame, { ...firstFrame, top: 620.5 }), true);
+
+  let stableComparisons = 0;
+  let previous = null as typeof firstFrame | null;
+  for (const [index, current] of [firstFrame, firstFrame, firstFrame].entries()) {
+    if (previous && arePageShellNavigationRectsStable(previous, current)) stableComparisons += 1;
+    previous = current;
+    assert.equal(stableComparisons, index);
+  }
+  assert.equal(stableComparisons, 2);
+  assert.equal(getPageShellNavigationScrollTop(400, 620, 80), 928);
+});
+
+test("Settings targets remain pending through shell hydration and acknowledge after ready geometry", () => {
   assert.deepEqual(findTarget("timezone").action, { kind: "settings-section", page: "Settings", section: "day-reset" });
+  assert.deepEqual(findTarget("appearance").action, {
+    kind: "page-shell",
+    page: "Settings",
+    pageKey: "settings",
+    shellId: "settings-appearance",
+  });
   assert.match(appSource, /setRequestedSettingsSection\(action\.section\)/);
   assert.match(appSource, /requestedSection=\{requestedSettingsSection\}/);
-  assert.match(settingsSource, /section\.scrollIntoView\(\{ block: "start" \}\)/);
+  assert.match(settingsSource, /shell\.scrollIntoView\(\{ block: "start" \}\)/);
+  assert.match(settingsSource, /!layout\.isLayoutReady/);
+  assert.match(settingsSource, /requestAnimationFrame/);
+  assert.ok(settingsSource.indexOf("shell.scrollIntoView") < settingsSource.indexOf("onSectionRequestHandled?."));
+  assert.match(settingsSource, /rect\.width <= 0 \|\| rect\.height <= 0/);
   assert.match(settingsSource, /onSectionRequestHandled\?\.\(requestedSection\)/);
   assert.match(settingsSource, /handledSectionRef\.current === requestedSection/);
 });
 
+test("shell destinations route to their page and request direct shell reveal", () => {
+  assert.deepEqual(findTarget("D20 Sandbox").action, {
+    kind: "page-shell",
+    page: "Test",
+    pageKey: "test:d20",
+    shellId: "test-d20-sandbox",
+  });
+  assert.deepEqual(findTarget("Face Mapping Controls").action, {
+    kind: "page-shell",
+    page: "Test",
+    pageKey: "test:d20",
+    shellId: "test-d20-controls",
+  });
+  assert.match(appSource, /action\.kind === "page-shell"/);
+  assert.match(appSource, /setRequestedPageShell\(action\)/);
+  assert.match(appSource, /data-page-shell-id=\"\$\{request\.shellId\}\"/);
+  assert.match(appSource, /persistHealthTabPreference\(action\.healthTab\)/);
+  assert.match(appSource, /const requestedPageShellLayoutReady = useSyncExternalStore/);
+  assert.match(appSource, /isPageShellLayoutReady\(requestedPageShell\.pageKey\)/);
+  assert.match(appSource, /!requestedPageShellLayoutReady/);
+  const shellNavigationSource = appSource.slice(appSource.indexOf("const requestedNavigation = requestedPageShell"), appSource.indexOf("useEffect(() => () => clearPageShellNavigationHighlight"));
+  assert.doesNotMatch(shellNavigationSource, /scrollIntoView/);
+  assert.match(shellNavigationSource, /data-app-fixed-header/);
+  assert.match(shellNavigationSource, /arePageShellNavigationRectsStable/);
+  assert.match(shellNavigationSource, /PAGE_SHELL_NAVIGATION_STABILITY_COMPARISONS/);
+  assert.match(shellNavigationSource, /PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS/);
+  assert.match(shellNavigationSource, /PAGE_SHELL_NAVIGATION_ANCHOR_STABLE_FRAMES/);
+  assert.match(shellNavigationSource, /let stableAnchorFrames = 0/);
+  assert.match(shellNavigationSource, /stableAnchorFrames = 0/);
+  assert.match(shellNavigationSource, /stableAnchorFrames \+= 1/);
+  assert.match(shellNavigationSource, /overflow-anchor/);
+  assert.match(shellNavigationSource, /restoreOverflowAnchor/);
+  assert.match(shellNavigationSource, /consumeAttempt/);
+  assert.match(shellNavigationSource, /abortNavigation/);
+  assert.doesNotMatch(shellNavigationSource, /correctionUsed/);
+  assert.match(shellNavigationSource, /window\.scrollTo\(\{[\s\S]*behavior: "auto"/);
+  assert.match(shellNavigationSource, /schedule\(stabilizeAnchor\)/);
+  assert.match(shellNavigationSource, /completeReveal\(shell\)/);
+  assert.match(shellNavigationSource, /window\.cancelAnimationFrame\(frame\)/);
+  assert.match(appSource, /highlightPageShellNavigationTarget\(shell\)/);
+  assert.match(appSource, /shell\.setAttribute\("data-page-shell-navigation-target", "true"\)/);
+  assert.match(appSource, /window\.setTimeout\(clearPageShellNavigationHighlight/);
+  assert.match(appSource, /window\.clearTimeout/);
+  assert.match(appSource, /clearPageShellNavigationHighlight\(\)/);
+  assert.match(layoutHookSource, /setPageShellLayoutReady\(pageKey, false\)/);
+  assert.match(layoutHookSource, /setPageShellLayoutReady\(pageKey, true\)/);
+  assert.match(pageShellLayoutSource, /subscribeToPageShellLayoutReadiness/);
+  assert.match(globalSource, /\[data-page-shell-navigation-target="true"\]/);
+  assert.match(globalSource, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
 test("inline search mode enters with an autofocused input and supports keyboard selection", () => {
-  assert.match(inlineSource, /placeholder="Search pages and sections\.\.\."/);
+  assert.match(inlineSource, /placeholder=\{isTaskSearchMode \? "Search all tasks\.\.\." : "Search pages and sections\.\.\."\}/);
+  assert.match(inlineSource, /placeholder=\{isTaskSearchMode \? "Search all tasks\.\.\."/);
+  assert.match(inlineSource, /Type to search all tasks\./);
+  assert.match(inlineSource, /aria-pressed=\{isTaskSearchMode\}/);
+  assert.match(inlineSource, /const isTaskSearchMode = isNavigatorTaskSearchQuery\(query\)/);
+  assert.match(inlineSource, /searchNavigatorTasks\(getNavigatorTaskSearchQuery\(query\), taskSearchEntities\)/);
+  assert.match(inlineSource, /setQuery\(toggleNavigatorTaskSearchQuery\)/);
+  assert.match(inlineSource, /<ListTodo aria-hidden="true"/);
+  assert.doesNotMatch(inlineSource, /useState\(false\).*isTaskSearchMode/);
   assert.match(inlineSource, /event\.key === "ArrowDown"/);
   assert.match(inlineSource, /event\.key === "ArrowUp"/);
   assert.match(inlineSource, /event\.key === "Enter"/);
   assert.match(inlineSource, /event\.key === "Escape"/);
   assert.match(inlineSource, /No destinations found\./);
-  assert.match(inlineSource, /inputRef\.current\?\.focus\(\)/);
+  assert.match(inlineSource, /focusDropdownControl\(inputRef\.current\)/);
   assert.match(inlineSource, /onNavigate\(target\);\s*onClose\(\)/);
   assert.doesNotMatch(inlineSource, /ModalShell/);
+});
+
+test("task query examples search canonical tasks and the icon toggles the hash", () => {
+  const entities = [taskEntity("milk", "Buy milk"), taskEntity("other", "Other task")];
+  assert.equal(searchNavigatorTasks(getNavigatorTaskSearchQuery("#milk"), entities)[0]?.action.taskId, "milk");
+  assert.equal(searchNavigatorTasks(getNavigatorTaskSearchQuery("# milk"), entities)[0]?.action.taskId, "milk");
+  assert.equal(toggleNavigatorTaskSearchQuery("milk"), "#milk");
+  assert.equal(toggleNavigatorTaskSearchQuery("#milk"), "milk");
+  assert.equal(toggleNavigatorTaskSearchQuery("# milk"), "milk");
+});
+
+test("task selection converges with the openTask deep-link path and preserves the current task workspace", () => {
+  const bottomDockAdapterSource = adapterSource.slice(adapterSource.indexOf("export function BottomDockAdapter"));
+  assert.match(appSource, /const openTaskFromExternalNavigation = useCallback/);
+  assert.match(appSource, /openTaskFromExternalNavigation\(requestedTaskId\)/);
+  assert.match(appSource, /action\.kind === "task"/);
+  assert.match(appSource, /openTaskFromExternalNavigation\(action\.taskId\)/);
+  assert.match(appSource, /setActiveTaskWorkspaceTab\(nextTaskWorkspaceTabId\)/);
+  assert.match(appSource, /setSharedTaskEditorOverlayTaskId\(taskId\)/);
+  assert.match(adapterSource, /taskSearchEntities/);
+  assert.match(dockSource, /taskSearchEntities/);
+  assert.match(adapterSource, /BottomDockComponent/);
+  assert.match(bottomDockAdapterSource, /export function BottomDockAdapter\(\{[\s\S]*?searchTargets,\s*taskSearchEntities,\s*\}: \{/);
+  assert.match(bottomDockAdapterSource, /<BottomDockComponent[\s\S]*?searchTargets=\{searchTargets\}[\s\S]*?taskSearchEntities=\{taskSearchEntities\}/);
 });
 
 test("expanded dock puts search first and swaps normal controls for inline search mode", () => {
@@ -96,11 +311,35 @@ test("expanded dock puts search first and swaps normal controls for inline searc
   assert.match(dockSource, /onClick=\{\(\) => onNavigate\(item\)\}/);
   assert.match(dockSource, /if \(isCollapsed\) \{/);
   assert.match(dockSource, /onPointerDown=\{startBubbleDrag\}/);
+  assert.match(dockSource, /const dockZIndexClass = isSearchMode \? "z-40" : "z-10";/);
+  assert.match(dockSource, /fixed inset-x-0 \$\{dockZIndexClass\} min-w-0 px-4/);
+  assert.match(dockSource, /fixed left-4 top-4 bottom-4 \$\{dockZIndexClass\}/);
+  assert.match(dockSource, /fixed right-4 top-4 bottom-4 \$\{dockZIndexClass\}/);
   assert.match(adapterSource, /onNavigateSearchTarget/);
   assert.match(appSource, /searchTargets=\{navigatorSearchTargets\}/);
   assert.match(appSource, /onNavigateSearchTarget=\{handleNavigatorSearchTarget\}/);
   assert.doesNotMatch(appSource, /NavigatorSearchModal/);
   assert.doesNotMatch(inlineSource, /fixed inset-0/);
+});
+
+test("top-level Settings shell destinations replace duplicate legacy section results while children remain", () => {
+  for (const [query, shellId] of [
+    ["appearance", "settings-appearance"],
+    ["day reset", "settings-day-reset"],
+    ["economy", "settings-economy"],
+    ["import export", "settings-import-export"],
+  ] as const) {
+    const settingsMatches = searchNavigatorTargets(query, targets).filter((target) => target.page === "Settings" && target.title.toLocaleLowerCase().replace(/[^a-z]+/g, " ").trim() === query.replace(/[^a-z]+/g, " ").trim());
+    assert.equal(settingsMatches.length, 1, `${query} should have one Settings destination`);
+    assert.deepEqual(settingsMatches[0]?.action, {
+      kind: "page-shell",
+      page: "Settings",
+      pageKey: "settings",
+      shellId,
+    });
+  }
+  assert.deepEqual(findTarget("theme").action, { kind: "settings-section", page: "Settings", section: "appearance" });
+  assert.doesNotMatch(readFileSync(new URL("../src/lib/navigator-search.ts", import.meta.url), "utf8"), /id: `settings-section-\$\{id\}`/);
 });
 
 test("inline results remain attached to each supported dock placement", () => {

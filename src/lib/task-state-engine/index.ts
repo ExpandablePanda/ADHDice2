@@ -1,6 +1,6 @@
 export { evaluateTaskState, findUnresolvedMissedOccurrence } from "./engine.ts";
 export { logicalDateForTimestamp } from "./calendar.ts";
-export { allowedOutcomes, isScheduledOccurrence, occurrenceIdentity, scheduledOccurrences } from "./recurrence.ts";
+export { allowedOutcomes, isScheduledOccurrence, occurrenceIdentity, resolveSuccessfulOccurrenceTarget, scheduledOccurrences } from "./recurrence.ts";
 export { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
 export { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, taskStateHistoryRowToCanonicalIntent } from "./action-authority.ts";
 export { createEngineRolloverPlan, engineRolloverPlanHasMutations, engineRolloverPlanTaskMutationCandidates } from "./rollover-authority.ts";

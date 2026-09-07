@@ -563,7 +563,7 @@ export function TasksTableAdapter({
       : null,
     [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
   );
-  if (tableProps.tasks.length === 0) {
+  if (tableProps.tasks.length === 0 && !tableProps.requestedOpenTask) {
     return (
       <TasksListViewPanel
         {...panelProps}
@@ -2945,7 +2945,7 @@ function TasksSimpleList({
     });
   }
 
-  if (tasks.length === 0) {
+  if (tasks.length === 0 && !tableProps.requestedOpenTask) {
     return (
       <TasksListViewPanel
         {...panelProps}

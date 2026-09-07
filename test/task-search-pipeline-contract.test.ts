@@ -21,7 +21,7 @@ test("search rows and rail totals share one committed selection result", () => {
   assert.match(appSource, /const activePrimaryFacetVisibleEntityIds = taskSearchSelection\?\.primaryFacetVisibleEntityIds/);
   assert.match(appSource, /const selectedBucketTasks = taskSearchSelection\?\.visibleTasks/);
   assert.match(appSource, /count: activeListFacetCounts\[item\.id\]/);
-  assert.match(appSource, /activePrimaryFacetVisibleEntityIds,\n    \),/);
+  assert.match(appSource, /activePrimaryFacetVisibleEntityIds,\n      todayKey,\n    \),/);
 });
 
 test("search hierarchy IDs take precedence over status-only hierarchy IDs", () => {

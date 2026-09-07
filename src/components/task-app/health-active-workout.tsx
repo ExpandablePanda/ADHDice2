@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
+import { PageShellBody } from "@/components/ui-system/reorderable-page-shells";
 import type { ActiveFitnessWorkoutController } from "@/hooks/useActiveFitnessWorkout";
 import type { HealthExercise, HealthFitnessMeasurement, HealthFitnessPlan, HealthFitnessPlanItem } from "@/lib/database.types";
 import {
@@ -69,8 +70,8 @@ export function HealthActiveWorkout({ controller, exerciseLibrary, planItems, pl
   }
 
   return (
-    <section aria-labelledby="health-active-workout-title" className="grid gap-4 rounded-[1.25rem] border border-[#cfc5ff] bg-[linear-gradient(135deg,#fbfaff,#f4f0ff)] p-4 shadow-[0_12px_36px_rgba(111,87,246,0.08)] dark:border-[#5e4cad]/60 dark:bg-[linear-gradient(135deg,rgba(111,87,246,0.14),rgba(255,255,255,0.03))]">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section aria-labelledby="health-active-workout-title" className="page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[1.25rem] border border-[#cfc5ff] bg-[linear-gradient(135deg,#fbfaff,#f4f0ff)] p-4 shadow-[0_12px_36px_rgba(111,87,246,0.08)] dark:border-[#5e4cad]/60 dark:bg-[linear-gradient(135deg,rgba(111,87,246,0.14),rgba(255,255,255,0.03))]">
+      <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Timer aria-hidden="true" className="h-5 w-5 text-[#6f57f6] dark:text-[#cabfff]" />
@@ -88,6 +89,7 @@ export function HealthActiveWorkout({ controller, exerciseLibrary, planItems, pl
         </div>
       </div>
 
+      <PageShellBody className="grid gap-4 pt-4">
       {isRetryState ? <p className="text-xs text-[#8d5670] dark:text-[#ffb0c1]">Workout timing is locked because the workout log was already created. Retry Finish Workout to complete saving.</p> : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -147,6 +149,7 @@ export function HealthActiveWorkout({ controller, exerciseLibrary, planItems, pl
         <AdhdChip disabled={controller.isFinishing} onClick={discard} type="button">Discard Workout</AdhdChip>
         <AdhdChip disabled={controller.isFinishing} onClick={() => { void controller.finishWorkout(); }} tone="purple" type="button">{controller.isFinishing ? "Saving…" : controller.runtime?.canonicalWorkoutId ? "Retry Finish Workout" : "Finish Workout"}</AdhdChip>
       </div>
+      </PageShellBody>
     </section>
   );
 }

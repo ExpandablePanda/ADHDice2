@@ -570,6 +570,165 @@ test("fixed weekly early completion preserves cadence", () => {
   assert.equal(result.nextDueDate, "2026-08-09");
 });
 
+test("fixed weekly success after a Missed occurrence targets the nearest upcoming occurrence", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-09-01T14:00:00.000Z",
+    task: task({
+      activeStatus: "missed",
+      dueOn: "2026-09-06",
+      recurrence: { kind: "weekly", weekdays: [0], anchorDate: "2026-08-30" },
+    }),
+    history: [history("2026-08-30", "missed", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-30",
+      occurrenceDueOn: "2026-08-30",
+    })],
+    action: { type: "record_outcome", outcome: "done", logicalDate: "2026-08-31" },
+  }));
+  const inserted = result.proposedHistoryChanges.find((change) => change.type === "insert");
+
+  assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceIdentity : null, "task:task-1:occurrence:2026-09-06");
+  assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceDueOn : null, "2026-09-06");
+  assert.equal(result.nextDueDate, "2026-09-13");
+  assert.notEqual(result.activeStatus, "missed");
+  assert.equal(result.calendar["2026-08-30"], "missed");
+  assert.equal(result.calendar["2026-08-31"], "done");
+});
+
+test("fixed multi-weekday success after an older Missed consumes only the nearest scheduled weekday", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-09-01T14:00:00.000Z",
+    task: task({
+      activeStatus: "missed",
+      dueOn: "2026-09-01",
+      recurrence: { kind: "weekly", weekdays: [0, 2], anchorDate: "2026-08-30" },
+    }),
+    history: [history("2026-08-30", "missed", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-30",
+      occurrenceDueOn: "2026-08-30",
+    })],
+    action: { type: "record_outcome", outcome: "done", logicalDate: "2026-08-31" },
+  }));
+  const inserted = result.proposedHistoryChanges.find((change) => change.type === "insert");
+
+  assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceDueOn : null, "2026-09-01");
+  assert.equal(result.nextDueDate, "2026-09-06");
+  assert.equal(result.calendar["2026-08-30"], "missed");
+});
+
+test("rolling interval three success after a Missed streak resolves the current obligation", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-09-01T14:00:00.000Z",
+    task: task({
+      activeStatus: "missed",
+      dueOn: "2026-08-29",
+      recurrence: { kind: "rolling", intervalDays: 3 },
+    }),
+    history: [history("2026-08-29", "missed", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-29",
+      occurrenceDueOn: "2026-08-29",
+    }), history("2026-08-30", "missed", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-29",
+      occurrenceDueOn: "2026-08-29",
+    })],
+    action: { type: "record_outcome", outcome: "done", logicalDate: "2026-09-01" },
+  }));
+  const inserted = result.proposedHistoryChanges.find((change) => change.type === "insert");
+
+  assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceIdentity : null, "task:task-1:occurrence:2026-08-29");
+  assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceDueOn : null, "2026-08-29");
+  assert.equal(result.nextDueDate, "2026-09-04");
+  assert.notEqual(result.activeStatus, "missed");
+  assert.equal(result.calendar["2026-08-29"], "missed");
+});
+
+test("legacy fixed success self-heals against a prior Missed occurrence without changing History facts", () => {
+  const legacyDone = history("2026-08-31", "done");
+  const result = evaluateTaskState(input({
+    now: "2026-09-01T14:00:00.000Z",
+    task: task({
+      activeStatus: "missed",
+      dueOn: "2026-09-06",
+      recurrence: { kind: "weekly", weekdays: [0], anchorDate: "2026-08-30" },
+    }),
+    history: [history("2026-08-30", "missed", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-30",
+      occurrenceDueOn: "2026-08-30",
+    }), legacyDone],
+  }));
+
+  assert.equal(result.nextDueDate, "2026-09-13");
+  assert.notEqual(result.activeStatus, "missed");
+  assert.equal(legacyDone.occurrenceIdentity, undefined);
+  assert.equal(legacyDone.occurrenceDueOn, undefined);
+});
+
+test("legacy rolling interval three success self-heals without changing History facts", () => {
+  const legacyDone = history("2026-09-01", "done");
+  const result = evaluateTaskState(input({
+    now: "2026-09-01T14:00:00.000Z",
+    task: task({
+      activeStatus: "missed",
+      dueOn: "2026-08-29",
+      recurrence: { kind: "rolling", intervalDays: 3 },
+    }),
+    history: [history("2026-08-29", "missed", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-29",
+      occurrenceDueOn: "2026-08-29",
+    }), legacyDone],
+  }));
+
+  assert.equal(result.nextDueDate, "2026-09-04");
+  assert.notEqual(result.activeStatus, "missed");
+  assert.equal(legacyDone.occurrenceIdentity, undefined);
+  assert.equal(legacyDone.occurrenceDueOn, undefined);
+});
+
+test("legacy rolling success closes an advanced-cursor missed streak", () => {
+  const historyRows = [
+    history("2026-08-17", "missed", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-17",
+      occurrenceDueOn: "2026-08-17",
+    }),
+    history("2026-08-20", "missed", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-20",
+      occurrenceDueOn: "2026-08-20",
+    }),
+    history("2026-09-01", "done", { occurrenceIdentity: null, occurrenceDueOn: null }),
+  ];
+  const result = evaluateTaskState(input({
+    now: "2026-09-01T14:00:00.000Z",
+    task: task({ activeStatus: "pending", dueOn: "2026-09-04", recurrence: { kind: "rolling", intervalDays: 3 } }),
+    history: historyRows,
+  }));
+
+  assert.equal(result.activeStatus, "upcoming");
+  assert.equal(result.nextDueDate, "2026-09-04");
+  assert.equal(result.unresolvedOccurrenceIdentity, null);
+  assert.deepEqual(historyRows.map((row) => [row.occurrenceIdentity, row.occurrenceDueOn]), [
+    ["task:task-1:occurrence:2026-08-17", "2026-08-17"],
+    ["task:task-1:occurrence:2026-08-20", "2026-08-20"],
+    [null, null],
+  ]);
+  assert.equal(result.proposedHistoryChanges.filter((change) => change.type === "insert").length, 0);
+});
+
+test("a rolling Missed occurrence after a legacy success remains active", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-09-02T14:00:00.000Z",
+    task: task({ activeStatus: "pending", dueOn: "2026-09-04", recurrence: { kind: "rolling", intervalDays: 3 } }),
+    history: [
+      history("2026-09-01", "done", { occurrenceIdentity: null, occurrenceDueOn: null }),
+      history("2026-09-02", "missed", {
+        occurrenceIdentity: "task:task-1:occurrence:2026-09-04",
+        occurrenceDueOn: "2026-09-04",
+      }),
+    ],
+  }));
+
+  assert.equal(result.activeStatus, "missed");
+  assert.equal(result.nextDueDate, "2026-09-04");
+});
+
 test("an active occurrence finalizes in place and advances the weekly cursor once", () => {
   const result = evaluateTaskState(input({
     now: "2026-08-04T14:00:00Z",

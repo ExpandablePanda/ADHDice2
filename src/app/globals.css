@@ -109,6 +109,26 @@
   }
 }
 
+@keyframes page-shell-navigation-target-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(111, 87, 246, 0.42);
+  }
+
+  35% {
+    box-shadow: 0 0 0 8px rgba(111, 87, 246, 0.18);
+  }
+
+  100% {
+    box-shadow: 0 0 0 12px rgba(111, 87, 246, 0);
+  }
+}
+
+[data-page-shell-navigation-target="true"] {
+  outline: 3px solid rgba(111, 87, 246, 0.58);
+  outline-offset: 4px;
+  animation: page-shell-navigation-target-pulse 1.8s ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .workspace-loading-ring-animation {
     display: none;
@@ -117,6 +137,11 @@
   .workspace-loading-logo {
     animation: none;
     opacity: 1;
+  }
+
+  [data-page-shell-navigation-target="true"] {
+    animation: none;
+    box-shadow: 0 0 0 4px rgba(111, 87, 246, 0.18);
   }
 }
 
@@ -176,6 +201,14 @@
     box-shadow: none !important;
     border-color: var(--border-soft) !important;
     -webkit-focus-ring-color: transparent;
+  }
+
+  input.health-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible,
+  textarea.health-input:focus-visible,
+  textarea.health-journal-textarea:focus-visible {
+    border-color: var(--accent) !important;
+    outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent) !important;
+    outline-offset: 2px;
   }
 
   .ui-pill-button-light {
@@ -305,6 +338,108 @@ body::-webkit-scrollbar-thumb:hover,
 .adhdice-scrollbar-overlay::-webkit-scrollbar {
   width: 0;
   height: 0;
+}
+
+.page-shell-surface {
+  container-type: inline-size;
+  container-name: page-shell;
+}
+
+.page-shell-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.page-shell-number-input {
+  -moz-appearance: textfield;
+}
+
+.page-shell-number-input::-webkit-inner-spin-button,
+.page-shell-number-input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+/* Custom shell layouts use portable snapped grid placement to derive these
+   runtime coordinates; narrow single-column views intentionally ignore them. */
+.page-shell-packed > [data-page-shell-id] {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 80rem) {
+  .page-shell-packed {
+    grid-auto-rows: 4px;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    column-gap: 1.25rem;
+    row-gap: 0;
+  }
+
+  .page-shell-packed > [data-page-shell-id] {
+    align-self: start;
+    grid-column: var(--page-shell-grid-column-start) / span var(--page-shell-grid-column-span);
+    grid-row: var(--page-shell-grid-row-start) / span var(--page-shell-grid-row-span);
+  }
+
+  .page-shell-packed > [data-page-shell-id][data-page-shell-centered="true"] {
+    transform: translateX(var(--page-shell-grid-center-offset, 0px));
+  }
+}
+
+@container page-shell (min-width: 48rem) {
+  .page-shell-chart-header {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+}
+
+.fitness-stat-grid,
+.fitness-week-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container page-shell (min-width: 36rem) {
+  .fitness-stat-grid,
+  .fitness-week-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container page-shell (min-width: 64rem) {
+  .fitness-stat-grid,
+  .fitness-week-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.fitness-stat-card {
+  min-width: 0;
+}
+
+.fitness-stat-copy,
+.fitness-stat-value,
+.fitness-stat-detail {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fitness-stat-progress {
+  max-width: 100%;
+  width: 4rem;
+}
+
+@container page-shell (max-width: 24rem) {
+  .fitness-stat-main {
+    display: grid;
+    gap: 0.5rem;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fitness-stat-progress {
+    width: 100%;
+  }
 }
 
 .adhdice-hud-workspace-scrollbar {

@@ -1,7 +1,7 @@
 "use client";
 
-import { Activity, Apple, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, MoonStar, Pencil, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Activity, Apple, BookOpen, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, History, MoonStar, Pencil, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref } from "react";
 
 import type {
   HealthAchievementAward,
@@ -23,6 +23,11 @@ import type {
   HealthFitnessPlanUpdate,
   HealthFoodLibraryItem,
   HealthImportAudit,
+  HealthJournalSignal,
+  HealthJournalSignalKind,
+  HealthJournalSignalOccurrence,
+  HealthJournalSignalOccurrenceInsert,
+  HealthJournalSignalValue,
   HealthMealEntry,
   HealthMealEntryInsert,
   HealthMealEntryUpdate,
@@ -40,6 +45,10 @@ import type {
   HealthSavedMealItem,
   HealthServingMeasureUnit,
   HealthServingWeightUnit,
+  HealthSymptom,
+  HealthSymptomEntry,
+  HealthSymptomEntryInsert,
+  HealthSymptomInsert,
   HealthWaterEntry,
   HealthWaterUnit,
   HealthWorkout,
@@ -51,12 +60,13 @@ import type {
   HealthWeightEntry,
 } from "@/lib/database.types";
 import type { WeightGoalForecast } from "@/lib/health-utils";
+import { ActivityLineChartCard, type NumericLineChartSeries } from "@/components/activity-line-chart-card";
 import {
   parseAppleHealthFileInWorker,
   type AppleHealthImportParseProgress,
   type AppleHealthImportPreview,
 } from "@/lib/health-apple-import";
-import type { HealthImportSaveProgress } from "@/hooks/useHealth";
+import type { HealthImportSaveProgress, HealthJournalEntrySaveInput } from "@/hooks/useHealth";
 import type { HealthKitSnapshot } from "@/lib/healthkit";
 import type { HealthKitIncrementalSyncResult, HealthKitSyncResult } from "@/lib/healthkit-sync";
 import type { HealthWorkoutSessionDetails, HealthWorkoutSessionSaveResult } from "@/hooks/useFitnessSessionDetails";
@@ -70,15 +80,20 @@ import {
 } from "@/lib/health-meal-draft";
 import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
-  calculateHealthDailyCalorieAllowance,
+  calculateHealthDailyCalorieBudget,
+  buildHealthDailyCalorieTargetSeries,
   clampPercent,
   buildHealthMealLoggedAt,
   buildWeightGoalForecast,
   displayWeightToKilograms,
   formatEditableWeight,
   formatHealthDateLabel,
-  formatHealthMealSummary,
+  formatHealthCalorieTarget,
+  formatHealthJournalDate,
+  formatHealthJournalMetadataDate,
   formatMealLoggedTime,
+  formatHealthStandardTime,
+  formatHealthTimestampTime,
   formatHealthNutritionNumber,
   formatHealthSleepDuration,
   formatWeight,
@@ -86,6 +101,8 @@ import {
   getHealthSleepElapsedSeconds,
   getHealthSleepStartTimestamp,
   getHealthSleepDayTotal,
+  getHealthMealNutritionValue,
+  getHealthMealSummaryParts,
   buildHealthDailySleepSeries,
   getSleepFocusSessions,
   sortHealthSleepSessionsByStart,
@@ -94,12 +111,14 @@ import {
   getWeightTrend,
   HEALTH_MEAL_SLOTS,
   HEALTH_SLEEP_KINDS,
-  HEALTH_MOOD_OPTIONS,
+  HEALTH_SCALE_OPTIONS,
+  HEALTH_SEVERITY_OPTIONS,
   type HealthReminderTemplateKey,
-  HEALTH_SYMPTOM_TAGS,
   HEALTH_TABS,
   kilogramsToDisplayValue,
   normalizeHealthMealTime,
+  normalizeHealthSymptomColor,
+  normalizeHealthSymptomName,
   sumMealNutritionForDate,
   sumMetricValueForDate,
   shiftHealthDate,
@@ -111,8 +130,36 @@ import {
   type HealthSleepKind,
   type HealthTab,
 } from "@/lib/health-utils";
+import {
+  buildHealthFeelingTrendModel,
+  formatHealthFeelingTrendScore,
+  getHealthFeelingTrendPoints,
+  getHealthFeelingTrendAverage,
+  getHealthFeelingTrendSelectionSummary,
+  HEALTH_FEELING_TREND_RANGES,
+  toggleHealthFeelingTrendSelection,
+  type FeelingTrendDefinition,
+  type FeelingTrendPoint,
+  type HealthFeelingTrendKind,
+  type HealthFeelingTrendRange,
+} from "@/lib/health-feeling-trends";
+import {
+  HEALTH_JOURNAL_SCORE_OPTIONS,
+  buildHealthJournalDraftValues,
+  ensureHealthJournalDraftValue,
+  getDefaultHealthJournalScaleLabels,
+  getHealthJournalSignalDisplayColor,
+  getHealthJournalSignalDisplayName,
+  getHealthJournalTemplateSignals,
+  groupHealthJournalEntriesByDate,
+  normalizeHealthJournalEntryTime,
+  findHealthJournalReflectionTagMatches,
+  replaceHealthJournalReflectionTag,
+  type HealthJournalDraftValue,
+  updateHealthJournalDraftValue,
+} from "@/lib/health-journal";
 import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
-import { ToggleField } from "./task-editor-fields";
+import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
 import {
   calculateHealthFoodNutrition,
   HEALTH_NUTRITION_FIELD_REGISTRY,
@@ -149,7 +196,11 @@ import {
   TASK_TABLE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
+import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
+import { PageShell, PageShellBody, PageShellLayoutControls, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { usePageShellLayout } from "@/hooks/usePageShellLayout";
+import { HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS, HEALTH_PAGE_SHELL_IDS, getHealthPageShellKey } from "@/lib/page-shell-layout";
 import { HealthBarcodeScanner } from "./health-barcode-scanner";
 import { HealthLibraryPanel } from "./health-library-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_CONTROL_CLASS, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
@@ -158,11 +209,22 @@ import { HealthSleepLineChart } from "./health-sleep-line-chart";
 import { HealthWaterPanel } from "./health-water-panel";
 import { HealthFitnessTab } from "./health-fitness-tab";
 import { AppleHealthNativeSection } from "./apple-health-native-section";
+import { HealthStandardTimeInput } from "./health-standard-time-input";
+import { HealthTodayTab } from "./health-today-tab";
 import { PageShellHeader } from "./page-shell-header";
 
 type HealthPageProps = {
   awards: HealthAchievementAward[];
   checkIns: HealthCheckIn[];
+  journalSignals: HealthJournalSignal[];
+  journalSignalValues: HealthJournalSignalValue[];
+  journalSignalOccurrences: HealthJournalSignalOccurrence[];
+  symptoms: HealthSymptom[];
+  symptomEntries: HealthSymptomEntry[];
+  createSymptom: (input: Omit<HealthSymptomInsert, "user_id">) => Promise<HealthSymptom | null>;
+  renameSymptom: (symptomId: string, name: string) => Promise<boolean>;
+  setSymptomColor: (symptomId: string, color: string) => Promise<boolean>;
+  archiveSymptom: (symptomId: string) => Promise<boolean>;
   deleteFavoriteFood: (itemId: string) => Promise<boolean>;
   deleteMealEntry: (entryId: string) => Promise<boolean>;
   deleteRecipe: (recipeId: string) => Promise<boolean>;
@@ -201,13 +263,14 @@ type HealthPageProps = {
   metricEntries: HealthMetricEntry[];
   profile: HealthProfile | null;
   recipes: HealthRecipe[];
-  saveCheckIn: (input: {
-    energy_score?: number | null;
-    entry_date: string;
-    mood_score?: number | null;
-    reflection?: string;
-    symptom_tags?: string[];
-  }) => Promise<boolean>;
+  saveJournalEntry: (input: HealthJournalEntrySaveInput) => Promise<HealthCheckIn | null>;
+  createJournalSignal: (input: Omit<import("@/lib/database.types").HealthJournalSignalInsert, "user_id">) => Promise<HealthJournalSignal | null>;
+  updateJournalSignal: (signalId: string, input: import("@/lib/database.types").HealthJournalSignalUpdate) => Promise<boolean>;
+  setJournalSignalTemplate: (signalId: string, inTemplate: boolean) => Promise<boolean>;
+  archiveJournalSignal: (signalId: string) => Promise<boolean>;
+  deleteJournalSignal: (signalId: string) => Promise<boolean>;
+  reorderJournalSignals: (orderedSignalIds: readonly string[]) => Promise<boolean>;
+  deleteJournalEntry: (entryId: string) => Promise<boolean>;
   saveFavoriteFood: (input: {
     attribution?: string | null;
     barcode?: string | null;
@@ -264,9 +327,12 @@ type HealthPageProps = {
   addWaterEntry: (input: {
     amount: number;
     amount_ml: number;
+    confirmed_at: string | null;
     entry_date: string;
+    logged_at: string;
     unit: HealthWaterUnit;
   }) => Promise<boolean>;
+  confirmWaterEntry: (entryId: string) => Promise<boolean>;
   addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<HealthWorkout | null>;
   archiveGoal: (goalId: string) => Promise<boolean>;
   archivePlan: (planId: string) => Promise<boolean>;
@@ -319,6 +385,78 @@ type SleepDraft = {
   time: string;
 };
 
+type JournalOccurrenceDraft = {
+  draftKey: string;
+  id?: string;
+  note: string;
+  score: number;
+  signalId: string;
+  time: string;
+};
+
+type JournalLibraryEditDraft = {
+  scaleLabels: string[];
+  name: string;
+};
+
+type JournalTagQuery = {
+  end: number;
+  query: string;
+  start: number;
+};
+
+type JournalTagOverlay =
+  | {
+      error: string | null;
+      mode: "feeling_occurrence";
+      score: number | null;
+      signal: HealthJournalSignal;
+      time: string;
+    }
+  | null;
+
+type JournalTagOption = {
+  kind: HealthJournalSignalKind;
+  name: string;
+  signal: HealthJournalSignal | null;
+  symptomId?: string;
+};
+
+function buildHealthJournalSymptomOccurrenceSignal(symptom: HealthSymptom): HealthJournalSignal {
+  return {
+    archived_at: symptom.archived_at,
+    color: null,
+    created_at: symptom.created_at,
+    high_label: getDefaultHealthJournalScaleLabels("symptom")[10] ?? "Extreme",
+    id: `canonical-symptom:${symptom.id}`,
+    in_template: false,
+    kind: "symptom",
+    low_label: getDefaultHealthJournalScaleLabels("symptom")[0] ?? "None",
+    name: null,
+    scale_labels: getDefaultHealthJournalScaleLabels("symptom"),
+    symptom_id: symptom.id,
+    template_sort_order: null,
+    updated_at: symptom.updated_at,
+    user_id: symptom.user_id,
+  };
+}
+
+type JournalHistoryTagOverlay = {
+  entryId: string;
+  optionKey: string;
+  start: number;
+} | null;
+
+type JournalSignalCreateKind = "emotion" | "other";
+type JournalWorkspaceMode = "entry" | "history" | "split-history-left" | "split-history-right";
+
+const CORE_JOURNAL_SCALE_LABELS: Readonly<Record<string, readonly string[]>> = {
+  Mood: ["Very bad", "Bad", "Poor", "Low", "Okay", "Fair", "Good", "Very good", "Great", "Excellent"],
+  Energy: ["Drained", "Very low", "Low", "Sluggish", "Okay", "Moderate", "Good", "High", "Very high", "Energized"],
+  Stress: ["Calm", "Very low", "Low", "Mild", "Moderate", "Noticeable", "High", "Very high", "Severe", "Overwhelmed"],
+  "Mental clarity": ["Foggy", "Very foggy", "Unclear", "Distracted", "Mixed", "Fair", "Clear", "Very clear", "Sharp", "Crystal clear"],
+};
+
 type MealEditDraft = {
   mode: "legacy" | "structured";
   calories: string;
@@ -361,10 +499,690 @@ function createQuickFoodId() {
     : `quick-food-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function createJournalDraftId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `health-journal-draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
 const DEFAULT_IMPORT_STATUS = "Waiting for an Apple Health export.";
+
+function formatHealthFeelingTrendTimestamp(point: FeelingTrendPoint) {
+  const timestamp = Date.parse(point.occurredAt);
+  if (!Number.isFinite(timestamp)) {
+    return formatHealthDateLabel(point.entryDate);
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    hour: "numeric",
+    hour12: true,
+    minute: "2-digit",
+    month: "short",
+  }).format(timestamp);
+}
+
+function buildHealthFeelingTrendSeries(
+  definition: FeelingTrendDefinition,
+  points: FeelingTrendPoint[],
+): NumericLineChartSeries {
+  const average = getHealthFeelingTrendAverage(points) ?? 0;
+  return {
+    color: definition.color,
+    key: definition.key,
+    label: definition.name,
+    points: points.map((point) => {
+      const timestampLabel = formatHealthFeelingTrendTimestamp(point);
+      return {
+        contextLabel: definition.scaleLabels[point.score] ?? "",
+        detailLabel: point.note ? `${timestampLabel} · ${point.note}` : timestampLabel,
+        key: point.id,
+        label: formatHealthDateLabel(point.entryDate),
+        value: point.score,
+        xDomainKey: point.entryDate,
+        xSubpositionKey: point.occurredAt,
+      };
+    }),
+    summaryLabel: `${definition.name} · Avg.`,
+    totalValue: average,
+  };
+}
+
+function HealthAccentColorPalette({
+  className,
+  color,
+  label,
+  onSetColor,
+}: {
+  className?: string;
+  color: string;
+  label: string;
+  onSetColor: (color: string) => void;
+}) {
+  return (
+    <div aria-label={`Choose a color for ${label}`} className={`grid grid-cols-8 gap-1 rounded-[0.8rem] border border-[#e4deef] bg-white/80 p-1 dark:border-white/10 dark:bg-white/[0.05] ${className ?? ""}`} role="group">
+      {ADHDICE_ACCENT_COLORS.map((paletteColor) => (
+        <button
+          aria-label={`Set ${label} color to ${paletteColor}`}
+          aria-pressed={color === paletteColor}
+          className={`h-5 w-5 rounded-full border-2 transition ${color === paletteColor ? "scale-110 border-[#2f294a] dark:border-white" : "border-transparent"}`}
+          key={paletteColor}
+          onClick={() => onSetColor(paletteColor)}
+          onMouseDown={(event) => event.preventDefault()}
+          style={{ backgroundColor: paletteColor }}
+          title={`Set ${label} color to ${paletteColor}`}
+          type="button"
+        />
+      ))}
+    </div>
+  );
+}
+
+function HealthColorControl({
+  color,
+  isOpen,
+  label,
+  onSetColor,
+  onToggle,
+}: {
+  color: string;
+  isOpen: boolean;
+  label: string;
+  onSetColor: (color: string) => void;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="relative shrink-0">
+      <AdhdIconButton
+        aria-expanded={isOpen}
+        aria-haspopup="true"
+        aria-label={`Change color for ${label}`}
+        onClick={onToggle}
+        onMouseDown={(event) => event.preventDefault()}
+        size="sm"
+        tone="ghost"
+        variant="rowToolbar"
+      >
+        <span aria-hidden="true" className="h-3.5 w-3.5 rounded-full border border-black/10 dark:border-white/20" style={{ backgroundColor: color }} />
+      </AdhdIconButton>
+      {isOpen ? (
+        <HealthAccentColorPalette
+          className="absolute right-0 top-full z-20 mt-1"
+          color={color}
+          label={label}
+          onSetColor={onSetColor}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function HealthSymptomColorControl({
+  isOpen,
+  onSetColor,
+  onToggle,
+  symptom,
+}: {
+  isOpen: boolean;
+  onSetColor: (color: string) => void;
+  onToggle: () => void;
+  symptom: HealthSymptom;
+}) {
+  return <HealthColorControl color={normalizeHealthSymptomColor(symptom.color)} isOpen={isOpen} label={symptom.name} onSetColor={onSetColor} onToggle={onToggle} />;
+}
+
+function getJournalTagOptionKey(option: JournalTagOption) {
+  return `${option.kind}:${option.symptomId ?? option.signal?.id ?? option.name.toLowerCase()}`;
+}
+
+function getJournalTagOptionColor(option: JournalTagOption, symptoms: readonly HealthSymptom[]) {
+  if (option.kind === "symptom" && option.symptomId) {
+    return normalizeHealthSymptomColor(symptoms.find((symptom) => symptom.id === option.symptomId)?.color);
+  }
+  return option.signal ? getHealthJournalSignalDisplayColor(option.signal) : "#6f57f6";
+}
+
+function formatJournalHistoryOccurrenceTime(timestamp: string) {
+  return formatHealthTimestampTime(timestamp) ?? "Time unavailable";
+}
+
+function formatJournalLoggedAt(timestamp: string) {
+  const date = formatHealthJournalMetadataDate(timestamp);
+  const time = formatHealthTimestampTime(timestamp);
+  return date && time ? `${date} · ${time}` : "time unavailable";
+}
+
+const FEELING_TREND_GROUPS: ReadonlyArray<{
+  allLabel: string;
+  heading: string;
+  kind: HealthFeelingTrendKind;
+}> = [
+  { allLabel: "All Symptoms", heading: "Symptoms", kind: "symptom" },
+  { allLabel: "All Emotions", heading: "Emotions", kind: "emotion" },
+  { allLabel: "All Other Feelings", heading: "Other Feelings", kind: "other" },
+];
+
+function FeelingTrendSelector({
+  definitions,
+  disabled,
+  onToggleKeys,
+  selectedKeys,
+}: {
+  definitions: readonly FeelingTrendDefinition[];
+  disabled: boolean;
+  onToggleKeys: (keys: readonly string[]) => void;
+  selectedKeys: ReadonlySet<string>;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selectorId = "feeling-trend-selector";
+  const selectionSummary = getHealthFeelingTrendSelectionSummary(definitions, selectedKeys);
+
+  useEffect(() => {
+    function handleOutsidePointerDown(event: globalThis.PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handleOutsidePointerDown);
+    return () => document.removeEventListener("pointerdown", handleOutsidePointerDown);
+  }, []);
+
+  function renderCheckbox(label: string, keys: readonly string[], key: string) {
+    const isChecked = keys.length > 0 && keys.every((definitionKey) => selectedKeys.has(definitionKey));
+    return (
+      <label className="flex min-w-0 cursor-pointer items-start gap-2 rounded-[0.8rem] px-2 py-1.5 text-left text-[13px] leading-5 text-[#5f5876] transition hover:bg-[#f7f5fb] dark:text-white/75 dark:hover:bg-white/8" key={key}>
+        <input
+          aria-label={label}
+          checked={isChecked}
+          className="mt-1 h-3.5 w-3.5 shrink-0 accent-[#6f57f6]"
+          onChange={() => onToggleKeys(keys)}
+          type="checkbox"
+        />
+        <span className="min-w-0 break-words whitespace-normal">{label}</span>
+      </label>
+    );
+  }
+
+  return (
+    <div
+      className="relative w-full"
+      onBlur={(event) => {
+        if (event.relatedTarget && !rootRef.current?.contains(event.relatedTarget as Node)) {
+          setIsOpen(false);
+        }
+      }}
+      ref={rootRef}
+    >
+      <button
+        aria-controls={isOpen ? selectorId : undefined}
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+        aria-label="Trend Feelings"
+        className={`${HEALTH_COMPACT_CONTROL_CLASS} flex items-center justify-between gap-2 text-left`}
+        disabled={disabled}
+        onClick={() => setIsOpen((open) => !open)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setIsOpen(false);
+          }
+        }}
+        type="button"
+      >
+        <span className="min-w-0 flex-1 truncate">{selectionSummary}</span>
+        <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${isOpen ? "rotate-180" : ""}`} />
+      </button>
+      {isOpen ? (
+        <AdhdDropdownPanel
+          aria-label="Feeling trend selector"
+          className="adhdice-scrollbar max-h-[min(32rem,calc(100dvh-2rem))] overflow-y-auto"
+          id={selectorId}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setIsOpen(false);
+            }
+          }}
+          role="dialog"
+          widthClassName="w-[min(24rem,calc(100vw-2rem))]"
+        >
+          <div className="grid gap-3">
+            <section aria-labelledby={`${selectorId}-all-heading`} className="grid gap-1">
+              <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40" id={`${selectorId}-all-heading`}>All</p>
+              {renderCheckbox("All Feelings", definitions.map((definition) => definition.key), `${selectorId}-all`)}
+            </section>
+            {FEELING_TREND_GROUPS.map((group) => {
+              const groupDefinitions = definitions.filter((definition) => definition.kind === group.kind);
+              if (groupDefinitions.length === 0) return null;
+              return (
+                <section aria-labelledby={`${selectorId}-${group.kind}-heading`} className="grid gap-1" key={group.kind}>
+                  <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40" id={`${selectorId}-${group.kind}-heading`}>{group.heading}</p>
+                  {renderCheckbox(group.allLabel, groupDefinitions.map((definition) => definition.key), `${selectorId}-${group.kind}-all`)}
+                  {groupDefinitions.map((definition) => renderCheckbox(
+                    `${definition.name}${definition.archived ? " (archived)" : ""}`,
+                    [definition.key],
+                    `${selectorId}-${definition.key}`,
+                  ))}
+                </section>
+              );
+            })}
+          </div>
+        </AdhdDropdownPanel>
+      ) : null}
+    </div>
+  );
+}
+
+function JournalHistoryTagPopover({
+  entry,
+  entryValues,
+  onClose,
+  option,
+  journalSignalOccurrences,
+  symptomEntries,
+  symptoms,
+}: {
+  entry: HealthCheckIn;
+  entryValues: readonly HealthJournalSignalValue[];
+  onClose: () => void;
+  option: JournalTagOption;
+  journalSignalOccurrences: readonly HealthJournalSignalOccurrence[];
+  symptomEntries: readonly HealthSymptomEntry[];
+  symptoms: readonly HealthSymptom[];
+}) {
+  const occurrenceRows = option.kind === "symptom" && option.symptomId
+    ? symptomEntries
+      .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.symptom_id === option.symptomId)
+      .sort((left, right) => Date.parse(left.logged_at) - Date.parse(right.logged_at))
+      .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.logged_at, note: occurrence.note, score: occurrence.severity }))
+    : option.signal
+      ? journalSignalOccurrences
+        .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.signal_id === option.signal?.id)
+        .sort((left, right) => Date.parse(left.occurred_at) - Date.parse(right.occurred_at))
+        .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.occurred_at, note: occurrence.note, score: occurrence.score }))
+      : [];
+  const overallValue = option.signal
+    ? entryValues.find((value) => value.signal_id === option.signal?.id) ?? null
+    : null;
+  const displayName = getHealthJournalSignalDisplayName(option.signal ?? {
+    archived_at: null,
+    color: null,
+    created_at: entry.created_at,
+    high_label: "Extreme",
+    id: option.symptomId ?? getJournalTagOptionKey(option),
+    in_template: false,
+    kind: option.kind,
+    low_label: "None",
+    name: option.name,
+    scale_labels: getDefaultHealthJournalScaleLabels(option.kind),
+    symptom_id: option.symptomId ?? null,
+    template_sort_order: null,
+    updated_at: entry.updated_at,
+    user_id: entry.user_id,
+  }, symptoms);
+  const scaleLabels = option.signal?.scale_labels ?? getDefaultHealthJournalScaleLabels(option.kind);
+
+  return (
+    <AdhdDropdownPanel
+      aria-label={`View ${displayName} details from this Journal Entry`}
+      className="left-0 top-[calc(100%+0.35rem)] z-50 max-h-[calc(100dvh-1rem)] overflow-y-auto"
+      role="dialog"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onClose();
+        }
+      }}
+      widthClassName="w-[min(20rem,calc(100vw-2rem))]"
+    >
+      <div className="grid gap-3 text-xs text-[#68738c] dark:text-white/60">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{displayName}</p>
+          <div className="mt-2 grid gap-2">
+            <p className="font-semibold text-[#4f5872] dark:text-white/75">Occurrences</p>
+            {occurrenceRows.length > 0 ? occurrenceRows.map((occurrence) => (
+                <div className="grid gap-0.5" key={occurrence.id}>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span>{formatJournalHistoryOccurrenceTime(occurrence.occurredAt)}</span>
+                    <span className="text-right font-semibold text-[#26324f] dark:text-white">{occurrence.score} · {scaleLabels[occurrence.score] ?? ""}</span>
+                  </div>
+                  {occurrence.note?.trim() ? <p className="text-[#4f5872] dark:text-white/75">{occurrence.note}</p> : null}
+                </div>
+              )) : <span>None logged</span>}
+          </div>
+        </div>
+        {overallValue ? (
+          <div className="border-t border-[#eeeaf8] pt-2 dark:border-white/10">
+            <p className="font-semibold text-[#4f5872] dark:text-white/75">Snapshot rating</p>
+            <p className="mt-1 font-semibold text-[#26324f] dark:text-white">{overallValue.score} · {scaleLabels[overallValue.score] ?? ""}</p>
+          </div>
+        ) : null}
+      </div>
+    </AdhdDropdownPanel>
+  );
+}
+
+function JournalHistoryReflection({
+  entry,
+  entryValues,
+  historyTagOptions,
+  historyTagOptionsByKey,
+  onToggleTag,
+  selectedTag,
+  journalSignalOccurrences,
+  symptomEntries,
+  symptoms,
+}: {
+  entry: HealthCheckIn;
+  entryValues: readonly HealthJournalSignalValue[];
+  historyTagOptions: readonly JournalTagOption[];
+  historyTagOptionsByKey: ReadonlyMap<string, JournalTagOption>;
+  onToggleTag: (match: { key: string; start: number }) => void;
+  selectedTag: JournalHistoryTagOverlay;
+  journalSignalOccurrences: readonly HealthJournalSignalOccurrence[];
+  symptomEntries: readonly HealthSymptomEntry[];
+  symptoms: readonly HealthSymptom[];
+}) {
+  const matches = findHealthJournalReflectionTagMatches(
+    entry.reflection,
+    historyTagOptions.map((option) => ({ key: getJournalTagOptionKey(option), kind: option.kind, name: option.name })),
+  );
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  matches.forEach((match) => {
+    const option = historyTagOptionsByKey.get(match.key);
+    if (!option) return;
+    if (match.start > cursor) nodes.push(entry.reflection.slice(cursor, match.start));
+    const isOpen = selectedTag?.entryId === entry.id
+      && selectedTag.optionKey === match.key
+      && selectedTag.start === match.start;
+    nodes.push(
+      <span className="relative inline-block align-baseline" key={`${match.start}:${match.key}`}>
+        <button
+          aria-expanded={isOpen}
+          aria-haspopup="dialog"
+          aria-label={`View ${match.text.slice(1)} details from this Journal Entry`}
+          className="rounded px-0.5 font-semibold underline decoration-current/30 underline-offset-2 transition hover:bg-[#f1edff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.08]"
+          onClick={() => onToggleTag({ key: match.key, start: match.start })}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && isOpen) {
+              event.preventDefault();
+              onToggleTag({ key: match.key, start: match.start });
+            }
+          }}
+          style={{ color: getJournalTagOptionColor(option, symptoms) }}
+          type="button"
+        >
+          {match.text}
+        </button>
+        {isOpen ? <JournalHistoryTagPopover entry={entry} entryValues={entryValues} journalSignalOccurrences={journalSignalOccurrences} onClose={() => onToggleTag({ key: match.key, start: match.start })} option={option} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
+      </span>,
+    );
+    cursor = match.end;
+  });
+  if (cursor < entry.reflection.length) nodes.push(entry.reflection.slice(cursor));
+
+  return <div className="mt-2 text-sm leading-6 text-[#66718f] dark:text-white/60">{nodes}</div>;
+}
+
+function HealthJournalColorControl({
+  isOpen,
+  onSetColor,
+  onToggle,
+  signal,
+  symptoms,
+}: {
+  isOpen: boolean;
+  onSetColor: (color: string) => void;
+  onToggle: () => void;
+  signal: HealthJournalSignal;
+  symptoms: readonly HealthSymptom[];
+}) {
+  return <HealthColorControl color={getHealthJournalSignalDisplayColor(signal, symptoms.find((symptom) => symptom.id === signal.symptom_id))} isOpen={isOpen} label={getHealthJournalSignalDisplayName(signal, symptoms)} onSetColor={onSetColor} onToggle={onToggle} />;
+}
+
+function JournalScaleLabelsEditor({
+  draft,
+  nameDisabled = false,
+  onCancel,
+  onChange,
+  onSave,
+  signal,
+  symptoms = [],
+}: {
+  draft: JournalLibraryEditDraft;
+  nameDisabled?: boolean;
+  onCancel: () => void;
+  onChange: (draft: JournalLibraryEditDraft) => void;
+  onSave: () => void;
+  signal: HealthJournalSignal;
+  symptoms?: readonly HealthSymptom[];
+}) {
+  const labels = Array.from({ length: HEALTH_JOURNAL_SCORE_OPTIONS.length }, (_, index) => draft.scaleLabels[index] ?? "");
+  const displayName = getHealthJournalSignalDisplayName(signal, symptoms);
+  return (
+    <div className="grid gap-3 rounded-[0.9rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+      {signal.kind === "symptom" ? <p className="text-sm font-semibold text-[#26324f] dark:text-white">{displayName}</p> : <Field label="Name"><input aria-label={`Edit ${displayName} name`} className={HEALTH_COMPACT_INPUT_CLASS} disabled={nameDisabled} onChange={(event) => onChange({ ...draft, name: event.target.value })} value={draft.name} /></Field>}
+      <div className="grid gap-2" id={`journal-scale-labels-${signal.id}`}>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Scale labels</p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {labels.map((label, index) => <label className="flex min-w-0 items-center gap-2 rounded-[0.7rem] border border-[#edf0fb] bg-white px-2 py-1.5 text-xs dark:border-white/10 dark:bg-white/[0.04]" key={index}><span className="w-4 shrink-0 font-black text-[#6f57f6] dark:text-[#cabfff]">{index}</span><input aria-label={`${displayName} score ${index} label`} className="min-w-0 flex-1 bg-transparent text-sm text-[#3c4966] outline-none dark:text-white/75" onChange={(event) => { const nextLabels = [...labels]; nextLabels[index] = event.target.value; onChange({ ...draft, scaleLabels: nextLabels }); }} value={label} /></label>)}
+        </div>
+      </div>
+      <div className="flex justify-end gap-2"><AdhdChip onClick={onCancel} type="button">Cancel</AdhdChip><AdhdChip onClick={onSave} tone="purple" type="button">Save</AdhdChip></div>
+    </div>
+  );
+}
+
+function JournalFeelingCreationRow({
+  inTemplate,
+  kind,
+  name,
+  onCancel,
+  onChangeInTemplate,
+  onChangeName,
+  onSave,
+}: {
+  inTemplate: boolean;
+  kind: JournalSignalCreateKind;
+  name: string;
+  onCancel: () => void;
+  onChangeInTemplate: (inTemplate: boolean) => void;
+  onChangeName: (name: string) => void;
+  onSave: () => void;
+}) {
+  const feelingLabel = kind === "emotion" ? "Emotion" : "Other Feeling";
+  return (
+    <div className="grid gap-3 rounded-[1rem] border border-[#eeeaf8] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+      <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        <Field label="Name"><input aria-label={`${feelingLabel} name`} className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 w-full`} onChange={(event) => onChangeName(event.target.value)} value={name} /></Field>
+        <label className="flex items-center gap-2 text-sm text-[#5d6783] dark:text-white/70"><input checked={inTemplate} onChange={(event) => onChangeInTemplate(event.target.checked)} type="checkbox" /> Add to Daily Template</label>
+      </div>
+      <div className="flex justify-end gap-2"><AdhdChip onClick={onCancel} type="button">Cancel</AdhdChip><AdhdChip onClick={onSave} tone="purple" type="button">Save</AdhdChip></div>
+    </div>
+  );
+}
+
+function JournalFeelingLibrarySection({
+  deleteJournalSignal,
+  draft,
+  journalLibraryEditId,
+  journalLibraryCreateKind,
+  journalSignalOccurrences,
+  journalSignalValues,
+  kind,
+  onCancelEdit,
+  onCancelCreate,
+  onChangeDraft,
+  onChangeCreateInTemplate,
+  onChangeCreateName,
+  onCreate,
+  onEdit,
+  onOpenCreate,
+  onSaveEdit,
+  onToggleTemplate,
+  onSetColor,
+  onToggleColorPicker,
+  journalSignalCreateInTemplate,
+  journalSignalCreateName,
+  signals,
+  symptoms,
+  archiveJournalSignal,
+  moveJournalSignal,
+  openColorPickerKey,
+}: {
+  deleteJournalSignal: (signalId: string) => Promise<boolean>;
+  draft: JournalLibraryEditDraft;
+  journalLibraryEditId: string | null;
+  journalLibraryCreateKind: JournalSignalCreateKind | null;
+  journalSignalOccurrences: HealthJournalSignalOccurrence[];
+  journalSignalValues: HealthJournalSignalValue[];
+  kind: JournalSignalCreateKind;
+  onCancelEdit: () => void;
+  onCancelCreate: () => void;
+  onChangeDraft: (draft: JournalLibraryEditDraft) => void;
+  onChangeCreateInTemplate: (inTemplate: boolean) => void;
+  onChangeCreateName: (name: string) => void;
+  onCreate: () => void;
+  onEdit: (signal: HealthJournalSignal) => void;
+  onOpenCreate: (kind: JournalSignalCreateKind) => void;
+  onSaveEdit: (signal: HealthJournalSignal) => void;
+  onSetColor: (signalId: string, color: string) => void;
+  onToggleTemplate: (signal: HealthJournalSignal) => void;
+  onToggleColorPicker: (key: string) => void;
+  journalSignalCreateInTemplate: boolean;
+  journalSignalCreateName: string;
+  signals: HealthJournalSignal[];
+  symptoms: HealthSymptom[];
+  archiveJournalSignal: (signalId: string) => Promise<boolean>;
+  moveJournalSignal: (signalId: string, direction: -1 | 1) => void;
+  openColorPickerKey: string | null;
+}) {
+  const sectionSignals = signals.filter((signal) => signal.kind === kind && signal.archived_at === null);
+  const templateSignals = getHealthJournalTemplateSignals(signals, symptoms);
+  const sectionTitle = kind === "emotion" ? "Emotions" : "Other Feelings";
+  const createLabel = kind === "emotion" ? "Emotion" : "Other Feeling";
+  return (
+    <section className="grid gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <SectionMiniTitle title={sectionTitle} />
+        <AdhdChip aria-label={`Add ${createLabel}`} onClick={() => onOpenCreate(kind)} type="button">+ {createLabel}</AdhdChip>
+      </div>
+      {journalLibraryCreateKind === kind ? <JournalFeelingCreationRow
+        inTemplate={journalSignalCreateInTemplate}
+        kind={kind}
+        name={journalSignalCreateName}
+        onCancel={onCancelCreate}
+        onChangeInTemplate={onChangeCreateInTemplate}
+        onChangeName={onChangeCreateName}
+        onSave={onCreate}
+      /> : null}
+      {sectionSignals.map((signal) => {
+        const templateIndex = templateSignals.findIndex((candidate) => candidate.id === signal.id);
+        const hasHistory = journalSignalValues.some((value) => value.signal_id === signal.id)
+          || journalSignalOccurrences.some((occurrence) => occurrence.signal_id === signal.id);
+        const displayName = getHealthJournalSignalDisplayName(signal, symptoms);
+        const isColorOpen = openColorPickerKey === `library:${signal.id}`;
+        return (
+          <div className="grid gap-2 rounded-[0.9rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={signal.id}>
+            {journalLibraryEditId === signal.id ? <JournalScaleLabelsEditor draft={draft} onCancel={onCancelEdit} onChange={onChangeDraft} onSave={() => onSaveEdit(signal)} signal={signal} /> : <>
+              <div className="flex flex-wrap items-center gap-2">
+                <HealthJournalColorControl isOpen={isColorOpen} onSetColor={(color) => onSetColor(signal.id, color)} onToggle={() => onToggleColorPicker(`library:${signal.id}`)} signal={signal} symptoms={symptoms} />
+                <span className="min-w-0 flex-1 font-semibold text-[#26324f] dark:text-white">{displayName}</span>
+                <span className="text-xs text-[#7d88a3] dark:text-white/45">{signal.scale_labels[0]} → {signal.scale_labels[10]}</span>
+                <AdhdChip onClick={() => onToggleTemplate(signal)} type="button">{signal.in_template ? "In Daily Template" : "Add to Template"}</AdhdChip>
+                {signal.in_template ? <>
+                  <AdhdIconButton aria-label={`Move ${displayName} up`} disabled={templateIndex <= 0} onClick={() => moveJournalSignal(signal.id, -1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronUp aria-hidden="true" /></AdhdIconButton>
+                  <AdhdIconButton aria-label={`Move ${displayName} down`} disabled={templateIndex < 0 || templateIndex >= templateSignals.length - 1} onClick={() => moveJournalSignal(signal.id, 1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronDown aria-hidden="true" /></AdhdIconButton>
+                </> : null}
+                <AdhdIconButton aria-label={`Edit ${displayName}`} onClick={() => onEdit(signal)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
+                <AdhdIconButton aria-label={`Archive ${displayName}`} onClick={() => { void archiveJournalSignal(signal.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
+                {!hasHistory ? <AdhdIconButton aria-label={`Delete ${displayName}`} onClick={() => { void deleteJournalSignal(signal.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton> : null}
+              </div>
+            </>}
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+function JournalSymptomLibrarySection({
+  activeSymptoms,
+  archiveSymptom,
+  editingSymptomId,
+  editingSymptomName,
+  getJournalSignalForSymptom,
+  handleRenameSymptom,
+  handleSetSymptomColor,
+  isSymptomCreateOpen,
+  journalLibraryEditId,
+  journalLibraryEditDraft,
+  journalSignalValues,
+  onCancelCreate,
+  onChangeCreateName,
+  onCancelEdit,
+  onChangeDraft,
+  onCreate,
+  onEdit,
+  onSaveEdit,
+  onToggleColorPicker,
+  onToggleTemplate,
+  onAddSymptom,
+  onMove,
+  openSymptomColorPickerKey,
+  setEditingSymptomId,
+  setEditingSymptomName,
+  startJournalSymptomEdit,
+  symptoms,
+  symptomCreateName,
+  templateSignals,
+}: {
+  activeSymptoms: HealthSymptom[];
+  archiveSymptom: (symptomId: string) => Promise<boolean>;
+  editingSymptomId: string | null;
+  editingSymptomName: string;
+  getJournalSignalForSymptom: (symptomId: string) => HealthJournalSignal | null;
+  handleRenameSymptom: (symptomId: string) => Promise<void>;
+  handleSetSymptomColor: (symptomId: string, color: string) => void;
+  isSymptomCreateOpen: boolean;
+  journalLibraryEditId: string | null;
+  journalLibraryEditDraft: JournalLibraryEditDraft;
+  journalSignalValues: HealthJournalSignalValue[];
+  onCancelCreate: () => void;
+  onChangeCreateName: (name: string) => void;
+  onCancelEdit: () => void;
+  onChangeDraft: (draft: JournalLibraryEditDraft) => void;
+  onCreate: () => void;
+  onEdit: (signal: HealthJournalSignal) => void;
+  onSaveEdit: (signal: HealthJournalSignal) => void;
+  onToggleColorPicker: (key: string) => void;
+  onToggleTemplate: (symptom: HealthSymptom, inTemplate: boolean) => void;
+  onAddSymptom: () => void;
+  onMove: (signalId: string, direction: -1 | 1) => void;
+  openSymptomColorPickerKey: string | null;
+  setEditingSymptomId: (id: string | null) => void;
+  setEditingSymptomName: (name: string) => void;
+  startJournalSymptomEdit: (symptom: HealthSymptom) => void;
+  symptoms: HealthSymptom[];
+  templateSignals: HealthJournalSignal[];
+  symptomCreateName: string;
+}) {
+  return <section className="grid gap-2"><div className="flex items-center justify-between gap-2"><SectionMiniTitle title="Symptoms" /><AdhdChip aria-label="Add symptom" onClick={onAddSymptom} type="button">+ Symptom</AdhdChip></div>{isSymptomCreateOpen ? <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-[1rem] border border-[#eeeaf8] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]"><input aria-label="New symptom name" className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 w-full sm:min-w-[12rem] sm:flex-1 sm:w-auto`} onChange={(event) => onChangeCreateName(event.target.value)} value={symptomCreateName} /><div className="flex shrink-0 gap-2 sm:ml-auto"><AdhdChip onClick={onCancelCreate} type="button">Cancel</AdhdChip><AdhdChip onClick={onCreate} tone="purple" type="button">Save</AdhdChip></div></div> : null}<p className="text-xs text-[#7d7598] dark:text-white/50">Symptoms use the canonical Health name. Journal controls appear here only when needed.</p>{activeSymptoms.map((symptom) => { const signal = getJournalSignalForSymptom(symptom.id); const templateIndex = signal ? templateSignals.findIndex((candidate) => candidate.id === signal.id) : -1; const hasHistory = signal ? journalSignalValues.some((value) => value.signal_id === signal.id) : false; const isColorOpen = openSymptomColorPickerKey === `library:${symptom.id}`; return <div className="grid gap-2 rounded-[0.9rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={symptom.id}><div className="flex flex-wrap items-center gap-2">{editingSymptomId === symptom.id ? null : <HealthSymptomColorControl isOpen={isColorOpen} onSetColor={(color) => handleSetSymptomColor(symptom.id, color)} onToggle={() => onToggleColorPicker(`library:${symptom.id}`)} symptom={symptom} />}{editingSymptomId === symptom.id ? <input aria-label={`Rename ${symptom.name}`} className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-0 flex-1`} onChange={(event) => setEditingSymptomName(event.target.value)} value={editingSymptomName} /> : <span className="min-w-0 flex-1 font-semibold text-[#26324f] dark:text-white">{symptom.name}</span>}{signal ? <AdhdChip onClick={() => onToggleTemplate(symptom, !signal.in_template)} type="button">{signal.in_template ? "In Daily Template" : "Add to Template"}</AdhdChip> : <AdhdChip onClick={() => onToggleTemplate(symptom, true)} type="button">Add to Template</AdhdChip>}{signal?.in_template ? <><AdhdIconButton aria-label={`Move ${symptom.name} up`} disabled={templateIndex <= 0} onClick={() => signal && onMove(signal.id, -1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronUp aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Move ${symptom.name} down`} disabled={templateIndex < 0 || templateIndex >= templateSignals.length - 1} onClick={() => signal && onMove(signal.id, 1)} size="sm" tone="ghost" variant="rowToolbar"><ChevronDown aria-hidden="true" /></AdhdIconButton></> : null}{editingSymptomId === symptom.id ? <><AdhdChip onClick={() => { void handleRenameSymptom(symptom.id); }} tone="purple" type="button">Save</AdhdChip><AdhdChip onClick={() => setEditingSymptomId(null)} type="button">Cancel</AdhdChip></> : <><AdhdIconButton aria-label={`Rename ${symptom.name}`} onClick={() => { setEditingSymptomId(symptom.id); setEditingSymptomName(symptom.name); }} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Archive ${symptom.name}`} onClick={() => { void archiveSymptom(symptom.id); }} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton></>}{signal ? <AdhdIconButton aria-label={`Edit ${symptom.name} labels`} onClick={() => onEdit(signal)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton> : <AdhdChip onClick={() => { void startJournalSymptomEdit(symptom); }} type="button">Edit labels</AdhdChip>}</div>{signal && journalLibraryEditId === signal.id ? <JournalScaleLabelsEditor draft={journalLibraryEditDraft} nameDisabled onCancel={onCancelEdit} onChange={onChangeDraft} onSave={() => onSaveEdit(signal)} signal={signal} symptoms={symptoms} /> : null}{hasHistory ? <span className="text-xs text-[#7d88a3] dark:text-white/45">Existing Journal history is retained.</span> : null}</div>; })}{activeSymptoms.length === 0 ? <EmptyCopy text="No active Symptoms yet." /> : null}</section>;
+}
 
 export function HealthPage({
   checkIns,
+  journalSignals,
+  journalSignalValues,
+  journalSignalOccurrences,
+  symptoms,
+  symptomEntries,
+  createSymptom,
+  renameSymptom,
+  setSymptomColor,
+  archiveSymptom,
   deleteFavoriteFood,
   deleteMealEntry,
   deleteRecipe,
@@ -386,7 +1204,14 @@ export function HealthPage({
   metricEntries,
   profile,
   recipes,
-  saveCheckIn,
+  saveJournalEntry,
+  createJournalSignal,
+  updateJournalSignal,
+  setJournalSignalTemplate,
+  archiveJournalSignal,
+  deleteJournalSignal,
+  reorderJournalSignals,
+  deleteJournalEntry,
   saveFavoriteFood,
   setFavoriteFoodStatus,
   saveRecipe,
@@ -400,6 +1225,7 @@ export function HealthPage({
   confirmMealPlanEntry,
   addWeightEntry,
   addWaterEntry,
+  confirmWaterEntry,
   addWorkout,
   archiveGoal,
   archiveExercise,
@@ -450,6 +1276,8 @@ export function HealthPage({
   workoutSets,
 }: HealthPageProps) {
   const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
+  const canonicalPageShellLayout = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS[activeTab];
+  const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab], canonicalPageShellLayout.sizes, canonicalPageShellLayout);
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
   const [mealDraft, setMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
   const [activeMealEntrySlot, setActiveMealEntrySlot] = useState<HealthMealEntry["meal_slot"] | null>(null);
@@ -489,10 +1317,50 @@ export function HealthPage({
   const [importSaveStatus, setImportSaveStatus] = useState("");
   const [weightDraft, setWeightDraft] = useState("");
   const [weightNote, setWeightNote] = useState("");
+  const [journalDate, setJournalDate] = useState(todayHealthDate());
+  const [journalEntryTime, setJournalEntryTime] = useState(getCurrentHealthDateTimeInputs().time);
+  const [selectedJournalEntryId, setSelectedJournalEntryId] = useState<string | null>(null);
   const [journalReflection, setJournalReflection] = useState("");
   const [journalMood, setJournalMood] = useState<number | null>(null);
   const [journalEnergy, setJournalEnergy] = useState<number | null>(null);
-  const [journalTags, setJournalTags] = useState<string[]>([]);
+  const [journalStress, setJournalStress] = useState<number | null>(null);
+  const [journalClarity, setJournalClarity] = useState<number | null>(null);
+  const [journalDraftValues, setJournalDraftValues] = useState<HealthJournalDraftValue[]>([]);
+  const [journalOccurrences, setJournalOccurrences] = useState<JournalOccurrenceDraft[]>([]);
+  const [journalOccurrenceHydrationVersion, setJournalOccurrenceHydrationVersion] = useState(0);
+  const [isJournalLibraryOpen, setIsJournalLibraryOpen] = useState(false);
+  const [isJournalAddOpen, setIsJournalAddOpen] = useState(false);
+  const [journalLibraryCreateKind, setJournalLibraryCreateKind] = useState<JournalSignalCreateKind | null>(null);
+  const [journalSignalCreateName, setJournalSignalCreateName] = useState("");
+  const [journalSignalCreateInTemplate, setJournalSignalCreateInTemplate] = useState(true);
+  const [journalLibraryEditId, setJournalLibraryEditId] = useState<string | null>(null);
+  const [journalLibraryEditDraft, setJournalLibraryEditDraft] = useState<JournalLibraryEditDraft>({ name: "", scaleLabels: [] });
+  const [expandedJournalScaleKey, setExpandedJournalScaleKey] = useState<string | null>(null);
+  const [journalTagQuery, setJournalTagQuery] = useState<JournalTagQuery | null>(null);
+  const [journalTagOverlay, setJournalTagOverlay] = useState<JournalTagOverlay>(null);
+  const [journalHistoryTagOverlay, setJournalHistoryTagOverlay] = useState<JournalHistoryTagOverlay>(null);
+  const [journalTagHighlightIndex, setJournalTagHighlightIndex] = useState(0);
+  const [journalOccurrenceEditorOpen, setJournalOccurrenceEditorOpen] = useState(false);
+  const [journalOccurrenceEditKey, setJournalOccurrenceEditKey] = useState<string | null>(null);
+  const [journalOccurrenceEditId, setJournalOccurrenceEditId] = useState<string | null>(null);
+  const [journalOccurrenceSignalId, setJournalOccurrenceSignalId] = useState("");
+  const [journalOccurrenceScore, setJournalOccurrenceScore] = useState<number | null>(null);
+  const [journalOccurrenceTime, setJournalOccurrenceTime] = useState(getCurrentHealthDateTimeInputs().time);
+  const [journalOccurrenceNote, setJournalOccurrenceNote] = useState("");
+  const [journalFormError, setJournalFormError] = useState<string | null>(null);
+  const [journalWorkspaceMode, setJournalWorkspaceMode] = useState<JournalWorkspaceMode>("entry");
+  const [isJournalHistoryMenuOpen, setIsJournalHistoryMenuOpen] = useState(false);
+  const [isJournalLoggedMetadataOpen, setIsJournalLoggedMetadataOpen] = useState(false);
+  const [expandedJournalHistoryEntryIds, setExpandedJournalHistoryEntryIds] = useState<Set<string>>(() => new Set());
+  const [collapsedJournalHistoryDates, setCollapsedJournalHistoryDates] = useState<Set<string>>(() => new Set());
+  const [selectedFeelingTrendDefinitionKeys, setSelectedFeelingTrendDefinitionKeys] = useState<Set<string>>(() => new Set());
+  const [openSymptomColorPickerKey, setOpenSymptomColorPickerKey] = useState<string | null>(null);
+  const [isSymptomCreateOpen, setIsSymptomCreateOpen] = useState(false);
+  const [isCreatingSymptom, setIsCreatingSymptom] = useState(false);
+  const [symptomCreateName, setSymptomCreateName] = useState("");
+  const [feelingTrendRange, setFeelingTrendRange] = useState<HealthFeelingTrendRange>("30D");
+  const [editingSymptomId, setEditingSymptomId] = useState<string | null>(null);
+  const [editingSymptomName, setEditingSymptomName] = useState("");
   const initialSleepInputs = useMemo(() => getCurrentHealthDateTimeInputs(), []);
   const [sleepKind, setSleepKind] = useState<HealthSleepKind>("Sleep");
   const [manualSleepDraft, setManualSleepDraft] = useState<SleepDraft>(() => ({
@@ -509,7 +1377,21 @@ export function HealthPage({
   const importAbortRef = useRef<AbortController | null>(null);
   const barcodeLookupGenerationRef = useRef(0);
   const mealSaveInFlightRef = useRef(false);
+  const journalReflectionRef = useRef<HTMLTextAreaElement | null>(null);
+  const journalTagCaretRef = useRef<number | null>(null);
+  const journalLibraryRef = useRef<HTMLDivElement | null>(null);
+  const journalSignalsRef = useRef(journalSignals);
+  const journalDraftEntryIdRef = useRef<string | null>(null);
+  const journalOccurrenceSaveStatusRef = useRef<"idle" | "saving" | "succeeded">("idle");
+  const journalHistoryLongPressTimerRef = useRef<number | null>(null);
+  const journalHistoryLongPressFiredRef = useRef(false);
+  const previousFeelingTrendDefinitionKeysRef = useRef<string[]>([]);
+  const hasInitializedFeelingTrendSelectionRef = useRef(false);
   const today = todayHealthDate();
+
+  useEffect(() => {
+    journalSignalsRef.current = journalSignals;
+  }, [journalSignals]);
 
   useEffect(() => {
     if (!sleepActiveSession?.isRunning) return;
@@ -523,7 +1405,6 @@ export function HealthPage({
     }
     setProfileDraft({
       calorie_goal: profile.calorie_goal,
-      add_active_energy_to_calorie_goal: profile.add_active_energy_to_calorie_goal,
       carbs_goal_grams: profile.carbs_goal_grams,
       fat_goal_grams: profile.fat_goal_grams,
       movement_goal: profile.movement_goal,
@@ -546,17 +1427,282 @@ export function HealthPage({
     importAbortRef.current?.abort();
   }, []);
 
-  const todayCheckIn = useMemo(
-    () => checkIns.find((entry) => entry.entry_date === today) ?? null,
-    [checkIns, today],
+  useEffect(() => () => {
+    if (journalHistoryLongPressTimerRef.current !== null) {
+      window.clearTimeout(journalHistoryLongPressTimerRef.current);
+    }
+  }, []);
+
+  const selectedJournalEntry = useMemo(
+    () => selectedJournalEntryId ? checkIns.find((entry) => entry.id === selectedJournalEntryId) ?? null : null,
+    [checkIns, selectedJournalEntryId],
   );
 
   useEffect(() => {
-    setJournalReflection(todayCheckIn?.reflection ?? "");
-    setJournalMood(todayCheckIn?.mood_score ?? null);
-    setJournalEnergy(todayCheckIn?.energy_score ?? null);
-    setJournalTags(todayCheckIn?.symptom_tags ?? []);
-  }, [todayCheckIn]);
+    if (selectedJournalEntry) {
+      setJournalDate(selectedJournalEntry.entry_date);
+      setJournalEntryTime(normalizeHealthJournalEntryTime(selectedJournalEntry.entry_time, selectedJournalEntry.created_at));
+      setJournalReflection(selectedJournalEntry.reflection);
+      setJournalMood(selectedJournalEntry.mood_score);
+      setJournalEnergy(selectedJournalEntry.energy_score);
+      setJournalStress(selectedJournalEntry.stress_score);
+      setJournalClarity(selectedJournalEntry.clarity_score);
+    }
+    setJournalFormError(null);
+    setJournalOccurrenceEditorOpen(false);
+    setJournalOccurrenceEditKey(null);
+    setJournalOccurrenceEditId(null);
+    setExpandedJournalScaleKey(null);
+    setJournalTagQuery(null);
+    setJournalTagOverlay(null);
+    setJournalHistoryTagOverlay(null);
+    setIsJournalLoggedMetadataOpen(false);
+    journalTagCaretRef.current = null;
+  }, [selectedJournalEntry, selectedJournalEntryId]);
+
+  useEffect(() => {
+    const preserveCurrentDraft = journalDraftEntryIdRef.current === selectedJournalEntryId;
+    setJournalDraftValues((current) => {
+      const next = buildHealthJournalDraftValues({
+        journalEntryId: selectedJournalEntry?.id ?? null,
+        signals: journalSignalsRef.current,
+        values: journalSignalValues,
+        symptoms,
+      });
+      if (!preserveCurrentDraft) return next;
+      const nextIds = new Set(next.map((value) => value.signal_id));
+      const preserved = current.filter((value) => !nextIds.has(value.signal_id) && journalSignalsRef.current.some((signal) => signal.id === value.signal_id));
+      return [...next, ...preserved];
+    });
+    journalDraftEntryIdRef.current = selectedJournalEntryId;
+    const nextOccurrences = selectedJournalEntry ? [
+      ...symptomEntries
+        .filter((entry) => entry.journal_entry_id === selectedJournalEntry.id)
+        .map((entry) => {
+          const loggedAt = new Date(entry.logged_at);
+          const signal = journalSignalsRef.current.find((candidate) => candidate.kind === "symptom" && candidate.symptom_id === entry.symptom_id);
+          return {
+            id: entry.id,
+            draftKey: entry.id,
+            note: entry.note ?? "",
+            score: entry.severity,
+            signalId: signal?.id ?? `canonical-symptom:${entry.symptom_id}`,
+            time: Number.isFinite(loggedAt.getTime())
+              ? `${String(loggedAt.getHours()).padStart(2, "0")}:${String(loggedAt.getMinutes()).padStart(2, "0")}`
+              : "",
+            occurredAt: entry.logged_at,
+          };
+        }),
+      ...journalSignalOccurrences
+        .filter((occurrence) => occurrence.journal_entry_id === selectedJournalEntry.id)
+        .map((occurrence) => {
+          const occurredAt = new Date(occurrence.occurred_at);
+          return {
+            id: occurrence.id,
+            draftKey: occurrence.id,
+            note: occurrence.note ?? "",
+            score: occurrence.score,
+            signalId: occurrence.signal_id,
+            time: Number.isFinite(occurredAt.getTime())
+              ? `${String(occurredAt.getHours()).padStart(2, "0")}:${String(occurredAt.getMinutes()).padStart(2, "0")}`
+              : "",
+            occurredAt: occurrence.occurred_at,
+          };
+        }),
+    ].sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt)).map((occurrence) => {
+      const { occurredAt, ...withoutTimestamp } = occurrence;
+      void occurredAt;
+      return withoutTimestamp;
+    })
+      : [];
+    if (journalOccurrenceSaveStatusRef.current === "succeeded") {
+      journalOccurrenceSaveStatusRef.current = "idle";
+      setJournalOccurrences(nextOccurrences);
+    } else {
+      setJournalOccurrences((current) => preserveCurrentDraft
+        ? [...nextOccurrences, ...current.filter((occurrence) => !occurrence.id)]
+        : nextOccurrences);
+    }
+  }, [journalOccurrenceHydrationVersion, journalSignalOccurrences, journalSignalValues, journalSignals, selectedJournalEntry, selectedJournalEntryId, symptomEntries, symptoms]);
+
+  const activeSymptoms = useMemo(
+    () => symptoms.filter((symptom) => symptom.archived_at === null),
+    [symptoms],
+  );
+  const activeJournalSignals = useMemo(
+    () => journalSignals.filter((signal) => signal.archived_at === null && signal.kind !== "symptom"),
+    [journalSignals],
+  );
+  const getJournalSignalForSymptom = useCallback((symptomId: string) => journalSignals.find(
+    (signal) => signal.kind === "symptom" && signal.symptom_id === symptomId && signal.archived_at === null,
+  ) ?? null, [journalSignals]);
+  const journalTagSymptom = useMemo(
+    () => journalTagOverlay?.mode === "feeling_occurrence" && journalTagOverlay.signal.kind === "symptom"
+      ? symptoms.find((symptom) => symptom.id === journalTagOverlay.signal.symptom_id) ?? null
+      : null,
+    [journalTagOverlay, symptoms],
+  );
+  const journalTagSignal = useMemo(
+    () => journalTagOverlay?.mode === "feeling_occurrence"
+      ? journalSignals.find((signal) => signal.id === journalTagOverlay.signal.id) ?? journalTagOverlay.signal
+      : null,
+    [journalSignals, journalTagOverlay],
+  );
+  const journalFeelingChoices = useMemo<JournalTagOption[]>(() => [
+    ...activeSymptoms.map((symptom) => ({
+      kind: "symptom" as const,
+      name: symptom.name,
+      signal: getJournalSignalForSymptom(symptom.id),
+      symptomId: symptom.id,
+    })),
+    ...activeJournalSignals.map((signal) => ({
+      kind: signal.kind,
+      name: getHealthJournalSignalDisplayName(signal, symptoms),
+      signal,
+    })),
+  ], [activeJournalSignals, activeSymptoms, getJournalSignalForSymptom, symptoms]);
+  const visibleJournalTagOptions = useMemo(() => {
+    const query = journalTagQuery?.query.trim().toLowerCase() ?? "";
+    return journalFeelingChoices
+      .filter((option) => !query || option.name.toLowerCase().includes(query))
+      .sort((left, right) => {
+        if (!query) return 0;
+        return Number(!left.name.toLowerCase().startsWith(query)) - Number(!right.name.toLowerCase().startsWith(query))
+          || left.name.localeCompare(right.name);
+      });
+  }, [journalFeelingChoices, journalTagQuery?.query]);
+  const visibleJournalTagGroups = useMemo(
+    () => (["symptom", "emotion", "other"] as const)
+      .map((kind) => ({
+        kind,
+        options: visibleJournalTagOptions.filter((option) => option.kind === kind),
+      }))
+      .filter((group) => group.options.length > 0),
+    [visibleJournalTagOptions],
+  );
+  const journalHistoryTagOptions = useMemo<JournalTagOption[]>(() => [
+    ...symptoms.map((symptom) => ({
+      kind: "symptom" as const,
+      name: symptom.name,
+      signal: journalSignals.find((signal) => signal.kind === "symptom" && signal.symptom_id === symptom.id && signal.archived_at === null)
+        ?? journalSignals.find((signal) => signal.kind === "symptom" && signal.symptom_id === symptom.id)
+        ?? null,
+      symptomId: symptom.id,
+    })),
+    ...journalSignals
+      .filter((signal) => signal.kind === "emotion" || signal.kind === "other")
+      .map((signal) => ({
+        kind: signal.kind,
+        name: getHealthJournalSignalDisplayName(signal, symptoms),
+        signal,
+      })),
+  ], [journalSignals, symptoms]);
+  const journalHistoryTagOptionsByKey = useMemo(
+    () => new Map(journalHistoryTagOptions.map((option) => [getJournalTagOptionKey(option), option] as const)),
+    [journalHistoryTagOptions],
+  );
+  const journalHistoryGroups = useMemo(
+    () => groupHealthJournalEntriesByDate(checkIns),
+    [checkIns],
+  );
+  const journalOccurrenceChoices = useMemo(() => {
+    const choices = journalFeelingChoices.map((choice) => {
+      if (choice.signal || choice.kind !== "symptom" || !choice.symptomId) return choice;
+      const symptom = symptoms.find((candidate) => candidate.id === choice.symptomId);
+      return symptom ? { ...choice, signal: buildHealthJournalSymptomOccurrenceSignal(symptom) } : choice;
+    });
+    const knownSignalIds = new Set(choices.flatMap((choice) => choice.signal ? [choice.signal.id] : []));
+    symptoms
+      .filter((symptom) => journalOccurrences.some((occurrence) => occurrence.signalId === `canonical-symptom:${symptom.id}`) && !knownSignalIds.has(`canonical-symptom:${symptom.id}`))
+      .forEach((symptom) => {
+        choices.push({
+          kind: "symptom",
+          name: symptom.name,
+          signal: buildHealthJournalSymptomOccurrenceSignal(symptom),
+          symptomId: symptom.id,
+        });
+      });
+    journalSignals
+      .filter((signal) => journalOccurrences.some((occurrence) => occurrence.signalId === signal.id) && !knownSignalIds.has(signal.id))
+      .forEach((signal) => {
+        choices.push({
+          kind: signal.kind,
+          name: getHealthJournalSignalDisplayName(signal, symptoms),
+          signal,
+          ...(signal.kind === "symptom" && signal.symptom_id ? { symptomId: signal.symptom_id } : {}),
+        });
+      });
+    return choices;
+  }, [journalFeelingChoices, journalOccurrences, journalSignals, symptoms]);
+  const journalOccurrenceSignal = useMemo(
+    () => journalOccurrenceChoices.find((choice) => choice.signal?.id === journalOccurrenceSignalId)?.signal
+      ?? journalSignals.find((signal) => signal.id === journalOccurrenceSignalId)
+      ?? null,
+    [journalOccurrenceChoices, journalOccurrenceSignalId, journalSignals],
+  );
+  const feelingTrendModel = useMemo(
+    () => buildHealthFeelingTrendModel({ journalSignalOccurrences, journalSignals, symptomEntries, symptoms }),
+    [journalSignalOccurrences, journalSignals, symptomEntries, symptoms],
+  );
+  const feelingTrendDefinitionKeys = useMemo(
+    () => feelingTrendModel.definitions.map((definition) => definition.key),
+    [feelingTrendModel.definitions],
+  );
+  useEffect(() => {
+    const availableKeys = new Set(feelingTrendDefinitionKeys);
+    const previousKeys = previousFeelingTrendDefinitionKeysRef.current;
+    setSelectedFeelingTrendDefinitionKeys((current) => {
+      if (!hasInitializedFeelingTrendSelectionRef.current && availableKeys.size > 0) {
+        hasInitializedFeelingTrendSelectionRef.current = true;
+        return new Set(availableKeys);
+      }
+      const wasShowingAllPreviousDefinitions = previousKeys.length > 0 && previousKeys.every((key) => current.has(key));
+      if (wasShowingAllPreviousDefinitions) {
+        return new Set(availableKeys);
+      }
+      const validKeys = new Set([...current].filter((key) => availableKeys.has(key)));
+      return validKeys.size === current.size ? current : validKeys;
+    });
+    previousFeelingTrendDefinitionKeysRef.current = feelingTrendDefinitionKeys;
+  }, [feelingTrendDefinitionKeys]);
+  const selectedFeelingTrendDefinitions = useMemo(
+    () => feelingTrendModel.definitions.filter((definition) => selectedFeelingTrendDefinitionKeys.has(definition.key)),
+    [feelingTrendModel.definitions, selectedFeelingTrendDefinitionKeys],
+  );
+  const feelingTrendSelectionSummary = useMemo(
+    () => getHealthFeelingTrendSelectionSummary(feelingTrendModel.definitions, selectedFeelingTrendDefinitionKeys),
+    [feelingTrendModel.definitions, selectedFeelingTrendDefinitionKeys],
+  );
+  const isAllFeelingsTrendSelected = feelingTrendModel.definitions.length > 0
+    && selectedFeelingTrendDefinitions.length === feelingTrendModel.definitions.length;
+  const selectedFeelingTrendPointsByDefinition = useMemo(
+    () => selectedFeelingTrendDefinitions.map((definition) => ({
+      definition,
+      points: getHealthFeelingTrendPoints({ asOfDate: today, feelingKey: definition.key, model: feelingTrendModel, range: feelingTrendRange }),
+    })),
+    [feelingTrendModel, feelingTrendRange, selectedFeelingTrendDefinitions, today],
+  );
+  const selectedFeelingTrendHistoryExists = useMemo(
+    () => selectedFeelingTrendDefinitions.some((definition) => feelingTrendModel.points.some((point) => point.feelingKey === definition.key)),
+    [feelingTrendModel.points, selectedFeelingTrendDefinitions],
+  );
+  const feelingTrendChartSeries = useMemo<NumericLineChartSeries[]>(() => {
+    return selectedFeelingTrendPointsByDefinition
+      .filter(({ points }) => points.length > 0)
+      .map(({ definition, points }) => buildHealthFeelingTrendSeries(definition, points));
+  }, [selectedFeelingTrendPointsByDefinition]);
+  const feelingTrendChartTitle = isAllFeelingsTrendSelected
+    ? "All Feelings"
+    : selectedFeelingTrendDefinitions.length === 1
+      ? `${selectedFeelingTrendDefinitions[0]?.name ?? "Feeling"} Occurrences`
+      : "Selected Feeling Occurrences";
+  const feelingTrendEmptyText = selectedFeelingTrendDefinitions.length === 1
+    ? selectedFeelingTrendHistoryExists
+      ? `No ${selectedFeelingTrendDefinitions[0]?.name ?? "Feeling"} Occurrences in the selected range.`
+      : `No occurrences logged for ${selectedFeelingTrendDefinitions[0]?.name ?? "Feeling"} yet.`
+    : selectedFeelingTrendHistoryExists
+      ? "No selected Feeling Occurrences in the selected range."
+      : "No occurrences logged for the selected Feelings yet.";
 
   const selectedMeals = useMemo(
     () => mealEntries.filter((entry) => entry.entry_date === foodHistoryDate),
@@ -566,6 +1712,20 @@ export function HealthPage({
     () => sumMealNutritionForDate(mealEntries, foodHistoryDate),
     [foodHistoryDate, mealEntries],
   );
+  const selectedActiveEnergyKcal = useMemo(
+    () => sumMetricValueForDate(metricEntries, foodHistoryDate, ["active_energy_kcal"]),
+    [foodHistoryDate, metricEntries],
+  );
+  const selectedCalorieBudget = useMemo(
+    () => calculateHealthDailyCalorieBudget(
+      profile?.calorie_goal,
+      selectedActiveEnergyKcal,
+    ),
+    [profile?.calorie_goal, selectedActiveEnergyKcal],
+  );
+  const selectedCalorieTargetDetail = selectedCalorieBudget === null
+    ? "set in goals"
+    : `target ${formatHealthCalorieTarget(selectedCalorieBudget)} kcal${selectedActiveEnergyKcal > 0 ? ` (+${formatHealthCalorieTarget(selectedActiveEnergyKcal)} active kcal)` : ""}`;
   const selectedMealPlans = useMemo(
     () => getActiveHealthMealPlans(mealPlanEntries, foodHistoryDate),
     [foodHistoryDate, mealPlanEntries],
@@ -582,13 +1742,17 @@ export function HealthPage({
     () => buildHealthDailyCalorieSeries({ endDate: foodHistoryDate, mealEntries }),
     [foodHistoryDate, mealEntries],
   );
+  const dailyCalorieTargetSeries = useMemo(
+    () => buildHealthDailyCalorieTargetSeries({
+      baseCalorieGoal: profile?.calorie_goal,
+      metricEntries,
+      points: dailyCalorieSeries,
+    }),
+    [dailyCalorieSeries, metricEntries, profile?.calorie_goal],
+  );
   const todayMovement = useMemo(
     () => sumMetricValueForDate(metricEntries, today, ["steps", "active_energy_kcal", "exercise_minutes"]),
     [metricEntries, today],
-  );
-  const selectedActiveEnergyKcal = useMemo(
-    () => sumMetricValueForDate(metricEntries, foodHistoryDate, ["active_energy_kcal"]),
-    [foodHistoryDate, metricEntries],
   );
   const todaySleepTotal = useMemo(
     () => getHealthSleepDayTotal({ date: today, focusCategories, focusHistory, metricEntries }),
@@ -782,11 +1946,6 @@ export function HealthPage({
   }
 
   const activeProfile = profile;
-  const selectedCalorieAllowance = calculateHealthDailyCalorieAllowance({
-    activeEnergyKcal: selectedActiveEnergyKcal,
-    addActiveEnergy: activeProfile.add_active_energy_to_calorie_goal,
-    baseCalorieGoal: activeProfile.calorie_goal,
-  });
   const effectiveSleepGoalMinutes = parseNullableInteger(profileDraft.sleep_goal_minutes ?? activeProfile.sleep_goal_minutes);
   const sleepGoalHours = effectiveSleepGoalMinutes === null ? "" : String(Math.floor(effectiveSleepGoalMinutes / 60));
   const sleepGoalRemainingMinutes = effectiveSleepGoalMinutes === null ? "" : String(effectiveSleepGoalMinutes % 60);
@@ -835,13 +1994,539 @@ export function HealthPage({
   }
 
   async function handleSaveJournal() {
-    await saveCheckIn({
-      energy_score: journalEnergy,
-      entry_date: today,
-      mood_score: journalMood,
-      reflection: journalReflection.trim(),
-      symptom_tags: journalTags,
+    const symptomOccurrenceInputs: Omit<HealthSymptomEntryInsert, "user_id" | "journal_entry_id">[] = [];
+    const journalSignalOccurrenceInputs: Omit<HealthJournalSignalOccurrenceInsert, "user_id" | "journal_entry_id">[] = [];
+    for (const occurrence of journalOccurrences) {
+      const signal = journalOccurrenceChoices.find((choice) => choice.signal?.id === occurrence.signalId)?.signal
+        ?? journalSignals.find((candidate) => candidate.id === occurrence.signalId);
+      const occurredAt = buildHealthMealLoggedAt(journalDate, occurrence.time);
+      if (!signal || !occurredAt || !Number.isInteger(occurrence.score) || occurrence.score < 1 || occurrence.score > 10) {
+        setJournalFormError("Each Feeling occurrence needs a valid time and a score from 1 to 10.");
+        return;
+      }
+      if (signal.kind === "symptom" && signal.symptom_id) {
+        symptomOccurrenceInputs.push({
+          entry_date: journalDate,
+          logged_at: occurredAt,
+          note: occurrence.note,
+          severity: occurrence.score,
+          symptom_id: signal.symptom_id,
+          ...(occurrence.id ? { id: occurrence.id } : {}),
+        });
+      } else if (signal.kind === "emotion" || signal.kind === "other") {
+        journalSignalOccurrenceInputs.push({
+          entry_date: journalDate,
+          note: occurrence.note,
+          occurred_at: occurredAt,
+          score: occurrence.score,
+          signal_id: signal.id,
+          ...(occurrence.id ? { id: occurrence.id } : {}),
+        });
+      }
+    }
+    const saved = await saveJournalEntry({
+      checkIn: {
+        ...(selectedJournalEntryId ? { id: selectedJournalEntryId } : {}),
+        clarity_score: journalClarity,
+        energy_score: journalEnergy,
+        entry_date: journalDate,
+        entry_time: journalEntryTime,
+        mood_score: journalMood,
+        reflection: journalReflection.trim(),
+        stress_score: journalStress,
+      },
+      journalSignalOccurrences: journalSignalOccurrenceInputs,
+      signalValues: journalDraftValues,
+      symptomOccurrences: symptomOccurrenceInputs,
     });
+    if (saved) {
+      journalOccurrenceSaveStatusRef.current = "succeeded";
+      setJournalOccurrenceHydrationVersion((current) => current + 1);
+      startNewJournalEntry();
+      setJournalFormError(null);
+    } else {
+      journalOccurrenceSaveStatusRef.current = "idle";
+    }
+  }
+
+  function openJournalSignalCreateForm(kind: JournalSignalCreateKind) {
+    setJournalLibraryCreateKind((current) => current === kind ? null : kind);
+    setJournalSignalCreateName("");
+    setJournalSignalCreateInTemplate(true);
+  }
+
+  function closeJournalSignalCreateForm() {
+    setJournalLibraryCreateKind(null);
+    setJournalSignalCreateName("");
+    setJournalSignalCreateInTemplate(true);
+  }
+
+  async function handleCreateJournalSignal() {
+    const kind = journalLibraryCreateKind;
+    if (!kind) return;
+    const scaleLabels = getDefaultHealthJournalScaleLabels(kind);
+    const created = await createJournalSignal({
+      high_label: scaleLabels.at(-1),
+      in_template: journalSignalCreateInTemplate,
+      kind,
+      low_label: scaleLabels[0],
+      name: journalSignalCreateName,
+      scale_labels: scaleLabels,
+      symptom_id: null,
+    });
+    if (created) {
+      closeJournalSignalCreateForm();
+      setJournalFormError(null);
+    }
+  }
+
+  function startJournalSignalEdit(signal: HealthJournalSignal) {
+    setJournalLibraryEditId(signal.id);
+    setJournalLibraryEditDraft({
+      scaleLabels: [...signal.scale_labels],
+      name: signal.name ?? "",
+    });
+  }
+
+  async function startJournalSymptomEdit(symptom: HealthSymptom) {
+    const signal = getJournalSignalForSymptom(symptom.id) ?? await createJournalSignal({
+      high_label: getDefaultHealthJournalScaleLabels("symptom")[10],
+      in_template: false,
+      kind: "symptom",
+      color: null,
+      low_label: getDefaultHealthJournalScaleLabels("symptom")[0],
+      name: null,
+      scale_labels: getDefaultHealthJournalScaleLabels("symptom"),
+      symptom_id: symptom.id,
+    });
+    if (signal) startJournalSignalEdit(signal);
+  }
+
+  async function saveJournalSignalEdit(signal: HealthJournalSignal) {
+    const saved = await updateJournalSignal(signal.id, {
+      high_label: journalLibraryEditDraft.scaleLabels[10],
+      low_label: journalLibraryEditDraft.scaleLabels[0],
+      name: signal.kind === "symptom" ? null : journalLibraryEditDraft.name,
+      scale_labels: journalLibraryEditDraft.scaleLabels,
+    });
+    if (saved) setJournalLibraryEditId(null);
+  }
+
+  function moveJournalSignal(signalId: string, direction: -1 | 1) {
+    const templateSignals = getHealthJournalTemplateSignals(journalSignals, symptoms);
+    const currentIndex = templateSignals.findIndex((signal) => signal.id === signalId);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= templateSignals.length) return;
+    const nextIds = templateSignals.map((signal) => signal.id);
+    [nextIds[currentIndex], nextIds[nextIndex]] = [nextIds[nextIndex], nextIds[currentIndex]];
+    void reorderJournalSignals(nextIds);
+  }
+
+  async function addJournalFeelingToToday(choice: JournalTagOption) {
+    const signal = choice.kind === "symptom" && choice.symptomId
+      ? choice.signal ?? await createJournalSignal({
+        high_label: getDefaultHealthJournalScaleLabels("symptom")[10],
+        in_template: false,
+        kind: "symptom",
+        color: null,
+        low_label: getDefaultHealthJournalScaleLabels("symptom")[0],
+        name: null,
+        scale_labels: getDefaultHealthJournalScaleLabels("symptom"),
+        symptom_id: choice.symptomId,
+      })
+      : choice.signal;
+    if (!signal || journalDraftValues.some((value) => value.signal_id === signal.id)) {
+      setIsJournalAddOpen(false);
+      return;
+    }
+    setJournalDraftValues((current) => ensureHealthJournalDraftValue(current, signal.id));
+    setIsJournalAddOpen(false);
+  }
+
+  function readJournalTagQuery(value: string, cursor: number): JournalTagQuery | null {
+    const beforeCursor = value.slice(0, cursor);
+    const match = beforeCursor.match(/(^|\s)#([^\s#]*)$/);
+    if (!match) return null;
+    const queryStart = cursor - match[0].length + (match[1] ? 1 : 0);
+    return { end: cursor, query: match[2] ?? "", start: queryStart };
+  }
+
+  function syncJournalTagQuery(target: HTMLTextAreaElement, resetHighlight = true) {
+    const nextQuery = readJournalTagQuery(target.value, target.selectionStart ?? target.value.length);
+    setJournalTagQuery(nextQuery);
+    if (resetHighlight) setJournalTagHighlightIndex(0);
+  }
+
+  async function selectJournalTag(option: JournalTagOption) {
+    const selectedQuery = journalTagQuery;
+    if (!selectedQuery) return;
+    const signal = option.kind === "symptom" && option.symptomId
+      ? option.signal ?? await createJournalSignal({
+        high_label: getDefaultHealthJournalScaleLabels("symptom")[10],
+        in_template: false,
+        kind: "symptom",
+        color: null,
+        low_label: getDefaultHealthJournalScaleLabels("symptom")[0],
+        name: null,
+        scale_labels: getDefaultHealthJournalScaleLabels("symptom"),
+        symptom_id: option.symptomId,
+      })
+      : option.signal;
+    if (!signal) return;
+
+    const replacement = `#${option.name} `;
+    const nextCaret = selectedQuery.start + replacement.length;
+    setJournalReflection((current) => replaceHealthJournalReflectionTag(current, selectedQuery.start, selectedQuery.end, replacement));
+    journalTagCaretRef.current = nextCaret;
+    setJournalTagQuery(null);
+    setJournalTagHighlightIndex(0);
+    setOpenSymptomColorPickerKey(null);
+    setJournalTagOverlay({
+      error: null,
+      mode: "feeling_occurrence",
+      score: null,
+      signal,
+      time: journalEntryTime || getCurrentHealthDateTimeInputs().time,
+    });
+  }
+
+  function toggleJournalHistoryTag(entryId: string, tag: { key: string; start: number }) {
+    setJournalHistoryTagOverlay((current) => current?.entryId === entryId
+      && current.optionKey === tag.key
+      && current.start === tag.start
+      ? null
+      : { entryId, optionKey: tag.key, start: tag.start });
+  }
+
+  function focusJournalReflectionAtCaret() {
+    requestAnimationFrame(() => {
+      const textarea = journalReflectionRef.current;
+      if (!textarea) return;
+      textarea.focus({ preventScroll: true });
+      if (journalTagCaretRef.current !== null) textarea.setSelectionRange(journalTagCaretRef.current, journalTagCaretRef.current);
+    });
+  }
+
+  function closeJournalTagOverlay() {
+    setJournalTagOverlay(null);
+    focusJournalReflectionAtCaret();
+  }
+
+  function saveJournalTagOccurrence() {
+    if (journalTagOverlay?.mode !== "feeling_occurrence") return;
+    const normalizedTime = normalizeHealthMealTime(journalTagOverlay.time);
+    if (journalTagOverlay.score === null || !Number.isInteger(journalTagOverlay.score) || journalTagOverlay.score < 1 || journalTagOverlay.score > 10 || !normalizedTime || !buildHealthMealLoggedAt(journalDate, normalizedTime)) {
+      setJournalTagOverlay((current) => current?.mode === "feeling_occurrence"
+        ? { ...current, error: "Choose a severity from 1 to 10 and a valid time." }
+        : current);
+      return;
+    }
+    const score = journalTagOverlay.score;
+    setJournalOccurrences((current) => [...current, {
+      draftKey: createJournalDraftId(),
+      note: "",
+      score,
+      signalId: journalTagOverlay.signal.id,
+      time: normalizedTime,
+    }]);
+    closeJournalTagOverlay();
+  }
+
+  function updateJournalTagOccurrence(update: Partial<Pick<Extract<Exclude<JournalTagOverlay, null>, { mode: "feeling_occurrence" }>, "score" | "time">>) {
+    setJournalTagOverlay((current) => current?.mode === "feeling_occurrence" ? { ...current, ...update, error: null } : current);
+  }
+
+  function handleJournalReflectionKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!journalTagQuery || visibleJournalTagOptions.length === 0) {
+      if (event.key === "Escape") setJournalTagQuery(null);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setJournalTagHighlightIndex((current) => (current + 1) % visibleJournalTagOptions.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setJournalTagHighlightIndex((current) => (current - 1 + visibleJournalTagOptions.length) % visibleJournalTagOptions.length);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      void selectJournalTag(visibleJournalTagOptions[journalTagHighlightIndex] ?? visibleJournalTagOptions[0]!);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setJournalTagQuery(null);
+    }
+  }
+
+  async function toggleJournalSymptomTemplate(symptom: HealthSymptom, inTemplate: boolean) {
+    const signal = getJournalSignalForSymptom(symptom.id) ?? await createJournalSignal({
+      high_label: getDefaultHealthJournalScaleLabels("symptom")[10],
+      in_template: false,
+      kind: "symptom",
+      color: null,
+      low_label: getDefaultHealthJournalScaleLabels("symptom")[0],
+      name: null,
+      scale_labels: getDefaultHealthJournalScaleLabels("symptom"),
+      symptom_id: symptom.id,
+    });
+    if (!signal) return;
+    const saved = await setJournalSignalTemplate(signal.id, inTemplate);
+    if (saved && inTemplate) {
+      setJournalDraftValues((current) => current.some((value) => value.signal_id === signal.id)
+        ? current
+        : [...current, { score: null, signal_id: signal.id }]);
+    }
+  }
+
+  async function toggleJournalFeelingTemplate(signal: HealthJournalSignal) {
+    const saved = await setJournalSignalTemplate(signal.id, !signal.in_template);
+    if (saved && !signal.in_template) {
+      setJournalDraftValues((current) => current.some((value) => value.signal_id === signal.id)
+        ? current
+        : [...current, { score: null, signal_id: signal.id }]);
+    }
+  }
+
+  async function archiveJournalFeeling(signalId: string) {
+    const saved = await archiveJournalSignal(signalId);
+    if (!saved || journalSignalValues.some((value) => value.journal_entry_id === selectedJournalEntry?.id && value.signal_id === signalId)) return saved;
+    setJournalDraftValues((current) => current.filter((value) => value.signal_id !== signalId));
+    return saved;
+  }
+
+  async function archiveJournalSymptom(symptomId: string) {
+    const signal = getJournalSignalForSymptom(symptomId);
+    const saved = await archiveSymptom(symptomId);
+    if (!saved || !signal || journalSignalValues.some((value) => value.journal_entry_id === selectedJournalEntry?.id && value.signal_id === signal.id)) return saved;
+    setJournalDraftValues((current) => current.filter((value) => value.signal_id !== signal.id));
+    return saved;
+  }
+
+  function handleManageJournalLibrary() {
+    setIsJournalLibraryOpen(true);
+    window.setTimeout(() => {
+      const library = journalLibraryRef.current;
+      library?.scrollIntoView({ behavior: "smooth", block: "start" });
+      library?.focus({ preventScroll: true });
+    }, 0);
+  }
+
+  function resetJournalOccurrenceDraft() {
+    setJournalOccurrenceEditorOpen(false);
+    setJournalOccurrenceEditKey(null);
+    setJournalOccurrenceEditId(null);
+    setJournalOccurrenceSignalId("");
+    setJournalOccurrenceScore(null);
+    setJournalOccurrenceTime(journalEntryTime || getCurrentHealthDateTimeInputs().time);
+    setJournalOccurrenceNote("");
+  }
+
+  function startJournalOccurrenceEdit(occurrence: JournalOccurrenceDraft) {
+    setJournalOccurrenceEditorOpen(true);
+    setJournalOccurrenceEditKey(occurrence.draftKey);
+    setJournalOccurrenceEditId(occurrence.id ?? null);
+    setJournalOccurrenceSignalId(occurrence.signalId);
+    setJournalOccurrenceScore(occurrence.score);
+    setJournalOccurrenceTime(occurrence.time);
+    setJournalOccurrenceNote(occurrence.note);
+  }
+
+  function saveJournalOccurrenceDraft() {
+    const normalizedTime = normalizeHealthMealTime(journalOccurrenceTime);
+    if (!journalOccurrenceSignalId || journalOccurrenceScore === null || !normalizedTime || !buildHealthMealLoggedAt(journalDate, normalizedTime)) {
+      setJournalFormError("Choose a Feeling, score from 1 to 10, and time for the occurrence.");
+      return;
+    }
+    const nextOccurrence: JournalOccurrenceDraft = {
+      draftKey: journalOccurrenceEditKey ?? createJournalDraftId(),
+      note: journalOccurrenceNote,
+      score: journalOccurrenceScore,
+      signalId: journalOccurrenceSignalId,
+      time: normalizedTime,
+      ...(journalOccurrenceEditId ? { id: journalOccurrenceEditId } : {}),
+    };
+    setJournalOccurrences((current) => journalOccurrenceEditKey
+      ? current.map((occurrence) => occurrence.draftKey === journalOccurrenceEditKey ? nextOccurrence : occurrence)
+      : [...current, nextOccurrence]);
+    resetJournalOccurrenceDraft();
+    setJournalFormError(null);
+  }
+
+  function openJournalOccurrenceCreate() {
+    resetJournalOccurrenceDraft();
+    setJournalOccurrenceEditorOpen(true);
+    setJournalOccurrenceTime(journalEntryTime || getCurrentHealthDateTimeInputs().time);
+  }
+
+  function clearJournalHistoryLongPressTimer() {
+    if (journalHistoryLongPressTimerRef.current === null) return;
+    window.clearTimeout(journalHistoryLongPressTimerRef.current);
+    journalHistoryLongPressTimerRef.current = null;
+  }
+
+  function isJournalHistoryDesktopViewport() {
+    return typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
+  }
+
+  function openJournalHistoryMenu() {
+    if (isJournalHistoryDesktopViewport()) setIsJournalHistoryMenuOpen(true);
+  }
+
+  function handleJournalHistoryPointerDown(event: PointerEvent<HTMLButtonElement>) {
+    journalHistoryLongPressFiredRef.current = false;
+    if (!isJournalHistoryDesktopViewport() || (event.pointerType === "mouse" && event.button !== 0)) return;
+    clearJournalHistoryLongPressTimer();
+    journalHistoryLongPressTimerRef.current = window.setTimeout(() => {
+      journalHistoryLongPressTimerRef.current = null;
+      journalHistoryLongPressFiredRef.current = true;
+      openJournalHistoryMenu();
+    }, 500);
+  }
+
+  function handleJournalHistoryPointerUp() {
+    clearJournalHistoryLongPressTimer();
+  }
+
+  function handleJournalHistoryPointerCancel() {
+    clearJournalHistoryLongPressTimer();
+    journalHistoryLongPressFiredRef.current = false;
+  }
+
+  function handleJournalHistoryClick() {
+    if (journalHistoryLongPressFiredRef.current) {
+      journalHistoryLongPressFiredRef.current = false;
+      return;
+    }
+    setIsJournalHistoryMenuOpen(false);
+    setJournalWorkspaceMode((current) => current === "entry" ? "history" : "entry");
+  }
+
+  function handleJournalHistoryKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== "ArrowDown") return;
+    event.preventDefault();
+    openJournalHistoryMenu();
+  }
+
+  function selectJournalWorkspaceMode(mode: JournalWorkspaceMode) {
+    setJournalWorkspaceMode(mode);
+    setIsJournalHistoryMenuOpen(false);
+  }
+
+  function toggleJournalScale(key: string) {
+    setExpandedJournalScaleKey((current) => current === key ? null : key);
+  }
+
+  function toggleJournalHistoryMetadata(entryId: string) {
+    setExpandedJournalHistoryEntryIds((current) => {
+      const next = new Set(current);
+      if (next.has(entryId)) {
+        next.delete(entryId);
+      } else {
+        next.add(entryId);
+      }
+      return next;
+    });
+  }
+
+  function toggleJournalHistoryDate(date: string) {
+    setCollapsedJournalHistoryDates((current) => {
+      const next = new Set(current);
+      if (next.has(date)) {
+        next.delete(date);
+      } else {
+        next.add(date);
+      }
+      return next;
+    });
+  }
+
+  function startNewJournalEntry() {
+    if (journalWorkspaceMode === "history") {
+      setJournalWorkspaceMode("entry");
+    }
+    setSelectedJournalEntryId(null);
+    setJournalEntryTime(getCurrentHealthDateTimeInputs().time);
+    setJournalReflection("");
+    setJournalMood(null);
+    setJournalEnergy(null);
+    setJournalStress(null);
+    setJournalClarity(null);
+    setJournalDraftValues(buildHealthJournalDraftValues({ journalEntryId: null, signals: journalSignals, values: journalSignalValues, symptoms }));
+    setJournalOccurrences([]);
+    setIsJournalAddOpen(false);
+    setJournalOccurrenceEditorOpen(false);
+    setJournalOccurrenceEditKey(null);
+    setJournalOccurrenceEditId(null);
+    setExpandedJournalScaleKey(null);
+    setIsJournalLoggedMetadataOpen(false);
+    setIsJournalHistoryMenuOpen(false);
+    setOpenSymptomColorPickerKey(null);
+    setJournalTagQuery(null);
+    setJournalTagOverlay(null);
+    setJournalHistoryTagOverlay(null);
+    journalTagCaretRef.current = null;
+    setJournalFormError(null);
+  }
+
+  function selectJournalEntry(entry: HealthCheckIn) {
+    if (journalWorkspaceMode === "history") {
+      setJournalWorkspaceMode("entry");
+    }
+    setSelectedJournalEntryId(entry.id);
+    setJournalDate(entry.entry_date);
+  }
+
+  function handleDeleteJournalEntry(entry: HealthCheckIn) {
+    if (typeof window !== "undefined" && !window.confirm("Delete this Journal Entry? This will delete its scores, reflection, Feeling values, and Feeling Occurrences.")) {
+      return;
+    }
+    void deleteJournalEntry(entry.id);
+  }
+
+  async function handleRenameSymptom(symptomId: string) {
+    const saved = await renameSymptom(symptomId, normalizeHealthSymptomName(editingSymptomName));
+    if (saved) {
+      setEditingSymptomId(null);
+      setEditingSymptomName("");
+    }
+  }
+
+  function handleSetSymptomColor(symptomId: string, color: string) {
+    setOpenSymptomColorPickerKey(null);
+    void setSymptomColor(symptomId, color);
+  }
+
+  function handleSetJournalSignalColor(signalId: string, color: string) {
+    setOpenSymptomColorPickerKey(null);
+    void updateJournalSignal(signalId, { color });
+  }
+
+  function toggleSymptomColorPicker(pickerKey: string) {
+    setOpenSymptomColorPickerKey((current) => current === pickerKey ? null : pickerKey);
+  }
+
+  function openSymptomCreateForm() {
+    setOpenSymptomColorPickerKey(null);
+    setSymptomCreateName("");
+    setIsSymptomCreateOpen(true);
+  }
+
+  function closeSymptomCreateForm() {
+    setSymptomCreateName("");
+    setIsSymptomCreateOpen(false);
+  }
+
+  async function handleCreateSymptom() {
+    if (isCreatingSymptom) {
+      return;
+    }
+    setIsCreatingSymptom(true);
+    try {
+      const created = await createSymptom({ name: symptomCreateName });
+      if (created) {
+        closeSymptomCreateForm();
+      }
+    } finally {
+      setIsCreatingSymptom(false);
+    }
   }
 
   async function handleSaveMeal() {
@@ -1510,7 +3195,7 @@ export function HealthPage({
           {isQuickEntryOpen ? (
             <div className="rounded-[1rem] border border-[#e8e2f7] bg-white px-3 py-2 text-xs text-[#6d7894] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/55">One-off entry</div>
           ) : (
-            <Field label="Measurement">
+            <Field composite label="Measurement">
               <HealthDropdown
                 ariaLabel="Measurement"
                 disabled={!mealDraft.foodName}
@@ -1559,7 +3244,7 @@ export function HealthPage({
             <Field label="Planned date">
               <HealthMealDateTimeInput onChange={(value) => { setFoodHistoryDate(value); setMealDraft((current) => ({ ...current, date: value })); }} type="date" value={mealDraft.date} />
             </Field>
-            <Field label="Meal">
+            <Field composite label="Meal">
               <HealthDropdown
                 ariaLabel="Planned meal"
                 onChange={(value) => { const nextSlot = value as HealthMealEntry["meal_slot"]; setActiveMealEntrySlot(nextSlot); setMealDraft((current) => ({ ...current, mealSlot: nextSlot })); }}
@@ -1617,7 +3302,7 @@ export function HealthPage({
 
   return (
     <section className="-mx-[15px] px-3 pb-32 sm:mx-0 sm:px-4">
-      <PageShellHeader subtitle="Health, Diet, Fitness" title="Health" />
+      <PageShellHeader actions={<PageShellLayoutControls layout={pageShellLayout} />} subtitle="Health, Diet, Fitness" title="Health" />
 
       <div aria-label="Health sections" className="mt-5 flex flex-wrap gap-2" role="tablist">
         {HEALTH_TABS.map((tab) => (
@@ -1641,7 +3326,26 @@ export function HealthPage({
       </div>
 
       {activeTab === "Today" ? (
-        <div aria-labelledby="health-tab-today" className="mt-6" id={getHealthTabPanelId("Today")} role="tabpanel" />
+        <div aria-labelledby="health-tab-today" id={getHealthTabPanelId("Today")} role="tabpanel">
+          <HealthTodayTab
+            checkIns={checkIns}
+            focusCategories={focusCategories}
+            focusHistory={focusHistory}
+            journalSignals={journalSignals}
+            journalSignalOccurrences={journalSignalOccurrences}
+            mealEntries={mealEntries}
+            metricEntries={metricEntries}
+            onNavigate={persistHealthTabPreference}
+            profile={activeProfile}
+            symptoms={symptoms}
+            symptomEntries={symptomEntries}
+            today={today}
+            waterEntries={waterEntries}
+            weightEntries={weightEntries}
+            workouts={workouts}
+            layout={pageShellLayout}
+          />
+        </div>
       ) : null}
 
       {activeTab === "Fitness" ? (
@@ -1688,94 +3392,502 @@ export function HealthPage({
           workoutExercises={workoutExercises}
           workoutSets={workoutSets}
           workouts={workouts}
+          layout={pageShellLayout}
         />
       ) : null}
 
       {activeTab === "Journal" ? (
-        <div aria-labelledby="health-tab-journal" className="mt-6 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]" id={getHealthTabPanelId("Journal")} role="tabpanel">
-          <HealthPanel icon={<HeartPulse />} subtitle="Daily check-in" title="How are you actually doing?">
-            <div className="grid gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <ScorePicker label="Mood" value={journalMood} onSelect={setJournalMood} />
-                <ScorePicker label="Energy" value={journalEnergy} onSelect={setJournalEnergy} />
+        <>
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="mt-6 grid min-w-0 gap-5 xl:grid-cols-12">
+          <PageShell id="journal-entry-history" label="Journal Entry and History">
+            <HealthPanel
+              aria-labelledby="health-tab-journal"
+              className="min-w-0"
+              headerActions={(
+                <div className="flex flex-wrap items-center justify-end gap-1">
+                  <div className="relative">
+                    <AdhdIconButton
+                      aria-controls="journal-history-layout-menu"
+                      aria-expanded={isJournalHistoryMenuOpen}
+                      aria-haspopup="menu"
+                      aria-label={journalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
+                      onClick={handleJournalHistoryClick}
+                      onKeyDown={handleJournalHistoryKeyDown}
+                      onPointerCancel={handleJournalHistoryPointerCancel}
+                      onPointerDown={handleJournalHistoryPointerDown}
+                      onPointerLeave={handleJournalHistoryPointerUp}
+                      onPointerUp={handleJournalHistoryPointerUp}
+                      size="sm"
+                      title={journalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
+                      tone="ghost"
+                      variant="rowToolbar"
+                    >
+                      {journalWorkspaceMode === "entry" ? <History aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
+                    </AdhdIconButton>
+                    {isJournalHistoryMenuOpen ? (
+                      <AdhdDropdownPanel
+                        aria-label="Choose Journal History layout"
+                        className="left-auto right-0 top-[calc(100%+0.35rem)]"
+                        id="journal-history-layout-menu"
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            setIsJournalHistoryMenuOpen(false);
+                          }
+                        }}
+                        role="menu"
+                        widthClassName="w-40"
+                      >
+                        <div className="grid gap-1">
+                          <button className="min-h-9 rounded-[0.7rem] px-3 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]" onClick={() => selectJournalWorkspaceMode("split-history-left")} role="menuitem" type="button">History Left</button>
+                          <button className="min-h-9 rounded-[0.7rem] px-3 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]" onClick={() => selectJournalWorkspaceMode("split-history-right")} role="menuitem" type="button">History Right</button>
+                        </div>
+                      </AdhdDropdownPanel>
+                    ) : null}
+                  </div>
+                  {journalWorkspaceMode === "history" ? <AdhdChip onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
+                </div>
+              )}
+              id={getHealthTabPanelId("Journal")}
+              icon={<HeartPulse />}
+              shellSurface
+              subtitle="Journal"
+              title="Journal"
+              role="tabpanel"
+            >
+            <div className={(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? "grid min-w-0 gap-5 md:grid-cols-2" : "min-w-0"}>
+            {journalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? journalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
+              <div className="grid min-w-0 gap-5">
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div className="flex flex-wrap gap-3">
+                    <Field label="Journal Date">
+                      <HealthMealDateTimeInput className="min-w-[8.5rem] justify-start" max={today} onChange={(date) => setJournalDate(date || today)} type="date" value={journalDate} />
+                    </Field>
+                    <Field label="Journal Time">
+                      <HealthStandardTimeInput ariaLabel="Journal Time" onChange={setJournalEntryTime} value={journalEntryTime} />
+                    </Field>
+                    <AdhdIconButton
+                      aria-controls="journal-logged-metadata"
+                      aria-expanded={isJournalLoggedMetadataOpen}
+                      aria-label={isJournalLoggedMetadataOpen ? "Hide Logged Date and Time" : "Show Logged Date and Time"}
+                      onClick={() => setIsJournalLoggedMetadataOpen((open) => !open)}
+                      size="sm"
+                      title={isJournalLoggedMetadataOpen ? "Hide Logged Date and Time" : "Show Logged Date and Time"}
+                      tone="ghost"
+                      variant="rowToolbar"
+                    >
+                      <ChevronDown aria-hidden="true" className={`transition-transform ${isJournalLoggedMetadataOpen ? "rotate-180" : ""}`} />
+                    </AdhdIconButton>
+                    {isJournalLoggedMetadataOpen ? <div className="contents" id="journal-logged-metadata">
+                      <Field label="Logged Date">
+                        <span aria-label="Logged Date" aria-readonly="true" className={`${HEALTH_COMPACT_CONTROL_CLASS} inline-flex min-w-[8.5rem] items-center justify-start max-sm:!h-[32px] max-sm:!min-h-[32px]`}><span className="text-[13px] leading-normal max-sm:!text-[16px] max-sm:!leading-normal">{selectedJournalEntry ? formatHealthJournalMetadataDate(selectedJournalEntry.created_at) ?? "Date unavailable" : "When saved"}</span></span>
+                      </Field>
+                      <Field label="Logged Time">
+                        {selectedJournalEntry ? <HealthStandardTimeInput ariaLabel="Logged Time" readOnly value={formatTimeInput(selectedJournalEntry.created_at)} /> : <HealthStandardTimeInput ariaLabel="Logged Time" readOnly readOnlyPlaceholder="When saved" value="" />}
+                      </Field>
+                    </div> : null}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <span className="text-xs text-[#7d88a3] dark:text-white/45">{selectedJournalEntry ? "Existing entry" : "New entry · not saved yet"}</span>
+                    <AdhdChip onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip>
+                  </div>
+                </div>
+
+                <section className="grid gap-3" aria-labelledby="journal-feelings-heading">
+                  <SectionMiniTitle
+                    actions={(
+                      <div className="flex flex-wrap gap-2">
+                        <AdhdChip onClick={() => setIsJournalAddOpen((open) => !open)} type="button">+ Add Feeling</AdhdChip>
+                        <AdhdChip onClick={handleManageJournalLibrary} type="button">Manage Journal Library</AdhdChip>
+                      </div>
+                    )}
+                    title="How are you feeling?"
+                  />
+                  <h3 className="sr-only" id="journal-feelings-heading">How are you feeling?</h3>
+                  {isJournalAddOpen ? (
+                    <div className="grid gap-2 rounded-[1rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                      <p className="text-xs text-[#68738c] dark:text-white/55">Add a feeling to this Journal Entry.</p>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {(["symptom", "emotion", "other"] as const).map((kind) => {
+                          const choices = journalFeelingChoices.filter((choice) => choice.kind === kind && !journalDraftValues.some((value) => choice.signal?.id === value.signal_id));
+                          return <div className="grid content-start gap-2" key={kind}><SectionMiniTitle title={kind === "symptom" ? "Symptoms" : kind === "emotion" ? "Emotions" : "Other Feelings"} />{choices.map((choice) => <AdhdChip key={choice.symptomId ?? choice.signal?.id} onClick={() => { void addJournalFeelingToToday(choice); }} type="button">{choice.name}</AdhdChip>)}</div>;
+                        })}
+                      </div>
+                      {journalFeelingChoices.every((choice) => journalDraftValues.some((value) => choice.signal?.id === value.signal_id)) ? <span className="text-xs text-[#7d7598] dark:text-white/50">All active Feelings are already in this entry.</span> : null}
+                    </div>
+                  ) : null}
+                  <div className={`grid min-w-0 gap-4 md:grid-cols-2 ${journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right" ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
+                    <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:mood"} expandedScaleKey="core:mood" label="Mood" onClear={() => { setJournalMood(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalMood(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:mood")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Mood} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalMood} /></div>
+                    <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:energy"} expandedScaleKey="core:energy" label="Energy" onClear={() => { setJournalEnergy(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalEnergy(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:energy")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Energy} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalEnergy} /></div>
+                    <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:stress"} expandedScaleKey="core:stress" label="Stress" onClear={() => { setJournalStress(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalStress(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:stress")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Stress} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalStress} /></div>
+                    <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:clarity"} expandedScaleKey="core:clarity" label="Mental Clarity" onClear={() => { setJournalClarity(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalClarity(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:clarity")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS["Mental clarity"]} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalClarity} /></div>
+                    {journalDraftValues.length === 0 ? <div className="min-w-0"><EmptyCopy text="Add template Feelings from the Journal Library." /></div> : journalDraftValues.map((draftValue) => {
+                      const signal = journalSignals.find((candidate) => candidate.id === draftValue.signal_id);
+                      if (!signal) return null;
+                      const isDayOnly = !signal.in_template;
+                      return (
+                        <div className="min-w-0" key={signal.id}>
+                          <JournalRatingCard
+                            expanded={expandedJournalScaleKey === `feeling:${signal.id}`}
+                            expandedScaleKey={`feeling:${signal.id}`}
+                            label={getHealthJournalSignalDisplayName(signal, symptoms)}
+                            onClear={() => { setJournalDraftValues((current) => updateHealthJournalDraftValue(current, signal.id, null)); setExpandedJournalScaleKey(null); }}
+                            onSelect={(score) => { setJournalDraftValues((current) => updateHealthJournalDraftValue(current, signal.id, score)); setExpandedJournalScaleKey(null); }}
+                            onToggle={() => toggleJournalScale(`feeling:${signal.id}`)}
+                            removeAction={isDayOnly ? <AdhdIconButton aria-label={`Remove ${getHealthJournalSignalDisplayName(signal, symptoms)} from this Journal Entry`} onClick={() => setJournalDraftValues((current) => current.filter((value) => value.signal_id !== signal.id))} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton> : null}
+                            scaleLabelIndexOffset={0}
+                            scaleLabels={signal.scale_labels}
+                            scoreOptions={HEALTH_JOURNAL_SCORE_OPTIONS}
+                            value={draftValue.score}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="grid gap-3" aria-labelledby="journal-occurrences-heading">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <SectionMiniTitle title="Feeling Occurrences" />
+                    <AdhdChip onClick={openJournalOccurrenceCreate} type="button">+ Log occurrence</AdhdChip>
+                  </div>
+                  <h3 className="sr-only" id="journal-occurrences-heading">Feeling Occurrences</h3>
+                  {journalOccurrenceEditorOpen ? (
+                    <div className="grid gap-3 rounded-[1rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                      <Field composite label="Feeling">
+                        <HealthDropdown
+                          ariaLabel="Occurrence Feeling"
+                          onChange={setJournalOccurrenceSignalId}
+                          options={[{ label: "Choose a Feeling", value: "" }, ...journalOccurrenceChoices.filter((choice) => choice.signal).map((choice) => ({ label: choice.name, value: choice.signal!.id }))]}
+                          value={journalOccurrenceSignalId}
+                        />
+                      </Field>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{journalOccurrenceSignal?.kind === "symptom" ? "Severity" : "Intensity"} · 1–10</p>
+                        <div className="mt-2 grid grid-cols-5 gap-2 sm:flex sm:flex-wrap">
+                          {HEALTH_SEVERITY_OPTIONS.map((score) => <button aria-label={`Occurrence score ${score} out of 10`} aria-pressed={journalOccurrenceScore === score} className={`flex h-9 w-full items-center justify-center rounded-full text-sm font-semibold sm:w-9 ${journalOccurrenceScore === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => setJournalOccurrenceScore(score)} type="button">{score}</button>)}
+                        </div>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field label="Occurrence Time"><HealthStandardTimeInput ariaLabel="Feeling occurrence time" onChange={setJournalOccurrenceTime} value={journalOccurrenceTime} /></Field>
+                        <Field label="Note (optional)"><input aria-label="Occurrence note" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setJournalOccurrenceNote(event.target.value)} value={journalOccurrenceNote} /></Field>
+                      </div>
+                      <div className="flex justify-end gap-2"><AdhdChip onClick={resetJournalOccurrenceDraft} type="button">Cancel</AdhdChip><AdhdChip onClick={saveJournalOccurrenceDraft} tone="purple" type="button">{journalOccurrenceEditKey ? "Update occurrence" : "Add occurrence"}</AdhdChip></div>
+                    </div>
+                  ) : null}
+                  {journalOccurrences.length === 0 ? <p className="text-xs text-[#7d7598] dark:text-white/50">No occurrences linked to this Journal Entry.</p> : (
+                    <div className="grid gap-2">{journalOccurrences.map((occurrence) => {
+                      const signal = journalOccurrenceChoices.find((choice) => choice.signal?.id === occurrence.signalId)?.signal ?? journalSignals.find((candidate) => candidate.id === occurrence.signalId);
+                      const name = signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Archived Feeling";
+                      return <div className="flex flex-wrap items-center gap-2 rounded-[0.9rem] border border-[#edf0fb] px-3 py-2 text-sm dark:border-white/10" key={occurrence.draftKey}><span className="font-semibold text-[#26324f] dark:text-white">{name}</span><span className="font-black text-[#6f57f6] dark:text-[#cabfff]">{occurrence.score}/10</span><span className="text-xs text-[#7d88a3] dark:text-white/45">{formatHealthStandardTime(occurrence.time) ?? "Time unavailable"}</span>{occurrence.note ? <span className="min-w-0 flex-1 text-xs text-[#73809c] dark:text-white/50">{occurrence.note}</span> : null}<AdhdIconButton aria-label={`Edit ${name} occurrence`} onClick={() => startJournalOccurrenceEdit(occurrence)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Remove ${name} occurrence`} onClick={() => setJournalOccurrences((current) => current.filter((item) => item.draftKey !== occurrence.draftKey))} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton></div>;
+                    })}</div>
+                  )}
+                </section>
+
+                <div className="grid gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Your day</span>
+                  <span className="text-xs text-[#7d88a3] dark:text-white/45">Tip: Type # while writing to tag a symptom or feeling. Choosing one logs a timestamped Feeling Occurrence.</span>
+                  <div className="relative w-full min-w-0">
+                    <textarea
+                      aria-activedescendant={journalTagQuery && visibleJournalTagOptions.length > 0 ? `journal-tag-option-${journalTagHighlightIndex}` : undefined}
+                      aria-controls={journalTagQuery ? "journal-tag-picker" : journalTagOverlay ? "journal-tag-overlay" : undefined}
+                      aria-label="Journal reflection"
+                      className="health-journal-textarea block min-h-40 w-full min-w-0 max-w-full rounded-[1.5rem] border border-[#e6e8f5] bg-white px-4 py-4 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
+                      onChange={(event) => { setJournalReflection(event.target.value); syncJournalTagQuery(event.currentTarget); }}
+                      onClick={(event) => syncJournalTagQuery(event.currentTarget)}
+                      onKeyDown={handleJournalReflectionKeyDown}
+                      onKeyUp={(event) => {
+                        if (!(["ArrowDown", "ArrowUp", "Enter", "Escape"] as string[]).includes(event.key)) syncJournalTagQuery(event.currentTarget, false);
+                      }}
+                      placeholder={'What happened today?\n\nWhat felt good or difficult?\nWhat was on your mind?\nDid your body feel different anywhere?\nAnything you want to remember about today?'}
+                      ref={journalReflectionRef}
+                      value={journalReflection}
+                    />
+                    {journalTagQuery ? (
+                      <div aria-label="Journal feeling picker" className="absolute inset-x-0 top-full z-30 mt-1 max-h-60 overflow-y-auto rounded-[1rem] border border-[#e4deef] bg-white p-2 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-[#211c34]" id="journal-tag-picker" role="listbox">
+                        {visibleJournalTagGroups.map(({ kind, options: groupOptions }, groupIndex) => {
+                          return <div className={`grid gap-1 ${groupIndex > 0 ? "mt-3" : ""}`} key={kind}><SectionMiniTitle title={kind === "symptom" ? "Symptoms" : kind === "emotion" ? "Emotions" : "Other Feelings"} />{groupOptions.map((option) => { const optionIndex = visibleJournalTagOptions.indexOf(option); return <button aria-selected={journalTagHighlightIndex === optionIndex} className={`flex min-h-9 w-full items-center rounded-[0.7rem] px-3 text-left text-sm font-semibold ${journalTagHighlightIndex === optionIndex ? "bg-[#efe9ff] text-[#5d49c7] dark:bg-[#3a2b61] dark:text-[#e0d9ff]" : "text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"}`} id={`journal-tag-option-${optionIndex}`} key={`${option.kind}:${option.symptomId ?? option.signal?.id}`} onClick={() => { void selectJournalTag(option); }} onMouseDown={(event) => event.preventDefault()} role="option">{option.name}</button>; })}</div>;
+                        })}
+                        {visibleJournalTagOptions.length === 0 ? <p className="px-3 py-2 text-xs text-[#7d88a3] dark:text-white/45">No matching Feelings.</p> : null}
+                      </div>
+                    ) : null}
+                    {journalTagOverlay ? (
+                      <AdhdDropdownPanel
+                        aria-label={`Log ${getHealthJournalSignalDisplayName(journalTagSignal ?? journalTagOverlay.signal, symptoms)}`}
+                        className="right-0 bottom-2 left-auto top-auto z-40 grid max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-2rem)] gap-3 overflow-y-auto"
+                        id="journal-tag-overlay"
+                        role="dialog"
+                        tabIndex={-1}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            closeJournalTagOverlay();
+                          }
+                        }}
+                        widthClassName="w-[min(25rem,calc(100vw-2rem))]"
+                      >
+                        {journalTagSignal ? <>
+                          <div className="flex flex-wrap items-center justify-between gap-2"><p className="min-w-0 flex-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Log {getHealthJournalSignalDisplayName(journalTagSignal, symptoms)}</p><div className="flex shrink-0 items-center gap-1">{journalTagSignal.kind === "symptom" && journalTagSymptom ? <HealthSymptomColorControl isOpen={openSymptomColorPickerKey === `journal-tag:${journalTagSymptom.id}`} onSetColor={(color) => handleSetSymptomColor(journalTagSymptom.id, color)} onToggle={() => toggleSymptomColorPicker(`journal-tag:${journalTagSymptom.id}`)} symptom={journalTagSymptom} /> : <HealthJournalColorControl isOpen={openSymptomColorPickerKey === `journal-tag:${journalTagSignal.id}`} onSetColor={(color) => handleSetJournalSignalColor(journalTagSignal.id, color)} onToggle={() => toggleSymptomColorPicker(`journal-tag:${journalTagSignal.id}`)} signal={journalTagSignal} symptoms={symptoms} />}<AdhdChip onClick={closeJournalTagOverlay} type="button">Skip</AdhdChip></div></div>
+                          <div className="grid gap-2"><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{journalTagSignal.kind === "symptom" ? "Severity" : "Intensity"} · 1–10</p><div className="grid grid-cols-2 gap-1.5">{HEALTH_SEVERITY_OPTIONS.map((score) => <button aria-label={`${getHealthJournalSignalDisplayName(journalTagSignal, symptoms)} ${journalTagSignal.kind === "symptom" ? "severity" : "intensity"} ${score}, ${journalTagSignal.scale_labels[score] ?? ""}`} aria-pressed={journalTagOverlay.score === score} className={`flex min-h-9 min-w-0 items-start justify-start gap-2 rounded-[0.7rem] px-2 py-2 text-left text-xs font-semibold ${journalTagOverlay.score === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => updateJournalTagOccurrence({ score })} type="button"><span className="shrink-0 font-black">{score}</span><span className="min-w-0 flex-1 break-words whitespace-normal">{journalTagSignal.scale_labels[score] ?? ""}</span></button>)}</div></div>
+                          <Field label="Occurrence Time"><HealthStandardTimeInput ariaLabel="Feeling occurrence time" onChange={(time) => updateJournalTagOccurrence({ time })} value={journalTagOverlay.time} /></Field>
+                          {journalTagOverlay.error ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{journalTagOverlay.error}</p> : null}
+                          <div className="flex justify-end gap-2"><AdhdChip onClick={closeJournalTagOverlay} type="button">Skip</AdhdChip><AdhdChip onClick={saveJournalTagOccurrence} tone="purple" type="button">Add occurrence</AdhdChip></div>
+                        </> : null}
+                      </AdhdDropdownPanel>
+                    ) : null}
+                  </div>
+                </div>
+                {journalFormError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{journalFormError}</p> : null}
+                <div className="flex justify-end"><button className="ui-pill-button-strong-light" onClick={() => { void handleSaveJournal(); }} type="button">{selectedJournalEntry ? "Update Journal Entry" : "Save Journal Entry"}</button></div>
               </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Signals</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {HEALTH_SYMPTOM_TAGS.map((tag) => {
-                    const selected = journalTags.includes(tag);
-                    return (
+            </div> : null}
+
+            {journalWorkspaceMode !== "entry" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? `${journalWorkspaceMode === "split-history-left" ? "md:order-1" : "md:order-2"} hidden md:block` : ""}`}>
+              <div className="space-y-4">
+                <SectionMiniTitle title="Journal History" />
+                {journalHistoryGroups.length === 0 ? <EmptyCopy text="Your first Journal Entry will start history here." /> : journalHistoryGroups.slice(0, 12).map((group) => {
+                  const isJournalHistoryDateCollapsed = collapsedJournalHistoryDates.has(group.date);
+                  return (
+                  <section className="grid gap-2" key={group.date}>
+                        <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">
+                          <button
+                            aria-controls={`journal-history-date-${group.date}`}
+                            aria-expanded={!isJournalHistoryDateCollapsed}
+                            className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-left transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
+                            onClick={() => toggleJournalHistoryDate(group.date)}
+                            type="button"
+                          >
+                            <span>{formatHealthDateLabel(group.date)}</span>
+                            <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isJournalHistoryDateCollapsed ? "-rotate-90" : "rotate-180"}`} />
+                          </button>
+                        </h3>
+                        <div className="grid gap-2" hidden={isJournalHistoryDateCollapsed} id={`journal-history-date-${group.date}`}>
+                          {group.entries.map((entry) => {
+                      const entryValues = journalSignalValues.filter((value) => value.journal_entry_id === entry.id);
+                      const entryOccurrences = [
+                        ...symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => ({
+                          id: occurrence.id,
+                          label: symptoms.find((symptom) => symptom.id === occurrence.symptom_id)?.name ?? "Archived symptom",
+                          score: occurrence.severity,
+                          occurredAt: occurrence.logged_at,
+                        })),
+                        ...journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => ({
+                          id: occurrence.id,
+                          label: getHealthJournalSignalDisplayName(journalSignals.find((signal) => signal.id === occurrence.signal_id) ?? { id: occurrence.signal_id, user_id: entry.user_id, kind: "other", symptom_id: null, name: "Archived Feeling", color: null, low_label: "None", high_label: "Extreme", scale_labels: getDefaultHealthJournalScaleLabels("other"), in_template: false, template_sort_order: null, archived_at: null, created_at: entry.created_at, updated_at: entry.updated_at }, symptoms),
+                          score: occurrence.score,
+                          occurredAt: occurrence.occurred_at,
+                        })),
+                      ].sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt));
+                      const isLoggedMetadataOpen = expandedJournalHistoryEntryIds.has(entry.id);
+                      return <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="grid gap-1">
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Journal</p>
+                              <div className="flex min-w-0 items-center gap-1">
+                                <p className="min-w-0 text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthJournalDate(entry.entry_date)} · {formatHealthStandardTime(normalizeHealthJournalEntryTime(entry.entry_time, entry.created_at)) ?? "Time unavailable"}</p>
+                                <button
+                                  aria-controls={`journal-history-logged-${entry.id}`}
+                                  aria-expanded={isLoggedMetadataOpen}
+                                  aria-label={isLoggedMetadataOpen ? "Hide Logged Date and Time" : "Show Logged Date and Time"}
+                                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#8d87a7] transition hover:bg-[#f1ecff] dark:text-white/45 dark:hover:bg-white/8"
+                                  onClick={() => toggleJournalHistoryMetadata(entry.id)}
+                                  title={isLoggedMetadataOpen ? "Hide Logged Date and Time" : "Show Logged Date and Time"}
+                                  type="button"
+                                >
+                                  <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isLoggedMetadataOpen ? "rotate-180" : ""}`} />
+                                </button>
+                              </div>
+                            </div>
+                            {isLoggedMetadataOpen ? <div id={`journal-history-logged-${entry.id}`}>
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Logged</p>
+                              <p className="text-xs text-[#7d88a3] dark:text-white/45">{formatJournalLoggedAt(entry.created_at)}</p>
+                            </div> : null}
+                          </div>
+                          <div className="flex gap-1"><AdhdChip onClick={() => selectJournalEntry(entry)} type="button">Edit</AdhdChip><AdhdChip onClick={() => handleDeleteJournalEntry(entry)} tone="danger" type="button">Delete</AdhdChip></div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#68738c] dark:text-white/60">{entry.mood_score !== null ? <span>Mood {entry.mood_score}</span> : null}{entry.energy_score !== null ? <span>Energy {entry.energy_score}</span> : null}{entry.stress_score !== null ? <span>Stress {entry.stress_score}</span> : null}{entry.clarity_score !== null ? <span>Clarity {entry.clarity_score}</span> : null}</div>
+                        {entryValues.length > 0 ? <p className="mt-2 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Snapshot ratings:</span> {entryValues.map((value) => { const signal = journalSignals.find((candidate) => candidate.id === value.signal_id); return `${signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Feeling"} ${value.score}`; }).join(" · ")}</p> : null}
+                        {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span> {entryOccurrences.map((occurrence) => `${occurrence.label} ${occurrence.score} @ ${formatJournalHistoryOccurrenceTime(occurrence.occurredAt)}`).join(" · ")}</p> : null}
+                        {entry.reflection ? <JournalHistoryReflection entry={entry} entryValues={entryValues} historyTagOptions={journalHistoryTagOptions} historyTagOptionsByKey={journalHistoryTagOptionsByKey} journalSignalOccurrences={journalSignalOccurrences} onToggleTag={(tag) => toggleJournalHistoryTag(entry.id, tag)} selectedTag={journalHistoryTagOverlay} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
+                        {entry.symptom_tags.length > 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Legacy tags: {entry.symptom_tags.join(", ")}</p> : null}
+                          </div>;
+                          })}
+                        </div>
+                  </section>
+                  );
+                })}
+              </div>
+            </div> : null}
+            </div>
+            </HealthPanel>
+
+          </PageShell>
+          <PageShell id="journal-library" label="Journal Library">
+            <HealthPanel id="journal-library-section" isOpen={isJournalLibraryOpen} onOpenChange={setIsJournalLibraryOpen} ref={journalLibraryRef} shellSurface tabIndex={-1} icon={<Sparkles />} subtitle={`Journal Library · ${activeSymptoms.length} Symptoms · ${activeJournalSignals.filter((signal) => signal.kind === "emotion").length} Emotions · ${activeJournalSignals.filter((signal) => signal.kind === "other").length} Other Feelings`} title="Manage Journal Library">
+              <div className="grid gap-5">
+                <JournalSymptomLibrarySection
+                  activeSymptoms={activeSymptoms}
+                  archiveSymptom={archiveJournalSymptom}
+                  editingSymptomId={editingSymptomId}
+                  editingSymptomName={editingSymptomName}
+                  getJournalSignalForSymptom={getJournalSignalForSymptom}
+                  handleRenameSymptom={handleRenameSymptom}
+                  handleSetSymptomColor={handleSetSymptomColor}
+                  isSymptomCreateOpen={isSymptomCreateOpen}
+                  journalLibraryEditDraft={journalLibraryEditDraft}
+                  journalLibraryEditId={journalLibraryEditId}
+                  journalSignalValues={journalSignalValues}
+                  onAddSymptom={openSymptomCreateForm}
+                  onCancelCreate={closeSymptomCreateForm}
+                  onCancelEdit={() => setJournalLibraryEditId(null)}
+                  onChangeCreateName={setSymptomCreateName}
+                  onChangeDraft={setJournalLibraryEditDraft}
+                  onCreate={() => { void handleCreateSymptom(); }}
+                  onEdit={startJournalSignalEdit}
+                  onMove={moveJournalSignal}
+                  onSaveEdit={saveJournalSignalEdit}
+                  onToggleColorPicker={toggleSymptomColorPicker}
+                  onToggleTemplate={toggleJournalSymptomTemplate}
+                  openSymptomColorPickerKey={openSymptomColorPickerKey}
+                  setEditingSymptomId={setEditingSymptomId}
+                  setEditingSymptomName={setEditingSymptomName}
+                  startJournalSymptomEdit={startJournalSymptomEdit}
+                  symptoms={symptoms}
+                  symptomCreateName={symptomCreateName}
+                  templateSignals={getHealthJournalTemplateSignals(journalSignals, symptoms)}
+                />
+                <JournalFeelingLibrarySection
+                  archiveJournalSignal={archiveJournalFeeling}
+                  deleteJournalSignal={deleteJournalSignal}
+                  draft={journalLibraryEditDraft}
+                  journalLibraryCreateKind={journalLibraryCreateKind}
+                  journalLibraryEditId={journalLibraryEditId}
+                  journalSignalOccurrences={journalSignalOccurrences}
+                  journalSignalValues={journalSignalValues}
+                  kind="emotion"
+                  moveJournalSignal={moveJournalSignal}
+                  onCancelCreate={closeJournalSignalCreateForm}
+                  onCancelEdit={() => setJournalLibraryEditId(null)}
+                  onChangeCreateInTemplate={setJournalSignalCreateInTemplate}
+                  onChangeCreateName={setJournalSignalCreateName}
+                  onChangeDraft={setJournalLibraryEditDraft}
+                  onCreate={() => { void handleCreateJournalSignal(); }}
+                  onEdit={startJournalSignalEdit}
+                  onOpenCreate={openJournalSignalCreateForm}
+                  onSaveEdit={saveJournalSignalEdit}
+                  onSetColor={handleSetJournalSignalColor}
+                  onToggleColorPicker={toggleSymptomColorPicker}
+                  onToggleTemplate={toggleJournalFeelingTemplate}
+                  journalSignalCreateInTemplate={journalSignalCreateInTemplate}
+                  journalSignalCreateName={journalSignalCreateName}
+                  openColorPickerKey={openSymptomColorPickerKey}
+                  signals={journalSignals}
+                  symptoms={symptoms}
+                />
+                <JournalFeelingLibrarySection
+                  archiveJournalSignal={archiveJournalFeeling}
+                  deleteJournalSignal={deleteJournalSignal}
+                  draft={journalLibraryEditDraft}
+                  journalLibraryCreateKind={journalLibraryCreateKind}
+                  journalLibraryEditId={journalLibraryEditId}
+                  journalSignalOccurrences={journalSignalOccurrences}
+                  journalSignalValues={journalSignalValues}
+                  kind="other"
+                  moveJournalSignal={moveJournalSignal}
+                  onCancelCreate={closeJournalSignalCreateForm}
+                  onCancelEdit={() => setJournalLibraryEditId(null)}
+                  onChangeCreateInTemplate={setJournalSignalCreateInTemplate}
+                  onChangeCreateName={setJournalSignalCreateName}
+                  onChangeDraft={setJournalLibraryEditDraft}
+                  onCreate={() => { void handleCreateJournalSignal(); }}
+                  onEdit={startJournalSignalEdit}
+                  onOpenCreate={openJournalSignalCreateForm}
+                  onSaveEdit={saveJournalSignalEdit}
+                  onSetColor={handleSetJournalSignalColor}
+                  onToggleColorPicker={toggleSymptomColorPicker}
+                  onToggleTemplate={toggleJournalFeelingTemplate}
+                  journalSignalCreateInTemplate={journalSignalCreateInTemplate}
+                  journalSignalCreateName={journalSignalCreateName}
+                  openColorPickerKey={openSymptomColorPickerKey}
+                  signals={journalSignals}
+                  symptoms={symptoms}
+                />
+              </div>
+            </HealthPanel>
+
+          </PageShell>
+          <PageShell id="journal-feeling-trends" label="Feeling Trends">
+          <HealthPanel className="min-w-0" icon={<Activity />} shellSurface subtitle="Feelings" title="Feeling Trends">
+            <div className="grid gap-4">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                <Field composite label="Feelings">
+                  <FeelingTrendSelector
+                    definitions={feelingTrendModel.definitions}
+                    disabled={feelingTrendModel.definitions.length === 0}
+                    onToggleKeys={(keys) => {
+                      setOpenSymptomColorPickerKey(null);
+                      setSelectedFeelingTrendDefinitionKeys((current) => toggleHealthFeelingTrendSelection(current, keys));
+                    }}
+                    selectedKeys={selectedFeelingTrendDefinitionKeys}
+                  />
+                </Field>
+                <div>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Range</span>
+                  <div aria-label="Feeling trend date range" className="mt-2 flex flex-wrap gap-2" role="group">
+                    {HEALTH_FEELING_TREND_RANGES.map((range) => (
                       <button
-                        aria-pressed={selected}
-                        className={`ui-chip-button-base transition ${
-                          selected
-                            ? "bg-[#efe9ff] text-[#6f57f6] dark:bg-[#2b214d] dark:text-[#cabfff]"
-                            : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"
-                        }`}
-                        key={tag}
-                        onClick={() =>
-                          setJournalTags((current) =>
-                            current.includes(tag) ? current.filter((entry) => entry !== tag) : [...current, tag],
-                          )
-                        }
+                        aria-pressed={feelingTrendRange === range}
+                        className={`ui-chip-button-base transition ${feelingTrendRange === range ? "bg-[#efe9ff] text-[#6f57f6] dark:bg-[#2b214d] dark:text-[#cabfff]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`}
+                        key={range}
+                        onClick={() => setFeelingTrendRange(range)}
                         type="button"
                       >
-                        {tag}
+                        {range}
                       </button>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
               </div>
-              <label className="grid gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Reflection</span>
-                <textarea
-                  className="min-h-40 rounded-[1.5rem] border border-[#e6e8f5] bg-white px-4 py-4 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
-                  onChange={(event) => setJournalReflection(event.target.value)}
-                  placeholder="What helped, what felt noisy, and what your body or mind might need next."
-                  value={journalReflection}
-                />
-              </label>
-              <div className="flex justify-end">
-                <button
-                  className="ui-pill-button-strong-light"
-                  onClick={() => { void handleSaveJournal(); }}
-                  type="button"
-                >
-                  Save Check-In
-                </button>
-              </div>
-            </div>
-          </HealthPanel>
 
-          <HealthPanel icon={<Sparkles />} subtitle="History" title="Recent check-ins">
-            <div className="space-y-3">
-              {checkIns.length === 0 ? (
-                <EmptyCopy text="Your first check-in will start the journal history here." />
+              {selectedFeelingTrendDefinitions.length > 0 ? (
+                <ActivityLineChartCard
+                  activePointContext={`${feelingTrendRange} • occurrence score scale 1–10`}
+                  ariaLabel={`${feelingTrendSelectionSummary} occurrence trend line graph`}
+                  emptyText={feelingTrendEmptyText}
+                  eyebrow="FEELING TRENDS"
+                  formatAxisValue={(value) => String(Math.round(value))}
+                  formatValue={(value) => `${formatHealthFeelingTrendScore(value)}/10`}
+                  compactPlot
+                  maxValue={10}
+                  series={feelingTrendChartSeries}
+                  subtitle={`${feelingTrendRange} • timestamped Feeling Occurrences only`}
+                  title={feelingTrendChartTitle}
+                  variant="embedded"
+                />
               ) : (
-                checkIns.slice(0, 8).map((entry) => (
-                  <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthDateLabel(entry.entry_date)}</p>
-                      <span className="text-xs text-[#7d88a3] dark:text-white/45">Mood {entry.mood_score ?? "?"} / Energy {entry.energy_score ?? "?"}</span>
-                    </div>
-                    <p className="mt-2 text-sm leading-6 text-[#66718f] dark:text-white/60">{entry.reflection || "No reflection saved."}</p>
-                  </div>
-                ))
+                <EmptyCopy
+                  text="Select one or more Feelings to see Feeling Trends here."
+                />
               )}
             </div>
           </HealthPanel>
-        </div>
+          </PageShell>
+          </ReorderablePageShells>
+        </>
       ) : null}
 
       {activeTab === "Food" ? (
-        <div aria-labelledby="health-tab-food" className="mt-3 grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]" id={getHealthTabPanelId("Food")} role="tabpanel">
-          <div className="grid min-w-0 content-start gap-5">
+        <div aria-labelledby="health-tab-food" className="mt-3 min-w-0" id={getHealthTabPanelId("Food")} role="tabpanel">
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-12">
+          <PageShell id="food-meal-log" label="Meal Log">
           <HealthPanel
             className="min-w-0"
             contentTopClassName="pt-1 sm:pt-1"
             headerChevronClassName="-translate-y-0.5"
             headerPaddingClassName="py-2 sm:py-2"
             icon={<Salad />}
+            shellSurface
             subtitle="Meal logging"
           >
             <div className="grid gap-3">
@@ -1786,7 +3898,7 @@ export function HealthPage({
               {HEALTH_MEAL_SLOTS.map((slot) => {
                 const slotMeals = selectedMeals.filter((entry) => entry.meal_slot === slot);
                   const slotPlans = selectedMealPlans.filter((entry) => entry.meal_slot === slot);
-                  const slotCaloriesTotal = slotMeals.reduce((total, entry) => total + mealNutritionValue(entry, "calories"), 0);
+                  const slotCaloriesTotal = slotMeals.reduce((total, entry) => total + getHealthMealNutritionValue(entry, "calories"), 0);
                   const slotPlannedCaloriesTotal = slotPlans.reduce((total, entry) => total + (entry.nutrition_snapshot?.calories ?? entry.calories), 0);
                   return (
                   <section className="grid gap-3" key={slot}>
@@ -1852,7 +3964,14 @@ export function HealthPage({
                     <div className="flex items-start gap-3">
                       <div className="min-w-0 flex-1">
                         <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(entry)}</p>
-                        <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">{formatHealthMealSummary(entry)}</p>
+                        <p className="mt-1 break-words text-xs text-[#74809b] dark:text-white/45">
+                          {getHealthMealSummaryParts(entry).map((part, index) => (
+                            <span key={part.kind}>
+                              {index > 0 ? " / " : null}
+                              {part.kind === "calories" ? <strong className="font-semibold text-[#4f5872] dark:text-white/70">{part.text}</strong> : part.text}
+                            </span>
+                            ))}
+                        </p>
                         <NutritionDetailsDisclosure details={entry.nutrition_snapshot?.nutrition_details} />
                       </div>
                       <div className="flex shrink-0 flex-wrap justify-end gap-2">
@@ -1885,7 +4004,7 @@ export function HealthPage({
                           <Field label="Amount">
                             <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, quantity: event.target.value }))} value={mealEditDraft.quantity} />
                           </Field>
-                          <Field label="Measurement">
+                          <Field composite label="Measurement">
                             <HealthDropdown
                               ariaLabel="Measurement"
                               onChange={(value) => setMealEditDraft((current) => ({ ...current, measurement: value }))}
@@ -1902,7 +4021,7 @@ export function HealthPage({
                           <Field label="Time">
                             <HealthMealDateTimeInput onChange={(value) => setMealEditDraft((current) => ({ ...current, time: value }))} type="time" value={mealEditDraft.time} />
                           </Field>
-                          <Field label="Meal">
+                          <Field composite label="Meal">
                             <HealthDropdown
                               ariaLabel="Meal"
                               onChange={(value) => setMealEditDraft((current) => ({ ...current, mealSlot: value as HealthMealEntry["meal_slot"] }))}
@@ -1943,7 +4062,7 @@ export function HealthPage({
                           <Field label="Time">
                             <HealthMealDateTimeInput onChange={(value) => setMealEditDraft((current) => ({ ...current, time: value }))} type="time" value={mealEditDraft.time} />
                           </Field>
-                          <Field label="Meal">
+                          <Field composite label="Meal">
                             <HealthDropdown
                               ariaLabel="Meal"
                               onChange={(value) => setMealEditDraft((current) => ({ ...current, mealSlot: value as HealthMealEntry["meal_slot"] }))}
@@ -1991,28 +4110,18 @@ export function HealthPage({
                 })}
             </div>
           </HealthPanel>
-          </div>
 
-          <div className="grid min-w-0 content-start gap-5">
+          </PageShell>
+          <PageShell id="food-daily-totals" label="Daily Totals">
           <HealthPanel
             headerActions={<FoodHistoryDateChip allowFuture date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />}
             className="min-w-0"
             icon={<Target />}
+            shellSurface
             subtitle="Daily totals"
           >
             <div className="grid gap-3 sm:grid-cols-2">
-              <CompactStat
-                detail={selectedCalorieAllowance === null
-                  ? "set in goals"
-                  : activeProfile.add_active_energy_to_calorie_goal
-                    ? `Base ${formatHealthNutritionNumber(activeProfile.calorie_goal)} + ${formatHealthNutritionNumber(selectedActiveEnergyKcal)} active`
-                    : `goal ${formatHealthNutritionNumber(selectedCalorieAllowance)}`}
-                label="Calories"
-                progressPercent={selectedCalorieAllowance === null ? null : clampPercent((selectedNutrition.calories / selectedCalorieAllowance) * 100)}
-                value={activeProfile.add_active_energy_to_calorie_goal && selectedCalorieAllowance !== null
-                  ? `${formatHealthNutritionNumber(selectedNutrition.calories)} / ${formatHealthNutritionNumber(selectedCalorieAllowance)}`
-                  : formatHealthNutritionNumber(selectedNutrition.calories)}
-              />
+              <CompactStat detail={selectedCalorieTargetDetail} label="Calories" progressPercent={selectedCalorieBudget ? clampPercent((selectedNutrition.calories / selectedCalorieBudget) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
               <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" progressPercent={profile.protein_goal_grams ? clampPercent((selectedNutrition.protein / profile.protein_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.protein)}g`} />
               <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.carbs)}g`} />
               <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.fat)}g`} />
@@ -2052,11 +4161,13 @@ export function HealthPage({
                 />
               </div>
             ) : null}
-            <HealthCalorieLineChart series={dailyCalorieSeries} />
+            <HealthCalorieLineChart series={dailyCalorieSeries} targetSeries={dailyCalorieTargetSeries} />
           </HealthPanel>
 
-          <HealthPanel className="min-w-0" icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
-              <div className="adhdice-scrollbar max-h-[26rem] space-y-5 overflow-y-auto pr-1">
+          </PageShell>
+          <PageShell id="food-favorites-recent" label="Favorites & Recent Foods">
+          <HealthPanel className="min-w-0" icon={<Sparkles />} shellSurface subtitle="Food shortcuts" title="Favorites & Recent Foods">
+              <div className="space-y-5">
                 <section className="space-y-3" aria-labelledby="health-favorites-heading">
                   <SectionMiniTitle title="Favorites" />
                   <h3 className="sr-only" id="health-favorites-heading">Favorites</h3>
@@ -2135,9 +4246,9 @@ export function HealthPage({
                 </section>
               </div>
           </HealthPanel>
-          </div>
 
-          <div className="order-4 min-w-0 xl:col-span-2 xl:order-none">
+          </PageShell>
+          <PageShell id="food-library" label="Food Library">
           <HealthLibraryPanel
             deleteFood={deleteFavoriteFood}
             deleteRecipe={deleteRecipe}
@@ -2148,25 +4259,33 @@ export function HealthPage({
             saveRecipe={saveRecipe}
             savedMeals={savedMeals}
             saveSavedMeal={saveSavedMeal}
+            shellSurface
           />
-          </div>
+          </PageShell>
 
+          </ReorderablePageShells>
         </div>
       ) : null}
 
       {activeTab === "Water" ? (
         <HealthWaterPanel
           addWaterEntry={addWaterEntry}
+          confirmWaterEntry={confirmWaterEntry}
           deleteWaterEntry={deleteWaterEntry}
+          saveWaterGoal={(waterGoalMl) => saveProfile({ water_goal_ml: waterGoalMl })}
           today={today}
           updateWaterEntry={updateWaterEntry}
+          waterGoalMl={profile.water_goal_ml}
           waterEntries={waterEntries}
+          layout={pageShellLayout}
         />
       ) : null}
 
       {activeTab === "Weight" ? (
-        <div aria-labelledby="health-tab-weight" className="mt-6 grid gap-5 xl:grid-cols-[1fr_1fr]" id={getHealthTabPanelId("Weight")} role="tabpanel">
-          <HealthPanel icon={<Scale />} subtitle="Weigh-in" title="Track trend, not perfection">
+        <div aria-labelledby="health-tab-weight" className="mt-6 min-w-0" id={getHealthTabPanelId("Weight")} role="tabpanel">
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-12">
+          <PageShell id="weight-entry" label="Weigh-in">
+          <HealthPanel icon={<Scale />} shellSurface subtitle="Weigh-in" title="Track trend, not perfection">
             <div className="grid gap-4 sm:grid-cols-[0.8fr_1.2fr]">
               <Field label={`Weight (${profile.preferred_weight_unit})`}>
                 <input className="health-input" inputMode="decimal" onChange={(event) => setWeightDraft(event.target.value)} placeholder={profile.preferred_weight_unit === "kg" ? "78.2" : "172.4"} value={weightDraft} />
@@ -2190,8 +4309,10 @@ export function HealthPage({
               />
             </div>
           </HealthPanel>
+          </PageShell>
 
-          <HealthPanel icon={<Activity />} subtitle="30 days" title="Recent trend">
+          <PageShell id="weight-trend" label="Recent Trend">
+          <HealthPanel icon={<Activity />} shellSurface subtitle="30 days" title="Recent trend">
             <div className="space-y-3">
               {weightTrend30.length === 0 ? (
                 <EmptyCopy text="Your trend will appear once you log a weight entry." />
@@ -2219,16 +4340,20 @@ export function HealthPage({
               )}
             </div>
           </HealthPanel>
+          </PageShell>
+          </ReorderablePageShells>
         </div>
       ) : null}
 
       {activeTab === "Sleep" ? (
-        <div aria-labelledby="health-tab-sleep" className="mt-6 grid gap-5 xl:grid-cols-[1fr_1fr]" id={getHealthTabPanelId("Sleep")} role="tabpanel">
-          <div className="grid content-start gap-5">
+        <div aria-labelledby="health-tab-sleep" className="mt-6 min-w-0" id={getHealthTabPanelId("Sleep")} role="tabpanel">
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-12">
+          <PageShell id="sleep-ledger" label="Health Sleep Totals">
           <HealthPanel
             collapseAfterHeaderActions
             headerActions={<FoodHistoryDateChip ariaLabel="Sleep ledger date" date={sleepLedgerDate} dayStepper today={today} onChange={setSleepLedgerDate} />}
             icon={<MoonStar />}
+            shellSurface
             subtitle="Sleep ledger"
             title="Health sleep totals"
           >
@@ -2238,7 +4363,7 @@ export function HealthPage({
               <CompactStat detail={formatHealthDateLabel(sleepLedgerDate)} label="Focus Clock" value={formatHealthSleepDuration(selectedSleepTotal.focusMinutes)} />
               <CompactStat detail={formatHealthDateLabel(sleepLedgerDate)} label="Imported" value={formatHealthSleepDuration(selectedSleepTotal.importedMinutes)} />
             </div>
-            <HealthSleepLineChart series={sleepActivitySeries} />
+            <HealthSleepLineChart series={sleepActivitySeries} sleepGoalMinutes={profile.sleep_goal_minutes} />
             <div className="mt-4 rounded-[1.25rem] border border-[#e6ebfb] bg-white/80 px-4 py-4 dark:border-white/10 dark:bg-white/[0.04]">
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
@@ -2261,10 +4386,10 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          </div>
+          </PageShell>
 
-          <div className="grid content-start gap-5">
-          <HealthPanel icon={<MoonStar />} subtitle="Manual entry" title="Log sleep">
+          <PageShell id="sleep-log" label="Log Sleep">
+          <HealthPanel icon={<MoonStar />} shellSurface subtitle="Manual entry" title="Log sleep">
             <SleepKindSelector onChange={(kind) => setManualSleepDraft((current) => ({ ...current, kind }))} value={manualSleepDraft.kind} />
             <SleepDraftFields draft={manualSleepDraft} onChange={(next) => setManualSleepDraft(next)} />
             {sleepFormError ? <p className="mt-3 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{sleepFormError}</p> : null}
@@ -2272,8 +4397,10 @@ export function HealthPage({
               <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveManualSleep(); }} type="button">Log Sleep</button>
             </div>
           </HealthPanel>
+          </PageShell>
 
-          <HealthPanel className="xl:order-2" icon={<Activity />} subtitle="Last 7 days" title="Sleep sources">
+          <PageShell id="sleep-sources" label="Sleep Sources">
+          <HealthPanel icon={<Activity />} shellSurface subtitle="Last 7 days" title="Sleep sources">
             <div className="grid gap-3 sm:grid-cols-3">
               <CompactStat detail="combined week" label="Total" value={formatHealthSleepDuration(recentSleepTotalMinutes)} />
               <CompactStat detail="Sleep Focus timers" label="Clock" value={formatHealthSleepDuration(recentSleepFocusMinutes)} />
@@ -2294,8 +4421,10 @@ export function HealthPage({
               ))}
             </div>
           </HealthPanel>
+          </PageShell>
 
-          <HealthPanel className="xl:order-1" icon={<Sparkles />} subtitle="Selected date" title="Sleep Ledger">
+          <PageShell id="sleep-focus-ledger" label="Sleep Ledger">
+          <HealthPanel icon={<Sparkles />} shellSurface subtitle="Selected date" title="Sleep Ledger">
             <div className="space-y-3">
               {selectedSleepFocusSessions.length === 0 ? (
                 <EmptyCopy text={`No Sleep Focus sessions logged for ${formatHealthDateLabel(sleepLedgerDate)}.`} />
@@ -2331,14 +4460,19 @@ export function HealthPage({
               )}
             </div>
           </HealthPanel>
-          </div>
+          </PageShell>
+          </ReorderablePageShells>
         </div>
       ) : null}
 
       {activeTab === "Insights" ? (
-        <div aria-labelledby="health-tab-insights" className="mt-6 grid gap-5 xl:grid-cols-[1.05fr_0.95fr]" id={getHealthTabPanelId("Insights")} role="tabpanel">
-          <AppleHealthNativeSection key={healthKitScopeKey ?? "signed-out"} healthKitScopeKey={healthKitScopeKey} syncAppleHealthData={syncAppleHealthData} syncIncrementalAppleHealthData={syncIncrementalAppleHealthData} />
-          <HealthPanel icon={<Apple />} subtitle="Import pathway" title="Apple Health groundwork">
+        <div aria-labelledby="health-tab-insights" className="mt-6 min-w-0" id={getHealthTabPanelId("Insights")} role="tabpanel">
+          <div className="mb-5">
+            <AppleHealthNativeSection key={healthKitScopeKey ?? "signed-out"} healthKitScopeKey={healthKitScopeKey} syncAppleHealthData={syncAppleHealthData} syncIncrementalAppleHealthData={syncIncrementalAppleHealthData} />
+          </div>
+          <ReorderablePageShells layout={pageShellLayout} shellsClassName="grid gap-5 xl:grid-cols-12">
+          <PageShell id="insights-import" label="Apple Health Import">
+          <HealthPanel icon={<Apple />} shellSurface subtitle="Import pathway" title="Apple Health groundwork">
             <div className="rounded-[1.5rem] border border-dashed border-[#d6def4] bg-[#fbfcff] p-5 dark:border-white/10 dark:bg-white/[0.03]">
               <p className="text-sm font-semibold text-[#22304b] dark:text-white">Upload an Apple Health export to preview what Health can import.</p>
               <p className="mt-2 text-sm leading-6 text-[#67728f] dark:text-white/60">
@@ -2410,7 +4544,9 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel icon={<MoonStar />} subtitle="Imported trends" title="What will appear here">
+          </PageShell>
+          <PageShell id="insights-trends" label="Imported Trends">
+          <HealthPanel icon={<MoonStar />} shellSurface subtitle="Imported trends" title="What will appear here">
             <div className="space-y-3">
               {metricEntries.length === 0 ? (
                 <EmptyCopy text="Imported sleep, activity, energy, and Apple Health weight data will show up here when the import flow lands." />
@@ -2430,87 +4566,91 @@ export function HealthPage({
               )}
             </div>
           </HealthPanel>
+          </PageShell>
+          </ReorderablePageShells>
         </div>
       ) : null}
 
       {activeTab === "Awards" ? (
         <div aria-labelledby="health-tab-awards" className="mt-6" id={getHealthTabPanelId("Awards")} role="tabpanel">
-          <HealthPanel icon={<Trophy />} subtitle="Awards" title="Under construction">
+          <ReorderablePageShells layout={pageShellLayout}>
+          <PageShell id="awards-content" label="Awards">
+          <HealthPanel icon={<Trophy />} shellSurface subtitle="Awards" title="Under construction">
             <EmptyCopy text="This tab is under construction." />
           </HealthPanel>
+          </PageShell>
+          </ReorderablePageShells>
         </div>
       ) : null}
 
-      <div className="mt-8">
-        <HealthPanel icon={<Target />} subtitle="Health settings">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Field label="Weight unit">
-            <select className="health-input" onChange={(event) => handleWeightUnitChange(event.target.value as HealthProfile["preferred_weight_unit"])} value={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit}>
-              <option value="lb">Pounds</option>
-              <option value="kg">Kilograms</option>
-            </select>
-          </Field>
-          <Field label="Calorie goal">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, calorie_goal: event.target.value as unknown as number }))} value={String(profileDraft.calorie_goal ?? "")} />
-          </Field>
-          <Field label="Protein goal (g)">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, protein_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.protein_goal_grams ?? "")} />
-          </Field>
-          <Field label="Carbs goal (g)">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, carbs_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.carbs_goal_grams ?? "")} />
-          </Field>
-          <Field label="Fat goal (g)">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, fat_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.fat_goal_grams ?? "")} />
-          </Field>
-          <Field label="Move goal (kcal)">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, movement_goal_calories: event.target.value as unknown as number }))} value={String(profileDraft.movement_goal_calories ?? "")} />
-          </Field>
-          <Field label="Move goal (min)">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, movement_goal_minutes: event.target.value as unknown as number }))} value={String(profileDraft.movement_goal_minutes ?? "")} />
-          </Field>
-          <Field label="Sleep goal">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="grid gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Hours</span>
-                <input className="health-input" inputMode="numeric" onChange={(event) => handleSleepGoalHoursChange(event.target.value)} value={sleepGoalHours} />
-              </label>
-              <label className="grid gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Minutes</span>
-                <input className="health-input" inputMode="numeric" max={59} onChange={(event) => handleSleepGoalMinutesChange(event.target.value)} value={sleepGoalRemainingMinutes} />
-              </label>
+      {activeTab === "Settings" ? (
+        <div aria-labelledby="health-tab-settings" className="mt-6" id={getHealthTabPanelId("Settings")} role="tabpanel">
+          <ReorderablePageShells layout={pageShellLayout}>
+          <PageShell id="settings-content" label="Health Settings">
+          <HealthPanel icon={<Target />} shellSurface subtitle="Health settings">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Field label="Weight unit">
+              <select className="health-input" onChange={(event) => handleWeightUnitChange(event.target.value as HealthProfile["preferred_weight_unit"])} value={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit}>
+                <option value="lb">Pounds</option>
+                <option value="kg">Kilograms</option>
+              </select>
+            </Field>
+            <Field label="Calorie goal">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, calorie_goal: event.target.value as unknown as number }))} value={String(profileDraft.calorie_goal ?? "")} />
+            </Field>
+            <Field label="Protein goal (g)">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, protein_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.protein_goal_grams ?? "")} />
+            </Field>
+            <Field label="Carbs goal (g)">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, carbs_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.carbs_goal_grams ?? "")} />
+            </Field>
+            <Field label="Fat goal (g)">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, fat_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.fat_goal_grams ?? "")} />
+            </Field>
+            <Field label="Move goal (kcal)">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, movement_goal_calories: event.target.value as unknown as number }))} value={String(profileDraft.movement_goal_calories ?? "")} />
+            </Field>
+            <Field label="Move goal (min)">
+              <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, movement_goal_minutes: event.target.value as unknown as number }))} value={String(profileDraft.movement_goal_minutes ?? "")} />
+            </Field>
+            <Field label="Sleep goal">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Hours</span>
+                  <input className="health-input" inputMode="numeric" onChange={(event) => handleSleepGoalHoursChange(event.target.value)} value={sleepGoalHours} />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Minutes</span>
+                  <input className="health-input" inputMode="numeric" max={59} onChange={(event) => handleSleepGoalMinutesChange(event.target.value)} value={sleepGoalRemainingMinutes} />
+                </label>
+              </div>
+            </Field>
+            <Field label={`Target weight (${profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit})`}>
+              <input
+                className="health-input"
+                inputMode="decimal"
+                onChange={(event) => setTargetWeightDraft(event.target.value)}
+                value={targetWeightDraft}
+              />
+            </Field>
             </div>
-          </Field>
-          <Field label={`Target weight (${profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit})`}>
-            <input
-              className="health-input"
-              inputMode="decimal"
-              onChange={(event) => setTargetWeightDraft(event.target.value)}
-              value={targetWeightDraft}
-            />
-          </Field>
-          <div className="sm:col-span-2">
-            <ToggleField
-              checked={profileDraft.add_active_energy_to_calorie_goal ?? profile.add_active_energy_to_calorie_goal}
-              compact
-              label="Add Active Energy to calorie allowance"
-              onChange={(checked) => setProfileDraft((current) => ({ ...current, add_active_energy_to_calorie_goal: checked }))}
-            />
-            <p className="mt-2 text-xs text-[#73809c] dark:text-white/50">Daily allowance = calorie goal + Active Energy.</p>
-          </div>
-          </div>
-          <div className="mt-4 flex justify-end">
-            <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveProfile(); }} type="button">
-              Save Goals
-            </button>
-          </div>
-          <WeightForecastCard forecast={weightForecast} unit={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit} />
-        </HealthPanel>
-      </div>
+            <div className="mt-4 flex justify-end">
+              <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveProfile(); }} type="button">
+                Save Goals
+              </button>
+            </div>
+            <WeightForecastCard forecast={weightForecast} unit={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit} />
+          </HealthPanel>
+          </PageShell>
+          </ReorderablePageShells>
+        </div>
+      ) : null}
     </section>
   );
 }
 
 function HealthPanel({
+  "aria-labelledby": ariaLabelledBy,
   className,
   collapseAfterHeaderActions = false,
   children,
@@ -2519,9 +4659,17 @@ function HealthPanel({
   headerPaddingClassName = "py-4 sm:py-5",
   headerActions,
   icon,
+  id,
+  ref,
+  role,
+  shellSurface = false,
   subtitle,
+  tabIndex,
   title,
+  isOpen: controlledIsOpen,
+  onOpenChange,
 }: {
+  "aria-labelledby"?: string;
   className?: string;
   collapseAfterHeaderActions?: boolean;
   children: ReactNode;
@@ -2530,10 +4678,23 @@ function HealthPanel({
   headerPaddingClassName?: string;
   headerActions?: ReactNode;
   icon: ReactNode;
+  id?: string;
+  ref?: Ref<HTMLDivElement>;
+  role?: string;
+  shellSurface?: boolean;
   subtitle: string;
+  tabIndex?: number;
   title?: string;
+  isOpen?: boolean;
+  onOpenChange?: (isOpen: boolean) => void;
 }) {
-  const [isOpen, setIsOpen] = useState(true);
+  const [internalIsOpen, setInternalIsOpen] = useState(true);
+  const isOpen = controlledIsOpen ?? internalIsOpen;
+  const toggleOpen = () => {
+    const nextIsOpen = !isOpen;
+    onOpenChange?.(nextIsOpen);
+    if (controlledIsOpen === undefined) setInternalIsOpen(nextIsOpen);
+  };
   const collapseButtonChevronClassName = [
     "h-4 w-4 transition-transform",
     headerChevronClassName,
@@ -2560,7 +4721,7 @@ function HealthPanel({
       aria-expanded={isOpen}
       aria-label={`${isOpen ? "Collapse" : "Expand"} ${title ?? subtitle}`}
       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8d87a7] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/45 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
-      onClick={() => setIsOpen((current) => !current)}
+      onClick={toggleOpen}
       type="button"
     >
       <ChevronDown
@@ -2573,15 +4734,16 @@ function HealthPanel({
   return (
     <div className={[
       "rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]",
+      shellSurface ? "page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden" : "",
       className,
-    ].filter(Boolean).join(" ")}>
-      <div className={["flex items-center gap-2 px-3 sm:px-5", headerPaddingClassName].filter(Boolean).join(" ")}>
+    ].filter(Boolean).join(" ")} aria-labelledby={ariaLabelledBy} id={id} ref={ref} role={role} tabIndex={tabIndex}>
+      <div className={["flex min-w-0 items-center gap-2 px-3 sm:px-5", shellSurface ? "shrink-0" : "", headerPaddingClassName].filter(Boolean).join(" ")}>
         {collapseAfterHeaderActions ? (
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
               aria-expanded={isOpen}
               className="flex min-w-0 flex-1 items-center gap-3 text-left"
-              onClick={() => setIsOpen((current) => !current)}
+              onClick={toggleOpen}
               type="button"
             >
               {panelTitle}
@@ -2592,7 +4754,7 @@ function HealthPanel({
           <button
             aria-expanded={isOpen}
             className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
-            onClick={() => setIsOpen((current) => !current)}
+            onClick={toggleOpen}
             type="button"
           >
             {panelTitle}
@@ -2604,7 +4766,7 @@ function HealthPanel({
         )}
         {collapseAfterHeaderActions ? collapseButton : headerActions}
       </div>
-      {isOpen ? <div className={`px-3 pb-4 sm:px-5 sm:pb-5 ${contentTopClassName}`}>{children}</div> : null}
+      {isOpen ? shellSurface ? <PageShellBody className={`px-3 pb-4 sm:px-5 sm:pb-5 ${contentTopClassName}`}>{children}</PageShellBody> : <div className={`px-3 pb-4 sm:px-5 sm:pb-5 ${contentTopClassName}`}>{children}</div> : null}
     </div>
   );
 }
@@ -2685,36 +4847,53 @@ function SleepDraftFields({ draft, onChange }: { draft: SleepDraft; onChange: (d
   );
 }
 
-function ScorePicker({
+function JournalRatingCard({
+  expanded,
+  expandedScaleKey,
   label,
+  onClear,
   onSelect,
+  onToggle,
+  removeAction,
+  scaleLabelIndexOffset,
+  scaleLabels,
+  scoreOptions,
   value,
 }: {
+  expanded: boolean;
+  expandedScaleKey: string;
   label: string;
+  onClear: () => void;
   onSelect: (value: number) => void;
+  onToggle: () => void;
+  removeAction?: ReactNode;
+  scaleLabelIndexOffset: number;
+  scaleLabels: readonly string[];
+  scoreOptions: readonly number[];
   value: number | null;
 }) {
+  const firstScore = scoreOptions[0];
+  const lastScore = scoreOptions[scoreOptions.length - 1];
+  const scaleDescription = `${scaleLabels[0] ?? ""} · ${scaleLabels[scaleLabels.length - 1] ?? ""} · ${firstScore}–${lastScore}`;
+  const getScoreLabel = (score: number) => scaleLabels[score + scaleLabelIndexOffset] ?? "";
+  const renderScoreOption = (score: number) => <button aria-label={`${label} ${score}, ${getScoreLabel(score)}`} aria-pressed={value === score} className={`flex min-h-9 min-w-0 items-start justify-start gap-2 rounded-[0.7rem] px-2 py-2 text-left text-xs font-semibold ${value === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onSelect(score)} type="button"><span className="shrink-0 font-black">{score}</span><span className="min-w-0 flex-1 break-words whitespace-normal">{getScoreLabel(score)}</span></button>;
   return (
-    <div>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</p>
-      <div className="mt-2 flex gap-2">
-        {HEALTH_MOOD_OPTIONS.map((score) => (
-          <button
-            aria-label={`${label} ${score} out of 5`}
-            aria-pressed={value === score}
-            className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold transition ${
-              value === score
-                ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-                : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"
-            }`}
-            key={score}
-            onClick={() => onSelect(score)}
-            type="button"
-          >
-            {score}
-          </button>
-        ))}
+    <div className="grid min-w-0 gap-2 rounded-[1rem] border border-[#edf0fb] bg-white/70 px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-[#26324f] dark:text-white">{label}</p>
+          <p className="text-[11px] text-[#7d88a3] dark:text-white/45">{scaleDescription}</p>
+        </div>
+        {removeAction ? <div className="flex flex-wrap gap-2">{removeAction}</div> : null}
       </div>
+      <button aria-controls={expandedScaleKey} aria-expanded={expanded} className="flex min-h-10 items-center justify-between gap-3 rounded-[0.8rem] px-1 py-1 text-left" onClick={onToggle} type="button">
+        <span className="min-w-0 flex-1 break-words whitespace-normal text-sm font-semibold text-[#4f5a76] dark:text-white/70">{value === null ? "Not logged" : `${value} · ${getScoreLabel(value)}`}</span>
+        <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${expanded ? "rotate-180" : ""}`} />
+      </button>
+      {expanded ? <div className="grid gap-2 rounded-[0.9rem] border border-[#eeeaf8] bg-[#fbfaff] p-2 dark:border-white/10 dark:bg-white/[0.03]" id={expandedScaleKey}>
+        {firstScore === 0 ? <div className="grid gap-1.5"><div>{renderScoreOption(0)}</div><div className="grid grid-cols-2 gap-1.5">{scoreOptions.slice(1).map(renderScoreOption)}</div></div> : <div className="grid grid-cols-2 gap-1.5">{scoreOptions.map(renderScoreOption)}</div>}
+        <button aria-label={`Clear ${label} score`} className="justify-self-start text-xs font-semibold text-[#7569a8] underline-offset-2 hover:underline dark:text-[#c4baff]" onClick={onClear} type="button">Not logged</button>
+      </div> : null}
     </div>
   );
 }
@@ -2772,37 +4951,48 @@ function formatFavoriteMealServing(entry: HealthMealEntry) {
 }
 
 function Field({
+  composite = false,
   children,
   label,
 }: {
+  composite?: boolean;
   children: ReactNode;
   label: string;
 }) {
-  return (
-    <label className="grid gap-2">
+  const content = (
+    <>
       <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</span>
       {children}
-    </label>
+    </>
   );
+  return composite ? <div className="grid gap-2">{content}</div> : <label className="grid gap-2">{content}</label>;
 }
 
 function HealthMealDateTimeInput({
+  ariaLabel,
+  className,
+  inputRef,
   max,
   onChange,
   type,
   value,
 }: {
+  ariaLabel?: string;
+  className?: string;
+  inputRef?: { current: HTMLInputElement | null };
   max?: string;
   onChange: (value: string) => void;
   type: "date" | "time";
   value: string;
 }) {
   return (
-    <div className={`${HEALTH_COMPACT_CONTROL_CLASS} flex min-w-0 max-w-full items-center max-sm:!h-[32px] max-sm:!min-h-[32px]`}>
+    <div className={`${HEALTH_COMPACT_CONTROL_CLASS} flex min-w-0 max-w-full items-center max-sm:!h-[32px] max-sm:!min-h-[32px] ${className ?? ""}`}>
       <input
+        aria-label={ariaLabel}
         className="block min-w-0 w-full max-w-full box-border border-0 bg-transparent p-0 text-[13px] leading-normal text-[#2f294a] outline-none dark:text-white max-sm:!text-[16px] max-sm:!leading-normal"
         max={max}
         onChange={(event) => onChange(event.target.value)}
+        ref={inputRef}
         type={type}
         value={type === "time" ? normalizeHealthMealTime(value) ?? "" : value}
       />
@@ -3148,14 +5338,6 @@ function nullableFiniteNumber(value: unknown) {
 function positiveFiniteNumber(value: unknown) {
   const parsed = finiteNumber(value);
   return parsed !== null && parsed > 0 ? parsed : null;
-}
-
-function mealNutritionValue(entry: HealthMealEntry, key: "calories" | "protein_g" | "carbs_g" | "fat_g") {
-  const snapshotValue = entry.nutrition_snapshot?.[key];
-  if (typeof snapshotValue === "number" && Number.isFinite(snapshotValue)) {
-    return snapshotValue;
-  }
-  return entry[key] ?? 0;
 }
 
 function parseNullableInteger(value: unknown) {

@@ -595,14 +595,9 @@ function automaticHistoryFactFor(
 
 function engineOccurrenceDueOnFor(
   result: ReturnType<typeof evaluateTaskState> | undefined,
-  engineInput: TaskStateEngineInput | undefined,
   logicalDate: string,
   outcome: TaskHistoryOutcome,
 ) {
-  if (engineInput?.task.recurrence.kind !== "rolling"
-    || engineInput.task.recurrence.intervalDays !== 1
-    || engineInput.task.recurrence.untilComplete === true
-    || !["done", "did_my_best", "complete"].includes(outcome)) return null;
   return result?.proposedHistoryChanges.find((change) => (
     change.type === "insert"
     && change.row.logicalDate === logicalDate
@@ -710,7 +705,13 @@ export function planTaskStateCommand(
           ...(outcomeDate < input.logicalDay.logicalDate ? { historicalOverride: true } : {}),
         }
       : input.type === "complete"
-        ? { type: "record_outcome" as const, outcome: "complete" as const, logicalDate: input.logicalDate }
+        ? {
+            type: "record_outcome" as const,
+            outcome: "complete" as const,
+            logicalDate: input.logicalDate,
+            occurrenceDueOn: input.scheduledDueOn ?? null,
+            occurrenceIdentity: input.occurrenceKey ?? null,
+          }
         : input.type === "delay"
           ? { type: "record_outcome" as const, outcome: "delayed" as const, logicalDate: input.logicalDate, delayUntilDate: input.effectiveDueOn }
         : input.type === "schedule_change"
@@ -785,7 +786,7 @@ export function planTaskStateCommand(
         historyFact.scheduled_due_on = input.scheduledDueOn ?? existingOutcomeRow.occurrenceDueOn ?? null;
       }
       if (historyFact && !historyFact.scheduled_due_on) {
-        historyFact.scheduled_due_on = engineOccurrenceDueOnFor(engineResult, state.engineInput, outcomeDate, input.outcome);
+        historyFact.scheduled_due_on = engineOccurrenceDueOnFor(engineResult, outcomeDate, input.outcome);
       }
       occurrence = input.occurrence ?? null;
       automaticHistoryDeleteIds = engineResult?.proposedHistoryChanges.flatMap((change) => (
@@ -822,12 +823,7 @@ export function planTaskStateCommand(
       patch.workflow_revision = (task.workflow_revision ?? 1) + 1;
       historyFact = historyFactFor(input, command, input.logicalDate ?? command.logicalDay.logicalDate, "complete");
       if (historyFact && !historyFact.scheduled_due_on) {
-        historyFact.scheduled_due_on = engineOccurrenceDueOnFor(
-          engineResult,
-          state.engineInput,
-          input.logicalDate ?? input.logicalDay.logicalDate,
-          "complete",
-        );
+        historyFact.scheduled_due_on = engineOccurrenceDueOnFor(engineResult, input.logicalDate ?? input.logicalDay.logicalDate, "complete");
       }
       occurrence = input.occurrence ?? null;
       break;
@@ -944,12 +940,7 @@ export function planTaskStateCommand(
       if (automaticHistory?.type === "insert") {
         historyFact = historyFactFor(input, command, automaticHistory.row.logicalDate, "did_my_best");
         if (historyFact && !historyFact.scheduled_due_on) {
-          historyFact.scheduled_due_on = engineOccurrenceDueOnFor(
-            engineResult,
-            state.engineInput,
-            automaticHistory.row.logicalDate,
-            "did_my_best",
-          );
+          historyFact.scheduled_due_on = engineOccurrenceDueOnFor(engineResult, automaticHistory.row.logicalDate, "did_my_best");
         }
       }
       automaticHistoryFacts = engineResult?.proposedHistoryChanges.flatMap((change) => {

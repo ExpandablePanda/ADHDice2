@@ -1220,6 +1220,7 @@ function TaskViewsMenu({
     { label: "Cards", value: "cards" },
     { label: "Matrix", value: "matrix" },
     { label: "Grid", value: "grid" },
+    { label: "Calendar", value: "calendar" },
   ];
 
   return (

@@ -956,8 +956,8 @@ export function ScratchPaperPageSection(props: ScratchPaperData) {
   }), [filter, props.notes, search]);
 
   return (
-    <section className="mb-8 rounded-[1.5rem] border border-[#e9e3f7] bg-[#f8f6ff] p-4 dark:border-white/10 dark:bg-white/[0.03]">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h2 className="text-lg font-semibold text-[#2f294a] dark:text-white">Scratch Paper</h2><p className="text-sm text-[#827a9e] dark:text-white/45">Quick notes that can stay linked to current tasks.</p></div>
       </div>
       <ScratchCurrentNoteEditor {...props} onCurrentNoteIdChange={setCurrentNoteId} />
@@ -974,6 +974,6 @@ export function ScratchPaperPageSection(props: ScratchPaperData) {
         {filteredNotes.filter((note) => note.id !== currentNoteId).map((note) => <ScratchNoteCard key={note.id} {...props} note={note} />)}
       </div>
       {!props.isLoading && filteredNotes.length === 0 ? <p className="mt-6 text-center text-sm text-[#8d87a7]">No notes match this view.</p> : null}
-    </section>
+    </div>
   );
 }

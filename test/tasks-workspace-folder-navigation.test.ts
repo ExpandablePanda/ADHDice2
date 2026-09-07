@@ -257,12 +257,10 @@ test("Tasks modal flows render outside the memoized canvas boundary", () => {
   assert.match(tasksBranch, /\{taskWorkspaceFlowLayer\}\s*<TasksWorkspace/);
   assert.doesNotMatch(workspaceInvocation, /\bflows\s*=/);
   for (const flowProp of [
-    "actualTimeEntryFlow",
     "batchDeleteFlow",
     "batchEditFlow",
     "focusPlannerFlow",
     "momentumFlow",
-    "taskEditorFlow",
     "taskHistoryFlow",
   ]) {
     assert.match(flowLayer, new RegExp(`${flowProp}=`));
