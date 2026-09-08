@@ -32,6 +32,7 @@ import {
 } from "./task-secondary-views";
 import { UrgentTasksPanelComponent } from "./task-grid-widgets";
 import { CalendarMonthPresentation, type CalendarMonthPresentationDay } from "../ui/calendar-month-presentation";
+import { formatPursuitCalendarDay, formatPursuitCalendarMonth, getPursuitCalendarMonthDays, PursuitCalendarDay, PursuitCalendarPresentation } from "./pursuit-calendar-presentation";
 import type { TaskDraft } from "./task-editor-model";
 import {
   buildTaskHistoryCalendarDateKeys,
@@ -732,6 +733,8 @@ export function TaskHistoryModal({
   const visibleCalendarActionStatuses: CalendarActionStatus[] = canClearSelectedDate
     ? ["clear", ...calendarActionStatuses as CalendarActionStatus[]]
     : calendarActionStatuses as CalendarActionStatus[];
+  const experimentalMonthKey = `${displayedMonth.year}-${String(displayedMonth.month + 1).padStart(2, "0")}`;
+  const experimentalMonthDays = getPursuitCalendarMonthDays(experimentalMonthKey).map((dateKey) => dateKey && knownDateKeys.has(dateKey) ? dateKey : null);
 
   function cellTone(dateKey: string) {
     const entry = historyByDate.get(dateKey);
@@ -896,6 +899,95 @@ export function TaskHistoryModal({
       ? selectedEntries.length > 0 && selectedEntries.every((entry) => entry?.status === status)
       : selectedEntry?.status === status;
   }
+
+  function experimentalStatusClass(status: string) {
+    if (status === "delayed") return "text-[#7d54d1] dark:text-[#d5c2ff]";
+    if (status === "missed") return "text-[#d64b5f] dark:text-[#ffb0bd]";
+    if (status === "did_my_best") return "text-[#b28700] dark:text-[#f3d38a]";
+    if (status === "due") return "text-[#d96b1c] dark:text-[#ffb47c]";
+    if (status === "not_due") return "text-[#3388c9] dark:text-[#8ed0f6]";
+    return "text-[#2f8a66] dark:text-[#87ddb7]";
+  }
+
+  const experimentalSelectedActions = (
+    <div className="flex flex-wrap gap-2">
+      {visibleCalendarActionStatuses.map((status) => (
+        <TaskTableChipButton
+          className="gap-2"
+          disabled={isSaving || selectedDates.length === 0 || (!isMultiSelect && (selectedIsFuture || (status === "delayed" && !canDelaySelectedDate)))}
+          key={status}
+          onClick={() => {
+            if (status === "delayed") {
+              if (!canDelaySelectedDate) return;
+              setShowDelayEditor(true);
+              return;
+            }
+            setShowDelayEditor(false);
+            void handleSetStatus(status);
+          }}
+          toneClassName={status === "clear"
+            ? `${TASK_TABLE_INACTIVE_CHIP_CLASS} disabled:opacity-50`
+            : `${isSelectedStatus(status) ? TASK_STATUS_INVERTED_CHIP_STYLES[status] : `${statusTone(status)} opacity-78 hover:opacity-100`} disabled:opacity-50`}
+        >
+          {status === "clear" ? null : renderTaskStatusCircle(status, "sm")}
+          <span>{status === "clear" ? "Clear" : formatTaskStatusLabel(status)}</span>
+        </TaskTableChipButton>
+      ))}
+      {calendarOverrideActions.map((overrideState) => (
+        <TaskTableChipButton
+          className="gap-2"
+          disabled={isSaving}
+          key={overrideState}
+          onClick={() => { void handleSetCalendarOverride(overrideState); }}
+          toneClassName={`${overrideState === "not_due" ? "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]" : "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]"} disabled:opacity-50`}
+        >{overrideState === "not_due" ? "Not Due" : "Due"}</TaskTableChipButton>
+      ))}
+    </div>
+  );
+
+  const experimentalCalendarSection = calendarRead ? (
+    <PursuitCalendarPresentation
+      ariaLabel="Pursuit-style Task Calendar experiment"
+      description="Exact Pursuit calendar presentation adapted from Task history."
+      historyEntries={historyRows.map((row) => ({
+        detail: <>
+          <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{row.calendarOverride ? "Manual schedule override" : row.isDueOpportunity ? "Due opportunity" : "Manual history entry"}</p>
+          {row.calendarOverride ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">Changed to Not Due</p> : null}
+          {row.calendarOverride && formatTaskCalendarOverrideChangedLine(row.calendarOverride) ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{formatTaskCalendarOverrideChangedLine(row.calendarOverride)}</p> : null}
+          {row.entry && formatTaskHistoryLoggedLine(row.entry) ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{formatTaskHistoryLoggedLine(row.entry)}</p> : null}
+          {row.entry && formatTaskHistoryEditedLine(row.entry) ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{formatTaskHistoryEditedLine(row.entry)}</p> : null}
+          {row.isCalculated ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">Calculated from task timeline</p> : null}
+        </>,
+        key: row.logicalDate,
+        label: formatPursuitCalendarDay(row.logicalDate, stateEngineContext?.timezone ?? "UTC"),
+        status: <span className={`text-xs font-semibold ${experimentalStatusClass(row.status)}`}>{row.status === "complete" && row.entry?.event_type === "completed_permanently" ? "Marked Complete" : formatTaskStatusLabel(row.status)}</span>,
+      }))}
+      historySummary={[
+        { label: "Last done", value: lastDone ? formatCalendarDate(lastDone.dateKey) : "None" },
+        { label: "Current streak", value: String(stats.currentStreak) },
+        { label: "Best streak", value: String(stats.bestStreak) },
+        { label: "Logged days", value: String(stats.loggedDays) },
+      ]}
+      monthDays={experimentalMonthDays}
+      monthLabel={formatPursuitCalendarMonth(experimentalMonthKey, stateEngineContext?.timezone ?? "UTC")}
+      nextMonthDisabled={monthValue(displayedMonth) >= monthValue(lastCalendarMonth)}
+      onChangeMonth={(amount) => setDisplayedMonth((current) => shiftTaskCalendarMonth(current, amount))}
+      previousMonthDisabled={monthValue(displayedMonth) <= monthValue(firstCalendarMonth)}
+      renderDay={(day) => {
+        const dateKey = day && knownDateKeys.has(day) ? day : null;
+        const stateLabel = dateKey ? calendarStateLabel(dateKey) : undefined;
+        return <PursuitCalendarDay ariaLabel={dateKey ? `${formatCalendarDate(dateKey)}, ${stateLabel}` : undefined} day={dateKey} onClick={() => { if (dateKey) selectDate(dateKey); }} selected={dateKey ? selectedDateSet.has(dateKey) : false} stateClassName={dateKey ? cellTone(dateKey) : undefined} title={dateKey ? `${formatCalendarDate(dateKey)} · ${stateLabel}` : undefined} />;
+      }}
+      selectedDayAction={experimentalSelectedActions}
+      selectedDayContent={<div className="mt-3">
+        <p className="text-xs text-[#827a97] dark:text-white/52">{isMultiSelect ? `${selectedDates.length} dates selected. The selected result will be saved to every selected date.` : selectedIsFuture ? "Future dates cannot be edited yet." : selectedIsDue ? "This date is part of the task's due schedule." : "This date is outside the inferred due schedule and will be treated as a manual history entry."}</p>
+        {!isMultiSelect && selectedEntry ? <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">{[formatTaskHistoryLoggedLine(selectedEntry) ?? "Logged time unavailable", formatTaskHistoryEditedLine(selectedEntry)].filter((value): value is string => Boolean(value)).join(" • ")}</p> : null}
+        {showDelayEditor && canDelaySelectedDate ? <div className="mt-3"><TaskDelayPicker anchorDateKey={selectedDate === today ? today : selectedDate} description={selectedDate === today ? "Delay today’s live task without changing past rewards or completion history." : "Correct this saved occurrence to Delayed using the app’s existing history semantics without double-counting rewards."} inputClassName="h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]" onCancel={() => setShowDelayEditor(false)} onSave={(nextDueOn) => handleSaveDelayedStatus(nextDueOn)} primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" saveLabel="Save delayed status" /></div> : null}
+      </div>}
+      selectedDayLabel={formatPursuitCalendarDay(selectedDate, stateEngineContext?.timezone ?? "UTC")}
+      selectedDayStatus={calendarStateLabel(selectedDate)}
+    />
+  ) : null;
 
   const calendarDay = (day: CalendarMonthPresentationDay) => {
     if (!knownDateKeys.has(day.dateKey)) {
@@ -1092,11 +1184,11 @@ export function TaskHistoryModal({
       <div className="sticky top-0 z-20 lg:hidden"><div className="mx-4 mt-3 flex w-fit items-center gap-1 rounded-full border border-[#ece8f8] bg-white/88 p-1 shadow-[0_12px_28px_rgba(81,61,168,0.06)] dark:border-white/10 dark:bg-white/[0.04]">{(["calendar", "history", "stats"] as const).map((section) => <TaskTableChipButton aria-pressed={mobileSection === section} key={section} onClick={() => setMobileSection(section)} toneClassName={mobileSection === section ? "border-[#6f57f6] bg-[#6f57f6] text-white dark:border-[#c9bbff] dark:bg-[#c9bbff] dark:text-[#1a1431]" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{section[0].toUpperCase() + section.slice(1)}</TaskTableChipButton>)}</div></div>
       <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:mt-6 sm:px-0 sm:py-0" ref={mobileScrollRef}>
         <div className="space-y-5 lg:hidden">
-          {mobileSection === "calendar" ? calendarRead ? <>{renderCalendarSection()}{selectedDetailsSection}</> : calendarUnavailableSection : null}
+          {mobileSection === "calendar" ? calendarRead ? <>{experimentalCalendarSection}{renderCalendarSection()}{selectedDetailsSection}</> : calendarUnavailableSection : null}
           {mobileSection === "history" ? historySection : null}
           {mobileSection === "stats" ? statsSection : null}
         </div>
-        <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6 lg:grid">{calendarRead ? <><div className="space-y-6">{renderCalendarSection()}{historySection}</div><div className="space-y-6">{selectedDetailsSection}{statsSection}</div></> : <div className="space-y-6">{calendarUnavailableSection}{historySection}{statsSection}</div>}</div>
+        <div className="hidden space-y-6 lg:block">{calendarRead ? <><div>{experimentalCalendarSection}</div><div className="grid grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6"><div className="space-y-6">{renderCalendarSection()}{historySection}</div><div className="space-y-6">{selectedDetailsSection}{statsSection}</div></div></> : <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6"><div className="space-y-6">{calendarUnavailableSection}{historySection}</div><div>{statsSection}</div></div>}</div>
       </div>
       {historyLoadErrorPanel}
       {(isHistoryLoading || isSaving) ? (

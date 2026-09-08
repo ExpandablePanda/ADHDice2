@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
-import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Compass, Footprints, Pencil, Plus, Save, X } from "lucide-react";
+import { CalendarDays, CheckCircle2, Compass, Footprints, Pencil, Plus, Save, X } from "lucide-react";
 import { ModalShell } from "@/components/modal-shell";
 import { AdhdCard, AdhdChip, AdhdDropdownSelect, AdhdIconButton, AdhdPanel } from "@/components/ui-system";
 import { TagsQuickPanel } from "./tasks-list-adapter";
@@ -25,6 +25,15 @@ import {
 } from "@/lib/pursuit-domain";
 import type { PursuitCreateInput } from "@/hooks/usePursuits";
 import { PursuitCompletionControl, PursuitCompletionNotePanel } from "./pursuit-workspace-row";
+import {
+  formatPursuitCalendarDay,
+  formatPursuitCalendarMonth,
+  getPursuitCalendarMonthDays,
+  PursuitCalendarDay,
+  PursuitCalendarPresentation,
+  PursuitSummaryStat as SummaryStat,
+  shiftPursuitCalendarMonth,
+} from "./pursuit-calendar-presentation";
 
 export type PursuitsWorkspaceProps = {
   activities: PursuitActivity[];
@@ -71,31 +80,6 @@ function getStatusTone(status: PursuitStatus) {
 
 function summaryLines(summary: PursuitCompletionSummary) {
   return `${formatPursuitLastCompletion(summary)} · ${summary.currentStreak} day streak · ${summary.totalCompletedDays} total days`;
-}
-
-function shiftMonthKey(monthKey: string, amount: number) {
-  const [year, month] = monthKey.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1 + amount, 1));
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function getMonthDays(monthKey: string) {
-  const [year, month] = monthKey.split("-").map(Number);
-  const firstDay = new Date(Date.UTC(year, month - 1, 1));
-  const dayCount = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return Array.from({ length: firstDay.getUTCDay() + dayCount }, (_, index) => {
-    if (index < firstDay.getUTCDay()) return null;
-    const day = index - firstDay.getUTCDay() + 1;
-    return `${monthKey}-${String(day).padStart(2, "0")}`;
-  });
-}
-
-function formatLogicalDay(logicalDay: string, timezone: string) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: timezone }).format(new Date(`${logicalDay}T12:00:00Z`));
-}
-
-function formatMonthLabel(monthKey: string, timezone: string) {
-  return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: timezone }).format(new Date(`${monthKey}-01T12:00:00Z`));
 }
 
 export function PursuitsWorkspace({
@@ -259,7 +243,7 @@ export function PursuitEditorModal({
   const childRows = useMemo(() => pursuit ? buildPursuitDescendantRows(pursuits, pursuit.id) : [], [pursuit, pursuits]);
   const childPursuits = childRows.map(({ pursuit: child }) => child);
   const completedDaySet = useMemo(() => new Set(completionSummary.completedLogicalDays), [completionSummary.completedLogicalDays]);
-  const monthDays = useMemo(() => getMonthDays(calendarMonth), [calendarMonth]);
+  const monthDays = useMemo(() => getPursuitCalendarMonthDays(calendarMonth), [calendarMonth]);
   const nextTargetLogicalDay = pursuit
     ? derivePursuitNextTargetLogicalDay(pursuit, completionSummary, { dayStartTime, timezone })
     : null;
@@ -329,7 +313,7 @@ export function PursuitEditorModal({
               <div className="space-y-4"><section className="rounded-[1.35rem] border border-[#ede7f7] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Consistency</p><p className="mt-1 text-sm text-[#827a97] dark:text-white/52">{summaryLines(completionSummary)}</p></div>{pursuit ? <><AdhdChip disabled={status !== "active" || isPending} icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => { if (completionSummary.completedToday) { void onRemoveCompletionOnLogicalDay(pursuit.id, todayKey); } else { setIsCompletionNoteOpen((current) => !current); } }} tone={completionSummary.completedToday ? "complete" : "purple"} type="button">{completionSummary.completedToday ? "Clear Done Today" : "Mark Done Today"}</AdhdChip>{isCompletionNoteOpen && !completionSummary.completedToday ? <PursuitCompletionNotePanel ariaLabel={"Complete " + pursuit.title} className="mt-3 max-w-md" notes={completionNote} onChangeNotes={setCompletionNote} onClose={() => setIsCompletionNoteOpen(false)} onConfirm={async () => { setIsPending(true); try { await onMarkDoneToday(pursuit.id, completionNote); setCompletionNote(""); setIsCompletionNoteOpen(false); } finally { setIsPending(false); } }} pending={isPending} presentation="inline" /> : null}</> : null}</div><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4"><SummaryStat label="Last done" value={formatPursuitLastCompletion(completionSummary).replace("Last done ", "")} /><SummaryStat label="Days since" value={completionSummary.daysSinceCompletion === null ? "—" : String(completionSummary.daysSinceCompletion)} /><SummaryStat label="Current streak" value={`${completionSummary.currentStreak} days`} /><SummaryStat label="Best / total" value={`${completionSummary.bestStreak} / ${completionSummary.totalCompletedDays}`} /></div></section><section className="rounded-[1.35rem] border border-[#ede7f7] bg-white p-4 dark:border-white/[0.02]"><div className="flex items-center justify-between gap-3"><p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Notes</p></div><textarea className={`${INPUT_CLASS} min-h-28 resize-y`} onChange={(event) => setNotes(event.target.value)} placeholder="Add notes" value={notes} /></section><section className="rounded-[1.35rem] border border-[#ede7f7] bg-white p-4 dark:border-white/[0.02]"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Tags</p><p className="mt-1 text-xs text-[#827a97] dark:text-white/52">Pursuit-native tags for filtering and context.</p></div><AdhdChip onClick={() => setIsTagsPanelOpen((current) => !current)} selected={isTagsPanelOpen} type="button">{isTagsPanelOpen ? "Done" : "Edit tags"}</AdhdChip></div><div className="mt-3 flex flex-wrap gap-2">{tags.length > 0 ? tags.map((tag) => <AdhdChip key={tag} toneClassName="border-[#e8defe] bg-[#f3eeff] text-[#7762f3] dark:border-[#3a2e63] dark:bg-[#21183d] dark:text-[#c7bcff]">#{tag}</AdhdChip>) : <span className="text-sm text-[#8d87a7] dark:text-white/45">No tags on this Pursuit yet.</span>}</div>{isTagsPanelOpen ? <div className="mt-3"><TagsQuickPanel allTagOptions={allTagOptions} entityLabel="Pursuit" onClose={() => setIsTagsPanelOpen(false)} onSave={setTags} tags={tags} /></div> : null}</section><section className="rounded-[1.35rem] border border-[#ede7f7] bg-white p-4 dark:border-white/[0.02]"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Pursuit children</p><p className="mt-1 text-xs text-[#827a97] dark:text-white/52">Keep working on this Pursuit as another Pursuit.</p></div>{pursuit ? <AdhdChip icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setChildEditorParentId(pursuit.id)} tone="purple" type="button">Add Pursuit</AdhdChip> : null}</div>{childPursuits.length > 0 ? <div className="mt-3 space-y-2">{childPursuits.map((child, index) => <div className="flex items-center gap-2 rounded-[0.9rem] bg-[#fbfaff] px-3 py-2 text-sm text-[#4e4865] dark:bg-white/[0.04] dark:text-white/76" key={child.id} style={{ marginLeft: `${Math.min(childRows[index]?.depth ?? 0, 8) * 18}px` }}><button className="flex min-w-0 flex-1 items-center gap-2 text-left transition hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b9a8ff] dark:hover:text-[#cabfff]" onClick={(event) => { event.stopPropagation(); if (pursuitsById.has(child.id)) setNestedPursuitId(child.id); else onOpenPursuit?.(child.id); }} type="button"><Compass className="h-4 w-4 shrink-0 text-[#6f57f6]" /><span className="truncate">{child.title}</span></button><AdhdChip tone={getStatusTone(child.status)}>{formatStatusLabel(child.status)}</AdhdChip><AdhdIconButton aria-label={`Add child Pursuit to ${child.title}`} onClick={(event) => { event.stopPropagation(); setChildEditorParentId(child.id); }} size="sm" title="Add child Pursuit" variant="rowToolbar"><Footprints /></AdhdIconButton></div>)}</div> : <p className="mt-3 text-sm text-[#8d87a7] dark:text-white/45">No Pursuit children yet.</p>}</section></div>
               <div className="space-y-4"><section className="rounded-[1.35rem] border border-[#ede7f7] bg-white p-4 dark:border-white/10 dark:bg-white/[0.02]"><p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Details</p><label className="mt-3 block text-xs font-semibold text-[#655d7d] dark:text-white/68">Lifecycle<AdhdDropdownSelect label="Lifecycle" onChange={setStatus} options={[{ label: "Active", value: "active" }, { label: "Paused", value: "paused" }, { label: "Archived", value: "archived" }]} value={status} /></label><label className="mt-3 block text-xs font-semibold text-[#655d7d] dark:text-white/68">Revisit target (days)<input className={INPUT_CLASS} min="1" onChange={(event) => setRevisitInterval(event.target.value)} placeholder="No target" type="number" value={revisitInterval} /></label><div className="mt-3 rounded-[0.9rem] bg-[#fbfaff] px-3 py-2 dark:bg-white/[0.04]"><p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">Next target</p><p className="mt-1 text-sm font-semibold text-[#4e4865] dark:text-white/80">{nextTargetLogicalDay ? formatPursuitTargetDate(nextTargetLogicalDay, timezone, todayKey) : "No target"}</p></div><p className="mt-3 rounded-[0.9rem] bg-[#fbfaff] px-3 py-2 text-sm text-[#4e4865] dark:bg-white/[0.04] dark:text-white/75">{formatPursuitRevisitCadence(pursuit?.revisit_interval_days ?? (revisitInterval ? Number.parseInt(revisitInterval, 10) : null))}</p></section><section className="rounded-[1.35rem] border border-[#ede7f7] bg-white p-4 dark:border-white/10 dark:bg-white/[0.02]"><p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Hierarchy</p>{initialParentPursuitId ? <p className="mt-3 rounded-[0.9rem] bg-[#fbfaff] px-3 py-2 text-sm text-[#4e4865] dark:bg-white/[0.04] dark:text-white/75">Pursuit child of {pursuitsById.get(initialParentPursuitId)?.title ?? "another Pursuit"}</p> : <><label className="mt-3 block text-xs font-semibold text-[#655d7d] dark:text-white/68">Parent type<AdhdDropdownSelect disabled={Boolean(initialParentTaskId)} label="Parent type" onChange={(nextKind) => { setParentKind(nextKind); if (nextKind !== "pursuit") setParentPursuitId(""); if (nextKind !== "task") setParentTaskId(""); }} options={[{ label: "None", value: "none" }, { label: "Pursuit", value: "pursuit" }, { label: "Task", value: "task" }]} value={parentKind} /></label>{parentKind === "pursuit" ? <label className="mt-3 block text-xs font-semibold text-[#655d7d] dark:text-white/68">Parent Pursuit<AdhdDropdownSelect label="Parent Pursuit" onChange={setParentPursuitId} options={[{ label: "Choose a Pursuit", value: "" }, ...parentOptions.map((candidate) => ({ label: `${getPursuitDepth(candidate, pursuitsById) > 0 ? "↳ " : ""}${candidate.title}`, value: candidate.id }))]} value={parentPursuitId} /></label> : null}{parentKind === "task" ? <label className="mt-3 block text-xs font-semibold text-[#655d7d] dark:text-white/68">Parent Task<AdhdDropdownSelect label="Parent Task" onChange={setParentTaskId} options={[{ label: "Choose a Task", value: "" }, ...taskOptions.map((task) => ({ label: task.title, value: task.id }))]} value={parentTaskId} /></label> : null}</>}</section></div>
             </div>
-          ) : <><PursuitCalendar activities={pursuitActivities} completionSummary={completionSummary} dayStartTime={dayStartTime} disabled={!pursuit || isPending} monthDays={monthDays} monthKey={calendarMonth} onChangeMonth={(amount) => setCalendarMonth((current) => shiftMonthKey(current, amount))} onChangeDayNote={setSelectedDayNote} onSaveSelectedDayNote={() => { void saveSelectedDayNote(); }} onSelectDay={handleSelectCalendarDay} selectedDay={selectedCalendarDay} selectedDayCompleted={selectedDayCompleted} selectedDayIsFuture={selectedDayIsFuture} selectedDayNote={selectedDayNote} onToggleSelectedDay={() => { void markSelectedDay(); }} timezone={timezone} todayKey={todayKey} />
+          ) : <><PursuitCalendar activities={pursuitActivities} completionSummary={completionSummary} dayStartTime={dayStartTime} disabled={!pursuit || isPending} monthDays={monthDays} monthKey={calendarMonth} onChangeMonth={(amount) => setCalendarMonth((current) => shiftPursuitCalendarMonth(current, amount))} onChangeDayNote={setSelectedDayNote} onSaveSelectedDayNote={() => { void saveSelectedDayNote(); }} onSelectDay={handleSelectCalendarDay} selectedDay={selectedCalendarDay} selectedDayCompleted={selectedDayCompleted} selectedDayIsFuture={selectedDayIsFuture} selectedDayNote={selectedDayNote} onToggleSelectedDay={() => { void markSelectedDay(); }} timezone={timezone} todayKey={todayKey} />
           {formError ? <p className="mt-4 rounded-[0.9rem] bg-[#fff3f5] px-3 py-2 text-xs text-[#a24e67] dark:bg-[#32161d] dark:text-[#ffb5c3]">{formError}</p> : null}</>}
         </div>
 
@@ -339,10 +323,6 @@ export function PursuitEditorModal({
       {childEditorParentId ? <PursuitEditorModal activities={activities} allTagOptions={allTagOptions} completionSummary={EMPTY_SUMMARY} completionSummaryByPursuitId={completionSummaryByPursuitId} dayStartTime={dayStartTime} initialParentPursuitId={childEditorParentId} onClose={() => setChildEditorParentId(null)} onCreate={(input) => onCreate({ ...input, parent_pursuit_id: childEditorParentId, parent_task_id: null })} onMarkCompletedOnLogicalDay={onMarkCompletedOnLogicalDay} onMarkDoneToday={onMarkDoneToday} onOpenPursuit={onOpenPursuit} onRemoveCompletionOnLogicalDay={onRemoveCompletionOnLogicalDay} onUpdate={onUpdate} pursuits={pursuits} taskOptions={taskOptions} todayKey={todayKey} timezone={timezone} /> : null}
     </ModalShell>
   );
-}
-
-function SummaryStat({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-[0.75rem] bg-[#f7f4ff] px-2.5 py-1.5 dark:bg-white/[0.05]"><p className="text-[10px] font-medium uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">{label}</p><p className="mt-1 text-sm font-semibold text-[#4e4865] dark:text-white/80">{value}</p></div>;
 }
 
 function PursuitCalendar({
@@ -389,67 +369,33 @@ function PursuitCalendar({
   );
   const days = [...completionSummary.completedLogicalDays].sort().reverse();
   return (
-    <section className="rounded-[1rem] border border-[#ede7f7] bg-white p-3 dark:border-white/10 dark:bg-white/[0.02]">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">Pursuit calendar</p>
-          <p className="mt-1 text-sm text-[#827a97] dark:text-white/52">Completed days and their notes in one place.</p>
-        </div>
-        <div className="flex items-center gap-1">
-          <AdhdIconButton aria-label="Previous month" onClick={() => onChangeMonth(-1)} size="sm" variant="rowToolbar"><ChevronLeft /></AdhdIconButton>
-          <p className="min-w-32 text-center text-sm font-semibold text-[#4e4865] dark:text-white/80">{formatMonthLabel(monthKey, timezone)}</p>
-          <AdhdIconButton aria-label="Next month" onClick={() => onChangeMonth(1)} size="sm" variant="rowToolbar"><ChevronRight /></AdhdIconButton>
-        </div>
-      </div>
-      <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <span key={day}>{day}</span>)}</div>
-      <div className="mt-1 grid grid-cols-7 gap-1">
-        {monthDays.map((day, index) => {
-          const completed = day ? completionSummary.completedLogicalDays.includes(day) : false;
-          const future = day ? day > todayKey : false;
-          return (
-            <button
-              aria-label={day ? `${day}${completed ? " Completed" : ""}` : undefined}
-              className={`min-h-10 rounded-[0.7rem] border text-sm transition ${!day ? "cursor-default border-transparent bg-transparent" : completed ? "border-[#b9dfc2] bg-[#eaf8ed] font-semibold text-[#348554] dark:border-[#356944] dark:bg-[#17311e] dark:text-[#a5ddb6]" : "border-[#eee9f8] bg-[#fbfaff] text-[#7d7598] hover:border-[#cfc2fb] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55"} ${day === selectedDay ? "ring-2 ring-[#b9a8ff]" : ""} ${future ? "cursor-default opacity-45" : ""}`}
-              disabled={!day || future || disabled}
-              key={day ?? `blank-${index}`}
-              onClick={() => onSelectDay(day)}
-              type="button"
-            >
-              {day ? day.slice(-2) : null}
-            </button>
-          );
-        })}
-      </div>
-      <div className="mt-3 rounded-[0.85rem] bg-[#fbfaff] px-3 py-3 dark:bg-white/[0.04]">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-sm font-semibold text-[#4e4865] dark:text-white/80">{selectedDay ? formatLogicalDay(selectedDay, timezone) : "Select a day"}</p>
-            <p className="mt-1 text-xs text-[#827a97] dark:text-white/52">{selectedDayCompleted ? "Completed" : selectedDayIsFuture ? "Future days are blank" : "No completion"}</p>
-          </div>
-          <button className={selectedDayCompleted ? SECONDARY_BUTTON_CLASS : PRIMARY_BUTTON_CLASS} disabled={!selectedDay || selectedDayIsFuture || disabled} onClick={onToggleSelectedDay} type="button">{selectedDayCompleted ? "Remove Completion" : "Mark Completed"}</button>
-        </div>
-        {!selectedDayIsFuture && selectedDay ? (
-          <div className="mt-3">
-            <label className="block text-[11px] font-semibold text-[#655d7d] dark:text-white/68">Completion note<textarea aria-label="Selected day completion note" className="mt-1 min-h-16 w-full resize-y rounded-[0.75rem] border border-[#e5e0f5] bg-white px-2.5 py-2 text-xs text-[#4e4865] outline-none focus:border-[#b9a8ff] dark:border-white/15 dark:bg-white/[0.05] dark:text-white/80" disabled={disabled} onChange={(event) => onChangeDayNote(event.target.value)} placeholder="Optional note for this day" value={selectedDayNote} /></label>
-            {selectedDayCompleted ? <button className="mt-2 inline-flex min-h-8 items-center justify-center gap-1.5 rounded-full border border-[#ddd2ff] bg-[#f1ecff] px-3 py-1.5 text-xs font-semibold text-[#6f57f6]" disabled={disabled} onClick={onSaveSelectedDayNote} type="button"><Save className="h-3.5 w-3.5" />Save note</button> : null}
-          </div>
-        ) : null}
-      </div>
-      <div className="mt-4 border-t border-[#eee9f8] pt-3 dark:border-white/10">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">Pursuit history</p>
-            <p className="mt-1 text-xs text-[#827a97] dark:text-white/52">Chronological completed days and attached notes.</p>
-          </div>
-          <div className="grid grid-cols-4 gap-1.5 text-right">
-            <SummaryStat label="Last done" value={formatPursuitLastCompletion(completionSummary).replace("Last done ", "")} />
-            <SummaryStat label="Current streak" value={String(completionSummary.currentStreak)} />
-            <SummaryStat label="Best streak" value={String(completionSummary.bestStreak)} />
-            <SummaryStat label="Completed days" value={String(completionSummary.totalCompletedDays)} />
-          </div>
-        </div>
-        {days.length === 0 ? <p className="mt-3 rounded-[0.75rem] bg-[#fbfaff] px-3 py-3 text-sm text-[#8d87a7] dark:bg-white/[0.04] dark:text-white/45">No completed days yet.</p> : <div className="mt-3 divide-y divide-[#eee9f8] rounded-[0.75rem] border border-[#eee9f8] dark:divide-white/10 dark:border-white/10">{days.map((day) => <div className="flex items-start justify-between gap-3 px-3 py-2.5 text-sm" key={day}><div><span className="font-semibold text-[#4e4865] dark:text-white/78">{formatLogicalDay(day, timezone)}</span>{activityByDay.get(day)?.notes ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{activityByDay.get(day)?.notes}</p> : null}</div><span className="text-xs font-semibold text-[#348554] dark:text-[#a5ddb6]">Completed</span></div>)}</div>}
-      </div>
-    </section>
+    <PursuitCalendarPresentation
+      ariaLabel="Pursuit calendar"
+      description="Completed days and their notes in one place."
+      historyEntries={days.map((day) => ({
+        detail: activityByDay.get(day)?.notes ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{activityByDay.get(day)?.notes}</p> : null,
+        key: day,
+        label: formatPursuitCalendarDay(day, timezone),
+        status: <span className="text-xs font-semibold text-[#348554] dark:text-[#a5ddb6]">Completed</span>,
+      }))}
+      historySummary={[
+        { label: "Last done", value: formatPursuitLastCompletion(completionSummary).replace("Last done ", "") },
+        { label: "Current streak", value: String(completionSummary.currentStreak) },
+        { label: "Best streak", value: String(completionSummary.bestStreak) },
+        { label: "Completed days", value: String(completionSummary.totalCompletedDays) },
+      ]}
+      monthDays={monthDays}
+      monthLabel={formatPursuitCalendarMonth(monthKey, timezone)}
+      onChangeMonth={onChangeMonth}
+      renderDay={(day) => {
+        const completed = day ? completionSummary.completedLogicalDays.includes(day) : false;
+        const future = day ? day > todayKey : false;
+        return <PursuitCalendarDay ariaLabel={day ? `${day}${completed ? " Completed" : ""}` : undefined} day={day} disabled={future || disabled} muted={future} onClick={() => onSelectDay(day)} selected={day === selectedDay} stateClassName={completed ? "border-[#b9dfc2] bg-[#eaf8ed] font-semibold text-[#348554] dark:border-[#356944] dark:bg-[#17311e] dark:text-[#a5ddb6]" : undefined} />;
+      }}
+      selectedDayAction={<button className={selectedDayCompleted ? SECONDARY_BUTTON_CLASS : PRIMARY_BUTTON_CLASS} disabled={!selectedDay || selectedDayIsFuture || disabled} onClick={onToggleSelectedDay} type="button">{selectedDayCompleted ? "Remove Completion" : "Mark Completed"}</button>}
+      selectedDayContent={!selectedDayIsFuture && selectedDay ? <div className="mt-3"><label className="block text-[11px] font-semibold text-[#655d7d] dark:text-white/68">Completion note<textarea aria-label="Selected day completion note" className="mt-1 min-h-16 w-full resize-y rounded-[0.75rem] border border-[#e5e0f5] bg-white px-2.5 py-2 text-xs text-[#4e4865] outline-none focus:border-[#b9a8ff] dark:border-white/15 dark:bg-white/[0.05] dark:text-white/80" disabled={disabled} onChange={(event) => onChangeDayNote(event.target.value)} placeholder="Optional note for this day" value={selectedDayNote} /></label>{selectedDayCompleted ? <button className="mt-2 inline-flex min-h-8 items-center justify-center gap-1.5 rounded-full border border-[#ddd2ff] bg-[#f1ecff] px-3 py-1.5 text-xs font-semibold text-[#6f57f6]" disabled={disabled} onClick={onSaveSelectedDayNote} type="button"><Save className="h-3.5 w-3.5" />Save note</button> : null}</div> : null}
+      selectedDayLabel={selectedDay ? formatPursuitCalendarDay(selectedDay, timezone) : "Select a day"}
+      selectedDayStatus={selectedDayCompleted ? "Completed" : selectedDayIsFuture ? "Future days are blank" : "No completion"}
+    />
   );
 }
