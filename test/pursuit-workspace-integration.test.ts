@@ -60,6 +60,7 @@ test("Table/List use a dedicated Pursuit rendering path and searchable domain ro
   assert.match(editorSource, /Next target/);
   assert.doesNotMatch(editorSource, /Log Activity|durationMinutes|Duration minutes|session-oriented/i);
   assert.match(appSource, /onOpenPursuit: openPursuitEditor/);
+  assert.match(appSource, /onCreatePursuitChild: openNewPursuitEditorFromPursuit/);
   assert.match(appSource, /returnToTaskEditorId/);
   assert.match(appSource, /openPursuitEditorFromTaskEditor/);
   assert.match(appSource, /openNewPursuitEditorFromTaskEditor/);
@@ -83,6 +84,34 @@ test("Pursuit table metadata reuses Task authorities and keeps the title row com
   assert.doesNotMatch(editorSource, /<select/);
 });
 
+test("Pursuit completion controls and quick actions stay row-local", () => {
+  assert.match(rowSource, /PursuitCompletionControl/);
+  assert.match(rowSource, /Compass/);
+  assert.doesNotMatch(rowSource, /CheckCircle2/);
+  assert.match(rowSource, /GREEN_ICON_CLASS/);
+  assert.match(rowSource, /GREEN_COMPLETION_CHIP_CLASS/);
+  assert.match(rowSource, /YELLOW_ICON_CLASS/);
+  assert.match(rowSource, /formatPursuitTargetDate/);
+  assert.match(rowSource, /PursuitRowActions/);
+  assert.match(rowSource, /onCreateChildPursuit/);
+  assert.match(rowSource, /onOpenCalendar/);
+  assert.match(rowSource, /stopPropagation/);
+  assert.match(tableSource, /onCreatePursuitChild/);
+  assert.match(listSource, /onCreatePursuitChild/);
+  assert.match(listSource, /onOpenQuickPanel/);
+});
+
+test("Pursuit Calendar contains history and day-note controls in one surface", () => {
+  assert.match(editorSource, /function PursuitCalendar/);
+  assert.match(editorSource, /selectedDayNote/);
+  assert.match(editorSource, /Chronological completed days/);
+  assert.match(editorSource, /Pursuit history/);
+  assert.doesNotMatch(editorSource, /setActiveSection\("history"\)/);
+  assert.doesNotMatch(editorSource, /aria-label="History"/);
+  assert.match(editorSource, /selectedDayCompleted/);
+  assert.match(editorSource, /onRemoveCompletionOnLogicalDay/);
+});
+
 test("Pursuit presentation follows Task disclosure and search context without becoming a Task match", () => {
   assert.match(tableSource, /shouldRenderTaskPursuitChildren\(sourceStepsExpanded, pursuitRows\)/);
   assert.match(tableSource, /pursuitSearchContextTaskIdSet\.has\(task\.id\)/);
@@ -103,7 +132,7 @@ test("Pursuit presentation wiring does not feed rows into Task completion inputs
   assert.doesNotMatch(rowSource, /TaskStatus|TaskHistory|occurrence|adhdice_clean_tasks/);
   assert.match(rowSource, /onMarkDoneToday/);
   assert.doesNotMatch(rowSource, /session|duration|activity-time/i);
-  assert.match(rowSource, /selected=\{completedToday\}/);
+  assert.match(rowSource, /aria-pressed=\{completedToday\}/);
   assert.doesNotMatch(rowSource, /gridTemplateColumns: `\$\{gridTemplateColumns\} 2\.5rem`/);
 });
 
@@ -126,7 +155,10 @@ test("all Task child controls share the Task/Pursuit chooser authority", () => {
 test("Pursuit completion writes a nullable check-in event without Task or Focus side effects", () => {
   const completionSource = pursuitHookSource.slice(pursuitHookSource.indexOf("const insertCompletion"), pursuitHookSource.indexOf("const markDoneToday"));
   assert.match(completionSource, /duration_seconds: null/);
-  assert.match(completionSource, /notes: null/);
+  assert.match(completionSource, /notes: options\.notes\?\.trim\(\) \|\| null/);
   assert.match(completionSource, /occurred_at: occurredAt/);
   assert.doesNotMatch(completionSource, /adhdice_clean_tasks|adhdice_task_history|adhdice_focus/i);
+  assert.match(pursuitHookSource, /getActivityForLogicalDay/);
+  assert.match(pursuitHookSource, /updateExistingCompletion/);
+  assert.match(pursuitHookSource, /notes: nextNotes/);
 });

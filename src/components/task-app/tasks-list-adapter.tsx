@@ -20,7 +20,7 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { Pursuit, Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
+import type { Pursuit, PursuitUpdate, Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
@@ -358,7 +358,12 @@ type TasksTableSourceProps = {
   pursuitSearch?: string;
   pursuitTimezone?: string;
   onOpenPursuit?: (pursuitId: string) => void;
-  onMarkDonePursuit?: (pursuitId: string) => void;
+  onOpenPursuitCalendar?: (pursuitId: string) => void;
+  onCreatePursuitChild?: (pursuitId: string) => void;
+  onMarkDonePursuit?: (pursuitId: string, notes?: string) => void | Promise<unknown>;
+  onRemovePursuitCompletion?: (pursuitId: string, logicalDay: string) => void | Promise<unknown>;
+  onUpdatePursuit?: (pursuitId: string, input: PursuitUpdate) => Promise<Pursuit | null>;
+  pursuitTodayKey?: string;
   selectedTaskIds?: string[];
   requestedOpenTaskId?: string | null;
   runningTaskTimers?: RunningTaskTimer[];
@@ -655,8 +660,13 @@ export function TasksTableAdapter({
           pursuitAttentionById={tableProps.pursuitAttentionById}
           pursuitSearch={tableProps.pursuitSearch}
           pursuitTimezone={tableProps.pursuitTimezone}
+          pursuitTodayKey={tableProps.pursuitTodayKey}
           onOpenPursuit={tableProps.onOpenPursuit}
+          onOpenPursuitCalendar={tableProps.onOpenPursuitCalendar}
+          onCreatePursuitChild={tableProps.onCreatePursuitChild}
           onMarkDonePursuit={tableProps.onMarkDonePursuit}
+          onRemovePursuitCompletion={tableProps.onRemovePursuitCompletion}
+          onUpdatePursuit={tableProps.onUpdatePursuit}
           onOpenBatchDelete={tableProps.onOpenBatchDelete}
           onOpenBatchEdit={tableProps.onOpenBatchEdit}
           onOpenDeleteTask={tableProps.onOpenDeleteTask}
@@ -3031,8 +3041,13 @@ function TasksSimpleList({
               pursuitAttentionById={tableProps.pursuitAttentionById}
               pursuitSearch={tableProps.pursuitSearch}
               pursuitTimezone={tableProps.pursuitTimezone}
+              pursuitTodayKey={tableProps.pursuitTodayKey}
               onOpenPursuit={tableProps.onOpenPursuit}
+              onOpenPursuitCalendar={tableProps.onOpenPursuitCalendar}
+              onCreatePursuitChild={tableProps.onCreatePursuitChild}
               onMarkDonePursuit={tableProps.onMarkDonePursuit}
+              onRemovePursuitCompletion={tableProps.onRemovePursuitCompletion}
+              onUpdatePursuit={tableProps.onUpdatePursuit}
               onCreateTaskList={tableProps.onCreateTaskList}
               onDismissDetachedTask={tableProps.onDismissDetachedTask}
               onDuplicateTask={tableProps.onDuplicateTask}
@@ -3721,10 +3736,15 @@ function TasksSimpleList({
                 attention={tableProps.pursuitAttentionById?.get(pursuit.id)}
                 depth={depth + 1}
                 key={`pursuit:${pursuit.id}`}
+                onCreateChildPursuit={tableProps.onCreatePursuitChild}
                 onMarkDoneToday={tableProps.onMarkDonePursuit ?? (() => undefined)}
                 onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
+                onOpenCalendar={tableProps.onOpenPursuitCalendar}
+                onRemoveCompletionOnLogicalDay={tableProps.onRemovePursuitCompletion}
+                onUpdatePursuit={tableProps.onUpdatePursuit}
                 pursuit={pursuit}
                 timezone={tableProps.pursuitTimezone ?? "UTC"}
+                todayKey={tableProps.pursuitTodayKey ?? ""}
               />
             )) : null}
           </div>
@@ -3735,10 +3755,15 @@ function TasksSimpleList({
               attention={tableProps.pursuitAttentionById?.get(pursuit.id)}
               depth={depth}
               key={`pursuit:${pursuit.id}`}
+              onCreateChildPursuit={tableProps.onCreatePursuitChild}
               onMarkDoneToday={tableProps.onMarkDonePursuit ?? (() => undefined)}
               onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
+              onOpenCalendar={tableProps.onOpenPursuitCalendar}
+              onRemoveCompletionOnLogicalDay={tableProps.onRemovePursuitCompletion}
+              onUpdatePursuit={tableProps.onUpdatePursuit}
               pursuit={pursuit}
               timezone={tableProps.pursuitTimezone ?? "UTC"}
+              todayKey={tableProps.pursuitTodayKey ?? ""}
             />
           ))}
           {windowedTasks.length < tasks.length ? <div aria-hidden="true" className="h-px" ref={loadMoreListRowsRef} /> : null}

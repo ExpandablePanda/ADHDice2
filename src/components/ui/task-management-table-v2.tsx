@@ -32,7 +32,7 @@ import {
   Trophy,
   X,
 } from "lucide-react";
-import type { Pursuit, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
+import type { Pursuit, PursuitUpdate, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
@@ -1234,7 +1234,12 @@ type TaskManagementTableV2Props = {
   pursuitSearch?: string;
   pursuitTimezone?: string;
   onOpenPursuit?: (pursuitId: string) => void;
-  onMarkDonePursuit?: (pursuitId: string) => void;
+  onOpenPursuitCalendar?: (pursuitId: string) => void;
+  onCreatePursuitChild?: (pursuitId: string) => void;
+  onMarkDonePursuit?: (pursuitId: string, notes?: string) => void | Promise<unknown>;
+  onRemovePursuitCompletion?: (pursuitId: string, logicalDay: string) => void | Promise<unknown>;
+  onUpdatePursuit?: (pursuitId: string, input: PursuitUpdate) => Promise<Pursuit | null>;
+  pursuitTodayKey?: string;
   primaryBadgeLabel?: string;
   rows?: PrototypeTaskRow[];
   runningTaskTimers?: RunningTaskTimer[];
@@ -2625,8 +2630,13 @@ export function TaskManagementTableV2({
   pursuitAttentionById,
   pursuitSearch = "",
   pursuitTimezone = "UTC",
+  pursuitTodayKey = "",
   onOpenPursuit,
+  onOpenPursuitCalendar,
+  onCreatePursuitChild,
   onMarkDonePursuit,
+  onRemovePursuitCompletion,
+  onUpdatePursuit,
   shellClassName = "",
   primaryBadgeLabel = "Inspired by server table UI",
   rows = DEFAULT_ROWS,
@@ -3269,10 +3279,15 @@ export function TaskManagementTableV2({
       depth={depth}
       gridTemplateColumns={gridTemplateColumns}
       key={`pursuit:${pursuit.id}`}
+      onCreateChildPursuit={onCreatePursuitChild}
       onMarkDoneToday={onMarkDonePursuit ?? (() => undefined)}
       onOpen={onOpenPursuit ?? (() => undefined)}
+      onOpenCalendar={onOpenPursuitCalendar}
+      onRemoveCompletionOnLogicalDay={onRemovePursuitCompletion}
+      onUpdatePursuit={onUpdatePursuit}
       pursuit={pursuit}
       timezone={pursuitTimezone}
+      todayKey={pursuitTodayKey}
     />
   ));
   useLayoutEffect(() => {
@@ -9765,10 +9780,15 @@ export function TaskManagementTableV2({
                         attention={pursuitAttentionById?.get(pursuit.id)}
                         depth={depth}
                         key={`editor-pursuit:${pursuit.id}`}
+                        onCreateChildPursuit={onCreatePursuitChild}
                         onMarkDoneToday={onMarkDonePursuit ?? (() => undefined)}
                         onOpen={onOpenPursuit ?? (() => undefined)}
+                        onOpenCalendar={onOpenPursuitCalendar}
+                        onRemoveCompletionOnLogicalDay={onRemovePursuitCompletion}
+                        onUpdatePursuit={onUpdatePursuit}
                         pursuit={pursuit}
                         timezone={pursuitTimezone}
+                        todayKey={pursuitTodayKey}
                       />
                     ))}
                   </div>

@@ -15,6 +15,10 @@ type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type RequiredSupabaseClient = NonNullable<SupabaseClient>;
 type Message = { text: string; tone: "neutral" | "good" | "warn" };
 
+type PursuitCompletionOptions = {
+  notes?: string;
+};
+
 export type PursuitCreateInput = Pick<PursuitInsert, "notes" | "parent_pursuit_id" | "parent_task_id" | "revisit_interval_days" | "tags" | "title">;
 export type PursuitLogicalDaySettings = { dayStartTime: string; timezone: string };
 
@@ -32,6 +36,24 @@ function getPursuitErrorMessage(error: unknown) {
     return error.message;
   }
   return String(error ?? "Unknown Pursuit error");
+}
+
+function getActivityForLogicalDay(
+  activities: ReadonlyArray<PursuitActivity>,
+  pursuitId: string,
+  logicalDaySettings: PursuitLogicalDaySettings,
+  logicalDay: string,
+) {
+  return activities
+    .filter((activity) => (
+      activity.pursuit_id === pursuitId
+      && getPursuitLogicalDay(activity.occurred_at, logicalDaySettings) === logicalDay
+    ))
+    .sort((left, right) => (
+      right.occurred_at.localeCompare(left.occurred_at)
+      || right.created_at.localeCompare(left.created_at)
+      || right.id.localeCompare(left.id)
+    ))[0] ?? null;
 }
 
 async function hasOwnedTask(client: RequiredSupabaseClient, userId: string, taskId: string) {
@@ -204,14 +226,34 @@ export function usePursuits(
     return nextPursuit;
   }, [client, pursuits, reportError, setMessage, userId]);
 
-  const insertCompletion = useCallback(async (pursuitId: string, occurredAt: string) => {
+  const updateExistingCompletion = useCallback(async (existing: PursuitActivity, options: PursuitCompletionOptions) => {
+    if (!client || !userId || options.notes === undefined) return existing;
+    const nextNotes = options.notes.trim() || null;
+    if (existing.notes === nextNotes) return existing;
+    const result = await client
+      .from("adhdice_pursuit_activities")
+      .update({ notes: nextNotes })
+      .eq("id", existing.id)
+      .eq("user_id", userId)
+      .select("*")
+      .single();
+    if (result.error || !result.data) {
+      reportError(result.error ?? "Pursuit completion note could not be saved.");
+      return null;
+    }
+    const nextActivity = result.data as PursuitActivity;
+    setActivities((current) => current.map((activity) => activity.id === nextActivity.id ? nextActivity : activity));
+    return nextActivity;
+  }, [client, reportError, userId]);
+
+  const insertCompletion = useCallback(async (pursuitId: string, occurredAt: string, options: PursuitCompletionOptions = {}) => {
     if (!client || !userId || !pursuits.some((pursuit) => pursuit.id === pursuitId)) return null;
     const payload: PursuitActivityInsert = {
       user_id: userId,
       pursuit_id: pursuitId,
       occurred_at: occurredAt,
       duration_seconds: null,
-      notes: null,
+      notes: options.notes?.trim() || null,
     };
     const result = await client.from("adhdice_pursuit_activities").insert(payload).select("*").single();
     if (result.error || !result.data) {
@@ -223,38 +265,32 @@ export function usePursuits(
     return nextActivity;
   }, [client, pursuits, reportError, setMessage, userId]);
 
-  const markDoneToday = useCallback(async (pursuitId: string) => {
+  const markDoneToday = useCallback(async (pursuitId: string, notes?: string) => {
     const todayKey = getPursuitLogicalDay(new Date(), logicalDaySettings);
     const lockKey = `${pursuitId}:${todayKey}`;
-    const existing = activities.find((activity) => (
-      activity.pursuit_id === pursuitId
-      && getPursuitLogicalDay(activity.occurred_at, logicalDaySettings) === todayKey
-    ));
-    if (existing) return existing;
+    const existing = getActivityForLogicalDay(activities, pursuitId, logicalDaySettings, todayKey);
+    if (existing) return updateExistingCompletion(existing, { notes });
     if (completionLocksRef.current.has(lockKey)) return null;
     completionLocksRef.current.add(lockKey);
     try {
-      return await insertCompletion(pursuitId, new Date().toISOString());
+      return await insertCompletion(pursuitId, new Date().toISOString(), { notes });
     } finally {
       completionLocksRef.current.delete(lockKey);
     }
-  }, [activities, insertCompletion, logicalDaySettings]);
+  }, [activities, insertCompletion, logicalDaySettings, updateExistingCompletion]);
 
-  const markCompletedOnLogicalDay = useCallback(async (pursuitId: string, logicalDay: string) => {
-    const existing = activities.find((activity) => (
-      activity.pursuit_id === pursuitId
-      && getPursuitLogicalDay(activity.occurred_at, logicalDaySettings) === logicalDay
-    ));
-    if (existing) return existing;
+  const markCompletedOnLogicalDay = useCallback(async (pursuitId: string, logicalDay: string, notes?: string) => {
+    const existing = getActivityForLogicalDay(activities, pursuitId, logicalDaySettings, logicalDay);
+    if (existing) return updateExistingCompletion(existing, { notes });
     const lockKey = `${pursuitId}:${logicalDay}`;
     if (completionLocksRef.current.has(lockKey)) return null;
     completionLocksRef.current.add(lockKey);
     try {
-      return await insertCompletion(pursuitId, getPursuitTimestampForLogicalDay(logicalDay, logicalDaySettings));
+      return await insertCompletion(pursuitId, getPursuitTimestampForLogicalDay(logicalDay, logicalDaySettings), { notes });
     } finally {
       completionLocksRef.current.delete(lockKey);
     }
-  }, [activities, insertCompletion, logicalDaySettings]);
+  }, [activities, insertCompletion, logicalDaySettings, updateExistingCompletion]);
 
   const removeCompletionOnLogicalDay = useCallback(async (pursuitId: string, logicalDay: string) => {
     if (!client || !userId) return false;
