@@ -13,7 +13,7 @@ import {
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
-import { AdhdIconButton } from "@/components/ui-system";
+import { AdhdIconButton, EditableEntityHeaderTitle } from "@/components/ui-system";
 import { TaskGridViewComponent } from "./task-grid-view";
 import {
   computeTaskSpecificHistoryStats,
@@ -600,6 +600,7 @@ export function MomentumTaskModal({
 
 export function TaskHistoryModal({
   onClose,
+  onRenameTaskTitle,
   onRetryTaskHistoryLoad,
   onSetDelayedStatus,
   onSetCalendarOverride,
@@ -615,6 +616,7 @@ export function TaskHistoryModal({
   calendarOverrides,
 }: {
   onClose: () => void;
+  onRenameTaskTitle: (taskId: string, nextTitle: string) => Promise<boolean | void> | boolean | void;
   onRetryTaskHistoryLoad?: () => Promise<boolean> | void;
   onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<boolean | void>;
   onSetDelayedStatus?: (entryDate: string, nextDueOn: string) => Promise<void>;
@@ -641,7 +643,33 @@ export function TaskHistoryModal({
   const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const isSavingRef = useRef(false);
+  const [taskTitleDraft, setTaskTitleDraft] = useState(taskTitle);
+  const isTaskTitleSaveInFlightRef = useRef(false);
   const [showDelayEditor, setShowDelayEditor] = useState(false);
+
+  async function commitTaskTitle() {
+    const nextTitle = taskTitleDraft.trim();
+    if (!nextTitle || nextTitle === taskTitle) {
+      setTaskTitleDraft(taskTitle);
+      return true;
+    }
+    if (isTaskTitleSaveInFlightRef.current) return false;
+    isTaskTitleSaveInFlightRef.current = true;
+    try {
+      const committed = await onRenameTaskTitle(task.id, nextTitle);
+      if (committed === false) return false;
+      setTaskTitleDraft(nextTitle);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      isTaskTitleSaveInFlightRef.current = false;
+    }
+  }
+
+  function cancelTaskTitle() {
+    setTaskTitleDraft(taskTitle);
+  }
   const firstCalendarMonth = getTaskCalendarMonth(new Date(`${days[0]}T12:00:00`));
   const lastCalendarMonth = getTaskCalendarMonth(new Date(`${days.at(-1)}T12:00:00`));
   const monthValue = (month: TaskCalendarMonth) => month.year * 12 + month.month;
@@ -963,7 +991,7 @@ export function TaskHistoryModal({
       <header className="flex shrink-0 items-start justify-between gap-4 border-b border-[#eee9f8] pb-4 dark:border-white/10">
         <div className="min-w-0">
           <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">Task</p>
-          <h2 className="mt-1 truncate text-xl font-semibold text-[#403a54] dark:text-white/88">{taskTitle}</h2>
+          <EditableEntityHeaderTitle aria-label="Task title" onCancel={cancelTaskTitle} onChange={setTaskTitleDraft} onCommit={commitTaskTitle} placeholder="Name this Task" value={taskTitleDraft} />
         </div>
         <AdhdIconButton aria-label="Close task history" onClick={onClose} size="sm" title="Close" variant="rowToolbar"><X /></AdhdIconButton>
       </header>

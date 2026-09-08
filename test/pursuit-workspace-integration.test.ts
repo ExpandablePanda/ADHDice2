@@ -182,9 +182,9 @@ test("Pursuit completion writes a nullable check-in event without Task or Focus 
   assert.match(pursuitHookSource, /notes: nextNotes/);
 });
 
-test("7.13.12 runtime version authorities agree and HUD reads the shared authority", () => {
+test("7.13.13 runtime version authorities agree and HUD reads the shared authority", () => {
   for (const source of [appVersionSource, publicVersionSource, packageSource, packageLockSource, currentStateSource]) {
-    assert.match(source, /7\.13\.12/);
+    assert.match(source, /7\.13\.13/);
     assert.doesNotMatch(source, /7\.13\.(?:5|6|9|10)/);
   }
   assert.match(appSource, /const HUD_VERSION = APP_VERSION/);

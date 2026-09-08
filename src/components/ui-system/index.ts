@@ -8,6 +8,7 @@ export {
   type AdhdIconButtonSize,
   type AdhdIconButtonTone,
 } from "./adhd-icon-button";
+export { EditableEntityHeaderTitle, type EditableEntityHeaderTitleProps } from "./editable-entity-header-title";
 export {
   AdhdPanel,
   type AdhdPanelElement,

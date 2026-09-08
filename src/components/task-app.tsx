@@ -6204,6 +6204,7 @@ export function TaskApp() {
 
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
+    onRenameTaskTitle: (taskId: string, nextTitle: string): Promise<boolean> => updateTask(taskId, { title: nextTitle }),
     onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "due_open"): Promise<boolean> => {
       if (!taskHistoryModalTaskId) return false;
       if (overrideState === "not_due") {
