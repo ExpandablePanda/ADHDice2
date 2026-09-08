@@ -2,6 +2,7 @@ import type { Task, TaskHistory } from "../database.types.ts";
 import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
 import type { CanonicalTaskScheduleBoundary } from "../task-state-canonical/types.ts";
 import { occurrenceIdentity } from "./recurrence.ts";
+import { resolveTaskBehaviorPolicy } from "./behavior-policy.ts";
 import type {
   TaskCalendarOverride,
   TaskHistoryOutcome,
@@ -222,6 +223,9 @@ function buildTaskStateEngineInput(
     : task.canonical_schedule_anchor_date ?? task.due_on;
 
   return {
+    // Policy selection belongs to the stored-Task normalization boundary.
+    // Future TaskType selection is added here, before the pure engine sees it.
+    behaviorPolicy: resolveTaskBehaviorPolicy(),
     task: {
       id: task.id,
       lifecycle,

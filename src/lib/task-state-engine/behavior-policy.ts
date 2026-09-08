@@ -6,28 +6,30 @@
  * Task Engine or another source of recurrence, Calendar, streak, rollover,
  * or reward rules.
  *
- * Only the current standard profile is defined in this foundation ticket.
- * In particular, no blank-occurrence or Pursuit behavior is represented here.
+ * The semantic fields below describe decisions the one Task Engine can
+ * consume. Only the current standard profile is active in this foundation
+ * ticket; no blank-occurrence or Pursuit behavior is activated here.
  */
+export type UnresolvedOccurrenceBehavior = "missed" | "blank";
+export type PositiveStreakUnhandledBehavior = "break" | "preserve";
+export type MissedStreakUnhandledBehavior = "increment" | "ignore";
+export type RewardBehavior = "enabled" | "disabled";
+
 export type TaskBehaviorPolicy = Readonly<{
   id: string;
-  occurrenceModel: "scheduled";
-  recurrenceModel: "standard";
-  rolloverModel: "standard";
-  calendarModel: "standard";
-  streakModel: "standard";
-  rewardModel: "standard";
+  unresolvedOccurrence: UnresolvedOccurrenceBehavior;
+  positiveStreakOnUnhandled: PositiveStreakUnhandledBehavior;
+  missedStreakOnUnhandled: MissedStreakUnhandledBehavior;
+  rewards: RewardBehavior;
 }>;
 
 /** The behavior every existing Task uses until a later profile is selected. */
 export const STANDARD_TASK_BEHAVIOR_POLICY: TaskBehaviorPolicy = Object.freeze({
   id: "standard-task",
-  occurrenceModel: "scheduled",
-  recurrenceModel: "standard",
-  rolloverModel: "standard",
-  calendarModel: "standard",
-  streakModel: "standard",
-  rewardModel: "standard",
+  unresolvedOccurrence: "missed",
+  positiveStreakOnUnhandled: "break",
+  missedStreakOnUnhandled: "increment",
+  rewards: "enabled",
 });
 
 /** Resolve an omitted or null policy to the current standard Task profile. */
