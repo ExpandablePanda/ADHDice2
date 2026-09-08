@@ -13,6 +13,16 @@ const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-a
 const rowSource = readFileSync(new URL("../src/components/task-app/pursuit-workspace-row.tsx", import.meta.url), "utf8");
 const editorSource = readFileSync(new URL("../src/components/task-app/pursuits-workspace.tsx", import.meta.url), "utf8");
 const pursuitHookSource = readFileSync(new URL("../src/hooks/usePursuits.ts", import.meta.url), "utf8");
+const appVersionSource = readFileSync(new URL("../src/lib/app-version.ts", import.meta.url), "utf8");
+const publicVersionSource = readFileSync(new URL("../public/app-version.json", import.meta.url), "utf8");
+const packageSource = readFileSync(new URL("../package.json", import.meta.url), "utf8");
+const packageLockSource = readFileSync(new URL("../package-lock.json", import.meta.url), "utf8");
+const currentStateSource = readFileSync(new URL("../docs/CURRENT_STATE.md", import.meta.url), "utf8");
+const secondaryViewsSource = readFileSync(new URL("../src/components/task-app/task-secondary-views.tsx", import.meta.url), "utf8");
+const gridWidgetsSource = readFileSync(new URL("../src/components/task-app/task-grid-widgets.tsx", import.meta.url), "utf8");
+const viewAdaptersSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
+const calendarSource = readFileSync(new URL("../src/components/task-app/task-calendar-view.tsx", import.meta.url), "utf8");
+const streakPrimitiveSource = readFileSync(new URL("../src/components/ui/task-table-primitives.tsx", import.meta.url), "utf8");
 
 test("7.13.1 migration preserves Task-owned Pursuits on parent deletion", () => {
   assert.match(migration, /add column if not exists parent_task_id uuid/);
@@ -161,4 +171,71 @@ test("Pursuit completion writes a nullable check-in event without Task or Focus 
   assert.match(pursuitHookSource, /getActivityForLogicalDay/);
   assert.match(pursuitHookSource, /updateExistingCompletion/);
   assert.match(pursuitHookSource, /notes: nextNotes/);
+});
+
+test("7.13.7 runtime version authorities agree and HUD reads the shared authority", () => {
+  for (const source of [appVersionSource, publicVersionSource, packageSource, packageLockSource, currentStateSource]) {
+    assert.match(source, /7\.13\.7/);
+    assert.doesNotMatch(source, /7\.13\.(?:5|6)/);
+  }
+  assert.match(appSource, /const HUD_VERSION = APP_VERSION/);
+});
+
+test("Pursuit completion controls use a row-safe shared note panel and preserve clear/attention states", () => {
+  assert.match(rowSource, /export function PursuitCompletionNotePanel/);
+  assert.match(rowSource, /data-pursuit-completion-note-panel/);
+  assert.match(rowSource, /onRequestCompletionNote/);
+  assert.match(rowSource, /completionNoteOpen \? <PursuitCompletionNotePanel/);
+  assert.match(rowSource, /GREEN_ICON_CLASS/);
+  assert.match(rowSource, /YELLOW_ICON_CLASS/);
+  assert.match(rowSource, /onRemoveCompletionOnLogicalDay/);
+  assert.match(editorSource, /PursuitCompletionNotePanel/);
+  assert.doesNotMatch(editorSource, /isCompletionNoteOpen[^\n]*absolute right-0 top/);
+});
+
+test("ChildTypeChooser is portal-layered above clipped Table/List rows with dismissal behavior", () => {
+  assert.match(tableSource, /createPortal/);
+  assert.match(tableSource, /data-child-type-chooser-menu/);
+  assert.match(tableSource, /position: "fixed"/);
+  assert.match(tableSource, /event\.key === "Escape"/);
+  assert.match(tableSource, /document\.addEventListener\("pointerdown"/);
+  assert.match(tableSource, /onChoosePursuit/);
+  assert.match(tableSource, /onChooseTask/);
+});
+
+test("Pursuit Table/List metadata cells share one inline quick-edit authority", () => {
+  assert.match(rowSource, /export type PursuitQuickEditMode/);
+  assert.match(rowSource, /export function PursuitQuickEditPanel/);
+  for (const label of ["Due", "Repeat", "Tags", "Notes", "Lifecycle"]) {
+    assert.match(rowSource, new RegExp(`label=\\"${label}\\"|Edit ${label}`));
+  }
+  assert.match(rowSource, /data-pursuit-quick-edit/);
+  assert.match(rowSource, /data-pursuit-metadata-row/);
+  assert.doesNotMatch(rowSource, /PursuitQuickMetadata|<Ellipsis/);
+  assert.match(rowSource, /onOpenCalendar/);
+  assert.match(rowSource, /onCreateChildPursuit/);
+  assert.match(rowSource, /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/);
+});
+
+test("Pursuit editor metadata uses the approved compact chip primitive", () => {
+  assert.match(rowSource, /TASK_TABLE_CHIP_BASE_CLASS/);
+  assert.match(rowSource, /AdhdChip/);
+  assert.match(editorSource, /<AdhdChip tone=\{getStatusTone\(status\)\}/);
+  assert.match(editorSource, /<AdhdChip key=\{tag\}/);
+  assert.match(editorSource, /<AdhdChip tone=\{getStatusTone\(child\.status\)\}/);
+  assert.doesNotMatch(editorSource, /rounded-full[^\n]*px-3 py-1\.5[^\n]*AdhdChip/);
+});
+
+test("TaskCurrentStreakChip is projected into every individual-task view without local history recomputation", () => {
+  assert.match(tableSource, /TaskCurrentStreakChip/);
+  assert.match(listSource, /TaskCurrentStreakChip/);
+  assert.match(secondaryViewsSource, /TaskCurrentStreakChip/);
+  assert.match(gridWidgetsSource, /TaskCurrentStreakChip/);
+  assert.match(calendarSource, /TaskCurrentStreakChip/);
+  assert.match(viewAdaptersSource, /currentStreakByTaskId/);
+  assert.match(appSource, /currentStreakByTaskId=\{currentStreakByTaskId\}/);
+  assert.match(streakPrimitiveSource, /if \(currentStreak <= 0\) return null/);
+  assert.doesNotMatch(secondaryViewsSource, /computeTaskSpecificHistoryStats|deduplicateTaskHistory/);
+  assert.doesNotMatch(gridWidgetsSource, /computeTaskSpecificHistoryStats|deduplicateTaskHistory/);
+  assert.match(calendarSource, /currentStreakByTaskId\[task\.id\] \?\? 0/);
 });

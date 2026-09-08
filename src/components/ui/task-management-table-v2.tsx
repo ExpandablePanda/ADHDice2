@@ -1,6 +1,7 @@
 "use client";
 
 import { Children, Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowLeft,
@@ -1887,6 +1888,46 @@ export function ChildTypeChooser({
   onChooseTask: () => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const menuHeight = 76;
+      const menuWidth = 112;
+      const left = Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8));
+      const top = rect.bottom + 4 + menuHeight <= window.innerHeight
+        ? rect.bottom + 4
+        : Math.max(8, rect.top - menuHeight - 4);
+      setMenuPosition({ left, top });
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setIsOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsOpen(false);
+    };
+
+    updatePosition();
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [isOpen]);
   if (!onChoosePursuit) {
     return (
       <button
@@ -1911,16 +1952,29 @@ export function ChildTypeChooser({
         aria-haspopup="menu"
         aria-label={ariaLabel ?? `Add ${childLabel}`}
         className={ROW_ACTION_ICON_BUTTON_CLASS}
-        onClick={() => setIsOpen((current) => !current)}
+        onClick={(event) => {
+          event.stopPropagation();
+          setIsOpen((current) => !current);
+        }}
+        ref={triggerRef}
         type="button"
       >
         <Footprints className="h-3.5 w-3.5" />
       </button>
-      {isOpen ? (
-        <div className="absolute right-0 top-full z-40 mt-1 grid min-w-28 gap-1 rounded-[0.8rem] border border-[#ddd2ff] bg-white p-1.5 text-left shadow-[0_12px_32px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]" role="menu">
+      {isOpen && menuPosition && typeof document !== "undefined" ? createPortal(
+        <div
+          className="grid min-w-28 gap-1 rounded-[0.8rem] border border-[#ddd2ff] bg-white p-1.5 text-left shadow-[0_12px_32px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
+          data-child-type-chooser-menu="true"
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+          ref={menuRef}
+          role="menu"
+          style={{ left: menuPosition.left, position: "fixed", top: menuPosition.top, zIndex: 160 }}
+        >
           <button className="rounded-[0.55rem] px-2 py-1.5 text-left text-xs font-semibold text-[#4e4865] hover:bg-[#f1ecff] dark:text-white/80 dark:hover:bg-white/10" onClick={() => { setIsOpen(false); onChooseTask(); }} role="menuitem" type="button">Task</button>
           <button className="rounded-[0.55rem] px-2 py-1.5 text-left text-xs font-semibold text-[#6f57f6] hover:bg-[#f1ecff] dark:text-[#cabfff] dark:hover:bg-white/10" onClick={() => { setIsOpen(false); onChoosePursuit(); }} role="menuitem" type="button">Pursuit</button>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );

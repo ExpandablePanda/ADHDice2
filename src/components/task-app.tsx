@@ -5088,6 +5088,7 @@ export function TaskApp() {
     <TaskGridView
       activeCount={filteredActiveTasks.length}
       currentColumns={gridColumns}
+      currentStreakByTaskId={currentStreakByTaskId}
       doneCount={filteredDoneTasks.length}
       draggedWidgetId={draggedGridWidgetId}
       focusedTaskIds={focusedTaskIds}
@@ -5145,6 +5146,7 @@ export function TaskApp() {
   );
   const matrixContentNode = (
     <TaskMatrixView
+      currentStreakByTaskId={currentStreakByTaskId}
       onEditTask={openExistingTaskEditor}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       subtasksByTaskId={taskSubtasksByTaskId}
@@ -5153,6 +5155,7 @@ export function TaskApp() {
   );
   const cardsContentNode = (
     <TaskCardGallery
+      currentStreakByTaskId={currentStreakByTaskId}
       focusedTaskIds={focusedTaskIds}
       onEditTask={openExistingTaskEditor}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
@@ -5164,6 +5167,7 @@ export function TaskApp() {
     <TaskCalendarView
       onAddTask={openCalendarDateTaskEditor}
       onOpenTask={openExistingTaskEditor}
+      currentStreakByTaskId={currentStreakByTaskId}
       taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
       tasks={calendarTasks}
     />

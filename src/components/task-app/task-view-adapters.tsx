@@ -366,6 +366,7 @@ export function FocusPlannerModalAdapter({
 export function TaskGridViewAdapter<TWidgetType extends string>({
   activeCount,
   currentColumns,
+  currentStreakByTaskId,
   doneCount,
   draggedWidgetId,
   focusedTaskIds,
@@ -398,6 +399,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
 }: {
   activeCount: number;
   currentColumns: number;
+  currentStreakByTaskId: Readonly<Record<string, number>>;
   doneCount: number;
   draggedWidgetId: string | null;
   focusedTaskIds: string[];
@@ -457,6 +459,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
         if (widgetType === "urgent") {
           return (
             <UrgentTasksPanelAdapter
+              currentStreakByTaskId={currentStreakByTaskId}
               focusedTaskIds={focusedTaskIds}
               onEditTask={onEditTask}
               onSetStatus={onSetStatus}
@@ -470,6 +473,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
           return (
             <TaskLaneAdapter
               count={tasksByWidget.focusToday.length}
+              currentStreakByTaskId={currentStreakByTaskId}
               defaultExpanded
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
@@ -483,6 +487,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
           return (
             <TaskLaneAdapter
               count={tasksByWidget.dueToday.length}
+              currentStreakByTaskId={currentStreakByTaskId}
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
               tasks={tasksByWidget.dueToday}
@@ -495,6 +500,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
           return (
             <TaskLaneAdapter
               count={tasksByWidget.activeQueue.length}
+              currentStreakByTaskId={currentStreakByTaskId}
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
               tasks={tasksByWidget.activeQueue}
@@ -507,6 +513,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
           return (
             <TaskLaneAdapter
               count={tasksByWidget.completed.length}
+              currentStreakByTaskId={currentStreakByTaskId}
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
               tasks={tasksByWidget.completed}

@@ -11,6 +11,7 @@ import { formatRepeatSummary } from "@/lib/task-formatting";
 import { getDisplayRowsFromSpan, getSpanFromDisplayRows, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
 import { formatTaskPriorityLabel, getTaskPriorityLevel, getTaskPriorityToneClass } from "@/lib/task-priority";
 import { getNextPendingSubtask, isClosedSubtaskStatus } from "@/lib/task-subtasks";
+import { TaskCurrentStreakChip } from "@/components/ui/task-table-primitives";
 
 type TaskGridItem = TaskGridLayoutItem<string>;
 
@@ -197,6 +198,7 @@ export function TaskGridWidgetShellComponent({
 }
 
 export function UrgentTasksPanelComponent({
+  currentStreakByTaskId,
   focusedTaskIds,
   onEditTask,
   onSetStatus,
@@ -204,6 +206,7 @@ export function UrgentTasksPanelComponent({
   subtasksByTaskId,
   tasks,
 }: {
+  currentStreakByTaskId: Readonly<Record<string, number>>;
   focusedTaskIds: string[];
   onEditTask: (task: Task) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
@@ -235,6 +238,7 @@ export function UrgentTasksPanelComponent({
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {focusedTaskIds.includes(task.id) ? <TaskMetaChip tone="purple">Focus</TaskMetaChip> : null}
+                  <TaskCurrentStreakChip currentStreak={currentStreakByTaskId[task.id] ?? 0} />
                   <span className={`inline-flex shrink-0 whitespace-nowrap rounded-xl border px-3 py-1.5 text-sm font-semibold ${getTaskPriorityToneClass(getTaskPriorityLevel(task))}`}>
                     {formatTaskPriorityLabel(getTaskPriorityLevel(task))}
                   </span>

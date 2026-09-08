@@ -56,6 +56,7 @@ import {
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS,
   CompactRepeatCadenceControls,
   TaskHierarchySearchChip,
+  TaskCurrentStreakChip,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { AdhdIconButton } from "@/components/ui-system";
@@ -853,10 +854,7 @@ function StepHistoryChips({ currentStreak, missedStreak }: { currentStreak: numb
   return (
     <>
       {currentStreak > 0 ? (
-        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#dc6c1c]`}>
-          <Flame className="h-3 w-3" />
-          {currentStreak}
-        </span>
+        <TaskCurrentStreakChip currentStreak={currentStreak} />
       ) : null}
       {missedStreak > 0 ? (
         <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#d94e67]`}>
@@ -884,10 +882,7 @@ function TaskHistoryChips({
   return (
     <>
       {currentStreak > 0 ? (
-        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} ${className ?? ""} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#dc6c1c]`}>
-          <Flame className="h-3 w-3" />
-          {currentStreak}
-        </span>
+        <TaskCurrentStreakChip className={className} currentStreak={currentStreak} />
       ) : null}
       {missedStreak > 0 ? (
         <span className={`${TASK_TABLE_LIST_CHIP_CLASS} ${className ?? ""} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#d94e67]`}>

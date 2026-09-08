@@ -17,6 +17,7 @@ import {
   type TaskCalendarMonth,
 } from "@/lib/task-calendar";
 import { AdhdChip, AdhdDropdownPanel, AdhdIconButton } from "@/components/ui-system";
+import { TaskCurrentStreakChip } from "@/components/ui/task-table-primitives";
 import { renderTaskStatusCircle } from "./task-status-ui";
 
 const CALENDAR_VISIBLE_TASK_CAP = 3;
@@ -24,6 +25,7 @@ const CALENDAR_VISIBLE_TASK_CAP = 3;
 type TaskCalendarViewProps = {
   onAddTask: (dueOn: string) => void;
   onOpenTask: (task: Task) => void;
+  currentStreakByTaskId: Readonly<Record<string, number>>;
   taskDisplayStatusByTaskId?: Readonly<Record<string, TaskDisplayStatus>>;
   tasks: Task[];
 };
@@ -42,11 +44,13 @@ function getTaskDepth(task: Task, taskById: ReadonlyMap<string, Task>) {
 
 function CalendarTaskButton({
   onOpenTask,
+  currentStreakByTaskId,
   task,
   taskById,
   taskDisplayStatusByTaskId,
 }: {
   onOpenTask: (task: Task) => void;
+  currentStreakByTaskId: Readonly<Record<string, number>>;
   task: Task;
   taskById: ReadonlyMap<string, Task>;
   taskDisplayStatusByTaskId?: Readonly<Record<string, TaskDisplayStatus>>;
@@ -73,6 +77,7 @@ function CalendarTaskButton({
         {timeLabel ? <span className="mr-1 text-[#8176ad] dark:text-[#bfb3f0]">{timeLabel}</span> : null}
         <span className={status === "done" || status === "complete" ? "line-through opacity-65" : ""}>{task.title || "Untitled task"}</span>
       </span>
+      <TaskCurrentStreakChip className="gap-0.5 px-1 py-0 text-[10px]" currentStreak={currentStreakByTaskId[task.id] ?? 0} />
     </button>
   );
 }
@@ -81,6 +86,7 @@ function CalendarDayCell({
   day,
   onAddTask,
   onOpenTask,
+  currentStreakByTaskId,
   expandedOverflowDateKey,
   onToggleOverflow,
   tasks,
@@ -92,6 +98,7 @@ function CalendarDayCell({
   expandedOverflowDateKey: string | null;
   onAddTask: (dueOn: string) => void;
   onOpenTask: (task: Task) => void;
+  currentStreakByTaskId: Readonly<Record<string, number>>;
   onToggleOverflow: (dateKey: string) => void;
   taskById: ReadonlyMap<string, Task>;
   taskDisplayStatusByTaskId?: Readonly<Record<string, TaskDisplayStatus>>;
@@ -130,6 +137,7 @@ function CalendarDayCell({
           <CalendarTaskButton
             key={task.id}
             onOpenTask={onOpenTask}
+            currentStreakByTaskId={currentStreakByTaskId}
             task={task}
             taskById={taskById}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
@@ -154,6 +162,7 @@ function CalendarDayCell({
               <CalendarTaskButton
                 key={task.id}
                 onOpenTask={onOpenTask}
+                currentStreakByTaskId={currentStreakByTaskId}
                 task={task}
                 taskById={taskById}
                 taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
@@ -167,6 +176,7 @@ function CalendarDayCell({
 }
 
 export function TaskCalendarView({
+  currentStreakByTaskId,
   onAddTask,
   onOpenTask,
   taskDisplayStatusByTaskId,
@@ -221,6 +231,7 @@ export function TaskCalendarView({
                 key={day.dateKey}
                 onAddTask={onAddTask}
                 onOpenTask={onOpenTask}
+                currentStreakByTaskId={currentStreakByTaskId}
                 onToggleOverflow={toggleOverflow}
                 taskById={taskById}
                 taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
@@ -249,6 +260,7 @@ export function TaskCalendarView({
                 <CalendarTaskButton
                   key={task.id}
                   onOpenTask={onOpenTask}
+                  currentStreakByTaskId={currentStreakByTaskId}
                   task={task}
                   taskById={taskById}
                   taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}

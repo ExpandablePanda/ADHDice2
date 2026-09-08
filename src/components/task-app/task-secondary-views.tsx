@@ -12,6 +12,7 @@ import { getNextPendingSubtask } from "@/lib/task-subtasks";
 import { isTaskUrgent } from "@/lib/task-buckets";
 import { formatDueLabel } from "@/lib/task-cockpit";
 import type { Task, TaskEnergy, TaskStatus } from "@/lib/database.types";
+import { TaskCurrentStreakChip } from "@/components/ui/task-table-primitives";
 
 type SelectProps<T extends string> = {
   label: string;
@@ -198,7 +199,7 @@ export function SupportPanelComponent({ doneCount, lowEnergyTasks, message, onIm
   );
 }
 
-export function TaskLaneComponent({ count, defaultExpanded = false, onEditTask, subtasksByTaskId, title, tasks, tone }: { count: number; defaultExpanded?: boolean; onEditTask: (task: Task) => void; subtasksByTaskId: Record<string, Task[]>; title: string; tasks: Task[]; tone: "purple" | "soft"; }) {
+export function TaskLaneComponent({ count, currentStreakByTaskId, defaultExpanded = false, onEditTask, subtasksByTaskId, title, tasks, tone }: { count: number; currentStreakByTaskId: Readonly<Record<string, number>>; defaultExpanded?: boolean; onEditTask: (task: Task) => void; subtasksByTaskId: Record<string, Task[]>; title: string; tasks: Task[]; tone: "purple" | "soft"; }) {
   const DEFAULT_VISIBLE_COUNT = 3;
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const visibleTasks = isExpanded ? tasks : tasks.slice(0, DEFAULT_VISIBLE_COUNT);
@@ -220,7 +221,10 @@ export function TaskLaneComponent({ count, defaultExpanded = false, onEditTask, 
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">
                 <button className="truncate text-left text-lg font-semibold text-[#27304c] dark:text-white" onClick={() => onEditTask(task)} type="button">{task.title}</button>
-                <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-[#7d88a1] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                  <TaskCurrentStreakChip currentStreak={currentStreakByTaskId[task.id] ?? 0} />
+                </div>
                 <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
               </div>
               <div className="flex items-center gap-2 sm:shrink-0">
@@ -236,7 +240,7 @@ export function TaskLaneComponent({ count, defaultExpanded = false, onEditTask, 
   );
 }
 
-export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { focusedTaskIds: string[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
+export function TaskCardGalleryComponent({ currentStreakByTaskId, focusedTaskIds, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; focusedTaskIds: string[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
   return (
     <section className="mt-7">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -246,7 +250,10 @@ export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStat
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <button className="text-left text-xl font-bold text-[#1f2746] dark:text-white" onClick={() => onEditTask(task)} type="button">{task.title}</button>
-                <p className="mt-2 text-sm text-[#77829f] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-[#77829f] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                  <TaskCurrentStreakChip currentStreak={currentStreakByTaskId[task.id] ?? 0} />
+                </div>
               </div>
               <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${getTaskPriorityToneClass(getTaskPriorityLevel(task))}`}>{formatTaskPriorityLevel(getTaskPriorityLevel(task))}</span>
             </div>
@@ -278,7 +285,7 @@ export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStat
   );
 }
 
-export function TaskMatrixViewComponent({ onEditTask, onSetStatus, subtasksByTaskId, tasks }: { onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
+export function TaskMatrixViewComponent({ currentStreakByTaskId, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
   const cells = [
     { key: "urgent-high", title: "Urgent + Higher Energy", tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy !== "low") },
     { key: "urgent-low", title: "Urgent + Low Energy", tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy === "low") },
@@ -300,7 +307,10 @@ export function TaskMatrixViewComponent({ onEditTask, onSetStatus, subtasksByTas
               <div className="flex w-full items-center justify-between gap-3 rounded-[1.2rem] border px-4 py-3 border-[#efeaf9] bg-[#fdfcff] dark:border-white/10 dark:bg-white/[0.04]" key={task.id}>
                 <div className="min-w-0">
                   <button className="truncate text-left text-base font-semibold text-[#27304c] dark:text-white" onClick={() => onEditTask(task)} type="button">{task.title}</button>
-                  <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <p className="text-xs text-[#7d88a1] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                    <TaskCurrentStreakChip currentStreak={currentStreakByTaskId[task.id] ?? 0} />
+                  </div>
                   {task.one_step_at_a_time && getNextPendingSubtask(task.id, subtasksByTaskId) ? <p className="mt-1 text-xs font-semibold text-[#6f57f6] dark:text-[#cabfff]">Next: {getNextPendingSubtask(task.id, subtasksByTaskId)?.title}</p> : null}
                 </div>
                 <div className="flex items-center gap-2">
