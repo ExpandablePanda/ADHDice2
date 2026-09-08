@@ -7,7 +7,7 @@ function joinClasses(...values: Array<string | false | null | undefined>) {
 }
 
 export type AdhdIconButtonSize = "sm" | "md" | "lg";
-export type AdhdIconButtonTone = "default" | "purple" | "danger" | "ghost";
+export type AdhdIconButtonTone = "default" | "purple" | "success" | "warning" | "danger" | "ghost";
 export type AdhdIconButtonVariant = "default" | "rowToolbar";
 
 const ICON_BUTTON_SIZE_CLASS: Record<AdhdIconButtonSize, string> = {
@@ -39,6 +39,10 @@ const ICON_BUTTON_TONE_CLASS: Record<AdhdIconButtonTone, string> = {
     "border-[#ece8f8] bg-white text-[#66718c] hover:border-[#d9cffb] hover:bg-[#f7f3ff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/60 dark:hover:border-white/20 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]",
   purple:
     "border-[#d9cffb] bg-[#f7f3ff] text-[#6f57f6] hover:border-[#cdbfff] hover:bg-[#f2ebff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:border-[#5a458f] dark:hover:bg-[#2b1d46]",
+  success:
+    "border-[#cfe7d7] bg-[#edf8f1] text-[#368155] hover:border-[#b9dfc2] hover:bg-[#e4f5e8] dark:border-[#284836] dark:bg-[#13261a] dark:text-[#a7d7b8] dark:hover:border-[#356944] dark:hover:bg-[#17311e]",
+  warning:
+    "border-[#f2df9d] bg-[#fff8dc] text-[#9a7418] hover:border-[#e6ce72] hover:bg-[#fff3c7] dark:border-[#66521d] dark:bg-[#342b12] dark:text-[#f3d38a] dark:hover:border-[#806827] dark:hover:bg-[#403415]",
   danger:
     "border-[#f3d7de] bg-[#fff5f7] text-[#d65775] hover:border-[#efc3cf] hover:bg-[#ffedf1] dark:border-[#5f2a36] dark:bg-[#32161d] dark:text-[#ffb0c1] dark:hover:border-[#7a3343] dark:hover:bg-[#3b1922]",
   ghost:
@@ -48,6 +52,8 @@ const ICON_BUTTON_TONE_CLASS: Record<AdhdIconButtonTone, string> = {
 const ICON_BUTTON_SELECTED_CLASS: Record<Exclude<AdhdIconButtonTone, "ghost">, string> = {
   default: "border-[#d9cffb] bg-[#f7f3ff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]",
   purple: "border-[#cdbfff] bg-[#efe6ff] text-[#5f45f0] dark:border-[#5a458f] dark:bg-[#2b1d46] dark:text-[#d6ccff]",
+  success: "border-[#b9dfc2] bg-[#e4f5e8] text-[#2f7448] dark:border-[#356944] dark:bg-[#17311e] dark:text-[#c2f0cc]",
+  warning: "border-[#e6ce72] bg-[#fff3c7] text-[#80620f] dark:border-[#806827] dark:bg-[#403415] dark:text-[#ffe2a1]",
   danger: "border-[#efc3cf] bg-[#ffecef] text-[#c63f60] dark:border-[#7a3343] dark:bg-[#3b1922] dark:text-[#ffc3cf]",
 };
 
@@ -56,6 +62,10 @@ const ROW_TOOLBAR_TONE_CLASS: Record<Exclude<AdhdIconButtonTone, "ghost">, strin
     "border-transparent bg-transparent text-[#8a79d6] opacity-78 hover:text-[#6f57f6] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:text-[#cabfff]",
   purple:
     "border-transparent bg-transparent text-[#8a79d6] opacity-78 hover:text-[#6f57f6] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:text-[#cabfff]",
+  success:
+    "border-transparent bg-transparent text-[#3f8b5a] opacity-78 hover:text-[#2f7448] hover:opacity-100 dark:text-[#a5ddb6] dark:hover:text-[#c2f0cc]",
+  warning:
+    "border-transparent bg-transparent text-[#b1811c] opacity-78 hover:text-[#936b10] hover:opacity-100 dark:text-[#f3d38a] dark:hover:text-[#ffe2a1]",
   danger:
     "border-transparent bg-transparent text-[#d94e67] opacity-72 hover:text-[#c93d5c] hover:opacity-100 dark:text-[#ff9eaf] dark:hover:text-[#ffb5c3]",
 };
@@ -63,6 +73,8 @@ const ROW_TOOLBAR_TONE_CLASS: Record<Exclude<AdhdIconButtonTone, "ghost">, strin
 const ROW_TOOLBAR_SELECTED_CLASS: Record<Exclude<AdhdIconButtonTone, "ghost">, string> = {
   default: "border-[#ddd2ff] bg-[#f3efff] text-[#6f57f6] opacity-100 dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]",
   purple: "border-[#ddd2ff] bg-[#f3efff] text-[#6f57f6] opacity-100 dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]",
+  success: "border-[#b9dfc2] bg-[#eaf8ed] text-[#348554] opacity-100 dark:border-[#356944] dark:bg-[#17311e] dark:text-[#a5ddb6]",
+  warning: "border-[#e6ce72] bg-[#fff8dc] text-[#9a7418] opacity-100 dark:border-[#806827] dark:bg-[#403415] dark:text-[#f3d38a]",
   danger: "border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] opacity-100 dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]",
 };
 

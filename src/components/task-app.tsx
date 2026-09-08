@@ -92,6 +92,7 @@ import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-a
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { AttentionWorkspace } from "./task-app/attention-workspace";
 import { PursuitEditorModal } from "./task-app/pursuits-workspace";
+import type { PursuitInlineCreateInput } from "./task-app/pursuit-workspace-row";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { TaskCalendarView } from "./task-app/task-calendar-view";
@@ -1702,6 +1703,7 @@ export function TaskApp() {
     activePage === "Tasks",
     { dayStartTime, timezone: userTimeZone },
   );
+  const createInlinePursuit = useCallback((input: PursuitInlineCreateInput) => pursuitData.createPursuit(input), [pursuitData.createPursuit]);
   const onTimePlan = useOnTimePlan(
     currentUserId,
     userTimeZone,
@@ -6685,6 +6687,7 @@ export function TaskApp() {
           milestonePromotionTaskIds={milestonePromotionTaskIds}
           onCreateChildTask={createChildTaskFromPreview}
           onCreateChildPursuit={openNewPursuitEditorFromTaskEditor}
+          onCreatePursuitInline={createInlinePursuit}
           onCreateTaskList={async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null })}
           onDetachAndPromoteTaskToMilestone={requestDetachAndPromoteMilestone}
           onDiscardTaskTimer={requestTaskTimerDiscard}
@@ -7135,6 +7138,7 @@ export function TaskApp() {
                   onOpenPursuit: openPursuitEditor,
                   onOpenPursuitCalendar: openPursuitCalendar,
                   onCreateChildPursuit: openNewPursuitEditor,
+                  onCreatePursuitInline: createInlinePursuit,
                   onCreatePursuitChild: openNewPursuitEditorFromPursuit,
                   onMarkDonePursuit: (pursuitId, notes) => {
                     if (pursuitAttentionMap.get(pursuitId)?.completionSummary.completedToday) {
@@ -7325,6 +7329,7 @@ export function TaskApp() {
                   onOpenPursuit: openPursuitEditor,
                   onOpenPursuitCalendar: openPursuitCalendar,
                   onCreateChildPursuit: openNewPursuitEditor,
+                  onCreatePursuitInline: createInlinePursuit,
                   onCreatePursuitChild: openNewPursuitEditorFromPursuit,
                   onMarkDonePursuit: (pursuitId, notes) => {
                     if (pursuitAttentionMap.get(pursuitId)?.completionSummary.completedToday) {

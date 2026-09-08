@@ -186,6 +186,8 @@ For every new identifier, prop, callback, or exported value:
 
 ## Frontend Work
 
+When adding a domain to an existing ADHDice UI surface, reuse the canonical primitive or live interaction source wherever behavior is equivalent; do not create domain-specific visual, action-row, chip, or dropdown copies to approximate a Task pattern.
+
 Follow:
 
 * `docs/UI_SYSTEM.md`

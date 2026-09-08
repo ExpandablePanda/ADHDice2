@@ -55,11 +55,15 @@ import {
   TASK_TABLE_TITLE_CELL_CLASS,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS,
   CompactRepeatCadenceControls,
+  TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS,
+  TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS,
   TaskHierarchySearchChip,
   TaskCurrentStreakChip,
+  TaskInlineChildDraft,
+  TaskListQuickPanelShell,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
-import { AdhdIconButton } from "@/components/ui-system";
+import { AdhdIconButton } from "@/components/ui-system/index";
 import { TaskHierarchyChevronButton } from "./task-hierarchy-chevron-button";
 import { TaskTimerStateChip } from "./task-timer-display";
 import {
@@ -69,7 +73,8 @@ import {
 } from "@/lib/task-list-sort";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import { buildPursuitWorkspaceIndex, filterPursuitsForTaskWorkspace, mergeTaskRowsWithPursuitSearchContext, shouldRenderTaskPursuitChildren, type PursuitAttention } from "@/lib/pursuit-domain";
-import { PursuitListWorkspaceRow } from "./pursuit-workspace-row";
+import { PursuitListWorkspaceRow, type PursuitInlineCreateInput } from "./pursuit-workspace-row";
+import { buildPursuitInlineCreateInput } from "@/lib/pursuit-ui";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 
@@ -147,9 +152,6 @@ function MetadataDisclosureButton({
 type ChildTaskDragState = { depth: number; parentTaskId: string | null; taskId: string };
 type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string };
 
-const QUICK_PANEL_SHELL_CLASS = "mt-2.5 rounded-[1.15rem] border border-[#e7defc] bg-[#fcfbff] px-4 py-3 shadow-[0_14px_34px_rgba(81,61,168,0.08)] dark:border-[#41306c] dark:bg-[#18112d]";
-const QUICK_PANEL_TEXT_INPUT_CLASS = "h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]";
-const QUICK_PANEL_PRIMARY_CHIP_CLASS = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
 const PRIORITY_OPTIONS = [
   ...TASK_PRIORITY_LEVEL_OPTIONS.map((value) => ({ label: value, value })),
 ];
@@ -194,7 +196,7 @@ function formatPreviewPriorityLabel(priority: ChildTaskPreviewPriority) {
 }
 
 function repeatTone(repeat: PrototypeTaskRow["repeat"]) {
-  return repeat === "none" ? TASK_TABLE_INACTIVE_CHIP_CLASS : QUICK_PANEL_PRIMARY_CHIP_CLASS;
+  return repeat === "none" ? TASK_TABLE_INACTIVE_CHIP_CLASS : TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS;
 }
 
 function energyTone(energy: PrototypeTaskRow["energy"]) {
@@ -294,6 +296,7 @@ type TasksTableSourceProps = {
   overlayOnly?: boolean;
   onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
   onCreateChildPursuit?: (parentTaskId: string) => void;
+  onCreatePursuitInline?: (input: PursuitInlineCreateInput) => Promise<Pursuit | null>;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenFocusTimer?: (taskId: string) => void;
   onOpenNote?: (noteId: string) => void;
@@ -657,6 +660,7 @@ export function TasksTableAdapter({
           onCreateTaskList={tableProps.onCreateTaskList}
           onCreateChildTask={tableProps.onCreateChildTask}
           onCreateChildPursuit={tableProps.onCreateChildPursuit}
+          onCreatePursuitInline={tableProps.onCreatePursuitInline}
           pursuits={tableProps.pursuits}
           pursuitAttentionById={tableProps.pursuitAttentionById}
           pursuitSearch={tableProps.pursuitSearch}
@@ -1283,7 +1287,7 @@ function StepsCardPreview({
         <div className="mt-2 rounded-[0.95rem] border border-[#e7defc] bg-[#fcfbff] px-3 py-3 dark:border-[#41306c] dark:bg-[#18112d]">
           <div className="flex flex-wrap items-center gap-2">
             <input
-              className={`${QUICK_PANEL_TEXT_INPUT_CLASS} min-w-[14rem] flex-1`}
+              className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} min-w-[14rem] flex-1`}
               onChange={(event) => onParentStepDraftChange?.(event.target.value)}
               onKeyDown={(event) => {
                 event.stopPropagation();
@@ -1300,7 +1304,7 @@ function StepsCardPreview({
               ref={parentStepDraftInputRef}
               value={parentStepDraftValue}
             />
-            <TaskTableChipButton onClick={() => onCommitParentStepDraft?.()} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Add Step</TaskTableChipButton>
+            <TaskTableChipButton onClick={() => onCommitParentStepDraft?.()} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Add Step</TaskTableChipButton>
             <TaskTableChipButton onClick={() => onCancelParentStepDraft?.()} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
           </div>
           {parentStepCreationError ? (
@@ -1648,7 +1652,7 @@ function StepsCardPreview({
                       </MetadataChipButton>
                       <MetadataChipButton
                         active={item.isFocused}
-                        activeToneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}
+                        activeToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
                         onClick={() => onToggleFocusToday?.(item.id)}
                         toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
                       >
@@ -1724,7 +1728,7 @@ function StepsCardPreview({
                   >
                     <input
                       autoFocus
-                      className={`${QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
+                      className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
                       onBlur={() => {
                         if ((substepTitleDrafts[item.id] ?? "").trim()) {
                           void commitSubstepDraft(item.id);
@@ -1746,7 +1750,7 @@ function StepsCardPreview({
                       placeholder="Substep title..."
                       value={substepTitleDrafts[item.id] ?? ""}
                     />
-                    <TaskTableChipButton toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS} type="submit">Add</TaskTableChipButton>
+                    <TaskTableChipButton toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS} type="submit">Add</TaskTableChipButton>
                     {substepCreationErrors[item.id] ? <p className="text-xs font-medium text-[#d94e67] dark:text-[#ff9eaf]">{substepCreationErrors[item.id]}</p> : null}
                   </form>
                 ) : null}
@@ -1886,28 +1890,6 @@ function MetadataChipButton({
   );
 }
 
-function QuickPanelShell({
-  children,
-  onClose,
-  title,
-}: {
-  children: ReactNode;
-  onClose: () => void;
-  title: string;
-}) {
-  return (
-    <div className={QUICK_PANEL_SHELL_CLASS} onClick={(event) => event.stopPropagation()}>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d82b6] dark:text-white/45">
-          {title}
-        </p>
-        <TaskTableChipButton onClick={onClose}>Close</TaskTableChipButton>
-      </div>
-      {children}
-    </div>
-  );
-}
-
 function QuickChipOption({
   active = false,
   activeToneClassName = TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
@@ -1967,7 +1949,7 @@ export function TagsQuickPanel({
   };
 
   return (
-    <QuickPanelShell onClose={onClose} title="Tags">
+    <TaskListQuickPanelShell onClose={onClose} title="Tags">
       <div className="space-y-3">
         <div>
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#938ab8] dark:text-white/45">
@@ -1990,7 +1972,7 @@ export function TagsQuickPanel({
         </div>
         <div className="space-y-3">
           <input
-            className={`${QUICK_PANEL_TEXT_INPUT_CLASS} w-full`}
+            className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} w-full`}
             onChange={(event) => setTagDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -2002,12 +1984,12 @@ export function TagsQuickPanel({
             value={tagDraft}
           />
           {exactMatchTag ? (
-            <TaskTableChipButton onClick={() => onSave(dedupeTaskTagLabels([...tags, exactMatchTag]))} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>
+            <TaskTableChipButton onClick={() => onSave(dedupeTaskTagLabels([...tags, exactMatchTag]))} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>
               Use #{exactMatchTag}
             </TaskTableChipButton>
           ) : null}
           {normalizedDraft && !exactMatchTag ? (
-            <TaskTableChipButton onClick={addTag} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>
+            <TaskTableChipButton onClick={addTag} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>
               {`Add "${formatNewTaskTagLabel(tagDraft)}"`}
             </TaskTableChipButton>
           ) : null}
@@ -2039,7 +2021,7 @@ export function TagsQuickPanel({
           )}
         </div>
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2061,7 +2043,7 @@ function DueQuickPanel({
   const today = todayDateKey;
 
   return (
-    <QuickPanelShell onClose={onClose} title="Due Date">
+    <TaskListQuickPanelShell onClose={onClose} title="Due Date">
       <div className="flex flex-wrap gap-2">
         <QuickChipOption active={dateDraft === ""} onClick={() => { setDateDraft(""); setTimeDraft(""); }}>
           No date
@@ -2078,20 +2060,20 @@ function DueQuickPanel({
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
         <input
-          className={QUICK_PANEL_TEXT_INPUT_CLASS}
+          className={TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS}
           onChange={(event) => setDateDraft(event.target.value)}
           type="date"
           value={dateDraft}
         />
         <input
-          className={QUICK_PANEL_TEXT_INPUT_CLASS}
+          className={TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS}
           onChange={(event) => setTimeDraft(event.target.value)}
           type="time"
           value={timeDraft}
         />
-        <TaskTableChipButton onClick={() => onSave({ dueOn: dateDraft, dueTime: timeDraft })} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Apply</TaskTableChipButton>
+        <TaskTableChipButton onClick={() => onSave({ dueOn: dateDraft, dueTime: timeDraft })} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Apply</TaskTableChipButton>
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2109,11 +2091,11 @@ function DelayQuickPanel({
   const anchorDateKey = getDelayAnchorDate(dueOn, todayDateKey);
 
   return (
-    <QuickPanelShell onClose={onClose} title="Delay Task">
+    <TaskListQuickPanelShell onClose={onClose} title="Delay Task">
       <TaskDelayPicker
         anchorDateKey={anchorDateKey}
         description="Move this due date forward and keep the task visibly Delayed until that new date arrives."
-        inputClassName={QUICK_PANEL_TEXT_INPUT_CLASS}
+        inputClassName={TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS}
         onCancel={onClose}
         onSave={async (nextDueOn) => {
           const didSave = await onSave(nextDueOn);
@@ -2122,10 +2104,10 @@ function DelayQuickPanel({
           }
           return didSave;
         }}
-        primaryToneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}
+        primaryToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
         saveLabel="Apply delay"
       />
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2143,7 +2125,7 @@ function PriorityQuickPanel({
   };
 
   return (
-    <QuickPanelShell onClose={onClose} title="Priority">
+    <TaskListQuickPanelShell onClose={onClose} title="Priority">
       <div className="flex flex-wrap gap-2">
         {PRIORITY_OPTIONS.map((option) => (
           <TaskTableChipButton
@@ -2155,7 +2137,7 @@ function PriorityQuickPanel({
           </TaskTableChipButton>
         ))}
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2237,7 +2219,7 @@ function RepeatQuickPanel({
   };
 
   return (
-    <QuickPanelShell onClose={onClose} title="Repeat">
+    <TaskListQuickPanelShell onClose={onClose} title="Repeat">
       <div className="flex flex-wrap gap-2">
         {REPEAT_OPTIONS.map((option) => (
           <QuickChipOption
@@ -2260,7 +2242,7 @@ function RepeatQuickPanel({
       {repeatFrequency !== "none" ? (
         <div className="mt-3 space-y-2">
           <CompactRepeatCadenceControls
-            activeToneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}
+            activeToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
             dayInputProps={{
               inputMode: "numeric",
               max: 31,
@@ -2326,7 +2308,7 @@ function RepeatQuickPanel({
           />
         </div>
       ) : null}
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2344,7 +2326,7 @@ function ListQuickPanel({
   const activeListIds = new Set(listMemberships.map((membership) => membership.id));
 
   return (
-    <QuickPanelShell onClose={onClose} title="Lists">
+    <TaskListQuickPanelShell onClose={onClose} title="Lists">
       <div className="flex flex-wrap gap-2">
         {listDefinitions.map((definition) => (
           <QuickChipOption
@@ -2357,7 +2339,7 @@ function ListQuickPanel({
           </QuickChipOption>
         ))}
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2378,7 +2360,7 @@ function EstimatedQuickPanel({
   };
 
   return (
-    <QuickPanelShell onClose={onClose} title="Estimated Time">
+    <TaskListQuickPanelShell onClose={onClose} title="Estimated Time">
       <div className="flex flex-wrap gap-2">
         {[5, 10, 15, 20, 30, 45, 60].map((option) => (
           <QuickChipOption active={minutes === option} key={option} onClick={() => onSave(option)}>
@@ -2391,7 +2373,7 @@ function EstimatedQuickPanel({
       </div>
       <div className="mt-3 flex flex-col gap-2 sm:flex-row">
         <input
-          className={`${QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
+          className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
           min={0}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -2404,9 +2386,9 @@ function EstimatedQuickPanel({
           type="number"
           value={draft}
         />
-        <TaskTableChipButton onClick={saveDraft} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save</TaskTableChipButton>
+        <TaskTableChipButton onClick={saveDraft} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save</TaskTableChipButton>
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2439,14 +2421,14 @@ function ActualQuickPanel({
   };
 
   return (
-    <QuickPanelShell onClose={onClose} title="Actual Time">
+    <TaskListQuickPanelShell onClose={onClose} title="Actual Time">
       <p className="mb-3 text-sm text-[#7d7597] dark:text-white/55">Current time: {formatListActual(seconds)}</p>
       <div className="mb-3 flex flex-wrap gap-2">
         {timer ? <><TaskTableChipButton className="gap-2" onClick={timer.pausedAt ? onResumeTimer : onPauseTimer} toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}>{timer.pausedAt ? <CirclePlay className="h-3.5 w-3.5" /> : <CirclePause className="h-3.5 w-3.5" />}{timer.pausedAt ? "Resume timer" : "Pause timer"}</TaskTableChipButton><TaskTableChipButton className="gap-2" onClick={onStopTimer} toneClassName="border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]"><TimerReset className="h-3.5 w-3.5" />Stop & Save</TaskTableChipButton></> : <TaskTableChipButton className="gap-2" onClick={onStartTimer} toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}><CirclePlay className="h-3.5 w-3.5" />Start timer</TaskTableChipButton>}
       </div>
       <div className="flex flex-col gap-2 sm:flex-row">
         <input
-          className={`${QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
+          className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
           min={0}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -2459,10 +2441,10 @@ function ActualQuickPanel({
           type="number"
           value={draft}
         />
-        <TaskTableChipButton onClick={saveDraft} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save</TaskTableChipButton>
+        <TaskTableChipButton onClick={saveDraft} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save</TaskTableChipButton>
         {onOpenManual ? <TaskTableChipButton onClick={onOpenManual} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Manual entry</TaskTableChipButton> : null}
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2477,7 +2459,7 @@ function EnergyQuickPanel({
 }) {
   const options: PrototypeTaskRow["energy"][] = ["none", "low", "medium", "high"];
   return (
-    <QuickPanelShell onClose={onClose} title="Energy">
+    <TaskListQuickPanelShell onClose={onClose} title="Energy">
       <div className="flex flex-wrap gap-2">
         {options.map((option) => (
           <QuickChipOption active={energy === option} activeToneClassName={energyTone(option)} key={option} onClick={() => onSave(option)}>
@@ -2485,7 +2467,7 @@ function EnergyQuickPanel({
           </QuickChipOption>
         ))}
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2504,16 +2486,16 @@ function LinkQuickPanel({
   const [urlDraft, setUrlDraft] = useState(url);
 
   return (
-    <QuickPanelShell onClose={onClose} title="Link">
+    <TaskListQuickPanelShell onClose={onClose} title="Link">
       <div className="grid gap-2">
-        <input className={QUICK_PANEL_TEXT_INPUT_CLASS} onChange={(event) => setLabelDraft(event.target.value)} placeholder="Label" value={labelDraft} />
-        <input className={QUICK_PANEL_TEXT_INPUT_CLASS} onChange={(event) => setUrlDraft(event.target.value)} placeholder="https://..." value={urlDraft} />
+        <input className={TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} onChange={(event) => setLabelDraft(event.target.value)} placeholder="Label" value={labelDraft} />
+        <input className={TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} onChange={(event) => setUrlDraft(event.target.value)} placeholder="https://..." value={urlDraft} />
       </div>
       <div className="mt-3 flex justify-end gap-2">
         <TaskTableChipButton onClick={() => onSave({ label: "", url: "" })} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Clear link</TaskTableChipButton>
-        <TaskTableChipButton onClick={() => onSave({ label: labelDraft.trim(), url: urlDraft.trim() })} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save link</TaskTableChipButton>
+        <TaskTableChipButton onClick={() => onSave({ label: labelDraft.trim(), url: urlDraft.trim() })} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save link</TaskTableChipButton>
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2528,18 +2510,18 @@ function NotesQuickPanel({
 }) {
   const [draft, setDraft] = useState(notes);
   return (
-    <QuickPanelShell onClose={onClose} title="Notes">
+    <TaskListQuickPanelShell onClose={onClose} title="Notes">
       <textarea
-        className={`${QUICK_PANEL_TEXT_INPUT_CLASS} min-h-[7rem] w-full resize-none py-3`}
+        className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} min-h-[7rem] w-full resize-none py-3`}
         onChange={(event) => setDraft(event.target.value)}
         placeholder="Add notes"
         value={draft}
       />
       <div className="mt-3 flex justify-end gap-2">
         <TaskTableChipButton onClick={() => onSave("")} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Clear notes</TaskTableChipButton>
-        <TaskTableChipButton onClick={() => onSave(draft)} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save notes</TaskTableChipButton>
+        <TaskTableChipButton onClick={() => onSave(draft)} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save notes</TaskTableChipButton>
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2569,11 +2551,16 @@ function TasksSimpleList({
   const [parentStepDraftTaskId, setParentStepDraftTaskId] = useState<string | null>(null);
   const [parentStepTitleDrafts, setParentStepTitleDrafts] = useState<Record<string, string>>({});
   const [parentStepCreationErrors, setParentStepCreationErrors] = useState<Record<string, string | null>>({});
+  const [parentPursuitDraftTaskId, setParentPursuitDraftTaskId] = useState<string | null>(null);
+  const [parentPursuitTitleDrafts, setParentPursuitTitleDrafts] = useState<Record<string, string>>({});
+  const [parentPursuitCreationErrors, setParentPursuitCreationErrors] = useState<Record<string, string | null>>({});
+  const [parentPursuitDraftPending, setParentPursuitDraftPending] = useState(false);
   const [taskTitleDrafts, setTaskTitleDrafts] = useState<Record<string, string>>({});
   const listShellRef = useRef<HTMLDivElement | null>(null);
   const loadMoreListRowsRef = useRef<HTMLDivElement | null>(null);
   const pendingMeasuredStatusScrollAnchorRef = useRef<MeasuredStatusScrollAnchor | null>(null);
   const parentStepDraftInputRef = useRef<HTMLInputElement | null>(null);
+  const parentPursuitDraftInputRef = useRef<HTMLInputElement | null>(null);
   const lastBuildTaskTableRowCountRef = useRef(snapshotBuildTaskTableRowDebugCount());
   const getShowAllSearchStepsKey = (taskId: string) => `${tableProps.hierarchyScopeKey ?? ""}:${taskId}`;
   const presentationTasks = useMemo(
@@ -2808,6 +2795,12 @@ function TasksSimpleList({
   }, [parentStepDraftTaskId]);
 
   useEffect(() => {
+    if (parentPursuitDraftTaskId) {
+      parentPursuitDraftInputRef.current?.focus();
+    }
+  }, [parentPursuitDraftTaskId]);
+
+  useEffect(() => {
     if (!tableProps.statusChangeScrollAnchorTaskIds?.length || tableProps.statusChangeScrollToken == null) {
       return;
     }
@@ -2964,6 +2957,46 @@ function TasksSimpleList({
     setParentStepDraftTaskId((current) => (current === parentTaskId ? null : current));
   }
 
+  function beginParentPursuitDraft(parentTaskId: string) {
+    closeQuickPanel();
+    setRowContextMenu(null);
+    setCollapsedStepSectionsByTaskId((current) => ({ ...current, [parentTaskId]: false }));
+    setParentPursuitCreationErrors((current) => ({ ...current, [parentTaskId]: null }));
+    setParentPursuitTitleDrafts((current) => ({ ...current, [parentTaskId]: current[parentTaskId] ?? "" }));
+    setParentPursuitDraftTaskId(parentTaskId);
+  }
+
+  function cancelParentPursuitDraft(parentTaskId: string) {
+    setParentPursuitDraftTaskId((current) => (current === parentTaskId ? null : current));
+    setParentPursuitCreationErrors((current) => ({ ...current, [parentTaskId]: null }));
+    setParentPursuitTitleDrafts((current) => ({ ...current, [parentTaskId]: "" }));
+  }
+
+  async function commitParentPursuitDraft(parentTaskId: string) {
+    const nextTitle = parentPursuitTitleDrafts[parentTaskId]?.trim() ?? "";
+    if (!nextTitle) {
+      setParentPursuitCreationErrors((current) => ({ ...current, [parentTaskId]: "Pursuit title can't be empty." }));
+      parentPursuitDraftInputRef.current?.focus();
+      return;
+    }
+    if (!tableProps.onCreatePursuitInline) {
+      setParentPursuitCreationErrors((current) => ({ ...current, [parentTaskId]: "Pursuit creation is unavailable for this task." }));
+      return;
+    }
+    setParentPursuitDraftPending(true);
+    try {
+      const created = await tableProps.onCreatePursuitInline(buildPursuitInlineCreateInput(nextTitle, { taskId: parentTaskId }));
+      if (!created) {
+        setParentPursuitCreationErrors((current) => ({ ...current, [parentTaskId]: "Pursuit could not be created." }));
+        parentPursuitDraftInputRef.current?.focus();
+        return;
+      }
+      cancelParentPursuitDraft(parentTaskId);
+    } finally {
+      setParentPursuitDraftPending(false);
+    }
+  }
+
   function toggleAllRenderedStepSections() {
     setCollapsedStepSectionsByTaskId((current) => {
       const eligibleGroups = tasks.flatMap((task) => {
@@ -3032,6 +3065,7 @@ function TasksSimpleList({
               onClearSelection={tableProps.onClearSelection}
               onCreateChildTask={tableProps.onCreateChildTask}
               onCreateChildPursuit={tableProps.onCreateChildPursuit}
+              onCreatePursuitInline={tableProps.onCreatePursuitInline}
               pursuits={tableProps.pursuits}
               pursuitAttentionById={tableProps.pursuitAttentionById}
               pursuitSearch={tableProps.pursuitSearch}
@@ -3182,6 +3216,7 @@ function TasksSimpleList({
           : null);
         const pursuitRows = pursuitWorkspaceIndex.byTaskId.get(task.id) ?? [];
         const hasPursuitRows = pursuitRows.length > 0;
+        const hasPursuitDraft = parentPursuitDraftTaskId === task.id;
         const activeHierarchyParentMatch = tableProps.statusFilterActive
           ? statusMatchedStepParentTaskIdSet.has(task.id)
           : searchMatchedStepParentTaskIdSet.has(task.id);
@@ -3192,11 +3227,13 @@ function TasksSimpleList({
           || pursuitSearchContextTaskIdSet.has(task.id)
           || highlightedTaskIdSet.has(task.id)
           || parentStepDraftTaskId === task.id
+          || hasPursuitDraft
           || collapsedStepSectionsByTaskId[task.id] === false;
         const hasVisibleRenderedDescendants = Boolean(
           isStepSectionExpanded && (
             (effectiveStepPreviewGroup && (effectiveStepPreviewGroup.items.length > 0 || parentStepDraftTaskId === task.id))
             || hasPursuitRows
+            || hasPursuitDraft
           ),
         );
         return (
@@ -3339,10 +3376,16 @@ function TasksSimpleList({
                       </AdhdIconButton>
                     ) : null}
                     {tableProps.onCreateChildTask ? (
-                      tableProps.onCreateChildPursuit ? (
+                      tableProps.onCreateChildPursuit || tableProps.onCreatePursuitInline ? (
                         <ChildTypeChooser
                           childLabel="Step"
-                          onChoosePursuit={() => tableProps.onCreateChildPursuit?.(task.id)}
+                          onChoosePursuit={() => {
+                            if (tableProps.onCreatePursuitInline) {
+                              beginParentPursuitDraft(task.id);
+                              return;
+                            }
+                            tableProps.onCreateChildPursuit?.(task.id);
+                          }}
                           onChooseTask={() => {
                             closeQuickPanel();
                             setRowContextMenu(null);
@@ -3442,7 +3485,7 @@ function TasksSimpleList({
                     {dueMeta}
                   </MetadataChipButton>
                   {isTaskFocusedToday(task.id, rowContext.focusedTaskIdSet) ? (
-                    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold ${QUICK_PANEL_PRIMARY_CHIP_CLASS}`}>
+                    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold ${TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}`}>
                       Focus
                     </span>
                   ) : null}
@@ -3707,7 +3750,24 @@ function TasksSimpleList({
                 visibleMetadataTaskIds={visibleMetadataTaskIds}
               />
             ) : null}
-            {!effectiveStepPreviewGroup && hasPursuitRows ? (
+            {hasPursuitDraft ? (
+              <TaskInlineChildDraft
+                childLabel="Pursuit"
+                error={parentPursuitCreationErrors[task.id] ?? null}
+                inputRef={parentPursuitDraftInputRef}
+                onCancel={() => cancelParentPursuitDraft(task.id)}
+                onChange={(value) => {
+                  setParentPursuitTitleDrafts((current) => ({ ...current, [task.id]: value }));
+                  setParentPursuitCreationErrors((current) => ({ ...current, [task.id]: null }));
+                }}
+                onCommit={() => {
+                  void commitParentPursuitDraft(task.id);
+                }}
+                pending={parentPursuitDraftPending}
+                value={parentPursuitTitleDrafts[task.id] ?? ""}
+              />
+            ) : null}
+            {!effectiveStepPreviewGroup && (hasPursuitRows || hasPursuitDraft) ? (
               <section className="mt-3 border-t border-[#f0ebfb] pt-3 dark:border-white/10">
                 <div className="flex items-center gap-1.5">
                   <span className={TASK_TABLE_TITLE_CELL_CLASS}>Pursuits</span>
@@ -3732,6 +3792,7 @@ function TasksSimpleList({
                 depth={depth + 1}
                 key={`pursuit:${pursuit.id}`}
                 onCreateChildPursuit={tableProps.onCreatePursuitChild}
+                onCreatePursuitInline={tableProps.onCreatePursuitInline}
                 onMarkDoneToday={tableProps.onMarkDonePursuit ?? (() => undefined)}
                 onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
                 onOpenCalendar={tableProps.onOpenPursuitCalendar}
@@ -3751,6 +3812,7 @@ function TasksSimpleList({
               depth={depth}
               key={`pursuit:${pursuit.id}`}
               onCreateChildPursuit={tableProps.onCreatePursuitChild}
+              onCreatePursuitInline={tableProps.onCreatePursuitInline}
               onMarkDoneToday={tableProps.onMarkDonePursuit ?? (() => undefined)}
               onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
               onOpenCalendar={tableProps.onOpenPursuitCalendar}

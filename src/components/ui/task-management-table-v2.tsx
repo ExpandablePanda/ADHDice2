@@ -57,7 +57,8 @@ import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/tas
 import { TaskHierarchyChevronButton } from "@/components/task-app/task-hierarchy-chevron-button";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import { buildPursuitWorkspaceIndex, filterPursuitsForTaskWorkspace, shouldRenderTaskPursuitChildren, type PursuitAttention } from "@/lib/pursuit-domain";
-import { PursuitListWorkspaceRow, PursuitTableWorkspaceRow } from "@/components/task-app/pursuit-workspace-row";
+import { PursuitListWorkspaceRow, PursuitTableWorkspaceRow, type PursuitInlineCreateInput } from "@/components/task-app/pursuit-workspace-row";
+import { buildPursuitInlineCreateInput } from "@/lib/pursuit-ui";
 import {
   formatRepeatFrequencyLabel,
   formatRepeatSummary,
@@ -85,8 +86,12 @@ import {
   formatTaskTableEntryTimestamp,
   ScrollUpButton,
   TaskCurrentStreakChip,
+  TaskInlineChildDraft,
+  TaskInlineChildDraftInput,
   TaskHierarchySearchChip,
   TaskTableChipButton,
+  TaskTableInlineActionRow,
+  type TaskTableViewportMetrics,
 } from "@/components/ui/task-table-primitives";
 import { mergeMeasuredColumnWidths, normalizeMeasuredColumnWidth } from "@/lib/task-table-measurements";
 import {
@@ -1171,6 +1176,7 @@ type TaskManagementTableV2Props = {
   onClearSelection?: () => void;
   onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
   onCreateChildPursuit?: (parentTaskId: string) => void;
+  onCreatePursuitInline?: (input: PursuitInlineCreateInput) => Promise<Pursuit | null>;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenBatchDelete?: () => void;
   onOpenBatchEdit?: () => void;
@@ -2622,6 +2628,7 @@ export function TaskManagementTableV2({
   onClearSelection,
   onCreateChildTask,
   onCreateChildPursuit,
+  onCreatePursuitInline,
   onCreateTaskList,
   onOpenBatchDelete,
   onOpenBatchEdit,
@@ -2761,13 +2768,18 @@ export function TaskManagementTableV2({
   const [tableStepCreationErrorByParentId, setTableStepCreationErrorByParentId] = useState<Record<string, string | null>>({});
   const [tableStepDraftChildLabels, setTableStepDraftChildLabels] = useState<Record<string, "Step" | "Substep">>({});
   const tableStepDraftInputRef = useRef<HTMLInputElement | null>(null);
+  const [tablePursuitDraftParentId, setTablePursuitDraftParentId] = useState<string | null>(null);
+  const [tablePursuitTitleDraft, setTablePursuitTitleDraft] = useState("");
+  const [tablePursuitCreationError, setTablePursuitCreationError] = useState<string | null>(null);
+  const [tablePursuitDraftPending, setTablePursuitDraftPending] = useState(false);
+  const tablePursuitDraftInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingSubtaskAutoExpandByTaskId, setPendingSubtaskAutoExpandByTaskId] = useState<Record<string, boolean>>({});
   const [hiddenSubtaskIds, setHiddenSubtaskIds] = useState<Record<string, boolean>>({});
   const [openColumnMenuId, setOpenColumnMenuId] = useState<SortColumnId | null>(null);
   const [columnMenuPosition, setColumnMenuPosition] = useState<ColumnMenuPosition | null>(null);
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [pendingCustomCadenceTaskId, setPendingCustomCadenceTaskId] = useState<string | null>(null);
-  const [tableViewportMetrics, setTableViewportMetrics] = useState({ clientWidth: 0, scrollLeft: 0 });
+  const [tableViewportMetrics, setTableViewportMetrics] = useState<TaskTableViewportMetrics>({ clientWidth: 0, scrollLeft: 0 });
   const [sortState, setSortState] = useState<{ columnId: SortColumnId; optionId: SortOptionId } | null>(() => getInitialSortState(persistedLayoutPreferences));
   const [localTextFilters, setTextFilters] = useState<Partial<Record<TextFilterColumnId, string>>>({});
   const [localStructuredFilters, setStructuredFilters] = useState<StructuredFilters>(DEFAULT_STRUCTURED_FILTERS);
@@ -2793,6 +2805,12 @@ export function TaskManagementTableV2({
       tableStepDraftInputRef.current?.focus();
     }
   }, [tableStepDraftParentId]);
+
+  useEffect(() => {
+    if (tablePursuitDraftParentId) {
+      tablePursuitDraftInputRef.current?.focus();
+    }
+  }, [tablePursuitDraftParentId]);
 
   useEffect(() => {
     return () => clearStatusRailLongPress();
@@ -3334,16 +3352,32 @@ export function TaskManagementTableV2({
       gridTemplateColumns={gridTemplateColumns}
       key={`pursuit:${pursuit.id}`}
       onCreateChildPursuit={onCreatePursuitChild}
+      onCreatePursuitInline={onCreatePursuitInline}
       onMarkDoneToday={onMarkDonePursuit ?? (() => undefined)}
       onOpen={onOpenPursuit ?? (() => undefined)}
       onOpenCalendar={onOpenPursuitCalendar}
       onRemoveCompletionOnLogicalDay={onRemovePursuitCompletion}
       onUpdatePursuit={onUpdatePursuit}
       pursuit={pursuit}
+      tableViewportMetrics={tableViewportMetrics}
       timezone={pursuitTimezone}
       todayKey={pursuitTodayKey}
     />
   ));
+  const renderTablePursuitDraft = (parentTaskId: string) => tablePursuitDraftParentId === parentTaskId ? (
+    <TaskInlineChildDraft
+      ariaLabel="New Pursuit title"
+      childLabel="Pursuit"
+      dataAttribute={parentTaskId}
+      error={tablePursuitCreationError}
+      inputRef={tablePursuitDraftInputRef}
+      onCancel={() => cancelTablePursuitDraft(parentTaskId)}
+      onChange={(value) => { setTablePursuitTitleDraft(value); setTablePursuitCreationError(null); }}
+      onCommit={() => commitTablePursuitDraft(parentTaskId)}
+      pending={tablePursuitDraftPending}
+      value={tablePursuitTitleDraft}
+    />
+  ) : null;
   useLayoutEffect(() => {
     startTableScrollTopHoldFrames(true);
   }, [displayedTasks, renderedTasks.length, startTableScrollTopHoldFrames]);
@@ -5502,6 +5536,54 @@ export function TaskManagementTableV2({
     setTableStepDraftParentId(parentTaskId);
   }
 
+  function beginTablePursuitDraft(parentTaskId: string) {
+    if (!onCreatePursuitInline) {
+      onCreateChildPursuit?.(parentTaskId);
+      return;
+    }
+
+    setExpandedStepsByTaskId((current) => ({
+      ...current,
+      [parentTaskId]: true,
+    }));
+    setTablePursuitCreationError(null);
+    setTablePursuitTitleDraft("");
+    setTablePursuitDraftParentId(parentTaskId);
+  }
+
+  function cancelTablePursuitDraft(parentTaskId: string) {
+    setTablePursuitDraftParentId((current) => current === parentTaskId ? null : current);
+    setTablePursuitTitleDraft("");
+    setTablePursuitCreationError(null);
+  }
+
+  async function commitTablePursuitDraft(parentTaskId: string) {
+    const title = tablePursuitTitleDraft.trim();
+    if (!title) {
+      setTablePursuitCreationError("Enter a Pursuit title.");
+      tablePursuitDraftInputRef.current?.focus();
+      return;
+    }
+    if (!onCreatePursuitInline) {
+      onCreateChildPursuit?.(parentTaskId);
+      return;
+    }
+
+    setTablePursuitDraftPending(true);
+    setTablePursuitCreationError(null);
+    try {
+      const created = await onCreatePursuitInline(buildPursuitInlineCreateInput(title, { taskId: parentTaskId }));
+      if (!created) {
+        setTablePursuitCreationError("Pursuit was not created.");
+        tablePursuitDraftInputRef.current?.focus();
+        return;
+      }
+      cancelTablePursuitDraft(parentTaskId);
+    } finally {
+      setTablePursuitDraftPending(false);
+    }
+  }
+
   function cancelTableStepDraft(parentTaskId: string) {
     setTableStepDraftParentId((current) => (current === parentTaskId ? null : current));
     setTableStepCreationErrorByParentId((current) => ({
@@ -6104,70 +6186,40 @@ export function TaskManagementTableV2({
       return null;
     }
 
-    const actionRowMaxWidth = tableViewportMetrics.clientWidth > 0
-      ? Math.max(280, tableViewportMetrics.clientWidth - 24)
-      : undefined;
-
     return (
-      <motion.div
-        animate={{ height: "auto", opacity: 1, y: 0 }}
-        className={`${TASK_TABLE_GRID_ORIGIN_CLASS} mt-2 w-max min-w-full overflow-hidden rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-2.5 shadow-[0_18px_45px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#1b1530]`}
-        data-task-table-inline-editor={task.id}
-        exit={{ height: 0, opacity: 0, y: -6 }}
-        initial={{ height: 0, opacity: 0, y: -6 }}
-        onClick={(event) => event.stopPropagation()}
-        ref={(node) => {
+      <TaskTableInlineActionRow
+        ariaLabel={`${overlayMode} actions`}
+        contentOverflow={overlayMode === "tags" ? "visible" : "auto"}
+        heading={overlayMode === "status"
+          ? "Status actions"
+          : overlayMode === "due"
+            ? "Due actions"
+            : overlayMode === "estimated"
+              ? "Estimated time"
+              : overlayMode === "actual"
+                ? "Actual time"
+                : overlayMode === "priority"
+                  ? "Priority actions"
+                  : overlayMode === "energy"
+                    ? "Energy actions"
+                    : overlayMode === "repeat"
+                      ? "Repeat actions"
+                      : overlayMode === "tags"
+                        ? "Tag actions"
+                        : overlayMode === "link"
+                          ? "Link actions"
+                          : overlayMode === "notes"
+                            ? "Notes actions"
+                            : "List actions"}
+        onClose={closeInspector}
+        containerRef={(node) => {
           activeInlineActionRowRef.current = node;
         }}
-        transition={{ duration: 0.18 }}
+        rowId={task.id}
+        viewportMetrics={tableViewportMetrics}
       >
-        <div
-          className="min-w-0"
-          style={{
-            maxWidth: actionRowMaxWidth,
-            transform: tableViewportMetrics.scrollLeft > 0 ? `translateX(${tableViewportMetrics.scrollLeft}px)` : undefined,
-          }}
-        >
-          <div className="mb-1 flex items-center gap-2">
-            <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
-              {overlayMode === "status"
-                ? "Status actions"
-                : overlayMode === "due"
-                  ? "Due actions"
-                  : overlayMode === "estimated"
-                    ? "Estimated time"
-                    : overlayMode === "actual"
-                      ? "Actual time"
-                      : overlayMode === "priority"
-                        ? "Priority actions"
-                        : overlayMode === "energy"
-                          ? "Energy actions"
-                          : overlayMode === "repeat"
-                            ? "Repeat actions"
-                            : overlayMode === "tags"
-                              ? "Tag actions"
-                              : overlayMode === "link"
-                                ? "Link actions"
-                                : overlayMode === "notes"
-                                  ? "Notes actions"
-                                  : "List actions"}
-            </p>
-            <button
-              aria-label="Close actions"
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#e4deef] bg-[#f4f5f8] text-[#8a82a7] transition hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/8 dark:text-white/55 dark:hover:text-[#cabfff]"
-              onClick={() => closeInspector()}
-              type="button"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          <div className={overlayMode === "tags" ? "overflow-visible" : "overflow-x-auto"}>
-            <div className={overlayMode === "tags" ? "flex w-full items-start gap-1.5" : "flex min-w-max items-start gap-1.5"}>
-              {inlineAccordionContent}
-            </div>
-          </div>
-        </div>
-      </motion.div>
+        {inlineAccordionContent}
+      </TaskTableInlineActionRow>
     );
   }
 
@@ -7132,7 +7184,7 @@ export function TaskManagementTableV2({
               {onCreateChildTask ? (
                 <ChildTypeChooser
                   childLabel="Step"
-                  onChoosePursuit={onCreateChildPursuit ? () => onCreateChildPursuit(task.id) : undefined}
+                  onChoosePursuit={onCreateChildPursuit || onCreatePursuitInline ? () => beginTablePursuitDraft(task.id) : undefined}
                   onChooseTask={() => beginTableStepDraft(task.id)}
                 />
               ) : null}
@@ -7698,7 +7750,7 @@ export function TaskManagementTableV2({
                         <ChildTypeChooser
                           aria-label={`Add substep to ${item.title || "Untitled step"}`}
                           childLabel="Substep"
-                          onChoosePursuit={onCreateChildPursuit ? () => onCreateChildPursuit(item.id) : undefined}
+                          onChoosePursuit={onCreateChildPursuit || onCreatePursuitInline ? () => beginTablePursuitDraft(item.id) : undefined}
                           onChooseTask={() => beginTableStepDraft(item.id, "Substep")}
                         />
                       </div>
@@ -8083,7 +8135,7 @@ export function TaskManagementTableV2({
             {onCreateChildTask ? (
               <ChildTypeChooser
                 childLabel="Step"
-                onChoosePursuit={onCreateChildPursuit ? () => onCreateChildPursuit(item.id) : undefined}
+                onChoosePursuit={onCreateChildPursuit || onCreatePursuitInline ? () => beginTablePursuitDraft(item.id) : undefined}
                 onChooseTask={() => beginTableStepDraft(item.id)}
               />
             ) : null}
@@ -8378,9 +8430,10 @@ export function TaskManagementTableV2({
         <div className="flex w-full min-w-0 items-center gap-1.5 text-left" style={{ paddingLeft: "0.2rem" }}>
           <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
           <div className="min-w-0 flex-1">
-            <input
-              aria-label={`New ${childLabel.toLowerCase()} title`}
-              className="w-full min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1.5 py-1 text-[13px] font-medium text-[#27304c] outline-none transition placeholder:text-[#aaa2c8] focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
+            <TaskInlineChildDraftInput
+              ariaLabel={`New ${childLabel.toLowerCase()} title`}
+              childLabel={childLabel}
+              inputRef={tableStepDraftParentId === parentTaskId ? tableStepDraftInputRef : undefined}
               onBlur={() => {
                 if (draft.trim()) {
                   void commitTableStepDraft(parentTaskId);
@@ -8388,10 +8441,11 @@ export function TaskManagementTableV2({
                 }
                 cancelTableStepDraft(parentTaskId);
               }}
-              onChange={(event) => {
+              onCancel={() => cancelTableStepDraft(parentTaskId)}
+              onChange={(value) => {
                 setTableStepTitleDrafts((current) => ({
                   ...current,
-                  [parentTaskId]: event.target.value,
+                  [parentTaskId]: value,
                 }));
                 if (creationError) {
                   setTableStepCreationErrorByParentId((current) => ({
@@ -8400,21 +8454,8 @@ export function TaskManagementTableV2({
                   }));
                 }
               }}
-              onClick={(event) => event.stopPropagation()}
-              onKeyDown={(event) => {
-                event.stopPropagation();
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void commitTableStepDraft(parentTaskId);
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  cancelTableStepDraft(parentTaskId);
-                }
-              }}
+              onCommit={() => commitTableStepDraft(parentTaskId)}
               placeholder={`${childLabel} title...`}
-              ref={tableStepDraftParentId === parentTaskId ? tableStepDraftInputRef : undefined}
-              type="text"
               value={draft}
             />
             {creationError ? (
@@ -8623,6 +8664,7 @@ export function TaskManagementTableV2({
                   ))}
                 </form>
               ) : null}
+              {renderTablePursuitDraft(item.id)}
             </Fragment>
           );
         })}
@@ -9029,7 +9071,8 @@ export function TaskManagementTableV2({
                 || (hasStepPreview && stepsExpanded && (visibleStepPreviewItems.length > 0 || stepPreviewGroup?.summary.hasInvalidDescendants)),
               );
               const hasRenderedSourceStepRows = hasSourceStepRows && sourceStepsExpanded;
-              const hasRenderedPursuitRows = shouldRenderTaskPursuitChildren(sourceStepsExpanded, pursuitRows);
+              const hasRenderedPursuitRows = shouldRenderTaskPursuitChildren(sourceStepsExpanded, pursuitRows)
+                || tablePursuitDraftParentId === task.id;
               const hasRenderedDescendants = hasRenderedStepPreviewRows || hasRenderedSourceStepRows || hasRenderedPursuitRows;
               const showInlineAccordion = allowInlineInspector
                 && selectedTaskId === task.id
@@ -9145,7 +9188,12 @@ export function TaskManagementTableV2({
                       {renderSourceStepMiniRows(task, visibleSubtasks)}
                     </motion.div>
                   ) : null}
-                  {hasRenderedPursuitRows ? renderPursuitRows(pursuitRows) : null}
+                  {hasRenderedPursuitRows ? (
+                    <>
+                      {shouldRenderTaskPursuitChildren(sourceStepsExpanded, pursuitRows) ? renderPursuitRows(pursuitRows) : null}
+                      {renderTablePursuitDraft(task.id)}
+                    </>
+                  ) : null}
                 </div>
               );
             })}
@@ -9835,6 +9883,7 @@ export function TaskManagementTableV2({
                         depth={depth}
                         key={`editor-pursuit:${pursuit.id}`}
                         onCreateChildPursuit={onCreatePursuitChild}
+                        onCreatePursuitInline={onCreatePursuitInline}
                         onMarkDoneToday={onMarkDonePursuit ?? (() => undefined)}
                         onOpen={onOpenPursuit ?? (() => undefined)}
                         onOpenCalendar={onOpenPursuitCalendar}

@@ -32,6 +32,8 @@ primitive for new work.
 | Panel visuals | `src/components/ui/task-management-table-v2.tsx` | Edit Task overlay and inlay visual source | Do not copy editing logic or internals | Approved visual source; migration deferred |
 | Card visuals | `src/components/task-app/tasks-list-adapter.tsx` | List View task-card visual source | Do not copy row, search, or highlight logic | Approved visual source; migration deferred |
 | Row-toolbar icons | `src/components/ui/task-management-table-v2.tsx` | Compact Table row actions via `AdhdIconButton` | Do not use circular card controls as the default | Approved source; row-toolbar adoption active |
+| Table inline action rows | `src/components/ui/task-table-primitives.tsx` | Shared Task/Pursuit Table action-row geometry, viewport compensation, and compact shell | Domain content and mutations remain local | Active shared presentation source |
+| List quick-panel shell | `src/components/ui/task-table-primitives.tsx` | Shared Task/Pursuit List quick-edit shell | List behavior and domain mutations remain local | Active shared presentation source |
 
 ## Off-Model or Deferred
 

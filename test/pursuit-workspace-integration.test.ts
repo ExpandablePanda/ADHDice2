@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { buildPursuitInlineCreateInput, getPursuitCompletionTone } from "@/lib/pursuit-ui";
+import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
+import { TaskCurrentStreakChip, TaskTableInlineActionRow } from "@/components/ui/task-table-primitives";
 
 const migration = readFileSync(new URL("../supabase/add_pursuit_task_parent_7_13_1.sql", import.meta.url), "utf8");
 const tagsMigration = readFileSync(new URL("../supabase/add_pursuit_tags_7_13_5.sql", import.meta.url), "utf8");
@@ -18,6 +23,7 @@ const publicVersionSource = readFileSync(new URL("../public/app-version.json", i
 const packageSource = readFileSync(new URL("../package.json", import.meta.url), "utf8");
 const packageLockSource = readFileSync(new URL("../package-lock.json", import.meta.url), "utf8");
 const currentStateSource = readFileSync(new URL("../docs/CURRENT_STATE.md", import.meta.url), "utf8");
+const iconButtonSource = readFileSync(new URL("../src/components/ui-system/adhd-icon-button.tsx", import.meta.url), "utf8");
 const secondaryViewsSource = readFileSync(new URL("../src/components/task-app/task-secondary-views.tsx", import.meta.url), "utf8");
 const gridWidgetsSource = readFileSync(new URL("../src/components/task-app/task-grid-widgets.tsx", import.meta.url), "utf8");
 const viewAdaptersSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
@@ -98,9 +104,11 @@ test("Pursuit completion controls and quick actions stay row-local", () => {
   assert.match(rowSource, /PursuitCompletionControl/);
   assert.match(rowSource, /Compass/);
   assert.doesNotMatch(rowSource, /CheckCircle2/);
-  assert.match(rowSource, /GREEN_ICON_CLASS/);
   assert.match(rowSource, /GREEN_COMPLETION_CHIP_CLASS/);
-  assert.match(rowSource, /YELLOW_ICON_CLASS/);
+  assert.doesNotMatch(rowSource, /GREEN_ICON_CLASS|YELLOW_ICON_CLASS|MUTED_ICON_CLASS/);
+  assert.match(rowSource, /getPursuitCompletionTone/);
+  assert.match(rowSource, /tone=\{tone\}/);
+  assert.match(rowSource, /disabled=\{disabled\}/);
   assert.match(rowSource, /formatPursuitTargetDate/);
   assert.match(rowSource, /PursuitRowActions/);
   assert.match(rowSource, /onCreateChildPursuit/);
@@ -173,12 +181,40 @@ test("Pursuit completion writes a nullable check-in event without Task or Focus 
   assert.match(pursuitHookSource, /notes: nextNotes/);
 });
 
-test("7.13.7 runtime version authorities agree and HUD reads the shared authority", () => {
+test("7.13.8 runtime version authorities agree and HUD reads the shared authority", () => {
   for (const source of [appVersionSource, publicVersionSource, packageSource, packageLockSource, currentStateSource]) {
-    assert.match(source, /7\.13\.7/);
+    assert.match(source, /7\.13\.8/);
     assert.doesNotMatch(source, /7\.13\.(?:5|6)/);
   }
   assert.match(appSource, /const HUD_VERSION = APP_VERSION/);
+});
+
+test("AdhdIconButton keeps existing tones and adds semantic success and warning states", () => {
+  for (const tone of ["default", "purple", "success", "warning", "danger", "ghost"]) {
+    assert.match(iconButtonSource, new RegExp(`\\b${tone}:`));
+  }
+  assert.match(iconButtonSource, /ROW_TOOLBAR_TONE_CLASS/);
+  assert.match(iconButtonSource, /ROW_TOOLBAR_SELECTED_CLASS/);
+  assert.match(iconButtonSource, /success:\s*"border/);
+  assert.match(iconButtonSource, /warning:\s*"border/);
+  assert.match(iconButtonSource, /dark:border/);
+});
+
+test("canonical icon tones, streak projection, and Table action rows render their shared geometry", () => {
+  const successButton = renderToStaticMarkup(createElement(AdhdIconButton, { "aria-label": "Complete", tone: "success", variant: "rowToolbar" }, createElement("span", null, "icon")));
+  const warningButton = renderToStaticMarkup(createElement(AdhdIconButton, { "aria-label": "Needs attention", tone: "warning", variant: "rowToolbar" }, createElement("span", null, "icon")));
+  const dangerButton = renderToStaticMarkup(createElement(AdhdIconButton, { "aria-label": "Delete", tone: "danger" }, createElement("span", null, "icon")));
+  const streak = renderToStaticMarkup(createElement(TaskCurrentStreakChip, { currentStreak: 3 }));
+  const noStreak = renderToStaticMarkup(createElement(TaskCurrentStreakChip, { currentStreak: 0 }));
+  const actionRow = renderToStaticMarkup(createElement(TaskTableInlineActionRow, { ariaLabel: "Pursuit actions", heading: "Actions", rowId: "pursuit-1" }, createElement("span", null, "content")));
+
+  assert.match(successButton, /text-\[#3f8b5a\]/);
+  assert.match(warningButton, /text-\[#b1811c\]/);
+  assert.match(dangerButton, /text-\[#d65775\]/);
+  assert.match(streak, /3/);
+  assert.equal(noStreak, "");
+  assert.match(actionRow, /data-task-table-inline-action-row="true"/);
+  assert.match(actionRow, /data-task-table-inline-editor="pursuit-1"/);
 });
 
 test("Pursuit completion controls use a row-safe shared note panel and preserve clear/attention states", () => {
@@ -186,8 +222,9 @@ test("Pursuit completion controls use a row-safe shared note panel and preserve 
   assert.match(rowSource, /data-pursuit-completion-note-panel/);
   assert.match(rowSource, /onRequestCompletionNote/);
   assert.match(rowSource, /completionNoteOpen \? <PursuitCompletionNotePanel/);
-  assert.match(rowSource, /GREEN_ICON_CLASS/);
-  assert.match(rowSource, /YELLOW_ICON_CLASS/);
+  assert.match(rowSource, /TaskTableInlineActionRow/);
+  assert.match(rowSource, /Optional note for today/);
+  assert.doesNotMatch(rowSource, /GREEN_ICON_CLASS|YELLOW_ICON_CLASS/);
   assert.match(rowSource, /onRemoveCompletionOnLogicalDay/);
   assert.match(editorSource, /PursuitCompletionNotePanel/);
   assert.doesNotMatch(editorSource, /isCompletionNoteOpen[^\n]*absolute right-0 top/);
@@ -215,6 +252,41 @@ test("Pursuit Table/List metadata cells share one inline quick-edit authority", 
   assert.match(rowSource, /onOpenCalendar/);
   assert.match(rowSource, /onCreateChildPursuit/);
   assert.match(rowSource, /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/);
+  assert.match(rowSource, /TaskTableInlineActionRow/);
+  assert.match(rowSource, /TaskListQuickPanelShell/);
+  assert.doesNotMatch(rowSource, /QUICK_PANEL_SHELL_CLASS|QUICK_PANEL_PRIMARY_CLASS/);
+});
+
+test("Pursuit semantic tones and inline parent payloads are domain-safe", () => {
+  const completedAttention = { completionSummary: { completedToday: true }, needsAttention: false } as never;
+  const attention = { completionSummary: { completedToday: false }, needsAttention: true } as never;
+  const normal = { completionSummary: { completedToday: false }, needsAttention: false } as never;
+  assert.equal(getPursuitCompletionTone(completedAttention, { status: "active" }), "success");
+  assert.equal(getPursuitCompletionTone(attention, { status: "active" }), "warning");
+  assert.equal(getPursuitCompletionTone(normal, { status: "active" }), "default");
+  assert.equal(getPursuitCompletionTone(normal, { status: "paused" }), "ghost");
+  assert.deepEqual(buildPursuitInlineCreateInput("  Child Pursuit  ", { taskId: "task-1" }), {
+    notes: null,
+    parent_pursuit_id: null,
+    parent_task_id: "task-1",
+    revisit_interval_days: null,
+    tags: [],
+    title: "Child Pursuit",
+  });
+  assert.deepEqual(buildPursuitInlineCreateInput("Child", { pursuitId: "pursuit-1" }).parent_pursuit_id, "pursuit-1");
+});
+
+test("Task and Pursuit inline rows use shared shells and drafts", () => {
+  assert.match(streakPrimitiveSource, /export function TaskTableInlineActionRow/);
+  assert.match(streakPrimitiveSource, /export function TaskInlineChildDraft/);
+  assert.match(tableSource, /TaskTableInlineActionRow/);
+  assert.match(tableSource, /TaskInlineChildDraft/);
+  assert.match(tableSource, /onCreatePursuitInline/);
+  assert.match(tableSource, /buildPursuitInlineCreateInput\(title, \{ taskId: parentTaskId \}\)/);
+  assert.match(rowSource, /buildPursuitInlineCreateInput\(title, \{ pursuitId: pursuit\.id \}\)/);
+  assert.match(listSource, /TaskInlineChildDraft/);
+  assert.match(listSource, /buildPursuitInlineCreateInput\(nextTitle, \{ taskId: parentTaskId \}\)/);
+  assert.match(appSource, /createInlinePursuit/);
 });
 
 test("Pursuit editor metadata uses the approved compact chip primitive", () => {
@@ -224,6 +296,9 @@ test("Pursuit editor metadata uses the approved compact chip primitive", () => {
   assert.match(editorSource, /<AdhdChip key=\{tag\}/);
   assert.match(editorSource, /<AdhdChip tone=\{getStatusTone\(child\.status\)\}/);
   assert.doesNotMatch(editorSource, /rounded-full[^\n]*px-3 py-1\.5[^\n]*AdhdChip/);
+  assert.match(editorSource, /<AdhdChip[^>]*onClick=\{\(\) => setIsTagsPanelOpen/);
+  assert.match(editorSource, /<AdhdChip icon=\{<Plus/);
+  assert.match(editorSource, /setChildEditorParentId\(pursuit\.id\)/);
 });
 
 test("TaskCurrentStreakChip is projected into every individual-task view without local history recomputation", () => {
