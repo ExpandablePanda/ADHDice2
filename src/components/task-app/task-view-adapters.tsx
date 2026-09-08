@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
-import { useEffect, useRef, useState, type ComponentProps, type JSX, type ReactNode } from "react";
+import { useRef, useState, type ComponentProps, type JSX, type ReactNode } from "react";
 import { ModalShell } from "../modal-shell";
 import { BottomDockComponent } from "./bottom-dock";
 import { FilterRowsComponent } from "./task-filter-rows";
@@ -14,6 +14,7 @@ import {
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
+import { AdhdChip } from "@/components/ui-system";
 import { TaskGridViewComponent } from "./task-grid-view";
 import {
   computeTaskSpecificHistoryStats,
@@ -30,12 +31,20 @@ import {
   TaskMatrixViewComponent,
 } from "./task-secondary-views";
 import { UrgentTasksPanelComponent } from "./task-grid-widgets";
+import { CalendarMonthPresentation, type CalendarMonthPresentationDay } from "../ui/calendar-month-presentation";
 import type { TaskDraft } from "./task-editor-model";
 import {
   buildTaskHistoryCalendarDateKeys,
-  getComfortableTaskHistoryScrollOffset,
   getTaskHistoryInitialFocusDateKey,
 } from "@/lib/task-history-calendar-focus";
+import {
+  formatTaskCalendarMonth,
+  getTaskCalendarMonth,
+  getTaskCalendarMonthGrid,
+  shiftTaskCalendarMonth,
+  TASK_CALENDAR_WEEKDAY_LABELS,
+  type TaskCalendarMonth,
+} from "@/lib/task-calendar";
 import type { AppPage } from "@/lib/task-ui-state";
 import type { NavigatorSearchTarget } from "@/lib/navigator-search";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
@@ -634,15 +643,18 @@ export function TaskHistoryModal({
   const initialSelectedDate = initialFocusDate;
   const [selectedDate, setSelectedDate] = useState(initialSelectedDate);
   const [selectedDates, setSelectedDates] = useState<string[]>([initialSelectedDate]);
+  const [displayedMonth, setDisplayedMonth] = useState<TaskCalendarMonth>(() => getTaskCalendarMonth(new Date(`${initialSelectedDate}T12:00:00`)));
   const [mobileSection, setMobileSection] = useState<"calendar" | "history" | "stats">("calendar");
   const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const isSavingRef = useRef(false);
   const [showDelayEditor, setShowDelayEditor] = useState(false);
-  const desktopCalendarViewportRef = useRef<HTMLDivElement>(null);
-  const mobileCalendarViewportRef = useRef<HTMLDivElement>(null);
+  const monthDays = getTaskCalendarMonthGrid(displayedMonth);
+  const firstCalendarMonth = getTaskCalendarMonth(new Date(`${days[0]}T12:00:00`));
+  const lastCalendarMonth = getTaskCalendarMonth(new Date(`${days.at(-1)}T12:00:00`));
+  const monthValue = (month: TaskCalendarMonth) => month.year * 12 + month.month;
+  const knownDateKeys = new Set(days);
   const mobileScrollRef = useRef<HTMLDivElement>(null);
-  const weeks: string[][] = [];
   const calendarRead = stateEngineContext
     ? resolveTaskHistoryCalendarRead({
       ...stateEngineContext,
@@ -721,10 +733,6 @@ export function TaskHistoryModal({
     ? ["clear", ...calendarActionStatuses as CalendarActionStatus[]]
     : calendarActionStatuses as CalendarActionStatus[];
 
-  for (let weekIndex = 0; weekIndex < days.length / 7; weekIndex += 1) {
-    weeks.push(days.slice(weekIndex * 7, weekIndex * 7 + 7));
-  }
-
   function cellTone(dateKey: string) {
     const entry = historyByDate.get(dateKey);
     if (!entry) {
@@ -748,11 +756,24 @@ export function TaskHistoryModal({
     return "border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]";
   }
 
+  function calendarStateLabel(dateKey: string) {
+    const entry = historyByDate.get(dateKey);
+    const state = entry?.status ?? calendarRead?.states[dateKey] ?? "not_due";
+    if (state === "complete" && entry?.event_type === "completed_permanently") return "Marked Complete";
+    return formatTaskStatusLabel(state);
+  }
+
+  function calendarDayClassName(day: CalendarMonthPresentationDay) {
+    const outOfRange = !knownDateKeys.has(day.dateKey);
+    return `group flex min-h-[5.5rem] w-full flex-col items-start rounded-[0.85rem] border p-2 text-left transition ${outOfRange ? "cursor-default border-transparent bg-transparent" : `${cellTone(day.dateKey)} hover:border-[#cfc2fb]`} ${day.isCurrentMonth ? "" : "opacity-55"} ${selectedDateSet.has(day.dateKey) ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""}`;
+  }
+
   function selectDate(dateKey: string) {
     setShowDelayEditor(false);
     if (!isMultiSelect) {
       setSelectedDate(dateKey);
       setSelectedDates([dateKey]);
+      setDisplayedMonth(getTaskCalendarMonth(new Date(`${dateKey}T12:00:00`)));
       return;
     }
 
@@ -770,6 +791,7 @@ export function TaskHistoryModal({
 
     setSelectedDate(dateKey);
     setSelectedDates([...selectedDates, dateKey].sort());
+    setDisplayedMonth(getTaskCalendarMonth(new Date(`${dateKey}T12:00:00`)));
   }
 
   function toggleMultiSelect() {
@@ -875,46 +897,31 @@ export function TaskHistoryModal({
       : selectedEntry?.status === status;
   }
 
-  useEffect(() => {
-    if (taskHistoryLoadStatus !== "ready") {
-      return;
+  const calendarDay = (day: CalendarMonthPresentationDay) => {
+    if (!knownDateKeys.has(day.dateKey)) {
+      return <span aria-hidden="true" className="block min-h-[5.5rem]" />;
     }
-
-    const frame = window.requestAnimationFrame(() => {
-      const isMobile = window.matchMedia("(max-width: 1023px)").matches;
-      const container = isMobile ? mobileCalendarViewportRef.current : desktopCalendarViewportRef.current;
-      const target = container?.querySelector<HTMLElement>(`[data-history-date="${initialFocusDate}"]`);
-      if (!container || !target) return;
-
-      const containerRect = container.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
-      if (isMobile) {
-        container.scrollTo({
-          top: getComfortableTaskHistoryScrollOffset({
-            containerSize: container.clientHeight,
-            targetOffset: container.scrollTop + targetRect.top - containerRect.top,
-            targetSize: targetRect.height,
-          }),
-          behavior: "auto",
-        });
-        return;
-      }
-
-      container.scrollTo({
-        left: getComfortableTaskHistoryScrollOffset({
-          containerSize: container.clientWidth,
-          targetOffset: container.scrollLeft + targetRect.left - containerRect.left,
-          targetSize: targetRect.width,
-        }),
-        behavior: "auto",
-      });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [initialFocusDate, task.id, taskHistoryLoadStatus]);
-
-  const calendarButton = (dateKey: string) => (
-    <button aria-pressed={selectedDateSet.has(dateKey)} className={`flex h-9 w-9 items-center justify-center rounded-[0.85rem] border text-[10px] font-black tabular-nums transition ${cellTone(dateKey)} ${selectedDateSet.has(dateKey) ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""} ${isMultiSelect && dateKey > today ? "cursor-not-allowed opacity-45" : ""}`} data-history-date={dateKey} key={dateKey} onClick={() => selectDate(dateKey)} title={dateKey} type="button">{dateKey.slice(-2)}</button>
-  );
+    const future = day.dateKey > today;
+    const stateLabel = calendarStateLabel(day.dateKey);
+    return (
+      <button
+        aria-label={`${formatCalendarDate(day.dateKey)}, ${stateLabel}${day.dateKey === today ? ", today" : ""}`}
+        aria-pressed={selectedDateSet.has(day.dateKey)}
+        className={`${calendarDayClassName(day)} ${isMultiSelect && future ? "cursor-not-allowed opacity-45" : ""}`}
+        data-history-date={day.dateKey}
+        disabled={isMultiSelect && future}
+        onClick={() => selectDate(day.dateKey)}
+        title={`${formatCalendarDate(day.dateKey)} · ${stateLabel}`}
+        type="button"
+      >
+        <span className="flex w-full items-center justify-between gap-2">
+          <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-white/70 px-1 text-sm font-semibold tabular-nums dark:bg-black/10">{day.dayOfMonth}</span>
+          {day.dateKey === today ? <span className="text-[10px] font-semibold text-[#6f57f6] dark:text-[#cabfff]">Today</span> : null}
+        </span>
+        <span className="mt-auto line-clamp-2 text-[11px] font-semibold leading-4">{stateLabel}</span>
+      </button>
+    );
+  };
   const calendarUnavailableSection = (
     <section aria-live="polite" className="rounded-[1.5rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-5 py-6 text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
       Calendar is unavailable until canonical Task State is ready.
@@ -922,17 +929,32 @@ export function TaskHistoryModal({
   );
   function renderCalendarSection() {
     return (
-      <section className="rounded-[1.5rem] border border-[#ece8f8] bg-[#fcfbff] p-4 dark:border-white/10 dark:bg-white/[0.03]"><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a day to inspect or update it."}</p>{calendarControls}<div className="mt-3">{calendarLegend}</div><div className="adhdice-scrollbar mt-4 h-[7.5rem] overflow-y-auto overscroll-contain touch-pan-y" ref={mobileCalendarViewportRef}><div className="grid grid-cols-7 gap-1.5">{days.map(calendarButton)}</div></div></section>
+      <CalendarMonthPresentation
+        ariaLabel="Task history calendar"
+        description={isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a day to inspect or update it."}
+        headerLabel="Calendar"
+        legend={calendarLegend}
+        monthDays={monthDays}
+        monthLabel={formatTaskCalendarMonth(displayedMonth)}
+        nextMonthDisabled={monthValue(displayedMonth) >= monthValue(lastCalendarMonth)}
+        onNextMonth={() => setDisplayedMonth((current) => shiftTaskCalendarMonth(current, 1))}
+        onPreviousMonth={() => setDisplayedMonth((current) => shiftTaskCalendarMonth(current, -1))}
+        onToday={() => setDisplayedMonth(getTaskCalendarMonth(new Date(`${today}T12:00:00`)))}
+        previousMonthDisabled={monthValue(displayedMonth) <= monthValue(firstCalendarMonth)}
+        renderDay={calendarDay}
+        toolbar={calendarControls}
+        weekdayLabels={TASK_CALENDAR_WEEKDAY_LABELS}
+      />
     );
   }
-  const calendarControls = <div className="mt-2 flex flex-wrap gap-2"><TaskTableChipButton onClick={toggleMultiSelect} toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}</TaskTableChipButton>{isMultiSelect && selectedDates.length > 1 ? <TaskTableChipButton onClick={() => setSelectedDates([selectedDate])}>Keep Current Only</TaskTableChipButton> : null}</div>;
+  const calendarControls = <div className="flex flex-wrap gap-2"><TaskTableChipButton onClick={toggleMultiSelect} toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}</TaskTableChipButton>{isMultiSelect && selectedDates.length > 1 ? <TaskTableChipButton onClick={() => setSelectedDates([selectedDate])}>Keep Current Only</TaskTableChipButton> : null}</div>;
   const calendarLegend = <div className="flex flex-wrap items-center gap-2 text-xs">{renderOfficialStatusChip("done", "Done")}{renderOfficialStatusChip("complete", "Marked Complete")}{renderOfficialStatusChip("delayed", "Delayed")}{renderOfficialStatusChip("did_my_best", "Did My Best")}{renderOfficialStatusChip("missed", "Missed")}<span className="text-[#d96b1c] dark:text-[#ffb47c]">Due</span><span className="text-[#3388c9] dark:text-[#8ed0f6]">Not Due</span></div>;
   const selectedDetailsSection = (
-    <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
+    <section className="rounded-[1.35rem] border border-[#ede7f7] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">{isMultiSelect ? "Edit Selected Dates" : "Edit Selected Date"}</p>
-                <h3 className="mt-1 text-xl font-black text-[#1f2746] dark:text-white">{isMultiSelect ? `${selectedDates.length} dates selected` : formatCalendarDate(selectedDate)}</h3>
+                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">{isMultiSelect ? "Edit Selected Dates" : "Edit Selected Date"}</p>
+                <h3 className="mt-1 text-lg font-semibold text-[#4e4865] dark:text-white/85">{isMultiSelect ? `${selectedDates.length} dates selected` : formatCalendarDate(selectedDate)}</h3>
                 <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/50">
                   {isMultiSelect
                     ? "The selected result will be saved to every selected date in one update."
@@ -953,7 +975,7 @@ export function TaskHistoryModal({
                 ) : null}
               </div>
               {isMultiSelect
-                ? <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>{selectedDates.length} Selected</span>
+                ? <AdhdChip tone="purple">{selectedDates.length} Selected</AdhdChip>
                 : renderStatusPill(selectedEntry, selectedVirtualState)}
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
@@ -1074,7 +1096,7 @@ export function TaskHistoryModal({
           {mobileSection === "history" ? historySection : null}
           {mobileSection === "stats" ? statsSection : null}
         </div>
-        <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6 lg:grid">{calendarRead ? <><div className="space-y-6"><section className="rounded-[2rem] border border-[#ece8f8] bg-[#fcfbff] p-5 dark:border-white/10 dark:bg-white/[0.03]"><div className="mb-4 flex items-start justify-between gap-3"><div><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a square to inspect or update that date."}</p>{calendarControls}</div><div className="max-w-sm">{calendarLegend}</div></div><div className="adhdice-scrollbar -mx-2 overflow-x-auto px-2 pb-2" ref={desktopCalendarViewportRef}><div className="inline-flex w-max gap-1.5 pr-2">{weeks.map((week, weekIndex) => <div className="flex flex-col gap-1.5" key={weekIndex}>{week.map(calendarButton)}</div>)}</div></div></section>{historySection}</div><div className="space-y-6">{selectedDetailsSection}{statsSection}</div></> : <div className="space-y-6">{calendarUnavailableSection}{historySection}{statsSection}</div>}</div>
+        <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6 lg:grid">{calendarRead ? <><div className="space-y-6">{renderCalendarSection()}{historySection}</div><div className="space-y-6">{selectedDetailsSection}{statsSection}</div></> : <div className="space-y-6">{calendarUnavailableSection}{historySection}{statsSection}</div>}</div>
       </div>
       {historyLoadErrorPanel}
       {(isHistoryLoading || isSaving) ? (
