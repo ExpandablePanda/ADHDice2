@@ -1,4 +1,6 @@
 export { evaluateTaskState, findUnresolvedMissedOccurrence } from "./engine.ts";
+export { resolveTaskBehaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY } from "./behavior-policy.ts";
+export type { TaskBehaviorPolicy } from "./behavior-policy.ts";
 export { logicalDateForTimestamp } from "./calendar.ts";
 export { allowedOutcomes, isScheduledOccurrence, occurrenceIdentity, resolveSuccessfulOccurrenceTarget, scheduledOccurrences } from "./recurrence.ts";
 export { projectPersistableTaskStatePatch } from "./persistence-projection.ts";

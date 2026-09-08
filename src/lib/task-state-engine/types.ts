@@ -1,3 +1,5 @@
+import type { TaskBehaviorPolicy } from "./behavior-policy.ts";
+
 export type TaskLifecycleState = "active" | "complete" | "archived" | "trashed";
 
 export type TaskActiveStatus =
@@ -191,6 +193,8 @@ export type TaskStateAction =
   | { type: "reconcile_rollover" };
 
 export type TaskStateEngineInput = {
+  /** Non-persisted behavior selection; omitted Tasks use the standard profile. */
+  behaviorPolicy?: TaskBehaviorPolicy;
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
   now: string | Date;
@@ -247,6 +251,7 @@ export type CurrentDayOutcomeFacts = {
 };
 
 export type TaskStateEngineResult = {
+  behaviorPolicy: TaskBehaviorPolicy;
   logicalDate: string;
   lifecycle: TaskLifecycleState;
   activeStatus: TaskActiveStatus;

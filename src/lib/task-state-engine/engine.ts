@@ -16,6 +16,7 @@ import {
   recurrenceAfterSuccess,
   scheduledOccurrences,
 } from "./recurrence.ts";
+import { resolveTaskBehaviorPolicy } from "./behavior-policy.ts";
 import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
 import type {
   ProposedTaskStatePatch,
@@ -275,6 +276,7 @@ function automaticMissedRows(input: {
 
 export function evaluateTaskState(input: TaskStateEngineInput) {
   const { task } = input;
+  const behaviorPolicy = resolveTaskBehaviorPolicy(input.behaviorPolicy);
   const today = logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover);
   const nowIso = (input.now instanceof Date ? input.now : new Date(input.now)).toISOString();
   const changes: TaskHistoryChange[] = [];
@@ -860,6 +862,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const calculatedMissed = Boolean(overdueAnchor);
 
   return {
+    behaviorPolicy,
     logicalDate: today,
     lifecycle: task.lifecycle,
     activeStatus,
