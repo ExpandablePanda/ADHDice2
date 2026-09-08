@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import { useRef, useState, type ComponentProps, type JSX, type ReactNode } from "react";
 import { ModalShell } from "../modal-shell";
 import { BottomDockComponent } from "./bottom-dock";
@@ -10,17 +10,15 @@ import { Select } from "./task-status-select";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { formatTaskStatusLabel, renderTaskStatusCircle, TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES } from "./task-status-ui";
 import {
-  TASK_TABLE_CHIP_BASE_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
-import { AdhdChip } from "@/components/ui-system";
+import { AdhdIconButton } from "@/components/ui-system";
 import { TaskGridViewComponent } from "./task-grid-view";
 import {
   computeTaskSpecificHistoryStats,
   buildTaskHistoryRowProjections,
   deduplicateTaskHistoryByLogicalDate,
-  formatTaskHistoryEntryLabel,
   getTaskHistoryLastDone,
   type TaskHistoryStats,
 } from "@/lib/task-history";
@@ -31,7 +29,6 @@ import {
   TaskMatrixViewComponent,
 } from "./task-secondary-views";
 import { UrgentTasksPanelComponent } from "./task-grid-widgets";
-import { CalendarMonthPresentation, type CalendarMonthPresentationDay } from "../ui/calendar-month-presentation";
 import { formatPursuitCalendarDay, formatPursuitCalendarMonth, getPursuitCalendarMonthDays, PursuitCalendarDay, PursuitCalendarPresentation } from "./pursuit-calendar-presentation";
 import type { TaskDraft } from "./task-editor-model";
 import {
@@ -39,11 +36,8 @@ import {
   getTaskHistoryInitialFocusDateKey,
 } from "@/lib/task-history-calendar-focus";
 import {
-  formatTaskCalendarMonth,
   getTaskCalendarMonth,
-  getTaskCalendarMonthGrid,
   shiftTaskCalendarMonth,
-  TASK_CALENDAR_WEEKDAY_LABELS,
   type TaskCalendarMonth,
 } from "@/lib/task-calendar";
 import type { AppPage } from "@/lib/task-ui-state";
@@ -142,7 +136,6 @@ function formatTaskCalendarOverrideChangedLine(override: TaskCalendarOverride) {
   return override.createdAt ? `Changed ${formatHistoryDateTime(override.createdAt)}` : null;
 }
 
-const HISTORY_STATUS_CHIP_BASE = "inline-flex items-center justify-center rounded-full border px-2 py-1 text-[13px] font-medium leading-none whitespace-nowrap";
 function statusTone(status: TaskStatus) {
   return TASK_STATUS_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
 }
@@ -645,17 +638,14 @@ export function TaskHistoryModal({
   const [selectedDate, setSelectedDate] = useState(initialSelectedDate);
   const [selectedDates, setSelectedDates] = useState<string[]>([initialSelectedDate]);
   const [displayedMonth, setDisplayedMonth] = useState<TaskCalendarMonth>(() => getTaskCalendarMonth(new Date(`${initialSelectedDate}T12:00:00`)));
-  const [mobileSection, setMobileSection] = useState<"calendar" | "history" | "stats">("calendar");
   const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const isSavingRef = useRef(false);
   const [showDelayEditor, setShowDelayEditor] = useState(false);
-  const monthDays = getTaskCalendarMonthGrid(displayedMonth);
   const firstCalendarMonth = getTaskCalendarMonth(new Date(`${days[0]}T12:00:00`));
   const lastCalendarMonth = getTaskCalendarMonth(new Date(`${days.at(-1)}T12:00:00`));
   const monthValue = (month: TaskCalendarMonth) => month.year * 12 + month.month;
   const knownDateKeys = new Set(days);
-  const mobileScrollRef = useRef<HTMLDivElement>(null);
   const calendarRead = stateEngineContext
     ? resolveTaskHistoryCalendarRead({
       ...stateEngineContext,
@@ -699,7 +689,6 @@ export function TaskHistoryModal({
   const selectedIsDue = selectedTimelineDay
     ? selectedTimelineDay.obligation === "due" || selectedTimelineDay.obligation === "overdue"
     : selectedCalendarState === "due";
-  const selectedVirtualState = selectedCalendarState;
   const engineCalendarActionStatuses = stateEngineContext && calendarRead
     ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, historicalOverride: true, logicalDate: selectedDate, task })
     : null;
@@ -733,8 +722,8 @@ export function TaskHistoryModal({
   const visibleCalendarActionStatuses: CalendarActionStatus[] = canClearSelectedDate
     ? ["clear", ...calendarActionStatuses as CalendarActionStatus[]]
     : calendarActionStatuses as CalendarActionStatus[];
-  const experimentalMonthKey = `${displayedMonth.year}-${String(displayedMonth.month + 1).padStart(2, "0")}`;
-  const experimentalMonthDays = getPursuitCalendarMonthDays(experimentalMonthKey).map((dateKey) => dateKey && knownDateKeys.has(dateKey) ? dateKey : null);
+  const taskCalendarMonthKey = `${displayedMonth.year}-${String(displayedMonth.month + 1).padStart(2, "0")}`;
+  const taskCalendarMonthDays = getPursuitCalendarMonthDays(taskCalendarMonthKey).map((dateKey) => dateKey && knownDateKeys.has(dateKey) ? dateKey : null);
 
   function cellTone(dateKey: string) {
     const entry = historyByDate.get(dateKey);
@@ -764,11 +753,6 @@ export function TaskHistoryModal({
     const state = entry?.status ?? calendarRead?.states[dateKey] ?? "not_due";
     if (state === "complete" && entry?.event_type === "completed_permanently") return "Marked Complete";
     return formatTaskStatusLabel(state);
-  }
-
-  function calendarDayClassName(day: CalendarMonthPresentationDay) {
-    const outOfRange = !knownDateKeys.has(day.dateKey);
-    return `group flex min-h-[5.5rem] w-full flex-col items-start rounded-[0.85rem] border p-2 text-left transition ${outOfRange ? "cursor-default border-transparent bg-transparent" : `${cellTone(day.dateKey)} hover:border-[#cfc2fb]`} ${day.isCurrentMonth ? "" : "opacity-55"} ${selectedDateSet.has(day.dateKey) ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""}`;
   }
 
   function selectDate(dateKey: string) {
@@ -859,48 +843,13 @@ export function TaskHistoryModal({
     }
   }
 
-  function renderOfficialStatusChip(status: TaskStatus, label?: string) {
-    return (
-      <span className={`${TASK_TABLE_CHIP_BASE_CLASS} ${statusTone(status)} gap-2`}>
-        {renderTaskStatusCircle(status, "sm")}
-        <span>{label ?? formatTaskStatusLabel(status)}</span>
-      </span>
-    );
-  }
-
-  function renderStatusPill(entry: DbTaskHistory | null, virtualState: "delayed" | "due" | "not_due" | "in_progress" | "missed" | "done" | "did_my_best" | "complete" | null = null) {
-    if (!entry) {
-      if (virtualState === "delayed") {
-        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]`}>Delayed</span>;
-      }
-      if (virtualState === "due") {
-        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]`}>Due</span>;
-      }
-      if (virtualState === "in_progress") {
-        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#a9c2ff] bg-[#eef3ff] text-[#4473df] dark:border-[#36559d] dark:bg-[#1d2a4a] dark:text-[#b4c7ff]`}>In Progress</span>;
-      }
-      if (virtualState === "missed") {
-        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]`}>Missed</span>;
-      }
-      if (virtualState === "not_due") {
-        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]`}>Not Due</span>;
-      }
-      return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60`}>No Entry</span>;
-    }
-    if (entry.status === "complete" && entry.event_type === "completed_permanently") {
-      return renderOfficialStatusChip("complete", formatTaskHistoryEntryLabel(entry));
-    }
-
-    return renderOfficialStatusChip(entry.status, formatTaskHistoryEntryLabel(entry));
-  }
-
   function isSelectedStatus(status: TaskStatus) {
     return isMultiSelect
       ? selectedEntries.length > 0 && selectedEntries.every((entry) => entry?.status === status)
       : selectedEntry?.status === status;
   }
 
-  function experimentalStatusClass(status: string) {
+  function taskHistoryStatusClass(status: string) {
     if (status === "delayed") return "text-[#7d54d1] dark:text-[#d5c2ff]";
     if (status === "missed") return "text-[#d64b5f] dark:text-[#ffb0bd]";
     if (status === "did_my_best") return "text-[#b28700] dark:text-[#f3d38a]";
@@ -909,8 +858,10 @@ export function TaskHistoryModal({
     return "text-[#2f8a66] dark:text-[#87ddb7]";
   }
 
-  const experimentalSelectedActions = (
+  const taskSelectedActions = (
     <div className="flex flex-wrap gap-2">
+      <TaskTableChipButton onClick={toggleMultiSelect} toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}</TaskTableChipButton>
+      {isMultiSelect && selectedDates.length > 1 ? <TaskTableChipButton onClick={() => setSelectedDates([selectedDate])}>Keep Current Only</TaskTableChipButton> : null}
       {visibleCalendarActionStatuses.map((status) => (
         <TaskTableChipButton
           className="gap-2"
@@ -945,10 +896,11 @@ export function TaskHistoryModal({
     </div>
   );
 
-  const experimentalCalendarSection = calendarRead ? (
+  const taskCalendarSection = calendarRead ? (
     <PursuitCalendarPresentation
-      ariaLabel="Pursuit-style Task Calendar experiment"
-      description="Exact Pursuit calendar presentation adapted from Task history."
+      ariaLabel="Task History"
+      description="Review and update this task’s outcomes by date."
+      historyDescription="Chronological task outcomes, due dates, and attached notes."
       historyEntries={historyRows.map((row) => ({
         detail: <>
           <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{row.calendarOverride ? "Manual schedule override" : row.isDueOpportunity ? "Due opportunity" : "Manual history entry"}</p>
@@ -960,7 +912,7 @@ export function TaskHistoryModal({
         </>,
         key: row.logicalDate,
         label: formatPursuitCalendarDay(row.logicalDate, stateEngineContext?.timezone ?? "UTC"),
-        status: <span className={`text-xs font-semibold ${experimentalStatusClass(row.status)}`}>{row.status === "complete" && row.entry?.event_type === "completed_permanently" ? "Marked Complete" : formatTaskStatusLabel(row.status)}</span>,
+        status: <span className={`text-xs font-semibold ${taskHistoryStatusClass(row.status)}`}>{row.status === "complete" && row.entry?.event_type === "completed_permanently" ? "Marked Complete" : formatTaskStatusLabel(row.status)}</span>,
       }))}
       historySummary={[
         { label: "Last done", value: lastDone ? formatCalendarDate(lastDone.dateKey) : "None" },
@@ -968,8 +920,9 @@ export function TaskHistoryModal({
         { label: "Best streak", value: String(stats.bestStreak) },
         { label: "Logged days", value: String(stats.loggedDays) },
       ]}
-      monthDays={experimentalMonthDays}
-      monthLabel={formatPursuitCalendarMonth(experimentalMonthKey, stateEngineContext?.timezone ?? "UTC")}
+      historyTitle="Task History"
+      monthDays={taskCalendarMonthDays}
+      monthLabel={formatPursuitCalendarMonth(taskCalendarMonthKey, stateEngineContext?.timezone ?? "UTC")}
       nextMonthDisabled={monthValue(displayedMonth) >= monthValue(lastCalendarMonth)}
       onChangeMonth={(amount) => setDisplayedMonth((current) => shiftTaskCalendarMonth(current, amount))}
       previousMonthDisabled={monthValue(displayedMonth) <= monthValue(firstCalendarMonth)}
@@ -978,7 +931,7 @@ export function TaskHistoryModal({
         const stateLabel = dateKey ? calendarStateLabel(dateKey) : undefined;
         return <PursuitCalendarDay ariaLabel={dateKey ? `${formatCalendarDate(dateKey)}, ${stateLabel}` : undefined} day={dateKey} onClick={() => { if (dateKey) selectDate(dateKey); }} selected={dateKey ? selectedDateSet.has(dateKey) : false} stateClassName={dateKey ? cellTone(dateKey) : undefined} title={dateKey ? `${formatCalendarDate(dateKey)} · ${stateLabel}` : undefined} />;
       }}
-      selectedDayAction={experimentalSelectedActions}
+      selectedDayAction={taskSelectedActions}
       selectedDayContent={<div className="mt-3">
         <p className="text-xs text-[#827a97] dark:text-white/52">{isMultiSelect ? `${selectedDates.length} dates selected. The selected result will be saved to every selected date.` : selectedIsFuture ? "Future dates cannot be edited yet." : selectedIsDue ? "This date is part of the task's due schedule." : "This date is outside the inferred due schedule and will be treated as a manual history entry."}</p>
         {!isMultiSelect && selectedEntry ? <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">{[formatTaskHistoryLoggedLine(selectedEntry) ?? "Logged time unavailable", formatTaskHistoryEditedLine(selectedEntry)].filter((value): value is string => Boolean(value)).join(" • ")}</p> : null}
@@ -989,179 +942,9 @@ export function TaskHistoryModal({
     />
   ) : null;
 
-  const calendarDay = (day: CalendarMonthPresentationDay) => {
-    if (!knownDateKeys.has(day.dateKey)) {
-      return <span aria-hidden="true" className="block min-h-[5.5rem]" />;
-    }
-    const future = day.dateKey > today;
-    const stateLabel = calendarStateLabel(day.dateKey);
-    return (
-      <button
-        aria-label={`${formatCalendarDate(day.dateKey)}, ${stateLabel}${day.dateKey === today ? ", today" : ""}`}
-        aria-pressed={selectedDateSet.has(day.dateKey)}
-        className={`${calendarDayClassName(day)} ${isMultiSelect && future ? "cursor-not-allowed opacity-45" : ""}`}
-        data-history-date={day.dateKey}
-        disabled={isMultiSelect && future}
-        onClick={() => selectDate(day.dateKey)}
-        title={`${formatCalendarDate(day.dateKey)} · ${stateLabel}`}
-        type="button"
-      >
-        <span className="flex w-full items-center justify-between gap-2">
-          <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-white/70 px-1 text-sm font-semibold tabular-nums dark:bg-black/10">{day.dayOfMonth}</span>
-          {day.dateKey === today ? <span className="text-[10px] font-semibold text-[#6f57f6] dark:text-[#cabfff]">Today</span> : null}
-        </span>
-        <span className="mt-auto line-clamp-2 text-[11px] font-semibold leading-4">{stateLabel}</span>
-      </button>
-    );
-  };
   const calendarUnavailableSection = (
     <section aria-live="polite" className="rounded-[1.5rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-5 py-6 text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
       Calendar is unavailable until canonical Task State is ready.
-    </section>
-  );
-  function renderCalendarSection() {
-    return (
-      <CalendarMonthPresentation
-        ariaLabel="Task history calendar"
-        description={isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a day to inspect or update it."}
-        headerLabel="Calendar"
-        legend={calendarLegend}
-        monthDays={monthDays}
-        monthLabel={formatTaskCalendarMonth(displayedMonth)}
-        nextMonthDisabled={monthValue(displayedMonth) >= monthValue(lastCalendarMonth)}
-        onNextMonth={() => setDisplayedMonth((current) => shiftTaskCalendarMonth(current, 1))}
-        onPreviousMonth={() => setDisplayedMonth((current) => shiftTaskCalendarMonth(current, -1))}
-        onToday={() => setDisplayedMonth(getTaskCalendarMonth(new Date(`${today}T12:00:00`)))}
-        previousMonthDisabled={monthValue(displayedMonth) <= monthValue(firstCalendarMonth)}
-        renderDay={calendarDay}
-        toolbar={calendarControls}
-        weekdayLabels={TASK_CALENDAR_WEEKDAY_LABELS}
-      />
-    );
-  }
-  const calendarControls = <div className="flex flex-wrap gap-2"><TaskTableChipButton onClick={toggleMultiSelect} toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}</TaskTableChipButton>{isMultiSelect && selectedDates.length > 1 ? <TaskTableChipButton onClick={() => setSelectedDates([selectedDate])}>Keep Current Only</TaskTableChipButton> : null}</div>;
-  const calendarLegend = <div className="flex flex-wrap items-center gap-2 text-xs">{renderOfficialStatusChip("done", "Done")}{renderOfficialStatusChip("complete", "Marked Complete")}{renderOfficialStatusChip("delayed", "Delayed")}{renderOfficialStatusChip("did_my_best", "Did My Best")}{renderOfficialStatusChip("missed", "Missed")}<span className="text-[#d96b1c] dark:text-[#ffb47c]">Due</span><span className="text-[#3388c9] dark:text-[#8ed0f6]">Not Due</span></div>;
-  const selectedDetailsSection = (
-    <section className="rounded-[1.35rem] border border-[#ede7f7] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">{isMultiSelect ? "Edit Selected Dates" : "Edit Selected Date"}</p>
-                <h3 className="mt-1 text-lg font-semibold text-[#4e4865] dark:text-white/85">{isMultiSelect ? `${selectedDates.length} dates selected` : formatCalendarDate(selectedDate)}</h3>
-                <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/50">
-                  {isMultiSelect
-                    ? "The selected result will be saved to every selected date in one update."
-                    : selectedIsFuture
-                    ? "Future dates cannot be edited yet."
-                    : selectedIsDue
-                      ? "This date is part of the task's due schedule."
-                      : "This date is outside the inferred due schedule and will be treated as a manual history entry."}
-                </p>
-                {!isMultiSelect && selectedEntry ? (
-                  <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">
-                    {[
-                      `Credited for ${formatCalendarDate(selectedEntry.entry_date)}`,
-                      formatTaskHistoryLoggedLine(selectedEntry) ?? "Logged time unavailable",
-                      formatTaskHistoryEditedLine(selectedEntry),
-                    ].filter((value): value is string => Boolean(value)).join(" • ")}
-                  </p>
-                ) : null}
-              </div>
-              {isMultiSelect
-                ? <AdhdChip tone="purple">{selectedDates.length} Selected</AdhdChip>
-                : renderStatusPill(selectedEntry, selectedVirtualState)}
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {visibleCalendarActionStatuses.map((status) => (
-                <TaskTableChipButton
-                  className="gap-2"
-                  disabled={isSaving || selectedDates.length === 0 || (!isMultiSelect && (selectedIsFuture || (status === "delayed" && !canDelaySelectedDate)))}
-                  key={status}
-                  onClick={() => {
-                    if (status === "delayed") {
-                      if (!canDelaySelectedDate) {
-                        return;
-                      }
-                      setShowDelayEditor(true);
-                      return;
-                    }
-                    setShowDelayEditor(false);
-                    void handleSetStatus(status);
-                  }}
-                  toneClassName={status === "clear"
-                    ? `${TASK_TABLE_INACTIVE_CHIP_CLASS} disabled:opacity-50`
-                    : `${isSelectedStatus(status) ? TASK_STATUS_INVERTED_CHIP_STYLES[status] : `${statusTone(status)} opacity-78 hover:opacity-100`} disabled:opacity-50`}
-                >
-                  {status === "clear" ? null : renderTaskStatusCircle(status, "sm")}
-                  <span>{status === "clear" ? "Clear" : formatTaskStatusLabel(status)}</span>
-                </TaskTableChipButton>
-              ))}
-              {calendarOverrideActions.map((overrideState) => (
-                <TaskTableChipButton
-                  className="gap-2"
-                  disabled={isSaving}
-                  key={overrideState}
-                  onClick={() => { void handleSetCalendarOverride(overrideState); }}
-                  toneClassName={`${overrideState === "not_due" ? "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]" : "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]"} disabled:opacity-50`}
-                >{overrideState === "not_due" ? "Not Due" : "Due"}</TaskTableChipButton>
-              ))}
-            </div>
-            {showDelayEditor && canDelaySelectedDate ? (
-              <div className="mt-4 rounded-[1.25rem] border border-[#efe9ff] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]">
-                <TaskDelayPicker
-                  anchorDateKey={selectedDate === today ? today : selectedDate}
-                  description={selectedDate === today
-                    ? "Delay today’s live task without changing past rewards or completion history."
-                    : "Correct this saved occurrence to Delayed using the app’s existing history semantics without double-counting rewards."}
-                  inputClassName="h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
-                  onCancel={() => setShowDelayEditor(false)}
-                  onSave={(nextDueOn) => handleSaveDelayedStatus(nextDueOn)}
-                  primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
-                  saveLabel="Save delayed status"
-                />
-              </div>
-            ) : null}
-            <p className="mt-4 text-xs text-[#8d87a7] dark:text-white/40">
-              Calendar edits update saved task history, streaks, and the live task status when the active unresolved state changes. They do not change past rewards or economy.
-            </p>
-    </section>
-  );
-  const historySection = (
-    <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
-      <div className="mb-4 flex items-center justify-between gap-3"><div><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Task Status History</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">Effective results for this task.</p></div><span className="text-xs font-semibold text-[#8d87a7] dark:text-white/40">{historyRows.length} entries</span></div>
-      <div className="space-y-2">{historyRows.length === 0 ? <EmptyTaskState text="No task history entries yet." /> : null}{historyRows.map((row) => <button className={`flex w-full items-center justify-between rounded-[1.25rem] border px-4 py-3 text-left transition ${selectedDateSet.has(row.logicalDate) ? "border-[#cfc3ff] bg-[#f8f5ff] dark:border-[#6f57f6] dark:bg-[#22193d]" : "border-[#efebfb] bg-[#fcfbff] hover:border-[#ddd3ff] dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20"}`} key={row.logicalDate} onClick={() => selectDate(row.logicalDate)} type="button"><div><p className="text-sm font-semibold text-[#27304c] dark:text-white">{formatCalendarDate(row.logicalDate)}</p><p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{row.calendarOverride ? "Manual schedule override" : row.isDueOpportunity ? "Due opportunity" : "Manual history entry"}</p>{row.calendarOverride ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">Changed to Not Due</p> : null}{row.calendarOverride && formatTaskCalendarOverrideChangedLine(row.calendarOverride) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskCalendarOverrideChangedLine(row.calendarOverride)}</p> : null}{row.entry && formatTaskHistoryLoggedLine(row.entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryLoggedLine(row.entry)}</p> : null}{row.entry && formatTaskHistoryEditedLine(row.entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryEditedLine(row.entry)}</p> : null}{row.isCalculated ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">Calculated from task timeline</p> : null}</div>{renderStatusPill(row.entry, row.status)}</button>)}</div>
-    </section>
-  );
-  const statsSection = (
-    <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
-            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Stats</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-              {[
-                { label: "Last Done", value: lastDone ? (lastDone.timestamp ? formatHistoryDateTime(lastDone.timestamp) : formatCalendarDate(lastDone.dateKey)) : "None", detail: "latest Done or Did My Best" },
-                { label: "Current Streak", value: stats.currentStreak, detail: "completed due dates in a row" },
-                { label: "Best Streak", value: stats.bestStreak, detail: "best completion streak" },
-                { label: "Current Missed Streak", value: stats.missedStreak, detail: "missed due dates in a row" },
-                { label: "Longest Missed Streak", value: stats.longestMissedStreak, detail: "longest missed run in range" },
-                { label: "Completion Rate", value: `${stats.completionRate}%`, detail: task.repeat_frequency === "none" ? "based on logged history" : `${stats.dueDays} due dates in range` },
-              ].map((stat) => (
-                <div className="rounded-[1.25rem] bg-[#f8f5ff] px-4 py-4 dark:bg-white/[0.05]" key={stat.label}>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">{stat.label}</p>
-                  <p className="mt-2 text-3xl font-black text-[#1f2746] dark:text-white">{stat.value}</p>
-                  <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/45">{stat.detail}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 grid grid-cols-3 gap-3 text-center">
-              {[
-                { label: "Completed", value: stats.completedDays },
-                { label: "Missed", value: stats.missedDays },
-                { label: "Logged", value: stats.loggedDays },
-              ].map((stat) => (
-                <div className="rounded-[1.1rem] border border-[#ece8f8] bg-[#fcfbff] px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]" key={stat.label}>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">{stat.label}</p>
-                  <p className="mt-1 text-xl font-black text-[#27304c] dark:text-white">{stat.value}</p>
-                </div>
-              ))}
-            </div>
     </section>
   );
   const isHistoryLoading = taskHistoryLoadStatus === "loading";
@@ -1177,18 +960,15 @@ export function TaskHistoryModal({
 
   return (
     <ModalShell className="flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden rounded-none border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] sm:h-auto sm:max-h-[calc(100vh-2rem)] sm:rounded-[2.4rem] sm:p-6 dark:border-white/10 dark:bg-[#171328]" label="Task history" onClose={onClose}>
-      <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-[#efebfb] bg-white px-4 py-3 dark:border-white/10 dark:bg-[#171328] sm:static sm:px-0 sm:pb-5">
-        <div className="min-w-0"><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Task History</p><h2 className="mt-1 truncate text-xl font-black text-[#1f2746] dark:text-white sm:mt-2 sm:text-3xl">{taskTitle}</h2><p className="mt-1 hidden text-sm text-[#7d88a1] dark:text-white/50 sm:block">Edit task history by date without changing past rewards or economy.</p></div>
-        <button aria-label="Close task history" className="shrink-0 p-2 text-2xl leading-none text-[#8e97af] dark:text-white/55" onClick={onClose} type="button">×</button>
-      </div>
-      <div className="sticky top-0 z-20 lg:hidden"><div className="mx-4 mt-3 flex w-fit items-center gap-1 rounded-full border border-[#ece8f8] bg-white/88 p-1 shadow-[0_12px_28px_rgba(81,61,168,0.06)] dark:border-white/10 dark:bg-white/[0.04]">{(["calendar", "history", "stats"] as const).map((section) => <TaskTableChipButton aria-pressed={mobileSection === section} key={section} onClick={() => setMobileSection(section)} toneClassName={mobileSection === section ? "border-[#6f57f6] bg-[#6f57f6] text-white dark:border-[#c9bbff] dark:bg-[#c9bbff] dark:text-[#1a1431]" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{section[0].toUpperCase() + section.slice(1)}</TaskTableChipButton>)}</div></div>
-      <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:mt-6 sm:px-0 sm:py-0" ref={mobileScrollRef}>
-        <div className="space-y-5 lg:hidden">
-          {mobileSection === "calendar" ? calendarRead ? <>{experimentalCalendarSection}{renderCalendarSection()}{selectedDetailsSection}</> : calendarUnavailableSection : null}
-          {mobileSection === "history" ? historySection : null}
-          {mobileSection === "stats" ? statsSection : null}
+      <header className="flex shrink-0 items-start justify-between gap-4 border-b border-[#eee9f8] pb-4 dark:border-white/10">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">Task</p>
+          <h2 className="mt-1 truncate text-xl font-semibold text-[#403a54] dark:text-white/88">{taskTitle}</h2>
         </div>
-        <div className="hidden space-y-6 lg:block">{calendarRead ? <><div>{experimentalCalendarSection}</div><div className="grid grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6"><div className="space-y-6">{renderCalendarSection()}{historySection}</div><div className="space-y-6">{selectedDetailsSection}{statsSection}</div></div></> : <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6"><div className="space-y-6">{calendarUnavailableSection}{historySection}</div><div>{statsSection}</div></div>}</div>
+        <AdhdIconButton aria-label="Close task history" onClick={onClose} size="sm" title="Close" variant="rowToolbar"><X /></AdhdIconButton>
+      </header>
+      <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:mt-6 sm:px-0 sm:py-0">
+        {calendarRead ? <div className="space-y-5">{taskCalendarSection}</div> : calendarUnavailableSection}
       </div>
       {historyLoadErrorPanel}
       {(isHistoryLoading || isSaving) ? (

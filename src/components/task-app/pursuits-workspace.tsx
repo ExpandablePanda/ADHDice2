@@ -378,12 +378,14 @@ function PursuitCalendar({
         label: formatPursuitCalendarDay(day, timezone),
         status: <span className="text-xs font-semibold text-[#348554] dark:text-[#a5ddb6]">Completed</span>,
       }))}
+      historyDescription="Chronological completed days and attached notes."
       historySummary={[
         { label: "Last done", value: formatPursuitLastCompletion(completionSummary).replace("Last done ", "") },
         { label: "Current streak", value: String(completionSummary.currentStreak) },
         { label: "Best streak", value: String(completionSummary.bestStreak) },
         { label: "Completed days", value: String(completionSummary.totalCompletedDays) },
       ]}
+      historyTitle="Pursuit History"
       monthDays={monthDays}
       monthLabel={formatPursuitCalendarMonth(monthKey, timezone)}
       onChangeMonth={onChangeMonth}

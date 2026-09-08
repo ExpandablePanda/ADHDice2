@@ -95,26 +95,29 @@ test("Task History modal passes active Calendar overrides into the Calendar read
   assert.match(calendarAuthoritySource, /calendarOverrides: input\.calendarOverrides/);
 });
 
-test("Task Status History uses the supplied timeline and neutral entry count copy", () => {
+test("Task History uses the supplied timeline in the promoted shared history presentation", () => {
   assert.match(modalSource, /buildTaskHistoryRowProjections/);
-  assert.match(modalSource, /\{historyRows\.length\} entries/);
+  assert.match(modalSource, /<PursuitCalendarPresentation/);
+  assert.match(modalSource, /historyTitle="Task History"/);
+  assert.match(modalSource, /historyDescription="Chronological task outcomes/);
   assert.match(modalSource, /Calculated from task timeline/);
   assert.doesNotMatch(modalSource, /\{sortedHistory\.length\} logged/);
 });
 
-test("Task Status History merges active Calendar overrides and presents manual Not Due metadata", () => {
+test("Task History merges active Calendar overrides and presents manual Not Due metadata", () => {
   assert.match(modalSource, /buildTaskHistoryRowProjections\(\s*normalizedTaskHistory,[\s\S]*calendarOverrides/);
   assert.match(modalSource, /Manual schedule override/);
   assert.match(modalSource, /Changed to Not Due/);
   assert.match(modalSource, /formatTaskCalendarOverrideChangedLine/);
   assert.match(modalSource, /createdAt/);
-  assert.match(modalSource, /key=\{row\.logicalDate\} onClick=\{\(\) => selectDate\(row\.logicalDate\)\}/);
+  assert.match(modalSource, /key: row\.logicalDate/);
   assert.doesNotMatch(modalSource, /syncTaskHistoryEntries\([^)]*not_due/);
 });
 
-test("Task History stats expose current and longest Missed streaks from the effective timeline", () => {
-  assert.match(modalSource, /label: "Current Missed Streak"/);
-  assert.match(modalSource, /label: "Longest Missed Streak"/);
+test("Task History stats retain effective timeline streak calculations", () => {
+  assert.match(modalSource, /historySummary=\{\[/);
+  assert.match(modalSource, /label: "Current streak"/);
+  assert.match(modalSource, /label: "Best streak"/);
   assert.match(modalSource, /longestMissedStreak: resolvedStreaks\.longestMissedStreak/);
   assert.match(modalSource, /const resolvedTimelineDays = calendarRead\?\.timeline\?\.days/);
   assert.match(modalSource, /computeTaskEffectiveTimelineStreaks\(resolvedTimelineDays, today\)/);

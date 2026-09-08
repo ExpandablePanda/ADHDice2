@@ -46,12 +46,13 @@ test("Task History opens its month calendar at the requested date", () => {
   assert.match(taskHistoryModalSource, /getTaskCalendarMonth\(new Date\(`\$\{initialSelectedDate\}T12:00:00`\)\)/);
 });
 
-test("Task History uses the shared month presentation and bounded navigation", () => {
-  assert.match(taskHistoryModalSource, /<CalendarMonthPresentation/);
-  assert.match(taskHistoryModalSource, /getTaskCalendarMonthGrid\(displayedMonth\)/);
-  assert.match(taskHistoryModalSource, /formatTaskCalendarMonth\(displayedMonth\)/);
+test("Task History uses the promoted shared Pursuit-style month presentation and bounded navigation", () => {
+  assert.match(taskHistoryModalSource, /<PursuitCalendarPresentation/);
+  assert.match(taskHistoryModalSource, /getPursuitCalendarMonthDays\(taskCalendarMonthKey\)/);
+  assert.match(taskHistoryModalSource, /formatPursuitCalendarMonth\(taskCalendarMonthKey/);
   assert.match(taskHistoryModalSource, /previousMonthDisabled=/);
   assert.match(taskHistoryModalSource, /nextMonthDisabled=/);
+  assert.doesNotMatch(taskHistoryModalSource, /CalendarMonthPresentation/);
   assert.doesNotMatch(taskHistoryModalSource, /const weeks: string\[\]\[\] = \[\]/);
   assert.doesNotMatch(taskHistoryModalSource, /inline-flex w-max gap-1\.5/);
 });
@@ -65,7 +66,6 @@ test("History Calendar is canonical-only and fails closed without a canonical re
   assert.match(taskHistoryModalSource, /const calendarRead = stateEngineContext\s*\?\s*resolveTaskHistoryCalendarRead/);
   assert.doesNotMatch(taskHistoryModalSource, /buildTaskHistoryCalendarDueDateSet|getTaskHistoryCalendarVirtualState/);
   assert.match(taskHistoryModalSource, /Calendar is unavailable until canonical Task State is ready/);
-  assert.match(taskHistoryModalSource, /mobileSection === "calendar" \? calendarRead \?/);
   assert.match(taskHistoryModalSource, /calendarRead\?\.states\[dateKey\]/);
 });
 

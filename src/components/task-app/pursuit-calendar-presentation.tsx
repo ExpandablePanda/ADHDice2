@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 
 export const PURSUIT_CALENDAR_WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -17,7 +17,9 @@ export type PursuitCalendarPresentationProps = {
   ariaLabel: string;
   description: ReactNode;
   historyEntries: readonly PursuitCalendarHistoryEntry[];
+  historyDescription: string;
   historySummary: readonly { label: string; value: string }[];
+  historyTitle: string;
   monthDays: readonly (string | null)[];
   monthLabel: string;
   onChangeMonth: (amount: number) => void;
@@ -146,7 +148,9 @@ export function PursuitCalendarPresentation({
   ariaLabel,
   description,
   historyEntries,
+  historyDescription,
   historySummary,
+  historyTitle,
   monthDays,
   monthLabel,
   onChangeMonth,
@@ -172,9 +176,9 @@ export function PursuitCalendarPresentation({
         </div>
       </div>
       <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">{PURSUIT_CALENDAR_WEEKDAY_LABELS.map((day) => <span key={day}>{day}</span>)}</div>
-      <div className="mt-1 grid grid-cols-7 gap-1">{monthDays.map((day, index) => renderDay(day, index))}</div>
+      <div className="mt-1 grid grid-cols-7 gap-1">{monthDays.map((day, index) => <Fragment key={day ?? `blank-${index}`}>{renderDay(day, index)}</Fragment>)}</div>
       <PursuitSelectedDayPresentation action={selectedDayAction} label={selectedDayLabel} status={selectedDayStatus}>{selectedDayContent}</PursuitSelectedDayPresentation>
-      <PursuitHistoryPresentation entries={historyEntries} summary={{ description: "Chronological completed days and attached notes.", title: "Pursuit history" }} summaryStats={historySummary} />
+      <PursuitHistoryPresentation entries={historyEntries} summary={{ description: historyDescription, title: historyTitle }} summaryStats={historySummary} />
     </section>
   );
 }

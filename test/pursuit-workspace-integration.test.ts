@@ -17,7 +17,6 @@ const tableSource = readFileSync(new URL("../src/components/ui/task-management-t
 const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
 const rowSource = readFileSync(new URL("../src/components/task-app/pursuit-workspace-row.tsx", import.meta.url), "utf8");
 const editorSource = readFileSync(new URL("../src/components/task-app/pursuits-workspace.tsx", import.meta.url), "utf8");
-const calendarPresentationSource = readFileSync(new URL("../src/components/task-app/pursuit-calendar-presentation.tsx", import.meta.url), "utf8");
 const pursuitHookSource = readFileSync(new URL("../src/hooks/usePursuits.ts", import.meta.url), "utf8");
 const appVersionSource = readFileSync(new URL("../src/lib/app-version.ts", import.meta.url), "utf8");
 const publicVersionSource = readFileSync(new URL("../public/app-version.json", import.meta.url), "utf8");
@@ -69,7 +68,7 @@ test("Table/List use a dedicated Pursuit rendering path and searchable domain ro
   assert.match(editorSource, /export function PursuitEditorModal/);
   assert.match(editorSource, /Mark Done Today/);
   assert.match(editorSource, /Pursuit calendar/);
-  assert.match(calendarPresentationSource, /Pursuit history/);
+  assert.match(editorSource, /historyTitle="Pursuit History"/);
   assert.match(rowSource, /Compass/);
   assert.doesNotMatch(rowSource, /Infinity/);
   assert.doesNotMatch(editorSource, /Infinity/);
@@ -123,8 +122,8 @@ test("Pursuit completion controls and quick actions stay row-local", () => {
 test("Pursuit Calendar contains history and day-note controls in one shared surface", () => {
   assert.match(editorSource, /function PursuitCalendar/);
   assert.match(editorSource, /selectedDayNote/);
-  assert.match(calendarPresentationSource, /Chronological completed days/);
-  assert.match(calendarPresentationSource, /Pursuit history/);
+  assert.match(editorSource, /historyDescription="Chronological completed days/);
+  assert.match(editorSource, /historyTitle="Pursuit History"/);
   assert.match(editorSource, /PursuitCalendarPresentation/);
   assert.doesNotMatch(editorSource, /setActiveSection\("history"\)/);
   assert.doesNotMatch(editorSource, /aria-label="History"/);
@@ -183,9 +182,9 @@ test("Pursuit completion writes a nullable check-in event without Task or Focus 
   assert.match(pursuitHookSource, /notes: nextNotes/);
 });
 
-test("7.13.11 runtime version authorities agree and HUD reads the shared authority", () => {
+test("7.13.12 runtime version authorities agree and HUD reads the shared authority", () => {
   for (const source of [appVersionSource, publicVersionSource, packageSource, packageLockSource, currentStateSource]) {
-    assert.match(source, /7\.13\.11/);
+    assert.match(source, /7\.13\.12/);
     assert.doesNotMatch(source, /7\.13\.(?:5|6|9|10)/);
   }
   assert.match(appSource, /const HUD_VERSION = APP_VERSION/);
