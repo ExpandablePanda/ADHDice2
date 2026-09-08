@@ -6,6 +6,7 @@ import type {
   TaskStatus,
 } from "../database.types";
 import { logicalDateForTimestamp } from "../task-state-engine/calendar.ts";
+import { normalizeTaskType } from "../task-type.ts";
 import type { CanonicalEntityKind } from "./types.ts";
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
@@ -113,6 +114,7 @@ function normalizedDraft(input: Omit<TaskInsert, "user_id">): CanonicalTaskCreat
   return {
     parent_task_id: input.parent_task_id ?? null,
     title: input.title.trim(),
+    task_type: normalizeTaskType(input.task_type),
     notes: input.notes ?? null,
     status: input.status ?? "pending",
     priority: input.priority ?? "normal",

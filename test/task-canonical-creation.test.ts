@@ -113,6 +113,7 @@ function canonicalTask(overrides: Partial<CanonicalTaskCreationRow> = {}): Canon
     parent_task_id: null,
     revision: 1,
     title: "New Task",
+    task_type: "task",
     notes: null,
     status: "pending",
     priority: "normal",
@@ -191,6 +192,7 @@ test("canonical creation plan initializes runtime state without action facts or 
   assert.equal(plan.schedule.historical_scope_known, false);
   assert.equal(plan.schedule.prospective_only, true);
   assert.equal(plan.task.status, "pending");
+  assert.equal(plan.task.task_type, "task");
   assert.equal(plan.task.completed_at, null);
   assert.equal(plan.task.trashed_at, null);
 
@@ -205,6 +207,15 @@ test("canonical creation plan initializes runtime state without action facts or 
   assert.equal(importedOpenPlan.task.repeat_frequency, "daily");
   assert.deepEqual(importedOpenPlan.task.tags, ["planning"]);
   assert.equal(importedOpenPlan.schedule.schedule_model, "rolling");
+
+  const pursuitPlan = buildCanonicalTaskCreationPlan({
+    draft: draft({ task_type: "pursuit" }),
+    entityKind: "step",
+    now,
+    profile,
+  });
+  assert.equal(pursuitPlan.task.task_type, "pursuit");
+  assert.equal(pursuitPlan.canonical.entity_kind, "step");
 });
 
 test("normal addTask uses trusted canonical creation and fails closed without legacy fallback", async () => {
@@ -236,6 +247,7 @@ test("normal addTask uses trusted canonical creation and fails closed without le
   assert.equal(created?.workflow_state, "none");
   assert.equal(calls[0]?.source, "task_creation");
   assert.equal("user_id" in (calls[0]?.payload ?? {}), true);
+  assert.equal(calls[0]?.payload.task_type, "task");
   assert.deepEqual(tasks.map((task) => task.title), ["Existing Task", "Trusted Task"]);
   assert.deepEqual(revealCalls, [created?.id]);
 
@@ -468,6 +480,7 @@ test("Import routes parents, Steps, and Substeps through canonical creation and 
   assert.deepEqual(calls.map((call) => call.source), ["task_import", "task_import", "task_import", "task_import", "task_import"]);
   assert.equal(calls[0]?.payload.due_on, "2026-08-20");
   assert.equal(calls[0]?.payload.repeat_frequency, "daily");
+  assert.equal(calls.every((call) => call.payload.task_type === "task"), true);
   assert.equal(calls[1]?.payload.parent_task_id, tasks[0]?.id);
   assert.equal(calls[2]?.payload.parent_task_id, tasks[1]?.id);
   assert.equal(calls[3]?.payload.parent_task_id, tasks[2]?.id);

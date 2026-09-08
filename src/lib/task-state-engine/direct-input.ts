@@ -3,6 +3,7 @@ import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts
 import type { CanonicalTaskScheduleBoundary } from "../task-state-canonical/types.ts";
 import { occurrenceIdentity } from "./recurrence.ts";
 import { resolveTaskBehaviorPolicy } from "./behavior-policy.ts";
+import { normalizeTaskType } from "../task-type.ts";
 import type {
   TaskCalendarOverride,
   TaskHistoryOutcome,
@@ -224,8 +225,8 @@ function buildTaskStateEngineInput(
 
   return {
     // Policy selection belongs to the stored-Task normalization boundary.
-    // Future TaskType selection is added here, before the pure engine sees it.
-    behaviorPolicy: resolveTaskBehaviorPolicy(),
+    // TaskType is metadata; resolve its current profile before the pure engine sees it.
+    behaviorPolicy: resolveTaskBehaviorPolicy(normalizeTaskType(task.task_type)),
     task: {
       id: task.id,
       lifecycle,

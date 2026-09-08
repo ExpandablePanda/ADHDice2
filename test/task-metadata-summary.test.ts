@@ -12,6 +12,7 @@ const { buildTaskMetadataSummary } = await jiti.import<typeof import("../src/com
   "../src/components/ui/task-management-table-v2.tsx",
 );
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
+const adapterSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
 
 const baseTask = {
   actualSeconds: 0,
@@ -33,6 +34,7 @@ const baseTask = {
   repeatMonthlyOrdinal: null,
   repeatMonthlyWeekday: null,
   status: "pending" as const,
+  taskType: "task" as const,
   tags: [],
   title: "",
 };
@@ -65,10 +67,19 @@ test("Summary is derived from the active metadataTask and exposes every property
   assert.match(summaryBranch, /selectMetadataPanel\(metadataTask\.id, row\.panelId/);
   const summaryHelper = tableSource.slice(tableSource.indexOf("export type TaskMetadataSummaryRow"), tableSource.indexOf("function statusSortValue"));
   assert.match(summaryHelper, /buildTaskMetadataSummary/);
-  for (const panelId of ["status", "priority", "energy", "due", "repeat", "estimated", "actual", "lists", "tags", "link", "notes"]) {
+  for (const panelId of ["status", "task_type", "priority", "energy", "due", "repeat", "estimated", "actual", "lists", "tags", "link", "notes"]) {
     assert.match(summaryHelper, new RegExp(`panelId: "${panelId}"`));
   }
   assert.match(tableSource, /const metadataTask = overlayMode === "full" \? metadataTargetTask \?\? selectedTask : selectedTask/);
+});
+
+test("Task Settings exposes the compact TaskType selector and routes changes through the existing metadata callback", () => {
+  const taskTypeBranch = tableSource.slice(tableSource.indexOf('metadataPanelId === "task_type"'), tableSource.indexOf('metadataPanelId === "due"'));
+  assert.match(taskTypeBranch, /<AdhdDropdownSelect/);
+  assert.match(taskTypeBranch, /options=\{TASK_TYPE_OPTIONS\}/);
+  assert.match(taskTypeBranch, /setTaskType\(metadataTask\.id, value\)/);
+  assert.match(taskTypeBranch, /TaskType labels are ready\. Behavior profiles are being configured separately\./);
+  assert.match(adapterSource, /onTaskTypeChange=\{tableProps\.onSetTaskType\}/);
 });
 
 test("full-editor property panels expose one Back to Summary control without changing metadata", () => {
@@ -143,6 +154,7 @@ test("Summary formatting keeps configured values visible and uses displayed actu
 
   assert.equal(summary.Title.value, "Finish quarterly report");
   assert.equal(summary.Status.value, "Delayed");
+  assert.equal(summary["Task Type"].value, "Task");
   assert.equal(summary.Priority.value, "3");
   assert.equal(summary.Energy.value, "Medium");
   assert.match(summary.Due.value, /12-24-2026 · 6:00pm/);

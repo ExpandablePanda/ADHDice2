@@ -20,7 +20,7 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { Pursuit, PursuitUpdate, Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
+import type { Pursuit, PursuitUpdate, Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
 import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
@@ -331,6 +331,7 @@ type TasksTableSourceProps = {
   onSetLink?: (taskId: string, nextLink: { label: string; url: string }) => void;
   onSetLinkedNoteIds?: (taskId: string, linkedNoteIds: string[]) => void;
   onSetNotes?: (taskId: string, notes: string) => void;
+  onSetTaskType?: (taskId: string, taskType: TaskType) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
   onTogglePinned?: (taskId: string) => void;
   onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
@@ -709,6 +710,7 @@ export function TasksTableAdapter({
           onTaskLinkChange={tableProps.onSetLink}
           onTaskLinkedNoteIdsChange={tableProps.onSetLinkedNoteIds}
           onTaskNotesChange={tableProps.onSetNotes}
+          onTaskTypeChange={tableProps.onSetTaskType}
           onTaskPriorityChange={tableProps.onSetPriority}
           onTaskPinToggle={tableProps.onTogglePinned}
           onTaskRepeatChange={tableProps.onSetRepeat}
@@ -3116,6 +3118,7 @@ function TasksSimpleList({
               onTaskLinkChange={tableProps.onSetLink}
               onTaskLinkedNoteIdsChange={tableProps.onSetLinkedNoteIds}
               onTaskNotesChange={tableProps.onSetNotes}
+              onTaskTypeChange={tableProps.onSetTaskType}
               onTaskPriorityChange={tableProps.onSetPriority}
               onTaskPinToggle={tableProps.onTogglePinned}
               onTaskRepeatChange={tableProps.onSetRepeat}

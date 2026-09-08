@@ -11,6 +11,7 @@ import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { createProjectionDomainRevision } from "@/lib/stable-task-projection";
 import { getTaskTrashTimestamp } from "@/lib/task-trash";
+import { normalizeTaskType } from "@/lib/task-type";
 
 const isDevelopment = process.env.NODE_ENV !== "production";
 let buildTaskTableRowDebugCount = 0;
@@ -114,6 +115,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     energy: task.energy,
     estimatedMinutes: task.estimated_minutes ?? null,
     id: task.id,
+    taskType: normalizeTaskType(task.task_type),
     linkLabel: task.external_link_label ?? "",
     linkUrl: task.external_link_url ?? "",
     lastDoneAt: lastDone?.timestamp ?? null,

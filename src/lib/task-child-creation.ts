@@ -54,6 +54,7 @@ export function buildChildTaskCreationDraft({
       status: "pending",
       subtasks_auto_reset: false,
       tags: [],
+      task_type: "task",
       title: trimmedTitle,
       trashed_at: null,
     },

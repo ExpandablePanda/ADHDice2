@@ -41,6 +41,7 @@ export function useTaskCreateAction({
   async function addTask(task: TaskDraft) {
     const payload: TaskInsert = {
       ...task,
+      task_type: task.task_type ?? "task",
       user_id: currentUserId,
       sort_order: Date.now(),
     };

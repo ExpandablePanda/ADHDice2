@@ -14,6 +14,7 @@ create table public.adhdice_clean_tasks (
   parent_task_id uuid references public.adhdice_clean_tasks(id) on delete cascade,
   revision integer not null default 1,
   title text not null check (char_length(trim(title)) > 0),
+  task_type text not null default 'task',
   notes text,
   status public.adhdice_clean_task_status not null default 'pending',
   priority public.adhdice_clean_task_priority not null default 'normal',
@@ -53,7 +54,9 @@ create table public.adhdice_clean_tasks (
       or (repeat_monthly_mode = 'ordinal_weekday' and repeat_monthly_ordinal is not null and repeat_monthly_weekday is not null)
     ),
   constraint adhdice_clean_tasks_parent_task_not_self
-    check (parent_task_id is null or parent_task_id <> id)
+    check (parent_task_id is null or parent_task_id <> id),
+  constraint adhdice_clean_tasks_task_type_check
+    check (task_type in ('task', 'pursuit', 'goal', 'custom'))
 );
 
 create table public.adhdice_user_profiles (

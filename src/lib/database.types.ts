@@ -73,6 +73,7 @@ export type TaskEnergy = "none" | "low" | "medium" | "high";
 export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
 export type TaskRepeatMonthlyMode = "day_of_month" | "ordinal_weekday";
 export type TaskRepeatMonthlyOrdinal = "first" | "second" | "third" | "fourth" | "last";
+export type { TaskType } from "./task-type.ts";
 export type PursuitStatus = "active" | "paused" | "archived";
 export type Pursuit = {
   id: string;
@@ -354,6 +355,7 @@ export type Task = {
   parent_task_id: string | null;
   revision: number;
   title: string;
+  task_type: import("./task-type.ts").TaskType;
   notes: string | null;
   status: TaskStatus;
   priority: TaskPriority;
@@ -396,6 +398,7 @@ export type TaskInsert = {
   parent_task_id?: string | null;
   revision?: number;
   title: string;
+  task_type?: import("./task-type.ts").TaskType;
   notes?: string | null;
   status?: TaskStatus;
   priority?: TaskPriority;
@@ -434,6 +437,7 @@ export type TaskUpdate = Partial<
     Task,
     | "revision"
     | "title"
+    | "task_type"
     | "notes"
     | "status"
     | "priority"

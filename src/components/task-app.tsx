@@ -4247,6 +4247,7 @@ export function TaskApp() {
       repeat_frequency: task.repeat_frequency,
       repeat_interval: task.repeat_interval,
       status: "pending",
+      task_type: task.task_type,
       subtasks_auto_reset: task.subtasks_auto_reset,
       tags: [...task.tags],
       title: task.title.trim() ? `Copy of ${task.title.trim()}` : "Copy of task",
@@ -6741,6 +6742,7 @@ export function TaskApp() {
           onTaskLinkChange={(taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); }}
           onTaskLinkedNoteIdsChange={(taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); }}
           onTaskNotesChange={(taskId, notes) => { void updateTask(taskId, { notes: notes || null }); }}
+          onTaskTypeChange={(taskId, taskType) => { void updateTask(taskId, { task_type: taskType }); }}
           onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
           onTaskPriorityChange={applyTaskPriorityChange}
           onTaskRepeatChange={handleSharedTaskRepeatChange}
@@ -7236,6 +7238,7 @@ export function TaskApp() {
                   onRequestedOpenTaskOverlayClose: closeSharedTaskEditorOverlay,
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
+                  onSetTaskType: (taskId, taskType) => { void updateTask(taskId, { task_type: taskType }); },
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
@@ -7420,6 +7423,7 @@ export function TaskApp() {
                   },
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
+                  onSetTaskType: (taskId, taskType) => { void updateTask(taskId, { task_type: taskType }); },
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {

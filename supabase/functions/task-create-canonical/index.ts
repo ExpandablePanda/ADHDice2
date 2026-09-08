@@ -9,7 +9,7 @@ import { userIdFromContext } from "../task-state-command/auth.ts";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const TASK_KEYS = new Set([
-  "parent_task_id", "title", "notes", "status", "priority", "priority_level", "energy",
+  "parent_task_id", "title", "task_type", "notes", "status", "priority", "priority_level", "energy",
   "is_urgent", "is_important", "due_on", "active_status_logical_date", "active_occurrence_due_on",
   "scheduled_on", "due_time", "estimated_minutes", "actual_seconds", "tags", "external_link_label",
   "external_link_url", "one_step_at_a_time", "subtasks_auto_reset", "repeat_frequency", "repeat_interval",

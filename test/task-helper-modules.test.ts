@@ -1819,6 +1819,7 @@ test("child task preview lookup exposes direct same-table children", () => {
     energy: "low",
     estimatedMinutes: 25,
     id: "child",
+    taskType: "task",
     isFocused: false,
     issueTypes: [],
     lastDoneAt: null,
@@ -2132,6 +2133,37 @@ test("guarded task update succeeds when the expected revision still matches", as
   assert.equal(result.conflict, null);
   assert.equal(result.reappliedOnLatestRevision, false);
   assert.equal(result.data?.notes, "After");
+  assert.equal(result.data?.revision, 4);
+  assert.equal(client.getUpdateAttemptCount(), 1);
+});
+
+test("TaskType metadata persists through the guarded update path without changing Task state", async () => {
+  const task = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    due_on: "2026-06-12",
+    id: "task-type-metadata",
+    repeat_frequency: "daily",
+    revision: 3,
+    sort_order: 1,
+    status: "pending",
+    title: "Profile label",
+  });
+  const client = createTaskUpdateTestClient(task);
+
+  const result = await updateTaskRowWithLegacyEnergyFallback(
+    client as never,
+    task.id,
+    { task_type: "pursuit" },
+    () => false,
+    () => false,
+    { expectedTask: task },
+  );
+
+  assert.equal(result.error, null);
+  assert.equal(result.data?.task_type, "pursuit");
+  assert.equal(result.data?.status, "pending");
+  assert.equal(result.data?.due_on, "2026-06-12");
+  assert.equal(result.data?.repeat_frequency, "daily");
   assert.equal(result.data?.revision, 4);
   assert.equal(client.getUpdateAttemptCount(), 1);
 });

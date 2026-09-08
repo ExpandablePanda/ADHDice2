@@ -87,6 +87,7 @@ export type ChildTaskPreview = {
   energy: Task["energy"];
   estimatedMinutes: number | null;
   id: string;
+  taskType: Task["task_type"];
   isFocused: boolean;
   issueTypes: Array<TaskHierarchyIssue["type"]>;
   lastDoneAt: string | null;
@@ -482,6 +483,7 @@ export function buildChildTaskPreviewLookup(
           energy: descendant.energy,
           estimatedMinutes: descendant.estimated_minutes,
           id: descendant.id,
+          taskType: descendant.task_type,
           isFocused: focusedTaskIdSet.has(descendant.id),
           issueTypes: adapter.getNode(descendant.id)?.issueTypes ?? [],
           lastDoneAt: lastDone?.timestamp ?? null,

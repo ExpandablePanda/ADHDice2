@@ -33,7 +33,7 @@ import {
   Trophy,
   X,
 } from "lucide-react";
-import type { Pursuit, PursuitUpdate, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
+import type { Pursuit, PursuitUpdate, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
@@ -68,6 +68,8 @@ import {
   isWeekdaysRepeatSelection,
 } from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
+import { formatTaskTypeLabel, normalizeTaskType, TASK_TYPE_OPTIONS } from "@/lib/task-type";
+import { AdhdDropdownSelect } from "@/components/ui-system";
 import {
   TASK_TABLE_BODY_MUTED_VALUE_CLASS as BODY_MUTED_VALUE_CLASS,
   TASK_TABLE_BODY_VALUE_CLASS as BODY_VALUE_CLASS,
@@ -168,7 +170,7 @@ type StructuredFilters = {
 };
 type OverlayMode = "actual" | "delay" | "due" | "energy" | "estimated" | "full" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type OverlaySectionId = "actual" | "due" | "energyStatus" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "tags";
-export type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "summary" | "tags";
+export type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "summary" | "tags" | "task_type";
 type ColumnAlignment = "center" | "left" | "right";
 export type RowContextMenuState = { left: number; taskId: string; top: number };
 type ColumnMenuPosition = { left: number; maxHeight: number; placement: "down" | "up"; top: number };
@@ -333,6 +335,7 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
     lastHandledAt: row.lastHandledAt,
     lastHandledDate: row.lastHandledDate,
     updatedAt: row.updatedAt,
+    taskType: row.taskType,
     dueOn: row.dueOn,
     dueTime: row.dueTime,
     energy: row.energy,
@@ -995,6 +998,7 @@ export type PrototypeTaskRow = {
   energy: TaskEnergy;
   estimatedMinutes: number | null;
   id: string;
+  taskType?: TaskType;
   linkLabel: string;
   linkUrl: string;
   lastDoneAt: string | null;
@@ -1233,6 +1237,7 @@ type TaskManagementTableV2Props = {
   onTaskSubtaskStatusChange?: (subtaskId: string, status: TaskStatus) => void;
   onTaskSubtasksAutoResetChange?: (taskId: string, subtasksAutoReset: boolean) => void;
   onTaskTagsChange?: (taskId: string, tags: string[]) => void;
+  onTaskTypeChange?: (taskId: string, taskType: TaskType) => void;
   onTaskTitleChange?: (taskId: string, title: string) => void;
   onToggleTaskSelection?: (taskId: string, options?: { additive?: boolean; range?: boolean; visibleTaskIds?: string[] }) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
@@ -2255,7 +2260,7 @@ export type TaskMetadataSummaryRow = {
 };
 
 export function buildTaskMetadataSummary(
-  task: Pick<PrototypeTaskRow, "actualSeconds" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "status" | "tags" | "title">,
+  task: Pick<PrototypeTaskRow, "actualSeconds" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "status" | "tags" | "taskType" | "title">,
   actualSeconds: number,
 ): TaskMetadataSummaryRow[] {
   const priority = getTaskPrioritySelection(task.priorities);
@@ -2278,6 +2283,7 @@ export function buildTaskMetadataSummary(
   return [
     { label: "Title", panelId: null, value: task.title.trim() || "Untitled task" },
     { label: "Status", panelId: "status", value: formatTaskStatusLabel(task.status) },
+    { label: "Task Type", panelId: "task_type", value: formatTaskTypeLabel(task.taskType) },
     { label: "Priority", panelId: "priority", value: priority ? formatPriorityLabel(priority) : "None" },
     { label: "Energy", panelId: "energy", value: task.energy === "none" ? "None" : formatEnergyLabel(task.energy) },
     { label: "Due", panelId: "due", value: formatDue(task.dueOn, task.dueTime) },
@@ -2684,6 +2690,7 @@ export function TaskManagementTableV2({
   onTaskSubtaskRename,
   onTaskSubtaskStatusChange,
   onTaskTagsChange,
+  onTaskTypeChange,
   onTaskTitleChange,
   onToggleTaskSelection,
   onToggleTaskList,
@@ -4846,6 +4853,16 @@ export function TaskManagementTableV2({
     }
   }
 
+  function setTaskType(taskId: string, taskType: TaskType) {
+    const nextTaskType = normalizeTaskType(taskType);
+    const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
+    queueTableMutationScrollTopHold(taskId);
+    patchTasks(targetTaskIds, (task) => ({ ...task, taskType: nextTaskType }));
+    for (const targetTaskId of targetTaskIds) {
+      onTaskTypeChange?.(targetTaskId, nextTaskType);
+    }
+  }
+
   function parsePositiveDraft(value: string, fallback: number) {
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -5487,6 +5504,7 @@ export function TaskManagementTableV2({
       energy: item.energy,
       estimatedMinutes: item.estimatedMinutes,
       id: item.id,
+      taskType: normalizeTaskType(item.taskType),
       lastDoneAt: item.lastDoneAt,
       lastDoneDate: item.lastDoneDate,
       lastHandledAt: item.lastHandledAt,
@@ -9453,6 +9471,7 @@ export function TaskManagementTableV2({
                   status: "Status",
                   summary: "Summary",
                   tags: "Tags",
+                  task_type: "Task Type",
                 };
                 const metadataSummaryRows = buildTaskMetadataSummary(metadataTask, getDisplayedActualSeconds(metadataTask));
                 const activeMetadataPanelLabel = metadataPanelLabels[metadataPanelId] ?? "Meta Data";
@@ -9515,6 +9534,24 @@ export function TaskManagementTableV2({
                           <span className="mt-0.5 block min-w-0 break-words text-sm text-[#2f294a] dark:text-white">{row.value}</span>
                         </div>
                       ))}
+                    </div>
+                  );
+                } else if (metadataPanelId === "task_type") {
+                  metadataPanelContent = (
+                    <div className="space-y-3">
+                      <AdhdDropdownSelect
+                        ariaLabel="Task type"
+                        label="Task type"
+                        onChange={(value) => {
+                          setTaskType(metadataTask.id, value);
+                          returnFullMetadataToSummary();
+                        }}
+                        options={TASK_TYPE_OPTIONS}
+                        value={normalizeTaskType(metadataTask.taskType)}
+                      />
+                      <p className="text-xs leading-5 text-[#7d7597] dark:text-white/50">
+                        TaskType labels are ready. Behavior profiles are being configured separately.
+                      </p>
                     </div>
                   );
                 } else if (metadataPanelId === "due") {

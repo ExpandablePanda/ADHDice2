@@ -10,6 +10,9 @@
  * consume. Only the current standard profile is active in this foundation
  * ticket; no blank-occurrence or Pursuit behavior is activated here.
  */
+import type { TaskType } from "../task-type.ts";
+import { isTaskType } from "../task-type.ts";
+
 export type UnresolvedOccurrenceBehavior = "missed" | "blank";
 export type PositiveStreakUnhandledBehavior = "break" | "preserve";
 export type MissedStreakUnhandledBehavior = "increment" | "ignore";
@@ -32,9 +35,15 @@ export const STANDARD_TASK_BEHAVIOR_POLICY: TaskBehaviorPolicy = Object.freeze({
   rewards: "enabled",
 });
 
-/** Resolve an omitted or null policy to the current standard Task profile. */
+/** Resolve a persisted TaskType, or a compatibility policy input, to the current profile. */
 export function resolveTaskBehaviorPolicy(
-  policy?: TaskBehaviorPolicy | null,
+  input?: TaskType | TaskBehaviorPolicy | null,
 ): TaskBehaviorPolicy {
-  return policy ?? STANDARD_TASK_BEHAVIOR_POLICY;
+  if (input && typeof input === "object") {
+    return input;
+  }
+  if (isTaskType(input)) {
+    return STANDARD_TASK_BEHAVIOR_POLICY;
+  }
+  return STANDARD_TASK_BEHAVIOR_POLICY;
 }
