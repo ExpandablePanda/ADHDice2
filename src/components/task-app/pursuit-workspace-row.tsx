@@ -80,7 +80,7 @@ export function PursuitCompletionNotePanel({
   onClose?: () => void;
   onConfirm: () => void | Promise<unknown>;
   pending?: boolean;
-  presentation?: "dropdown" | "table";
+  presentation?: "dropdown" | "inline" | "table";
   viewportMetrics?: TaskTableViewportMetrics;
 }) {
   const content = (
@@ -97,11 +97,11 @@ export function PursuitCompletionNotePanel({
       <AdhdChip disabled={pending} icon={<Save className="h-3.5 w-3.5" />} onClick={() => { void onConfirm(); }} tone="complete" type="button">
         {pending ? "Saving..." : "Confirm"}
       </AdhdChip>
-      {presentation === "dropdown" && onClose ? <AdhdIconButton aria-label="Close completion note" onClick={onClose} size="sm" title="Close" variant="rowToolbar"><X /></AdhdIconButton> : null}
+      {presentation !== "table" && onClose ? <AdhdIconButton aria-label="Close completion note" onClick={onClose} size="sm" title="Close" variant="rowToolbar"><X /></AdhdIconButton> : null}
     </div>
   );
 
-  if (presentation === "dropdown") {
+  if (presentation === "dropdown" || presentation === "inline") {
     return <div aria-label={ariaLabel} className={className} data-pursuit-completion-note-panel="true">{content}</div>;
   }
 

@@ -181,9 +181,9 @@ test("Pursuit completion writes a nullable check-in event without Task or Focus 
   assert.match(pursuitHookSource, /notes: nextNotes/);
 });
 
-test("7.13.8 runtime version authorities agree and HUD reads the shared authority", () => {
+test("7.13.9 runtime version authorities agree and HUD reads the shared authority", () => {
   for (const source of [appVersionSource, publicVersionSource, packageSource, packageLockSource, currentStateSource]) {
-    assert.match(source, /7\.13\.8/);
+    assert.match(source, /7\.13\.9/);
     assert.doesNotMatch(source, /7\.13\.(?:5|6)/);
   }
   assert.match(appSource, /const HUD_VERSION = APP_VERSION/);
@@ -228,6 +228,33 @@ test("Pursuit completion controls use a row-safe shared note panel and preserve 
   assert.match(rowSource, /onRemoveCompletionOnLogicalDay/);
   assert.match(editorSource, /PursuitCompletionNotePanel/);
   assert.doesNotMatch(editorSource, /isCompletionNoteOpen[^\n]*absolute right-0 top/);
+});
+
+test("Pursuit completion presentation keeps Table rows separate from the editor", () => {
+  const panelSource = rowSource.slice(rowSource.indexOf("export function PursuitCompletionNotePanel"), rowSource.indexOf("export function PursuitCompletionControl"));
+  const sharedContentSource = panelSource.slice(panelSource.indexOf("const content"), panelSource.indexOf('if (presentation === "dropdown" || presentation === "inline")'));
+  const nonTableBranch = panelSource.slice(panelSource.indexOf('if (presentation === "dropdown" || presentation === "inline")'), panelSource.indexOf("return (\n    <TaskTableInlineActionRow"));
+  const editorPanelStart = editorSource.indexOf("<PursuitCompletionNotePanel");
+  const editorPanelSource = editorSource.slice(editorPanelStart, editorSource.indexOf(" />", editorPanelStart) + 3);
+
+  assert.match(rowSource, /presentation\?: "dropdown" \| "inline" \| "table"/);
+  assert.match(panelSource, /if \(presentation === "dropdown" \|\| presentation === "inline"\)/);
+  assert.match(panelSource, /<TaskTableInlineActionRow[\s\S]*heading="Mark done today"/);
+  assert.doesNotMatch(nonTableBranch, /TaskTableInlineActionRow|TASK_TABLE_GRID_ORIGIN_CLASS|viewportMetrics|w-max|min-w-full|translateX/);
+  assert.match(nonTableBranch, /data-pursuit-completion-note-panel/);
+  assert.match(sharedContentSource, /Optional note for today/);
+  assert.match(sharedContentSource, /Confirm/);
+  assert.match(sharedContentSource, /Close completion note/);
+  assert.match(editorPanelSource, /presentation="inline"/);
+  assert.doesNotMatch(editorPanelSource, /presentation="table"/);
+});
+
+test("Pursuit completion presentation leaves the Calendar surface independent", () => {
+  const calendarFunctionSource = editorSource.slice(editorSource.indexOf("function PursuitCalendar"));
+  assert.doesNotMatch(calendarFunctionSource, /PursuitCompletionNotePanel|TaskTableInlineActionRow/);
+  assert.match(calendarFunctionSource, /selectedDayCompleted/);
+  assert.match(calendarFunctionSource, /onToggleSelectedDay/);
+  assert.match(calendarFunctionSource, /onSaveSelectedDayNote/);
 });
 
 test("ChildTypeChooser is portal-layered above clipped Table/List rows with dismissal behavior", () => {
