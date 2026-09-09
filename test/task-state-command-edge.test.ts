@@ -11,6 +11,9 @@ import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonica
 import type { CanonicalTaskCommandOperation } from "../src/lib/task-state-canonical/types.ts";
 import { planTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
 import { buildCanonicalTaskStateEngineInput } from "../src/lib/task-state-canonical/engine-input.ts";
+import { buildCompatibilityTaskStateEngineInput } from "../src/lib/task-state-engine/direct-input.ts";
+import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
+import type { TaskBehaviorPolicyRevision, TaskBehaviorProfiles } from "../src/lib/task-state-engine/behavior-policy.ts";
 
 const edgeSource = readFileSync(new URL("../supabase/functions/task-state-command/index.ts", import.meta.url), "utf8");
 const domainSource = readFileSync(new URL("../supabase/functions/task-state-command/domain.ts", import.meta.url), "utf8");
@@ -215,12 +218,44 @@ const canonicalReadModel = {
     revision: 4,
     canonical_revision: 4,
     status: "pending",
-    due_on: "2026-08-10",
+    due_on: "2026-09-01",
+    task_type: "task",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    canonicalization_status: "canonical_runtime",
     terminal_state: "active",
     container_state: "active",
     workflow_state: "none",
   },
-  scheduleBoundaries: [],
+  scheduleBoundaries: [{
+    id: "boundary-task-1",
+    user_id: "owner-1",
+    entity_id: "task-1",
+    entity_kind: "parent",
+    effective_from_logical_date: "2026-09-01",
+    boundary_sequence: 1,
+    boundary_type: "initial",
+    schedule_model: "rolling",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    one_time_due_on: null,
+    due_time: null,
+    anchor_date: "2026-09-01",
+    anchor_kind: "user_selected",
+    anchor_confidence: "proven",
+    historical_scope_known: true,
+    prospective_only: false,
+  }],
   occurrences: [],
   occurrenceEffectiveOverrides: [],
   historyFacts: [],
@@ -236,6 +271,213 @@ const canonicalReadModel = {
     settings_revision: 3,
   },
 } as unknown as CanonicalTaskStateReadModel;
+
+function behaviorRevision(
+  effectiveFromLogicalDate: string,
+  values: Partial<TaskBehaviorPolicyRevision> = {},
+): TaskBehaviorPolicyRevision {
+  return {
+    id: `task-behavior-${effectiveFromLogicalDate}`,
+    effectiveFromLogicalDate,
+    unresolvedOccurrence: "missed",
+    positiveStreakOnUnhandled: "break",
+    missedStreakOnUnhandled: "increment",
+    rewards: "enabled",
+    ...values,
+  };
+}
+
+function behaviorProfile(revision: TaskBehaviorPolicyRevision): TaskBehaviorProfiles {
+  return {
+    task: {
+      id: "task-behavior-profile",
+      unresolvedOccurrence: revision.unresolvedOccurrence,
+      positiveStreakOnUnhandled: revision.positiveStreakOnUnhandled,
+      missedStreakOnUnhandled: revision.missedStreakOnUnhandled,
+      rewards: revision.rewards,
+    },
+  };
+}
+
+test("trusted orchestration forwards the complete Task behavior revision timeline", async () => {
+  const revisions = [
+    behaviorRevision("2026-09-01"),
+    behaviorRevision("2026-09-10", {
+      unresolvedOccurrence: "blank",
+      positiveStreakOnUnhandled: "preserve",
+      missedStreakOnUnhandled: "ignore",
+      rewards: "disabled",
+    }),
+  ];
+  let capturedContext: Parameters<typeof buildCanonicalTaskStateEngineInput>[1] | undefined;
+
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: archiveIntent("behavior-revisions-forwarded"),
+    adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: behaviorProfile(revisions[1]!), revisions, error: null }),
+      buildEngineInput: (readModel, context) => {
+        capturedContext = context;
+        return buildCanonicalTaskStateEngineInput(readModel, context);
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(capturedContext?.behaviorPolicyRevisions, { task: revisions });
+  assert.equal(capturedContext?.behaviorProfiles?.task?.rewards, "disabled");
+});
+
+test("trusted orchestration uses the Standard fallback for empty or unavailable profile storage", async () => {
+  for (const [label, behaviorResult] of [
+    ["no rows", { data: {}, revisions: [], error: null }],
+    ["unavailable table", { data: {}, revisions: [], error: { code: "42P01", message: "relation does not exist" } }],
+  ] as const) {
+    let capturedEngineInput: TaskStateEngineInput | undefined;
+    const result = await executeTrustedTaskStateCommand({
+      userId: "owner-1",
+      intent: archiveIntent(`behavior-fallback:${label}`),
+      adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+      dependencies: {
+        loadReplayOperation: async () => ({ data: null, error: null }),
+        loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+        loadBehaviorProfiles: async () => behaviorResult,
+        buildEngineInput: (readModel, context) => {
+          capturedEngineInput = buildCanonicalTaskStateEngineInput(readModel, context);
+          return capturedEngineInput;
+        },
+      },
+    });
+
+    assert.equal(result.status, 200, label);
+    assert.equal(capturedEngineInput?.behaviorPolicy?.id, "standard-task", label);
+    assert.equal(capturedEngineInput?.behaviorPolicyRevisions, undefined, label);
+  }
+});
+
+test("trusted reconciliation applies each historical Task behavior revision to its own logical date", async () => {
+  const revisions = [
+    behaviorRevision("2026-09-01"),
+    behaviorRevision("2026-09-10", {
+      unresolvedOccurrence: "blank",
+      positiveStreakOnUnhandled: "preserve",
+      missedStreakOnUnhandled: "ignore",
+      rewards: "disabled",
+    }),
+    behaviorRevision("2026-09-20"),
+  ];
+  let capturedEngineInput: TaskStateEngineInput | undefined;
+  let capturedPlan: ReturnType<typeof planTaskStateCommand> | undefined;
+
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "reconcile_rollover",
+      task_id: "task-1",
+      replay_identity: "rollover:historical-behavior-revisions",
+      expected_revision: 4,
+    },
+    adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-25T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: behaviorProfile(revisions[2]!), revisions, error: null }),
+      buildEngineInput: (readModel, context) => {
+        capturedEngineInput = buildCanonicalTaskStateEngineInput(readModel, context);
+        return capturedEngineInput;
+      },
+      planCommand: (state, command) => {
+        capturedPlan = planTaskStateCommand(state, command);
+        return capturedPlan;
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(capturedEngineInput?.behaviorPolicy?.unresolvedOccurrence, "missed");
+  assert.deepEqual(capturedEngineInput?.behaviorPolicyRevisions, revisions);
+  const automaticDates = capturedPlan?.normalizedResult.automaticHistoryFacts.map((fact) => fact.logical_date) ?? [];
+  assert.ok(automaticDates.includes("2026-09-05"));
+  assert.ok(automaticDates.includes("2026-09-20"));
+  assert.ok(!automaticDates.some((date) => date >= "2026-09-10" && date <= "2026-09-19"));
+  assert.ok(!automaticDates.includes("2026-09-25"));
+});
+
+test("canonical server and browser/direct normalization make the same historical policy decisions", () => {
+  const revisions = [
+    behaviorRevision("2026-09-01"),
+    behaviorRevision("2026-09-10", {
+      unresolvedOccurrence: "blank",
+      positiveStreakOnUnhandled: "preserve",
+      missedStreakOnUnhandled: "ignore",
+      rewards: "disabled",
+    }),
+    behaviorRevision("2026-09-20"),
+  ];
+  const context = {
+    behaviorProfiles: behaviorProfile(revisions[2]!),
+    behaviorPolicyRevisions: { task: revisions },
+    now: "2026-09-25T16:00:00.000Z",
+    timezone: "America/New_York",
+    logicalDayRollover: "06:00",
+  };
+  const serverInput = buildCanonicalTaskStateEngineInput(canonicalReadModel, context);
+  const browserInput = buildCompatibilityTaskStateEngineInput(canonicalReadModel.task, [], context);
+  const serverResult = evaluateTaskState({ ...serverInput, action: { type: "reconcile_rollover" } });
+  const browserResult = evaluateTaskState({ ...browserInput, action: { type: "reconcile_rollover" } });
+
+  assert.deepEqual(serverInput.behaviorPolicy, browserInput.behaviorPolicy);
+  assert.deepEqual(serverInput.behaviorPolicyRevisions, browserInput.behaviorPolicyRevisions);
+  assert.deepEqual(
+    serverResult.proposedHistoryChanges.map((change) => change.type === "insert" ? change.row.logicalDate : change.rowId),
+    browserResult.proposedHistoryChanges.map((change) => change.type === "insert" ? change.row.logicalDate : change.rowId),
+  );
+});
+
+test("trusted current-logical-day reward policy prevents a new entitlement while earned rewards remain planning-safe", async () => {
+  const revisions = [
+    behaviorRevision("2026-09-01"),
+    behaviorRevision("2026-09-10", {
+      unresolvedOccurrence: "blank",
+      positiveStreakOnUnhandled: "preserve",
+      missedStreakOnUnhandled: "ignore",
+      rewards: "disabled",
+    }),
+    behaviorRevision("2026-09-20"),
+  ];
+  let capturedPlan: ReturnType<typeof planTaskStateCommand> | undefined;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: "outcome:current-disabled-rewards",
+      expected_revision: 4,
+      outcome: "done",
+    },
+    adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: behaviorProfile(revisions[2]!), revisions, error: null }),
+      planCommand: (state, command) => {
+        capturedPlan = planTaskStateCommand(state, command);
+        return capturedPlan;
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(capturedPlan?.command.logicalDay.logicalDate, "2026-09-15");
+  assert.equal(capturedPlan?.normalizedResult.rewardEntitlement, null);
+  assert.deepEqual(capturedPlan?.normalizedResult.automaticHistoryDeleteIds, []);
+});
 
 function archiveIntent(replayIdentity: string, taskId = "task-1", expectedRevision = 4): TaskStateCommandIntent {
   return {

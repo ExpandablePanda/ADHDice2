@@ -24,7 +24,7 @@ import {
 } from "./domain.ts";
 import { deterministicUuid } from "../../../src/lib/task-state-canonical/digest.ts";
 import { logicalDateForTimestamp } from "../../../src/lib/task-state-engine/calendar.ts";
-import type { TaskBehaviorProfiles } from "../../../src/lib/task-state-engine/behavior-policy.ts";
+import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "../../../src/lib/task-state-engine/behavior-policy.ts";
 import { loadTaskTypeBehaviorProfiles } from "../../../src/lib/task-type-behavior-profiles.ts";
 
 export type TrustedTaskStateCommandClient = CanonicalReadClient & {
@@ -251,16 +251,22 @@ export async function executeTrustedTaskStateCommand(input: {
       settingsRevision: readResult.data.logicalDayProfile.settings_revision,
     };
     let behaviorProfiles: TaskBehaviorProfiles = {};
+    let behaviorPolicyRevisions: TaskBehaviorPolicyRevisionMap = {};
     try {
       const behaviorProfilesResult = await dependencies.loadBehaviorProfiles(input.adminClient, input.userId);
-      behaviorProfiles = behaviorProfilesResult.error ? {} : behaviorProfilesResult.data;
+      if (!behaviorProfilesResult.error && behaviorProfilesResult.revisions.length > 0) {
+        behaviorProfiles = behaviorProfilesResult.data;
+        behaviorPolicyRevisions = { task: behaviorProfilesResult.revisions };
+      }
     } catch {
       // The profile table is additive and may not be deployed with this client yet.
       // Preserve the Standard Task fallback until the reviewed migration is applied.
       behaviorProfiles = {};
+      behaviorPolicyRevisions = {};
     }
     const engineInput = dependencies.buildEngineInput(readResult.data, {
       behaviorProfiles,
+      behaviorPolicyRevisions,
       now,
       timezone: logicalDay.timezone,
       logicalDayRollover: logicalDay.dayStartTime,

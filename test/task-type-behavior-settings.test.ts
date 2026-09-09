@@ -68,6 +68,14 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
   });
+  assert.deepEqual(result.revisions, [{
+    id: "task-behavior-profile",
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "preserve",
+    missedStreakOnUnhandled: "ignore",
+    rewards: "disabled",
+    effectiveFromLogicalDate: "2026-09-08",
+  }]);
   assert.deepEqual(taskTypeBehaviorProfileUpsertPayload("user-a", STANDARD_TASK_BEHAVIOR_POLICY, "2026-09-08"), {
     user_id: "user-a",
     task_type: "task",
