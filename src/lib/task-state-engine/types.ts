@@ -66,6 +66,7 @@ export type TaskStateSnapshot = {
   recurrenceCursor?: string | null;
   satisfiedOccurrenceIdentity?: string | null;
   recurrence: TaskRecurrence;
+  behaviorPolicy?: TaskBehaviorPolicy;
 };
 
 export type TaskStateHistoryRow = {
@@ -240,7 +241,7 @@ export type RewardEligibility = {
   identity: string | null;
   logicalDate: string | null;
   outcome: TaskHistoryOutcome | null;
-  reason: "eligible" | "already_claimed" | "ineligible_outcome" | "no_outcome";
+  reason: "eligible" | "already_claimed" | "ineligible_outcome" | "no_outcome" | "disabled";
 };
 
 export type CurrentDayOutcomeFacts = {

@@ -24,6 +24,8 @@ import {
 } from "./domain.ts";
 import { deterministicUuid } from "../../../src/lib/task-state-canonical/digest.ts";
 import { logicalDateForTimestamp } from "../../../src/lib/task-state-engine/calendar.ts";
+import type { TaskBehaviorProfiles } from "../../../src/lib/task-state-engine/behavior-policy.ts";
+import { loadTaskTypeBehaviorProfiles } from "../../../src/lib/task-type-behavior-profiles.ts";
 
 export type TrustedTaskStateCommandClient = CanonicalReadClient & {
   rpc(
@@ -38,6 +40,7 @@ export type TrustedTaskStateCommandResponse = {
 };
 
 type OrchestrationDependencies = {
+  loadBehaviorProfiles: typeof loadTaskTypeBehaviorProfiles;
   loadReplayOperation: typeof loadCanonicalTaskCommandOperationReplay;
   loadCanonicalState: typeof loadCanonicalTaskState;
   buildEngineInput: typeof buildCanonicalTaskStateEngineInput;
@@ -59,6 +62,7 @@ type OrchestrationDependencies = {
 };
 
 const defaultDependencies: OrchestrationDependencies = {
+  loadBehaviorProfiles: loadTaskTypeBehaviorProfiles,
   loadReplayOperation: loadCanonicalTaskCommandOperationReplay,
   loadCanonicalState: loadCanonicalTaskState,
   buildEngineInput: buildCanonicalTaskStateEngineInput,
@@ -246,7 +250,17 @@ export async function executeTrustedTaskStateCommand(input: {
       dayStartTime: readResult.data.logicalDayProfile.day_start_time,
       settingsRevision: readResult.data.logicalDayProfile.settings_revision,
     };
+    let behaviorProfiles: TaskBehaviorProfiles = {};
+    try {
+      const behaviorProfilesResult = await dependencies.loadBehaviorProfiles(input.adminClient, input.userId);
+      behaviorProfiles = behaviorProfilesResult.error ? {} : behaviorProfilesResult.data;
+    } catch {
+      // The profile table is additive and may not be deployed with this client yet.
+      // Preserve the Standard Task fallback until the reviewed migration is applied.
+      behaviorProfiles = {};
+    }
     const engineInput = dependencies.buildEngineInput(readResult.data, {
+      behaviorProfiles,
       now,
       timezone: logicalDay.timezone,
       logicalDayRollover: logicalDay.dayStartTime,

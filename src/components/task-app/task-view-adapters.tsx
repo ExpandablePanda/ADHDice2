@@ -48,6 +48,7 @@ import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleAct
 import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
+import type { TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
 import type {
   Task,
   TaskHistory as DbTaskHistory,
@@ -629,6 +630,7 @@ export function TaskHistoryModal({
   todayDateKey: string;
   initialDateKey?: string | null;
   stateEngineContext?: { logicalDayRollover: string; now: Date | string; timezone: string };
+  behaviorProfiles?: TaskBehaviorProfiles;
   calendarOverrides?: TaskCalendarOverride[];
 }) {
   const today = todayDateKey;
@@ -682,6 +684,7 @@ export function TaskHistoryModal({
       history: normalizedTaskHistory,
       calendarOverrides,
       task,
+      behaviorProfiles,
     })
     : null;
   const dueDates = new Set(Object.entries(calendarRead?.states ?? {})
@@ -718,7 +721,7 @@ export function TaskHistoryModal({
     ? selectedTimelineDay.obligation === "due" || selectedTimelineDay.obligation === "overdue"
     : selectedCalendarState === "due";
   const engineCalendarActionStatuses = stateEngineContext && calendarRead
-    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, historicalOverride: true, logicalDate: selectedDate, task })
+    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, historicalOverride: true, logicalDate: selectedDate, task, behaviorProfiles })
     : null;
   const calendarActionStatuses = calendarRead
     ? getTaskHistoryCalendarVisibleActionStatuses({

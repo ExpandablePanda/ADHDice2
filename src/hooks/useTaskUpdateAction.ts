@@ -21,6 +21,7 @@ import {
   projectTaskWithCanonicalScheduleBoundary,
 } from "@/lib/task-state-canonical/schedule-projection";
 import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
+import type { TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
 
 type Message = {
   text: string;
@@ -53,6 +54,7 @@ type UpdateTaskActionOptions = {
 };
 
 type UseTaskUpdateActionOptions = {
+  behaviorProfiles?: TaskBehaviorProfiles;
   /** Test seam for the canonical executor; normal callers use the real executor. */
   canonicalCommandExecutor?: (action: TaskStateRuntimeCanonicalAction, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   clearPendingTaskMutations?: (taskIds: string[]) => void;
@@ -111,6 +113,7 @@ function canonicalMutationFingerprint(
 }
 
 export function useTaskUpdateAction({
+  behaviorProfiles,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   canonicalTaskMutationState,
   clearPendingTaskMutations,
@@ -353,6 +356,7 @@ export function useTaskUpdateAction({
     }
     const scheduleAuthority = previousTask && scheduleOnlyEdit
       ? evaluateTaskScheduleAuthority({
+        behaviorProfiles,
         history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: logicalDayNow,

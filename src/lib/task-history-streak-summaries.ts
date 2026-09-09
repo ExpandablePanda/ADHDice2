@@ -7,6 +7,7 @@ import {
 import { resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine/calendar-authority";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
+import type { TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
 import type { CanonicalTaskCommandOperation, CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/types";
 import { buildTaskHistoryLastHandledSummaryMap, type TaskHistoryLastHandledSummaryMap } from "@/lib/task-history-last-handled";
 
@@ -24,6 +25,7 @@ export type TaskHistoryStreakSummary = {
 export type TaskHistoryStreakSummaryMap = Record<string, TaskHistoryStreakSummary>;
 
 export type TaskHistoryStreakSummaryContext = {
+  behaviorProfiles?: TaskBehaviorProfiles;
   compatibilityOnly?: boolean;
   calendarOverrides?: TaskCalendarOverride[];
   calendarOverridesByTaskId?: Readonly<Record<string, TaskCalendarOverride[]>>;
@@ -59,6 +61,7 @@ export function buildTaskHistoryStreakSummary(
   const normalizedHistory = deduplicateTaskHistoryByLogicalDate(history);
   const { calendarStart } = resolveCalendarRange(task, normalizedHistory, todayDateKey);
   const calendarRead = resolveTaskHistoryCalendarRead({
+    behaviorProfiles: context.behaviorProfiles,
     compatibilityOnly: context.compatibilityOnly,
     calendarStart,
     calendarEnd: todayDateKey,

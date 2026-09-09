@@ -1,4 +1,4 @@
-import type { Task } from "../database.types.ts";
+import type { Task, TaskTypeBehaviorProfile } from "../database.types.ts";
 import type {
   CanonicalTaskCalendarOverride,
   CanonicalTaskCommandOperation,
@@ -54,6 +54,7 @@ type CanonicalReadTableRows = {
   adhdice_task_reward_entitlements: CanonicalTaskRewardEntitlement;
   adhdice_task_reward_grants: CanonicalTaskRewardGrant;
   adhdice_task_reward_claim_consumptions: CanonicalTaskRewardClaimConsumption;
+  adhdice_task_type_behavior_profiles: TaskTypeBehaviorProfile;
 };
 
 /**

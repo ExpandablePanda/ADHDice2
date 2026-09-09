@@ -137,6 +137,7 @@ import type { TaskCanonicalMutationState } from "@/hooks/useTaskUpdateAction";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
 import { useWorkspaceData } from "@/hooks/useWorkspaceData";
+import { useTaskTypeBehaviorProfiles } from "@/hooks/useTaskTypeBehaviorProfiles";
 import { useTaskListFolderActions } from "@/hooks/useTaskListFolderActions";
 import { useResponsiveTaskGridColumns } from "@/hooks/useResponsiveTaskGridColumns";
 import { useTaskListSelection } from "@/hooks/useTaskListSelection";
@@ -1226,6 +1227,11 @@ export function TaskApp() {
   });
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const {
+    profiles: taskTypeBehaviorProfiles,
+    resetTaskDefaults,
+    updateTaskBehaviorProfile,
+  } = useTaskTypeBehaviorProfiles(supabase, session?.user?.id ?? null, setMessage);
+  const {
     focusCategories, setFocusCategories,
     focusCounters,
     focusCounterHistory,
@@ -1880,6 +1886,7 @@ export function TaskApp() {
     workspaceGenerationRef,
   } = useWorkspaceData({
     activePage,
+    behaviorProfiles: taskTypeBehaviorProfiles,
     currentUser: session?.user,
     isMissingTaskListManualMembershipsTableError,
     isMissingTaskListsTableError,
@@ -1957,6 +1964,20 @@ export function TaskApp() {
     todayKey,
     timezone: userTimeZone,
   });
+  const taskTypeBehaviorProfilesRevision = useMemo(
+    () => JSON.stringify(taskTypeBehaviorProfiles),
+    [taskTypeBehaviorProfiles],
+  );
+  const refreshedBehaviorProfilesRevisionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (taskTypeBehaviorProfilesRevision === "{}") {
+      refreshedBehaviorProfilesRevisionRef.current = null;
+      return;
+    }
+    if (!isTaskHistoryLoaded || tasks.length === 0 || refreshedBehaviorProfilesRevisionRef.current === taskTypeBehaviorProfilesRevision) return;
+    refreshedBehaviorProfilesRevisionRef.current = taskTypeBehaviorProfilesRevision;
+    void Promise.all(tasks.map((task) => refreshTaskHistoryStreakSummary(task.id)));
+  }, [isTaskHistoryLoaded, refreshTaskHistoryStreakSummary, taskTypeBehaviorProfilesRevision, tasks]);
   const actionWorkspaceGeneration = workspaceGenerationRef.current;
 
   const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[], nextTask?: Task) => {
@@ -2466,6 +2487,7 @@ export function TaskApp() {
         ]);
         const plan = createEngineRolloverPlan({
             allowCanonicalAutomaticMissed: true,
+            behaviorProfiles: taskTypeBehaviorProfiles,
             history: rolloverHistory,
             includeDiagnostics: diagnosticsEnabled,
             now: new Date(),
@@ -2741,11 +2763,12 @@ export function TaskApp() {
   );
   const taskStatusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("task-status-settings", {
+      behaviorProfiles: taskTypeBehaviorProfiles,
       dayStartTime,
       timezone: userTimeZone,
       todayKey,
     }),
-    [dayStartTime, todayKey, userTimeZone],
+    [dayStartTime, taskTypeBehaviorProfiles, todayKey, userTimeZone],
   );
   const [projectionCache] = useState(createStableTaskProjectionCache);
   const activeStatusInputRevision = combineProjectionRevisions(
@@ -2758,6 +2781,7 @@ export function TaskApp() {
     () => {
       if (!isTaskHistoryLoaded) return null;
       return projectionCache.getOrCreate("active-status", activeStatusInputRevision, () => resolveActiveTaskStatuses({
+        behaviorProfiles: taskTypeBehaviorProfiles,
         historyByTaskId: taskHistoryByTaskId,
         logicalDayRollover: dayStartTime,
         now: new Date(logicalDayNow),
@@ -2768,7 +2792,7 @@ export function TaskApp() {
     // Status evaluation is logical-day based. The minute clock must not clone
     // or replace the canonical Task collection while the logical day is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache],
+    [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache, taskTypeBehaviorProfiles],
   );
   const taskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId ?? persistedTaskDisplayStatusByTaskId;
   const taskDisplayDueOnByTaskId = activeStatusRead?.dueOnByTaskId ?? {};
@@ -3832,6 +3856,7 @@ export function TaskApp() {
       sortTasksForUi,
     },
     batchEdit: {
+      behaviorProfiles: taskTypeBehaviorProfiles,
       clearListTaskSelection,
       dayStartTime,
       focusedTaskIds,
@@ -3878,6 +3903,7 @@ export function TaskApp() {
       taskLists,
     },
     editorSave: {
+      behaviorProfiles: taskTypeBehaviorProfiles,
       canonicalTaskCreator: (payload, source) => insertTaskRowWithCanonicalCreation(client, payload, source),
       currentUserId: currentUserIdText,
       dayStartTime,
@@ -3936,6 +3962,7 @@ export function TaskApp() {
       tasks,
     },
     update: {
+      behaviorProfiles: taskTypeBehaviorProfiles,
       canonicalTaskMutationState: canonicalTaskMutationStateRef.current,
       clearPendingTaskMutations,
       markPendingTaskMutations,
@@ -5500,6 +5527,7 @@ export function TaskApp() {
     }
     const scopedHistory = historyLoad.history;
     const completeAuthority = evaluateTaskActionAuthority({
+      behaviorProfiles: taskTypeBehaviorProfiles,
       history: scopedHistory,
       logicalDayRollover: dayStartTime,
       now: new Date(logicalDayNow),
@@ -5699,6 +5727,7 @@ export function TaskApp() {
     const scopedHistory = historyLoad.history;
     const action = status === "done" || status === "did_my_best" || status === "missed" || status === "delayed"
       ? evaluateTaskActionAuthority({
+        behaviorProfiles: taskTypeBehaviorProfiles,
         history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: new Date(logicalDayNow),
@@ -6303,6 +6332,7 @@ export function TaskApp() {
     onRetryTaskHistoryLoad: () => retryTaskHistoryForTask(taskHistoryModalTaskId),
     todayDateKey: todayKey,
     stateEngineContext: { logicalDayRollover: dayStartTime, now: new Date(logicalDayNow), timezone: userTimeZone },
+    behaviorProfiles: taskTypeBehaviorProfiles,
   } : null;
   function togglePinnedFilter() {
     setTaskUiState((prev) => ({
@@ -6743,6 +6773,9 @@ export function TaskApp() {
           onTaskLinkedNoteIdsChange={(taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); }}
           onTaskNotesChange={(taskId, notes) => { void updateTask(taskId, { notes: notes || null }); }}
           onTaskTypeChange={(taskId, taskType) => { void updateTask(taskId, { task_type: taskType }); }}
+          onTaskBehaviorProfileChange={updateTaskBehaviorProfile}
+          onResetTaskBehaviorProfile={resetTaskDefaults}
+          taskTypeBehaviorProfiles={taskTypeBehaviorProfiles}
           onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
           onTaskPriorityChange={applyTaskPriorityChange}
           onTaskRepeatChange={handleSharedTaskRepeatChange}

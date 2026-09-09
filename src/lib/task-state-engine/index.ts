@@ -1,10 +1,17 @@
 export { evaluateTaskState, findUnresolvedMissedOccurrence } from "./engine.ts";
-export { resolveTaskBehaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY } from "./behavior-policy.ts";
+export {
+  normalizeTaskBehaviorProfile,
+  normalizeTaskBehaviorProfiles,
+  resolveTaskBehaviorPolicy,
+  STANDARD_TASK_BEHAVIOR_POLICY,
+} from "./behavior-policy.ts";
 export type {
   MissedStreakUnhandledBehavior,
   PositiveStreakUnhandledBehavior,
   RewardBehavior,
+  TaskBehaviorProfiles,
   TaskBehaviorPolicy,
+  TaskBehaviorPolicyField,
   UnresolvedOccurrenceBehavior,
 } from "./behavior-policy.ts";
 export { logicalDateForTimestamp } from "./calendar.ts";

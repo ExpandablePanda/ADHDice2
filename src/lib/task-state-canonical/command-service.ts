@@ -608,8 +608,9 @@ function engineOccurrenceDueOnFor(
 function rewardPlan(
   envelope: CanonicalCommandEnvelope,
   fact: CanonicalHistoryFactPlan | null,
+  behaviorPolicy: ReturnType<typeof evaluateTaskState>["behaviorPolicy"] | undefined,
 ): CanonicalRewardEntitlementPlan | null {
-  if (!fact || !["done", "did_my_best", "complete"].includes(fact.outcome)) return null;
+  if (!fact || behaviorPolicy?.rewards === "disabled" || !["done", "did_my_best", "complete"].includes(fact.outcome)) return null;
   const outcome = fact.outcome as "done" | "did_my_best" | "complete";
   return {
     identity: `task-reward-entitlement:${envelope.taskId}:${fact.logical_date}:v1`,
@@ -959,7 +960,7 @@ export function planTaskStateCommand(
   normalizedResult.scheduleBoundary = scheduleBoundary;
   normalizedResult.occurrenceEffectiveOverride = occurrenceEffectiveOverride;
   normalizedResult.calendarOverride = calendarOverride;
-  normalizedResult.rewardEntitlement = rewardPlan(command, historyFact);
+  normalizedResult.rewardEntitlement = rewardPlan(command, historyFact, engineResult?.behaviorPolicy);
   return { command, normalizedResult };
 }
 

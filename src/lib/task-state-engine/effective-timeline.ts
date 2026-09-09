@@ -23,8 +23,10 @@ import type {
   TaskTimelineCheckpoint,
   TaskTimelineReplayRequest,
 } from "./types.ts";
+import { resolveTaskBehaviorPolicy, type TaskBehaviorPolicy } from "./behavior-policy.ts";
 
 export type BuildTaskEffectiveTimelineInput = {
+  behaviorPolicy?: TaskBehaviorPolicy;
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
   logicalDate: string;
@@ -325,6 +327,7 @@ function initialOccurrenceDueOn(
 export function buildTaskEffectiveTimeline(
   input: BuildTaskEffectiveTimelineInput,
 ): TaskEffectiveTimeline {
+  const behaviorPolicy = resolveTaskBehaviorPolicy(input.behaviorPolicy);
   const rows = input.history
     .filter((row) => row.taskId === input.task.id)
     .map((row) => ({ ...row }));
@@ -528,10 +531,14 @@ export function buildTaskEffectiveTimeline(
       } else if (isFixedRecurrence && !isFixedScheduledDate) {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       } else if (date < input.logicalDate) {
-        // Unhandled past dates are not History. Automatic Missed persistence
-        // belongs to the trusted command path, so reads show Not Due until a
-        // canonical fact exists for that date.
-        calculated = calculatedDay(input.task.id, date, "not_due", "none");
+        // Policy is prospective: explicit History remains a fact, while only
+        // unhandled/calculated occurrences use the current profile. Standard
+        // Tasks remain neutral until trusted reconciliation materializes
+        // Missed; a future profile may keep the scheduled-but-blank obligation
+        // visibly distinct.
+        calculated = behaviorPolicy.unresolvedOccurrence === "missed"
+          ? calculatedDay(input.task.id, date, "not_due", "none")
+          : calculatedDay(input.task.id, date, "scheduled", "due", date);
       } else if (date === input.logicalDate) {
         if (activeDueOn < input.logicalDate) {
           if (isFixedRecurrence) {
@@ -550,7 +557,8 @@ export function buildTaskEffectiveTimeline(
       } else {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       }
-      if (input.replay?.materializeAutomaticMissed
+      if (behaviorPolicy.unresolvedOccurrence === "missed"
+        && input.replay?.materializeAutomaticMissed
         && date < input.logicalDate
         && !completed
         && !override

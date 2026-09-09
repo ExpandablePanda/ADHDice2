@@ -59,5 +59,5 @@ test("Task Engine remains TaskType-agnostic while direct normalization owns poli
   const directInput = readFileSync("src/lib/task-state-engine/direct-input.ts", "utf8");
   assert.doesNotMatch(engine, /task_type|taskType/);
   assert.match(directInput, /normalizeTaskType\(task\.task_type\)/);
-  assert.match(directInput, /resolveTaskBehaviorPolicy\(normalizeTaskType\(task\.task_type\)\)/);
+  assert.match(directInput, /resolveTaskBehaviorPolicy\(normalizeTaskType\(task\.task_type\), context\.behaviorProfiles\)/);
 });

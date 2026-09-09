@@ -1,4 +1,5 @@
 import type { PersistedRecordCurrent, PersistedRecordEvent } from "./records/persisted-types.ts";
+import type { TaskType } from "./task-type.ts";
 import type {
   CanonicalTaskCalendarOverride,
   CanonicalTaskCommandOperation,
@@ -74,6 +75,23 @@ export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "cus
 export type TaskRepeatMonthlyMode = "day_of_month" | "ordinal_weekday";
 export type TaskRepeatMonthlyOrdinal = "first" | "second" | "third" | "fourth" | "last";
 export type { TaskType } from "./task-type.ts";
+export type TaskTypeBehaviorProfile = {
+  user_id: string;
+  task_type: TaskType;
+  unresolved_occurrence: "missed" | "blank";
+  positive_streak_on_unhandled: "break" | "preserve";
+  missed_streak_on_unhandled: "increment" | "ignore";
+  rewards: "enabled" | "disabled";
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskTypeBehaviorProfileInsert = Omit<TaskTypeBehaviorProfile, "created_at" | "updated_at"> & {
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type TaskTypeBehaviorProfileUpdate = Partial<Pick<TaskTypeBehaviorProfile, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "updated_at">>;
 export type PursuitStatus = "active" | "paused" | "archived";
 export type Pursuit = {
   id: string;
@@ -2514,6 +2532,12 @@ export type Database = {
         Row: Task & CanonicalTaskStateColumns;
         Insert: TaskInsert;
         Update: TaskUpdate;
+        Relationships: [];
+      };
+      adhdice_task_type_behavior_profiles: {
+        Row: TaskTypeBehaviorProfile;
+        Insert: TaskTypeBehaviorProfileInsert;
+        Update: TaskTypeBehaviorProfileUpdate;
         Relationships: [];
       };
       adhdice_task_command_operations: {

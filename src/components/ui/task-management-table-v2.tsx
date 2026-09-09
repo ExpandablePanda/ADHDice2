@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Children, Fragment, lazy, Suspense, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
@@ -105,6 +105,7 @@ import {
 } from "@/lib/task-table-alignment";
 import { TaskTimerDial } from "@/components/task-app/task-timer-display";
 import { resolveTaskTableLayoutPublishDecision, type TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
+import type { TaskBehaviorProfiles, TaskBehaviorPolicy, TaskBehaviorPolicyField } from "@/lib/task-state-engine/behavior-policy";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = TaskPriorityLevelOption;
@@ -216,6 +217,9 @@ const TABLE_REVEAL_BOTTOM_PADDING = 16;
 const TABLE_REVEAL_VIEWPORT_SAFE_BOTTOM = 104;
 const TABLE_REVEAL_INLINE_MIN_VISIBLE_HEIGHT = 104;
 const TABLE_REVEAL_STEPS_MIN_VISIBLE_HEIGHT = 144;
+const TaskTypeBehaviorSettings = lazy(
+  () => import("@/components/task-app/task-type-behavior-settings").then((module) => ({ default: module.TaskTypeBehaviorSettings })),
+);
 
 export function shouldFocusTaskTableRevealTarget(
   shouldFocusResult: boolean | undefined,
@@ -1238,6 +1242,9 @@ type TaskManagementTableV2Props = {
   onTaskSubtasksAutoResetChange?: (taskId: string, subtasksAutoReset: boolean) => void;
   onTaskTagsChange?: (taskId: string, tags: string[]) => void;
   onTaskTypeChange?: (taskId: string, taskType: TaskType) => void;
+  taskTypeBehaviorProfiles?: TaskBehaviorProfiles;
+  onTaskBehaviorProfileChange?: (field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
+  onResetTaskBehaviorProfile?: () => Promise<boolean> | boolean;
   onTaskTitleChange?: (taskId: string, title: string) => void;
   onToggleTaskSelection?: (taskId: string, options?: { additive?: boolean; range?: boolean; visibleTaskIds?: string[] }) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
@@ -2691,6 +2698,9 @@ export function TaskManagementTableV2({
   onTaskSubtaskStatusChange,
   onTaskTagsChange,
   onTaskTypeChange,
+  taskTypeBehaviorProfiles,
+  onTaskBehaviorProfileChange,
+  onResetTaskBehaviorProfile,
   onTaskTitleChange,
   onToggleTaskSelection,
   onToggleTaskList,
@@ -2759,6 +2769,7 @@ export function TaskManagementTableV2({
   const [repeatDayOfMonthDrafts, setRepeatDayOfMonthDrafts] = useState<Record<string, string>>({});
   const [collapsedOverlaySectionsByTaskId, setCollapsedOverlaySectionsByTaskId] = useState<Record<string, Partial<Record<OverlaySectionId, boolean>>>>({});
   const [activeMetadataPanelByTaskId, setActiveMetadataPanelByTaskId] = useState<Record<string, MetadataPanelId>>({});
+  const [taskTypeBehaviorSettingsOpenByTaskId, setTaskTypeBehaviorSettingsOpenByTaskId] = useState<Record<string, boolean>>({});
   const [notePickerOpenByTaskId, setNotePickerOpenByTaskId] = useState<Record<string, boolean>>({});
   const [tagPickerOpenByTaskId, setTagPickerOpenByTaskId] = useState<Record<string, boolean>>({});
   const [expandedSubtasksByTaskId, setExpandedSubtasksByTaskId] = useState<Record<string, boolean>>({});
@@ -9539,19 +9550,51 @@ export function TaskManagementTableV2({
                 } else if (metadataPanelId === "task_type") {
                   metadataPanelContent = (
                     <div className="space-y-3">
-                      <AdhdDropdownSelect
-                        ariaLabel="Task type"
-                        label="Task type"
-                        onChange={(value) => {
-                          setTaskType(metadataTask.id, value);
-                          returnFullMetadataToSummary();
-                        }}
-                        options={TASK_TYPE_OPTIONS}
-                        value={normalizeTaskType(metadataTask.taskType)}
-                      />
-                      <p className="text-xs leading-5 text-[#7d7597] dark:text-white/50">
-                        TaskType labels are ready. Behavior profiles are being configured separately.
-                      </p>
+                      {taskTypeBehaviorSettingsOpenByTaskId[metadataTask.id] ? (
+                        <>
+                          <TaskTableChipButton
+                            onClick={() => setTaskTypeBehaviorSettingsOpenByTaskId((current) => ({ ...current, [metadataTask.id]: false }))}
+                            toneClassName={INACTIVE_CHIP_CLASS}
+                          >
+                            Back to Task Type
+                          </TaskTableChipButton>
+                          <Suspense fallback={<p className="text-sm text-[#7d7598] dark:text-white/55">Loading behavior settings…</p>}>
+                            <TaskTypeBehaviorSettings
+                              onChange={(field, value) => onTaskBehaviorProfileChange?.(field, value) ?? false}
+                              onReset={() => onResetTaskBehaviorProfile?.() ?? false}
+                              profile={taskTypeBehaviorProfiles?.task ?? {
+                                id: "standard-task",
+                                unresolvedOccurrence: "missed",
+                                positiveStreakOnUnhandled: "break",
+                                missedStreakOnUnhandled: "increment",
+                                rewards: "enabled",
+                              }}
+                            />
+                          </Suspense>
+                        </>
+                      ) : (
+                        <>
+                          <AdhdDropdownSelect
+                            ariaLabel="Task type"
+                            label="Task type"
+                            onChange={(value) => {
+                              setTaskType(metadataTask.id, value);
+                              returnFullMetadataToSummary();
+                            }}
+                            options={TASK_TYPE_OPTIONS}
+                            value={normalizeTaskType(metadataTask.taskType)}
+                          />
+                          <TaskTableChipButton
+                            onClick={() => setTaskTypeBehaviorSettingsOpenByTaskId((current) => ({ ...current, [metadataTask.id]: true }))}
+                            toneClassName={INACTIVE_CHIP_CLASS}
+                          >
+                            Behavior Settings
+                          </TaskTableChipButton>
+                          <p className="text-xs leading-5 text-[#7d7597] dark:text-white/50">
+                            TaskType selects a behavior profile. Task is configurable; future TaskTypes are not active yet.
+                          </p>
+                        </>
+                      )}
                     </div>
                   );
                 } else if (metadataPanelId === "due") {

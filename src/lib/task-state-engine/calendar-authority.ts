@@ -8,6 +8,7 @@ import { evaluateTaskActionAuthority } from "./action-authority.ts";
 import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
 import type { TaskCalendarOverride, TaskHistoryOutcome } from "./types.ts";
 import type { TaskEffectiveTimeline } from "./types.ts";
+import type { TaskBehaviorProfiles } from "./behavior-policy.ts";
 
 export type TaskHistoryCalendarActionStatus = "done" | "did_my_best" | "delayed" | "missed" | "complete";
 
@@ -35,6 +36,7 @@ export type TaskHistoryCalendarReadResult = {
 
 /** Central Calendar read bridge. Explicit History always wins in the engine. */
 export function resolveTaskHistoryCalendarRead(input: {
+  behaviorProfiles?: TaskBehaviorProfiles;
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
@@ -60,6 +62,7 @@ export function resolveTaskHistoryCalendarRead(input: {
     const calendarStart = input.calendarStart ?? logicalDate;
     const calendarEnd = input.calendarEnd ?? shiftDateKey(logicalDate, 40);
     const timeline = buildTaskEffectiveTimeline({
+      behaviorPolicy: engineInput.behaviorPolicy,
       task: engineInput.task,
       history: engineInput.history,
       calendarOverrides: input.calendarOverrides,
@@ -87,6 +90,7 @@ export function resolveTaskHistoryCalendarRead(input: {
 }
 
 export function resolveTaskHistoryCalendarStates(input: {
+  behaviorProfiles?: TaskBehaviorProfiles;
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
@@ -103,6 +107,7 @@ export function resolveTaskHistoryCalendarStates(input: {
 
 /** The Calendar asks the same evaluator whether an action can be offered. */
 export function resolveTaskHistoryCalendarActionStatuses(input: {
+  behaviorProfiles?: TaskBehaviorProfiles;
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];

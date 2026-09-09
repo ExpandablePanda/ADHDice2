@@ -16,7 +16,7 @@ import {
   recurrenceAfterSuccess,
   scheduledOccurrences,
 } from "./recurrence.ts";
-import { resolveTaskBehaviorPolicy } from "./behavior-policy.ts";
+import { resolveTaskBehaviorPolicy, type TaskBehaviorPolicy } from "./behavior-policy.ts";
 import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
 import type {
   ProposedTaskStatePatch,
@@ -49,18 +49,29 @@ function statusForFutureDate(today: string, dueOn: string): TaskActiveStatus {
   return daysBetween(today, dueOn) <= 7 ? "upcoming" : "not_due";
 }
 
-function streakFor(outcome: TaskHistoryOutcome | null, unscheduledInactive: boolean): StreakDisposition {
+function streakFor(
+  outcome: TaskHistoryOutcome | null,
+  unscheduledInactive: boolean,
+  policy: TaskBehaviorPolicy,
+  unhandled: boolean,
+): StreakDisposition {
   if (outcome && SUCCESS.has(outcome)) return "increment_positive";
   if (outcome === "delayed") return "preserve_positive";
-  if (outcome === "missed") return "increment_missed";
+  if (outcome === "missed") {
+    if (unhandled && policy.positiveStreakOnUnhandled === "preserve") return "preserve_positive";
+    return unhandled && policy.missedStreakOnUnhandled === "ignore" ? "preserve_missed" : "increment_missed";
+  }
   if (unscheduledInactive) return "break_positive";
   return "none";
 }
 
-function rewardFor(taskId: string, row: TaskStateHistoryRow | null): RewardEligibility {
+function rewardFor(taskId: string, row: TaskStateHistoryRow | null, policy: TaskBehaviorPolicy): RewardEligibility {
   if (!row) return { eligible: false, identity: null, logicalDate: null, outcome: null, reason: "no_outcome" };
   if (!SUCCESS.has(row.outcome)) {
     return { eligible: false, identity: null, logicalDate: row.logicalDate, outcome: row.outcome, reason: "ineligible_outcome" };
+  }
+  if (policy.rewards === "disabled") {
+    return { eligible: false, identity: null, logicalDate: row.logicalDate, outcome: row.outcome, reason: "disabled" };
   }
   return {
     eligible: !row.rewardClaimed,
@@ -224,12 +235,14 @@ function laterDate(left: string, right: string) {
 }
 
 function automaticMissedRows(input: {
+  behaviorPolicy: TaskBehaviorPolicy;
   task: TaskStateEngineInput["task"];
   history: readonly TaskStateHistoryRow[];
   today: string;
   occurredAt: string;
 }): TaskStateHistoryRow[] {
-  const { task, history, today, occurredAt } = input;
+  const { behaviorPolicy, task, history, today, occurredAt } = input;
+  if (behaviorPolicy.unresolvedOccurrence === "blank") return [];
   const scheduleStart = task.dueOn
     ?? (task.historicalScheduleAnchorProven ? task.historicalScheduleAnchor ?? null : null);
   if (task.lifecycle !== "active" || !scheduleStart
@@ -445,7 +458,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   }
 
   if (input.action?.type === "reconcile_rollover" && !staleInProgressForRollover) {
-    for (const row of automaticMissedRows({ task, history: rows, today, occurredAt: nowIso })) {
+    for (const row of automaticMissedRows({ behaviorPolicy, task, history: rows, today, occurredAt: nowIso })) {
       rows.push(row);
       byDate.set(row.logicalDate, row);
       recurrenceByDate.set(row.logicalDate, row);
@@ -462,6 +475,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     : null;
   if (scheduleReplay) {
     const replayPlan = buildTaskEffectiveTimeline({
+      behaviorPolicy,
       task,
       history: rows,
       logicalDate: today,
@@ -694,7 +708,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const oneOffHandled = task.recurrence.kind === "none"
     && latestHandledRow
     && (latestHandledRow.outcome === "done" || latestHandledRow.outcome === "complete");
-  const overdueAnchor = !activeMissedOccurrence
+  const overdueAnchor = behaviorPolicy.unresolvedOccurrence === "missed"
+    && !activeMissedOccurrence
     && task.lifecycle === "active" && !completed && !oneOffHandled && !unscheduled && nextDue && nextDue < today ? nextDue : null;
   if (overdueAnchor) {
     // Calculated Missed is a read/effective-timeline fact. It must not be
@@ -750,6 +765,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   if (task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRecurrenceRow) calendar[today] = "in_progress";
 
   const replayTimeline = buildTaskEffectiveTimeline({
+    behaviorPolicy,
     task,
     history: rows,
     logicalDate: today,
@@ -889,8 +905,10 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     streakDisposition: streakFor(
       currentRecurrenceOutcome ?? (calculatedMissed ? "missed" : null),
       unscheduledInactive,
+      behaviorPolicy,
+      calculatedMissed,
     ),
-    rewardEligibility: rewardFor(task.id, rewardRow ?? null),
+    rewardEligibility: rewardFor(task.id, rewardRow ?? null, behaviorPolicy),
     timeline: replayTimeline,
     validationErrors: errors,
   };

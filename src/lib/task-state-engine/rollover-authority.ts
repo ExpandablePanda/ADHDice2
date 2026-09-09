@@ -9,6 +9,7 @@ import {
 import type { PersistableTaskStatePatch } from "./persistence-projection.ts";
 import type { TaskHistoryOutcome } from "./types.ts";
 import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
+import type { TaskBehaviorProfiles } from "./behavior-policy.ts";
 
 export type EngineRolloverHistoryRow = {
   logicalDate: string;
@@ -49,6 +50,7 @@ const MAX_REMAINING_PATCH_SUMMARIES = 50;
  */
 export function createEngineRolloverPlan(input: {
   allowCanonicalAutomaticMissed?: boolean;
+  behaviorProfiles?: TaskBehaviorProfiles;
   compatibilityOnly?: boolean;
   history: TaskHistory[];
   includeDiagnostics?: boolean;
@@ -71,6 +73,7 @@ export function createEngineRolloverPlan(input: {
     if (isCanonicalArchivedOrTrashed(task as CanonicalProjectedTaskState)) continue;
     const buildInput = input.compatibilityOnly ? buildCompatibilityTaskStateEngineInput : buildDirectTaskStateEngineInput;
     const engineInput = buildInput(task as CanonicalProjectedTaskState, historyByTaskId.get(task.id) ?? [], {
+      behaviorProfiles: input.behaviorProfiles,
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.rolloverTime,
