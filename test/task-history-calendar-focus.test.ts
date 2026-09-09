@@ -5,6 +5,8 @@ import {
   buildTaskHistoryCalendarDateKeys,
   getTaskHistoryInitialFocusDateKey,
 } from "../src/lib/task-history-calendar-focus.ts";
+import { createTaskHistoryCalendarReadRevision } from "../src/lib/task-state-engine/calendar-authority.ts";
+import { createTask } from "../src/lib/task-buckets.ts";
 import { shiftDateKey } from "../src/lib/task-grid-layout.ts";
 
 const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
@@ -63,7 +65,9 @@ test("History Calendar is canonical-only and fails closed without a canonical re
 
   assert.ok(dueDateSelection >= 0);
   assert.ok(warningCopy > dueDateSelection);
-  assert.match(taskHistoryModalSource, /const calendarRead = stateEngineContext\s*\?\s*resolveTaskHistoryCalendarRead/);
+  assert.match(taskHistoryModalSource, /const calendarRead = useMemo\(\(\) => \{/);
+  assert.match(taskHistoryModalSource, /createTaskHistoryCalendarReadRevision/);
+  assert.match(taskHistoryModalSource, /resolveTaskHistoryCalendarRead\(calendarReadInput\)/);
   assert.doesNotMatch(taskHistoryModalSource, /buildTaskHistoryCalendarDueDateSet|getTaskHistoryCalendarVirtualState/);
   assert.match(taskHistoryModalSource, /Calendar is unavailable until canonical Task State is ready/);
   assert.match(taskHistoryModalSource, /calendarRead\?\.states\[dateKey\]/);
@@ -82,7 +86,46 @@ test("History Calendar applies multi-select Not Due sequentially and excludes fu
 
 test("TaskHistoryModal keeps the canonical projection range for month rendering", () => {
   assert.match(taskHistoryModalSource, /const days = buildTaskHistoryCalendarDateKeys\(today\);/);
-  assert.match(taskHistoryModalSource, /calendarEnd: days\.at\(-1\) \?\? today/);
-  assert.match(taskHistoryModalSource, /calendarStart: days\[0\] \?\? today/);
+  assert.match(taskHistoryModalSource, /const calendarEnd = days\.at\(-1\) \?\? today/);
+  assert.match(taskHistoryModalSource, /const calendarStart = days\[0\] \?\? today/);
   assert.match(taskHistoryModalSource, /const knownDateKeys = new Set\(days\)/);
+});
+
+test("History Calendar semantic revision ignores unrelated TaskApp rerenders and changes for Task History", () => {
+  const task = createTask({ id: "calendar-cache-task", title: "Calendar", due_on: "2026-09-01", repeat_frequency: "daily" });
+  const input = {
+    calendarEnd: "2026-09-13",
+    calendarStart: "2026-08-31",
+    history: [],
+    logicalDayRollover: "00:00",
+    now: "2026-09-09T12:00:00.000Z",
+    task,
+    timezone: "UTC",
+  };
+  const first = createTaskHistoryCalendarReadRevision(input);
+  const unrelatedRerender = createTaskHistoryCalendarReadRevision({
+    ...input,
+    now: "2026-09-09T12:15:00.000Z",
+    task: { ...task, title: "Renamed outside the Calendar projection" },
+  });
+  const historyChanged = createTaskHistoryCalendarReadRevision({
+    ...input,
+    history: [{
+      counted_as_due_occurrence: true,
+      created_at: "2026-09-09T12:00:00.000Z",
+      entry_date: "2026-09-09",
+      event_type: "status",
+      id: "history-1",
+      occurrence_due_on: "2026-09-09",
+      occurrence_key: "task:calendar-cache-task:occurrence:2026-09-09",
+      status: "done",
+      task_id: task.id,
+      updated_at: "2026-09-09T12:00:00.000Z",
+      user_id: task.user_id,
+      was_completed: true,
+    }],
+  });
+
+  assert.equal(unrelatedRerender, first);
+  assert.notEqual(historyChanged, first);
 });

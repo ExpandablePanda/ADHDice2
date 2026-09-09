@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-06
+Last reviewed: 2026-09-09
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.13`.
+- Current working app version: `7.13.20`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,26 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-09 7.13.20 Task Engine Interaction Performance
+
+Active Status now uses the existing stable projection cache incrementally by
+Task. Each entry is keyed by semantic Task State inputs, that Task's canonical
+History, logical-day context, and only the behavior-policy semantics that can
+change Active Status. A single Task or History mutation therefore reevaluates
+only that Task while unchanged Tasks reuse their in-memory results. Rewards are
+not an Active Status dependency; unresolved-occurrence policy affects Active
+Status; unresolved-occurrence plus positive/missed unhandled behavior affect
+Effective Timeline streaks.
+
+The History Calendar modal now memoizes its canonical Calendar/Effective
+Timeline read and selected-date action authority by semantic dependencies. A
+development-only diagnostic reports `active-status evaluatedTasks=N
+reusedTasks=N` and `task-history-calendar recomputed taskId=...` when the
+existing workspace performance diagnostic flag is enabled.
+
+No Task semantics, canonical History facts, persistence, SQL, schema, RLS,
+Realtime behavior, or Pursuit architecture changed.
 
 ## 2026-09-06 7.12.119 Saved View Editing
 

@@ -7,6 +7,7 @@ import {
   normalizeTaskBehaviorPolicyRevisions,
   normalizeTaskBehaviorProfile,
   resolveTaskBehaviorPolicyForLogicalDate,
+  selectTaskBehaviorProjectionSemantics,
   STANDARD_TASK_BEHAVIOR_POLICY,
 } from "../src/lib/task-state-engine/behavior-policy.ts";
 import { loadTaskTypeBehaviorProfiles, taskTypeBehaviorProfileUpsertPayload } from "../src/lib/task-type-behavior-profiles.ts";
@@ -116,6 +117,64 @@ test("profile revisions resolve prospectively and deterministically by logical d
   assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: "2026-09-25" }).unresolvedOccurrence, "missed");
   assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: "2026-08-31" }), STANDARD_TASK_BEHAVIOR_POLICY);
   assert.equal(revisions[1]?.effectiveFromLogicalDate, "2026-09-10");
+});
+
+test("behavior policy revisions invalidate only the projections that consume their semantics", () => {
+  const base = selectTaskBehaviorProjectionSemantics({
+    behaviorProfiles: {
+      task: {
+        id: "policy",
+        missedStreakOnUnhandled: "increment",
+        positiveStreakOnUnhandled: "break",
+        rewards: "enabled",
+        unresolvedOccurrence: "missed",
+      },
+    },
+    behaviorPolicyRevisions: { task: [revision("2026-09-01")] },
+  });
+  const rewardsOnly = selectTaskBehaviorProjectionSemantics({
+    behaviorProfiles: {
+      task: {
+        id: "policy",
+        missedStreakOnUnhandled: "increment",
+        positiveStreakOnUnhandled: "break",
+        rewards: "disabled",
+        unresolvedOccurrence: "missed",
+      },
+    },
+    behaviorPolicyRevisions: { task: [revision("2026-09-01", { rewards: "disabled" })] },
+  });
+  const streakOnly = selectTaskBehaviorProjectionSemantics({
+    behaviorProfiles: {
+      task: {
+        id: "policy",
+        missedStreakOnUnhandled: "ignore",
+        positiveStreakOnUnhandled: "preserve",
+        rewards: "enabled",
+        unresolvedOccurrence: "missed",
+      },
+    },
+    behaviorPolicyRevisions: { task: [revision("2026-09-01", { missedStreakOnUnhandled: "ignore", positiveStreakOnUnhandled: "preserve" })] },
+  });
+  const unresolvedChange = selectTaskBehaviorProjectionSemantics({
+    behaviorProfiles: {
+      task: {
+        id: "policy",
+        missedStreakOnUnhandled: "increment",
+        positiveStreakOnUnhandled: "break",
+        rewards: "enabled",
+        unresolvedOccurrence: "blank",
+      },
+    },
+    behaviorPolicyRevisions: { task: [revision("2026-09-01", { unresolvedOccurrence: "blank" })] },
+  });
+
+  assert.deepEqual(rewardsOnly.activeStatus, base.activeStatus);
+  assert.deepEqual(streakOnly.activeStatus, base.activeStatus);
+  assert.notDeepEqual(unresolvedChange.activeStatus, base.activeStatus);
+  assert.notDeepEqual(streakOnly.streak, base.streak);
+  assert.notDeepEqual(rewardsOnly.rewards, base.rewards);
+  assert.deepEqual(rewardsOnly.streak, base.streak);
 });
 
 test("Task profile selection follows the ADHDice logical-day rollover, not UTC date", () => {

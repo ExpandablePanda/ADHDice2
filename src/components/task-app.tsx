@@ -208,8 +208,9 @@ import {
   evaluateTaskActionAuthority,
   taskStateHistoryRowToCanonicalIntent,
   projectTasksForActiveStatusRead,
-  resolveActiveTaskStatuses,
+  resolveActiveTaskStatusesIncrementally,
 } from "@/lib/task-state-engine";
+import { selectTaskBehaviorProjectionSemantics } from "@/lib/task-state-engine/behavior-policy";
 import {
   getMomentumMetric,
   getNextMomentumView,
@@ -1967,12 +1968,15 @@ export function TaskApp() {
     timezone: userTimeZone,
   });
   const taskTypeBehaviorProfilesRevision = useMemo(
-    () => JSON.stringify(taskTypeBehaviorProfiles),
-    [taskTypeBehaviorProfiles],
+    () => createProjectionDomainRevision("task-history-streak-policy", selectTaskBehaviorProjectionSemantics({
+      behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
+      behaviorProfiles: taskTypeBehaviorProfiles,
+    }).streak),
+    [taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles],
   );
   const refreshedBehaviorProfilesRevisionRef = useRef<string | null>(null);
   useEffect(() => {
-    if (taskTypeBehaviorProfilesRevision === "{}") {
+    if (taskTypeBehaviorProfilesRevision === createProjectionDomainRevision("task-history-streak-policy", selectTaskBehaviorProjectionSemantics({}).streak)) {
       refreshedBehaviorProfilesRevisionRef.current = null;
       return;
     }
@@ -2416,7 +2420,10 @@ export function TaskApp() {
     [logicalDayNow, userTimeZone],
   );
   const nextTaskStateHistory = taskHistory;
-  const taskStateHistoryContentRevision = createProjectionDomainRevision("task-state-history", nextTaskStateHistory);
+  const taskStateHistoryContentRevision = useMemo(
+    () => createProjectionDomainRevision("task-state-history", nextTaskStateHistory),
+    [nextTaskStateHistory],
+  );
   const [stabilizeTaskStateHistory] = useState(() => {
     let cached = { revision: "", value: nextTaskStateHistory };
     return (revision: string, value: typeof nextTaskStateHistory) => {
@@ -2764,26 +2771,29 @@ export function TaskApp() {
     () => createProjectionDomainRevision("task-history-readiness", isTaskHistoryLoaded),
     [isTaskHistoryLoaded],
   );
-  const taskStatusSettingsRevision = useMemo(
+  const taskActiveStatusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("task-status-settings", {
-      behaviorProfiles: taskTypeBehaviorProfiles,
+      behavior: selectTaskBehaviorProjectionSemantics({
+        behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
+        behaviorProfiles: taskTypeBehaviorProfiles,
+      }).activeStatus,
       dayStartTime,
       timezone: userTimeZone,
       todayKey,
     }),
-    [dayStartTime, taskTypeBehaviorProfiles, todayKey, userTimeZone],
+    [dayStartTime, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles, todayKey, userTimeZone],
   );
   const [projectionCache] = useState(createStableTaskProjectionCache);
   const activeStatusInputRevision = combineProjectionRevisions(
     taskDomainRevision,
     taskHistoryRevision,
-    taskStatusSettingsRevision,
+    taskActiveStatusSettingsRevision,
     taskHistoryReadinessRevision,
   );
   const activeStatusRead = useMemo(
     () => {
       if (!isTaskHistoryLoaded) return null;
-      return projectionCache.getOrCreate("active-status", activeStatusInputRevision, () => resolveActiveTaskStatuses({
+      const result = resolveActiveTaskStatusesIncrementally({
         behaviorProfiles: taskTypeBehaviorProfiles,
         behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
         historyByTaskId: taskHistoryByTaskId,
@@ -2791,12 +2801,16 @@ export function TaskApp() {
         now: new Date(logicalDayNow),
         tasks,
         timezone: userTimeZone,
-      }));
+      }, projectionCache);
+      if (isWorkspacePerformanceDiagnosticsEnabled()) {
+        console.info(`[workspace:active-status] evaluatedTasks=${result.evaluatedTasks} reusedTasks=${result.reusedTasks}`);
+      }
+      return result;
     },
     // Status evaluation is logical-day based. The minute clock must not clone
     // or replace the canonical Task collection while the logical day is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache, taskTypeBehaviorProfiles],
+    [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache],
   );
   const taskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId ?? persistedTaskDisplayStatusByTaskId;
   const taskDisplayDueOnByTaskId = activeStatusRead?.dueOnByTaskId ?? {};
@@ -2968,9 +2982,9 @@ export function TaskApp() {
   const statusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("status-settings", {
       focusedTaskIds,
-      taskStatusSettingsRevision,
+      taskActiveStatusSettingsRevision,
     }),
-    [focusedTaskIds, taskStatusSettingsRevision],
+    [focusedTaskIds, taskActiveStatusSettingsRevision],
   );
   const milestoneProjectionRevision = useMemo(
     () => createProjectionDomainRevision("milestones", {
@@ -3118,13 +3132,17 @@ export function TaskApp() {
     () => createProjectionDomainRevision("task-notes", availableTaskNotes),
     [availableTaskNotes],
   );
-  const workspaceFactsRevision = combineProjectionRevisions(
-    canonicalIndexRevision,
-    taskNotesRevision,
-    createProjectionDomainRevision("bucket-context", {
+  const bucketContextRevision = useMemo(
+    () => createProjectionDomainRevision("bucket-context", {
       focusedTaskIds,
       routing: taskRouting,
     }),
+    [focusedTaskIds, taskRouting],
+  );
+  const workspaceFactsRevision = combineProjectionRevisions(
+    canonicalIndexRevision,
+    taskNotesRevision,
+    bucketContextRevision,
   );
   const taskAppWorkspaceFacts = useMemo(
     () => projectionCache.getOrCreate("workspace-facts", workspaceFactsRevision, () => buildTaskAppWorkspaceFacts({
@@ -3140,11 +3158,17 @@ export function TaskApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [projectionCache, workspaceFactsRevision],
   );
-  const derivationViewRevision = createProjectionDomainRevision("view", taskUiStateForDerivedData);
-  const derivationSettingsRevision = createProjectionDomainRevision("view-settings", {
-    grid: taskGridLayout,
-    listVisibleColumns: taskUiState.visibleColumnsByView.table,
-  });
+  const derivationViewRevision = useMemo(
+    () => createProjectionDomainRevision("view", taskUiStateForDerivedData),
+    [taskUiStateForDerivedData],
+  );
+  const derivationSettingsRevision = useMemo(
+    () => createProjectionDomainRevision("view-settings", {
+      grid: taskGridLayout,
+      listVisibleColumns: taskUiState.visibleColumnsByView.table,
+    }),
+    [taskGridLayout, taskUiState.visibleColumnsByView.table],
+  );
   const taskDerivationRevision = createTaskDerivationRevisionKey({
     historyRevision: taskHistoryRevision,
     listRevision: workspaceFactsRevision,

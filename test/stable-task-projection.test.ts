@@ -7,7 +7,10 @@ import {
   createStableTaskProjectionCache,
   createTaskDerivationRevisionKey,
 } from "../src/lib/stable-task-projection.ts";
-import { projectTasksForActiveStatusRead } from "../src/lib/task-state-engine/read-authority.ts";
+import {
+  projectTasksForActiveStatusRead,
+  resolveActiveTaskStatusesIncrementally,
+} from "../src/lib/task-state-engine/read-authority.ts";
 import type { Task } from "../src/lib/database.types.ts";
 import { createStableTaskRowModelCache, snapshotBuildTaskTableRowDebugCount } from "../src/lib/task-table-row.ts";
 
@@ -23,6 +26,44 @@ function task(overrides: Partial<Task> = {}): Task {
     status: "pending", subtasks_auto_reset: false, tags: [], title: "Projection", trashed_at: null,
     updated_at: "2026-08-02T12:00:00.000Z", user_id: "user-1", ...overrides,
   };
+}
+
+function canonicalTask(overrides: Partial<Task> = {}) {
+  const source = task({
+    due_on: "2026-09-08",
+    repeat_frequency: "none",
+    ...overrides,
+  });
+  return {
+    ...source,
+    canonicalization_status: "canonical_proven" as const,
+    container_state: "active" as const,
+    entity_kind: "parent" as const,
+    terminal_state: "active" as const,
+    workflow_logical_date: null,
+    workflow_state: "none" as const,
+    canonical_schedule_boundary: {
+      anchor_confidence: "proven",
+      anchor_date: source.due_on,
+      boundary_sequence: 1,
+      boundary_type: "initial",
+      day_start_time: "00:00",
+      due_time: source.due_time,
+      effective_from_logical_date: "2026-09-01",
+      entity_id: source.id,
+      entity_kind: "parent",
+      id: `boundary-${source.id}`,
+      repeat_day_of_month: source.repeat_day_of_month,
+      repeat_days_of_week: source.repeat_days_of_week,
+      repeat_frequency: source.repeat_frequency === "none" ? "none" : source.repeat_frequency,
+      repeat_interval: source.repeat_interval,
+      repeat_monthly_mode: source.repeat_monthly_mode,
+      repeat_monthly_ordinal: source.repeat_monthly_ordinal,
+      repeat_monthly_weekday: source.repeat_monthly_weekday,
+      schedule_model: source.due_on ? "one_time" : "unscheduled",
+      one_time_due_on: source.due_on,
+    } as never,
+  } as Task & { canonical_schedule_boundary: Record<string, unknown> };
 }
 
 test("canonical projection cache ignores search, page, editor, and minute-only state", () => {
@@ -44,6 +85,91 @@ test("canonical projection cache ignores search, page, editor, and minute-only s
   assert.strictEqual(project({ activePage: "Home", editorId: "task-1", minute: 11, search: "proj" }), first);
   assert.equal(builds, 1);
   assert.strictEqual(first[0], tasks[0]);
+});
+
+test("incremental Active Status evaluates only changed Task and History identities", () => {
+  const cache = createStableTaskProjectionCache();
+  const tasks = [canonicalTask({ id: "task-a" }), canonicalTask({ id: "task-b" }), canonicalTask({ id: "task-c" })];
+  const input = {
+    behaviorPolicyRevisions: { task: [] },
+    historyByTaskId: { "task-a": [], "task-b": [], "task-c": [] },
+    logicalDayRollover: "00:00",
+    now: "2026-09-09T12:00:00.000Z",
+    tasks,
+    timezone: "UTC",
+  };
+
+  const first = resolveActiveTaskStatusesIncrementally(input, cache);
+  assert.deepEqual([first.evaluatedTasks, first.reusedTasks], [3, 0]);
+
+  const changedTask = canonicalTask({ id: "task-a", due_on: "2026-09-10" });
+  const second = resolveActiveTaskStatusesIncrementally({
+    ...input,
+    historyByTaskId: { ...input.historyByTaskId, "task-a": [] },
+    tasks: [changedTask, tasks[1]!, tasks[2]!],
+  }, cache);
+  assert.deepEqual([second.evaluatedTasks, second.reusedTasks], [1, 2]);
+
+  const historyChange = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-09-09T12:00:00.000Z",
+    entry_date: "2026-09-09",
+    event_type: "status" as const,
+    id: "history-a",
+    occurrence_due_on: "2026-09-08",
+    occurrence_key: "task:task-a:occurrence:2026-09-08",
+    status: "done" as const,
+    task_id: "task-a",
+    updated_at: "2026-09-09T12:00:00.000Z",
+    user_id: "user-1",
+    was_completed: true,
+  };
+  const third = resolveActiveTaskStatusesIncrementally({
+    ...input,
+    historyByTaskId: { ...input.historyByTaskId, "task-a": [historyChange] },
+    tasks,
+  }, cache);
+  assert.deepEqual([third.evaluatedTasks, third.reusedTasks], [1, 2]);
+});
+
+test("Active Status ignores reward and streak-only policy changes but honors unresolved-occurrence changes", () => {
+  const cache = createStableTaskProjectionCache();
+  const tasks = [canonicalTask({ id: "task-a" }), canonicalTask({ id: "task-b" })];
+  const base = {
+    behaviorProfiles: {
+      task: {
+        id: "policy",
+        missedStreakOnUnhandled: "increment" as const,
+        positiveStreakOnUnhandled: "break" as const,
+        rewards: "enabled" as const,
+        unresolvedOccurrence: "missed" as const,
+      },
+    },
+    historyByTaskId: { "task-a": [], "task-b": [] },
+    logicalDayRollover: "00:00",
+    now: "2026-09-09T12:00:00.000Z",
+    tasks,
+    timezone: "UTC",
+  };
+  resolveActiveTaskStatusesIncrementally(base, cache);
+
+  const rewardChange = resolveActiveTaskStatusesIncrementally({
+    ...base,
+    behaviorProfiles: { task: { ...base.behaviorProfiles.task, rewards: "disabled" } },
+  }, cache);
+  assert.deepEqual([rewardChange.evaluatedTasks, rewardChange.reusedTasks], [0, 2]);
+
+  const streakChange = resolveActiveTaskStatusesIncrementally({
+    ...base,
+    behaviorProfiles: { task: { ...base.behaviorProfiles.task, positiveStreakOnUnhandled: "preserve" } },
+  }, cache);
+  assert.deepEqual([streakChange.evaluatedTasks, streakChange.reusedTasks], [0, 2]);
+
+  const activeStatusChange = resolveActiveTaskStatusesIncrementally({
+    ...base,
+    behaviorProfiles: { task: { ...base.behaviorProfiles.task, unresolvedOccurrence: "blank" } },
+  }, cache);
+  assert.deepEqual([activeStatusChange.evaluatedTasks, activeStatusChange.reusedTasks], [2, 0]);
 });
 
 test("canonical due changes invalidate the shared presentation projection even when status is unchanged", () => {

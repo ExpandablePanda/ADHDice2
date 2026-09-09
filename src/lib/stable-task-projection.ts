@@ -13,6 +13,8 @@ type ProjectionCacheEntry = {
   value: unknown;
 };
 
+export type StableTaskProjectionCache = ReturnType<typeof createStableTaskProjectionCache>;
+
 function stableSerialize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? String(value);
   if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
@@ -62,6 +64,7 @@ export function createTaskDerivationRevisionKey(input: {
  */
 export function createStableTaskProjectionCache() {
   const entries = new Map<ProjectionLayer, ProjectionCacheEntry>();
+  const keyedEntries = new Map<ProjectionLayer, Map<string, ProjectionCacheEntry>>();
   return {
     getOrCreate<Value>(layer: ProjectionLayer, revision: string, create: () => Value): Value {
       const cached = entries.get(layer);
@@ -74,6 +77,28 @@ export function createStableTaskProjectionCache() {
       const value = create();
       entries.set(layer, { revision, value });
       return value;
+    },
+    getOrCreateByKey<Value>(layer: ProjectionLayer, key: string, revision: string, create: () => Value) {
+      const layerEntries = keyedEntries.get(layer) ?? new Map<string, ProjectionCacheEntry>();
+      keyedEntries.set(layer, layerEntries);
+      const cached = layerEntries.get(key);
+      if (cached?.revision === revision) {
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          console.info(`[workspace:cache-hit] layer=${layer} key=${key} revision=${revision}`);
+        }
+        return { reused: true, value: cached.value as Value };
+      }
+      const value = create();
+      layerEntries.set(key, { revision, value });
+      return { reused: false, value };
+    },
+    retainKeys(layer: ProjectionLayer, keys: readonly string[]) {
+      const layerEntries = keyedEntries.get(layer);
+      if (!layerEntries) return;
+      const retained = new Set(keys);
+      for (const key of layerEntries.keys()) {
+        if (!retained.has(key)) layerEntries.delete(key);
+      }
     },
   };
 }

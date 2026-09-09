@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, X } from "lucide-react";
-import { useRef, useState, type ComponentProps, type JSX, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ComponentProps, type JSX, type ReactNode } from "react";
 import { ModalShell } from "../modal-shell";
 import { BottomDockComponent } from "./bottom-dock";
 import { FilterRowsComponent } from "./task-filter-rows";
@@ -45,10 +45,11 @@ import type { NavigatorSearchTarget } from "@/lib/navigator-search";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import type { ImportTasksResult, TaskImportOptions, TaskImportProgress } from "@/hooks/useTaskCrudActions";
 import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleActionStatuses } from "@/lib/task-complete";
-import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
+import { createTaskHistoryCalendarReadRevision, logicalDateForTimestamp, resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
+import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import type {
   Task,
   TaskHistory as DbTaskHistory,
@@ -638,7 +639,10 @@ export function TaskHistoryModal({
 }) {
   const today = todayDateKey;
   const days = buildTaskHistoryCalendarDateKeys(today);
-  const normalizedTaskHistory = deduplicateTaskHistoryByLogicalDate(taskHistory);
+  const normalizedTaskHistory = useMemo(
+    () => deduplicateTaskHistoryByLogicalDate(taskHistory),
+    [taskHistory],
+  );
   const historyByDate = new Map(normalizedTaskHistory.map((historyEntry) => [historyEntry.entry_date, historyEntry]));
   const [initialFocusDate] = useState(() => getTaskHistoryInitialFocusDateKey({ initialDateKey, todayDateKey }));
   const initialSelectedDate = initialFocusDate;
@@ -679,18 +683,57 @@ export function TaskHistoryModal({
   const lastCalendarMonth = getTaskCalendarMonth(new Date(`${days.at(-1)}T12:00:00`));
   const monthValue = (month: TaskCalendarMonth) => month.year * 12 + month.month;
   const knownDateKeys = new Set(days);
-  const calendarRead = stateEngineContext
-    ? resolveTaskHistoryCalendarRead({
-      ...stateEngineContext,
-      calendarEnd: days.at(-1) ?? today,
-      calendarStart: days[0] ?? today,
-      history: normalizedTaskHistory,
-      calendarOverrides,
-      task,
-      behaviorProfiles,
-      behaviorPolicyRevisions,
-    })
+  const calendarStart = days[0] ?? today;
+  const calendarEnd = days.at(-1) ?? today;
+  const calendarLogicalDate = stateEngineContext
+    ? logicalDateForTimestamp(stateEngineContext.now, stateEngineContext.timezone, stateEngineContext.logicalDayRollover)
     : null;
+  // The semantic logical date is the dependency boundary; minute-level `now`
+  // identity must not rebuild the canonical Calendar read.
+  const calendarReadInput = useMemo(
+    () => stateEngineContext
+      ? {
+        ...stateEngineContext,
+        calendarEnd,
+        calendarStart,
+        history: normalizedTaskHistory,
+        calendarOverrides,
+        task,
+        behaviorProfiles,
+        behaviorPolicyRevisions,
+      }
+      : null,
+    // Semantic logical-date dependencies intentionally exclude minute-level `now`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      behaviorPolicyRevisions,
+      behaviorProfiles,
+      calendarOverrides,
+      calendarLogicalDate,
+      calendarEnd,
+      calendarStart,
+      normalizedTaskHistory,
+      stateEngineContext?.logicalDayRollover,
+      stateEngineContext?.timezone,
+      task,
+      today,
+    ],
+  );
+  const calendarReadRevision = useMemo(
+    () => calendarReadInput
+      ? createTaskHistoryCalendarReadRevision(calendarReadInput)
+      : "task-history-calendar:unavailable",
+    [calendarReadInput],
+  );
+  const calendarRead = useMemo(() => {
+    if (!calendarReadInput) return null;
+    if (isWorkspacePerformanceDiagnosticsEnabled()) {
+      console.info(`[workspace:task-history-calendar] recomputed taskId=${task.id}`);
+    }
+    return resolveTaskHistoryCalendarRead(calendarReadInput);
+    // The semantic revision above is the dependency boundary for this pure read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calendarReadRevision]);
   const dueDates = new Set(Object.entries(calendarRead?.states ?? {})
     .filter(([, state]) => state === "due")
     .map(([dateKey]) => dateKey));
@@ -726,9 +769,24 @@ export function TaskHistoryModal({
     : selectedTimelineDay
     ? selectedTimelineDay.obligation === "due" || selectedTimelineDay.obligation === "overdue"
     : selectedCalendarState === "due";
-  const engineCalendarActionStatuses = stateEngineContext && calendarRead
-    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, historicalOverride: true, logicalDate: selectedDate, task, behaviorProfiles, behaviorPolicyRevisions })
-    : null;
+  const engineCalendarActionStatuses = useMemo(
+    () => calendarReadInput && calendarRead
+      ? resolveTaskHistoryCalendarActionStatuses({
+        behaviorPolicyRevisions,
+        behaviorProfiles,
+        history: normalizedTaskHistory,
+        historicalOverride: true,
+        logicalDate: selectedDate,
+        logicalDayRollover: calendarReadInput.logicalDayRollover,
+        now: calendarReadInput.now,
+        task,
+        timezone: calendarReadInput.timezone,
+      })
+      : null,
+    // The calendar revision already covers these semantic inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [calendarRead, calendarReadRevision, selectedDate],
+  );
   const calendarActionStatuses = calendarRead
     ? getTaskHistoryCalendarVisibleActionStatuses({
       engineStatuses: engineCalendarActionStatuses,

@@ -36,6 +36,21 @@ export type TaskBehaviorPolicyRevisionMap = Readonly<Partial<Record<TaskType, Ta
 export type TaskBehaviorPolicyField = Exclude<keyof TaskBehaviorPolicy, "id">;
 export type TaskBehaviorProfiles = Readonly<Partial<Record<TaskType, TaskBehaviorPolicy>>>;
 
+export type TaskBehaviorProjectionSemantics = {
+  activeStatus: {
+    profile: Pick<TaskBehaviorPolicy, "unresolvedOccurrence">;
+    revisions: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate" | "unresolvedOccurrence">[];
+  };
+  streak: {
+    profile: Pick<TaskBehaviorPolicy, "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled">;
+    revisions: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate" | "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled">[];
+  };
+  rewards: {
+    profile: Pick<TaskBehaviorPolicy, "rewards">;
+    revisions: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate" | "rewards">[];
+  };
+};
+
 const POLICY_VALUES = {
   unresolvedOccurrence: new Set<UnresolvedOccurrenceBehavior>(["missed", "blank"]),
   positiveStreakOnUnhandled: new Set<PositiveStreakUnhandledBehavior>(["break", "preserve"]),
@@ -51,6 +66,53 @@ export const STANDARD_TASK_BEHAVIOR_POLICY: TaskBehaviorPolicy = Object.freeze({
   missedStreakOnUnhandled: "increment",
   rewards: "enabled",
 });
+
+/**
+ * Projection-specific policy inputs. Keep this at the engine boundary so a
+ * change to one behavior concern cannot invalidate unrelated projections.
+ */
+export function selectTaskBehaviorProjectionSemantics(input: {
+  behaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+  taskType?: TaskType | null;
+}): TaskBehaviorProjectionSemantics {
+  const taskType = input.taskType === "task" || input.taskType === undefined || input.taskType === null
+    ? "task"
+    : input.taskType;
+  const profile = taskType === "task"
+    ? normalizeTaskBehaviorProfile(input.behaviorProfiles?.task, "task")
+    : STANDARD_TASK_BEHAVIOR_POLICY;
+  const revisions = taskType === "task" ? input.behaviorPolicyRevisions?.task ?? [] : [];
+  return {
+    activeStatus: {
+      profile: { unresolvedOccurrence: profile.unresolvedOccurrence },
+      revisions: revisions.map((revision) => ({
+        effectiveFromLogicalDate: revision.effectiveFromLogicalDate,
+        unresolvedOccurrence: revision.unresolvedOccurrence,
+      })),
+    },
+    streak: {
+      profile: {
+        missedStreakOnUnhandled: profile.missedStreakOnUnhandled,
+        positiveStreakOnUnhandled: profile.positiveStreakOnUnhandled,
+        unresolvedOccurrence: profile.unresolvedOccurrence,
+      },
+      revisions: revisions.map((revision) => ({
+        effectiveFromLogicalDate: revision.effectiveFromLogicalDate,
+        missedStreakOnUnhandled: revision.missedStreakOnUnhandled,
+        positiveStreakOnUnhandled: revision.positiveStreakOnUnhandled,
+        unresolvedOccurrence: revision.unresolvedOccurrence,
+      })),
+    },
+    rewards: {
+      profile: { rewards: profile.rewards },
+      revisions: revisions.map((revision) => ({
+        effectiveFromLogicalDate: revision.effectiveFromLogicalDate,
+        rewards: revision.rewards,
+      })),
+    },
+  };
+}
 
 function isPolicyValue<T extends TaskBehaviorPolicyField>(field: T, value: unknown): value is TaskBehaviorPolicy[T] {
   return POLICY_VALUES[field].has(value as never);

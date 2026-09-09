@@ -267,7 +267,7 @@ test("TaskApp keeps persisted Task status authoritative until full History is re
   assert.match(taskAppSource, /const taskHistoryReadinessRevision = useMemo\([\s\S]*createProjectionDomainRevision\("task-history-readiness", isTaskHistoryLoaded\)/);
   assert.match(taskAppSource, /taskHistoryReadinessRevision,[\s\S]*activeStatusRead/);
   assert.match(activeStatusRead, /if \(!isTaskHistoryLoaded\) return null/);
-  assert.match(activeStatusRead, /resolveActiveTaskStatuses\(/);
+  assert.match(activeStatusRead, /resolveActiveTaskStatusesIncrementally\(/);
   assert.match(taskAppSource, /const taskDisplayDueOnByTaskId = activeStatusRead\?\.dueOnByTaskId/);
   assert.match(taskAppSource, /createProjectionDomainRevision\("active-task-read", \{[\s\S]*dueOnByTaskId:[\s\S]*statusesByTaskId:/);
   assert.match(taskAppSource, /projectTasksForActiveStatusRead\(tasks, taskDisplayStatusByTaskId, taskDisplayDueOnByTaskId\)/);

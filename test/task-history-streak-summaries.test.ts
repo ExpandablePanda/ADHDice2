@@ -461,10 +461,10 @@ test("parent and child Table/List title paths consume compact summary fields", (
 test("modal calendar and statistics normalize saved Done, Did My Best, and Missed rows", () => {
   const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
 
-  assert.match(modalSource, /const normalizedTaskHistory = deduplicateTaskHistoryByLogicalDate\(taskHistory\)/);
+  assert.match(modalSource, /const normalizedTaskHistory = useMemo\(\s*\(\) => deduplicateTaskHistoryByLogicalDate\(taskHistory\)/);
   assert.match(modalSource, /const historyByDate = new Map\(normalizedTaskHistory\.map/);
   assert.match(modalSource, /computeTaskSpecificHistoryStats\(task, normalizedTaskHistory/);
-  assert.match(modalSource, /resolveTaskHistoryCalendarActionStatuses\(\{\s*\.\.\.stateEngineContext, history: normalizedTaskHistory/);
+  assert.match(modalSource, /resolveTaskHistoryCalendarActionStatuses\(\{[\s\S]*history: normalizedTaskHistory/);
   assert.match(modalSource, /selectedEntry\?\.status === status/);
   assert.doesNotMatch(modalSource, /<span>Clear<\/span>/);
   assert.match(modalSource, /entry\.status === "missed"/);
