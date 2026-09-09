@@ -1880,6 +1880,7 @@ export function TaskApp() {
     reconcileRolloverWorkspace,
     retryTaskHistoryForTask,
     refreshTaskHistoryStreakSummary,
+    refreshTaskHistoryStreakSummaries,
     softRefreshWorkspace,
     taskHistoryByTaskId: sharedTaskHistoryByTaskId,
     taskHistoryLoadStateByTaskId,
@@ -1976,14 +1977,15 @@ export function TaskApp() {
   );
   const refreshedBehaviorProfilesRevisionRef = useRef<string | null>(null);
   useEffect(() => {
-    if (taskTypeBehaviorProfilesRevision === createProjectionDomainRevision("task-history-streak-policy", selectTaskBehaviorProjectionSemantics({}).streak)) {
-      refreshedBehaviorProfilesRevisionRef.current = null;
-      return;
-    }
     if (!isTaskHistoryLoaded || tasks.length === 0 || refreshedBehaviorProfilesRevisionRef.current === taskTypeBehaviorProfilesRevision) return;
+    const hasPreviouslyObservedPolicy = refreshedBehaviorProfilesRevisionRef.current !== null;
     refreshedBehaviorProfilesRevisionRef.current = taskTypeBehaviorProfilesRevision;
-    void Promise.all(tasks.map((task) => refreshTaskHistoryStreakSummary(task.id)));
-  }, [isTaskHistoryLoaded, refreshTaskHistoryStreakSummary, taskTypeBehaviorProfilesRevision, tasks]);
+    if (!hasPreviouslyObservedPolicy) return;
+    if (isWorkspacePerformanceDiagnosticsEnabled()) {
+      console.info(`[workspace:streak-summary] mode=bulk reason=behavior-policy tasks=${tasks.length}`);
+    }
+    void refreshTaskHistoryStreakSummaries(tasks);
+  }, [isTaskHistoryLoaded, refreshTaskHistoryStreakSummaries, taskTypeBehaviorProfilesRevision, tasks]);
   const actionWorkspaceGeneration = workspaceGenerationRef.current;
 
   const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[], nextTask?: Task) => {

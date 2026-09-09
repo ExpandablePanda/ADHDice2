@@ -7,11 +7,13 @@ import type { TaskHistory } from "../src/lib/database.types.ts";
 import { TASK_STATE_HISTORY_CUTOVER_DATE } from "../src/lib/task-history-cutover.ts";
 import { computeTaskEffectiveTimelineStreaks } from "../src/lib/task-state-engine/effective-timeline.ts";
 import {
+  buildTaskHistoryStreakSummary,
   buildTaskHistoryStreakSummaryMap as buildCanonicalTaskHistoryStreakSummaryMap,
   type TaskHistoryStreakSummaryContext,
   updateTaskHistoryStreakSummaryMap,
 } from "../src/lib/task-history-streak-summaries.ts";
 import { computeTaskSpecificHistoryStats, deduplicateTaskHistoryByLogicalDate } from "../src/lib/task-history.ts";
+import { buildTaskHistoryLastHandledSummaryMap } from "../src/lib/task-history-last-handled.ts";
 import { resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/calendar-authority.ts";
 import type { TaskCalendarOverride } from "../src/lib/task-state-engine/types.ts";
 
@@ -79,6 +81,31 @@ test("narrow critical History can coexist with a three-day compact completion st
   const summaries = buildTaskHistoryStreakSummaryMap([currentTask], rows, "2026-08-03");
 
   assert.equal(summaries[currentTask.id]?.currentStreak, 3);
+});
+
+test("bulk streak summaries preserve the per-Task summary results", () => {
+  const tasks = [task("bulk-a"), task("bulk-b")];
+  const rows = [
+    history("bulk-a-done", "2026-08-01", "done", true, "bulk-a"),
+    history("bulk-a-done-2", "2026-08-02", "done", true, "bulk-a"),
+    history("bulk-b-missed", "2026-08-01", "missed", false, "bulk-b"),
+  ];
+  const context = {
+    compatibilityOnly: true,
+    manualActionSummaryByTaskId: buildTaskHistoryLastHandledSummaryMap(tasks, rows, [], [], "2026-08-02"),
+  } as const;
+  const bulk = buildTaskHistoryStreakSummaryMap(tasks, rows, "2026-08-02", context);
+  const perTask = Object.fromEntries(tasks.map((currentTask) => [
+    currentTask.id,
+    buildTaskHistoryStreakSummary(
+      currentTask,
+      rows.filter((row) => row.task_id === currentTask.id),
+      "2026-08-02",
+      context,
+    ),
+  ]));
+
+  assert.deepEqual(bulk, perTask);
 });
 
 test("compact summaries count three trailing missed entries", () => {

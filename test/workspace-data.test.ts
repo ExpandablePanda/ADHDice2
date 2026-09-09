@@ -320,6 +320,37 @@ test("streak-summary resolution is rejected after the owning effect unmounts", a
   assert.match(summaryLoader, /if \(!isActive \|\| !canApplyCoreWorkspaceResult\(\)\)[\s\S]*buildTaskHistoryStreakSummaryMap/);
 });
 
+test("global streak-policy refresh uses one stable bulk workspace authority", async () => {
+  const workspaceSource = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const appSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const policyEffect = appSource.slice(
+    appSource.indexOf("const refreshedBehaviorProfilesRevisionRef"),
+    appSource.indexOf("const actionWorkspaceGeneration"),
+  );
+  const policyRevision = appSource.slice(
+    appSource.indexOf("const taskTypeBehaviorProfilesRevision"),
+    appSource.indexOf("const refreshedBehaviorProfilesRevisionRef"),
+  );
+  const summaryLoader = workspaceSource.slice(
+    workspaceSource.indexOf("async function loadTaskHistoryStreakSummaries"),
+    workspaceSource.indexOf("async function reloadTaskHistoryStreakSummaryForTask"),
+  );
+
+  assert.match(workspaceSource, /const loadTaskHistoryStreakSummariesRef = useRef/);
+  assert.match(workspaceSource, /loadTaskHistoryStreakSummariesRef\.current = loadTaskHistoryStreakSummaries/);
+  assert.match(workspaceSource, /const refreshTaskHistoryStreakSummaries = useCallback/);
+  assert.match(policyEffect, /refreshTaskHistoryStreakSummaries\(tasks\)/);
+  assert.match(policyEffect, /\[workspace:streak-summary\] mode=bulk reason=behavior-policy tasks=\$\{tasks\.length\}/);
+  assert.doesNotMatch(policyEffect, /Promise\.all\(tasks\.map/);
+  assert.doesNotMatch(policyEffect, /refreshTaskHistoryStreakSummary\(task\.id\)/);
+  assert.match(policyRevision, /selectTaskBehaviorProjectionSemantics/);
+  assert.match(policyRevision, /\}\)\.streak/);
+  assert.doesNotMatch(policyRevision, /rewards/);
+  assert.match(summaryLoader, /buildTaskHistoryStreakSummaryMap\(nextTasks/);
+  assert.match(summaryLoader, /setTaskHistoryStreakSummaries\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextSummaries\)\)/);
+  assert.doesNotMatch(summaryLoader, /nextTasks\.map\(/);
+});
+
 test("workspace streak summaries batch-load active Calendar overrides and index them by task", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const summaryLoader = source.slice(source.indexOf("async function loadTaskHistoryStreakSummaries"), source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"));

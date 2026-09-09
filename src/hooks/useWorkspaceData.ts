@@ -315,6 +315,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const taskHistoryLoadStateByTaskIdRef = useRef<Record<string, TaskHistoryTaskLoadState>>({});
   const taskHistoryTaskLoadPromisesRef = useRef(new Map<string, OwnedWorkspacePromise<TaskHistoryLoadResult>>());
   const loadTaskHistoryForTasksRef = useRef<((taskIds: string[]) => Promise<TaskHistoryLoadMap>) | null>(null);
+  const loadTaskHistoryStreakSummariesRef = useRef<((nextTasks?: Task[]) => Promise<boolean>) | null>(null);
   const taskHistoryStreakSummaryLoadPromiseRef = useRef<OwnedWorkspacePromise<boolean> | null>(null);
   const taskHistoryStreakSummaryTaskReloadsRef = useRef(new Map<string, OwnedWorkspacePromise<boolean>>());
   const taskReloadInFlightRef = useRef(false);
@@ -452,6 +453,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       taskHistoryLoadInFlightRef.current = false;
       queuedTaskHistoryReloadRef.current = false;
       taskHistoryLoadPromiseRef.current = null;
+      loadTaskHistoryStreakSummariesRef.current = null;
       taskHistoryStreakSummaryLoadPromiseRef.current = null;
       taskHistoryStreakSummaryTaskReloadsRef.current.clear();
       taskReloadInFlightRef.current = false;
@@ -491,6 +493,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     taskHistoryLoadInFlightRef.current = false;
     queuedTaskHistoryReloadRef.current = false;
     taskHistoryLoadPromiseRef.current = null;
+    loadTaskHistoryStreakSummariesRef.current = null;
     taskHistoryStreakSummaryLoadPromiseRef.current = null;
     taskHistoryStreakSummaryTaskReloadsRef.current.clear();
     setActiveProfileUserId(userId);
@@ -1077,6 +1080,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     loadNotesRef.current = () => loadNotes({ silent: true });
     loadTaskHistoryForTaskRef.current = (taskId, options) => loadTaskHistoryForTask(taskId, { ...options, silent: true }).then((result) => result.status === "ready");
     loadTaskHistoryForTasksRef.current = loadTaskHistoryForTasks;
+    loadTaskHistoryStreakSummariesRef.current = loadTaskHistoryStreakSummaries;
     fetchTaskHistoryForRolloverRef.current = fetchTaskHistoryForRollover;
     refreshTaskHistoryStreakSummaryRef.current = reloadTaskHistoryStreakSummaryForTask;
     retryTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { force: true }).then((result) => result.status === "ready");
@@ -1710,6 +1714,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       rolloverWorkspaceReconciliationRef.current = null;
       prepareTaskMutationRef.current = null;
       fetchTaskHistoryForRolloverRef.current = null;
+      loadTaskHistoryStreakSummariesRef.current = null;
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
       taskChannelRemovalPromiseRef.current = null;
@@ -1768,6 +1773,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     async (taskIds: string[]) => await loadTaskHistoryForTasksRef.current?.(taskIds) ?? {},
     [],
   );
+  const refreshTaskHistoryStreakSummaries = useCallback(
+    async (nextTasks?: Task[]) => await loadTaskHistoryStreakSummariesRef.current?.(nextTasks) ?? false,
+    [],
+  );
   const fetchTaskHistoryForRollover = useCallback(
     async (taskIds: string[]) => await fetchTaskHistoryForRolloverRef.current?.(taskIds) ?? {},
     [],
@@ -1799,6 +1808,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     softRefreshWorkspace,
     loadTaskHistoryForTask,
     loadTaskHistoryForTasks,
+    refreshTaskHistoryStreakSummaries,
     fetchTaskHistoryForRollover,
     retryTaskHistoryForTask,
     loadTaskNotes,

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.20`.
+- Current working app version: `7.13.21`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -33,6 +33,20 @@ existing workspace performance diagnostic flag is enabled.
 
 No Task semantics, canonical History facts, persistence, SQL, schema, RLS,
 Realtime behavior, or Pursuit architecture changed.
+
+## 2026-09-09 7.13.21 Behavior Profile Bulk Streak Reconciliation
+
+Global changes to streak-affecting Task behavior policy now call the existing
+bulk `loadTaskHistoryStreakSummaries()` authority once. It reuses loaded full
+History, loads Calendar overrides and manual command operations collection-wide,
+builds the complete summary map, and publishes one summary state update.
+Single-Task History/task mutations continue using the targeted refresh path.
+Rewards-only policy changes remain outside streak and Active Status revisions.
+
+The existing workspace performance diagnostic reports bulk policy refreshes as
+`[workspace:streak-summary] mode=bulk reason=behavior-policy tasks=N`.
+No Task State, recurrence, History, Calendar, reward, persistence, SQL, schema,
+RLS, Realtime, or Pursuit semantics changed.
 
 ## 2026-09-06 7.12.119 Saved View Editing
 
