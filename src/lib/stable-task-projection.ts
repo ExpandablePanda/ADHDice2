@@ -40,6 +40,53 @@ export function combineProjectionRevisions(...revisions: string[]) {
   return hashRevision(revisions.join("|"));
 }
 
+export type CooperativeChunkOptions = {
+  budgetMs?: number;
+  isCurrent?: () => boolean;
+  now?: () => number;
+  yieldToBrowser?: () => Promise<void>;
+};
+
+export type CooperativeChunkResult = {
+  chunks: number;
+  completed: boolean;
+};
+
+function defaultYieldToBrowser() {
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    return new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+  }
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+/** Run CPU-only projection work in short browser-yielding slices. */
+export async function forEachCooperatively<T>(
+  items: readonly T[],
+  process: (item: T) => void,
+  options: CooperativeChunkOptions = {},
+): Promise<CooperativeChunkResult> {
+  const budgetMs = options.budgetMs ?? 10;
+  const now = options.now ?? (() => performance.now());
+  const yieldToBrowser = options.yieldToBrowser ?? defaultYieldToBrowser;
+  let index = 0;
+  let chunks = 0;
+
+  while (index < items.length) {
+    if (options.isCurrent && !options.isCurrent()) return { chunks, completed: false };
+    const deadline = now() + budgetMs;
+    chunks += 1;
+    do {
+      if (options.isCurrent && !options.isCurrent()) return { chunks, completed: false };
+      process(items[index]!);
+      index += 1;
+    } while (index < items.length && now() < deadline);
+
+    if (index < items.length) await yieldToBrowser();
+  }
+
+  return { chunks, completed: true };
+}
+
 export function createTaskDerivationRevisionKey(input: {
   historyRevision: string;
   listRevision: string;

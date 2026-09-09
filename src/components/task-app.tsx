@@ -209,6 +209,7 @@ import {
   taskStateHistoryRowToCanonicalIntent,
   projectTasksForActiveStatusRead,
   resolveActiveTaskStatusesIncrementally,
+  resolveActiveTaskStatusesIncrementallyChunked,
 } from "@/lib/task-state-engine";
 import { selectTaskBehaviorProjectionSemantics } from "@/lib/task-state-engine/behavior-policy";
 import {
@@ -1984,7 +1985,7 @@ export function TaskApp() {
     if (isWorkspacePerformanceDiagnosticsEnabled()) {
       console.info(`[workspace:streak-summary] mode=bulk reason=behavior-policy tasks=${tasks.length}`);
     }
-    void refreshTaskHistoryStreakSummaries(tasks);
+    void refreshTaskHistoryStreakSummaries(tasks, { supersede: true });
   }, [isTaskHistoryLoaded, refreshTaskHistoryStreakSummaries, taskTypeBehaviorProfilesRevision, tasks]);
   const actionWorkspaceGeneration = workspaceGenerationRef.current;
 
@@ -2785,6 +2786,13 @@ export function TaskApp() {
     }),
     [dayStartTime, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles, todayKey, userTimeZone],
   );
+  const taskActiveStatusBehaviorRevision = useMemo(
+    () => createProjectionDomainRevision("task-status-behavior", selectTaskBehaviorProjectionSemantics({
+      behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
+      behaviorProfiles: taskTypeBehaviorProfiles,
+    }).activeStatus),
+    [taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles],
+  );
   const [projectionCache] = useState(createStableTaskProjectionCache);
   const activeStatusInputRevision = combineProjectionRevisions(
     taskDomainRevision,
@@ -2792,28 +2800,67 @@ export function TaskApp() {
     taskActiveStatusSettingsRevision,
     taskHistoryReadinessRevision,
   );
-  const activeStatusRead = useMemo(
-    () => {
-      if (!isTaskHistoryLoaded) return null;
-      const result = resolveActiveTaskStatusesIncrementally({
-        behaviorProfiles: taskTypeBehaviorProfiles,
-        behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
-        historyByTaskId: taskHistoryByTaskId,
-        logicalDayRollover: dayStartTime,
-        now: new Date(logicalDayNow),
-        tasks,
-        timezone: userTimeZone,
-      }, projectionCache);
+  const [activeStatusRead, setActiveStatusRead] = useState<Awaited<ReturnType<typeof resolveActiveTaskStatusesIncrementally>> | null>(null);
+  const activeStatusCalculationTokenRef = useRef(0);
+  const committedActiveStatusBehaviorRevisionRef = useRef<string | null>(null);
+  const latestActiveStatusInputRevisionRef = useRef(activeStatusInputRevision);
+  const latestActiveStatusBehaviorRevisionRef = useRef(taskActiveStatusBehaviorRevision);
+  latestActiveStatusInputRevisionRef.current = activeStatusInputRevision;
+  latestActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
+  useEffect(() => {
+    const calculationToken = activeStatusCalculationTokenRef.current + 1;
+    activeStatusCalculationTokenRef.current = calculationToken;
+    if (!isTaskHistoryLoaded) {
+      committedActiveStatusBehaviorRevisionRef.current = null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the user-scoped projection when History is unavailable.
+      setActiveStatusRead(null);
+      return () => {
+        if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
+      };
+    }
+
+    const activeStatusInput = {
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
+      historyByTaskId: taskHistoryByTaskId,
+      logicalDayRollover: dayStartTime,
+      now: new Date(logicalDayNow),
+      tasks,
+      timezone: userTimeZone,
+    };
+    const isGlobalBehaviorChange = committedActiveStatusBehaviorRevisionRef.current !== null
+      && committedActiveStatusBehaviorRevisionRef.current !== taskActiveStatusBehaviorRevision;
+
+    if (isGlobalBehaviorChange) {
+      void resolveActiveTaskStatusesIncrementallyChunked(activeStatusInput, projectionCache, {
+        budgetMs: 10,
+        isCurrent: () => activeStatusCalculationTokenRef.current === calculationToken
+          && latestActiveStatusInputRevisionRef.current === activeStatusInputRevision
+          && latestActiveStatusBehaviorRevisionRef.current === taskActiveStatusBehaviorRevision,
+      }).then((result) => {
+        if (!result.completed || activeStatusCalculationTokenRef.current !== calculationToken) return;
+        committedActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          console.info(`[workspace:active-status] mode=global-chunked tasks=${tasks.length} chunks=${result.chunks}`);
+        }
+        setActiveStatusRead(result);
+      });
+    } else {
+      const result = resolveActiveTaskStatusesIncrementally(activeStatusInput, projectionCache);
+      committedActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info(`[workspace:active-status] evaluatedTasks=${result.evaluatedTasks} reusedTasks=${result.reusedTasks}`);
       }
-      return result;
-    },
+      setActiveStatusRead(result);
+    }
+
+    return () => {
+      if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
+    };
     // Status evaluation is logical-day based. The minute clock must not clone
     // or replace the canonical Task collection while the logical day is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache],
-  );
+  }, [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache, taskActiveStatusBehaviorRevision]);
   const taskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId ?? persistedTaskDisplayStatusByTaskId;
   const taskDisplayDueOnByTaskId = activeStatusRead?.dueOnByTaskId ?? {};
   const activeStatusRevision = useMemo(

@@ -258,7 +258,7 @@ test("modal canonical hydration invalidates the active-status projection without
 
 test("TaskApp keeps persisted Task status authoritative until full History is ready", async () => {
   const taskAppSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
-  const activeStatusStart = taskAppSource.indexOf("const activeStatusRead");
+  const activeStatusStart = taskAppSource.indexOf("const [activeStatusRead");
   const activeStatusEnd = taskAppSource.indexOf("const taskDisplayStatusByTaskId", activeStatusStart);
   const activeStatusRead = taskAppSource.slice(activeStatusStart, activeStatusEnd);
 
@@ -266,8 +266,12 @@ test("TaskApp keeps persisted Task status authoritative until full History is re
   assert.match(taskAppSource, /const taskDisplayStatusByTaskId = activeStatusRead\?\.statusesByTaskId \?\? persistedTaskDisplayStatusByTaskId/);
   assert.match(taskAppSource, /const taskHistoryReadinessRevision = useMemo\([\s\S]*createProjectionDomainRevision\("task-history-readiness", isTaskHistoryLoaded\)/);
   assert.match(taskAppSource, /taskHistoryReadinessRevision,[\s\S]*activeStatusRead/);
-  assert.match(activeStatusRead, /if \(!isTaskHistoryLoaded\) return null/);
+  assert.match(activeStatusRead, /if \(!isTaskHistoryLoaded\)/);
   assert.match(activeStatusRead, /resolveActiveTaskStatusesIncrementally\(/);
+  assert.match(activeStatusRead, /resolveActiveTaskStatusesIncrementallyChunked\(/);
+  assert.match(activeStatusRead, /mode=global-chunked tasks=\$\{tasks\.length\} chunks=\$\{result\.chunks\}/);
+  assert.match(activeStatusRead, /activeStatusCalculationTokenRef/);
+  assert.match(activeStatusRead, /setActiveStatusRead\(result\)/);
   assert.match(taskAppSource, /const taskDisplayDueOnByTaskId = activeStatusRead\?\.dueOnByTaskId/);
   assert.match(taskAppSource, /createProjectionDomainRevision\("active-task-read", \{[\s\S]*dueOnByTaskId:[\s\S]*statusesByTaskId:/);
   assert.match(taskAppSource, /projectTasksForActiveStatusRead\(tasks, taskDisplayStatusByTaskId, taskDisplayDueOnByTaskId\)/);

@@ -10,6 +10,7 @@ import {
 import {
   projectTasksForActiveStatusRead,
   resolveActiveTaskStatusesIncrementally,
+  resolveActiveTaskStatusesIncrementallyChunked,
 } from "../src/lib/task-state-engine/read-authority.ts";
 import type { Task } from "../src/lib/database.types.ts";
 import { createStableTaskRowModelCache, snapshotBuildTaskTableRowDebugCount } from "../src/lib/task-table-row.ts";
@@ -130,6 +131,54 @@ test("incremental Active Status evaluates only changed Task and History identiti
     tasks,
   }, cache);
   assert.deepEqual([third.evaluatedTasks, third.reusedTasks], [1, 2]);
+});
+
+test("global Active Status chunking yields and matches the canonical result", async () => {
+  const tasks = ["task-a", "task-b", "task-c", "task-d"].map((id) => canonicalTask({ id }));
+  const input = {
+    behaviorPolicyRevisions: { task: [] },
+    historyByTaskId: Object.fromEntries(tasks.map((candidate) => [candidate.id, []])),
+    logicalDayRollover: "00:00",
+    now: "2026-09-09T12:00:00.000Z",
+    tasks,
+    timezone: "UTC",
+  };
+  const expected = resolveActiveTaskStatusesIncrementally(input, createStableTaskProjectionCache());
+  let clock = 0;
+  let yields = 0;
+  const actual = await resolveActiveTaskStatusesIncrementallyChunked(input, createStableTaskProjectionCache(), {
+    budgetMs: 1,
+    now: () => clock++,
+    yieldToBrowser: async () => { yields += 1; },
+  });
+
+  assert.ok(yields > 0);
+  assert.ok(actual.chunks > 1);
+  assert.equal(actual.completed, true);
+  assert.deepEqual(actual.statusesByTaskId, expected.statusesByTaskId);
+  assert.deepEqual(actual.dueOnByTaskId, expected.dueOnByTaskId);
+});
+
+test("incomplete Active Status work does not expose its partial map", async () => {
+  const tasks = [canonicalTask({ id: "task-a" }), canonicalTask({ id: "task-b" })];
+  let current = true;
+  const result = await resolveActiveTaskStatusesIncrementallyChunked({
+    behaviorPolicyRevisions: { task: [] },
+    historyByTaskId: { "task-a": [], "task-b": [] },
+    logicalDayRollover: "00:00",
+    now: "2026-09-09T12:00:00.000Z",
+    tasks,
+    timezone: "UTC",
+  }, createStableTaskProjectionCache(), {
+    budgetMs: 0,
+    now: () => 0,
+    isCurrent: () => current,
+    yieldToBrowser: async () => { current = false; },
+  });
+
+  assert.equal(result.completed, false);
+  assert.deepEqual(result.statusesByTaskId, {});
+  assert.deepEqual(result.dueOnByTaskId, {});
 });
 
 test("Active Status ignores reward and streak-only policy changes but honors unresolved-occurrence changes", () => {

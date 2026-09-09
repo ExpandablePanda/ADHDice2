@@ -6,7 +6,7 @@ import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput
 import { evaluateTaskState } from "./engine.ts";
 import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "./behavior-policy.ts";
 import { selectTaskBehaviorProjectionSemantics } from "./behavior-policy.ts";
-import { createProjectionDomainRevision, type StableTaskProjectionCache } from "../stable-task-projection.ts";
+import { createProjectionDomainRevision, forEachCooperatively, type CooperativeChunkOptions, type CooperativeChunkResult, type StableTaskProjectionCache } from "../stable-task-projection.ts";
 import { normalizeTaskType } from "../task-type.ts";
 import { logicalDateForTimestamp } from "./calendar.ts";
 
@@ -138,6 +138,8 @@ export type IncrementalActiveStatusReadResult = ActiveStatusReadResult & {
   reusedTasks: number;
 };
 
+export type ChunkedActiveStatusReadResult = IncrementalActiveStatusReadResult & CooperativeChunkResult;
+
 export function resolveActiveTaskStatusesIncrementally(
   input: ActiveStatusReadInput,
   projectionCache: StableTaskProjectionCache,
@@ -171,6 +173,50 @@ export function resolveActiveTaskStatusesIncrementally(
   }
   projectionCache.retainKeys("active-status", input.tasks.map((task) => task.id));
   return { authority: "engine", dueOnByTaskId, evaluatedTasks, reusedTasks, statusesByTaskId };
+}
+
+export async function resolveActiveTaskStatusesIncrementallyChunked(
+  input: ActiveStatusReadInput,
+  projectionCache: StableTaskProjectionCache,
+  options: CooperativeChunkOptions = {},
+): Promise<ChunkedActiveStatusReadResult> {
+  const statusesByTaskId: TaskDisplayStatusByTaskId = {};
+  const dueOnByTaskId: Record<string, string | null> = {};
+  let evaluatedTasks = 0;
+  let reusedTasks = 0;
+  const result = await forEachCooperatively(input.tasks, (task) => {
+    const taskInput = {
+      behaviorProfiles: input.behaviorProfiles,
+      behaviorPolicyRevisions: input.behaviorPolicyRevisions,
+      history: input.historyByTaskId[task.id] ?? [],
+      logicalDayRollover: input.logicalDayRollover,
+      now: input.now,
+      task,
+      timezone: input.timezone,
+    } satisfies ActiveStatusTaskReadInput;
+    const cached = projectionCache.getOrCreateByKey(
+      "active-status",
+      task.id,
+      createActiveStatusTaskProjectionRevision(taskInput),
+      () => {
+        evaluatedTasks += 1;
+        return resolveActiveTaskStatus(taskInput);
+      },
+    );
+    if (cached.reused) reusedTasks += 1;
+    statusesByTaskId[task.id] = cached.value.status;
+    if (cached.value.dueOn !== undefined) dueOnByTaskId[task.id] = cached.value.dueOn;
+  }, options);
+  if (result.completed) projectionCache.retainKeys("active-status", input.tasks.map((task) => task.id));
+  return {
+    authority: "engine",
+    chunks: result.chunks,
+    completed: result.completed,
+    dueOnByTaskId: result.completed ? dueOnByTaskId : {},
+    evaluatedTasks,
+    reusedTasks,
+    statusesByTaskId: result.completed ? statusesByTaskId : {},
+  };
 }
 
 function resolveTaskStatuses(input: ActiveStatusReadInput, compatibilityOnly: boolean): ActiveStatusReadResult {

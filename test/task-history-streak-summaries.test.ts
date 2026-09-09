@@ -9,6 +9,7 @@ import { computeTaskEffectiveTimelineStreaks } from "../src/lib/task-state-engin
 import {
   buildTaskHistoryStreakSummary,
   buildTaskHistoryStreakSummaryMap as buildCanonicalTaskHistoryStreakSummaryMap,
+  buildTaskHistoryStreakSummaryMapCooperatively,
   type TaskHistoryStreakSummaryContext,
   updateTaskHistoryStreakSummaryMap,
 } from "../src/lib/task-history-streak-summaries.ts";
@@ -473,6 +474,43 @@ test("an affected task summary updates without rebuilding other task summaries",
 
   assert.equal(updated[currentTask.id]?.currentStreak, 2);
   assert.strictEqual(updated[otherTask.id], initial[otherTask.id]);
+});
+
+test("bulk streak-summary chunking yields and preserves the canonical summary map", async () => {
+  const tasks = [task("bulk-a"), task("bulk-b"), task("bulk-c"), task("bulk-d")];
+  const rows = tasks.map((candidate, index) => history(`bulk-${index}`, "2026-08-03", "done", true, candidate.id));
+  let clock = 0;
+  let yields = 0;
+  const expected = buildCanonicalTaskHistoryStreakSummaryMap(tasks, rows, "2026-08-03", { compatibilityOnly: true });
+  const actual = await buildTaskHistoryStreakSummaryMapCooperatively(tasks, rows, "2026-08-03", { compatibilityOnly: true }, {
+    budgetMs: 1,
+    now: () => clock++,
+    yieldToBrowser: async () => { yields += 1; },
+  });
+
+  assert.ok(yields > 0);
+  assert.ok(actual.chunks > 1);
+  assert.equal(actual.completed, true);
+  assert.deepEqual(actual.summaries, expected);
+});
+
+test("superseded bulk streak-summary work does not expose its partial map", async () => {
+  let current = true;
+  const result = await buildTaskHistoryStreakSummaryMapCooperatively(
+    [task("stale-a"), task("stale-b")],
+    [],
+    "2026-08-03",
+    { compatibilityOnly: true },
+    {
+      budgetMs: 0,
+      now: () => 0,
+      isCurrent: () => current,
+      yieldToBrowser: async () => { current = false; },
+    },
+  );
+
+  assert.equal(result.completed, false);
+  assert.deepEqual(result.summaries, {});
 });
 
 test("parent and child Table/List title paths consume compact summary fields", () => {

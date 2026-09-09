@@ -36,6 +36,7 @@ export {
   projectTasksForActiveStatusRead,
   resolveActiveTaskStatus,
   resolveActiveTaskStatusesIncrementally,
+  resolveActiveTaskStatusesIncrementallyChunked,
   resolveCompatibilityTaskStatuses,
   resolveActiveTaskStatuses,
   TASK_STATE_ENGINE_INTEGRATION_ENABLED,

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.21`.
+- Current working app version: `7.13.22`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-09 7.13.22 Non-blocking Global Task Behavior Recalculation
+
+Global Active Status and behavior-policy streak-summary recalculations now run
+through short cooperative CPU chunks with browser yields. Each calculation
+keeps its complete result in local maps and publishes once atomically; a
+lightweight token prevents superseded work from committing. The existing
+per-Task Active Status cache remains incremental for ordinary mutations, and
+the bulk streak path still reuses full History plus one collection-wide load
+each for Calendar overrides and manual command operations. Rewards-only policy
+changes remain outside both global recalculations. No Task semantics,
+persistence, SQL, schema, RLS, Realtime, or Pursuit behavior changed.
 
 ## 2026-09-09 7.13.20 Task Engine Interaction Performance
 
