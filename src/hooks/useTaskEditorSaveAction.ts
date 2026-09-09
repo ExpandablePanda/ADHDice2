@@ -10,7 +10,7 @@ import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
-import type { TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
 import { isTaskStateRuntimeLifecycleTransition, TASK_METADATA_UPDATE_FIELDS, TASK_STATE_OWNED_UPDATE_FIELDS } from "@/lib/task-state-runtime-actions";
 import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
 
@@ -39,6 +39,7 @@ type SaveTaskEditorOptions = {
 
 type UseTaskEditorSaveActionOptions = {
   behaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   canonicalTaskCreator?: CanonicalTaskCreator;
   canonicalTaskStateUpdate?: (taskId: string, values: TaskUpdate, options?: { manualAction?: "unscheduled_status" }) => Promise<boolean>;
   currentDayKey: string;
@@ -65,6 +66,7 @@ type UseTaskEditorSaveActionOptions = {
 
 export function useTaskEditorSaveAction({
   behaviorProfiles,
+  behaviorPolicyRevisions,
   canonicalTaskCreator,
   canonicalTaskStateUpdate,
   currentDayKey,
@@ -203,6 +205,7 @@ export function useTaskEditorSaveAction({
       const actionAuthority = previousTask && outcome
         ? evaluateTaskActionAuthority({
           behaviorProfiles,
+          behaviorPolicyRevisions,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -214,6 +217,7 @@ export function useTaskEditorSaveAction({
       const scheduleAuthority = previousTask && scheduleOnlyEdit
         ? evaluateTaskScheduleAuthority({
           behaviorProfiles,
+          behaviorPolicyRevisions,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,

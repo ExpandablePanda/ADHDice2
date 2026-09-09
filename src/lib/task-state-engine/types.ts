@@ -1,4 +1,4 @@
-import type { TaskBehaviorPolicy } from "./behavior-policy.ts";
+import type { TaskBehaviorPolicy, TaskBehaviorPolicyRevision } from "./behavior-policy.ts";
 
 export type TaskLifecycleState = "active" | "complete" | "archived" | "trashed";
 
@@ -24,7 +24,8 @@ export type TaskCalendarState =
   | "complete"
   | "scheduled"
   | "not_due"
-  | "no_entry";
+  | "no_entry"
+  | "unhandled_blank";
 
 export type TaskHistoryOutcome = "done" | "did_my_best" | "missed" | "delayed" | "complete";
 export type TaskHistoryProvenance = "manual" | "rollover" | "reconciliation" | "import";
@@ -133,6 +134,10 @@ export type TaskEffectiveTimelineDay = {
   occurrenceIdentity: string | null;
   occurrenceDueOn: string | null;
   obligation: TaskEffectiveTimelineObligation;
+  /** Policy that governed this logical date; present for historical resolution. */
+  behaviorPolicy: TaskBehaviorPolicy;
+  /** True only for an automatically unresolved scheduled occurrence. */
+  unhandled: boolean;
 };
 
 export type TaskEffectiveTimeline = {
@@ -196,6 +201,8 @@ export type TaskStateAction =
 export type TaskStateEngineInput = {
   /** Non-persisted behavior selection; omitted Tasks use the standard profile. */
   behaviorPolicy?: TaskBehaviorPolicy;
+  /** Task-specific revisions selected by the normalization boundary. */
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevision[];
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
   now: string | Date;

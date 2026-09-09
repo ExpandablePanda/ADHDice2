@@ -1227,11 +1227,6 @@ export function TaskApp() {
   });
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const {
-    profiles: taskTypeBehaviorProfiles,
-    resetTaskDefaults,
-    updateTaskBehaviorProfile,
-  } = useTaskTypeBehaviorProfiles(supabase, session?.user?.id ?? null, setMessage);
-  const {
     focusCategories, setFocusCategories,
     focusCounters,
     focusCounterHistory,
@@ -1863,6 +1858,12 @@ export function TaskApp() {
     () => getLogicalDayKey(new Date(logicalDayNow), { dayStartTime, timezone: userTimeZone }),
     [dayStartTime, logicalDayNow, userTimeZone],
   );
+  const {
+    profileRevisions: taskTypeBehaviorProfileRevisions,
+    profiles: taskTypeBehaviorProfiles,
+    resetTaskDefaults,
+    updateTaskBehaviorProfile,
+  } = useTaskTypeBehaviorProfiles(supabase, todayKey, session?.user?.id ?? null, setMessage);
 
   const {
     isSoftWorkspaceRefreshing,
@@ -1887,6 +1888,7 @@ export function TaskApp() {
   } = useWorkspaceData({
     activePage,
     behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
     currentUser: session?.user,
     isMissingTaskListManualMembershipsTableError,
     isMissingTaskListsTableError,
@@ -2488,6 +2490,7 @@ export function TaskApp() {
         const plan = createEngineRolloverPlan({
             allowCanonicalAutomaticMissed: true,
             behaviorProfiles: taskTypeBehaviorProfiles,
+            behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
             history: rolloverHistory,
             includeDiagnostics: diagnosticsEnabled,
             now: new Date(),
@@ -2782,6 +2785,7 @@ export function TaskApp() {
       if (!isTaskHistoryLoaded) return null;
       return projectionCache.getOrCreate("active-status", activeStatusInputRevision, () => resolveActiveTaskStatuses({
         behaviorProfiles: taskTypeBehaviorProfiles,
+        behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
         historyByTaskId: taskHistoryByTaskId,
         logicalDayRollover: dayStartTime,
         now: new Date(logicalDayNow),
@@ -3857,6 +3861,7 @@ export function TaskApp() {
     },
     batchEdit: {
       behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
       clearListTaskSelection,
       dayStartTime,
       focusedTaskIds,
@@ -3904,6 +3909,7 @@ export function TaskApp() {
     },
     editorSave: {
       behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
       canonicalTaskCreator: (payload, source) => insertTaskRowWithCanonicalCreation(client, payload, source),
       currentUserId: currentUserIdText,
       dayStartTime,
@@ -3963,6 +3969,7 @@ export function TaskApp() {
     },
     update: {
       behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
       canonicalTaskMutationState: canonicalTaskMutationStateRef.current,
       clearPendingTaskMutations,
       markPendingTaskMutations,
@@ -5528,6 +5535,7 @@ export function TaskApp() {
     const scopedHistory = historyLoad.history;
     const completeAuthority = evaluateTaskActionAuthority({
       behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
       history: scopedHistory,
       logicalDayRollover: dayStartTime,
       now: new Date(logicalDayNow),
@@ -5728,6 +5736,7 @@ export function TaskApp() {
     const action = status === "done" || status === "did_my_best" || status === "missed" || status === "delayed"
       ? evaluateTaskActionAuthority({
         behaviorProfiles: taskTypeBehaviorProfiles,
+        behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
         history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: new Date(logicalDayNow),
@@ -6333,6 +6342,7 @@ export function TaskApp() {
     todayDateKey: todayKey,
     stateEngineContext: { logicalDayRollover: dayStartTime, now: new Date(logicalDayNow), timezone: userTimeZone },
     behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorPolicyRevisions: { task: taskTypeBehaviorProfileRevisions },
   } : null;
   function togglePinnedFilter() {
     setTaskUiState((prev) => ({

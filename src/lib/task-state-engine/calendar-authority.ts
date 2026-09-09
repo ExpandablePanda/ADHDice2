@@ -8,23 +8,24 @@ import { evaluateTaskActionAuthority } from "./action-authority.ts";
 import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
 import type { TaskCalendarOverride, TaskHistoryOutcome } from "./types.ts";
 import type { TaskEffectiveTimeline } from "./types.ts";
-import type { TaskBehaviorProfiles } from "./behavior-policy.ts";
+import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "./behavior-policy.ts";
 
 export type TaskHistoryCalendarActionStatus = "done" | "did_my_best" | "delayed" | "missed" | "complete";
 
-export type TaskHistoryCalendarAuthorityState = "delayed" | "due" | "not_due" | "in_progress" | "done" | "did_my_best" | "missed" | "complete";
+export type TaskHistoryCalendarAuthorityState = "delayed" | "due" | "not_due" | "blank" | "in_progress" | "done" | "did_my_best" | "missed" | "complete";
 
 const CALENDAR_STATE_MAP = {
   open: "due",
   scheduled: "due",
   no_entry: "not_due",
   upcoming: "not_due",
+  unhandled_blank: "blank",
 } as const;
 
 function mapCalendarStates(calendar: Record<string, string>) {
   return Object.fromEntries(Object.entries(calendar).map(([date, state]) => [
     date,
-    state === "open" || state === "scheduled" || state === "no_entry" || state === "upcoming" ? CALENDAR_STATE_MAP[state] : state,
+    state === "open" || state === "scheduled" || state === "no_entry" || state === "upcoming" || state === "unhandled_blank" ? CALENDAR_STATE_MAP[state] : state,
   ])) as Record<string, TaskHistoryCalendarAuthorityState>;
 }
 
@@ -37,6 +38,7 @@ export type TaskHistoryCalendarReadResult = {
 /** Central Calendar read bridge. Explicit History always wins in the engine. */
 export function resolveTaskHistoryCalendarRead(input: {
   behaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
@@ -63,6 +65,7 @@ export function resolveTaskHistoryCalendarRead(input: {
     const calendarEnd = input.calendarEnd ?? shiftDateKey(logicalDate, 40);
     const timeline = buildTaskEffectiveTimeline({
       behaviorPolicy: engineInput.behaviorPolicy,
+      behaviorPolicyRevisions: engineInput.behaviorPolicyRevisions,
       task: engineInput.task,
       history: engineInput.history,
       calendarOverrides: input.calendarOverrides,
@@ -91,6 +94,7 @@ export function resolveTaskHistoryCalendarRead(input: {
 
 export function resolveTaskHistoryCalendarStates(input: {
   behaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
@@ -108,6 +112,7 @@ export function resolveTaskHistoryCalendarStates(input: {
 /** The Calendar asks the same evaluator whether an action can be offered. */
 export function resolveTaskHistoryCalendarActionStatuses(input: {
   behaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];

@@ -92,7 +92,7 @@ export type TaskHistoryRowProjection = {
   isCalculated: boolean;
   isDueOpportunity: boolean;
   logicalDate: string;
-  status: FinalizedTaskHistoryStatus | "not_due";
+  status: FinalizedTaskHistoryStatus | "not_due" | "blank";
 };
 
 /** Merge explicit History, active manual Calendar overrides, and finalized Effective Timeline days. */
@@ -131,14 +131,14 @@ export function buildTaskHistoryRowProjections(
   }
 
   for (const [logicalDate, day] of Object.entries(effectiveDays)) {
-    if (rowsByDate.has(logicalDate) || day.state !== "missed") continue;
+    if (rowsByDate.has(logicalDate) || (day.state !== "missed" && day.state !== "unhandled_blank")) continue;
     rowsByDate.set(logicalDate, {
       calendarOverride: null,
       entry: null,
       isCalculated: true,
-      isDueOpportunity: true,
+      isDueOpportunity: day.state === "missed",
       logicalDate,
-      status: "missed",
+      status: day.state === "unhandled_blank" ? "blank" : "missed",
     });
   }
 

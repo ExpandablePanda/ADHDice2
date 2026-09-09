@@ -4,7 +4,7 @@ import type { CanonicalTaskCalendarOverride, CanonicalTaskOccurrence, CanonicalT
 import type { CanonicalTaskStateReadModel } from "./read-model.ts";
 import { mapCanonicalTaskHistoryFacts } from "./history-projection.ts";
 import { latestCanonicalScheduleBoundary } from "./schedule-projection.ts";
-import type { TaskBehaviorProfiles } from "../task-state-engine/behavior-policy.ts";
+import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "../task-state-engine/behavior-policy.ts";
 
 export { recurrenceFromBoundary } from "../task-state-engine/direct-input.ts";
 
@@ -74,7 +74,7 @@ function activeCalendarOverrides(readModel: CanonicalTaskStateReadModel): TaskCa
  */
 export function buildCanonicalTaskStateEngineInput(
   readModel: CanonicalTaskStateReadModel,
-  context: { behaviorProfiles?: TaskBehaviorProfiles; now: string; timezone: string; logicalDayRollover: string },
+  context: { behaviorProfiles?: TaskBehaviorProfiles; behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap; now: string; timezone: string; logicalDayRollover: string },
 ): TaskStateEngineInput {
   const boundary = latestCanonicalScheduleBoundary(readModel.scheduleBoundaries);
   if (!boundary) throw new Error("Canonical schedule state is unavailable.");

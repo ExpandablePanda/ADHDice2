@@ -48,7 +48,7 @@ import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleAct
 import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
-import type { TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
 import type {
   Task,
   TaskHistory as DbTaskHistory,
@@ -614,6 +614,8 @@ export function TaskHistoryModal({
   todayDateKey,
   initialDateKey,
   stateEngineContext,
+  behaviorProfiles,
+  behaviorPolicyRevisions,
   calendarOverrides,
 }: {
   onClose: () => void;
@@ -631,6 +633,7 @@ export function TaskHistoryModal({
   initialDateKey?: string | null;
   stateEngineContext?: { logicalDayRollover: string; now: Date | string; timezone: string };
   behaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   calendarOverrides?: TaskCalendarOverride[];
 }) {
   const today = todayDateKey;
@@ -685,6 +688,7 @@ export function TaskHistoryModal({
       calendarOverrides,
       task,
       behaviorProfiles,
+      behaviorPolicyRevisions,
     })
     : null;
   const dueDates = new Set(Object.entries(calendarRead?.states ?? {})
@@ -717,11 +721,13 @@ export function TaskHistoryModal({
   const selectedIsFuture = selectedDate > today;
   const selectedTimelineDay = calendarRead?.timeline?.days[selectedDate] ?? null;
   const selectedCalendarState = calendarRead?.states[selectedDate] ?? null;
-  const selectedIsDue = selectedTimelineDay
+  const selectedIsDue = selectedTimelineDay?.state === "unhandled_blank"
+    ? false
+    : selectedTimelineDay
     ? selectedTimelineDay.obligation === "due" || selectedTimelineDay.obligation === "overdue"
     : selectedCalendarState === "due";
   const engineCalendarActionStatuses = stateEngineContext && calendarRead
-    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, historicalOverride: true, logicalDate: selectedDate, task, behaviorProfiles })
+    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, historicalOverride: true, logicalDate: selectedDate, task, behaviorProfiles, behaviorPolicyRevisions })
     : null;
   const calendarActionStatuses = calendarRead
     ? getTaskHistoryCalendarVisibleActionStatuses({
@@ -760,6 +766,9 @@ export function TaskHistoryModal({
     const entry = historyByDate.get(dateKey);
     if (!entry) {
       const virtualState = calendarRead?.states[dateKey] ?? null;
+      if (virtualState === "blank") {
+        return "border-transparent bg-transparent text-[#6b6681] dark:border-transparent dark:bg-transparent dark:text-white/60";
+      }
       if (virtualState === "delayed") {
         return "border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]";
       }
@@ -782,6 +791,7 @@ export function TaskHistoryModal({
   function calendarStateLabel(dateKey: string) {
     const entry = historyByDate.get(dateKey);
     const state = entry?.status ?? calendarRead?.states[dateKey] ?? "not_due";
+    if (state === "blank") return "Blank";
     if (state === "complete" && entry?.event_type === "completed_permanently") return "Marked Complete";
     return formatTaskStatusLabel(state);
   }
@@ -881,6 +891,7 @@ export function TaskHistoryModal({
   }
 
   function taskHistoryStatusClass(status: string) {
+    if (status === "blank") return "text-slate-500 dark:text-slate-400";
     if (status === "delayed") return "text-[#7d54d1] dark:text-[#d5c2ff]";
     if (status === "missed") return "text-[#d64b5f] dark:text-[#ffb0bd]";
     if (status === "did_my_best") return "text-[#b28700] dark:text-[#f3d38a]";

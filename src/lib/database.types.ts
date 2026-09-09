@@ -78,6 +78,7 @@ export type { TaskType } from "./task-type.ts";
 export type TaskTypeBehaviorProfile = {
   user_id: string;
   task_type: TaskType;
+  effective_from_logical_date: string;
   unresolved_occurrence: "missed" | "blank";
   positive_streak_on_unhandled: "break" | "preserve";
   missed_streak_on_unhandled: "increment" | "ignore";

@@ -28,7 +28,7 @@ import {
   projectTaskWithCanonicalScheduleBoundary,
 } from "@/lib/task-state-canonical/schedule-projection";
 import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
-import type { TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
 
 type Message = {
   text: string;
@@ -44,6 +44,7 @@ type UpdateTaskRowResult = {
 
 type UseTaskBatchEditActionOptions = {
   behaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   canonicalCommandExecutor?: (action: Extract<TaskStateRuntimeAction, { kind: "canonical_action" }>, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   clearListTaskSelection: () => void;
   currentDayKey: string;
@@ -74,6 +75,7 @@ type UseTaskBatchEditActionOptions = {
 
 export function useTaskBatchEditAction({
   behaviorProfiles,
+  behaviorPolicyRevisions,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   clearListTaskSelection,
   currentDayKey,
@@ -227,6 +229,7 @@ export function useTaskBatchEditAction({
       const actionAuthority = outcome
         ? evaluateTaskActionAuthority({
           behaviorProfiles,
+          behaviorPolicyRevisions,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -238,6 +241,7 @@ export function useTaskBatchEditAction({
       const scheduleAuthority = !actionAuthority && dueDateOnlyEdit
         ? evaluateTaskScheduleAuthority({
           behaviorProfiles,
+          behaviorPolicyRevisions,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,

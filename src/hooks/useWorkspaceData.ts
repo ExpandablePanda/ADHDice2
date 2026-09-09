@@ -49,7 +49,7 @@ import {
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
-import type { TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type ResolvedSupabaseClient = NonNullable<SupabaseClient>;
@@ -67,6 +67,7 @@ type Message = {
 type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   activePage: AppPage;
   behaviorProfiles: TaskBehaviorProfiles;
+  behaviorPolicyRevisions: TaskBehaviorPolicyRevisionMap;
   currentUser: User | null | undefined;
   mapFocusCategoryRow: (row: DbFocusCategory) => FocusCategory;
   mapFocusSessionRow: (row: DbFocusSession) => HistoricalFocusSession;
@@ -251,6 +252,7 @@ function logWorkspaceTiming(step: string, startedAt: number, details: Record<str
 export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   activePage,
   behaviorProfiles,
+  behaviorPolicyRevisions,
   currentUser,
   mapFocusCategoryRow,
   mapFocusSessionRow,
@@ -352,6 +354,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const fetchTaskHistoryForRolloverRef = useRef<((taskIds: string[]) => Promise<TaskHistoryLoadMap>) | null>(null);
   const tasksRef = useRef(tasks);
   const behaviorProfilesRef = useRef(behaviorProfiles);
+  const behaviorPolicyRevisionsRef = useRef(behaviorPolicyRevisions);
 
   const setTaskHistoryTaskLoadState = useCallback((taskId: string, state: TaskHistoryTaskLoadState) => {
     taskHistoryLoadStateByTaskIdRef.current = {
@@ -419,6 +422,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   useEffect(() => {
     behaviorProfilesRef.current = behaviorProfiles;
   }, [behaviorProfiles]);
+
+  useEffect(() => {
+    behaviorPolicyRevisionsRef.current = behaviorPolicyRevisions;
+  }, [behaviorPolicyRevisions]);
 
   useEffect(() => {
     shouldSkipTaskReloadRef.current = shouldSkipTaskReload;
@@ -938,6 +945,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
           const nextSummaries = buildTaskHistoryStreakSummaryMap(nextTasks, compactHistory, todayKeyRef.current, {
             behaviorProfiles: behaviorProfilesRef.current,
+            behaviorPolicyRevisions: behaviorPolicyRevisionsRef.current,
             calendarOverridesByTaskId: indexActiveCalendarOverrides(activeCalendarOverrides),
             logicalDayRollover,
             manualActionCalendarOverrides: activeCalendarOverrides,
@@ -989,6 +997,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           if (!activeCalendarOverrides || !isActive || !canApplyCoreWorkspaceResult()) return false;
           const summaryContext = {
             behaviorProfiles: behaviorProfilesRef.current,
+            behaviorPolicyRevisions: behaviorPolicyRevisionsRef.current,
             calendarOverrides: activeCalendarOverrides.map(taskCalendarOverrideFromCanonical),
             manualActionCalendarOverrides: activeCalendarOverrides,
             manualActionCommandOperations,

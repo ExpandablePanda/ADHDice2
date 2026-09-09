@@ -7,7 +7,7 @@
  * or reward rules.
  *
  * The semantic fields below describe decisions the one Task Engine can
- * consume. In 7.13.17 only the persisted Task profile is active; other
+ * consume. In 7.13.18 only the persisted Task profile is active; other
  * TaskTypes retain the Standard fallback until their semantics are approved.
  */
 import type { TaskType } from "../task-type.ts";
@@ -25,6 +25,13 @@ export type TaskBehaviorPolicy = Readonly<{
   missedStreakOnUnhandled: MissedStreakUnhandledBehavior;
   rewards: RewardBehavior;
 }>;
+
+export type TaskBehaviorPolicyRevision = Readonly<TaskBehaviorPolicy & {
+  effectiveFromLogicalDate: string;
+}>;
+
+export type TaskBehaviorPolicyRevisions = readonly TaskBehaviorPolicyRevision[];
+export type TaskBehaviorPolicyRevisionMap = Readonly<Partial<Record<TaskType, TaskBehaviorPolicyRevisions>>>;
 
 export type TaskBehaviorPolicyField = Exclude<keyof TaskBehaviorPolicy, "id">;
 export type TaskBehaviorProfiles = Readonly<Partial<Record<TaskType, TaskBehaviorPolicy>>>;
@@ -93,35 +100,100 @@ export function normalizeTaskBehaviorProfile(input: unknown, taskType: TaskType 
   });
 }
 
-export function normalizeTaskBehaviorProfiles(rows: readonly unknown[]): TaskBehaviorProfiles {
+export function normalizeTaskBehaviorProfiles(rows: readonly unknown[], logicalDate?: string): TaskBehaviorProfiles {
+  const revisions = normalizeTaskBehaviorPolicyRevisions(rows);
   const profiles: Partial<Record<TaskType, TaskBehaviorPolicy>> = {};
+  const targetDate = logicalDate ?? revisions.map((revision) => revision.effectiveFromLogicalDate).sort().at(-1) ?? "0000-00-00";
+  for (const taskType of ["task", "pursuit", "goal", "custom"] as const) {
+    const taskRevision = revisions
+      .filter((candidate) => candidate.taskType === taskType && candidate.effectiveFromLogicalDate <= targetDate)
+      .at(-1);
+    if (taskRevision) {
+      profiles[taskType] = normalizeTaskBehaviorProfile({
+        id: `${taskType}-behavior-profile`,
+        unresolvedOccurrence: taskRevision.unresolvedOccurrence,
+        positiveStreakOnUnhandled: taskRevision.positiveStreakOnUnhandled,
+        missedStreakOnUnhandled: taskRevision.missedStreakOnUnhandled,
+        rewards: taskRevision.rewards,
+      }, taskType);
+    }
+  }
+  return profiles;
+}
+
+export type NormalizedTaskBehaviorPolicyRevision = TaskBehaviorPolicyRevision & { taskType: TaskType };
+
+function isLogicalDate(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+/** Normalize and deterministically order the user-scoped revision timeline. */
+export function normalizeTaskBehaviorPolicyRevisions(rows: readonly unknown[]): NormalizedTaskBehaviorPolicyRevision[] {
+  const revisions: NormalizedTaskBehaviorPolicyRevision[] = [];
   for (const row of rows) {
     if (typeof row !== "object" || row === null) continue;
-    const candidate = row as { task_type?: unknown };
+    const candidate = row as { task_type?: unknown; effective_from_logical_date?: unknown };
     if (!isTaskType(candidate.task_type)) continue;
-    profiles[candidate.task_type] = normalizeTaskBehaviorProfile({
+    if (!isLogicalDate(candidate.effective_from_logical_date)) continue;
+    const policy = normalizeTaskBehaviorProfile({
       id: `${candidate.task_type}-behavior-profile`,
       unresolvedOccurrence: (row as { unresolved_occurrence?: unknown }).unresolved_occurrence,
       positiveStreakOnUnhandled: (row as { positive_streak_on_unhandled?: unknown }).positive_streak_on_unhandled,
       missedStreakOnUnhandled: (row as { missed_streak_on_unhandled?: unknown }).missed_streak_on_unhandled,
       rewards: (row as { rewards?: unknown }).rewards,
     }, candidate.task_type);
+    if (policy === STANDARD_TASK_BEHAVIOR_POLICY && !(
+      (row as { unresolved_occurrence?: unknown }).unresolved_occurrence === "missed"
+      && (row as { positive_streak_on_unhandled?: unknown }).positive_streak_on_unhandled === "break"
+      && (row as { missed_streak_on_unhandled?: unknown }).missed_streak_on_unhandled === "increment"
+      && (row as { rewards?: unknown }).rewards === "enabled"
+    )) continue;
+    revisions.push({
+      ...policy,
+      effectiveFromLogicalDate: candidate.effective_from_logical_date,
+      taskType: candidate.task_type,
+    });
   }
-  return profiles;
+  return revisions.sort((left, right) => left.taskType.localeCompare(right.taskType)
+    || left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate)
+    || left.id.localeCompare(right.id));
+}
+
+/** Resolve the latest revision effective on an ADHDice logical date. */
+export function resolveTaskBehaviorPolicyForLogicalDate(input: {
+  revisions?: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate" | "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled" | "rewards">[];
+  logicalDate: string;
+}): TaskBehaviorPolicy {
+  const revision = [...(input.revisions ?? [])]
+    .filter((candidate) => candidate.effectiveFromLogicalDate <= input.logicalDate)
+    .sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate))
+    .at(-1);
+  if (!revision) return STANDARD_TASK_BEHAVIOR_POLICY;
+  return normalizeTaskBehaviorProfile({
+    ...revision,
+    id: "effective-task-behavior-policy",
+  });
 }
 
 /** Resolve a persisted TaskType, or a compatibility policy input, to the current profile. */
 export function resolveTaskBehaviorPolicy(
   input?: TaskType | TaskBehaviorPolicy | null,
   profiles?: TaskBehaviorProfiles,
+  revisions?: TaskBehaviorPolicyRevisionMap,
+  logicalDate?: string,
 ): TaskBehaviorPolicy {
   if (input && typeof input === "object") {
     return normalizeTaskBehaviorProfile(input);
   }
   if (isTaskType(input)) {
-    // Only the Task profile is activated in 7.13.17. Other TaskTypes retain
+    // Only the Task profile is activated in 7.13.18. Other TaskTypes retain
     // the safe Standard fallback until their own semantics are approved.
-    if (input === "task" && profiles?.task) return normalizeTaskBehaviorProfile(profiles.task, input);
+    if (input === "task") {
+      if (logicalDate && revisions?.task?.length) {
+        return resolveTaskBehaviorPolicyForLogicalDate({ revisions: revisions.task, logicalDate });
+      }
+      if (profiles?.task) return normalizeTaskBehaviorProfile(profiles.task, input);
+    }
     return STANDARD_TASK_BEHAVIOR_POLICY;
   }
   if (profiles?.task) return normalizeTaskBehaviorProfile(profiles.task, "task");

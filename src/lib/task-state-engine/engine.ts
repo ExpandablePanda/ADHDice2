@@ -16,7 +16,12 @@ import {
   recurrenceAfterSuccess,
   scheduledOccurrences,
 } from "./recurrence.ts";
-import { resolveTaskBehaviorPolicy, type TaskBehaviorPolicy } from "./behavior-policy.ts";
+import {
+  resolveTaskBehaviorPolicy,
+  resolveTaskBehaviorPolicyForLogicalDate,
+  type TaskBehaviorPolicy,
+  type TaskBehaviorPolicyRevision,
+} from "./behavior-policy.ts";
 import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
 import type {
   ProposedTaskStatePatch,
@@ -236,13 +241,13 @@ function laterDate(left: string, right: string) {
 
 function automaticMissedRows(input: {
   behaviorPolicy: TaskBehaviorPolicy;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevision[];
   task: TaskStateEngineInput["task"];
   history: readonly TaskStateHistoryRow[];
   today: string;
   occurredAt: string;
 }): TaskStateHistoryRow[] {
-  const { behaviorPolicy, task, history, today, occurredAt } = input;
-  if (behaviorPolicy.unresolvedOccurrence === "blank") return [];
+  const { behaviorPolicy, behaviorPolicyRevisions, task, history, today, occurredAt } = input;
   const scheduleStart = task.dueOn
     ?? (task.historicalScheduleAnchorProven ? task.historicalScheduleAnchor ?? null : null);
   if (task.lifecycle !== "active" || !scheduleStart
@@ -268,7 +273,12 @@ function automaticMissedRows(input: {
   }
 
   const existingDates = new Set(history.map((row) => row.logicalDate));
-  return dueDates.filter((date) => !existingDates.has(date)).map((logicalDate) => {
+  const policyForDate = (logicalDate: string) => behaviorPolicyRevisions?.length
+    ? resolveTaskBehaviorPolicyForLogicalDate({ revisions: behaviorPolicyRevisions, logicalDate })
+    : behaviorPolicy;
+  return dueDates.filter((date) => !existingDates.has(date)).filter((date) => (
+    policyForDate(date).unresolvedOccurrence === "missed"
+  )).map((logicalDate) => {
     const independent = task.recurrence.kind !== "rolling" || task.recurrence.intervalDays === 1;
     const occurrenceDueOn = independent ? logicalDate : scheduleStart;
     return {
@@ -458,7 +468,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   }
 
   if (input.action?.type === "reconcile_rollover" && !staleInProgressForRollover) {
-    for (const row of automaticMissedRows({ behaviorPolicy, task, history: rows, today, occurredAt: nowIso })) {
+    for (const row of automaticMissedRows({ behaviorPolicy, behaviorPolicyRevisions: input.behaviorPolicyRevisions, task, history: rows, today, occurredAt: nowIso })) {
       rows.push(row);
       byDate.set(row.logicalDate, row);
       recurrenceByDate.set(row.logicalDate, row);
@@ -476,6 +486,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   if (scheduleReplay) {
     const replayPlan = buildTaskEffectiveTimeline({
       behaviorPolicy,
+      behaviorPolicyRevisions: input.behaviorPolicyRevisions,
       task,
       history: rows,
       logicalDate: today,
@@ -766,6 +777,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
 
   const replayTimeline = buildTaskEffectiveTimeline({
     behaviorPolicy,
+    behaviorPolicyRevisions: input.behaviorPolicyRevisions,
     task,
     history: rows,
     logicalDate: today,

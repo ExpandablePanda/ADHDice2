@@ -99,6 +99,9 @@ export function getTaskStatusCircleHoverInvertedClassName(status: TaskDisplaySta
 }
 
 export function formatTaskStatusLabel(value: string) {
+  if (value === "blank") {
+    return "Blank";
+  }
   if (value === "pending") {
     return "Open";
   }

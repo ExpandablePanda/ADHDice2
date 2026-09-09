@@ -5,7 +5,7 @@ import { evaluateTaskState } from "./engine.ts";
 import { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
 import type { TaskHistoryChange, TaskHistoryOutcome, TaskStateHistoryRow } from "./types.ts";
-import type { TaskBehaviorProfiles } from "./behavior-policy.ts";
+import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "./behavior-policy.ts";
 
 const OCCURRENCE_SENSITIVE_TASK_UPDATE_FIELDS = [
   "status",
@@ -106,6 +106,7 @@ export function taskStateHistoryRowToCanonicalIntent(
 
 export function evaluateTaskActionAuthority(input: {
   behaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
@@ -182,6 +183,7 @@ export function evaluateTaskActionAuthority(input: {
  */
 export function evaluateTaskScheduleAuthority(input: {
   behaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];

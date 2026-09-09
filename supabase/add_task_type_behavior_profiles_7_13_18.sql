@@ -1,16 +1,18 @@
--- ADHDice 7.13.17: per-user TaskType behavior profiles.
--- Authored for review/application; do not run against live Supabase automatically.
+-- ADHDice 7.13.18: effective-dated per-user TaskType behavior profiles.
+-- SOURCE ONLY: this reviewed migration must not be applied automatically.
+-- It intentionally does not migrate existing Task, Pursuit, History, or reward data.
 
 create table if not exists public.adhdice_task_type_behavior_profiles (
   user_id uuid not null references auth.users(id) on delete cascade,
   task_type text not null,
+  effective_from_logical_date date not null,
   unresolved_occurrence text not null default 'missed',
   positive_streak_on_unhandled text not null default 'break',
   missed_streak_on_unhandled text not null default 'increment',
   rewards text not null default 'enabled',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  primary key (user_id, task_type),
+  primary key (user_id, task_type, effective_from_logical_date),
   constraint adhdice_task_type_behavior_profiles_task_type_check
     check (task_type in ('task', 'pursuit', 'goal', 'custom')),
   constraint adhdice_task_type_behavior_profiles_unresolved_occurrence_check

@@ -4,7 +4,7 @@ import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
 import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
 import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
-import type { TaskBehaviorProfiles } from "./behavior-policy.ts";
+import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "./behavior-policy.ts";
 
 /**
  * Compatibility export retained for callers that still gate Task State
@@ -22,6 +22,7 @@ export type ActiveStatusReadResult = {
 type ActiveStatusReadTask = Task & Partial<CanonicalTaskStateColumns> & { canonical_schedule_boundary?: CanonicalProjectedTaskState["canonical_schedule_boundary"] };
 type ActiveStatusReadInput = {
   behaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   enabled?: boolean;
   historyByTaskId: Record<string, TaskHistory[]>;
   logicalDayRollover: string;
@@ -42,6 +43,7 @@ function resolveTaskStatuses(input: ActiveStatusReadInput, compatibilityOnly: bo
     const buildInput = compatibilityOnly ? buildCompatibilityTaskStateEngineInput : buildDirectTaskStateEngineInput;
     const engineInput = buildInput(task, normalizedHistory, {
       behaviorProfiles: input.behaviorProfiles,
+      behaviorPolicyRevisions: input.behaviorPolicyRevisions,
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.logicalDayRollover,
