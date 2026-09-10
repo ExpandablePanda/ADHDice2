@@ -96,6 +96,43 @@ test("Custom ruleset projection edits use the atomic effective-dated assignment 
   });
 });
 
+test("TaskType/ruleset transitions send both metadata fields through the assignment RPC", async () => {
+  const task = createTask({ id: "task-type-transition", revision: 4, task_type: "custom", custom_ruleset_id: "ruleset-practice" });
+  const calls: Array<{ p_task_patch: Record<string, unknown> }> = [];
+  const client = {
+    rpc: async (_functionName: string, args: { p_task_patch: Record<string, unknown> }) => {
+      calls.push(args);
+      return { data: { ...task, ...args.p_task_patch, revision: task.revision + calls.length }, error: null };
+    },
+  };
+
+  const namedToTask = await updateTaskRowWithLegacyEnergyFallback(
+    client as never,
+    task.id,
+    { task_type: "task", custom_ruleset_id: null },
+    () => false,
+    () => false,
+    { effectiveFromLogicalDate: "2026-09-21", expectedTask: task },
+  );
+  const taskToNamed = await updateTaskRowWithLegacyEnergyFallback(
+    client as never,
+    task.id,
+    { task_type: "custom", custom_ruleset_id: "ruleset-routine" },
+    () => false,
+    () => false,
+    { effectiveFromLogicalDate: "2026-09-21", expectedTask: task },
+  );
+
+  assert.equal(namedToTask.data?.task_type, "task");
+  assert.equal(namedToTask.data?.custom_ruleset_id, null);
+  assert.equal(taskToNamed.data?.task_type, "custom");
+  assert.equal(taskToNamed.data?.custom_ruleset_id, "ruleset-routine");
+  assert.deepEqual(calls.map(({ p_task_patch }) => p_task_patch), [
+    { task_type: "task", custom_ruleset_id: null },
+    { task_type: "custom", custom_ruleset_id: "ruleset-routine" },
+  ]);
+});
+
 function computeDerivedForHierarchyDiagnostics(
   tasks: ReturnType<typeof createTask>[],
   overrides: Partial<{

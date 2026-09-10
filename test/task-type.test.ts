@@ -35,6 +35,8 @@ test("named Custom rulesets extend the shared selection model without becoming T
   ];
   assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Pursuit", "Goal", "Custom Default", "Practice", "Routine"]);
   assert.deepEqual(resolveTaskTypeSelection("practice", rulesets), { taskType: "custom", customRulesetId: "practice" });
+  assert.deepEqual(resolveTaskTypeSelection("custom", rulesets), { taskType: "custom", customRulesetId: null });
+  assert.deepEqual(resolveTaskTypeSelection("task", rulesets), { taskType: "task", customRulesetId: null });
   assert.equal(taskTypeSelectionValue("custom", "practice", rulesets), "practice");
   assert.equal(formatTaskTypeLabel("custom", "practice", rulesets), "Practice");
   assert.equal(formatTaskTypeLabel("custom", null, rulesets), "Custom Default");
