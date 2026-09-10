@@ -140,17 +140,37 @@ test("profile migration is additive, constrained, and review-only", () => {
   assert.doesNotMatch(migration, /insert\s+into\s+public\.adhdice_/i);
 });
 
-test("profile revisions resolve prospectively and deterministically by logical date", () => {
+test("profile revisions use the earliest revision as a baseline and remain deterministic by logical date", () => {
   const revisions = normalizeTaskBehaviorPolicyRevisions([
     { task_type: "task", effective_from_logical_date: "2026-09-20", unresolved_occurrence: "missed", positive_streak_on_unhandled: "break", missed_streak_on_unhandled: "increment", rewards: "enabled" },
-    { task_type: "task", effective_from_logical_date: "2026-09-10", unresolved_occurrence: "blank", positive_streak_on_unhandled: "preserve", missed_streak_on_unhandled: "ignore", rewards: "disabled" },
-    { task_type: "task", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "missed", positive_streak_on_unhandled: "break", missed_streak_on_unhandled: "increment", rewards: "enabled" },
+    { task_type: "task", effective_from_logical_date: "2026-09-10", unresolved_occurrence: "missed", positive_streak_on_unhandled: "break", missed_streak_on_unhandled: "increment", rewards: "enabled" },
+    { task_type: "task", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank", positive_streak_on_unhandled: "preserve", missed_streak_on_unhandled: "ignore", rewards: "disabled" },
   ]);
-  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: "2026-09-05" }).unresolvedOccurrence, "missed");
-  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: "2026-09-15" }).unresolvedOccurrence, "blank");
-  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: "2026-09-25" }).unresolvedOccurrence, "missed");
-  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: "2026-08-31" }), STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions: [], logicalDate: "2026-09-05" }), STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: "2026-08-31" }).unresolvedOccurrence, "blank");
+  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: "2026-09-05" }).missedStreakOnUnhandled, "ignore");
+  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: "2026-09-15" }).unresolvedOccurrence, "missed");
+  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: "2026-09-25" }).rewards, "enabled");
   assert.equal(revisions[1]?.effectiveFromLogicalDate, "2026-09-10");
+});
+
+test("one Task or Custom revision supplies the baseline before its effective date", () => {
+  const taskRevision = revision("2026-09-09", {
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "preserve",
+    missedStreakOnUnhandled: "ignore",
+    rewards: "disabled",
+  });
+  const customRevision = revision("2026-09-15", {
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "break",
+    missedStreakOnUnhandled: "ignore",
+    rewards: "disabled",
+  });
+  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions: [taskRevision], logicalDate: "2026-09-01" }).unresolvedOccurrence, "blank");
+  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions: [taskRevision], logicalDate: "2026-09-09" }).rewards, "disabled");
+  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions: [customRevision], logicalDate: "2026-09-01" }).missedStreakOnUnhandled, "ignore");
+  assert.equal(resolveTaskBehaviorPolicyForLogicalDate({ revisions: [customRevision], logicalDate: "2026-09-15" }).positiveStreakOnUnhandled, "break");
 });
 
 test("behavior policy revisions invalidate only the projections that consume their semantics", () => {
@@ -244,7 +264,7 @@ test("Custom policy changes invalidate the same semantic projections while stayi
   );
 });
 
-test("Task profile selection follows the ADHDice logical-day rollover, not UTC date", () => {
+test("Task profile selection follows the ADHDice logical-day rollover and first-revision baseline", () => {
   const task = {
     id: "task-settings-logical-day",
     due_on: "2026-09-09",
@@ -271,8 +291,29 @@ test("Task profile selection follows the ADHDice logical-day rollover, not UTC d
     now: "2026-09-09T10:00:00.000Z",
     timezone: "America/New_York",
   });
-  assert.equal(beforeRollover.behaviorPolicy?.unresolvedOccurrence, "missed");
+  assert.equal(beforeRollover.behaviorPolicy?.unresolvedOccurrence, "blank");
   assert.equal(afterRollover.behaviorPolicy?.unresolvedOccurrence, "blank");
+});
+
+test("Custom blank/ignore baseline keeps backdated calculated Daily dates blank and out of missed streak", () => {
+  const baseline = revision("2026-09-09", {
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "break",
+    missedStreakOnUnhandled: "ignore",
+  });
+  const timeline = buildTaskEffectiveTimeline({
+    behaviorPolicy: normalizeTaskBehaviorProfile(baseline, "custom"),
+    behaviorPolicyRevisions: [baseline],
+    task: { ...effectiveTask(), id: "custom-backdated-daily" },
+    history: [],
+    logicalDate: "2026-09-10",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-10",
+  });
+  assert.equal(timeline.days["2026-09-01"]?.state, "unhandled_blank");
+  assert.equal(timeline.days["2026-09-01"]?.unhandled, true);
+  assert.equal(timeline.days["2026-09-01"]?.behaviorPolicy.unresolvedOccurrence, "blank");
+  assert.equal(timeline.currentMissedStreak, 0);
 });
 
 function effectiveTask() {
@@ -403,12 +444,12 @@ test("blank historical unhandled occurrences stay blank in Calendar authority", 
     repeat_monthly_mode: "day_of_month",
     repeat_monthly_ordinal: null,
     repeat_monthly_weekday: null,
-    task_type: "task",
+    task_type: "custom",
   } as never;
   const result = resolveTaskHistoryCalendarRead({
     compatibilityOnly: true,
     history: [],
-    behaviorPolicyRevisions: { task: [revision("2026-09-01", { unresolvedOccurrence: "blank", positiveStreakOnUnhandled: "preserve", missedStreakOnUnhandled: "ignore" })] },
+    behaviorPolicyRevisions: { custom: [revision("2026-09-09", { unresolvedOccurrence: "blank", positiveStreakOnUnhandled: "preserve", missedStreakOnUnhandled: "ignore" })] },
     logicalDayRollover: "00:00",
     now: "2026-09-03T12:00:00.000Z",
     task: calendarTask,
@@ -422,6 +463,26 @@ test("blank historical unhandled occurrences stay blank in Calendar authority", 
   const rows = buildTaskHistoryRowProjections([], result?.timeline?.days);
   assert.equal(rows.find((row) => row.logicalDate === "2026-09-01")?.status, "blank");
   assert.equal(rows.find((row) => row.logicalDate === "2026-09-01")?.isDueOpportunity, false);
+});
+
+test("explicit persisted Missed History remains factual under a blank/ignore baseline", () => {
+  const baseline = revision("2026-09-09", {
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "break",
+    missedStreakOnUnhandled: "ignore",
+  });
+  const timeline = buildTaskEffectiveTimeline({
+    behaviorPolicy: normalizeTaskBehaviorProfile(baseline, "custom"),
+    behaviorPolicyRevisions: [baseline],
+    task: effectiveTask(),
+    history: [effectiveHistory("2026-09-05", "missed")],
+    logicalDate: "2026-09-10",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-10",
+  });
+  assert.equal(timeline.days["2026-09-05"]?.state, "missed");
+  assert.equal(timeline.days["2026-09-05"]?.outcome, "missed");
+  assert.equal(timeline.days["2026-09-05"]?.unhandled, false);
 });
 
 test("settings UI model exposes configurable Task and Custom tabs with inactive Pursuit and Goal tabs", () => {

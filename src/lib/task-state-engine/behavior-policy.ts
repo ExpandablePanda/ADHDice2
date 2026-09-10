@@ -230,15 +230,21 @@ export function normalizeTaskBehaviorPolicyRevisions(rows: readonly unknown[]): 
     || left.id.localeCompare(right.id));
 }
 
-/** Resolve the latest revision effective on an ADHDice logical date. */
+/**
+ * Resolve the policy effective on an ADHDice logical date. The earliest
+ * revision is the profile baseline until a later effective-dated revision
+ * supersedes it.
+ */
 export function resolveTaskBehaviorPolicyForLogicalDate(input: {
   revisions?: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate" | "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled" | "rewards">[];
   logicalDate: string;
 }): TaskBehaviorPolicy {
-  const revision = [...(input.revisions ?? [])]
+  const orderedRevisions = [...(input.revisions ?? [])]
+    .sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate));
+  const revision = orderedRevisions
     .filter((candidate) => candidate.effectiveFromLogicalDate <= input.logicalDate)
-    .sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate))
-    .at(-1);
+    .at(-1)
+    ?? orderedRevisions[0];
   if (!revision) return STANDARD_TASK_BEHAVIOR_POLICY;
   return normalizeTaskBehaviorProfile({
     ...revision,

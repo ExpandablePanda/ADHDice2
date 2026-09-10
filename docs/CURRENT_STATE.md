@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.25`.
+- Current working app version: `7.13.26`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -33,6 +33,14 @@ loadable for future activation, but inactive TaskTypes omit revision timelines
 and retain Standard fallback through downstream projections and command
 planning. No schema, SQL, or persistence changes were required; Edge source
 remains updated and deployment is pending review.
+
+## 2026-09-10 7.13.26 First-Revision Task Behavior Baseline
+
+The shared effective-dated behavior resolver now uses the earliest revision
+for an active TaskType as its baseline before that revision's effective date;
+later revisions remain effective-dated changes. Task and Custom remain active,
+while Pursuit and Goal retain Standard fallback. No schema, SQL, persistence, or
+live-data changes were required; Edge deployment remains pending review.
 
 ## 2026-09-10 7.13.23 Indexed Last-Handled Summary Construction
 
