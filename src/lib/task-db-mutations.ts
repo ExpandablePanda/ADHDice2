@@ -7,10 +7,10 @@ import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/t
 type TaskUpdateField = Exclude<keyof TaskUpdate, "revision">;
 
 export type TaskRowUpdateOptions = {
-  /** Logical date on which a Custom ruleset assignment change takes effect. */
+  /** Logical date on which a Task behavior selection change takes effect. */
   effectiveFromLogicalDate?: string;
   expectedTask?: Task | null;
-  /** Refresh the browser-owned Custom ruleset state after the assignment RPC commits. */
+  /** Refresh the browser-owned behavior-selection state after the selection RPC commits. */
   refreshCustomBehaviorRulesets?: () => Promise<boolean>;
 };
 
@@ -35,7 +35,7 @@ export type UpdateTaskRowResult = {
   data: Task | null;
   error: { message: string } | null;
   conflict: TaskRowUpdateConflict | null;
-  customRulesetStateRefreshError?: string;
+  behaviorSelectionStateRefreshError?: string;
   reappliedOnLatestRevision: boolean;
   usedActualSecondsFallback: boolean;
   usedEnergyFallback: boolean;
@@ -218,8 +218,8 @@ export async function updateTaskRowWithLegacyEnergyFallback(
   isMissingTaskEnergyNoneEnumError: (message: string) => boolean,
   options?: TaskRowUpdateOptions,
 ): Promise<UpdateTaskRowResult> {
-  if (Object.hasOwn(values, "custom_ruleset_id")) {
-    return updateTaskCustomRulesetAssignment(
+  if (Object.hasOwn(values, "task_type") || Object.hasOwn(values, "custom_ruleset_id")) {
+    return updateTaskBehaviorSelection(
       client,
       taskId,
       values,
@@ -350,10 +350,10 @@ export async function updateTaskRowWithLegacyEnergyFallback(
 }
 
 /**
- * Custom ruleset assignment is a historical authority, so the Task projection
- * and its effective-dated assignment must be committed by one trusted RPC.
+ * TaskType + named-ruleset selection is a historical authority, so the Task
+ * projection and its effective-dated selection must be committed by one RPC.
  */
-async function updateTaskCustomRulesetAssignment(
+async function updateTaskBehaviorSelection(
   client: SupabaseClient,
   taskId: string,
   values: TaskUpdate,
@@ -363,30 +363,30 @@ async function updateTaskCustomRulesetAssignment(
   let patch = values;
   let usedEnergyFallback = false;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const result = await client.rpc("adhdice_update_task_custom_ruleset_assignment", {
+    const result = await client.rpc("adhdice_update_task_behavior_selection", {
       p_effective_from_logical_date: options?.effectiveFromLogicalDate ?? null,
       p_expected_task_revision: typeof options?.expectedTask?.revision === "number" ? options.expectedTask.revision : null,
       p_task_id: taskId,
       p_task_patch: patch,
     });
     if (!result.error) {
-      let customRulesetStateRefreshError: string | undefined;
+      let behaviorSelectionStateRefreshError: string | undefined;
       if (result.data && options?.refreshCustomBehaviorRulesets) {
         try {
           if (!(await options.refreshCustomBehaviorRulesets())) {
-            customRulesetStateRefreshError = "The committed Custom ruleset assignment could not be refreshed in the browser.";
+            behaviorSelectionStateRefreshError = "The committed Task behavior selection could not be refreshed in the browser.";
           }
         } catch (error) {
-          customRulesetStateRefreshError = error instanceof Error
+          behaviorSelectionStateRefreshError = error instanceof Error
             ? error.message
-            : "The committed Custom ruleset assignment could not be refreshed in the browser.";
+            : "The committed Task behavior selection could not be refreshed in the browser.";
         }
       }
       return {
         data: (result.data as Task | null) ?? null,
         error: null,
         conflict: null,
-        ...(customRulesetStateRefreshError ? { customRulesetStateRefreshError } : {}),
+        ...(behaviorSelectionStateRefreshError ? { behaviorSelectionStateRefreshError } : {}),
         reappliedOnLatestRevision: false,
         usedActualSecondsFallback: false,
         usedEnergyFallback,
@@ -408,7 +408,7 @@ async function updateTaskCustomRulesetAssignment(
   }
   return {
     data: null,
-    error: { message: "Custom ruleset assignment update retries were exhausted." },
+    error: { message: "Task behavior selection update retries were exhausted." },
     conflict: null,
     reappliedOnLatestRevision: false,
     usedActualSecondsFallback: false,

@@ -1865,9 +1865,9 @@ export function TaskApp() {
     profiles: taskTypeBehaviorProfiles,
     customBehaviorRulesets,
     customBehaviorRulesetProfiles,
-    customRulesetStateRef,
+    behaviorSelectionStateRef,
     customRulesetBehaviorPolicyRevisions,
-    customRulesetAssignmentsByTaskId,
+    behaviorSelectionsByTaskId,
     createCustomRuleset,
     renameCustomRuleset,
     refreshCustomBehaviorRulesets,
@@ -1902,7 +1902,7 @@ export function TaskApp() {
     behaviorProfiles: taskTypeBehaviorProfiles,
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
     namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-    customRulesetStateRef,
+    behaviorSelectionStateRef,
     currentUser: session?.user,
     isMissingTaskListManualMembershipsTableError,
     isMissingTaskListsTableError,
@@ -1999,8 +1999,9 @@ export function TaskApp() {
       task: taskTypeBehaviorProjectionSemantics.task.streak,
       custom: taskTypeBehaviorProjectionSemantics.custom.streak,
       namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      behaviorSelectionsByTaskId,
     }),
-    [customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProjectionSemantics],
+    [behaviorSelectionsByTaskId, customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProjectionSemantics],
   );
   const refreshedBehaviorProfilesRevisionRef = useRef<string | null>(null);
   useEffect(() => {
@@ -2528,7 +2529,7 @@ export function TaskApp() {
             behaviorProfiles: taskTypeBehaviorProfiles,
             behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
             namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-            customRulesetAssignmentsByTaskId,
+            behaviorSelectionsByTaskId,
             history: rolloverHistory,
             includeDiagnostics: diagnosticsEnabled,
             now: new Date(),
@@ -2823,8 +2824,8 @@ export function TaskApp() {
     [customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProjectionSemantics],
   );
   const taskActiveStatusAssignmentsRevision = useMemo(
-    () => createProjectionDomainRevision("task-status-assignments", customRulesetAssignmentsByTaskId),
-    [customRulesetAssignmentsByTaskId],
+    () => createProjectionDomainRevision("task-status-behavior-selections", behaviorSelectionsByTaskId),
+    [behaviorSelectionsByTaskId],
   );
   const [projectionCache] = useState(createStableTaskProjectionCache);
   const activeStatusInputRevision = combineProjectionRevisions(
@@ -2857,7 +2858,7 @@ export function TaskApp() {
       behaviorProfiles: taskTypeBehaviorProfiles,
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
       namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-      customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId,
       historyByTaskId: taskHistoryByTaskId,
       logicalDayRollover: dayStartTime,
       now: new Date(logicalDayNow),
@@ -2929,13 +2930,13 @@ export function TaskApp() {
     options?: TaskRowUpdateOptions,
   ) => {
     const refreshedBeforeMutation = await prepareTaskMutation();
-    const refreshAssignmentState = Object.hasOwn(values, "custom_ruleset_id")
+    const refreshBehaviorSelectionState = (Object.hasOwn(values, "task_type") || Object.hasOwn(values, "custom_ruleset_id"))
       ? refreshCustomBehaviorRulesets
       : options?.refreshCustomBehaviorRulesets;
     let nextOptions: TaskRowUpdateOptions = {
       ...options,
       effectiveFromLogicalDate: options?.effectiveFromLogicalDate ?? todayKey,
-      refreshCustomBehaviorRulesets: refreshAssignmentState,
+      refreshCustomBehaviorRulesets: refreshBehaviorSelectionState,
     };
 
     if (refreshedBeforeMutation) {
@@ -2951,7 +2952,7 @@ export function TaskApp() {
           ...options,
           effectiveFromLogicalDate: options?.effectiveFromLogicalDate ?? todayKey,
           expectedTask: latestTaskResult.data ?? null,
-          refreshCustomBehaviorRulesets: refreshAssignmentState,
+          refreshCustomBehaviorRulesets: refreshBehaviorSelectionState,
         };
       }
     }
@@ -3981,7 +3982,7 @@ export function TaskApp() {
       behaviorProfiles: taskTypeBehaviorProfiles,
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
       namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-      customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId,
       clearListTaskSelection,
       dayStartTime,
       focusedTaskIds,
@@ -4031,7 +4032,7 @@ export function TaskApp() {
       behaviorProfiles: taskTypeBehaviorProfiles,
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
       namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-      customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId,
       canonicalTaskCreator: (payload, source) => insertTaskRowWithCanonicalCreation(client, payload, source),
       currentUserId: currentUserIdText,
       dayStartTime,
@@ -4093,7 +4094,7 @@ export function TaskApp() {
       behaviorProfiles: taskTypeBehaviorProfiles,
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
       namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-      customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId,
       canonicalTaskMutationState: canonicalTaskMutationStateRef.current,
       clearPendingTaskMutations,
       markPendingTaskMutations,
@@ -5661,7 +5662,7 @@ export function TaskApp() {
       behaviorProfiles: taskTypeBehaviorProfiles,
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
       namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-      customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId,
       history: scopedHistory,
       logicalDayRollover: dayStartTime,
       now: new Date(logicalDayNow),
@@ -5864,7 +5865,7 @@ export function TaskApp() {
         behaviorProfiles: taskTypeBehaviorProfiles,
         behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
         namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-        customRulesetAssignmentsByTaskId,
+        behaviorSelectionsByTaskId,
         history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: new Date(logicalDayNow),
@@ -6472,7 +6473,7 @@ export function TaskApp() {
     behaviorProfiles: taskTypeBehaviorProfiles,
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
     namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-    customRulesetAssignmentsByTaskId,
+    behaviorSelectionsByTaskId,
   } : null;
   function togglePinnedFilter() {
     setTaskUiState((prev) => ({

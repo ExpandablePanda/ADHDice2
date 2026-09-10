@@ -106,7 +106,7 @@ export function createTaskHistoryCalendarReadRevision(input: TaskHistoryCalendar
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
       behaviorProfiles: input.behaviorProfiles,
       customRulesetId: input.task.custom_ruleset_id,
-      customRulesetAssignmentsByTaskId: input.customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId: input.behaviorSelectionsByTaskId,
       logicalDate: logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover),
       namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
       taskId: input.task.id,

@@ -35,12 +35,13 @@ export type TaskBehaviorPolicyRevisions = readonly TaskBehaviorPolicyRevision[];
 export type TaskBehaviorPolicyRevisionMap = Readonly<Partial<Record<TaskType, TaskBehaviorPolicyRevisions>>>;
 /** Revisions keyed by the stable identity of a reusable Custom ruleset. */
 export type NamedCustomRulesetBehaviorPolicyRevisionMap = Readonly<Record<string, TaskBehaviorPolicyRevisions>>;
-/** Assignment history keyed by the stable identity of a canonical Task. */
-export type TaskCustomRulesetAssignment = Readonly<{
+/** Complete behavior-selection history keyed by the stable identity of a canonical Task. */
+export type TaskBehaviorSelection = Readonly<{
   effectiveFromLogicalDate: string;
+  taskType: TaskType;
   customRulesetId: string | null;
 }>;
-export type TaskCustomRulesetAssignmentMap = Readonly<Record<string, readonly TaskCustomRulesetAssignment[]>>;
+export type TaskBehaviorSelectionMap = Readonly<Record<string, readonly TaskBehaviorSelection[]>>;
 export type ActiveTaskBehaviorProfileTaskType = "task" | "custom";
 
 export type TaskBehaviorPolicyField = Exclude<keyof TaskBehaviorPolicy, "id">;
@@ -50,7 +51,7 @@ export type TaskBehaviorPolicyResolutionContext = {
   behaviorProfiles?: TaskBehaviorProfiles;
   behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   namedCustomRulesetBehaviorPolicyRevisions?: NamedCustomRulesetBehaviorPolicyRevisionMap;
-  customRulesetAssignmentsByTaskId?: TaskCustomRulesetAssignmentMap;
+  behaviorSelectionsByTaskId?: TaskBehaviorSelectionMap;
 };
 
 export type TaskBehaviorProjectionSemantics = {
@@ -98,7 +99,7 @@ export function selectTaskBehaviorProjectionSemantics(input: {
   behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   customRulesetId?: string | null;
   namedCustomRulesetBehaviorPolicyRevisions?: NamedCustomRulesetBehaviorPolicyRevisionMap;
-  customRulesetAssignmentsByTaskId?: TaskCustomRulesetAssignmentMap;
+  behaviorSelectionsByTaskId?: TaskBehaviorSelectionMap;
   logicalDate?: string;
   taskId?: string;
   taskType?: TaskType | null;
@@ -110,7 +111,7 @@ export function selectTaskBehaviorProjectionSemantics(input: {
     ? resolveTaskBehaviorPolicyForTask({
       behaviorProfiles: input.behaviorProfiles,
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
-      customRulesetAssignmentsByTaskId: input.customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId: input.behaviorSelectionsByTaskId,
       customRulesetId: input.customRulesetId,
       logicalDate: input.logicalDate,
       namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
@@ -317,9 +318,9 @@ export function resolveTaskBehaviorPolicy(
 }
 
 /**
- * Resolve the policy selected by one stored Task. Named Custom assignments
- * are a separate identity namespace and never fall through to the legacy
- * TaskType-wide Custom timeline when an assignment is present.
+ * Resolve the policy selected by one stored Task. A behavior selection is the
+ * complete TaskType + optional named-ruleset pair, so historical TaskType
+ * transitions never fall through to the current Task projection.
  */
 export function resolveTaskBehaviorPolicyForTask(input: TaskBehaviorPolicyResolutionContext & {
   customRulesetId?: string | null;
@@ -327,96 +328,114 @@ export function resolveTaskBehaviorPolicyForTask(input: TaskBehaviorPolicyResolu
   taskId?: string;
   taskType: TaskType;
 }) {
-  const taskType = input.taskType;
-  if (taskType === "custom") {
-    const assignmentRows = input.taskId
-      ? [...(input.customRulesetAssignmentsByTaskId?.[input.taskId] ?? [])]
-        .sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate))
+  const selectionRows = input.taskId
+    ? [...(input.behaviorSelectionsByTaskId?.[input.taskId] ?? [])]
+      .filter((selection) => isTaskTypeSelection(selection))
+      .sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate))
+    : [];
+  if (selectionRows.length === 0) {
+    const currentNamedRulesetRevisions = input.taskType === "custom" && input.customRulesetId
+      ? input.namedCustomRulesetBehaviorPolicyRevisions?.[input.customRulesetId] ?? []
       : [];
-    const effectiveAssignment = assignmentRows.length > 0
-      ? assignmentRows
-        .filter((assignment) => assignment.effectiveFromLogicalDate <= input.logicalDate)
-        .at(-1) ?? assignmentRows[0]
-      : input.customRulesetId
-        ? { effectiveFromLogicalDate: "0000-01-01", customRulesetId: input.customRulesetId }
-        : null;
-    const assignmentTimeline = assignmentRows.length > 0
-      ? buildCustomAssignmentPolicyRevisions({
-        assignments: assignmentRows,
-        behaviorPolicyRevisions: input.behaviorPolicyRevisions,
-        namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
-      })
-      : null;
-    if (assignmentTimeline) {
+    if (input.taskType === "custom" && input.customRulesetId) {
       return {
-        policy: resolveTaskBehaviorPolicyForLogicalDate({ revisions: assignmentTimeline, logicalDate: input.logicalDate }),
-        revisions: assignmentTimeline,
+        policy: resolveTaskBehaviorPolicyForLogicalDate({
+          revisions: currentNamedRulesetRevisions,
+          logicalDate: input.logicalDate,
+        }),
+        revisions: currentNamedRulesetRevisions,
       };
     }
-    const rulesetId = effectiveAssignment?.customRulesetId ?? null;
-    const revisions = rulesetId
-      ? input.namedCustomRulesetBehaviorPolicyRevisions?.[rulesetId] ?? []
-      : input.behaviorPolicyRevisions?.custom ?? [];
+    const revisions = isActiveTaskBehaviorProfileTaskType(input.taskType)
+      ? input.behaviorPolicyRevisions?.[input.taskType] ?? []
+      : [];
     return {
-      policy: rulesetId
-        ? resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: input.logicalDate })
-        : resolveTaskBehaviorPolicy("custom", input.behaviorProfiles, input.behaviorPolicyRevisions, input.logicalDate),
+      policy: isActiveTaskBehaviorProfileTaskType(input.taskType)
+        ? resolveTaskBehaviorPolicy(input.taskType, input.behaviorProfiles, input.behaviorPolicyRevisions, input.logicalDate)
+        : STANDARD_TASK_BEHAVIOR_POLICY,
       revisions,
     };
   }
-  if (isActiveTaskBehaviorProfileTaskType(taskType)) {
-    const revisions = input.behaviorPolicyRevisions?.[taskType] ?? [];
-    return {
-      policy: resolveTaskBehaviorPolicy(taskType, input.behaviorProfiles, input.behaviorPolicyRevisions, input.logicalDate),
-      revisions,
-    };
-  }
-  return { policy: STANDARD_TASK_BEHAVIOR_POLICY, revisions: [] as TaskBehaviorPolicyRevisions };
+  const selections = selectionRows;
+  const revisions = buildBehaviorSelectionPolicyRevisions({
+    selections,
+    behaviorProfiles: input.behaviorProfiles,
+    behaviorPolicyRevisions: input.behaviorPolicyRevisions,
+    namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
+  });
+  const effectiveSelection = selections
+    .filter((selection) => selection.effectiveFromLogicalDate <= input.logicalDate)
+    .at(-1) ?? selections[0];
+  const resolvedPolicy = resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: input.logicalDate });
+  return {
+    policy: effectiveSelection && !isActiveTaskBehaviorProfileTaskType(effectiveSelection.taskType)
+      ? STANDARD_TASK_BEHAVIOR_POLICY
+      : resolvedPolicy,
+    revisions,
+  };
 }
 
-function assignmentPolicyRevisions(
-  assignment: TaskCustomRulesetAssignment,
+function selectionPolicyRevisions(
+  selection: TaskBehaviorSelection,
   context: Pick<TaskBehaviorPolicyResolutionContext, "behaviorPolicyRevisions" | "namedCustomRulesetBehaviorPolicyRevisions">,
 ) {
-  return assignment.customRulesetId
-    ? context.namedCustomRulesetBehaviorPolicyRevisions?.[assignment.customRulesetId] ?? []
-    : context.behaviorPolicyRevisions?.custom ?? [];
+  if (selection.taskType === "custom" && selection.customRulesetId) {
+    return context.namedCustomRulesetBehaviorPolicyRevisions?.[selection.customRulesetId] ?? [];
+  }
+  return isActiveTaskBehaviorProfileTaskType(selection.taskType)
+    ? context.behaviorPolicyRevisions?.[selection.taskType] ?? []
+    : [];
 }
 
 /**
- * Convert assignment segments into the one effective-dated revision stream
- * consumed by the existing engine. The first assignment is deliberately
- * emitted as the stream baseline, so dates before it retain that assignment.
+ * Convert behavior-selection segments into the one effective-dated revision
+ * stream consumed by the existing engine. The first selection is deliberately
+ * emitted as the stream baseline, so dates before it retain that selection.
  */
-function buildCustomAssignmentPolicyRevisions(input: {
-  assignments: readonly TaskCustomRulesetAssignment[];
+function buildBehaviorSelectionPolicyRevisions(input: {
+  selections: readonly TaskBehaviorSelection[];
+  behaviorProfiles?: TaskBehaviorProfiles;
   behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
   namedCustomRulesetBehaviorPolicyRevisions?: NamedCustomRulesetBehaviorPolicyRevisionMap;
 }): TaskBehaviorPolicyRevision[] {
-  const assignments = [...input.assignments]
+  const selections = [...input.selections]
     .sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate));
   const dates = new Set<string>();
-  for (let index = 0; index < assignments.length; index += 1) {
-    const assignment = assignments[index];
-    const nextEffectiveDate = assignments[index + 1]?.effectiveFromLogicalDate ?? null;
-    dates.add(assignment.effectiveFromLogicalDate);
-    for (const revision of assignmentPolicyRevisions(assignment, input)) {
-      if (revision.effectiveFromLogicalDate >= assignment.effectiveFromLogicalDate
+  for (let index = 0; index < selections.length; index += 1) {
+    const selection = selections[index];
+    const nextEffectiveDate = selections[index + 1]?.effectiveFromLogicalDate ?? null;
+    dates.add(selection.effectiveFromLogicalDate);
+    for (const revision of selectionPolicyRevisions(selection, input)) {
+      if (revision.effectiveFromLogicalDate >= selection.effectiveFromLogicalDate
         && (!nextEffectiveDate || revision.effectiveFromLogicalDate < nextEffectiveDate)) {
         dates.add(revision.effectiveFromLogicalDate);
       }
     }
   }
   return [...dates].sort().map((logicalDate) => {
-    const assignment = assignments
+    const selection = selections
       .filter((candidate) => candidate.effectiveFromLogicalDate <= logicalDate)
-      .at(-1) ?? assignments[0];
-    const sourceRevisions = assignmentPolicyRevisions(assignment, input);
-    const policy = resolveTaskBehaviorPolicyForLogicalDate({ revisions: sourceRevisions, logicalDate });
+      .at(-1) ?? selections[0];
+    const sourceRevisions = selectionPolicyRevisions(selection, input);
+    const isNamedCustomSelection = selection.taskType === "custom" && selection.customRulesetId !== null;
+    const policy = isNamedCustomSelection
+      ? resolveTaskBehaviorPolicyForLogicalDate({ revisions: sourceRevisions, logicalDate })
+      : sourceRevisions.length > 0
+      ? resolveTaskBehaviorPolicyForLogicalDate({ revisions: sourceRevisions, logicalDate })
+      : resolveTaskBehaviorPolicy(selection.taskType, input.behaviorProfiles, input.behaviorPolicyRevisions, logicalDate);
     return {
       ...policy,
-      id: `custom-assignment:${assignment.customRulesetId ?? "generic"}:${logicalDate}`,
+      id: policy === STANDARD_TASK_BEHAVIOR_POLICY
+        ? policy.id
+        : `behavior-selection:${selection.taskType}:${selection.customRulesetId ?? "generic"}:${logicalDate}`,
       effectiveFromLogicalDate: logicalDate,
     };
   });
+}
+
+function isTaskTypeSelection(value: TaskBehaviorSelection): value is TaskBehaviorSelection {
+  return isTaskType(value.taskType)
+    && /^\d{4}-\d{2}-\d{2}$/.test(value.effectiveFromLogicalDate)
+    && (value.customRulesetId === null || typeof value.customRulesetId === "string")
+    && (value.customRulesetId === null || value.taskType === "custom");
 }

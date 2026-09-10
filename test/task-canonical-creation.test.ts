@@ -18,6 +18,7 @@ import { planTaskStateCommand, type CanonicalTaskStateCommand } from "../src/lib
 
 const canonicalCreationEdgeSource = readFileSync(new URL("../supabase/functions/task-create-canonical/index.ts", import.meta.url), "utf8");
 const assignmentMigration = readFileSync(new URL("../supabase/add_task_custom_ruleset_assignments_7_13_28.sql", import.meta.url), "utf8");
+const behaviorSelectionMigration = readFileSync(new URL("../supabase/add_task_behavior_selections_7_13_31.sql", import.meta.url), "utf8");
 
 const ownerId = "00000000-0000-4000-8000-000000000001";
 const parentId = "00000000-0000-4000-8000-000000000002";
@@ -250,6 +251,11 @@ test("canonical creation source validates ownership and persists initial assignm
   assert.match(assignmentMigration, /insert into public\.adhdice_task_custom_ruleset_assignments/);
   assert.match(assignmentMigration, /v_effective_from/);
   assert.match(assignmentMigration, /grant execute on function public\.adhdice_create_canonical_task\(uuid, jsonb\) to service_role/);
+  assert.match(behaviorSelectionMigration, /create or replace function public\.adhdice_seed_task_behavior_selection/);
+  assert.match(behaviorSelectionMigration, /insert into public\.adhdice_task_behavior_selections/);
+  assert.match(behaviorSelectionMigration, /task_type, custom_ruleset_id/);
+  assert.match(behaviorSelectionMigration, /on conflict \(user_id, task_id, effective_from_logical_date\)/i);
+  assert.match(behaviorSelectionMigration, /adhdice_task_custom_ruleset_assignments as/);
 });
 
 test("normal addTask uses trusted canonical creation and fails closed without legacy fallback", async () => {

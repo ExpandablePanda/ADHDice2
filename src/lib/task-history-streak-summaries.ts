@@ -70,7 +70,7 @@ export function buildTaskHistoryStreakSummary(
     behaviorProfiles: context.behaviorProfiles,
     behaviorPolicyRevisions: context.behaviorPolicyRevisions,
     namedCustomRulesetBehaviorPolicyRevisions: context.namedCustomRulesetBehaviorPolicyRevisions,
-    customRulesetAssignmentsByTaskId: context.customRulesetAssignmentsByTaskId,
+    behaviorSelectionsByTaskId: context.behaviorSelectionsByTaskId,
     compatibilityOnly: context.compatibilityOnly,
     calendarStart,
     calendarEnd: todayDateKey,

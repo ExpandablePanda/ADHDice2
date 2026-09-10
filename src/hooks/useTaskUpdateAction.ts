@@ -115,7 +115,7 @@ export function useTaskUpdateAction({
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
-  customRulesetAssignmentsByTaskId,
+  behaviorSelectionsByTaskId,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   canonicalTaskMutationState,
   clearPendingTaskMutations,
@@ -361,7 +361,7 @@ export function useTaskUpdateAction({
         behaviorProfiles,
         behaviorPolicyRevisions,
         namedCustomRulesetBehaviorPolicyRevisions,
-        customRulesetAssignmentsByTaskId,
+        behaviorSelectionsByTaskId,
         history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: logicalDayNow,
@@ -397,7 +397,7 @@ export function useTaskUpdateAction({
       error,
       usedEnergyFallback,
       usedActualSecondsFallback,
-      customRulesetStateRefreshError,
+      behaviorSelectionStateRefreshError,
     } = result;
 
     if (error) {
@@ -421,9 +421,9 @@ export function useTaskUpdateAction({
       return false;
     }
 
-    if (customRulesetStateRefreshError) {
+    if (behaviorSelectionStateRefreshError) {
       clearPendingTaskMutations?.([taskId]);
-      setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(customRulesetStateRefreshError) });
+      setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(behaviorSelectionStateRefreshError) });
       return false;
     }
 
@@ -436,7 +436,7 @@ export function useTaskUpdateAction({
         : rawNextData;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
-      if (scheduleOnlyEdit || Object.hasOwn(nextValues, "custom_ruleset_id")) {
+      if (scheduleOnlyEdit || Object.hasOwn(nextValues, "task_type") || Object.hasOwn(nextValues, "custom_ruleset_id")) {
         void onTaskHistoryMutation?.(taskId, scopedHistory, nextData);
       }
       if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {

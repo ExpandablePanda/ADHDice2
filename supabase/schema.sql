@@ -60,14 +60,14 @@ create table public.adhdice_clean_tasks (
     check (task_type in ('task', 'pursuit', 'goal', 'custom'))
 );
 
--- 7.13.27/7.13.28 Custom behavior authority. The Task projection is kept
--- for current reads; effective-dated assignment rows below are historical
--- authority for logical-date policy selection.
--- The canonical creation source for this schema accepts custom_ruleset_id only
--- for Custom Tasks, validates the ruleset owner, and inserts the initial
--- assignment at the creation logical date. Its executable RPC body is kept in
--- add_task_custom_ruleset_assignments_7_13_28.sql because this consolidated
--- schema snapshot predates the separately applied canonical Task tables.
+-- 7.13.27/7.13.28/7.13.31 behavior authority. The Task projection is kept
+-- for current reads; effective-dated behavior-selection rows below are the
+-- historical authority for logical-date policy selection.
+-- The canonical creation source accepts custom_ruleset_id only for Custom
+-- Tasks, validates the ruleset owner, and inserts the initial selection at the
+-- creation logical date. Its executable RPC body is kept in the sequential
+-- canonical-creation migration sources because this consolidated schema
+-- snapshot predates the separately applied canonical Task tables.
 -- Canonical RPC contract: public.adhdice_create_canonical_task(uuid, jsonb).
 create table public.adhdice_custom_behavior_rulesets (
   id uuid not null default gen_random_uuid(),
@@ -101,11 +101,12 @@ alter table public.adhdice_clean_tasks
     references public.adhdice_custom_behavior_rulesets(user_id, id)
     on delete restrict;
 
-create table public.adhdice_task_custom_ruleset_assignments (
+create table public.adhdice_task_behavior_selections (
   id uuid not null default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   task_id uuid not null,
   effective_from_logical_date date not null,
+  task_type text not null,
   custom_ruleset_id uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -116,7 +117,11 @@ create table public.adhdice_task_custom_ruleset_assignments (
     on delete cascade,
   foreign key (user_id, custom_ruleset_id)
     references public.adhdice_custom_behavior_rulesets(user_id, id)
-    on delete restrict
+    on delete restrict,
+  constraint adhdice_task_behavior_selections_task_type_check
+    check (task_type in ('task', 'pursuit', 'goal', 'custom')),
+  constraint adhdice_task_behavior_selections_custom_ruleset_task_type_check
+    check (custom_ruleset_id is null or task_type = 'custom')
 );
 
 create table public.adhdice_user_profiles (
@@ -875,10 +880,10 @@ create index adhdice_custom_behavior_rulesets_user_id_idx
   on public.adhdice_custom_behavior_rulesets (user_id);
 create index adhdice_custom_behavior_ruleset_revisions_ruleset_id_idx
   on public.adhdice_custom_behavior_ruleset_revisions (ruleset_id, effective_from_logical_date);
-create index adhdice_task_custom_ruleset_assignments_task_date_idx
-  on public.adhdice_task_custom_ruleset_assignments (user_id, task_id, effective_from_logical_date desc);
-create index adhdice_task_custom_ruleset_assignments_ruleset_idx
-  on public.adhdice_task_custom_ruleset_assignments (user_id, custom_ruleset_id)
+create index adhdice_task_behavior_selections_task_date_idx
+  on public.adhdice_task_behavior_selections (user_id, task_id, effective_from_logical_date desc);
+create index adhdice_task_behavior_selections_ruleset_idx
+  on public.adhdice_task_behavior_selections (user_id, custom_ruleset_id)
   where custom_ruleset_id is not null;
 create index adhdice_user_profiles_updated_at_idx
   on public.adhdice_user_profiles (updated_at desc);
@@ -990,7 +995,7 @@ create index adhdice_health_achievement_awards_user_earned_idx
 alter table public.adhdice_clean_tasks enable row level security;
 alter table public.adhdice_custom_behavior_rulesets enable row level security;
 alter table public.adhdice_custom_behavior_ruleset_revisions enable row level security;
-alter table public.adhdice_task_custom_ruleset_assignments enable row level security;
+alter table public.adhdice_task_behavior_selections enable row level security;
 alter table public.adhdice_user_profiles enable row level security;
 alter table public.adhdice_focus_categories enable row level security;
 alter table public.adhdice_focus_sessions enable row level security;
@@ -1052,10 +1057,10 @@ grant select, insert, update, delete on table public.adhdice_health_journal_sign
 grant select, insert, update, delete on table public.adhdice_health_journal_signal_occurrences to authenticated;
 revoke all on table public.adhdice_custom_behavior_rulesets from anon, authenticated;
 revoke all on table public.adhdice_custom_behavior_ruleset_revisions from anon, authenticated;
-revoke all on table public.adhdice_task_custom_ruleset_assignments from anon, authenticated;
+revoke all on table public.adhdice_task_behavior_selections from anon, authenticated;
 grant select, insert, update, delete on table public.adhdice_custom_behavior_rulesets to authenticated;
 grant select, insert, update, delete on table public.adhdice_custom_behavior_ruleset_revisions to authenticated;
-grant select on table public.adhdice_task_custom_ruleset_assignments to authenticated;
+grant select on table public.adhdice_task_behavior_selections to authenticated;
 
 create policy "Users can read their own clean tasks"
   on public.adhdice_clean_tasks
@@ -1119,8 +1124,8 @@ create policy "Users can delete their own Custom behavior ruleset revisions"
     select 1 from public.adhdice_custom_behavior_rulesets ruleset
     where ruleset.id = ruleset_id and ruleset.user_id = (select auth.uid())
   ));
-create policy "Users can read their own Task Custom ruleset assignments"
-  on public.adhdice_task_custom_ruleset_assignments for select to authenticated
+create policy "Users can read their own Task behavior selections"
+  on public.adhdice_task_behavior_selections for select to authenticated
   using ((select auth.uid()) = user_id);
 
 create policy "Users can read their own profiles"
@@ -1663,7 +1668,7 @@ begin
 end;
 $$;
 
-create or replace function public.adhdice_validate_task_custom_ruleset_assignment()
+create or replace function public.adhdice_validate_task_behavior_selection()
 returns trigger
 language plpgsql
 security invoker
@@ -1672,47 +1677,56 @@ as $function$
 begin
   if not exists (
     select 1 from public.adhdice_clean_tasks task
-    where task.user_id = new.user_id and task.id = new.task_id and task.task_type = 'custom'
+    where task.user_id = new.user_id and task.id = new.task_id
   ) then
-    raise exception 'Only Custom Tasks may consume Custom ruleset assignments.' using errcode = '23514';
+    raise exception 'Behavior selection Task does not belong to the selection owner.' using errcode = '23503';
+  end if;
+  if new.task_type not in ('task', 'pursuit', 'goal', 'custom') then
+    raise exception 'Behavior selection TaskType is invalid.' using errcode = '23514';
+  end if;
+  if new.custom_ruleset_id is not null and new.task_type <> 'custom' then
+    raise exception 'Only Custom behavior selections may consume a named Custom ruleset.' using errcode = '23514';
   end if;
   return new;
 end;
 $function$;
 
-create or replace function public.adhdice_guard_task_custom_ruleset_projection_update()
+create or replace function public.adhdice_guard_task_behavior_selection_projection_update()
 returns trigger
 language plpgsql
 security invoker
 set search_path = public, pg_temp
 as $function$
 begin
-  if current_setting('adhdice.custom_ruleset_assignment_authority', true) is distinct from '1'
-     and ((tg_op = 'INSERT' and new.custom_ruleset_id is not null)
-       or (tg_op = 'UPDATE' and new.custom_ruleset_id is distinct from old.custom_ruleset_id)) then
-    raise exception 'Task Custom ruleset projection may only be assigned through canonical assignment authority.' using errcode = '42501';
+  if coalesce(
+       current_setting('adhdice.task_behavior_selection_authority', true),
+       current_setting('adhdice.custom_ruleset_assignment_authority', true)
+     ) is distinct from '1'
+     and ((tg_op = 'INSERT' and (new.task_type <> 'task' or new.custom_ruleset_id is not null))
+       or (tg_op = 'UPDATE' and (new.task_type is distinct from old.task_type or new.custom_ruleset_id is distinct from old.custom_ruleset_id))) then
+    raise exception 'Task behavior selection projection may only be assigned through canonical selection authority.' using errcode = '42501';
   end if;
   return new;
 end;
 $function$;
 
-revoke all on function public.adhdice_validate_task_custom_ruleset_assignment() from public, anon, authenticated;
-revoke all on function public.adhdice_guard_task_custom_ruleset_projection_update() from public, anon, authenticated;
+revoke all on function public.adhdice_validate_task_behavior_selection() from public, anon, authenticated;
+revoke all on function public.adhdice_guard_task_behavior_selection_projection_update() from public, anon, authenticated;
 
-drop trigger if exists adhdice_validate_task_custom_ruleset_assignment on public.adhdice_task_custom_ruleset_assignments;
-create trigger adhdice_validate_task_custom_ruleset_assignment
-  before insert or update of user_id, task_id, custom_ruleset_id
-  on public.adhdice_task_custom_ruleset_assignments
-  for each row execute function public.adhdice_validate_task_custom_ruleset_assignment();
+drop trigger if exists adhdice_validate_task_behavior_selection on public.adhdice_task_behavior_selections;
+create trigger adhdice_validate_task_behavior_selection
+  before insert or update of user_id, task_id, task_type, custom_ruleset_id
+  on public.adhdice_task_behavior_selections
+  for each row execute function public.adhdice_validate_task_behavior_selection();
 
-drop trigger if exists adhdice_guard_task_custom_ruleset_projection_update on public.adhdice_clean_tasks;
-create trigger adhdice_guard_task_custom_ruleset_projection_update
-  before insert or update of custom_ruleset_id
+drop trigger if exists adhdice_guard_task_behavior_selection_projection_update on public.adhdice_clean_tasks;
+create trigger adhdice_guard_task_behavior_selection_projection_update
+  before insert or update of task_type, custom_ruleset_id
   on public.adhdice_clean_tasks
-  for each row execute function public.adhdice_guard_task_custom_ruleset_projection_update();
+  for each row execute function public.adhdice_guard_task_behavior_selection_projection_update();
 
-create trigger adhdice_task_custom_ruleset_assignments_set_updated_at
-  before update on public.adhdice_task_custom_ruleset_assignments
+create trigger adhdice_task_behavior_selections_set_updated_at
+  before update on public.adhdice_task_behavior_selections
   for each row execute function public.adhdice_clean_set_updated_at();
 
 create or replace function public.adhdice_validate_health_journal_signal_occurrence_kind()

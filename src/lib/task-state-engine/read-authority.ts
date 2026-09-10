@@ -43,7 +43,7 @@ export type ActiveStatusTaskReadInput = Omit<ActiveStatusReadInput, "historyByTa
 
 function activeStatusTaskIdentity(
   task: ActiveStatusReadTask,
-  assignmentsByTaskId: ActiveStatusReadInput["customRulesetAssignmentsByTaskId"],
+  behaviorSelectionsByTaskId: ActiveStatusReadInput["behaviorSelectionsByTaskId"],
 ) {
   const boundary = task.canonical_schedule_boundary;
   return {
@@ -68,7 +68,7 @@ function activeStatusTaskIdentity(
     canonicalization_status: task.canonicalization_status,
     container_state: task.container_state,
     custom_ruleset_id: task.custom_ruleset_id,
-    custom_ruleset_assignments: assignmentsByTaskId?.[task.id] ?? [],
+    behavior_selections: behaviorSelectionsByTaskId?.[task.id] ?? [],
     due_on: task.due_on,
     id: task.id,
     repeat_day_of_month: task.repeat_day_of_month,
@@ -115,13 +115,13 @@ export function createActiveStatusTaskProjectionRevision(input: ActiveStatusTask
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
       behaviorProfiles: input.behaviorProfiles,
       customRulesetId: input.task.custom_ruleset_id,
-      customRulesetAssignmentsByTaskId: input.customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId: input.behaviorSelectionsByTaskId,
       logicalDate: logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover),
       namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
       taskId: input.task.id,
       taskType: normalizeTaskType(input.task.task_type),
     }).activeStatus,
-    task: activeStatusTaskIdentity(input.task, input.customRulesetAssignmentsByTaskId),
+    task: activeStatusTaskIdentity(input.task, input.behaviorSelectionsByTaskId),
     timezone: input.timezone,
   });
 }
@@ -161,7 +161,7 @@ export function resolveActiveTaskStatusesIncrementally(
       behaviorProfiles: input.behaviorProfiles,
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
       namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
-      customRulesetAssignmentsByTaskId: input.customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId: input.behaviorSelectionsByTaskId,
       history: input.historyByTaskId[task.id] ?? [],
       logicalDayRollover: input.logicalDayRollover,
       now: input.now,
@@ -199,7 +199,7 @@ export async function resolveActiveTaskStatusesIncrementallyChunked(
       behaviorProfiles: input.behaviorProfiles,
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
       namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
-      customRulesetAssignmentsByTaskId: input.customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId: input.behaviorSelectionsByTaskId,
       history: input.historyByTaskId[task.id] ?? [],
       logicalDayRollover: input.logicalDayRollover,
       now: input.now,
@@ -245,7 +245,7 @@ function resolveTaskStatuses(input: ActiveStatusReadInput, compatibilityOnly: bo
       behaviorProfiles: input.behaviorProfiles,
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
       namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
-      customRulesetAssignmentsByTaskId: input.customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId: input.behaviorSelectionsByTaskId,
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.logicalDayRollover,

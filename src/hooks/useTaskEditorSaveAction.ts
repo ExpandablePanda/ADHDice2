@@ -66,7 +66,7 @@ export function useTaskEditorSaveAction({
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
-  customRulesetAssignmentsByTaskId,
+  behaviorSelectionsByTaskId,
   canonicalTaskCreator,
   canonicalTaskStateUpdate,
   currentDayKey,
@@ -161,10 +161,10 @@ export function useTaskEditorSaveAction({
         let metadataTask: Task | null = null;
         if (Object.keys(changedMetadataValues).length > 0) {
           const metadataResult = await updateTaskRowWithLegacyEnergyFallback(taskId, changedMetadataValues);
-          if (metadataResult.error || metadataResult.conflict || metadataResult.customRulesetStateRefreshError || !metadataResult.data) {
+          if (metadataResult.error || metadataResult.conflict || metadataResult.behaviorSelectionStateRefreshError || !metadataResult.data) {
             setMessage({
               tone: "warn",
-              text: taskCommitReconciliationFailureMessage(metadataResult.error?.message ?? metadataResult.customRulesetStateRefreshError ?? (metadataResult.conflict ? buildTaskUpdateConflictMessage(metadataResult.conflict) : "No updated metadata row was returned.")),
+              text: taskCommitReconciliationFailureMessage(metadataResult.error?.message ?? metadataResult.behaviorSelectionStateRefreshError ?? (metadataResult.conflict ? buildTaskUpdateConflictMessage(metadataResult.conflict) : "No updated metadata row was returned.")),
             });
             return null;
           }
@@ -207,7 +207,7 @@ export function useTaskEditorSaveAction({
           behaviorProfiles,
           behaviorPolicyRevisions,
           namedCustomRulesetBehaviorPolicyRevisions,
-          customRulesetAssignmentsByTaskId,
+          behaviorSelectionsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -221,7 +221,7 @@ export function useTaskEditorSaveAction({
           behaviorProfiles,
           behaviorPolicyRevisions,
           namedCustomRulesetBehaviorPolicyRevisions,
-          customRulesetAssignmentsByTaskId,
+          behaviorSelectionsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -255,7 +255,7 @@ export function useTaskEditorSaveAction({
         error,
         usedEnergyFallback,
         usedActualSecondsFallback,
-        customRulesetStateRefreshError,
+        behaviorSelectionStateRefreshError,
       } = result;
 
       if (error) {
@@ -274,8 +274,8 @@ export function useTaskEditorSaveAction({
         return null;
       }
 
-      if (customRulesetStateRefreshError) {
-        setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(customRulesetStateRefreshError) });
+      if (behaviorSelectionStateRefreshError) {
+        setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(behaviorSelectionStateRefreshError) });
         return null;
       }
 

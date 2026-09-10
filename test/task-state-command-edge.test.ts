@@ -345,31 +345,32 @@ test("trusted orchestration forwards the complete Task behavior revision timelin
   assert.equal(capturedContext?.behaviorProfiles?.custom?.unresolvedOccurrence, "blank");
 });
 
-test("trusted assigned Custom ruleset planning matches browser/direct policy resolution", async () => {
+test("trusted cross-TaskType selection planning matches browser/direct policy resolution", async () => {
   const namedRevision = behaviorRevision("2026-09-01", {
     unresolvedOccurrence: "blank",
     positiveStreakOnUnhandled: "preserve",
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
   });
-  const routineRevision = behaviorRevision("2026-09-01");
   const assignments = [
-    { effectiveFromLogicalDate: "2026-09-01", customRulesetId: "ruleset-practice" },
-    { effectiveFromLogicalDate: "2026-09-21", customRulesetId: "ruleset-routine" },
+    { effectiveFromLogicalDate: "2026-09-01", taskType: "task" as const, customRulesetId: null },
+    { effectiveFromLogicalDate: "2026-09-10", taskType: "custom" as const, customRulesetId: "ruleset-practice" },
+    { effectiveFromLogicalDate: "2026-09-21", taskType: "task" as const, customRulesetId: null },
   ];
   const assignedReadModel = {
     ...canonicalReadModel,
     task: {
       ...canonicalReadModel.task,
-      task_type: "custom",
-      // Current projection is Routine; the historical assignment is Practice.
-      custom_ruleset_id: "ruleset-routine",
+      task_type: "task",
+      // Current projection is Task; the historical selection was Practice.
+      custom_ruleset_id: null,
     },
-    customRulesetAssignments: assignments.map((assignment, index) => ({
+    behaviorSelections: assignments.map((assignment, index) => ({
       id: `assignment-${index + 1}`,
       user_id: "owner-1",
       task_id: "task-1",
       effective_from_logical_date: assignment.effectiveFromLogicalDate,
+      task_type: assignment.taskType,
       custom_ruleset_id: assignment.customRulesetId,
       created_at: `${assignment.effectiveFromLogicalDate}T00:00:00.000Z`,
       updated_at: `${assignment.effectiveFromLogicalDate}T00:00:00.000Z`,
@@ -378,7 +379,7 @@ test("trusted assigned Custom ruleset planning matches browser/direct policy res
   let capturedEngineInput: TaskStateEngineInput | undefined;
   const result = await executeTrustedTaskStateCommand({
     userId: "owner-1",
-    intent: archiveIntent("assigned-custom-ruleset"),
+    intent: archiveIntent("cross-tasktype-selection"),
     adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
     now: "2026-09-15T16:00:00.000Z",
     dependencies: {
@@ -399,7 +400,7 @@ test("trusted assigned Custom ruleset planning matches browser/direct policy res
       }),
       loadCustomRulesets: async () => ({
         data: [],
-        revisions: { "ruleset-practice": [namedRevision], "ruleset-routine": [routineRevision] },
+        revisions: { "ruleset-practice": [namedRevision] },
         error: null,
       }),
       buildEngineInput: (readModel, context) => {
@@ -421,10 +422,10 @@ test("trusted assigned Custom ruleset planning matches browser/direct policy res
       },
     },
     behaviorPolicyRevisions: { custom: [behaviorRevision("2026-09-01")] },
-    customRulesetAssignmentsByTaskId: {
+    behaviorSelectionsByTaskId: {
       "task-1": assignments,
     },
-    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": [namedRevision], "ruleset-routine": [routineRevision] },
+    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": [namedRevision] },
     now: "2026-09-15T16:00:00.000Z",
     timezone: "America/New_York",
     logicalDayRollover: "06:00",
@@ -436,15 +437,15 @@ test("trusted assigned Custom ruleset planning matches browser/direct policy res
 
   const laterServerInput = buildCanonicalTaskStateEngineInput(assignedReadModel, {
     behaviorPolicyRevisions: { custom: [behaviorRevision("2026-09-01")] },
-    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": [namedRevision], "ruleset-routine": [routineRevision] },
+    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": [namedRevision] },
     now: "2026-09-25T16:00:00.000Z",
     timezone: "America/New_York",
     logicalDayRollover: "06:00",
   });
   const laterBrowserInput = buildCompatibilityTaskStateEngineInput(assignedReadModel.task, [], {
     behaviorPolicyRevisions: { custom: [behaviorRevision("2026-09-01")] },
-    customRulesetAssignmentsByTaskId: { "task-1": assignments },
-    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": [namedRevision], "ruleset-routine": [routineRevision] },
+    behaviorSelectionsByTaskId: { "task-1": assignments },
+    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": [namedRevision] },
     now: "2026-09-25T16:00:00.000Z",
     timezone: "America/New_York",
     logicalDayRollover: "06:00",

@@ -87,14 +87,15 @@ export function buildCanonicalTaskStateEngineInput(
       ? workflowOccurrence?.scheduled_due_on ?? readModel.task.active_occurrence_due_on
       : readModel.task.active_occurrence_due_on,
   } as CanonicalProjectedTaskState;
-  const engineContext = readModel.customRulesetAssignments
+  const engineContext = readModel.behaviorSelections
     ? {
       ...context,
-      customRulesetAssignmentsByTaskId: {
-        ...(context.customRulesetAssignmentsByTaskId ?? {}),
-        [readModel.task.id]: readModel.customRulesetAssignments.map((assignment) => ({
-          effectiveFromLogicalDate: assignment.effective_from_logical_date,
-          customRulesetId: assignment.custom_ruleset_id,
+      behaviorSelectionsByTaskId: {
+        ...(context.behaviorSelectionsByTaskId ?? {}),
+        [readModel.task.id]: readModel.behaviorSelections.map((selection) => ({
+          effectiveFromLogicalDate: selection.effective_from_logical_date,
+          taskType: selection.task_type,
+          customRulesetId: selection.custom_ruleset_id,
         })),
       },
     }

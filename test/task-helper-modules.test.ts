@@ -67,7 +67,7 @@ import {
   resolveTaskRewardTier,
 } from "../src/lib/task-rewards.ts";
 
-test("Custom ruleset projection edits use the atomic effective-dated assignment RPC", async () => {
+test("Task behavior selection edits use the atomic effective-dated selection RPC", async () => {
   let call: { functionName: string; args: Record<string, unknown> } | null = null;
   const expectedTask = createTask({ id: "assignment-task", revision: 7, task_type: "custom", custom_ruleset_id: "ruleset-a" });
   const updatedTask = { ...expectedTask, custom_ruleset_id: null, revision: 8 };
@@ -87,7 +87,7 @@ test("Custom ruleset projection edits use the atomic effective-dated assignment 
 
   assert.equal(result.error, null);
   assert.equal(result.data?.custom_ruleset_id, null);
-  assert.equal(call?.functionName, "adhdice_update_task_custom_ruleset_assignment");
+  assert.equal(call?.functionName, "adhdice_update_task_behavior_selection");
   assert.deepEqual(call?.args, {
     p_effective_from_logical_date: "2026-09-21",
     p_expected_task_revision: 7,
@@ -96,7 +96,7 @@ test("Custom ruleset projection edits use the atomic effective-dated assignment 
   });
 });
 
-test("TaskType/ruleset transitions send both metadata fields through the assignment RPC", async () => {
+test("TaskType/ruleset transitions send both metadata fields through the selection RPC", async () => {
   const task = createTask({ id: "task-type-transition", revision: 4, task_type: "custom", custom_ruleset_id: "ruleset-practice" });
   const calls: Array<{ p_task_patch: Record<string, unknown> }> = [];
   const client = {
@@ -2535,6 +2535,16 @@ function createTaskUpdateTestClient(initialTask: ReturnType<typeof createTask>) 
   let deleteAttemptCount = 0;
 
   return {
+    async rpc(_functionName: string, args: { p_task_patch: Record<string, unknown> }) {
+      updateAttemptCount += 1;
+      if (!currentTask) return { data: null, error: null };
+      currentTask = {
+        ...currentTask,
+        ...args.p_task_patch,
+        revision: currentTask.revision + 1,
+      };
+      return { data: { ...currentTask }, error: null };
+    },
     from() {
       return {
         delete() {

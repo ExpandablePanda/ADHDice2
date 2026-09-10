@@ -38,7 +38,7 @@ type Message = {
 type UpdateTaskRowResult = {
   data: Task | null;
   error: { message: string } | null;
-  customRulesetStateRefreshError?: string;
+  behaviorSelectionStateRefreshError?: string;
   usedActualSecondsFallback: boolean;
   usedEnergyFallback: boolean;
 };
@@ -76,7 +76,7 @@ export function useTaskBatchEditAction({
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
-  customRulesetAssignmentsByTaskId,
+  behaviorSelectionsByTaskId,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   clearListTaskSelection,
   currentDayKey,
@@ -232,7 +232,7 @@ export function useTaskBatchEditAction({
           behaviorProfiles,
           behaviorPolicyRevisions,
           namedCustomRulesetBehaviorPolicyRevisions,
-          customRulesetAssignmentsByTaskId,
+          behaviorSelectionsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -246,7 +246,7 @@ export function useTaskBatchEditAction({
           behaviorProfiles,
           behaviorPolicyRevisions,
           namedCustomRulesetBehaviorPolicyRevisions,
-          customRulesetAssignmentsByTaskId,
+          behaviorSelectionsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -329,20 +329,20 @@ export function useTaskBatchEditAction({
             planSuccess = true;
           }
         } else {
-          const { data, error, customRulesetStateRefreshError, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues, { expectedTask: task });
+          const { data, error, behaviorSelectionStateRefreshError, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues, { expectedTask: task });
           planFallbackUsed = usedEnergyFallback;
 
           if (error) {
             planErrorMessage = error.message;
-          } else if (customRulesetStateRefreshError) {
-            planErrorMessage = customRulesetStateRefreshError;
+          } else if (behaviorSelectionStateRefreshError) {
+            planErrorMessage = behaviorSelectionStateRefreshError;
           } else if (!data) {
             planErrorMessage = `Task "${task.title}" updated, but no task row came back from Supabase.`;
           } else {
             const nextData = mergeTaskWithCanonicalScheduleProjection(task, data);
             nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? nextData : currentTask);
             hasAuthoritativeTaskRowsToReconcile = true;
-            if (dueDateOnlyEdit || Object.hasOwn(trackedUpdateValues, "custom_ruleset_id")) {
+            if (dueDateOnlyEdit || Object.hasOwn(trackedUpdateValues, "task_type") || Object.hasOwn(trackedUpdateValues, "custom_ruleset_id")) {
               void onTaskHistoryMutation?.(task.id, scopedHistory, nextData);
             }
 

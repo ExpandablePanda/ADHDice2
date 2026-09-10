@@ -75,7 +75,7 @@ export function createEngineRolloverPlan(input: TaskBehaviorPolicyResolutionCont
       behaviorProfiles: input.behaviorProfiles,
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
       namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
-      customRulesetAssignmentsByTaskId: input.customRulesetAssignmentsByTaskId,
+      behaviorSelectionsByTaskId: input.behaviorSelectionsByTaskId,
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.rolloverTime,

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.30`.
+- Current working app version: `7.13.31`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-10 7.13.31 Historical Behavior Selection Correction
+
+Effective-dated behavior authority now stores the complete TaskType plus
+optional named Custom ruleset selection in `adhdice_task_behavior_selections`.
+The 7.13.28 Custom-only assignment rows are renamed and normalized as Custom
+selections; a compatibility view supports the older canonical creation RPC
+without retaining a second historical authority. Existing Tasks use the
+current Task projection until their first selection change, which lazily writes
+the creation-date baseline before the new current-date selection. New Tasks are
+seeded at creation, and browser/direct/canonical/trusted resolution feeds the
+same selection timeline into the existing Task Engine. No SQL or Edge source
+has been deployed; browser QA and live Supabase verification remain pending.
 
 ## 2026-09-10 7.13.24 Custom TaskType Behavior Profile
 

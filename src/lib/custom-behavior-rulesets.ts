@@ -1,7 +1,7 @@
 import type {
   CustomBehaviorRuleset,
   CustomBehaviorRulesetRevision,
-  TaskCustomRulesetAssignment as PersistedTaskCustomRulesetAssignment,
+  TaskBehaviorSelection as PersistedTaskBehaviorSelection,
 } from "./database.types.ts";
 import {
   normalizeTaskBehaviorProfile,
@@ -9,8 +9,8 @@ import {
   type TaskBehaviorPolicy,
   type TaskBehaviorPolicyRevision,
   type TaskBehaviorPolicyRevisions,
-  type TaskCustomRulesetAssignment,
-  type TaskCustomRulesetAssignmentMap,
+  type TaskBehaviorSelection,
+  type TaskBehaviorSelectionMap,
 } from "./task-state-engine/behavior-policy.ts";
 
 type RulesetError = { code?: string; message?: string };
@@ -45,28 +45,28 @@ type RulesetRevisionTable = {
   upsert(values: unknown, options?: { onConflict?: string }): Promise<{ error: RulesetError | null }>;
 };
 
-type RulesetAssignmentTable = {
-  select(columns: string): RulesetSelectQuery<PersistedTaskCustomRulesetAssignment>;
+type BehaviorSelectionTable = {
+  select(columns: string): RulesetSelectQuery<PersistedTaskBehaviorSelection>;
 };
 
 export type CustomBehaviorRulesetClient = {
   from(table: "adhdice_custom_behavior_rulesets"): RulesetIdentityTable;
   from(table: "adhdice_custom_behavior_ruleset_revisions"): RulesetRevisionTable;
-  from(table: "adhdice_task_custom_ruleset_assignments"): RulesetAssignmentTable;
+  from(table: "adhdice_task_behavior_selections"): BehaviorSelectionTable;
 };
 
 export type LoadedCustomBehaviorRulesets = {
   data: CustomBehaviorRuleset[];
   revisions: NamedCustomRulesetBehaviorPolicyRevisionMap;
-  assignmentsByTaskId: TaskCustomRulesetAssignmentMap;
+  behaviorSelectionsByTaskId: TaskBehaviorSelectionMap;
   error: RulesetError | null;
-  assignmentError?: RulesetError | null;
+  behaviorSelectionError?: RulesetError | null;
 };
 
 /** The browser-owned named Custom state that can be refreshed as one unit. */
 export type CustomBehaviorRulesetState = Pick<
   LoadedCustomBehaviorRulesets,
-  "data" | "revisions" | "assignmentsByTaskId"
+  "data" | "revisions" | "behaviorSelectionsByTaskId"
 >;
 
 export type CustomBehaviorRulesetMutationResult<T> = {
@@ -105,15 +105,18 @@ function toPolicyRevision(row: CustomBehaviorRulesetRevision): TaskBehaviorPolic
   };
 }
 
-function toAssignment(row: PersistedTaskCustomRulesetAssignment, userId: string): TaskCustomRulesetAssignment | null {
+function toBehaviorSelection(row: PersistedTaskBehaviorSelection, userId: string): TaskBehaviorSelection | null {
   if (row.user_id !== userId
     || typeof row.task_id !== "string"
     || !LOGICAL_DATE.test(row.effective_from_logical_date)
-    || (row.custom_ruleset_id !== null && typeof row.custom_ruleset_id !== "string")) {
+    || !["task", "pursuit", "goal", "custom"].includes(row.task_type)
+    || (row.custom_ruleset_id !== null && typeof row.custom_ruleset_id !== "string")
+    || (row.custom_ruleset_id !== null && row.task_type !== "custom")) {
     return null;
   }
   return {
     effectiveFromLogicalDate: row.effective_from_logical_date,
+    taskType: row.task_type,
     customRulesetId: row.custom_ruleset_id,
   };
 }
@@ -277,7 +280,7 @@ export async function renameCustomBehaviorRuleset(
 export function isMissingCustomBehaviorRulesetsTableError(error: RulesetError | null | undefined) {
   const message = error?.message ?? "";
   return error?.code === "42P01"
-    || /adhdice_custom_behavior_ruleset|relation .* does not exist/i.test(message);
+    || /adhdice_(?:custom_behavior_ruleset|task_behavior_selection)|relation .* does not exist/i.test(message);
 }
 
 /** Load the named Custom identity rows and their separate revision timelines. */
@@ -285,8 +288,8 @@ export async function loadCustomBehaviorRulesets(
   client: CustomBehaviorRulesetClient,
   userId: string,
 ): Promise<LoadedCustomBehaviorRulesets> {
-  if (!userId) return { data: [], revisions: {}, assignmentsByTaskId: {}, error: null, assignmentError: null };
-  const [rulesetsResult, revisionsResult, assignmentsResult] = await Promise.all([
+  if (!userId) return { data: [], revisions: {}, behaviorSelectionsByTaskId: {}, error: null, behaviorSelectionError: null };
+  const [rulesetsResult, revisionsResult, behaviorSelectionsResult] = await Promise.all([
     client
       .from("adhdice_custom_behavior_rulesets")
       .select("id,user_id,name,task_type,created_at,updated_at")
@@ -295,12 +298,12 @@ export async function loadCustomBehaviorRulesets(
       .from("adhdice_custom_behavior_ruleset_revisions")
       .select("ruleset_id,effective_from_logical_date,unresolved_occurrence,positive_streak_on_unhandled,missed_streak_on_unhandled,rewards,created_at,updated_at"),
     client
-      .from("adhdice_task_custom_ruleset_assignments")
-      .select("id,user_id,task_id,effective_from_logical_date,custom_ruleset_id,created_at,updated_at")
+      .from("adhdice_task_behavior_selections")
+      .select("id,user_id,task_id,effective_from_logical_date,task_type,custom_ruleset_id,created_at,updated_at")
       .eq("user_id", userId),
   ]);
-  if (rulesetsResult.error) return { data: [], revisions: {}, assignmentsByTaskId: {}, error: rulesetsResult.error, assignmentError: null };
-  if (revisionsResult.error) return { data: [], revisions: {}, assignmentsByTaskId: {}, error: revisionsResult.error, assignmentError: null };
+  if (rulesetsResult.error) return { data: [], revisions: {}, behaviorSelectionsByTaskId: {}, error: rulesetsResult.error, behaviorSelectionError: null };
+  if (revisionsResult.error) return { data: [], revisions: {}, behaviorSelectionsByTaskId: {}, error: revisionsResult.error, behaviorSelectionError: null };
 
   const rulesets = (rulesetsResult.data ?? []).filter((ruleset) => ruleset.task_type === "custom");
   const rulesetIds = new Set(rulesets.map((ruleset) => ruleset.id));
@@ -310,20 +313,20 @@ export async function loadCustomBehaviorRulesets(
     const next = [...(revisions[row.ruleset_id] ?? []), toPolicyRevision(row)];
     revisions[row.ruleset_id] = next.sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate));
   }
-  const assignmentsByTaskId: Record<string, TaskCustomRulesetAssignment[]> = {};
-  for (const row of assignmentsResult.data ?? []) {
-    const assignment = toAssignment(row, userId);
-    if (!assignment) continue;
-    assignmentsByTaskId[row.task_id] = [...(assignmentsByTaskId[row.task_id] ?? []), assignment]
+  const behaviorSelectionsByTaskId: Record<string, TaskBehaviorSelection[]> = {};
+  for (const row of behaviorSelectionsResult.data ?? []) {
+    const selection = toBehaviorSelection(row, userId);
+    if (!selection) continue;
+    behaviorSelectionsByTaskId[row.task_id] = [...(behaviorSelectionsByTaskId[row.task_id] ?? []), selection]
       .sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate));
   }
   return {
     data: rulesets,
     revisions,
-    assignmentsByTaskId,
-    // A missing assignment table is a compatibility boundary: keep the 7.13.27
-    // ruleset data usable and let callers treat the assignment map as empty.
+    behaviorSelectionsByTaskId,
+    // A missing selection table is a compatibility boundary: keep the 7.13.30
+    // ruleset data usable and let callers treat the selection map as empty.
     error: null,
-    assignmentError: assignmentsResult.error ?? null,
+    behaviorSelectionError: behaviorSelectionsResult.error ?? null,
   };
 }

@@ -278,8 +278,8 @@ export async function executeTrustedTaskStateCommand(input: {
     try {
       const customRulesetsResult = await dependencies.loadCustomRulesets(input.adminClient, input.userId);
       if (!customRulesetsResult.error) {
-        namedCustomRulesetBehaviorPolicyRevisions = customRulesetsResult.assignmentError
-          && !isMissingCustomBehaviorRulesetsTableError(customRulesetsResult.assignmentError)
+        namedCustomRulesetBehaviorPolicyRevisions = customRulesetsResult.behaviorSelectionError
+          && !isMissingCustomBehaviorRulesetsTableError(customRulesetsResult.behaviorSelectionError)
           ? {}
           : customRulesetsResult.revisions;
       }
