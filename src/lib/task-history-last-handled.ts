@@ -82,47 +82,57 @@ function getPresentationTimestamp(record: TaskManualActionRecord, currentLogical
   return `${record.logicalDate}T00:00:00`;
 }
 
-function manualActionRecordsForTask(
-  taskId: string,
+function indexLatestManualActionByTaskId(
+  tasks: readonly Task[],
   history: readonly TaskHistory[],
   calendarOverrides: readonly CanonicalTaskCalendarOverride[],
   commandOperations: readonly CanonicalTaskCommandOperation[],
-) {
-  const records: TaskManualActionRecord[] = [];
+): Map<string, TaskManualActionRecord> {
+  const requestedTaskIds = new Set(tasks.map((task) => task.id));
+  const latestByTaskId = new Map<string, TaskManualActionRecord>();
+  if (requestedTaskIds.size === 0) return latestByTaskId;
+  const consider = (record: TaskManualActionRecord) => {
+    if (!requestedTaskIds.has(record.taskId)) return;
+    const current = latestByTaskId.get(record.taskId);
+    if (!current || compareActionRecords(record, current) >= 0) {
+      latestByTaskId.set(record.taskId, record);
+    }
+  };
+
   for (const entry of history) {
-    if (entry.task_id !== taskId || !isManualHistoryFact(entry)) continue;
-    records.push({
+    if (!requestedTaskIds.has(entry.task_id) || !isManualHistoryFact(entry)) continue;
+    consider({
       identity: `history:${entry.id}`,
       logicalDate: entry.entry_date,
       occurredAt: entry.updated_at || entry.created_at || null,
       source: "history",
-      taskId,
+      taskId: entry.task_id,
       timestampIsAuthoritative: shouldExposeHistoryEventTimestamp(entry),
     });
   }
   for (const override of calendarOverrides) {
-    if (override.entity_id !== taskId || !isManualCalendarOverride(override)) continue;
-    records.push({
+    if (!requestedTaskIds.has(override.entity_id) || !isManualCalendarOverride(override)) continue;
+    consider({
       identity: `calendar_override:${override.id}`,
       logicalDate: override.logical_date,
       occurredAt: override.updated_at || override.created_at || null,
       source: "calendar_override",
-      taskId,
+      taskId: override.entity_id,
       timestampIsAuthoritative: true,
     });
   }
   for (const operation of commandOperations) {
-    if (operation.entity_id !== taskId || (!isManualCommand(operation) && !isExplicitUnscheduledCommand(operation))) continue;
-    records.push({
+    if (!requestedTaskIds.has(operation.entity_id) || (!isManualCommand(operation) && !isExplicitUnscheduledCommand(operation))) continue;
+    consider({
       identity: `command:${operation.id}`,
       logicalDate: operation.requested_logical_date!,
       occurredAt: operation.completed_at || operation.created_at || null,
       source: "command",
-      taskId,
+      taskId: operation.entity_id,
       timestampIsAuthoritative: true,
     });
   }
-  return records;
+  return latestByTaskId;
 }
 
 export function buildTaskHistoryLastHandledSummaryMap(
@@ -132,10 +142,9 @@ export function buildTaskHistoryLastHandledSummaryMap(
   commandOperations: readonly CanonicalTaskCommandOperation[] = [],
   currentLogicalDateKey?: string,
 ): TaskHistoryLastHandledSummaryMap {
+  const latestByTaskId = indexLatestManualActionByTaskId(tasks, history, calendarOverrides, commandOperations);
   return Object.fromEntries(tasks.map((task) => {
-    const latest = manualActionRecordsForTask(task.id, history, calendarOverrides, commandOperations)
-      .sort(compareActionRecords)
-      .at(-1);
+    const latest = latestByTaskId.get(task.id);
     return [task.id, latest ? {
       dateKey: latest.logicalDate,
       timestamp: getPresentationTimestamp(latest, currentLogicalDateKey),

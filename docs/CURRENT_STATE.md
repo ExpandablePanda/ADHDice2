@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.22`.
+- Current working app version: `7.13.23`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-10 7.13.23 Indexed Last-Handled Summary Construction
+
+Global streak-summary preprocessing now indexes the latest manual action by
+Task ID while scanning History, active manual Calendar overrides, and
+committed runtime command operations once each. The existing manual-action
+eligibility, logical-date/timestamp/identity ordering, presentation timestamp,
+atomic publication, 10ms cooperative Task loop, and stale-work cancellation
+remain unchanged. No Task semantics, persistence, SQL, schema, RLS, Realtime,
+or Pursuit behavior changed.
 
 ## 2026-09-09 7.13.22 Non-blocking Global Task Behavior Recalculation
 

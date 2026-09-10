@@ -8,6 +8,7 @@ import { buildTaskHistoryLastHandledSummaryMap } from "../src/lib/task-history-l
 import type { CanonicalTaskCalendarOverride, CanonicalTaskCommandOperation } from "../src/lib/task-state-canonical/types.ts";
 
 const taskId = "last-handled-task";
+const lastHandledSource = readFileSync(new URL("../src/lib/task-history-last-handled.ts", import.meta.url), "utf8");
 
 function task(overrides: Partial<Task> = {}) {
   return createTask({ created_at: "2026-08-01T09:00:00.000Z", id: taskId, sort_order: 0, status: "pending", title: "Last Handled", ...overrides });
@@ -160,4 +161,51 @@ test("latest logical date wins while same-date timestamp is retained", () => {
   )[taskId];
 
   assert.deepEqual(summary, { dateKey: "2026-08-14", timestamp: "2026-08-14T13:00:00.000Z" });
+});
+
+test("indexed last-handled candidates preserve timestamp and identity ordering and omit unhandled Tasks", () => {
+  const handledTask = task({ id: "handled-task" });
+  const unhandledTask = task({ id: "unhandled-task" });
+  const rows = [
+    history("2026-08-12", "done", { id: "history-earlier", task_id: handledTask.id, updated_at: "2026-08-12T10:00:00.000Z" }),
+    history("2026-08-13", "done", { id: "history-z", task_id: handledTask.id, updated_at: "2026-08-13T12:00:00.000Z" }),
+    history("2026-08-13", "done", {
+      canonical_provenance_kind: "migration_reconstruction",
+      id: "history-a",
+      task_id: handledTask.id,
+      updated_at: "2026-08-13T12:00:00.000Z",
+    }),
+  ];
+
+  const summary = buildTaskHistoryLastHandledSummaryMap([handledTask, unhandledTask], rows, [], [], "2026-08-16");
+
+  assert.deepEqual(summary[handledTask.id], { dateKey: "2026-08-13", timestamp: "2026-08-13T12:00:00.000Z" });
+  assert.equal(summary[unhandledTask.id], undefined);
+  assert.match(lastHandledSource, /const latestByTaskId = new Map/);
+  assert.doesNotMatch(lastHandledSource, /manualActionRecordsForTask/);
+});
+
+test("indexed last-handled construction scans each source collection once for multiple Tasks", () => {
+  const handledTask = task({ id: "scan-handled" });
+  const unhandledTask = task({ id: "scan-unhandled" });
+  const scanCounts = { history: 0, calendar: 0, commands: 0 };
+  function countIterations<T>(rows: readonly T[], source: keyof typeof scanCounts) {
+    return new Proxy(rows, {
+      get(target, property, receiver) {
+        if (property === Symbol.iterator) scanCounts[source] += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    }) as readonly T[];
+  }
+
+  const summary = buildTaskHistoryLastHandledSummaryMap(
+    [handledTask, unhandledTask],
+    countIterations([history("2026-08-14", "done", { id: "scan-history", task_id: handledTask.id })], "history"),
+    countIterations([], "calendar"),
+    countIterations([], "commands"),
+    "2026-08-15",
+  );
+
+  assert.equal(summary[handledTask.id]?.dateKey, "2026-08-14");
+  assert.deepEqual(scanCounts, { history: 1, calendar: 1, commands: 1 });
 });
