@@ -308,6 +308,28 @@ test("normal addTask uses trusted canonical creation and fails closed without le
   assert.equal(fallbackCalls, 0);
 });
 
+test("named Custom creation intent reaches the canonical creator with TaskType and ruleset identity", async () => {
+  const calls: TaskInsert[] = [];
+  const rulesetId = "00000000-0000-4000-8000-000000000011";
+  const action = useTaskCreateAction({
+    canonicalTaskCreator: async (payload) => {
+      calls.push(payload);
+      return { data: canonicalTask({ task_type: "custom", custom_ruleset_id: rulesetId }), error: null, usedEnergyFallback: false, usedActualSecondsFallback: false };
+    },
+    client: noDirectTaskInsertClient(),
+    currentUserId: ownerId,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    shouldRouteTaskToInbox: () => false,
+    sortTasksForUi: (value) => value,
+  });
+
+  await action.addTask({ title: "Practice", task_type: "custom", custom_ruleset_id: rulesetId });
+  assert.equal(calls[0]?.task_type, "custom");
+  assert.equal(calls[0]?.custom_ruleset_id, rulesetId);
+});
+
 test("canonical creation returns the persisted boundary and local state without reload", async () => {
   const cases: Array<{
     label: string;

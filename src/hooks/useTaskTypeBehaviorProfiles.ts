@@ -14,12 +14,19 @@ import {
 } from "@/lib/task-state-engine/behavior-policy";
 import type { TaskType } from "@/lib/task-type";
 import {
+  createCustomBehaviorRuleset,
+  normalizeCustomBehaviorRulesetName,
   isMissingCustomBehaviorRulesetsTableError,
   loadCustomBehaviorRulesets,
+  renameCustomBehaviorRuleset,
+  upsertCustomBehaviorRulesetRevision,
+  validateCustomBehaviorRulesetName,
   type CustomBehaviorRulesetState,
   type CustomBehaviorRulesetClient,
   type LoadedCustomBehaviorRulesets,
 } from "@/lib/custom-behavior-rulesets";
+import type { CustomBehaviorRuleset } from "@/lib/database.types";
+import { resolveTaskBehaviorPolicyForLogicalDate } from "@/lib/task-state-engine/behavior-policy";
 import {
   isMissingTaskTypeBehaviorProfilesTableError,
   loadTaskTypeBehaviorProfiles,
@@ -62,6 +69,16 @@ export function useTaskTypeBehaviorProfiles(
     }))),
     currentLogicalDate,
   ), [currentLogicalDate, profileRevisions]);
+  const customBehaviorRulesetProfiles = useMemo(
+    () => Object.fromEntries(customBehaviorRulesets.map((ruleset) => [
+      ruleset.id,
+      resolveTaskBehaviorPolicyForLogicalDate({
+        revisions: customRulesetBehaviorPolicyRevisions[ruleset.id] ?? [],
+        logicalDate: currentLogicalDate,
+      }),
+    ])) as Record<string, TaskBehaviorPolicy>,
+    [currentLogicalDate, customBehaviorRulesets, customRulesetBehaviorPolicyRevisions],
+  );
 
   const publishCustomRulesetState = useCallback((result: LoadedCustomBehaviorRulesets) => {
     const nextState: CustomBehaviorRulesetState = {
@@ -197,16 +214,79 @@ export function useTaskTypeBehaviorProfiles(
     return false;
   }, [currentLogicalDate, persist, profileRevisions, replaceCurrentRevision]);
 
+  const updateCustomBehaviorRulesetProfile = useCallback(async (
+    rulesetId: string,
+    field: ConfigurableTaskBehaviorField,
+    value: TaskBehaviorPolicy[typeof field],
+  ) => {
+    const current = customBehaviorRulesetProfiles[rulesetId];
+    if (!current) return false;
+    const next = normalizeTaskBehaviorProfile({ ...current, [field]: value }, "custom");
+    const error = await upsertCustomBehaviorRulesetRevision(
+      client as unknown as CustomBehaviorRulesetClient,
+      rulesetId,
+      currentLogicalDate,
+      next,
+    );
+    if (error) {
+      setMessage({ tone: "warn", text: error.message ?? "Could not save the Custom ruleset policy." });
+      return false;
+    }
+    return refreshCustomBehaviorRulesets();
+  }, [client, currentLogicalDate, customBehaviorRulesetProfiles, refreshCustomBehaviorRulesets, setMessage]);
+
+  const createCustomRuleset = useCallback(async (nameInput: string): Promise<CustomBehaviorRuleset | null> => {
+    const validation = validateCustomBehaviorRulesetName(nameInput, customBehaviorRulesets);
+    if (validation.error) {
+      setMessage({ tone: "warn", text: validation.error });
+      return null;
+    }
+    const result = await createCustomBehaviorRuleset(
+      client as unknown as CustomBehaviorRulesetClient,
+      userId ?? "",
+      normalizeCustomBehaviorRulesetName(nameInput),
+      profiles.custom ?? STANDARD_TASK_BEHAVIOR_POLICY,
+      currentLogicalDate,
+      customBehaviorRulesets,
+    );
+    if (result.error || !result.data) {
+      setMessage({ tone: "warn", text: result.error?.message ?? "Could not create the Custom ruleset." });
+      return null;
+    }
+    if (!(await refreshCustomBehaviorRulesets())) return null;
+    return result.data;
+  }, [client, currentLogicalDate, customBehaviorRulesets, profiles.custom, refreshCustomBehaviorRulesets, setMessage, userId]);
+
+  const renameCustomRuleset = useCallback(async (rulesetId: string, nameInput: string) => {
+    const result = await renameCustomBehaviorRuleset(
+      client as unknown as CustomBehaviorRulesetClient,
+      userId ?? "",
+      rulesetId,
+      nameInput,
+      customBehaviorRulesets,
+    );
+    if (result.error || !result.data) {
+      setMessage({ tone: "warn", text: result.error?.message ?? "Could not rename the Custom ruleset." });
+      return false;
+    }
+    if (!(await refreshCustomBehaviorRulesets())) return false;
+    return true;
+  }, [client, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage, userId]);
+
   return {
     isLoading,
     profileRevisions,
     profiles,
     customBehaviorRulesets,
+    customBehaviorRulesetProfiles,
     customRulesetStateRef,
     customRulesetBehaviorPolicyRevisions,
     customRulesetAssignmentsByTaskId,
     refreshCustomBehaviorRulesets,
+    createCustomRuleset,
+    renameCustomRuleset,
     resetTaskBehaviorProfile,
     updateTaskBehaviorProfile,
+    updateCustomBehaviorRulesetProfile,
   };
 }

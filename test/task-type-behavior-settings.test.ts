@@ -492,13 +492,16 @@ test("settings UI model exposes configurable Task and Custom tabs with inactive 
   assert.match(settingsSource, /Positive streak when scheduled occurrence is unfinished/);
   assert.match(settingsSource, /Missed streak when scheduled occurrence is unfinished/);
   assert.match(settingsSource, /Derived effects/);
-  assert.match(settingsSource, /System rule/);
+  assert.doesNotMatch(settingsSource, /System rule/);
+  assert.match(settingsSource, /\+ New Ruleset/);
+  assert.match(settingsSource, /Ruleset name/);
+  assert.match(settingsSource, /onCustomRulesetChange/);
   assert.equal(taskTypeBehaviorTabDescription("pursuit"), "Behavior profile not configured yet.");
   assert.equal(taskTypeBehaviorTabDescription("goal"), "Behavior profile not configured yet.");
   assert.equal(taskTypeBehaviorTabDescription("custom"), null);
-  assert.match(settingsSource, /activeTab === "task" \|\| activeTab === "custom"/);
-  assert.match(settingsSource, /onChange\(activeTab, "unresolvedOccurrence"/);
-  assert.match(settingsSource, /Reset \$\{activeTab === "custom" \? "Custom" : "Task"\} Defaults/);
+  assert.match(settingsSource, /activeTab === "task" \|\| \(activeTab === "custom" && !selectedRuleset\)/);
+  assert.match(settingsSource, /updateActiveProfile\("unresolvedOccurrence"/);
+  assert.match(settingsSource, /Reset \$\{activeTab === "custom" \? "Custom Default" : "Task"\} Defaults/);
   assert.match(settingsSource, /leaves Task History unchanged/);
 });
 

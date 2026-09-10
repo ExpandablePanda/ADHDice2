@@ -20,7 +20,7 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { Pursuit, PursuitUpdate, Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, Pursuit, PursuitUpdate, Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
 import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
@@ -75,6 +75,7 @@ import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import { buildPursuitWorkspaceIndex, filterPursuitsForTaskWorkspace, mergeTaskRowsWithPursuitSearchContext, shouldRenderTaskPursuitChildren, type PursuitAttention } from "@/lib/pursuit-domain";
 import { PursuitListWorkspaceRow, type PursuitInlineCreateInput } from "./pursuit-workspace-row";
 import { buildPursuitInlineCreateInput } from "@/lib/pursuit-ui";
+import type { TaskBehaviorPolicy, TaskBehaviorPolicyField, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 
@@ -331,7 +332,15 @@ type TasksTableSourceProps = {
   onSetLink?: (taskId: string, nextLink: { label: string; url: string }) => void;
   onSetLinkedNoteIds?: (taskId: string, linkedNoteIds: string[]) => void;
   onSetNotes?: (taskId: string, notes: string) => void;
-  onSetTaskType?: (taskId: string, taskType: TaskType) => void;
+  onSetTaskType?: (taskId: string, taskType: TaskType, customRulesetId?: string | null) => void;
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
+  customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
+  taskTypeBehaviorProfiles?: TaskBehaviorProfiles;
+  onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
+  onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean>;
+  onSetTaskBehaviorProfile?: (taskType: TaskType, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
+  onSetCustomRulesetBehaviorProfile?: (rulesetId: string, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
+  onResetTaskBehaviorProfile?: (taskType: TaskType) => Promise<boolean> | boolean;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
   onTogglePinned?: (taskId: string) => void;
   onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
@@ -711,6 +720,14 @@ export function TasksTableAdapter({
           onTaskLinkedNoteIdsChange={tableProps.onSetLinkedNoteIds}
           onTaskNotesChange={tableProps.onSetNotes}
           onTaskTypeChange={tableProps.onSetTaskType}
+          customBehaviorRulesets={tableProps.customBehaviorRulesets}
+          customBehaviorRulesetProfiles={tableProps.customBehaviorRulesetProfiles}
+          taskTypeBehaviorProfiles={tableProps.taskTypeBehaviorProfiles}
+          onCreateCustomRuleset={tableProps.onCreateCustomRuleset}
+          onRenameCustomRuleset={tableProps.onRenameCustomRuleset}
+          onTaskBehaviorProfileChange={tableProps.onSetTaskBehaviorProfile}
+          onCustomRulesetBehaviorProfileChange={tableProps.onSetCustomRulesetBehaviorProfile}
+          onResetTaskBehaviorProfile={tableProps.onResetTaskBehaviorProfile}
           onTaskPriorityChange={tableProps.onSetPriority}
           onTaskPinToggle={tableProps.onTogglePinned}
           onTaskRepeatChange={tableProps.onSetRepeat}
@@ -3119,6 +3136,14 @@ function TasksSimpleList({
               onTaskLinkedNoteIdsChange={tableProps.onSetLinkedNoteIds}
               onTaskNotesChange={tableProps.onSetNotes}
               onTaskTypeChange={tableProps.onSetTaskType}
+              customBehaviorRulesets={tableProps.customBehaviorRulesets}
+              customBehaviorRulesetProfiles={tableProps.customBehaviorRulesetProfiles}
+              taskTypeBehaviorProfiles={tableProps.taskTypeBehaviorProfiles}
+              onCreateCustomRuleset={tableProps.onCreateCustomRuleset}
+              onRenameCustomRuleset={tableProps.onRenameCustomRuleset}
+              onTaskBehaviorProfileChange={tableProps.onSetTaskBehaviorProfile}
+              onCustomRulesetBehaviorProfileChange={tableProps.onSetCustomRulesetBehaviorProfile}
+              onResetTaskBehaviorProfile={tableProps.onResetTaskBehaviorProfile}
               onTaskPriorityChange={tableProps.onSetPriority}
               onTaskPinToggle={tableProps.onTogglePinned}
               onTaskRepeatChange={tableProps.onSetRepeat}

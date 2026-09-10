@@ -116,6 +116,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     estimatedMinutes: task.estimated_minutes ?? null,
     id: task.id,
     taskType: normalizeTaskType(task.task_type),
+    customRulesetId: task.custom_ruleset_id,
     linkLabel: task.external_link_label ?? "",
     linkUrl: task.external_link_url ?? "",
     lastDoneAt: lastDone?.timestamp ?? null,

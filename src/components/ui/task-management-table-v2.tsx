@@ -33,7 +33,7 @@ import {
   Trophy,
   X,
 } from "lucide-react";
-import type { Pursuit, PursuitUpdate, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, Pursuit, PursuitUpdate, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
@@ -68,7 +68,7 @@ import {
   isWeekdaysRepeatSelection,
 } from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
-import { formatTaskTypeLabel, normalizeTaskType, TASK_TYPE_OPTIONS } from "@/lib/task-type";
+import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, normalizeTaskType, resolveTaskTypeSelection, taskTypeSelectionValue } from "@/lib/task-type";
 import { AdhdDropdownSelect } from "@/components/ui-system";
 import {
   TASK_TABLE_BODY_MUTED_VALUE_CLASS as BODY_MUTED_VALUE_CLASS,
@@ -340,6 +340,7 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
     lastHandledDate: row.lastHandledDate,
     updatedAt: row.updatedAt,
     taskType: row.taskType,
+    customRulesetId: row.customRulesetId,
     dueOn: row.dueOn,
     dueTime: row.dueTime,
     energy: row.energy,
@@ -1003,6 +1004,7 @@ export type PrototypeTaskRow = {
   estimatedMinutes: number | null;
   id: string;
   taskType?: TaskType;
+  customRulesetId?: string | null;
   linkLabel: string;
   linkUrl: string;
   lastDoneAt: string | null;
@@ -1241,9 +1243,14 @@ type TaskManagementTableV2Props = {
   onTaskSubtaskStatusChange?: (subtaskId: string, status: TaskStatus) => void;
   onTaskSubtasksAutoResetChange?: (taskId: string, subtasksAutoReset: boolean) => void;
   onTaskTagsChange?: (taskId: string, tags: string[]) => void;
-  onTaskTypeChange?: (taskId: string, taskType: TaskType) => void;
+  onTaskTypeChange?: (taskId: string, taskType: TaskType, customRulesetId?: string | null) => void;
   taskTypeBehaviorProfiles?: TaskBehaviorProfiles;
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
+  customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
+  onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
+  onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean>;
   onTaskBehaviorProfileChange?: (taskType: TaskType, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
+  onCustomRulesetBehaviorProfileChange?: (rulesetId: string, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
   onResetTaskBehaviorProfile?: (taskType: TaskType) => Promise<boolean> | boolean;
   onTaskTitleChange?: (taskId: string, title: string) => void;
   onToggleTaskSelection?: (taskId: string, options?: { additive?: boolean; range?: boolean; visibleTaskIds?: string[] }) => void;
@@ -2267,7 +2274,9 @@ export type TaskMetadataSummaryRow = {
 };
 
 export function buildTaskMetadataSummary(
-  task: Pick<PrototypeTaskRow, "actualSeconds" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "status" | "tags" | "taskType" | "title">,
+  task: Pick<PrototypeTaskRow, "actualSeconds" | "customRulesetId" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "status" | "tags" | "taskType" | "title"> & {
+    customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
+  },
   actualSeconds: number,
 ): TaskMetadataSummaryRow[] {
   const priority = getTaskPrioritySelection(task.priorities);
@@ -2290,7 +2299,7 @@ export function buildTaskMetadataSummary(
   return [
     { label: "Title", panelId: null, value: task.title.trim() || "Untitled task" },
     { label: "Status", panelId: "status", value: formatTaskStatusLabel(task.status) },
-    { label: "Task Type", panelId: "task_type", value: formatTaskTypeLabel(task.taskType) },
+    { label: "Task Type", panelId: "task_type", value: formatTaskTypeLabel(task.taskType, task.customRulesetId, task.customBehaviorRulesets) },
     { label: "Priority", panelId: "priority", value: priority ? formatPriorityLabel(priority) : "None" },
     { label: "Energy", panelId: "energy", value: task.energy === "none" ? "None" : formatEnergyLabel(task.energy) },
     { label: "Due", panelId: "due", value: formatDue(task.dueOn, task.dueTime) },
@@ -2699,7 +2708,12 @@ export function TaskManagementTableV2({
   onTaskTagsChange,
   onTaskTypeChange,
   taskTypeBehaviorProfiles,
+  customBehaviorRulesets = [],
+  customBehaviorRulesetProfiles,
+  onCreateCustomRuleset,
+  onRenameCustomRuleset,
   onTaskBehaviorProfileChange,
+  onCustomRulesetBehaviorProfileChange,
   onResetTaskBehaviorProfile,
   onTaskTitleChange,
   onToggleTaskSelection,
@@ -4864,13 +4878,13 @@ export function TaskManagementTableV2({
     }
   }
 
-  function setTaskType(taskId: string, taskType: TaskType) {
-    const nextTaskType = normalizeTaskType(taskType);
+  function setTaskType(taskId: string, selectionValue: string) {
+    const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
     queueTableMutationScrollTopHold(taskId);
-    patchTasks(targetTaskIds, (task) => ({ ...task, taskType: nextTaskType }));
+    patchTasks(targetTaskIds, (task) => ({ ...task, customRulesetId: selection.customRulesetId, taskType: selection.taskType }));
     for (const targetTaskId of targetTaskIds) {
-      onTaskTypeChange?.(targetTaskId, nextTaskType);
+      onTaskTypeChange?.(targetTaskId, selection.taskType, selection.customRulesetId);
     }
   }
 
@@ -5516,6 +5530,7 @@ export function TaskManagementTableV2({
       estimatedMinutes: item.estimatedMinutes,
       id: item.id,
       taskType: normalizeTaskType(item.taskType),
+      customRulesetId: item.customRulesetId,
       lastDoneAt: item.lastDoneAt,
       lastDoneDate: item.lastDoneDate,
       lastHandledAt: item.lastHandledAt,
@@ -9484,7 +9499,7 @@ export function TaskManagementTableV2({
                   tags: "Tags",
                   task_type: "Task Type",
                 };
-                const metadataSummaryRows = buildTaskMetadataSummary(metadataTask, getDisplayedActualSeconds(metadataTask));
+                const metadataSummaryRows = buildTaskMetadataSummary({ ...metadataTask, customBehaviorRulesets }, getDisplayedActualSeconds(metadataTask));
                 const activeMetadataPanelLabel = metadataPanelLabels[metadataPanelId] ?? "Meta Data";
                 function renderInlineTextChoices<T extends string>(
                   options: Array<{ label: string; value: T }>,
@@ -9560,9 +9575,15 @@ export function TaskManagementTableV2({
                           </TaskTableChipButton>
                           <Suspense fallback={<p className="text-sm text-[#7d7598] dark:text-white/55">Loading behavior settings…</p>}>
                             <TaskTypeBehaviorSettings
-                              key={`${metadataTask.id}:${normalizeTaskType(metadataTask.taskType)}`}
+                              key={`${metadataTask.id}:${taskTypeSelectionValue(metadataTask.taskType, metadataTask.customRulesetId, customBehaviorRulesets)}`}
+                              customBehaviorRulesetProfiles={customBehaviorRulesetProfiles}
+                              customBehaviorRulesets={customBehaviorRulesets}
                               initialTaskType={normalizeTaskType(metadataTask.taskType)}
+                              initialCustomRulesetId={metadataTask.customRulesetId}
+                              onCreateCustomRuleset={onCreateCustomRuleset}
                               onChange={(taskType, field, value) => onTaskBehaviorProfileChange?.(taskType, field, value) ?? false}
+                              onCustomRulesetChange={(rulesetId, field, value) => onCustomRulesetBehaviorProfileChange?.(rulesetId, field, value) ?? false}
+                              onRenameCustomRuleset={onRenameCustomRuleset}
                               onReset={(taskType) => onResetTaskBehaviorProfile?.(taskType) ?? false}
                               profiles={taskTypeBehaviorProfiles ?? {}}
                             />
@@ -9577,8 +9598,8 @@ export function TaskManagementTableV2({
                               setTaskType(metadataTask.id, value);
                               returnFullMetadataToSummary();
                             }}
-                            options={TASK_TYPE_OPTIONS}
-                            value={normalizeTaskType(metadataTask.taskType)}
+                            options={buildTaskTypeSelectionOptions(customBehaviorRulesets)}
+                            value={taskTypeSelectionValue(metadataTask.taskType, metadataTask.customRulesetId, customBehaviorRulesets)}
                           />
                           <TaskTableChipButton
                             onClick={() => setTaskTypeBehaviorSettingsOpenByTaskId((current) => ({ ...current, [metadataTask.id]: true }))}
@@ -9587,7 +9608,7 @@ export function TaskManagementTableV2({
                             Behavior Settings
                           </TaskTableChipButton>
                           <p className="text-xs leading-5 text-[#7d7597] dark:text-white/50">
-                            TaskType selects a behavior profile. Task and Custom are configurable; Pursuit and Goal are not active yet.
+                            TaskType selects a behavior profile. Task, Custom Default, and named rulesets are configurable; Pursuit and Goal are not active yet.
                           </p>
                         </>
                       )}

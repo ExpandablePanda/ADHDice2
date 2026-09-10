@@ -24,16 +24,35 @@ type RulesetSelectQuery<T> = {
   ): PromiseLike<TResult1 | TResult2>;
 };
 
+type RulesetMutationQuery<T> = {
+  eq(column: string, value: string): RulesetMutationQuery<T>;
+  select(columns: string): Promise<RulesetQueryResult<T>>;
+  then<TResult1 = RulesetQueryResult<T>, TResult2 = never>(
+    onfulfilled?: ((value: RulesetQueryResult<T>) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ): PromiseLike<TResult1 | TResult2>;
+};
+
+type RulesetIdentityTable = {
+  delete(): RulesetMutationQuery<CustomBehaviorRuleset>;
+  insert(values: unknown): { select(columns: string): Promise<RulesetQueryResult<CustomBehaviorRuleset>> };
+  select(columns: string): RulesetSelectQuery<CustomBehaviorRuleset>;
+  update(values: unknown): RulesetMutationQuery<CustomBehaviorRuleset>;
+};
+
+type RulesetRevisionTable = {
+  select(columns: string): RulesetSelectQuery<CustomBehaviorRulesetRevision>;
+  upsert(values: unknown, options?: { onConflict?: string }): Promise<{ error: RulesetError | null }>;
+};
+
+type RulesetAssignmentTable = {
+  select(columns: string): RulesetSelectQuery<PersistedTaskCustomRulesetAssignment>;
+};
+
 export type CustomBehaviorRulesetClient = {
-  from(table: "adhdice_custom_behavior_rulesets"): {
-    select(columns: string): RulesetSelectQuery<CustomBehaviorRuleset>;
-  };
-  from(table: "adhdice_custom_behavior_ruleset_revisions"): {
-    select(columns: string): RulesetSelectQuery<CustomBehaviorRulesetRevision>;
-  };
-  from(table: "adhdice_task_custom_ruleset_assignments"): {
-    select(columns: string): RulesetSelectQuery<PersistedTaskCustomRulesetAssignment>;
-  };
+  from(table: "adhdice_custom_behavior_rulesets"): RulesetIdentityTable;
+  from(table: "adhdice_custom_behavior_ruleset_revisions"): RulesetRevisionTable;
+  from(table: "adhdice_task_custom_ruleset_assignments"): RulesetAssignmentTable;
 };
 
 export type LoadedCustomBehaviorRulesets = {
@@ -49,6 +68,11 @@ export type CustomBehaviorRulesetState = Pick<
   LoadedCustomBehaviorRulesets,
   "data" | "revisions" | "assignmentsByTaskId"
 >;
+
+export type CustomBehaviorRulesetMutationResult<T> = {
+  data: T | null;
+  error: RulesetError | null;
+};
 
 const LOGICAL_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const POLICY_VALUES = {
@@ -113,6 +137,141 @@ export function customBehaviorRulesetRevisionUpsertPayload(
     missed_streak_on_unhandled: policy.missedStreakOnUnhandled,
     rewards: policy.rewards,
   };
+}
+
+export function normalizeCustomBehaviorRulesetName(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function validateCustomBehaviorRulesetName(
+  value: unknown,
+  rulesets: readonly Pick<CustomBehaviorRuleset, "id" | "name">[] = [],
+  excludedRulesetId?: string | null,
+) {
+  const name = normalizeCustomBehaviorRulesetName(value);
+  if (!name) return { name, error: "Ruleset name cannot be blank." };
+  const normalizedName = name.toLocaleLowerCase();
+  if (rulesets.some((ruleset) => ruleset.id !== excludedRulesetId && normalizeCustomBehaviorRulesetName(ruleset.name).toLocaleLowerCase() === normalizedName)) {
+    return { name, error: "A ruleset with that name already exists." };
+  }
+  return { name, error: null };
+}
+
+function rulesetMutationError(message: string): CustomBehaviorRulesetMutationResult<never> {
+  return { data: null, error: { message } };
+}
+
+function isValidCustomBehaviorRulesetIdentity(row: CustomBehaviorRuleset | null | undefined): row is CustomBehaviorRuleset {
+  return Boolean(row)
+    && typeof row.id === "string"
+    && typeof row.user_id === "string"
+    && typeof row.name === "string"
+    && row.task_type === "custom";
+}
+
+/** Persist a named identity and its first revision without publishing a partial browser state. */
+export async function createCustomBehaviorRuleset(
+  client: CustomBehaviorRulesetClient,
+  userId: string,
+  nameInput: string,
+  policy: TaskBehaviorPolicy,
+  effectiveFromLogicalDate: string,
+  loadedRulesets: readonly Pick<CustomBehaviorRuleset, "id" | "name">[] = [],
+): Promise<CustomBehaviorRulesetMutationResult<CustomBehaviorRuleset>> {
+  const validation = validateCustomBehaviorRulesetName(nameInput, loadedRulesets);
+  if (validation.error) return rulesetMutationError(validation.error);
+  if (!userId) return rulesetMutationError("Ruleset creation requires an authenticated user.");
+
+  let identityResult: RulesetQueryResult<CustomBehaviorRuleset>;
+  try {
+    identityResult = await client
+      .from("adhdice_custom_behavior_rulesets")
+      .insert(customBehaviorRulesetUpsertPayload(userId, validation.name))
+      .select("id,user_id,name,task_type,created_at,updated_at");
+  } catch (error) {
+    return rulesetMutationError(error instanceof Error ? error.message : "Could not create the Custom ruleset.");
+  }
+  if (identityResult.error) return { data: null, error: identityResult.error };
+  const identity = identityResult.data?.[0];
+  if (!isValidCustomBehaviorRulesetIdentity(identity) || identity.user_id !== userId) {
+    return rulesetMutationError("Custom ruleset creation returned an unusable identity.");
+  }
+
+  let revisionResult: { error: RulesetError | null };
+  try {
+    revisionResult = await client
+      .from("adhdice_custom_behavior_ruleset_revisions")
+      .upsert(customBehaviorRulesetRevisionUpsertPayload(identity.id, effectiveFromLogicalDate, policy), {
+        onConflict: "ruleset_id,effective_from_logical_date",
+      });
+  } catch (error) {
+    revisionResult = { error: { message: error instanceof Error ? error.message : "Could not save the Custom ruleset policy." } };
+  }
+  if (revisionResult.error) {
+    // No Task or assignment can reference this just-created identity yet. Remove
+    // only this failed creation so an identity without its first policy cannot
+    // become a browser-visible orphans through a later refresh.
+    try {
+      await client
+        .from("adhdice_custom_behavior_rulesets")
+        .delete()
+        .eq("id", identity.id)
+        .eq("user_id", userId);
+    } catch {
+      // Preserve the original persistence error; the browser still publishes no
+      // speculative state and the next refresh will reveal any server residue.
+    }
+    return { data: null, error: revisionResult.error };
+  }
+  return { data: identity, error: null };
+}
+
+/** Replace only the current logical-date revision for one named ruleset. */
+export async function upsertCustomBehaviorRulesetRevision(
+  client: CustomBehaviorRulesetClient,
+  rulesetId: string,
+  effectiveFromLogicalDate: string,
+  policy: TaskBehaviorPolicy,
+) {
+  try {
+    const result = await client
+      .from("adhdice_custom_behavior_ruleset_revisions")
+      .upsert(customBehaviorRulesetRevisionUpsertPayload(rulesetId, effectiveFromLogicalDate, policy), {
+        onConflict: "ruleset_id,effective_from_logical_date",
+      });
+    return result.error;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Could not save the Custom ruleset policy." };
+  }
+}
+
+/** Rename identity metadata only; no behavior revision or assignment is touched. */
+export async function renameCustomBehaviorRuleset(
+  client: CustomBehaviorRulesetClient,
+  userId: string,
+  rulesetId: string,
+  nameInput: string,
+  loadedRulesets: readonly Pick<CustomBehaviorRuleset, "id" | "name">[] = [],
+): Promise<CustomBehaviorRulesetMutationResult<CustomBehaviorRuleset>> {
+  const validation = validateCustomBehaviorRulesetName(nameInput, loadedRulesets, rulesetId);
+  if (validation.error) return rulesetMutationError(validation.error);
+  let result: RulesetQueryResult<CustomBehaviorRuleset>;
+  try {
+    result = await client
+      .from("adhdice_custom_behavior_rulesets")
+      .update({ name: validation.name, updated_at: new Date().toISOString() })
+      .eq("id", rulesetId)
+      .eq("user_id", userId)
+      .select("id,user_id,name,task_type,created_at,updated_at");
+  } catch (error) {
+    return rulesetMutationError(error instanceof Error ? error.message : "Could not rename the Custom ruleset.");
+  }
+  if (result.error) return { data: null, error: result.error };
+  const updated = result.data?.[0];
+  if (!isValidCustomBehaviorRulesetIdentity(updated) || updated.id !== rulesetId || updated.user_id !== userId) {
+    return rulesetMutationError("Custom ruleset rename did not return the updated identity.");
+  }
+  return { data: updated, error: null };
 }
 
 export function isMissingCustomBehaviorRulesetsTableError(error: RulesetError | null | undefined) {

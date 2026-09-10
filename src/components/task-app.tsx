@@ -1863,12 +1863,17 @@ export function TaskApp() {
   const {
     profileRevisions: taskTypeBehaviorProfileRevisions,
     profiles: taskTypeBehaviorProfiles,
+    customBehaviorRulesets,
+    customBehaviorRulesetProfiles,
     customRulesetStateRef,
     customRulesetBehaviorPolicyRevisions,
     customRulesetAssignmentsByTaskId,
+    createCustomRuleset,
+    renameCustomRuleset,
     refreshCustomBehaviorRulesets,
     resetTaskBehaviorProfile,
     updateTaskBehaviorProfile,
+    updateCustomBehaviorRulesetProfile,
   } = useTaskTypeBehaviorProfiles(supabase, todayKey, session?.user?.id ?? null, setMessage);
 
   const {
@@ -6907,10 +6912,15 @@ export function TaskApp() {
           onTaskLinkChange={(taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); }}
           onTaskLinkedNoteIdsChange={(taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); }}
           onTaskNotesChange={(taskId, notes) => { void updateTask(taskId, { notes: notes || null }); }}
-          onTaskTypeChange={(taskId, taskType) => { void updateTask(taskId, { task_type: taskType }); }}
+          onTaskTypeChange={(taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); }}
           onTaskBehaviorProfileChange={updateTaskBehaviorProfile}
+          onCustomRulesetBehaviorProfileChange={updateCustomBehaviorRulesetProfile}
           onResetTaskBehaviorProfile={resetTaskBehaviorProfile}
           taskTypeBehaviorProfiles={taskTypeBehaviorProfiles}
+          customBehaviorRulesets={customBehaviorRulesets}
+          customBehaviorRulesetProfiles={customBehaviorRulesetProfiles}
+          onCreateCustomRuleset={createCustomRuleset}
+          onRenameCustomRuleset={renameCustomRuleset}
           onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
           onTaskPriorityChange={applyTaskPriorityChange}
           onTaskRepeatChange={handleSharedTaskRepeatChange}
@@ -7406,7 +7416,15 @@ export function TaskApp() {
                   onRequestedOpenTaskOverlayClose: closeSharedTaskEditorOverlay,
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
-                  onSetTaskType: (taskId, taskType) => { void updateTask(taskId, { task_type: taskType }); },
+                  onSetTaskType: (taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); },
+                  customBehaviorRulesets,
+                  customBehaviorRulesetProfiles,
+                  taskTypeBehaviorProfiles,
+                  onCreateCustomRuleset: createCustomRuleset,
+                  onRenameCustomRuleset: renameCustomRuleset,
+                  onSetTaskBehaviorProfile: updateTaskBehaviorProfile,
+                  onSetCustomRulesetBehaviorProfile: updateCustomBehaviorRulesetProfile,
+                  onResetTaskBehaviorProfile: resetTaskBehaviorProfile,
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
@@ -7591,7 +7609,15 @@ export function TaskApp() {
                   },
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
-                  onSetTaskType: (taskId, taskType) => { void updateTask(taskId, { task_type: taskType }); },
+                  onSetTaskType: (taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); },
+                  customBehaviorRulesets,
+                  customBehaviorRulesetProfiles,
+                  taskTypeBehaviorProfiles,
+                  onCreateCustomRuleset: createCustomRuleset,
+                  onRenameCustomRuleset: renameCustomRuleset,
+                  onSetTaskBehaviorProfile: updateTaskBehaviorProfile,
+                  onSetCustomRulesetBehaviorProfile: updateCustomBehaviorRulesetProfile,
+                  onResetTaskBehaviorProfile: resetTaskBehaviorProfile,
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {

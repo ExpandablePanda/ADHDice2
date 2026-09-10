@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { loadCustomBehaviorRulesets } from "../src/lib/custom-behavior-rulesets.ts";
+import {
+  createCustomBehaviorRuleset,
+  loadCustomBehaviorRulesets,
+  renameCustomBehaviorRuleset,
+  upsertCustomBehaviorRulesetRevision,
+  validateCustomBehaviorRulesetName,
+} from "../src/lib/custom-behavior-rulesets.ts";
 import { updateTaskRowWithLegacyEnergyFallback } from "../src/lib/task-db-mutations.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import { buildCompatibilityTaskStateEngineInput } from "../src/lib/task-state-engine/direct-input.ts";
@@ -303,6 +309,152 @@ test("named ruleset loader keeps separate identities and ignores inactive rulese
     { effectiveFromLogicalDate: "2026-09-01", customRulesetId: "ruleset-practice" },
     { effectiveFromLogicalDate: "2026-09-21", customRulesetId: "ruleset-routine" },
   ]);
+});
+
+test("named ruleset management trims names, rejects blanks and loaded duplicates case-insensitively", () => {
+  const loaded = [{ id: "practice", name: "Practice" }];
+  assert.deepEqual(validateCustomBehaviorRulesetName("  Routine  ", loaded), { name: "Routine", error: null });
+  assert.deepEqual(validateCustomBehaviorRulesetName("  ", loaded), { name: "", error: "Ruleset name cannot be blank." });
+  assert.deepEqual(validateCustomBehaviorRulesetName(" practice ", loaded), { name: "practice", error: "A ruleset with that name already exists." });
+  assert.deepEqual(validateCustomBehaviorRulesetName(" practice ", loaded, "practice"), { name: "practice", error: null });
+});
+
+test("named ruleset creation seeds Custom Default policy and does not publish a partial identity", async () => {
+  const calls: Array<{ table: string; operation: string; values?: unknown }> = [];
+  const identity = { id: "ruleset-practice", user_id: "owner-1", name: "Practice", task_type: "custom" as const, created_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-10T00:00:00.000Z" };
+  const client = {
+    from(table: string) {
+      if (table === "adhdice_custom_behavior_rulesets") {
+        return {
+          insert(values: unknown) {
+            calls.push({ table, operation: "insert", values });
+            return { select: async () => ({ data: [identity], error: null }) };
+          },
+          delete() {
+            return {
+              eq() { return this; },
+              then: () => Promise.resolve({ data: [], error: null }),
+            };
+          },
+        };
+      }
+      return {
+        upsert(values: unknown, options: unknown) {
+          calls.push({ table, operation: "upsert", values: { values, options } });
+          return Promise.resolve({ error: null });
+        },
+      };
+    },
+  };
+  const result = await createCustomBehaviorRuleset(client as never, "owner-1", "  Practice  ", {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "custom-default",
+    unresolvedOccurrence: "blank",
+    rewards: "disabled",
+  }, "2026-09-10");
+
+  assert.equal(result.error, null);
+  assert.equal(result.data?.id, identity.id);
+  assert.deepEqual(calls, [
+    { table: "adhdice_custom_behavior_rulesets", operation: "insert", values: { user_id: "owner-1", name: "Practice", task_type: "custom" } },
+    {
+      table: "adhdice_custom_behavior_ruleset_revisions",
+      operation: "upsert",
+      values: {
+        values: {
+          ruleset_id: "ruleset-practice",
+          effective_from_logical_date: "2026-09-10",
+          unresolved_occurrence: "blank",
+          positive_streak_on_unhandled: "break",
+          missed_streak_on_unhandled: "increment",
+          rewards: "disabled",
+        },
+        options: { onConflict: "ruleset_id,effective_from_logical_date" },
+      },
+    },
+  ]);
+});
+
+test("named ruleset revision updates replace today without rewriting prior revisions", async () => {
+  let persisted: unknown = null;
+  const client = {
+    from() {
+      return {
+        upsert(values: unknown, options: unknown) {
+          persisted = { values, options };
+          return Promise.resolve({ error: null });
+        },
+      };
+    },
+  };
+  const error = await upsertCustomBehaviorRulesetRevision(client as never, "ruleset-practice", "2026-09-10", {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "ruleset-practice",
+    positiveStreakOnUnhandled: "preserve",
+  });
+  assert.equal(error, null);
+  assert.deepEqual(persisted, {
+    values: {
+      ruleset_id: "ruleset-practice",
+      effective_from_logical_date: "2026-09-10",
+      unresolved_occurrence: "missed",
+      positive_streak_on_unhandled: "preserve",
+      missed_streak_on_unhandled: "increment",
+      rewards: "enabled",
+    },
+    options: { onConflict: "ruleset_id,effective_from_logical_date" },
+  });
+});
+
+test("failed named ruleset creation removes only its unreferenced identity and returns no success", async () => {
+  let deleteCalls = 0;
+  const identity = { id: "ruleset-orphan", user_id: "owner-1", name: "Orphan", task_type: "custom" as const, created_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-10T00:00:00.000Z" };
+  const client = {
+    from(table: string) {
+      if (table === "adhdice_custom_behavior_rulesets") {
+        return {
+          insert: () => ({ select: async () => ({ data: [identity], error: null }) }),
+          delete: () => ({
+            eq() { deleteCalls += 1; return this; },
+            then(resolve: (value: { data: never[]; error: null }) => unknown) { return Promise.resolve({ data: [], error: null }).then(resolve); },
+          }),
+        };
+      }
+      return { upsert: async () => ({ error: { message: "revision rejected" } }) };
+    },
+  };
+  const result = await createCustomBehaviorRuleset(client as never, "owner-1", "Orphan", STANDARD_TASK_BEHAVIOR_POLICY, "2026-09-10");
+  assert.equal(result.data, null);
+  assert.equal(result.error?.message, "revision rejected");
+  assert.equal(deleteCalls, 2);
+});
+
+test("rename preserves identity and policy history, while persistence failures return no success", async () => {
+  const identity = { id: "ruleset-practice", user_id: "owner-1", name: "Guitar Practice", task_type: "custom" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-10T00:00:00.000Z" };
+  let updateValues: unknown = null;
+  const client = {
+    from() {
+      return {
+        update(values: unknown) {
+          updateValues = values;
+          return {
+            eq() { return this; },
+            select: async () => ({ data: [identity], error: null }),
+          };
+        },
+      };
+    },
+  };
+  const renamed = await renameCustomBehaviorRuleset(client as never, "owner-1", "ruleset-practice", " Guitar Practice ", [{ id: "ruleset-practice", name: "Practice" }]);
+  assert.equal(renamed.data?.id, "ruleset-practice");
+  assert.equal(renamed.data?.name, "Guitar Practice");
+  assert.deepEqual(updateValues, { name: "Guitar Practice", updated_at: updateValues && typeof updateValues === "object" ? (updateValues as { updated_at: string }).updated_at : null });
+
+  const failed = await renameCustomBehaviorRuleset({
+    from: () => ({ update: () => ({ eq() { return this; }, select: async () => ({ data: null, error: { message: "rename rejected" } }) }) }),
+  } as never, "owner-1", "ruleset-practice", "New Name", []);
+  assert.equal(failed.data, null);
+  assert.equal(failed.error?.message, "rename rejected");
 });
 
 test("successful browser assignment mutations refresh authority before local reconciliation", async () => {

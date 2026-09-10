@@ -88,6 +88,7 @@ export type ChildTaskPreview = {
   estimatedMinutes: number | null;
   id: string;
   taskType: Task["task_type"];
+  customRulesetId?: string | null;
   isFocused: boolean;
   issueTypes: Array<TaskHierarchyIssue["type"]>;
   lastDoneAt: string | null;
@@ -484,6 +485,7 @@ export function buildChildTaskPreviewLookup(
           estimatedMinutes: descendant.estimated_minutes,
           id: descendant.id,
           taskType: descendant.task_type,
+          customRulesetId: descendant.custom_ruleset_id,
           isFocused: focusedTaskIdSet.has(descendant.id),
           issueTypes: adapter.getNode(descendant.id)?.issueTypes ?? [],
           lastDoneAt: lastDone?.timestamp ?? null,

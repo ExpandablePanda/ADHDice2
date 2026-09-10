@@ -1849,6 +1849,7 @@ test("child task preview lookup exposes direct same-table children", () => {
     estimatedMinutes: 25,
     id: "child",
     taskType: "task",
+    customRulesetId: null,
     isFocused: false,
     issueTypes: [],
     lastDoneAt: null,

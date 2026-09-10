@@ -76,9 +76,10 @@ test("Summary is derived from the active metadataTask and exposes every property
 test("Task Settings exposes the compact TaskType selector and routes changes through the existing metadata callback", () => {
   const taskTypeBranch = tableSource.slice(tableSource.indexOf('metadataPanelId === "task_type"'), tableSource.indexOf('metadataPanelId === "due"'));
   assert.match(taskTypeBranch, /<AdhdDropdownSelect/);
-  assert.match(taskTypeBranch, /options=\{TASK_TYPE_OPTIONS\}/);
+  assert.match(taskTypeBranch, /options=\{buildTaskTypeSelectionOptions\(customBehaviorRulesets\)\}/);
   assert.match(taskTypeBranch, /setTaskType\(metadataTask\.id, value\)/);
-  assert.match(taskTypeBranch, /TaskType labels are ready\. Behavior profiles are being configured separately\./);
+  assert.match(taskTypeBranch, /Custom Default/);
+  assert.match(taskTypeBranch, /onCustomRulesetBehaviorProfileChange/);
   assert.match(adapterSource, /onTaskTypeChange=\{tableProps\.onSetTaskType\}/);
 });
 
@@ -165,6 +166,12 @@ test("Summary formatting keeps configured values visible and uses displayed actu
   assert.equal(summary.Tags.value, "#calls · #urgent");
   assert.equal(summary.Link.value, "Project brief");
   assert.equal(summary.Notes.value, "Needs final review · 2 linked notes");
+});
+
+test("Task metadata displays a named ruleset and Custom Default through the shared resolver", () => {
+  const rulesets = [{ id: "practice", name: "Practice", task_type: "custom" as const }];
+  assert.equal(summaryByLabel({ ...baseTask, taskType: "custom", customRulesetId: "practice", customBehaviorRulesets: rulesets })["Task Type"]?.value, "Practice");
+  assert.equal(summaryByLabel({ ...baseTask, taskType: "custom", customRulesetId: null, customBehaviorRulesets: rulesets })["Task Type"]?.value, "Custom Default");
 });
 
 test("Summary keeps empty metadata rows readable and falls back from link label to URL", () => {

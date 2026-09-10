@@ -4,7 +4,7 @@ export const TASK_TYPE_BEHAVIOR_TABS: ReadonlyArray<{ label: string; value: Task
   { label: "Task", value: "task" },
   { label: "Pursuit", value: "pursuit" },
   { label: "Goal", value: "goal" },
-  { label: "Custom", value: "custom" },
+  { label: "Custom Default", value: "custom" },
 ];
 
 export function taskTypeBehaviorTabDescription(tab: TaskTypeBehaviorTab) {

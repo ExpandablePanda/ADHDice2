@@ -3,10 +3,13 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  buildTaskTypeSelectionOptions,
   formatTaskTypeLabel,
   isTaskType,
   normalizeTaskType,
+  resolveTaskTypeSelection,
   TASK_TYPE_OPTIONS,
+  taskTypeSelectionValue,
   type TaskType,
 } from "../src/lib/task-type.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
@@ -18,11 +21,23 @@ test("TaskType exposes the four product labels and safely normalizes compatibili
   for (const taskType of ["task", "pursuit", "goal", "custom"] as TaskType[]) {
     assert.equal(isTaskType(taskType), true);
     assert.equal(normalizeTaskType(taskType), taskType);
-    assert.equal(formatTaskTypeLabel(taskType), taskType[0].toUpperCase() + taskType.slice(1));
+    assert.equal(formatTaskTypeLabel(taskType), taskType === "custom" ? "Custom Default" : taskType[0].toUpperCase() + taskType.slice(1));
   }
   assert.equal(normalizeTaskType(undefined), "task");
   assert.equal(normalizeTaskType(null), "task");
   assert.equal(normalizeTaskType("legacy"), "task");
+});
+
+test("named Custom rulesets extend the shared selection model without becoming TaskType values", () => {
+  const rulesets = [
+    { id: "routine", name: "Routine", task_type: "custom" as const },
+    { id: "practice", name: "Practice", task_type: "custom" as const },
+  ];
+  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Pursuit", "Goal", "Custom Default", "Practice", "Routine"]);
+  assert.deepEqual(resolveTaskTypeSelection("practice", rulesets), { taskType: "custom", customRulesetId: "practice" });
+  assert.equal(taskTypeSelectionValue("custom", "practice", rulesets), "practice");
+  assert.equal(formatTaskTypeLabel("custom", "practice", rulesets), "Practice");
+  assert.equal(formatTaskTypeLabel("custom", null, rulesets), "Custom Default");
 });
 
 test("normal and child Task creation default TaskType to task", () => {

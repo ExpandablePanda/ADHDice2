@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.28`.
+- Current working app version: `7.13.30`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -51,6 +51,20 @@ browser/direct and trusted command planning; unassigned Custom Tasks retain the
 7.13.26 TaskType-level Custom profile. Pursuit and Goal remain inactive with
 Standard fallback, and existing History remains factual. No SQL or Edge source
 has been deployed; browser QA and live Supabase verification remain pending.
+
+## 2026-09-10 7.13.30 Named Custom Ruleset Management and Assignment UI
+
+The Behavior Settings panel now manages reusable named Custom rulesets while
+retaining `Custom Default` for the existing TaskType-level Custom profile.
+Named rulesets seed their first effective-dated revision from Custom Default,
+support independent current-day behavior revisions and identity-only renames,
+and are surfaced through the shared Task metadata selector. Task assignment
+changes retain the existing effective-dated assignment RPC authority, and
+canonical Task creation continues to accept `task_type = 'custom'` with a
+named `custom_ruleset_id`. Fixed System Rule cards were removed from the
+customizable panel without changing engine semantics. No SQL or Edge source
+was changed or deployed; browser QA and live Supabase verification remain
+pending.
 
 ## 2026-09-10 7.13.28 Effective-Dated Custom Ruleset Assignment Correction
 
