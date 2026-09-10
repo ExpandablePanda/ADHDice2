@@ -128,6 +128,25 @@ export type CustomBehaviorRulesetRevisionInsert = Omit<CustomBehaviorRulesetRevi
 };
 
 export type CustomBehaviorRulesetRevisionUpdate = Partial<Pick<CustomBehaviorRulesetRevision, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "updated_at">>;
+
+/** Effective-dated Task -> named Custom ruleset authority. Null is explicit generic Custom. */
+export type TaskCustomRulesetAssignment = {
+  id: string;
+  user_id: string;
+  task_id: string;
+  effective_from_logical_date: string;
+  custom_ruleset_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskCustomRulesetAssignmentInsert = Omit<TaskCustomRulesetAssignment, "created_at" | "id" | "updated_at"> & {
+  created_at?: string;
+  id?: string;
+  updated_at?: string;
+};
+
+export type TaskCustomRulesetAssignmentUpdate = Partial<Pick<TaskCustomRulesetAssignment, "custom_ruleset_id" | "updated_at">>;
 export type PursuitStatus = "active" | "paused" | "archived";
 export type Pursuit = {
   id: string;
@@ -2590,6 +2609,12 @@ export type Database = {
         Row: CustomBehaviorRulesetRevision;
         Insert: CustomBehaviorRulesetRevisionInsert;
         Update: CustomBehaviorRulesetRevisionUpdate;
+        Relationships: [];
+      };
+      adhdice_task_custom_ruleset_assignments: {
+        Row: TaskCustomRulesetAssignment;
+        Insert: TaskCustomRulesetAssignmentInsert;
+        Update: TaskCustomRulesetAssignmentUpdate;
         Relationships: [];
       };
       adhdice_task_command_operations: {

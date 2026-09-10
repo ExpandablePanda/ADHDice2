@@ -30,7 +30,10 @@ import type {
   TaskBehaviorProfiles,
 } from "../../../src/lib/task-state-engine/behavior-policy.ts";
 import { loadTaskTypeBehaviorProfiles } from "../../../src/lib/task-type-behavior-profiles.ts";
-import { loadCustomBehaviorRulesets } from "../../../src/lib/custom-behavior-rulesets.ts";
+import {
+  isMissingCustomBehaviorRulesetsTableError,
+  loadCustomBehaviorRulesets,
+} from "../../../src/lib/custom-behavior-rulesets.ts";
 
 export type TrustedTaskStateCommandClient = CanonicalReadClient & {
   rpc(
@@ -275,7 +278,10 @@ export async function executeTrustedTaskStateCommand(input: {
     try {
       const customRulesetsResult = await dependencies.loadCustomRulesets(input.adminClient, input.userId);
       if (!customRulesetsResult.error) {
-        namedCustomRulesetBehaviorPolicyRevisions = customRulesetsResult.revisions;
+        namedCustomRulesetBehaviorPolicyRevisions = customRulesetsResult.assignmentError
+          && !isMissingCustomBehaviorRulesetsTableError(customRulesetsResult.assignmentError)
+          ? {}
+          : customRulesetsResult.revisions;
       }
     } catch {
       // Named rulesets are additive; an unavailable foundation must preserve

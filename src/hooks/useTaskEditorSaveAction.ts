@@ -66,6 +66,7 @@ export function useTaskEditorSaveAction({
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
+  customRulesetAssignmentsByTaskId,
   canonicalTaskCreator,
   canonicalTaskStateUpdate,
   currentDayKey,
@@ -206,6 +207,7 @@ export function useTaskEditorSaveAction({
           behaviorProfiles,
           behaviorPolicyRevisions,
           namedCustomRulesetBehaviorPolicyRevisions,
+          customRulesetAssignmentsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -219,6 +221,7 @@ export function useTaskEditorSaveAction({
           behaviorProfiles,
           behaviorPolicyRevisions,
           namedCustomRulesetBehaviorPolicyRevisions,
+          customRulesetAssignmentsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -283,7 +286,7 @@ export function useTaskEditorSaveAction({
         : rawNextData;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
-      if (scheduleOnlyEdit) {
+      if (scheduleOnlyEdit || Object.hasOwn(updateValues, "custom_ruleset_id")) {
         try {
           await onTaskHistoryMutation?.(taskId, scopedHistory, nextData);
         } catch (error) {

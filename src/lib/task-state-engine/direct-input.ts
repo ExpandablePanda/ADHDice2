@@ -228,6 +228,7 @@ function buildTaskStateEngineInput(
     ...context,
     customRulesetId: taskType === "custom" ? task.custom_ruleset_id : null,
     logicalDate: logicalDateForTimestamp(context.now, context.timezone, context.logicalDayRollover),
+    taskId: task.id,
     taskType,
   });
 

@@ -7,6 +7,8 @@ import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/t
 type TaskUpdateField = Exclude<keyof TaskUpdate, "revision">;
 
 export type TaskRowUpdateOptions = {
+  /** Logical date on which a Custom ruleset assignment change takes effect. */
+  effectiveFromLogicalDate?: string;
   expectedTask?: Task | null;
 };
 
@@ -213,6 +215,15 @@ export async function updateTaskRowWithLegacyEnergyFallback(
   isMissingTaskEnergyNoneEnumError: (message: string) => boolean,
   options?: TaskRowUpdateOptions,
 ): Promise<UpdateTaskRowResult> {
+  if (Object.hasOwn(values, "custom_ruleset_id")) {
+    return updateTaskCustomRulesetAssignment(
+      client,
+      taskId,
+      values,
+      isMissingTaskEnergyNoneEnumError,
+      options,
+    );
+  }
   const expectedTask = options?.expectedTask ?? null;
   const expectedRevision = typeof expectedTask?.revision === "number" ? expectedTask.revision : undefined;
   const initialResult = await runTaskUpdateAttempt(
@@ -332,6 +343,60 @@ export async function updateTaskRowWithLegacyEnergyFallback(
     reappliedOnLatestRevision: false,
     usedActualSecondsFallback: initialResult.usedActualSecondsFallback || retryResult.usedActualSecondsFallback,
     usedEnergyFallback: initialResult.usedEnergyFallback || retryResult.usedEnergyFallback,
+  };
+}
+
+/**
+ * Custom ruleset assignment is a historical authority, so the Task projection
+ * and its effective-dated assignment must be committed by one trusted RPC.
+ */
+async function updateTaskCustomRulesetAssignment(
+  client: SupabaseClient,
+  taskId: string,
+  values: TaskUpdate,
+  isMissingTaskEnergyNoneEnumError: (message: string) => boolean,
+  options?: TaskRowUpdateOptions,
+): Promise<UpdateTaskRowResult> {
+  let patch = values;
+  let usedEnergyFallback = false;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await client.rpc("adhdice_update_task_custom_ruleset_assignment", {
+      p_effective_from_logical_date: options?.effectiveFromLogicalDate ?? null,
+      p_expected_task_revision: typeof options?.expectedTask?.revision === "number" ? options.expectedTask.revision : null,
+      p_task_id: taskId,
+      p_task_patch: patch,
+    });
+    if (!result.error) {
+      return {
+        data: (result.data as Task | null) ?? null,
+        error: null,
+        conflict: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback,
+      };
+    }
+    if (patch.energy === "none" && isMissingTaskEnergyNoneEnumError(result.error.message)) {
+      patch = { ...patch, energy: "low" };
+      usedEnergyFallback = true;
+      continue;
+    }
+    return {
+      data: null,
+      error: result.error,
+      conflict: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback,
+    };
+  }
+  return {
+    data: null,
+    error: { message: "Custom ruleset assignment update retries were exhausted." },
+    conflict: null,
+    reappliedOnLatestRevision: false,
+    usedActualSecondsFallback: false,
+    usedEnergyFallback,
   };
 }
 

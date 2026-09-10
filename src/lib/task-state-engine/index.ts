@@ -20,6 +20,8 @@ export type {
   TaskBehaviorPolicyRevisionMap,
   TaskBehaviorPolicyRevisions,
   TaskBehaviorProjectionSemantics,
+  TaskCustomRulesetAssignment,
+  TaskCustomRulesetAssignmentMap,
   UnresolvedOccurrenceBehavior,
 } from "./behavior-policy.ts";
 export { logicalDateForTimestamp } from "./calendar.ts";

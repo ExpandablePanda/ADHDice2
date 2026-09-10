@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.27`.
+- Current working app version: `7.13.28`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -51,6 +51,20 @@ browser/direct and trusted command planning; unassigned Custom Tasks retain the
 7.13.26 TaskType-level Custom profile. Pursuit and Goal remain inactive with
 Standard fallback, and existing History remains factual. No SQL or Edge source
 has been deployed; browser QA and live Supabase verification remain pending.
+
+## 2026-09-10 7.13.28 Effective-Dated Custom Ruleset Assignment Correction
+
+Task-to-named-Custom-ruleset assignment is now a separate effective-dated,
+owner-scoped timeline. The Task row's nullable `custom_ruleset_id` remains a
+current projection only; browser, canonical, and trusted command resolution
+select the assignment effective on the requested logical date, with the first
+assignment serving as the baseline before its effective date. The correction
+migration also protects historical assignment meaning with restrictive
+ruleset deletion FKs, routes assignment edits through an atomic owner-checked
+RPC, and extends canonical creation to persist an owned initial assignment.
+Existing Tasks are not backfilled, explicit History is not rewritten, and
+Pursuit/Goal remain Standard fallback. SQL and Edge source are not deployed;
+browser QA and live Supabase verification remain pending.
 
 ## 2026-09-10 7.13.23 Indexed Last-Handled Summary Construction
 

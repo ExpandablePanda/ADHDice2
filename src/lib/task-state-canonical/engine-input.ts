@@ -87,7 +87,19 @@ export function buildCanonicalTaskStateEngineInput(
       ? workflowOccurrence?.scheduled_due_on ?? readModel.task.active_occurrence_due_on
       : readModel.task.active_occurrence_due_on,
   } as CanonicalProjectedTaskState;
-  return buildDirectTaskStateEngineInput(task, historyRows(readModel), context, {
+  const engineContext = readModel.customRulesetAssignments
+    ? {
+      ...context,
+      customRulesetAssignmentsByTaskId: {
+        ...(context.customRulesetAssignmentsByTaskId ?? {}),
+        [readModel.task.id]: readModel.customRulesetAssignments.map((assignment) => ({
+          effectiveFromLogicalDate: assignment.effective_from_logical_date,
+          customRulesetId: assignment.custom_ruleset_id,
+        })),
+      },
+    }
+    : context;
+  return buildDirectTaskStateEngineInput(task, historyRows(readModel), engineContext, {
     calendarOverrides: activeCalendarOverrides(readModel),
     workflow: {
       state: readModel.task.workflow_state ?? "none",

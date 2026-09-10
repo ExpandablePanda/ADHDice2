@@ -16,6 +16,9 @@ import {
 import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import { planTaskStateCommand, type CanonicalTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
 
+const canonicalCreationEdgeSource = readFileSync(new URL("../supabase/functions/task-create-canonical/index.ts", import.meta.url), "utf8");
+const assignmentMigration = readFileSync(new URL("../supabase/add_task_custom_ruleset_assignments_7_13_28.sql", import.meta.url), "utf8");
+
 const ownerId = "00000000-0000-4000-8000-000000000001";
 const parentId = "00000000-0000-4000-8000-000000000002";
 const now = "2026-08-11T14:00:00.000Z";
@@ -216,6 +219,37 @@ test("canonical creation plan initializes runtime state without action facts or 
   });
   assert.equal(pursuitPlan.task.task_type, "pursuit");
   assert.equal(pursuitPlan.canonical.entity_kind, "step");
+});
+
+test("canonical creation accepts a named Custom ruleset but rejects it for a normal Task", () => {
+  const rulesetId = "00000000-0000-4000-8000-000000000011";
+  const customPlan = buildCanonicalTaskCreationPlan({
+    draft: draft({ task_type: "custom", custom_ruleset_id: rulesetId }),
+    entityKind: "parent",
+    now,
+    profile,
+  });
+  assert.equal(customPlan.task.task_type, "custom");
+  assert.equal(customPlan.task.custom_ruleset_id, rulesetId);
+  assert.throws(
+    () => buildCanonicalTaskCreationPlan({
+      draft: draft({ custom_ruleset_id: rulesetId }),
+      entityKind: "parent",
+      now,
+      profile,
+    }),
+    (error: unknown) => error instanceof CanonicalTaskCreationValidationError
+      && error.code === "INVALID_CUSTOM_RULESET_TASK_TYPE",
+  );
+});
+
+test("canonical creation source validates ownership and persists initial assignment authority", () => {
+  assert.match(canonicalCreationEdgeSource, /custom_ruleset_id/);
+  assert.match(assignmentMigration, /Only Custom Tasks may consume a named Custom ruleset/);
+  assert.match(assignmentMigration, /ruleset\.user_id = p_user_id/);
+  assert.match(assignmentMigration, /insert into public\.adhdice_task_custom_ruleset_assignments/);
+  assert.match(assignmentMigration, /v_effective_from/);
+  assert.match(assignmentMigration, /grant execute on function public\.adhdice_create_canonical_task\(uuid, jsonb\) to service_role/);
 });
 
 test("normal addTask uses trusted canonical creation and fails closed without legacy fallback", async () => {

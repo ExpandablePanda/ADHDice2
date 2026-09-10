@@ -67,6 +67,35 @@ import {
   resolveTaskRewardTier,
 } from "../src/lib/task-rewards.ts";
 
+test("Custom ruleset projection edits use the atomic effective-dated assignment RPC", async () => {
+  let call: { functionName: string; args: Record<string, unknown> } | null = null;
+  const expectedTask = createTask({ id: "assignment-task", revision: 7, task_type: "custom", custom_ruleset_id: "ruleset-a" });
+  const updatedTask = { ...expectedTask, custom_ruleset_id: null, revision: 8 };
+  const result = await updateTaskRowWithLegacyEnergyFallback(
+    {
+      rpc: async (functionName: string, args: Record<string, unknown>) => {
+        call = { functionName, args };
+        return { data: updatedTask, error: null };
+      },
+    } as never,
+    expectedTask.id,
+    { custom_ruleset_id: null, title: "Return to generic Custom" },
+    () => false,
+    () => false,
+    { effectiveFromLogicalDate: "2026-09-21", expectedTask },
+  );
+
+  assert.equal(result.error, null);
+  assert.equal(result.data?.custom_ruleset_id, null);
+  assert.equal(call?.functionName, "adhdice_update_task_custom_ruleset_assignment");
+  assert.deepEqual(call?.args, {
+    p_effective_from_logical_date: "2026-09-21",
+    p_expected_task_revision: 7,
+    p_task_id: "assignment-task",
+    p_task_patch: { custom_ruleset_id: null, title: "Return to generic Custom" },
+  });
+});
+
 function computeDerivedForHierarchyDiagnostics(
   tasks: ReturnType<typeof createTask>[],
   overrides: Partial<{

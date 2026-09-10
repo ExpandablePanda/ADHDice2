@@ -75,6 +75,7 @@ export function useTaskBatchEditAction({
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
+  customRulesetAssignmentsByTaskId,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   clearListTaskSelection,
   currentDayKey,
@@ -230,6 +231,7 @@ export function useTaskBatchEditAction({
           behaviorProfiles,
           behaviorPolicyRevisions,
           namedCustomRulesetBehaviorPolicyRevisions,
+          customRulesetAssignmentsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -243,6 +245,7 @@ export function useTaskBatchEditAction({
           behaviorProfiles,
           behaviorPolicyRevisions,
           namedCustomRulesetBehaviorPolicyRevisions,
+          customRulesetAssignmentsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -336,7 +339,7 @@ export function useTaskBatchEditAction({
             const nextData = mergeTaskWithCanonicalScheduleProjection(task, data);
             nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? nextData : currentTask);
             hasAuthoritativeTaskRowsToReconcile = true;
-            if (dueDateOnlyEdit) {
+            if (dueDateOnlyEdit || Object.hasOwn(trackedUpdateValues, "custom_ruleset_id")) {
               void onTaskHistoryMutation?.(task.id, scopedHistory, nextData);
             }
 

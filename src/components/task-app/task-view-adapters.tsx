@@ -618,6 +618,7 @@ export function TaskHistoryModal({
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
+  customRulesetAssignmentsByTaskId,
   calendarOverrides,
 }: {
   onClose: () => void;
@@ -637,6 +638,7 @@ export function TaskHistoryModal({
   behaviorProfiles?: TaskBehaviorPolicyResolutionContext["behaviorProfiles"];
   behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
   namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
+  customRulesetAssignmentsByTaskId?: TaskBehaviorPolicyResolutionContext["customRulesetAssignmentsByTaskId"];
   calendarOverrides?: TaskCalendarOverride[];
 }) {
   const today = todayDateKey;
@@ -704,6 +706,7 @@ export function TaskHistoryModal({
         behaviorProfiles,
         behaviorPolicyRevisions,
         namedCustomRulesetBehaviorPolicyRevisions,
+        customRulesetAssignmentsByTaskId,
       }
       : null,
     // Semantic logical-date dependencies intentionally exclude minute-level `now`.
@@ -712,6 +715,7 @@ export function TaskHistoryModal({
       behaviorPolicyRevisions,
       behaviorProfiles,
       namedCustomRulesetBehaviorPolicyRevisions,
+      customRulesetAssignmentsByTaskId,
       calendarOverrides,
       calendarLogicalDate,
       calendarEnd,
@@ -779,6 +783,7 @@ export function TaskHistoryModal({
         behaviorPolicyRevisions,
         behaviorProfiles,
         namedCustomRulesetBehaviorPolicyRevisions,
+        customRulesetAssignmentsByTaskId,
         history: normalizedTaskHistory,
         historicalOverride: true,
         logicalDate: selectedDate,

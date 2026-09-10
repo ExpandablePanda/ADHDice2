@@ -10,6 +10,7 @@ import {
   type TaskBehaviorPolicyField,
   type TaskBehaviorPolicyRevision,
   type TaskBehaviorPolicyRevisionMap,
+  type TaskCustomRulesetAssignment,
 } from "@/lib/task-state-engine/behavior-policy";
 import type { TaskType } from "@/lib/task-type";
 import {
@@ -39,6 +40,7 @@ export function useTaskTypeBehaviorProfiles(
 ) {
   const [profileRevisions, setProfileRevisions] = useState<TaskBehaviorPolicyRevisionMap>({});
   const [customRulesetBehaviorPolicyRevisions, setCustomRulesetBehaviorPolicyRevisions] = useState<Record<string, readonly TaskBehaviorPolicyRevision[]>>({});
+  const [customRulesetAssignmentsByTaskId, setCustomRulesetAssignmentsByTaskId] = useState<Record<string, readonly TaskCustomRulesetAssignment[]>>({});
   const [isLoading, setIsLoading] = useState(false);
   const profiles = useMemo(() => normalizeTaskBehaviorProfiles(
     TASK_TYPE_VALUES.flatMap((taskType) => (profileRevisions[taskType] ?? []).map((revision) => ({
@@ -60,6 +62,7 @@ export function useTaskTypeBehaviorProfiles(
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setProfileRevisions({});
       setCustomRulesetBehaviorPolicyRevisions({});
+      setCustomRulesetAssignmentsByTaskId({});
       setIsLoading(false);
       return () => { cancelled = true; };
     }
@@ -72,11 +75,13 @@ export function useTaskTypeBehaviorProfiles(
       if (result.error && !isMissingTaskTypeBehaviorProfilesTableError(result.error)) {
         setMessage({ tone: "warn", text: result.error.message ?? "Could not load Task behavior settings." });
       }
-      if (customRulesetsResult.error && !isMissingCustomBehaviorRulesetsTableError(customRulesetsResult.error)) {
-        setMessage({ tone: "warn", text: customRulesetsResult.error.message ?? "Could not load Custom behavior rulesets." });
+      const customRulesetError = customRulesetsResult.error ?? customRulesetsResult.assignmentError;
+      if (customRulesetError && !isMissingCustomBehaviorRulesetsTableError(customRulesetError)) {
+        setMessage({ tone: "warn", text: customRulesetError.message ?? "Could not load Custom behavior rulesets." });
       }
       setProfileRevisions(result.revisions);
       setCustomRulesetBehaviorPolicyRevisions(customRulesetsResult.revisions);
+      setCustomRulesetAssignmentsByTaskId(customRulesetsResult.assignmentsByTaskId);
       setIsLoading(false);
     });
     return () => { cancelled = true; };
@@ -140,6 +145,7 @@ export function useTaskTypeBehaviorProfiles(
     profileRevisions,
     profiles,
     customRulesetBehaviorPolicyRevisions,
+    customRulesetAssignmentsByTaskId,
     resetTaskBehaviorProfile,
     updateTaskBehaviorProfile,
   };

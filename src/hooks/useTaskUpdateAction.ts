@@ -115,6 +115,7 @@ export function useTaskUpdateAction({
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
+  customRulesetAssignmentsByTaskId,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   canonicalTaskMutationState,
   clearPendingTaskMutations,
@@ -360,6 +361,7 @@ export function useTaskUpdateAction({
         behaviorProfiles,
         behaviorPolicyRevisions,
         namedCustomRulesetBehaviorPolicyRevisions,
+        customRulesetAssignmentsByTaskId,
         history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: logicalDayNow,
@@ -427,7 +429,7 @@ export function useTaskUpdateAction({
         : rawNextData;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
-      if (scheduleOnlyEdit) {
+      if (scheduleOnlyEdit || Object.hasOwn(updateValues, "custom_ruleset_id")) {
         void onTaskHistoryMutation?.(taskId, scopedHistory, nextData);
       }
       if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {

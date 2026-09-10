@@ -1,6 +1,7 @@
 import type {
   CustomBehaviorRuleset,
   CustomBehaviorRulesetRevision,
+  TaskCustomRulesetAssignment as PersistedTaskCustomRulesetAssignment,
 } from "./database.types.ts";
 import {
   normalizeTaskBehaviorProfile,
@@ -8,6 +9,8 @@ import {
   type TaskBehaviorPolicy,
   type TaskBehaviorPolicyRevision,
   type TaskBehaviorPolicyRevisions,
+  type TaskCustomRulesetAssignment,
+  type TaskCustomRulesetAssignmentMap,
 } from "./task-state-engine/behavior-policy.ts";
 
 type RulesetError = { code?: string; message?: string };
@@ -28,12 +31,17 @@ export type CustomBehaviorRulesetClient = {
   from(table: "adhdice_custom_behavior_ruleset_revisions"): {
     select(columns: string): RulesetSelectQuery<CustomBehaviorRulesetRevision>;
   };
+  from(table: "adhdice_task_custom_ruleset_assignments"): {
+    select(columns: string): RulesetSelectQuery<PersistedTaskCustomRulesetAssignment>;
+  };
 };
 
 export type LoadedCustomBehaviorRulesets = {
   data: CustomBehaviorRuleset[];
   revisions: NamedCustomRulesetBehaviorPolicyRevisionMap;
+  assignmentsByTaskId: TaskCustomRulesetAssignmentMap;
   error: RulesetError | null;
+  assignmentError?: RulesetError | null;
 };
 
 const LOGICAL_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -64,6 +72,19 @@ function toPolicyRevision(row: CustomBehaviorRulesetRevision): TaskBehaviorPolic
   return {
     ...policy,
     effectiveFromLogicalDate: row.effective_from_logical_date,
+  };
+}
+
+function toAssignment(row: PersistedTaskCustomRulesetAssignment, userId: string): TaskCustomRulesetAssignment | null {
+  if (row.user_id !== userId
+    || typeof row.task_id !== "string"
+    || !LOGICAL_DATE.test(row.effective_from_logical_date)
+    || (row.custom_ruleset_id !== null && typeof row.custom_ruleset_id !== "string")) {
+    return null;
+  }
+  return {
+    effectiveFromLogicalDate: row.effective_from_logical_date,
+    customRulesetId: row.custom_ruleset_id,
   };
 }
 
@@ -99,8 +120,8 @@ export async function loadCustomBehaviorRulesets(
   client: CustomBehaviorRulesetClient,
   userId: string,
 ): Promise<LoadedCustomBehaviorRulesets> {
-  if (!userId) return { data: [], revisions: {}, error: null };
-  const [rulesetsResult, revisionsResult] = await Promise.all([
+  if (!userId) return { data: [], revisions: {}, assignmentsByTaskId: {}, error: null, assignmentError: null };
+  const [rulesetsResult, revisionsResult, assignmentsResult] = await Promise.all([
     client
       .from("adhdice_custom_behavior_rulesets")
       .select("id,user_id,name,task_type,created_at,updated_at")
@@ -108,9 +129,13 @@ export async function loadCustomBehaviorRulesets(
     client
       .from("adhdice_custom_behavior_ruleset_revisions")
       .select("ruleset_id,effective_from_logical_date,unresolved_occurrence,positive_streak_on_unhandled,missed_streak_on_unhandled,rewards,created_at,updated_at"),
+    client
+      .from("adhdice_task_custom_ruleset_assignments")
+      .select("id,user_id,task_id,effective_from_logical_date,custom_ruleset_id,created_at,updated_at")
+      .eq("user_id", userId),
   ]);
-  if (rulesetsResult.error) return { data: [], revisions: {}, error: rulesetsResult.error };
-  if (revisionsResult.error) return { data: [], revisions: {}, error: revisionsResult.error };
+  if (rulesetsResult.error) return { data: [], revisions: {}, assignmentsByTaskId: {}, error: rulesetsResult.error, assignmentError: null };
+  if (revisionsResult.error) return { data: [], revisions: {}, assignmentsByTaskId: {}, error: revisionsResult.error, assignmentError: null };
 
   const rulesets = (rulesetsResult.data ?? []).filter((ruleset) => ruleset.task_type === "custom");
   const rulesetIds = new Set(rulesets.map((ruleset) => ruleset.id));
@@ -120,5 +145,20 @@ export async function loadCustomBehaviorRulesets(
     const next = [...(revisions[row.ruleset_id] ?? []), toPolicyRevision(row)];
     revisions[row.ruleset_id] = next.sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate));
   }
-  return { data: rulesets, revisions, error: null };
+  const assignmentsByTaskId: Record<string, TaskCustomRulesetAssignment[]> = {};
+  for (const row of assignmentsResult.data ?? []) {
+    const assignment = toAssignment(row, userId);
+    if (!assignment) continue;
+    assignmentsByTaskId[row.task_id] = [...(assignmentsByTaskId[row.task_id] ?? []), assignment]
+      .sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate));
+  }
+  return {
+    data: rulesets,
+    revisions,
+    assignmentsByTaskId,
+    // A missing assignment table is a compatibility boundary: keep the 7.13.27
+    // ruleset data usable and let callers treat the assignment map as empty.
+    error: null,
+    assignmentError: assignmentsResult.error ?? null,
+  };
 }

@@ -73,6 +73,7 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   behaviorProfiles: NonNullable<TaskBehaviorPolicyResolutionContext["behaviorProfiles"]>;
   behaviorPolicyRevisions: NonNullable<TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"]>;
   namedCustomRulesetBehaviorPolicyRevisions: NonNullable<TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"]>;
+  customRulesetAssignmentsByTaskId: NonNullable<TaskBehaviorPolicyResolutionContext["customRulesetAssignmentsByTaskId"]>;
   currentUser: User | null | undefined;
   mapFocusCategoryRow: (row: DbFocusCategory) => FocusCategory;
   mapFocusSessionRow: (row: DbFocusSession) => HistoricalFocusSession;
@@ -259,6 +260,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
+  customRulesetAssignmentsByTaskId,
   currentUser,
   mapFocusCategoryRow,
   mapFocusSessionRow,
@@ -364,6 +366,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const behaviorProfilesRef = useRef(behaviorProfiles);
   const behaviorPolicyRevisionsRef = useRef(behaviorPolicyRevisions);
   const namedCustomRulesetBehaviorPolicyRevisionsRef = useRef(namedCustomRulesetBehaviorPolicyRevisions);
+  const customRulesetAssignmentsByTaskIdRef = useRef(customRulesetAssignmentsByTaskId);
 
   const setTaskHistoryTaskLoadState = useCallback((taskId: string, state: TaskHistoryTaskLoadState) => {
     taskHistoryLoadStateByTaskIdRef.current = {
@@ -439,6 +442,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   useEffect(() => {
     namedCustomRulesetBehaviorPolicyRevisionsRef.current = namedCustomRulesetBehaviorPolicyRevisions;
   }, [namedCustomRulesetBehaviorPolicyRevisions]);
+
+  useEffect(() => {
+    customRulesetAssignmentsByTaskIdRef.current = customRulesetAssignmentsByTaskId;
+  }, [customRulesetAssignmentsByTaskId]);
 
   useEffect(() => {
     shouldSkipTaskReloadRef.current = shouldSkipTaskReload;
@@ -978,6 +985,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             behaviorProfiles: behaviorProfilesRef.current,
             behaviorPolicyRevisions: behaviorPolicyRevisionsRef.current,
             namedCustomRulesetBehaviorPolicyRevisions: namedCustomRulesetBehaviorPolicyRevisionsRef.current,
+            customRulesetAssignmentsByTaskId: customRulesetAssignmentsByTaskIdRef.current,
             calendarOverridesByTaskId: indexActiveCalendarOverrides(activeCalendarOverrides),
             logicalDayRollover,
             manualActionCalendarOverrides: activeCalendarOverrides,
@@ -1038,6 +1046,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             behaviorProfiles: behaviorProfilesRef.current,
             behaviorPolicyRevisions: behaviorPolicyRevisionsRef.current,
             namedCustomRulesetBehaviorPolicyRevisions: namedCustomRulesetBehaviorPolicyRevisionsRef.current,
+            customRulesetAssignmentsByTaskId: customRulesetAssignmentsByTaskIdRef.current,
             calendarOverrides: activeCalendarOverrides.map(taskCalendarOverrideFromCanonical),
             manualActionCalendarOverrides: activeCalendarOverrides,
             manualActionCommandOperations,
