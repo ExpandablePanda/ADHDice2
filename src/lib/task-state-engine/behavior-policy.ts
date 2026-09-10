@@ -33,6 +33,7 @@ export type TaskBehaviorPolicyRevision = Readonly<TaskBehaviorPolicy & {
 
 export type TaskBehaviorPolicyRevisions = readonly TaskBehaviorPolicyRevision[];
 export type TaskBehaviorPolicyRevisionMap = Readonly<Partial<Record<TaskType, TaskBehaviorPolicyRevisions>>>;
+export type ActiveTaskBehaviorProfileTaskType = "task" | "custom";
 
 export type TaskBehaviorPolicyField = Exclude<keyof TaskBehaviorPolicy, "id">;
 export type TaskBehaviorProfiles = Readonly<Partial<Record<TaskType, TaskBehaviorPolicy>>>;
@@ -68,6 +69,11 @@ export const STANDARD_TASK_BEHAVIOR_POLICY: TaskBehaviorPolicy = Object.freeze({
   rewards: "enabled",
 });
 
+/** Only these TaskTypes may supply revision timelines to the shared engine. */
+export function isActiveTaskBehaviorProfileTaskType(taskType: TaskType): taskType is ActiveTaskBehaviorProfileTaskType {
+  return taskType === "task" || taskType === "custom";
+}
+
 /**
  * Projection-specific policy inputs. Keep this at the engine boundary so a
  * change to one behavior concern cannot invalidate unrelated projections.
@@ -80,10 +86,10 @@ export function selectTaskBehaviorProjectionSemantics(input: {
   const taskType = input.taskType === "task" || input.taskType === undefined || input.taskType === null
     ? "task"
     : input.taskType;
-  const profile = taskType === "task" || taskType === "custom"
+  const profile = isActiveTaskBehaviorProfileTaskType(taskType)
     ? normalizeTaskBehaviorProfile(input.behaviorProfiles?.[taskType], taskType)
     : STANDARD_TASK_BEHAVIOR_POLICY;
-  const revisions = taskType === "task" || taskType === "custom"
+  const revisions = isActiveTaskBehaviorProfileTaskType(taskType)
     ? input.behaviorPolicyRevisions?.[taskType] ?? []
     : [];
   return {
@@ -251,7 +257,7 @@ export function resolveTaskBehaviorPolicy(
     return normalizeTaskBehaviorProfile(input);
   }
   if (isTaskType(input)) {
-    if (input === "task" || input === "custom") {
+    if (isActiveTaskBehaviorProfileTaskType(input)) {
       if (logicalDate && revisions?.[input]?.length) {
         return resolveTaskBehaviorPolicyForLogicalDate({ revisions: revisions[input], logicalDate });
       }

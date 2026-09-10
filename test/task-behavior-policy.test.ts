@@ -16,6 +16,7 @@ import {
   type TaskBehaviorPolicy,
   type TaskStateEngineInput,
 } from "../src/lib/task-state-engine/index.ts";
+import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
 
 const input: TaskStateEngineInput = {
   task: {
@@ -138,6 +139,53 @@ test("Task and Custom resolve independent effective-dated profiles through the s
   assert.deepEqual(customInput.behaviorPolicyRevisions, customRevisions);
   assert.deepEqual(taskInput.behaviorPolicyRevisions, [taskRevision]);
   assert.equal(evaluateTaskState({ ...customInput, action: { type: "reconcile_rollover" } }).behaviorPolicy.unresolvedOccurrence, "blank");
+  const customTimeline = buildTaskEffectiveTimeline({
+    behaviorPolicy: customInput.behaviorPolicy,
+    behaviorPolicyRevisions: customInput.behaviorPolicyRevisions,
+    task: customInput.task,
+    history: customInput.history,
+    logicalDate: "2026-09-15",
+    calendarStart: "2026-09-08",
+    calendarEnd: "2026-09-15",
+  });
+  assert.equal(customTimeline.days["2026-09-11"]?.behaviorPolicy.unresolvedOccurrence, "blank");
+});
+
+test("inactive Pursuit and Goal rows cannot enter the effective timeline through direct input", () => {
+  const inactiveRevision = {
+    id: "inactive-profile",
+    effectiveFromLogicalDate: "2026-09-01",
+    unresolvedOccurrence: "blank" as const,
+    positiveStreakOnUnhandled: "preserve" as const,
+    missedStreakOnUnhandled: "ignore" as const,
+    rewards: "disabled" as const,
+  };
+  for (const taskType of ["pursuit", "goal"] as const) {
+    const context = {
+      behaviorProfiles: {
+        [taskType]: normalizeTaskBehaviorProfile(inactiveRevision, taskType),
+      },
+      behaviorPolicyRevisions: taskType === "pursuit"
+        ? { pursuit: [inactiveRevision] }
+        : { goal: [inactiveRevision] },
+      now: input.now,
+      timezone: input.timezone,
+      logicalDayRollover: input.logicalDayRollover,
+    };
+    const engineInput = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: taskType }, [], context);
+    assert.equal(engineInput.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY, taskType);
+    assert.equal(engineInput.behaviorPolicyRevisions, undefined, taskType);
+    const timeline = buildTaskEffectiveTimeline({
+      behaviorPolicy: engineInput.behaviorPolicy,
+      behaviorPolicyRevisions: engineInput.behaviorPolicyRevisions,
+      task: engineInput.task,
+      history: engineInput.history,
+      logicalDate: "2026-09-10",
+      calendarStart: "2026-09-08",
+      calendarEnd: "2026-09-10",
+    });
+    assert.equal(timeline.days["2026-09-10"]?.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY, taskType);
+  }
 });
 
 test("the Task Engine resolves the standard policy without changing current evaluation", () => {

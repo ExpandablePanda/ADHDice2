@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.24`.
+- Current working app version: `7.13.25`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -24,6 +24,15 @@ intentionally inactive and use the Standard fallback. Browser and trusted
 command paths now receive the complete type-aware profile map, with the Edge
 Function source updated accordingly. No schema or SQL changes were required;
 Edge deployment remains pending review.
+
+## 2026-09-10 7.13.25 Inactive TaskType Revision Boundary
+
+The Task Engine input boundary now forwards effective-dated behavior
+revisions only for Task and Custom. Persisted Pursuit and Goal rows remain
+loadable for future activation, but inactive TaskTypes omit revision timelines
+and retain Standard fallback through downstream projections and command
+planning. No schema, SQL, or persistence changes were required; Edge source
+remains updated and deployment is pending review.
 
 ## 2026-09-10 7.13.23 Indexed Last-Handled Summary Construction
 

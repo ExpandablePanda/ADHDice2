@@ -3,7 +3,7 @@ import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts
 import type { CanonicalTaskScheduleBoundary } from "../task-state-canonical/types.ts";
 import { occurrenceIdentity } from "./recurrence.ts";
 import { logicalDateForTimestamp } from "./calendar.ts";
-import { resolveTaskBehaviorPolicy, type TaskBehaviorPolicyRevisionMap, type TaskBehaviorProfiles } from "./behavior-policy.ts";
+import { isActiveTaskBehaviorProfileTaskType, resolveTaskBehaviorPolicy, type TaskBehaviorPolicyRevisionMap, type TaskBehaviorProfiles } from "./behavior-policy.ts";
 import { normalizeTaskType } from "../task-type.ts";
 import type {
   TaskCalendarOverride,
@@ -226,7 +226,9 @@ function buildTaskStateEngineInput(
         : boundary.anchor_date
     : task.canonical_schedule_anchor_date ?? task.due_on;
   const taskType = normalizeTaskType(task.task_type);
-  const behaviorPolicyRevisions = context.behaviorPolicyRevisions?.[taskType] ?? [];
+  const behaviorPolicyRevisions = isActiveTaskBehaviorProfileTaskType(taskType)
+    ? context.behaviorPolicyRevisions?.[taskType] ?? []
+    : [];
 
   return {
     // Policy selection belongs to the stored-Task normalization boundary.
