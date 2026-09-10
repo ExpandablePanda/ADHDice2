@@ -225,18 +225,20 @@ function buildTaskStateEngineInput(
         ? null
         : boundary.anchor_date
     : task.canonical_schedule_anchor_date ?? task.due_on;
+  const taskType = normalizeTaskType(task.task_type);
+  const behaviorPolicyRevisions = context.behaviorPolicyRevisions?.[taskType] ?? [];
 
   return {
     // Policy selection belongs to the stored-Task normalization boundary.
     // TaskType is metadata; resolve its current profile before the pure engine sees it.
     behaviorPolicy: resolveTaskBehaviorPolicy(
-      normalizeTaskType(task.task_type),
+      taskType,
       context.behaviorProfiles,
       context.behaviorPolicyRevisions,
       logicalDateForTimestamp(context.now, context.timezone, context.logicalDayRollover),
     ),
-    ...(normalizeTaskType(task.task_type) === "task" && context.behaviorPolicyRevisions?.task?.length
-      ? { behaviorPolicyRevisions: [...context.behaviorPolicyRevisions.task] }
+    ...(behaviorPolicyRevisions.length
+      ? { behaviorPolicyRevisions: [...behaviorPolicyRevisions] }
       : {}),
     task: {
       id: task.id,

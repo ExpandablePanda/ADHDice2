@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-09
+Last reviewed: 2026-09-10
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.23`.
+- Current working app version: `7.13.24`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-10 7.13.24 Custom TaskType Behavior Profile
+
+Custom is now the first active non-Task behavior profile and resolves through
+the shared Task Engine using its own effective-dated, user-scoped revision
+timeline. Custom is currently a shared TaskType-level experimental profile;
+Task and Custom revisions remain independent. Pursuit and Goal remain
+intentionally inactive and use the Standard fallback. Browser and trusted
+command paths now receive the complete type-aware profile map, with the Edge
+Function source updated accordingly. No schema or SQL changes were required;
+Edge deployment remains pending review.
 
 ## 2026-09-10 7.13.23 Indexed Last-Handled Summary Construction
 

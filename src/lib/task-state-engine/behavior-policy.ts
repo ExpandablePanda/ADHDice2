@@ -7,8 +7,9 @@
  * or reward rules.
  *
  * The semantic fields below describe decisions the one Task Engine can
- * consume. In 7.13.18 only the persisted Task profile is active; other
- * TaskTypes retain the Standard fallback until their semantics are approved.
+ * consume. Task and Custom are the currently active configurable profiles;
+ * Pursuit and Goal retain the Standard fallback until their semantics are
+ * approved.
  */
 import type { TaskType } from "../task-type.ts";
 import { isTaskType } from "../task-type.ts";
@@ -79,10 +80,12 @@ export function selectTaskBehaviorProjectionSemantics(input: {
   const taskType = input.taskType === "task" || input.taskType === undefined || input.taskType === null
     ? "task"
     : input.taskType;
-  const profile = taskType === "task"
-    ? normalizeTaskBehaviorProfile(input.behaviorProfiles?.task, "task")
+  const profile = taskType === "task" || taskType === "custom"
+    ? normalizeTaskBehaviorProfile(input.behaviorProfiles?.[taskType], taskType)
     : STANDARD_TASK_BEHAVIOR_POLICY;
-  const revisions = taskType === "task" ? input.behaviorPolicyRevisions?.task ?? [] : [];
+  const revisions = taskType === "task" || taskType === "custom"
+    ? input.behaviorPolicyRevisions?.[taskType] ?? []
+    : [];
   return {
     activeStatus: {
       profile: { unresolvedOccurrence: profile.unresolvedOccurrence },
@@ -248,13 +251,11 @@ export function resolveTaskBehaviorPolicy(
     return normalizeTaskBehaviorProfile(input);
   }
   if (isTaskType(input)) {
-    // Only the Task profile is activated in 7.13.18. Other TaskTypes retain
-    // the safe Standard fallback until their own semantics are approved.
-    if (input === "task") {
-      if (logicalDate && revisions?.task?.length) {
-        return resolveTaskBehaviorPolicyForLogicalDate({ revisions: revisions.task, logicalDate });
+    if (input === "task" || input === "custom") {
+      if (logicalDate && revisions?.[input]?.length) {
+        return resolveTaskBehaviorPolicyForLogicalDate({ revisions: revisions[input], logicalDate });
       }
-      if (profiles?.task) return normalizeTaskBehaviorProfile(profiles.task, input);
+      if (profiles?.[input]) return normalizeTaskBehaviorProfile(profiles[input], input);
     }
     return STANDARD_TASK_BEHAVIOR_POLICY;
   }

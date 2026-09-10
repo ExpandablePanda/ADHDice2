@@ -9,10 +9,13 @@ import {
   type TaskBehaviorPolicy,
   type TaskBehaviorPolicyField,
   type TaskBehaviorPolicyRevision,
+  type TaskBehaviorPolicyRevisionMap,
 } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskType } from "@/lib/task-type";
 import {
   isMissingTaskTypeBehaviorProfilesTableError,
   loadTaskTypeBehaviorProfiles,
+  replaceTaskTypeBehaviorProfileRevision,
   taskTypeBehaviorProfileUpsertPayload,
   type TaskTypeBehaviorProfileClient,
 } from "@/lib/task-type-behavior-profiles";
@@ -20,6 +23,8 @@ import {
 type Message = { text: string; tone: "neutral" | "good" | "warn" };
 type ConfigurableTaskBehaviorField = Exclude<TaskBehaviorPolicyField, never>;
 type BrowserSupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
+const TASK_TYPE_VALUES: readonly TaskType[] = ["task", "pursuit", "goal", "custom"];
+const CONFIGURABLE_TASK_TYPES = new Set<TaskType>(["task", "custom"]);
 
 export function useTaskTypeBehaviorProfiles(
   client: BrowserSupabaseClient,
@@ -27,16 +32,19 @@ export function useTaskTypeBehaviorProfiles(
   userId: string | null,
   setMessage: Dispatch<SetStateAction<Message | null>>,
 ) {
-  const [profileRevisions, setProfileRevisions] = useState<TaskBehaviorPolicyRevision[]>([]);
+  const [profileRevisions, setProfileRevisions] = useState<TaskBehaviorPolicyRevisionMap>({});
   const [isLoading, setIsLoading] = useState(false);
-  const profiles = useMemo(() => normalizeTaskBehaviorProfiles(profileRevisions.map((revision) => ({
-    task_type: "task",
-    effective_from_logical_date: revision.effectiveFromLogicalDate,
-    unresolved_occurrence: revision.unresolvedOccurrence,
-    positive_streak_on_unhandled: revision.positiveStreakOnUnhandled,
-    missed_streak_on_unhandled: revision.missedStreakOnUnhandled,
-    rewards: revision.rewards,
-  })), currentLogicalDate), [currentLogicalDate, profileRevisions]);
+  const profiles = useMemo(() => normalizeTaskBehaviorProfiles(
+    TASK_TYPE_VALUES.flatMap((taskType) => (profileRevisions[taskType] ?? []).map((revision) => ({
+      task_type: taskType,
+      effective_from_logical_date: revision.effectiveFromLogicalDate,
+      unresolved_occurrence: revision.unresolvedOccurrence,
+      positive_streak_on_unhandled: revision.positiveStreakOnUnhandled,
+      missed_streak_on_unhandled: revision.missedStreakOnUnhandled,
+      rewards: revision.rewards,
+    }))),
+    currentLogicalDate,
+  ), [currentLogicalDate, profileRevisions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,7 +52,7 @@ export function useTaskTypeBehaviorProfiles(
       // The hook must clear user-scoped cached profiles when auth leaves the workspace.
       // This is an intentional synchronization with the external auth owner.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setProfileRevisions([]);
+      setProfileRevisions({});
       setIsLoading(false);
       return () => { cancelled = true; };
     }
@@ -54,16 +62,16 @@ export function useTaskTypeBehaviorProfiles(
       if (result.error && !isMissingTaskTypeBehaviorProfilesTableError(result.error)) {
         setMessage({ tone: "warn", text: result.error.message ?? "Could not load Task behavior settings." });
       }
-      setProfileRevisions([...result.revisions]);
+      setProfileRevisions(result.revisions);
       setIsLoading(false);
     });
     return () => { cancelled = true; };
   }, [client, setMessage, userId]);
 
-  const persist = useCallback(async (nextPolicy: TaskBehaviorPolicy) => {
-    if (!client || !userId) return false;
+  const persist = useCallback(async (taskType: TaskType, nextPolicy: TaskBehaviorPolicy) => {
+    if (!client || !userId || !CONFIGURABLE_TASK_TYPES.has(taskType)) return false;
     const result = await client.from("adhdice_task_type_behavior_profiles").upsert(
-      { ...taskTypeBehaviorProfileUpsertPayload(userId, nextPolicy, currentLogicalDate), updated_at: new Date().toISOString() },
+      { ...taskTypeBehaviorProfileUpsertPayload(userId, taskType, nextPolicy, currentLogicalDate), updated_at: new Date().toISOString() },
       { onConflict: "user_id,task_type,effective_from_logical_date" },
     );
     if (result.error) {
@@ -77,39 +85,39 @@ export function useTaskTypeBehaviorProfiles(
     return true;
   }, [client, currentLogicalDate, setMessage, userId]);
 
-  const replaceCurrentRevision = useCallback((policy: TaskBehaviorPolicy | null) => {
+  const replaceCurrentRevision = useCallback((taskType: TaskType, policy: TaskBehaviorPolicy | null) => {
     if (!policy) {
-      setProfileRevisions((current) => current.filter((revision) => revision.effectiveFromLogicalDate !== currentLogicalDate));
+      setProfileRevisions((current) => replaceTaskTypeBehaviorProfileRevision(current, taskType, currentLogicalDate, null));
       return;
     }
     const nextRevision: TaskBehaviorPolicyRevision = {
-      ...normalizeTaskBehaviorProfile(policy, "task"),
+      ...normalizeTaskBehaviorProfile(policy, taskType),
       effectiveFromLogicalDate: currentLogicalDate,
     };
-    setProfileRevisions((current) => [
-      ...current.filter((revision) => revision.effectiveFromLogicalDate !== currentLogicalDate),
-      nextRevision,
-    ].sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate)));
+    setProfileRevisions((current) => replaceTaskTypeBehaviorProfileRevision(current, taskType, currentLogicalDate, nextRevision));
   }, [currentLogicalDate]);
 
   const updateTaskBehaviorProfile = useCallback(async (
+    taskType: TaskType,
     field: ConfigurableTaskBehaviorField,
     value: TaskBehaviorPolicy[typeof field],
   ) => {
-    const current = profiles.task ?? STANDARD_TASK_BEHAVIOR_POLICY;
-    const previousRevision = profileRevisions.find((revision) => revision.effectiveFromLogicalDate === currentLogicalDate) ?? null;
-    const next = normalizeTaskBehaviorProfile({ ...current, [field]: value }, "task");
-    replaceCurrentRevision(next);
-    if (await persist(next)) return true;
-    replaceCurrentRevision(previousRevision);
+    if (!CONFIGURABLE_TASK_TYPES.has(taskType)) return false;
+    const current = profiles[taskType] ?? STANDARD_TASK_BEHAVIOR_POLICY;
+    const previousRevision = (profileRevisions[taskType] ?? []).find((revision) => revision.effectiveFromLogicalDate === currentLogicalDate) ?? null;
+    const next = normalizeTaskBehaviorProfile({ ...current, [field]: value }, taskType);
+    replaceCurrentRevision(taskType, next);
+    if (await persist(taskType, next)) return true;
+    replaceCurrentRevision(taskType, previousRevision);
     return false;
-  }, [currentLogicalDate, persist, profileRevisions, profiles.task, replaceCurrentRevision]);
+  }, [currentLogicalDate, persist, profileRevisions, profiles, replaceCurrentRevision]);
 
-  const resetTaskDefaults = useCallback(async () => {
-    const previousRevision = profileRevisions.find((revision) => revision.effectiveFromLogicalDate === currentLogicalDate) ?? null;
-    replaceCurrentRevision(STANDARD_TASK_BEHAVIOR_POLICY);
-    if (await persist(STANDARD_TASK_BEHAVIOR_POLICY)) return true;
-    replaceCurrentRevision(previousRevision);
+  const resetTaskBehaviorProfile = useCallback(async (taskType: TaskType) => {
+    if (!CONFIGURABLE_TASK_TYPES.has(taskType)) return false;
+    const previousRevision = (profileRevisions[taskType] ?? []).find((revision) => revision.effectiveFromLogicalDate === currentLogicalDate) ?? null;
+    replaceCurrentRevision(taskType, STANDARD_TASK_BEHAVIOR_POLICY);
+    if (await persist(taskType, STANDARD_TASK_BEHAVIOR_POLICY)) return true;
+    replaceCurrentRevision(taskType, previousRevision);
     return false;
   }, [currentLogicalDate, persist, profileRevisions, replaceCurrentRevision]);
 
@@ -117,7 +125,7 @@ export function useTaskTypeBehaviorProfiles(
     isLoading,
     profileRevisions,
     profiles,
-    resetTaskDefaults,
+    resetTaskBehaviorProfile,
     updateTaskBehaviorProfile,
   };
 }

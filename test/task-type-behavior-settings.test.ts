@@ -10,7 +10,7 @@ import {
   selectTaskBehaviorProjectionSemantics,
   STANDARD_TASK_BEHAVIOR_POLICY,
 } from "../src/lib/task-state-engine/behavior-policy.ts";
-import { loadTaskTypeBehaviorProfiles, taskTypeBehaviorProfileUpsertPayload } from "../src/lib/task-type-behavior-profiles.ts";
+import { loadTaskTypeBehaviorProfiles, replaceTaskTypeBehaviorProfileRevision, taskTypeBehaviorProfileUpsertPayload } from "../src/lib/task-type-behavior-profiles.ts";
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
 import { resolveTaskBehaviorPolicy } from "../src/lib/task-state-engine/behavior-policy.ts";
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
@@ -53,6 +53,13 @@ test("stored Task profile normalization and ownership filter are narrow", async 
               positive_streak_on_unhandled: "preserve",
               missed_streak_on_unhandled: "ignore",
               rewards: "disabled",
+            }, {
+              task_type: "custom",
+              effective_from_logical_date: "2026-09-08",
+              unresolved_occurrence: "blank",
+              positive_streak_on_unhandled: "preserve",
+              missed_streak_on_unhandled: "ignore",
+              rewards: "disabled",
             }],
             error: null,
           };
@@ -69,17 +76,24 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
   });
-  assert.deepEqual(result.revisions, [{
+  assert.deepEqual(result.revisions, { task: [{
     id: "task-behavior-profile",
     unresolvedOccurrence: "blank",
     positiveStreakOnUnhandled: "preserve",
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
     effectiveFromLogicalDate: "2026-09-08",
-  }]);
-  assert.deepEqual(taskTypeBehaviorProfileUpsertPayload("user-a", STANDARD_TASK_BEHAVIOR_POLICY, "2026-09-08"), {
+  }], custom: [{
+    id: "custom-behavior-profile",
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "preserve",
+    missedStreakOnUnhandled: "ignore",
+    rewards: "disabled",
+    effectiveFromLogicalDate: "2026-09-08",
+  }] });
+  assert.deepEqual(taskTypeBehaviorProfileUpsertPayload("user-a", "custom", STANDARD_TASK_BEHAVIOR_POLICY, "2026-09-08"), {
     user_id: "user-a",
-    task_type: "task",
+    task_type: "custom",
     effective_from_logical_date: "2026-09-08",
     unresolved_occurrence: "missed",
     positive_streak_on_unhandled: "break",
@@ -87,7 +101,27 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     rewards: "enabled",
   });
   assert.equal(resolveTaskBehaviorPolicy("task", result.data), result.data.task);
+  assert.equal(resolveTaskBehaviorPolicy("custom", result.data), result.data.custom);
   assert.equal(resolveTaskBehaviorPolicy("pursuit", result.data), STANDARD_TASK_BEHAVIOR_POLICY);
+});
+
+test("type-aware optimistic replacement and rollback do not cross TaskType boundaries", () => {
+  const taskRevision = revision("2026-09-08");
+  const customRevision = { ...taskRevision, id: "custom-revision", unresolvedOccurrence: "blank" as const };
+  const initial = { task: [taskRevision], custom: [customRevision] };
+  const optimisticCustom = replaceTaskTypeBehaviorProfileRevision(initial, "custom", "2026-09-08", { ...customRevision, rewards: "disabled" });
+  assert.equal(optimisticCustom.task?.[0], taskRevision);
+  assert.equal(optimisticCustom.custom?.[0]?.rewards, "disabled");
+  const rolledBackCustom = replaceTaskTypeBehaviorProfileRevision(optimisticCustom, "custom", "2026-09-08", customRevision);
+  assert.deepEqual(rolledBackCustom, initial);
+  const resetTask = replaceTaskTypeBehaviorProfileRevision(initial, "task", "2026-09-08", {
+    ...taskRevision,
+    unresolvedOccurrence: "missed",
+    positiveStreakOnUnhandled: "break",
+    missedStreakOnUnhandled: "increment",
+    rewards: "enabled",
+  });
+  assert.equal(resetTask.custom?.[0], customRevision);
 });
 
 test("profile migration is additive, constrained, and review-only", () => {
@@ -175,6 +209,39 @@ test("behavior policy revisions invalidate only the projections that consume the
   assert.notDeepEqual(streakOnly.streak, base.streak);
   assert.notDeepEqual(rewardsOnly.rewards, base.rewards);
   assert.deepEqual(rewardsOnly.streak, base.streak);
+});
+
+test("Custom policy changes invalidate the same semantic projections while staying independent from Task", () => {
+  const task = revision("2026-09-01");
+  const custom = revision("2026-09-01", {
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "preserve",
+    missedStreakOnUnhandled: "ignore",
+    rewards: "disabled",
+  });
+  const taskSemantics = selectTaskBehaviorProjectionSemantics({
+    behaviorProfiles: { task: normalizeTaskBehaviorProfile(task), custom: normalizeTaskBehaviorProfile(custom, "custom") },
+    behaviorPolicyRevisions: { task: [task], custom: [custom] },
+    taskType: "task",
+  });
+  const customSemantics = selectTaskBehaviorProjectionSemantics({
+    behaviorProfiles: { task: normalizeTaskBehaviorProfile(task), custom: normalizeTaskBehaviorProfile(custom, "custom") },
+    behaviorPolicyRevisions: { task: [task], custom: [custom] },
+    taskType: "custom",
+  });
+  assert.equal(taskSemantics.activeStatus.profile.unresolvedOccurrence, "missed");
+  assert.equal(customSemantics.activeStatus.profile.unresolvedOccurrence, "blank");
+  assert.notDeepEqual(customSemantics.activeStatus, taskSemantics.activeStatus);
+  assert.notDeepEqual(customSemantics.streak, taskSemantics.streak);
+  assert.notDeepEqual(customSemantics.rewards, taskSemantics.rewards);
+  assert.deepEqual(
+    selectTaskBehaviorProjectionSemantics({ behaviorPolicyRevisions: { task: [task], custom: [custom] }, taskType: "pursuit" }),
+    selectTaskBehaviorProjectionSemantics({ taskType: "pursuit" }),
+  );
+  assert.deepEqual(
+    selectTaskBehaviorProjectionSemantics({ behaviorPolicyRevisions: { task: [task], custom: [custom] }, taskType: "goal" }),
+    selectTaskBehaviorProjectionSemantics({ taskType: "goal" }),
+  );
 });
 
 test("Task profile selection follows the ADHDice logical-day rollover, not UTC date", () => {
@@ -357,7 +424,7 @@ test("blank historical unhandled occurrences stay blank in Calendar authority", 
   assert.equal(rows.find((row) => row.logicalDate === "2026-09-01")?.isDueOpportunity, false);
 });
 
-test("settings UI model exposes the four TaskTypes and separates future profiles", () => {
+test("settings UI model exposes configurable Task and Custom tabs with inactive Pursuit and Goal tabs", () => {
   const settingsSource = readFileSync("src/components/task-app/task-type-behavior-settings.tsx", "utf8");
   assert.deepEqual(TASK_TYPE_BEHAVIOR_TABS.map((tab) => tab.value), ["task", "pursuit", "goal", "custom"]);
   assert.match(settingsSource, /Unfinished scheduled occurrence/);
@@ -367,7 +434,11 @@ test("settings UI model exposes the four TaskTypes and separates future profiles
   assert.match(settingsSource, /System rule/);
   assert.equal(taskTypeBehaviorTabDescription("pursuit"), "Behavior profile not configured yet.");
   assert.equal(taskTypeBehaviorTabDescription("goal"), "Behavior profile not configured yet.");
-  assert.equal(taskTypeBehaviorTabDescription("custom"), "Behavior profile not configured yet.");
+  assert.equal(taskTypeBehaviorTabDescription("custom"), null);
+  assert.match(settingsSource, /activeTab === "task" \|\| activeTab === "custom"/);
+  assert.match(settingsSource, /onChange\(activeTab, "unresolvedOccurrence"/);
+  assert.match(settingsSource, /Reset \$\{activeTab === "custom" \? "Custom" : "Task"\} Defaults/);
+  assert.match(settingsSource, /leaves Task History unchanged/);
 });
 
 test("non-default policy fields affect only the shared engine decisions", () => {

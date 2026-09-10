@@ -254,9 +254,9 @@ export async function executeTrustedTaskStateCommand(input: {
     let behaviorPolicyRevisions: TaskBehaviorPolicyRevisionMap = {};
     try {
       const behaviorProfilesResult = await dependencies.loadBehaviorProfiles(input.adminClient, input.userId);
-      if (!behaviorProfilesResult.error && behaviorProfilesResult.revisions.length > 0) {
+      if (!behaviorProfilesResult.error && Object.values(behaviorProfilesResult.revisions).some((revisions) => (revisions?.length ?? 0) > 0)) {
         behaviorProfiles = behaviorProfilesResult.data;
-        behaviorPolicyRevisions = { task: behaviorProfilesResult.revisions };
+        behaviorPolicyRevisions = behaviorProfilesResult.revisions;
       }
     } catch {
       // The profile table is additive and may not be deployed with this client yet.

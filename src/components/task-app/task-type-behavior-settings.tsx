@@ -13,6 +13,7 @@ import type {
   UnresolvedOccurrenceBehavior,
 } from "@/lib/task-state-engine/behavior-policy";
 import { TASK_TYPE_BEHAVIOR_TABS, taskTypeBehaviorTabDescription, type TaskTypeBehaviorTab } from "@/lib/task-type-behavior-settings";
+import type { TaskType } from "@/lib/task-type";
 
 export type BehaviorTab = TaskTypeBehaviorTab;
 type ConfigurableField = "missedStreakOnUnhandled" | "positiveStreakOnUnhandled" | "rewards" | "unresolvedOccurrence";
@@ -51,21 +52,31 @@ function LockedRule({ children }: { children: ReactNode }) {
 }
 
 export function TaskTypeBehaviorSettings({
+  initialTaskType = "task",
   onChange,
   onReset,
-  profile,
+  profiles,
 }: {
-  onChange: (field: ConfigurableField, value: TaskBehaviorPolicy[ConfigurableField]) => Promise<boolean> | boolean;
-  onReset: () => Promise<boolean> | boolean;
-  profile: TaskBehaviorPolicy;
+  initialTaskType?: TaskType;
+  onChange: (taskType: TaskTypeBehaviorTab, field: ConfigurableField, value: TaskBehaviorPolicy[ConfigurableField]) => Promise<boolean> | boolean;
+  onReset: (taskType: TaskTypeBehaviorTab) => Promise<boolean> | boolean;
+  profiles: Partial<Record<TaskType, TaskBehaviorPolicy>>;
 }) {
-  const [activeTab, setActiveTab] = useState<BehaviorTab>("task");
+  const [activeTab, setActiveTab] = useState<BehaviorTab>(initialTaskType);
   const [resetting, setResetting] = useState(false);
+  const activeProfile = profiles[activeTab] ?? {
+    id: `${activeTab}-standard`,
+    unresolvedOccurrence: "missed" as const,
+    positiveStreakOnUnhandled: "break" as const,
+    missedStreakOnUnhandled: "increment" as const,
+    rewards: "enabled" as const,
+  };
 
   async function resetDefaults() {
-    if (!window.confirm("Reset Task behavior defaults? This changes only the Task profile and leaves Task History unchanged.")) return;
+    const label = activeTab === "custom" ? "Custom" : "Task";
+    if (!window.confirm(`Reset ${label} behavior defaults? This changes only the ${label} profile and leaves Task History unchanged.`)) return;
     setResetting(true);
-    await onReset();
+    await onReset(activeTab);
     setResetting(false);
   }
 
@@ -80,9 +91,9 @@ export function TaskTypeBehaviorSettings({
             <p className="mt-1 text-sm leading-5 text-[#7d7598] dark:text-white/55">Profiles shape one shared Task Engine. Rules are per user and per TaskType.</p>
             <p className="mt-2 text-xs leading-5 text-[#988eb9] dark:text-white/45">Configurable rules use controls. Derived effects are informational; System rules are locked.</p>
           </div>
-          {activeTab === "task" ? (
+          {activeTab === "task" || activeTab === "custom" ? (
             <AdhdChip className="gap-1.5" disabled={resetting} icon={<RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void resetDefaults(); }} tone="default">
-              {resetting ? "Resetting…" : "Reset Task Defaults"}
+              {resetting ? "Resetting…" : `Reset ${activeTab === "custom" ? "Custom" : "Task"} Defaults`}
             </AdhdChip>
           ) : null}
         </div>
@@ -98,7 +109,7 @@ export function TaskTypeBehaviorSettings({
         ))}
       </div>
 
-      {activeTab !== "task" ? (
+      {activeTab !== "task" && activeTab !== "custom" ? (
         <div className="rounded-[1rem] border border-dashed border-[#ddd6f5] bg-white px-4 py-6 text-sm text-[#7d7598] dark:border-white/12 dark:bg-white/[0.025] dark:text-white/55">
           {taskTypeBehaviorTabDescription(activeTab)}
         </div>
@@ -108,18 +119,18 @@ export function TaskTypeBehaviorSettings({
             <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Scheduled occurrences</h4>
             <Selector<UnresolvedOccurrenceBehavior>
               label="Unfinished scheduled occurrence"
-              onChange={(value) => { void onChange("unresolvedOccurrence", value); }}
+              onChange={(value) => { void onChange(activeTab, "unresolvedOccurrence", value); }}
               options={[{ label: "Mark Missed", value: "missed" }, { label: "Leave scheduled occurrence blank", value: "blank" }]}
-              value={profile.unresolvedOccurrence}
+              value={activeProfile.unresolvedOccurrence}
             />
             <p className="mt-2 text-xs leading-5 text-[#7d7598] dark:text-white/50">
-              {profile.unresolvedOccurrence === "missed"
+              {activeProfile.unresolvedOccurrence === "missed"
                 ? "When a scheduled Task passes without a handled outcome, ADHDice records it as Missed."
                 : "When a scheduled Task passes without a handled outcome, ADHDice leaves a scheduled-but-blank obligation."}
             </p>
             <div className="mt-3 space-y-2 text-xs text-[#6f6887] dark:text-white/55">
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">Derived effects</p>
-              {profile.unresolvedOccurrence === "missed" ? (
+              {activeProfile.unresolvedOccurrence === "missed" ? (
                 <>
                   <div>Mark Missed → Calendar displays Missed</div>
                   <div>Mark Missed → Missed History fact is recorded</div>
@@ -140,15 +151,15 @@ export function TaskTypeBehaviorSettings({
             <div className="grid gap-3 md:grid-cols-2">
               <Selector<PositiveStreakUnhandledBehavior>
                 label="Positive streak when scheduled occurrence is unfinished"
-                onChange={(value) => { void onChange("positiveStreakOnUnhandled", value); }}
+                onChange={(value) => { void onChange(activeTab, "positiveStreakOnUnhandled", value); }}
                 options={[{ label: "Break streak", value: "break" }, { label: "Preserve streak", value: "preserve" }]}
-                value={profile.positiveStreakOnUnhandled}
+                value={activeProfile.positiveStreakOnUnhandled}
               />
               <Selector<MissedStreakUnhandledBehavior>
                 label="Missed streak when scheduled occurrence is unfinished"
-                onChange={(value) => { void onChange("missedStreakOnUnhandled", value); }}
+                onChange={(value) => { void onChange(activeTab, "missedStreakOnUnhandled", value); }}
                 options={[{ label: "Add to missed streak", value: "increment" }, { label: "Ignore for missed streak", value: "ignore" }]}
-                value={profile.missedStreakOnUnhandled}
+                value={activeProfile.missedStreakOnUnhandled}
               />
             </div>
             <div className="mt-3"><LockedRule>Delayed → Preserve positive streak</LockedRule></div>
@@ -176,9 +187,9 @@ export function TaskTypeBehaviorSettings({
             <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Rewards</h4>
             <Selector<RewardBehavior>
               label="Rewards"
-              onChange={(value) => { void onChange("rewards", value); }}
+              onChange={(value) => { void onChange(activeTab, "rewards", value); }}
               options={[{ label: "Enabled", value: "enabled" }, { label: "Disabled", value: "disabled" }]}
-              value={profile.rewards}
+              value={activeProfile.rewards}
             />
             <p className="mt-2 text-xs leading-5 text-[#7d7598] dark:text-white/50">Successful outcomes: Done, Did My Best, and Complete. Existing earned rewards remain permanent.</p>
           </section>

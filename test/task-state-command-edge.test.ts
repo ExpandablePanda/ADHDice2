@@ -309,6 +309,18 @@ test("trusted orchestration forwards the complete Task behavior revision timelin
       rewards: "disabled",
     }),
   ];
+  const customRevision = behaviorRevision("2026-09-01", { unresolvedOccurrence: "blank" });
+  const behaviorRevisions = { task: revisions, custom: [customRevision] };
+  const behaviorProfiles = {
+    ...behaviorProfile(revisions[1]!),
+    custom: {
+      id: "custom-behavior-profile",
+      unresolvedOccurrence: customRevision.unresolvedOccurrence,
+      positiveStreakOnUnhandled: customRevision.positiveStreakOnUnhandled,
+      missedStreakOnUnhandled: customRevision.missedStreakOnUnhandled,
+      rewards: customRevision.rewards,
+    },
+  };
   let capturedContext: Parameters<typeof buildCanonicalTaskStateEngineInput>[1] | undefined;
 
   const result = await executeTrustedTaskStateCommand({
@@ -319,7 +331,7 @@ test("trusted orchestration forwards the complete Task behavior revision timelin
     dependencies: {
       loadReplayOperation: async () => ({ data: null, error: null }),
       loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
-      loadBehaviorProfiles: async () => ({ data: behaviorProfile(revisions[1]!), revisions, error: null }),
+      loadBehaviorProfiles: async () => ({ data: behaviorProfiles, revisions: behaviorRevisions, error: null }),
       buildEngineInput: (readModel, context) => {
         capturedContext = context;
         return buildCanonicalTaskStateEngineInput(readModel, context);
@@ -328,14 +340,15 @@ test("trusted orchestration forwards the complete Task behavior revision timelin
   });
 
   assert.equal(result.status, 200);
-  assert.deepEqual(capturedContext?.behaviorPolicyRevisions, { task: revisions });
+  assert.deepEqual(capturedContext?.behaviorPolicyRevisions, behaviorRevisions);
   assert.equal(capturedContext?.behaviorProfiles?.task?.rewards, "disabled");
+  assert.equal(capturedContext?.behaviorProfiles?.custom?.unresolvedOccurrence, "blank");
 });
 
 test("trusted orchestration uses the Standard fallback for empty or unavailable profile storage", async () => {
   for (const [label, behaviorResult] of [
-    ["no rows", { data: {}, revisions: [], error: null }],
-    ["unavailable table", { data: {}, revisions: [], error: { code: "42P01", message: "relation does not exist" } }],
+    ["no rows", { data: {}, revisions: {}, error: null }],
+    ["unavailable table", { data: {}, revisions: {}, error: { code: "42P01", message: "relation does not exist" } }],
   ] as const) {
     let capturedEngineInput: TaskStateEngineInput | undefined;
     const result = await executeTrustedTaskStateCommand({
@@ -386,7 +399,7 @@ test("trusted reconciliation applies each historical Task behavior revision to i
     dependencies: {
       loadReplayOperation: async () => ({ data: null, error: null }),
       loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
-      loadBehaviorProfiles: async () => ({ data: behaviorProfile(revisions[2]!), revisions, error: null }),
+      loadBehaviorProfiles: async () => ({ data: behaviorProfile(revisions[2]!), revisions: { task: revisions }, error: null }),
       buildEngineInput: (readModel, context) => {
         capturedEngineInput = buildCanonicalTaskStateEngineInput(readModel, context);
         return capturedEngineInput;
@@ -465,7 +478,7 @@ test("trusted current-logical-day reward policy prevents a new entitlement while
     dependencies: {
       loadReplayOperation: async () => ({ data: null, error: null }),
       loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
-      loadBehaviorProfiles: async () => ({ data: behaviorProfile(revisions[2]!), revisions, error: null }),
+      loadBehaviorProfiles: async () => ({ data: behaviorProfile(revisions[2]!), revisions: { task: revisions }, error: null }),
       planCommand: (state, command) => {
         capturedPlan = planTaskStateCommand(state, command);
         return capturedPlan;

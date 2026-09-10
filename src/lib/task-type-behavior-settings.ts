@@ -8,5 +8,5 @@ export const TASK_TYPE_BEHAVIOR_TABS: ReadonlyArray<{ label: string; value: Task
 ];
 
 export function taskTypeBehaviorTabDescription(tab: TaskTypeBehaviorTab) {
-  return tab === "task" ? null : "Behavior profile not configured yet.";
+  return tab === "task" || tab === "custom" ? null : "Behavior profile not configured yet.";
 }

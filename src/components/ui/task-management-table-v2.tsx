@@ -1243,8 +1243,8 @@ type TaskManagementTableV2Props = {
   onTaskTagsChange?: (taskId: string, tags: string[]) => void;
   onTaskTypeChange?: (taskId: string, taskType: TaskType) => void;
   taskTypeBehaviorProfiles?: TaskBehaviorProfiles;
-  onTaskBehaviorProfileChange?: (field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
-  onResetTaskBehaviorProfile?: () => Promise<boolean> | boolean;
+  onTaskBehaviorProfileChange?: (taskType: TaskType, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
+  onResetTaskBehaviorProfile?: (taskType: TaskType) => Promise<boolean> | boolean;
   onTaskTitleChange?: (taskId: string, title: string) => void;
   onToggleTaskSelection?: (taskId: string, options?: { additive?: boolean; range?: boolean; visibleTaskIds?: string[] }) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
@@ -9560,15 +9560,11 @@ export function TaskManagementTableV2({
                           </TaskTableChipButton>
                           <Suspense fallback={<p className="text-sm text-[#7d7598] dark:text-white/55">Loading behavior settings…</p>}>
                             <TaskTypeBehaviorSettings
-                              onChange={(field, value) => onTaskBehaviorProfileChange?.(field, value) ?? false}
-                              onReset={() => onResetTaskBehaviorProfile?.() ?? false}
-                              profile={taskTypeBehaviorProfiles?.task ?? {
-                                id: "standard-task",
-                                unresolvedOccurrence: "missed",
-                                positiveStreakOnUnhandled: "break",
-                                missedStreakOnUnhandled: "increment",
-                                rewards: "enabled",
-                              }}
+                              key={`${metadataTask.id}:${normalizeTaskType(metadataTask.taskType)}`}
+                              initialTaskType={normalizeTaskType(metadataTask.taskType)}
+                              onChange={(taskType, field, value) => onTaskBehaviorProfileChange?.(taskType, field, value) ?? false}
+                              onReset={(taskType) => onResetTaskBehaviorProfile?.(taskType) ?? false}
+                              profiles={taskTypeBehaviorProfiles ?? {}}
                             />
                           </Suspense>
                         </>
@@ -9591,7 +9587,7 @@ export function TaskManagementTableV2({
                             Behavior Settings
                           </TaskTableChipButton>
                           <p className="text-xs leading-5 text-[#7d7597] dark:text-white/50">
-                            TaskType selects a behavior profile. Task is configurable; future TaskTypes are not active yet.
+                            TaskType selects a behavior profile. Task and Custom are configurable; Pursuit and Goal are not active yet.
                           </p>
                         </>
                       )}

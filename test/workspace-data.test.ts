@@ -328,7 +328,7 @@ test("global streak-policy refresh uses one stable bulk workspace authority", as
     appSource.indexOf("const actionWorkspaceGeneration"),
   );
   const policyRevision = appSource.slice(
-    appSource.indexOf("const taskTypeBehaviorProfilesRevision"),
+    appSource.indexOf("const taskTypeBehaviorProjectionSemantics"),
     appSource.indexOf("const refreshedBehaviorProfilesRevisionRef"),
   );
   const summaryLoader = workspaceSource.slice(
@@ -344,7 +344,7 @@ test("global streak-policy refresh uses one stable bulk workspace authority", as
   assert.doesNotMatch(policyEffect, /Promise\.all\(tasks\.map/);
   assert.doesNotMatch(policyEffect, /refreshTaskHistoryStreakSummary\(task\.id\)/);
   assert.match(policyRevision, /selectTaskBehaviorProjectionSemantics/);
-  assert.match(policyRevision, /\}\)\.streak/);
+  assert.match(policyRevision, /task: taskTypeBehaviorProjectionSemantics\.task\.streak/);
   assert.doesNotMatch(policyRevision, /rewards/);
   assert.match(summaryLoader, /buildTaskHistoryStreakSummaryMapCooperatively\(nextTasks/);
   assert.match(summaryLoader, /setTaskHistoryStreakSummaries\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextSummaries\.summaries\)\)/);

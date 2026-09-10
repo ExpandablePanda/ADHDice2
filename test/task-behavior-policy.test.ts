@@ -10,6 +10,7 @@ import {
 } from "../src/lib/task-state-engine/direct-input.ts";
 import {
   evaluateTaskState,
+  normalizeTaskBehaviorProfile,
   resolveTaskBehaviorPolicy,
   STANDARD_TASK_BEHAVIOR_POLICY,
   type TaskBehaviorPolicy,
@@ -89,6 +90,54 @@ test("direct and compatibility inputs resolve policy from stored TaskType withou
     assert.equal(direct.task.id, storedTask.id);
     assert.equal(compatibility.task.id, storedTask.id);
   }
+});
+
+test("Task and Custom resolve independent effective-dated profiles through the shared engine input", () => {
+  const taskRevision = {
+    id: "task-profile",
+    effectiveFromLogicalDate: "2026-09-01",
+    unresolvedOccurrence: "missed" as const,
+    positiveStreakOnUnhandled: "break" as const,
+    missedStreakOnUnhandled: "increment" as const,
+    rewards: "enabled" as const,
+  };
+  const customRevisions = [
+    taskRevision,
+    {
+      ...taskRevision,
+      id: "custom-profile",
+      effectiveFromLogicalDate: "2026-09-10",
+      unresolvedOccurrence: "blank" as const,
+      positiveStreakOnUnhandled: "preserve" as const,
+      missedStreakOnUnhandled: "ignore" as const,
+      rewards: "disabled" as const,
+    },
+  ];
+  const profiles = {
+    task: normalizeTaskBehaviorProfile({ id: "task", ...taskRevision }),
+    custom: normalizeTaskBehaviorProfile({ id: "custom", ...customRevisions[1] }, "custom"),
+  };
+  const revisions = { task: [taskRevision], custom: customRevisions };
+  const context = {
+    behaviorProfiles: profiles,
+    behaviorPolicyRevisions: revisions,
+    now: "2026-09-15T14:00:00.000Z",
+    timezone: "UTC",
+    logicalDayRollover: "00:00",
+  };
+
+  assert.equal(resolveTaskBehaviorPolicy("custom", profiles, revisions, "2026-09-15").unresolvedOccurrence, "blank");
+  assert.equal(resolveTaskBehaviorPolicy("task", profiles, revisions, "2026-09-15").unresolvedOccurrence, "missed");
+  assert.equal(resolveTaskBehaviorPolicy("pursuit", profiles, revisions, "2026-09-15"), STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.equal(resolveTaskBehaviorPolicy("goal", profiles, revisions, "2026-09-15"), STANDARD_TASK_BEHAVIOR_POLICY);
+
+  const customInput = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: "custom" }, [], context);
+  const taskInput = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: "task" }, [], context);
+  assert.equal(customInput.behaviorPolicy?.unresolvedOccurrence, "blank");
+  assert.equal(taskInput.behaviorPolicy?.unresolvedOccurrence, "missed");
+  assert.deepEqual(customInput.behaviorPolicyRevisions, customRevisions);
+  assert.deepEqual(taskInput.behaviorPolicyRevisions, [taskRevision]);
+  assert.equal(evaluateTaskState({ ...customInput, action: { type: "reconcile_rollover" } }).behaviorPolicy.unresolvedOccurrence, "blank");
 });
 
 test("the Task Engine resolves the standard policy without changing current evaluation", () => {
