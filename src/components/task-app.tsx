@@ -1863,8 +1863,10 @@ export function TaskApp() {
   const {
     profileRevisions: taskTypeBehaviorProfileRevisions,
     profiles: taskTypeBehaviorProfiles,
+    customRulesetStateRef,
     customRulesetBehaviorPolicyRevisions,
     customRulesetAssignmentsByTaskId,
+    refreshCustomBehaviorRulesets,
     resetTaskBehaviorProfile,
     updateTaskBehaviorProfile,
   } = useTaskTypeBehaviorProfiles(supabase, todayKey, session?.user?.id ?? null, setMessage);
@@ -1895,7 +1897,7 @@ export function TaskApp() {
     behaviorProfiles: taskTypeBehaviorProfiles,
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
     namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-    customRulesetAssignmentsByTaskId,
+    customRulesetStateRef,
     currentUser: session?.user,
     isMissingTaskListManualMembershipsTableError,
     isMissingTaskListsTableError,
@@ -2922,9 +2924,13 @@ export function TaskApp() {
     options?: TaskRowUpdateOptions,
   ) => {
     const refreshedBeforeMutation = await prepareTaskMutation();
+    const refreshAssignmentState = Object.hasOwn(values, "custom_ruleset_id")
+      ? refreshCustomBehaviorRulesets
+      : options?.refreshCustomBehaviorRulesets;
     let nextOptions: TaskRowUpdateOptions = {
       ...options,
       effectiveFromLogicalDate: options?.effectiveFromLogicalDate ?? todayKey,
+      refreshCustomBehaviorRulesets: refreshAssignmentState,
     };
 
     if (refreshedBeforeMutation) {
@@ -2940,6 +2946,7 @@ export function TaskApp() {
           ...options,
           effectiveFromLogicalDate: options?.effectiveFromLogicalDate ?? todayKey,
           expectedTask: latestTaskResult.data ?? null,
+          refreshCustomBehaviorRulesets: refreshAssignmentState,
         };
       }
     }
@@ -2952,7 +2959,7 @@ export function TaskApp() {
       isMissingTaskEnergyNoneEnumError,
       nextOptions,
     );
-  }, [client, prepareTaskMutation, todayKey]);
+  }, [client, prepareTaskMutation, refreshCustomBehaviorRulesets, todayKey]);
   const currentUserIdText = session?.user?.id ?? "";
   const loadTaskCalendarOverridesForTask = useCallback(async (taskId: string) => {
     if (!currentUserIdText) return null;

@@ -161,10 +161,10 @@ export function useTaskEditorSaveAction({
         let metadataTask: Task | null = null;
         if (Object.keys(changedMetadataValues).length > 0) {
           const metadataResult = await updateTaskRowWithLegacyEnergyFallback(taskId, changedMetadataValues);
-          if (metadataResult.error || metadataResult.conflict || !metadataResult.data) {
+          if (metadataResult.error || metadataResult.conflict || metadataResult.customRulesetStateRefreshError || !metadataResult.data) {
             setMessage({
               tone: "warn",
-              text: taskCommitReconciliationFailureMessage(metadataResult.error?.message ?? (metadataResult.conflict ? buildTaskUpdateConflictMessage(metadataResult.conflict) : "No updated metadata row was returned.")),
+              text: taskCommitReconciliationFailureMessage(metadataResult.error?.message ?? metadataResult.customRulesetStateRefreshError ?? (metadataResult.conflict ? buildTaskUpdateConflictMessage(metadataResult.conflict) : "No updated metadata row was returned.")),
             });
             return null;
           }
@@ -255,6 +255,7 @@ export function useTaskEditorSaveAction({
         error,
         usedEnergyFallback,
         usedActualSecondsFallback,
+        customRulesetStateRefreshError,
       } = result;
 
       if (error) {
@@ -270,6 +271,11 @@ export function useTaskEditorSaveAction({
           setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? latestTask : task)));
         }
         setMessage({ tone: "warn", text: taskEditFailureMessage(buildTaskUpdateConflictMessage(conflict)) });
+        return null;
+      }
+
+      if (customRulesetStateRefreshError) {
+        setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(customRulesetStateRefreshError) });
         return null;
       }
 

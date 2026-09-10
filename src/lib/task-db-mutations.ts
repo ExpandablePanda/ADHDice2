@@ -10,6 +10,8 @@ export type TaskRowUpdateOptions = {
   /** Logical date on which a Custom ruleset assignment change takes effect. */
   effectiveFromLogicalDate?: string;
   expectedTask?: Task | null;
+  /** Refresh the browser-owned Custom ruleset state after the assignment RPC commits. */
+  refreshCustomBehaviorRulesets?: () => Promise<boolean>;
 };
 
 export type TaskRowDeleteOptions = {
@@ -33,6 +35,7 @@ export type UpdateTaskRowResult = {
   data: Task | null;
   error: { message: string } | null;
   conflict: TaskRowUpdateConflict | null;
+  customRulesetStateRefreshError?: string;
   reappliedOnLatestRevision: boolean;
   usedActualSecondsFallback: boolean;
   usedEnergyFallback: boolean;
@@ -367,10 +370,23 @@ async function updateTaskCustomRulesetAssignment(
       p_task_patch: patch,
     });
     if (!result.error) {
+      let customRulesetStateRefreshError: string | undefined;
+      if (result.data && options?.refreshCustomBehaviorRulesets) {
+        try {
+          if (!(await options.refreshCustomBehaviorRulesets())) {
+            customRulesetStateRefreshError = "The committed Custom ruleset assignment could not be refreshed in the browser.";
+          }
+        } catch (error) {
+          customRulesetStateRefreshError = error instanceof Error
+            ? error.message
+            : "The committed Custom ruleset assignment could not be refreshed in the browser.";
+        }
+      }
       return {
         data: (result.data as Task | null) ?? null,
         error: null,
         conflict: null,
+        ...(customRulesetStateRefreshError ? { customRulesetStateRefreshError } : {}),
         reappliedOnLatestRevision: false,
         usedActualSecondsFallback: false,
         usedEnergyFallback,

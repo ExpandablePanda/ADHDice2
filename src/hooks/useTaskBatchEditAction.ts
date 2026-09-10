@@ -38,6 +38,7 @@ type Message = {
 type UpdateTaskRowResult = {
   data: Task | null;
   error: { message: string } | null;
+  customRulesetStateRefreshError?: string;
   usedActualSecondsFallback: boolean;
   usedEnergyFallback: boolean;
 };
@@ -328,11 +329,13 @@ export function useTaskBatchEditAction({
             planSuccess = true;
           }
         } else {
-          const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues, { expectedTask: task });
+          const { data, error, customRulesetStateRefreshError, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues, { expectedTask: task });
           planFallbackUsed = usedEnergyFallback;
 
           if (error) {
             planErrorMessage = error.message;
+          } else if (customRulesetStateRefreshError) {
+            planErrorMessage = customRulesetStateRefreshError;
           } else if (!data) {
             planErrorMessage = `Task "${task.title}" updated, but no task row came back from Supabase.`;
           } else {

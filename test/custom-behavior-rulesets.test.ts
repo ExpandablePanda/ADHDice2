@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { loadCustomBehaviorRulesets } from "../src/lib/custom-behavior-rulesets.ts";
+import { updateTaskRowWithLegacyEnergyFallback } from "../src/lib/task-db-mutations.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import { buildCompatibilityTaskStateEngineInput } from "../src/lib/task-state-engine/direct-input.ts";
+import { useTaskUpdateAction } from "../src/hooks/useTaskUpdateAction.ts";
 import {
   evaluateTaskState,
   resolveTaskBehaviorPolicyForTask,
@@ -271,9 +273,17 @@ test("named ruleset loader keeps separate identities and ignores inactive rulese
     { ruleset_id: "ruleset-routine", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "missed" as const, positive_streak_on_unhandled: "break" as const, missed_streak_on_unhandled: "increment" as const, rewards: "enabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
     { ruleset_id: "ruleset-goal", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank" as const, positive_streak_on_unhandled: "preserve" as const, missed_streak_on_unhandled: "ignore" as const, rewards: "disabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
   ];
+  const assignments = [
+    { id: "assignment-practice", user_id: "owner-1", task_id: task.id, effective_from_logical_date: "2026-09-01", custom_ruleset_id: "ruleset-practice", created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+    { id: "assignment-routine", user_id: "owner-1", task_id: task.id, effective_from_logical_date: "2026-09-21", custom_ruleset_id: "ruleset-routine", created_at: "2026-09-21T00:00:00.000Z", updated_at: "2026-09-21T00:00:00.000Z" },
+  ];
   const client = {
     from(table: string) {
-      const data = table.endsWith("rulesets") ? rulesets : revisions;
+      const data = table === "adhdice_custom_behavior_rulesets"
+        ? rulesets
+        : table === "adhdice_custom_behavior_ruleset_revisions"
+          ? revisions
+          : assignments;
       return {
         select() {
           return {
@@ -289,4 +299,188 @@ test("named ruleset loader keeps separate identities and ignores inactive rulese
   assert.deepEqual(Object.keys(loaded.revisions), ["ruleset-practice", "ruleset-routine"]);
   assert.equal(loaded.revisions["ruleset-practice"]?.[0]?.unresolvedOccurrence, "blank");
   assert.equal(loaded.revisions["ruleset-routine"]?.[0]?.unresolvedOccurrence, "missed");
+  assert.deepEqual(loaded.assignmentsByTaskId[task.id], [
+    { effectiveFromLogicalDate: "2026-09-01", customRulesetId: "ruleset-practice" },
+    { effectiveFromLogicalDate: "2026-09-21", customRulesetId: "ruleset-routine" },
+  ]);
+});
+
+test("successful browser assignment mutations refresh authority before local reconciliation", async () => {
+  const assignmentTask = createTask({
+    custom_ruleset_id: "ruleset-practice",
+    due_on: "2026-09-01",
+    id: "browser-assignment-task",
+    repeat_frequency: "daily",
+    status: "pending",
+    task_type: "custom",
+  });
+  let assignmentAuthority = [
+    { effectiveFromLogicalDate: "2026-09-01", customRulesetId: "ruleset-practice" },
+  ];
+  let nextAssignmentAuthority = [
+    ...assignmentAuthority,
+    { effectiveFromLogicalDate: "2026-09-21", customRulesetId: "ruleset-routine" },
+  ];
+  let refreshCalls = 0;
+  const observedPolicies: string[] = [];
+  const client = {
+    rpc: async (_functionName: string, args: { p_task_patch: { custom_ruleset_id?: string | null } }) => ({
+      data: {
+        ...assignmentTask,
+        custom_ruleset_id: args.p_task_patch.custom_ruleset_id ?? null,
+        revision: assignmentTask.revision + refreshCalls + 1,
+      },
+      error: null,
+    }),
+  };
+  const refreshCustomBehaviorRulesets = async () => {
+    refreshCalls += 1;
+    assignmentAuthority = nextAssignmentAuthority;
+    return true;
+  };
+  const update = useTaskUpdateAction({
+    behaviorProfiles: {
+      custom: {
+        id: "generic-custom",
+        missedStreakOnUnhandled: "increment",
+        positiveStreakOnUnhandled: "break",
+        rewards: "enabled",
+        unresolvedOccurrence: "missed",
+      },
+    },
+    behaviorPolicyRevisions: { custom: [revision("generic-custom", "2026-09-01", { rewards: "disabled" })] },
+    customRulesetAssignmentsByTaskId: { [assignmentTask.id]: assignmentAuthority },
+    currentDayKey: "2026-09-21",
+    namedCustomRulesetBehaviorPolicyRevisions: namedRulesets(),
+    onTaskHistoryMutation: (_taskId, _history, nextTask) => {
+      const resolved = resolveTaskBehaviorPolicyForTask({
+        behaviorPolicyRevisions: { custom: [revision("generic-custom", "2026-09-01", { rewards: "disabled" })] },
+        behaviorProfiles: {
+          custom: {
+            id: "generic-custom",
+            missedStreakOnUnhandled: "increment",
+            positiveStreakOnUnhandled: "break",
+            rewards: "disabled",
+            unresolvedOccurrence: "missed",
+          },
+        },
+        customRulesetAssignmentsByTaskId: { [assignmentTask.id]: assignmentAuthority },
+        customRulesetId: nextTask?.custom_ruleset_id,
+        logicalDate: "2026-09-21",
+        namedCustomRulesetBehaviorPolicyRevisions: namedRulesets(),
+        taskId: assignmentTask.id,
+        taskType: "custom",
+      });
+      observedPolicies.push(`${resolved.policy.unresolvedOccurrence}/${resolved.policy.rewards}`);
+    },
+    onTasksCompleted: async () => {},
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: [assignmentTask],
+    updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
+      client as never,
+      taskId,
+      values,
+      () => false,
+      () => false,
+      { ...options, refreshCustomBehaviorRulesets },
+    ),
+  });
+
+  assert.equal(await update.updateTask(assignmentTask.id, { custom_ruleset_id: "ruleset-routine" }), true);
+  assert.equal(refreshCalls, 1);
+  assert.deepEqual(assignmentAuthority, nextAssignmentAuthority);
+  assert.equal(observedPolicies[0], "missed/enabled");
+
+  nextAssignmentAuthority = [
+    assignmentAuthority[0]!,
+    { effectiveFromLogicalDate: "2026-09-21", customRulesetId: null },
+  ];
+  assert.equal(await update.updateTask(assignmentTask.id, { custom_ruleset_id: null }), true);
+  assert.equal(refreshCalls, 2);
+  assert.deepEqual(assignmentAuthority, [
+    { effectiveFromLogicalDate: "2026-09-01", customRulesetId: "ruleset-practice" },
+    { effectiveFromLogicalDate: "2026-09-21", customRulesetId: null },
+  ]);
+  assert.equal(observedPolicies[1], "missed/disabled");
+});
+
+test("a failed assignment mutation does not publish speculative browser authority", async () => {
+  const failedTask = createTask({ id: "failed-browser-assignment", task_type: "custom", custom_ruleset_id: "ruleset-practice" });
+  const assignmentAuthority = [
+    { effectiveFromLogicalDate: "2026-09-01", customRulesetId: "ruleset-practice" },
+  ];
+  let refreshCalls = 0;
+  const result = await updateTaskRowWithLegacyEnergyFallback(
+    {
+      rpc: async () => ({ data: null, error: { message: "assignment rejected" } }),
+    } as never,
+    failedTask.id,
+    { custom_ruleset_id: "ruleset-routine" },
+    () => false,
+    () => false,
+    {
+      expectedTask: failedTask,
+      refreshCustomBehaviorRulesets: async () => {
+        refreshCalls += 1;
+        return true;
+      },
+    },
+  );
+
+  assert.equal(result.data, null);
+  assert.equal(result.error?.message, "assignment rejected");
+  assert.equal(refreshCalls, 0);
+  assert.equal(resolveTaskBehaviorPolicyForTask({
+    customRulesetAssignmentsByTaskId: { [failedTask.id]: assignmentAuthority },
+    customRulesetId: "ruleset-practice",
+    logicalDate: "2026-09-12",
+    namedCustomRulesetBehaviorPolicyRevisions: namedRulesets(),
+    taskId: failedTask.id,
+    taskType: "custom",
+  }).policy.unresolvedOccurrence, "blank");
+});
+
+test("a refreshed assignment loader retains earlier rows while replacing the same logical date", async () => {
+  const rulesets = [
+    { id: "ruleset-practice", user_id: "owner-1", name: "Practice", task_type: "custom" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+    { id: "ruleset-routine", user_id: "owner-1", name: "Routine", task_type: "custom" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+  ];
+  const revisions = [
+    { ruleset_id: "ruleset-practice", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank" as const, positive_streak_on_unhandled: "preserve" as const, missed_streak_on_unhandled: "ignore" as const, rewards: "disabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+    { ruleset_id: "ruleset-routine", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "missed" as const, positive_streak_on_unhandled: "break" as const, missed_streak_on_unhandled: "increment" as const, rewards: "enabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+  ];
+  let assignmentRows = [
+    { id: "assignment-practice", user_id: "owner-1", task_id: task.id, effective_from_logical_date: "2026-09-01", custom_ruleset_id: "ruleset-practice", created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+    { id: "assignment-current", user_id: "owner-1", task_id: task.id, effective_from_logical_date: "2026-09-21", custom_ruleset_id: "ruleset-practice", created_at: "2026-09-21T00:00:00.000Z", updated_at: "2026-09-21T00:00:00.000Z" },
+  ];
+  const client = {
+    from(table: string) {
+      const data = table === "adhdice_custom_behavior_rulesets" ? rulesets : table === "adhdice_custom_behavior_ruleset_revisions" ? revisions : assignmentRows;
+      return {
+        select() {
+          return {
+            eq: async () => ({ data, error: null }),
+            then: (resolve: (value: { data: typeof data; error: null }) => unknown) => Promise.resolve({ data, error: null }).then(resolve),
+          };
+        },
+      };
+    },
+  };
+
+  const initial = await loadCustomBehaviorRulesets(client as never, "owner-1");
+  assignmentRows = [assignmentRows[0]!, { ...assignmentRows[1]!, custom_ruleset_id: "ruleset-routine" }];
+  const refreshed = await loadCustomBehaviorRulesets(client as never, "owner-1");
+
+  assert.deepEqual(initial.assignmentsByTaskId[task.id], [
+    { effectiveFromLogicalDate: "2026-09-01", customRulesetId: "ruleset-practice" },
+    { effectiveFromLogicalDate: "2026-09-21", customRulesetId: "ruleset-practice" },
+  ]);
+  assert.deepEqual(refreshed.assignmentsByTaskId[task.id], [
+    { effectiveFromLogicalDate: "2026-09-01", customRulesetId: "ruleset-practice" },
+    { effectiveFromLogicalDate: "2026-09-21", customRulesetId: "ruleset-routine" },
+  ]);
 });

@@ -44,6 +44,12 @@ export type LoadedCustomBehaviorRulesets = {
   assignmentError?: RulesetError | null;
 };
 
+/** The browser-owned named Custom state that can be refreshed as one unit. */
+export type CustomBehaviorRulesetState = Pick<
+  LoadedCustomBehaviorRulesets,
+  "data" | "revisions" | "assignmentsByTaskId"
+>;
+
 const LOGICAL_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const POLICY_VALUES = {
   unresolved_occurrence: new Set(["missed", "blank"]),

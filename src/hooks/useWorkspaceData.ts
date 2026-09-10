@@ -19,6 +19,7 @@ import type {
 } from "@/lib/database.types";
 import { loadProfileMedia, setActiveProfileUserId, WORKSPACE_PROFILE_COLUMNS, type WorkspaceProfileRow } from "@/lib/profile-store";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
+import type { CustomBehaviorRulesetState } from "@/lib/custom-behavior-rulesets";
 import type { CanonicalTaskCalendarOverride, CanonicalTaskCommandOperation, CanonicalTaskHistoryFact, CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
 import { taskCalendarOverrideFromCanonical } from "@/lib/task-state-canonical/engine-input";
 import { projectTasksWithCanonicalScheduleBoundaries } from "@/lib/task-state-canonical/schedule-projection";
@@ -73,7 +74,7 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   behaviorProfiles: NonNullable<TaskBehaviorPolicyResolutionContext["behaviorProfiles"]>;
   behaviorPolicyRevisions: NonNullable<TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"]>;
   namedCustomRulesetBehaviorPolicyRevisions: NonNullable<TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"]>;
-  customRulesetAssignmentsByTaskId: NonNullable<TaskBehaviorPolicyResolutionContext["customRulesetAssignmentsByTaskId"]>;
+  customRulesetStateRef: MutableRefObject<CustomBehaviorRulesetState>;
   currentUser: User | null | undefined;
   mapFocusCategoryRow: (row: DbFocusCategory) => FocusCategory;
   mapFocusSessionRow: (row: DbFocusSession) => HistoricalFocusSession;
@@ -260,7 +261,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
-  customRulesetAssignmentsByTaskId,
+  customRulesetStateRef,
   currentUser,
   mapFocusCategoryRow,
   mapFocusSessionRow,
@@ -366,7 +367,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const behaviorProfilesRef = useRef(behaviorProfiles);
   const behaviorPolicyRevisionsRef = useRef(behaviorPolicyRevisions);
   const namedCustomRulesetBehaviorPolicyRevisionsRef = useRef(namedCustomRulesetBehaviorPolicyRevisions);
-  const customRulesetAssignmentsByTaskIdRef = useRef(customRulesetAssignmentsByTaskId);
 
   const setTaskHistoryTaskLoadState = useCallback((taskId: string, state: TaskHistoryTaskLoadState) => {
     taskHistoryLoadStateByTaskIdRef.current = {
@@ -442,10 +442,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   useEffect(() => {
     namedCustomRulesetBehaviorPolicyRevisionsRef.current = namedCustomRulesetBehaviorPolicyRevisions;
   }, [namedCustomRulesetBehaviorPolicyRevisions]);
-
-  useEffect(() => {
-    customRulesetAssignmentsByTaskIdRef.current = customRulesetAssignmentsByTaskId;
-  }, [customRulesetAssignmentsByTaskId]);
 
   useEffect(() => {
     shouldSkipTaskReloadRef.current = shouldSkipTaskReload;
@@ -985,7 +981,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             behaviorProfiles: behaviorProfilesRef.current,
             behaviorPolicyRevisions: behaviorPolicyRevisionsRef.current,
             namedCustomRulesetBehaviorPolicyRevisions: namedCustomRulesetBehaviorPolicyRevisionsRef.current,
-            customRulesetAssignmentsByTaskId: customRulesetAssignmentsByTaskIdRef.current,
+            customRulesetAssignmentsByTaskId: customRulesetStateRef.current.assignmentsByTaskId,
             calendarOverridesByTaskId: indexActiveCalendarOverrides(activeCalendarOverrides),
             logicalDayRollover,
             manualActionCalendarOverrides: activeCalendarOverrides,
@@ -1046,7 +1042,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             behaviorProfiles: behaviorProfilesRef.current,
             behaviorPolicyRevisions: behaviorPolicyRevisionsRef.current,
             namedCustomRulesetBehaviorPolicyRevisions: namedCustomRulesetBehaviorPolicyRevisionsRef.current,
-            customRulesetAssignmentsByTaskId: customRulesetAssignmentsByTaskIdRef.current,
+            customRulesetAssignmentsByTaskId: customRulesetStateRef.current.assignmentsByTaskId,
             calendarOverrides: activeCalendarOverrides.map(taskCalendarOverrideFromCanonical),
             manualActionCalendarOverrides: activeCalendarOverrides,
             manualActionCommandOperations,
@@ -1773,7 +1769,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
       void client.removeChannel(workspaceChannel);
     };
-  }, [currentUser?.id, supabase, suppressCategoryReload]);
+  }, [currentUser?.id, customRulesetStateRef, supabase, suppressCategoryReload]);
 
   useEffect(() => {
     if (!currentUser) {

@@ -397,6 +397,7 @@ export function useTaskUpdateAction({
       error,
       usedEnergyFallback,
       usedActualSecondsFallback,
+      customRulesetStateRefreshError,
     } = result;
 
     if (error) {
@@ -420,6 +421,12 @@ export function useTaskUpdateAction({
       return false;
     }
 
+    if (customRulesetStateRefreshError) {
+      clearPendingTaskMutations?.([taskId]);
+      setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(customRulesetStateRefreshError) });
+      return false;
+    }
+
     if (data) {
       const rawNextData = usedActualSecondsFallback && typeof values.actual_seconds === "number"
         ? { ...data, actual_seconds: values.actual_seconds }
@@ -429,7 +436,7 @@ export function useTaskUpdateAction({
         : rawNextData;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
-      if (scheduleOnlyEdit || Object.hasOwn(updateValues, "custom_ruleset_id")) {
+      if (scheduleOnlyEdit || Object.hasOwn(nextValues, "custom_ruleset_id")) {
         void onTaskHistoryMutation?.(taskId, scopedHistory, nextData);
       }
       if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {

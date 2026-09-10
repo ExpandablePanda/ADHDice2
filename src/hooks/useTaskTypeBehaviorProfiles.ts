@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import {
   normalizeTaskBehaviorProfile,
@@ -16,7 +16,9 @@ import type { TaskType } from "@/lib/task-type";
 import {
   isMissingCustomBehaviorRulesetsTableError,
   loadCustomBehaviorRulesets,
+  type CustomBehaviorRulesetState,
   type CustomBehaviorRulesetClient,
+  type LoadedCustomBehaviorRulesets,
 } from "@/lib/custom-behavior-rulesets";
 import {
   isMissingTaskTypeBehaviorProfilesTableError,
@@ -39,9 +41,16 @@ export function useTaskTypeBehaviorProfiles(
   setMessage: Dispatch<SetStateAction<Message | null>>,
 ) {
   const [profileRevisions, setProfileRevisions] = useState<TaskBehaviorPolicyRevisionMap>({});
+  const [customBehaviorRulesets, setCustomBehaviorRulesets] = useState<CustomBehaviorRulesetState["data"]>([]);
   const [customRulesetBehaviorPolicyRevisions, setCustomRulesetBehaviorPolicyRevisions] = useState<Record<string, readonly TaskBehaviorPolicyRevision[]>>({});
   const [customRulesetAssignmentsByTaskId, setCustomRulesetAssignmentsByTaskId] = useState<Record<string, readonly TaskCustomRulesetAssignment[]>>({});
   const [isLoading, setIsLoading] = useState(false);
+  const customRulesetStateRef = useRef<CustomBehaviorRulesetState>({
+    data: [],
+    revisions: {},
+    assignmentsByTaskId: {},
+  });
+  const customRulesetLoadGenerationRef = useRef(0);
   const profiles = useMemo(() => normalizeTaskBehaviorProfiles(
     TASK_TYPE_VALUES.flatMap((taskType) => (profileRevisions[taskType] ?? []).map((revision) => ({
       task_type: taskType,
@@ -54,13 +63,60 @@ export function useTaskTypeBehaviorProfiles(
     currentLogicalDate,
   ), [currentLogicalDate, profileRevisions]);
 
+  const publishCustomRulesetState = useCallback((result: LoadedCustomBehaviorRulesets) => {
+    const nextState: CustomBehaviorRulesetState = {
+      data: result.data,
+      revisions: result.revisions,
+      assignmentsByTaskId: result.assignmentsByTaskId,
+    };
+    // Publish the ref before scheduling React state so mutation follow-up
+    // reconciliation can read the committed assignment timeline immediately.
+    customRulesetStateRef.current = nextState;
+    setCustomBehaviorRulesets(nextState.data);
+    setCustomRulesetBehaviorPolicyRevisions(nextState.revisions);
+    setCustomRulesetAssignmentsByTaskId(nextState.assignmentsByTaskId);
+  }, []);
+
+  const refreshCustomBehaviorRulesets = useCallback(async () => {
+    if (!client || !userId) return false;
+    const loadGeneration = customRulesetLoadGenerationRef.current + 1;
+    customRulesetLoadGenerationRef.current = loadGeneration;
+    setIsLoading(true);
+    try {
+      const result = await loadCustomBehaviorRulesets(client as unknown as CustomBehaviorRulesetClient, userId);
+      if (customRulesetLoadGenerationRef.current !== loadGeneration) return false;
+      const customRulesetError = result.error ?? result.assignmentError;
+      if (customRulesetError && !isMissingCustomBehaviorRulesetsTableError(customRulesetError)) {
+        setMessage({ tone: "warn", text: customRulesetError.message ?? "Could not refresh Custom behavior rulesets." });
+        return false;
+      }
+      publishCustomRulesetState(result);
+      return true;
+    } catch (error) {
+      if (customRulesetLoadGenerationRef.current !== loadGeneration) return false;
+      setMessage({
+        tone: "warn",
+        text: error instanceof Error ? error.message : "Could not refresh Custom behavior rulesets.",
+      });
+      return false;
+    } finally {
+      if (customRulesetLoadGenerationRef.current === loadGeneration) {
+        setIsLoading(false);
+      }
+    }
+  }, [client, publishCustomRulesetState, setMessage, userId]);
+
   useEffect(() => {
     let cancelled = false;
+    const loadGeneration = customRulesetLoadGenerationRef.current + 1;
+    customRulesetLoadGenerationRef.current = loadGeneration;
     if (!client || !userId) {
       // The hook must clear user-scoped cached profiles when auth leaves the workspace.
       // This is an intentional synchronization with the external auth owner.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setProfileRevisions({});
+      customRulesetStateRef.current = { data: [], revisions: {}, assignmentsByTaskId: {} };
+      setCustomBehaviorRulesets([]);
       setCustomRulesetBehaviorPolicyRevisions({});
       setCustomRulesetAssignmentsByTaskId({});
       setIsLoading(false);
@@ -71,7 +127,7 @@ export function useTaskTypeBehaviorProfiles(
       loadTaskTypeBehaviorProfiles(client as unknown as TaskTypeBehaviorProfileClient, userId),
       loadCustomBehaviorRulesets(client as unknown as CustomBehaviorRulesetClient, userId),
     ]).then(([result, customRulesetsResult]) => {
-      if (cancelled) return;
+      if (cancelled || customRulesetLoadGenerationRef.current !== loadGeneration) return;
       if (result.error && !isMissingTaskTypeBehaviorProfilesTableError(result.error)) {
         setMessage({ tone: "warn", text: result.error.message ?? "Could not load Task behavior settings." });
       }
@@ -80,12 +136,13 @@ export function useTaskTypeBehaviorProfiles(
         setMessage({ tone: "warn", text: customRulesetError.message ?? "Could not load Custom behavior rulesets." });
       }
       setProfileRevisions(result.revisions);
-      setCustomRulesetBehaviorPolicyRevisions(customRulesetsResult.revisions);
-      setCustomRulesetAssignmentsByTaskId(customRulesetsResult.assignmentsByTaskId);
+      if (!customRulesetError || isMissingCustomBehaviorRulesetsTableError(customRulesetError)) {
+        publishCustomRulesetState(customRulesetsResult);
+      }
       setIsLoading(false);
     });
     return () => { cancelled = true; };
-  }, [client, setMessage, userId]);
+  }, [client, publishCustomRulesetState, setMessage, userId]);
 
   const persist = useCallback(async (taskType: TaskType, nextPolicy: TaskBehaviorPolicy) => {
     if (!client || !userId || !CONFIGURABLE_TASK_TYPES.has(taskType)) return false;
@@ -144,8 +201,11 @@ export function useTaskTypeBehaviorProfiles(
     isLoading,
     profileRevisions,
     profiles,
+    customBehaviorRulesets,
+    customRulesetStateRef,
     customRulesetBehaviorPolicyRevisions,
     customRulesetAssignmentsByTaskId,
+    refreshCustomBehaviorRulesets,
     resetTaskBehaviorProfile,
     updateTaskBehaviorProfile,
   };
