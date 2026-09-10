@@ -48,7 +48,7 @@ import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleAct
 import { createTaskHistoryCalendarReadRevision, logicalDateForTimestamp, resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
-import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import type {
   Task,
@@ -617,6 +617,7 @@ export function TaskHistoryModal({
   stateEngineContext,
   behaviorProfiles,
   behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
   calendarOverrides,
 }: {
   onClose: () => void;
@@ -633,8 +634,9 @@ export function TaskHistoryModal({
   todayDateKey: string;
   initialDateKey?: string | null;
   stateEngineContext?: { logicalDayRollover: string; now: Date | string; timezone: string };
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+  behaviorProfiles?: TaskBehaviorPolicyResolutionContext["behaviorProfiles"];
+  behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
+  namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
   calendarOverrides?: TaskCalendarOverride[];
 }) {
   const today = todayDateKey;
@@ -701,6 +703,7 @@ export function TaskHistoryModal({
         task,
         behaviorProfiles,
         behaviorPolicyRevisions,
+        namedCustomRulesetBehaviorPolicyRevisions,
       }
       : null,
     // Semantic logical-date dependencies intentionally exclude minute-level `now`.
@@ -708,6 +711,7 @@ export function TaskHistoryModal({
     [
       behaviorPolicyRevisions,
       behaviorProfiles,
+      namedCustomRulesetBehaviorPolicyRevisions,
       calendarOverrides,
       calendarLogicalDate,
       calendarEnd,
@@ -774,6 +778,7 @@ export function TaskHistoryModal({
       ? resolveTaskHistoryCalendarActionStatuses({
         behaviorPolicyRevisions,
         behaviorProfiles,
+        namedCustomRulesetBehaviorPolicyRevisions,
         history: normalizedTaskHistory,
         historicalOverride: true,
         logicalDate: selectedDate,

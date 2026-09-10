@@ -4,7 +4,7 @@ import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
 import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
 import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
-import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "./behavior-policy.ts";
+import type { TaskBehaviorPolicyResolutionContext } from "./behavior-policy.ts";
 import { selectTaskBehaviorProjectionSemantics } from "./behavior-policy.ts";
 import { createProjectionDomainRevision, forEachCooperatively, type CooperativeChunkOptions, type CooperativeChunkResult, type StableTaskProjectionCache } from "../stable-task-projection.ts";
 import { normalizeTaskType } from "../task-type.ts";
@@ -27,9 +27,7 @@ type ActiveStatusReadTask = Task & Partial<CanonicalTaskStateColumns> & {
   canonical_schedule_anchor_date?: string | null;
   canonical_schedule_boundary?: CanonicalProjectedTaskState["canonical_schedule_boundary"];
 };
-type ActiveStatusReadInput = {
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+type ActiveStatusReadInput = TaskBehaviorPolicyResolutionContext & {
   enabled?: boolean;
   historyByTaskId: Record<string, TaskHistory[]>;
   logicalDayRollover: string;
@@ -66,6 +64,7 @@ function activeStatusTaskIdentity(task: ActiveStatusReadTask) {
       : null,
     canonicalization_status: task.canonicalization_status,
     container_state: task.container_state,
+    custom_ruleset_id: task.custom_ruleset_id,
     due_on: task.due_on,
     id: task.id,
     repeat_day_of_month: task.repeat_day_of_month,
@@ -111,6 +110,8 @@ export function createActiveStatusTaskProjectionRevision(input: ActiveStatusTask
     policy: selectTaskBehaviorProjectionSemantics({
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
       behaviorProfiles: input.behaviorProfiles,
+      customRulesetId: input.task.custom_ruleset_id,
+      namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
       taskType: normalizeTaskType(input.task.task_type),
     }).activeStatus,
     task: activeStatusTaskIdentity(input.task),
@@ -152,6 +153,7 @@ export function resolveActiveTaskStatusesIncrementally(
     const taskInput = {
       behaviorProfiles: input.behaviorProfiles,
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
       history: input.historyByTaskId[task.id] ?? [],
       logicalDayRollover: input.logicalDayRollover,
       now: input.now,
@@ -188,6 +190,7 @@ export async function resolveActiveTaskStatusesIncrementallyChunked(
     const taskInput = {
       behaviorProfiles: input.behaviorProfiles,
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
       history: input.historyByTaskId[task.id] ?? [],
       logicalDayRollover: input.logicalDayRollover,
       now: input.now,
@@ -232,6 +235,7 @@ function resolveTaskStatuses(input: ActiveStatusReadInput, compatibilityOnly: bo
     const engineInput = buildInput(task, normalizedHistory, {
       behaviorProfiles: input.behaviorProfiles,
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.logicalDayRollover,

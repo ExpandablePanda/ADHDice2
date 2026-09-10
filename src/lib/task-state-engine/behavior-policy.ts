@@ -33,10 +33,18 @@ export type TaskBehaviorPolicyRevision = Readonly<TaskBehaviorPolicy & {
 
 export type TaskBehaviorPolicyRevisions = readonly TaskBehaviorPolicyRevision[];
 export type TaskBehaviorPolicyRevisionMap = Readonly<Partial<Record<TaskType, TaskBehaviorPolicyRevisions>>>;
+/** Revisions keyed by the stable identity of a reusable Custom ruleset. */
+export type NamedCustomRulesetBehaviorPolicyRevisionMap = Readonly<Record<string, TaskBehaviorPolicyRevisions>>;
 export type ActiveTaskBehaviorProfileTaskType = "task" | "custom";
 
 export type TaskBehaviorPolicyField = Exclude<keyof TaskBehaviorPolicy, "id">;
 export type TaskBehaviorProfiles = Readonly<Partial<Record<TaskType, TaskBehaviorPolicy>>>;
+
+export type TaskBehaviorPolicyResolutionContext = {
+  behaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+  namedCustomRulesetBehaviorPolicyRevisions?: NamedCustomRulesetBehaviorPolicyRevisionMap;
+};
 
 export type TaskBehaviorProjectionSemantics = {
   activeStatus: {
@@ -81,17 +89,26 @@ export function isActiveTaskBehaviorProfileTaskType(taskType: TaskType): taskTyp
 export function selectTaskBehaviorProjectionSemantics(input: {
   behaviorProfiles?: TaskBehaviorProfiles;
   behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+  customRulesetId?: string | null;
+  namedCustomRulesetBehaviorPolicyRevisions?: NamedCustomRulesetBehaviorPolicyRevisionMap;
   taskType?: TaskType | null;
 }): TaskBehaviorProjectionSemantics {
   const taskType = input.taskType === "task" || input.taskType === undefined || input.taskType === null
     ? "task"
     : input.taskType;
-  const profile = isActiveTaskBehaviorProfileTaskType(taskType)
-    ? normalizeTaskBehaviorProfile(input.behaviorProfiles?.[taskType], taskType)
-    : STANDARD_TASK_BEHAVIOR_POLICY;
-  const revisions = isActiveTaskBehaviorProfileTaskType(taskType)
-    ? input.behaviorPolicyRevisions?.[taskType] ?? []
+  const assignedCustomRulesetRevisions = taskType === "custom" && input.customRulesetId
+    ? input.namedCustomRulesetBehaviorPolicyRevisions?.[input.customRulesetId] ?? []
     : [];
+  const revisions = assignedCustomRulesetRevisions.length > 0
+    ? assignedCustomRulesetRevisions
+    : isActiveTaskBehaviorProfileTaskType(taskType) && !input.customRulesetId
+      ? input.behaviorPolicyRevisions?.[taskType] ?? []
+      : [];
+  const profile = assignedCustomRulesetRevisions.length > 0
+    ? normalizeTaskBehaviorProfile(assignedCustomRulesetRevisions.at(-1), "custom")
+    : isActiveTaskBehaviorProfileTaskType(taskType) && !input.customRulesetId
+      ? normalizeTaskBehaviorProfile(input.behaviorProfiles?.[taskType], taskType)
+      : STANDARD_TASK_BEHAVIOR_POLICY;
   return {
     activeStatus: {
       profile: { unresolvedOccurrence: profile.unresolvedOccurrence },
@@ -273,4 +290,32 @@ export function resolveTaskBehaviorPolicy(
   }
   if (profiles?.task) return normalizeTaskBehaviorProfile(profiles.task, "task");
   return STANDARD_TASK_BEHAVIOR_POLICY;
+}
+
+/**
+ * Resolve the policy selected by one stored Task. Named Custom assignments
+ * are a separate identity namespace and never fall through to the legacy
+ * TaskType-wide Custom timeline when an assignment is present.
+ */
+export function resolveTaskBehaviorPolicyForTask(input: TaskBehaviorPolicyResolutionContext & {
+  customRulesetId?: string | null;
+  logicalDate: string;
+  taskType: TaskType;
+}) {
+  const taskType = input.taskType;
+  if (taskType === "custom" && input.customRulesetId) {
+    const revisions = input.namedCustomRulesetBehaviorPolicyRevisions?.[input.customRulesetId] ?? [];
+    return {
+      policy: resolveTaskBehaviorPolicyForLogicalDate({ revisions, logicalDate: input.logicalDate }),
+      revisions,
+    };
+  }
+  if (isActiveTaskBehaviorProfileTaskType(taskType)) {
+    const revisions = input.behaviorPolicyRevisions?.[taskType] ?? [];
+    return {
+      policy: resolveTaskBehaviorPolicy(taskType, input.behaviorProfiles, input.behaviorPolicyRevisions, input.logicalDate),
+      revisions,
+    };
+  }
+  return { policy: STANDARD_TASK_BEHAVIOR_POLICY, revisions: [] as TaskBehaviorPolicyRevisions };
 }

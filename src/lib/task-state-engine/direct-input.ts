@@ -3,8 +3,8 @@ import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts
 import type { CanonicalTaskScheduleBoundary } from "../task-state-canonical/types.ts";
 import { occurrenceIdentity } from "./recurrence.ts";
 import { logicalDateForTimestamp } from "./calendar.ts";
-import { isActiveTaskBehaviorProfileTaskType, resolveTaskBehaviorPolicy, type TaskBehaviorPolicyRevisionMap, type TaskBehaviorProfiles } from "./behavior-policy.ts";
 import { normalizeTaskType } from "../task-type.ts";
+import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "./behavior-policy.ts";
 import type {
   TaskCalendarOverride,
   TaskHistoryOutcome,
@@ -38,9 +38,7 @@ export class CanonicalTaskStateAuthorityRequiredError extends Error {
   }
 }
 
-type DirectTaskStateContext = {
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+type DirectTaskStateContext = TaskBehaviorPolicyResolutionContext & {
   now: string | Date;
   timezone: string;
   logicalDayRollover: string;
@@ -226,21 +224,19 @@ function buildTaskStateEngineInput(
         : boundary.anchor_date
     : task.canonical_schedule_anchor_date ?? task.due_on;
   const taskType = normalizeTaskType(task.task_type);
-  const behaviorPolicyRevisions = isActiveTaskBehaviorProfileTaskType(taskType)
-    ? context.behaviorPolicyRevisions?.[taskType] ?? []
-    : [];
+  const policyResolution = resolveTaskBehaviorPolicyForTask({
+    ...context,
+    customRulesetId: taskType === "custom" ? task.custom_ruleset_id : null,
+    logicalDate: logicalDateForTimestamp(context.now, context.timezone, context.logicalDayRollover),
+    taskType,
+  });
 
   return {
     // Policy selection belongs to the stored-Task normalization boundary.
     // TaskType is metadata; resolve its current profile before the pure engine sees it.
-    behaviorPolicy: resolveTaskBehaviorPolicy(
-      taskType,
-      context.behaviorProfiles,
-      context.behaviorPolicyRevisions,
-      logicalDateForTimestamp(context.now, context.timezone, context.logicalDayRollover),
-    ),
-    ...(behaviorPolicyRevisions.length
-      ? { behaviorPolicyRevisions: [...behaviorPolicyRevisions] }
+    behaviorPolicy: policyResolution.policy,
+    ...(policyResolution.revisions.length
+      ? { behaviorPolicyRevisions: [...policyResolution.revisions] }
       : {}),
     task: {
       id: task.id,

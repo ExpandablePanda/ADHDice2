@@ -28,7 +28,7 @@ import {
   projectTaskWithCanonicalScheduleBoundary,
 } from "@/lib/task-state-canonical/schedule-projection";
 import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
-import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 
 type Message = {
   text: string;
@@ -42,9 +42,7 @@ type UpdateTaskRowResult = {
   usedEnergyFallback: boolean;
 };
 
-type UseTaskBatchEditActionOptions = {
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+type UseTaskBatchEditActionOptions = TaskBehaviorPolicyResolutionContext & {
   canonicalCommandExecutor?: (action: Extract<TaskStateRuntimeAction, { kind: "canonical_action" }>, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   clearListTaskSelection: () => void;
   currentDayKey: string;
@@ -76,6 +74,7 @@ type UseTaskBatchEditActionOptions = {
 export function useTaskBatchEditAction({
   behaviorProfiles,
   behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   clearListTaskSelection,
   currentDayKey,
@@ -230,6 +229,7 @@ export function useTaskBatchEditAction({
         ? evaluateTaskActionAuthority({
           behaviorProfiles,
           behaviorPolicyRevisions,
+          namedCustomRulesetBehaviorPolicyRevisions,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -242,6 +242,7 @@ export function useTaskBatchEditAction({
         ? evaluateTaskScheduleAuthority({
           behaviorProfiles,
           behaviorPolicyRevisions,
+          namedCustomRulesetBehaviorPolicyRevisions,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,

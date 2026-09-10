@@ -3,6 +3,7 @@ export {
   normalizeTaskBehaviorProfile,
   normalizeTaskBehaviorProfiles,
   resolveTaskBehaviorPolicy,
+  resolveTaskBehaviorPolicyForTask,
   selectTaskBehaviorProjectionSemantics,
   STANDARD_TASK_BEHAVIOR_POLICY,
 } from "./behavior-policy.ts";
@@ -11,8 +12,13 @@ export type {
   PositiveStreakUnhandledBehavior,
   RewardBehavior,
   TaskBehaviorProfiles,
+  NamedCustomRulesetBehaviorPolicyRevisionMap,
   TaskBehaviorPolicy,
   TaskBehaviorPolicyField,
+  TaskBehaviorPolicyResolutionContext,
+  TaskBehaviorPolicyRevision,
+  TaskBehaviorPolicyRevisionMap,
+  TaskBehaviorPolicyRevisions,
   TaskBehaviorProjectionSemantics,
   UnresolvedOccurrenceBehavior,
 } from "./behavior-policy.ts";

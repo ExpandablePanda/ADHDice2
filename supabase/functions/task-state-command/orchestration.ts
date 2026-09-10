@@ -24,8 +24,13 @@ import {
 } from "./domain.ts";
 import { deterministicUuid } from "../../../src/lib/task-state-canonical/digest.ts";
 import { logicalDateForTimestamp } from "../../../src/lib/task-state-engine/calendar.ts";
-import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "../../../src/lib/task-state-engine/behavior-policy.ts";
+import type {
+  NamedCustomRulesetBehaviorPolicyRevisionMap,
+  TaskBehaviorPolicyRevisionMap,
+  TaskBehaviorProfiles,
+} from "../../../src/lib/task-state-engine/behavior-policy.ts";
 import { loadTaskTypeBehaviorProfiles } from "../../../src/lib/task-type-behavior-profiles.ts";
+import { loadCustomBehaviorRulesets } from "../../../src/lib/custom-behavior-rulesets.ts";
 
 export type TrustedTaskStateCommandClient = CanonicalReadClient & {
   rpc(
@@ -41,6 +46,7 @@ export type TrustedTaskStateCommandResponse = {
 
 type OrchestrationDependencies = {
   loadBehaviorProfiles: typeof loadTaskTypeBehaviorProfiles;
+  loadCustomRulesets: typeof loadCustomBehaviorRulesets;
   loadReplayOperation: typeof loadCanonicalTaskCommandOperationReplay;
   loadCanonicalState: typeof loadCanonicalTaskState;
   buildEngineInput: typeof buildCanonicalTaskStateEngineInput;
@@ -63,6 +69,7 @@ type OrchestrationDependencies = {
 
 const defaultDependencies: OrchestrationDependencies = {
   loadBehaviorProfiles: loadTaskTypeBehaviorProfiles,
+  loadCustomRulesets: loadCustomBehaviorRulesets,
   loadReplayOperation: loadCanonicalTaskCommandOperationReplay,
   loadCanonicalState: loadCanonicalTaskState,
   buildEngineInput: buildCanonicalTaskStateEngineInput,
@@ -252,6 +259,7 @@ export async function executeTrustedTaskStateCommand(input: {
     };
     let behaviorProfiles: TaskBehaviorProfiles = {};
     let behaviorPolicyRevisions: TaskBehaviorPolicyRevisionMap = {};
+    let namedCustomRulesetBehaviorPolicyRevisions: NamedCustomRulesetBehaviorPolicyRevisionMap = {};
     try {
       const behaviorProfilesResult = await dependencies.loadBehaviorProfiles(input.adminClient, input.userId);
       if (!behaviorProfilesResult.error && Object.values(behaviorProfilesResult.revisions).some((revisions) => (revisions?.length ?? 0) > 0)) {
@@ -264,9 +272,20 @@ export async function executeTrustedTaskStateCommand(input: {
       behaviorProfiles = {};
       behaviorPolicyRevisions = {};
     }
+    try {
+      const customRulesetsResult = await dependencies.loadCustomRulesets(input.adminClient, input.userId);
+      if (!customRulesetsResult.error) {
+        namedCustomRulesetBehaviorPolicyRevisions = customRulesetsResult.revisions;
+      }
+    } catch {
+      // Named rulesets are additive; an unavailable foundation must preserve
+      // the legacy TaskType profile and Standard fallback behavior.
+      namedCustomRulesetBehaviorPolicyRevisions = {};
+    }
     const engineInput = dependencies.buildEngineInput(readResult.data, {
       behaviorProfiles,
       behaviorPolicyRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions,
       now,
       timezone: logicalDay.timezone,
       logicalDayRollover: logicalDay.dayStartTime,

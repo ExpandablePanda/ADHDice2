@@ -13,6 +13,11 @@ import {
 } from "@/lib/task-state-engine/behavior-policy";
 import type { TaskType } from "@/lib/task-type";
 import {
+  isMissingCustomBehaviorRulesetsTableError,
+  loadCustomBehaviorRulesets,
+  type CustomBehaviorRulesetClient,
+} from "@/lib/custom-behavior-rulesets";
+import {
   isMissingTaskTypeBehaviorProfilesTableError,
   loadTaskTypeBehaviorProfiles,
   replaceTaskTypeBehaviorProfileRevision,
@@ -33,6 +38,7 @@ export function useTaskTypeBehaviorProfiles(
   setMessage: Dispatch<SetStateAction<Message | null>>,
 ) {
   const [profileRevisions, setProfileRevisions] = useState<TaskBehaviorPolicyRevisionMap>({});
+  const [customRulesetBehaviorPolicyRevisions, setCustomRulesetBehaviorPolicyRevisions] = useState<Record<string, readonly TaskBehaviorPolicyRevision[]>>({});
   const [isLoading, setIsLoading] = useState(false);
   const profiles = useMemo(() => normalizeTaskBehaviorProfiles(
     TASK_TYPE_VALUES.flatMap((taskType) => (profileRevisions[taskType] ?? []).map((revision) => ({
@@ -53,16 +59,24 @@ export function useTaskTypeBehaviorProfiles(
       // This is an intentional synchronization with the external auth owner.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setProfileRevisions({});
+      setCustomRulesetBehaviorPolicyRevisions({});
       setIsLoading(false);
       return () => { cancelled = true; };
     }
     setIsLoading(true);
-    void loadTaskTypeBehaviorProfiles(client as unknown as TaskTypeBehaviorProfileClient, userId).then((result) => {
+    void Promise.all([
+      loadTaskTypeBehaviorProfiles(client as unknown as TaskTypeBehaviorProfileClient, userId),
+      loadCustomBehaviorRulesets(client as unknown as CustomBehaviorRulesetClient, userId),
+    ]).then(([result, customRulesetsResult]) => {
       if (cancelled) return;
       if (result.error && !isMissingTaskTypeBehaviorProfilesTableError(result.error)) {
         setMessage({ tone: "warn", text: result.error.message ?? "Could not load Task behavior settings." });
       }
+      if (customRulesetsResult.error && !isMissingCustomBehaviorRulesetsTableError(customRulesetsResult.error)) {
+        setMessage({ tone: "warn", text: customRulesetsResult.error.message ?? "Could not load Custom behavior rulesets." });
+      }
       setProfileRevisions(result.revisions);
+      setCustomRulesetBehaviorPolicyRevisions(customRulesetsResult.revisions);
       setIsLoading(false);
     });
     return () => { cancelled = true; };
@@ -125,6 +139,7 @@ export function useTaskTypeBehaviorProfiles(
     isLoading,
     profileRevisions,
     profiles,
+    customRulesetBehaviorPolicyRevisions,
     resetTaskBehaviorProfile,
     updateTaskBehaviorProfile,
   };

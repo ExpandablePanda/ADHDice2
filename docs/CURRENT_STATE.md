@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.26`.
+- Current working app version: `7.13.27`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -41,6 +41,16 @@ for an active TaskType as its baseline before that revision's effective date;
 later revisions remain effective-dated changes. Task and Custom remain active,
 while Pursuit and Goal retain Standard fallback. No schema, SQL, persistence, or
 live-data changes were required; Edge deployment remains pending review.
+
+## 2026-09-10 7.13.27 Named Custom Behavior Ruleset Foundation
+
+Added source-only persistence for reusable named Custom behavior rulesets,
+independent effective-dated revisions, and nullable `custom_ruleset_id` Task
+assignment. Assigned Custom Tasks now select their named ruleset timeline in
+browser/direct and trusted command planning; unassigned Custom Tasks retain the
+7.13.26 TaskType-level Custom profile. Pursuit and Goal remain inactive with
+Standard fallback, and existing History remains factual. No SQL or Edge source
+has been deployed; browser QA and live Supabase verification remain pending.
 
 ## 2026-09-10 7.13.23 Indexed Last-Handled Summary Construction
 

@@ -7,7 +7,7 @@ import {
 import { resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine/calendar-authority";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
-import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import type { CanonicalTaskCommandOperation, CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/types";
 import { buildTaskHistoryLastHandledSummaryMap, type TaskHistoryLastHandledSummaryMap } from "@/lib/task-history-last-handled";
 import { forEachCooperatively, type CooperativeChunkOptions } from "@/lib/stable-task-projection";
@@ -31,9 +31,7 @@ export type ChunkedTaskHistoryStreakSummaryMapResult = {
   summaries: TaskHistoryStreakSummaryMap;
 };
 
-export type TaskHistoryStreakSummaryContext = {
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+export type TaskHistoryStreakSummaryContext = TaskBehaviorPolicyResolutionContext & {
   compatibilityOnly?: boolean;
   calendarOverrides?: TaskCalendarOverride[];
   calendarOverridesByTaskId?: Readonly<Record<string, TaskCalendarOverride[]>>;
@@ -71,6 +69,7 @@ export function buildTaskHistoryStreakSummary(
   const calendarRead = resolveTaskHistoryCalendarRead({
     behaviorProfiles: context.behaviorProfiles,
     behaviorPolicyRevisions: context.behaviorPolicyRevisions,
+    namedCustomRulesetBehaviorPolicyRevisions: context.namedCustomRulesetBehaviorPolicyRevisions,
     compatibilityOnly: context.compatibilityOnly,
     calendarStart,
     calendarEnd: todayDateKey,

@@ -5,7 +5,7 @@ import { evaluateTaskState } from "./engine.ts";
 import { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
 import type { TaskHistoryChange, TaskHistoryOutcome, TaskStateHistoryRow } from "./types.ts";
-import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "./behavior-policy.ts";
+import type { TaskBehaviorPolicyResolutionContext } from "./behavior-policy.ts";
 
 const OCCURRENCE_SENSITIVE_TASK_UPDATE_FIELDS = [
   "status",
@@ -104,9 +104,7 @@ export function taskStateHistoryRowToCanonicalIntent(
   };
 }
 
-export function evaluateTaskActionAuthority(input: {
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+export function evaluateTaskActionAuthority(input: TaskBehaviorPolicyResolutionContext & {
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
@@ -181,9 +179,7 @@ export function evaluateTaskActionAuthority(input: {
  * proposed task is the schedule snapshot, while complete task-scoped History
  * remains the only source for unresolved outcomes and occurrence identity.
  */
-export function evaluateTaskScheduleAuthority(input: {
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+export function evaluateTaskScheduleAuthority(input: TaskBehaviorPolicyResolutionContext & {
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];

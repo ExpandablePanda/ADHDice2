@@ -93,6 +93,41 @@ export type TaskTypeBehaviorProfileInsert = Omit<TaskTypeBehaviorProfile, "creat
 };
 
 export type TaskTypeBehaviorProfileUpdate = Partial<Pick<TaskTypeBehaviorProfile, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "updated_at">>;
+
+export type CustomBehaviorRuleset = {
+  id: string;
+  user_id: string;
+  name: string;
+  task_type: "custom";
+  created_at: string;
+  updated_at: string;
+};
+
+export type CustomBehaviorRulesetInsert = Omit<CustomBehaviorRuleset, "created_at" | "id" | "updated_at"> & {
+  created_at?: string;
+  id?: string;
+  updated_at?: string;
+};
+
+export type CustomBehaviorRulesetUpdate = Partial<Pick<CustomBehaviorRuleset, "name" | "updated_at">>;
+
+export type CustomBehaviorRulesetRevision = {
+  ruleset_id: string;
+  effective_from_logical_date: string;
+  unresolved_occurrence: "missed" | "blank";
+  positive_streak_on_unhandled: "break" | "preserve";
+  missed_streak_on_unhandled: "increment" | "ignore";
+  rewards: "enabled" | "disabled";
+  created_at: string;
+  updated_at: string;
+};
+
+export type CustomBehaviorRulesetRevisionInsert = Omit<CustomBehaviorRulesetRevision, "created_at" | "updated_at"> & {
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type CustomBehaviorRulesetRevisionUpdate = Partial<Pick<CustomBehaviorRulesetRevision, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "updated_at">>;
 export type PursuitStatus = "active" | "paused" | "archived";
 export type Pursuit = {
   id: string;
@@ -375,6 +410,8 @@ export type Task = {
   revision: number;
   title: string;
   task_type: import("./task-type.ts").TaskType;
+  /** Nullable assignment; optional for rows/fixtures read before 7.13.27 is applied. */
+  custom_ruleset_id?: string | null;
   notes: string | null;
   status: TaskStatus;
   priority: TaskPriority;
@@ -418,6 +455,7 @@ export type TaskInsert = {
   revision?: number;
   title: string;
   task_type?: import("./task-type.ts").TaskType;
+  custom_ruleset_id?: string | null;
   notes?: string | null;
   status?: TaskStatus;
   priority?: TaskPriority;
@@ -457,6 +495,7 @@ export type TaskUpdate = Partial<
     | "revision"
     | "title"
     | "task_type"
+    | "custom_ruleset_id"
     | "notes"
     | "status"
     | "priority"
@@ -2539,6 +2578,18 @@ export type Database = {
         Row: TaskTypeBehaviorProfile;
         Insert: TaskTypeBehaviorProfileInsert;
         Update: TaskTypeBehaviorProfileUpdate;
+        Relationships: [];
+      };
+      adhdice_custom_behavior_rulesets: {
+        Row: CustomBehaviorRuleset;
+        Insert: CustomBehaviorRulesetInsert;
+        Update: CustomBehaviorRulesetUpdate;
+        Relationships: [];
+      };
+      adhdice_custom_behavior_ruleset_revisions: {
+        Row: CustomBehaviorRulesetRevision;
+        Insert: CustomBehaviorRulesetRevisionInsert;
+        Update: CustomBehaviorRulesetRevisionUpdate;
         Relationships: [];
       };
       adhdice_task_command_operations: {

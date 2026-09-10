@@ -60,5 +60,6 @@ test("Task Engine remains TaskType-agnostic while direct normalization owns poli
   assert.doesNotMatch(engine, /task_type|taskType/);
   assert.match(directInput, /normalizeTaskType\(task\.task_type\)/);
   assert.match(directInput, /const taskType = normalizeTaskType\(task\.task_type\)/);
-  assert.match(directInput, /resolveTaskBehaviorPolicy\(\s*taskType,\s*context\.behaviorProfiles/);
+  assert.match(directInput, /resolveTaskBehaviorPolicyForTask\(/);
+  assert.match(directInput, /customRulesetId:\s*taskType === "custom"\s*\?\s*task\.custom_ruleset_id\s*:\s*null/);
 });

@@ -111,10 +111,20 @@ function normalizedDraft(input: Omit<TaskInsert, "user_id">): CanonicalTaskCreat
     fail("UNSAFE_TRASH_SNAPSHOT", "Imported Trash timestamps require canonical container provenance and were not accepted.");
   }
 
+  const taskType = normalizeTaskType(input.task_type);
+  const customRulesetId = input.custom_ruleset_id ?? null;
+  if (customRulesetId !== null && !UUID_KEY.test(customRulesetId)) {
+    fail("INVALID_CUSTOM_RULESET", "Custom ruleset identity is invalid.");
+  }
+  if (customRulesetId !== null && taskType !== "custom") {
+    fail("INVALID_CUSTOM_RULESET_TASK_TYPE", "Only Custom Tasks may reference a Custom behavior ruleset.");
+  }
+
   return {
     parent_task_id: input.parent_task_id ?? null,
     title: input.title.trim(),
-    task_type: normalizeTaskType(input.task_type),
+    task_type: taskType,
+    custom_ruleset_id: customRulesetId,
     notes: input.notes ?? null,
     status: input.status ?? "pending",
     priority: input.priority ?? "normal",

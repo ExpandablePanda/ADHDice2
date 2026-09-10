@@ -21,7 +21,7 @@ import {
   projectTaskWithCanonicalScheduleBoundary,
 } from "@/lib/task-state-canonical/schedule-projection";
 import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
-import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 
 type Message = {
   text: string;
@@ -53,9 +53,7 @@ type UpdateTaskActionOptions = {
   rewardEligible?: boolean;
 };
 
-type UseTaskUpdateActionOptions = {
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+type UseTaskUpdateActionOptions = TaskBehaviorPolicyResolutionContext & {
   /** Test seam for the canonical executor; normal callers use the real executor. */
   canonicalCommandExecutor?: (action: TaskStateRuntimeCanonicalAction, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   clearPendingTaskMutations?: (taskIds: string[]) => void;
@@ -116,6 +114,7 @@ function canonicalMutationFingerprint(
 export function useTaskUpdateAction({
   behaviorProfiles,
   behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   canonicalTaskMutationState,
   clearPendingTaskMutations,
@@ -360,6 +359,7 @@ export function useTaskUpdateAction({
       ? evaluateTaskScheduleAuthority({
         behaviorProfiles,
         behaviorPolicyRevisions,
+        namedCustomRulesetBehaviorPolicyRevisions,
         history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: logicalDayNow,

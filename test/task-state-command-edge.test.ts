@@ -345,6 +345,78 @@ test("trusted orchestration forwards the complete Task behavior revision timelin
   assert.equal(capturedContext?.behaviorProfiles?.custom?.unresolvedOccurrence, "blank");
 });
 
+test("trusted assigned Custom ruleset planning matches browser/direct policy resolution", async () => {
+  const namedRevision = behaviorRevision("2026-09-01", {
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "preserve",
+    missedStreakOnUnhandled: "ignore",
+    rewards: "disabled",
+  });
+  const assignedReadModel = {
+    ...canonicalReadModel,
+    task: {
+      ...canonicalReadModel.task,
+      task_type: "custom",
+      custom_ruleset_id: "ruleset-practice",
+    },
+  } as unknown as CanonicalTaskStateReadModel;
+  let capturedEngineInput: TaskStateEngineInput | undefined;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: archiveIntent("assigned-custom-ruleset"),
+    adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: assignedReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({
+        data: {
+          custom: {
+            id: "legacy-custom",
+            unresolvedOccurrence: "missed",
+            positiveStreakOnUnhandled: "break",
+            missedStreakOnUnhandled: "increment",
+            rewards: "enabled",
+          },
+        },
+        revisions: { custom: [behaviorRevision("2026-09-01")] },
+        error: null,
+      }),
+      loadCustomRulesets: async () => ({
+        data: [],
+        revisions: { "ruleset-practice": [namedRevision] },
+        error: null,
+      }),
+      buildEngineInput: (readModel, context) => {
+        capturedEngineInput = buildCanonicalTaskStateEngineInput(readModel, context);
+        return capturedEngineInput;
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  const browserInput = buildCompatibilityTaskStateEngineInput(assignedReadModel.task, [], {
+    behaviorProfiles: {
+      custom: {
+        id: "legacy-custom",
+        unresolvedOccurrence: "missed",
+        positiveStreakOnUnhandled: "break",
+        missedStreakOnUnhandled: "increment",
+        rewards: "enabled",
+      },
+    },
+    behaviorPolicyRevisions: { custom: [behaviorRevision("2026-09-01")] },
+    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": [namedRevision] },
+    now: "2026-09-15T16:00:00.000Z",
+    timezone: "America/New_York",
+    logicalDayRollover: "06:00",
+  });
+  assert.equal(capturedEngineInput?.behaviorPolicy?.unresolvedOccurrence, "blank");
+  assert.equal(capturedEngineInput?.behaviorPolicy?.rewards, "disabled");
+  assert.deepEqual(capturedEngineInput?.behaviorPolicy, browserInput.behaviorPolicy);
+  assert.deepEqual(capturedEngineInput?.behaviorPolicyRevisions, browserInput.behaviorPolicyRevisions);
+});
+
 test("trusted orchestration uses the Standard fallback for empty or unavailable profile storage", async () => {
   for (const [label, behaviorResult] of [
     ["no rows", { data: {}, revisions: {}, error: null }],

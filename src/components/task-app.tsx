@@ -1863,6 +1863,7 @@ export function TaskApp() {
   const {
     profileRevisions: taskTypeBehaviorProfileRevisions,
     profiles: taskTypeBehaviorProfiles,
+    customRulesetBehaviorPolicyRevisions,
     resetTaskBehaviorProfile,
     updateTaskBehaviorProfile,
   } = useTaskTypeBehaviorProfiles(supabase, todayKey, session?.user?.id ?? null, setMessage);
@@ -1892,6 +1893,7 @@ export function TaskApp() {
     activePage,
     behaviorProfiles: taskTypeBehaviorProfiles,
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
     currentUser: session?.user,
     isMissingTaskListManualMembershipsTableError,
     isMissingTaskListsTableError,
@@ -1972,21 +1974,24 @@ export function TaskApp() {
   const taskTypeBehaviorProjectionSemantics = useMemo(() => ({
     task: selectTaskBehaviorProjectionSemantics({
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
       behaviorProfiles: taskTypeBehaviorProfiles,
       taskType: "task",
     }),
     custom: selectTaskBehaviorProjectionSemantics({
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
       behaviorProfiles: taskTypeBehaviorProfiles,
       taskType: "custom",
     }),
-  }), [taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles]);
+  }), [customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles]);
   const taskTypeBehaviorProfilesRevision = useMemo(
     () => createProjectionDomainRevision("task-history-streak-policy", {
       task: taskTypeBehaviorProjectionSemantics.task.streak,
       custom: taskTypeBehaviorProjectionSemantics.custom.streak,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
     }),
-    [taskTypeBehaviorProjectionSemantics],
+    [customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProjectionSemantics],
   );
   const refreshedBehaviorProfilesRevisionRef = useRef<string | null>(null);
   useEffect(() => {
@@ -2513,6 +2518,7 @@ export function TaskApp() {
             allowCanonicalAutomaticMissed: true,
             behaviorProfiles: taskTypeBehaviorProfiles,
             behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+            namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
             history: rolloverHistory,
             includeDiagnostics: diagnosticsEnabled,
             now: new Date(),
@@ -2802,8 +2808,9 @@ export function TaskApp() {
     () => createProjectionDomainRevision("task-status-behavior", {
       task: taskTypeBehaviorProjectionSemantics.task.activeStatus,
       custom: taskTypeBehaviorProjectionSemantics.custom.activeStatus,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
     }),
-    [taskTypeBehaviorProjectionSemantics],
+    [customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProjectionSemantics],
   );
   const [projectionCache] = useState(createStableTaskProjectionCache);
   const activeStatusInputRevision = combineProjectionRevisions(
@@ -2834,6 +2841,7 @@ export function TaskApp() {
     const activeStatusInput = {
       behaviorProfiles: taskTypeBehaviorProfiles,
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
       historyByTaskId: taskHistoryByTaskId,
       logicalDayRollover: dayStartTime,
       now: new Date(logicalDayNow),
@@ -3947,6 +3955,7 @@ export function TaskApp() {
     batchEdit: {
       behaviorProfiles: taskTypeBehaviorProfiles,
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
       clearListTaskSelection,
       dayStartTime,
       focusedTaskIds,
@@ -3995,6 +4004,7 @@ export function TaskApp() {
     editorSave: {
       behaviorProfiles: taskTypeBehaviorProfiles,
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
       canonicalTaskCreator: (payload, source) => insertTaskRowWithCanonicalCreation(client, payload, source),
       currentUserId: currentUserIdText,
       dayStartTime,
@@ -4055,6 +4065,7 @@ export function TaskApp() {
     update: {
       behaviorProfiles: taskTypeBehaviorProfiles,
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
       canonicalTaskMutationState: canonicalTaskMutationStateRef.current,
       clearPendingTaskMutations,
       markPendingTaskMutations,
@@ -5621,6 +5632,7 @@ export function TaskApp() {
     const completeAuthority = evaluateTaskActionAuthority({
       behaviorProfiles: taskTypeBehaviorProfiles,
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
       history: scopedHistory,
       logicalDayRollover: dayStartTime,
       now: new Date(logicalDayNow),
@@ -5822,6 +5834,7 @@ export function TaskApp() {
       ? evaluateTaskActionAuthority({
         behaviorProfiles: taskTypeBehaviorProfiles,
         behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+        namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
         history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: new Date(logicalDayNow),
@@ -6428,6 +6441,7 @@ export function TaskApp() {
     stateEngineContext: { logicalDayRollover: dayStartTime, now: new Date(logicalDayNow), timezone: userTimeZone },
     behaviorProfiles: taskTypeBehaviorProfiles,
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
   } : null;
   function togglePinnedFilter() {
     setTaskUiState((prev) => ({

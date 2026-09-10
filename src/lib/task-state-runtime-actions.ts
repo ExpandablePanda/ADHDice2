@@ -33,6 +33,7 @@ export type TaskStateOwnedUpdateField = typeof TASK_STATE_OWNED_UPDATE_FIELDS[nu
 export const TASK_METADATA_UPDATE_FIELDS = [
   "title",
   "task_type",
+  "custom_ruleset_id",
   "notes",
   "priority",
   "priority_level",

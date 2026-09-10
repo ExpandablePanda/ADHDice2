@@ -10,7 +10,7 @@ import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
 import { createProjectionDomainRevision } from "../stable-task-projection.ts";
 import type { TaskCalendarOverride, TaskHistoryOutcome } from "./types.ts";
 import type { TaskEffectiveTimeline } from "./types.ts";
-import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "./behavior-policy.ts";
+import type { TaskBehaviorPolicyResolutionContext } from "./behavior-policy.ts";
 import { selectTaskBehaviorProjectionSemantics } from "./behavior-policy.ts";
 import { normalizeTaskType } from "../task-type.ts";
 
@@ -45,9 +45,7 @@ type TaskHistoryCalendarTask = Task & Partial<CanonicalTaskStateColumns> & {
 };
 
 /** Central Calendar read bridge. Explicit History always wins in the engine. */
-export type TaskHistoryCalendarReadInput = {
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+export type TaskHistoryCalendarReadInput = TaskBehaviorPolicyResolutionContext & {
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
@@ -94,6 +92,7 @@ function taskHistoryCalendarTaskIdentity(task: TaskHistoryCalendarTask) {
     repeat_monthly_weekday: task.repeat_monthly_weekday,
     status: task.status,
     task_type: task.task_type,
+    custom_ruleset_id: task.custom_ruleset_id,
     terminal_state: task.terminal_state,
     workflow_logical_date: task.workflow_logical_date,
     workflow_state: task.workflow_state,
@@ -106,6 +105,8 @@ export function createTaskHistoryCalendarReadRevision(input: TaskHistoryCalendar
     behavior: selectTaskBehaviorProjectionSemantics({
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
       behaviorProfiles: input.behaviorProfiles,
+      customRulesetId: input.task.custom_ruleset_id,
+      namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
       taskType: normalizeTaskType(input.task.task_type),
     }).streak,
     calendarEnd: input.calendarEnd,
@@ -182,9 +183,7 @@ export function resolveTaskHistoryCalendarRead(input: TaskHistoryCalendarReadInp
   };
 }
 
-export function resolveTaskHistoryCalendarStates(input: {
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+export function resolveTaskHistoryCalendarStates(input: TaskBehaviorPolicyResolutionContext & {
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
@@ -200,9 +199,7 @@ export function resolveTaskHistoryCalendarStates(input: {
 }
 
 /** The Calendar asks the same evaluator whether an action can be offered. */
-export function resolveTaskHistoryCalendarActionStatuses(input: {
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+export function resolveTaskHistoryCalendarActionStatuses(input: TaskBehaviorPolicyResolutionContext & {
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];

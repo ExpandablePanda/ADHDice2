@@ -10,7 +10,7 @@ import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
-import type { TaskBehaviorPolicyRevisionMap, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import { isTaskStateRuntimeLifecycleTransition, TASK_METADATA_UPDATE_FIELDS, TASK_STATE_OWNED_UPDATE_FIELDS } from "@/lib/task-state-runtime-actions";
 import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
 
@@ -37,9 +37,7 @@ type SaveTaskEditorOptions = {
   taskId?: string | null;
 };
 
-type UseTaskEditorSaveActionOptions = {
-  behaviorProfiles?: TaskBehaviorProfiles;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevisionMap;
+type UseTaskEditorSaveActionOptions = TaskBehaviorPolicyResolutionContext & {
   canonicalTaskCreator?: CanonicalTaskCreator;
   canonicalTaskStateUpdate?: (taskId: string, values: TaskUpdate, options?: { manualAction?: "unscheduled_status" }) => Promise<boolean>;
   currentDayKey: string;
@@ -67,6 +65,7 @@ type UseTaskEditorSaveActionOptions = {
 export function useTaskEditorSaveAction({
   behaviorProfiles,
   behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
   canonicalTaskCreator,
   canonicalTaskStateUpdate,
   currentDayKey,
@@ -206,6 +205,7 @@ export function useTaskEditorSaveAction({
         ? evaluateTaskActionAuthority({
           behaviorProfiles,
           behaviorPolicyRevisions,
+          namedCustomRulesetBehaviorPolicyRevisions,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -218,6 +218,7 @@ export function useTaskEditorSaveAction({
         ? evaluateTaskScheduleAuthority({
           behaviorProfiles,
           behaviorPolicyRevisions,
+          namedCustomRulesetBehaviorPolicyRevisions,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,

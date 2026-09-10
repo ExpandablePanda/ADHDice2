@@ -145,6 +145,7 @@ export function createTask(params: Partial<Task> & Pick<Task, "id" | "title" | "
     parent_task_id: null,
     revision: 1,
     task_type: "task",
+    custom_ruleset_id: null,
     notes: null,
     priority: "normal",
     energy: "medium" as TaskEnergy,
