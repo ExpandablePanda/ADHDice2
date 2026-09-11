@@ -80,6 +80,7 @@ export type TaskTypeBehaviorProfile = {
   task_type: TaskType;
   effective_from_logical_date: string;
   unresolved_occurrence: "missed" | "blank";
+  /** Deprecated compatibility column; current engine semantics always break. */
   positive_streak_on_unhandled: "break" | "preserve";
   missed_streak_on_unhandled: "increment" | "ignore";
   rewards: "enabled" | "disabled";
@@ -115,6 +116,7 @@ export type CustomBehaviorRulesetRevision = {
   ruleset_id: string;
   effective_from_logical_date: string;
   unresolved_occurrence: "missed" | "blank";
+  /** Deprecated compatibility column; current engine semantics always break. */
   positive_streak_on_unhandled: "break" | "preserve";
   missed_streak_on_unhandled: "increment" | "ignore";
   rewards: "enabled" | "disabled";

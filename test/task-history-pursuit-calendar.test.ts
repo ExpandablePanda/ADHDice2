@@ -53,10 +53,12 @@ test("Task History uses only the promoted Pursuit-style calendar presentation", 
   assert.match(modal, /selectedDateSet\.has\(dateKey\)/);
   assert.match(modal, /if \(dateKey\) selectDate\(dateKey\)/);
   assert.match(modal, /<PursuitCalendarPresentation/);
-  assert.match(modal, /historyTitle="Task History"/);
+  assert.match(modal, /const taskTypeLabel = formatTaskTypeLabel\(task\.task_type, task\.custom_ruleset_id, customBehaviorRulesets\)/);
+  assert.match(modal, /historyTitle=\{taskHistoryLabel\}/);
   assert.match(modal, /historyDescription="Chronological task outcomes/);
   assert.match(modal, /<header className="flex shrink-0/);
-  assert.match(modal, /tracking-\[0\.22em\].*Task<\/p>/s);
+  assert.match(modal, /tracking-\[0\.22em\].*\{taskTypeLabel\}<\/p>/s);
+  assert.match(modal, /formatTaskTypeLabel/);
   assert.match(modal, /<EditableEntityHeaderTitle aria-label="Task title"/);
   assert.doesNotMatch(modal, /<h2[^>]*>\{taskTitle\}<\/h2>/);
   assert.doesNotMatch(modal, /CalendarMonthPresentation|Edit Selected Date|Task Status History/);

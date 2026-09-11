@@ -476,7 +476,7 @@ test("named ruleset revision updates replace today without rewriting prior revis
       ruleset_id: "ruleset-practice",
       effective_from_logical_date: "2026-09-10",
       unresolved_occurrence: "missed",
-      positive_streak_on_unhandled: "preserve",
+      positive_streak_on_unhandled: "break",
       missed_streak_on_unhandled: "increment",
       rewards: "enabled",
     },

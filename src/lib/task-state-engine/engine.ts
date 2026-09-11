@@ -63,7 +63,6 @@ function streakFor(
   if (outcome && SUCCESS.has(outcome)) return "increment_positive";
   if (outcome === "delayed") return "preserve_positive";
   if (outcome === "missed") {
-    if (unhandled && policy.positiveStreakOnUnhandled === "preserve") return "preserve_positive";
     return unhandled && policy.missedStreakOnUnhandled === "ignore" ? "preserve_missed" : "increment_missed";
   }
   if (unscheduledInactive) return "break_positive";

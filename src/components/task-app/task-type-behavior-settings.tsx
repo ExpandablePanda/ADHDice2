@@ -8,7 +8,6 @@ import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import type { CustomBehaviorRuleset } from "@/lib/database.types";
 import type {
   MissedStreakUnhandledBehavior,
-  PositiveStreakUnhandledBehavior,
   RewardBehavior,
   TaskBehaviorPolicy,
   UnresolvedOccurrenceBehavior,
@@ -18,7 +17,7 @@ import { buildTaskTypeSelectionOptions, normalizeTaskType, type TaskType } from 
 import { TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
 
 export type BehaviorTab = TaskTypeBehaviorTab;
-type ConfigurableField = "missedStreakOnUnhandled" | "positiveStreakOnUnhandled" | "rewards" | "unresolvedOccurrence";
+type ConfigurableField = "missedStreakOnUnhandled" | "rewards" | "unresolvedOccurrence";
 
 const SECTION_CLASS = "rounded-[1rem] border border-[#eee9f8] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.035]";
 
@@ -86,10 +85,9 @@ export function TaskTypeBehaviorSettings({
       setRulesetNameDraft(selectedRulesetName);
     }
   }, [selectedRulesetId, selectedRulesetName]);
-  const activeProfile = (selectedRuleset ? customBehaviorRulesetProfiles[selectedRuleset.id] : profiles[activeTab]) ?? {
+  const activeProfile: Pick<TaskBehaviorPolicy, "id" | ConfigurableField> = (selectedRuleset ? customBehaviorRulesetProfiles[selectedRuleset.id] : profiles[activeTab]) ?? {
     id: `${activeTab}-standard`,
     unresolvedOccurrence: "missed" as const,
-    positiveStreakOnUnhandled: "break" as const,
     missedStreakOnUnhandled: "increment" as const,
     rewards: "enabled" as const,
   };
@@ -264,20 +262,12 @@ export function TaskTypeBehaviorSettings({
 
           <section className={SECTION_CLASS}>
             <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Streaks</h4>
-            <div className="grid gap-3 md:grid-cols-2">
-              <Selector<PositiveStreakUnhandledBehavior>
-                label="Positive streak when scheduled occurrence is unfinished"
-                onChange={(value) => { updateActiveProfile("positiveStreakOnUnhandled", value); }}
-                options={[{ label: "Break streak", value: "break" }, { label: "Preserve streak", value: "preserve" }]}
-                value={activeProfile.positiveStreakOnUnhandled}
-              />
-              <Selector<MissedStreakUnhandledBehavior>
-                label="Missed streak when scheduled occurrence is unfinished"
-                onChange={(value) => { updateActiveProfile("missedStreakOnUnhandled", value); }}
-                options={[{ label: "Add to missed streak", value: "increment" }, { label: "Ignore for missed streak", value: "ignore" }]}
-                value={activeProfile.missedStreakOnUnhandled}
-              />
-            </div>
+            <Selector<MissedStreakUnhandledBehavior>
+              label="Missed streak when scheduled occurrence is unfinished"
+              onChange={(value) => { updateActiveProfile("missedStreakOnUnhandled", value); }}
+              options={[{ label: "Add to missed streak", value: "increment" }, { label: "Ignore for missed streak", value: "ignore" }]}
+              value={activeProfile.missedStreakOnUnhandled}
+            />
           </section>
 
           <section className={SECTION_CLASS}>

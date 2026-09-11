@@ -98,10 +98,19 @@ test("Task History modal passes active Calendar overrides into the Calendar read
 test("Task History uses the supplied timeline in the promoted shared history presentation", () => {
   assert.match(modalSource, /buildTaskHistoryRowProjections/);
   assert.match(modalSource, /<PursuitCalendarPresentation/);
-  assert.match(modalSource, /historyTitle="Task History"/);
+  assert.match(modalSource, /const taskTypeLabel = formatTaskTypeLabel\(task\.task_type, task\.custom_ruleset_id, customBehaviorRulesets\)/);
+  assert.match(modalSource, /historyTitle=\{taskHistoryLabel\}/);
   assert.match(modalSource, /historyDescription="Chronological task outcomes/);
   assert.match(modalSource, /Calculated from task timeline/);
   assert.doesNotMatch(modalSource, /\{sortedHistory\.length\} logged/);
+});
+
+test("Task History receives named Custom ruleset identity for centralized display resolution", () => {
+  const flowStart = appSource.indexOf("const taskHistoryFlow");
+  const flowEnd = appSource.indexOf("\n  function togglePinnedFilter", flowStart);
+  const flow = appSource.slice(flowStart, flowEnd);
+  assert.match(flow, /customBehaviorRulesets,/);
+  assert.match(modalSource, /customBehaviorRulesets\?: readonly Pick<CustomBehaviorRuleset, "id" \| "name" \| "task_type">\[\]/);
 });
 
 test("Task History merges active Calendar overrides and presents manual Not Due metadata", () => {

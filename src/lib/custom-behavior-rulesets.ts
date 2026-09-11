@@ -5,6 +5,7 @@ import type {
 } from "./database.types.ts";
 import {
   normalizeTaskBehaviorProfile,
+  STANDARD_TASK_BEHAVIOR_POLICY,
   type NamedCustomRulesetBehaviorPolicyRevisionMap,
   type TaskBehaviorPolicy,
   type TaskBehaviorPolicyRevision,
@@ -136,7 +137,7 @@ export function customBehaviorRulesetRevisionUpsertPayload(
     ruleset_id: rulesetId,
     effective_from_logical_date: effectiveFromLogicalDate,
     unresolved_occurrence: policy.unresolvedOccurrence,
-    positive_streak_on_unhandled: policy.positiveStreakOnUnhandled,
+    positive_streak_on_unhandled: STANDARD_TASK_BEHAVIOR_POLICY.positiveStreakOnUnhandled,
     missed_streak_on_unhandled: policy.missedStreakOnUnhandled,
     rewards: policy.rewards,
   };

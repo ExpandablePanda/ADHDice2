@@ -11,6 +11,7 @@ import {
   STANDARD_TASK_BEHAVIOR_POLICY,
 } from "../src/lib/task-state-engine/behavior-policy.ts";
 import { loadTaskTypeBehaviorProfiles, replaceTaskTypeBehaviorProfileRevision, taskTypeBehaviorProfileUpsertPayload } from "../src/lib/task-type-behavior-profiles.ts";
+import { customBehaviorRulesetRevisionUpsertPayload } from "../src/lib/custom-behavior-rulesets.ts";
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
 import { resolveTaskBehaviorPolicy } from "../src/lib/task-state-engine/behavior-policy.ts";
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
@@ -100,6 +101,15 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     missed_streak_on_unhandled: "increment",
     rewards: "enabled",
   });
+  const legacyPreservePolicy = normalizeTaskBehaviorProfile({
+    id: "legacy-preserve",
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "preserve",
+    missedStreakOnUnhandled: "ignore",
+    rewards: "disabled",
+  }, "custom");
+  assert.equal(taskTypeBehaviorProfileUpsertPayload("user-a", "custom", legacyPreservePolicy, "2026-09-08").positive_streak_on_unhandled, "break");
+  assert.equal(customBehaviorRulesetRevisionUpsertPayload("ruleset-practice", "2026-09-08", legacyPreservePolicy).positive_streak_on_unhandled, "break");
   assert.equal(resolveTaskBehaviorPolicy("task", result.data), result.data.task);
   assert.equal(resolveTaskBehaviorPolicy("custom", result.data), result.data.custom);
   assert.equal(resolveTaskBehaviorPolicy("pursuit", result.data), STANDARD_TASK_BEHAVIOR_POLICY);
@@ -342,7 +352,7 @@ function effectiveHistory(logicalDate: string, outcome: "done" | "missed", prove
   return { id: `history-${logicalDate}`, taskId: "task-settings-timeline", logicalDate, outcome, provenance, occurredAt: `${logicalDate}T12:00:00.000Z` };
 }
 
-test("Effective Timeline owns independent unhandled positive and missed streak effects", () => {
+test("unfinished scheduled occurrences always break positive streak while missed streak remains independent", () => {
   const base = {
     task: effectiveTask(),
     history: [effectiveHistory("2026-09-01", "done")],
@@ -357,8 +367,33 @@ test("Effective Timeline owns independent unhandled positive and missed streak e
   assert.equal(breakIgnore.currentMissedStreak, 0);
 
   const preserveIgnore = buildTaskEffectiveTimeline({ ...base, behaviorPolicyRevisions: [revision("2026-09-01", { unresolvedOccurrence: "blank", positiveStreakOnUnhandled: "preserve", missedStreakOnUnhandled: "ignore" })] });
-  assert.equal(preserveIgnore.currentCompletedStreak, 1);
+  assert.equal(preserveIgnore.currentCompletedStreak, 0);
   assert.equal(preserveIgnore.currentMissedStreak, 0);
+});
+
+test("legacy Preserve does not survive an unfinished scheduled occurrence between successful outcomes", () => {
+  const preservePolicy = revision("2026-09-01", {
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "preserve",
+    missedStreakOnUnhandled: "ignore",
+  });
+  const timeline = buildTaskEffectiveTimeline({
+    behaviorPolicy: normalizeTaskBehaviorProfile(preservePolicy),
+    behaviorPolicyRevisions: [preservePolicy],
+    task: effectiveTask(),
+    history: [
+      effectiveHistory("2026-09-01", "done"),
+      effectiveHistory("2026-09-02", "done"),
+      effectiveHistory("2026-09-04", "done"),
+      effectiveHistory("2026-09-05", "done"),
+    ],
+    logicalDate: "2026-09-05",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-05",
+  });
+  assert.equal(timeline.days["2026-09-03"]?.state, "unhandled_blank");
+  assert.equal(timeline.days["2026-09-03"]?.unhandled, true);
+  assert.equal(timeline.currentCompletedStreak, 2);
 });
 
 test("automatic Missed policy independently controls both authoritative streaks", () => {
@@ -400,7 +435,7 @@ test("automatic Missed policy independently controls both authoritative streaks"
   const preserveIncrement = project(evaluatePolicy({ positiveStreakOnUnhandled: "preserve", missedStreakOnUnhandled: "increment" }));
   assert.equal(preserveIncrement.automaticMissed[0]?.outcome, "missed");
   assert.equal(preserveIncrement.timeline.days["2026-09-08"]?.unhandled, true);
-  assert.equal(preserveIncrement.timeline.currentCompletedStreak, 1);
+  assert.equal(preserveIncrement.timeline.currentCompletedStreak, 0);
   assert.equal(preserveIncrement.timeline.currentMissedStreak, 1);
 
   const breakIgnore = project(evaluatePolicy({ positiveStreakOnUnhandled: "break", missedStreakOnUnhandled: "ignore" }));
@@ -489,8 +524,8 @@ test("settings UI model exposes configurable Task and Custom tabs with inactive 
   const settingsSource = readFileSync("src/components/task-app/task-type-behavior-settings.tsx", "utf8");
   assert.deepEqual(TASK_TYPE_BEHAVIOR_TABS.map((tab) => tab.value), ["task", "pursuit", "goal", "custom"]);
   assert.match(settingsSource, /Unfinished scheduled occurrence/);
-  assert.match(settingsSource, /Positive streak when scheduled occurrence is unfinished/);
   assert.match(settingsSource, /Missed streak when scheduled occurrence is unfinished/);
+  assert.doesNotMatch(settingsSource, /positiveStreakOnUnhandled|Positive streak when scheduled occurrence is unfinished|Preserve streak/);
   assert.match(settingsSource, /Derived effects/);
   assert.doesNotMatch(settingsSource, /System rule/);
   assert.match(settingsSource, /\+ New Ruleset/);
@@ -531,7 +566,7 @@ test("non-default policy fields affect only the shared engine decisions", () => 
       rewards: "enabled",
     }),
   });
-  assert.equal(missedResult.streakDisposition, "preserve_positive");
+  assert.equal(missedResult.streakDisposition, "preserve_missed");
 
   const ignoredMissedResult = evaluateTaskState({
     ...input,

@@ -74,10 +74,6 @@ function isIgnoredUnhandled(day: TaskEffectiveTimelineStreakDay) {
   return day.unhandled === true && day.behaviorPolicy?.missedStreakOnUnhandled === "ignore";
 }
 
-function isPreservedPositiveUnhandled(day: TaskEffectiveTimelineStreakDay) {
-  return day.unhandled === true && day.behaviorPolicy?.positiveStreakOnUnhandled === "preserve";
-}
-
 function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | undefined): "success" | "missed" | "break" | "neutral" | null {
   if (!day) return null;
   const { state } = day;
@@ -104,7 +100,7 @@ export function computeTaskEffectiveTimelineStreaks(
   while (cursor && Object.hasOwn(days, cursor)) {
     const day = days[cursor];
     const finalizedKind = classifyFinalizedCalendarDay(day);
-    if (!day || !finalizedKind || finalizedKind === "neutral" || isPreservedPositiveUnhandled(day)) {
+    if (!day || !finalizedKind || finalizedKind === "neutral") {
       cursor = shiftDateKey(cursor, -1);
       continue;
     }

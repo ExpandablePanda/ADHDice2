@@ -15,6 +15,11 @@ import type { TaskType } from "../task-type.ts";
 import { isTaskType } from "../task-type.ts";
 
 export type UnresolvedOccurrenceBehavior = "missed" | "blank";
+/**
+ * @deprecated Compatibility-only value for persisted pre-7.13.32 rows. The
+ * authoritative positive streak invariant always breaks on an unfinished
+ * scheduled occurrence, regardless of this value.
+ */
 export type PositiveStreakUnhandledBehavior = "break" | "preserve";
 export type MissedStreakUnhandledBehavior = "increment" | "ignore";
 export type RewardBehavior = "enabled" | "disabled";
@@ -22,6 +27,7 @@ export type RewardBehavior = "enabled" | "disabled";
 export type TaskBehaviorPolicy = Readonly<{
   id: string;
   unresolvedOccurrence: UnresolvedOccurrenceBehavior;
+  /** @deprecated Compatibility-only persistence field; never controls streak behavior. */
   positiveStreakOnUnhandled: PositiveStreakUnhandledBehavior;
   missedStreakOnUnhandled: MissedStreakUnhandledBehavior;
   rewards: RewardBehavior;
@@ -44,7 +50,8 @@ export type TaskBehaviorSelection = Readonly<{
 export type TaskBehaviorSelectionMap = Readonly<Record<string, readonly TaskBehaviorSelection[]>>;
 export type ActiveTaskBehaviorProfileTaskType = "task" | "custom";
 
-export type TaskBehaviorPolicyField = Exclude<keyof TaskBehaviorPolicy, "id">;
+/** User-configurable policy fields. Positive streak preservation is not configurable. */
+export type TaskBehaviorPolicyField = Exclude<keyof TaskBehaviorPolicy, "id" | "positiveStreakOnUnhandled">;
 export type TaskBehaviorProfiles = Readonly<Partial<Record<TaskType, TaskBehaviorPolicy>>>;
 
 export type TaskBehaviorPolicyResolutionContext = {
@@ -60,8 +67,8 @@ export type TaskBehaviorProjectionSemantics = {
     revisions: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate" | "unresolvedOccurrence">[];
   };
   streak: {
-    profile: Pick<TaskBehaviorPolicy, "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled">;
-    revisions: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate" | "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled">[];
+    profile: Pick<TaskBehaviorPolicy, "unresolvedOccurrence" | "missedStreakOnUnhandled">;
+    revisions: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate" | "unresolvedOccurrence" | "missedStreakOnUnhandled">[];
   };
   rewards: {
     profile: Pick<TaskBehaviorPolicy, "rewards">;
@@ -71,10 +78,11 @@ export type TaskBehaviorProjectionSemantics = {
 
 const POLICY_VALUES = {
   unresolvedOccurrence: new Set<UnresolvedOccurrenceBehavior>(["missed", "blank"]),
-  positiveStreakOnUnhandled: new Set<PositiveStreakUnhandledBehavior>(["break", "preserve"]),
   missedStreakOnUnhandled: new Set<MissedStreakUnhandledBehavior>(["increment", "ignore"]),
   rewards: new Set<RewardBehavior>(["enabled", "disabled"]),
 } as const;
+
+const LEGACY_POSITIVE_STREAK_VALUES = new Set<PositiveStreakUnhandledBehavior>(["break", "preserve"]);
 
 /** The behavior every existing Task uses until a later profile is selected. */
 export const STANDARD_TASK_BEHAVIOR_POLICY: TaskBehaviorPolicy = Object.freeze({
@@ -145,13 +153,11 @@ export function selectTaskBehaviorProjectionSemantics(input: {
     streak: {
       profile: {
         missedStreakOnUnhandled: profile.missedStreakOnUnhandled,
-        positiveStreakOnUnhandled: profile.positiveStreakOnUnhandled,
         unresolvedOccurrence: profile.unresolvedOccurrence,
       },
       revisions: revisions.map((revision) => ({
         effectiveFromLogicalDate: revision.effectiveFromLogicalDate,
         missedStreakOnUnhandled: revision.missedStreakOnUnhandled,
-        positiveStreakOnUnhandled: revision.positiveStreakOnUnhandled,
         unresolvedOccurrence: revision.unresolvedOccurrence,
       })),
     },
@@ -169,7 +175,11 @@ function isPolicyValue<T extends TaskBehaviorPolicyField>(field: T, value: unkno
   return POLICY_VALUES[field].has(value as never);
 }
 
-function isStandardPolicyValues(input: Pick<TaskBehaviorPolicy, TaskBehaviorPolicyField>) {
+function isLegacyPositiveStreakValue(value: unknown): value is PositiveStreakUnhandledBehavior {
+  return LEGACY_POSITIVE_STREAK_VALUES.has(value as PositiveStreakUnhandledBehavior);
+}
+
+function isStandardPolicyValues(input: Pick<TaskBehaviorPolicy, "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled" | "rewards">) {
   return input.unresolvedOccurrence === STANDARD_TASK_BEHAVIOR_POLICY.unresolvedOccurrence
     && input.positiveStreakOnUnhandled === STANDARD_TASK_BEHAVIOR_POLICY.positiveStreakOnUnhandled
     && input.missedStreakOnUnhandled === STANDARD_TASK_BEHAVIOR_POLICY.missedStreakOnUnhandled
@@ -180,6 +190,7 @@ function isStandardPolicyValues(input: Pick<TaskBehaviorPolicy, TaskBehaviorPoli
 export function normalizeTaskBehaviorProfile(input: unknown, taskType: TaskType = "task"): TaskBehaviorPolicy {
   if (typeof input !== "object" || input === null) return STANDARD_TASK_BEHAVIOR_POLICY;
   const candidate = input as Partial<TaskBehaviorPolicy>;
+  const positiveStreakOnUnhandled = candidate.positiveStreakOnUnhandled ?? "break";
   if (typeof candidate.id === "string"
     && candidate.id.trim()
     && "unresolvedOccurrence" in candidate
@@ -188,28 +199,31 @@ export function normalizeTaskBehaviorProfile(input: unknown, taskType: TaskType 
     && "rewards" in candidate) {
     const completePolicy = candidate as TaskBehaviorPolicy;
     if (isPolicyValue("unresolvedOccurrence", completePolicy.unresolvedOccurrence)
-      && isPolicyValue("positiveStreakOnUnhandled", completePolicy.positiveStreakOnUnhandled)
+      && isLegacyPositiveStreakValue(completePolicy.positiveStreakOnUnhandled)
       && isPolicyValue("missedStreakOnUnhandled", completePolicy.missedStreakOnUnhandled)
       && isPolicyValue("rewards", completePolicy.rewards)) {
       return completePolicy;
     }
   }
   if (!isPolicyValue("unresolvedOccurrence", candidate.unresolvedOccurrence)
-    || !isPolicyValue("positiveStreakOnUnhandled", candidate.positiveStreakOnUnhandled)
+    || !isLegacyPositiveStreakValue(positiveStreakOnUnhandled)
     || !isPolicyValue("missedStreakOnUnhandled", candidate.missedStreakOnUnhandled)
     || !isPolicyValue("rewards", candidate.rewards)) {
     return STANDARD_TASK_BEHAVIOR_POLICY;
   }
   const values: Pick<TaskBehaviorPolicy, TaskBehaviorPolicyField> = {
     unresolvedOccurrence: candidate.unresolvedOccurrence as UnresolvedOccurrenceBehavior,
-    positiveStreakOnUnhandled: candidate.positiveStreakOnUnhandled as PositiveStreakUnhandledBehavior,
     missedStreakOnUnhandled: candidate.missedStreakOnUnhandled as MissedStreakUnhandledBehavior,
     rewards: candidate.rewards as RewardBehavior,
   };
-  if (isStandardPolicyValues(values)) return STANDARD_TASK_BEHAVIOR_POLICY;
+  const completeValues = {
+    ...values,
+    positiveStreakOnUnhandled,
+  } as Pick<TaskBehaviorPolicy, "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled" | "rewards">;
+  if (isStandardPolicyValues(completeValues)) return STANDARD_TASK_BEHAVIOR_POLICY;
   return Object.freeze({
     id: typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `${taskType}-behavior-profile`,
-    ...values,
+    ...completeValues,
   });
 }
 

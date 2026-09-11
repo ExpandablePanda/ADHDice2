@@ -2,6 +2,7 @@ import type { TaskTypeBehaviorProfile } from "./database.types.ts";
 import {
   normalizeTaskBehaviorPolicyRevisions,
   normalizeTaskBehaviorProfiles,
+  STANDARD_TASK_BEHAVIOR_POLICY,
   type TaskBehaviorPolicy,
   type TaskBehaviorPolicyRevision,
   type TaskBehaviorPolicyRevisionMap,
@@ -35,7 +36,7 @@ export function taskTypeBehaviorProfileUpsertPayload(userId: string, taskType: T
     task_type: taskType,
     effective_from_logical_date: effectiveFromLogicalDate,
     unresolved_occurrence: policy.unresolvedOccurrence,
-    positive_streak_on_unhandled: policy.positiveStreakOnUnhandled,
+    positive_streak_on_unhandled: STANDARD_TASK_BEHAVIOR_POLICY.positiveStreakOnUnhandled,
     missed_streak_on_unhandled: policy.missedStreakOnUnhandled,
     rewards: policy.rewards,
   };

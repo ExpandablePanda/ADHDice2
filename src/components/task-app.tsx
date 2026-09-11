@@ -6474,6 +6474,7 @@ export function TaskApp() {
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
     namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
     behaviorSelectionsByTaskId,
+    customBehaviorRulesets,
   } : null;
   function togglePinnedFilter() {
     setTaskUiState((prev) => ({

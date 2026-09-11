@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.31`.
+- Current working app version: `7.13.32`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -26,6 +26,22 @@ the creation-date baseline before the new current-date selection. New Tasks are
 seeded at creation, and browser/direct/canonical/trusted resolution feeds the
 same selection timeline into the existing Task Engine. No SQL or Edge source
 has been deployed; browser QA and live Supabase verification remain pending.
+
+## 2026-09-10 7.13.32 Ruleset Streak and Task History Label Cleanup
+
+An unfinished scheduled occurrence now always breaks the derived positive
+success streak, whether the unresolved occurrence is displayed as Missed or
+Blank. Not Due and future dates remain neutral; missed-streak handling,
+rewards, explicit History facts, and existing Delay behavior are unchanged.
+The legacy `positive_streak_on_unhandled` persistence column remains accepted
+as a deprecated compatibility field, but new Task and named Custom ruleset
+writes emit `break` and the engine ignores persisted `preserve` values.
+
+Task Calendar History now resolves its header and calendar label through the
+centralized TaskType/ruleset display helper, so normal Task, Custom Default,
+named Custom, Pursuit, and Goal labels remain consistent. The shared TypeScript
+engine source used by the trusted Edge bundle changed, but no Edge Function or
+SQL deployment was performed; browser and live Supabase QA remain pending.
 
 ## 2026-09-10 7.13.24 Custom TaskType Behavior Profile
 

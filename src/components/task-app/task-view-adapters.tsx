@@ -51,10 +51,12 @@ import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import type {
+  CustomBehaviorRuleset,
   Task,
   TaskHistory as DbTaskHistory,
   TaskStatus,
 } from "@/lib/database.types";
+import { formatTaskTypeLabel } from "@/lib/task-type";
 
 type Message = {
   text: string;
@@ -619,6 +621,7 @@ export function TaskHistoryModal({
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
   behaviorSelectionsByTaskId,
+  customBehaviorRulesets = [],
   calendarOverrides,
 }: {
   onClose: () => void;
@@ -639,9 +642,12 @@ export function TaskHistoryModal({
   behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
   namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
   behaviorSelectionsByTaskId?: TaskBehaviorPolicyResolutionContext["behaviorSelectionsByTaskId"];
+  customBehaviorRulesets?: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type">[];
   calendarOverrides?: TaskCalendarOverride[];
 }) {
   const today = todayDateKey;
+  const taskTypeLabel = formatTaskTypeLabel(task.task_type, task.custom_ruleset_id, customBehaviorRulesets);
+  const taskHistoryLabel = `${taskTypeLabel} History`;
   const days = buildTaskHistoryCalendarDateKeys(today);
   const normalizedTaskHistory = useMemo(
     () => deduplicateTaskHistoryByLogicalDate(taskHistory),
@@ -1008,7 +1014,7 @@ export function TaskHistoryModal({
 
   const taskCalendarSection = calendarRead ? (
     <PursuitCalendarPresentation
-      ariaLabel="Task History"
+      ariaLabel={taskHistoryLabel}
       description="Review and update this task’s outcomes by date."
       historyDescription="Chronological task outcomes, due dates, and attached notes."
       historyEntries={historyRows.map((row) => ({
@@ -1030,7 +1036,7 @@ export function TaskHistoryModal({
         { label: "Best streak", value: String(stats.bestStreak) },
         { label: "Logged days", value: String(stats.loggedDays) },
       ]}
-      historyTitle="Task History"
+      historyTitle={taskHistoryLabel}
       monthDays={taskCalendarMonthDays}
       monthLabel={formatPursuitCalendarMonth(taskCalendarMonthKey, stateEngineContext?.timezone ?? "UTC")}
       nextMonthDisabled={monthValue(displayedMonth) >= monthValue(lastCalendarMonth)}
@@ -1069,10 +1075,10 @@ export function TaskHistoryModal({
   ) : null;
 
   return (
-    <ModalShell className="flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden rounded-none border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] sm:h-auto sm:max-h-[calc(100vh-2rem)] sm:rounded-[2.4rem] sm:p-6 dark:border-white/10 dark:bg-[#171328]" label="Task history" onClose={onClose}>
+    <ModalShell className="flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden rounded-none border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] sm:h-auto sm:max-h-[calc(100vh-2rem)] sm:rounded-[2.4rem] sm:p-6 dark:border-white/10 dark:bg-[#171328]" label={`${taskHistoryLabel} calendar`} onClose={onClose}>
       <header className="flex shrink-0 items-start justify-between gap-4 border-b border-[#eee9f8] pb-4 dark:border-white/10">
         <div className="min-w-0">
-          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">Task</p>
+          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{taskTypeLabel}</p>
           <EditableEntityHeaderTitle aria-label="Task title" onCancel={cancelTaskTitle} onChange={setTaskTitleDraft} onCommit={commitTaskTitle} placeholder="Name this Task" value={taskTitleDraft} />
         </div>
         <AdhdIconButton aria-label="Close task history" onClick={onClose} size="sm" title="Close" variant="rowToolbar"><X /></AdhdIconButton>
