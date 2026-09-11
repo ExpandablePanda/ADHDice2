@@ -74,6 +74,7 @@ create table public.adhdice_custom_behavior_rulesets (
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null check (length(btrim(name)) > 0),
   task_type text not null default 'custom' check (task_type = 'custom'),
+  deleted_at timestamptz null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (id),
@@ -123,6 +124,89 @@ create table public.adhdice_task_behavior_selections (
   constraint adhdice_task_behavior_selections_custom_ruleset_task_type_check
     check (custom_ruleset_id is null or task_type = 'custom')
 );
+
+-- 7.13.33 tombstones named Custom identities while preserving historical
+-- revisions and selection references. New/current references require an active
+-- identity; historical reads are not filtered by this guard.
+create or replace function public.adhdice_validate_active_custom_behavior_ruleset_reference()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $function$
+begin
+  if new.custom_ruleset_id is null then
+    return new;
+  end if;
+  if not exists (
+    select 1 from public.adhdice_custom_behavior_rulesets ruleset
+     where ruleset.user_id = new.user_id
+       and ruleset.id = new.custom_ruleset_id
+       and ruleset.task_type = 'custom'
+       and ruleset.deleted_at is null
+  ) then
+    raise exception 'The named Custom ruleset is missing, not owned by the owner, or has been deleted.'
+      using errcode = '23503';
+  end if;
+  return new;
+end;
+$function$;
+
+drop trigger if exists adhdice_validate_active_custom_ruleset_task_reference
+  on public.adhdice_clean_tasks;
+create trigger adhdice_validate_active_custom_ruleset_task_reference
+  before insert or update of custom_ruleset_id
+  on public.adhdice_clean_tasks
+  for each row execute function public.adhdice_validate_active_custom_behavior_ruleset_reference();
+
+drop trigger if exists adhdice_validate_active_custom_ruleset_selection_reference
+  on public.adhdice_task_behavior_selections;
+create trigger adhdice_validate_active_custom_ruleset_selection_reference
+  before insert or update of custom_ruleset_id
+  on public.adhdice_task_behavior_selections
+  for each row execute function public.adhdice_validate_active_custom_behavior_ruleset_reference();
+
+create or replace function public.adhdice_delete_custom_behavior_ruleset(
+  p_ruleset_id uuid
+)
+returns table(ruleset_id uuid, ruleset_name text, deleted_at timestamptz)
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $function$
+declare
+  v_ruleset public.adhdice_custom_behavior_rulesets%rowtype;
+  v_assigned_task_count integer;
+begin
+  if auth.uid() is null then
+    raise exception 'Custom ruleset deletion requires an authenticated owner.' using errcode = '42501';
+  end if;
+  select * into v_ruleset
+    from public.adhdice_custom_behavior_rulesets
+   where id = p_ruleset_id and user_id = auth.uid()
+   for update;
+  if not found then
+    raise exception 'Custom ruleset was not found or is not owned by the authenticated user.' using errcode = 'P0002';
+  end if;
+  if v_ruleset.deleted_at is not null then
+    raise exception 'Custom ruleset is already deleted.' using errcode = 'P0002';
+  end if;
+  select count(*)::integer into v_assigned_task_count
+    from public.adhdice_clean_tasks task
+   where task.user_id = auth.uid() and task.custom_ruleset_id = p_ruleset_id;
+  if v_assigned_task_count > 0 then
+    raise exception '% is currently assigned to % Task%. Change those Tasks to another type or ruleset before deleting it.',
+      v_ruleset.name, v_assigned_task_count,
+      case when v_assigned_task_count = 1 then '' else 's' end
+      using errcode = '23514';
+  end if;
+  return query
+  update public.adhdice_custom_behavior_rulesets
+     set deleted_at = now(), updated_at = now()
+   where id = p_ruleset_id and user_id = auth.uid() and deleted_at is null
+  returning id, name, deleted_at;
+end;
+$function$;
 
 create table public.adhdice_user_profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -1061,6 +1145,9 @@ revoke all on table public.adhdice_task_behavior_selections from anon, authentic
 grant select, insert, update, delete on table public.adhdice_custom_behavior_rulesets to authenticated;
 grant select, insert, update, delete on table public.adhdice_custom_behavior_ruleset_revisions to authenticated;
 grant select on table public.adhdice_task_behavior_selections to authenticated;
+revoke all on function public.adhdice_validate_active_custom_behavior_ruleset_reference() from public, anon, authenticated;
+revoke all on function public.adhdice_delete_custom_behavior_ruleset(uuid) from public, anon, authenticated;
+grant execute on function public.adhdice_delete_custom_behavior_ruleset(uuid) to authenticated;
 
 create policy "Users can read their own clean tasks"
   on public.adhdice_clean_tasks

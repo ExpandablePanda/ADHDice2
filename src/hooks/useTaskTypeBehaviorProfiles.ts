@@ -15,6 +15,7 @@ import {
 import type { TaskType } from "@/lib/task-type";
 import {
   createCustomBehaviorRuleset,
+  deleteCustomBehaviorRuleset,
   normalizeCustomBehaviorRulesetName,
   isMissingCustomBehaviorRulesetsTableError,
   loadCustomBehaviorRulesets,
@@ -219,6 +220,8 @@ export function useTaskTypeBehaviorProfiles(
     field: ConfigurableTaskBehaviorField,
     value: TaskBehaviorPolicy[typeof field],
   ) => {
+    const ruleset = customBehaviorRulesets.find((entry) => entry.id === rulesetId);
+    if (!ruleset || ruleset.deleted_at != null) return false;
     const current = customBehaviorRulesetProfiles[rulesetId];
     if (!current) return false;
     const next = normalizeTaskBehaviorProfile({ ...current, [field]: value }, "custom");
@@ -233,7 +236,7 @@ export function useTaskTypeBehaviorProfiles(
       return false;
     }
     return refreshCustomBehaviorRulesets();
-  }, [client, currentLogicalDate, customBehaviorRulesetProfiles, refreshCustomBehaviorRulesets, setMessage]);
+  }, [client, currentLogicalDate, customBehaviorRulesetProfiles, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage]);
 
   const createCustomRuleset = useCallback(async (nameInput: string): Promise<CustomBehaviorRuleset | null> => {
     const validation = validateCustomBehaviorRulesetName(nameInput, customBehaviorRulesets);
@@ -258,6 +261,11 @@ export function useTaskTypeBehaviorProfiles(
   }, [client, currentLogicalDate, customBehaviorRulesets, profiles.custom, refreshCustomBehaviorRulesets, setMessage, userId]);
 
   const renameCustomRuleset = useCallback(async (rulesetId: string, nameInput: string) => {
+    const ruleset = customBehaviorRulesets.find((entry) => entry.id === rulesetId);
+    if (!ruleset || ruleset.deleted_at != null) {
+      setMessage({ tone: "warn", text: "The Custom ruleset has already been deleted." });
+      return false;
+    }
     const result = await renameCustomBehaviorRuleset(
       client as unknown as CustomBehaviorRulesetClient,
       userId ?? "",
@@ -273,6 +281,23 @@ export function useTaskTypeBehaviorProfiles(
     return true;
   }, [client, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage, userId]);
 
+  const deleteCustomRuleset = useCallback(async (rulesetId: string) => {
+    const ruleset = customBehaviorRulesets.find((entry) => entry.id === rulesetId);
+    if (!ruleset || ruleset.deleted_at != null) {
+      setMessage({ tone: "warn", text: "The Custom ruleset has already been deleted." });
+      return false;
+    }
+    const error = await deleteCustomBehaviorRuleset(
+      client as unknown as CustomBehaviorRulesetClient,
+      rulesetId,
+    );
+    if (error) {
+      setMessage({ tone: "warn", text: error.message ?? "Could not delete the Custom ruleset." });
+      return false;
+    }
+    return refreshCustomBehaviorRulesets();
+  }, [client, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage]);
+
   return {
     isLoading,
     profileRevisions,
@@ -284,6 +309,7 @@ export function useTaskTypeBehaviorProfiles(
     behaviorSelectionsByTaskId,
     refreshCustomBehaviorRulesets,
     createCustomRuleset,
+    deleteCustomRuleset,
     renameCustomRuleset,
     resetTaskBehaviorProfile,
     updateTaskBehaviorProfile,

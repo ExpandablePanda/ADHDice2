@@ -43,6 +43,14 @@ test("named Custom rulesets extend the shared selection model without becoming T
   assert.equal(formatTaskTypeLabel("custom", null, rulesets), "Custom Default");
 });
 
+test("deleted named rulesets stay available to historical labels but not current selectors", () => {
+  const rulesets = [{ id: "retired", name: "Practice", task_type: "custom" as const, deleted_at: "2026-09-11T00:00:00.000Z" }];
+  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Pursuit", "Goal", "Custom Default"]);
+  assert.deepEqual(resolveTaskTypeSelection("retired", rulesets), { taskType: "task", customRulesetId: null });
+  assert.equal(taskTypeSelectionValue("custom", "retired", rulesets), "custom");
+  assert.equal(formatTaskTypeLabel("custom", "retired", rulesets), "Practice");
+});
+
 test("normal and child Task creation default TaskType to task", () => {
   assert.equal(buildNewTaskDraft("New Task").task_type, "task");
   const child = buildChildTaskCreationDraft({ parentTaskId: "parent-1", title: "Step" });

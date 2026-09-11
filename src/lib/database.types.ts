@@ -100,17 +100,25 @@ export type CustomBehaviorRuleset = {
   user_id: string;
   name: string;
   task_type: "custom";
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 };
 
-export type CustomBehaviorRulesetInsert = Omit<CustomBehaviorRuleset, "created_at" | "id" | "updated_at"> & {
+export type CustomBehaviorRulesetInsert = Omit<CustomBehaviorRuleset, "created_at" | "deleted_at" | "id" | "updated_at"> & {
   created_at?: string;
+  deleted_at?: string | null;
   id?: string;
   updated_at?: string;
 };
 
-export type CustomBehaviorRulesetUpdate = Partial<Pick<CustomBehaviorRuleset, "name" | "updated_at">>;
+export type CustomBehaviorRulesetUpdate = Partial<Pick<CustomBehaviorRuleset, "deleted_at" | "name" | "updated_at">>;
+
+export type CustomBehaviorRulesetDeleteResult = {
+  ruleset_id: string;
+  ruleset_name: string;
+  deleted_at: string;
+};
 
 export type CustomBehaviorRulesetRevision = {
   ruleset_id: string;
@@ -3151,6 +3159,10 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_delete_custom_behavior_ruleset: {
+        Args: { p_ruleset_id: string };
+        Returns: CustomBehaviorRulesetDeleteResult[];
+      };
       adhdice_mark_tasks_permanently_deleted: {
         Args: { p_task_ids: string[] };
         Returns: string[];

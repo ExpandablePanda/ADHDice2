@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   createCustomBehaviorRuleset,
+  deleteCustomBehaviorRuleset,
   loadCustomBehaviorRulesets,
   renameCustomBehaviorRuleset,
   upsertCustomBehaviorRulesetRevision,
@@ -30,6 +31,7 @@ const context = {
 const migration = readFileSync(new URL("../supabase/add_custom_behavior_rulesets_7_13_27.sql", import.meta.url), "utf8");
 const assignmentMigration = readFileSync(new URL("../supabase/add_task_custom_ruleset_assignments_7_13_28.sql", import.meta.url), "utf8");
 const behaviorSelectionMigration = readFileSync(new URL("../supabase/add_task_behavior_selections_7_13_31.sql", import.meta.url), "utf8");
+const softDeleteMigration = readFileSync(new URL("../supabase/add_custom_behavior_ruleset_soft_delete_7_13_33.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 
 const task = createTask({
@@ -346,15 +348,32 @@ test("7.13.31 generalizes the assignment authority without retaining a second ta
   assert.match(behaviorSelectionMigration, /on conflict \(user_id, task_id, effective_from_logical_date\)/i);
 });
 
-test("named ruleset loader keeps separate identities and ignores inactive rulesets", async () => {
+test("7.13.33 tombstones named rulesets, protects current assignments, and keeps history addressable", () => {
+  assert.match(softDeleteMigration, /add column if not exists deleted_at timestamptz null/i);
+  assert.match(softDeleteMigration, /create or replace function public\.adhdice_delete_custom_behavior_ruleset\(\s*p_ruleset_id uuid/i);
+  assert.match(softDeleteMigration, /task\.custom_ruleset_id = p_ruleset_id/);
+  assert.match(softDeleteMigration, /currently assigned to % Task%/);
+  assert.match(softDeleteMigration, /set deleted_at = now\(\)/);
+  assert.match(softDeleteMigration, /deleted_at is null/);
+  assert.match(softDeleteMigration, /adhdice_validate_active_custom_behavior_ruleset_reference/);
+  assert.match(softDeleteMigration, /grant execute on function public\.adhdice_delete_custom_behavior_ruleset\(uuid\) to authenticated/);
+  assert.doesNotMatch(softDeleteMigration, /delete from public\.adhdice_custom_behavior_ruleset_revisions/i);
+  assert.doesNotMatch(softDeleteMigration, /delete from public\.adhdice_task_behavior_selections/i);
+  assert.match(schema, /deleted_at timestamptz null/);
+  assert.match(schema, /adhdice_delete_custom_behavior_ruleset/);
+});
+
+test("named ruleset loader keeps historical identities while ignoring non-Custom rows", async () => {
   const rulesets = [
     { id: "ruleset-practice", user_id: "owner-1", name: "Practice", task_type: "custom" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
     { id: "ruleset-routine", user_id: "owner-1", name: "Routine", task_type: "custom" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+    { id: "ruleset-retired", user_id: "owner-1", name: "Retired Practice", task_type: "custom" as const, deleted_at: "2026-09-11T00:00:00.000Z", created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-11T00:00:00.000Z" },
     { id: "ruleset-goal", user_id: "owner-1", name: "Goal", task_type: "goal" as never, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
   ];
   const revisions = [
     { ruleset_id: "ruleset-practice", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank" as const, positive_streak_on_unhandled: "preserve" as const, missed_streak_on_unhandled: "ignore" as const, rewards: "disabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
     { ruleset_id: "ruleset-routine", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "missed" as const, positive_streak_on_unhandled: "break" as const, missed_streak_on_unhandled: "increment" as const, rewards: "enabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+    { ruleset_id: "ruleset-retired", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "missed" as const, positive_streak_on_unhandled: "break" as const, missed_streak_on_unhandled: "increment" as const, rewards: "enabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-11T00:00:00.000Z" },
     { ruleset_id: "ruleset-goal", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank" as const, positive_streak_on_unhandled: "preserve" as const, missed_streak_on_unhandled: "ignore" as const, rewards: "disabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
   ];
   const assignments = [
@@ -379,10 +398,11 @@ test("named ruleset loader keeps separate identities and ignores inactive rulese
     },
   };
   const loaded = await loadCustomBehaviorRulesets(client as never, "owner-1");
-  assert.deepEqual(loaded.data.map((ruleset) => ruleset.id), ["ruleset-practice", "ruleset-routine"]);
-  assert.deepEqual(Object.keys(loaded.revisions), ["ruleset-practice", "ruleset-routine"]);
+  assert.deepEqual(loaded.data.map((ruleset) => ruleset.id), ["ruleset-practice", "ruleset-routine", "ruleset-retired"]);
+  assert.deepEqual(Object.keys(loaded.revisions), ["ruleset-practice", "ruleset-routine", "ruleset-retired"]);
   assert.equal(loaded.revisions["ruleset-practice"]?.[0]?.unresolvedOccurrence, "blank");
   assert.equal(loaded.revisions["ruleset-routine"]?.[0]?.unresolvedOccurrence, "missed");
+  assert.equal(loaded.revisions["ruleset-retired"]?.[0]?.unresolvedOccurrence, "missed");
   assert.deepEqual(loaded.behaviorSelectionsByTaskId[task.id], [
     { effectiveFromLogicalDate: "2026-09-01", taskType: "custom", customRulesetId: "ruleset-practice" },
     { effectiveFromLogicalDate: "2026-09-21", taskType: "custom", customRulesetId: "ruleset-routine" },
@@ -395,6 +415,24 @@ test("named ruleset management trims names, rejects blanks and loaded duplicates
   assert.deepEqual(validateCustomBehaviorRulesetName("  ", loaded), { name: "", error: "Ruleset name cannot be blank." });
   assert.deepEqual(validateCustomBehaviorRulesetName(" practice ", loaded), { name: "practice", error: "A ruleset with that name already exists." });
   assert.deepEqual(validateCustomBehaviorRulesetName(" practice ", loaded, "practice"), { name: "practice", error: null });
+  assert.deepEqual(validateCustomBehaviorRulesetName(" Practice ", [{ id: "deleted", name: "Practice", deleted_at: "2026-09-11T00:00:00.000Z" }]), { name: "Practice", error: null });
+});
+
+test("user-facing ruleset deletion delegates to the owner-scoped RPC and preserves server errors", async () => {
+  const calls: Array<{ functionName: string; args: unknown }> = [];
+  const client = {
+    rpc: async (functionName: string, args: unknown) => {
+      calls.push({ functionName, args });
+      return { data: [{ ruleset_id: "ruleset-practice", ruleset_name: "Practice", deleted_at: "2026-09-11T00:00:00.000Z" }], error: null };
+    },
+  };
+  assert.equal(await deleteCustomBehaviorRuleset(client as never, "ruleset-practice"), null);
+  assert.deepEqual(calls, [{ functionName: "adhdice_delete_custom_behavior_ruleset", args: { p_ruleset_id: "ruleset-practice" } }]);
+
+  const failed = await deleteCustomBehaviorRuleset({
+    rpc: async () => ({ data: null, error: { message: "Practice is currently assigned to 1 Task. Change those Tasks to another type or ruleset before deleting it." } }),
+  } as never, "ruleset-practice");
+  assert.equal(failed?.message, "Practice is currently assigned to 1 Task. Change those Tasks to another type or ruleset before deleting it.");
 });
 
 test("named ruleset creation seeds Custom Default policy and does not publish a partial identity", async () => {

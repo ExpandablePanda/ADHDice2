@@ -1248,6 +1248,7 @@ type TaskManagementTableV2Props = {
   customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
   onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
+  onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean> | boolean;
   onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean>;
   onTaskBehaviorProfileChange?: (taskType: TaskType, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
   onCustomRulesetBehaviorProfileChange?: (rulesetId: string, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
@@ -2711,6 +2712,7 @@ export function TaskManagementTableV2({
   customBehaviorRulesets = [],
   customBehaviorRulesetProfiles,
   onCreateCustomRuleset,
+  onDeleteCustomRuleset,
   onRenameCustomRuleset,
   onTaskBehaviorProfileChange,
   onCustomRulesetBehaviorProfileChange,
@@ -9581,6 +9583,7 @@ export function TaskManagementTableV2({
                               initialTaskType={normalizeTaskType(metadataTask.taskType)}
                               initialCustomRulesetId={metadataTask.customRulesetId}
                               onCreateCustomRuleset={onCreateCustomRuleset}
+                              onDeleteCustomRuleset={onDeleteCustomRuleset}
                               onChange={(taskType, field, value) => onTaskBehaviorProfileChange?.(taskType, field, value) ?? false}
                               onCustomRulesetChange={(rulesetId, field, value) => onCustomRulesetBehaviorProfileChange?.(rulesetId, field, value) ?? false}
                               onRenameCustomRuleset={onRenameCustomRuleset}

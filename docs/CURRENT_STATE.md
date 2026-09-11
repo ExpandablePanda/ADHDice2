@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.32`.
+- Current working app version: `7.13.33`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -42,6 +42,19 @@ centralized TaskType/ruleset display helper, so normal Task, Custom Default,
 named Custom, Pursuit, and Goal labels remain consistent. The shared TypeScript
 engine source used by the trusted Edge bundle changed, but no Edge Function or
 SQL deployment was performed; browser and live Supabase QA remain pending.
+
+## 2026-09-11 7.13.33 Named Custom Ruleset Tombstones
+
+Named Custom rulesets can now be deleted from Behavior Settings through a
+soft-delete tombstone. Current Task assignments block deletion with a useful
+owner-scoped count, while revisions, effective-dated behavior selections, and
+historical display identity remain intact. Deleted rulesets are excluded from
+new/current selectors and editable settings; their names remain available to
+historical label and policy resolution, and active name reuse is allowed. The
+The SQL migration and consolidated schema are source-only. The shared ruleset
+loader imported by the trusted Task command bundle changed to retain deleted
+identities, but no Edge Function or SQL deployment was performed; browser/live
+Supabase QA remains pending.
 
 ## 2026-09-10 7.13.24 Custom TaskType Behavior Profile
 

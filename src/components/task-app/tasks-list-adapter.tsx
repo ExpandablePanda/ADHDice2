@@ -337,6 +337,7 @@ type TasksTableSourceProps = {
   customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
   taskTypeBehaviorProfiles?: TaskBehaviorProfiles;
   onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
+  onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean> | boolean;
   onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean>;
   onSetTaskBehaviorProfile?: (taskType: TaskType, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
   onSetCustomRulesetBehaviorProfile?: (rulesetId: string, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
@@ -724,6 +725,7 @@ export function TasksTableAdapter({
           customBehaviorRulesetProfiles={tableProps.customBehaviorRulesetProfiles}
           taskTypeBehaviorProfiles={tableProps.taskTypeBehaviorProfiles}
           onCreateCustomRuleset={tableProps.onCreateCustomRuleset}
+          onDeleteCustomRuleset={tableProps.onDeleteCustomRuleset}
           onRenameCustomRuleset={tableProps.onRenameCustomRuleset}
           onTaskBehaviorProfileChange={tableProps.onSetTaskBehaviorProfile}
           onCustomRulesetBehaviorProfileChange={tableProps.onSetCustomRulesetBehaviorProfile}
@@ -3140,6 +3142,7 @@ function TasksSimpleList({
               customBehaviorRulesetProfiles={tableProps.customBehaviorRulesetProfiles}
               taskTypeBehaviorProfiles={tableProps.taskTypeBehaviorProfiles}
               onCreateCustomRuleset={tableProps.onCreateCustomRuleset}
+              onDeleteCustomRuleset={tableProps.onDeleteCustomRuleset}
               onRenameCustomRuleset={tableProps.onRenameCustomRuleset}
               onTaskBehaviorProfileChange={tableProps.onSetTaskBehaviorProfile}
               onCustomRulesetBehaviorProfileChange={tableProps.onSetCustomRulesetBehaviorProfile}

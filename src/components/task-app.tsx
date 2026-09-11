@@ -1869,6 +1869,7 @@ export function TaskApp() {
     customRulesetBehaviorPolicyRevisions,
     behaviorSelectionsByTaskId,
     createCustomRuleset,
+    deleteCustomRuleset,
     renameCustomRuleset,
     refreshCustomBehaviorRulesets,
     resetTaskBehaviorProfile,
@@ -6922,6 +6923,7 @@ export function TaskApp() {
           customBehaviorRulesets={customBehaviorRulesets}
           customBehaviorRulesetProfiles={customBehaviorRulesetProfiles}
           onCreateCustomRuleset={createCustomRuleset}
+          onDeleteCustomRuleset={deleteCustomRuleset}
           onRenameCustomRuleset={renameCustomRuleset}
           onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
           onTaskPriorityChange={applyTaskPriorityChange}
@@ -7423,6 +7425,7 @@ export function TaskApp() {
                   customBehaviorRulesetProfiles,
                   taskTypeBehaviorProfiles,
                   onCreateCustomRuleset: createCustomRuleset,
+                  onDeleteCustomRuleset: deleteCustomRuleset,
                   onRenameCustomRuleset: renameCustomRuleset,
                   onSetTaskBehaviorProfile: updateTaskBehaviorProfile,
                   onSetCustomRulesetBehaviorProfile: updateCustomBehaviorRulesetProfile,
@@ -7616,6 +7619,7 @@ export function TaskApp() {
                   customBehaviorRulesetProfiles,
                   taskTypeBehaviorProfiles,
                   onCreateCustomRuleset: createCustomRuleset,
+                  onDeleteCustomRuleset: deleteCustomRuleset,
                   onRenameCustomRuleset: renameCustomRuleset,
                   onSetTaskBehaviorProfile: updateTaskBehaviorProfile,
                   onSetCustomRulesetBehaviorProfile: updateCustomBehaviorRulesetProfile,

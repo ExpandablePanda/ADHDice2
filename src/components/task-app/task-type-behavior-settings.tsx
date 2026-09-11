@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Pencil, RotateCcw, X } from "lucide-react";
+import { Check, Pencil, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownSelect } from "@/components/ui-system/adhd-dropdown-select";
@@ -49,6 +49,7 @@ export function TaskTypeBehaviorSettings({
   initialTaskType = "task",
   initialCustomRulesetId = null,
   onCreateCustomRuleset,
+  onDeleteCustomRuleset,
   onChange,
   onCustomRulesetChange,
   onRenameCustomRuleset,
@@ -60,6 +61,7 @@ export function TaskTypeBehaviorSettings({
   initialTaskType?: TaskType;
   initialCustomRulesetId?: string | null;
   onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
+  onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean> | boolean;
   onChange: (taskType: TaskTypeBehaviorTab, field: ConfigurableField, value: TaskBehaviorPolicy[ConfigurableField]) => Promise<boolean> | boolean;
   onCustomRulesetChange?: (rulesetId: string, field: ConfigurableField, value: TaskBehaviorPolicy[ConfigurableField]) => Promise<boolean> | boolean;
   onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean> | boolean;
@@ -71,9 +73,10 @@ export function TaskTypeBehaviorSettings({
   const [isCreating, setIsCreating] = useState(false);
   const [newRulesetName, setNewRulesetName] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
-  const [rulesetNameDraft, setRulesetNameDraft] = useState(() => customBehaviorRulesets.find((ruleset) => ruleset.id === initialCustomRulesetId)?.name ?? "");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [rulesetNameDraft, setRulesetNameDraft] = useState(() => customBehaviorRulesets.find((ruleset) => ruleset.id === initialCustomRulesetId && ruleset.deleted_at == null)?.name ?? "");
   const selectionOptions = buildTaskTypeSelectionOptions(customBehaviorRulesets);
-  const selectedRuleset = customBehaviorRulesets.find((ruleset) => ruleset.id === activeSelection) ?? null;
+  const selectedRuleset = customBehaviorRulesets.find((ruleset) => ruleset.id === activeSelection && ruleset.deleted_at == null) ?? null;
   const selectedRulesetId = selectedRuleset?.id ?? null;
   const selectedRulesetName = selectedRuleset?.name ?? null;
   const activeTab: BehaviorTab = selectedRuleset ? "custom" : normalizeTaskType(activeSelection);
@@ -94,7 +97,7 @@ export function TaskTypeBehaviorSettings({
 
   function selectProfile(value: string) {
     setActiveSelection(value);
-    const nextRuleset = customBehaviorRulesets.find((ruleset) => ruleset.id === value);
+    const nextRuleset = customBehaviorRulesets.find((ruleset) => ruleset.id === value && ruleset.deleted_at == null);
     if (nextRuleset) setRulesetNameDraft(nextRuleset.name);
   }
 
@@ -128,6 +131,23 @@ export function TaskTypeBehaviorSettings({
       setIsRenaming(false);
     }
     setRulesetNameDraft(renamed ? rulesetNameDraft.trim() : selectedRuleset.name);
+  }
+
+  async function deleteRuleset() {
+    if (!selectedRuleset || !onDeleteCustomRuleset || isDeleting) return;
+    if (!window.confirm(`Delete “${selectedRuleset.name}”?\n\nIt will disappear from ruleset settings and Task selectors. Historical Task behavior that used ${selectedRuleset.name} will remain intact.`)) return;
+    setIsDeleting(true);
+    let deleted = false;
+    try {
+      deleted = await onDeleteCustomRuleset(selectedRuleset.id);
+    } catch {
+      deleted = false;
+    } finally {
+      setIsDeleting(false);
+    }
+    if (!deleted) return;
+    setActiveSelection("custom");
+    setRulesetNameDraft("");
   }
 
   function updateActiveProfile(field: ConfigurableField, value: TaskBehaviorPolicy[ConfigurableField]) {
@@ -211,13 +231,14 @@ export function TaskTypeBehaviorSettings({
               <input
                 aria-label={`Rename ${selectedRuleset.name}`}
                 className={`${TASK_TABLE_INPUT_CLASS} min-w-[12rem] flex-1`}
-                disabled={isRenaming}
+                disabled={isRenaming || isDeleting}
                 id="selected-custom-ruleset-name"
                 onChange={(event) => setRulesetNameDraft(event.target.value)}
                 type="text"
                 value={rulesetNameDraft}
               />
-              <AdhdChip disabled={isRenaming} icon={<Pencil aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void renameRuleset(); }} tone="default">{isRenaming ? "Saving…" : "Rename"}</AdhdChip>
+              <AdhdChip disabled={isRenaming || isDeleting} icon={<Pencil aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void renameRuleset(); }} tone="default">{isRenaming ? "Saving…" : "Rename"}</AdhdChip>
+              <AdhdChip disabled={!onDeleteCustomRuleset || isRenaming || isDeleting} icon={<Trash2 aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void deleteRuleset(); }} tone="danger">{isDeleting ? "Deleting…" : "Delete Ruleset"}</AdhdChip>
             </div>
           </label>
         </div>

@@ -35,23 +35,33 @@ export function normalizeTaskType(value: unknown): TaskType {
 }
 
 function isNamedCustomRuleset(
-  ruleset: Pick<CustomBehaviorRuleset, "id" | "name" | "task_type">,
+  ruleset: Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & { deleted_at?: string | null },
 ): boolean {
+  return ruleset.task_type === "custom"
+    && ruleset.deleted_at == null
+    && Boolean(ruleset.id.trim())
+    && Boolean(ruleset.name.trim());
+}
+
+function isRulesetIdentity(
+  ruleset: Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & { deleted_at?: string | null },
+) {
   return ruleset.task_type === "custom" && Boolean(ruleset.id.trim()) && Boolean(ruleset.name.trim());
 }
 
 function sortNamedCustomRulesets(
-  rulesets: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type">[],
+  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & { deleted_at?: string | null })[],
+  includeDeleted = false,
 ) {
   return rulesets
-    .filter(isNamedCustomRuleset)
+    .filter((ruleset) => (includeDeleted ? isRulesetIdentity(ruleset) : isNamedCustomRuleset(ruleset)))
     .slice()
     .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) || left.id.localeCompare(right.id));
 }
 
 /** Build the one shared user-facing TaskType/ruleset choice model. */
 export function buildTaskTypeSelectionOptions(
-  rulesets: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type">[] = [],
+  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & { deleted_at?: string | null })[] = [],
 ): ReadonlyArray<TaskTypeSelectionOption> {
   return [
     ...BASE_TASK_TYPE_SELECTION_OPTIONS,
@@ -62,7 +72,7 @@ export function buildTaskTypeSelectionOptions(
 export function taskTypeSelectionValue(
   taskType: unknown,
   customRulesetId: string | null | undefined,
-  rulesets: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type">[] = [],
+  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & { deleted_at?: string | null })[] = [],
 ): string {
   const normalizedTaskType = normalizeTaskType(taskType);
   if (normalizedTaskType === "custom" && customRulesetId && sortNamedCustomRulesets(rulesets).some((ruleset) => ruleset.id === customRulesetId)) {
@@ -73,7 +83,7 @@ export function taskTypeSelectionValue(
 
 export function resolveTaskTypeSelection(
   value: unknown,
-  rulesets: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type">[] = [],
+  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & { deleted_at?: string | null })[] = [],
 ): TaskTypeSelection {
   const namedRuleset = sortNamedCustomRulesets(rulesets).find((ruleset) => ruleset.id === value);
   if (namedRuleset) {
@@ -85,11 +95,11 @@ export function resolveTaskTypeSelection(
 export function formatTaskTypeLabel(
   value: unknown,
   customRulesetId?: string | null,
-  rulesets: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type">[] = [],
+  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & { deleted_at?: string | null })[] = [],
 ): string {
   const normalizedTaskType = normalizeTaskType(value);
   if (normalizedTaskType === "custom") {
-    const namedRuleset = sortNamedCustomRulesets(rulesets).find((ruleset) => ruleset.id === customRulesetId);
+    const namedRuleset = sortNamedCustomRulesets(rulesets, true).find((ruleset) => ruleset.id === customRulesetId);
     return namedRuleset?.name.trim() || "Custom Default";
   }
   return TASK_TYPE_OPTIONS.find((option) => option.value === normalizedTaskType)?.label ?? "Task";

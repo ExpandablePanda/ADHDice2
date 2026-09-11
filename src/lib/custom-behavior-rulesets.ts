@@ -16,6 +16,10 @@ import {
 
 type RulesetError = { code?: string; message?: string };
 type RulesetQueryResult<T> = { data: T[] | null; error: RulesetError | null };
+type CustomBehaviorRulesetNameCandidate = Pick<CustomBehaviorRuleset, "id" | "name"> & {
+  /** Optional keeps pre-tombstone test/read fixtures compatible. */
+  deleted_at?: string | null;
+};
 
 type RulesetSelectQuery<T> = {
   eq(column: string, value: string): Promise<RulesetQueryResult<T>>;
@@ -54,6 +58,10 @@ export type CustomBehaviorRulesetClient = {
   from(table: "adhdice_custom_behavior_rulesets"): RulesetIdentityTable;
   from(table: "adhdice_custom_behavior_ruleset_revisions"): RulesetRevisionTable;
   from(table: "adhdice_task_behavior_selections"): BehaviorSelectionTable;
+  rpc(
+    functionName: "adhdice_delete_custom_behavior_ruleset",
+    args: { p_ruleset_id: string },
+  ): Promise<{ data: unknown; error: RulesetError | null }>;
 };
 
 export type LoadedCustomBehaviorRulesets = {
@@ -149,13 +157,15 @@ export function normalizeCustomBehaviorRulesetName(value: unknown) {
 
 export function validateCustomBehaviorRulesetName(
   value: unknown,
-  rulesets: readonly Pick<CustomBehaviorRuleset, "id" | "name">[] = [],
+  rulesets: readonly CustomBehaviorRulesetNameCandidate[] = [],
   excludedRulesetId?: string | null,
 ) {
   const name = normalizeCustomBehaviorRulesetName(value);
   if (!name) return { name, error: "Ruleset name cannot be blank." };
   const normalizedName = name.toLocaleLowerCase();
-  if (rulesets.some((ruleset) => ruleset.id !== excludedRulesetId && normalizeCustomBehaviorRulesetName(ruleset.name).toLocaleLowerCase() === normalizedName)) {
+  if (rulesets.some((ruleset) => ruleset.id !== excludedRulesetId
+    && ruleset.deleted_at == null
+    && normalizeCustomBehaviorRulesetName(ruleset.name).toLocaleLowerCase() === normalizedName)) {
     return { name, error: "A ruleset with that name already exists." };
   }
   return { name, error: null };
@@ -170,7 +180,8 @@ function isValidCustomBehaviorRulesetIdentity(row: CustomBehaviorRuleset | null 
     && typeof row.id === "string"
     && typeof row.user_id === "string"
     && typeof row.name === "string"
-    && row.task_type === "custom";
+    && row.task_type === "custom"
+    && (row.deleted_at === undefined || row.deleted_at === null || typeof row.deleted_at === "string");
 }
 
 /** Persist a named identity and its first revision without publishing a partial browser state. */
@@ -180,7 +191,7 @@ export async function createCustomBehaviorRuleset(
   nameInput: string,
   policy: TaskBehaviorPolicy,
   effectiveFromLogicalDate: string,
-  loadedRulesets: readonly Pick<CustomBehaviorRuleset, "id" | "name">[] = [],
+  loadedRulesets: readonly CustomBehaviorRulesetNameCandidate[] = [],
 ): Promise<CustomBehaviorRulesetMutationResult<CustomBehaviorRuleset>> {
   const validation = validateCustomBehaviorRulesetName(nameInput, loadedRulesets);
   if (validation.error) return rulesetMutationError(validation.error);
@@ -191,7 +202,7 @@ export async function createCustomBehaviorRuleset(
     identityResult = await client
       .from("adhdice_custom_behavior_rulesets")
       .insert(customBehaviorRulesetUpsertPayload(userId, validation.name))
-      .select("id,user_id,name,task_type,created_at,updated_at");
+      .select("id,user_id,name,task_type,deleted_at,created_at,updated_at");
   } catch (error) {
     return rulesetMutationError(error instanceof Error ? error.message : "Could not create the Custom ruleset.");
   }
@@ -249,14 +260,34 @@ export async function upsertCustomBehaviorRulesetRevision(
   }
 }
 
+/** Tombstone a named identity through the owner-checked database authority. */
+export async function deleteCustomBehaviorRuleset(
+  client: CustomBehaviorRulesetClient,
+  rulesetId: string,
+) {
+  if (!rulesetId.trim()) return { message: "Custom ruleset identity is required." };
+  try {
+    const result = await client.rpc("adhdice_delete_custom_behavior_ruleset", { p_ruleset_id: rulesetId });
+    if (result.error) return result.error;
+    if (!Array.isArray(result.data) || result.data.length !== 1) {
+      return { message: "Custom ruleset deletion returned an unusable result." };
+    }
+    return null;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Could not delete the Custom ruleset." };
+  }
+}
+
 /** Rename identity metadata only; no behavior revision or assignment is touched. */
 export async function renameCustomBehaviorRuleset(
   client: CustomBehaviorRulesetClient,
   userId: string,
   rulesetId: string,
   nameInput: string,
-  loadedRulesets: readonly Pick<CustomBehaviorRuleset, "id" | "name">[] = [],
+  loadedRulesets: readonly CustomBehaviorRulesetNameCandidate[] = [],
 ): Promise<CustomBehaviorRulesetMutationResult<CustomBehaviorRuleset>> {
+  const current = loadedRulesets.find((ruleset) => ruleset.id === rulesetId);
+  if (current?.deleted_at != null) return rulesetMutationError("The Custom ruleset has already been deleted.");
   const validation = validateCustomBehaviorRulesetName(nameInput, loadedRulesets, rulesetId);
   if (validation.error) return rulesetMutationError(validation.error);
   let result: RulesetQueryResult<CustomBehaviorRuleset>;
@@ -266,7 +297,7 @@ export async function renameCustomBehaviorRuleset(
       .update({ name: validation.name, updated_at: new Date().toISOString() })
       .eq("id", rulesetId)
       .eq("user_id", userId)
-      .select("id,user_id,name,task_type,created_at,updated_at");
+      .select("id,user_id,name,task_type,deleted_at,created_at,updated_at");
   } catch (error) {
     return rulesetMutationError(error instanceof Error ? error.message : "Could not rename the Custom ruleset.");
   }
@@ -293,7 +324,7 @@ export async function loadCustomBehaviorRulesets(
   const [rulesetsResult, revisionsResult, behaviorSelectionsResult] = await Promise.all([
     client
       .from("adhdice_custom_behavior_rulesets")
-      .select("id,user_id,name,task_type,created_at,updated_at")
+      .select("id,user_id,name,task_type,deleted_at,created_at,updated_at")
       .eq("user_id", userId),
     client
       .from("adhdice_custom_behavior_ruleset_revisions")
@@ -306,7 +337,7 @@ export async function loadCustomBehaviorRulesets(
   if (rulesetsResult.error) return { data: [], revisions: {}, behaviorSelectionsByTaskId: {}, error: rulesetsResult.error, behaviorSelectionError: null };
   if (revisionsResult.error) return { data: [], revisions: {}, behaviorSelectionsByTaskId: {}, error: revisionsResult.error, behaviorSelectionError: null };
 
-  const rulesets = (rulesetsResult.data ?? []).filter((ruleset) => ruleset.task_type === "custom");
+  const rulesets = (rulesetsResult.data ?? []).filter(isValidCustomBehaviorRulesetIdentity);
   const rulesetIds = new Set(rulesets.map((ruleset) => ruleset.id));
   const revisions: Record<string, TaskBehaviorPolicyRevisions> = {};
   for (const row of revisionsResult.data ?? []) {

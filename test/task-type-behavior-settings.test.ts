@@ -20,6 +20,9 @@ import { buildCompatibilityTaskStateEngineInput } from "../src/lib/task-state-en
 import { buildTaskHistoryRowProjections } from "../src/lib/task-history.ts";
 import type { TaskStateEngineInput } from "../src/lib/task-state-engine/types.ts";
 
+const behaviorSettingsSource = readFileSync("src/components/task-app/task-type-behavior-settings.tsx", "utf8");
+const behaviorProfilesHookSource = readFileSync("src/hooks/useTaskTypeBehaviorProfiles.ts", "utf8");
+
 const input: TaskStateEngineInput = {
   task: {
     id: "task-settings-1",
@@ -37,6 +40,16 @@ const input: TaskStateEngineInput = {
 test("missing Task profile falls back to the current Standard policy", () => {
   assert.deepEqual(normalizeTaskBehaviorProfile(null), STANDARD_TASK_BEHAVIOR_POLICY);
   assert.deepEqual(normalizeTaskBehaviorProfile({ unresolvedOccurrence: "invalid" }), STANDARD_TASK_BEHAVIOR_POLICY);
+});
+
+test("Behavior Settings exposes only active named rulesets and gates deletion behind confirmation", () => {
+  assert.match(behaviorSettingsSource, /buildTaskTypeSelectionOptions\(customBehaviorRulesets\)/);
+  assert.match(behaviorSettingsSource, /deleted_at == null/);
+  assert.match(behaviorSettingsSource, /Delete Ruleset/);
+  assert.match(behaviorSettingsSource, /window\.confirm\(`Delete/);
+  assert.doesNotMatch(behaviorSettingsSource, /Preserve positive streak/);
+  assert.match(behaviorProfilesHookSource, /deleteCustomBehaviorRuleset/);
+  assert.match(behaviorProfilesHookSource, /return refreshCustomBehaviorRulesets\(\)/);
 });
 
 test("stored Task profile normalization and ownership filter are narrow", async () => {
