@@ -193,7 +193,9 @@ begin
   end if;
   select count(*)::integer into v_assigned_task_count
     from public.adhdice_clean_tasks task
-   where task.user_id = auth.uid() and task.custom_ruleset_id = p_ruleset_id;
+   where task.user_id = auth.uid()
+     and task.custom_ruleset_id = p_ruleset_id
+     and task.permanently_deleted_at is null;
   if v_assigned_task_count > 0 then
     raise exception '% is currently assigned to % Task%. Change those Tasks to another type or ruleset before deleting it.',
       v_ruleset.name, v_assigned_task_count,

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.34`.
+- Current working app version: `7.13.35`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-11 7.13.35 Permanently Deleted Task Ruleset Deletion Correction
+
+Named Custom ruleset deletion now excludes permanently deleted Task tombstones
+from its current-assignment count. Active, archived, and normally trashed
+restorable Tasks still block deletion; a permanently deleted Task can retain
+its historical ruleset identity without blocking the ruleset tombstone. The
+RPC remains the final server-side concurrency guard, and no tombstone,
+historical selection, revision, or Task History row is rewritten. The SQL
+migration and consolidated schema are source-only; Edge Functions and browser
+QA remain unchanged and unverified.
 
 ## 2026-09-11 7.13.34 Task Type Table Filtering and Ruleset Resolution
 

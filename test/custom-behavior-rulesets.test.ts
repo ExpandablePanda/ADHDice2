@@ -34,6 +34,7 @@ const migration = readFileSync(new URL("../supabase/add_custom_behavior_rulesets
 const assignmentMigration = readFileSync(new URL("../supabase/add_task_custom_ruleset_assignments_7_13_28.sql", import.meta.url), "utf8");
 const behaviorSelectionMigration = readFileSync(new URL("../supabase/add_task_behavior_selections_7_13_31.sql", import.meta.url), "utf8");
 const softDeleteMigration = readFileSync(new URL("../supabase/add_custom_behavior_ruleset_soft_delete_7_13_33.sql", import.meta.url), "utf8");
+const tombstoneFixMigration = readFileSync(new URL("../supabase/fix_custom_behavior_ruleset_delete_tombstones_7_13_35.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 
 const task = createTask({
@@ -363,6 +364,35 @@ test("7.13.33 tombstones named rulesets, protects current assignments, and keeps
   assert.doesNotMatch(softDeleteMigration, /delete from public\.adhdice_task_behavior_selections/i);
   assert.match(schema, /deleted_at timestamptz null/);
   assert.match(schema, /adhdice_delete_custom_behavior_ruleset/);
+});
+
+test("7.13.35 excludes permanently deleted Task tombstones from the current-assignment guard", () => {
+  const deleteFunction = (source: string) => source.slice(source.indexOf("create or replace function public.adhdice_delete_custom_behavior_ruleset"));
+  for (const source of [tombstoneFixMigration, schema]) {
+    const functionBody = deleteFunction(source);
+    assert.match(functionBody, /task\.user_id = auth\.uid\(\)\s+and task\.custom_ruleset_id = p_ruleset_id\s+and task\.permanently_deleted_at is null/i);
+    assert.match(functionBody, /if v_assigned_task_count > 0/);
+    assert.match(functionBody, /case when v_assigned_task_count = 1 then '' else 's' end/);
+    assert.match(functionBody, /set deleted_at = now\(\)/);
+  }
+
+  const practiceTasks = [
+    { id: "active", lifecycle: "active", userId: "owner-1", customRulesetId: "ruleset-practice", permanentlyDeletedAt: null },
+    { id: "archived", lifecycle: "archived", userId: "owner-1", customRulesetId: "ruleset-practice", permanentlyDeletedAt: null },
+    { id: "restorable-trash", lifecycle: "restorable-trash", userId: "owner-1", customRulesetId: "ruleset-practice", permanentlyDeletedAt: null },
+    { id: "permanently-deleted", lifecycle: "permanently-deleted", userId: "owner-1", customRulesetId: "ruleset-practice", permanentlyDeletedAt: "2026-09-11T12:00:00.000Z" },
+  ];
+  const currentAssignments = practiceTasks.filter((task) =>
+    task.userId === "owner-1"
+    && task.customRulesetId === "ruleset-practice"
+    && task.permanentlyDeletedAt === null,
+  );
+  assert.deepEqual(currentAssignments.map((task) => task.lifecycle), ["active", "archived", "restorable-trash"]);
+  assert.equal(practiceTasks.find((task) => task.id === "permanently-deleted")?.customRulesetId, "ruleset-practice");
+  assert.equal(practiceTasks.find((task) => task.id === "permanently-deleted")?.permanentlyDeletedAt, "2026-09-11T12:00:00.000Z");
+
+  assert.doesNotMatch(tombstoneFixMigration, /update public\.adhdice_clean_tasks/i);
+  assert.doesNotMatch(tombstoneFixMigration, /delete from public\.adhdice_(?:custom_behavior_ruleset_revisions|task_behavior_selections|task_history)/i);
 });
 
 test("named ruleset loader keeps historical identities while ignoring non-Custom rows", async () => {
