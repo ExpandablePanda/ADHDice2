@@ -378,6 +378,7 @@ type TasksTableSourceProps = {
   onOpenPursuit?: (pursuitId: string) => void;
   onOpenPursuitCalendar?: (pursuitId: string) => void;
   onCreatePursuitChild?: (pursuitId: string) => void;
+  onDeletePursuit?: (pursuitId: string) => Promise<boolean> | boolean;
   onMarkDonePursuit?: (pursuitId: string, notes?: string) => void | Promise<unknown>;
   onRemovePursuitCompletion?: (pursuitId: string, logicalDay: string) => void | Promise<unknown>;
   onUpdatePursuit?: (pursuitId: string, input: PursuitUpdate) => Promise<Pursuit | null>;
@@ -684,6 +685,7 @@ export function TasksTableAdapter({
           onOpenPursuit={tableProps.onOpenPursuit}
           onOpenPursuitCalendar={tableProps.onOpenPursuitCalendar}
           onCreatePursuitChild={tableProps.onCreatePursuitChild}
+          onDeletePursuit={tableProps.onDeletePursuit}
           onMarkDonePursuit={tableProps.onMarkDonePursuit}
           onRemovePursuitCompletion={tableProps.onRemovePursuitCompletion}
           onUpdatePursuit={tableProps.onUpdatePursuit}
@@ -3101,6 +3103,7 @@ function TasksSimpleList({
               onOpenPursuit={tableProps.onOpenPursuit}
               onOpenPursuitCalendar={tableProps.onOpenPursuitCalendar}
               onCreatePursuitChild={tableProps.onCreatePursuitChild}
+              onDeletePursuit={tableProps.onDeletePursuit}
               onMarkDonePursuit={tableProps.onMarkDonePursuit}
               onRemovePursuitCompletion={tableProps.onRemovePursuitCompletion}
               onUpdatePursuit={tableProps.onUpdatePursuit}
@@ -3832,6 +3835,7 @@ function TasksSimpleList({
                 key={`pursuit:${pursuit.id}`}
                 onCreateChildPursuit={tableProps.onCreatePursuitChild}
                 onCreatePursuitInline={tableProps.onCreatePursuitInline}
+                onDeletePursuit={tableProps.onDeletePursuit}
                 onMarkDoneToday={tableProps.onMarkDonePursuit ?? (() => undefined)}
                 onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
                 onOpenCalendar={tableProps.onOpenPursuitCalendar}
@@ -3852,6 +3856,7 @@ function TasksSimpleList({
               key={`pursuit:${pursuit.id}`}
               onCreateChildPursuit={tableProps.onCreatePursuitChild}
               onCreatePursuitInline={tableProps.onCreatePursuitInline}
+              onDeletePursuit={tableProps.onDeletePursuit}
               onMarkDoneToday={tableProps.onMarkDonePursuit ?? (() => undefined)}
               onOpen={tableProps.onOpenPursuit ?? (() => undefined)}
               onOpenCalendar={tableProps.onOpenPursuitCalendar}

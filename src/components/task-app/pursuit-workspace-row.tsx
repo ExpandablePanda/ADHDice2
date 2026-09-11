@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CalendarDays, Compass, Footprints, Pencil, Save, X } from "lucide-react";
+import { CalendarDays, Compass, Footprints, Pencil, Save, Trash2, X } from "lucide-react";
 import { AdhdChip, AdhdDropdownPanel, AdhdIconButton } from "@/components/ui-system/index";
 import {
   formatTaskTableEntryTimestamp,
@@ -29,6 +29,7 @@ export type PursuitWorkspaceRowProps = {
   depth: number;
   onCreateChildPursuit?: (pursuitId: string) => void;
   onCreatePursuitInline?: (input: PursuitInlineCreateInput) => Promise<Pursuit | null>;
+  onDeletePursuit?: (pursuitId: string) => Promise<boolean> | boolean;
   onMarkDoneToday: (pursuitId: string, notes?: string) => void | Promise<unknown>;
   onOpen: (pursuitId: string) => void;
   onOpenCalendar?: (pursuitId: string) => void;
@@ -270,12 +271,13 @@ function PursuitMetadataButton({ active = false, label, onClick, value, toneClas
   );
 }
 
-function PursuitRowActions({ onCreateChildPursuit, onOpen, onOpenCalendar, pursuit }: Pick<PursuitWorkspaceRowProps, "onCreateChildPursuit" | "onOpen" | "onOpenCalendar" | "pursuit">) {
+function PursuitRowActions({ onCreateChildPursuit, onDeletePursuit, onOpen, onOpenCalendar, pursuit }: Pick<PursuitWorkspaceRowProps, "onCreateChildPursuit" | "onDeletePursuit" | "onOpen" | "onOpenCalendar" | "pursuit">) {
   return (
     <div className="flex shrink-0 items-center gap-0.5" data-pursuit-row-actions="true" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
       {onCreateChildPursuit ? <AdhdIconButton aria-label={`Add child Pursuit to ${pursuit.title}`} onClick={() => onCreateChildPursuit(pursuit.id)} size="sm" title="Add child Pursuit" variant="rowToolbar"><Footprints /></AdhdIconButton> : null}
       {onOpenCalendar ? <AdhdIconButton aria-label={`Open calendar for ${pursuit.title}`} onClick={() => onOpenCalendar(pursuit.id)} size="sm" title="Open calendar" variant="rowToolbar"><CalendarDays /></AdhdIconButton> : null}
       <AdhdIconButton aria-label={`Edit ${pursuit.title}`} onClick={() => onOpen(pursuit.id)} size="sm" title="Edit Pursuit" variant="rowToolbar"><Pencil /></AdhdIconButton>
+      {onDeletePursuit ? <AdhdIconButton aria-label={`Delete ${pursuit.title}`} onClick={(event) => { event.stopPropagation(); if (!window.confirm(`Delete “${pursuit.title}”?\n\nThis permanently deletes this old Pursuit and its Pursuit completion history. This cannot be undone.`)) return; void onDeletePursuit(pursuit.id); }} size="sm" title="Delete Pursuit" tone="danger" variant="rowToolbar"><Trash2 /></AdhdIconButton> : null}
     </div>
   );
 }
@@ -299,7 +301,7 @@ function PursuitTitle({ attention, depth, onMarkDoneToday, onOpen, onRemoveCompl
   );
 }
 
-export function PursuitTableWorkspaceRow({ attention, columns, depth, gridTemplateColumns, onCreateChildPursuit, onCreatePursuitInline, onMarkDoneToday, onOpen, onOpenCalendar, onRemoveCompletionOnLogicalDay, onUpdatePursuit, pursuit, tableViewportMetrics, timezone, todayKey }: PursuitWorkspaceRowProps & { columns: ReadonlyArray<string>; gridTemplateColumns: string; tableViewportMetrics?: TaskTableViewportMetrics }) {
+export function PursuitTableWorkspaceRow({ attention, columns, depth, gridTemplateColumns, onCreateChildPursuit, onCreatePursuitInline, onDeletePursuit, onMarkDoneToday, onOpen, onOpenCalendar, onRemoveCompletionOnLogicalDay, onUpdatePursuit, pursuit, tableViewportMetrics, timezone, todayKey }: PursuitWorkspaceRowProps & { columns: ReadonlyArray<string>; gridTemplateColumns: string; tableViewportMetrics?: TaskTableViewportMetrics }) {
   const [activeQuickEdit, setActiveQuickEdit] = useState<PursuitQuickEditMode | null>(null);
   const [completionNoteOpen, setCompletionNoteOpen] = useState(false);
   const [completionNote, setCompletionNote] = useState("");
@@ -367,7 +369,7 @@ export function PursuitTableWorkspaceRow({ attention, columns, depth, gridTempla
       <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-transparent py-0.5 pl-[3px] pr-0 text-center transition hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] dark:bg-transparent`} style={{ gridTemplateColumns }}>
         {columns.map((columnId) => {
           if (columnId === "status_icon") return <div className="flex min-h-full min-w-0 items-center justify-center overflow-hidden" key={`${pursuit.id}-${columnId}`}><PursuitCompletionControl attention={attention} onMarkDoneToday={onMarkDoneToday} onRemoveCompletionOnLogicalDay={onRemoveCompletionOnLogicalDay} onRequestCompletionNote={() => { setActiveQuickEdit(null); setCompletionNoteOpen((current) => !current); }} pursuit={pursuit} todayKey={todayKey} /></div>;
-          if (columnId === "title") return <div className="flex min-h-full min-w-0 items-center overflow-hidden pl-[5px] pr-1 text-left" key={`${pursuit.id}-${columnId}`}><PursuitTitle attention={attention} depth={depth} onMarkDoneToday={onMarkDoneToday} onOpen={onOpen} onRemoveCompletionOnLogicalDay={onRemoveCompletionOnLogicalDay} pursuit={pursuit} showIdentityIcon={false} timezone={timezone} todayKey={todayKey} variant="table" /><PursuitRowActions onCreateChildPursuit={onCreatePursuitInline ? beginChildDraft : onCreateChildPursuit} onOpen={onOpen} onOpenCalendar={onOpenCalendar} pursuit={pursuit} /></div>;
+          if (columnId === "title") return <div className="flex min-h-full min-w-0 items-center overflow-hidden pl-[5px] pr-1 text-left" key={`${pursuit.id}-${columnId}`}><PursuitTitle attention={attention} depth={depth} onMarkDoneToday={onMarkDoneToday} onOpen={onOpen} onRemoveCompletionOnLogicalDay={onRemoveCompletionOnLogicalDay} pursuit={pursuit} showIdentityIcon={false} timezone={timezone} todayKey={todayKey} variant="table" /><PursuitRowActions onCreateChildPursuit={onCreatePursuitInline ? beginChildDraft : onCreateChildPursuit} onDeletePursuit={onDeletePursuit} onOpen={onOpen} onOpenCalendar={onOpenCalendar} pursuit={pursuit} /></div>;
           if (columnId === "due") {
             const hasTarget = Boolean(attention?.nextTargetLogicalDay);
             return <div className="flex min-h-full min-w-0 items-center justify-center overflow-hidden px-1" key={`${pursuit.id}-${columnId}`}><PursuitMetadataButton active={activeQuickEdit === "due"} label="Due" onClick={() => openQuickEdit("due")} toneClassName={hasTarget ? attention?.needsAttention ? YELLOW_CHIP_CLASS : TASK_TABLE_LIST_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS} value={targetLabel(attention, timezone)} /></div>;
@@ -393,7 +395,7 @@ export function PursuitTableWorkspaceRow({ attention, columns, depth, gridTempla
   );
 }
 
-export function PursuitListWorkspaceRow({ attention, depth, onCreateChildPursuit, onCreatePursuitInline, onMarkDoneToday, onOpen, onOpenCalendar, onRemoveCompletionOnLogicalDay, onUpdatePursuit, pursuit, timezone, todayKey }: PursuitWorkspaceRowProps) {
+export function PursuitListWorkspaceRow({ attention, depth, onCreateChildPursuit, onCreatePursuitInline, onDeletePursuit, onMarkDoneToday, onOpen, onOpenCalendar, onRemoveCompletionOnLogicalDay, onUpdatePursuit, pursuit, timezone, todayKey }: PursuitWorkspaceRowProps) {
   const [activeQuickEdit, setActiveQuickEdit] = useState<PursuitQuickEditMode | null>(null);
   const [childDraftOpen, setChildDraftOpen] = useState(false);
   const [childDraftTitle, setChildDraftTitle] = useState("");
@@ -434,7 +436,7 @@ export function PursuitListWorkspaceRow({ attention, depth, onCreateChildPursuit
     <article className="relative cursor-pointer rounded-[1.35rem] border border-[#e7e0f7] bg-[#fbfaff] p-3 shadow-[0_12px_30px_rgba(81,61,168,0.04)] dark:border-white/10 dark:bg-white/[0.03]" data-pursuit-row={pursuit.id} onClick={() => onOpen(pursuit.id)} style={{ marginLeft: `${Math.min(depth, 8) * 18}px` }}>
       <div className="flex min-w-0 items-center justify-between gap-2">
         <PursuitTitle attention={attention} depth={0} onMarkDoneToday={onMarkDoneToday} onOpen={onOpen} onRemoveCompletionOnLogicalDay={onRemoveCompletionOnLogicalDay} pursuit={pursuit} showIdentityIcon timezone={timezone} todayKey={todayKey} variant="list" />
-        <PursuitRowActions onCreateChildPursuit={onCreatePursuitInline ? beginChildDraft : onCreateChildPursuit} onOpen={onOpen} onOpenCalendar={onOpenCalendar} pursuit={pursuit} />
+        <PursuitRowActions onCreateChildPursuit={onCreatePursuitInline ? beginChildDraft : onCreateChildPursuit} onDeletePursuit={onDeletePursuit} onOpen={onOpen} onOpenCalendar={onOpenCalendar} pursuit={pursuit} />
       </div>
       {onUpdatePursuit ? <div className="mt-3 flex min-w-0 flex-wrap items-center gap-1.5" data-pursuit-metadata-row="true" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
         <PursuitMetadataButton active={activeQuickEdit === "due"} label="Due" onClick={() => openQuickEdit("due")} toneClassName={attention?.nextTargetLogicalDay ? TASK_TABLE_LIST_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS} value={targetLabel(attention, timezone)} />

@@ -1272,6 +1272,7 @@ type TaskManagementTableV2Props = {
   onOpenPursuit?: (pursuitId: string) => void;
   onOpenPursuitCalendar?: (pursuitId: string) => void;
   onCreatePursuitChild?: (pursuitId: string) => void;
+  onDeletePursuit?: (pursuitId: string) => Promise<boolean> | boolean;
   onMarkDonePursuit?: (pursuitId: string, notes?: string) => void | Promise<unknown>;
   onRemovePursuitCompletion?: (pursuitId: string, logicalDay: string) => void | Promise<unknown>;
   onUpdatePursuit?: (pursuitId: string, input: PursuitUpdate) => Promise<Pursuit | null>;
@@ -2748,6 +2749,7 @@ export function TaskManagementTableV2({
   onOpenPursuit,
   onOpenPursuitCalendar,
   onCreatePursuitChild,
+  onDeletePursuit,
   onMarkDonePursuit,
   onRemovePursuitCompletion,
   onUpdatePursuit,
@@ -3414,6 +3416,7 @@ export function TaskManagementTableV2({
       key={`pursuit:${pursuit.id}`}
       onCreateChildPursuit={onCreatePursuitChild}
       onCreatePursuitInline={onCreatePursuitInline}
+      onDeletePursuit={onDeletePursuit}
       onMarkDoneToday={onMarkDonePursuit ?? (() => undefined)}
       onOpen={onOpenPursuit ?? (() => undefined)}
       onOpenCalendar={onOpenPursuitCalendar}
@@ -10073,6 +10076,7 @@ export function TaskManagementTableV2({
                         key={`editor-pursuit:${pursuit.id}`}
                         onCreateChildPursuit={onCreatePursuitChild}
                         onCreatePursuitInline={onCreatePursuitInline}
+                        onDeletePursuit={onDeletePursuit}
                         onMarkDoneToday={onMarkDonePursuit ?? (() => undefined)}
                         onOpen={onOpenPursuit ?? (() => undefined)}
                         onOpenCalendar={onOpenPursuitCalendar}

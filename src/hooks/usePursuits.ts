@@ -22,6 +22,11 @@ type PursuitCompletionOptions = {
 export type PursuitCreateInput = Pick<PursuitInsert, "notes" | "parent_pursuit_id" | "parent_task_id" | "revisit_interval_days" | "tags" | "title">;
 export type PursuitLogicalDaySettings = { dayStartTime: string; timezone: string };
 
+export function formatPursuitChildDeleteWarning(childCount: number) {
+  const childLabel = childCount === 1 ? "child Pursuit" : "child Pursuits";
+  return `This Pursuit has ${childCount} ${childLabel}. Delete ${childCount === 1 ? "it" : "them"} first.`;
+}
+
 export function isMissingPursuitTableError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   return message.includes("adhdice_pursuits")
@@ -226,6 +231,30 @@ export function usePursuits(
     return nextPursuit;
   }, [client, pursuits, reportError, setMessage, userId]);
 
+  const deletePursuit = useCallback(async (pursuitId: string): Promise<boolean> => {
+    if (!client || !userId) return false;
+    const childCount = pursuits.filter((pursuit) => pursuit.parent_pursuit_id === pursuitId).length;
+    if (childCount > 0) {
+      reportError(formatPursuitChildDeleteWarning(childCount));
+      return false;
+    }
+
+    const result = await client
+      .from("adhdice_pursuits")
+      .delete()
+      .eq("id", pursuitId)
+      .eq("user_id", userId);
+    if (result.error) {
+      reportError(result.error);
+      return false;
+    }
+
+    setPursuits((current) => current.filter((pursuit) => pursuit.id !== pursuitId));
+    setActivities((current) => current.filter((activity) => activity.pursuit_id !== pursuitId));
+    setMessage?.({ tone: "good", text: "Pursuit deleted." });
+    return true;
+  }, [client, pursuits, reportError, setMessage, userId]);
+
   const updateExistingCompletion = useCallback(async (existing: PursuitActivity, options: PursuitCompletionOptions) => {
     if (!client || !userId || options.notes === undefined) return existing;
     const nextNotes = options.notes.trim() || null;
@@ -320,6 +349,7 @@ export function usePursuits(
   return {
     activities,
     createPursuit,
+    deletePursuit,
     error,
     isLoading,
     markCompletedOnLogicalDay,

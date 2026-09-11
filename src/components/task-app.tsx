@@ -1709,6 +1709,13 @@ export function TaskApp() {
     { dayStartTime, timezone: userTimeZone },
   );
   const createInlinePursuit = useCallback((input: PursuitInlineCreateInput) => pursuitData.createPursuit(input), [pursuitData.createPursuit]);
+  const deletePursuit = useCallback(async (pursuitId: string) => {
+    const deleted = await pursuitData.deletePursuit(pursuitId);
+    if (deleted && pursuitEditorState?.pursuitId === pursuitId) {
+      closePursuitEditor();
+    }
+    return deleted;
+  }, [closePursuitEditor, pursuitData.deletePursuit, pursuitEditorState?.pursuitId]);
   const onTimePlan = useOnTimePlan(
     currentUserId,
     userTimeZone,
@@ -6927,6 +6934,7 @@ export function TaskApp() {
           onMarkDonePursuit={togglePursuitDoneToday}
           onOpenPursuitCalendar={(pursuitId) => openPursuitEditor(pursuitId, sharedTaskEditorOverlayTaskId, "calendar")}
           onCreatePursuitChild={(pursuitId) => openNewPursuitEditor(null, sharedTaskEditorOverlayTaskId, pursuitId)}
+          onDeletePursuit={deletePursuit}
           onRemovePursuitCompletion={pursuitData.removeCompletionOnLogicalDay}
           onUpdatePursuit={pursuitData.updatePursuit}
           onOpenNote={(noteId) => {
@@ -7375,6 +7383,7 @@ export function TaskApp() {
                   onCreateChildPursuit: openNewPursuitEditor,
                   onCreatePursuitInline: createInlinePursuit,
                   onCreatePursuitChild: openNewPursuitEditorFromPursuit,
+                  onDeletePursuit: deletePursuit,
                   onMarkDonePursuit: (pursuitId, notes) => {
                     if (pursuitAttentionMap.get(pursuitId)?.completionSummary.completedToday) {
                       void pursuitData.removeCompletionOnLogicalDay(pursuitId, todayKey);
@@ -7578,6 +7587,7 @@ export function TaskApp() {
                   onCreateChildPursuit: openNewPursuitEditor,
                   onCreatePursuitInline: createInlinePursuit,
                   onCreatePursuitChild: openNewPursuitEditorFromPursuit,
+                  onDeletePursuit: deletePursuit,
                   onMarkDonePursuit: (pursuitId, notes) => {
                     if (pursuitAttentionMap.get(pursuitId)?.completionSummary.completedToday) {
                       void pursuitData.removeCompletionOnLogicalDay(pursuitId, todayKey);

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.36`.
+- Current working app version: `7.13.37`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-11 7.13.37 Legacy Pursuit Hard Delete
+
+Old separate Pursuit rows in the Tasks workspace now offer a confirmed Trash
+action. `usePursuits` performs an owner-scoped hard delete for childless rows,
+blocks parents until their loaded child Pursuits are deleted, and removes the
+deleted Pursuit plus its locally loaded completion activities after success.
+The database remains authoritative for the existing Pursuit activity cascade,
+child `ON DELETE RESTRICT`, and Task-parent `ON DELETE SET NULL` behavior. No
+SQL or Edge Function deployment was performed; browser QA and live Supabase
+verification remain unverified.
 
 ## 2026-09-11 7.13.36 Ruleset Delete RPC Ambiguity Correction
 
