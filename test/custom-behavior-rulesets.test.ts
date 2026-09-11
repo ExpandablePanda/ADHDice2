@@ -35,6 +35,7 @@ const assignmentMigration = readFileSync(new URL("../supabase/add_task_custom_ru
 const behaviorSelectionMigration = readFileSync(new URL("../supabase/add_task_behavior_selections_7_13_31.sql", import.meta.url), "utf8");
 const softDeleteMigration = readFileSync(new URL("../supabase/add_custom_behavior_ruleset_soft_delete_7_13_33.sql", import.meta.url), "utf8");
 const tombstoneFixMigration = readFileSync(new URL("../supabase/fix_custom_behavior_ruleset_delete_tombstones_7_13_35.sql", import.meta.url), "utf8");
+const ambiguityFixMigration = readFileSync(new URL("../supabase/fix_custom_behavior_ruleset_delete_ambiguity_7_13_36.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 
 const task = createTask({
@@ -393,6 +394,30 @@ test("7.13.35 excludes permanently deleted Task tombstones from the current-assi
 
   assert.doesNotMatch(tombstoneFixMigration, /update public\.adhdice_clean_tasks/i);
   assert.doesNotMatch(tombstoneFixMigration, /delete from public\.adhdice_(?:custom_behavior_ruleset_revisions|task_behavior_selections|task_history)/i);
+});
+
+test("7.13.36 qualifies the ruleset delete UPDATE columns without changing its guards", () => {
+  const deleteFunction = (source: string) => source.slice(source.indexOf("create or replace function public.adhdice_delete_custom_behavior_ruleset"));
+  for (const source of [ambiguityFixMigration, schema]) {
+    const functionBody = deleteFunction(source);
+    const finalUpdate = functionBody.slice(functionBody.indexOf("return query"));
+    const predicateAndReturning = finalUpdate.slice(finalUpdate.indexOf("where"));
+
+    assert.match(functionBody, /returns table\(\s*ruleset_id uuid,\s*ruleset_name text,\s*deleted_at timestamptz/i);
+    assert.match(finalUpdate, /update public\.adhdice_custom_behavior_rulesets as ruleset/i);
+    assert.match(finalUpdate, /where ruleset\.id = p_ruleset_id\s+and ruleset\.user_id = auth\.uid\(\)\s+and ruleset\.deleted_at is null/i);
+    assert.match(finalUpdate, /returning ruleset\.id, ruleset\.name, ruleset\.deleted_at;/i);
+    assert.doesNotMatch(predicateAndReturning.replaceAll("ruleset.deleted_at", ""), /\bdeleted_at\b/i);
+    assert.match(functionBody, /task\.user_id = auth\.uid\(\)\s+and task\.custom_ruleset_id = p_ruleset_id\s+and task\.permanently_deleted_at is null/i);
+    assert.match(functionBody, /update public\.adhdice_custom_behavior_rulesets as ruleset[\s\S]*?set deleted_at = now\(\)/i);
+    assert.doesNotMatch(functionBody, /delete from public\.adhdice_(?:custom_behavior_ruleset_revisions|task_behavior_selections|task_history)/i);
+    assert.match(functionBody, /security invoker[\s\S]*?set search_path = public, pg_temp/i);
+  }
+
+  for (const source of [ambiguityFixMigration, schema]) {
+    assert.match(source, /revoke all on function public\.adhdice_delete_custom_behavior_ruleset\(uuid\) from public, anon, authenticated;/i);
+    assert.match(source, /grant execute on function public\.adhdice_delete_custom_behavior_ruleset\(uuid\) to authenticated;/i);
+  }
 });
 
 test("named ruleset loader keeps historical identities while ignoring non-Custom rows", async () => {

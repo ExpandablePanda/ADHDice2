@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.35`.
+- Current working app version: `7.13.36`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-11 7.13.36 Ruleset Delete RPC Ambiguity Correction
+
+The named Custom ruleset delete RPC now aliases its target ruleset table and
+qualifies the final UPDATE predicate and returned columns, preventing
+PL/pgSQL output-column variables from making `deleted_at` ambiguous. The
+7.13.35 assignment guard remains unchanged: active, archived, and restorable
+trashed Tasks block deletion, while permanently deleted Task tombstones do
+not. The soft-delete RPC, historical selections, revisions, Task History,
+grants, and security/search_path model are unchanged. The SQL migration and
+consolidated schema are source-only; SQL deployment and browser QA remain
+unverified.
 
 ## 2026-09-11 7.13.35 Permanently Deleted Task Ruleset Deletion Correction
 

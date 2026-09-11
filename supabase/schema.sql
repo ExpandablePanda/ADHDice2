@@ -169,7 +169,11 @@ create trigger adhdice_validate_active_custom_ruleset_selection_reference
 create or replace function public.adhdice_delete_custom_behavior_ruleset(
   p_ruleset_id uuid
 )
-returns table(ruleset_id uuid, ruleset_name text, deleted_at timestamptz)
+returns table(
+  ruleset_id uuid,
+  ruleset_name text,
+  deleted_at timestamptz
+)
 language plpgsql
 security invoker
 set search_path = public, pg_temp
@@ -203,10 +207,12 @@ begin
       using errcode = '23514';
   end if;
   return query
-  update public.adhdice_custom_behavior_rulesets
+  update public.adhdice_custom_behavior_rulesets as ruleset
      set deleted_at = now(), updated_at = now()
-   where id = p_ruleset_id and user_id = auth.uid() and deleted_at is null
-  returning id, name, deleted_at;
+   where ruleset.id = p_ruleset_id
+     and ruleset.user_id = auth.uid()
+     and ruleset.deleted_at is null
+  returning ruleset.id, ruleset.name, ruleset.deleted_at;
 end;
 $function$;
 
