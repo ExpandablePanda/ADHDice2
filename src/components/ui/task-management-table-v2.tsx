@@ -36,6 +36,7 @@ import {
 import type { CustomBehaviorRuleset, Pursuit, PursuitUpdate, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
+import type { CustomBehaviorRulesetDeleteActionResult } from "@/lib/custom-behavior-rulesets";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy, groupChildTaskPreviewItemsByStoredCompletion, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import { isTaskEditorChildRouteSettled, resolveTaskEditorFocusPhase } from "@/lib/task-editor-focus-request";
@@ -68,7 +69,7 @@ import {
   isWeekdaysRepeatSelection,
 } from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
-import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, normalizeTaskType, resolveTaskTypeSelection, taskTypeSelectionValue } from "@/lib/task-type";
+import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, taskTypeSelectionValue } from "@/lib/task-type";
 import { AdhdDropdownSelect } from "@/components/ui-system";
 import {
   TASK_TABLE_BODY_MUTED_VALUE_CLASS as BODY_MUTED_VALUE_CLASS,
@@ -149,6 +150,7 @@ type SortColumnId =
   | "tags"
   | "link"
   | "notes"
+  | "task_type"
   | "priority"
   | "energy"
   | "repeat"
@@ -162,12 +164,13 @@ type HeaderColumn = {
   options: Array<{ id: SortOptionId; label: string }>;
 };
 type TextFilterColumnId = "title" | "lists" | "tags" | "link" | "notes";
-type StructuredFilterColumnId = "status" | "priority" | "energy" | "repeat";
+type StructuredFilterColumnId = "status" | "priority" | "energy" | "repeat" | "task_type";
 type StructuredFilters = {
   energy: TaskEnergy[];
   priority: TaskPriority[];
   repeat: TaskRepeatCategory[];
   status: TaskDisplayStatus[];
+  task_type: string[];
 };
 type OverlayMode = "actual" | "delay" | "due" | "energy" | "estimated" | "full" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type OverlaySectionId = "actual" | "due" | "energyStatus" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "tags";
@@ -200,9 +203,11 @@ export type TaskRowContextMenuQuickEditItem = {
 };
 export type PrototypeTaskSubtask = {
   children: PrototypeTaskSubtask[];
+  customRulesetId?: string | null;
   dueOn: string | null;
   id: string;
   status: TaskDisplayStatus;
+  taskType?: TaskType;
   title: string;
 };
 type PrototypeSubtaskMiniRow = {
@@ -322,9 +327,11 @@ function findPreviewAncestorIdsForTask(
 function buildPrototypeSubtaskSignature(subtasks: PrototypeTaskSubtask[]): string {
   return JSON.stringify(subtasks.map((subtask) => ({
     children: buildPrototypeSubtaskSignature(subtask.children),
+    customRulesetId: subtask.customRulesetId,
     dueOn: subtask.dueOn,
     id: subtask.id,
     status: subtask.status,
+    taskType: subtask.taskType,
     title: subtask.title,
   })));
 }
@@ -1248,7 +1255,9 @@ type TaskManagementTableV2Props = {
   customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
   onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
-  onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean> | boolean;
+  onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
+  onShowCustomRulesetTasks?: (rulesetId: string) => void;
+  onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
   onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean>;
   onTaskBehaviorProfileChange?: (taskType: TaskType, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
   onCustomRulesetBehaviorProfileChange?: (rulesetId: string, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
@@ -1450,7 +1459,7 @@ function readTaskTablePreferences(): TaskTablePreferences | null {
   }
 }
 
-function normalizePersistedSortState(sortState: TaskTableLayoutPreferences["sortState"] | TaskTablePreferences["sortState"] | undefined) {
+function normalizePersistedSortState(sortState: TaskTableLayoutPreferences["sortState"] | TaskTablePreferences["sortState"] | undefined): { columnId: SortColumnId; optionId: SortOptionId } | null {
   const nextSortState = sortState ?? null;
   if (!nextSortState) {
     return null;
@@ -1459,7 +1468,9 @@ function normalizePersistedSortState(sortState: TaskTableLayoutPreferences["sort
   const hasValidColumn = HEADER_COLUMNS.some((column) => column.id === nextSortState.columnId);
   const matchingColumn = HEADER_COLUMNS.find((column) => column.id === nextSortState.columnId);
   const hasValidOption = matchingColumn?.options.some((option) => option.id === nextSortState.optionId) ?? false;
-  return hasValidColumn && hasValidOption ? nextSortState : null;
+  return hasValidColumn && hasValidOption
+    ? { columnId: nextSortState.columnId as SortColumnId, optionId: nextSortState.optionId as SortOptionId }
+    : null;
 }
 
 function getInitialSortState(persistedLayoutPreferences?: TaskTableLayoutPreferences) {
@@ -1482,9 +1493,9 @@ function getInitialColumnWidths() {
   }, { ...DEFAULT_COLUMN_WIDTHS });
 }
 
-function normalizePersistedColumnOrder(columnOrder: TaskTableLayoutPreferences["columnOrder"] | TaskTablePreferences["columnOrder"] | undefined) {
+function normalizePersistedColumnOrder(columnOrder: TaskTableLayoutPreferences["columnOrder"] | TaskTablePreferences["columnOrder"] | undefined): TaskManagementTableColumnId[] {
   const storedOrder = columnOrder ?? [];
-  const validStoredOrder = storedOrder.filter((columnId) => HEADER_COLUMNS.some((column) => column.id === columnId));
+  const validStoredOrder = storedOrder.filter((columnId): columnId is TaskManagementTableColumnId => HEADER_COLUMNS.some((column) => column.id === columnId));
   const missingColumns = HEADER_COLUMNS.map((column) => column.id).filter((columnId) => !validStoredOrder.includes(columnId));
   const lastHandledIndex = missingColumns.indexOf("last_handled");
   const lastDoneIndex = validStoredOrder.indexOf("last_done");
@@ -1631,6 +1642,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   tags: 82,
   link: 80,
   notes: 92,
+  task_type: 128,
   priority: 92,
   energy: 80,
   repeat: 92,
@@ -1654,6 +1666,7 @@ const MIN_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   tags: 58,
   link: 58,
   notes: 70,
+  task_type: 92,
   priority: 70,
   energy: 64,
   repeat: 72,
@@ -1674,6 +1687,7 @@ const COLUMN_WIDTH_BUFFER: Record<TaskManagementTableColumnId, number> = {
   tags: 2,
   link: 2,
   notes: 4,
+  task_type: 4,
   priority: 4,
   energy: 4,
   repeat: 6,
@@ -1685,6 +1699,7 @@ const TABLE_FONT_STYLE = {
 const HEADER_COLUMNS: HeaderColumn[] = [
   { id: "status_icon", label: "Status", menuLabel: "Status", options: [{ id: "status_asc", label: "Status A-Z" }, { id: "status_desc", label: "Status Z-A" }] },
   { id: "title", label: "Task", menuLabel: "Task", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search tasks" },
+  { id: "task_type", label: "Task Type", menuLabel: "Task Type", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }] },
   { id: "lists", label: "Lists", menuLabel: "Lists", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search lists" },
   { id: "date_added", label: "Date Added", menuLabel: "Date Added", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
   { id: "date_completed", label: "Date Completed", menuLabel: "Date Completed", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
@@ -1706,6 +1721,7 @@ const DEFAULT_STRUCTURED_FILTERS: StructuredFilters = {
   priority: [],
   repeat: [],
   status: [],
+  task_type: [],
 };
 
 function summarizeInlineItems<T>(items: T[], maxVisible = 1) {
@@ -2428,7 +2444,7 @@ export function TaskTitleDraftInput({
   );
 }
 
-function textSortValue(task: PrototypeTaskRow, columnId: SortColumnId) {
+function textSortValue(task: PrototypeTaskRow, columnId: SortColumnId, customBehaviorRulesets: readonly CustomBehaviorRuleset[] = []) {
   switch (columnId) {
     case "title":
       return task.title;
@@ -2440,6 +2456,8 @@ function textSortValue(task: PrototypeTaskRow, columnId: SortColumnId) {
       return task.linkLabel || "No link";
     case "notes":
       return task.notes;
+    case "task_type":
+      return formatTaskTypeLabel(task.taskType, task.customRulesetId, customBehaviorRulesets);
     case "priority":
       return task.priorities.join(", ");
     case "energy":
@@ -2464,7 +2482,7 @@ function isTextFilterColumn(columnId: SortColumnId): columnId is TextFilterColum
 }
 
 function isStructuredFilterColumn(columnId: SortColumnId): columnId is StructuredFilterColumnId {
-  return columnId === "status" || columnId === "priority" || columnId === "energy" || columnId === "repeat";
+  return columnId === "status" || columnId === "priority" || columnId === "energy" || columnId === "repeat" || columnId === "task_type";
 }
 
 function prioritySortValue(task: PrototypeTaskRow) {
@@ -2542,7 +2560,7 @@ function sortRows(
   rows: PrototypeTaskRow[],
   columnId: SortColumnId,
   optionId: SortOptionId,
-  options?: { activeTaskTimerIds?: Set<string>; liveActualSecondsByTaskId?: Map<string, number> },
+  options?: { activeTaskTimerIds?: Set<string>; customBehaviorRulesets?: readonly CustomBehaviorRuleset[]; liveActualSecondsByTaskId?: Map<string, number> },
 ) {
   const sorted = [...rows];
 
@@ -2562,7 +2580,7 @@ function sortRows(
     let comparison = 0;
 
     if (optionId === "text_asc" || optionId === "text_desc") {
-      comparison = compareText(textSortValue(left, columnId), textSortValue(right, columnId));
+      comparison = compareText(textSortValue(left, columnId, options?.customBehaviorRulesets), textSortValue(right, columnId, options?.customBehaviorRulesets));
     } else if (optionId === "active_first") {
       comparison = Number(hasActiveTimer(right, options?.activeTaskTimerIds ?? new Set<string>()))
         - Number(hasActiveTimer(left, options?.activeTaskTimerIds ?? new Set<string>()));
@@ -2713,6 +2731,8 @@ export function TaskManagementTableV2({
   customBehaviorRulesetProfiles,
   onCreateCustomRuleset,
   onDeleteCustomRuleset,
+  onShowCustomRulesetTasks,
+  onMoveCustomRulesetTasksToTaskAndDelete,
   onRenameCustomRuleset,
   onTaskBehaviorProfileChange,
   onCustomRulesetBehaviorProfileChange,
@@ -2831,7 +2851,12 @@ export function TaskManagementTableV2({
     priority: columnFilters?.priority ?? localStructuredFilters.priority,
     repeat: (columnFilters?.repeat as TaskRepeatCategory[] | undefined) ?? localStructuredFilters.repeat,
     status: statusColumnFilters ?? localStructuredFilters.status,
+    task_type: columnFilters?.taskType ?? localStructuredFilters.task_type,
   }), [columnFilters, energyColumnFilters, localStructuredFilters, statusColumnFilters]);
+  const taskTypeFilterOptions = useMemo(
+    () => buildTaskTypeSelectionOptions(customBehaviorRulesets),
+    [customBehaviorRulesets],
+  );
   const getShowAllSearchStepsKey = (taskId: string) => `${hierarchyScopeKey}:${taskId}`;
 
   useEffect(() => {
@@ -3049,11 +3074,13 @@ export function TaskManagementTableV2({
       && (structuredFilters.status.length === 0 || structuredFilters.status.includes(task.status))
       && (structuredFilters.priority.length === 0 || task.priorities.some((priority) => structuredFilters.priority.includes(priority)))
       && (structuredFilters.energy.length === 0 || structuredFilters.energy.includes(task.energy))
-      && (structuredFilters.repeat.length === 0 || structuredFilters.repeat.includes(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval))));
+      && (structuredFilters.repeat.length === 0 || structuredFilters.repeat.includes(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval)))
+      && matchesTaskTypeSelections(task.taskType, task.customRulesetId, structuredFilters.task_type));
 
     const nextDisplayedTasks = sortState
       ? sortRows(filtered, sortState.columnId, sortState.optionId, {
         activeTaskTimerIds,
+        customBehaviorRulesets,
         liveActualSecondsByTaskId,
       })
       : filtered;
@@ -3068,7 +3095,7 @@ export function TaskManagementTableV2({
     }
 
     return nextDisplayedTasks;
-  }, [activeTaskTimerIds, liveActualSecondsByTaskId, onColumnFiltersChange, onEnergyColumnFiltersChange, onStatusColumnFiltersChange, sortState, structuredFilters, tasks, textFilters]);
+  }, [activeTaskTimerIds, customBehaviorRulesets, liveActualSecondsByTaskId, onColumnFiltersChange, onEnergyColumnFiltersChange, onStatusColumnFiltersChange, sortState, structuredFilters, tasks, textFilters]);
   const cancelTableScrollTopHold = useCallback(() => {
     if (tableScrollTopHoldFrameRef.current !== null) {
       window.cancelAnimationFrame(tableScrollTopHoldFrameRef.current);
@@ -3421,7 +3448,8 @@ export function TaskManagementTableV2({
       || structuredFilters.status.length > 0
       || structuredFilters.priority.length > 0
       || structuredFilters.energy.length > 0
-      || structuredFilters.repeat.length > 0,
+      || structuredFilters.repeat.length > 0
+      || structuredFilters.task_type.length > 0,
     [structuredFilters, textFilters],
   );
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
@@ -5328,10 +5356,11 @@ export function TaskManagementTableV2({
     setStructuredFilters(next);
     if (columnId === "status") onStatusColumnFiltersChange?.(next.status);
     if (columnId === "energy") onEnergyColumnFiltersChange?.(next.energy);
-    if (columnId === "priority" || columnId === "repeat") {
+    if (columnId === "priority" || columnId === "repeat" || columnId === "task_type") {
       onColumnFiltersChange?.({
         priority: next.priority,
         repeat: next.repeat,
+        taskType: next.task_type,
         text: textFilters,
       });
     }
@@ -5340,7 +5369,7 @@ export function TaskManagementTableV2({
   function clearAllFilters() {
     setTextFilters({});
     setStructuredFilters(DEFAULT_STRUCTURED_FILTERS);
-    onColumnFiltersChange?.({ priority: [], repeat: [], text: {} });
+    onColumnFiltersChange?.({ priority: [], repeat: [], taskType: [], text: {} });
     onEnergyColumnFiltersChange?.([]);
     onStatusColumnFiltersChange?.([]);
   }
@@ -6538,6 +6567,7 @@ export function TaskManagementTableV2({
                 onColumnFiltersChange?.({
                   priority: structuredFilters.priority,
                   repeat: structuredFilters.repeat,
+                  taskType: structuredFilters.task_type,
                   text: next,
                 });
               }}
@@ -6610,6 +6640,23 @@ export function TaskManagementTableV2({
                   className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? repeatTone(option.value) : LIST_CHIP_CLASS}`}
                   key={`${option.value || "repeat-filter"}-${optionIndex}`}
                   onClick={() => toggleStructuredFilter("repeat", option.value)}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {column.id === "task_type" ? (
+          <div className="mb-2 flex flex-wrap gap-2 px-1">
+            {taskTypeFilterOptions.map((option) => {
+              const selected = structuredFilters.task_type.includes(option.value);
+              return (
+                <button
+                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : LIST_CHIP_CLASS}`}
+                  key={option.value}
+                  onClick={() => toggleStructuredFilter("task_type", option.value)}
                   type="button"
                 >
                   {option.label}
@@ -6715,6 +6762,14 @@ export function TaskManagementTableV2({
               }
               if (isStructuredFilterColumn(column.id)) {
                 setStructuredFilters((current) => ({ ...current, [column.id]: [] }));
+                if (column.id === "task_type") {
+                  onColumnFiltersChange?.({
+                    priority: structuredFilters.priority,
+                    repeat: structuredFilters.repeat,
+                    taskType: [],
+                    text: textFilters,
+                  });
+                }
               }
               setOpenColumnMenuId(null);
             }}
@@ -7355,6 +7410,17 @@ export function TaskManagementTableV2({
           </div>
         ),
         "lists"
+      );
+    }
+
+    if (columnId === "task_type") {
+      return wrapMeasuredContent(
+        <div>
+          <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>
+            {formatTaskTypeLabel(task.taskType, task.customRulesetId, customBehaviorRulesets)}
+          </span>
+        </div>,
+        "justify-center",
       );
     }
 
@@ -8282,6 +8348,16 @@ export function TaskManagementTableV2({
       ));
     }
 
+    if (columnId === "task_type") {
+      return (
+        <div>
+          <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>
+            {formatTaskTypeLabel(item.taskType, item.customRulesetId, customBehaviorRulesets)}
+          </span>
+        </div>
+      );
+    }
+
     if (columnId === "date_added") {
       return (
         <div>
@@ -8522,6 +8598,10 @@ export function TaskManagementTableV2({
       );
     }
 
+    if (columnId === "task_type") {
+      return <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>Task</span>;
+    }
+
     if (columnId === "due") {
       return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>No date</span>;
     }
@@ -8746,6 +8826,10 @@ export function TaskManagementTableV2({
           <span className={`${CHIP_BASE} ${statusTone(subtask.status)}`}>{formatStatusLabel(subtask.status)}</span>
         </div>
       );
+    }
+
+    if (columnId === "task_type") {
+      return <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>{formatTaskTypeLabel(subtask.taskType, subtask.customRulesetId, customBehaviorRulesets)}</span>;
     }
 
     return <div aria-hidden="true" />;
@@ -9584,6 +9668,11 @@ export function TaskManagementTableV2({
                               initialCustomRulesetId={metadataTask.customRulesetId}
                               onCreateCustomRuleset={onCreateCustomRuleset}
                               onDeleteCustomRuleset={onDeleteCustomRuleset}
+                              onShowCustomRulesetTasks={(rulesetId) => {
+                                onShowCustomRulesetTasks?.(rulesetId);
+                                closeInspector();
+                              }}
+                              onMoveCustomRulesetTasksToTaskAndDelete={onMoveCustomRulesetTasksToTaskAndDelete}
                               onChange={(taskType, field, value) => onTaskBehaviorProfileChange?.(taskType, field, value) ?? false}
                               onCustomRulesetChange={(rulesetId, field, value) => onCustomRulesetBehaviorProfileChange?.(rulesetId, field, value) ?? false}
                               onRenameCustomRuleset={onRenameCustomRuleset}

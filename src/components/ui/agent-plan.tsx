@@ -45,9 +45,9 @@ export type AgentPlanMetaPill = {
   tone?: AgentPlanMetaTone;
 };
 
-export type AgentPlanColumnId = "bucket" | "date_added" | "date_completed" | "last_done" | "last_handled" | "due" | "energy" | "estimated_time" | "actual_time" | "streak" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal";
+export type AgentPlanColumnId = "bucket" | "task_type" | "date_added" | "date_completed" | "last_done" | "last_handled" | "due" | "energy" | "estimated_time" | "actual_time" | "streak" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal";
 
-const REORDERABLE_COLUMN_IDS: AgentPlanColumnId[] = ["bucket", "date_added", "date_completed", "last_done", "last_handled", "due", "energy", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "repeat", "signal"];
+const REORDERABLE_COLUMN_IDS: AgentPlanColumnId[] = ["bucket", "task_type", "date_added", "date_completed", "last_done", "last_handled", "due", "energy", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "repeat", "signal"];
 
 export type AgentPlanSubtaskItem = {
   children: AgentPlanSubtaskItem[];
@@ -268,6 +268,7 @@ const TASK_CONNECTOR_STROKE = "#d8ccff";
 const FOCUS_RING_CLASS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-[#cabfff] dark:focus-visible:ring-offset-[#171328]";
 const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   bucket: 150,
+  task_type: 132,
   date_added: 168,
   date_completed: 176,
   last_done: 156,
@@ -288,6 +289,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
 };
 const MIN_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   bucket: 84,
+  task_type: 92,
   date_added: 112,
   date_completed: 120,
   last_done: 112,
@@ -308,6 +310,7 @@ const MIN_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
 };
 const COLUMN_HEADER_LABELS: Record<ResizableColumnId, string> = {
   bucket: "Lists",
+  task_type: "Task Type",
   date_added: "Date Added",
   date_completed: "Date Completed",
   last_done: "Last Done",
@@ -340,7 +343,7 @@ type HorizontalScrollIndicator = {
   width: number;
 };
 
-type ResizableColumnId = "bucket" | "date_added" | "date_completed" | "last_done" | "last_handled" | "due" | "energy" | "estimated_time" | "actual_time" | "streak" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal" | "status" | "task";
+type ResizableColumnId = "bucket" | "task_type" | "date_added" | "date_completed" | "last_done" | "last_handled" | "due" | "energy" | "estimated_time" | "actual_time" | "streak" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal" | "status" | "task";
 
 function getPriorityTone(priority: AgentPlanPriorityValue): AgentPlanMetaTone {
   if (priority === "focus") return "accent";
@@ -1727,6 +1730,7 @@ export default function AgentPlan({
                     const repeatValue = getMetadataValue(task, "Repeat");
                     const metadataValueByColumn: Partial<Record<AgentPlanColumnId, string>> = {
                       bucket: getMetadataValue(task, "Lists"),
+                      task_type: getMetadataValue(task, "Task Type") || "Task",
                       date_added: formatDateAddedLabel(task.createdAt),
                       date_completed: task.completedAt ? formatDateAddedLabel(task.completedAt) : "Not completed",
                       last_done: getMetadataValue(task, "Last Done") || "No done yet",
@@ -2742,6 +2746,16 @@ export default function AgentPlan({
                                       </div>
                                     ) : null}
                                   </div>
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "task_type") {
+                              return (
+                                <td className="px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`} data-column-measure>
+                                    {metadataValueByColumn.task_type}
+                                  </span>
                                 </td>
                               );
                             }

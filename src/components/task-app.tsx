@@ -138,6 +138,7 @@ import { useTaskRewardController } from "@/hooks/useTaskRewardController";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
 import { useWorkspaceData } from "@/hooks/useWorkspaceData";
 import { useTaskTypeBehaviorProfiles } from "@/hooks/useTaskTypeBehaviorProfiles";
+import { moveAssignedTasksToTaskAndDeleteRuleset } from "@/lib/custom-ruleset-delete-resolution";
 import { useTaskListFolderActions } from "@/hooks/useTaskListFolderActions";
 import { useResponsiveTaskGridColumns } from "@/hooks/useResponsiveTaskGridColumns";
 import { useTaskListSelection } from "@/hooks/useTaskListSelection";
@@ -906,6 +907,7 @@ const MAX_FOCUS_ALARM_INTERVAL_MINUTES = 120;
 const FOCUS_ALARM_INTERVAL_STEP_MINUTES = 5;
 const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   bucket: "Lists",
+  task_type: "Task Type",
   date_added: "Date Added",
   date_completed: "Date Completed",
   last_done: "Last Done",
@@ -922,7 +924,7 @@ const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   repeat: "Repeat",
   signal: "Indicators",
 };
-const LIST_COLUMN_PICKER_ORDER: AgentPlanColumnId[] = ["bucket", "date_added", "last_done", "last_handled", "due", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "energy", "repeat", "signal"];
+const LIST_COLUMN_PICKER_ORDER: AgentPlanColumnId[] = ["bucket", "task_type", "date_added", "last_done", "last_handled", "due", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "energy", "repeat", "signal"];
 const TASK_KEYBOARD_SHORTCUTS: TaskKeyboardShortcut[] = [
   { action: "Search tasks", keys: ["/"] },
   { action: "New task", keys: ["N"], alternateKeys: ["A"] },
@@ -3603,6 +3605,7 @@ export function TaskApp() {
     || taskUiState.quickFilters.length > 0
     || taskUiState.tableColumnFilters.priority.length > 0
     || taskUiState.tableColumnFilters.repeat.length > 0
+    || (taskUiState.tableColumnFilters.taskType?.length ?? 0) > 0
     || Object.values(taskUiState.tableColumnFilters.text).some((value) => Boolean(value?.trim()))
   );
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
@@ -4252,6 +4255,49 @@ export function TaskApp() {
       ...buildTaskPriorityUpdate(nextPriorityLevel),
     });
   }, [updateTask]);
+
+  const showCustomRulesetTasks = useCallback((rulesetId: string) => {
+    setActivePage("Tasks");
+    setIsTaskFiltersOpen(true);
+    setTaskUiState((prev) => ({
+      ...prev,
+      duplicateTitleMode: false,
+      energyFilters: [],
+      includeStepsByView: { ...prev.includeStepsByView, table: true },
+      quickFilters: [],
+      search: "",
+      selectedBucket: "all",
+      statusFilters: [],
+      tableColumnFilters: {
+        ...prev.tableColumnFilters,
+        priority: [],
+        repeat: [],
+        taskType: [rulesetId],
+        text: {},
+      },
+      view: "table",
+    }));
+  }, [setActivePage, setIsTaskFiltersOpen, setTaskUiState]);
+
+  const moveCustomRulesetTasksToTaskAndDelete = useCallback(async (rulesetId: string) => {
+    const rulesetName = customBehaviorRulesets.find((ruleset) => ruleset.id === rulesetId)?.name ?? "the Custom ruleset";
+    const assignedTaskIds = tasks
+      .filter((task) => task.task_type === "custom" && task.custom_ruleset_id === rulesetId)
+      .map((task) => task.id);
+    const resolution = await moveAssignedTasksToTaskAndDeleteRuleset({
+      deleteRuleset: () => deleteCustomRuleset(rulesetId),
+      moveTask: (taskId) => updateTask(taskId, { task_type: "task", custom_ruleset_id: null }),
+      taskIds: assignedTaskIds,
+    });
+    if (resolution.failedTaskId) {
+      const failedTask = tasks.find((task) => task.id === resolution.failedTaskId);
+      const taskLabel = failedTask?.title.trim() ? `Task “${failedTask.title.trim()}”` : "an assigned Task";
+      const message = `Could not move ${taskLabel} to Task, so ${rulesetName} was not deleted.`;
+      setMessage({ tone: "warn", text: message });
+      return { assignedTaskCount: null, error: message, ok: false };
+    }
+    return resolution.deleteResult ?? { assignedTaskCount: null, error: "Could not delete the Custom ruleset.", ok: false };
+  }, [customBehaviorRulesets, deleteCustomRuleset, setMessage, tasks, updateTask]);
 
   const openTaskInNewWorkspaceTab = useCallback((taskId: string) => {
     const task = tasks.find((entry) => entry.id === taskId);
@@ -5386,9 +5432,9 @@ export function TaskApp() {
       waitingCount={waitingTasks.length}
     />
   );
-  const clearTableColumnFilter = (dimension: "priority" | "repeat" | "title" | "lists" | "tags" | "link" | "notes") => {
+  const clearTableColumnFilter = (dimension: "priority" | "repeat" | "taskType" | "title" | "lists" | "tags" | "link" | "notes") => {
     setTaskUiState((prev) => {
-      if (dimension === "priority" || dimension === "repeat") {
+      if (dimension === "priority" || dimension === "repeat" || dimension === "taskType") {
         return {
           ...prev,
           tableColumnFilters: { ...prev.tableColumnFilters, [dimension]: [] },
@@ -5441,6 +5487,7 @@ export function TaskApp() {
       selectedStatuses={taskUiState.statusFilters}
       selectedEnergies={taskUiState.energyFilters}
       tableColumnFilters={taskUiState.tableColumnFilters}
+      customBehaviorRulesets={customBehaviorRulesets}
       onClearTableColumnFilter={clearTableColumnFilter}
     />
   );
@@ -6536,6 +6583,7 @@ export function TaskApp() {
         selectedStatuses={taskUiState.statusFilters}
         selectedEnergies={taskUiState.energyFilters}
         tableColumnFilters={taskUiState.tableColumnFilters}
+        customBehaviorRulesets={customBehaviorRulesets}
         onClearTableColumnFilter={clearTableColumnFilter}
         listSortPreference={taskUiState.view === "list" && !duplicateTitleModeActive ? activeListSortPreference : undefined}
         onListSortPreferenceChange={taskUiState.view === "list" && !duplicateTitleModeActive ? (preference) => setTaskUiState((current) => ({
@@ -6924,6 +6972,8 @@ export function TaskApp() {
           customBehaviorRulesetProfiles={customBehaviorRulesetProfiles}
           onCreateCustomRuleset={createCustomRuleset}
           onDeleteCustomRuleset={deleteCustomRuleset}
+          onShowCustomRulesetTasks={showCustomRulesetTasks}
+          onMoveCustomRulesetTasksToTaskAndDelete={moveCustomRulesetTasksToTaskAndDelete}
           onRenameCustomRuleset={renameCustomRuleset}
           onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
           onTaskPriorityChange={applyTaskPriorityChange}
@@ -7426,6 +7476,8 @@ export function TaskApp() {
                   taskTypeBehaviorProfiles,
                   onCreateCustomRuleset: createCustomRuleset,
                   onDeleteCustomRuleset: deleteCustomRuleset,
+                  onShowCustomRulesetTasks: showCustomRulesetTasks,
+                  onMoveCustomRulesetTasksToTaskAndDelete: moveCustomRulesetTasksToTaskAndDelete,
                   onRenameCustomRuleset: renameCustomRuleset,
                   onSetTaskBehaviorProfile: updateTaskBehaviorProfile,
                   onSetCustomRulesetBehaviorProfile: updateCustomBehaviorRulesetProfile,
@@ -7620,6 +7672,8 @@ export function TaskApp() {
                   taskTypeBehaviorProfiles,
                   onCreateCustomRuleset: createCustomRuleset,
                   onDeleteCustomRuleset: deleteCustomRuleset,
+                  onShowCustomRulesetTasks: showCustomRulesetTasks,
+                  onMoveCustomRulesetTasksToTaskAndDelete: moveCustomRulesetTasksToTaskAndDelete,
                   onRenameCustomRuleset: renameCustomRuleset,
                   onSetTaskBehaviorProfile: updateTaskBehaviorProfile,
                   onSetCustomRulesetBehaviorProfile: updateCustomBehaviorRulesetProfile,

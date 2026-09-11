@@ -22,6 +22,7 @@ import type { TaskStateEngineInput } from "../src/lib/task-state-engine/types.ts
 
 const behaviorSettingsSource = readFileSync("src/components/task-app/task-type-behavior-settings.tsx", "utf8");
 const behaviorProfilesHookSource = readFileSync("src/hooks/useTaskTypeBehaviorProfiles.ts", "utf8");
+const filterRowsSource = readFileSync("src/components/task-app/task-filter-rows.tsx", "utf8");
 
 const input: TaskStateEngineInput = {
   task: {
@@ -50,6 +51,22 @@ test("Behavior Settings exposes only active named rulesets and gates deletion be
   assert.doesNotMatch(behaviorSettingsSource, /Preserve positive streak/);
   assert.match(behaviorProfilesHookSource, /deleteCustomBehaviorRuleset/);
   assert.match(behaviorProfilesHookSource, /return refreshCustomBehaviorRulesets\(\)/);
+});
+
+test("blocked named-ruleset deletion exposes task resolution actions with singular/plural copy", () => {
+  assert.match(behaviorSettingsSource, /is currently assigned to \{blockedDelete\.count\} Task\{blockedDelete\.count === 1 \? "" : "s"\}/);
+  assert.match(behaviorSettingsSource, />Show Tasks<\/AdhdChip>/);
+  assert.match(behaviorSettingsSource, /Move \$\{blockedDelete\.count\} Task.*to Task & Delete/);
+  assert.match(behaviorSettingsSource, />Cancel<\/AdhdChip>/);
+  assert.match(behaviorSettingsSource, /onMoveCustomRulesetTasksToTaskAndDelete/);
+  assert.match(behaviorSettingsSource, /onShowCustomRulesetTasks/);
+});
+
+test("Task Type filters are represented in the shared active-filter row", () => {
+  assert.match(filterRowsSource, /customBehaviorRulesets\?: readonly CustomBehaviorRuleset\[\]/);
+  assert.match(filterRowsSource, /tableColumnFilters\?\.taskType\?\.length/);
+  assert.match(filterRowsSource, /buildTaskTypeSelectionOptions\(customBehaviorRulesets\)/);
+  assert.match(filterRowsSource, /dimension: "taskType"/);
 });
 
 test("stored Task profile normalization and ownership filter are narrow", async () => {

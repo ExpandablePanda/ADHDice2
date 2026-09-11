@@ -15,7 +15,9 @@ import { createPortal } from "react-dom";
 import { TASK_FILTER_STATUS_OPTIONS } from "@/lib/task-filter-state";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { AdhdDropdownPanel } from "@/components/ui-system";
+import type { CustomBehaviorRuleset } from "@/lib/database.types";
 import type { ListSortField, ListSortPreference } from "@/lib/task-list-sort";
+import { buildTaskTypeSelectionOptions } from "@/lib/task-type";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 
 const ENERGY_OPTIONS: TaskEnergy[] = ["none", "low", "medium", "high"];
@@ -109,7 +111,8 @@ type FilterRowsProps = {
   selectedStatuses: TaskDisplayStatus[];
   statusCounts: Record<TaskDisplayStatus, number>;
   tableColumnFilters?: TaskTableColumnFilters;
-  onClearTableColumnFilter?: (dimension: "priority" | "repeat" | keyof TaskTableColumnFilters["text"]) => void;
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
+  onClearTableColumnFilter?: (dimension: "priority" | "repeat" | "taskType" | keyof TaskTableColumnFilters["text"]) => void;
   listSortPreference?: ListSortPreference;
   onListSortPreferenceChange?: (preference: ListSortPreference) => void;
 };
@@ -261,6 +264,7 @@ export function FilterRowsComponent({
   selectedStatuses,
   statusCounts,
   tableColumnFilters,
+  customBehaviorRulesets = [],
   onClearTableColumnFilter,
   listSortPreference,
   onListSortPreferenceChange,
@@ -268,12 +272,18 @@ export function FilterRowsComponent({
   const bucketFilterCount = (pinnedFilterActive ? 1 : 0) + (routineFilterActive ? 1 : 0);
   const tableFilterCount = (tableColumnFilters?.priority.length ? 1 : 0)
     + (tableColumnFilters?.repeat.length ? 1 : 0)
+    + (tableColumnFilters?.taskType?.length ? 1 : 0)
     + Object.values(tableColumnFilters?.text ?? {}).filter((value) => value?.trim()).length;
   const activeFilterCount = selectedStatuses.length + selectedEnergies.length + bucketFilterCount + (duplicateTitleMode ? 1 : 0) + tableFilterCount;
   const searchModeActiveCount = bucketFilterCount + (duplicateTitleMode ? 1 : 0);
+  const taskTypeFilterLabels = buildTaskTypeSelectionOptions(customBehaviorRulesets);
   const activeTableColumnFilterChips = [
     ...(tableColumnFilters?.priority.length ? [{ dimension: "priority" as const, label: `Table Priority: ${tableColumnFilters.priority.join(", ")}` }] : []),
     ...(tableColumnFilters?.repeat.length ? [{ dimension: "repeat" as const, label: `Table Repeat: ${tableColumnFilters.repeat.map(formatOptionLabel).join(", ")}` }] : []),
+    ...(tableColumnFilters?.taskType?.length ? [{
+      dimension: "taskType" as const,
+      label: `Table Task Type: ${tableColumnFilters.taskType.map((value) => taskTypeFilterLabels.find((option) => option.value === value)?.label ?? value).join(", ")}`,
+    }] : []),
     ...Object.entries(tableColumnFilters?.text ?? {})
       .filter((entry): entry is [keyof TaskTableColumnFilters["text"], string] => Boolean(entry[1]?.trim()))
       .map(([dimension, value]) => ({ dimension, label: `Table ${formatOptionLabel(dimension)}: ${value}` })),

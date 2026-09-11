@@ -65,9 +65,11 @@ function buildTaskTableSubtasks(subtasks: Task[], parentId: string | null = null
     .sort((left, right) => left.sort_order - right.sort_order)
     .map((subtask) => ({
       children: buildTaskTableSubtasks(subtasks, subtask.id),
+      customRulesetId: subtask.custom_ruleset_id,
       dueOn: subtask.due_on,
       id: subtask.id,
       status: subtask.status,
+      taskType: normalizeTaskType(subtask.task_type),
       title: subtask.title,
     }));
 }

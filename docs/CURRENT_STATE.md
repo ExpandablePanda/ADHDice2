@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-10
+Last reviewed: 2026-09-11
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.33`.
+- Current working app version: `7.13.34`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-11 7.13.34 Task Type Table Filtering and Ruleset Resolution
+
+Table View now exposes Task Type as a persisted, reorderable column with
+centralized TaskType/ruleset labels and active-selector-backed filters. Named
+ruleset deletion remains server-blocked while current Tasks use it, but the
+blocked UI can show the matching Task filter or move each assigned Task to
+normal Task through the existing effective-dated selection mutation before
+retrying the tombstone. Historical selections, ruleset identities, Task
+History, SQL source, and Edge Functions are unchanged; browser and live
+Supabase QA remain pending.
 
 ## 2026-09-10 7.13.31 Historical Behavior Selection Correction
 

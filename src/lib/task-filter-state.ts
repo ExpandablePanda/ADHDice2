@@ -28,6 +28,7 @@ export function hasActiveTaskFilters(state: TaskUiState) {
     || state.energyFilters.length > 0
     || state.tableColumnFilters.priority.length > 0
     || state.tableColumnFilters.repeat.length > 0
+    || (state.tableColumnFilters.taskType?.length ?? 0) > 0
     || Object.values(state.tableColumnFilters.text).some((value) => value?.trim())
     || FILTER_BUCKET_IDS.has(state.selectedBucket)
     || state.matchAny !== DEFAULT_TASK_UI_STATE.matchAny;

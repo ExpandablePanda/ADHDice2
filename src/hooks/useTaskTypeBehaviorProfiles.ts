@@ -22,6 +22,8 @@ import {
   renameCustomBehaviorRuleset,
   upsertCustomBehaviorRulesetRevision,
   validateCustomBehaviorRulesetName,
+  getCustomRulesetAssignedTaskCount,
+  type CustomBehaviorRulesetDeleteActionResult,
   type CustomBehaviorRulesetState,
   type CustomBehaviorRulesetClient,
   type LoadedCustomBehaviorRulesets,
@@ -281,21 +283,28 @@ export function useTaskTypeBehaviorProfiles(
     return true;
   }, [client, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage, userId]);
 
-  const deleteCustomRuleset = useCallback(async (rulesetId: string) => {
+  const deleteCustomRuleset = useCallback(async (rulesetId: string): Promise<CustomBehaviorRulesetDeleteActionResult> => {
     const ruleset = customBehaviorRulesets.find((entry) => entry.id === rulesetId);
     if (!ruleset || ruleset.deleted_at != null) {
       setMessage({ tone: "warn", text: "The Custom ruleset has already been deleted." });
-      return false;
+      return { assignedTaskCount: null, error: "The Custom ruleset has already been deleted.", ok: false };
     }
     const error = await deleteCustomBehaviorRuleset(
       client as unknown as CustomBehaviorRulesetClient,
       rulesetId,
     );
     if (error) {
-      setMessage({ tone: "warn", text: error.message ?? "Could not delete the Custom ruleset." });
-      return false;
+      const message = error.message ?? "Could not delete the Custom ruleset.";
+      const assignedTaskCount = getCustomRulesetAssignedTaskCount(message);
+      if (assignedTaskCount === null) {
+        setMessage({ tone: "warn", text: message });
+      }
+      return { assignedTaskCount, error: message, ok: false };
     }
-    return refreshCustomBehaviorRulesets();
+    const refreshed = await refreshCustomBehaviorRulesets();
+    return refreshed
+      ? { assignedTaskCount: null, error: null, ok: true }
+      : { assignedTaskCount: null, error: "Could not refresh the Custom ruleset state.", ok: false };
   }, [client, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage]);
 
   return {

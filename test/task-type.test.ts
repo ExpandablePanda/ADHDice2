@@ -6,6 +6,8 @@ import {
   buildTaskTypeSelectionOptions,
   formatTaskTypeLabel,
   isTaskType,
+  matchesTaskTypeSelection,
+  matchesTaskTypeSelections,
   normalizeTaskType,
   resolveTaskTypeSelection,
   TASK_TYPE_OPTIONS,
@@ -49,6 +51,35 @@ test("deleted named rulesets stay available to historical labels but not current
   assert.deepEqual(resolveTaskTypeSelection("retired", rulesets), { taskType: "task", customRulesetId: null });
   assert.equal(taskTypeSelectionValue("custom", "retired", rulesets), "custom");
   assert.equal(formatTaskTypeLabel("custom", "retired", rulesets), "Practice");
+});
+
+test("Task Type filters distinguish Task, Custom Default, and named rulesets by projection", () => {
+  assert.equal(matchesTaskTypeSelection("task", null, "task"), true);
+  assert.equal(matchesTaskTypeSelection("custom", null, "custom"), true);
+  assert.equal(matchesTaskTypeSelection("custom", "practice", "custom"), false);
+  assert.equal(matchesTaskTypeSelection("custom", "practice", "practice"), true);
+  assert.equal(matchesTaskTypeSelection("custom", "discipline", "practice"), false);
+  assert.equal(matchesTaskTypeSelections("custom", "practice", ["task", "practice"]), true);
+  assert.equal(matchesTaskTypeSelections("custom", null, ["task", "practice"]), false);
+});
+
+test("Table View owns a Task Type column and reuses the shared label/filter authorities", () => {
+  const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
+  const taskAppSource = readFileSync("src/components/task-app.tsx", "utf8");
+  const uiStateSource = readFileSync("src/lib/task-ui-state.ts", "utf8");
+  assert.match(tableSource, /id: "task_type", label: "Task Type"/);
+  assert.match(tableSource, /buildTaskTypeSelectionOptions\(customBehaviorRulesets\)/);
+  assert.match(tableSource, /formatTaskTypeLabel\(task\.taskType, task\.customRulesetId, customBehaviorRulesets\)/);
+  assert.match(tableSource, /matchesTaskTypeSelections\(task\.taskType, task\.customRulesetId, structuredFilters\.task_type\)/);
+  assert.match(tableSource, /const missingColumns = HEADER_COLUMNS\.map/);
+  assert.match(tableSource, /return \[\.\.\.validStoredOrder, \.\.\.missingColumns\]/);
+  assert.match(taskAppSource, /setActivePage\("Tasks"\)/);
+  assert.match(taskAppSource, /taskType: \[rulesetId\]/);
+  assert.match(taskAppSource, /moveAssignedTasksToTaskAndDeleteRuleset/);
+  assert.match(taskAppSource, /updateTask\(taskId, \{ task_type: "task", custom_ruleset_id: null \}\)/);
+  assert.match(taskAppSource, /deleteRuleset: \(\) => deleteCustomRuleset\(rulesetId\)/);
+  assert.match(uiStateSource, /task_type/);
+  assert.match(uiStateSource, /withNotes\.includes\("task_type"\)/);
 });
 
 test("normal and child Task creation default TaskType to task", () => {

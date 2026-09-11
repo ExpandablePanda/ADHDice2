@@ -28,6 +28,7 @@ import { getTaskRepeatCategory } from "@/lib/task-repeat";
 import { isTaskInRecentTrash } from "@/lib/task-trash";
 import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
 import { todayISO } from "@/lib/utils";
+import { matchesTaskTypeSelections } from "@/lib/task-type";
 
 type TaskGridItem = TaskGridLayoutItem<string>;
 type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "includeStepsByView" | "matchAny" | "quickFilters" | "selectedBucket" | "statusFilters" | "tableColumnFilters" | "view">;
@@ -566,6 +567,7 @@ function matchesCanonicalTableColumnFilters(
     filters.repeat.length > 0
     && !filters.repeat.includes(getTaskRepeatCategory(task.repeat_frequency, task.repeat_days_of_week, task.repeat_interval))
   ) return false;
+  if (!matchesTaskTypeSelections(task.task_type, task.custom_ruleset_id, filters.taskType ?? [])) return false;
 
   return Object.entries(filters.text).every(([columnId, rawQuery]) => {
     const query = rawQuery?.trim().toLowerCase();
@@ -1582,6 +1584,7 @@ export function computeTaskAppDerivedData({
     || canonicalEntityProjection.contextRootParentIds.size > 0
     || taskUiState.tableColumnFilters.priority.length > 0
     || taskUiState.tableColumnFilters.repeat.length > 0
+    || (taskUiState.tableColumnFilters.taskType?.length ?? 0) > 0
     || Object.values(taskUiState.tableColumnFilters.text).some((value) => Boolean(value?.trim()));
   const canonicalMatchingChildTaskIds = hasCanonicalMatchingBranch
     ? Array.from(

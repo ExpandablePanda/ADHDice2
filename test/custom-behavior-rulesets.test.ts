@@ -5,11 +5,13 @@ import test from "node:test";
 import {
   createCustomBehaviorRuleset,
   deleteCustomBehaviorRuleset,
+  getCustomRulesetAssignedTaskCount,
   loadCustomBehaviorRulesets,
   renameCustomBehaviorRuleset,
   upsertCustomBehaviorRulesetRevision,
   validateCustomBehaviorRulesetName,
 } from "../src/lib/custom-behavior-rulesets.ts";
+import { moveAssignedTasksToTaskAndDeleteRuleset } from "../src/lib/custom-ruleset-delete-resolution.ts";
 import { updateTaskRowWithLegacyEnergyFallback } from "../src/lib/task-db-mutations.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import { buildCompatibilityTaskStateEngineInput } from "../src/lib/task-state-engine/direct-input.ts";
@@ -751,4 +753,53 @@ test("a refreshed assignment loader retains earlier rows while replacing the sam
     { effectiveFromLogicalDate: "2026-09-01", taskType: "custom", customRulesetId: "ruleset-practice" },
     { effectiveFromLogicalDate: "2026-09-21", taskType: "custom", customRulesetId: "ruleset-routine" },
   ]);
+});
+
+test("blocked deletion copy parses singular and plural assignment counts", () => {
+  assert.equal(getCustomRulesetAssignedTaskCount("Practice is currently assigned to 1 Task. Change those Tasks before deleting it."), 1);
+  assert.equal(getCustomRulesetAssignedTaskCount("Practice is currently assigned to 2 Tasks. Change those Tasks before deleting it."), 2);
+  assert.equal(getCustomRulesetAssignedTaskCount("Could not delete the Custom ruleset."), null);
+});
+
+test("ruleset resolution moves every assigned Task before attempting tombstone deletion", async () => {
+  const movedTaskIds: string[] = [];
+  let deleteCalls = 0;
+  const result = await moveAssignedTasksToTaskAndDeleteRuleset({
+    taskIds: ["task-a", "task-b"],
+    moveTask: async (taskId) => {
+      movedTaskIds.push(taskId);
+      return true;
+    },
+    deleteRuleset: async () => {
+      deleteCalls += 1;
+      return true;
+    },
+  });
+  assert.deepEqual(movedTaskIds, ["task-a", "task-b"]);
+  assert.deepEqual(result.movedTaskIds, ["task-a", "task-b"]);
+  assert.equal(result.deleteAttempted, true);
+  assert.equal(result.deleted, true);
+  assert.equal(deleteCalls, 1);
+});
+
+test("ruleset resolution stops on the first move failure and leaves deletion blocked", async () => {
+  const movedTaskIds: string[] = [];
+  let deleteCalls = 0;
+  const result = await moveAssignedTasksToTaskAndDeleteRuleset({
+    taskIds: ["task-a", "task-b", "task-c"],
+    moveTask: async (taskId) => {
+      movedTaskIds.push(taskId);
+      return taskId !== "task-b";
+    },
+    deleteRuleset: async () => {
+      deleteCalls += 1;
+      return true;
+    },
+  });
+  assert.deepEqual(movedTaskIds, ["task-a", "task-b"]);
+  assert.deepEqual(result.movedTaskIds, ["task-a"]);
+  assert.equal(result.failedTaskId, "task-b");
+  assert.equal(result.deleteAttempted, false);
+  assert.equal(result.deleted, false);
+  assert.equal(deleteCalls, 0);
 });

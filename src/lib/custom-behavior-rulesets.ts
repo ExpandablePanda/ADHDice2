@@ -83,6 +83,17 @@ export type CustomBehaviorRulesetMutationResult<T> = {
   error: RulesetError | null;
 };
 
+export type CustomBehaviorRulesetDeleteActionResult = {
+  assignedTaskCount: number | null;
+  error: string | null;
+  ok: boolean;
+};
+
+export function getCustomRulesetAssignedTaskCount(message: string | null | undefined) {
+  const match = message?.match(/currently assigned to\s+(\d+)\s+Tasks?\b/i);
+  return match ? Number(match[1]) : null;
+}
+
 const LOGICAL_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const POLICY_VALUES = {
   unresolved_occurrence: new Set(["missed", "blank"]),

@@ -26,6 +26,7 @@ import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId 
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
+import type { CustomBehaviorRulesetDeleteActionResult } from "@/lib/custom-behavior-rulesets";
 import { createStableTaskRowModelCache, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
@@ -337,7 +338,9 @@ type TasksTableSourceProps = {
   customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
   taskTypeBehaviorProfiles?: TaskBehaviorProfiles;
   onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
-  onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean> | boolean;
+  onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
+  onShowCustomRulesetTasks?: (rulesetId: string) => void;
+  onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
   onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean>;
   onSetTaskBehaviorProfile?: (taskType: TaskType, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
   onSetCustomRulesetBehaviorProfile?: (rulesetId: string, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
@@ -476,6 +479,7 @@ type MeasuredStatusScrollAnchor = {
 
 const TASK_TABLE_COLUMN_MAP: Record<AgentPlanColumnId, TaskManagementTableColumnId> = {
   bucket: "lists",
+  task_type: "task_type",
   date_added: "date_added",
   date_completed: "date_completed",
   last_done: "last_done",
@@ -726,6 +730,8 @@ export function TasksTableAdapter({
           taskTypeBehaviorProfiles={tableProps.taskTypeBehaviorProfiles}
           onCreateCustomRuleset={tableProps.onCreateCustomRuleset}
           onDeleteCustomRuleset={tableProps.onDeleteCustomRuleset}
+          onShowCustomRulesetTasks={tableProps.onShowCustomRulesetTasks}
+          onMoveCustomRulesetTasksToTaskAndDelete={tableProps.onMoveCustomRulesetTasksToTaskAndDelete}
           onRenameCustomRuleset={tableProps.onRenameCustomRuleset}
           onTaskBehaviorProfileChange={tableProps.onSetTaskBehaviorProfile}
           onCustomRulesetBehaviorProfileChange={tableProps.onSetCustomRulesetBehaviorProfile}
@@ -3143,6 +3149,8 @@ function TasksSimpleList({
               taskTypeBehaviorProfiles={tableProps.taskTypeBehaviorProfiles}
               onCreateCustomRuleset={tableProps.onCreateCustomRuleset}
               onDeleteCustomRuleset={tableProps.onDeleteCustomRuleset}
+              onShowCustomRulesetTasks={tableProps.onShowCustomRulesetTasks}
+              onMoveCustomRulesetTasksToTaskAndDelete={tableProps.onMoveCustomRulesetTasksToTaskAndDelete}
               onRenameCustomRuleset={tableProps.onRenameCustomRuleset}
               onTaskBehaviorProfileChange={tableProps.onSetTaskBehaviorProfile}
               onCustomRulesetBehaviorProfileChange={tableProps.onSetCustomRulesetBehaviorProfile}

@@ -104,3 +104,29 @@ export function formatTaskTypeLabel(
   }
   return TASK_TYPE_OPTIONS.find((option) => option.value === normalizedTaskType)?.label ?? "Task";
 }
+
+export function matchesTaskTypeSelection(
+  taskType: unknown,
+  customRulesetId: string | null | undefined,
+  selectionValue: string,
+): boolean {
+  const normalizedTaskType = normalizeTaskType(taskType);
+  const normalizedCustomRulesetId = customRulesetId ?? null;
+  if (selectionValue === "custom") {
+    return normalizedTaskType === "custom" && normalizedCustomRulesetId === null;
+  }
+  if (isTaskType(selectionValue)) {
+    return normalizedTaskType === selectionValue;
+  }
+  return normalizedTaskType === "custom" && normalizedCustomRulesetId === selectionValue;
+}
+
+export function matchesTaskTypeSelections(
+  taskType: unknown,
+  customRulesetId: string | null | undefined,
+  selectionValues: readonly string[],
+): boolean {
+  return selectionValues.length === 0 || selectionValues.some((selectionValue) => (
+    matchesTaskTypeSelection(taskType, customRulesetId, selectionValue)
+  ));
+}

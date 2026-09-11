@@ -13,6 +13,7 @@ export type TaskTableTextFilterColumnId = "title" | "lists" | "tags" | "link" | 
 export type TaskTableColumnFilters = {
   priority: TaskPriorityLevelOption[];
   repeat: TaskRepeatCategory[];
+  taskType?: string[];
   text: Partial<Record<TaskTableTextFilterColumnId, string>>;
 };
 export type AppPage =
@@ -72,6 +73,7 @@ export const DEFAULT_TASK_WORKSPACE_TAB_ID = "workspace-1";
 export const VALID_TASK_VIEWS: TaskViewMode[] = ["table", "list", "cards", "matrix", "grid", "calendar"];
 export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "bucket",
+  "task_type",
   "date_added",
   "date_completed",
   "last_done",
@@ -90,7 +92,7 @@ export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
 ];
 
 export const DEFAULT_TASK_TABLE_VISIBLE_COLUMNS: AgentPlanColumnId[] = [...VALID_LIST_COLUMN_IDS];
-const DEFAULT_NON_TABLE_VISIBLE_COLUMNS = DEFAULT_TASK_TABLE_VISIBLE_COLUMNS.filter((columnId) => columnId !== "date_completed" && columnId !== "last_done" && columnId !== "last_handled" && columnId !== "streak");
+const DEFAULT_NON_TABLE_VISIBLE_COLUMNS = DEFAULT_TASK_TABLE_VISIBLE_COLUMNS.filter((columnId) => columnId !== "task_type" && columnId !== "date_completed" && columnId !== "last_done" && columnId !== "last_handled" && columnId !== "streak");
 export const DEFAULT_VISIBLE_COLUMNS_BY_VIEW: Record<TaskViewMode, AgentPlanColumnId[]> = {
   table: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
   list: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
@@ -108,7 +110,7 @@ export const DEFAULT_TASK_UI_STATE: TaskUiState = {
   search: "",
   selectedBucket: "today",
   statusFilters: [],
-  tableColumnFilters: { priority: [], repeat: [], text: {} },
+  tableColumnFilters: { priority: [], repeat: [], taskType: [], text: {} },
   tasksSurface: "tasks",
   uiStateVersion: TASK_UI_SCHEMA_VERSION,
   view: "table",
@@ -209,7 +211,10 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     const withActual: AgentPlanColumnId[] = withEstimated.includes("actual_time") ? withEstimated : [...withEstimated, "actual_time"];
     const withTags: AgentPlanColumnId[] = withActual.includes("tags") ? withActual : [...withActual, "tags"];
     const withLink: AgentPlanColumnId[] = withTags.includes("link") ? withTags : [...withTags, "link"];
-    accumulator[view] = withLink.includes("notes") ? withLink : [...withLink, "notes"];
+    const withNotes: AgentPlanColumnId[] = withLink.includes("notes") ? withLink : [...withLink, "notes"];
+    accumulator[view] = view === "table" && !withNotes.includes("task_type")
+      ? [...withNotes, "task_type"]
+      : withNotes;
     return accumulator;
   }, {
     table: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.table],
@@ -236,6 +241,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     tableColumnFilters: {
       priority: Array.isArray(state.tableColumnFilters?.priority) ? state.tableColumnFilters.priority : [],
       repeat: Array.isArray(state.tableColumnFilters?.repeat) ? state.tableColumnFilters.repeat : [],
+      taskType: Array.isArray(state.tableColumnFilters?.taskType) ? state.tableColumnFilters.taskType : [],
       text: state.tableColumnFilters?.text && typeof state.tableColumnFilters.text === "object"
         ? state.tableColumnFilters.text
         : {},

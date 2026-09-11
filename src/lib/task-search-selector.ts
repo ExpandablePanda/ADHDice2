@@ -3,6 +3,7 @@ import { isArchiveLikeTask } from "@/lib/task-complete";
 import { isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
 import { getTaskRepeatCategory } from "@/lib/task-repeat";
 import { isTaskInRecentTrash } from "@/lib/task-trash";
+import { matchesTaskTypeSelections } from "@/lib/task-type";
 import type { TaskQuickFilter, TaskTableColumnFilters } from "@/lib/task-ui-state";
 
 export type TaskSearchEntity = {
@@ -69,6 +70,7 @@ function matchesTableFilters(task: Task, filters: TaskTableColumnFilters, listId
     filters.repeat.length > 0
     && !filters.repeat.includes(getTaskRepeatCategory(task.repeat_frequency, task.repeat_days_of_week, task.repeat_interval))
   ) return false;
+  if (!matchesTaskTypeSelections(task.task_type, task.custom_ruleset_id, filters.taskType ?? [])) return false;
   return Object.entries(filters.text).every(([columnId, query]) => {
     const normalized = query?.trim().toLowerCase();
     if (!normalized) return true;

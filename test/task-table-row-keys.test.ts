@@ -34,7 +34,7 @@ function row(source: Task) {
     estimatedMinutes: 20, id: source.id, lastDoneAt: null, lastDoneDate: null, lastHandledAt: null, lastHandledDate: null, linkLabel: "", linkUrl: "", linkedNotes: [], lists: [],
     missedStreak: 0, notes: "", pinOrder: null, pinnedAt: null, priorities: ["3"], repeat: "none", repeatDayOfMonth: null,
     repeatDaysOfWeek: [], repeatInterval: 1, repeatMonthlyMode: "day_of_month", repeatMonthlyOrdinal: null, repeatMonthlyWeekday: null,
-    status: "pending", subtasks: [], subtasksAutoReset: false, tags: [], title: source.title, trashedAt: null, updatedAt: source.updated_at,
+    status: "pending", subtasks: [], subtasksAutoReset: false, tags: [], taskType: source.task_type, customRulesetId: source.custom_ruleset_id, title: source.title, trashedAt: null, updatedAt: source.updated_at,
   };
 }
 
@@ -84,4 +84,21 @@ test("Table parent, expanded Step/Substep, editor, and overlay rows have stable 
 
   assert.deepEqual(normalWarnings, []);
   assert.deepEqual(overlayWarnings, []);
+});
+
+test("Table Task Type cells use Task, Custom Default, and named ruleset labels", () => {
+  const markup = renderToStaticMarkup(createElement(TaskManagementTableV2, {
+    customBehaviorRulesets: [{ id: "practice", name: "Practice", task_type: "custom" }],
+    rows: [
+      row(task("table-task", { task_type: "task", custom_ruleset_id: null })),
+      row(task("table-custom-default", { task_type: "custom", custom_ruleset_id: null })),
+      row(task("table-practice", { task_type: "custom", custom_ruleset_id: "practice" })),
+    ],
+    showHeader: false,
+    visibleColumns: ["title", "task_type"],
+  }));
+
+  assert.match(markup, />Task<\/span>/);
+  assert.match(markup, />Custom Default<\/span>/);
+  assert.match(markup, />Practice<\/span>/);
 });

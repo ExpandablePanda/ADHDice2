@@ -28,6 +28,8 @@ test("task ui state migration repairs missing newer columns", () => {
     assert.equal(migrated.visibleColumnsByView[view].includes("notes"), true);
   }
   assert.equal(migrated.visibleColumnsByView.table.includes("date_completed"), true);
+  assert.equal(migrated.visibleColumnsByView.table.includes("task_type"), true);
+  assert.deepEqual(migrated.visibleColumnsByView.table.slice(0, 2), ["bucket", "due"]);
   assert.equal(migrated.visibleColumnsByView.table.includes("streak"), false);
   assert.equal(migrated.visibleColumnsByView.list.includes("date_completed"), false);
   assert.equal(migrated.visibleColumnsByView.list.includes("streak"), false);
@@ -129,6 +131,7 @@ test("task ui state migration preserves shared Table filters and defaults legacy
   assert.deepEqual(migrateLegacyTaskUiState({}).tableColumnFilters, {
     priority: [],
     repeat: [],
+    taskType: [],
     text: {},
   });
 
@@ -143,6 +146,7 @@ test("task ui state migration preserves shared Table filters and defaults legacy
   assert.deepEqual(migrated.tableColumnFilters, {
     priority: ["5"],
     repeat: ["weekly"],
+    taskType: [],
     text: { title: "Family" },
   });
 });

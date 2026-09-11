@@ -6,6 +6,7 @@ import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownSelect } from "@/components/ui-system/adhd-dropdown-select";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import type { CustomBehaviorRuleset } from "@/lib/database.types";
+import type { CustomBehaviorRulesetDeleteActionResult } from "@/lib/custom-behavior-rulesets";
 import type {
   MissedStreakUnhandledBehavior,
   RewardBehavior,
@@ -20,6 +21,14 @@ export type BehaviorTab = TaskTypeBehaviorTab;
 type ConfigurableField = "missedStreakOnUnhandled" | "rewards" | "unresolvedOccurrence";
 
 const SECTION_CLASS = "rounded-[1rem] border border-[#eee9f8] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.035]";
+
+type DeleteActionResult = boolean | CustomBehaviorRulesetDeleteActionResult;
+
+function normalizeDeleteActionResult(result: DeleteActionResult): CustomBehaviorRulesetDeleteActionResult {
+  return typeof result === "boolean"
+    ? { assignedTaskCount: null, error: null, ok: result }
+    : result;
+}
 
 function Selector<T extends string>({
   label,
@@ -50,10 +59,12 @@ export function TaskTypeBehaviorSettings({
   initialCustomRulesetId = null,
   onCreateCustomRuleset,
   onDeleteCustomRuleset,
+  onMoveCustomRulesetTasksToTaskAndDelete,
   onChange,
   onCustomRulesetChange,
   onRenameCustomRuleset,
   onReset,
+  onShowCustomRulesetTasks,
   profiles,
 }: {
   customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
@@ -61,7 +72,9 @@ export function TaskTypeBehaviorSettings({
   initialTaskType?: TaskType;
   initialCustomRulesetId?: string | null;
   onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
-  onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean> | boolean;
+  onDeleteCustomRuleset?: (rulesetId: string) => Promise<DeleteActionResult> | DeleteActionResult;
+  onShowCustomRulesetTasks?: (rulesetId: string) => void;
+  onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<DeleteActionResult> | DeleteActionResult;
   onChange: (taskType: TaskTypeBehaviorTab, field: ConfigurableField, value: TaskBehaviorPolicy[ConfigurableField]) => Promise<boolean> | boolean;
   onCustomRulesetChange?: (rulesetId: string, field: ConfigurableField, value: TaskBehaviorPolicy[ConfigurableField]) => Promise<boolean> | boolean;
   onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean> | boolean;
@@ -74,6 +87,8 @@ export function TaskTypeBehaviorSettings({
   const [newRulesetName, setNewRulesetName] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isResolvingDelete, setIsResolvingDelete] = useState(false);
+  const [blockedDelete, setBlockedDelete] = useState<{ count: number; name: string; rulesetId: string } | null>(null);
   const [rulesetNameDraft, setRulesetNameDraft] = useState(() => customBehaviorRulesets.find((ruleset) => ruleset.id === initialCustomRulesetId && ruleset.deleted_at == null)?.name ?? "");
   const selectionOptions = buildTaskTypeSelectionOptions(customBehaviorRulesets);
   const selectedRuleset = customBehaviorRulesets.find((ruleset) => ruleset.id === activeSelection && ruleset.deleted_at == null) ?? null;
@@ -97,6 +112,7 @@ export function TaskTypeBehaviorSettings({
 
   function selectProfile(value: string) {
     setActiveSelection(value);
+    setBlockedDelete(null);
     const nextRuleset = customBehaviorRulesets.find((ruleset) => ruleset.id === value && ruleset.deleted_at == null);
     if (nextRuleset) setRulesetNameDraft(nextRuleset.name);
   }
@@ -137,17 +153,45 @@ export function TaskTypeBehaviorSettings({
     if (!selectedRuleset || !onDeleteCustomRuleset || isDeleting) return;
     if (!window.confirm(`Delete “${selectedRuleset.name}”?\n\nIt will disappear from ruleset settings and Task selectors. Historical Task behavior that used ${selectedRuleset.name} will remain intact.`)) return;
     setIsDeleting(true);
-    let deleted = false;
+    let result: CustomBehaviorRulesetDeleteActionResult = { assignedTaskCount: null, error: null, ok: false };
     try {
-      deleted = await onDeleteCustomRuleset(selectedRuleset.id);
+      result = normalizeDeleteActionResult(await onDeleteCustomRuleset(selectedRuleset.id));
     } catch {
-      deleted = false;
+      result = { assignedTaskCount: null, error: "Could not delete the Custom ruleset.", ok: false };
     } finally {
       setIsDeleting(false);
     }
-    if (!deleted) return;
+    if (!result.ok) {
+      if (result.assignedTaskCount !== null) {
+        setBlockedDelete({ count: result.assignedTaskCount, name: selectedRuleset.name, rulesetId: selectedRuleset.id });
+      }
+      return;
+    }
     setActiveSelection("custom");
     setRulesetNameDraft("");
+    setBlockedDelete(null);
+  }
+
+  async function moveAssignedTasksToTaskAndDelete() {
+    if (!blockedDelete || !onMoveCustomRulesetTasksToTaskAndDelete || isResolvingDelete) return;
+    setIsResolvingDelete(true);
+    let result: CustomBehaviorRulesetDeleteActionResult = { assignedTaskCount: null, error: null, ok: false };
+    try {
+      result = normalizeDeleteActionResult(await onMoveCustomRulesetTasksToTaskAndDelete(blockedDelete.rulesetId));
+    } catch {
+      result = { assignedTaskCount: null, error: "Could not move the assigned Tasks.", ok: false };
+    } finally {
+      setIsResolvingDelete(false);
+    }
+    if (!result.ok) {
+      if (result.assignedTaskCount !== null) {
+        setBlockedDelete((current) => current ? { ...current, count: result.assignedTaskCount ?? current.count } : current);
+      }
+      return;
+    }
+    setActiveSelection("custom");
+    setRulesetNameDraft("");
+    setBlockedDelete(null);
   }
 
   function updateActiveProfile(field: ConfigurableField, value: TaskBehaviorPolicy[ConfigurableField]) {
@@ -237,10 +281,27 @@ export function TaskTypeBehaviorSettings({
                 type="text"
                 value={rulesetNameDraft}
               />
-              <AdhdChip disabled={isRenaming || isDeleting} icon={<Pencil aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void renameRuleset(); }} tone="default">{isRenaming ? "Saving…" : "Rename"}</AdhdChip>
-              <AdhdChip disabled={!onDeleteCustomRuleset || isRenaming || isDeleting} icon={<Trash2 aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void deleteRuleset(); }} tone="danger">{isDeleting ? "Deleting…" : "Delete Ruleset"}</AdhdChip>
+              <AdhdChip disabled={isRenaming || isDeleting || isResolvingDelete} icon={<Pencil aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void renameRuleset(); }} tone="default">{isRenaming ? "Saving…" : "Rename"}</AdhdChip>
+              <AdhdChip disabled={!onDeleteCustomRuleset || isRenaming || isDeleting || isResolvingDelete} icon={<Trash2 aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void deleteRuleset(); }} tone="danger">{isDeleting ? "Deleting…" : "Delete Ruleset"}</AdhdChip>
             </div>
           </label>
+        </div>
+      ) : null}
+
+      {blockedDelete ? (
+        <div className="mb-4 rounded-[1rem] border border-[#f1d7a2] bg-[#fffaf0] p-3 dark:border-[#6e5724] dark:bg-[#3b2d12]/45" role="alert">
+          <p className="text-sm font-semibold text-[#6d531b] dark:text-[#f3d38a]">
+            {blockedDelete.name} is currently assigned to {blockedDelete.count} Task{blockedDelete.count === 1 ? "" : "s"}.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <AdhdChip disabled={isResolvingDelete} onClick={() => { onShowCustomRulesetTasks?.(blockedDelete.rulesetId); setBlockedDelete(null); }} tone="default">Show Tasks</AdhdChip>
+            {onMoveCustomRulesetTasksToTaskAndDelete ? (
+              <AdhdChip disabled={isResolvingDelete} onClick={() => { void moveAssignedTasksToTaskAndDelete(); }} tone="purple">
+                {isResolvingDelete ? "Moving…" : `Move ${blockedDelete.count} Task${blockedDelete.count === 1 ? "" : "s"} to Task & Delete`}
+              </AdhdChip>
+            ) : null}
+            <AdhdChip disabled={isResolvingDelete} onClick={() => setBlockedDelete(null)} icon={<X aria-hidden="true" className="h-3.5 w-3.5" />} tone="default">Cancel</AdhdChip>
+          </div>
         </div>
       ) : null}
 
