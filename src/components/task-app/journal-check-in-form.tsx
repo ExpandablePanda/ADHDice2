@@ -39,7 +39,6 @@ import {
 import {
   buildHealthMealLoggedAt,
   formatHealthNutritionNumber,
-  formatHealthStandardTime,
   formatHealthTimestampTime,
   formatHealthSleepDuration,
   getCurrentHealthDateTimeInputs,
@@ -59,6 +58,7 @@ const QUESTION_HINT_CLASS = "text-xs text-[#7d88a3] dark:text-white/50";
 type JournalOccurrenceDraft = {
   id: string;
   name: string;
+  occurredAt: string;
   signalId: string;
   score: number;
   time: string;
@@ -118,6 +118,7 @@ function occurrenceDraftsForEntry(
       .map((occurrence) => ({
         id: occurrence.id,
         name: symptoms.find((symptom) => symptom.id === occurrence.symptom_id)?.name ?? "Archived symptom",
+        occurredAt: occurrence.logged_at,
         signalId: journalSignals.find((signal) => signal.kind === "symptom" && signal.symptom_id === occurrence.symptom_id)?.id ?? `canonical-symptom:${occurrence.symptom_id}`,
         score: occurrence.severity,
         time: timeInputFromTimestamp(occurrence.logged_at),
@@ -128,6 +129,7 @@ function occurrenceDraftsForEntry(
       .map((occurrence) => ({
         id: occurrence.id,
         name: journalSignals.find((signal) => signal.id === occurrence.signal_id)?.name ?? "Archived feeling",
+        occurredAt: occurrence.occurred_at,
         signalId: occurrence.signal_id,
         score: occurrence.score,
         time: timeInputFromTimestamp(occurrence.occurred_at),
@@ -368,11 +370,12 @@ export function JournalCheckInForm({
 
   function saveOccurrenceDraft() {
     const normalizedTime = normalizeHealthMealTime(occurrenceTime);
-    if (!occurrenceSignal || occurrenceScore === null || occurrenceScore < 1 || occurrenceScore > occurrenceDenominator || !normalizedTime || !buildHealthMealLoggedAt(entryDate, normalizedTime)) {
+    const occurredAt = normalizedTime ? buildHealthMealLoggedAt(entryDate, normalizedTime) : null;
+    if (!occurrenceSignal || occurrenceScore === null || occurrenceScore < 1 || occurrenceScore > occurrenceDenominator || !normalizedTime || !occurredAt) {
       setFormError(`Choose a Feeling, score from 1 to ${occurrenceDenominator}, and a valid local time.`);
       return;
     }
-    const draft = { id: createDraftId("journal-occurrence"), name: occurrenceSignal.kind === "symptom" ? symptoms.find((symptom) => symptom.id === occurrenceSignal.symptom_id)?.name ?? "Archived symptom" : occurrenceSignal.name ?? "Archived feeling", note: occurrenceNote, score: occurrenceScore, signalId: occurrenceSignal.id, time: normalizedTime };
+    const draft = { id: createDraftId("journal-occurrence"), name: occurrenceSignal.kind === "symptom" ? symptoms.find((symptom) => symptom.id === occurrenceSignal.symptom_id)?.name ?? "Archived symptom" : occurrenceSignal.name ?? "Archived feeling", note: occurrenceNote, occurredAt, score: occurrenceScore, signalId: occurrenceSignal.id, time: normalizedTime };
     setOccurrenceDrafts((current) => [...current, draft]);
     setLinkedOccurrenceKeys((current) => new Set([...current, occurrenceKey(occurrenceSignal.kind === "symptom" ? "symptom" : "feeling", draft.id)]));
     setOccurrenceEditorOpen(false);
@@ -537,7 +540,7 @@ function EventQuestions({ answers, entryDate, entryTime, feelingQuestion, onChan
 
 function FeelingQuestionSection({ answers, entryType, linkedOccurrenceKeys, occurrenceDrafts, occurrenceOptions, occurrenceSignalOptions, onOpenEditor, onRemoveDraft, onToggleLinkedOccurrence, onUpdateAnswer }: { answers: HealthJournalStructuredAnswers; entryType: HealthJournalEntryType; linkedOccurrenceKeys: ReadonlySet<string>; occurrenceDrafts: readonly JournalOccurrenceDraft[]; occurrenceOptions: readonly JournalOccurrenceOption[]; occurrenceSignalOptions: readonly HealthJournalSignal[]; onOpenEditor: () => void; onRemoveDraft: (id: string) => void; onToggleLinkedOccurrence: (reference: HealthJournalLinkedOccurrence) => void; onUpdateAnswer: <Key extends keyof HealthJournalStructuredAnswers>(key: Key, value: HealthJournalStructuredAnswers[Key]) => void }) {
   const noteKey = entryType === "start_of_day" ? "waking_feeling_note" : entryType === "end_of_day" ? "current_feeling_note" : "event_feeling_note";
-  return <QuestionSection title={entryType === "start_of_day" ? "How do you feel waking up?" : entryType === "end_of_day" ? "How do you feel right now?" : "How did you feel?"}><p className={QUESTION_HINT_CLASS}>Each reference is a specific logged occurrence with its severity/intensity and local time.</p>{occurrenceOptions.length === 0 && occurrenceDrafts.length === 0 ? <p className={QUESTION_HINT_CLASS}>No other logged Feeling occurrences are available yet. You can log one here.</p> : null}<div className="grid gap-2">{occurrenceOptions.map((option) => { const reference = { id: option.id, kind: option.kind }; const key = occurrenceKey(reference.kind, reference.id); return <label className="flex min-w-0 items-start gap-2 rounded-[0.8rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={key}><input checked={linkedOccurrenceKeys.has(key)} onChange={() => onToggleLinkedOccurrence(reference)} type="checkbox" /><span className="min-w-0 flex-1 text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthJournalOccurrenceReference({ name: option.name, occurredAt: option.occurredAt, score: option.score, signal: option.signal })}</span></label>; })}{occurrenceDrafts.map((draft) => { const signal = occurrenceSignalOptions.find((candidate) => candidate.id === draft.signalId) ?? null; const name = draft.name; const denominator = getHealthJournalScaleDenominator(signal); return <div className="flex flex-wrap items-center gap-2 rounded-[0.8rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={draft.id}><span className="min-w-0 flex-1 text-sm font-semibold text-[#26324f] dark:text-white">{name} ({draft.score}/{denominator}) {formatHealthStandardTime(draft.time) ?? "Time unavailable"}</span><AdhdIconButton aria-label={`Remove ${name} occurrence`} onClick={() => onRemoveDraft(draft.id)} size="sm" tone="danger" variant="rowToolbar">×</AdhdIconButton></div>; })}</div><AdhdChip onClick={onOpenEditor} type="button">+ Log a new occurrence</AdhdChip><TextQuestion label="Optional note" value={String(answers[noteKey] ?? "")} onChange={(value) => onUpdateAnswer(noteKey, value)} /></QuestionSection>;
+  return <QuestionSection title={entryType === "start_of_day" ? "How do you feel waking up?" : entryType === "end_of_day" ? "How do you feel right now?" : "How did you feel?"}><p className={QUESTION_HINT_CLASS}>Each reference is a specific logged occurrence with its severity/intensity and local time.</p>{occurrenceOptions.length === 0 && occurrenceDrafts.length === 0 ? <p className={QUESTION_HINT_CLASS}>No other logged Feeling occurrences are available yet. You can log one here.</p> : null}<div className="grid gap-2">{occurrenceOptions.map((option) => { const reference = { id: option.id, kind: option.kind }; const key = occurrenceKey(reference.kind, reference.id); return <label className="flex min-w-0 items-start gap-2 rounded-[0.8rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={key}><input checked={linkedOccurrenceKeys.has(key)} onChange={() => onToggleLinkedOccurrence(reference)} type="checkbox" /><span className="min-w-0 flex-1 text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthJournalOccurrenceReference({ name: option.name, occurredAt: option.occurredAt, score: option.score, signal: option.signal })}</span></label>; })}{occurrenceDrafts.map((draft) => { const signal = occurrenceSignalOptions.find((candidate) => candidate.id === draft.signalId) ?? null; const name = draft.name; return <div className="flex flex-wrap items-center gap-2 rounded-[0.8rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={draft.id}><span className="min-w-0 flex-1 text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthJournalOccurrenceReference({ name, occurredAt: draft.occurredAt, score: draft.score, signal })}</span><AdhdIconButton aria-label={`Remove ${name} occurrence`} onClick={() => onRemoveDraft(draft.id)} size="sm" tone="danger" variant="rowToolbar">×</AdhdIconButton></div>; })}</div><AdhdChip onClick={onOpenEditor} type="button">+ Log a new occurrence</AdhdChip><TextQuestion label="Optional note" value={String(answers[noteKey] ?? "")} onChange={(value) => onUpdateAnswer(noteKey, value)} /></QuestionSection>;
 }
 
 function OccurrenceEditor({ occurrenceDenominator, occurrenceNote, occurrenceScore, occurrenceSignal, occurrenceSignalId, occurrenceSignalOptions, occurrenceTime, onCancel, onChangeNote, onChangeScore, onChangeSignal, onChangeTime, onSave }: { occurrenceDenominator: number; occurrenceNote: string; occurrenceScore: number | null; occurrenceSignal: HealthJournalSignal | null; occurrenceSignalId: string; occurrenceSignalOptions: readonly HealthJournalSignal[]; occurrenceTime: string; onCancel: () => void; onChangeNote: (value: string) => void; onChangeScore: (value: number | null) => void; onChangeSignal: (value: string) => void; onChangeTime: (value: string) => void; onSave: () => void }) {

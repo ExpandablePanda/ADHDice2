@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.44`.
+- Current working app version: `7.13.45`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-12 7.13.45 Journal Occurrence Date and Time Labels
+
+Journal Feeling and symptom occurrence references now show the occurrence name,
+canonical score denominator, local calendar date, and local time. Start of Day,
+End of Day, and Event pickers, edit/reopen rows, saved Journal summaries, and
+linked history references use the same timestamp-based local formatting. No
+occurrence identity, persistence, schema, or Health local-storage behavior
+changed; browser QA remains unverified.
 
 ## 2026-09-12 7.13.44 Health/Journal LocalStorage Quota Hotfix
 

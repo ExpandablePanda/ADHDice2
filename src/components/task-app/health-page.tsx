@@ -641,10 +641,6 @@ function getJournalTagOptionColor(option: JournalTagOption, symptoms: readonly H
   return option.signal ? getHealthJournalSignalDisplayColor(option.signal) : "#6f57f6";
 }
 
-function formatJournalHistoryOccurrenceTime(timestamp: string) {
-  return formatHealthTimestampTime(timestamp) ?? "Time unavailable";
-}
-
 function formatJournalLoggedAt(timestamp: string) {
   const date = formatHealthJournalMetadataDate(timestamp);
   const time = formatHealthTimestampTime(timestamp);
@@ -844,8 +840,8 @@ function JournalHistoryTagPopover({
             {occurrenceRows.length > 0 ? occurrenceRows.map((occurrence) => (
                 <div className="grid gap-0.5" key={occurrence.id}>
                   <div className="flex items-baseline justify-between gap-3">
-                    <span>{formatJournalHistoryOccurrenceTime(occurrence.occurredAt)}</span>
-                    <span className="text-right font-semibold text-[#26324f] dark:text-white">{occurrence.score} · {scaleLabels[occurrence.score] ?? ""}</span>
+                    <span>{formatHealthJournalOccurrenceReference({ name: displayName, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: option.signal })}</span>
+                    <span className="text-right font-semibold text-[#26324f] dark:text-white">{scaleLabels[occurrence.score] ?? ""}</span>
                   </div>
                   {occurrence.note?.trim() ? <p className="text-[#4f5872] dark:text-white/75">{occurrence.note}</p> : null}
                 </div>

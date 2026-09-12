@@ -12,6 +12,7 @@ import {
   buildHealthJournalSleepLink,
   findRelevantHealthSleepContext,
   formatHealthJournalOccurrenceReference,
+  getHealthJournalOccurrenceDisplay,
   getHealthJournalCustomQuestionsForEntry,
   getHealthJournalEntryType,
   getHealthJournalScaleDenominator,
@@ -21,6 +22,7 @@ import {
   normalizeHealthJournalStructuredAnswers,
   normalizeHealthJournalWins,
 } from "../src/lib/health-journal-checkins.ts";
+import { formatHealthTimestampDate, formatHealthTimestampTime } from "../src/lib/health-utils.ts";
 
 const formSource = readFileSync(new URL("../src/components/task-app/journal-check-in-form.tsx", import.meta.url), "utf8");
 const summarySource = readFileSync(new URL("../src/components/task-app/journal-entry-summary.tsx", import.meta.url), "utf8");
@@ -130,10 +132,26 @@ test("Sleep context uses the existing Sleep Focus and imported sleep records, an
   assert.match(formSource, /Open Sleep/);
 });
 
-test("Occurrence references preserve identity, canonical scale ranges, and local time", () => {
+test("Occurrence references include local date and time while preserving identity and canonical scales", () => {
   const customScale = signal();
   assert.equal(getHealthJournalScaleDenominator(customScale), 4);
-  assert.equal(formatHealthJournalOccurrenceReference({ name: "Back Pain", occurredAt: "2026-09-12T16:30:00.000Z", score: 3, signal: customScale }), "Back Pain (3/4) 12:30 PM");
+  const occurredAt = "2026-09-12T16:30:00.000Z";
+  const localDate = formatHealthTimestampDate(occurredAt);
+  const localTime = formatHealthTimestampTime(occurredAt);
+  assert.equal(formatHealthJournalOccurrenceReference({ name: "Back Pain", occurredAt, score: 3, signal: customScale }), `Back Pain (3/4) · ${localDate} · ${localTime}`);
+  assert.equal(getHealthJournalOccurrenceDisplay({ id: "symptom-occurrence", kind: "symptom", name: "Back Pain", occurredAt, score: 3, denominator: 4 }), `Back Pain (3/4) · ${localDate} · ${localTime}`);
+  assert.equal(getHealthJournalOccurrenceDisplay({ id: "feeling-occurrence", kind: "feeling", name: "Anxiety", occurredAt, score: 8, denominator: 10 }), `Anxiety (8/10) · ${localDate} · ${localTime}`);
+  const priorDateOccurrenceAt = "2026-09-11T01:15:00.000Z";
+  const currentDateOccurrenceAt = "2026-09-12T01:15:00.000Z";
+  const priorDateOccurrence = formatHealthJournalOccurrenceReference({ name: "Back Pain", occurredAt: priorDateOccurrenceAt, score: 4, signal: customScale });
+  const currentDateOccurrence = formatHealthJournalOccurrenceReference({ name: "Back Pain", occurredAt: currentDateOccurrenceAt, score: 4, signal: customScale });
+  assert.notEqual(priorDateOccurrence, currentDateOccurrence);
+  assert.equal(priorDateOccurrence, `Back Pain (4/4) · ${formatHealthTimestampDate(priorDateOccurrenceAt)} · ${formatHealthTimestampTime(priorDateOccurrenceAt)}`);
+  assert.equal(currentDateOccurrence, `Back Pain (4/4) · ${formatHealthTimestampDate(currentDateOccurrenceAt)} · ${formatHealthTimestampTime(currentDateOccurrenceAt)}`);
+  const nearLocalMidnight = "2026-09-12T01:30:00.000Z";
+  const nearLocalMidnightDate = formatHealthTimestampDate(nearLocalMidnight);
+  const nearLocalMidnightTime = formatHealthTimestampTime(nearLocalMidnight);
+  assert.equal(getHealthJournalOccurrenceDisplay({ id: "boundary-occurrence", kind: "symptom", name: "Headache", occurredAt: nearLocalMidnight, score: 2, denominator: 4 }), `Headache (2/4) · ${nearLocalMidnightDate} · ${nearLocalMidnightTime}`);
   const references = normalizeHealthJournalLinkedOccurrences([
     { id: "occurrence-morning", kind: "symptom" },
     { id: "occurrence-evening", kind: "symptom" },
@@ -142,8 +160,13 @@ test("Occurrence references preserve identity, canonical scale ranges, and local
   assert.deepEqual(references.map((reference) => reference.id), ["occurrence-morning", "occurrence-evening"]);
   assert.match(formSource, /specific logged occurrence/);
   assert.match(formSource, /formatHealthJournalOccurrenceReference/);
+  assert.match(formSource, /occurredAt: occurrence\.logged_at/);
+  assert.match(formSource, /occurredAt: occurrence\.occurred_at/);
+  assert.match(formSource, /occurredAt: draft\.occurredAt/);
   assert.match(formSource, /scale_labels\[score\]/);
   assert.match(summarySource, /Feeling occurrences/);
+  assert.match(healthPageSource, /formatHealthJournalOccurrenceReference\(\{ name: displayName, occurredAt: occurrence\.occurredAt/);
+  assert.doesNotMatch(healthPageSource, /formatJournalHistoryOccurrenceTime/);
   assert.match(healthPageSource, /JournalScaleLabelsEditor/);
   assert.match(formSource, /hasStructuredJournalContent/);
   assert.match(formSource, /selectedJournalEntry\?\.reflection/);

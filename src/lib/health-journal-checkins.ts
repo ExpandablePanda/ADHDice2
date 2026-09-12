@@ -15,11 +15,12 @@ import type {
 } from "@/lib/database.types";
 import {
   formatHealthSleepDuration,
+  formatHealthTimestampDate,
+  formatHealthTimestampTime,
   getHealthSleepStartTimestamp,
   getSleepFocusSessions,
   shiftHealthDate,
 } from "@/lib/health-utils";
-import { formatHealthTimestampTime } from "@/lib/health-utils";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 
 export const HEALTH_JOURNAL_ENTRY_TYPES: readonly HealthJournalEntryType[] = ["start_of_day", "end_of_day", "event"];
@@ -160,6 +161,12 @@ export function getHealthJournalScaleDenominator(signal: Pick<HealthJournalSigna
   return Number.isInteger(denominator) && denominator > 0 ? denominator : 10;
 }
 
+function formatHealthJournalOccurrenceDateTime(occurredAt: string) {
+  const date = formatHealthTimestampDate(occurredAt);
+  const time = formatHealthTimestampTime(occurredAt);
+  return date && time ? `${date} · ${time}` : "Time unavailable";
+}
+
 export function formatHealthJournalOccurrenceReference({
   name,
   occurredAt,
@@ -171,13 +178,13 @@ export function formatHealthJournalOccurrenceReference({
   score: number;
   signal?: Pick<HealthJournalSignal, "scale_labels"> | null;
 }) {
-  return `${name} (${score}/${getHealthJournalScaleDenominator(signal)}) ${formatHealthTimestampTime(occurredAt) ?? "Time unavailable"}`;
+  return `${name} (${score}/${getHealthJournalScaleDenominator(signal)}) · ${formatHealthJournalOccurrenceDateTime(occurredAt)}`;
 }
 
 export function getHealthJournalOccurrenceDisplay(
   occurrence: HealthJournalOccurrenceDisplay,
 ) {
-  return `${occurrence.name} (${occurrence.score}/${occurrence.denominator}) ${formatHealthTimestampTime(occurrence.occurredAt) ?? "Time unavailable"}`;
+  return `${occurrence.name} (${occurrence.score}/${occurrence.denominator}) · ${formatHealthJournalOccurrenceDateTime(occurrence.occurredAt)}`;
 }
 
 export function findRelevantHealthSleepContext({
