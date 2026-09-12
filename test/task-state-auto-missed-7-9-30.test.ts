@@ -5,6 +5,7 @@ import { planTaskStateCommand, serializeCanonicalTaskStateCommandForRpc } from "
 import { validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
 import type { TaskStateEngineInput, TaskStateHistoryRow } from "../src/lib/task-state-engine/types.ts";
 import type { CanonicalTaskRow } from "../src/lib/task-state-canonical/read-model.ts";
+import { STANDARD_TASK_BEHAVIOR_POLICY, type TaskBehaviorPolicyRevision } from "../src/lib/task-state-engine/behavior-policy.ts";
 
 const NOW = "2026-08-17T12:00:00.000Z";
 
@@ -87,9 +88,106 @@ function insertedMissed(input: TaskStateEngineInput) {
   ));
 }
 
+function behaviorRevision(
+  effectiveFromLogicalDate: string,
+  overrides: Partial<TaskBehaviorPolicyRevision> = {},
+): TaskBehaviorPolicyRevision {
+  return {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    ...overrides,
+    id: `task-behavior-${effectiveFromLogicalDate}`,
+    effectiveFromLogicalDate,
+  };
+}
+
 test("automatic Missed materializes passed Daily obligations but never today", () => {
   assert.deepEqual(insertedMissed(engineInput()).map((row) => row.logicalDate), ["2026-08-14", "2026-08-15", "2026-08-16"]);
   assert.equal(insertedMissed(engineInput({ dueOn: "2026-08-17", historicalScheduleAnchor: "2026-08-17" })).length, 0);
+});
+
+test("current Blank leaves unresolved historical backlog without automatic Missed or missed streak", () => {
+  const historicalMissed = behaviorRevision("2026-08-01");
+  const currentBlank = behaviorRevision("2026-08-15", {
+    unresolvedOccurrence: "blank",
+    missedStreakOnUnhandled: "ignore",
+  });
+  const input = {
+    ...engineInput(),
+    behaviorPolicy: currentBlank,
+    behaviorPolicyRevisions: [historicalMissed, currentBlank],
+  };
+  const result = evaluateTaskState(input);
+
+  assert.deepEqual(insertedMissed(input), []);
+  assert.equal(result.timeline.currentMissedStreak, 0);
+  assert.equal(result.streakDisposition, "none");
+});
+
+test("current Missed backfills unresolved historical dates despite an older Blank policy", () => {
+  const historicalBlank = behaviorRevision("2026-08-01", {
+    unresolvedOccurrence: "blank",
+    missedStreakOnUnhandled: "ignore",
+  });
+  const currentMissed = behaviorRevision("2026-08-15");
+  const input = {
+    ...engineInput(),
+    behaviorPolicy: currentMissed,
+    behaviorPolicyRevisions: [historicalBlank, currentMissed],
+  };
+
+  assert.deepEqual(insertedMissed(input).map((row) => row.logicalDate), ["2026-08-14", "2026-08-15", "2026-08-16"]);
+});
+
+test("switching to Blank preserves an existing older-policy Missed fact and successful History", () => {
+  const historicalMissed = behaviorRevision("2026-08-01");
+  const currentBlank = behaviorRevision("2026-08-15", {
+    unresolvedOccurrence: "blank",
+    missedStreakOnUnhandled: "ignore",
+  });
+  const existingMissed = history("2026-08-14");
+  const existingDone = {
+    ...history("2026-08-13", "manual"),
+    id: "done-2026-08-13",
+    outcome: "done" as const,
+    wasCompleted: true,
+  };
+  const result = evaluateTaskState({
+    ...engineInput({}, [existingDone, existingMissed]),
+    calendarStart: "2026-08-13",
+    calendarEnd: "2026-08-17",
+    behaviorPolicy: currentBlank,
+    behaviorPolicyRevisions: [historicalMissed, currentBlank],
+  });
+
+  assert.deepEqual(result.proposedHistoryChanges, []);
+  assert.equal(result.timeline.days["2026-08-13"]?.state, "done");
+  assert.equal(result.timeline.days["2026-08-14"]?.state, "missed");
+});
+
+test("effective-dated policy still describes existing History while rollover uses current policy for open dates", () => {
+  const historicalBlank = behaviorRevision("2026-08-01", {
+    unresolvedOccurrence: "blank",
+    missedStreakOnUnhandled: "ignore",
+  });
+  const currentMissed = behaviorRevision("2026-08-15");
+  const existingDone = {
+    ...history("2026-08-13", "manual"),
+    id: "done-2026-08-13",
+    outcome: "done" as const,
+    wasCompleted: true,
+  };
+  const input = {
+    ...engineInput({}, [existingDone]),
+    calendarStart: "2026-08-13",
+    calendarEnd: "2026-08-17",
+    behaviorPolicy: currentMissed,
+    behaviorPolicyRevisions: [historicalBlank, currentMissed],
+  };
+  const result = evaluateTaskState(input);
+
+  assert.equal(result.timeline.days["2026-08-13"]?.behaviorPolicy.unresolvedOccurrence, "blank");
+  assert.equal(result.timeline.days["2026-08-13"]?.state, "done");
+  assert.deepEqual(insertedMissed(input).map((row) => row.logicalDate), ["2026-08-14", "2026-08-15", "2026-08-16"]);
 });
 
 test("Unscheduled and zero-History schedules without a proven start create nothing", () => {

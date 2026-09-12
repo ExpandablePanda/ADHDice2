@@ -829,7 +829,7 @@ test("trusted manual occurrence enforcement rejects a policy-hidden outcome befo
   assert.equal(rpcCalls, 0);
 });
 
-test("trusted reconciliation applies each historical Task behavior revision to its own logical date", async () => {
+test("trusted reconciliation uses the current Task policy for unresolved historical backlog", async () => {
   const revisions = [
     behaviorRevision("2026-09-01"),
     behaviorRevision("2026-09-10", {
@@ -872,9 +872,13 @@ test("trusted reconciliation applies each historical Task behavior revision to i
   assert.equal(capturedEngineInput?.behaviorPolicy?.unresolvedOccurrence, "missed");
   assert.deepEqual(capturedEngineInput?.behaviorPolicyRevisions, revisions);
   const automaticDates = capturedPlan?.normalizedResult.automaticHistoryFacts.map((fact) => fact.logical_date) ?? [];
-  assert.ok(automaticDates.includes("2026-09-05"));
-  assert.ok(automaticDates.includes("2026-09-20"));
-  assert.ok(!automaticDates.some((date) => date >= "2026-09-10" && date <= "2026-09-19"));
+  assert.deepEqual(automaticDates, [
+    "2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05",
+    "2026-09-06", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10",
+    "2026-09-11", "2026-09-12", "2026-09-13", "2026-09-14", "2026-09-15",
+    "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20",
+    "2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24",
+  ]);
   assert.ok(!automaticDates.includes("2026-09-25"));
 });
 
