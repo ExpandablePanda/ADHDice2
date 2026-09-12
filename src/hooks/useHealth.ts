@@ -13,6 +13,7 @@ import type {
   HealthFoodLibraryItemInsert,
   HealthImportAudit,
   HealthImportAuditInsert,
+  HealthJournalCustomQuestion,
   HealthJournalSignal,
   HealthJournalSignalInsert,
   HealthJournalSignalOccurrence,
@@ -79,6 +80,7 @@ import {
   sortHealthJournalSignals,
   type HealthJournalDraftValue,
 } from "@/lib/health-journal";
+import { getHealthJournalScaleDenominator, normalizeHealthJournalCustomQuestions } from "@/lib/health-journal-checkins";
 import {
   getHealthFoodIdentityKey,
   normalizeHealthWaterEntry,
@@ -210,10 +212,14 @@ function normalizeHealthCheckIn(checkIn: HealthCheckIn): HealthCheckIn {
   return {
     ...checkIn,
     entry_time: normalizeHealthJournalEntryTime(checkIn.entry_time, checkIn.created_at),
+    entry_type: checkIn.entry_type ?? "event",
     clarity_score: checkIn.clarity_score ?? null,
     stress_score: checkIn.stress_score ?? null,
     symptom_tags: Array.isArray(checkIn.symptom_tags) ? checkIn.symptom_tags : [],
     reflection: typeof checkIn.reflection === "string" ? checkIn.reflection : "",
+    structured_answers: checkIn.structured_answers && typeof checkIn.structured_answers === "object"
+      ? checkIn.structured_answers
+      : { custom_answers: [], schema_version: 1 },
   };
 }
 
@@ -243,10 +249,13 @@ function readLocalHealthState(userId: string): LocalHealthState {
     mealEntries: readStoredJson(storageKey(userId, "meals"), emptyState.mealEntries),
     mealPlanEntries: readStoredJson(storageKey(userId, "meal-plans"), emptyState.mealPlanEntries),
     metricEntries: readStoredJson(storageKey(userId, "metrics"), emptyState.metricEntries),
-    profile: normalizeHealthProfile(
-      readStoredJson<Partial<HealthProfile> | null>(storageKey(userId, "profile"), null),
-      userId,
-    ),
+    profile: (() => {
+      const storedProfile = normalizeHealthProfile(
+        readStoredJson<Partial<HealthProfile> | null>(storageKey(userId, "profile"), null),
+        userId,
+      );
+      return { ...storedProfile, journal_questions: normalizeHealthJournalCustomQuestions(storedProfile.journal_questions) };
+    })(),
     recipes: readStoredJson(storageKey(userId, "recipes"), emptyState.recipes),
     savedMeals: readStoredJson(storageKey(userId, "saved-meals"), emptyState.savedMeals),
     symptomEntries: sortHealthSymptomEntries(normalizeHealthSymptomEntries(readStoredJson<HealthSymptomEntry[]>(storageKey(userId, "symptom-entries"), emptyState.symptomEntries))),
@@ -1082,7 +1091,10 @@ export function useHealth(
         mealEntries: mealEntriesResult.data ?? [],
         mealPlanEntries: replayedMealPlans,
         metricEntries: metricEntriesResult.data ?? [],
-        profile: normalizeHealthProfile(profileResult.data, userId),
+        profile: (() => {
+          const remoteProfile = normalizeHealthProfile(profileResult.data, userId);
+          return { ...remoteProfile, journal_questions: normalizeHealthJournalCustomQuestions(remoteProfile.journal_questions) };
+        })(),
         recipes: recipesResult.data ?? [],
         savedMeals: savedMealsResult.data ?? [],
         symptomEntries: symptomEntriesResult.error ? currentLocalSymptomEntries : normalizeHealthSymptomEntries(symptomRecovery.mergedEntries),
@@ -1154,6 +1166,53 @@ export function useHealth(
     return true;
   }
 
+  async function saveJournalQuestions(questions: readonly HealthJournalCustomQuestion[]) {
+    if (!userId || !profile) {
+      return false;
+    }
+    const nextQuestions = normalizeHealthJournalCustomQuestions(questions);
+    const now = new Date().toISOString();
+    const nextProfile: HealthProfile = {
+      ...profile,
+      journal_questions: nextQuestions,
+      updated_at: now,
+    };
+    let savedLocallyBecauseMigrationIsPending = false;
+    if (client && storageMode === "remote") {
+      const { error } = await client
+        .from("adhdice_health_profiles")
+        .upsert({ journal_questions: nextQuestions, user_id: userId });
+      if (error && !isMissingHealthPersistence(error.message)) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+      if (error) {
+        savedLocallyBecauseMigrationIsPending = true;
+        setMessage({ tone: "neutral", text: "Journal questions are saved locally until the 7.13.43 Journal migration is applied." });
+      }
+    }
+    const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      symptoms,
+      symptomEntries,
+      waterEntries,
+      weightEntries,
+    });
+    applySnapshot(buildHealthSnapshot({ ...currentSnapshot, profile: nextProfile }));
+    if (!savedLocallyBecauseMigrationIsPending) {
+      setMessage({ tone: "good", text: "Journal check-in questions saved." });
+    }
+    return true;
+  }
+
   async function saveJournalEntry(input: HealthJournalEntrySaveInput) {
     if (!userId || !profile) {
       return null;
@@ -1204,12 +1263,14 @@ export function useHealth(
       energy_score: input.checkIn.energy_score !== undefined ? input.checkIn.energy_score : existingRow?.energy_score ?? null,
       entry_date: input.checkIn.entry_date,
       entry_time: entryTime,
+      entry_type: input.checkIn.entry_type ?? existingRow?.entry_type ?? "event",
       id: requestedEntryId ?? createLocalId("health-checkin"),
       mood_score: input.checkIn.mood_score !== undefined ? input.checkIn.mood_score : existingRow?.mood_score ?? null,
       stress_score: input.checkIn.stress_score !== undefined ? input.checkIn.stress_score : existingRow?.stress_score ?? null,
       clarity_score: input.checkIn.clarity_score !== undefined ? input.checkIn.clarity_score : existingRow?.clarity_score ?? null,
       reflection: input.checkIn.reflection !== undefined ? input.checkIn.reflection : existingRow?.reflection ?? "",
       symptom_tags: input.checkIn.symptom_tags !== undefined ? input.checkIn.symptom_tags : existingRow?.symptom_tags ?? [],
+      structured_answers: input.checkIn.structured_answers ?? existingRow?.structured_answers ?? { custom_answers: [], schema_version: 1 },
       updated_at: now,
       user_id: userId,
     };
@@ -1221,10 +1282,12 @@ export function useHealth(
         energy_score: input.checkIn.energy_score !== undefined ? input.checkIn.energy_score : existingRow?.energy_score ?? null,
         entry_date: input.checkIn.entry_date,
         entry_time: entryTime,
+        entry_type: localRow.entry_type,
         mood_score: input.checkIn.mood_score !== undefined ? input.checkIn.mood_score : existingRow?.mood_score ?? null,
         reflection: input.checkIn.reflection !== undefined ? input.checkIn.reflection : existingRow?.reflection ?? "",
         stress_score: input.checkIn.stress_score !== undefined ? input.checkIn.stress_score : existingRow?.stress_score ?? null,
         symptom_tags: input.checkIn.symptom_tags !== undefined ? input.checkIn.symptom_tags : existingRow?.symptom_tags ?? [],
+        structured_answers: localRow.structured_answers,
       };
       const result = requestedEntryId
         ? await client
@@ -1243,7 +1306,7 @@ export function useHealth(
       if (error) {
         if (isMissingHealthPersistence(error.message)) {
           journalRemoteEnabledRef.current = false;
-          setMessage({ tone: "neutral", text: "Journal is using local storage until the 7.12.41 Health Journal migration is applied." });
+          setMessage({ tone: "neutral", text: "Journal is using local storage until the 7.13.43 Journal migration is applied." });
         } else {
           setMessage({ tone: "warn", text: error.message });
           return null;
@@ -1264,6 +1327,8 @@ export function useHealth(
     }
     for (const occurrence of input.symptomOccurrences) {
       const occurrenceSymptom = currentSnapshot.symptoms.find((symptom) => symptom.id === occurrence.symptom_id);
+      const occurrenceSignal = currentSnapshot.journalSignals.find((signal) => signal.kind === "symptom" && signal.symptom_id === occurrence.symptom_id);
+      const occurrenceDenominator = getHealthJournalScaleDenominator(occurrenceSignal);
       const isOwnedOccurrence = occurrence.id
         ? currentSnapshot.symptomEntries.some((entry) => entry.id === occurrence.id && entry.journal_entry_id === nextRow.id)
         : false;
@@ -1278,17 +1343,18 @@ export function useHealth(
         setMessage({ tone: "warn", text: "Choose an active symptom for each occurrence." });
         return null;
       }
-      if (!Number.isInteger(occurrence.severity) || occurrence.severity < 1 || occurrence.severity > 10) {
-        setMessage({ tone: "warn", text: "Feeling occurrence severity must be between 1 and 10." });
+      if (!Number.isInteger(occurrence.severity) || occurrence.severity < 1 || occurrence.severity > occurrenceDenominator) {
+        setMessage({ tone: "warn", text: `Feeling occurrence severity must be between 1 and ${occurrenceDenominator}.` });
         return null;
       }
     }
     for (const occurrence of input.journalSignalOccurrences) {
       const signal = currentSnapshot.journalSignals.find((candidate) => candidate.id === occurrence.signal_id);
+      const occurrenceDenominator = getHealthJournalScaleDenominator(signal);
       const isExistingOccurrence = occurrence.id
         ? currentSnapshot.journalSignalOccurrences.some((candidate) => candidate.id === occurrence.id && candidate.journal_entry_id === nextRow.id)
         : false;
-      if (!isValidNativeJournalSignal(signal) || (signal.archived_at !== null && !isExistingOccurrence)) {
+      if (!isValidNativeJournalSignal(signal) || (signal?.archived_at !== null && !isExistingOccurrence)) {
         setMessage({ tone: "warn", text: "Choose an active Emotion or Other Feeling for each occurrence." });
         return null;
       }
@@ -1296,8 +1362,8 @@ export function useHealth(
         setMessage({ tone: "warn", text: "That Feeling occurrence belongs to another Journal Entry." });
         return null;
       }
-      if (!Number.isInteger(occurrence.score) || occurrence.score < 1 || occurrence.score > 10 || !occurrence.occurred_at || !Number.isFinite(Date.parse(occurrence.occurred_at))) {
-        setMessage({ tone: "warn", text: "Feeling occurrences need a score from 1 to 10 and a valid time." });
+      if (!Number.isInteger(occurrence.score) || occurrence.score < 1 || occurrence.score > occurrenceDenominator || !occurrence.occurred_at || !Number.isFinite(Date.parse(occurrence.occurred_at))) {
+        setMessage({ tone: "warn", text: `Feeling occurrences need a score from 1 to ${occurrenceDenominator} and a valid time.` });
         return null;
       }
     }
@@ -3568,6 +3634,7 @@ export function useHealth(
     journalSignalValues,
     journalSignalOccurrences,
     saveJournalEntry,
+    saveJournalQuestions,
     createJournalSignal,
     updateJournalSignal,
     setJournalSignalTemplate,

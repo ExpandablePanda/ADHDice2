@@ -1437,6 +1437,105 @@ export type HealthNutritionDetails = {
 
 export type HealthNutritionDetailKey = keyof HealthNutritionDetails;
 
+export type HealthJournalEntryType = "start_of_day" | "end_of_day" | "event";
+export type HealthJournalQuestionTarget = "start_of_day" | "end_of_day" | "both";
+export type HealthJournalCustomInputType =
+  | "short_text"
+  | "long_text"
+  | "number"
+  | "scale_1_10"
+  | "yes_no"
+  | "single_choice"
+  | "multiple_choice";
+
+export type HealthJournalCustomQuestion = {
+  id: string;
+  question: string;
+  target: HealthJournalQuestionTarget;
+  input_type: HealthJournalCustomInputType;
+  options: string[];
+  enabled: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthJournalCustomAnswerValue = string | number | boolean | string[] | null;
+
+export type HealthJournalCustomAnswer = {
+  question_id: string;
+  question: string;
+  target: HealthJournalQuestionTarget;
+  input_type: HealthJournalCustomInputType;
+  options: string[];
+  value: HealthJournalCustomAnswerValue;
+};
+
+export type HealthJournalLinkedOccurrence = {
+  id: string;
+  kind: "symptom" | "feeling";
+};
+
+export type HealthJournalSleepLink = {
+  date: string;
+  total_minutes: number;
+  focus_session_ids: string[];
+  imported_metric_ids: string[];
+  sources: Array<"focus" | "apple_health">;
+};
+
+export type HealthJournalBreakfastMeal = {
+  id: string;
+  food_name: string;
+  brand_name: string | null;
+  calories: number;
+  logged_at: string;
+};
+
+export type HealthJournalReframe = {
+  negative: string;
+  positive: string;
+};
+
+export type HealthJournalStructuredAnswers = {
+  schema_version: 1;
+  sleep_link?: HealthJournalSleepLink | null;
+  sleep_quality_score?: number | null;
+  sleep_quality_note?: string;
+  breakfast_state?: "already_ate" | "planning_to_eat" | "skipping" | "not_sure_yet" | null;
+  planned_breakfast?: string;
+  breakfast_meal_ids?: string[];
+  breakfast_meals?: HealthJournalBreakfastMeal[];
+  linked_occurrence_ids?: HealthJournalLinkedOccurrence[];
+  waking_feeling_note?: string;
+  current_feeling_note?: string;
+  event_feeling_note?: string;
+  energy_now?: number | null;
+  focus_now?: number | null;
+  energy_overall?: number | null;
+  focus_overall?: number | null;
+  energy_note?: string;
+  focus_note?: string;
+  morning_thoughts?: string;
+  morning_reframes?: HealthJournalReframe[];
+  matters_most?: string;
+  harder_today?: string;
+  successful_today?: string;
+  evening_reflection?: string;
+  went_well?: string;
+  wins?: string[];
+  difficult_today?: string;
+  evening_reframes?: HealthJournalReframe[];
+  still_on_mind?: string;
+  remember_tomorrow?: string;
+  event_description?: string;
+  event_time?: string;
+  event_record?: string;
+  anything_else?: string;
+  custom_answers?: HealthJournalCustomAnswer[];
+  [key: string]: unknown;
+};
+
 export type HealthProfile = {
   user_id: string;
   preferred_weight_unit: HealthWeightUnit;
@@ -1453,6 +1552,7 @@ export type HealthProfile = {
   workout_type_options: string[];
   workout_title_options: string[];
   workout_import_aliases: Record<string, string>;
+  journal_questions?: HealthJournalCustomQuestion[];
   created_at: string;
   updated_at: string;
 };
@@ -1473,6 +1573,7 @@ export type HealthProfileInsert = {
   workout_type_options?: string[];
   workout_title_options?: string[];
   workout_import_aliases?: Record<string, string>;
+  journal_questions?: HealthJournalCustomQuestion[];
 };
 
 export type HealthProfileUpdate = Partial<
@@ -1492,6 +1593,7 @@ export type HealthProfileUpdate = Partial<
     | "workout_type_options"
     | "workout_title_options"
     | "workout_import_aliases"
+    | "journal_questions"
   >
 >;
 
@@ -1506,6 +1608,8 @@ export type HealthCheckIn = {
   clarity_score: number | null;
   symptom_tags: string[];
   reflection: string;
+  entry_type?: HealthJournalEntryType | null;
+  structured_answers?: HealthJournalStructuredAnswers;
   created_at: string;
   updated_at: string;
 };
@@ -1521,10 +1625,12 @@ export type HealthCheckInInsert = {
   clarity_score?: number | null;
   symptom_tags?: string[];
   reflection?: string;
+  entry_type?: HealthJournalEntryType | null;
+  structured_answers?: HealthJournalStructuredAnswers;
 };
 
 export type HealthCheckInUpdate = Partial<
-  Pick<HealthCheckIn, "entry_date" | "entry_time" | "mood_score" | "energy_score" | "stress_score" | "clarity_score" | "symptom_tags" | "reflection">
+  Pick<HealthCheckIn, "entry_date" | "entry_time" | "mood_score" | "energy_score" | "stress_score" | "clarity_score" | "symptom_tags" | "reflection" | "entry_type" | "structured_answers">
 >;
 
 export type HealthJournalSignalKind = "symptom" | "emotion" | "other";

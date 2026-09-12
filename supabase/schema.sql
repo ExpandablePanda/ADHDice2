@@ -561,6 +561,8 @@ create table public.adhdice_health_profiles (
   workout_title_options text[] not null default '{}',
   workout_import_aliases jsonb not null default '{}'::jsonb
     check (jsonb_typeof(workout_import_aliases) = 'object'),
+  journal_questions jsonb not null default '[]'::jsonb
+    check (jsonb_typeof(journal_questions) = 'array'),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -576,6 +578,9 @@ create table public.adhdice_health_checkins (
   clarity_score integer,
   symptom_tags text[] not null default '{}',
   reflection text not null default '',
+  entry_type text check (entry_type is null or entry_type in ('start_of_day', 'end_of_day', 'event')),
+  structured_answers jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(structured_answers) = 'object'),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint adhdice_health_checkins_mood_score_range_check
