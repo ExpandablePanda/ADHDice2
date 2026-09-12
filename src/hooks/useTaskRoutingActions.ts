@@ -50,6 +50,9 @@ export function useTaskRoutingActions({
   }
 
   async function setTaskManualListMembership(taskId: string, listId: TaskListId, included: boolean) {
+    if (listId === "attention") {
+      return;
+    }
     const isCompatibilityList = listId === "today" || listId === "later" || listId === "quick_wins" || listId === "waiting";
 
     setTaskListManualMemberships((current) => {

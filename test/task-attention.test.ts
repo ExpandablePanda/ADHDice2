@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { buildAttentionTaskSections } from "../src/lib/task-attention.ts";
+import { buildAttentionTaskSections, buildTaskAttentionProjection, getTaskAttentionNotification } from "../src/lib/task-attention.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import {
   resolveTaskBehaviorPolicyForTask,
@@ -12,6 +12,9 @@ import {
 
 const TODAY = "2026-09-12";
 const attentionWorkspaceSource = readFileSync("src/components/task-app/attention-workspace.tsx", "utf8");
+const attentionChipSource = readFileSync("src/components/task-app/task-attention-chip.tsx", "utf8");
+const taskAppSource = readFileSync("src/components/task-app.tsx", "utf8");
+const tasksSurfaceSwitchSource = readFileSync("src/components/task-app/tasks-surface-switch.tsx", "utf8");
 
 function task(id: string, dueOn: string | null, status: "pending" | "in_progress" | "missed" | "done" = "pending") {
   return createTask({
@@ -126,6 +129,96 @@ test("Attention uses effective Task, Custom Default, named Custom, and selection
   assert.deepEqual(namedCustomPolicy.needsActionTriggers, ["missed", "due_today"]);
   assert.deepEqual(historicalSelectionPolicy.needsActionTriggers, ["missed", "due_today"]);
   assert.notDeepEqual(customDefaultPolicy.needsActionTriggers, namedCustomPolicy.needsActionTriggers);
+});
+
+test("canonical Attention projection includes only effective Needs Action membership", () => {
+  const rows = [
+    task("missed", "2026-09-10", "missed"),
+    task("today", TODAY),
+    task("overdue", "2026-09-11"),
+    task("in-progress-today", TODAY, "in_progress"),
+    task("coming-up", "2026-09-13"),
+    task("unscheduled", null),
+    task("done", "2026-09-11", "done"),
+  ];
+  const allTriggers = Object.fromEntries(rows.map((entry) => [entry.id, policy(entry.id, ["missed", "due_today", "overdue"]) ]));
+  const enabled = buildTaskAttentionProjection({
+    behaviorPoliciesByTaskId: allTriggers,
+    statusesByTaskId: {
+      done: "done",
+      "coming-up": "pending",
+      "in-progress-today": "in_progress",
+      missed: "missed",
+      overdue: "pending",
+      today: "pending",
+      unscheduled: "unscheduled",
+    },
+    tasks: rows,
+    todayKey: TODAY,
+  });
+
+  assert.deepEqual([...enabled.taskIds].sort(), ["in-progress-today", "missed", "overdue", "today"]);
+  assert.equal(enabled.reasonByTaskId.missed, "missed");
+  assert.equal(enabled.reasonByTaskId.today, "due_today");
+  assert.equal(enabled.reasonByTaskId.overdue, "overdue");
+  assert.equal(enabled.classificationByTaskId["coming-up"]?.section, "coming_up");
+
+  const disabled = buildTaskAttentionProjection({
+    behaviorPoliciesByTaskId: {
+      missed: policy("missed-disabled", ["due_today", "overdue"]),
+      today: policy("today-disabled", ["missed", "overdue"]),
+      overdue: policy("overdue-disabled", ["missed", "due_today"]),
+      "in-progress-today": policy("today-disabled", ["missed", "overdue"]),
+    },
+    statusesByTaskId: {
+      "in-progress-today": "in_progress",
+      missed: "missed",
+      overdue: "pending",
+      today: "pending",
+    },
+    tasks: rows.slice(0, 4),
+    todayKey: TODAY,
+  });
+  assert.deepEqual([...disabled.taskIds], []);
+  assert.equal(disabled.classificationByTaskId["in-progress-today"]?.section, "in_progress");
+
+  const loading = buildTaskAttentionProjection({
+    behaviorPoliciesByTaskId: allTriggers,
+    behaviorPolicyLoading: true,
+    statusesByTaskId: { missed: "missed" },
+    tasks: [rows[0]!],
+    todayKey: TODAY,
+  });
+  assert.deepEqual([...loading.taskIds], []);
+});
+
+test("Attention notification reasons use the governed informational copy", () => {
+  assert.deepEqual(getTaskAttentionNotification("missed"), {
+    description: "This task is currently Missed.",
+    reason: "missed",
+    title: "Missed",
+  });
+  assert.deepEqual(getTaskAttentionNotification("due_today"), {
+    description: "This task is due today and is still unresolved.",
+    reason: "due_today",
+    title: "Due Today",
+  });
+  assert.deepEqual(getTaskAttentionNotification("overdue", "2026-09-10"), {
+    description: "This task was due September 10, 2026 and is still unresolved.",
+    reason: "overdue",
+    title: "Overdue",
+  });
+});
+
+test("Attention is a canonical row presentation and no longer a top-level surface", () => {
+  assert.match(attentionChipSource, /aria-expanded/);
+  assert.match(attentionChipSource, /aria-haspopup="dialog"/);
+  assert.match(attentionChipSource, /event\.key === "Escape"/);
+  assert.match(attentionChipSource, /handlePointerDown/);
+  assert.match(attentionChipSource, /Needs Attention/);
+  assert.match(attentionChipSource, /TaskAttentionChip/);
+  assert.doesNotMatch(tasksSurfaceSwitchSource, />\s*Attention\s*</);
+  assert.doesNotMatch(taskAppSource, /<AttentionWorkspace/);
 });
 
 test("Attention waits for effective behavior readiness before classifying Task rows", () => {

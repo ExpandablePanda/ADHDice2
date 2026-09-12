@@ -111,6 +111,17 @@ test("task ui state migration removes the retired Trash status filter", () => {
   assert.deepEqual(migrated.statusFilters, ["pending"]);
 });
 
+test("task ui state migration moves the retired Attention surface into the Attention list", () => {
+  const migrated = migrateLegacyTaskUiState({
+    ...DEFAULT_TASK_UI_STATE,
+    selectedBucket: "today",
+    tasksSurface: "attention",
+  });
+
+  assert.equal(migrated.tasksSurface, "tasks");
+  assert.equal(migrated.selectedBucket, "attention");
+});
+
 test("task ui state migration maps legacy list columns onto table view", () => {
   const migrated = migrateLegacyTaskUiState({
     ...DEFAULT_TASK_UI_STATE,

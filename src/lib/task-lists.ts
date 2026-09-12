@@ -7,6 +7,7 @@ export type BuiltInTaskListId =
   | "all"
   | "inbox"
   | "today"
+  | "attention"
   | "milestones"
   | "focus"
   | "priority_1_2"
@@ -78,7 +79,7 @@ export type TaskListManualMembership = {
   user_id: string;
 };
 
-const APP_OWNED_SYSTEM_LIST_IDS = new Set<TaskListId>(["all", "milestones", "routine"]);
+const APP_OWNED_SYSTEM_LIST_IDS = new Set<TaskListId>(["all", "attention", "milestones", "routine"]);
 
 export function isAppOwnedSystemTaskListId(value: string | null | undefined): value is TaskListId {
   return Boolean(value && APP_OWNED_SYSTEM_LIST_IDS.has(value as TaskListId));
@@ -119,7 +120,7 @@ export function canRemoveTaskFromCurrentList(
 }
 
 export function isTaskListSettingsEligible(list: Pick<TaskListDefinition, "id">) {
-  return list.id !== "routine" && list.id !== "milestones";
+  return list.id !== "attention" && list.id !== "routine" && list.id !== "milestones";
 }
 
 export type TaskListMembership = {
@@ -157,6 +158,7 @@ export type TaskListEvaluationContext = {
   isTaskHistoryLoaded?: boolean;
   historyFactsByTaskId: Record<string, TaskHistoryFacts>;
   manualMembershipsByTaskId: Record<string, TaskListId[]>;
+  attentionTaskIds?: ReadonlySet<string>;
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
   todayDateKey: string;
@@ -209,6 +211,7 @@ export const BUILT_IN_TASK_LIST_IDS: BuiltInTaskListId[] = [
   "all",
   "inbox",
   "today",
+  "attention",
   "milestones",
   "focus",
   "priority_1_2",
@@ -267,6 +270,18 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       type: "system",
     },
     {
+      description: "Tasks currently classified as Needs Action by their effective behavior policy.",
+      id: "attention",
+      isDeletable: false,
+      isEditable: false,
+      isVisible: true,
+      membershipMode: "system",
+      name: "Attention",
+      rules: null,
+      sortOrder: 3,
+      type: "system",
+    },
+    {
       description: "Active finite goals with locked trophy tiers and target dates.",
       id: "milestones",
       isDeletable: false,
@@ -275,7 +290,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "system",
       name: "Milestones",
       rules: null,
-      sortOrder: 3,
+      sortOrder: 4,
       type: "smart",
     },
     {
@@ -289,7 +304,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "focus", op: "is", value: true } }],
       },
-      sortOrder: 4,
+      sortOrder: 5,
       type: "smart",
     },
     {
@@ -303,7 +318,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "priority_level", op: "is", value: ["1", "2"] } }],
       },
-      sortOrder: 5,
+      sortOrder: 6,
       type: "smart",
     },
     {
@@ -317,7 +332,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "priority_level", op: "is", value: ["3", "4"] } }],
       },
-      sortOrder: 6,
+      sortOrder: 7,
       type: "smart",
     },
     {
@@ -331,7 +346,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "priority_level", op: "is", value: "5" } }],
       },
-      sortOrder: 7,
+      sortOrder: 8,
       type: "smart",
     },
     {
@@ -343,7 +358,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "system",
       name: "Routine",
       rules: null,
-      sortOrder: 8,
+      sortOrder: 9,
       type: "system",
     },
     {
@@ -355,7 +370,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "manual",
       name: "Quick Wins",
       rules: null,
-      sortOrder: 9,
+      sortOrder: 10,
       type: "system",
     },
     {
@@ -369,7 +384,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "repeat", op: "is", value: true } }],
       },
-      sortOrder: 10,
+      sortOrder: 11,
       type: "system",
     },
     {
@@ -383,7 +398,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "status", op: "is", value: "upcoming" } }],
       },
-      sortOrder: 11,
+      sortOrder: 12,
       type: "system",
     },
     {
@@ -395,7 +410,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "manual",
       name: "Later",
       rules: null,
-      sortOrder: 12,
+      sortOrder: 13,
       type: "system",
     },
     {
@@ -412,7 +427,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
           { connector: "or", rule: { field: "status", op: "is", value: "did_my_best" } },
         ],
       },
-      sortOrder: 13,
+      sortOrder: 14,
       type: "system",
     },
     {
@@ -426,7 +441,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "status", op: "is", value: "missed" } }],
       },
-      sortOrder: 14,
+      sortOrder: 15,
       type: "system",
     },
   ];
@@ -480,7 +495,7 @@ export function evaluateTaskListMemberships(
 
   const manualSeedStartedAt = canMeasure ? performance.now() : 0;
   for (const listId of manualListIds) {
-    if (listId === "today") {
+    if (listId === "today" || listId === "attention") {
       continue;
     }
     memberships.set(listId, {
@@ -493,6 +508,13 @@ export function evaluateTaskListMemberships(
   if (context.milestoneTaskIds?.has(task.id) && task.status !== "trashed") {
     memberships.set("milestones", {
       id: "milestones",
+      isManual: false,
+      source: "rule",
+    });
+  }
+  if (context.attentionTaskIds?.has(task.id)) {
+    memberships.set("attention", {
+      id: "attention",
       isManual: false,
       source: "rule",
     });
@@ -959,6 +981,12 @@ function taskBelongsToSpecificList(
   }
   if (visitedListIds.has(selectedListId)) {
     return false;
+  }
+
+  if (selectedListId === "attention") {
+    const belongsToAttention = context.attentionTaskIds?.has(task.id) === true;
+    evaluationCache.set(cacheKey, belongsToAttention);
+    return belongsToAttention;
   }
 
   const manualListIds = context.manualMembershipsByTaskId[task.id] ?? [];

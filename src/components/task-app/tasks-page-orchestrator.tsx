@@ -17,7 +17,6 @@ import type { TaskWorkspaceTab, TasksSurface, TaskViewMode } from "@/lib/task-ui
 type TasksPageOrchestratorProps = {
   activeTabId: string;
   alternateViewPanel: ReactNode;
-  attentionWorkspacePanel: ReactNode;
   brainstormWorkspacePanel: ReactNode;
   completedMilestonesWorkspacePanel: ReactNode;
   listViewPanel: ReactNode;
@@ -41,7 +40,6 @@ type TasksPageOrchestratorProps = {
 export function TasksWorkspace({
   activeTabId,
   alternateViewPanel,
-  attentionWorkspacePanel,
   brainstormWorkspacePanel,
   completedMilestonesWorkspacePanel,
   listViewPanel,
@@ -153,7 +151,6 @@ export function TasksWorkspace({
     <>
       <TaskPage
         alternateViewPanel={alternateViewPanel}
-        attentionWorkspacePanel={attentionWorkspacePanel}
         brainstormWorkspacePanel={brainstormWorkspacePanel}
         completedMilestonesWorkspacePanel={completedMilestonesWorkspacePanel}
         listViewPanel={listViewPanel}
@@ -163,7 +160,7 @@ export function TasksWorkspace({
         pathsWorkspacePanel={pathsWorkspacePanel}
         reportWorkspacePanel={reportWorkspacePanel}
         surface={surface}
-        surfaceSwitch={<TasksSurfaceSwitch onChange={onSurfaceChange} value={surface} />}
+        surfaceSwitch={<TasksSurfaceSwitch onChange={onSurfaceChange} value={surface === "attention" ? "tasks" : surface} />}
         tabs={(
           <div className={`adhdice-scrollbar flex max-w-full items-center overflow-x-auto ${TASKS_SURFACE_GROUP_CLASS}`}>
               {tabs.map((tab, index) => {

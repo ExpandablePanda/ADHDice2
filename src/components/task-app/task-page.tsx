@@ -5,7 +5,6 @@ import type { TasksSurface, TaskViewMode } from "@/lib/task-ui-state";
 
 type TaskPageProps = {
   alternateViewPanel: ReactNode;
-  attentionWorkspacePanel: ReactNode;
   brainstormWorkspacePanel: ReactNode;
   completedMilestonesWorkspacePanel: ReactNode;
   listViewPanel: ReactNode;
@@ -23,7 +22,6 @@ type TaskPageProps = {
 
 export function TaskPage({
   alternateViewPanel,
-  attentionWorkspacePanel,
   brainstormWorkspacePanel,
   completedMilestonesWorkspacePanel,
   listViewPanel,
@@ -44,9 +42,7 @@ export function TaskPage({
         {surfaceSwitch}
         {tabs}
       </div>
-      {surface === "attention" ? (
-        attentionWorkspacePanel
-      ) : surface === "paths" ? (
+      {surface === "paths" ? (
         pathsWorkspacePanel
       ) : surface === "report" ? (
         reportWorkspacePanel

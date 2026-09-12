@@ -72,7 +72,7 @@ test("every built-in and custom subtype has a canonical draggable identity", () 
   }
   assert.ok(manifest.some((item) => item.item_key === getTaskListRailFolderItemKey(folderA.id)));
   for (const id of [
-    "all", "inbox", "today", "later", "waiting", "focus", "milestones",
+    "all", "inbox", "today", "attention", "later", "waiting", "focus", "milestones",
     "routine", "quick_wins", "priority_1_2", "priority_3_4", "priority_5",
   ]) {
     assert.ok(manifest.some((item) => item.item_key === `system:${id}`), id);

@@ -35,6 +35,8 @@ import {
 } from "lucide-react";
 import type { CustomBehaviorRuleset, Pursuit, PursuitUpdate, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
+import { TaskAttentionChip } from "@/components/task-app/task-attention-chip";
+import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import type { CustomBehaviorRulesetDeleteActionResult } from "@/lib/custom-behavior-rulesets";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
@@ -363,6 +365,7 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
     priorities: row.priorities,
     currentStreak: row.currentStreak,
     missedStreak: row.missedStreak,
+    attentionReason: row.attentionReason,
   repeat: row.repeat,
   repeatInterval: row.repeatInterval,
   repeatDaysOfWeek: row.repeatDaysOfWeek,
@@ -1032,6 +1035,7 @@ export type PrototypeTaskRow = {
   priorities: TaskPriority[];
   currentStreak: number;
   missedStreak: number;
+  attentionReason?: TaskAttentionReason | null;
   repeat: TaskRepeat;
   repeatInterval: number;
   repeatDaysOfWeek: number[];
@@ -1167,6 +1171,7 @@ type TaskManagementTableV2Props = {
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: Array<{ id: string; title: string }>;
   allTagOptions?: string[];
+  attentionReasonByTaskId?: Readonly<Record<string, TaskAttentionReason>>;
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
   highlightedActiveTaskId?: string | null;
@@ -1808,8 +1813,14 @@ function renderStepLayerChip(depth: number) {
   );
 }
 
-function renderStepHistoryChips(currentStreak: number, missedStreak: number) {
-  if (currentStreak <= 0 && missedStreak <= 0) {
+function renderStepHistoryChips(
+  currentStreak: number,
+  missedStreak: number,
+  attentionReason?: TaskAttentionReason | null,
+  dueOn?: string | null,
+  taskId?: string,
+) {
+  if (currentStreak <= 0 && missedStreak <= 0 && !attentionReason) {
     return null;
   }
 
@@ -1827,6 +1838,7 @@ function renderStepHistoryChips(currentStreak: number, missedStreak: number) {
           {missedStreak}
         </span>
       ) : null}
+      {attentionReason && taskId ? <TaskAttentionChip dueOn={dueOn ?? null} reason={attentionReason} taskId={taskId} /> : null}
     </>
   );
 }
@@ -2651,6 +2663,7 @@ export function TaskManagementTableV2({
   allListOptions = [],
   allNoteOptions = [],
   allTagOptions = [],
+  attentionReasonByTaskId = {},
   childTaskCreationBlockedTaskIds = [],
   childTaskPreviewByParentTaskId = {},
   highlightedActiveTaskId = null,
@@ -5611,7 +5624,10 @@ export function TaskManagementTableV2({
       ?? (retainedSelectedTask?.id === item.id ? retainedSelectedTask : null)
       ?? (retainedMetadataTargetTask?.id === item.id ? retainedMetadataTargetTask : null);
     if (retainedTask) {
-      return retainedTask;
+      return {
+        ...retainedTask,
+        attentionReason: attentionReasonByTaskId[item.id] ?? null,
+      };
     }
 
     return {
@@ -5635,6 +5651,7 @@ export function TaskManagementTableV2({
       lists: [],
       currentStreak: item.currentStreak,
       missedStreak: item.missedStreak,
+      attentionReason: attentionReasonByTaskId[item.id] ?? null,
       notes: item.notes,
       priorities: [...item.priorityFlags],
       repeat: item.repeat,
@@ -7397,6 +7414,7 @@ export function TaskManagementTableV2({
                   {task.missedStreak}
                 </span>
               ) : null}
+              <TaskAttentionChip dueOn={task.dueOn || null} reason={task.attentionReason} taskId={task.id} />
               </div>
             </div>
             {hasDescription ? (
@@ -8280,7 +8298,13 @@ export function TaskManagementTableV2({
                     </p>
                   </button>
                   {renderStepLayerChip(item.depth)}
-                  {renderStepHistoryChips(item.currentStreak, item.missedStreak)}
+                  {renderStepHistoryChips(
+                    item.currentStreak,
+                    item.missedStreak,
+                    attentionReasonByTaskId[item.id],
+                    item.dueOn ?? item.scheduledOn ?? null,
+                    item.id,
+                  )}
                   {canCollapse ? (
                     <button
                       aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}

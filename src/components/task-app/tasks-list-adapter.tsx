@@ -26,6 +26,8 @@ import { resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsFor
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
+import { TaskAttentionChip } from "./task-attention-chip";
+import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import type { CustomBehaviorRulesetDeleteActionResult } from "@/lib/custom-behavior-rulesets";
 import { createStableTaskRowModelCache, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
@@ -403,6 +405,7 @@ type TasksTableSourceProps = {
     manualMembershipsByTaskId: Record<string, TaskListId[]>;
     subtasksByTaskId: Record<string, Task[]>;
     taskDisplayStatusByTaskId: Record<string, TaskDisplayStatus>;
+    taskAttentionReasonByTaskId: Readonly<Record<string, TaskAttentionReason>>;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
     taskHistoryStreakSummaryByTaskId: Record<string, TaskHistoryStreakSummary>;
     todayDateKey: string;
@@ -573,6 +576,7 @@ export function TasksTableAdapter({
         subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
         taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+        attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
         todayDateKey: tableProps.rowContext.todayDateKey,
       }));
 
@@ -604,6 +608,7 @@ export function TasksTableAdapter({
         subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
         taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
+        attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[tableProps.requestedOpenTask.id],
         todayDateKey: tableProps.rowContext.todayDateKey,
       })
       : null,
@@ -640,11 +645,13 @@ export function TasksTableAdapter({
               subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
               taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
               taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+              attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
               todayDateKey: tableProps.rowContext.todayDateKey,
             }))}
           allListOptions={tableProps.allListOptions}
           allNoteOptions={noteOptions}
           allTagOptions={tableProps.allTagOptions}
+          attentionReasonByTaskId={tableProps.rowContext.taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
           highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
@@ -2806,6 +2813,7 @@ function TasksSimpleList({
       subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
       taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
       taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
+      attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[tableProps.requestedOpenTask.id],
       todayDateKey: tableProps.rowContext.todayDateKey,
     })] : [],
     [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
@@ -2821,6 +2829,7 @@ function TasksSimpleList({
         subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
         taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
+        attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[tableProps.requestedOpenTask.id],
         todayDateKey: tableProps.rowContext.todayDateKey,
       })
       : null,
@@ -2864,6 +2873,7 @@ function TasksSimpleList({
           subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
           taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
           taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+          attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
           todayDateKey: tableProps.rowContext.todayDateKey,
         })),
       })
@@ -3127,6 +3137,7 @@ function TasksSimpleList({
               allListOptions={tableProps.allListOptions}
               allNoteOptions={tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? []}
               allTagOptions={tableProps.allTagOptions}
+              attentionReasonByTaskId={tableProps.rowContext.taskAttentionReasonByTaskId}
               childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
               childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
               highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
@@ -3275,6 +3286,7 @@ function TasksSimpleList({
           subtasks: rowContext.subtasksByTaskId[task.id] ?? [],
           taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
           taskHistoryStreakSummary: rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+          attentionReason: rowContext.taskAttentionReasonByTaskId[task.id],
           todayDateKey: rowContext.todayDateKey,
         });
         const categoryLabel = resolveTaskCategoryLabel({
@@ -3423,6 +3435,11 @@ function TasksSimpleList({
                       <TaskHistoryChips
                         currentStreak={taskRow.currentStreak}
                         missedStreak={taskRow.missedStreak}
+                      />
+                      <TaskAttentionChip
+                        dueOn={taskRow.dueOn || null}
+                        reason={taskRow.attentionReason}
+                        taskId={task.id}
                       />
                       <MetadataDisclosureButton
                         isVisible={isMetadataVisible}

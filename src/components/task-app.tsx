@@ -90,7 +90,6 @@ import { DetachAndPromoteMilestoneModal, MilestoneCorrectionModal, MilestoneSetu
 import { MilestoneInspectorSection } from "./task-app/milestone-detail-section";
 import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-app/milestone-lifecycle-modal";
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
-import { AttentionWorkspace } from "./task-app/attention-workspace";
 import { PursuitEditorModal } from "./task-app/pursuits-workspace";
 import type { PursuitInlineCreateInput } from "./task-app/pursuit-workspace-row";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
@@ -308,6 +307,7 @@ import {
   type TaskHistoryStats,
 } from "@/lib/task-history";
 import { groupTaskSubtasksByTaskId } from "@/lib/task-subtasks";
+import { buildTaskAttentionProjection } from "@/lib/task-attention";
 import {
   buildManualMembershipMap,
   getBuiltInTaskLists,
@@ -2722,7 +2722,7 @@ export function TaskApp() {
       byId.set(list.id, list);
     }
     for (const list of taskLists) {
-      if (list.id === "routine" || list.id === "milestones") {
+      if (list.id === "attention" || list.id === "routine" || list.id === "milestones") {
         continue;
       }
       byId.set(list.id, list);
@@ -2978,6 +2978,17 @@ export function TaskApp() {
       }).policy,
     ])) as Readonly<Record<string, Pick<TaskBehaviorPolicy, "needsActionTriggers">>>;
   }, [behaviorSelectionsByTaskId, customRulesetBehaviorPolicyRevisions, isTaskTypeBehaviorProfilesLoading, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles, tasksForActiveStatusRead, todayKey]);
+  const taskAttentionProjection = useMemo(
+    () => buildTaskAttentionProjection({
+      behaviorPoliciesByTaskId: attentionBehaviorPoliciesByTaskId ?? undefined,
+      behaviorPolicyLoading: attentionBehaviorPoliciesByTaskId === null,
+      dueOnByTaskId: taskDisplayDueOnByTaskId,
+      statusesByTaskId: taskDisplayStatusByTaskId,
+      tasks: tasksForActiveStatusRead,
+      todayKey,
+    }),
+    [attentionBehaviorPoliciesByTaskId, taskDisplayDueOnByTaskId, taskDisplayStatusByTaskId, tasksForActiveStatusRead, todayKey],
+  );
   useEffect(() => {
     if (isTaskHistoryLoaded && activeStatusRead && process.env.NODE_ENV === "development" && typeof window !== "undefined") {
       window.__ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__ = activeStatusRead.authority;
@@ -3090,10 +3101,11 @@ export function TaskApp() {
     isTaskHistoryLoaded,
     historyFactsByTaskId: taskHistoryFactsByTaskId,
     manualMembershipsByTaskId,
+    attentionTaskIds: taskAttentionProjection.taskIds,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
     todayDateKey: todayKey,
-  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
+  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskAttentionProjection.taskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
   const parsedTaskSearch = useMemo(
     () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
     [taskUiState.duplicateTitleMode, taskUiState.search],
@@ -3130,9 +3142,10 @@ export function TaskApp() {
     () => createProjectionDomainRevision("lists-memberships", {
       lists: availableTaskLists,
       manualMembershipsByTaskId,
+      attentionTaskIds: Array.from(taskAttentionProjection.taskIds).sort(),
       taskSubtasksByTaskId,
     }),
-    [availableTaskLists, manualMembershipsByTaskId, taskSubtasksByTaskId],
+    [availableTaskLists, manualMembershipsByTaskId, taskAttentionProjection.taskIds, taskSubtasksByTaskId],
   );
   const statusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("status-settings", {
@@ -3697,6 +3710,7 @@ export function TaskApp() {
     listDefinitions: availableTaskLists,
     listMembershipsByTaskId: taskListMembershipsByTaskId,
     manualMembershipsByTaskId,
+    taskAttentionReasonByTaskId: taskAttentionProjection.reasonByTaskId,
     subtasksByTaskId: taskSubtasksByTaskId,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
@@ -3712,6 +3726,7 @@ export function TaskApp() {
     taskListMembershipsByTaskId,
     taskSubtasksByTaskId,
     taskDisplayStatusByTaskId,
+    taskAttentionProjection.reasonByTaskId,
     todayKey,
   ]);
   const taskHighlightMatches = useMemo(
@@ -4394,6 +4409,10 @@ export function TaskApp() {
   }, [activeTaskWorkspaceTab.isRailHidden, activeTaskWorkspaceTab.taskUiState, createTaskWorkspaceTab, setActivePage, taskUiState.view, tasks]);
 
   const handleTaskWorkspaceSurfaceChange = useCallback((surface: TaskUiState["tasksSurface"]) => {
+    if (surface === "attention") {
+      setTaskUiState((prev) => ({ ...prev, selectedBucket: "attention", tasksSurface: "tasks" }));
+      return;
+    }
     if (surface === "report") {
       const existingReportTab = taskWorkspaceTabsState.tabs.find((tab) => isReportTaskWorkspaceTab(tab));
       if (existingReportTab) {
@@ -7375,33 +7394,6 @@ export function TaskApp() {
                 state={brainstormState.state}
                 syncState={brainstormState.syncState}
                 updateState={brainstormState.updateState}
-              />
-            )}
-            attentionWorkspacePanel={(
-              <AttentionWorkspace
-                attentionMap={pursuitAttentionMap}
-                behaviorPoliciesByTaskId={attentionBehaviorPoliciesByTaskId}
-                behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
-                dueOnByTaskId={taskDisplayDueOnByTaskId}
-                error={pursuitData.error}
-                isLoading={pursuitData.isLoading}
-                allTagOptions={allPursuitTags}
-                completionSummaryByPursuitId={pursuitCompletionSummaryMap}
-                activities={pursuitData.activities}
-                onCreate={pursuitData.createPursuit}
-                onMarkCompletedOnLogicalDay={pursuitData.markCompletedOnLogicalDay}
-                onMarkDoneToday={pursuitData.markDoneToday}
-                onRemoveCompletionOnLogicalDay={pursuitData.removeCompletionOnLogicalDay}
-                onOpenTask={openTaskInSharedTasksEditorFromPaths}
-                onRefresh={pursuitData.refresh}
-                onUpdate={pursuitData.updatePursuit}
-                dayStartTime={dayStartTime}
-                pursuits={pursuitData.pursuits}
-                taskOptions={tasks.map((task) => ({ id: task.id, title: task.title }))}
-                statusesByTaskId={taskDisplayStatusByTaskId}
-                tasks={tasksForActiveStatusRead}
-                todayKey={todayKey}
-                timezone={userTimeZone}
               />
             )}
             completedMilestonesWorkspacePanel={(

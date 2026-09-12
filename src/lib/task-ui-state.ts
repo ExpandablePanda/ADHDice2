@@ -188,6 +188,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
   const nextBucket = typeof state.selectedBucket === "string" && state.selectedBucket.length > 0
     ? normalizeLegacySelectedBucket(state.selectedBucket)
     : DEFAULT_TASK_UI_STATE.selectedBucket;
+  const isLegacyAttentionSurface = state.tasksSurface === "attention";
   const nextVisibleColumnsByView = VALID_TASK_VIEWS.reduce<Record<TaskViewMode, AgentPlanColumnId[]>>((accumulator, view) => {
     const candidate = view === "table"
       ? state.visibleColumnsByView?.table ?? state.visibleColumnsByView?.list
@@ -234,7 +235,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
       return result;
     }, { table: false, list: false, cards: false, matrix: false, grid: false, calendar: false }),
     listSortBySurface: normalizeListSortBySurface(state.listSortBySurface),
-    selectedBucket: nextBucket,
+    selectedBucket: isLegacyAttentionSurface ? "attention" : nextBucket,
     statusFilters: Array.isArray(state.statusFilters)
       ? state.statusFilters.filter((status) => status !== "trashed")
       : [],
@@ -246,7 +247,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
         ? state.tableColumnFilters.text
         : {},
     },
-    tasksSurface: state.tasksSurface === "attention" || state.tasksSurface === "paths" || state.tasksSurface === "report" || state.tasksSurface === "on_time" || state.tasksSurface === "brainstorm" || state.tasksSurface === "completed_milestones"
+    tasksSurface: state.tasksSurface === "paths" || state.tasksSurface === "report" || state.tasksSurface === "on_time" || state.tasksSurface === "brainstorm" || state.tasksSurface === "completed_milestones"
       ? state.tasksSurface
       : "tasks",
     view: nextView,

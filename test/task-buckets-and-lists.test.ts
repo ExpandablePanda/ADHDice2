@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildTaskHistoryFacts } from "../src/lib/task-history.ts";
-import { buildManualMembershipMap, evaluateTaskListMemberships, getBuiltInTaskLists, parseTaskListRules, taskBelongsToList, type TaskListDefinition } from "../src/lib/task-lists.ts";
+import { buildManualMembershipMap, evaluateTaskListMemberships, getBuiltInTaskLists, isAppOwnedSystemTaskListId, isManualTaskListDestination, isTaskListSettingsEligible, parseTaskListRules, taskBelongsToList, type TaskListDefinition } from "../src/lib/task-lists.ts";
 import { createTask, getTaskBucket, isPursuitVisibleInTaskWorkspace } from "../src/lib/task-buckets.ts";
 
 function createTaskListEvaluationContext(
@@ -105,6 +105,41 @@ test("built-in task lists include Routine as a persisted manual system list", ()
   assert.equal(routineList?.membershipMode, "manual");
   assert.equal(routineList?.type, "system");
   assert.equal(routineList?.name, "Routine");
+});
+
+test("Attention is a visible system-owned derived list and ignores manual membership", () => {
+  const attentionList = getBuiltInTaskLists().find((list) => list.id === "attention") ?? null;
+  assert.ok(attentionList);
+  assert.equal(attentionList?.isVisible, true);
+  assert.equal(attentionList?.membershipMode, "system");
+  assert.equal(attentionList?.isDeletable, false);
+  assert.equal(attentionList?.isEditable, false);
+  assert.equal(isAppOwnedSystemTaskListId("attention"), true);
+  assert.equal(isManualTaskListDestination(attentionList!), false);
+  assert.equal(isTaskListSettingsEligible(attentionList!), false);
+
+  const task = createTask({
+    due_on: "2026-06-24",
+    id: "task-attention-list",
+    status: "pending",
+    title: "Attention list task",
+  });
+  const lists = getBuiltInTaskLists();
+  const context = createTaskListEvaluationContext({
+    attentionTaskIds: new Set([task.id]),
+    manualMembershipsByTaskId: buildManualMembershipMap([{
+      created_at: "2026-06-24T10:00:00.000Z",
+      id: "manual-attention-membership",
+      list_id: "attention",
+      task_id: task.id,
+      user_id: "test-user",
+    }]),
+  });
+  const memberships = evaluateTaskListMemberships(task, lists, context);
+  const attentionMembership = memberships.find((membership) => membership.id === "attention");
+  assert.deepEqual(attentionMembership, { id: "attention", isManual: false, source: "rule" });
+  assert.equal(taskBelongsToList(task, "attention", lists, context), true);
+  assert.equal(taskBelongsToList(task, "attention", lists, createTaskListEvaluationContext()), false);
 });
 
 test("inbox saved due-empty rule constrains both bulk and direct membership checks", () => {

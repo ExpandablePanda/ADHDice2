@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.42`.
+- Current working app version: `7.13.43`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-12 7.13.43 Attention System List + Notification Chip
+
+Attention is now surfaced through the canonical Task list system as the
+visible, app-owned `attention` system list. Membership is derived only when
+the existing effective-policy Attention classifier returns `needs_action`, so
+Missed, Due Today, and Overdue remain policy-controlled while In Progress and
+Coming Up remain outside the notification list. Table and List rows expose a
+small informational Attention chip with the current reason in an anchored
+popover; no Task status, persistence field, manual membership, behavior
+engine, SQL/schema change, or Edge deployment was added. Legacy persisted
+`attention` surface state migrates to Tasks with the Attention list selected.
+Browser QA remains unverified.
 
 ## 2026-09-12 7.13.41 Effective-Dated Needs Action Triggers
 
@@ -24,8 +37,9 @@ classification; disabling it does not make a Missed Task qualify as Overdue,
 and disabling Due Today or Overdue allows the existing Attention classifier to
 fall through to In Progress or Coming Up as applicable. Task facts, History,
 status, due dates, recurrence, projections, streaks, rewards, and Pursuit
-behavior remain unchanged. The forward SQL migration is source-only; no SQL or
-Edge deployment was performed, and browser QA remains unverified.
+behavior remain unchanged. The Needs Action SQL migration has been applied to
+live ADHDice Supabase and verified. No Edge deployment was required, and
+browser QA remains unverified.
 
 ## 2026-09-12 7.13.42 Current-Policy Task Rollover Correction
 
@@ -34,8 +48,11 @@ occurrences with the Task's current resolved behavior policy. A current Blank
 policy leaves that backlog without automatic Missed History or missed-streak
 materialization; a current Missed policy retains intentional automatic
 backfill. Existing History facts and effective-dated historical policy
-resolution remain unchanged. No SQL or Edge deployment was performed, and
-browser QA remains unverified.
+resolution remain unchanged. The `task-state-command` Edge Function was
+deployed from commit `378d2cb7580f6ab5221434322859e6ed0ea1b114`; the deployed
+Edge Function version was 35 at QA time, and browser QA for the Blank/Ignore
+unresolved-backlog correction passed. No SQL migration or schema change was
+required.
 
 ## 2026-09-12 7.13.40 Available Actions UI Enforcement
 
