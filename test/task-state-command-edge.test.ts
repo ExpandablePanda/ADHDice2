@@ -284,6 +284,7 @@ function behaviorRevision(
     missedStreakOnUnhandled: "increment",
     rewards: "enabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
+    needsActionTriggers: ["missed", "due_today", "overdue"],
     ...values,
   };
 }
@@ -297,6 +298,7 @@ function behaviorProfile(revision: TaskBehaviorPolicyRevision): TaskBehaviorProf
       missedStreakOnUnhandled: revision.missedStreakOnUnhandled,
       rewards: revision.rewards,
       availableActions: revision.availableActions,
+      needsActionTriggers: revision.needsActionTriggers,
     },
   };
 }

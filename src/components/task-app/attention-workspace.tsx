@@ -7,10 +7,13 @@ import type { Task } from "@/lib/database.types";
 import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import { buildAttentionTaskSections, formatAttentionTaskTiming } from "@/lib/task-attention";
 import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
+import type { TaskBehaviorPolicy } from "@/lib/task-state-engine/behavior-policy";
 import { formatTaskStatusLabel } from "./task-status-ui";
 import { PursuitsWorkspace, type PursuitsWorkspaceProps } from "./pursuits-workspace";
 
 type AttentionWorkspaceProps = PursuitsWorkspaceProps & {
+  behaviorPoliciesByTaskId?: Readonly<Record<string, Pick<TaskBehaviorPolicy, "needsActionTriggers">>> | null;
+  behaviorPolicyLoading?: boolean;
   dueOnByTaskId: Record<string, string | null>;
   onOpenTask: (taskId: string) => void;
   statusesByTaskId: TaskDisplayStatusByTaskId;
@@ -19,6 +22,8 @@ type AttentionWorkspaceProps = PursuitsWorkspaceProps & {
 };
 
 export function AttentionWorkspace({
+  behaviorPoliciesByTaskId,
+  behaviorPolicyLoading = false,
   dueOnByTaskId,
   onOpenTask,
   statusesByTaskId,
@@ -27,9 +32,12 @@ export function AttentionWorkspace({
   ...pursuitProps
 }: AttentionWorkspaceProps) {
   const sections = useMemo(
-    () => buildAttentionTaskSections({ dueOnByTaskId, statusesByTaskId, tasks, todayKey }),
-    [dueOnByTaskId, statusesByTaskId, tasks, todayKey],
+    () => behaviorPolicyLoading
+      ? { comingUp: [], inProgress: [], needsAction: [] }
+      : buildAttentionTaskSections({ behaviorPoliciesByTaskId: behaviorPoliciesByTaskId ?? undefined, dueOnByTaskId, statusesByTaskId, tasks, todayKey }),
+    [behaviorPoliciesByTaskId, behaviorPolicyLoading, dueOnByTaskId, statusesByTaskId, tasks, todayKey],
   );
+  const taskSectionEmptyText = behaviorPolicyLoading ? "Loading Task behavior settings…" : undefined;
   const [showAllComingUp, setShowAllComingUp] = useState(false);
   const visibleComingUp = showAllComingUp ? sections.comingUp : sections.comingUp.slice(0, 6);
 
@@ -45,7 +53,7 @@ export function AttentionWorkspace({
       </div>
 
       <AttentionTaskSection
-        emptyText="Nothing is overdue, missed, or due today."
+        emptyText={taskSectionEmptyText ?? "Nothing is overdue, missed, or due today."}
         icon={<CalendarClock className="h-4 w-4" />}
         title="Needs Action"
         tone="missed"
@@ -56,7 +64,7 @@ export function AttentionWorkspace({
         onOpenTask={onOpenTask}
       />
       <AttentionTaskSection
-        emptyText="No Tasks are currently In Progress."
+        emptyText={taskSectionEmptyText ?? "No Tasks are currently In Progress."}
         icon={<ArrowRight className="h-4 w-4" />}
         title="In Progress"
         tone="progress"
@@ -71,7 +79,7 @@ export function AttentionWorkspace({
 
       <AdhdPanel title="Coming Up" subtitle="Future Tasks remain awareness, not urgency.">
         {visibleComingUp.length === 0 ? (
-          <p className="rounded-[1rem] border border-dashed border-[#ded6f3] bg-[#fbfaff] px-4 py-4 text-sm text-[#766f8d] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/58">No upcoming Tasks with a scheduled date.</p>
+          <p className="rounded-[1rem] border border-dashed border-[#ded6f3] bg-[#fbfaff] px-4 py-4 text-sm text-[#766f8d] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/58">{taskSectionEmptyText ?? "No upcoming Tasks with a scheduled date."}</p>
         ) : (
           <div className="grid gap-2">
             {visibleComingUp.map((task) => (

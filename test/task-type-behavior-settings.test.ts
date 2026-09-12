@@ -24,6 +24,7 @@ const behaviorSettingsSource = readFileSync("src/components/task-app/task-type-b
 const behaviorProfilesHookSource = readFileSync("src/hooks/useTaskTypeBehaviorProfiles.ts", "utf8");
 const filterRowsSource = readFileSync("src/components/task-app/task-filter-rows.tsx", "utf8");
 const availableActionsMigration = readFileSync("supabase/add_available_actions_policy_7_13_38.sql", "utf8");
+const needsActionTriggersMigration = readFileSync("supabase/add_needs_action_triggers_policy_7_13_41.sql", "utf8");
 const schemaSource = readFileSync("supabase/schema.sql", "utf8");
 
 const input: TaskStateEngineInput = {
@@ -109,6 +110,7 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
+    needsActionTriggers: ["missed", "due_today", "overdue"],
   });
   assert.deepEqual(result.revisions, { task: [{
     id: "task-behavior-profile",
@@ -117,6 +119,7 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
+    needsActionTriggers: ["missed", "due_today", "overdue"],
     effectiveFromLogicalDate: "2026-09-08",
   }], custom: [{
     id: "custom-behavior-profile",
@@ -125,6 +128,7 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
+    needsActionTriggers: ["missed", "due_today", "overdue"],
     effectiveFromLogicalDate: "2026-09-08",
   }] });
   assert.deepEqual(taskTypeBehaviorProfileUpsertPayload("user-a", "custom", STANDARD_TASK_BEHAVIOR_POLICY, "2026-09-08"), {
@@ -136,6 +140,7 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     missed_streak_on_unhandled: "increment",
     rewards: "enabled",
     available_actions: ["done", "did_my_best", "missed", "delay", "complete"],
+    needs_action_triggers: ["missed", "due_today", "overdue"],
   });
   const legacyPreservePolicy = normalizeTaskBehaviorProfile({
     id: "legacy-preserve",
@@ -197,6 +202,20 @@ test("7.13.38 adds only the additive Available Actions columns and preserves exi
   assert.doesNotMatch(availableActionsMigration, /delete\s+from\s+public\.adhdice_/i);
   for (const table of ["adhdice_task_type_behavior_profiles", "adhdice_custom_behavior_ruleset_revisions"]) {
     assert.match(schemaSource, new RegExp(`create table public\\.${table}[\\s\\S]*available_actions text\\[\\] not null`, "i"));
+  }
+});
+
+test("7.13.41 adds only additive Needs Action trigger columns and preserves existing rows", () => {
+  assert.match(needsActionTriggersMigration, /alter table public\.adhdice_task_type_behavior_profiles[\s\S]*add column if not exists needs_action_triggers text\[\]/i);
+  assert.match(needsActionTriggersMigration, /alter table public\.adhdice_custom_behavior_ruleset_revisions[\s\S]*add column if not exists needs_action_triggers text\[\]/i);
+  assert.match(needsActionTriggersMigration, /array\['missed', 'due_today', 'overdue'\]::text\[\]/i);
+  assert.match(needsActionTriggersMigration, /set needs_action_triggers = \([\s\S]*unnest\(/i);
+  assert.match(needsActionTriggersMigration, /needs_action_triggers <@ array\['missed', 'due_today', 'overdue'\]::text\[\]/i);
+  assert.match(needsActionTriggersMigration, /array_position\(needs_action_triggers, null\) is null/i);
+  assert.doesNotMatch(needsActionTriggersMigration, /insert\s+into\s+public\.adhdice_(?:clean_tasks|task_history|task_behavior_selections)/i);
+  assert.doesNotMatch(needsActionTriggersMigration, /delete\s+from\s+public\.adhdice_/i);
+  for (const table of ["adhdice_task_type_behavior_profiles", "adhdice_custom_behavior_ruleset_revisions"]) {
+    assert.match(schemaSource, new RegExp(`create table public\\.${table}[\\s\\S]*needs_action_triggers text\\[\\] not null`, "i"));
   }
 });
 
@@ -298,6 +317,28 @@ test("behavior policy revisions invalidate only the projections that consume the
       task: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, effectiveFromLogicalDate: "2026-09-01", availableActions: [] }],
     },
   });
+  const attentionOnly = selectTaskBehaviorProjectionSemantics({
+    behaviorProfiles: {
+      task: normalizeTaskBehaviorProfile({ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "needs-action-hidden", needsActionTriggers: [] }),
+    },
+    behaviorPolicyRevisions: {
+      task: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, effectiveFromLogicalDate: "2026-09-01", needsActionTriggers: [] }],
+    },
+  });
+  const namedAttentionOnly = selectTaskBehaviorProjectionSemantics({
+    customRulesetId: "ruleset-needs-action",
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      "ruleset-needs-action": [{ ...revision("2026-09-01"), needsActionTriggers: [] }],
+    },
+    taskType: "custom",
+  });
+  const namedStandard = selectTaskBehaviorProjectionSemantics({
+    customRulesetId: "ruleset-needs-action",
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      "ruleset-needs-action": [revision("2026-09-01")],
+    },
+    taskType: "custom",
+  });
   const standardWithSameRevision = selectTaskBehaviorProjectionSemantics({
     behaviorProfiles: { task: STANDARD_TASK_BEHAVIOR_POLICY },
     behaviorPolicyRevisions: {
@@ -305,6 +346,8 @@ test("behavior policy revisions invalidate only the projections that consume the
     },
   });
   assert.deepEqual(availabilityOnly, standardWithSameRevision);
+  assert.deepEqual(attentionOnly, standardWithSameRevision);
+  assert.deepEqual(namedAttentionOnly, namedStandard);
 });
 
 test("Custom policy changes invalidate the same semantic projections while staying independent from Task", () => {
@@ -610,11 +653,18 @@ test("settings UI model exposes configurable Task and Custom tabs with inactive 
   assert.match(settingsSource, /Missed/);
   assert.match(settingsSource, /Delay/);
   assert.match(settingsSource, /Complete/);
-  assert.match(settingsSource, /isSavingAvailableActions/);
-  assert.match(settingsSource, /disabled=\{resetting \|\| isSavingAvailableActions\}/);
-  assert.match(settingsSource, /if \(isSavingAvailableActions \|\| isSavingAvailableActionsRef\.current\) return;/);
+  assert.match(settingsSource, /Needs Action/);
+  assert.match(settingsSource, /needsActionTriggers/);
+  assert.match(settingsSource, /isSavingPolicyArray/);
+  assert.match(settingsSource, /disabled=\{resetting \|\| isSavingPolicyArray\}/);
+  assert.match(settingsSource, /if \(isSavingPolicyArray \|\| isSavingPolicyArrayRef\.current\) return;/);
   assert.match(settingsSource, /onChange\(activeTab, "availableActions", nextActions\)/);
   assert.match(settingsSource, /onCustomRulesetChange\?\.\(selectedRuleset\.id, "availableActions", nextActions\)/);
+  assert.match(settingsSource, /onChange\(activeTab, "needsActionTriggers", nextTriggers\)/);
+  assert.match(settingsSource, /onCustomRulesetChange\?\.\(selectedRuleset\.id, "needsActionTriggers", nextTriggers\)/);
+  assert.match(behaviorProfilesHookSource, /policySaveInFlightRef/);
+  assert.match(behaviorProfilesHookSource, /replaceCurrentRevision\(taskType, previousRevision\)/);
+  assert.match(behaviorProfilesHookSource, /finally \{[\s\S]*policySaveInFlightRef\.current\.delete/);
   assert.match(behaviorProfilesHookSource, /replaceCurrentRevision\(taskType, STANDARD_TASK_BEHAVIOR_POLICY\)/);
 });
 

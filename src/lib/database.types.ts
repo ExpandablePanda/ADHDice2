@@ -1,6 +1,6 @@
 import type { PersistedRecordCurrent, PersistedRecordEvent } from "./records/persisted-types.ts";
 import type { TaskType } from "./task-type.ts";
-import type { TaskManualAction } from "./task-state-engine/behavior-policy.ts";
+import type { TaskManualAction, TaskNeedsActionTrigger } from "./task-state-engine/behavior-policy.ts";
 import type {
   CanonicalTaskCalendarOverride,
   CanonicalTaskCommandOperation,
@@ -86,6 +86,7 @@ export type TaskTypeBehaviorProfile = {
   missed_streak_on_unhandled: "increment" | "ignore";
   rewards: "enabled" | "disabled";
   available_actions: TaskManualAction[];
+  needs_action_triggers: TaskNeedsActionTrigger[];
   created_at: string;
   updated_at: string;
 };
@@ -95,7 +96,7 @@ export type TaskTypeBehaviorProfileInsert = Omit<TaskTypeBehaviorProfile, "creat
   updated_at?: string;
 };
 
-export type TaskTypeBehaviorProfileUpdate = Partial<Pick<TaskTypeBehaviorProfile, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "available_actions" | "updated_at">>;
+export type TaskTypeBehaviorProfileUpdate = Partial<Pick<TaskTypeBehaviorProfile, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "available_actions" | "needs_action_triggers" | "updated_at">>;
 
 export type CustomBehaviorRuleset = {
   id: string;
@@ -131,6 +132,7 @@ export type CustomBehaviorRulesetRevision = {
   missed_streak_on_unhandled: "increment" | "ignore";
   rewards: "enabled" | "disabled";
   available_actions: TaskManualAction[];
+  needs_action_triggers: TaskNeedsActionTrigger[];
   created_at: string;
   updated_at: string;
 };
@@ -140,7 +142,7 @@ export type CustomBehaviorRulesetRevisionInsert = Omit<CustomBehaviorRulesetRevi
   updated_at?: string;
 };
 
-export type CustomBehaviorRulesetRevisionUpdate = Partial<Pick<CustomBehaviorRulesetRevision, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "available_actions" | "updated_at">>;
+export type CustomBehaviorRulesetRevisionUpdate = Partial<Pick<CustomBehaviorRulesetRevision, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "available_actions" | "needs_action_triggers" | "updated_at">>;
 
 /** Effective-dated Task behavior selection authority. Null is generic Custom. */
 export type TaskBehaviorSelection = {

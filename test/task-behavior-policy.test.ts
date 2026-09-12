@@ -22,6 +22,8 @@ import {
   resolveTaskBehaviorPolicy,
   STANDARD_TASK_BEHAVIOR_POLICY,
   STANDARD_TASK_AVAILABLE_ACTIONS,
+  STANDARD_TASK_NEEDS_ACTION_TRIGGERS,
+  normalizeTaskNeedsActionTriggers,
   taskManualActionForCanonicalCommand,
   taskManualActionForStatus,
   type TaskBehaviorPolicy,
@@ -81,6 +83,7 @@ test("missing and every persisted TaskType resolve to the frozen standard profil
     missedStreakOnUnhandled: "increment",
     rewards: "enabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
+    needsActionTriggers: ["missed", "due_today", "overdue"],
   });
 });
 
@@ -94,6 +97,16 @@ test("manual occurrence actions normalize compatibly, deterministically, and all
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
   }, "custom").availableActions, STANDARD_TASK_AVAILABLE_ACTIONS);
+  assert.deepEqual(STANDARD_TASK_NEEDS_ACTION_TRIGGERS, ["missed", "due_today", "overdue"]);
+  assert.deepEqual(normalizeTaskNeedsActionTriggers(undefined), STANDARD_TASK_NEEDS_ACTION_TRIGGERS);
+  assert.deepEqual(normalizeTaskNeedsActionTriggers("overdue"), STANDARD_TASK_NEEDS_ACTION_TRIGGERS);
+  assert.deepEqual(normalizeTaskNeedsActionTriggers(["overdue", "invalid", "missed", "overdue", null, "due_today"]), ["missed", "due_today", "overdue"]);
+  assert.deepEqual(normalizeTaskNeedsActionTriggers([]), []);
+  assert.deepEqual(normalizeTaskBehaviorProfile({
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "trigger-filtered",
+    needsActionTriggers: ["overdue", "missed", "overdue", "invalid", "due_today"],
+  }).needsActionTriggers, STANDARD_TASK_NEEDS_ACTION_TRIGGERS);
   assert.deepEqual(normalizeTaskBehaviorProfile({
     id: "restricted-custom",
     unresolvedOccurrence: "blank",
@@ -340,6 +353,7 @@ test("a future Pursuit-like semantic policy is representable but inactive", () =
     missedStreakOnUnhandled: "ignore",
     rewards: "enabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
+    needsActionTriggers: ["missed", "due_today", "overdue"],
   };
 
   assert.deepEqual(futurePursuitExample, {
@@ -349,6 +363,7 @@ test("a future Pursuit-like semantic policy is representable but inactive", () =
     missedStreakOnUnhandled: "ignore",
     rewards: "enabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
+    needsActionTriggers: ["missed", "due_today", "overdue"],
   });
   assert.deepEqual(resolveTaskBehaviorPolicy(futurePursuitExample), futurePursuitExample);
   assert.deepEqual(evaluateTaskState({ ...input, behaviorPolicy: futurePursuitExample }).behaviorPolicy, futurePursuitExample);

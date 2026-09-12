@@ -2,6 +2,7 @@ import type { Task } from "@/lib/database.types";
 import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import { getTaskPriorityLevel } from "@/lib/task-priority";
 import { daysBetween } from "@/lib/task-state-engine/calendar";
+import { STANDARD_TASK_BEHAVIOR_POLICY, type TaskBehaviorPolicy } from "@/lib/task-state-engine/behavior-policy";
 
 export type AttentionTaskSections = {
   comingUp: Task[];
@@ -27,23 +28,33 @@ function compareTasks(left: Task, right: Task, dueOnByTaskId: Record<string, str
     || left.id.localeCompare(right.id);
 }
 
-function isNeedsActionTask(task: Task, status: TaskDisplayStatus, dueOn: string | null, todayKey: string) {
+function isNeedsActionTask(
+  task: Task,
+  status: TaskDisplayStatus,
+  dueOn: string | null,
+  todayKey: string,
+  policy: Pick<TaskBehaviorPolicy, "needsActionTriggers"> = STANDARD_TASK_BEHAVIOR_POLICY,
+) {
   if (status === "missed") {
-    return true;
+    return policy.needsActionTriggers.includes("missed");
   }
   if (TERMINAL_TASK_STATUSES.has(status) || status === "unscheduled") {
     return false;
   }
-  return dueOn !== null && dueOn <= todayKey;
+  if (dueOn === todayKey) return policy.needsActionTriggers.includes("due_today");
+  if (dueOn !== null && dueOn < todayKey) return policy.needsActionTriggers.includes("overdue");
+  return false;
 }
 
 export function buildAttentionTaskSections({
+  behaviorPoliciesByTaskId,
   dueOnByTaskId = {},
   statusesByTaskId,
   tasks,
   todayKey,
 }: {
   dueOnByTaskId?: Record<string, string | null>;
+  behaviorPoliciesByTaskId?: Readonly<Record<string, Pick<TaskBehaviorPolicy, "needsActionTriggers">>>;
   statusesByTaskId: TaskDisplayStatusByTaskId;
   tasks: ReadonlyArray<Task>;
   todayKey: string;
@@ -55,7 +66,7 @@ export function buildAttentionTaskSections({
   for (const task of tasks) {
     const status = statusesByTaskId[task.id] ?? task.status;
     const dueOn = dueOnByTaskId[task.id] ?? task.due_on;
-    if (isNeedsActionTask(task, status, dueOn, todayKey)) {
+    if (isNeedsActionTask(task, status, dueOn, todayKey, behaviorPoliciesByTaskId?.[task.id])) {
       needsAction.push(task);
       continue;
     }

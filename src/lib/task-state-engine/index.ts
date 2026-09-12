@@ -4,9 +4,11 @@ export {
   normalizeTaskBehaviorProfiles,
   normalizeTaskBehaviorPolicyRevisions,
   normalizeTaskManualActions,
+  normalizeTaskNeedsActionTriggers,
   resolveTaskBehaviorPolicy,
   resolveTaskBehaviorPolicyForTask,
   STANDARD_TASK_AVAILABLE_ACTIONS,
+  STANDARD_TASK_NEEDS_ACTION_TRIGGERS,
   selectTaskBehaviorProjectionSemantics,
   STANDARD_TASK_BEHAVIOR_POLICY,
 } from "./behavior-policy.ts";
@@ -26,6 +28,7 @@ export type {
   TaskBehaviorSelection,
   TaskBehaviorSelectionMap,
   TaskManualAction,
+  TaskNeedsActionTrigger,
   UnresolvedOccurrenceBehavior,
 } from "./behavior-policy.ts";
 export { logicalDateForTimestamp } from "./calendar.ts";

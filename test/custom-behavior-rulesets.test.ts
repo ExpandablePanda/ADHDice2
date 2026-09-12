@@ -59,6 +59,7 @@ function revision(
     missedStreakOnUnhandled: "increment",
     rewards: "enabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
+    needsActionTriggers: ["missed", "due_today", "overdue"],
     ...values,
   };
 }
@@ -460,6 +461,7 @@ test("named ruleset loader keeps historical identities while ignoring non-Custom
   assert.deepEqual(Object.keys(loaded.revisions), ["ruleset-practice", "ruleset-routine", "ruleset-retired"]);
   assert.equal(loaded.revisions["ruleset-practice"]?.[0]?.unresolvedOccurrence, "blank");
   assert.deepEqual(loaded.revisions["ruleset-practice"]?.[0]?.availableActions, ["done", "missed"]);
+  assert.deepEqual(loaded.revisions["ruleset-practice"]?.[0]?.needsActionTriggers, ["missed", "due_today", "overdue"]);
   assert.equal(loaded.revisions["ruleset-routine"]?.[0]?.unresolvedOccurrence, "missed");
   assert.deepEqual(loaded.revisions["ruleset-routine"]?.[0]?.availableActions, ["done", "did_my_best", "missed", "delay", "complete"]);
   assert.equal(loaded.revisions["ruleset-retired"]?.[0]?.unresolvedOccurrence, "missed");
@@ -528,6 +530,7 @@ test("named ruleset creation seeds Custom Default policy and does not publish a 
     unresolvedOccurrence: "blank",
     rewards: "disabled",
     availableActions: ["done", "delay"],
+    needsActionTriggers: ["overdue", "missed"] as const,
   }, "2026-09-10");
 
   assert.equal(result.error, null);
@@ -546,6 +549,7 @@ test("named ruleset creation seeds Custom Default policy and does not publish a 
           missed_streak_on_unhandled: "increment",
           rewards: "disabled",
           available_actions: ["done", "delay"],
+          needs_action_triggers: ["missed", "overdue"],
         },
         options: { onConflict: "ruleset_id,effective_from_logical_date" },
       },
@@ -580,6 +584,7 @@ test("named ruleset revision updates replace today without rewriting prior revis
       missed_streak_on_unhandled: "increment",
       rewards: "enabled",
       available_actions: ["done", "did_my_best", "missed", "delay", "complete"],
+      needs_action_triggers: ["missed", "due_today", "overdue"],
     },
     options: { onConflict: "ruleset_id,effective_from_logical_date" },
   });

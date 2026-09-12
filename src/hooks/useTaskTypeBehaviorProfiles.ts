@@ -61,6 +61,7 @@ export function useTaskTypeBehaviorProfiles(
     behaviorSelectionsByTaskId: {},
   });
   const customRulesetLoadGenerationRef = useRef(0);
+  const policySaveInFlightRef = useRef(new Set<string>());
   const profiles = useMemo(() => normalizeTaskBehaviorProfiles(
     TASK_TYPE_VALUES.flatMap((taskType) => (profileRevisions[taskType] ?? []).map((revision) => ({
       task_type: taskType,
@@ -70,6 +71,7 @@ export function useTaskTypeBehaviorProfiles(
       missed_streak_on_unhandled: revision.missedStreakOnUnhandled,
       rewards: revision.rewards,
       available_actions: revision.availableActions,
+      needs_action_triggers: revision.needsActionTriggers,
     }))),
     currentLogicalDate,
   ), [currentLogicalDate, profileRevisions]);
@@ -167,10 +169,16 @@ export function useTaskTypeBehaviorProfiles(
 
   const persist = useCallback(async (taskType: TaskType, nextPolicy: TaskBehaviorPolicy) => {
     if (!client || !userId || !CONFIGURABLE_TASK_TYPES.has(taskType)) return false;
-    const result = await client.from("adhdice_task_type_behavior_profiles").upsert(
-      { ...taskTypeBehaviorProfileUpsertPayload(userId, taskType, nextPolicy, currentLogicalDate), updated_at: new Date().toISOString() },
-      { onConflict: "user_id,task_type,effective_from_logical_date" },
-    );
+    let result: { error: { code?: string; message?: string } | null };
+    try {
+      result = await client.from("adhdice_task_type_behavior_profiles").upsert(
+        { ...taskTypeBehaviorProfileUpsertPayload(userId, taskType, nextPolicy, currentLogicalDate), updated_at: new Date().toISOString() },
+        { onConflict: "user_id,task_type,effective_from_logical_date" },
+      );
+    } catch (error) {
+      setMessage({ tone: "warn", text: error instanceof Error ? error.message : "Could not save Task behavior settings." });
+      return false;
+    }
     if (result.error) {
       if (!isMissingTaskTypeBehaviorProfilesTableError(result.error)) {
         setMessage({ tone: "warn", text: result.error.message ?? "Could not save Task behavior settings." });
@@ -200,22 +208,36 @@ export function useTaskTypeBehaviorProfiles(
     value: TaskBehaviorPolicy[typeof field],
   ) => {
     if (!CONFIGURABLE_TASK_TYPES.has(taskType)) return false;
+    const saveKey = `task:${taskType}`;
+    if (policySaveInFlightRef.current.has(saveKey)) return false;
+    policySaveInFlightRef.current.add(saveKey);
     const current = profiles[taskType] ?? STANDARD_TASK_BEHAVIOR_POLICY;
     const previousRevision = (profileRevisions[taskType] ?? []).find((revision) => revision.effectiveFromLogicalDate === currentLogicalDate) ?? null;
     const next = normalizeTaskBehaviorProfile({ ...current, [field]: value }, taskType);
     replaceCurrentRevision(taskType, next);
-    if (await persist(taskType, next)) return true;
-    replaceCurrentRevision(taskType, previousRevision);
-    return false;
+    try {
+      if (await persist(taskType, next)) return true;
+      replaceCurrentRevision(taskType, previousRevision);
+      return false;
+    } finally {
+      policySaveInFlightRef.current.delete(saveKey);
+    }
   }, [currentLogicalDate, persist, profileRevisions, profiles, replaceCurrentRevision]);
 
   const resetTaskBehaviorProfile = useCallback(async (taskType: TaskType) => {
     if (!CONFIGURABLE_TASK_TYPES.has(taskType)) return false;
+    const saveKey = `task:${taskType}`;
+    if (policySaveInFlightRef.current.has(saveKey)) return false;
+    policySaveInFlightRef.current.add(saveKey);
     const previousRevision = (profileRevisions[taskType] ?? []).find((revision) => revision.effectiveFromLogicalDate === currentLogicalDate) ?? null;
     replaceCurrentRevision(taskType, STANDARD_TASK_BEHAVIOR_POLICY);
-    if (await persist(taskType, STANDARD_TASK_BEHAVIOR_POLICY)) return true;
-    replaceCurrentRevision(taskType, previousRevision);
-    return false;
+    try {
+      if (await persist(taskType, STANDARD_TASK_BEHAVIOR_POLICY)) return true;
+      replaceCurrentRevision(taskType, previousRevision);
+      return false;
+    } finally {
+      policySaveInFlightRef.current.delete(saveKey);
+    }
   }, [currentLogicalDate, persist, profileRevisions, replaceCurrentRevision]);
 
   const updateCustomBehaviorRulesetProfile = useCallback(async (
@@ -225,20 +247,30 @@ export function useTaskTypeBehaviorProfiles(
   ) => {
     const ruleset = customBehaviorRulesets.find((entry) => entry.id === rulesetId);
     if (!ruleset || ruleset.deleted_at != null) return false;
+    const saveKey = `ruleset:${rulesetId}`;
+    if (policySaveInFlightRef.current.has(saveKey)) return false;
+    policySaveInFlightRef.current.add(saveKey);
     const current = customBehaviorRulesetProfiles[rulesetId];
-    if (!current) return false;
-    const next = normalizeTaskBehaviorProfile({ ...current, [field]: value }, "custom");
-    const error = await upsertCustomBehaviorRulesetRevision(
-      client as unknown as CustomBehaviorRulesetClient,
-      rulesetId,
-      currentLogicalDate,
-      next,
-    );
-    if (error) {
-      setMessage({ tone: "warn", text: error.message ?? "Could not save the Custom ruleset policy." });
+    if (!current) {
+      policySaveInFlightRef.current.delete(saveKey);
       return false;
     }
-    return refreshCustomBehaviorRulesets();
+    const next = normalizeTaskBehaviorProfile({ ...current, [field]: value }, "custom");
+    try {
+      const error = await upsertCustomBehaviorRulesetRevision(
+        client as unknown as CustomBehaviorRulesetClient,
+        rulesetId,
+        currentLogicalDate,
+        next,
+      );
+      if (error) {
+        setMessage({ tone: "warn", text: error.message ?? "Could not save the Custom ruleset policy." });
+        return false;
+      }
+      return refreshCustomBehaviorRulesets();
+    } finally {
+      policySaveInFlightRef.current.delete(saveKey);
+    }
   }, [client, currentLogicalDate, customBehaviorRulesetProfiles, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage]);
 
   const createCustomRuleset = useCallback(async (nameInput: string): Promise<CustomBehaviorRuleset | null> => {

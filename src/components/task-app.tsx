@@ -215,7 +215,7 @@ import {
   resolveActiveTaskStatusesIncrementally,
   resolveActiveTaskStatusesIncrementallyChunked,
 } from "@/lib/task-state-engine";
-import { selectTaskBehaviorProjectionSemantics } from "@/lib/task-state-engine/behavior-policy";
+import { resolveTaskBehaviorPolicyForTask, selectTaskBehaviorProjectionSemantics, type TaskBehaviorPolicy, type TaskBehaviorProjectionSemantics } from "@/lib/task-state-engine/behavior-policy";
 import {
   getMomentumMetric,
   getNextMomentumView,
@@ -2022,14 +2022,28 @@ export function TaskApp() {
       taskType: "custom",
     }),
   }), [customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles]);
+  const namedCustomRulesetProjectionSemantics = useMemo<Readonly<Record<string, TaskBehaviorProjectionSemantics>>>(() => Object.fromEntries(
+    Object.keys(customRulesetBehaviorPolicyRevisions).map((rulesetId) => [
+      rulesetId,
+      selectTaskBehaviorProjectionSemantics({
+        behaviorProfiles: taskTypeBehaviorProfiles,
+        behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+        customRulesetId: rulesetId,
+        namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+        taskType: "custom",
+      }),
+    ]),
+  ) as Readonly<Record<string, TaskBehaviorProjectionSemantics>>, [customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles]);
   const taskTypeBehaviorProfilesRevision = useMemo(
     () => createProjectionDomainRevision("task-history-streak-policy", {
       task: taskTypeBehaviorProjectionSemantics.task.streak,
       custom: taskTypeBehaviorProjectionSemantics.custom.streak,
-      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: Object.fromEntries(
+        Object.entries(namedCustomRulesetProjectionSemantics).map(([rulesetId, semantics]) => [rulesetId, semantics.streak]),
+      ),
       behaviorSelectionsByTaskId,
     }),
-    [behaviorSelectionsByTaskId, customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProjectionSemantics],
+    [behaviorSelectionsByTaskId, namedCustomRulesetProjectionSemantics, taskTypeBehaviorProjectionSemantics],
   );
   const refreshedBehaviorProfilesRevisionRef = useRef<string | null>(null);
   useEffect(() => {
@@ -2847,9 +2861,11 @@ export function TaskApp() {
     () => createProjectionDomainRevision("task-status-behavior", {
       task: taskTypeBehaviorProjectionSemantics.task.activeStatus,
       custom: taskTypeBehaviorProjectionSemantics.custom.activeStatus,
-      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: Object.fromEntries(
+        Object.entries(namedCustomRulesetProjectionSemantics).map(([rulesetId, semantics]) => [rulesetId, semantics.activeStatus]),
+      ),
     }),
-    [customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProjectionSemantics],
+    [namedCustomRulesetProjectionSemantics, taskTypeBehaviorProjectionSemantics],
   );
   const taskActiveStatusAssignmentsRevision = useMemo(
     () => createProjectionDomainRevision("task-status-behavior-selections", behaviorSelectionsByTaskId),
@@ -2946,6 +2962,22 @@ export function TaskApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [canonicalEntityRevision, projectionCache],
   );
+  const attentionBehaviorPoliciesByTaskId = useMemo<Readonly<Record<string, Pick<TaskBehaviorPolicy, "needsActionTriggers">>> | null>(() => {
+    if (isTaskTypeBehaviorProfilesLoading) return null;
+    return Object.fromEntries(tasksForActiveStatusRead.map((task) => [
+      task.id,
+      resolveTaskBehaviorPolicyForTask({
+        behaviorProfiles: taskTypeBehaviorProfiles,
+        behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+        behaviorSelectionsByTaskId,
+        customRulesetId: task.custom_ruleset_id,
+        logicalDate: todayKey,
+        namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+        taskId: task.id,
+        taskType: task.task_type,
+      }).policy,
+    ])) as Readonly<Record<string, Pick<TaskBehaviorPolicy, "needsActionTriggers">>>;
+  }, [behaviorSelectionsByTaskId, customRulesetBehaviorPolicyRevisions, isTaskTypeBehaviorProfilesLoading, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles, tasksForActiveStatusRead, todayKey]);
   useEffect(() => {
     if (isTaskHistoryLoaded && activeStatusRead && process.env.NODE_ENV === "development" && typeof window !== "undefined") {
       window.__ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__ = activeStatusRead.authority;
@@ -7348,6 +7380,8 @@ export function TaskApp() {
             attentionWorkspacePanel={(
               <AttentionWorkspace
                 attentionMap={pursuitAttentionMap}
+                behaviorPoliciesByTaskId={attentionBehaviorPoliciesByTaskId}
+                behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
                 dueOnByTaskId={taskDisplayDueOnByTaskId}
                 error={pursuitData.error}
                 isLoading={pursuitData.isLoading}

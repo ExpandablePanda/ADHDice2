@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.40`.
+- Current working app version: `7.13.41`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-12 7.13.41 Effective-Dated Needs Action Triggers
+
+Task behavior policies now carry the presentation-only Needs Action trigger
+set: Missed, Due Today, and Overdue. Task and Custom Default profiles plus
+named Custom rulesets resolve these triggers through the existing effective-
+dated TaskType selection and revision authority. Missed remains first-match
+classification; disabling it does not make a Missed Task qualify as Overdue,
+and disabling Due Today or Overdue allows the existing Attention classifier to
+fall through to In Progress or Coming Up as applicable. Task facts, History,
+status, due dates, recurrence, projections, streaks, rewards, and Pursuit
+behavior remain unchanged. The forward SQL migration is source-only; no SQL or
+Edge deployment was performed, and browser QA remains unverified.
 
 ## 2026-09-12 7.13.40 Available Actions UI Enforcement
 

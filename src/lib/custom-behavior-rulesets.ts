@@ -6,6 +6,7 @@ import type {
 import {
   normalizeTaskBehaviorProfile,
   normalizeTaskManualActions,
+  normalizeTaskNeedsActionTriggers,
   STANDARD_TASK_BEHAVIOR_POLICY,
   type NamedCustomRulesetBehaviorPolicyRevisionMap,
   type TaskBehaviorPolicy,
@@ -14,6 +15,7 @@ import {
   type TaskBehaviorSelection,
   type TaskBehaviorSelectionMap,
   type TaskManualAction,
+  type TaskNeedsActionTrigger,
 } from "./task-state-engine/behavior-policy.ts";
 
 type RulesetError = { code?: string; message?: string };
@@ -52,9 +54,11 @@ type RulesetRevisionTable = {
   upsert(values: unknown, options?: { onConflict?: string }): Promise<{ error: RulesetError | null }>;
 };
 
-type PersistedCustomBehaviorRulesetRevision = Omit<CustomBehaviorRulesetRevision, "available_actions"> & {
+type PersistedCustomBehaviorRulesetRevision = Omit<CustomBehaviorRulesetRevision, "available_actions" | "needs_action_triggers"> & {
   /** Optional keeps pre-7.13.38 source/test rows compatible. */
   available_actions?: readonly TaskManualAction[] | null;
+  /** Optional keeps pre-7.13.41 source/test rows compatible. */
+  needs_action_triggers?: readonly TaskNeedsActionTrigger[] | null;
 };
 
 type BehaviorSelectionTable = {
@@ -126,6 +130,7 @@ function toPolicyRevision(row: PersistedCustomBehaviorRulesetRevision): TaskBeha
     missedStreakOnUnhandled: row.missed_streak_on_unhandled,
     rewards: row.rewards,
     availableActions: row.available_actions,
+    needsActionTriggers: row.needs_action_triggers,
   }, "custom");
   return {
     ...policy,
@@ -168,6 +173,7 @@ export function customBehaviorRulesetRevisionUpsertPayload(
     missed_streak_on_unhandled: policy.missedStreakOnUnhandled,
     rewards: policy.rewards,
     available_actions: [...normalizeTaskManualActions(policy.availableActions)],
+    needs_action_triggers: [...normalizeTaskNeedsActionTriggers(policy.needsActionTriggers)],
   };
 }
 
@@ -332,7 +338,7 @@ export async function renameCustomBehaviorRuleset(
 export function isMissingCustomBehaviorRulesetsTableError(error: RulesetError | null | undefined) {
   const message = error?.message ?? "";
   return error?.code === "42P01"
-    || /adhdice_(?:custom_behavior_ruleset|task_behavior_selection)|relation .* does not exist|column .*available_actions.* does not exist/i.test(message);
+    || /adhdice_(?:custom_behavior_ruleset|task_behavior_selection)|relation .* does not exist|column .*(?:available_actions|needs_action_triggers).* does not exist/i.test(message);
 }
 
 /**
@@ -346,8 +352,10 @@ export function isMissingCustomBehaviorRulesetsAdditiveSchemaError(error: unknow
   const message = typeof candidate.message === "string" ? candidate.message : "";
   const missingRelation = /relation .* does not exist|could not find the table .* in the schema cache/i.test(message);
   const missingAvailableActionsColumn = /available_actions.*(?:does not exist|not found)|could not find the ['"]available_actions['"] column/i.test(message);
+  const missingNeedsActionTriggersColumn = /needs_action_triggers.*(?:does not exist|not found)|could not find the ['"]needs_action_triggers['"] column/i.test(message);
   return (code === "42P01" && (!message || missingRelation))
     || missingAvailableActionsColumn
+    || missingNeedsActionTriggersColumn
     || missingRelation;
 }
 
@@ -364,7 +372,7 @@ export async function loadCustomBehaviorRulesets(
       .eq("user_id", userId),
     client
       .from("adhdice_custom_behavior_ruleset_revisions")
-      .select("ruleset_id,effective_from_logical_date,unresolved_occurrence,positive_streak_on_unhandled,missed_streak_on_unhandled,rewards,available_actions,created_at,updated_at"),
+      .select("ruleset_id,effective_from_logical_date,unresolved_occurrence,positive_streak_on_unhandled,missed_streak_on_unhandled,rewards,available_actions,needs_action_triggers,created_at,updated_at"),
     client
       .from("adhdice_task_behavior_selections")
       .select("id,user_id,task_id,effective_from_logical_date,task_type,custom_ruleset_id,created_at,updated_at")

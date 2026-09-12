@@ -69,6 +69,7 @@ create table public.adhdice_task_type_behavior_profiles (
   missed_streak_on_unhandled text not null default 'increment',
   rewards text not null default 'enabled',
   available_actions text[] not null default array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[],
+  needs_action_triggers text[] not null default array['missed', 'due_today', 'overdue']::text[],
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (user_id, task_type, effective_from_logical_date),
@@ -85,7 +86,11 @@ create table public.adhdice_task_type_behavior_profiles (
   constraint adhdice_task_type_behavior_profiles_available_actions_check
     check (available_actions <@ array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[]),
   constraint adhdice_task_type_behavior_profiles_available_actions_no_null_check
-    check (array_position(available_actions, null) is null)
+    check (array_position(available_actions, null) is null),
+  constraint adhdice_task_type_behavior_profiles_needs_action_triggers_check
+    check (needs_action_triggers <@ array['missed', 'due_today', 'overdue']::text[]),
+  constraint adhdice_task_type_behavior_profiles_needs_action_triggers_no_null_check
+    check (array_position(needs_action_triggers, null) is null)
 );
 
 -- 7.13.27/7.13.28/7.13.31 behavior authority. The Task projection is kept
@@ -117,10 +122,15 @@ create table public.adhdice_custom_behavior_ruleset_revisions (
   missed_streak_on_unhandled text not null default 'increment' check (missed_streak_on_unhandled in ('increment', 'ignore')),
   rewards text not null default 'enabled' check (rewards in ('enabled', 'disabled')),
   available_actions text[] not null default array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[],
+  needs_action_triggers text[] not null default array['missed', 'due_today', 'overdue']::text[],
   constraint adhdice_custom_behavior_ruleset_revisions_available_actions_check
     check (available_actions <@ array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[]),
   constraint adhdice_custom_behavior_ruleset_revisions_available_actions_no_null_check
     check (array_position(available_actions, null) is null),
+  constraint adhdice_custom_behavior_ruleset_revisions_needs_action_triggers_check
+    check (needs_action_triggers <@ array['missed', 'due_today', 'overdue']::text[]),
+  constraint adhdice_custom_behavior_ruleset_revisions_needs_action_triggers_no_null_check
+    check (array_position(needs_action_triggers, null) is null),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (ruleset_id, effective_from_logical_date)
