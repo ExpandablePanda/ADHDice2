@@ -106,6 +106,7 @@ import {
   type HealthMealPlanPendingMutation,
   type HealthMealPlanPendingMutationJournal,
 } from "@/lib/health-meal-planning";
+import { writeLocalStorageEntries, type LocalStorageWriteResult } from "@/lib/health-local-storage";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -148,6 +149,13 @@ type HealthStateSnapshot = {
 type LocalHealthState = {
   snapshot: HealthStateSnapshot;
   mealPlanPendingMutations: HealthMealPlanPendingMutationJournal;
+};
+
+type HealthPersistenceMode = "local" | "remote";
+type HealthLocalPersistenceFailure = {
+  mode: HealthPersistenceMode;
+  reason: "quota" | "storage";
+  source: "health-cache" | "meal-plan-pending";
 };
 
 function buildEmptyState(userId: string): HealthStateSnapshot {
@@ -195,7 +203,12 @@ function readStoredJson<T>(key: string, fallback: T): T {
     return fallback;
   }
 
-  const rawValue = window.localStorage.getItem(key);
+  let rawValue: string | null;
+  try {
+    rawValue = window.localStorage.getItem(key);
+  } catch {
+    return fallback;
+  }
   if (!rawValue) {
     return fallback;
   }
@@ -203,7 +216,6 @@ function readStoredJson<T>(key: string, fallback: T): T {
   try {
     return JSON.parse(rawValue) as T;
   } catch {
-    window.localStorage.removeItem(key);
     return fallback;
   }
 }
@@ -277,9 +289,15 @@ function readLocalHealthState(userId: string): LocalHealthState {
   };
 }
 
-function persistLocalHealthState(state: HealthStateSnapshot) {
+function persistLocalHealthState(state: HealthStateSnapshot): LocalStorageWriteResult {
   if (typeof window === "undefined") {
-    return;
+    return { ok: true };
+  }
+  let storage: Storage;
+  try {
+    storage = window.localStorage;
+  } catch {
+    return { ok: false, reason: "storage" };
   }
 
   const {
@@ -302,31 +320,41 @@ function persistLocalHealthState(state: HealthStateSnapshot) {
     symptoms,
     symptomEntries,
   } = state;
-  window.localStorage.setItem(storageKey(profile.user_id, "profile"), JSON.stringify(profile));
-  window.localStorage.setItem(storageKey(profile.user_id, "checkins"), JSON.stringify(checkIns));
-  window.localStorage.setItem(storageKey(profile.user_id, "journal-signals"), JSON.stringify(journalSignals));
-  window.localStorage.setItem(storageKey(profile.user_id, "journal-signal-values"), JSON.stringify(journalSignalValues));
-  window.localStorage.setItem(storageKey(profile.user_id, "journal-signal-occurrences"), JSON.stringify(journalSignalOccurrences));
-  window.localStorage.setItem(storageKey(profile.user_id, "meals"), JSON.stringify(mealEntries));
-  window.localStorage.setItem(storageKey(profile.user_id, "meal-plans"), JSON.stringify(mealPlanEntries));
-  window.localStorage.setItem(storageKey(profile.user_id, "favorites"), JSON.stringify(favorites));
-  window.localStorage.setItem(storageKey(profile.user_id, "recipes"), JSON.stringify(recipes));
-  window.localStorage.setItem(storageKey(profile.user_id, "saved-meals"), JSON.stringify(savedMeals));
-  window.localStorage.setItem(storageKey(profile.user_id, "water"), JSON.stringify(waterEntries));
-  window.localStorage.setItem(storageKey(profile.user_id, "weights"), JSON.stringify(weightEntries));
-  window.localStorage.setItem(storageKey(profile.user_id, "metrics"), JSON.stringify(metricEntries));
-  window.localStorage.setItem(storageKey(profile.user_id, "imports"), JSON.stringify(importAudits));
-  window.localStorage.setItem(storageKey(profile.user_id, "awards"), JSON.stringify(awards));
-  window.localStorage.setItem(storageKey(profile.user_id, "workouts"), JSON.stringify(workouts));
-  window.localStorage.setItem(storageKey(profile.user_id, "symptoms"), JSON.stringify(symptoms));
-  window.localStorage.setItem(storageKey(profile.user_id, "symptom-entries"), JSON.stringify(symptomEntries));
+  return writeLocalStorageEntries(storage, [
+    [storageKey(profile.user_id, "profile"), JSON.stringify(profile)],
+    [storageKey(profile.user_id, "checkins"), JSON.stringify(checkIns)],
+    [storageKey(profile.user_id, "journal-signals"), JSON.stringify(journalSignals)],
+    [storageKey(profile.user_id, "journal-signal-values"), JSON.stringify(journalSignalValues)],
+    [storageKey(profile.user_id, "journal-signal-occurrences"), JSON.stringify(journalSignalOccurrences)],
+    [storageKey(profile.user_id, "meals"), JSON.stringify(mealEntries)],
+    [storageKey(profile.user_id, "meal-plans"), JSON.stringify(mealPlanEntries)],
+    [storageKey(profile.user_id, "favorites"), JSON.stringify(favorites)],
+    [storageKey(profile.user_id, "recipes"), JSON.stringify(recipes)],
+    [storageKey(profile.user_id, "saved-meals"), JSON.stringify(savedMeals)],
+    [storageKey(profile.user_id, "water"), JSON.stringify(waterEntries)],
+    [storageKey(profile.user_id, "weights"), JSON.stringify(weightEntries)],
+    [storageKey(profile.user_id, "metrics"), JSON.stringify(metricEntries)],
+    [storageKey(profile.user_id, "imports"), JSON.stringify(importAudits)],
+    [storageKey(profile.user_id, "awards"), JSON.stringify(awards)],
+    [storageKey(profile.user_id, "workouts"), JSON.stringify(workouts)],
+    [storageKey(profile.user_id, "symptoms"), JSON.stringify(symptoms)],
+    [storageKey(profile.user_id, "symptom-entries"), JSON.stringify(symptomEntries)],
+  ]);
 }
 
-function persistHealthMealPlanPendingMutations(userId: string, journal: HealthMealPlanPendingMutationJournal) {
+function persistHealthMealPlanPendingMutations(userId: string, journal: HealthMealPlanPendingMutationJournal): LocalStorageWriteResult {
   if (typeof window === "undefined") {
-    return;
+    return { ok: true };
   }
-  window.localStorage.setItem(storageKey(userId, "meal-plan-pending-mutations"), JSON.stringify(journal));
+  let storage: Storage;
+  try {
+    storage = window.localStorage;
+  } catch {
+    return { ok: false, reason: "storage" };
+  }
+  return writeLocalStorageEntries(storage, [
+    [storageKey(userId, "meal-plan-pending-mutations"), JSON.stringify(journal)],
+  ]);
 }
 
 function createLocalId(prefix: string) {
@@ -372,6 +400,43 @@ export function useHealth(
   const journalRemoteEnabledRef = useRef(true);
   const journalSignalOccurrencesRemoteEnabledRef = useRef(true);
   const mealPlanPendingMutationsRef = useRef<HealthMealPlanPendingMutationJournal>({});
+  const healthLocalPersistenceFailureRef = useRef<HealthLocalPersistenceFailure | null>(null);
+
+  function rememberHealthLocalPersistenceFailure(
+    result: LocalStorageWriteResult,
+    mode: HealthPersistenceMode,
+    source: HealthLocalPersistenceFailure["source"],
+  ) {
+    if (!result.ok) {
+      healthLocalPersistenceFailureRef.current = { mode, reason: result.reason, source };
+    }
+  }
+
+  function setHealthSuccessMessage(message: { tone: "good"; text: string }) {
+    const failure = healthLocalPersistenceFailureRef.current;
+    healthLocalPersistenceFailureRef.current = null;
+    if (!failure) {
+      setMessage(message);
+      return;
+    }
+
+    const storageProblem = failure.reason === "quota"
+      ? "browser storage is full"
+      : "the browser could not update its local cache";
+    if (failure.source === "meal-plan-pending") {
+      setMessage({
+        tone: "warn",
+        text: `Meal Plan remains visible, but its pending recovery record could not be saved because ${storageProblem}. This change may not survive a refresh; no Health data was deleted.`,
+      });
+      return;
+    }
+    setMessage({
+      tone: "warn",
+      text: failure.mode === "remote"
+        ? `Supabase saved this Health change, but ${storageProblem}. The cloud-backed data remains authoritative; no Health data was deleted.`
+        : `Health updated in memory, but ${storageProblem}. This local-only change may not survive a refresh; no Health data was deleted.`,
+    });
+  }
 
   function recordMealPlanPendingMutation(mutation: HealthMealPlanPendingMutation) {
     const currentJournal = mealPlanPendingMutationsRef.current;
@@ -380,7 +445,11 @@ export function useHealth(
       : recordHealthMealPlanPendingDelete(currentJournal, mutation.planId);
     mealPlanPendingMutationsRef.current = nextJournal;
     if (userId) {
-      persistHealthMealPlanPendingMutations(userId, nextJournal);
+      rememberHealthLocalPersistenceFailure(
+        persistHealthMealPlanPendingMutations(userId, nextJournal),
+        "local",
+        "meal-plan-pending",
+      );
     }
   }
 
@@ -391,7 +460,11 @@ export function useHealth(
     }
     mealPlanPendingMutationsRef.current = nextJournal;
     if (userId) {
-      persistHealthMealPlanPendingMutations(userId, nextJournal);
+      rememberHealthLocalPersistenceFailure(
+        persistHealthMealPlanPendingMutations(userId, nextJournal),
+        "local",
+        "meal-plan-pending",
+      );
     }
   }
 
@@ -418,7 +491,7 @@ export function useHealth(
     } satisfies HealthStateSnapshot;
   }
 
-  function applySnapshot(snapshot: HealthStateSnapshot) {
+  function applySnapshot(snapshot: HealthStateSnapshot, options?: { persistenceMode?: HealthPersistenceMode }) {
     const nextSnapshot = {
       ...snapshot,
       checkIns: [...snapshot.checkIns].sort(sortHealthJournalEntries),
@@ -443,7 +516,19 @@ export function useHealth(
     setWorkouts(sortHealthWorkouts(nextSnapshot.workouts));
     setImportAudits(nextSnapshot.importAudits);
     setAwards(nextSnapshot.awards);
-    persistLocalHealthState(nextSnapshot);
+    const persistenceResult = persistLocalHealthState(nextSnapshot);
+    if (persistenceResult.ok) {
+      if (healthLocalPersistenceFailureRef.current?.source !== "meal-plan-pending") {
+        healthLocalPersistenceFailureRef.current = null;
+      }
+    } else {
+      rememberHealthLocalPersistenceFailure(
+        persistenceResult,
+        options?.persistenceMode ?? (storageMode === "remote" ? "remote" : "local"),
+        "health-cache",
+      );
+    }
+    return persistenceResult;
   }
 
   async function claimEligibleAwards(
@@ -572,7 +657,7 @@ export function useHealth(
     const nextSnapshot = buildHealthSnapshot({ ...snapshot, awards: nextAwards });
     applySnapshot(nextSnapshot);
     if (!options?.silent) {
-      setMessage({
+      setHealthSuccessMessage({
         tone: "good",
         text: `Unlocked ${nextAwards.length - snapshot.awards.length} health achievement${nextAwards.length - snapshot.awards.length === 1 ? "" : "s"}.`,
       });
@@ -609,6 +694,7 @@ export function useHealth(
       journalRemoteEnabledRef.current = true;
       journalSignalOccurrencesRemoteEnabledRef.current = true;
       mealPlanPendingMutationsRef.current = {};
+      healthLocalPersistenceFailureRef.current = null;
       return;
     }
 
@@ -618,9 +704,10 @@ export function useHealth(
     symptomEntriesRemoteEnabledRef.current = true;
     journalRemoteEnabledRef.current = true;
     journalSignalOccurrencesRemoteEnabledRef.current = true;
+    healthLocalPersistenceFailureRef.current = null;
     const localState = readLocalHealthState(userId);
     mealPlanPendingMutationsRef.current = localState.mealPlanPendingMutations;
-    applySnapshot(localState.snapshot);
+    applySnapshot(localState.snapshot, { persistenceMode: "local" });
 
     if (!client) {
       setStorageMode("local");
@@ -1054,7 +1141,11 @@ export function useHealth(
           completedMealPlanMutations,
         );
         mealPlanPendingMutationsRef.current = nextPendingMealPlanMutations;
-        persistHealthMealPlanPendingMutations(userId, nextPendingMealPlanMutations);
+        rememberHealthLocalPersistenceFailure(
+          persistHealthMealPlanPendingMutations(userId, nextPendingMealPlanMutations),
+          "local",
+          "meal-plan-pending",
+        );
         if (mealPlanRecoveryError) {
           mealPlanRemoteEnabledRef.current = false;
           setMessage({
@@ -1115,7 +1206,7 @@ export function useHealth(
         ? remoteSnapshot
         : buildHealthSnapshot({ ...remoteSnapshot, favorites: hydratedFavorites });
       setStorageMode("remote");
-      applySnapshot(snapshotToApply);
+      applySnapshot(snapshotToApply, { persistenceMode: "remote" });
       await claimEligibleAwards(snapshotToApply, { persistRemotely: true, silent: true });
       setIsLoading(false);
     })();
@@ -1162,7 +1253,7 @@ export function useHealth(
       waterEntries,
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Health goals saved." });
+    setHealthSuccessMessage({ tone: "good", text: "Health goals saved." });
     return true;
   }
 
@@ -1206,9 +1297,13 @@ export function useHealth(
       waterEntries,
       weightEntries,
     });
-    applySnapshot(buildHealthSnapshot({ ...currentSnapshot, profile: nextProfile }));
+    applySnapshot(buildHealthSnapshot({ ...currentSnapshot, profile: nextProfile }), {
+      persistenceMode: client && storageMode === "remote" && !savedLocallyBecauseMigrationIsPending ? "remote" : "local",
+    });
     if (!savedLocallyBecauseMigrationIsPending) {
-      setMessage({ tone: "good", text: "Journal check-in questions saved." });
+      setHealthSuccessMessage({ tone: "good", text: "Journal check-in questions saved." });
+    } else if (healthLocalPersistenceFailureRef.current) {
+      setHealthSuccessMessage({ tone: "good", text: "Journal check-in questions saved." });
     }
     return true;
   }
@@ -1521,7 +1616,9 @@ export function useHealth(
       journalSignalOccurrences: nextJournalSignalOccurrences,
       symptomEntries: sortHealthSymptomEntries(nextSymptomEntries),
     });
-    applySnapshot(nextSnapshot);
+    applySnapshot(nextSnapshot, {
+      persistenceMode: client && storageMode === "remote" && journalRemoteEnabledRef.current ? "remote" : "local",
+    });
     if (childWriteError) {
       if (isMissingHealthPersistence(childWriteError.message)) {
         journalRemoteEnabledRef.current = false;
@@ -1534,7 +1631,7 @@ export function useHealth(
       return null;
     }
     await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
-    setMessage({ tone: "good", text: existingRow ? "Journal Entry updated." : "Journal Entry saved." });
+    setHealthSuccessMessage({ tone: "good", text: existingRow ? "Journal Entry updated." : "Journal Entry saved." });
     return nextRow;
   }
 
@@ -1627,8 +1724,10 @@ export function useHealth(
     applySnapshot(buildHealthSnapshot({
       ...currentSnapshot,
       journalSignals: [...currentSnapshot.journalSignals, nextRow].sort(sortHealthJournalSignals),
-    }));
-    setMessage({ tone: "good", text: `${getHealthJournalSignalDisplayName(nextRow, currentSnapshot.symptoms)} added to Journal Library.` });
+    }), {
+      persistenceMode: client && storageMode === "remote" && journalRemoteEnabledRef.current ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: `${getHealthJournalSignalDisplayName(nextRow, currentSnapshot.symptoms)} added to Journal Library.` });
     return nextRow;
   }
 
@@ -1706,7 +1805,9 @@ export function useHealth(
     applySnapshot(buildHealthSnapshot({
       ...currentSnapshot,
       journalSignals: currentSnapshot.journalSignals.map((signal) => signal.id === signalId ? nextRow : signal).sort(sortHealthJournalSignals),
-    }));
+    }), {
+      persistenceMode: client && storageMode === "remote" && journalRemoteEnabledRef.current ? "remote" : "local",
+    });
     return true;
   }
 
@@ -1720,7 +1821,7 @@ export function useHealth(
 
   async function archiveJournalSignal(signalId: string) {
     const saved = await updateJournalSignal(signalId, { archived_at: new Date().toISOString(), in_template: false, template_sort_order: null });
-    if (saved) setMessage({ tone: "good", text: "Feeling archived." });
+    if (saved) setHealthSuccessMessage({ tone: "good", text: "Feeling archived." });
     return saved;
   }
 
@@ -1765,8 +1866,10 @@ export function useHealth(
     applySnapshot(buildHealthSnapshot({
       ...currentSnapshot,
       journalSignals: currentSnapshot.journalSignals.filter((signal) => signal.id !== signalId),
-    }));
-    setMessage({ tone: "good", text: "Feeling deleted." });
+    }), {
+      persistenceMode: client && storageMode === "remote" && journalRemoteEnabledRef.current ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Feeling deleted." });
     return true;
   }
 
@@ -1804,7 +1907,9 @@ export function useHealth(
         }
       }
     }
-    applySnapshot(buildHealthSnapshot({ ...currentSnapshot, journalSignals: nextSignals.sort(sortHealthJournalSignals) }));
+    applySnapshot(buildHealthSnapshot({ ...currentSnapshot, journalSignals: nextSignals.sort(sortHealthJournalSignals) }), {
+      persistenceMode: client && storageMode === "remote" && journalRemoteEnabledRef.current ? "remote" : "local",
+    });
     return true;
   }
 
@@ -1842,8 +1947,10 @@ export function useHealth(
       journalSignalValues: currentSnapshot.journalSignalValues.filter((value) => value.journal_entry_id !== entryId),
       journalSignalOccurrences: currentSnapshot.journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id !== entryId),
       symptomEntries: currentSnapshot.symptomEntries.filter((entry) => entry.journal_entry_id !== entryId),
-    }));
-    setMessage({ tone: "good", text: "Journal Entry deleted." });
+    }), {
+      persistenceMode: client && storageMode === "remote" ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Journal Entry deleted." });
     return true;
   }
 
@@ -1928,8 +2035,10 @@ export function useHealth(
       symptomEntries,
       waterEntries,
       weightEntries,
-    }));
-    setMessage({ tone: "good", text: successText });
+    }), {
+      persistenceMode: client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: successText });
     return true;
   }
 
@@ -1997,8 +2106,10 @@ export function useHealth(
       symptomEntries,
       waterEntries,
       weightEntries,
-    }));
-    setMessage({ tone: "good", text: "Symptom added." });
+    }), {
+      persistenceMode: client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Symptom added." });
     return nextRow;
   }
 
@@ -2090,8 +2201,10 @@ export function useHealth(
       symptomEntries: sortHealthSymptomEntries([nextRow, ...currentSymptomEntries]),
       waterEntries,
       weightEntries,
-    }));
-    setMessage({ tone: "good", text: "Symptom entry saved." });
+    }), {
+      persistenceMode: client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Symptom entry saved." });
     return true;
   }
 
@@ -2174,8 +2287,10 @@ export function useHealth(
       symptomEntries: sortHealthSymptomEntries(symptomEntries.map((entry) => entry.id === entryId ? nextRow : entry)),
       waterEntries,
       weightEntries,
-    }));
-    setMessage({ tone: "good", text: "Symptom entry updated." });
+    }), {
+      persistenceMode: client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Symptom entry updated." });
     return true;
   }
 
@@ -2217,8 +2332,10 @@ export function useHealth(
       symptomEntries: symptomEntries.filter((entry) => entry.id !== entryId),
       waterEntries,
       weightEntries,
-    }));
-    setMessage({ tone: "good", text: "Symptom entry removed." });
+    }), {
+      persistenceMode: client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Symptom entry removed." });
     return true;
   }
 
@@ -2288,7 +2405,7 @@ export function useHealth(
     });
     applySnapshot(nextSnapshot);
     await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
-    setMessage({ tone: "good", text: "Meal saved." });
+    setHealthSuccessMessage({ tone: "good", text: "Meal saved." });
     return true;
   }
 
@@ -2318,7 +2435,7 @@ export function useHealth(
       waterEntries,
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Meal removed." });
+    setHealthSuccessMessage({ tone: "good", text: "Meal removed." });
     return true;
   }
 
@@ -2373,7 +2490,7 @@ export function useHealth(
     });
     applySnapshot(nextSnapshot);
     await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
-    setMessage({ tone: "good", text: "Meal updated." });
+    setHealthSuccessMessage({ tone: "good", text: "Meal updated." });
     return true;
   }
 
@@ -2454,8 +2571,10 @@ export function useHealth(
       waterEntries,
       weightEntries,
     });
-    applySnapshot(nextSnapshot);
-    setMessage({ tone: "good", text: "Meal added to plan." });
+    applySnapshot(nextSnapshot, {
+      persistenceMode: persistedRemotely ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Meal added to plan." });
     return true;
   }
 
@@ -2513,8 +2632,10 @@ export function useHealth(
       savedMeals,
       waterEntries,
       weightEntries,
-    }));
-    setMessage({ tone: "good", text: "Meal plan updated." });
+    }), {
+      persistenceMode: persistedRemotely ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Meal plan updated." });
     return true;
   }
 
@@ -2566,8 +2687,10 @@ export function useHealth(
       savedMeals,
       waterEntries,
       weightEntries,
-    }));
-    setMessage({ tone: "good", text: "Meal plan removed." });
+    }), {
+      persistenceMode: persistedRemotely ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Meal plan removed." });
     return true;
   }
 
@@ -2658,9 +2781,11 @@ export function useHealth(
       waterEntries,
       weightEntries,
     });
-    applySnapshot(nextSnapshot);
+    applySnapshot(nextSnapshot, {
+      persistenceMode: client && storageMode === "remote" ? "remote" : "local",
+    });
     await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
-    setMessage({ tone: "good", text: newlyCreated ? "Meal plan marked Done." : "Meal plan Done recovered." });
+    setHealthSuccessMessage({ tone: "good", text: newlyCreated ? "Meal plan marked Done." : "Meal plan Done recovered." });
     return true;
   }
 
@@ -2756,7 +2881,7 @@ export function useHealth(
       nextRow,
     ].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
     applySnapshot(buildHealthSnapshot({ ...currentSnapshot, favorites: nextFavorites }));
-    setMessage({
+    setHealthSuccessMessage({
       tone: "good",
       text: nextRow.is_favorite ? "Saved to favorites." : "Custom food saved.",
     });
@@ -2802,7 +2927,7 @@ export function useHealth(
       waterEntries,
       weightEntries,
     }));
-    setMessage({ tone: "good", text: isFavorite ? "Saved to favorites." : "Custom food saved." });
+    setHealthSuccessMessage({ tone: "good", text: isFavorite ? "Saved to favorites." : "Custom food saved." });
     return true;
   }
 
@@ -2832,7 +2957,7 @@ export function useHealth(
       waterEntries,
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Favorite removed." });
+    setHealthSuccessMessage({ tone: "good", text: "Favorite removed." });
     return true;
   }
 
@@ -2880,7 +3005,7 @@ export function useHealth(
       waterEntries,
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Recipe saved." });
+    setHealthSuccessMessage({ tone: "good", text: "Recipe saved." });
     return true;
   }
 
@@ -2908,7 +3033,7 @@ export function useHealth(
       waterEntries,
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Recipe removed." });
+    setHealthSuccessMessage({ tone: "good", text: "Recipe removed." });
     return true;
   }
 
@@ -2954,7 +3079,7 @@ export function useHealth(
       waterEntries,
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Custom meal saved." });
+    setHealthSuccessMessage({ tone: "good", text: "Custom meal saved." });
     return true;
   }
 
@@ -2982,7 +3107,7 @@ export function useHealth(
       waterEntries,
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Custom meal removed." });
+    setHealthSuccessMessage({ tone: "good", text: "Custom meal removed." });
     return true;
   }
 
@@ -3028,7 +3153,7 @@ export function useHealth(
       waterEntries: [nextRow, ...waterEntries].sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Water added." });
+    setHealthSuccessMessage({ tone: "good", text: "Water added." });
     return true;
   }
 
@@ -3056,7 +3181,7 @@ export function useHealth(
       waterEntries: waterEntries.filter((entry) => entry.id !== entryId),
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Water entry removed." });
+    setHealthSuccessMessage({ tone: "good", text: "Water entry removed." });
     return true;
   }
 
@@ -3101,7 +3226,7 @@ export function useHealth(
         .sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Water entry updated." });
+    setHealthSuccessMessage({ tone: "good", text: "Water entry updated." });
     return true;
   }
 
@@ -3161,7 +3286,7 @@ export function useHealth(
         .sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Water entry confirmed." });
+    setHealthSuccessMessage({ tone: "good", text: "Water entry confirmed." });
     return true;
   }
 
@@ -3216,7 +3341,7 @@ export function useHealth(
     });
     applySnapshot(nextSnapshot);
     await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
-    setMessage({ tone: "good", text: "Weight saved." });
+    setHealthSuccessMessage({ tone: "good", text: "Weight saved." });
     return true;
   }
 
@@ -3293,8 +3418,10 @@ export function useHealth(
       waterEntries,
       workouts: sortHealthWorkouts([nextRow, ...workouts.filter((entry) => entry.id !== nextRow.id)]),
       weightEntries,
-    }));
-    setMessage({ tone: "good", text: "Workout saved." });
+    }), {
+      persistenceMode: client && storageMode === "remote" && workoutRemoteEnabledRef.current ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Workout saved." });
     return nextRow;
   }
 
@@ -3357,8 +3484,10 @@ export function useHealth(
       waterEntries,
       workouts: sortHealthWorkouts(workouts.map((workout) => workout.id === workoutId ? persistedWorkout : workout)),
       weightEntries,
-    }));
-    setMessage({ tone: "good", text: "Workout updated." });
+    }), {
+      persistenceMode: client && storageMode === "remote" && workoutRemoteEnabledRef.current ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Workout updated." });
     return true;
   }
 
@@ -3402,8 +3531,10 @@ export function useHealth(
       waterEntries,
       workouts: workouts.filter((workout) => workout.id !== workoutId),
       weightEntries,
-    }));
-    setMessage({ tone: "good", text: "Workout deleted." });
+    }), {
+      persistenceMode: client && storageMode === "remote" && workoutRemoteEnabledRef.current ? "remote" : "local",
+    });
+    setHealthSuccessMessage({ tone: "good", text: "Workout deleted." });
     return true;
   }
 
@@ -3582,7 +3713,9 @@ export function useHealth(
       waterEntries,
       weightEntries: [...insertedWeightRows, ...weightEntries].sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
     });
-    applySnapshot(nextSnapshot);
+    applySnapshot(nextSnapshot, {
+      persistenceMode: client && storageMode === "remote" ? "remote" : "local",
+    });
     await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
     options?.onProgress?.({
       completed: totalWrites,
@@ -3590,7 +3723,7 @@ export function useHealth(
       phase: "complete",
       total: totalWrites,
     });
-    setMessage({
+    setHealthSuccessMessage({
       tone: "good",
       text: `Apple Health import saved ${freshMetricInputs.length} metric ${freshMetricInputs.length === 1 ? "entry" : "entries"}${auditPayload.duplicate_count ? ` and skipped ${auditPayload.duplicate_count} duplicates` : ""}.`,
     });
@@ -3623,7 +3756,7 @@ export function useHealth(
       waterEntries,
       weightEntries: weightEntries.filter((entry) => entry.id !== entryId),
     }));
-    setMessage({ tone: "good", text: "Weight entry removed." });
+    setHealthSuccessMessage({ tone: "good", text: "Weight entry removed." });
     return true;
   }
 

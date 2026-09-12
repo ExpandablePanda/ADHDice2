@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.43`.
+- Current working app version: `7.13.44`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-12 7.13.44 Health/Journal LocalStorage Quota Hotfix
+
+Health local-cache persistence now treats quota and unexpected browser storage
+write failures as non-fatal. React state updates before the cache pass, quota
+failure stops remaining cache writes without deleting Health or pending
+meal-plan keys, and remote Supabase hydration continues. Local-only actions
+surface a warning when their durable browser write did not succeed. No schema,
+Supabase deployment, or Journal product behavior changed; browser QA remains
+unverified.
 
 ## 2026-09-12 7.13.41 Effective-Dated Needs Action Triggers
 
