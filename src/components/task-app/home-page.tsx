@@ -14,6 +14,8 @@ import { useHomeTodoState } from "@/hooks/useHomeTodoState";
 import { TaskStatusCircleRail, formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import { PageShellHeader } from "./page-shell-header";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
+import { resolveTaskStatusOptionsForTask } from "@/lib/task-state-engine/action-authority";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import type { Task, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskDraft } from "@/components/task-app/task-editor-model";
@@ -45,6 +47,12 @@ export function HomePage({
   calendarTimeZone,
   tasks,
   userId,
+  behaviorProfiles,
+  behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
+  behaviorSelectionsByTaskId,
+  behaviorPolicyLoading = false,
+  behaviorPolicyLogicalDate,
 }: {
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
   onCreateTask: (draft: TaskDraft) => Promise<Task | null>;
@@ -55,6 +63,12 @@ export function HomePage({
   calendarTimeZone: string;
   tasks: Task[];
   userId: string | null;
+  behaviorProfiles?: TaskBehaviorPolicyResolutionContext["behaviorProfiles"];
+  behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
+  namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
+  behaviorSelectionsByTaskId?: TaskBehaviorPolicyResolutionContext["behaviorSelectionsByTaskId"];
+  behaviorPolicyLoading?: boolean;
+  behaviorPolicyLogicalDate: string;
 }) {
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
   const { state, syncStatus, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
@@ -231,7 +245,19 @@ export function HomePage({
                   onSetStatus(task, status);
                   setStatusMenuTaskId(null);
                 }}
-                options={getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus }).map((status) => ({ label: formatTaskStatusLabel(status), value: status }))}
+                options={resolveTaskStatusOptionsForTask({
+                  behaviorPolicyRevisions,
+                  behaviorProfiles,
+                  behaviorSelectionsByTaskId,
+                  customRulesetId: task.custom_ruleset_id,
+                  logicalDate: behaviorPolicyLogicalDate,
+                  namedCustomRulesetBehaviorPolicyRevisions,
+                  policyLoading: behaviorPolicyLoading,
+                  statuses: getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus }),
+                  taskId: task.id,
+                  taskType: task.task_type,
+                }).map((status) => ({ label: formatTaskStatusLabel(status), value: status }))}
+                preserveCurrentStatus
                 statusLabelPrefix="Set task status to"
                 wrap={false}
               />

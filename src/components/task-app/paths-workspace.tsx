@@ -33,6 +33,7 @@ import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import type { TaskListDefinition, TaskListId, TaskListMembership } from "@/lib/task-lists";
 
 type LinkedTaskOption = Task;
+type TaskStatusOptionsResolver = (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[];
 type PathEndpointIconId = keyof typeof PATH_ENDPOINT_ICON_MAP;
 type PathConnectionSource = { kind: "endpoint" } | { kind: "node"; nodeId: string };
 type PathNodeHandleSide = "bottom" | "left" | "right" | "top";
@@ -46,6 +47,7 @@ type PathsWorkspaceProps = {
   taskDisplayStatusByTaskId?: Record<string, TaskStatus>;
   tasks?: LinkedTaskOption[];
   userId?: string | null;
+  getTaskStatusOptions?: TaskStatusOptionsResolver;
 };
 
 const PATH_TYPE_LABELS: Record<PathType, string> = {
@@ -247,17 +249,19 @@ function getNodeHandleClassName(side: PathNodeHandleSide) {
 }
 
 function PathLinkedTaskPill({
+  getTaskStatusOptions,
   onOpenTask,
   onSetTaskStatus,
   task,
 }: {
+  getTaskStatusOptions?: TaskStatusOptionsResolver;
   onOpenTask?: (taskId: string) => void;
   onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
   task: LinkedTaskOption;
 }) {
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   const statusMenuRef = useRef<HTMLSpanElement | null>(null);
-  const statusOptions = useMemo(() => getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }), [task]);
+  const statusOptions = useMemo(() => getTaskStatusOptions?.(task, task.status) ?? getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }), [getTaskStatusOptions, task]);
 
   useEffect(() => {
     if (!isStatusMenuOpen) {
@@ -333,15 +337,17 @@ function PathLinkedTaskPill({
 }
 
 function PathTaskStatusControl({
+  getTaskStatusOptions,
   onSetTaskStatus,
   task,
 }: {
+  getTaskStatusOptions?: TaskStatusOptionsResolver;
   onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
   task: Task;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLSpanElement | null>(null);
-  const statusOptions = useMemo(() => getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }), [task]);
+  const statusOptions = useMemo(() => getTaskStatusOptions?.(task, task.status) ?? getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }), [getTaskStatusOptions, task]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -397,10 +403,12 @@ function PathTaskStatusControl({
 }
 
 function PathTaskHierarchyChip({
+  getTaskStatusOptions,
   onOpenTask,
   onSetTaskStatus,
   task,
 }: {
+  getTaskStatusOptions?: TaskStatusOptionsResolver;
   onOpenTask?: (taskId: string) => void;
   onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
   task: Task;
@@ -417,16 +425,18 @@ function PathTaskHierarchyChip({
         <span className="truncate">{task.title}</span>
       </AdhdChip>
       <span aria-hidden="true" className="h-0.5 w-4 shrink-0 bg-[#b7a8f8] dark:bg-[#7f67ff]" />
-      <PathTaskStatusControl onSetTaskStatus={onSetTaskStatus} task={task} />
+      <PathTaskStatusControl getTaskStatusOptions={getTaskStatusOptions} onSetTaskStatus={onSetTaskStatus} task={task} />
     </div>
   );
 }
 
 function PathTaskNodeStepList({
+  getTaskStatusOptions,
   onOpenTask,
   onSetTaskStatus,
   steps,
 }: {
+  getTaskStatusOptions?: TaskStatusOptionsResolver;
   onOpenTask?: (taskId: string) => void;
   onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
   steps: PathsTaskNodeStep[];
@@ -436,13 +446,13 @@ function PathTaskNodeStepList({
       {steps.map((step) => (
         <div className="relative" key={step.task.id}>
           <span className="absolute -left-5 top-[13px] h-0.5 w-5 bg-[#cfc3f8] dark:bg-[#5d48ab]" />
-          <PathTaskHierarchyChip onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={step.task} />
+          <PathTaskHierarchyChip getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={step.task} />
           {step.substeps.length > 0 ? (
             <div className="relative ml-4 mt-2 space-y-2 border-l-2 border-[#ddd5ef] pl-5 dark:border-white/15">
               {step.substeps.map((substep) => (
                 <div className="relative" key={substep.id}>
                   <span className="absolute -left-5 top-[13px] h-0.5 w-5 bg-[#ddd5ef] dark:bg-white/15" />
-                  <PathTaskHierarchyChip onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={substep} />
+                  <PathTaskHierarchyChip getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={substep} />
                 </div>
               ))}
             </div>
@@ -454,11 +464,13 @@ function PathTaskNodeStepList({
 }
 
 function PathTaskNodeCard({
+  getTaskStatusOptions,
   onOpenTask,
   onSetTaskStatus,
   onUnlink,
   view,
 }: {
+  getTaskStatusOptions?: TaskStatusOptionsResolver;
   onOpenTask?: (taskId: string) => void;
   onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
   onUnlink: () => void;
@@ -485,10 +497,10 @@ function PathTaskNodeCard({
         <span className="relative -m-2 flex h-8 w-8 shrink-0 touch-none items-center justify-center cursor-grab text-[#8d86a4] active:cursor-grabbing" data-path-node-drag-surface>
           <GripVertical className="h-4 w-4" />
         </span>
-        <PathTaskHierarchyChip onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={view.task} />
+        <PathTaskHierarchyChip getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={view.task} />
       </div>
       {visibleSteps.length > 0 ? (
-        <PathTaskNodeStepList onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} steps={visibleSteps} />
+        <PathTaskNodeStepList getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} steps={visibleSteps} />
       ) : null}
     </div>
   );
@@ -838,6 +850,7 @@ export function PathsWorkspace({
   taskDisplayStatusByTaskId = {},
   tasks = [],
   userId,
+  getTaskStatusOptions,
 }: PathsWorkspaceProps) {
   const workspaceUserId = userId ?? LOCAL_PATHS_PROTOTYPE_USER_ID;
   const adapter = useMemo(() => createLocalStoragePathsStorageAdapter({ userId: workspaceUserId }), [workspaceUserId]);
@@ -1840,6 +1853,7 @@ export function PathsWorkspace({
                         >
                           {isTaskNode && taskNodeView ? (
                             <PathTaskNodeCard
+                              getTaskStatusOptions={getTaskStatusOptions}
                               onOpenTask={onOpenTask}
                               onSetTaskStatus={onSetTaskStatus}
                               onUnlink={() => {
@@ -1895,7 +1909,7 @@ export function PathsWorkspace({
                                 {linkedTasksForNode.map((task, index) => {
                                   const taskId = node.linkedTaskIds[index] ?? "";
                                   return task && !task.trashed_at ? (
-                                    <PathLinkedTaskPill key={taskId} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} />
+                                    <PathLinkedTaskPill getTaskStatusOptions={getTaskStatusOptions} key={taskId} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} />
                                   ) : (
                                     <PathUnavailableLinkedTaskChip
                                       key={taskId}
@@ -2263,6 +2277,7 @@ export function PathsWorkspace({
                               <div className="flex max-w-full items-center gap-1" key={taskId}>
                                 <div className="max-w-full">
                                   <PathLinkedTaskPill
+                                    getTaskStatusOptions={getTaskStatusOptions}
                                     onOpenTask={onOpenTask}
                                     onSetTaskStatus={onSetTaskStatus}
                                     task={linkedTask}

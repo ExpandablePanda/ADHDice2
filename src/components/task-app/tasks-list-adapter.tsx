@@ -22,6 +22,7 @@ import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPrevie
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { CustomBehaviorRuleset, Pursuit, PursuitUpdate, Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
 import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
+import { resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask } from "@/lib/task-state-engine/action-authority";
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
@@ -76,7 +77,7 @@ import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import { buildPursuitWorkspaceIndex, filterPursuitsForTaskWorkspace, mergeTaskRowsWithPursuitSearchContext, shouldRenderTaskPursuitChildren, type PursuitAttention } from "@/lib/pursuit-domain";
 import { PursuitListWorkspaceRow, type PursuitInlineCreateInput } from "./pursuit-workspace-row";
 import { buildPursuitInlineCreateInput } from "@/lib/pursuit-ui";
-import type { TaskBehaviorPolicy, TaskBehaviorPolicyField, TaskBehaviorProfiles } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskBehaviorPolicy, TaskBehaviorPolicyField, TaskBehaviorPolicyResolutionContext, TaskBehaviorProfiles, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 
@@ -337,6 +338,10 @@ type TasksTableSourceProps = {
   customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
   taskTypeBehaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
+  namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
+  behaviorSelectionsByTaskId?: TaskBehaviorPolicyResolutionContext["behaviorSelectionsByTaskId"];
+  behaviorPolicyLoading?: boolean;
   onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
   onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
   onShowCustomRulesetTasks?: (rulesetId: string) => void;
@@ -730,6 +735,11 @@ export function TasksTableAdapter({
           customBehaviorRulesets={tableProps.customBehaviorRulesets}
           customBehaviorRulesetProfiles={tableProps.customBehaviorRulesetProfiles}
           taskTypeBehaviorProfiles={tableProps.taskTypeBehaviorProfiles}
+          behaviorPolicyRevisions={tableProps.behaviorPolicyRevisions}
+          namedCustomRulesetBehaviorPolicyRevisions={tableProps.namedCustomRulesetBehaviorPolicyRevisions}
+          behaviorSelectionsByTaskId={tableProps.behaviorSelectionsByTaskId}
+          behaviorPolicyLogicalDate={tableProps.rowContext.todayDateKey}
+          behaviorPolicyLoading={tableProps.behaviorPolicyLoading}
           onCreateCustomRuleset={tableProps.onCreateCustomRuleset}
           onDeleteCustomRuleset={tableProps.onDeleteCustomRuleset}
           onShowCustomRulesetTasks={tableProps.onShowCustomRulesetTasks}
@@ -1027,6 +1037,8 @@ function StepsCardPreview({
   onSetRepeat,
   onSetStatus,
   onSetTags,
+  getAvailableStatuses,
+  isManualActionAllowed,
   onToggleFocusToday,
   onTogglePinned,
   onToggleTaskList,
@@ -1077,6 +1089,8 @@ function StepsCardPreview({
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
   onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
+  getAvailableStatuses?: (item: ChildTaskPreview) => readonly TaskDisplayStatus[];
+  isManualActionAllowed?: (item: ChildTaskPreview, action: TaskManualAction) => boolean;
   onSetStatus?: (
     taskId: string,
     status: TaskStatus,
@@ -1657,7 +1671,7 @@ function StepsCardPreview({
                           currentStatus={displayStatus}
                           onSetStatus={(status) => {
                             if (status === "delayed") {
-                              if (canTaskDelay({ dueOn: item.dueOn, status: displayStatus }) && onDelayTaskUntil) {
+                              if (canTaskDelay({ dueOn: item.dueOn, status: displayStatus }) && (isManualActionAllowed?.(item, "delay") ?? true) && onDelayTaskUntil) {
                                 onOpenQuickPanel(item.id, "delay");
                               }
                               return;
@@ -1668,10 +1682,11 @@ function StepsCardPreview({
                               onSetStatus?.(item.id, status, childTask, [item.id]);
                             }
                           }}
-                          options={getSelectableTaskDisplayStatusesForTask({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: displayStatus }).map((status) => ({
+                          options={(getAvailableStatuses?.(item) ?? getSelectableTaskDisplayStatusesForTask({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: displayStatus })).map((status) => ({
                             label: formatTaskStatusLabel(status),
                             value: status,
                           }))}
+                          preserveCurrentStatus
                           statusLabelPrefix={`Set ${item.depth > 1 ? "substep" : "step"} status to`}
                         />
                       </div>
@@ -2650,6 +2665,44 @@ function TasksSimpleList({
     return () => observer.disconnect();
   }, [committedResultRevision, rowWindowCount, tasks.length, windowedTasks.length]);
   const rowContext = tableProps.rowContext;
+  const getPolicyFilteredTaskStatuses = (input: {
+    customRulesetId?: string | null;
+    dueOn: string | null;
+    repeatFrequency: Task["repeat_frequency"];
+    status: TaskDisplayStatus;
+    taskId: string;
+    taskType: TaskType;
+  }) => resolveTaskStatusOptionsForTask({
+    behaviorPolicyRevisions: tableProps.behaviorPolicyRevisions,
+    behaviorProfiles: tableProps.taskTypeBehaviorProfiles,
+    behaviorSelectionsByTaskId: tableProps.behaviorSelectionsByTaskId,
+    customRulesetId: input.customRulesetId,
+    logicalDate: rowContext.todayDateKey,
+    namedCustomRulesetBehaviorPolicyRevisions: tableProps.namedCustomRulesetBehaviorPolicyRevisions,
+    policyLoading: tableProps.behaviorPolicyLoading,
+    statuses: getSelectableTaskDisplayStatusesForTask(input),
+    taskId: input.taskId,
+    taskType: input.taskType,
+  });
+  const isListManualActionAllowedForIdentity = (task: { customRulesetId?: string | null; id: string; taskType: TaskType }, action: TaskManualAction) => {
+    if (tableProps.behaviorPolicyLoading) return false;
+    return resolveTaskManualActionAvailabilityForTask({
+      action,
+      behaviorPolicyRevisions: tableProps.behaviorPolicyRevisions,
+      behaviorProfiles: tableProps.taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId: tableProps.behaviorSelectionsByTaskId,
+      customRulesetId: task.customRulesetId,
+      logicalDate: rowContext.todayDateKey,
+      namedCustomRulesetBehaviorPolicyRevisions: tableProps.namedCustomRulesetBehaviorPolicyRevisions,
+      taskId: task.id,
+      taskType: task.taskType,
+    }).available;
+  };
+  const isListManualActionAllowed = (task: Pick<Task, "id" | "task_type" | "custom_ruleset_id">, action: TaskManualAction) => isListManualActionAllowedForIdentity({
+    customRulesetId: task.custom_ruleset_id,
+    id: task.id,
+    taskType: task.task_type,
+  }, action);
   const runningTimerByTaskId = useMemo(
     () => new Map((tableProps.runningTaskTimers ?? []).map((timer) => [timer.taskId, timer] as const)),
     [tableProps.runningTaskTimers],
@@ -3150,6 +3203,11 @@ function TasksSimpleList({
               customBehaviorRulesets={tableProps.customBehaviorRulesets}
               customBehaviorRulesetProfiles={tableProps.customBehaviorRulesetProfiles}
               taskTypeBehaviorProfiles={tableProps.taskTypeBehaviorProfiles}
+              behaviorPolicyRevisions={tableProps.behaviorPolicyRevisions}
+              namedCustomRulesetBehaviorPolicyRevisions={tableProps.namedCustomRulesetBehaviorPolicyRevisions}
+              behaviorSelectionsByTaskId={tableProps.behaviorSelectionsByTaskId}
+              behaviorPolicyLogicalDate={tableProps.rowContext.todayDateKey}
+              behaviorPolicyLoading={tableProps.behaviorPolicyLoading}
               onCreateCustomRuleset={tableProps.onCreateCustomRuleset}
               onDeleteCustomRuleset={tableProps.onDeleteCustomRuleset}
               onShowCustomRulesetTasks={tableProps.onShowCustomRulesetTasks}
@@ -3503,7 +3561,7 @@ function TasksSimpleList({
                     onSetStatus={(status) => {
                       if (status === "delayed") {
                         setRowContextMenu(null);
-                        if (canTaskDelay({ dueOn: task.due_on, status: displayStatus }) && tableProps.onDelayTaskUntil) {
+                        if (canTaskDelay({ dueOn: task.due_on, status: displayStatus }) && isListManualActionAllowed(task, "delay") && tableProps.onDelayTaskUntil) {
                           openQuickPanel(task.id, "delay");
                         }
                         return;
@@ -3516,10 +3574,11 @@ function TasksSimpleList({
                         tableProps.onSetStatus?.(task.id, status, task, queueMeasuredListStatusScrollAnchor(task.id));
                       }
                     }}
-                    options={getSelectableTaskDisplayStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus }).map((status) => ({
+                    options={getPolicyFilteredTaskStatuses({ customRulesetId: task.custom_ruleset_id, dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus, taskId: task.id, taskType: task.task_type }).map((status) => ({
                       label: formatTaskStatusLabel(status),
                       value: status,
                     }))}
+                    preserveCurrentStatus
                   />
                 </div>
                 <div className={`${isMetadataVisible ? "flex" : "hidden"} -mx-1 mt-2 -my-1 max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:thin]`}>
@@ -3754,6 +3813,8 @@ function TasksSimpleList({
                 onSetRepeat={tableProps.onSetRepeat}
                 onSetStatus={tableProps.onSetStatus}
                 onSetTags={tableProps.onSetTags}
+                getAvailableStatuses={(item) => getPolicyFilteredTaskStatuses({ customRulesetId: item.customRulesetId, dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status, taskId: item.id, taskType: item.taskType ?? "task" })}
+                isManualActionAllowed={(item, action) => isListManualActionAllowedForIdentity({ customRulesetId: item.customRulesetId, id: item.id, taskType: item.taskType ?? "task" }, action)}
                 onToggleFocusToday={onToggleFocusToday}
                 onTogglePinned={tableProps.onTogglePinned}
                 onToggleTaskList={tableProps.onToggleTaskList}

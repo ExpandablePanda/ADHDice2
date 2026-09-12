@@ -377,6 +377,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
   doneCount,
   draggedWidgetId,
   focusedTaskIds,
+  getTaskStatusOptions,
   gridAutoRowHeight,
   gridLayout,
   isEditMode,
@@ -410,6 +411,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
   doneCount: number;
   draggedWidgetId: string | null;
   focusedTaskIds: string[];
+  getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[];
   gridAutoRowHeight: number;
   gridLayout: GridItem[];
   isEditMode: boolean;
@@ -468,6 +470,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
             <UrgentTasksPanelAdapter
               currentStreakByTaskId={currentStreakByTaskId}
               focusedTaskIds={focusedTaskIds}
+              getTaskStatusOptions={getTaskStatusOptions}
               onEditTask={onEditTask}
               onSetStatus={onSetStatus}
               onSetSubtaskStatus={onSetSubtaskStatus}
@@ -621,6 +624,7 @@ export function TaskHistoryModal({
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
   behaviorSelectionsByTaskId,
+  behaviorPolicyLoading = false,
   customBehaviorRulesets = [],
   calendarOverrides,
 }: {
@@ -642,6 +646,7 @@ export function TaskHistoryModal({
   behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
   namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
   behaviorSelectionsByTaskId?: TaskBehaviorPolicyResolutionContext["behaviorSelectionsByTaskId"];
+  behaviorPolicyLoading?: boolean;
   customBehaviorRulesets?: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type">[];
   calendarOverrides?: TaskCalendarOverride[];
 }) {
@@ -790,9 +795,11 @@ export function TaskHistoryModal({
         behaviorProfiles,
         namedCustomRulesetBehaviorPolicyRevisions,
         behaviorSelectionsByTaskId,
+        policyLoading: behaviorPolicyLoading,
         history: normalizedTaskHistory,
         historicalOverride: true,
         logicalDate: selectedDate,
+        logicalDates: isMultiSelect ? selectedDates : [selectedDate],
         logicalDayRollover: calendarReadInput.logicalDayRollover,
         now: calendarReadInput.now,
         task,
@@ -801,7 +808,7 @@ export function TaskHistoryModal({
       : null,
     // The calendar revision already covers these semantic inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [calendarRead, calendarReadRevision, selectedDate],
+    [behaviorPolicyLoading, behaviorPolicyRevisions, behaviorProfiles, behaviorSelectionsByTaskId, calendarRead, calendarReadRevision, isMultiSelect, namedCustomRulesetBehaviorPolicyRevisions, normalizedTaskHistory, selectedDate, selectedDates, task],
   );
   const calendarActionStatuses = calendarRead
     ? getTaskHistoryCalendarVisibleActionStatuses({
@@ -819,7 +826,8 @@ export function TaskHistoryModal({
     && Boolean(onSetDelayedStatus)
     && task.status !== "complete"
     && task.status !== "archived"
-    && task.status !== "trashed";
+    && task.status !== "trashed"
+    && calendarActionStatuses.includes("delayed");
   const canClearSelectedDate = !isMultiSelect
     && !selectedIsFuture
     && Boolean(selectedEntry)

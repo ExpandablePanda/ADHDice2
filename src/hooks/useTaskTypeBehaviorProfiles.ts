@@ -54,7 +54,7 @@ export function useTaskTypeBehaviorProfiles(
   const [customBehaviorRulesets, setCustomBehaviorRulesets] = useState<CustomBehaviorRulesetState["data"]>([]);
   const [customRulesetBehaviorPolicyRevisions, setCustomRulesetBehaviorPolicyRevisions] = useState<Record<string, readonly TaskBehaviorPolicyRevision[]>>({});
   const [behaviorSelectionsByTaskId, setBehaviorSelectionsByTaskId] = useState<Record<string, readonly TaskBehaviorSelection[]>>({});
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(() => Boolean(userId));
   const behaviorSelectionStateRef = useRef<CustomBehaviorRulesetState>({
     data: [],
     revisions: {},

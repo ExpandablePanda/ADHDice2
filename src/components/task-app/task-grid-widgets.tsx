@@ -5,6 +5,7 @@ import { useState } from "react";
 import { renderTaskStatusCircle } from "./task-status-ui";
 import { formatDueLabel } from "@/lib/task-cockpit";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
+import { preserveCurrentTaskStatusForPresentation } from "@/lib/task-state-engine/action-authority";
 import type { Task, TaskStatus } from "@/lib/database.types";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { formatRepeatSummary } from "@/lib/task-formatting";
@@ -200,6 +201,7 @@ export function TaskGridWidgetShellComponent({
 export function UrgentTasksPanelComponent({
   currentStreakByTaskId,
   focusedTaskIds,
+  getTaskStatusOptions,
   onEditTask,
   onSetStatus,
   onSetSubtaskStatus,
@@ -208,6 +210,7 @@ export function UrgentTasksPanelComponent({
 }: {
   currentStreakByTaskId: Readonly<Record<string, number>>;
   focusedTaskIds: string[];
+  getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[];
   onEditTask: (task: Task) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
   onSetSubtaskStatus: (subtaskId: string, status: TaskStatus) => void;
@@ -246,12 +249,19 @@ export function UrgentTasksPanelComponent({
                   <TaskMetaChip tone="neutral">{formatDueLabel(task.due_on)}</TaskMetaChip>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }).map((status) => {
-                    const isActive = task.status === status;
-                    return (
-                      <button aria-label={`Set status to ${formatOptionLabel(status)}`} className={`h-8 w-8 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button"><span className="flex h-full w-full items-center justify-center">{renderTaskStatusCircle(status, "md")}</span></button>
-                    );
-                  })}
+                  {(() => {
+                    const availableStatuses = getTaskStatusOptions?.(task, task.status);
+                    const statusOptions = availableStatuses
+                      ? preserveCurrentTaskStatusForPresentation(availableStatuses, task.status)
+                      : getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status });
+                    return statusOptions.map((status) => {
+                      const isActive = task.status === status;
+                      const presentationOnly = Boolean(availableStatuses && !availableStatuses.includes(status));
+                      return (
+                        <button aria-label={`${presentationOnly ? "Current status" : "Set status to"} ${formatOptionLabel(status)}`} className={`h-8 w-8 rounded-full border-2 transition ${presentationOnly ? "cursor-default opacity-45" : isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} disabled={presentationOnly} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button"><span className="flex h-full w-full items-center justify-center">{renderTaskStatusCircle(status, "md")}</span></button>
+                      );
+                    });
+                  })()}
                 </div>
                 <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
               </div>
@@ -261,7 +271,9 @@ export function UrgentTasksPanelComponent({
             <ul className="mt-5 space-y-2">
               {(subtasksByTaskId[task.id] ?? []).map((subtask) => (
                 <li className="flex items-center gap-3" key={subtask.id}>
-                  <button aria-label={`Mark ${subtask.title} as ${isClosedSubtaskStatus(subtask.status) ? "pending" : "done"}`} className="transition" onClick={() => onSetSubtaskStatus(subtask.id, isClosedSubtaskStatus(subtask.status) ? "pending" : "done")} type="button">{renderTaskStatusCircle(subtask.status, "sm")}</button>
+                  {isClosedSubtaskStatus(subtask.status) || (getTaskStatusOptions?.(subtask, "pending") ?? ["done"]).includes("done") ? (
+                    <button aria-label={`Mark ${subtask.title} as ${isClosedSubtaskStatus(subtask.status) ? "pending" : "done"}`} className="transition" onClick={() => onSetSubtaskStatus(subtask.id, isClosedSubtaskStatus(subtask.status) ? "pending" : "done")} type="button">{renderTaskStatusCircle(subtask.status, "sm")}</button>
+                  ) : null}
                   <span className={`${isClosedSubtaskStatus(subtask.status) ? "line-through opacity-50" : ""} text-[#525d78] dark:text-white/72`}>{subtask.title}</span>
                 </li>
               ))}

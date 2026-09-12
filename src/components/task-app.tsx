@@ -207,6 +207,9 @@ import {
   createEngineRolloverPlan,
   engineRolloverPlanTaskMutationCandidates,
   evaluateTaskActionAuthority,
+  resolveTaskManualActionAvailabilityForTask,
+  resolveTaskStatusOptionsForTask,
+  taskManualActionForStatus,
   taskStateHistoryRowToCanonicalIntent,
   projectTasksForActiveStatusRead,
   resolveActiveTaskStatusesIncrementally,
@@ -290,6 +293,7 @@ import {
   canTaskBeMarkedComplete,
   COMPLETE_BLOCKED_MESSAGE,
   getTaskCompleteConfirmationDescription,
+  getSelectableTaskStatusesForTask,
 } from "@/lib/task-complete";
 import { buildMilestoneLifecycleArgs, canDetachAndPromoteTaskToMilestone, canPromoteTaskToMilestone, formatMilestoneRpcError, getMilestoneEligibility, mergeAuthoritativeMilestoneTask, shouldReverseCompletedMilestoneForStatusChange } from "@/lib/milestones";
 import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
@@ -1870,6 +1874,7 @@ export function TaskApp() {
     [dayStartTime, logicalDayNow, userTimeZone],
   );
   const {
+    isLoading: isTaskTypeBehaviorProfilesLoading,
     profileRevisions: taskTypeBehaviorProfileRevisions,
     profiles: taskTypeBehaviorProfiles,
     customBehaviorRulesets,
@@ -1885,6 +1890,19 @@ export function TaskApp() {
     updateTaskBehaviorProfile,
     updateCustomBehaviorRulesetProfile,
   } = useTaskTypeBehaviorProfiles(supabase, todayKey, session?.user?.id ?? null, setMessage);
+
+  const resolveCurrentTaskStatusOptions = (task: Task, currentStatus: TaskStatus = task.status) => resolveTaskStatusOptionsForTask({
+    behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorSelectionsByTaskId,
+    customRulesetId: task.custom_ruleset_id,
+    logicalDate: todayKey,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+    policyLoading: isTaskTypeBehaviorProfilesLoading,
+    statuses: getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: currentStatus }),
+    taskId: task.id,
+    taskType: task.task_type,
+  });
 
   const {
     isSoftWorkspaceRefreshing,
@@ -4134,6 +4152,24 @@ export function TaskApp() {
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
   });
+  async function updateTaskSubtaskStatusWithPolicy(subtaskId: string, status: TaskStatus) {
+    const subtask = tasks.find((task) => task.id === subtaskId) ?? null;
+    const action = taskManualActionForStatus(status);
+    if (action && (isTaskTypeBehaviorProfilesLoading || !subtask || !resolveTaskManualActionAvailabilityForTask({
+      action,
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: subtask.custom_ruleset_id,
+      logicalDate: todayKey,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      taskId: subtask.id,
+      taskType: subtask.task_type,
+    }).available)) {
+      return false;
+    }
+    return updateTaskSubtaskStatus(subtaskId, status);
+  }
   async function reorderChildTask(taskId: string, instruction: TaskSiblingReorderInstruction) {
     const plan = buildTaskSiblingReorderPlan(tasks, taskId, instruction);
     if (!plan.ok) {
@@ -5015,7 +5051,17 @@ export function TaskApp() {
 
   const delayTaskToDate = useCallback(async (taskId: string, nextDueOn: string | null) => {
     const task = tasks.find((entry) => entry.id === taskId);
-    if (!task || !canTaskDelay({ dueOn: task.due_on, status: task.status })) {
+    if (!task || !canTaskDelay({ dueOn: task.due_on, status: task.status }) || isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
+      action: "delay",
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: task.custom_ruleset_id,
+      logicalDate: todayKey,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      taskId: task.id,
+      taskType: task.task_type,
+    }).available) {
       return false;
     }
 
@@ -5043,7 +5089,7 @@ export function TaskApp() {
       return true;
     }
 
-  }, [currentUserId, dayStartTime, getTaskDelayAnchorDate, loadTaskHistoryForTasks, logicalDayNow, setMessage, supabase, tasks, todayKey, updateTask, userTimeZone]);
+  }, [behaviorSelectionsByTaskId, customRulesetBehaviorPolicyRevisions, currentUserId, dayStartTime, getTaskDelayAnchorDate, isTaskTypeBehaviorProfilesLoading, loadTaskHistoryForTasks, logicalDayNow, setMessage, supabase, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles, tasks, todayKey, updateTask, userTimeZone]);
 
   const delaySameTableTask = useCallback(async (taskId: string, days: number) => {
     const task = tasks.find((entry) => entry.id === taskId);
@@ -5308,6 +5354,7 @@ export function TaskApp() {
       doneCount={filteredDoneTasks.length}
       draggedWidgetId={draggedGridWidgetId}
       focusedTaskIds={focusedTaskIds}
+      getTaskStatusOptions={resolveCurrentTaskStatusOptions}
       gridAutoRowHeight={TASK_GRID_ROW_HEIGHT}
       gridLayout={taskGridLayout}
       isEditMode={isGridEditMode}
@@ -5340,7 +5387,7 @@ export function TaskApp() {
       onEditTask={openExistingTaskEditor}
       onSelectWidget={setSelectedGridWidgetId}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
-      onSetSubtaskStatus={(subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); }}
+      onSetSubtaskStatus={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
       onSetDraggedWidget={setDraggedGridWidgetId}
       overdueCount={filteredOverdueTasks.length}
       selectedWidgetId={selectedGridWidget?.id ?? null}
@@ -5363,6 +5410,7 @@ export function TaskApp() {
   const matrixContentNode = (
     <TaskMatrixView
       currentStreakByTaskId={currentStreakByTaskId}
+      getTaskStatusOptions={resolveCurrentTaskStatusOptions}
       onEditTask={openExistingTaskEditor}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       subtasksByTaskId={taskSubtasksByTaskId}
@@ -5373,6 +5421,7 @@ export function TaskApp() {
     <TaskCardGallery
       currentStreakByTaskId={currentStreakByTaskId}
       focusedTaskIds={focusedTaskIds}
+      getTaskStatusOptions={resolveCurrentTaskStatusOptions}
       onEditTask={openExistingTaskEditor}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       subtasksByTaskId={taskSubtasksByTaskId}
@@ -5613,6 +5662,19 @@ export function TaskApp() {
       onTimeOrigin?: OnTimeLinkedItemOrigin;
     },
   ) {
+    if (isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
+      action: "complete",
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: task.custom_ruleset_id,
+      logicalDate: todayKey,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      taskId: task.id,
+      taskType: task.task_type,
+    }).available) {
+      return false;
+    }
     const eligibility = canTaskBeMarkedComplete(task.id, tasks);
     if (!eligibility.canComplete) {
       setMessage({ tone: "warn", text: COMPLETE_BLOCKED_MESSAGE });
@@ -5853,6 +5915,21 @@ export function TaskApp() {
       || task.revision !== canonicalTask.revision
     ) {
       setMessage({ tone: "warn", text: "This task changed before the action started. Please try again from the current task." });
+      return false;
+    }
+
+    const manualAction = taskManualActionForStatus(status);
+    if (manualAction && (isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
+      action: manualAction,
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: canonicalTask.custom_ruleset_id,
+      logicalDate: todayKey,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      taskId: canonicalTask.id,
+      taskType: canonicalTask.task_type,
+    }).available)) {
       return false;
     }
 
@@ -6288,6 +6365,13 @@ export function TaskApp() {
     priorityOptions,
     repeatFrequencyOptions,
     repeatWeekdayOptions,
+    selectedTasks: selectedListTasks,
+    behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+    behaviorSelectionsByTaskId,
+    behaviorPolicyLogicalDate: todayKey,
+    behaviorPolicyLoading: isTaskTypeBehaviorProfilesLoading,
   } : null;
 
   const focusPlannerFlow = showFocusPlanner ? {
@@ -6529,6 +6613,7 @@ export function TaskApp() {
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
     namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
     behaviorSelectionsByTaskId,
+    behaviorPolicyLoading: isTaskTypeBehaviorProfilesLoading,
     customBehaviorRulesets,
   } : null;
   function togglePinnedFilter() {
@@ -6684,6 +6769,7 @@ export function TaskApp() {
     onCreate: scratchNotes.createNote,
     onCreateTask: openScratchLinkedTaskTemplate,
     onOpenTask: openTaskEditorFromId,
+    getTaskStatusOptions: resolveCurrentTaskStatusOptions,
     onSetStatus: scratchNotes.setNoteStatus,
     onSetTaskStatus: (taskId, status) => {
       const task = tasks.find((entry) => entry.id === taskId);
@@ -6976,6 +7062,11 @@ export function TaskApp() {
           onCustomRulesetBehaviorProfileChange={updateCustomBehaviorRulesetProfile}
           onResetTaskBehaviorProfile={resetTaskBehaviorProfile}
           taskTypeBehaviorProfiles={taskTypeBehaviorProfiles}
+          behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
+          namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
+          behaviorSelectionsByTaskId={behaviorSelectionsByTaskId}
+          behaviorPolicyLogicalDate={todayKey}
+          behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
           customBehaviorRulesets={customBehaviorRulesets}
           customBehaviorRulesetProfiles={customBehaviorRulesetProfiles}
           onCreateCustomRuleset={createCustomRuleset}
@@ -6995,7 +7086,7 @@ export function TaskApp() {
           onTaskSubtaskDelete={(subtaskId) => { void deleteTaskSubtask(subtaskId); }}
           onTaskSubtaskRename={(subtaskId, title) => { void renameTaskSubtask(subtaskId, title); }}
           onTaskSubtasksAutoResetChange={(taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); }}
-          onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); }}
+          onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
           pursuits={pursuitData.pursuits}
           pursuitAttentionById={pursuitAttentionMap}
           pursuitSearch=""
@@ -7194,6 +7285,12 @@ export function TaskApp() {
             onOpenTask={openTaskEditorFromId}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
+            behaviorProfiles={taskTypeBehaviorProfiles}
+            behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
+            namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
+            behaviorSelectionsByTaskId={behaviorSelectionsByTaskId}
+            behaviorPolicyLogicalDate={todayKey}
+            behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
             calendarNowMs={logicalDayNow}
             calendarTimeZone={userTimeZone}
             tasks={tasks}
@@ -7287,6 +7384,12 @@ export function TaskApp() {
             onCloseTab={closeTaskWorkspaceTab}
             onTimeWorkspacePanel={(
               <OnTimePlannerWorkspace
+                behaviorProfiles={taskTypeBehaviorProfiles}
+                behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
+                namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
+                behaviorSelectionsByTaskId={behaviorSelectionsByTaskId}
+                behaviorPolicyLogicalDate={todayKey}
+                behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
                 error={onTimePlan.error}
                 onOpenTask={openTaskInSharedTasksEditorFromOnTime}
                 onSetTaskStatus={(task, status, origin) => { void updateTaskStatus(task, status, false, origin); }}
@@ -7314,6 +7417,7 @@ export function TaskApp() {
             pathsWorkspacePanel={(
               <PathsWorkspace
                 availableTaskLists={availableTaskLists}
+                getTaskStatusOptions={resolveCurrentTaskStatusOptions}
                 listMembershipsByTaskId={taskListMembershipsByTaskId}
                 onOpenTask={openTaskInSharedTasksEditorFromPaths}
                 onSetTaskStatus={(taskId, status) => {
@@ -7483,6 +7587,10 @@ export function TaskApp() {
                   customBehaviorRulesets,
                   customBehaviorRulesetProfiles,
                   taskTypeBehaviorProfiles,
+                  behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+                  namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+                  behaviorSelectionsByTaskId,
+                  behaviorPolicyLoading: isTaskTypeBehaviorProfilesLoading,
                   onCreateCustomRuleset: createCustomRuleset,
                   onDeleteCustomRuleset: deleteCustomRuleset,
                   onShowCustomRulesetTasks: showCustomRulesetTasks,
@@ -7534,7 +7642,7 @@ export function TaskApp() {
                   onAddChildTaskSubtask: (subtaskId) => addChildTaskSubtask(subtaskId),
                   onDeleteTaskSubtask: (subtaskId) => { void deleteTaskSubtask(subtaskId); },
                   onRenameTaskSubtask: (subtaskId, title) => { void renameTaskSubtask(subtaskId, title); },
-                  onSetTaskSubtaskStatus: (subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); },
+                  onSetTaskSubtaskStatus: (subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); },
                   onSetTaskSubtasksAutoReset: (taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); },
                   onSetTags: (taskId, tags) => { void updateTask(taskId, { tags }); },
                   onSetTitle: (taskId, title) => { void updateTask(taskId, { title }); },
@@ -7680,6 +7788,10 @@ export function TaskApp() {
                   customBehaviorRulesets,
                   customBehaviorRulesetProfiles,
                   taskTypeBehaviorProfiles,
+                  behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+                  namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+                  behaviorSelectionsByTaskId,
+                  behaviorPolicyLoading: isTaskTypeBehaviorProfilesLoading,
                   onCreateCustomRuleset: createCustomRuleset,
                   onDeleteCustomRuleset: deleteCustomRuleset,
                   onShowCustomRulesetTasks: showCustomRulesetTasks,
@@ -7731,7 +7843,7 @@ export function TaskApp() {
                   onAddChildTaskSubtask: (subtaskId) => addChildTaskSubtask(subtaskId),
                   onDeleteTaskSubtask: (subtaskId) => { void deleteTaskSubtask(subtaskId); },
                   onRenameTaskSubtask: (subtaskId, title) => { void renameTaskSubtask(subtaskId, title); },
-                  onSetTaskSubtaskStatus: (subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); },
+                  onSetTaskSubtaskStatus: (subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); },
                   onSetTaskSubtasksAutoReset: (taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); },
                   onSetTags: (taskId, tags) => { void updateTask(taskId, { tags }); },
                   onSetTitle: (taskId, title) => { void updateTask(taskId, { title }); },

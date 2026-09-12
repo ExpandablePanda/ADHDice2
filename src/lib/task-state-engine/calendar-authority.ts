@@ -5,7 +5,7 @@ import { logicalDateForTimestamp, shiftDateKey } from "./calendar.ts";
 import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
-import { evaluateTaskActionAuthority } from "./action-authority.ts";
+import { evaluateTaskActionAuthority, resolveTaskStatusOptionsForTask } from "./action-authority.ts";
 import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
 import { createProjectionDomainRevision } from "../stable-task-projection.ts";
 import type { TaskCalendarOverride, TaskHistoryOutcome } from "./types.ts";
@@ -207,6 +207,8 @@ export function resolveTaskHistoryCalendarActionStatuses(input: TaskBehaviorPoli
   enabled?: boolean;
   history: TaskHistory[];
   logicalDate: string;
+  logicalDates?: readonly string[];
+  policyLoading?: boolean;
   logicalDayRollover: string;
   historicalOverride?: boolean;
   now: Date | string;
@@ -215,27 +217,44 @@ export function resolveTaskHistoryCalendarActionStatuses(input: TaskBehaviorPoli
 }) {
   if (!(input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED)) return null;
   const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.history);
-  const existingEntry = normalizedHistory.find((entry) => entry.entry_date === input.logicalDate) ?? null;
-  const historicalOverrideOccurrenceDueOn = input.historicalOverride
-    && !existingEntry
-    && input.task.repeat_frequency !== "none"
-    ? input.logicalDate
-    : undefined;
   const candidates: TaskHistoryCalendarActionStatus[] = ["done", "did_my_best", "delayed", "missed", "complete"];
-  return candidates.filter((outcome) => !evaluateTaskActionAuthority({
-    ...input,
-    history: normalizedHistory,
-    ...(outcome === "delayed" ? { delayDays: 1 } : {}),
-    ...(input.historicalOverride ? { historicalOverride: true } : {}),
-    outcome,
-    outcomeDate: input.logicalDate,
-    ...(existingEntry ? {
-      occurrenceDueOn: existingEntry.occurrence_due_on ?? input.logicalDate,
-      occurrenceIdentity: existingEntry.occurrence_key ?? undefined,
-      previousOutcome: existingEntry.status as TaskHistoryOutcome,
-      replaceExisting: true,
-    } : {
-      occurrenceDueOn: historicalOverrideOccurrenceDueOn,
-    }),
-  })?.validationErrors.length);
+  const logicalDates = input.logicalDates?.length ? input.logicalDates : [input.logicalDate];
+  let sharedStatuses: TaskHistoryCalendarActionStatus[] | null = null;
+  for (const logicalDate of logicalDates) {
+    const existingEntry = normalizedHistory.find((entry) => entry.entry_date === logicalDate) ?? null;
+    const historicalOverrideOccurrenceDueOn = input.historicalOverride
+      && !existingEntry
+      && input.task.repeat_frequency !== "none"
+      ? logicalDate
+      : undefined;
+    const policyStatuses = resolveTaskStatusOptionsForTask({
+      ...input,
+      logicalDate,
+      statuses: candidates,
+      taskId: input.task.id,
+      taskType: normalizeTaskType(input.task.task_type),
+      customRulesetId: input.task.custom_ruleset_id,
+      policyLoading: input.policyLoading,
+    });
+    const dateStatuses = policyStatuses.filter((outcome) => !evaluateTaskActionAuthority({
+      ...input,
+      history: normalizedHistory,
+      ...(outcome === "delayed" ? { delayDays: 1 } : {}),
+      ...(input.historicalOverride ? { historicalOverride: true } : {}),
+      outcome,
+      outcomeDate: logicalDate,
+      ...(existingEntry ? {
+        occurrenceDueOn: existingEntry.occurrence_due_on ?? logicalDate,
+        occurrenceIdentity: existingEntry.occurrence_key ?? undefined,
+        previousOutcome: existingEntry.status as TaskHistoryOutcome,
+        replaceExisting: true,
+      } : {
+        occurrenceDueOn: historicalOverrideOccurrenceDueOn,
+      }),
+    })?.validationErrors.length) as TaskHistoryCalendarActionStatus[];
+    sharedStatuses = sharedStatuses === null
+      ? dateStatuses
+      : sharedStatuses.filter((status) => dateStatuses.includes(status));
+  }
+  return sharedStatuses ?? [];
 }

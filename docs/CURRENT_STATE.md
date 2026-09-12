@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-11
+Last reviewed: 2026-09-12
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.39`.
+- Current working app version: `7.13.40`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-12 7.13.40 Available Actions UI Enforcement
+
+Behavior Settings now exposes the effective-dated Available Actions controls
+for Task, Custom Default, and named Custom rulesets. Existing contextual Task
+status/action choices are filtered through the shared action authority, with
+historical Calendar dates and multi-date selections using policy intersections.
+Current and historical outcomes remain factual; workflow, lifecycle, Calendar
+override, and automatic engine behavior remain unchanged. No SQL or Edge
+deployment changed, and browser QA remains unverified.
 
 ## 2026-09-11 7.13.39 Trusted Available Actions Failure-Closed Correction
 

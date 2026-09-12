@@ -80,10 +80,25 @@ test("Daily Until Complete exposes Done when shared engine authority allows it",
 
 test("History Calendar multi-select exposes Not Due while retaining occurrence restrictions", () => {
   assert.deepEqual(getTaskHistoryCalendarVisibleActionStatuses({
-    engineStatuses: [],
+    engineStatuses: null,
     isMultiSelect: true,
     task: { repeat_frequency: "daily_until_complete" },
   }), ["done", "did_my_best", "missed"]);
+});
+
+test("History Calendar multi-select intersects policy-aware manual actions", () => {
+  assert.deepEqual(getTaskHistoryCalendarVisibleActionStatuses({
+    engineStatuses: ["done", "missed"],
+    historicalOverride: true,
+    isMultiSelect: true,
+    task: { repeat_frequency: "daily" },
+  }), ["done", "missed"]);
+  assert.deepEqual(getTaskHistoryCalendarVisibleActionStatuses({
+    engineStatuses: ["done"],
+    historicalOverride: true,
+    isMultiSelect: true,
+    task: { repeat_frequency: "daily" },
+  }), ["done"]);
 });
 
 test("History Calendar exposes Not Due for past dates but Due only for today", () => {

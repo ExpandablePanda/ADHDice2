@@ -210,6 +210,7 @@ export function TaskStatusCircleRail<Status extends TaskDisplayStatus>({
   currentStatus,
   onSetStatus,
   options,
+  preserveCurrentStatus = false,
   statusLabelPrefix = "Set status to",
   wrap = true,
 }: {
@@ -217,18 +218,25 @@ export function TaskStatusCircleRail<Status extends TaskDisplayStatus>({
   currentStatus: Status;
   onSetStatus: (status: Status, event: MouseEvent<HTMLButtonElement>) => void;
   options: Array<{ label: string; value: Status }>;
+  preserveCurrentStatus?: boolean;
   statusLabelPrefix?: string;
   wrap?: boolean;
 }) {
+  const renderedOptions = preserveCurrentStatus && !options.some((option) => option.value === currentStatus)
+    ? [{ label: formatTaskStatusLabel(currentStatus), value: currentStatus, presentationOnly: true }, ...options]
+    : options.map((option) => ({ ...option, presentationOnly: false }));
   return (
     <div className={["flex gap-1.5", wrap ? "flex-wrap" : "flex-nowrap", className].join(" ").trim()}>
-      {options.map((option) => (
+      {renderedOptions.map((option) => (
         <button
           aria-label={`${statusLabelPrefix} ${option.label}`}
-          className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${currentStatus === option.value ? "" : "opacity-78 hover:opacity-100"}`}
+          aria-disabled={option.presentationOnly || undefined}
+          className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${option.presentationOnly ? "cursor-default opacity-45" : currentStatus === option.value ? "" : "opacity-78 hover:opacity-100"}`}
+          disabled={option.presentationOnly}
           key={option.value}
           onClick={(event) => {
             event.stopPropagation();
+            if (option.presentationOnly) return;
             onSetStatus(option.value, event);
           }}
           type="button"

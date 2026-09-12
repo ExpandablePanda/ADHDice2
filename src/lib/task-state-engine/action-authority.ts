@@ -24,6 +24,13 @@ const TASK_MANUAL_ACTION_LABELS: Readonly<Record<TaskManualAction, string>> = {
   complete: "Complete",
 };
 
+/** Map display statuses to the manual-action vocabulary without changing status semantics. */
+export function taskManualActionForStatus(status: string): TaskManualAction | null {
+  if (status === "done" || status === "did_my_best" || status === "missed" || status === "complete") return status;
+  if (status === "delayed") return "delay";
+  return null;
+}
+
 /** Map canonical manual occurrence commands to the policy vocabulary. */
 export function taskManualActionForCanonicalCommand(input: { type: string; outcome?: unknown }): TaskManualAction | null {
   if (input.type === "handled_outcome" || input.type === "set_outcome") {
@@ -91,6 +98,65 @@ export function resolveTaskManualActionAvailabilityForTask(input: TaskBehaviorPo
     policy: resolution.policy,
     available: isTaskManualActionAvailable(resolution.policy, input.action),
   };
+}
+
+/** Apply the resolved policy as an upper bound over already-contextual status choices. */
+export function filterTaskStatusesByAvailableActions<Status extends string>(
+  statuses: readonly Status[],
+  policy: Pick<TaskBehaviorPolicy, "availableActions"> | null | undefined,
+) {
+  return statuses.filter((status) => {
+    const action = taskManualActionForStatus(status);
+    return action === null || isTaskManualActionAvailable(policy, action);
+  });
+}
+
+/** Keep an existing status visible in a filtered control without making it a new choice. */
+export function preserveCurrentTaskStatusForPresentation<Status extends string>(
+  statuses: readonly Status[],
+  currentStatus: Status,
+) {
+  return statuses.includes(currentStatus) ? statuses : [currentStatus, ...statuses];
+}
+
+/** Resolve policy once for one Task/date, then filter its contextual status choices. */
+export function resolveTaskStatusOptionsForTask<Status extends string>(input: TaskBehaviorPolicyResolutionContext & {
+  customRulesetId?: string | null;
+  logicalDate: string;
+  policyLoading?: boolean;
+  statuses: readonly Status[];
+  taskId?: string;
+  taskType: Parameters<typeof resolveTaskBehaviorPolicyForTask>[0]["taskType"];
+}) {
+  if (input.policyLoading) {
+    return input.statuses.filter((status) => taskManualActionForStatus(status) === null);
+  }
+  const resolution = resolveTaskBehaviorPolicyForTask(input);
+  return filterTaskStatusesByAvailableActions(input.statuses, resolution.policy);
+}
+
+/** Intersect policy availability across Tasks for an existing batch status set. */
+export function filterTaskStatusesForTasksByAvailableActions<Status extends string>(input: TaskBehaviorPolicyResolutionContext & {
+  logicalDate: string;
+  policyLoading?: boolean;
+  statuses: readonly Status[];
+  tasks: ReadonlyArray<{
+    customRulesetId?: string | null;
+    taskId?: string;
+    taskType: Parameters<typeof resolveTaskBehaviorPolicyForTask>[0]["taskType"];
+  }>;
+}) {
+  if (input.policyLoading) {
+    return input.statuses.filter((status) => taskManualActionForStatus(status) === null);
+  }
+  const policies = input.tasks.map((task) => resolveTaskBehaviorPolicyForTask({
+    ...input,
+    ...task,
+  }).policy);
+  return input.statuses.filter((status) => {
+    const action = taskManualActionForStatus(status);
+    return action === null || policies.every((policy) => isTaskManualActionAvailable(policy, action));
+  });
 }
 
 const OCCURRENCE_SENSITIVE_TASK_UPDATE_FIELDS = [

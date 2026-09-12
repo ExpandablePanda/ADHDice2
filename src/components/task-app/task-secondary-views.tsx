@@ -6,6 +6,7 @@ import type { TaskDraft } from "./task-editor-model";
 import { renderTaskStatusCircle } from "./task-status-ui";
 import { formatActualSecondsLabel, formatRepeatSummary, formatTaskMetaLine } from "@/lib/task-formatting";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
+import { preserveCurrentTaskStatusForPresentation } from "@/lib/task-state-engine/action-authority";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { buildTaskPriorityUpdate, formatTaskPriorityLevel, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import { getNextPendingSubtask } from "@/lib/task-subtasks";
@@ -240,7 +241,7 @@ export function TaskLaneComponent({ count, currentStreakByTaskId, defaultExpande
   );
 }
 
-export function TaskCardGalleryComponent({ currentStreakByTaskId, focusedTaskIds, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; focusedTaskIds: string[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
+export function TaskCardGalleryComponent({ currentStreakByTaskId, focusedTaskIds, getTaskStatusOptions, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; focusedTaskIds: string[]; getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
   return (
     <section className="mt-7">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -265,14 +266,21 @@ export function TaskCardGalleryComponent({ currentStreakByTaskId, focusedTaskIds
               </TaskMetaChip>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              {getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }).map((status) => {
-                const isActive = task.status === status;
-                return (
-                  <button aria-label={`Set status to ${formatOptionLabel(status)}`} className={`h-7 w-7 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">
-                    <span className="flex h-full w-full items-center justify-center">{renderTaskStatusCircle(status, "sm")}</span>
-                  </button>
-                );
-              })}
+              {(() => {
+                const availableStatuses = getTaskStatusOptions?.(task, task.status);
+                const statusOptions = availableStatuses
+                  ? preserveCurrentTaskStatusForPresentation(availableStatuses, task.status)
+                  : getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status });
+                return statusOptions.map((status) => {
+                  const isActive = task.status === status;
+                  const presentationOnly = Boolean(availableStatuses && !availableStatuses.includes(status));
+                  return (
+                    <button aria-label={`${presentationOnly ? "Current status" : "Set status to"} ${formatOptionLabel(status)}`} className={`h-7 w-7 rounded-full border-2 transition ${presentationOnly ? "cursor-default opacity-45" : isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} disabled={presentationOnly} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">
+                      <span className="flex h-full w-full items-center justify-center">{renderTaskStatusCircle(status, "sm")}</span>
+                    </button>
+                  );
+                });
+              })()}
             </div>
             <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
             <div className="mt-5">
@@ -285,7 +293,7 @@ export function TaskCardGalleryComponent({ currentStreakByTaskId, focusedTaskIds
   );
 }
 
-export function TaskMatrixViewComponent({ currentStreakByTaskId, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
+export function TaskMatrixViewComponent({ currentStreakByTaskId, getTaskStatusOptions, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
   const cells = [
     { key: "urgent-high", title: "Urgent + Higher Energy", tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy !== "low") },
     { key: "urgent-low", title: "Urgent + Low Energy", tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy === "low") },
@@ -314,14 +322,21 @@ export function TaskMatrixViewComponent({ currentStreakByTaskId, onEditTask, onS
                   {task.one_step_at_a_time && getNextPendingSubtask(task.id, subtasksByTaskId) ? <p className="mt-1 text-xs font-semibold text-[#6f57f6] dark:text-[#cabfff]">Next: {getNextPendingSubtask(task.id, subtasksByTaskId)?.title}</p> : null}
                 </div>
                 <div className="flex items-center gap-2">
-                  {getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }).map((status) => {
-                    const isActive = task.status === status;
-                    return (
-                      <button aria-label={`Set status to ${formatOptionLabel(status)}`} className={`h-6 w-6 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">
-                        <span className="flex h-full w-full items-center justify-center">{renderTaskStatusCircle(status, "sm")}</span>
-                      </button>
-                    );
-                  })}
+                  {(() => {
+                    const availableStatuses = getTaskStatusOptions?.(task, task.status);
+                    const statusOptions = availableStatuses
+                      ? preserveCurrentTaskStatusForPresentation(availableStatuses, task.status)
+                      : getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status });
+                    return statusOptions.map((status) => {
+                      const isActive = task.status === status;
+                      const presentationOnly = Boolean(availableStatuses && !availableStatuses.includes(status));
+                      return (
+                        <button aria-label={`${presentationOnly ? "Current status" : "Set status to"} ${formatOptionLabel(status)}`} className={`h-6 w-6 rounded-full border-2 transition ${presentationOnly ? "cursor-default opacity-45" : isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} disabled={presentationOnly} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">
+                          <span className="flex h-full w-full items-center justify-center">{renderTaskStatusCircle(status, "sm")}</span>
+                        </button>
+                      );
+                    });
+                  })()}
                   <button className="ui-pill-button-strong-light" onClick={() => onEditTask(task)} type="button">Edit</button>
                 </div>
               </div>

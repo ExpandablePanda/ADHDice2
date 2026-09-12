@@ -70,6 +70,8 @@ import {
 } from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, taskTypeSelectionValue } from "@/lib/task-type";
+import { preserveCurrentTaskStatusForPresentation, resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask, taskManualActionForStatus } from "@/lib/task-state-engine/action-authority";
+import type { TaskBehaviorPolicyResolutionContext, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
 import { AdhdDropdownSelect } from "@/components/ui-system";
 import {
   TASK_TABLE_BODY_MUTED_VALUE_CLASS as BODY_MUTED_VALUE_CLASS,
@@ -880,6 +882,7 @@ function InlineSubtaskEditor({
   onCommitTitle,
   onDelete,
   onDraftChange,
+  getAvailableStatuses,
   onRequestDelay,
   onSetStatus,
   subtasks,
@@ -892,6 +895,7 @@ function InlineSubtaskEditor({
   onCommitTitle?: (subtaskId: string) => void;
   onDelete?: (subtaskId: string) => void;
   onDraftChange: (subtaskId: string, value: string) => void;
+  getAvailableStatuses?: (subtask: PrototypeTaskSubtask) => readonly TaskStatus[];
   onRequestDelay?: (subtaskId: string) => void;
   onSetStatus?: (subtaskId: string, nextStatus: TaskStatus) => void;
   subtasks: PrototypeTaskSubtask[];
@@ -968,10 +972,11 @@ function InlineSubtaskEditor({
                   onSetStatus?.(subtask.id, status);
                   setOpenStatusPickerSubtaskId(null);
                 }}
-                options={TASK_SUBTASK_STATUS_OPTIONS.filter((option) => (
-                  option.value !== "delayed"
-                  || canTaskDelay({ dueOn: subtask.dueOn, status: subtask.status })
-                ))}
+                options={(getAvailableStatuses?.(subtask) ?? TASK_SUBTASK_STATUS_OPTIONS.filter((option) => option.value !== "delayed" || canTaskDelay({ dueOn: subtask.dueOn, status: subtask.status })).map((option) => option.value)).map((status) => ({
+                  label: formatTaskStatusLabel(status),
+                  value: status,
+                }))}
+                preserveCurrentStatus
                 statusLabelPrefix="Set step status to"
               />
             ) : null}
@@ -987,6 +992,7 @@ function InlineSubtaskEditor({
                 onCommitTitle={onCommitTitle}
                 onDelete={onDelete}
                 onDraftChange={onDraftChange}
+                getAvailableStatuses={getAvailableStatuses}
                 onRequestDelay={onRequestDelay}
                 onSetStatus={onSetStatus}
                 subtasks={subtask.children}
@@ -1252,6 +1258,11 @@ type TaskManagementTableV2Props = {
   onTaskTagsChange?: (taskId: string, tags: string[]) => void;
   onTaskTypeChange?: (taskId: string, taskType: TaskType, customRulesetId?: string | null) => void;
   taskTypeBehaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
+  namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
+  behaviorSelectionsByTaskId?: TaskBehaviorPolicyResolutionContext["behaviorSelectionsByTaskId"];
+  behaviorPolicyLogicalDate?: string;
+  behaviorPolicyLoading?: boolean;
   customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
   onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
@@ -2728,6 +2739,11 @@ export function TaskManagementTableV2({
   onTaskTagsChange,
   onTaskTypeChange,
   taskTypeBehaviorProfiles,
+  behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
+  behaviorSelectionsByTaskId,
+  behaviorPolicyLogicalDate = "",
+  behaviorPolicyLoading = false,
   customBehaviorRulesets = [],
   customBehaviorRulesetProfiles,
   onCreateCustomRuleset,
@@ -2798,6 +2814,43 @@ export function TaskManagementTableV2({
   const titleDraftsRef = useRef<Record<string, string>>({});
   const pendingEditorChildTitleRenameRef = useRef<{ taskId: string; title: string } | null>(null);
   const [subtaskTitleDrafts, setSubtaskTitleDrafts] = useState<Record<string, string>>({});
+
+  function getPolicyFilteredStatuses(input: {
+    dueOn: string | null;
+    repeatFrequency: TaskRepeat;
+    status: TaskDisplayStatus;
+    taskId?: string;
+    taskType?: TaskType;
+    customRulesetId?: string | null;
+  }) {
+    return resolveTaskStatusOptionsForTask({
+      behaviorPolicyRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: input.customRulesetId,
+      logicalDate: behaviorPolicyLogicalDate,
+      namedCustomRulesetBehaviorPolicyRevisions,
+      policyLoading: behaviorPolicyLoading,
+      statuses: getSelectableTaskDisplayStatusesForTask(input),
+      taskId: input.taskId,
+      taskType: input.taskType ?? "task",
+    });
+  }
+
+  function isManualActionAllowed(task: Pick<PrototypeTaskRow, "id" | "taskType" | "customRulesetId">, action: TaskManualAction) {
+    if (behaviorPolicyLoading || !behaviorPolicyLogicalDate) return false;
+    return resolveTaskManualActionAvailabilityForTask({
+      action,
+      behaviorPolicyRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: task.customRulesetId,
+      logicalDate: behaviorPolicyLogicalDate,
+      namedCustomRulesetBehaviorPolicyRevisions,
+      taskId: task.id,
+      taskType: task.taskType ?? "task",
+    }).available;
+  }
   const [linkDrafts, setLinkDrafts] = useState<Record<string, { label: string; url: string }>>({});
   const [notesDrafts, setNotesDrafts] = useState<Record<string, string>>({});
   const [linkedNoteDrafts, setLinkedNoteDrafts] = useState<Record<string, string[]>>({});
@@ -4821,7 +4874,7 @@ export function TaskManagementTableV2({
   }
 
   function canDelayTask(task: PrototypeTaskRow) {
-    return canTaskDelay({ dueOn: task.dueOn, status: task.status });
+    return canTaskDelay({ dueOn: task.dueOn, status: task.status }) && isManualActionAllowed(task, "delay");
   }
 
   function clearStatusRailLongPress() {
@@ -4866,6 +4919,13 @@ export function TaskManagementTableV2({
     // completion, recurrence, rewards, and trash/archive side effects still run.
     queueTableMutationScrollTopHold(taskId);
     const targetTaskIds = resolveTableActionTargetTaskIds(taskId);
+    const manualAction = taskManualActionForStatus(status);
+    if (manualAction && !targetTaskIds.every((targetTaskId) => {
+      const targetTask = getTaskById(targetTaskId);
+      return targetTask ? isManualActionAllowed(targetTask, manualAction) : false;
+    })) {
+      return;
+    }
     for (const targetTaskId of targetTaskIds) {
       onTaskStatusChange?.(targetTaskId, status, undefined, { suppressSharedScrollAnchor: true });
     }
@@ -5729,9 +5789,12 @@ export function TaskManagementTableV2({
     }
 
     if (overlayMode === "status") {
-      return getSelectableTaskDisplayStatusesForTask({ dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status }).map((status, optionIndex) => (
+      const availableStatuses = getPolicyFilteredStatuses({ customRulesetId: task.customRulesetId, dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status, taskId: task.id, taskType: task.taskType });
+      const statusOptions = preserveCurrentTaskStatusForPresentation(availableStatuses, task.status);
+      return statusOptions.map((status, optionIndex) => (
         <button
           className={inlineAccordionButtonClass()}
+          disabled={!availableStatuses.includes(status)}
           key={`${status || "status-option"}-${optionIndex}`}
           onClick={() => {
             if (status === "delayed") {
@@ -7063,10 +7126,11 @@ export function TaskManagementTableV2({
                     }
                   setTaskDisplayStatus(task.id, status);
                   }}
-                  options={getSelectableTaskDisplayStatusesForTask({ dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status }).map((status) => ({
+                  options={getPolicyFilteredStatuses({ customRulesetId: task.customRulesetId, dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status, taskId: task.id, taskType: task.taskType }).map((status) => ({
                     label: formatTaskStatusLabel(status),
                     value: status,
                   }))}
+                  preserveCurrentStatus
                   statusLabelPrefix="Set task status to"
                   wrap={false}
                 />
@@ -7140,10 +7204,11 @@ export function TaskManagementTableV2({
                   }
                   setTaskDisplayStatus(task.id, status);
                 }}
-                options={getSelectableTaskDisplayStatusesForTask({ dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status }).map((status) => ({
+                options={getPolicyFilteredStatuses({ customRulesetId: task.customRulesetId, dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status, taskId: task.id, taskType: task.taskType }).map((status) => ({
                   label: formatTaskStatusLabel(status),
                   value: status,
                 }))}
+                preserveCurrentStatus
                 statusLabelPrefix="Set task status to"
                 wrap={false}
               />
@@ -7990,7 +8055,7 @@ export function TaskManagementTableV2({
                     onPointerDown={stopRowActionPointerEvent}
                   >
                     <div className="flex flex-wrap gap-1.5" data-step-row-status-icons={item.id}>
-                      {getSelectableTaskDisplayStatusesForTask({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status }).map((status) => (
+                      {getPolicyFilteredStatuses({ customRulesetId: item.customRulesetId, dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status, taskId: item.id, taskType: item.taskType }).map((status) => (
                         <button
                           aria-label={`Set step status to ${formatTaskStatusLabel(status)}`}
                           className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${item.status === status ? "" : "opacity-78 hover:opacity-100"}`}
@@ -8149,11 +8214,12 @@ export function TaskManagementTableV2({
                   }
                   setTaskDisplayStatus(item.id, status);
                 }}
-                options={getSelectableTaskDisplayStatusesForTask({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status }).map((status) => ({
-                  label: formatTaskStatusLabel(status),
-                  value: status,
-                }))}
-                statusLabelPrefix="Set step status to"
+                  options={getPolicyFilteredStatuses({ customRulesetId: item.customRulesetId, dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status, taskId: item.id, taskType: item.taskType }).map((status) => ({
+                    label: formatTaskStatusLabel(status),
+                    value: status,
+                  }))}
+                  preserveCurrentStatus
+                  statusLabelPrefix="Set step status to"
                 wrap={false}
               />
             </div>
@@ -9966,10 +10032,12 @@ export function TaskManagementTableV2({
                     </div>
                   );
                 } else if (metadataPanelId === "status") {
+                  const availableStatuses = getPolicyFilteredStatuses({ customRulesetId: metadataTask.customRulesetId, dueOn: metadataTask.dueOn, repeatFrequency: metadataTask.repeat, status: metadataTask.status, taskId: metadataTask.id, taskType: metadataTask.taskType });
+                  const statusOptions = preserveCurrentTaskStatusForPresentation(availableStatuses, metadataTask.status);
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
-                      {getSelectableTaskDisplayStatusesForTask({ dueOn: metadataTask.dueOn, repeatFrequency: metadataTask.repeat, status: metadataTask.status }).map((status, optionIndex) => (
-                        <TaskTableChipButton className="gap-1.5" key={`${status || "status-option"}-${optionIndex}`} onClick={() => {
+                      {statusOptions.map((status, optionIndex) => (
+                        <TaskTableChipButton className="gap-1.5" disabled={!availableStatuses.includes(status)} key={`${status || "status-option"}-${optionIndex}`} onClick={() => {
                           if (status === "delayed") {
                             if (canDelayTask(metadataTask)) {
                               setActiveMetadataPanelByTaskId((current) => ({ ...current, [metadataTask.id]: "delay" }));
@@ -10132,6 +10200,7 @@ export function TaskManagementTableV2({
                                 [subtaskId]: value,
                               }));
                             }}
+                            getAvailableStatuses={(subtask) => getPolicyFilteredStatuses({ customRulesetId: subtask.customRulesetId, dueOn: subtask.dueOn, repeatFrequency: "none", status: subtask.status, taskId: subtask.id, taskType: subtask.taskType }).filter((status): status is TaskStatus => status !== "unscheduled")}
                             onRequestDelay={(subtaskId) => openTaskDelay(subtaskId)}
                             onSetStatus={(subtaskId, nextStatus) => onTaskSubtaskStatusChange?.(subtaskId, nextStatus)}
                             subtasks={selectedTaskVisibleSubtasks}
@@ -10679,9 +10748,12 @@ export function TaskManagementTableV2({
                     ) : null}
                     {overlayMode !== "energy" ? (
                     <div className={`${overlayMode === "status" ? "" : "mt-4"} flex flex-wrap gap-2`}>
-                      {getSelectableTaskDisplayStatusesForTask({ dueOn: selectedTask.dueOn, repeatFrequency: selectedTask.repeat, status: selectedTask.status }).map((status, optionIndex) => (
+                      {(() => {
+                        const availableStatuses = getPolicyFilteredStatuses({ customRulesetId: selectedTask.customRulesetId, dueOn: selectedTask.dueOn, repeatFrequency: selectedTask.repeat, status: selectedTask.status, taskId: selectedTask.id, taskType: selectedTask.taskType });
+                        return preserveCurrentTaskStatusForPresentation(availableStatuses, selectedTask.status).map((status, optionIndex) => (
                         <TaskTableChipButton
                           className="gap-1.5"
+                          disabled={!availableStatuses.includes(status)}
                           key={`${status || "status-option"}-${optionIndex}`}
                           onClick={() => {
                             if (status === "delayed") {
@@ -10704,7 +10776,8 @@ export function TaskManagementTableV2({
                           {renderTaskStatusCircle(status, "sm", { inverted: selectedTask.status === status })}
                           <span>{formatTaskStatusLabel(status)}</span>
                         </TaskTableChipButton>
-                      ))}
+                        ));
+                      })()}
                     </div>
                     ) : null}
                   </section>

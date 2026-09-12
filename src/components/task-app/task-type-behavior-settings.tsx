@@ -1,24 +1,27 @@
 "use client";
 
 import { Check, Pencil, RotateCcw, Trash2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownSelect } from "@/components/ui-system/adhd-dropdown-select";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import type { CustomBehaviorRuleset } from "@/lib/database.types";
 import type { CustomBehaviorRulesetDeleteActionResult } from "@/lib/custom-behavior-rulesets";
-import type {
-  MissedStreakUnhandledBehavior,
-  RewardBehavior,
-  TaskBehaviorPolicy,
-  UnresolvedOccurrenceBehavior,
+import {
+  STANDARD_TASK_AVAILABLE_ACTIONS,
+  normalizeTaskManualActions,
+  type MissedStreakUnhandledBehavior,
+  type RewardBehavior,
+  type TaskBehaviorPolicy,
+  type TaskManualAction,
+  type UnresolvedOccurrenceBehavior,
 } from "@/lib/task-state-engine/behavior-policy";
 import { taskTypeBehaviorTabDescription, type TaskTypeBehaviorTab } from "@/lib/task-type-behavior-settings";
 import { buildTaskTypeSelectionOptions, normalizeTaskType, type TaskType } from "@/lib/task-type";
 import { TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
 
 export type BehaviorTab = TaskTypeBehaviorTab;
-type ConfigurableField = "missedStreakOnUnhandled" | "rewards" | "unresolvedOccurrence";
+type ConfigurableField = "availableActions" | "missedStreakOnUnhandled" | "rewards" | "unresolvedOccurrence";
 
 const SECTION_CLASS = "rounded-[1rem] border border-[#eee9f8] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.035]";
 
@@ -88,6 +91,8 @@ export function TaskTypeBehaviorSettings({
   const [isRenaming, setIsRenaming] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isResolvingDelete, setIsResolvingDelete] = useState(false);
+  const [isSavingAvailableActions, setIsSavingAvailableActions] = useState(false);
+  const isSavingAvailableActionsRef = useRef(false);
   const [blockedDelete, setBlockedDelete] = useState<{ count: number; name: string; rulesetId: string } | null>(null);
   const [rulesetNameDraft, setRulesetNameDraft] = useState(() => customBehaviorRulesets.find((ruleset) => ruleset.id === initialCustomRulesetId && ruleset.deleted_at == null)?.name ?? "");
   const selectionOptions = buildTaskTypeSelectionOptions(customBehaviorRulesets);
@@ -105,6 +110,7 @@ export function TaskTypeBehaviorSettings({
   }, [selectedRulesetId, selectedRulesetName]);
   const activeProfile: Pick<TaskBehaviorPolicy, "id" | ConfigurableField> = (selectedRuleset ? customBehaviorRulesetProfiles[selectedRuleset.id] : profiles[activeTab]) ?? {
     id: `${activeTab}-standard`,
+    availableActions: STANDARD_TASK_AVAILABLE_ACTIONS,
     unresolvedOccurrence: "missed" as const,
     missedStreakOnUnhandled: "increment" as const,
     rewards: "enabled" as const,
@@ -194,7 +200,8 @@ export function TaskTypeBehaviorSettings({
     setBlockedDelete(null);
   }
 
-  function updateActiveProfile(field: ConfigurableField, value: TaskBehaviorPolicy[ConfigurableField]) {
+  function updateActiveProfile(field: Exclude<ConfigurableField, "availableActions">, value: TaskBehaviorPolicy[typeof field]) {
+    if (isSavingAvailableActions || isSavingAvailableActionsRef.current) return;
     if (selectedRuleset) {
       void onCustomRulesetChange?.(selectedRuleset.id, field, value);
       return;
@@ -202,7 +209,29 @@ export function TaskTypeBehaviorSettings({
     void onChange(activeTab, field, value);
   }
 
+  async function toggleAvailableAction(action: TaskManualAction) {
+    if (isSavingAvailableActions || isSavingAvailableActionsRef.current) return;
+    isSavingAvailableActionsRef.current = true;
+    const currentActions = normalizeTaskManualActions(activeProfile.availableActions);
+    const nextActions = normalizeTaskManualActions(
+      currentActions.includes(action)
+        ? currentActions.filter((current) => current !== action)
+        : [...currentActions, action],
+    );
+    setIsSavingAvailableActions(true);
+    try {
+      const saved = selectedRuleset
+        ? await onCustomRulesetChange?.(selectedRuleset.id, "availableActions", nextActions)
+        : await onChange(activeTab, "availableActions", nextActions);
+      if (saved === false) return;
+    } finally {
+      isSavingAvailableActionsRef.current = false;
+      setIsSavingAvailableActions(false);
+    }
+  }
+
   async function resetDefaults() {
+    if (isSavingAvailableActions || isSavingAvailableActionsRef.current) return;
     const label = activeTab === "custom" ? "Custom Default" : "Task";
     if (!window.confirm(`Reset ${label} behavior defaults? This changes only the ${label} profile and leaves Task History unchanged.`)) return;
     setResetting(true);
@@ -223,7 +252,7 @@ export function TaskTypeBehaviorSettings({
           </div>
           <div className="flex flex-wrap justify-end gap-1.5">
           {activeTab === "task" || (activeTab === "custom" && !selectedRuleset) ? (
-            <AdhdChip className="gap-1.5" disabled={resetting} icon={<RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void resetDefaults(); }} tone="default">
+            <AdhdChip className="gap-1.5" disabled={resetting || isSavingAvailableActions} icon={<RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void resetDefaults(); }} tone="default">
               {resetting ? "Resetting…" : `Reset ${activeTab === "custom" ? "Custom Default" : "Task"} Defaults`}
             </AdhdChip>
           ) : null}
@@ -261,7 +290,7 @@ export function TaskTypeBehaviorSettings({
       ) : null}
       <div className="mb-4 flex flex-wrap gap-1.5" role="tablist" aria-label="TaskType behavior profiles">
         {selectionOptions.map((option) => (
-          <AdhdChip key={option.value} onClick={() => selectProfile(option.value)} selected={activeSelection === option.value} type="button" role="tab" aria-selected={activeSelection === option.value}>
+          <AdhdChip disabled={isSavingAvailableActions} key={option.value} onClick={() => selectProfile(option.value)} selected={activeSelection === option.value} type="button" role="tab" aria-selected={activeSelection === option.value}>
             {option.label}
           </AdhdChip>
         ))}
@@ -311,6 +340,30 @@ export function TaskTypeBehaviorSettings({
         </div>
       ) : (
         <div className="space-y-3">
+          <section className={SECTION_CLASS}>
+            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Available Actions</h4>
+            <p className="mt-2 text-xs leading-5 text-[#7d7598] dark:text-white/50">Choose which manual actions are available for Tasks using this profile. Task schedule and state can further limit which actions appear.</p>
+            <div aria-label="Available Actions" className="mt-3 flex flex-wrap gap-1.5" role="group">
+              {([
+                ["done", "Done"],
+                ["did_my_best", "Did My Best"],
+                ["missed", "Missed"],
+                ["delay", "Delay"],
+                ["complete", "Complete"],
+              ] as const).map(([action, label]) => (
+                <AdhdChip
+                  key={action}
+                  disabled={isSavingAvailableActions}
+                  onClick={() => { void toggleAvailableAction(action); }}
+                  selected={activeProfile.availableActions.includes(action)}
+                  type="button"
+                >
+                  {label}
+                </AdhdChip>
+              ))}
+            </div>
+          </section>
+
           <section className={SECTION_CLASS}>
             <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Scheduled occurrences</h4>
             <Selector<UnresolvedOccurrenceBehavior>

@@ -604,6 +604,18 @@ test("settings UI model exposes configurable Task and Custom tabs with inactive 
   assert.match(settingsSource, /updateActiveProfile\("unresolvedOccurrence"/);
   assert.match(settingsSource, /Reset \$\{activeTab === "custom" \? "Custom Default" : "Task"\} Defaults/);
   assert.match(settingsSource, /leaves Task History unchanged/);
+  assert.match(settingsSource, /Available Actions/);
+  assert.match(settingsSource, /Done/);
+  assert.match(settingsSource, /Did My Best/);
+  assert.match(settingsSource, /Missed/);
+  assert.match(settingsSource, /Delay/);
+  assert.match(settingsSource, /Complete/);
+  assert.match(settingsSource, /isSavingAvailableActions/);
+  assert.match(settingsSource, /disabled=\{resetting \|\| isSavingAvailableActions\}/);
+  assert.match(settingsSource, /if \(isSavingAvailableActions \|\| isSavingAvailableActionsRef\.current\) return;/);
+  assert.match(settingsSource, /onChange\(activeTab, "availableActions", nextActions\)/);
+  assert.match(settingsSource, /onCustomRulesetChange\?\.\(selectedRuleset\.id, "availableActions", nextActions\)/);
+  assert.match(behaviorProfilesHookSource, /replaceCurrentRevision\(taskType, STANDARD_TASK_BEHAVIOR_POLICY\)/);
 });
 
 test("non-default policy fields affect only the shared engine decisions", () => {

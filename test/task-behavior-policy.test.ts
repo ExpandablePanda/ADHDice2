@@ -10,16 +10,20 @@ import {
 } from "../src/lib/task-state-engine/direct-input.ts";
 import {
   evaluateTaskState,
+  filterTaskStatusesByAvailableActions,
+  filterTaskStatusesForTasksByAvailableActions,
   getAvailableTaskManualActions,
   isTaskManualActionAvailable,
   normalizeTaskBehaviorPolicyRevisions,
   normalizeTaskBehaviorProfile,
   resolveTaskManualActionAvailability,
   resolveTaskManualActionAvailabilityForTask,
+  resolveTaskStatusOptionsForTask,
   resolveTaskBehaviorPolicy,
   STANDARD_TASK_BEHAVIOR_POLICY,
   STANDARD_TASK_AVAILABLE_ACTIONS,
   taskManualActionForCanonicalCommand,
+  taskManualActionForStatus,
   type TaskBehaviorPolicy,
   type TaskStateEngineInput,
 } from "../src/lib/task-state-engine/index.ts";
@@ -119,6 +123,53 @@ test("manual action mapping leaves workflow, lifecycle, Calendar, and historical
   for (const type of ["start_in_progress", "clear_in_progress", "archive_task", "trash_task", "restore_task", "calendar_override", "clear_outcome", "reconcile_rollover"]) {
     assert.equal(taskManualActionForCanonicalCommand({ type }), null, type);
   }
+});
+
+test("display statuses map to manual actions and policy filtering preserves contextual non-manual statuses", () => {
+  assert.equal(taskManualActionForStatus("done"), "done");
+  assert.equal(taskManualActionForStatus("did_my_best"), "did_my_best");
+  assert.equal(taskManualActionForStatus("missed"), "missed");
+  assert.equal(taskManualActionForStatus("delayed"), "delay");
+  assert.equal(taskManualActionForStatus("complete"), "complete");
+  for (const status of ["pending", "in_progress", "upcoming", "not_due", "archived", "trashed"]) {
+    assert.equal(taskManualActionForStatus(status), null, status);
+  }
+
+  const contextualStatuses = ["pending", "done", "did_my_best", "delayed", "missed", "complete", "archived"] as const;
+  assert.deepEqual(
+    filterTaskStatusesByAvailableActions(contextualStatuses, { availableActions: ["done", "delay"] }),
+    ["pending", "done", "delayed", "archived"],
+  );
+  assert.deepEqual(
+    filterTaskStatusesByAvailableActions(contextualStatuses, { availableActions: [] }),
+    ["pending", "archived"],
+  );
+});
+
+test("task status resolver intersects contextual eligibility with effective policy for one Task and batches", () => {
+  const taskPolicy = normalizeTaskBehaviorProfile({ ...STANDARD_TASK_BEHAVIOR_POLICY, availableActions: ["done", "delay"] });
+  const restrictedPolicy = normalizeTaskBehaviorProfile({ ...STANDARD_TASK_BEHAVIOR_POLICY, availableActions: ["done"] });
+  const context = {
+    behaviorProfiles: { task: taskPolicy, custom: restrictedPolicy },
+    behaviorPolicyRevisions: { task: [{ ...taskPolicy, effectiveFromLogicalDate: "2026-09-01" }] },
+  };
+  const statuses = ["pending", "done", "missed", "delayed", "complete"] as const;
+  assert.deepEqual(resolveTaskStatusOptionsForTask({
+    ...context,
+    logicalDate: "2026-09-12",
+    statuses,
+    taskId: "task-1",
+    taskType: "task",
+  }), ["pending", "done", "delayed"]);
+  assert.deepEqual(filterTaskStatusesForTasksByAvailableActions({
+    ...context,
+    logicalDate: "2026-09-12",
+    statuses,
+    tasks: [
+      { taskId: "task-1", taskType: "task" },
+      { taskId: "task-2", taskType: "custom" },
+    ],
+  }), ["pending", "done"]);
 });
 
 test("available actions resolve by effective logical date and complete historical Task behavior selections", () => {

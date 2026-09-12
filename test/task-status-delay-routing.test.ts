@@ -50,3 +50,18 @@ test("normal status-circle actions still use their existing status or schedule h
   assert.match(listSource, /onSetStatus\?\.\(item\.id, status, childTask, \[item\.id\]\)/);
   assert.match(listSource, /tableProps\.onSetStatus\?\.\(task\.id, status, task, queueMeasuredListStatusScrollAnchor\(task\.id\)\)/);
 });
+
+test("Table and List status rails share the policy-aware action resolver", () => {
+  assert.match(tableSource, /resolveTaskStatusOptionsForTask/);
+  assert.match(tableSource, /getPolicyFilteredStatuses/);
+  assert.match(tableSource, /isManualActionAllowed/);
+  assert.match(listSource, /resolveTaskStatusOptionsForTask/);
+  assert.match(listSource, /getPolicyFilteredTaskStatuses/);
+  assert.match(listSource, /isListManualActionAllowed/);
+});
+
+test("TaskApp guards direct subtask manual status commands with the same policy authority", () => {
+  assert.match(taskAppSource, /updateTaskSubtaskStatusWithPolicy/);
+  assert.match(taskAppSource, /taskManualActionForStatus\(status\)/);
+  assert.match(taskAppSource, /resolveTaskManualActionAvailabilityForTask/);
+});
