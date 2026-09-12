@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.41`.
+- Current working app version: `7.13.42`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -26,6 +26,16 @@ fall through to In Progress or Coming Up as applicable. Task facts, History,
 status, due dates, recurrence, projections, streaks, rewards, and Pursuit
 behavior remain unchanged. The forward SQL migration is source-only; no SQL or
 Edge deployment was performed, and browser QA remains unverified.
+
+## 2026-09-12 7.13.42 Current-Policy Task Rollover Correction
+
+Automatic rollover now resolves still-unresolved historical scheduled
+occurrences with the Task's current resolved behavior policy. A current Blank
+policy leaves that backlog without automatic Missed History or missed-streak
+materialization; a current Missed policy retains intentional automatic
+backfill. Existing History facts and effective-dated historical policy
+resolution remain unchanged. No SQL or Edge deployment was performed, and
+browser QA remains unverified.
 
 ## 2026-09-12 7.13.40 Available Actions UI Enforcement
 

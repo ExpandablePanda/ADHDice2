@@ -18,9 +18,7 @@ import {
 } from "./recurrence.ts";
 import {
   resolveTaskBehaviorPolicy,
-  resolveTaskBehaviorPolicyForLogicalDate,
   type TaskBehaviorPolicy,
-  type TaskBehaviorPolicyRevision,
 } from "./behavior-policy.ts";
 import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
 import type {
@@ -240,13 +238,12 @@ function laterDate(left: string, right: string) {
 
 function automaticMissedRows(input: {
   behaviorPolicy: TaskBehaviorPolicy;
-  behaviorPolicyRevisions?: TaskBehaviorPolicyRevision[];
   task: TaskStateEngineInput["task"];
   history: readonly TaskStateHistoryRow[];
   today: string;
   occurredAt: string;
 }): TaskStateHistoryRow[] {
-  const { behaviorPolicy, behaviorPolicyRevisions, task, history, today, occurredAt } = input;
+  const { behaviorPolicy, task, history, today, occurredAt } = input;
   const scheduleStart = task.dueOn
     ?? (task.historicalScheduleAnchorProven ? task.historicalScheduleAnchor ?? null : null);
   if (task.lifecycle !== "active" || !scheduleStart
@@ -272,28 +269,29 @@ function automaticMissedRows(input: {
   }
 
   const existingDates = new Set(history.map((row) => row.logicalDate));
-  const policyForDate = (logicalDate: string) => behaviorPolicyRevisions?.length
-    ? resolveTaskBehaviorPolicyForLogicalDate({ revisions: behaviorPolicyRevisions, logicalDate })
-    : behaviorPolicy;
-  return dueDates.filter((date) => !existingDates.has(date)).filter((date) => (
-    policyForDate(date).unresolvedOccurrence === "missed"
-  )).map((logicalDate) => {
-    const independent = task.recurrence.kind !== "rolling" || task.recurrence.intervalDays === 1;
-    const occurrenceDueOn = independent ? logicalDate : scheduleStart;
-    return {
-      id: historyIdentity(task.id, logicalDate, "missed", "rollover"),
-      taskId: task.id,
-      logicalDate,
-      outcome: "missed",
-      provenance: "rollover",
-      occurredAt,
-      occurrenceIdentity: occurrenceIdentity(task.id, occurrenceDueOn),
-      occurrenceDueOn,
-      countedAsDueOccurrence: true,
-      wasCompleted: false,
-      eventType: "status",
-    };
-  });
+  // Rollover resolves open obligations under the Task's current policy. The
+  // effective-dated revision timeline remains available to the replay
+  // timeline below for existing facts and historical presentation.
+  if (behaviorPolicy.unresolvedOccurrence !== "missed") return [];
+  return dueDates
+    .filter((date) => !existingDates.has(date))
+    .map((logicalDate) => {
+      const independent = task.recurrence.kind !== "rolling" || task.recurrence.intervalDays === 1;
+      const occurrenceDueOn = independent ? logicalDate : scheduleStart;
+      return {
+        id: historyIdentity(task.id, logicalDate, "missed", "rollover"),
+        taskId: task.id,
+        logicalDate,
+        outcome: "missed",
+        provenance: "rollover",
+        occurredAt,
+        occurrenceIdentity: occurrenceIdentity(task.id, occurrenceDueOn),
+        occurrenceDueOn,
+        countedAsDueOccurrence: true,
+        wasCompleted: false,
+        eventType: "status",
+      };
+    });
 }
 
 export function evaluateTaskState(input: TaskStateEngineInput) {
@@ -467,7 +465,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   }
 
   if (input.action?.type === "reconcile_rollover" && !staleInProgressForRollover) {
-    for (const row of automaticMissedRows({ behaviorPolicy, behaviorPolicyRevisions: input.behaviorPolicyRevisions, task, history: rows, today, occurredAt: nowIso })) {
+    for (const row of automaticMissedRows({ behaviorPolicy, task, history: rows, today, occurredAt: nowIso })) {
       rows.push(row);
       byDate.set(row.logicalDate, row);
       recurrenceByDate.set(row.logicalDate, row);
