@@ -60,11 +60,16 @@ function dependenciesFor(options: {
   invoke: (input: { intent: TaskStateCommandIntent; deferAchievements?: boolean }) => Promise<{ data: unknown; error: null | { code?: string; message?: string } }>;
   finalize?: (input: { operationId: string }) => Promise<{ data: unknown; error: null | { code?: string; message?: string } }>;
   buildEngineInput?: unknown;
+  loadCanonicalState?: unknown;
+  loadBehaviorProfiles?: unknown;
+  loadCustomRulesets?: unknown;
 }) {
   let revision = batchIntent.expected_revision;
   return {
     loadReplayOperation: async () => ({ data: null, error: null }),
-    loadCanonicalState: async () => ({ data: readModel(revision), error: null }),
+    loadCanonicalState: (options.loadCanonicalState ?? (async () => ({ data: readModel(revision), error: null }))) as never,
+    loadBehaviorProfiles: (options.loadBehaviorProfiles ?? (async () => ({ data: {}, revisions: {}, error: null }))) as never,
+    loadCustomRulesets: (options.loadCustomRulesets ?? (async () => ({ data: [], revisions: {}, behaviorSelectionsByTaskId: {}, error: null, behaviorSelectionError: null }))) as never,
     buildEngineInput: (options.buildEngineInput ?? (() => ({}))) as never,
     buildCommand: ((input: { intent: TaskStateCommandIntent }) => ({
       commandId: input.intent.replay_identity,
@@ -187,6 +192,66 @@ test("batch action-availability preflight rejects before any child commits when 
   assert.equal(childCalls, 0);
   assert.equal(finalizerCalls, 0);
   assert.equal(body.final_committed_revision, batchIntent.expected_revision);
+});
+
+test("batch canonical-state preflight failure rejects before child mutation", async () => {
+  let childCalls = 0;
+  let finalizerCalls = 0;
+  const result = await executeHistoryOutcomeBatch({
+    userId,
+    intent: batchIntent,
+    adminClient: {} as TrustedTaskStateCommandClient,
+    dependencies: dependenciesFor({
+      loadCanonicalState: async () => { throw new Error("canonical read failed"); },
+      invoke: async () => {
+        childCalls += 1;
+        return { data: null, error: null };
+      },
+      finalize: async () => {
+        finalizerCalls += 1;
+        return { data: { status: "completed" }, error: null };
+      },
+    }),
+  });
+  const body = result.body as Record<string, unknown>;
+  assert.equal(result.status, 503);
+  assert.equal(body.state, "partial");
+  assert.deepEqual(body.completed_entries, []);
+  assert.equal((body.error as Record<string, unknown>).code, "canonical_state_unavailable");
+  assert.equal(childCalls, 0);
+  assert.equal(finalizerCalls, 0);
+  assert.equal(body.final_committed_revision, batchIntent.expected_revision);
+  assert.equal((body.child_results as Array<Record<string, unknown>>).some((child) => child.state === "committed"), false);
+});
+
+test("batch policy-authority preflight failure rejects before child mutation", async () => {
+  let childCalls = 0;
+  let finalizerCalls = 0;
+  const result = await executeHistoryOutcomeBatch({
+    userId,
+    intent: batchIntent,
+    adminClient: {} as TrustedTaskStateCommandClient,
+    dependencies: dependenciesFor({
+      loadBehaviorProfiles: async () => { throw new Error("permission denied"); },
+      invoke: async () => {
+        childCalls += 1;
+        return { data: null, error: null };
+      },
+      finalize: async () => {
+        finalizerCalls += 1;
+        return { data: { status: "completed" }, error: null };
+      },
+    }),
+  });
+  const body = result.body as Record<string, unknown>;
+  assert.equal(result.status, 503);
+  assert.equal(body.state, "partial");
+  assert.deepEqual(body.completed_entries, []);
+  assert.equal((body.error as Record<string, unknown>).code, "behavior_policy_unavailable");
+  assert.equal(childCalls, 0);
+  assert.equal(finalizerCalls, 0);
+  assert.equal(body.final_committed_revision, batchIntent.expected_revision);
+  assert.equal((body.child_results as Array<Record<string, unknown>>).some((child) => child.state === "committed"), false);
 });
 
 test("stale child stops after a committed prefix and finalizes Achievement before returning", async () => {

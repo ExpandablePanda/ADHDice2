@@ -38,6 +38,22 @@ export function isMissingTaskTypeBehaviorProfilesTableError(error: { code?: stri
     || /adhdice_task_type_behavior_profiles|relation .* does not exist|column .*available_actions.* does not exist/i.test(message);
 }
 
+/**
+ * Trusted orchestration compatibility is narrower than the browser loader's
+ * legacy error translation. Only the additive profile table/column absence
+ * may preserve the pre-7.13.38 Standard fallback.
+ */
+export function isMissingTaskTypeBehaviorProfilesAdditiveSchemaError(error: unknown) {
+  const candidate = error && typeof error === "object" ? error as { code?: unknown; message?: unknown } : {};
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  const message = typeof candidate.message === "string" ? candidate.message : "";
+  const missingRelation = /relation .* does not exist|could not find the table .* in the schema cache/i.test(message);
+  const missingAvailableActionsColumn = /available_actions.*(?:does not exist|not found)|could not find the ['"]available_actions['"] column/i.test(message);
+  return (code === "42P01" && (!message || missingRelation))
+    || missingAvailableActionsColumn
+    || missingRelation;
+}
+
 export function taskTypeBehaviorProfileUpsertPayload(userId: string, taskType: TaskType, policy: TaskBehaviorPolicy, effectiveFromLogicalDate: string) {
   return {
     user_id: userId,

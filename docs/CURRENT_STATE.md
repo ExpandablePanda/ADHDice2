@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.38`.
+- Current working app version: `7.13.39`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,20 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-11 7.13.39 Trusted Available Actions Failure-Closed Correction
+
+Trusted manual occurrence commands now distinguish the reviewed missing
+additive-schema compatibility boundary from unexpected behavior-authority
+failures. `set_outcome`, `delay_occurrence`, `complete_task`, and History batch
+preflight return `behavior_policy_unavailable` with HTTP 503 before persistence
+when Task/Custom behavior, named-ruleset, or selection authority is unavailable
+or malformed; successfully resolved restrictive policies still return
+`TASK_ACTION_NOT_AVAILABLE`. Only the recognized undeployed Available Actions
+table/column absence retains the Standard all-actions compatibility fallback.
+Automatic rollover and Missed reconciliation continue through the existing
+compatibility fallback path. No UI or SQL migration changed; SQL and Edge
+deployment were not performed. Browser and live Supabase QA remain unverified.
 
 ## 2026-09-11 7.13.38 Available Actions Policy Foundation
 

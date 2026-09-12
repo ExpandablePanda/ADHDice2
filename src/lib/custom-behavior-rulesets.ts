@@ -335,6 +335,22 @@ export function isMissingCustomBehaviorRulesetsTableError(error: RulesetError | 
     || /adhdice_(?:custom_behavior_ruleset|task_behavior_selection)|relation .* does not exist|column .*available_actions.* does not exist/i.test(message);
 }
 
+/**
+ * Trusted orchestration may use only a known additive-schema absence as its
+ * pre-deployment compatibility boundary. Other ruleset/selection failures
+ * must remain visible to manual-action authorization.
+ */
+export function isMissingCustomBehaviorRulesetsAdditiveSchemaError(error: unknown) {
+  const candidate = error && typeof error === "object" ? error as { code?: unknown; message?: unknown } : {};
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  const message = typeof candidate.message === "string" ? candidate.message : "";
+  const missingRelation = /relation .* does not exist|could not find the table .* in the schema cache/i.test(message);
+  const missingAvailableActionsColumn = /available_actions.*(?:does not exist|not found)|could not find the ['"]available_actions['"] column/i.test(message);
+  return (code === "42P01" && (!message || missingRelation))
+    || missingAvailableActionsColumn
+    || missingRelation;
+}
+
 /** Load the named Custom identity rows and their separate revision timelines. */
 export async function loadCustomBehaviorRulesets(
   client: CustomBehaviorRulesetClient,
