@@ -23,6 +23,16 @@ export type UnresolvedOccurrenceBehavior = "missed" | "blank";
 export type PositiveStreakUnhandledBehavior = "break" | "preserve";
 export type MissedStreakUnhandledBehavior = "increment" | "ignore";
 export type RewardBehavior = "enabled" | "disabled";
+export type TaskManualAction = "done" | "did_my_best" | "missed" | "delay" | "complete";
+
+/** Stable persisted order for the manual occurrence-action vocabulary. */
+export const STANDARD_TASK_AVAILABLE_ACTIONS: readonly TaskManualAction[] = Object.freeze([
+  "done",
+  "did_my_best",
+  "missed",
+  "delay",
+  "complete",
+]);
 
 export type TaskBehaviorPolicy = Readonly<{
   id: string;
@@ -31,6 +41,7 @@ export type TaskBehaviorPolicy = Readonly<{
   positiveStreakOnUnhandled: PositiveStreakUnhandledBehavior;
   missedStreakOnUnhandled: MissedStreakUnhandledBehavior;
   rewards: RewardBehavior;
+  availableActions: readonly TaskManualAction[];
 }>;
 
 export type TaskBehaviorPolicyRevision = Readonly<TaskBehaviorPolicy & {
@@ -83,6 +94,20 @@ const POLICY_VALUES = {
 } as const;
 
 const LEGACY_POSITIVE_STREAK_VALUES = new Set<PositiveStreakUnhandledBehavior>(["break", "preserve"]);
+const TASK_MANUAL_ACTION_VALUES = new Set<TaskManualAction>(STANDARD_TASK_AVAILABLE_ACTIONS);
+
+function areTaskManualActionsEqual(left: readonly TaskManualAction[], right: readonly TaskManualAction[]) {
+  return left.length === right.length && left.every((action, index) => action === right[index]);
+}
+
+/** Normalize persisted/manual action input to valid, unique, canonical order. */
+export function normalizeTaskManualActions(input: unknown): readonly TaskManualAction[] {
+  // A missing or malformed field is an additive-schema compatibility case. Keep
+  // existing behavior until the new column is available and readable.
+  if (!Array.isArray(input)) return STANDARD_TASK_AVAILABLE_ACTIONS;
+  const requested = new Set(input.filter((value): value is TaskManualAction => TASK_MANUAL_ACTION_VALUES.has(value as TaskManualAction)));
+  return Object.freeze(STANDARD_TASK_AVAILABLE_ACTIONS.filter((action) => requested.has(action)));
+}
 
 /** The behavior every existing Task uses until a later profile is selected. */
 export const STANDARD_TASK_BEHAVIOR_POLICY: TaskBehaviorPolicy = Object.freeze({
@@ -91,6 +116,7 @@ export const STANDARD_TASK_BEHAVIOR_POLICY: TaskBehaviorPolicy = Object.freeze({
   positiveStreakOnUnhandled: "break",
   missedStreakOnUnhandled: "increment",
   rewards: "enabled",
+  availableActions: STANDARD_TASK_AVAILABLE_ACTIONS,
 });
 
 /** Only these TaskTypes may supply revision timelines to the shared engine. */
@@ -179,31 +205,32 @@ function isLegacyPositiveStreakValue(value: unknown): value is PositiveStreakUnh
   return LEGACY_POSITIVE_STREAK_VALUES.has(value as PositiveStreakUnhandledBehavior);
 }
 
-function isStandardPolicyValues(input: Pick<TaskBehaviorPolicy, "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled" | "rewards">) {
+function isStandardPolicyValues(input: Pick<TaskBehaviorPolicy, "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled" | "rewards" | "availableActions">) {
   return input.unresolvedOccurrence === STANDARD_TASK_BEHAVIOR_POLICY.unresolvedOccurrence
     && input.positiveStreakOnUnhandled === STANDARD_TASK_BEHAVIOR_POLICY.positiveStreakOnUnhandled
     && input.missedStreakOnUnhandled === STANDARD_TASK_BEHAVIOR_POLICY.missedStreakOnUnhandled
-    && input.rewards === STANDARD_TASK_BEHAVIOR_POLICY.rewards;
+    && input.rewards === STANDARD_TASK_BEHAVIOR_POLICY.rewards
+    && areTaskManualActionsEqual(input.availableActions, STANDARD_TASK_AVAILABLE_ACTIONS);
 }
 
 /** Normalize untrusted database/profile data to one complete engine policy. */
 export function normalizeTaskBehaviorProfile(input: unknown, taskType: TaskType = "task"): TaskBehaviorPolicy {
   if (typeof input !== "object" || input === null) return STANDARD_TASK_BEHAVIOR_POLICY;
-  const candidate = input as Partial<TaskBehaviorPolicy>;
+  const candidate = input as Partial<TaskBehaviorPolicy> & { availableActions?: unknown };
   const positiveStreakOnUnhandled = candidate.positiveStreakOnUnhandled ?? "break";
   if (typeof candidate.id === "string"
     && candidate.id.trim()
     && "unresolvedOccurrence" in candidate
     && "positiveStreakOnUnhandled" in candidate
     && "missedStreakOnUnhandled" in candidate
-    && "rewards" in candidate) {
-    const completePolicy = candidate as TaskBehaviorPolicy;
-    if (isPolicyValue("unresolvedOccurrence", completePolicy.unresolvedOccurrence)
-      && isLegacyPositiveStreakValue(completePolicy.positiveStreakOnUnhandled)
-      && isPolicyValue("missedStreakOnUnhandled", completePolicy.missedStreakOnUnhandled)
-      && isPolicyValue("rewards", completePolicy.rewards)) {
-      return completePolicy;
-    }
+    && "rewards" in candidate
+    && Array.isArray(candidate.availableActions)
+    && isPolicyValue("unresolvedOccurrence", candidate.unresolvedOccurrence)
+    && isLegacyPositiveStreakValue(candidate.positiveStreakOnUnhandled)
+    && isPolicyValue("missedStreakOnUnhandled", candidate.missedStreakOnUnhandled)
+    && isPolicyValue("rewards", candidate.rewards)
+    && areTaskManualActionsEqual(normalizeTaskManualActions(candidate.availableActions), candidate.availableActions as TaskManualAction[])) {
+    return candidate as TaskBehaviorPolicy;
   }
   if (!isPolicyValue("unresolvedOccurrence", candidate.unresolvedOccurrence)
     || !isLegacyPositiveStreakValue(positiveStreakOnUnhandled)
@@ -215,11 +242,12 @@ export function normalizeTaskBehaviorProfile(input: unknown, taskType: TaskType 
     unresolvedOccurrence: candidate.unresolvedOccurrence as UnresolvedOccurrenceBehavior,
     missedStreakOnUnhandled: candidate.missedStreakOnUnhandled as MissedStreakUnhandledBehavior,
     rewards: candidate.rewards as RewardBehavior,
+    availableActions: normalizeTaskManualActions(candidate.availableActions),
   };
   const completeValues = {
     ...values,
     positiveStreakOnUnhandled,
-  } as Pick<TaskBehaviorPolicy, "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled" | "rewards">;
+  } as Pick<TaskBehaviorPolicy, "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled" | "rewards" | "availableActions">;
   if (isStandardPolicyValues(completeValues)) return STANDARD_TASK_BEHAVIOR_POLICY;
   return Object.freeze({
     id: typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `${taskType}-behavior-profile`,
@@ -242,6 +270,7 @@ export function normalizeTaskBehaviorProfiles(rows: readonly unknown[], logicalD
         positiveStreakOnUnhandled: taskRevision.positiveStreakOnUnhandled,
         missedStreakOnUnhandled: taskRevision.missedStreakOnUnhandled,
         rewards: taskRevision.rewards,
+        availableActions: taskRevision.availableActions,
       }, taskType);
     }
   }
@@ -268,6 +297,7 @@ export function normalizeTaskBehaviorPolicyRevisions(rows: readonly unknown[]): 
       positiveStreakOnUnhandled: (row as { positive_streak_on_unhandled?: unknown }).positive_streak_on_unhandled,
       missedStreakOnUnhandled: (row as { missed_streak_on_unhandled?: unknown }).missed_streak_on_unhandled,
       rewards: (row as { rewards?: unknown }).rewards,
+      availableActions: (row as { available_actions?: unknown }).available_actions,
     }, candidate.task_type);
     if (policy === STANDARD_TASK_BEHAVIOR_POLICY && !(
       (row as { unresolved_occurrence?: unknown }).unresolved_occurrence === "missed"
@@ -292,7 +322,7 @@ export function normalizeTaskBehaviorPolicyRevisions(rows: readonly unknown[]): 
  * supersedes it.
  */
 export function resolveTaskBehaviorPolicyForLogicalDate(input: {
-  revisions?: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate" | "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled" | "rewards">[];
+  revisions?: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate" | "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled" | "rewards" | "availableActions">[];
   logicalDate: string;
 }): TaskBehaviorPolicy {
   const orderedRevisions = [...(input.revisions ?? [])]

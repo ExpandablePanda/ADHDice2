@@ -58,6 +58,7 @@ function revision(
     positiveStreakOnUnhandled: "break",
     missedStreakOnUnhandled: "increment",
     rewards: "enabled",
+    availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
     ...values,
   };
 }
@@ -428,7 +429,7 @@ test("named ruleset loader keeps historical identities while ignoring non-Custom
     { id: "ruleset-goal", user_id: "owner-1", name: "Goal", task_type: "goal" as never, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
   ];
   const revisions = [
-    { ruleset_id: "ruleset-practice", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank" as const, positive_streak_on_unhandled: "preserve" as const, missed_streak_on_unhandled: "ignore" as const, rewards: "disabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+    { ruleset_id: "ruleset-practice", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank" as const, positive_streak_on_unhandled: "preserve" as const, missed_streak_on_unhandled: "ignore" as const, rewards: "disabled" as const, available_actions: ["missed", "done", "missed"], created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
     { ruleset_id: "ruleset-routine", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "missed" as const, positive_streak_on_unhandled: "break" as const, missed_streak_on_unhandled: "increment" as const, rewards: "enabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
     { ruleset_id: "ruleset-retired", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "missed" as const, positive_streak_on_unhandled: "break" as const, missed_streak_on_unhandled: "increment" as const, rewards: "enabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-11T00:00:00.000Z" },
     { ruleset_id: "ruleset-goal", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank" as const, positive_streak_on_unhandled: "preserve" as const, missed_streak_on_unhandled: "ignore" as const, rewards: "disabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
@@ -458,7 +459,9 @@ test("named ruleset loader keeps historical identities while ignoring non-Custom
   assert.deepEqual(loaded.data.map((ruleset) => ruleset.id), ["ruleset-practice", "ruleset-routine", "ruleset-retired"]);
   assert.deepEqual(Object.keys(loaded.revisions), ["ruleset-practice", "ruleset-routine", "ruleset-retired"]);
   assert.equal(loaded.revisions["ruleset-practice"]?.[0]?.unresolvedOccurrence, "blank");
+  assert.deepEqual(loaded.revisions["ruleset-practice"]?.[0]?.availableActions, ["done", "missed"]);
   assert.equal(loaded.revisions["ruleset-routine"]?.[0]?.unresolvedOccurrence, "missed");
+  assert.deepEqual(loaded.revisions["ruleset-routine"]?.[0]?.availableActions, ["done", "did_my_best", "missed", "delay", "complete"]);
   assert.equal(loaded.revisions["ruleset-retired"]?.[0]?.unresolvedOccurrence, "missed");
   assert.deepEqual(loaded.behaviorSelectionsByTaskId[task.id], [
     { effectiveFromLogicalDate: "2026-09-01", taskType: "custom", customRulesetId: "ruleset-practice" },
@@ -524,6 +527,7 @@ test("named ruleset creation seeds Custom Default policy and does not publish a 
     id: "custom-default",
     unresolvedOccurrence: "blank",
     rewards: "disabled",
+    availableActions: ["done", "delay"],
   }, "2026-09-10");
 
   assert.equal(result.error, null);
@@ -541,6 +545,7 @@ test("named ruleset creation seeds Custom Default policy and does not publish a 
           positive_streak_on_unhandled: "break",
           missed_streak_on_unhandled: "increment",
           rewards: "disabled",
+          available_actions: ["done", "delay"],
         },
         options: { onConflict: "ruleset_id,effective_from_logical_date" },
       },
@@ -574,6 +579,7 @@ test("named ruleset revision updates replace today without rewriting prior revis
       positive_streak_on_unhandled: "break",
       missed_streak_on_unhandled: "increment",
       rewards: "enabled",
+      available_actions: ["done", "did_my_best", "missed", "delay", "complete"],
     },
     options: { onConflict: "ruleset_id,effective_from_logical_date" },
   });
@@ -775,7 +781,7 @@ test("a refreshed assignment loader retains earlier rows while replacing the sam
     { id: "ruleset-routine", user_id: "owner-1", name: "Routine", task_type: "custom" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
   ];
   const revisions = [
-    { ruleset_id: "ruleset-practice", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank" as const, positive_streak_on_unhandled: "preserve" as const, missed_streak_on_unhandled: "ignore" as const, rewards: "disabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
+    { ruleset_id: "ruleset-practice", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank" as const, positive_streak_on_unhandled: "preserve" as const, missed_streak_on_unhandled: "ignore" as const, rewards: "disabled" as const, available_actions: ["missed", "done", "missed"], created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
     { ruleset_id: "ruleset-routine", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "missed" as const, positive_streak_on_unhandled: "break" as const, missed_streak_on_unhandled: "increment" as const, rewards: "enabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
   ];
   let assignmentRows = [

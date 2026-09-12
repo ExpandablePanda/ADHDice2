@@ -16,6 +16,7 @@ import type { TaskStateHistoryRow } from "../src/lib/task-state-engine/types.ts"
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
 import { buildTrustedTaskStateCommand } from "../supabase/functions/task-state-command/domain.ts";
+import { normalizeTaskBehaviorProfile, STANDARD_TASK_BEHAVIOR_POLICY } from "../src/lib/task-state-engine/behavior-policy.ts";
 
 const logicalDay = {
   identity: "user-1:2026-08-10:America/New_York:06:00:3",
@@ -293,6 +294,41 @@ test("explicit Missed remains a set_outcome History command without reward eligi
   assert.equal(plan.normalizedResult.rewardEntitlement, null);
 });
 
+test("canonical planning rejects every unavailable manual occurrence action with one stable domain code", () => {
+  const planningState = state();
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    behaviorPolicy: normalizeTaskBehaviorProfile({
+      ...STANDARD_TASK_BEHAVIOR_POLICY,
+      id: "restricted",
+      availableActions: [],
+    }),
+  };
+  const commands: CanonicalTaskStateCommand[] = [
+    command({ outcome: "done" }),
+    command({ outcome: "did_my_best" }),
+    command({ outcome: "missed" }),
+    {
+      ...command(),
+      type: "delay",
+      occurrenceId: "occurrence-1",
+      scheduledDueOn: logicalDay.logicalDate,
+      effectiveDueOn: "2026-08-12",
+    },
+    { ...command(), type: "complete" },
+  ];
+  for (const input of commands) {
+    assert.throws(
+      () => planTaskStateCommand(planningState, input),
+      (error: unknown) => error instanceof Error
+        && "code" in error
+        && error.code === "TASK_ACTION_NOT_AVAILABLE"
+        && error.message.endsWith("is not available for this Task ruleset."),
+      input.type,
+    );
+  }
+});
+
 test("handled Done uses the engine-derived projection for a recurring task", () => {
   const plan = planTaskStateCommand(state({ repeat_frequency: "daily" }), command({
     commandId: "00000000-0000-4000-8000-000000000014",
@@ -470,6 +506,14 @@ function canonicalRolloverReadModel(scheduleModel: "rolling" | "fixed") {
 
 test("trusted rollover derives one automatic DMB, preserves the stale logical date, and reuses reward parity", () => {
   const rolloverState = staleRolloverState();
+  rolloverState.engineInput = {
+    ...rolloverState.engineInput!,
+    behaviorPolicy: normalizeTaskBehaviorProfile({
+      ...STANDARD_TASK_BEHAVIOR_POLICY,
+      id: "manual-actions-hidden",
+      availableActions: [],
+    }),
+  };
   const rolloverCommand = trustedCommand({
     type: "reconcile_rollover",
     task_id: "task-1",

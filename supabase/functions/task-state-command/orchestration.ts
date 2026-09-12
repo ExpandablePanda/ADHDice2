@@ -34,6 +34,11 @@ import {
   isMissingCustomBehaviorRulesetsTableError,
   loadCustomBehaviorRulesets,
 } from "../../../src/lib/custom-behavior-rulesets.ts";
+import {
+  resolveTaskManualActionAvailability,
+  taskManualActionForCanonicalCommand,
+  taskManualActionLabel,
+} from "../../../src/lib/task-state-engine/action-authority.ts";
 
 export type TrustedTaskStateCommandClient = CanonicalReadClient & {
   rpc(
@@ -106,6 +111,39 @@ const defaultDependencies: OrchestrationDependencies = {
     p_operation_id: operationId,
   }),
 };
+
+async function loadBehaviorResolutionContext(
+  dependencies: OrchestrationDependencies,
+  adminClient: TrustedTaskStateCommandClient,
+  userId: string,
+) {
+  let behaviorProfiles: TaskBehaviorProfiles = {};
+  let behaviorPolicyRevisions: TaskBehaviorPolicyRevisionMap = {};
+  let namedCustomRulesetBehaviorPolicyRevisions: NamedCustomRulesetBehaviorPolicyRevisionMap = {};
+  try {
+    const behaviorProfilesResult = await dependencies.loadBehaviorProfiles(adminClient, userId);
+    if (!behaviorProfilesResult.error && Object.values(behaviorProfilesResult.revisions).some((revisions) => (revisions?.length ?? 0) > 0)) {
+      behaviorProfiles = behaviorProfilesResult.data;
+      behaviorPolicyRevisions = behaviorProfilesResult.revisions;
+    }
+  } catch {
+    // The profile table is additive and may not be deployed with this client yet.
+    // Preserve the Standard Task fallback until the reviewed migration is applied.
+  }
+  try {
+    const customRulesetsResult = await dependencies.loadCustomRulesets(adminClient, userId);
+    if (!customRulesetsResult.error) {
+      namedCustomRulesetBehaviorPolicyRevisions = customRulesetsResult.behaviorSelectionError
+        && !isMissingCustomBehaviorRulesetsTableError(customRulesetsResult.behaviorSelectionError)
+        ? {}
+        : customRulesetsResult.revisions;
+    }
+  } catch {
+    // Named rulesets are additive; an unavailable foundation preserves the
+    // legacy TaskType profile and Standard fallback behavior.
+  }
+  return { behaviorProfiles, behaviorPolicyRevisions, namedCustomRulesetBehaviorPolicyRevisions };
+}
 
 function errorResponse(code: string, message: string, status = 409): TrustedTaskStateCommandResponse {
   return { status, body: { error: { code, message } } };
@@ -260,38 +298,9 @@ export async function executeTrustedTaskStateCommand(input: {
       dayStartTime: readResult.data.logicalDayProfile.day_start_time,
       settingsRevision: readResult.data.logicalDayProfile.settings_revision,
     };
-    let behaviorProfiles: TaskBehaviorProfiles = {};
-    let behaviorPolicyRevisions: TaskBehaviorPolicyRevisionMap = {};
-    let namedCustomRulesetBehaviorPolicyRevisions: NamedCustomRulesetBehaviorPolicyRevisionMap = {};
-    try {
-      const behaviorProfilesResult = await dependencies.loadBehaviorProfiles(input.adminClient, input.userId);
-      if (!behaviorProfilesResult.error && Object.values(behaviorProfilesResult.revisions).some((revisions) => (revisions?.length ?? 0) > 0)) {
-        behaviorProfiles = behaviorProfilesResult.data;
-        behaviorPolicyRevisions = behaviorProfilesResult.revisions;
-      }
-    } catch {
-      // The profile table is additive and may not be deployed with this client yet.
-      // Preserve the Standard Task fallback until the reviewed migration is applied.
-      behaviorProfiles = {};
-      behaviorPolicyRevisions = {};
-    }
-    try {
-      const customRulesetsResult = await dependencies.loadCustomRulesets(input.adminClient, input.userId);
-      if (!customRulesetsResult.error) {
-        namedCustomRulesetBehaviorPolicyRevisions = customRulesetsResult.behaviorSelectionError
-          && !isMissingCustomBehaviorRulesetsTableError(customRulesetsResult.behaviorSelectionError)
-          ? {}
-          : customRulesetsResult.revisions;
-      }
-    } catch {
-      // Named rulesets are additive; an unavailable foundation must preserve
-      // the legacy TaskType profile and Standard fallback behavior.
-      namedCustomRulesetBehaviorPolicyRevisions = {};
-    }
+    const behaviorContext = await loadBehaviorResolutionContext(dependencies, input.adminClient, input.userId);
     const engineInput = dependencies.buildEngineInput(readResult.data, {
-      behaviorProfiles,
-      behaviorPolicyRevisions,
-      namedCustomRulesetBehaviorPolicyRevisions,
+      ...behaviorContext,
       now,
       timezone: logicalDay.timezone,
       logicalDayRollover: logicalDay.dayStartTime,
@@ -508,6 +517,78 @@ async function partialBatchResponse(input: {
   };
 }
 
+async function preflightHistoryOutcomeBatchActionAvailability(input: {
+  userId: string;
+  intent: HistoryOutcomeBatchIntent;
+  adminClient: TrustedTaskStateCommandClient;
+  dependencies: OrchestrationDependencies;
+  now?: string;
+  orderedEntries: HistoryOutcomeBatchIntent["entries"];
+}) {
+  const action = taskManualActionForCanonicalCommand({ type: "set_outcome", outcome: input.intent.outcome });
+  if (!action) return null;
+
+  let readResult: Awaited<ReturnType<typeof loadCanonicalTaskState>>;
+  try {
+    readResult = await input.dependencies.loadCanonicalState(input.adminClient, {
+      userId: input.userId,
+      taskId: input.intent.task_id,
+    });
+  } catch {
+    return null;
+  }
+  if (readResult.error || !readResult.data) return null;
+
+  const now = input.now ?? new Date().toISOString();
+  const logicalDate = logicalDateForTimestamp(
+    now,
+    readResult.data.logicalDayProfile.timezone,
+    readResult.data.logicalDayProfile.day_start_time,
+  );
+  const logicalDay = {
+    identity: `logical-day:${input.userId}:${readResult.data.logicalDayProfile.settings_revision}:${readResult.data.logicalDayProfile.timezone}:${readResult.data.logicalDayProfile.day_start_time}:${logicalDate}`,
+    logicalDate,
+    timezone: readResult.data.logicalDayProfile.timezone,
+    dayStartTime: readResult.data.logicalDayProfile.day_start_time,
+    settingsRevision: readResult.data.logicalDayProfile.settings_revision,
+  };
+  let engineInput: ReturnType<OrchestrationDependencies["buildEngineInput"]>;
+  try {
+    const behaviorContext = await loadBehaviorResolutionContext(input.dependencies, input.adminClient, input.userId);
+    engineInput = input.dependencies.buildEngineInput(readResult.data, {
+      ...behaviorContext,
+      now,
+      timezone: logicalDay.timezone,
+      logicalDayRollover: logicalDay.dayStartTime,
+    });
+  } catch {
+    return null;
+  }
+
+  for (const [index, entry] of input.orderedEntries.entries()) {
+    const availability = resolveTaskManualActionAvailability({
+      action,
+      behaviorPolicy: engineInput.behaviorPolicy,
+      behaviorPolicyRevisions: engineInput.behaviorPolicyRevisions,
+      logicalDate: entry.logical_date,
+    });
+    if (!availability.available) {
+      return {
+        index,
+        logicalDate: entry.logical_date,
+        replayIdentity: childReplayIdentity(input.intent, entry.logical_date),
+        failure: batchFailure({
+          error: {
+            code: "TASK_ACTION_NOT_AVAILABLE",
+            message: `${taskManualActionLabel(action)} is not available for this Task ruleset on ${entry.logical_date}.`,
+          },
+        }, 422),
+      };
+    }
+  }
+  return null;
+}
+
 export async function executeHistoryOutcomeBatch(input: {
   userId: string;
   intent: HistoryOutcomeBatchIntent;
@@ -522,6 +603,37 @@ export async function executeHistoryOutcomeBatch(input: {
   let currentRevision = input.intent.expected_revision;
   const childResults: Array<Record<string, unknown>> = [];
   const completedEntries: string[] = [];
+
+  const preflightFailure = await preflightHistoryOutcomeBatchActionAvailability({
+    userId: input.userId,
+    intent: input.intent,
+    adminClient: input.adminClient,
+    dependencies,
+    now: input.now,
+    orderedEntries,
+  });
+  if (preflightFailure) {
+    return partialBatchResponse({
+      dependencies,
+      adminClient: input.adminClient,
+      userId: input.userId,
+      intent: input.intent,
+      operationId,
+      startedAt,
+      childResults: [{
+        index: preflightFailure.index,
+        logical_date: preflightFailure.logicalDate,
+        replay_identity: preflightFailure.replayIdentity,
+        expected_revision: currentRevision,
+        state: "rejected",
+        error: preflightFailure.failure,
+      }],
+      completedEntries,
+      failedEntryIndex: preflightFailure.index,
+      currentRevision,
+      failure: preflightFailure.failure,
+    });
+  }
 
   for (const [index, entry] of orderedEntries.entries()) {
     const replayIdentity = childReplayIdentity(input.intent, entry.logical_date);

@@ -27,6 +27,11 @@ import type {
 import { sha256Digest } from "./digest.ts";
 import type { CanonicalTaskRow } from "./read-model.ts";
 import { recurrenceFromBoundary, taskCalendarOverrideFromCanonical } from "./engine-input.ts";
+import {
+  resolveTaskManualActionAvailability,
+  taskManualActionForCanonicalCommand,
+  taskManualActionLabel,
+} from "../task-state-engine/action-authority.ts";
 
 export type CanonicalHandledOutcome = Extract<TaskHistoryOutcome, "done" | "did_my_best" | "missed">;
 
@@ -680,6 +685,24 @@ export function planTaskStateCommand(
       "ENGINE_SNAPSHOT_REQUIRED",
       `${input.type} planning requires the canonical engine snapshot; a client projection cannot substitute for it.`,
     );
+  }
+  const manualAction = taskManualActionForCanonicalCommand(input);
+  if (manualAction && state.engineInput) {
+    const logicalDate = "logicalDate" in input && input.logicalDate
+      ? input.logicalDate
+      : input.logicalDay.logicalDate;
+    const availability = resolveTaskManualActionAvailability({
+      action: manualAction,
+      behaviorPolicy: state.engineInput.behaviorPolicy,
+      behaviorPolicyRevisions: state.engineInput.behaviorPolicyRevisions,
+      logicalDate,
+    });
+    if (!availability.available) {
+      throw new CanonicalCommandPlanningError(
+        "TASK_ACTION_NOT_AVAILABLE",
+        `${taskManualActionLabel(manualAction)} is not available for this Task ruleset.`,
+      );
+    }
   }
   const shouldEvaluateEngine = Boolean(state.engineInput && (
     ["handled_outcome", "complete", "delay", "schedule_change", "calendar_override", "clear_outcome", "rollover"].includes(input.type)

@@ -12,6 +12,7 @@ import {
   type TaskStateCommandIntent,
 } from "../supabase/functions/task-state-command/domain.ts";
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
+import { STANDARD_TASK_BEHAVIOR_POLICY } from "../src/lib/task-state-engine/behavior-policy.ts";
 
 const taskId = "task-history-batch";
 const userId = "owner-1";
@@ -58,12 +59,13 @@ const batchIntent: HistoryOutcomeBatchIntent = {
 function dependenciesFor(options: {
   invoke: (input: { intent: TaskStateCommandIntent; deferAchievements?: boolean }) => Promise<{ data: unknown; error: null | { code?: string; message?: string } }>;
   finalize?: (input: { operationId: string }) => Promise<{ data: unknown; error: null | { code?: string; message?: string } }>;
+  buildEngineInput?: unknown;
 }) {
   let revision = batchIntent.expected_revision;
   return {
     loadReplayOperation: async () => ({ data: null, error: null }),
     loadCanonicalState: async () => ({ data: readModel(revision), error: null }),
-    buildEngineInput: (() => ({})) as never,
+    buildEngineInput: (options.buildEngineInput ?? (() => ({}))) as never,
     buildCommand: ((input: { intent: TaskStateCommandIntent }) => ({
       commandId: input.intent.replay_identity,
       commandType: "handled_outcome",
@@ -148,6 +150,43 @@ test("three-date batch invokes normal canonical children sequentially with threa
   assert.equal(childCalls.every((call) => call.deferAchievements === true), true);
   assert.equal(finalizerCalls, 1);
   assert.equal(body.final_committed_revision, 13);
+});
+
+test("batch action-availability preflight rejects before any child commits when a selected date is unavailable", async () => {
+  let childCalls = 0;
+  let finalizerCalls = 0;
+  const result = await executeHistoryOutcomeBatch({
+    userId,
+    intent: { ...batchIntent, outcome: "did_my_best" },
+    adminClient: {} as TrustedTaskStateCommandClient,
+    dependencies: dependenciesFor({
+      buildEngineInput: () => ({
+        behaviorPolicy: STANDARD_TASK_BEHAVIOR_POLICY,
+        behaviorPolicyRevisions: [
+          { ...STANDARD_TASK_BEHAVIOR_POLICY, effectiveFromLogicalDate: "2026-08-17" },
+          { ...STANDARD_TASK_BEHAVIOR_POLICY, effectiveFromLogicalDate: "2026-08-18", availableActions: ["done"] },
+        ],
+      }),
+      invoke: async () => {
+        childCalls += 1;
+        return { data: null, error: null };
+      },
+      finalize: async () => {
+        finalizerCalls += 1;
+        return { data: { status: "completed" }, error: null };
+      },
+    }),
+  });
+  const body = result.body as Record<string, unknown>;
+  assert.equal(result.status, 200);
+  assert.equal(body.state, "partial");
+  assert.deepEqual(body.completed_entries, []);
+  assert.equal(body.failed_entry_index, 1);
+  assert.equal((body.error as Record<string, unknown>).code, "TASK_ACTION_NOT_AVAILABLE");
+  assert.match(String((body.error as Record<string, unknown>).message), /2026-08-18/);
+  assert.equal(childCalls, 0);
+  assert.equal(finalizerCalls, 0);
+  assert.equal(body.final_committed_revision, batchIntent.expected_revision);
 });
 
 test("stale child stops after a committed prefix and finalizes Achievement before returning", async () => {

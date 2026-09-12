@@ -5,7 +5,93 @@ import { evaluateTaskState } from "./engine.ts";
 import { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
 import type { TaskHistoryChange, TaskHistoryOutcome, TaskStateHistoryRow } from "./types.ts";
-import type { TaskBehaviorPolicyResolutionContext } from "./behavior-policy.ts";
+import {
+  normalizeTaskBehaviorProfile,
+  resolveTaskBehaviorPolicyForLogicalDate,
+  resolveTaskBehaviorPolicyForTask,
+  STANDARD_TASK_BEHAVIOR_POLICY,
+  type TaskBehaviorPolicy,
+  type TaskBehaviorPolicyResolutionContext,
+  type TaskBehaviorPolicyRevision,
+  type TaskManualAction,
+} from "./behavior-policy.ts";
+
+const TASK_MANUAL_ACTION_LABELS: Readonly<Record<TaskManualAction, string>> = {
+  done: "Done",
+  did_my_best: "Did My Best",
+  missed: "Missed",
+  delay: "Delay",
+  complete: "Complete",
+};
+
+/** Map canonical manual occurrence commands to the policy vocabulary. */
+export function taskManualActionForCanonicalCommand(input: { type: string; outcome?: unknown }): TaskManualAction | null {
+  if (input.type === "handled_outcome" || input.type === "set_outcome") {
+    return input.outcome === "done" || input.outcome === "did_my_best" || input.outcome === "missed"
+      ? input.outcome
+      : null;
+  }
+  if (input.type === "complete" || input.type === "complete_task") return "complete";
+  if (input.type === "delay" || input.type === "delay_occurrence") return "delay";
+  return null;
+}
+
+export function taskManualActionLabel(action: TaskManualAction) {
+  return TASK_MANUAL_ACTION_LABELS[action];
+}
+
+/** Read the policy upper bound without changing contextual eligibility rules. */
+export function getAvailableTaskManualActions(policy?: Pick<TaskBehaviorPolicy, "availableActions"> | null): readonly TaskManualAction[] {
+  return normalizeTaskBehaviorProfile({
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    availableActions: policy?.availableActions,
+  }).availableActions;
+}
+
+export function isTaskManualActionAvailable(
+  policy: Pick<TaskBehaviorPolicy, "availableActions"> | null | undefined,
+  action: TaskManualAction,
+) {
+  return getAvailableTaskManualActions(policy).includes(action);
+}
+
+/** Resolve policy availability against the effective date carried by a command. */
+export function resolveTaskManualActionAvailability(input: {
+  action: TaskManualAction;
+  behaviorPolicy?: TaskBehaviorPolicy;
+  behaviorPolicyRevisions?: readonly TaskBehaviorPolicyRevision[];
+  logicalDate: string;
+}) {
+  const policy = input.behaviorPolicyRevisions?.length
+    ? resolveTaskBehaviorPolicyForLogicalDate({
+      revisions: input.behaviorPolicyRevisions,
+      logicalDate: input.logicalDate,
+    })
+    : normalizeTaskBehaviorProfile(input.behaviorPolicy);
+  return {
+    action: input.action,
+    logicalDate: input.logicalDate,
+    policy,
+    available: isTaskManualActionAvailable(policy, input.action),
+  };
+}
+
+/** Resolve a Task's historical selection and policy timeline for one date. */
+export function resolveTaskManualActionAvailabilityForTask(input: TaskBehaviorPolicyResolutionContext & {
+  action: TaskManualAction;
+  customRulesetId?: string | null;
+  logicalDate: string;
+  taskId?: string;
+  taskType: Parameters<typeof resolveTaskBehaviorPolicyForTask>[0]["taskType"];
+}) {
+  const resolution = resolveTaskBehaviorPolicyForTask(input);
+  return {
+    action: input.action,
+    logicalDate: input.logicalDate,
+    policy: resolution.policy,
+    available: isTaskManualActionAvailable(resolution.policy, input.action),
+  };
+}
 
 const OCCURRENCE_SENSITIVE_TASK_UPDATE_FIELDS = [
   "status",

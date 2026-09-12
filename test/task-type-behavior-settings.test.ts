@@ -23,6 +23,8 @@ import type { TaskStateEngineInput } from "../src/lib/task-state-engine/types.ts
 const behaviorSettingsSource = readFileSync("src/components/task-app/task-type-behavior-settings.tsx", "utf8");
 const behaviorProfilesHookSource = readFileSync("src/hooks/useTaskTypeBehaviorProfiles.ts", "utf8");
 const filterRowsSource = readFileSync("src/components/task-app/task-filter-rows.tsx", "utf8");
+const availableActionsMigration = readFileSync("supabase/add_available_actions_policy_7_13_38.sql", "utf8");
+const schemaSource = readFileSync("supabase/schema.sql", "utf8");
 
 const input: TaskStateEngineInput = {
   task: {
@@ -106,6 +108,7 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     positiveStreakOnUnhandled: "preserve",
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
+    availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
   });
   assert.deepEqual(result.revisions, { task: [{
     id: "task-behavior-profile",
@@ -113,6 +116,7 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     positiveStreakOnUnhandled: "preserve",
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
+    availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
     effectiveFromLogicalDate: "2026-09-08",
   }], custom: [{
     id: "custom-behavior-profile",
@@ -120,6 +124,7 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     positiveStreakOnUnhandled: "preserve",
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
+    availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
     effectiveFromLogicalDate: "2026-09-08",
   }] });
   assert.deepEqual(taskTypeBehaviorProfileUpsertPayload("user-a", "custom", STANDARD_TASK_BEHAVIOR_POLICY, "2026-09-08"), {
@@ -130,6 +135,7 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     positive_streak_on_unhandled: "break",
     missed_streak_on_unhandled: "increment",
     rewards: "enabled",
+    available_actions: ["done", "did_my_best", "missed", "delay", "complete"],
   });
   const legacyPreservePolicy = normalizeTaskBehaviorProfile({
     id: "legacy-preserve",
@@ -178,6 +184,20 @@ test("profile migration is additive, constrained, and review-only", () => {
   assert.match(migration, /with check \(\(select auth\.uid\(\)\) = user_id\)/i);
   assert.doesNotMatch(migration, /adhdice_pursuits|adhdice_pursuit_activities/i);
   assert.doesNotMatch(migration, /insert\s+into\s+public\.adhdice_/i);
+});
+
+test("7.13.38 adds only the additive Available Actions columns and preserves existing rows", () => {
+  assert.match(availableActionsMigration, /alter table public\.adhdice_task_type_behavior_profiles[\s\S]*add column if not exists available_actions text\[\]/i);
+  assert.match(availableActionsMigration, /alter table public\.adhdice_custom_behavior_ruleset_revisions[\s\S]*add column if not exists available_actions text\[\]/i);
+  assert.match(availableActionsMigration, /array\['done', 'did_my_best', 'missed', 'delay', 'complete'\]::text\[\]/i);
+  assert.match(availableActionsMigration, /set available_actions = \([\s\S]*unnest\(/i);
+  assert.match(availableActionsMigration, /available_actions <@ array\['done', 'did_my_best', 'missed', 'delay', 'complete'\]::text\[\]/i);
+  assert.match(availableActionsMigration, /array_position\(available_actions, null\) is null/i);
+  assert.doesNotMatch(availableActionsMigration, /insert\s+into\s+public\.adhdice_(?:clean_tasks|task_history|task_behavior_selections)/i);
+  assert.doesNotMatch(availableActionsMigration, /delete\s+from\s+public\.adhdice_/i);
+  for (const table of ["adhdice_task_type_behavior_profiles", "adhdice_custom_behavior_ruleset_revisions"]) {
+    assert.match(schemaSource, new RegExp(`create table public\\.${table}[\\s\\S]*available_actions text\\[\\] not null`, "i"));
+  }
 });
 
 test("profile revisions use the earliest revision as a baseline and remain deterministic by logical date", () => {
@@ -269,6 +289,22 @@ test("behavior policy revisions invalidate only the projections that consume the
   assert.notDeepEqual(streakOnly.streak, base.streak);
   assert.notDeepEqual(rewardsOnly.rewards, base.rewards);
   assert.deepEqual(rewardsOnly.streak, base.streak);
+
+  const availabilityOnly = selectTaskBehaviorProjectionSemantics({
+    behaviorProfiles: {
+      task: normalizeTaskBehaviorProfile({ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "manual-actions-hidden", availableActions: [] }),
+    },
+    behaviorPolicyRevisions: {
+      task: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, effectiveFromLogicalDate: "2026-09-01", availableActions: [] }],
+    },
+  });
+  const standardWithSameRevision = selectTaskBehaviorProjectionSemantics({
+    behaviorProfiles: { task: STANDARD_TASK_BEHAVIOR_POLICY },
+    behaviorPolicyRevisions: {
+      task: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, effectiveFromLogicalDate: "2026-09-01" }],
+    },
+  });
+  assert.deepEqual(availabilityOnly, standardWithSameRevision);
 });
 
 test("Custom policy changes invalidate the same semantic projections while staying independent from Task", () => {

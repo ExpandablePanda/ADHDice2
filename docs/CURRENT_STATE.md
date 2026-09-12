@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.37`.
+- Current working app version: `7.13.38`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-11 7.13.38 Available Actions Policy Foundation
+
+TaskType and named Custom ruleset revisions now carry an effective-dated
+manual occurrence Available Actions upper bound: Done, Did My Best, Missed,
+Delay, and Complete. Missing legacy fields normalize to all five actions;
+invalid and duplicate values normalize safely, and an empty set remains valid.
+The shared action authority resolves the policy for the command logical date,
+while canonical planning and trusted `task-state-command` reject unavailable
+manual actions with `TASK_ACTION_NOT_AVAILABLE`. History outcome batches
+preflight all selected dates before any child commit. Automatic rollover and
+Missed reconciliation, existing History facts, lifecycle/workflow commands,
+Calendar overrides, rewards, streaks, and recurrence remain unchanged. The
+focused migration and Edge source are review-only; SQL has not been applied,
+`task-state-command` has not been redeployed, and browser QA remains
+unverified. No Available Actions controls were added to Behavior Settings.
 
 ## 2026-09-11 7.13.37 Legacy Pursuit Hard Delete
 

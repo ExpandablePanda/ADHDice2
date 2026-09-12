@@ -5,6 +5,7 @@ import type {
 } from "./database.types.ts";
 import {
   normalizeTaskBehaviorProfile,
+  normalizeTaskManualActions,
   STANDARD_TASK_BEHAVIOR_POLICY,
   type NamedCustomRulesetBehaviorPolicyRevisionMap,
   type TaskBehaviorPolicy,
@@ -12,6 +13,7 @@ import {
   type TaskBehaviorPolicyRevisions,
   type TaskBehaviorSelection,
   type TaskBehaviorSelectionMap,
+  type TaskManualAction,
 } from "./task-state-engine/behavior-policy.ts";
 
 type RulesetError = { code?: string; message?: string };
@@ -46,8 +48,13 @@ type RulesetIdentityTable = {
 };
 
 type RulesetRevisionTable = {
-  select(columns: string): RulesetSelectQuery<CustomBehaviorRulesetRevision>;
+  select(columns: string): RulesetSelectQuery<PersistedCustomBehaviorRulesetRevision>;
   upsert(values: unknown, options?: { onConflict?: string }): Promise<{ error: RulesetError | null }>;
+};
+
+type PersistedCustomBehaviorRulesetRevision = Omit<CustomBehaviorRulesetRevision, "available_actions"> & {
+  /** Optional keeps pre-7.13.38 source/test rows compatible. */
+  available_actions?: readonly TaskManualAction[] | null;
 };
 
 type BehaviorSelectionTable = {
@@ -102,7 +109,7 @@ const POLICY_VALUES = {
   rewards: new Set(["enabled", "disabled"]),
 } as const;
 
-function isValidRevision(row: CustomBehaviorRulesetRevision) {
+function isValidRevision(row: PersistedCustomBehaviorRulesetRevision) {
   return typeof row.ruleset_id === "string"
     && LOGICAL_DATE.test(row.effective_from_logical_date)
     && POLICY_VALUES.unresolved_occurrence.has(row.unresolved_occurrence)
@@ -111,13 +118,14 @@ function isValidRevision(row: CustomBehaviorRulesetRevision) {
     && POLICY_VALUES.rewards.has(row.rewards);
 }
 
-function toPolicyRevision(row: CustomBehaviorRulesetRevision): TaskBehaviorPolicyRevision {
+function toPolicyRevision(row: PersistedCustomBehaviorRulesetRevision): TaskBehaviorPolicyRevision {
   const policy = normalizeTaskBehaviorProfile({
     id: `custom-ruleset:${row.ruleset_id}`,
     unresolvedOccurrence: row.unresolved_occurrence,
     positiveStreakOnUnhandled: row.positive_streak_on_unhandled,
     missedStreakOnUnhandled: row.missed_streak_on_unhandled,
     rewards: row.rewards,
+    availableActions: row.available_actions,
   }, "custom");
   return {
     ...policy,
@@ -159,6 +167,7 @@ export function customBehaviorRulesetRevisionUpsertPayload(
     positive_streak_on_unhandled: STANDARD_TASK_BEHAVIOR_POLICY.positiveStreakOnUnhandled,
     missed_streak_on_unhandled: policy.missedStreakOnUnhandled,
     rewards: policy.rewards,
+    available_actions: [...normalizeTaskManualActions(policy.availableActions)],
   };
 }
 
@@ -323,7 +332,7 @@ export async function renameCustomBehaviorRuleset(
 export function isMissingCustomBehaviorRulesetsTableError(error: RulesetError | null | undefined) {
   const message = error?.message ?? "";
   return error?.code === "42P01"
-    || /adhdice_(?:custom_behavior_ruleset|task_behavior_selection)|relation .* does not exist/i.test(message);
+    || /adhdice_(?:custom_behavior_ruleset|task_behavior_selection)|relation .* does not exist|column .*available_actions.* does not exist/i.test(message);
 }
 
 /** Load the named Custom identity rows and their separate revision timelines. */
@@ -339,7 +348,7 @@ export async function loadCustomBehaviorRulesets(
       .eq("user_id", userId),
     client
       .from("adhdice_custom_behavior_ruleset_revisions")
-      .select("ruleset_id,effective_from_logical_date,unresolved_occurrence,positive_streak_on_unhandled,missed_streak_on_unhandled,rewards,created_at,updated_at"),
+      .select("ruleset_id,effective_from_logical_date,unresolved_occurrence,positive_streak_on_unhandled,missed_streak_on_unhandled,rewards,available_actions,created_at,updated_at"),
     client
       .from("adhdice_task_behavior_selections")
       .select("id,user_id,task_id,effective_from_logical_date,task_type,custom_ruleset_id,created_at,updated_at")

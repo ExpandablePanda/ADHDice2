@@ -283,6 +283,7 @@ function behaviorRevision(
     positiveStreakOnUnhandled: "break",
     missedStreakOnUnhandled: "increment",
     rewards: "enabled",
+    availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
     ...values,
   };
 }
@@ -295,6 +296,7 @@ function behaviorProfile(revision: TaskBehaviorPolicyRevision): TaskBehaviorProf
       positiveStreakOnUnhandled: revision.positiveStreakOnUnhandled,
       missedStreakOnUnhandled: revision.missedStreakOnUnhandled,
       rewards: revision.rewards,
+      availableActions: revision.availableActions,
     },
   };
 }
@@ -479,6 +481,48 @@ test("trusted orchestration uses the Standard fallback for empty or unavailable 
     assert.equal(capturedEngineInput?.behaviorPolicy?.id, "standard-task", label);
     assert.equal(capturedEngineInput?.behaviorPolicyRevisions, undefined, label);
   }
+});
+
+test("trusted manual occurrence enforcement rejects a policy-hidden outcome before the RPC", async () => {
+  let rpcCalls = 0;
+  const restrictedRevision = behaviorRevision("2026-09-01", { availableActions: ["done"] });
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: "outcome:unavailable-did-my-best",
+      expected_revision: 4,
+      outcome: "did_my_best",
+      logical_date: "2026-09-15",
+    },
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: { state: "committed" }, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({
+        data: behaviorProfile(restrictedRevision),
+        revisions: { task: [restrictedRevision] },
+        error: null,
+      }),
+      buildEngineInput: (readModel, context) => buildCanonicalTaskStateEngineInput(readModel, context),
+    },
+  });
+
+  assert.equal(result.status, 422);
+  assert.deepEqual(result.body, {
+    error: {
+      code: "TASK_ACTION_NOT_AVAILABLE",
+      message: "Did My Best is not available for this Task ruleset.",
+    },
+  });
+  assert.equal(rpcCalls, 0);
 });
 
 test("trusted reconciliation applies each historical Task behavior revision to its own logical date", async () => {

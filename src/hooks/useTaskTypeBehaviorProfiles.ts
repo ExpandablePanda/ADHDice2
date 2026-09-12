@@ -69,6 +69,7 @@ export function useTaskTypeBehaviorProfiles(
       positive_streak_on_unhandled: revision.positiveStreakOnUnhandled,
       missed_streak_on_unhandled: revision.missedStreakOnUnhandled,
       rewards: revision.rewards,
+      available_actions: revision.availableActions,
     }))),
     currentLogicalDate,
   ), [currentLogicalDate, profileRevisions]);

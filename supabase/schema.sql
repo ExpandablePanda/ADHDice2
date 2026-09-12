@@ -60,6 +60,34 @@ create table public.adhdice_clean_tasks (
     check (task_type in ('task', 'pursuit', 'goal', 'custom'))
 );
 
+create table public.adhdice_task_type_behavior_profiles (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  task_type text not null,
+  effective_from_logical_date date not null,
+  unresolved_occurrence text not null default 'missed',
+  positive_streak_on_unhandled text not null default 'break',
+  missed_streak_on_unhandled text not null default 'increment',
+  rewards text not null default 'enabled',
+  available_actions text[] not null default array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[],
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, task_type, effective_from_logical_date),
+  constraint adhdice_task_type_behavior_profiles_task_type_check
+    check (task_type in ('task', 'pursuit', 'goal', 'custom')),
+  constraint adhdice_task_type_behavior_profiles_unresolved_occurrence_check
+    check (unresolved_occurrence in ('missed', 'blank')),
+  constraint adhdice_task_type_behavior_profiles_positive_streak_check
+    check (positive_streak_on_unhandled in ('break', 'preserve')),
+  constraint adhdice_task_type_behavior_profiles_missed_streak_check
+    check (missed_streak_on_unhandled in ('increment', 'ignore')),
+  constraint adhdice_task_type_behavior_profiles_rewards_check
+    check (rewards in ('enabled', 'disabled')),
+  constraint adhdice_task_type_behavior_profiles_available_actions_check
+    check (available_actions <@ array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[]),
+  constraint adhdice_task_type_behavior_profiles_available_actions_no_null_check
+    check (array_position(available_actions, null) is null)
+);
+
 -- 7.13.27/7.13.28/7.13.31 behavior authority. The Task projection is kept
 -- for current reads; effective-dated behavior-selection rows below are the
 -- historical authority for logical-date policy selection.
@@ -88,6 +116,11 @@ create table public.adhdice_custom_behavior_ruleset_revisions (
   positive_streak_on_unhandled text not null default 'break' check (positive_streak_on_unhandled in ('break', 'preserve')),
   missed_streak_on_unhandled text not null default 'increment' check (missed_streak_on_unhandled in ('increment', 'ignore')),
   rewards text not null default 'enabled' check (rewards in ('enabled', 'disabled')),
+  available_actions text[] not null default array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[],
+  constraint adhdice_custom_behavior_ruleset_revisions_available_actions_check
+    check (available_actions <@ array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[]),
+  constraint adhdice_custom_behavior_ruleset_revisions_available_actions_no_null_check
+    check (array_position(available_actions, null) is null),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (ruleset_id, effective_from_logical_date)
@@ -968,6 +1001,8 @@ create index adhdice_clean_tasks_user_pinned_idx
 create index adhdice_clean_tasks_custom_ruleset_id_idx
   on public.adhdice_clean_tasks (custom_ruleset_id)
   where custom_ruleset_id is not null;
+create index adhdice_task_type_behavior_profiles_user_type_date_idx
+  on public.adhdice_task_type_behavior_profiles (user_id, task_type, effective_from_logical_date);
 create index adhdice_custom_behavior_rulesets_user_id_idx
   on public.adhdice_custom_behavior_rulesets (user_id);
 create index adhdice_custom_behavior_ruleset_revisions_ruleset_id_idx
@@ -1085,6 +1120,7 @@ create index adhdice_health_achievement_awards_user_earned_idx
   on public.adhdice_health_achievement_awards (user_id, earned_at desc);
 
 alter table public.adhdice_clean_tasks enable row level security;
+alter table public.adhdice_task_type_behavior_profiles enable row level security;
 alter table public.adhdice_custom_behavior_rulesets enable row level security;
 alter table public.adhdice_custom_behavior_ruleset_revisions enable row level security;
 alter table public.adhdice_task_behavior_selections enable row level security;
@@ -1147,6 +1183,8 @@ revoke all on table public.adhdice_health_journal_signal_occurrences from anon, 
 grant select, insert, update, delete on table public.adhdice_health_journal_signals to authenticated;
 grant select, insert, update, delete on table public.adhdice_health_journal_signal_values to authenticated;
 grant select, insert, update, delete on table public.adhdice_health_journal_signal_occurrences to authenticated;
+revoke all on table public.adhdice_task_type_behavior_profiles from anon, authenticated;
+grant select, insert, update, delete on table public.adhdice_task_type_behavior_profiles to authenticated;
 revoke all on table public.adhdice_custom_behavior_rulesets from anon, authenticated;
 revoke all on table public.adhdice_custom_behavior_ruleset_revisions from anon, authenticated;
 revoke all on table public.adhdice_task_behavior_selections from anon, authenticated;
@@ -1180,6 +1218,19 @@ create policy "Users can delete their own clean tasks"
 
 create policy "Users can read their own Custom behavior rulesets"
   on public.adhdice_custom_behavior_rulesets for select to authenticated
+  using ((select auth.uid()) = user_id);
+create policy "Users can read their own TaskType behavior profiles"
+  on public.adhdice_task_type_behavior_profiles for select to authenticated
+  using ((select auth.uid()) = user_id);
+create policy "Users can create their own TaskType behavior profiles"
+  on public.adhdice_task_type_behavior_profiles for insert to authenticated
+  with check ((select auth.uid()) = user_id);
+create policy "Users can update their own TaskType behavior profiles"
+  on public.adhdice_task_type_behavior_profiles for update to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+create policy "Users can delete their own TaskType behavior profiles"
+  on public.adhdice_task_type_behavior_profiles for delete to authenticated
   using ((select auth.uid()) = user_id);
 create policy "Users can create their own Custom behavior rulesets"
   on public.adhdice_custom_behavior_rulesets for insert to authenticated
