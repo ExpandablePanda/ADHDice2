@@ -13,6 +13,7 @@ export type AttentionTaskSections = {
 
 export type TaskAttentionReason = "missed" | "due_today" | "overdue";
 export type TaskAttentionSection = "needs_action" | "in_progress" | "coming_up" | null;
+export type TaskAttentionBehaviorPolicy = Pick<TaskBehaviorPolicy, "needsActionTriggers" | "missedStreakOnUnhandled">;
 export type TaskAttentionClassification = {
   reason: TaskAttentionReason | null;
   section: TaskAttentionSection;
@@ -49,7 +50,7 @@ export function classifyTaskForAttention({
   todayKey,
 }: {
   dueOn?: string | null;
-  policy?: Pick<TaskBehaviorPolicy, "needsActionTriggers">;
+  policy?: TaskAttentionBehaviorPolicy;
   status?: TaskDisplayStatus;
   task: Task;
   todayKey: string;
@@ -58,6 +59,9 @@ export function classifyTaskForAttention({
   const policy = policyInput ?? STANDARD_TASK_BEHAVIOR_POLICY;
   const status = statusInput ?? task.status;
   if (status === "missed") {
+    if (policy.missedStreakOnUnhandled === "increment") {
+      return { reason: null, section: null };
+    }
     return policy.needsActionTriggers.includes("missed")
       ? { reason: "missed", section: "needs_action" }
       : { reason: null, section: null };
@@ -101,7 +105,7 @@ export function buildTaskAttentionProjection({
   tasks,
   todayKey,
 }: {
-  behaviorPoliciesByTaskId?: Readonly<Record<string, Pick<TaskBehaviorPolicy, "needsActionTriggers">>>;
+  behaviorPoliciesByTaskId?: Readonly<Record<string, TaskAttentionBehaviorPolicy>>;
   behaviorPolicyLoading?: boolean;
   dueOnByTaskId?: Record<string, string | null>;
   statusesByTaskId: TaskDisplayStatusByTaskId;
@@ -174,7 +178,7 @@ export function buildAttentionTaskSections({
   todayKey,
 }: {
   dueOnByTaskId?: Record<string, string | null>;
-  behaviorPoliciesByTaskId?: Readonly<Record<string, Pick<TaskBehaviorPolicy, "needsActionTriggers">>>;
+  behaviorPoliciesByTaskId?: Readonly<Record<string, TaskAttentionBehaviorPolicy>>;
   statusesByTaskId: TaskDisplayStatusByTaskId;
   tasks: ReadonlyArray<Task>;
   todayKey: string;

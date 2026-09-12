@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.43`.
+- Current working app version: `7.13.44`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-12 7.13.44 Attention Correction
+
+Tracked Missed outcomes no longer duplicate Attention when the effective
+behavior profile increments missed streaks; Missed Attention remains available
+when the profile ignores missed streaks and the Missed trigger is enabled. The
+row Attention indicator is now a yellow icon-only Bell using the approved
+row-toolbar primitive. Its informational popover now uses the approved
+floating/portal presentation outside clipped row and table ancestors, with
+viewport-safe anchoring and dismissal on outside click, Escape, scroll, or
+resize. Due Today and Overdue trigger behavior remains unchanged. No SQL,
+schema migration, Supabase data change, or Edge deployment was performed;
+browser QA remains unverified.
 
 ## 2026-09-12 7.13.43 Attention System List + Notification Chip
 

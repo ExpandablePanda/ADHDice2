@@ -1,9 +1,29 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useLayoutEffect, useId, useRef, useState } from "react";
 import { Bell } from "lucide-react";
-import { AdhdChip, AdhdDropdownPanel } from "@/components/ui-system";
+import { AdhdDropdownPanel, AdhdIconButton } from "@/components/ui-system";
 import { getTaskAttentionNotification, type TaskAttentionReason } from "@/lib/task-attention";
+
+const VIEWPORT_MARGIN = 8;
+const PANEL_GAP = 6;
+const ESTIMATED_PANEL_WIDTH = 256;
+const ESTIMATED_PANEL_HEIGHT = 132;
+
+function getPanelPosition(trigger: HTMLElement, panelWidth = ESTIMATED_PANEL_WIDTH, panelHeight = ESTIMATED_PANEL_HEIGHT) {
+  const rect = trigger.getBoundingClientRect();
+  const boundedPanelWidth = Math.min(panelWidth, Math.max(0, window.innerWidth - VIEWPORT_MARGIN * 2));
+  const left = Math.max(
+    VIEWPORT_MARGIN,
+    Math.min(rect.left, window.innerWidth - boundedPanelWidth - VIEWPORT_MARGIN),
+  );
+  const belowTop = rect.bottom + PANEL_GAP;
+  const top = belowTop + panelHeight <= window.innerHeight - VIEWPORT_MARGIN
+    ? belowTop
+    : Math.max(VIEWPORT_MARGIN, rect.top - panelHeight - PANEL_GAP);
+  return { left, top };
+}
 
 export function TaskAttentionChip({
   dueOn,
@@ -15,66 +35,98 @@ export function TaskAttentionChip({
   taskId: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const rootRef = useRef<HTMLSpanElement | null>(null);
+  const [panelPosition, setPanelPosition] = useState<{ left: number; top: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const generatedId = useId().replace(/:/g, "");
   const popoverId = `task-attention-popover-${taskId}-${generatedId}`;
   const headingId = `${popoverId}-heading`;
+  const notification = reason ? getTaskAttentionNotification(reason, dueOn) : null;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isOpen) {
       return;
     }
 
-    function handlePointerDown(event: PointerEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) {
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) {
         setIsOpen(false);
+        return;
       }
+      const panel = panelRef.current;
+      setPanelPosition(getPanelPosition(trigger, panel?.offsetWidth, panel?.offsetHeight));
+    };
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || panelRef.current?.contains(target)) {
+        return;
+      }
+      setIsOpen(false);
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        event.preventDefault();
         setIsOpen(false);
       }
     }
 
-    window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
+    const closeOnViewportChange = () => setIsOpen(false);
+    updatePosition();
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", closeOnViewportChange);
+    window.addEventListener("scroll", closeOnViewportChange, true);
     return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", closeOnViewportChange);
+      window.removeEventListener("scroll", closeOnViewportChange, true);
     };
   }, [isOpen]);
 
-  if (!reason) {
+  if (!notification) {
     return null;
   }
 
-  const notification = getTaskAttentionNotification(reason, dueOn);
   return (
-    <span className="relative inline-flex" ref={rootRef}>
-      <AdhdChip
+    <span className="inline-flex" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+      <AdhdIconButton
         aria-controls={isOpen ? popoverId : undefined}
         aria-expanded={isOpen}
         aria-haspopup="dialog"
-        className="text-[11px]"
-        icon={<Bell aria-hidden="true" className="h-3 w-3" />}
+        aria-label={`Needs attention: ${notification.title}`}
         onClick={(event) => {
           event.stopPropagation();
-          setIsOpen((current) => !current);
+          if (isOpen) {
+            setIsOpen(false);
+            return;
+          }
+          const trigger = triggerRef.current;
+          if (!trigger) return;
+          setPanelPosition(getPanelPosition(trigger));
+          setIsOpen(true);
         }}
-        onPointerDown={(event) => event.stopPropagation()}
-        tone="danger"
+        ref={triggerRef}
+        size="sm"
+        tone="warning"
+        variant="rowToolbar"
       >
-        Attention
-      </AdhdChip>
-      {isOpen ? (
+        <Bell aria-hidden="true" />
+      </AdhdIconButton>
+      {isOpen && panelPosition && typeof document !== "undefined" ? createPortal(
         <AdhdDropdownPanel
           aria-labelledby={headingId}
-          className="w-64 p-3"
+          className="z-[160] max-w-[calc(100vw-1rem)] p-3"
           id={popoverId}
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
+          ref={panelRef}
           role="dialog"
+          style={{ left: panelPosition.left, position: "fixed", top: panelPosition.top, zIndex: 160 }}
+          widthClassName="w-64"
         >
           <div className="grid gap-1">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#6f57f6] dark:text-[#cabfff]" id={headingId}>
@@ -83,7 +135,8 @@ export function TaskAttentionChip({
             <p className="text-sm font-semibold text-[#2e3650] dark:text-white/90">{notification.title}</p>
             <p className="text-xs leading-5 text-[#69738d] dark:text-white/65">{notification.description}</p>
           </div>
-        </AdhdDropdownPanel>
+        </AdhdDropdownPanel>,
+        document.body,
       ) : null}
     </span>
   );

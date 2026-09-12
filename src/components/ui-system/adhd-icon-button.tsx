@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 
 function joinClasses(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -89,7 +89,7 @@ export type AdhdIconButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 
   variant?: AdhdIconButtonVariant;
 };
 
-export function AdhdIconButton({
+export const AdhdIconButton = forwardRef<HTMLButtonElement, AdhdIconButtonProps>(function AdhdIconButton({
   "aria-label": ariaLabel,
   children,
   className,
@@ -100,7 +100,7 @@ export function AdhdIconButton({
   variant = "default",
   type,
   ...props
-}: AdhdIconButtonProps) {
+}: AdhdIconButtonProps, ref) {
   const selectedClass = tone === "ghost"
     ? ICON_BUTTON_TONE_CLASS.purple
     : variant === "rowToolbar"
@@ -131,10 +131,11 @@ export function AdhdIconButton({
       )}
       type={type ?? "button"}
       {...props}
+      ref={ref}
     >
       <span className={joinClasses("inline-flex shrink-0 items-center justify-center", resolvedIconClass, iconClassName)}>
         {children}
       </span>
     </button>
   );
-}
+});

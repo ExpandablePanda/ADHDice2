@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { buildAttentionTaskSections, buildTaskAttentionProjection, getTaskAttentionNotification } from "../src/lib/task-attention.ts";
+import { buildAttentionTaskSections, buildTaskAttentionProjection, classifyTaskForAttention, getTaskAttentionNotification, type TaskAttentionBehaviorPolicy } from "../src/lib/task-attention.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import {
   resolveTaskBehaviorPolicyForTask,
@@ -27,13 +27,17 @@ function task(id: string, dueOn: string | null, status: "pending" | "in_progress
   });
 }
 
-function policy(id: string, needsActionTriggers: TaskBehaviorPolicy["needsActionTriggers"]): TaskBehaviorPolicy {
-  return { ...STANDARD_TASK_BEHAVIOR_POLICY, id, needsActionTriggers };
+function policy(
+  id: string,
+  needsActionTriggers: TaskBehaviorPolicy["needsActionTriggers"],
+  missedStreakOnUnhandled: TaskBehaviorPolicy["missedStreakOnUnhandled"] = STANDARD_TASK_BEHAVIOR_POLICY.missedStreakOnUnhandled,
+): TaskBehaviorPolicy {
+  return { ...STANDARD_TASK_BEHAVIOR_POLICY, id, missedStreakOnUnhandled, needsActionTriggers };
 }
 
 function sections(
   tasks: ReturnType<typeof task>[],
-  behaviorPoliciesByTaskId: Readonly<Record<string, Pick<TaskBehaviorPolicy, "needsActionTriggers">>> = {},
+  behaviorPoliciesByTaskId: Readonly<Record<string, TaskAttentionBehaviorPolicy>> = {},
 ) {
   return buildAttentionTaskSections({
     behaviorPoliciesByTaskId,
@@ -43,7 +47,7 @@ function sections(
   });
 }
 
-test("Standard Needs Action preserves Missed, Due Today, Overdue, and baseline fall-through behavior", () => {
+test("Standard Needs Action preserves Due Today, Overdue, and baseline fall-through behavior", () => {
   const rows = [
     task("missed", "2026-09-10", "missed"),
     task("today", TODAY),
@@ -53,9 +57,32 @@ test("Standard Needs Action preserves Missed, Due Today, Overdue, and baseline f
     task("future", "2026-09-13"),
   ];
   const result = sections(rows);
-  assert.deepEqual(result.needsAction.map((entry) => entry.id).sort(), ["in-progress-today", "missed", "overdue", "today"]);
+  assert.deepEqual(result.needsAction.map((entry) => entry.id).sort(), ["in-progress-today", "overdue", "today"]);
   assert.deepEqual(result.inProgress.map((entry) => entry.id), ["in-progress-future"]);
   assert.deepEqual(result.comingUp.map((entry) => entry.id), ["future"]);
+});
+
+test("Missed Attention avoids duplicate tracked streak warnings and honors Ignore triggers", () => {
+  const missed = task("missed", "2026-09-10", "missed");
+
+  assert.deepEqual(classifyTaskForAttention({
+    policy: policy("tracked", ["missed"], "increment"),
+    status: "missed",
+    task: missed,
+    todayKey: TODAY,
+  }), { reason: null, section: null });
+  assert.deepEqual(classifyTaskForAttention({
+    policy: policy("ignored-with-trigger", ["missed"], "ignore"),
+    status: "missed",
+    task: missed,
+    todayKey: TODAY,
+  }), { reason: "missed", section: "needs_action" });
+  assert.deepEqual(classifyTaskForAttention({
+    policy: policy("ignored-without-trigger", [], "ignore"),
+    status: "missed",
+    task: missed,
+    todayKey: TODAY,
+  }), { reason: null, section: null });
 });
 
 test("Needs Action trigger filtering preserves Missed precedence and exact date conditions", () => {
@@ -64,7 +91,7 @@ test("Needs Action trigger filtering preserves Missed precedence and exact date 
   const overdue = task("overdue", "2026-09-11");
   const inProgressToday = task("in-progress-today", TODAY, "in_progress");
   const result = sections([missed, today, overdue, inProgressToday], {
-    missed: policy("no-missed", ["due_today", "overdue"]),
+    missed: policy("no-missed", ["due_today", "overdue"], "ignore"),
     today: policy("no-due-today", ["missed", "overdue"]),
     overdue: policy("no-overdue", ["missed", "due_today"]),
     "in-progress-today": policy("no-due-today", ["missed", "overdue"]),
@@ -157,8 +184,8 @@ test("canonical Attention projection includes only effective Needs Action member
     todayKey: TODAY,
   });
 
-  assert.deepEqual([...enabled.taskIds].sort(), ["in-progress-today", "missed", "overdue", "today"]);
-  assert.equal(enabled.reasonByTaskId.missed, "missed");
+  assert.deepEqual([...enabled.taskIds].sort(), ["in-progress-today", "overdue", "today"]);
+  assert.equal(enabled.reasonByTaskId.missed, undefined);
   assert.equal(enabled.reasonByTaskId.today, "due_today");
   assert.equal(enabled.reasonByTaskId.overdue, "overdue");
   assert.equal(enabled.classificationByTaskId["coming-up"]?.section, "coming_up");
@@ -181,6 +208,15 @@ test("canonical Attention projection includes only effective Needs Action member
   });
   assert.deepEqual([...disabled.taskIds], []);
   assert.equal(disabled.classificationByTaskId["in-progress-today"]?.section, "in_progress");
+
+  const ignoredMissed = buildTaskAttentionProjection({
+    behaviorPoliciesByTaskId: { missed: policy("ignored-missed", ["missed"], "ignore") },
+    statusesByTaskId: { missed: "missed" },
+    tasks: [rows[0]!],
+    todayKey: TODAY,
+  });
+  assert.deepEqual([...ignoredMissed.taskIds], ["missed"]);
+  assert.equal(ignoredMissed.reasonByTaskId.missed, "missed");
 
   const loading = buildTaskAttentionProjection({
     behaviorPoliciesByTaskId: allTriggers,
@@ -211,6 +247,21 @@ test("Attention notification reasons use the governed informational copy", () =>
 });
 
 test("Attention is a canonical row presentation and no longer a top-level surface", () => {
+  assert.match(attentionChipSource, /AdhdIconButton/);
+  assert.match(attentionChipSource, /tone="warning"/);
+  assert.match(attentionChipSource, /variant="rowToolbar"/);
+  assert.match(attentionChipSource, /<Bell aria-hidden="true" \/>/);
+  assert.doesNotMatch(attentionChipSource, /tone="danger"/);
+  assert.doesNotMatch(attentionChipSource, />\s*Attention\s*</);
+  assert.match(attentionChipSource, /aria-label=\{`Needs attention: \$\{notification\.title\}`\}/);
+  assert.match(attentionChipSource, /createPortal\([\s\S]*document\.body/);
+  assert.match(attentionChipSource, /ref=\{triggerRef\}/);
+  assert.match(attentionChipSource, /ref=\{panelRef\}/);
+  assert.match(attentionChipSource, /position: "fixed"/);
+  assert.match(attentionChipSource, /window\.addEventListener\("resize", closeOnViewportChange\)/);
+  assert.match(attentionChipSource, /window\.addEventListener\("scroll", closeOnViewportChange, true\)/);
+  assert.match(taskAppSource, /missedStreakOnUnhandled/);
+  assert.match(taskAppSource, /TaskAttentionBehaviorPolicy/);
   assert.match(attentionChipSource, /aria-expanded/);
   assert.match(attentionChipSource, /aria-haspopup="dialog"/);
   assert.match(attentionChipSource, /event\.key === "Escape"/);

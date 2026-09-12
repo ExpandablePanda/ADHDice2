@@ -5,14 +5,13 @@ import { ArrowRight, CalendarClock, Clock3, ListTodo } from "lucide-react";
 import { AdhdCard, AdhdChip, AdhdPanel } from "@/components/ui-system";
 import type { Task } from "@/lib/database.types";
 import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
-import { buildAttentionTaskSections, formatAttentionTaskTiming } from "@/lib/task-attention";
+import { buildAttentionTaskSections, formatAttentionTaskTiming, type TaskAttentionBehaviorPolicy } from "@/lib/task-attention";
 import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
-import type { TaskBehaviorPolicy } from "@/lib/task-state-engine/behavior-policy";
 import { formatTaskStatusLabel } from "./task-status-ui";
 import { PursuitsWorkspace, type PursuitsWorkspaceProps } from "./pursuits-workspace";
 
 type AttentionWorkspaceProps = PursuitsWorkspaceProps & {
-  behaviorPoliciesByTaskId?: Readonly<Record<string, Pick<TaskBehaviorPolicy, "needsActionTriggers">>> | null;
+  behaviorPoliciesByTaskId?: Readonly<Record<string, TaskAttentionBehaviorPolicy>> | null;
   behaviorPolicyLoading?: boolean;
   dueOnByTaskId: Record<string, string | null>;
   onOpenTask: (taskId: string) => void;

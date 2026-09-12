@@ -307,7 +307,7 @@ import {
   type TaskHistoryStats,
 } from "@/lib/task-history";
 import { groupTaskSubtasksByTaskId } from "@/lib/task-subtasks";
-import { buildTaskAttentionProjection } from "@/lib/task-attention";
+import { buildTaskAttentionProjection, type TaskAttentionBehaviorPolicy } from "@/lib/task-attention";
 import {
   buildManualMembershipMap,
   getBuiltInTaskLists,
@@ -2962,11 +2962,10 @@ export function TaskApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [canonicalEntityRevision, projectionCache],
   );
-  const attentionBehaviorPoliciesByTaskId = useMemo<Readonly<Record<string, Pick<TaskBehaviorPolicy, "needsActionTriggers">>> | null>(() => {
+  const attentionBehaviorPoliciesByTaskId = useMemo<Readonly<Record<string, TaskAttentionBehaviorPolicy>> | null>(() => {
     if (isTaskTypeBehaviorProfilesLoading) return null;
-    return Object.fromEntries(tasksForActiveStatusRead.map((task) => [
-      task.id,
-      resolveTaskBehaviorPolicyForTask({
+    return Object.fromEntries(tasksForActiveStatusRead.map((task) => {
+      const resolvedPolicy = resolveTaskBehaviorPolicyForTask({
         behaviorProfiles: taskTypeBehaviorProfiles,
         behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
         behaviorSelectionsByTaskId,
@@ -2975,8 +2974,12 @@ export function TaskApp() {
         namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
         taskId: task.id,
         taskType: task.task_type,
-      }).policy,
-    ])) as Readonly<Record<string, Pick<TaskBehaviorPolicy, "needsActionTriggers">>>;
+      }).policy;
+      return [task.id, {
+        missedStreakOnUnhandled: resolvedPolicy.missedStreakOnUnhandled,
+        needsActionTriggers: resolvedPolicy.needsActionTriggers,
+      } satisfies TaskAttentionBehaviorPolicy];
+    })) as Readonly<Record<string, TaskAttentionBehaviorPolicy>>;
   }, [behaviorSelectionsByTaskId, customRulesetBehaviorPolicyRevisions, isTaskTypeBehaviorProfilesLoading, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles, tasksForActiveStatusRead, todayKey]);
   const taskAttentionProjection = useMemo(
     () => buildTaskAttentionProjection({
