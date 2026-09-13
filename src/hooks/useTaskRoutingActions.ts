@@ -3,7 +3,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TaskListManualMembership as DbTaskListManualMembership } from "@/lib/database.types";
-import type { TaskListId, TaskListManualMembership } from "@/lib/task-lists";
+import { getTaskListCapabilities, type TaskListDefinition, type TaskListId, type TaskListManualMembership } from "@/lib/task-lists";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 
 type Message = {
@@ -20,6 +20,7 @@ type UseTaskRoutingActionsOptions = {
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTaskListManualMemberships: Dispatch<SetStateAction<TaskListManualMembership[]>>;
   setTaskRouting: Dispatch<SetStateAction<Record<string, TaskRoutingBucket>>>;
+  taskListDefinitions: ReadonlyArray<TaskListDefinition>;
   taskListManualMemberships: TaskListManualMembership[];
 };
 
@@ -32,6 +33,7 @@ export function useTaskRoutingActions({
   setMessage,
   setTaskListManualMemberships,
   setTaskRouting,
+  taskListDefinitions,
   taskListManualMemberships,
 }: UseTaskRoutingActionsOptions) {
   function routeTask(taskId: string, bucket: TaskRoutingBucket | null) {
@@ -50,7 +52,8 @@ export function useTaskRoutingActions({
   }
 
   async function setTaskManualListMembership(taskId: string, listId: TaskListId, included: boolean) {
-    if (listId === "attention") {
+    const list = taskListDefinitions.find((definition) => definition.id === listId);
+    if (!list || !getTaskListCapabilities(list).canAssignManualMembership) {
       return;
     }
     const isCompatibilityList = listId === "today" || listId === "later" || listId === "quick_wins" || listId === "waiting";

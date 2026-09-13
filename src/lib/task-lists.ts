@@ -71,6 +71,20 @@ export type TaskListDefinition = {
   type: TaskListType;
 };
 
+export type TaskListCapabilities = {
+  acceptsManualMembership: boolean;
+  canAssignManualMembership: boolean;
+  canDelete: boolean;
+  canEditRules: boolean;
+  canRename: boolean;
+  lockedEligibility: {
+    helperText: string;
+    label: string;
+    title: string;
+  } | null;
+  usesRuleEvaluation: boolean;
+};
+
 export type TaskListManualMembership = {
   created_at: string;
   id: string;
@@ -80,6 +94,44 @@ export type TaskListManualMembership = {
 };
 
 const APP_OWNED_SYSTEM_LIST_IDS = new Set<TaskListId>(["all", "attention", "milestones", "routine"]);
+
+export const DEFAULT_ATTENTION_TASK_LIST_RULES: TaskListRuleGroup = {
+  rules: [{ rule: { field: "due", op: "is_overdue" } }],
+};
+
+export function isAttentionTaskList(list: Pick<TaskListDefinition, "id">) {
+  return list.id === "attention";
+}
+
+export function resolveEffectiveTaskListRules(list: Pick<TaskListDefinition, "id" | "rules">) {
+  return isAttentionTaskList(list) && list.rules === null
+    ? DEFAULT_ATTENTION_TASK_LIST_RULES
+    : list.rules;
+}
+
+export function getTaskListCapabilities(list: Pick<TaskListDefinition, "id" | "isDeletable" | "isEditable" | "membershipMode" | "type">): TaskListCapabilities {
+  const isAttention = isAttentionTaskList(list);
+  const usesRuleEvaluation = isAttention || list.membershipMode === "rules" || list.membershipMode === "hybrid";
+  return {
+    acceptsManualMembership: !isAttention && list.id !== "today",
+    canAssignManualMembership: isManualTaskListDestination(list),
+    canDelete: list.type === "custom" && list.isDeletable,
+    canEditRules: usesRuleEvaluation && (isAttention || list.isEditable),
+    canRename: list.type === "custom" && list.isEditable,
+    lockedEligibility: isAttention
+      ? {
+        helperText: "Tasks that track missed streaks use their missed-streak indicator instead.",
+        label: "Does not track missed streaks",
+        title: "Eligibility",
+      }
+      : null,
+    usesRuleEvaluation,
+  };
+}
+
+export function taskListUsesRuleEvaluation(list: Pick<TaskListDefinition, "id" | "membershipMode">) {
+  return isAttentionTaskList(list) || list.membershipMode === "rules" || list.membershipMode === "hybrid";
+}
 
 export function isAppOwnedSystemTaskListId(value: string | null | undefined): value is TaskListId {
   return Boolean(value && APP_OWNED_SYSTEM_LIST_IDS.has(value as TaskListId));
@@ -120,7 +172,7 @@ export function canRemoveTaskFromCurrentList(
 }
 
 export function isTaskListSettingsEligible(list: Pick<TaskListDefinition, "id">) {
-  return list.id !== "attention" && list.id !== "routine" && list.id !== "milestones";
+  return list.id !== "routine" && list.id !== "milestones";
 }
 
 export type TaskListMembership = {
@@ -158,7 +210,7 @@ export type TaskListEvaluationContext = {
   isTaskHistoryLoaded?: boolean;
   historyFactsByTaskId: Record<string, TaskHistoryFacts>;
   manualMembershipsByTaskId: Record<string, TaskListId[]>;
-  attentionTaskIds?: ReadonlySet<string>;
+  attentionEligibleTaskIds?: ReadonlySet<string>;
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
   todayDateKey: string;
@@ -270,14 +322,14 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       type: "system",
     },
     {
-      description: "Tasks currently classified as Needs Action by their effective behavior policy.",
+      description: "Eligible tasks matching your Attention rules.",
       id: "attention",
       isDeletable: false,
-      isEditable: false,
+      isEditable: true,
       isVisible: true,
       membershipMode: "system",
       name: "Attention",
-      rules: null,
+      rules: DEFAULT_ATTENTION_TASK_LIST_RULES,
       sortOrder: 3,
       type: "system",
     },
@@ -495,12 +547,13 @@ export function evaluateTaskListMemberships(
 
   const manualSeedStartedAt = canMeasure ? performance.now() : 0;
   for (const listId of manualListIds) {
-    if (listId === "today" || listId === "attention") {
+    const list = lookup.listById.get(listId);
+    if (list && !getTaskListCapabilities(list).acceptsManualMembership) {
       continue;
     }
     memberships.set(listId, {
       id: listId,
-      isManual: lookup.listById.get(listId)?.membershipMode !== "system",
+      isManual: list?.membershipMode !== "system",
       source: "manual",
     });
   }
@@ -508,13 +561,6 @@ export function evaluateTaskListMemberships(
   if (context.milestoneTaskIds?.has(task.id) && task.status !== "trashed") {
     memberships.set("milestones", {
       id: "milestones",
-      isManual: false,
-      source: "rule",
-    });
-  }
-  if (context.attentionTaskIds?.has(task.id)) {
-    memberships.set("attention", {
-      id: "attention",
       isManual: false,
       source: "rule",
     });
@@ -912,7 +958,12 @@ function matchesSpecificListRuleMembership(
   if (cached !== undefined) {
     return cached;
   }
-  if (!list.rules) {
+  if (isAttentionTaskList(list) && context.attentionEligibleTaskIds?.has(task.id) !== true) {
+    evaluationCache.set(cacheKey, false);
+    return false;
+  }
+  const rules = resolveEffectiveTaskListRules(list);
+  if (!rules) {
     evaluationCache.set(cacheKey, false);
     return false;
   }
@@ -921,7 +972,7 @@ function matchesSpecificListRuleMembership(
     evaluationCache.set(cacheKey, false);
     return false;
   }
-  const matches = matchesTaskListRules(task, list.rules, lists, context, visitedListIds, evaluationCache, lookup);
+  const matches = matchesTaskListRules(task, rules, lists, context, visitedListIds, evaluationCache, lookup);
   evaluationCache.set(cacheKey, matches);
   return matches;
 }
@@ -983,14 +1034,10 @@ function taskBelongsToSpecificList(
     return false;
   }
 
-  if (selectedListId === "attention") {
-    const belongsToAttention = context.attentionTaskIds?.has(task.id) === true;
-    evaluationCache.set(cacheKey, belongsToAttention);
-    return belongsToAttention;
-  }
-
   const manualListIds = context.manualMembershipsByTaskId[task.id] ?? [];
-  const hasManualMembership = selectedListId !== "today" && manualListIds.includes(selectedListId);
+  const list = lookup.listById.get(selectedListId);
+  const hasManualMembership = Boolean(list && getTaskListCapabilities(list).acceptsManualMembership)
+    && manualListIds.includes(selectedListId);
   if (hasManualMembership) {
     evaluationCache.set(cacheKey, true);
     return true;
@@ -1008,7 +1055,6 @@ function taskBelongsToSpecificList(
     return belongsToInbox;
   }
 
-  const list = lookup.listById.get(selectedListId);
   if (!list) {
     evaluationCache.set(cacheKey, false);
     return false;
@@ -1029,11 +1075,13 @@ export function buildTaskListLookup(lists: TaskListDefinition[]): TaskListLookup
 
   for (const list of lists) {
     listById.set(list.id, list);
-    if (!list.rules) {
+    if (!taskListUsesRuleEvaluation(list)) {
       continue;
     }
+    const rules = resolveEffectiveTaskListRules(list);
+    if (!rules) continue;
     ruleLists.push(list);
-    usesSavedHistoryByListId.set(list.id, ruleGroupUsesSavedHistory(list.rules));
+    usesSavedHistoryByListId.set(list.id, ruleGroupUsesSavedHistory(rules));
     if (list.id !== "inbox") {
       nonInboxRuleLists.push(list);
     }

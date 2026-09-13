@@ -307,7 +307,7 @@ import {
   type TaskHistoryStats,
 } from "@/lib/task-history";
 import { groupTaskSubtasksByTaskId } from "@/lib/task-subtasks";
-import { buildTaskAttentionProjection, type TaskAttentionBehaviorPolicy } from "@/lib/task-attention";
+import { buildTaskAttentionProjection, buildTaskAttentionReasonMap, type TaskAttentionBehaviorPolicy } from "@/lib/task-attention";
 import {
   buildManualMembershipMap,
   getBuiltInTaskLists,
@@ -2722,7 +2722,7 @@ export function TaskApp() {
       byId.set(list.id, list);
     }
     for (const list of taskLists) {
-      if (list.id === "attention" || list.id === "routine" || list.id === "milestones") {
+      if (list.id === "routine" || list.id === "milestones") {
         continue;
       }
       byId.set(list.id, list);
@@ -2977,7 +2977,6 @@ export function TaskApp() {
       }).policy;
       return [task.id, {
         missedStreakOnUnhandled: resolvedPolicy.missedStreakOnUnhandled,
-        needsActionTriggers: resolvedPolicy.needsActionTriggers,
       } satisfies TaskAttentionBehaviorPolicy];
     })) as Readonly<Record<string, TaskAttentionBehaviorPolicy>>;
   }, [behaviorSelectionsByTaskId, customRulesetBehaviorPolicyRevisions, isTaskTypeBehaviorProfilesLoading, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles, tasksForActiveStatusRead, todayKey]);
@@ -2985,12 +2984,10 @@ export function TaskApp() {
     () => buildTaskAttentionProjection({
       behaviorPoliciesByTaskId: attentionBehaviorPoliciesByTaskId ?? undefined,
       behaviorPolicyLoading: attentionBehaviorPoliciesByTaskId === null,
-      dueOnByTaskId: taskDisplayDueOnByTaskId,
       statusesByTaskId: taskDisplayStatusByTaskId,
       tasks: tasksForActiveStatusRead,
-      todayKey,
     }),
-    [attentionBehaviorPoliciesByTaskId, taskDisplayDueOnByTaskId, taskDisplayStatusByTaskId, tasksForActiveStatusRead, todayKey],
+    [attentionBehaviorPoliciesByTaskId, taskDisplayStatusByTaskId, tasksForActiveStatusRead],
   );
   useEffect(() => {
     if (isTaskHistoryLoaded && activeStatusRead && process.env.NODE_ENV === "development" && typeof window !== "undefined") {
@@ -3104,11 +3101,11 @@ export function TaskApp() {
     isTaskHistoryLoaded,
     historyFactsByTaskId: taskHistoryFactsByTaskId,
     manualMembershipsByTaskId,
-    attentionTaskIds: taskAttentionProjection.taskIds,
+    attentionEligibleTaskIds: taskAttentionProjection.attentionEligibleTaskIds,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
     todayDateKey: todayKey,
-  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskAttentionProjection.taskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
+  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskAttentionProjection.attentionEligibleTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
   const parsedTaskSearch = useMemo(
     () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
     [taskUiState.duplicateTitleMode, taskUiState.search],
@@ -3145,10 +3142,10 @@ export function TaskApp() {
     () => createProjectionDomainRevision("lists-memberships", {
       lists: availableTaskLists,
       manualMembershipsByTaskId,
-      attentionTaskIds: Array.from(taskAttentionProjection.taskIds).sort(),
+      attentionEligibleTaskIds: Array.from(taskAttentionProjection.attentionEligibleTaskIds).sort(),
       taskSubtasksByTaskId,
     }),
-    [availableTaskLists, manualMembershipsByTaskId, taskAttentionProjection.taskIds, taskSubtasksByTaskId],
+    [availableTaskLists, manualMembershipsByTaskId, taskAttentionProjection.attentionEligibleTaskIds, taskSubtasksByTaskId],
   );
   const statusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("status-settings", {
@@ -3460,6 +3457,18 @@ export function TaskApp() {
     urgentTasks,
     visibleListCounts,
   } = derivedData;
+  const attentionRuleGroup = availableTaskLists.find((list) => list.id === "attention")?.rules ?? null;
+  const taskAttentionReasonByTaskId = useMemo(
+    () => buildTaskAttentionReasonMap({
+      attentionRuleGroup,
+      dueOnByTaskId: taskDisplayDueOnByTaskId,
+      listMembershipsByTaskId: taskListMembershipsByTaskId,
+      statusesByTaskId: taskDisplayStatusByTaskId,
+      tasks: tasksForActiveStatusRead,
+      todayKey,
+    }),
+    [attentionRuleGroup, taskDisplayDueOnByTaskId, taskDisplayStatusByTaskId, taskListMembershipsByTaskId, tasksForActiveStatusRead, todayKey],
+  );
   const pursuitAttentionMap = useMemo(
     () => buildPursuitAttentionMap(pursuitData.pursuits, pursuitData.activities, {
       dayStartTime,
@@ -3713,7 +3722,7 @@ export function TaskApp() {
     listDefinitions: availableTaskLists,
     listMembershipsByTaskId: taskListMembershipsByTaskId,
     manualMembershipsByTaskId,
-    taskAttentionReasonByTaskId: taskAttentionProjection.reasonByTaskId,
+    taskAttentionReasonByTaskId,
     subtasksByTaskId: taskSubtasksByTaskId,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
@@ -3729,7 +3738,7 @@ export function TaskApp() {
     taskListMembershipsByTaskId,
     taskSubtasksByTaskId,
     taskDisplayStatusByTaskId,
-    taskAttentionProjection.reasonByTaskId,
+    taskAttentionReasonByTaskId,
     todayKey,
   ]);
   const taskHighlightMatches = useMemo(
@@ -4159,6 +4168,7 @@ export function TaskApp() {
       setMessage,
       setTaskListManualMemberships,
       setTaskRouting,
+      taskListDefinitions: availableTaskLists,
       taskListManualMemberships,
     },
     subtask: {

@@ -1,27 +1,15 @@
 import type { Task } from "@/lib/database.types";
 import { formatTaskCalendarDate } from "@/lib/task-calendar";
 import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
-import { getTaskPriorityLevel } from "@/lib/task-priority";
 import { daysBetween } from "@/lib/task-state-engine/calendar";
-import { STANDARD_TASK_BEHAVIOR_POLICY, type TaskBehaviorPolicy } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskBehaviorPolicy } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskListRuleGroup } from "@/lib/task-lists";
 
-export type AttentionTaskSections = {
-  comingUp: Task[];
-  inProgress: Task[];
-  needsAction: Task[];
-};
+export type TaskAttentionReason = "missed" | "due_today" | "overdue" | "attention_rule";
+export type TaskAttentionBehaviorPolicy = Pick<TaskBehaviorPolicy, "missedStreakOnUnhandled">;
 
-export type TaskAttentionReason = "missed" | "due_today" | "overdue";
-export type TaskAttentionSection = "needs_action" | "in_progress" | "coming_up" | null;
-export type TaskAttentionBehaviorPolicy = Pick<TaskBehaviorPolicy, "needsActionTriggers" | "missedStreakOnUnhandled">;
-export type TaskAttentionClassification = {
-  reason: TaskAttentionReason | null;
-  section: TaskAttentionSection;
-};
-export type TaskAttentionNotification = {
-  description: string;
-  reason: TaskAttentionReason;
-  title: string;
+export type TaskAttentionProjection = {
+  attentionEligibleTaskIds: ReadonlySet<string>;
 };
 
 const TERMINAL_TASK_STATUSES = new Set<TaskDisplayStatus>([
@@ -30,114 +18,38 @@ const TERMINAL_TASK_STATUSES = new Set<TaskDisplayStatus>([
   "did_my_best",
   "done",
   "trashed",
+  "unscheduled",
 ]);
 
-function compareTasks(left: Task, right: Task, dueOnByTaskId: Record<string, string | null>) {
-  const leftDue = dueOnByTaskId[left.id] ?? left.due_on ?? "9999-12-31";
-  const rightDue = dueOnByTaskId[right.id] ?? right.due_on ?? "9999-12-31";
-  return leftDue.localeCompare(rightDue)
-    || getTaskPriorityLevel(right) - getTaskPriorityLevel(left)
-    || left.sort_order - right.sort_order
-    || left.title.localeCompare(right.title)
-    || left.id.localeCompare(right.id);
-}
-
-export function classifyTaskForAttention({
-  dueOn: dueOnInput,
-  policy: policyInput,
-  status: statusInput,
-  task,
-  todayKey,
-}: {
-  dueOn?: string | null;
-  policy?: TaskAttentionBehaviorPolicy;
-  status?: TaskDisplayStatus;
-  task: Task;
-  todayKey: string;
-}): TaskAttentionClassification {
-  const dueOn = dueOnInput === undefined ? task.due_on : dueOnInput;
-  const policy = policyInput ?? STANDARD_TASK_BEHAVIOR_POLICY;
-  const status = statusInput ?? task.status;
-  if (status === "missed") {
-    if (policy.missedStreakOnUnhandled === "increment") {
-      return { reason: null, section: null };
-    }
-    return policy.needsActionTriggers.includes("missed")
-      ? { reason: "missed", section: "needs_action" }
-      : { reason: null, section: null };
-  }
-  if (TERMINAL_TASK_STATUSES.has(status) || status === "unscheduled") {
-    return { reason: null, section: null };
-  }
-  if (dueOn === todayKey) {
-    if (policy.needsActionTriggers.includes("due_today")) {
-      return { reason: "due_today", section: "needs_action" };
-    }
-  } else if (dueOn !== null && dueOn < todayKey) {
-    if (policy.needsActionTriggers.includes("overdue")) {
-      return { reason: "overdue", section: "needs_action" };
-    }
-  }
-  if (status === "in_progress") {
-    return { reason: null, section: "in_progress" };
-  }
-  if (
-    dueOn !== null
-    && dueOn > todayKey
-    && (status === "upcoming" || status === "not_due" || status === "pending" || status === "delayed")
-  ) {
-    return { reason: null, section: "coming_up" };
-  }
-  return { reason: null, section: null };
-}
-
-export type TaskAttentionProjection = {
-  classificationByTaskId: Readonly<Record<string, TaskAttentionClassification>>;
-  reasonByTaskId: Readonly<Record<string, TaskAttentionReason>>;
-  taskIds: ReadonlySet<string>;
-};
-
+/**
+ * Project only the policy-derived Attention eligibility gate. Final list
+ * membership remains owned by the canonical Task List rule evaluator.
+ */
 export function buildTaskAttentionProjection({
   behaviorPoliciesByTaskId,
   behaviorPolicyLoading = false,
-  dueOnByTaskId = {},
   statusesByTaskId,
   tasks,
-  todayKey,
 }: {
   behaviorPoliciesByTaskId?: Readonly<Record<string, TaskAttentionBehaviorPolicy>>;
   behaviorPolicyLoading?: boolean;
-  dueOnByTaskId?: Record<string, string | null>;
   statusesByTaskId: TaskDisplayStatusByTaskId;
   tasks: ReadonlyArray<Task>;
-  todayKey: string;
 }): TaskAttentionProjection {
   if (behaviorPolicyLoading) {
-    return {
-      classificationByTaskId: {},
-      reasonByTaskId: {},
-      taskIds: new Set<string>(),
-    };
+    return { attentionEligibleTaskIds: new Set<string>() };
   }
 
-  const classificationByTaskId: Record<string, TaskAttentionClassification> = {};
-  const reasonByTaskId: Record<string, TaskAttentionReason> = {};
-  const taskIds = new Set<string>();
+  const attentionEligibleTaskIds = new Set<string>();
   for (const task of tasks) {
-    const classification = classifyTaskForAttention({
-      dueOn: Object.hasOwn(dueOnByTaskId, task.id) ? dueOnByTaskId[task.id] : task.due_on,
-      policy: behaviorPoliciesByTaskId?.[task.id],
-      status: statusesByTaskId[task.id] ?? task.status,
-      task,
-      todayKey,
-    });
-    classificationByTaskId[task.id] = classification;
-    if (classification.section === "needs_action" && classification.reason) {
-      taskIds.add(task.id);
-      reasonByTaskId[task.id] = classification.reason;
+    const policy = behaviorPoliciesByTaskId?.[task.id];
+    const status = statusesByTaskId[task.id] ?? task.status;
+    if (!policy || policy.missedStreakOnUnhandled !== "ignore" || TERMINAL_TASK_STATUSES.has(status)) {
+      continue;
     }
+    attentionEligibleTaskIds.add(task.id);
   }
-  return { classificationByTaskId, reasonByTaskId, taskIds };
+  return { attentionEligibleTaskIds };
 }
 
 export function formatTaskAttentionDueDate(dueOn: string) {
@@ -148,77 +60,74 @@ export function formatTaskAttentionDueDate(dueOn: string) {
 export function getTaskAttentionNotification(
   reason: TaskAttentionReason,
   dueOn: string | null = null,
-): TaskAttentionNotification {
+) {
   if (reason === "missed") {
     return {
       description: "This task is currently Missed.",
       reason,
       title: "Missed",
-    };
+    } as const;
   }
   if (reason === "due_today") {
     return {
       description: "This task is due today and is still unresolved.",
       reason,
       title: "Due Today",
-    };
+    } as const;
+  }
+  if (reason === "overdue") {
+    return {
+      description: `This task was due ${dueOn ? formatTaskAttentionDueDate(dueOn) : "an earlier date"} and is still unresolved.`,
+      reason,
+      title: "Overdue",
+    } as const;
   }
   return {
-    description: `This task was due ${dueOn ? formatTaskAttentionDueDate(dueOn) : "an earlier date"} and is still unresolved.`,
+    description: "Matches your Attention list rules.",
     reason,
-    title: "Overdue",
-  };
+    title: "Attention Rule",
+  } as const;
 }
 
-export function buildAttentionTaskSections({
-  behaviorPoliciesByTaskId,
+/** Choose copy only after final Attention membership has already been derived. */
+export function buildTaskAttentionReasonMap({
+  attentionRuleGroup,
   dueOnByTaskId = {},
+  listMembershipsByTaskId,
   statusesByTaskId,
   tasks,
   todayKey,
 }: {
+  /** Used only to avoid claiming a due/missed explanation for another rule. */
+  attentionRuleGroup?: TaskListRuleGroup | null;
   dueOnByTaskId?: Record<string, string | null>;
-  behaviorPoliciesByTaskId?: Readonly<Record<string, TaskAttentionBehaviorPolicy>>;
+  listMembershipsByTaskId: Readonly<Record<string, ReadonlyArray<{ id: string }>>>;
   statusesByTaskId: TaskDisplayStatusByTaskId;
   tasks: ReadonlyArray<Task>;
   todayKey: string;
-}): AttentionTaskSections {
-  const needsAction: Task[] = [];
-  const inProgress: Task[] = [];
-  const comingUp: Task[] = [];
-
+}): Readonly<Record<string, TaskAttentionReason>> {
+  const reasonByTaskId: Record<string, TaskAttentionReason> = {};
+  const canExplainDueFacts = attentionRuleGroup === undefined || attentionRuleGroup.rules.some(({ rule }) =>
+    rule.field === "due" && (rule.op === "is_overdue" || rule.op === "is_today"),
+  );
+  const canExplainMissedFact = attentionRuleGroup === undefined || attentionRuleGroup.rules.some(({ rule }) =>
+    rule.field === "status" && rule.op === "is" && (Array.isArray(rule.value) ? rule.value.includes("missed") : rule.value === "missed"),
+  );
   for (const task of tasks) {
+    if (!listMembershipsByTaskId[task.id]?.some((membership) => membership.id === "attention")) {
+      continue;
+    }
     const status = statusesByTaskId[task.id] ?? task.status;
-    const dueOn = dueOnByTaskId[task.id] ?? task.due_on;
-    const classification = classifyTaskForAttention({
-      dueOn,
-      policy: behaviorPoliciesByTaskId?.[task.id],
-      status,
-      task,
-      todayKey,
-    });
-    if (classification.section === "needs_action") {
-      needsAction.push(task);
-      continue;
-    }
-    if (status === "in_progress") {
-      inProgress.push(task);
-      continue;
-    }
-    if (
-      !TERMINAL_TASK_STATUSES.has(status)
-      && dueOn !== null
-      && dueOn > todayKey
-      && (status === "upcoming" || status === "not_due" || status === "pending" || status === "delayed")
-    ) {
-      comingUp.push(task);
-    }
+    const dueOn = Object.hasOwn(dueOnByTaskId, task.id) ? dueOnByTaskId[task.id] : task.due_on;
+    reasonByTaskId[task.id] = canExplainDueFacts && dueOn === todayKey
+      ? "due_today"
+      : canExplainDueFacts && dueOn !== null && dueOn < todayKey
+        ? "overdue"
+        : canExplainMissedFact && status === "missed"
+          ? "missed"
+          : "attention_rule";
   }
-
-  needsAction.sort((left, right) => compareTasks(left, right, dueOnByTaskId));
-  inProgress.sort((left, right) => left.sort_order - right.sort_order || left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
-  comingUp.sort((left, right) => compareTasks(left, right, dueOnByTaskId));
-  return { comingUp, inProgress, needsAction };
+  return reasonByTaskId;
 }
 
 export function formatAttentionTaskTiming(

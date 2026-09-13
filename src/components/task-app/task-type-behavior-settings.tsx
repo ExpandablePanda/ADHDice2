@@ -9,14 +9,11 @@ import type { CustomBehaviorRuleset } from "@/lib/database.types";
 import type { CustomBehaviorRulesetDeleteActionResult } from "@/lib/custom-behavior-rulesets";
 import {
   STANDARD_TASK_AVAILABLE_ACTIONS,
-  STANDARD_TASK_NEEDS_ACTION_TRIGGERS,
   normalizeTaskManualActions,
-  normalizeTaskNeedsActionTriggers,
   type MissedStreakUnhandledBehavior,
   type RewardBehavior,
   type TaskBehaviorPolicy,
   type TaskManualAction,
-  type TaskNeedsActionTrigger,
   type UnresolvedOccurrenceBehavior,
 } from "@/lib/task-state-engine/behavior-policy";
 import { taskTypeBehaviorTabDescription, type TaskTypeBehaviorTab } from "@/lib/task-type-behavior-settings";
@@ -24,7 +21,7 @@ import { buildTaskTypeSelectionOptions, normalizeTaskType, type TaskType } from 
 import { TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
 
 export type BehaviorTab = TaskTypeBehaviorTab;
-type ConfigurableField = "availableActions" | "missedStreakOnUnhandled" | "needsActionTriggers" | "rewards" | "unresolvedOccurrence";
+type ConfigurableField = "availableActions" | "missedStreakOnUnhandled" | "rewards" | "unresolvedOccurrence";
 
 const SECTION_CLASS = "rounded-[1rem] border border-[#eee9f8] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.035]";
 
@@ -117,7 +114,6 @@ export function TaskTypeBehaviorSettings({
     unresolvedOccurrence: "missed" as const,
     missedStreakOnUnhandled: "increment" as const,
     rewards: "enabled" as const,
-    needsActionTriggers: STANDARD_TASK_NEEDS_ACTION_TRIGGERS,
   };
 
   function selectProfile(value: string) {
@@ -204,7 +200,7 @@ export function TaskTypeBehaviorSettings({
     setBlockedDelete(null);
   }
 
-  function updateActiveProfile(field: Exclude<ConfigurableField, "availableActions" | "needsActionTriggers">, value: TaskBehaviorPolicy[typeof field]) {
+  function updateActiveProfile(field: Exclude<ConfigurableField, "availableActions">, value: TaskBehaviorPolicy[typeof field]) {
     if (isSavingPolicyArray || isSavingPolicyArrayRef.current) return;
     if (selectedRuleset) {
       void onCustomRulesetChange?.(selectedRuleset.id, field, value);
@@ -227,27 +223,6 @@ export function TaskTypeBehaviorSettings({
       const saved = selectedRuleset
         ? await onCustomRulesetChange?.(selectedRuleset.id, "availableActions", nextActions)
         : await onChange(activeTab, "availableActions", nextActions);
-      if (saved === false) return;
-    } finally {
-      isSavingPolicyArrayRef.current = false;
-      setIsSavingPolicyArray(false);
-    }
-  }
-
-  async function toggleNeedsActionTrigger(trigger: TaskNeedsActionTrigger) {
-    if (isSavingPolicyArray || isSavingPolicyArrayRef.current) return;
-    isSavingPolicyArrayRef.current = true;
-    const currentTriggers = normalizeTaskNeedsActionTriggers(activeProfile.needsActionTriggers);
-    const nextTriggers = normalizeTaskNeedsActionTriggers(
-      currentTriggers.includes(trigger)
-        ? currentTriggers.filter((current) => current !== trigger)
-        : [...currentTriggers, trigger],
-    );
-    setIsSavingPolicyArray(true);
-    try {
-      const saved = selectedRuleset
-        ? await onCustomRulesetChange?.(selectedRuleset.id, "needsActionTriggers", nextTriggers)
-        : await onChange(activeTab, "needsActionTriggers", nextTriggers);
       if (saved === false) return;
     } finally {
       isSavingPolicyArrayRef.current = false;
@@ -384,24 +359,6 @@ export function TaskTypeBehaviorSettings({
                   type="button"
                 >
                   {label}
-                </AdhdChip>
-              ))}
-            </div>
-          </section>
-
-          <section className={SECTION_CLASS}>
-            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Needs Action</h4>
-            <p className="mt-2 text-xs leading-5 text-[#7d7598] dark:text-white/50">Choose which Task conditions can place Tasks using this profile in Needs Action. Task state and schedule still determine whether each condition applies.</p>
-            <div aria-label="Needs Action" className="mt-3 flex flex-wrap gap-1.5" role="group">
-              {STANDARD_TASK_NEEDS_ACTION_TRIGGERS.map((trigger) => (
-                <AdhdChip
-                  key={trigger}
-                  disabled={isSavingPolicyArray}
-                  onClick={() => { void toggleNeedsActionTrigger(trigger); }}
-                  selected={activeProfile.needsActionTriggers.includes(trigger)}
-                  type="button"
-                >
-                  {trigger === "due_today" ? "Due Today" : trigger === "missed" ? "Missed" : "Overdue"}
                 </AdhdChip>
               ))}
             </div>

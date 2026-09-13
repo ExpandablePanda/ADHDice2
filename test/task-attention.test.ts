@@ -2,13 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { buildAttentionTaskSections, buildTaskAttentionProjection, classifyTaskForAttention, getTaskAttentionNotification, type TaskAttentionBehaviorPolicy } from "../src/lib/task-attention.ts";
+import { buildTaskAttentionProjection, buildTaskAttentionReasonMap, getTaskAttentionNotification, type TaskAttentionBehaviorPolicy } from "../src/lib/task-attention.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
-import {
-  resolveTaskBehaviorPolicyForTask,
-  STANDARD_TASK_BEHAVIOR_POLICY,
-  type TaskBehaviorPolicy,
-} from "../src/lib/task-state-engine/behavior-policy.ts";
+import { buildTaskListCounts, evaluateTaskListMemberships, getBuiltInTaskLists, taskBelongsToList, type TaskListEvaluationContext } from "../src/lib/task-lists.ts";
+import { STANDARD_TASK_BEHAVIOR_POLICY } from "../src/lib/task-state-engine/behavior-policy.ts";
 
 const TODAY = "2026-09-12";
 const attentionWorkspaceSource = readFileSync("src/components/task-app/attention-workspace.tsx", "utf8");
@@ -16,237 +13,199 @@ const attentionChipSource = readFileSync("src/components/task-app/task-attention
 const taskAppSource = readFileSync("src/components/task-app.tsx", "utf8");
 const tasksSurfaceSwitchSource = readFileSync("src/components/task-app/tasks-surface-switch.tsx", "utf8");
 
-function task(id: string, dueOn: string | null, status: "pending" | "in_progress" | "missed" | "done" = "pending") {
+function task(id: string, dueOn: string | null, status: "pending" | "in_progress" | "missed" | "done" = "pending", priorityLevel?: number) {
   return createTask({
     created_at: "2026-09-01T00:00:00.000Z",
     due_on: dueOn,
     id,
+    priority_level: priorityLevel,
     sort_order: 0,
     status,
     title: id,
   });
 }
 
-function policy(
-  id: string,
-  needsActionTriggers: TaskBehaviorPolicy["needsActionTriggers"],
-  missedStreakOnUnhandled: TaskBehaviorPolicy["missedStreakOnUnhandled"] = STANDARD_TASK_BEHAVIOR_POLICY.missedStreakOnUnhandled,
-): TaskBehaviorPolicy {
-  return { ...STANDARD_TASK_BEHAVIOR_POLICY, id, missedStreakOnUnhandled, needsActionTriggers };
+function policy(id: string, missedStreakOnUnhandled: TaskAttentionBehaviorPolicy["missedStreakOnUnhandled"]) {
+  return { ...STANDARD_TASK_BEHAVIOR_POLICY, id, missedStreakOnUnhandled };
 }
 
-function sections(
-  tasks: ReturnType<typeof task>[],
-  behaviorPoliciesByTaskId: Readonly<Record<string, TaskAttentionBehaviorPolicy>> = {},
-) {
-  return buildAttentionTaskSections({
-    behaviorPoliciesByTaskId,
-    statusesByTaskId: Object.fromEntries(tasks.map((entry) => [entry.id, entry.status])),
-    tasks,
-    todayKey: TODAY,
-  });
-}
-
-test("Standard Needs Action preserves Due Today, Overdue, and baseline fall-through behavior", () => {
-  const rows = [
-    task("missed", "2026-09-10", "missed"),
-    task("today", TODAY),
-    task("overdue", "2026-09-11"),
-    task("in-progress-today", TODAY, "in_progress"),
-    task("in-progress-future", "2026-09-13", "in_progress"),
-    task("future", "2026-09-13"),
-  ];
-  const result = sections(rows);
-  assert.deepEqual(result.needsAction.map((entry) => entry.id).sort(), ["in-progress-today", "overdue", "today"]);
-  assert.deepEqual(result.inProgress.map((entry) => entry.id), ["in-progress-future"]);
-  assert.deepEqual(result.comingUp.map((entry) => entry.id), ["future"]);
-});
-
-test("Missed Attention avoids duplicate tracked streak warnings and honors Ignore triggers", () => {
-  const missed = task("missed", "2026-09-10", "missed");
-
-  assert.deepEqual(classifyTaskForAttention({
-    policy: policy("tracked", ["missed"], "increment"),
-    status: "missed",
-    task: missed,
-    todayKey: TODAY,
-  }), { reason: null, section: null });
-  assert.deepEqual(classifyTaskForAttention({
-    policy: policy("ignored-with-trigger", ["missed"], "ignore"),
-    status: "missed",
-    task: missed,
-    todayKey: TODAY,
-  }), { reason: "missed", section: "needs_action" });
-  assert.deepEqual(classifyTaskForAttention({
-    policy: policy("ignored-without-trigger", [], "ignore"),
-    status: "missed",
-    task: missed,
-    todayKey: TODAY,
-  }), { reason: null, section: null });
-});
-
-test("Needs Action trigger filtering preserves Missed precedence and exact date conditions", () => {
-  const missed = task("missed", "2026-09-01", "missed");
-  const today = task("today", TODAY);
-  const overdue = task("overdue", "2026-09-11");
-  const inProgressToday = task("in-progress-today", TODAY, "in_progress");
-  const result = sections([missed, today, overdue, inProgressToday], {
-    missed: policy("no-missed", ["due_today", "overdue"], "ignore"),
-    today: policy("no-due-today", ["missed", "overdue"]),
-    overdue: policy("no-overdue", ["missed", "due_today"]),
-    "in-progress-today": policy("no-due-today", ["missed", "overdue"]),
-  });
-
-  assert.deepEqual(result.needsAction, []);
-  assert.deepEqual(result.inProgress.map((entry) => entry.id), ["in-progress-today"]);
-
-  const overdueOnly = sections([missed, today, overdue], {
-    missed: policy("overdue-only", ["overdue"]),
-    today: policy("overdue-only", ["overdue"]),
-    overdue: policy("overdue-only", ["overdue"]),
-  });
-  assert.deepEqual(overdueOnly.needsAction.map((entry) => entry.id), ["overdue"]);
-  assert.deepEqual(overdueOnly.comingUp, []);
-});
-
-test("terminal, unscheduled, and future facts stay excluded regardless of enabled triggers", () => {
-  const terminal = task("terminal", "2026-09-01", "done");
-  const unscheduled = task("unscheduled", null);
-  const future = task("future", "2026-09-13");
-  const result = buildAttentionTaskSections({
-    behaviorPoliciesByTaskId: {
-      terminal: policy("all", ["missed", "due_today", "overdue"]),
-      unscheduled: policy("all", ["missed", "due_today", "overdue"]),
-      future: policy("all", ["missed", "due_today", "overdue"]),
-    },
-    statusesByTaskId: { terminal: "done", unscheduled: "unscheduled", future: "pending" },
-    tasks: [terminal, unscheduled, future],
-    todayKey: TODAY,
-  });
-  assert.deepEqual(result.needsAction, []);
-  assert.deepEqual(result.comingUp.map((entry) => entry.id), ["future"]);
-});
-
-test("Attention uses effective Task, Custom Default, named Custom, and selection-timeline policies", () => {
-  const taskRevision = { ...STANDARD_TASK_BEHAVIOR_POLICY, id: "task-revision", effectiveFromLogicalDate: TODAY, needsActionTriggers: ["missed", "due_today"] as const };
-  const customRevision = { ...STANDARD_TASK_BEHAVIOR_POLICY, id: "custom-revision", effectiveFromLogicalDate: TODAY, needsActionTriggers: ["missed", "due_today", "overdue"] as const };
-  const namedRevision = { ...STANDARD_TASK_BEHAVIOR_POLICY, id: "named-revision", effectiveFromLogicalDate: TODAY, needsActionTriggers: ["missed", "due_today"] as const };
-  const context = {
-    behaviorPolicyRevisions: { task: [taskRevision], custom: [customRevision] },
-    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-one": [namedRevision] },
+function context(overrides: Partial<TaskListEvaluationContext> = {}): TaskListEvaluationContext {
+  return {
+    currentStreakByTaskId: {},
+    focusedTaskIds: new Set<string>(),
+    hasStepsByTaskId: {},
+    historyFactsByTaskId: {},
+    isDueToday: (date) => date === TODAY,
+    isDueTomorrow: (date) => date === "2026-09-13",
+    isLater: (date) => Boolean(date && date > "2026-09-13"),
+    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived" && candidate.status !== "trashed",
+    isOverdue: (date) => Boolean(date && date < TODAY),
+    manualMembershipsByTaskId: {},
+    taskHistoryByTaskId: {},
+    todayDateKey: TODAY,
+    ...overrides,
   };
-  const taskPolicy = resolveTaskBehaviorPolicyForTask({ ...context, logicalDate: TODAY, taskId: "task-one", taskType: "task" }).policy;
-  const customDefaultPolicy = resolveTaskBehaviorPolicyForTask({ ...context, logicalDate: TODAY, taskId: "custom-default", taskType: "custom", customRulesetId: null }).policy;
-  const namedCustomPolicy = resolveTaskBehaviorPolicyForTask({ ...context, logicalDate: TODAY, taskId: "named-custom", taskType: "custom", customRulesetId: "ruleset-one" }).policy;
-  const historicalSelectionPolicy = resolveTaskBehaviorPolicyForTask({
-    ...context,
-    behaviorSelectionsByTaskId: {
-      "selected-custom": [
-        { effectiveFromLogicalDate: "2026-09-01", taskType: "custom", customRulesetId: "ruleset-one" },
-      ],
-    },
-    customRulesetId: null,
-    logicalDate: TODAY,
-    taskId: "selected-custom",
-    taskType: "custom",
-  }).policy;
+}
 
-  assert.deepEqual(taskPolicy.needsActionTriggers, ["missed", "due_today"]);
-  assert.deepEqual(customDefaultPolicy.needsActionTriggers, ["missed", "due_today", "overdue"]);
-  assert.deepEqual(namedCustomPolicy.needsActionTriggers, ["missed", "due_today"]);
-  assert.deepEqual(historicalSelectionPolicy.needsActionTriggers, ["missed", "due_today"]);
-  assert.notDeepEqual(customDefaultPolicy.needsActionTriggers, namedCustomPolicy.needsActionTriggers);
+function membershipsFor(taskToCheck: ReturnType<typeof task>, attentionEligibleTaskIds: ReadonlySet<string>, lists = getBuiltInTaskLists()) {
+  return evaluateTaskListMemberships(taskToCheck, lists, context({ attentionEligibleTaskIds }));
+}
+
+test("default Attention rules include only eligible overdue Tasks", () => {
+  const rows = [
+    task("overdue", "2026-09-11"),
+    task("today", TODAY),
+    task("future", "2026-09-13"),
+    task("unscheduled", null),
+  ];
+  const policies = Object.fromEntries(rows.map((entry) => [entry.id, policy(entry.id, "ignore")])) as Record<string, TaskAttentionBehaviorPolicy>;
+  const projection = buildTaskAttentionProjection({
+    behaviorPoliciesByTaskId: policies,
+    statusesByTaskId: Object.fromEntries(rows.map((entry) => [entry.id, entry.status])),
+    tasks: rows,
+  });
+
+  const lists = getBuiltInTaskLists();
+  assert.deepEqual(rows.filter((entry) => membershipsFor(entry, projection.attentionEligibleTaskIds, lists).some((membership) => membership.id === "attention")).map((entry) => entry.id), ["overdue"]);
+  assert.equal(buildTaskListCounts(rows, lists, context({ attentionEligibleTaskIds: projection.attentionEligibleTaskIds })).attention, 1);
+  assert.deepEqual([...projection.attentionEligibleTaskIds].sort(), ["future", "overdue", "today", "unscheduled"]);
 });
 
-test("canonical Attention projection includes only effective Needs Action membership", () => {
-  const rows = [
-    task("missed", "2026-09-10", "missed"),
-    task("today", TODAY),
-    task("overdue", "2026-09-11"),
-    task("in-progress-today", TODAY, "in_progress"),
-    task("coming-up", "2026-09-13"),
-    task("unscheduled", null),
-    task("done", "2026-09-11", "done"),
-  ];
-  const allTriggers = Object.fromEntries(rows.map((entry) => [entry.id, policy(entry.id, ["missed", "due_today", "overdue"]) ]));
-  const enabled = buildTaskAttentionProjection({
-    behaviorPoliciesByTaskId: allTriggers,
-    statusesByTaskId: {
-      done: "done",
-      "coming-up": "pending",
-      "in-progress-today": "in_progress",
-      missed: "missed",
-      overdue: "pending",
-      today: "pending",
-      unscheduled: "unscheduled",
-    },
-    tasks: rows,
-    todayKey: TODAY,
-  });
-
-  assert.deepEqual([...enabled.taskIds].sort(), ["in-progress-today", "overdue", "today"]);
-  assert.equal(enabled.reasonByTaskId.missed, undefined);
-  assert.equal(enabled.reasonByTaskId.today, "due_today");
-  assert.equal(enabled.reasonByTaskId.overdue, "overdue");
-  assert.equal(enabled.classificationByTaskId["coming-up"]?.section, "coming_up");
-
-  const disabled = buildTaskAttentionProjection({
+test("locked Attention eligibility excludes tracked-miss profiles, including Custom rulesets", () => {
+  const overdueTracked = task("tracked", "2026-09-11");
+  const overdueIgnored = task("ignored", "2026-09-11");
+  const projection = buildTaskAttentionProjection({
     behaviorPoliciesByTaskId: {
-      missed: policy("missed-disabled", ["due_today", "overdue"]),
-      today: policy("today-disabled", ["missed", "overdue"]),
-      overdue: policy("overdue-disabled", ["missed", "due_today"]),
-      "in-progress-today": policy("today-disabled", ["missed", "overdue"]),
+      tracked: policy("custom-tracked", "increment"),
+      ignored: policy("custom-ignored", "ignore"),
     },
-    statusesByTaskId: {
-      "in-progress-today": "in_progress",
-      missed: "missed",
-      overdue: "pending",
-      today: "pending",
+    statusesByTaskId: { tracked: "pending", ignored: "pending" },
+    tasks: [overdueTracked, overdueIgnored],
+  });
+
+  assert.equal(projection.attentionEligibleTaskIds.has("tracked"), false);
+  assert.equal(projection.attentionEligibleTaskIds.has("ignored"), true);
+  assert.equal(membershipsFor(overdueTracked, projection.attentionEligibleTaskIds).some((membership) => membership.id === "attention"), false);
+  assert.equal(membershipsFor(overdueIgnored, projection.attentionEligibleTaskIds).some((membership) => membership.id === "attention"), true);
+});
+
+test("legacy needsActionTriggers do not affect final Attention membership", () => {
+  const overdue = task("legacy-trigger", "2026-09-11");
+  const enabled = { ...policy("ignored", "ignore"), needsActionTriggers: ["missed", "due_today", "overdue"] };
+  const disabled = { ...policy("ignored", "ignore"), needsActionTriggers: [] };
+  const lists = getBuiltInTaskLists();
+
+  const enabledProjection = buildTaskAttentionProjection({ behaviorPoliciesByTaskId: { [overdue.id]: enabled }, statusesByTaskId: { [overdue.id]: "pending" }, tasks: [overdue] });
+  const disabledProjection = buildTaskAttentionProjection({ behaviorPoliciesByTaskId: { [overdue.id]: disabled }, statusesByTaskId: { [overdue.id]: "pending" }, tasks: [overdue] });
+  assert.equal(membershipsFor(overdue, enabledProjection.attentionEligibleTaskIds, lists).some((membership) => membership.id === "attention"), true);
+  assert.equal(membershipsFor(overdue, disabledProjection.attentionEligibleTaskIds, lists).some((membership) => membership.id === "attention"), true);
+});
+
+test("Attention rule edits use the normal evaluator while the eligibility gate remains locked", () => {
+  const lists = getBuiltInTaskLists().map((list) => list.id === "attention"
+    ? { ...list, rules: { rules: [{ rule: { field: "due", op: "is_today" as const } }] } }
+    : list);
+  const todayIgnored = task("today-ignored", TODAY);
+  const todayTracked = task("today-tracked", TODAY);
+  const projection = buildTaskAttentionProjection({
+    behaviorPoliciesByTaskId: {
+      "today-ignored": policy("ignored", "ignore"),
+      "today-tracked": policy("tracked", "increment"),
     },
-    tasks: rows.slice(0, 4),
-    todayKey: TODAY,
+    statusesByTaskId: { "today-ignored": "pending", "today-tracked": "pending" },
+    tasks: [todayIgnored, todayTracked],
   });
-  assert.deepEqual([...disabled.taskIds], []);
-  assert.equal(disabled.classificationByTaskId["in-progress-today"]?.section, "in_progress");
 
-  const ignoredMissed = buildTaskAttentionProjection({
-    behaviorPoliciesByTaskId: { missed: policy("ignored-missed", ["missed"], "ignore") },
-    statusesByTaskId: { missed: "missed" },
-    tasks: [rows[0]!],
-    todayKey: TODAY,
-  });
-  assert.deepEqual([...ignoredMissed.taskIds], ["missed"]);
-  assert.equal(ignoredMissed.reasonByTaskId.missed, "missed");
+  assert.equal(membershipsFor(todayIgnored, projection.attentionEligibleTaskIds, lists).some((membership) => membership.id === "attention"), true);
+  assert.equal(membershipsFor(todayTracked, projection.attentionEligibleTaskIds, lists).some((membership) => membership.id === "attention"), false);
+});
 
-  const loading = buildTaskAttentionProjection({
-    behaviorPoliciesByTaskId: allTriggers,
-    behaviorPolicyLoading: true,
-    statusesByTaskId: { missed: "missed" },
-    tasks: [rows[0]!],
+test("non-due Attention rules still use canonical Task List operators", () => {
+  const lists = getBuiltInTaskLists().map((list) => list.id === "attention"
+    ? { ...list, rules: { rules: [{ rule: { field: "priority_level", op: "is" as const, value: "5" as const } }] } }
+    : list);
+  const ignored = task("priority-ignored", null, "pending", 5);
+  const tracked = task("priority-tracked", null, "pending", 5);
+  const projection = buildTaskAttentionProjection({
+    behaviorPoliciesByTaskId: {
+      "priority-ignored": policy("ignored", "ignore"),
+      "priority-tracked": policy("tracked", "increment"),
+    },
+    statusesByTaskId: { "priority-ignored": "pending", "priority-tracked": "pending" },
+    tasks: [ignored, tracked],
+  });
+
+  assert.equal(membershipsFor(ignored, projection.attentionEligibleTaskIds, lists).some((membership) => membership.id === "attention"), true);
+  assert.equal(membershipsFor(tracked, projection.attentionEligibleTaskIds, lists).some((membership) => membership.id === "attention"), false);
+});
+
+test("an explicit empty Attention rule group matches nothing and does not use the default", () => {
+  const lists = getBuiltInTaskLists().map((list) => list.id === "attention" ? { ...list, rules: { rules: [] } } : list);
+  const overdue = task("overdue-empty", "2026-09-11");
+  const attentionEligibleTaskIds = new Set([overdue.id]);
+
+  assert.equal(evaluateTaskListMemberships(overdue, lists, context({ attentionEligibleTaskIds })).some((membership) => membership.id === "attention"), false);
+  assert.equal(taskBelongsToList(overdue, "attention", lists, context({ attentionEligibleTaskIds })), false);
+});
+
+test("missing behavior policy or policy loading fails the Attention gate closed", () => {
+  const overdue = task("overdue-loading", "2026-09-11");
+  const base = {
+    statusesByTaskId: { [overdue.id]: "pending" as const },
+    tasks: [overdue],
+  };
+  assert.deepEqual([...buildTaskAttentionProjection(base).attentionEligibleTaskIds], []);
+  assert.deepEqual([...buildTaskAttentionProjection({ ...base, behaviorPolicyLoading: true, behaviorPoliciesByTaskId: { [overdue.id]: policy("ignored", "ignore") } }).attentionEligibleTaskIds], []);
+});
+
+test("Attention reason map is populated only for final members and falls back for custom rules", () => {
+  const overdue = task("overdue-reason", "2026-09-10");
+  const missedOverdue = task("missed-overdue-reason", "2026-09-10", "missed");
+  const future = task("future-reason", "2026-09-20");
+  const reasons = buildTaskAttentionReasonMap({
+    attentionRuleGroup: { rules: [{ rule: { field: "due", op: "is_overdue" } }] },
+    listMembershipsByTaskId: {
+      [overdue.id]: [{ id: "attention" }],
+      [missedOverdue.id]: [{ id: "attention" }],
+      [future.id]: [{ id: "attention" }],
+    },
+    statusesByTaskId: { [overdue.id]: "pending", [missedOverdue.id]: "missed", [future.id]: "pending" },
+    tasks: [overdue, missedOverdue, future],
     todayKey: TODAY,
   });
-  assert.deepEqual([...loading.taskIds], []);
+
+  assert.equal(reasons[overdue.id], "overdue");
+  assert.equal(reasons[missedOverdue.id], "overdue");
+  assert.equal(reasons[future.id], "attention_rule");
+  assert.equal(buildTaskAttentionReasonMap({
+    attentionRuleGroup: { rules: [{ rule: { field: "priority_level", op: "is", value: "5" } }] },
+    listMembershipsByTaskId: { [overdue.id]: [{ id: "attention" }] },
+    statusesByTaskId: { [overdue.id]: "pending" },
+    tasks: [overdue],
+    todayKey: TODAY,
+  })[overdue.id], "attention_rule");
+  assert.equal(buildTaskAttentionReasonMap({
+    listMembershipsByTaskId: {},
+    statusesByTaskId: { [overdue.id]: "pending" },
+    tasks: [overdue],
+    todayKey: TODAY,
+  })[overdue.id], undefined);
 });
 
 test("Attention notification reasons use the governed informational copy", () => {
-  assert.deepEqual(getTaskAttentionNotification("missed"), {
-    description: "This task is currently Missed.",
-    reason: "missed",
-    title: "Missed",
-  });
-  assert.deepEqual(getTaskAttentionNotification("due_today"), {
-    description: "This task is due today and is still unresolved.",
-    reason: "due_today",
-    title: "Due Today",
-  });
   assert.deepEqual(getTaskAttentionNotification("overdue", "2026-09-10"), {
     description: "This task was due September 10, 2026 and is still unresolved.",
     reason: "overdue",
     title: "Overdue",
   });
+  assert.deepEqual(getTaskAttentionNotification("attention_rule"), {
+    description: "Matches your Attention list rules.",
+    reason: "attention_rule",
+    title: "Attention Rule",
+  });
 });
 
-test("Attention is a canonical row presentation and no longer a top-level surface", () => {
+test("Attention remains a canonical row presentation with the working accessible popover", () => {
   assert.match(attentionChipSource, /AdhdIconButton/);
   assert.match(attentionChipSource, /tone="warning"/);
   assert.match(attentionChipSource, /variant="rowToolbar"/);
@@ -255,25 +214,23 @@ test("Attention is a canonical row presentation and no longer a top-level surfac
   assert.doesNotMatch(attentionChipSource, />\s*Attention\s*</);
   assert.match(attentionChipSource, /aria-label=\{`Needs attention: \$\{notification\.title\}`\}/);
   assert.match(attentionChipSource, /createPortal\([\s\S]*document\.body/);
-  assert.match(attentionChipSource, /ref=\{triggerRef\}/);
-  assert.match(attentionChipSource, /ref=\{panelRef\}/);
   assert.match(attentionChipSource, /position: "fixed"/);
   assert.match(attentionChipSource, /window\.addEventListener\("resize", closeOnViewportChange\)/);
   assert.match(attentionChipSource, /window\.addEventListener\("scroll", closeOnViewportChange, true\)/);
-  assert.match(taskAppSource, /missedStreakOnUnhandled/);
-  assert.match(taskAppSource, /TaskAttentionBehaviorPolicy/);
   assert.match(attentionChipSource, /aria-expanded/);
   assert.match(attentionChipSource, /aria-haspopup="dialog"/);
   assert.match(attentionChipSource, /event\.key === "Escape"/);
   assert.match(attentionChipSource, /handlePointerDown/);
   assert.match(attentionChipSource, /Needs Attention/);
   assert.match(attentionChipSource, /TaskAttentionChip/);
+  assert.match(taskAppSource, /attentionEligibleTaskIds/);
+  assert.doesNotMatch(taskAppSource, /attentionTaskIds/);
+  assert.doesNotMatch(taskAppSource, /listId === "attention"/);
   assert.doesNotMatch(tasksSurfaceSwitchSource, />\s*Attention\s*</);
   assert.doesNotMatch(taskAppSource, /<AttentionWorkspace/);
 });
 
-test("Attention waits for effective behavior readiness before classifying Task rows", () => {
-  assert.match(attentionWorkspaceSource, /behaviorPolicyLoading/);
-  assert.match(attentionWorkspaceSource, /behaviorPolicyLoading\s*\?\s*\{ comingUp: \[\], inProgress: \[\], needsAction: \[\] \}/);
-  assert.match(attentionWorkspaceSource, /buildAttentionTaskSections\(\{ behaviorPoliciesByTaskId:/);
+test("the inactive legacy Attention workspace does not classify rows independently", () => {
+  assert.doesNotMatch(attentionWorkspaceSource, /buildAttentionTaskSections|behaviorPolicyLoading|needsActionTriggers/);
+  assert.match(attentionWorkspaceSource, /already-derived final Attention members/);
 });

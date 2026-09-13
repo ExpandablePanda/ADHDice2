@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildTaskHistoryFacts } from "../src/lib/task-history.ts";
-import { buildManualMembershipMap, evaluateTaskListMemberships, getBuiltInTaskLists, isAppOwnedSystemTaskListId, isManualTaskListDestination, isTaskListSettingsEligible, parseTaskListRules, taskBelongsToList, type TaskListDefinition } from "../src/lib/task-lists.ts";
+import { buildManualMembershipMap, evaluateTaskListMemberships, getBuiltInTaskLists, getTaskListCapabilities, isAppOwnedSystemTaskListId, isManualTaskListDestination, isTaskListSettingsEligible, parseTaskListRules, resolveEffectiveTaskListRules, taskBelongsToList, taskListUsesRuleEvaluation, type TaskListDefinition } from "../src/lib/task-lists.ts";
 import { createTask, getTaskBucket, isPursuitVisibleInTaskWorkspace } from "../src/lib/task-buckets.ts";
 
 function createTaskListEvaluationContext(
@@ -113,20 +113,39 @@ test("Attention is a visible system-owned derived list and ignores manual member
   assert.equal(attentionList?.isVisible, true);
   assert.equal(attentionList?.membershipMode, "system");
   assert.equal(attentionList?.isDeletable, false);
-  assert.equal(attentionList?.isEditable, false);
+  assert.equal(attentionList?.isEditable, true);
+  assert.deepEqual(attentionList?.rules, { rules: [{ rule: { field: "due", op: "is_overdue" } }] });
   assert.equal(isAppOwnedSystemTaskListId("attention"), true);
   assert.equal(isManualTaskListDestination(attentionList!), false);
-  assert.equal(isTaskListSettingsEligible(attentionList!), false);
+  assert.equal(isTaskListSettingsEligible(attentionList!), true);
+  assert.equal(taskListUsesRuleEvaluation(attentionList!), true);
+  assert.equal(taskListUsesRuleEvaluation(getBuiltInTaskLists().find((list) => list.id === "routine")!), false);
+  assert.equal(taskListUsesRuleEvaluation(getBuiltInTaskLists().find((list) => list.id === "milestones")!), false);
+  assert.deepEqual(resolveEffectiveTaskListRules({ id: "attention", rules: null }), attentionList?.rules);
+  assert.deepEqual(resolveEffectiveTaskListRules({ id: "attention", rules: { rules: [] } }), { rules: [] });
+  assert.deepEqual(getTaskListCapabilities(attentionList!), {
+    acceptsManualMembership: false,
+    canAssignManualMembership: false,
+    canDelete: false,
+    canEditRules: true,
+    canRename: false,
+    lockedEligibility: {
+      helperText: "Tasks that track missed streaks use their missed-streak indicator instead.",
+      label: "Does not track missed streaks",
+      title: "Eligibility",
+    },
+    usesRuleEvaluation: true,
+  });
 
   const task = createTask({
-    due_on: "2026-06-24",
+    due_on: "2026-06-23",
     id: "task-attention-list",
     status: "pending",
     title: "Attention list task",
   });
   const lists = getBuiltInTaskLists();
   const context = createTaskListEvaluationContext({
-    attentionTaskIds: new Set([task.id]),
+    attentionEligibleTaskIds: new Set([task.id]),
     manualMembershipsByTaskId: buildManualMembershipMap([{
       created_at: "2026-06-24T10:00:00.000Z",
       id: "manual-attention-membership",

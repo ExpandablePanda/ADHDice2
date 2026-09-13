@@ -1,18 +1,16 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ArrowRight, CalendarClock, Clock3, ListTodo } from "lucide-react";
 import { AdhdCard, AdhdChip, AdhdPanel } from "@/components/ui-system";
 import type { Task } from "@/lib/database.types";
 import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
-import { buildAttentionTaskSections, formatAttentionTaskTiming, type TaskAttentionBehaviorPolicy } from "@/lib/task-attention";
+import { formatAttentionTaskTiming } from "@/lib/task-attention";
 import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
 import { formatTaskStatusLabel } from "./task-status-ui";
 import { PursuitsWorkspace, type PursuitsWorkspaceProps } from "./pursuits-workspace";
 
 type AttentionWorkspaceProps = PursuitsWorkspaceProps & {
-  behaviorPoliciesByTaskId?: Readonly<Record<string, TaskAttentionBehaviorPolicy>> | null;
-  behaviorPolicyLoading?: boolean;
   dueOnByTaskId: Record<string, string | null>;
   onOpenTask: (taskId: string) => void;
   statusesByTaskId: TaskDisplayStatusByTaskId;
@@ -21,8 +19,6 @@ type AttentionWorkspaceProps = PursuitsWorkspaceProps & {
 };
 
 export function AttentionWorkspace({
-  behaviorPoliciesByTaskId,
-  behaviorPolicyLoading = false,
   dueOnByTaskId,
   onOpenTask,
   statusesByTaskId,
@@ -30,13 +26,10 @@ export function AttentionWorkspace({
   todayKey,
   ...pursuitProps
 }: AttentionWorkspaceProps) {
-  const sections = useMemo(
-    () => behaviorPolicyLoading
-      ? { comingUp: [], inProgress: [], needsAction: [] }
-      : buildAttentionTaskSections({ behaviorPoliciesByTaskId: behaviorPoliciesByTaskId ?? undefined, dueOnByTaskId, statusesByTaskId, tasks, todayKey }),
-    [behaviorPoliciesByTaskId, behaviorPolicyLoading, dueOnByTaskId, statusesByTaskId, tasks, todayKey],
-  );
-  const taskSectionEmptyText = behaviorPolicyLoading ? "Loading Task behavior settings…" : undefined;
+  // This legacy workspace is not the active TaskApp route. If rendered, its
+  // caller supplies the already-derived final Attention members as `tasks`.
+  const sections = { comingUp: [], inProgress: [], needsAction: tasks };
+  const taskSectionEmptyText = undefined;
   const [showAllComingUp, setShowAllComingUp] = useState(false);
   const visibleComingUp = showAllComingUp ? sections.comingUp : sections.comingUp.slice(0, 6);
 

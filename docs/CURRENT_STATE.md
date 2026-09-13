@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.44`.
+- Current working app version: `7.13.45`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,23 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-12 7.13.45 Attention Rule Authority + Editable System List
+
+Attention is now a configurable, app-owned system list. Its locked
+eligibility condition is resolved from effective behavior policy: only Tasks
+whose effective missed-streak behavior is Ignore may participate. The default
+editable Attention rule is `Due is overdue`; explicit rule edits are evaluated
+by the normal Task List rule engine, and an explicit empty rule group matches
+nothing. Legacy persisted Attention rows with `rules = null` use that default.
+
+Behavior-profile `needsActionTriggers` remains persisted for compatibility but
+no longer governs Attention. The yellow Bell, Attention count, list filtering,
+and popover all consume final Attention list membership. Attention settings use
+the normal list rule editor below a read-only eligibility explanation; the
+system list remains fixed-name, non-deletable, and unavailable for manual
+membership. No SQL migration, schema change, Supabase data migration, or Edge
+Function deployment was performed. Browser QA remains unverified.
 
 ## 2026-09-12 7.13.44 Attention Correction
 

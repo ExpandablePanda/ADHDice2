@@ -15,7 +15,7 @@ import {
   updateTaskListRuleRow,
   updateTaskListRuleRowConnector,
 } from "@/lib/task-list-rule-editor";
-import { isTaskListSettingsEligible, type TaskListDefinition, type TaskListId, type TaskListRuleGroup, type parseTaskListRules } from "@/lib/task-lists";
+import { getTaskListCapabilities, isTaskListSettingsEligible, resolveEffectiveTaskListRules, type TaskListDefinition, type TaskListId, type TaskListRuleGroup, type parseTaskListRules } from "@/lib/task-lists";
 import { TaskListRuleRowEditor } from "./task-list-rule-row-editor";
 import { TaskListFolderManager } from "./task-list-folder-manager";
 
@@ -65,7 +65,7 @@ function buildInitialDrafts(lists: TaskListDefinition[]) {
         isCollapsed: !(index === 0 && list.isVisible && list.type === "system"),
         isVisible: list.isVisible,
         name: list.name,
-        rules: normalizeTaskListRuleGroup(list.rules),
+        rules: normalizeTaskListRuleGroup(resolveEffectiveTaskListRules(list)),
       },
     ]),
   ) as Record<string, TaskListSettingsDraft>;
@@ -120,10 +120,11 @@ export function TaskListSettingsModal({
     const draft = currentDraft ? { ...currentDraft, ...draftOverride } : null;
     if (!draft) return;
 
+    const capabilities = getTaskListCapabilities(list);
     let parsedRules = null;
-    if (list.membershipMode !== "manual" && list.membershipMode !== "system") {
+    if (capabilities.canEditRules) {
       parsedRules = draft.rules;
-      if (!parsedRules || parsedRules.rules.length === 0) {
+      if (!parsedRules || (parsedRules.rules.length === 0 && !capabilities.lockedEligibility)) {
         setRowErrors((current) => ({
           ...current,
           [list.id]: "Pick at least one rule for a rules-based list.",
@@ -279,6 +280,7 @@ export function TaskListSettingsModal({
           {eligibleLists.map((list) => {
             const draft = drafts[list.id];
             if (!draft) return null;
+            const capabilities = getTaskListCapabilities(list);
             return (
               <section
                 className="rounded-[1.5rem] border border-[#ece8f8] bg-white p-4 shadow-[0_12px_30px_rgba(81,61,168,0.05)] dark:border-white/10 dark:bg-white/[0.03]"
@@ -293,13 +295,13 @@ export function TaskListSettingsModal({
                     </div>
                     <p className="mt-2 text-sm text-[#68738f] dark:text-white/55">{list.description}</p>
                     <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/35">{listCounts[list.id] ?? 0} task{(listCounts[list.id] ?? 0) === 1 ? "" : "s"} currently visible</p>
-                    {draft.isCollapsed ? <p className="mt-2 text-xs text-[#7a7397] dark:text-white/45">{list.membershipMode === "manual" ? "Manual list membership." : list.membershipMode === "system" ? "Membership is controlled from the task toolbar." : summarizeTaskListRules(draft.rules, (listId) => listLabelById[listId] ?? "")}</p> : null}
+                    {draft.isCollapsed ? <p className="mt-2 text-xs text-[#7a7397] dark:text-white/45">{capabilities.lockedEligibility ? `${capabilities.lockedEligibility.title}: ${capabilities.lockedEligibility.label}. ` : ""}{list.membershipMode === "manual" ? "Manual list membership." : capabilities.canEditRules ? summarizeTaskListRules(draft.rules, (listId) => listLabelById[listId] ?? "") : "Membership is controlled from the task toolbar."}</p> : null}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2 md:self-start">
                     <button aria-label={draft.isCollapsed ? `Expand ${list.name}` : `Collapse ${list.name}`} className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ddd6fb] bg-white text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]" onClick={() => updateDraft(list.id, { isCollapsed: !draft.isCollapsed })} type="button">
                       {draft.isCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
                     </button>
-                    {list.type === "custom" && list.isDeletable ? (
+                    {capabilities.canDelete ? (
                       <button className="ui-pill-button-danger-light transition hover:border-[#ef9aab] dark:border-[#5b2e3b] dark:bg-white/[0.05] dark:text-[#ff9eaf]" onClick={() => { void onDeleteList(list.id); }} type="button">
                         Delete
                       </button>
@@ -327,7 +329,7 @@ export function TaskListSettingsModal({
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
                       <label className="space-y-2">
                         <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Name</span>
-                        <input className="w-full rounded-[1rem] border border-[#ddd6fb] bg-white px-4 py-3 text-sm text-[#27304c] outline-none disabled:cursor-not-allowed disabled:bg-[#f7f4ff] disabled:text-[#8d87a7] dark:border-white/10 dark:bg-white/[0.05] dark:text-white dark:disabled:bg-white/[0.03] dark:disabled:text-white/35" disabled={list.type !== "custom"} onChange={(event) => updateDraft(list.id, { name: event.target.value })} value={draft.name} />
+                        <input className="w-full rounded-[1rem] border border-[#ddd6fb] bg-white px-4 py-3 text-sm text-[#27304c] outline-none disabled:cursor-not-allowed disabled:bg-[#f7f4ff] disabled:text-[#8d87a7] dark:border-white/10 dark:bg-white/[0.05] dark:text-white dark:disabled:bg-white/[0.03] dark:disabled:text-white/35" disabled={!capabilities.canRename} onChange={(event) => updateDraft(list.id, { name: event.target.value })} value={draft.name} />
                       </label>
                       <label className="flex items-end">
                         <span className="flex w-full items-center justify-between rounded-[1rem] border border-[#ddd6fb] bg-white px-4 py-3 text-sm text-[#27304c] dark:border-white/10 dark:bg-white/[0.05] dark:text-white">
@@ -339,8 +341,15 @@ export function TaskListSettingsModal({
                         </span>
                       </label>
                     </div>
-                    {list.membershipMode !== "manual" && list.membershipMode !== "system" ? (
+                    {capabilities.canEditRules ? (
                       <div className="mt-4 space-y-3">
+                        {capabilities.lockedEligibility ? (
+                          <div className="rounded-[1rem] border border-[#d9cffb] bg-[#f8f5ff] px-4 py-3 dark:border-[#4d3c88] dark:bg-[#261e49]/45">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6f57f6] dark:text-[#cabfff]">{capabilities.lockedEligibility.title}</p>
+                            <p className="mt-1 text-sm font-semibold text-[#2f294a] dark:text-white/90">{capabilities.lockedEligibility.label}</p>
+                            <p className="mt-1 text-xs leading-5 text-[#7d7598] dark:text-white/55">{capabilities.lockedEligibility.helperText}</p>
+                          </div>
+                        ) : null}
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Rules</span>
                         </div>
