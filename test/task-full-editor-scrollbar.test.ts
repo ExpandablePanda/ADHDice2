@@ -5,6 +5,18 @@ import test from "node:test";
 const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
 const cssSource = readFileSync("src/app/globals.css", "utf8");
 
+test("the background Table suppresses overflow only while the full Edit Task is open", () => {
+  const tableScrollOwnerStart = tableSource.indexOf("className={`adhdice-scrollbar relative min-h");
+  const tableScrollOwner = tableSource.slice(tableScrollOwnerStart, tableSource.indexOf("variants={{", tableScrollOwnerStart));
+
+  assert.ok(tableScrollOwnerStart >= 0);
+  assert.match(tableSource, /const isFullInspectorOpen = Boolean\([\s\S]*selectedTaskId[\s\S]*overlayMode === "full"[\s\S]*\(enableInspector \|\| allowInlineInspector\)/);
+  assert.match(tableScrollOwner, /className=\{`adhdice-scrollbar relative min-h-\[min\(28rem,65vh\)\] max-h-\[65vh\] \$\{isFullInspectorOpen \? "overflow-hidden" : "overflow-x-auto overflow-y-auto"\}`\}/);
+  assert.match(tableScrollOwner, /isFullInspectorOpen \? "overflow-hidden"/);
+  assert.match(tableScrollOwner, /: "overflow-x-auto overflow-y-auto"/);
+  assert.doesNotMatch(tableScrollOwner, /(?:scrollTop|scrollLeft)\s*=[^=]|scrollTo\(|scrollIntoView\(/);
+});
+
 test("desktop and mobile full Edit Task scroll containers hide scrollbar chrome while retaining vertical scrolling", () => {
   const desktopFullEditor = tableSource.slice(
     tableSource.indexOf("const fullDesktopEditorNode"),

@@ -2990,6 +2990,11 @@ export function TaskManagementTableV2({
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const tableUserScrollIntentRef = useRef(false);
   const tableScrollTopHoldFrameRef = useRef<number | null>(null);
+  const isFullInspectorOpen = Boolean(
+    selectedTaskId
+    && overlayMode === "full"
+    && (enableInspector || allowInlineInspector),
+  );
   const isMobileFullOverlayOpen = Boolean(
     selectedTaskId
     && overlayMode === "full"
@@ -9196,7 +9201,7 @@ export function TaskManagementTableV2({
         <div className={`${showHeader ? "mt-1" : ""} overflow-hidden rounded-[1.7rem]`} style={{ overflowAnchor: "none" }}>
           <motion.div
             animate="visible"
-            className="adhdice-scrollbar relative min-h-[min(28rem,65vh)] max-h-[65vh] overflow-x-auto overflow-y-auto"
+            className={`adhdice-scrollbar relative min-h-[min(28rem,65vh)] max-h-[65vh] ${isFullInspectorOpen ? "overflow-hidden" : "overflow-x-auto overflow-y-auto"}`}
             initial="hidden"
             onPointerDown={(event) => {
               if (event.target === event.currentTarget) {

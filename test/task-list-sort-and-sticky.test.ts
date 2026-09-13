@@ -146,7 +146,7 @@ test("List and Table sticky hierarchy source contracts preserve real rows and sc
   assert.match(tableSource, /data-task-table-hierarchy-group=\{task\.id\}/);
   assert.match(tableSource, /hasRenderedDescendants \? "sticky top-8 z-10 bg-white/);
   assert.match(tableSource, /style=\{\{ gridTemplateColumns \}\}/);
-  assert.match(tableSource, /adhdice-scrollbar relative min-h-\[min\(28rem,65vh\)\] max-h-\[65vh\] overflow-x-auto overflow-y-auto/);
+  assert.match(tableSource, /adhdice-scrollbar relative min-h-\[min\(28rem,65vh\)\] max-h-\[65vh\] \$\{isFullInspectorOpen \? "overflow-hidden" : "overflow-x-auto overflow-y-auto"\}/);
   assert.match(tableSource, /<div className="min-w-max space-y-1\.5 pb-2">/);
   assert.equal((tableSource.match(/data-task-table-row=\{task\.id\}/g) ?? []).length, 1);
   assert.match(tableSource, /onToggleTaskSelection/);

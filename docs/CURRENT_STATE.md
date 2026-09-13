@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.51`.
+- Current working app version: `7.13.52`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.52 Suppress Background Table Scrollbars During Full Edit Task
+
+Safari QA for 7.13.51 still showed native scrollbars while full Edit Task was
+open. Re-diagnosis found that the visible vertical and horizontal bars belonged
+to the underlying Table scroll container, not the Edit Task scroll owners. Full
+Edit Task now temporarily suppresses the background Table's overflow while
+preserving its scrollTop and scrollLeft values; closing the editor restores
+normal Table scrolling. Edit Task internal scrolling remains enabled, and the
+previous hidden-scrollbar treatment remains in place. No Task, state, or
+persistence changes were made; no SQL, schema, migration, Supabase, or Edge
+Function changes were made, and browser QA remains assigned to Andrew.
 
 ## 2026-09-13 7.13.51 Hide Remaining Full Edit Task Outer Scrollbar
 
