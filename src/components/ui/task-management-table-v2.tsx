@@ -10590,7 +10590,7 @@ export function TaskManagementTableV2({
                   : useMobileFullOverlay
                     ? "flex min-h-0 flex-1 items-start justify-center overscroll-none px-3 pt-[calc(env(safe-area-inset-top)+0.25rem)] pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-5"
                   : overlayMode === "full"
-                    ? "flex flex-1 items-start justify-center overflow-x-hidden overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))]"
+                    ? "adhdice-scrollbar-hidden flex flex-1 items-start justify-center overflow-x-hidden overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))]"
                     : "grid flex-1 gap-3 overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))] lg:grid-cols-[1.1fr_0.9fr]";
 
                 return (

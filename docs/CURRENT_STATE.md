@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.50`.
+- Current working app version: `7.13.51`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.51 Hide Remaining Full Edit Task Outer Scrollbar
+
+Browser QA for 7.13.50 failed in Safari because the inner desktop and mobile
+Edit Task scrollbar treatment was correct but the outer full-overlay scroll
+owner still displayed native scrollbar chrome. The same dedicated hidden-
+scrollbar utility now covers that remaining outer full Edit Task owner while
+its `overflow-y-auto` behavior remains enabled. No navigation, layout, state,
+or persistence behavior changed. No SQL, schema, migration, Supabase, or Edge
+Function changes were made; manual browser QA for this correction remains
+assigned to Andrew.
 
 ## 2026-09-13 7.13.50 Hide Full Edit Task System Scrollbar
 
