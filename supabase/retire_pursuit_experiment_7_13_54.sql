@@ -1,4 +1,4 @@
--- ADHDice 7.13.54: retire the Pursuit experiment.
+-- ADHDice 7.13.56 correction to the 7.13.54 Pursuit retirement migration.
 --
 -- Pursuit rows are test data, not a compatibility surface.  This migration
 -- deletes only structurally identified Pursuit records and Task rows whose
@@ -115,8 +115,9 @@ begin
 end;
 $focus_cleanup$;
 
--- Canonical Task State dependency order.  Nullable cross-links are cleared
--- first because canonical foreign keys intentionally use ON DELETE RESTRICT.
+-- Canonical Task State dependency order.  Clear only incoming workflow
+-- pointers and delete disposable state rows without mutating valid facts into
+-- constraint-invalid intermediate shapes.
 update public.adhdice_clean_tasks task
 set workflow_occurrence_id = null,
     workflow_command_id = null
@@ -168,32 +169,26 @@ where exists (
   where target.user_id = entitlement.user_id and target.task_id = entitlement.entity_id
 );
 
-update public.adhdice_task_schedule_boundaries boundary
-set prior_boundary_id = null,
-    affected_occurrence_id = null,
-    command_id = null
-where exists (
-  select 1 from pg_temp.adhdice_retired_pursuit_tasks target
-  where target.user_id = boundary.user_id and target.task_id = boundary.entity_id
-);
-
-update public.adhdice_task_history_facts history
-set occurrence_id = null,
-    schedule_boundary_id = null,
-    command_id = null
-where exists (
-  select 1 from pg_temp.adhdice_retired_pursuit_tasks target
-  where target.user_id = history.user_id and target.task_id = history.entity_id
-);
-
+-- Break only the occurrence -> history cycle.  The occurrence is disposable,
+-- so its outgoing command reference does not need to be rewritten.
 update public.adhdice_task_occurrences occurrence
-set resolved_history_id = null,
-    command_id = null
+set resolved_history_id = null
 where exists (
   select 1 from pg_temp.adhdice_retired_pursuit_tasks target
   where target.user_id = occurrence.user_id and target.task_id = occurrence.entity_id
 );
 
+-- Remove the boundary -> occurrence incoming reference.  Keep prior_boundary_id
+-- and command_id intact until the disposable boundary row itself is deleted.
+update public.adhdice_task_schedule_boundaries boundary
+set affected_occurrence_id = null
+where exists (
+  select 1 from pg_temp.adhdice_retired_pursuit_tasks target
+  where target.user_id = boundary.user_id and target.task_id = boundary.entity_id
+);
+
+-- Delete disposable History facts directly.  Runtime-provenance facts retain
+-- their required command_id until the row is removed.
 delete from public.adhdice_task_history_facts history
 where exists (
   select 1 from pg_temp.adhdice_retired_pursuit_tasks target
@@ -206,12 +201,31 @@ where exists (
   where target.user_id = occurrence.user_id and target.task_id = occurrence.entity_id
 );
 
-delete from public.adhdice_task_schedule_boundaries boundary
-where exists (
-  select 1 from pg_temp.adhdice_retired_pursuit_tasks target
-  where target.user_id = boundary.user_id and target.task_id = boundary.entity_id
-);
+-- Schedule boundaries self-reference through prior_boundary_id.  Delete each
+-- target boundary from newest to oldest so a sequence-2 child disappears
+-- before its sequence-1 initial parent, without changing either row's valid
+-- boundary shape.
+do $boundary_cleanup$
+declare
+  boundary_row record;
+begin
+  for boundary_row in
+    select boundary.user_id, boundary.id
+    from public.adhdice_task_schedule_boundaries boundary
+    join pg_temp.adhdice_retired_pursuit_tasks target
+      on target.user_id = boundary.user_id
+     and target.task_id = boundary.entity_id
+    order by boundary.user_id, boundary.entity_id, boundary.boundary_sequence desc
+  loop
+    delete from public.adhdice_task_schedule_boundaries boundary
+    where boundary.user_id = boundary_row.user_id
+      and boundary.id = boundary_row.id;
+  end loop;
+end;
+$boundary_cleanup$;
 
+-- All disposable Task State rows that referenced these command operations have
+-- now been removed, including their outgoing command_id fields.
 delete from public.adhdice_task_command_operations command
 where exists (
   select 1 from pg_temp.adhdice_retired_pursuit_tasks target

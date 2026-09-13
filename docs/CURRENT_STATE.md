@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.55`.
+- Current working app version: `7.13.56`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.56 Correct Pursuit Retirement Task-State Cleanup
+
+The 7.13.55 live migration attempt successfully passed the combined Pursuit
+table `TRUNCATE`, then rolled back when canonical schedule-boundary cleanup
+violated `adhdice_task_schedule_boundaries_initial_check`. Diagnosis also
+found that the pending history `command_id = null` update would violate
+`adhdice_task_history_facts_runtime_provenance_check`. Both failed attempts
+rolled back transactionally, so live data remains unchanged: 3 Pursuit-typed
+Tasks, 6 standalone Pursuits, 5 Pursuit activities, and 1 Goal Task remain.
+
+Version 7.13.56 replaces temporary invalid nulling with dependency-ordered
+deletion: it clears only incoming workflow/cycle blockers, deletes History
+facts and occurrences, removes schedule boundaries newest-to-oldest, then
+commands and exact Pursuit Tasks. Goal data remains untouched. The corrected
+live migration remains pending explicit application.
 
 ## 2026-09-13 7.13.55 Correct Pursuit Retirement TRUNCATE Dependency
 
