@@ -1,7 +1,7 @@
 "use client";
 
 import { Pencil, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 
 import type { HealthJournalSignal, HealthJournalSignalInsert, HealthSymptom } from "@/lib/database.types";
@@ -321,35 +321,8 @@ function JournalEventOccurrenceOverlay({
   symptoms: readonly HealthSymptom[];
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState({ left: 8, top: 8 });
   const denominator = getHealthJournalScaleDenominator(signal);
   const displayName = getHealthJournalSignalDisplayName(signal, symptoms);
-
-  useLayoutEffect(() => {
-    function updatePosition() {
-      const anchor = anchorRef.current;
-      if (!anchor || typeof window === "undefined") return;
-      const anchorRect = anchor.getBoundingClientRect();
-      const panelRect = panelRef.current?.getBoundingClientRect();
-      const panelWidth = panelRect?.width ?? Math.min(400, window.innerWidth - 16);
-      const panelHeight = panelRect?.height ?? Math.min(520, window.innerHeight - 16);
-      const maxLeft = Math.max(8, window.innerWidth - panelWidth - 8);
-      const belowTop = anchorRect.bottom + 8;
-      const maxTop = Math.max(8, window.innerHeight - panelHeight - 8);
-      const top = belowTop + panelHeight <= window.innerHeight - 8
-        ? belowTop
-        : Math.max(8, Math.min(anchorRect.top - panelHeight - 8, maxTop));
-      setPosition({ left: Math.max(8, Math.min(anchorRect.right - panelWidth, maxLeft)), top });
-    }
-
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [anchorRef]);
 
   useEffect(() => {
     panelRef.current?.focus();
@@ -380,7 +353,7 @@ function JournalEventOccurrenceOverlay({
   return createPortal(
     <AdhdDropdownPanel
       aria-label={`Log ${displayName}`}
-      className="z-[160] grid max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] gap-3 overflow-y-auto"
+      className="z-[160] grid max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] gap-2 overflow-y-auto"
       data-journal-floating-overlay="true"
       id="journal-event-tag-overlay"
       onKeyDown={(event) => {
@@ -391,16 +364,16 @@ function JournalEventOccurrenceOverlay({
       }}
       ref={panelRef}
       role="dialog"
-      style={{ left: position.left, position: "fixed", top: position.top }}
+      style={{ left: "50%", position: "fixed", top: "50%", transform: "translate(-50%, -50%)" }}
       tabIndex={-1}
-      widthClassName="w-[min(25rem,calc(100vw-1rem))]"
+      widthClassName="w-[min(23rem,calc(100vw-1rem))]"
     >
-      <div className="grid gap-3">
+      <div className="grid gap-2">
         <p className={`${QUESTION_HINT_CLASS} font-semibold uppercase tracking-[0.16em]`}>Log {displayName}</p>
-        <div className="grid gap-2"><p className={`${QUESTION_HINT_CLASS} font-semibold uppercase tracking-[0.16em]`}>{signal.kind === "symptom" ? "Severity" : "Intensity"} · 1–{denominator}</p><div className="grid grid-cols-2 gap-1.5">{Array.from({ length: denominator }, (_, index) => index + 1).map((score) => <button aria-label={`${displayName} ${score}, ${signal.scale_labels[score] ?? ""}`} aria-pressed={overlay.score === score} className={`flex min-h-9 min-w-0 items-start justify-start gap-2 rounded-[0.7rem] px-2 py-2 text-left text-xs font-semibold ${overlay.score === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onChange({ error: null, score })} type="button"><span className="shrink-0 font-semibold">{score}</span><span className="min-w-0 flex-1 break-words whitespace-normal">{signal.scale_labels[score] ?? ""}</span></button>)}</div></div>
-        <label className="grid gap-2"><span className={QUESTION_HINT_CLASS}>Occurrence time</span><HealthStandardTimeInput ariaLabel="Event Feeling occurrence time" compact onChange={(value) => onChange({ error: null, time: value })} value={overlay.time} /></label>
+        <div className="grid gap-1.5"><p className={`${QUESTION_HINT_CLASS} font-semibold uppercase tracking-[0.16em]`}>{signal.kind === "symptom" ? "Severity" : "Intensity"} · 1–{denominator}</p><div className="grid grid-cols-2 gap-1.5">{Array.from({ length: denominator }, (_, index) => index + 1).map((score) => <button aria-label={`${displayName} ${score}, ${signal.scale_labels[score] ?? ""}`} aria-pressed={overlay.score === score} className={`flex min-h-8 min-w-0 items-start justify-start gap-2 rounded-[0.7rem] px-2 py-1.5 text-left text-xs font-semibold ${overlay.score === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onChange({ error: null, score })} type="button"><span className="shrink-0 font-semibold">{score}</span><span className="min-w-0 flex-1 break-words whitespace-normal">{signal.scale_labels[score] ?? ""}</span></button>)}</div></div>
+        <label className="grid gap-1.5"><span className={QUESTION_HINT_CLASS}>Occurrence time</span><HealthStandardTimeInput ariaLabel="Event Feeling occurrence time" compact onChange={(value) => onChange({ error: null, time: value })} value={overlay.time} /></label>
         {overlay.error ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{overlay.error}</p> : null}
-        <div className="flex justify-end gap-2"><AdhdChip onClick={onClose} type="button">Skip</AdhdChip><AdhdChip onClick={onSave} tone="purple" type="button">{overlay.draftKey ? "Update occurrence" : "Add occurrence"}</AdhdChip></div>
+        <div className="flex justify-end gap-1.5"><AdhdChip onClick={onClose} type="button">Skip</AdhdChip><AdhdChip onClick={onSave} tone="purple" type="button">{overlay.draftKey ? "Update occurrence" : "Add occurrence"}</AdhdChip></div>
       </div>
     </AdhdDropdownPanel>,
     document.body,

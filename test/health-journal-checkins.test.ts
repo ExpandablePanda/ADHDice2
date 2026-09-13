@@ -200,7 +200,7 @@ test("Occurrence references include local date and time while preserving identit
   assert.match(formSource, /selectedJournalEntry\?\.reflection/);
 });
 
-test("7.13.47 Journal QA corrections keep compact controls, floating Event Feeling editing, and legacy Event notes", () => {
+test("7.13.48 Journal QA correction centers compact Event Feeling editing and preserves legacy behavior", () => {
   const eventChoiceSource = formSource.slice(formSource.indexOf("function EventCaptureChoice"), formSource.indexOf("function StartOfDayQuestions"));
 
   assert.match(formSource, /HealthStandardTimeInput ariaLabel=\{topTimeLabel\} compact/);
@@ -210,10 +210,19 @@ test("7.13.47 Journal QA corrections keep compact controls, floating Event Feeli
   assert.doesNotMatch(eventCaptureSource, /Event notes/);
   assert.match(eventCaptureSource, /createPortal/);
   assert.match(eventCaptureSource, /data-journal-floating-overlay="true"/);
-  assert.match(eventCaptureSource, /style=\{\{ left: position\.left, position: "fixed", top: position\.top \}\}/);
+  assert.match(eventCaptureSource, /style=\{\{ left: "50%", position: "fixed", top: "50%", transform: "translate\(-50%, -50%\)" \}\}/);
+  assert.doesNotMatch(eventCaptureSource, /useLayoutEffect|updatePosition|getBoundingClientRect|window\.addEventListener\("scroll"/);
+  assert.match(eventCaptureSource, /w-\[min\(23rem,calc\(100vw-1rem\)\)\]/);
+  assert.doesNotMatch(eventCaptureSource, /w-\[min\(25rem/);
+  assert.match(eventCaptureSource, /max-w-\[calc\(100vw-1rem\)\]/);
   assert.match(eventCaptureSource, /max-h-\[calc\(100dvh-1rem\)\].*overflow-y-auto/);
-  assert.match(eventCaptureSource, /window\.addEventListener\("scroll", updatePosition, true\)/);
   assert.match(eventCaptureSource, /event\.key === "Escape"/);
+  assert.match(eventCaptureSource, /readJournalTagQuery/);
+  assert.match(eventCaptureSource, /replaceHealthJournalReflectionTag/);
+  assert.match(eventCaptureSource, /const normalizedTime = normalizeHealthMealTime\(tagOverlay\.time\)/);
+  assert.match(eventCaptureSource, /const occurredAt = normalizedTime \? buildHealthMealLoggedAt\(date, normalizedTime\) : null/);
+  assert.match(eventCaptureSource, /if \(existing\) onUpdateOccurrence\(nextDraft\);\s+else onSaveOccurrence\(nextDraft\);/);
+  assert.match(eventCaptureSource, /textarea\.focus\(\{ preventScroll: true \}\)/);
 
   assert.match(eventChoiceSource, /role="radiogroup"/);
   assert.match(eventChoiceSource, /role="radio"/);
