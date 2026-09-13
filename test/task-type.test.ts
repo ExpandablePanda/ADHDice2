@@ -19,12 +19,12 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import { buildNewTaskDraft } from "../src/components/task-app/task-editor-model.ts";
 import { buildChildTaskCreationDraft } from "../src/lib/task-child-creation.ts";
 
-test("TaskType exposes only selectable Task and Custom labels while retaining Goal read compatibility", () => {
-  assert.deepEqual(TASK_TYPE_OPTIONS.map((option) => option.value), ["task", "custom"]);
+test("TaskType exposes only selectable Task while retaining Goal and named Custom read compatibility", () => {
+  assert.deepEqual(TASK_TYPE_OPTIONS.map((option) => option.value), ["task"]);
   for (const taskType of ["task", "goal", "custom"] as TaskType[]) {
     assert.equal(isTaskType(taskType), true);
     assert.equal(normalizeTaskType(taskType), taskType);
-    assert.equal(formatTaskTypeLabel(taskType), taskType === "custom" ? "Custom Default" : taskType[0].toUpperCase() + taskType.slice(1));
+    assert.equal(formatTaskTypeLabel(taskType), taskType === "custom" ? "Custom Task Type (legacy)" : taskType[0].toUpperCase() + taskType.slice(1));
   }
   assert.equal(isTaskType("pursuit"), false);
   assert.equal(parseTaskType("pursuit"), null);
@@ -38,28 +38,28 @@ test("named Custom Task Types extend the shared selection model without becoming
     { id: "routine", name: "Routine", task_type: "custom" as const },
     { id: "practice", name: "Practice", task_type: "custom" as const },
   ];
-  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Custom Default", "Practice", "Routine"]);
+  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Practice", "Routine"]);
   assert.deepEqual(resolveTaskTypeSelection("practice", rulesets), { taskType: "custom", customRulesetId: "practice" });
-  assert.deepEqual(resolveTaskTypeSelection("custom", rulesets), { taskType: "custom", customRulesetId: null });
+  assert.equal(resolveTaskTypeSelection("custom", rulesets), null);
   assert.deepEqual(resolveTaskTypeSelection("task", rulesets), { taskType: "task", customRulesetId: null });
   assert.equal(resolveTaskTypeSelection("goal", rulesets), null);
   assert.equal(taskTypeSelectionValue("custom", "practice", rulesets), "practice");
   assert.equal(formatTaskTypeLabel("custom", "practice", rulesets), "Practice");
   assert.equal(formatTaskTypeLabel("custom", "practice", [{ id: "practice", name: "Guitar Practice", task_type: "custom" }]), "Guitar Practice");
-  assert.equal(formatTaskTypeLabel("custom", null, rulesets), "Custom Default");
+  assert.equal(formatTaskTypeLabel("custom", null, rulesets), "Custom Task Type (legacy)");
 });
 
 test("deleted named rulesets stay available to historical labels but not current selectors", () => {
   const rulesets = [{ id: "retired", name: "Practice", task_type: "custom" as const, deleted_at: "2026-09-11T00:00:00.000Z" }];
-  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Custom Default"]);
+  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task"]);
   assert.equal(resolveTaskTypeSelection("retired", rulesets), null);
   assert.equal(taskTypeSelectionValue("custom", "retired", rulesets), "custom");
   assert.equal(formatTaskTypeLabel("custom", "retired", rulesets), "Practice");
 });
 
-test("Task Type filters distinguish Task, Custom Default, and named rulesets by projection", () => {
+test("Task Type filters distinguish Task and named rulesets by projection", () => {
   assert.equal(matchesTaskTypeSelection("task", null, "task"), true);
-  assert.equal(matchesTaskTypeSelection("custom", null, "custom"), true);
+  assert.equal(matchesTaskTypeSelection("custom", null, "custom"), false);
   assert.equal(matchesTaskTypeSelection("custom", "practice", "custom"), false);
   assert.equal(matchesTaskTypeSelection("custom", "practice", "practice"), true);
   assert.equal(matchesTaskTypeSelection("custom", "discipline", "practice"), false);
@@ -75,6 +75,7 @@ test("Table View owns a Task Type column and reuses the shared label/filter auth
   assert.match(tableSource, /buildTaskTypeSelectionOptions\(customBehaviorRulesets\)/);
   assert.match(tableSource, /formatTaskTypeLabel\(task\.taskType, task\.customRulesetId, customBehaviorRulesets\)/);
   assert.match(tableSource, /matchesTaskTypeSelections\(task\.taskType, task\.customRulesetId, structuredFilters\.task_type\)/);
+  assert.doesNotMatch(tableSource, /Custom Default/);
   assert.match(tableSource, /const missingColumns = HEADER_COLUMNS\.map/);
   assert.match(tableSource, /return \[\.\.\.validStoredOrder, \.\.\.missingColumns\]/);
   assert.match(taskAppSource, /setActivePage\("Tasks"\)/);
@@ -84,6 +85,18 @@ test("Table View owns a Task Type column and reuses the shared label/filter auth
   assert.match(taskAppSource, /deleteRuleset: \(\) => deleteCustomRuleset\(rulesetId\)/);
   assert.match(uiStateSource, /task_type/);
   assert.match(uiStateSource, /withNotes\.includes\("task_type"\)/);
+});
+
+test("anonymous Custom assignments are invalid while named Custom display remains authoritative", () => {
+  const migration = readFileSync("supabase/20260913000000_remove_anonymous_custom_task_type_7_13_58.sql", "utf8");
+  const schema = readFileSync("supabase/schema.sql", "utf8");
+  assert.match(migration, /update\s+public\.adhdice_clean_tasks[\s\S]*where task_type = 'custom'[\s\S]*custom_ruleset_id is null/i);
+  assert.match(migration, /update\s+public\.adhdice_task_behavior_selections[\s\S]*where task_type = 'custom'[\s\S]*custom_ruleset_id is null/i);
+  assert.match(migration, /delete\s+from\s+public\.adhdice_task_type_behavior_profiles[\s\S]*where task_type = 'custom'/i);
+  assert.doesNotMatch(migration, /custom_ruleset_id is not null[\s\S]*set task_type = 'task'/i);
+  assert.match(schema, /\(task_type = 'custom' and custom_ruleset_id is not null\)[\s\S]*\(task_type in \('task', 'goal'\) and custom_ruleset_id is null\)/i);
+  assert.match(schema, /Custom behavior selections require a named Custom Task Type/i);
+  assert.doesNotMatch(schema, /constraint adhdice_task_type_behavior_profiles_task_type_check\s*\n\s*check \(task_type in \('task', 'goal', 'custom'\)\)/i);
 });
 
 test("normal and child Task creation default TaskType to task", () => {

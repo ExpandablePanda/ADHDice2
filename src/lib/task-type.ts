@@ -2,10 +2,9 @@ import type { CustomBehaviorRuleset } from "./database.types.ts";
 
 export type TaskType = "task" | "goal" | "custom";
 
-export type TaskTypeSelection = Readonly<{
-  customRulesetId: string | null;
-  taskType: TaskType;
-}>;
+export type TaskTypeSelection =
+  | Readonly<{ customRulesetId: null; taskType: "task" }>
+  | Readonly<{ customRulesetId: string; taskType: "custom" }>;
 
 export type TaskTypeSelectionOption = {
   label: string;
@@ -14,12 +13,10 @@ export type TaskTypeSelectionOption = {
 
 export const TASK_TYPE_OPTIONS: ReadonlyArray<{ label: string; value: TaskType }> = [
   { label: "Task", value: "task" },
-  { label: "Custom Default", value: "custom" },
 ];
 
 const BASE_TASK_TYPE_SELECTION_OPTIONS: ReadonlyArray<TaskTypeSelectionOption> = [
   { label: "Task", value: "task" },
-  { label: "Custom Default", value: "custom" },
 ];
 
 export function isTaskType(value: unknown): value is TaskType {
@@ -94,7 +91,7 @@ export function resolveTaskTypeSelection(
     return { customRulesetId: namedRuleset.id, taskType: "custom" };
   }
   const taskType = parseTaskType(value);
-  return taskType && taskType !== "goal" ? { customRulesetId: null, taskType } : null;
+  return taskType === "task" ? { customRulesetId: null, taskType } : null;
 }
 
 export function formatTaskTypeLabel(
@@ -105,7 +102,7 @@ export function formatTaskTypeLabel(
   const normalizedTaskType = normalizeTaskType(value);
   if (normalizedTaskType === "custom") {
     const namedRuleset = sortNamedCustomRulesets(rulesets, true).find((ruleset) => ruleset.id === customRulesetId);
-    return namedRuleset?.name.trim() || "Custom Default";
+    return namedRuleset?.name.trim() || "Custom Task Type (legacy)";
   }
   if (normalizedTaskType === "goal") return "Goal";
   return TASK_TYPE_OPTIONS.find((option) => option.value === normalizedTaskType)?.label ?? "Task";
@@ -118,9 +115,7 @@ export function matchesTaskTypeSelection(
 ): boolean {
   const normalizedTaskType = normalizeTaskType(taskType);
   const normalizedCustomRulesetId = customRulesetId ?? null;
-  if (selectionValue === "custom") {
-    return normalizedTaskType === "custom" && normalizedCustomRulesetId === null;
-  }
+  if (selectionValue === "custom") return false;
   if (isTaskType(selectionValue)) {
     return normalizedTaskType === selectionValue;
   }

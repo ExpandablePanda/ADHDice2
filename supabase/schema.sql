@@ -74,7 +74,7 @@ create table public.adhdice_task_type_behavior_profiles (
   updated_at timestamptz not null default now(),
   primary key (user_id, task_type, effective_from_logical_date),
   constraint adhdice_task_type_behavior_profiles_task_type_check
-    check (task_type in ('task', 'goal', 'custom')),
+    check (task_type in ('task', 'goal')),
   constraint adhdice_task_type_behavior_profiles_unresolved_occurrence_check
     check (unresolved_occurrence in ('missed', 'blank')),
   constraint adhdice_task_type_behavior_profiles_positive_streak_check
@@ -139,7 +139,10 @@ create table public.adhdice_custom_behavior_ruleset_revisions (
 alter table public.adhdice_clean_tasks
   add constraint adhdice_clean_tasks_user_id_id_key unique (user_id, id),
   add constraint adhdice_clean_tasks_custom_ruleset_task_type_check
-    check (custom_ruleset_id is null or task_type = 'custom'),
+    check (
+      (task_type = 'custom' and custom_ruleset_id is not null)
+      or (task_type in ('task', 'goal') and custom_ruleset_id is null)
+    ),
   add constraint adhdice_clean_tasks_custom_ruleset_owner_fkey
     foreign key (user_id, custom_ruleset_id)
     references public.adhdice_custom_behavior_rulesets(user_id, id)
@@ -165,7 +168,10 @@ create table public.adhdice_task_behavior_selections (
   constraint adhdice_task_behavior_selections_task_type_check
     check (task_type in ('task', 'goal', 'custom')),
   constraint adhdice_task_behavior_selections_custom_ruleset_task_type_check
-    check (custom_ruleset_id is null or task_type = 'custom')
+    check (
+      (task_type = 'custom' and custom_ruleset_id is not null)
+      or (task_type in ('task', 'goal') and custom_ruleset_id is null)
+    )
 );
 
 -- 7.13.33 tombstones named Custom identities while preserving historical
@@ -1842,6 +1848,9 @@ begin
   end if;
   if new.custom_ruleset_id is not null and new.task_type <> 'custom' then
     raise exception 'Only Custom behavior selections may consume a named Custom ruleset.' using errcode = '23514';
+  end if;
+  if new.task_type = 'custom' and new.custom_ruleset_id is null then
+    raise exception 'Custom behavior selections require a named Custom Task Type.' using errcode = '23514';
   end if;
   return new;
 end;

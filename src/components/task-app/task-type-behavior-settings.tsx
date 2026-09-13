@@ -16,7 +16,7 @@ import {
   type TaskManualAction,
   type UnresolvedOccurrenceBehavior,
 } from "@/lib/task-state-engine/behavior-policy";
-import { taskTypeBehaviorTabDescription, type TaskTypeBehaviorTab } from "@/lib/task-type-behavior-settings";
+import { buildDefaultCustomTaskTypeDraft, taskTypeBehaviorTabDescription, type TaskTypeBehaviorTab } from "@/lib/task-type-behavior-settings";
 import { buildTaskTypeSelectionOptions, normalizeTaskType, type TaskType } from "@/lib/task-type";
 import { TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
 
@@ -55,6 +55,104 @@ function Selector<T extends string>({
   );
 }
 
+type BehaviorControlProfile = Pick<TaskBehaviorPolicy, "id" | ConfigurableField>;
+
+function BehaviorControls({
+  activeProfile,
+  disabled,
+  onChange,
+  onToggleAvailableAction,
+}: {
+  activeProfile: BehaviorControlProfile;
+  disabled: boolean;
+  onChange: {
+    unresolvedOccurrence: (value: UnresolvedOccurrenceBehavior) => void;
+    missedStreakOnUnhandled: (value: MissedStreakUnhandledBehavior) => void;
+    rewards: (value: RewardBehavior) => void;
+  };
+  onToggleAvailableAction: (action: TaskManualAction) => void | Promise<void>;
+}) {
+  return (
+    <div className="space-y-3">
+      <section className={SECTION_CLASS}>
+        <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Available Actions</h4>
+        <p className="mt-2 text-xs leading-5 text-[#7d7598] dark:text-white/50">Choose which manual actions are available for Tasks using this profile. Task schedule and state can further limit which actions appear.</p>
+        <div aria-label="Available Actions" className="mt-3 flex flex-wrap gap-1.5" role="group">
+          {([
+            ["done", "Done"],
+            ["did_my_best", "Did My Best"],
+            ["missed", "Missed"],
+            ["delay", "Delay"],
+            ["complete", "Complete"],
+          ] as const).map(([action, label]) => (
+            <AdhdChip
+              key={action}
+              disabled={disabled}
+              onClick={() => { void onToggleAvailableAction(action); }}
+              selected={activeProfile.availableActions.includes(action)}
+              type="button"
+            >
+              {label}
+            </AdhdChip>
+          ))}
+        </div>
+      </section>
+
+      <section className={SECTION_CLASS}>
+        <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Scheduled occurrences</h4>
+        <Selector<UnresolvedOccurrenceBehavior>
+          label="Unfinished scheduled occurrence"
+          onChange={onChange.unresolvedOccurrence}
+          options={[{ label: "Mark Missed", value: "missed" }, { label: "Leave scheduled occurrence blank", value: "blank" }]}
+          value={activeProfile.unresolvedOccurrence}
+        />
+        <p className="mt-2 text-xs leading-5 text-[#7d7598] dark:text-white/50">
+          {activeProfile.unresolvedOccurrence === "missed"
+            ? "When a scheduled Task passes without a handled outcome, ADHDice records it as Missed."
+            : "When a scheduled Task passes without a handled outcome, ADHDice leaves a scheduled-but-blank obligation."}
+        </p>
+        <div className="mt-3 space-y-2 text-xs text-[#6f6887] dark:text-white/55">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">Derived effects</p>
+          {activeProfile.unresolvedOccurrence === "missed" ? (
+            <>
+              <div>Mark Missed → Calendar displays Missed</div>
+              <div>Mark Missed → Missed History fact is recorded</div>
+              <div>Mark Missed → obligation remains unresolved</div>
+            </>
+          ) : (
+            <>
+              <div>Leave blank → Calendar preserves the scheduled distinction</div>
+              <div>Leave blank → no Missed History fact is recorded</div>
+              <div>Leave blank → obligation remains unresolved</div>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className={SECTION_CLASS}>
+        <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Streaks</h4>
+        <Selector<MissedStreakUnhandledBehavior>
+          label="Missed streak when scheduled occurrence is unfinished"
+          onChange={onChange.missedStreakOnUnhandled}
+          options={[{ label: "Add to missed streak", value: "increment" }, { label: "Ignore for missed streak", value: "ignore" }]}
+          value={activeProfile.missedStreakOnUnhandled}
+        />
+      </section>
+
+      <section className={SECTION_CLASS}>
+        <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Rewards</h4>
+        <Selector<RewardBehavior>
+          label="Rewards"
+          onChange={onChange.rewards}
+          options={[{ label: "Enabled", value: "enabled" }, { label: "Disabled", value: "disabled" }]}
+          value={activeProfile.rewards}
+        />
+        <p className="mt-2 text-xs leading-5 text-[#7d7598] dark:text-white/50">Successful outcomes: Done, Did My Best, and Complete. Existing earned rewards remain permanent.</p>
+      </section>
+    </div>
+  );
+}
+
 export function TaskTypeBehaviorSettings({
   customBehaviorRulesetProfiles = {},
   customBehaviorRulesets = [],
@@ -74,7 +172,7 @@ export function TaskTypeBehaviorSettings({
   customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   initialTaskType?: TaskType;
   initialCustomRulesetId?: string | null;
-  onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
+  onCreateCustomRuleset?: (name: string, policy: TaskBehaviorPolicy) => Promise<CustomBehaviorRuleset | null>;
   onDeleteCustomRuleset?: (rulesetId: string) => Promise<DeleteActionResult> | DeleteActionResult;
   onShowCustomRulesetTasks?: (rulesetId: string) => void;
   onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<DeleteActionResult> | DeleteActionResult;
@@ -88,6 +186,7 @@ export function TaskTypeBehaviorSettings({
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newRulesetName, setNewRulesetName] = useState("");
+  const [customTaskTypeDraft, setCustomTaskTypeDraft] = useState<TaskBehaviorPolicy>(buildDefaultCustomTaskTypeDraft);
   const [isRenaming, setIsRenaming] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isResolvingDelete, setIsResolvingDelete] = useState(false);
@@ -108,13 +207,28 @@ export function TaskTypeBehaviorSettings({
       setRulesetNameDraft(selectedRulesetName);
     }
   }, [selectedRulesetId, selectedRulesetName]);
-  const activeProfile: Pick<TaskBehaviorPolicy, "id" | ConfigurableField> = (selectedRuleset ? customBehaviorRulesetProfiles[selectedRuleset.id] : profiles[activeTab]) ?? {
+  const activeProfile: Pick<TaskBehaviorPolicy, "id" | ConfigurableField> = isCreateOpen
+    ? customTaskTypeDraft
+    : (selectedRuleset ? customBehaviorRulesetProfiles[selectedRuleset.id] : profiles[activeTab]) ?? {
     id: `${activeTab}-standard`,
     availableActions: STANDARD_TASK_AVAILABLE_ACTIONS,
     unresolvedOccurrence: "missed" as const,
     missedStreakOnUnhandled: "increment" as const,
     rewards: "enabled" as const,
-  };
+    };
+
+  function openCreate() {
+    setNewRulesetName("");
+    setCustomTaskTypeDraft(buildDefaultCustomTaskTypeDraft());
+    setBlockedDelete(null);
+    setIsCreateOpen(true);
+  }
+
+  function cancelCreate() {
+    setIsCreateOpen(false);
+    setNewRulesetName("");
+    setCustomTaskTypeDraft(buildDefaultCustomTaskTypeDraft());
+  }
 
   function selectProfile(value: string) {
     setActiveSelection(value);
@@ -128,7 +242,7 @@ export function TaskTypeBehaviorSettings({
     setIsCreating(true);
     let created: CustomBehaviorRuleset | null = null;
     try {
-      created = await onCreateCustomRuleset(newRulesetName);
+      created = await onCreateCustomRuleset(newRulesetName, customTaskTypeDraft);
     } catch {
       created = null;
     } finally {
@@ -173,7 +287,7 @@ export function TaskTypeBehaviorSettings({
       }
       return;
     }
-    setActiveSelection("custom");
+    setActiveSelection("task");
     setRulesetNameDraft("");
     setBlockedDelete(null);
   }
@@ -195,14 +309,17 @@ export function TaskTypeBehaviorSettings({
       }
       return;
     }
-    setActiveSelection("custom");
+    setActiveSelection("task");
     setRulesetNameDraft("");
     setBlockedDelete(null);
   }
 
   function updateActiveProfile(field: Exclude<ConfigurableField, "availableActions">, value: TaskBehaviorPolicy[typeof field]) {
     if (isSavingPolicyArray || isSavingPolicyArrayRef.current) return;
-    if (selectedRuleset) {
+    if (isCreateOpen) {
+      setCustomTaskTypeDraft((current) => ({ ...current, [field]: value }));
+      return;
+    } else if (selectedRuleset) {
       void onCustomRulesetChange?.(selectedRuleset.id, field, value);
       return;
     }
@@ -211,6 +328,14 @@ export function TaskTypeBehaviorSettings({
 
   async function toggleAvailableAction(action: TaskManualAction) {
     if (isSavingPolicyArray || isSavingPolicyArrayRef.current) return;
+    if (isCreateOpen) {
+      const currentActions = normalizeTaskManualActions(customTaskTypeDraft.availableActions);
+      const nextActions = currentActions.includes(action)
+        ? currentActions.filter((current) => current !== action)
+        : [...currentActions, action];
+      setCustomTaskTypeDraft((current) => ({ ...current, availableActions: nextActions }));
+      return;
+    }
     isSavingPolicyArrayRef.current = true;
     const currentActions = normalizeTaskManualActions(activeProfile.availableActions);
     const nextActions = normalizeTaskManualActions(
@@ -232,12 +357,25 @@ export function TaskTypeBehaviorSettings({
 
   async function resetDefaults() {
     if (isSavingPolicyArray || isSavingPolicyArrayRef.current) return;
-    const label = activeTab === "custom" ? "Custom Default" : "Task";
+    const label = "Task";
     if (!window.confirm(`Reset ${label} behavior defaults? This changes only the ${label} profile and leaves Task History unchanged.`)) return;
     setResetting(true);
-    await onReset(activeTab);
+    await onReset("task");
     setResetting(false);
   }
+
+  const behaviorControls = (
+    <BehaviorControls
+      activeProfile={activeProfile}
+      disabled={isSavingPolicyArray}
+      onChange={{
+        unresolvedOccurrence: (value) => { updateActiveProfile("unresolvedOccurrence", value); },
+        missedStreakOnUnhandled: (value) => { updateActiveProfile("missedStreakOnUnhandled", value); },
+        rewards: (value) => { updateActiveProfile("rewards", value); },
+      }}
+      onToggleAvailableAction={toggleAvailableAction}
+    />
+  );
 
   return (
     <AdhdPanel
@@ -247,16 +385,16 @@ export function TaskTypeBehaviorSettings({
       <div>
             <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Task Types</p>
             <h3 className="mt-1 text-lg font-semibold text-[#2f294a] dark:text-white">Behavior settings</h3>
-            <p className="mt-1 text-sm leading-5 text-[#7d7598] dark:text-white/55">Profiles shape one shared Task Engine. Task uses standard behavior, Custom Default uses generic custom behavior, and named Custom Task Types use saved behavior configurations.</p>
+            <p className="mt-1 text-sm leading-5 text-[#7d7598] dark:text-white/55">Profiles shape one shared Task Engine. Task uses standard behavior, and named Custom Task Types use saved behavior configurations.</p>
             <p className="mt-2 text-xs leading-5 text-[#988eb9] dark:text-white/45">Custom Task Types keep their own effective-dated behavior revisions.</p>
           </div>
           <div className="flex flex-wrap justify-end gap-1.5">
-          {activeTab === "task" || (activeTab === "custom" && !selectedRuleset) ? (
+          {activeTab === "task" ? (
             <AdhdChip className="gap-1.5" disabled={resetting || isSavingPolicyArray} icon={<RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void resetDefaults(); }} tone="default">
-              {resetting ? "Resetting…" : `Reset ${activeTab === "custom" ? "Custom Default" : "Task"} Defaults`}
+              {resetting ? "Resetting…" : "Reset Task Defaults"}
             </AdhdChip>
           ) : null}
-          <AdhdChip className="gap-1.5" disabled={!onCreateCustomRuleset || isCreating} onClick={() => setIsCreateOpen(true)} tone="purple">
+          <AdhdChip className="gap-1.5" disabled={!onCreateCustomRuleset || isCreating} onClick={openCreate} tone="purple">
             + New Custom Task Type
           </AdhdChip>
           </div>
@@ -282,12 +420,17 @@ export function TaskTypeBehaviorSettings({
               value={newRulesetName}
             />
           </label>
+          <div className="mt-4">
+            <p className="mb-3 text-xs leading-5 text-[#7d7598] dark:text-white/50">Configure the behavior before creating this named Custom Task Type. Nothing is saved until you choose Create.</p>
+            {behaviorControls}
+          </div>
           <div className="mt-2 flex flex-wrap justify-end gap-1.5">
-            <AdhdChip disabled={isCreating} icon={<X aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { setIsCreateOpen(false); setNewRulesetName(""); }} tone="default">Cancel</AdhdChip>
+            <AdhdChip disabled={isCreating} icon={<X aria-hidden="true" className="h-3.5 w-3.5" />} onClick={cancelCreate} tone="default">Cancel</AdhdChip>
             <AdhdChip disabled={isCreating} icon={<Check aria-hidden="true" className="h-3.5 w-3.5" />} type="submit" tone="purple">{isCreating ? "Creating…" : "Create Custom Task Type"}</AdhdChip>
           </div>
         </form>
       ) : null}
+      {!isCreateOpen ? <>
       <div className="mb-4 flex flex-wrap gap-1.5" role="tablist" aria-label="Task Type behavior profiles">
         {selectionOptions.map((option) => (
           <AdhdChip disabled={isSavingPolicyArray} key={option.value} onClick={() => selectProfile(option.value)} selected={activeSelection === option.value} type="button" role="tab" aria-selected={activeSelection === option.value}>
@@ -334,89 +477,14 @@ export function TaskTypeBehaviorSettings({
         </div>
       ) : null}
 
-      {activeTab !== "task" && activeTab !== "custom" ? (
+      {activeTab === "task" || selectedRuleset ? (
+        behaviorControls
+      ) : (
         <div className="rounded-[1rem] border border-dashed border-[#ddd6f5] bg-white px-4 py-6 text-sm text-[#7d7598] dark:border-white/12 dark:bg-white/[0.025] dark:text-white/55">
           {taskTypeBehaviorTabDescription(activeTab)}
         </div>
-      ) : (
-        <div className="space-y-3">
-          <section className={SECTION_CLASS}>
-            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Available Actions</h4>
-            <p className="mt-2 text-xs leading-5 text-[#7d7598] dark:text-white/50">Choose which manual actions are available for Tasks using this profile. Task schedule and state can further limit which actions appear.</p>
-            <div aria-label="Available Actions" className="mt-3 flex flex-wrap gap-1.5" role="group">
-              {([
-                ["done", "Done"],
-                ["did_my_best", "Did My Best"],
-                ["missed", "Missed"],
-                ["delay", "Delay"],
-                ["complete", "Complete"],
-              ] as const).map(([action, label]) => (
-                <AdhdChip
-                  key={action}
-                  disabled={isSavingPolicyArray}
-                  onClick={() => { void toggleAvailableAction(action); }}
-                  selected={activeProfile.availableActions.includes(action)}
-                  type="button"
-                >
-                  {label}
-                </AdhdChip>
-              ))}
-            </div>
-          </section>
-
-          <section className={SECTION_CLASS}>
-            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Scheduled occurrences</h4>
-            <Selector<UnresolvedOccurrenceBehavior>
-              label="Unfinished scheduled occurrence"
-              onChange={(value) => { updateActiveProfile("unresolvedOccurrence", value); }}
-              options={[{ label: "Mark Missed", value: "missed" }, { label: "Leave scheduled occurrence blank", value: "blank" }]}
-              value={activeProfile.unresolvedOccurrence}
-            />
-            <p className="mt-2 text-xs leading-5 text-[#7d7598] dark:text-white/50">
-              {activeProfile.unresolvedOccurrence === "missed"
-                ? "When a scheduled Task passes without a handled outcome, ADHDice records it as Missed."
-                : "When a scheduled Task passes without a handled outcome, ADHDice leaves a scheduled-but-blank obligation."}
-            </p>
-            <div className="mt-3 space-y-2 text-xs text-[#6f6887] dark:text-white/55">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">Derived effects</p>
-              {activeProfile.unresolvedOccurrence === "missed" ? (
-                <>
-                  <div>Mark Missed → Calendar displays Missed</div>
-                  <div>Mark Missed → Missed History fact is recorded</div>
-                  <div>Mark Missed → obligation remains unresolved</div>
-                </>
-              ) : (
-                <>
-                  <div>Leave blank → Calendar preserves the scheduled distinction</div>
-                  <div>Leave blank → no Missed History fact is recorded</div>
-                  <div>Leave blank → obligation remains unresolved</div>
-                </>
-              )}
-            </div>
-          </section>
-
-          <section className={SECTION_CLASS}>
-            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Streaks</h4>
-            <Selector<MissedStreakUnhandledBehavior>
-              label="Missed streak when scheduled occurrence is unfinished"
-              onChange={(value) => { updateActiveProfile("missedStreakOnUnhandled", value); }}
-              options={[{ label: "Add to missed streak", value: "increment" }, { label: "Ignore for missed streak", value: "ignore" }]}
-              value={activeProfile.missedStreakOnUnhandled}
-            />
-          </section>
-
-          <section className={SECTION_CLASS}>
-            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Rewards</h4>
-            <Selector<RewardBehavior>
-              label="Rewards"
-              onChange={(value) => { updateActiveProfile("rewards", value); }}
-              options={[{ label: "Enabled", value: "enabled" }, { label: "Disabled", value: "disabled" }]}
-              value={activeProfile.rewards}
-            />
-            <p className="mt-2 text-xs leading-5 text-[#7d7598] dark:text-white/50">Successful outcomes: Done, Did My Best, and Complete. Existing earned rewards remain permanent.</p>
-          </section>
-        </div>
       )}
+      </> : null}
     </AdhdPanel>
   );
 }

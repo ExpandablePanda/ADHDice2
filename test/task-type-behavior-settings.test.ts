@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
-import { TASK_TYPE_BEHAVIOR_TABS, taskTypeBehaviorTabDescription } from "../src/lib/task-type-behavior-settings.ts";
+import { buildDefaultCustomTaskTypeDraft, TASK_TYPE_BEHAVIOR_TABS, taskTypeBehaviorTabDescription } from "../src/lib/task-type-behavior-settings.ts";
 import {
   normalizeTaskBehaviorPolicyRevisions,
   normalizeTaskBehaviorProfile,
@@ -44,6 +44,14 @@ const input: TaskStateEngineInput = {
 test("missing Task profile falls back to the current Standard policy", () => {
   assert.deepEqual(normalizeTaskBehaviorProfile(null), STANDARD_TASK_BEHAVIOR_POLICY);
   assert.deepEqual(normalizeTaskBehaviorProfile({ unresolvedOccurrence: "invalid" }), STANDARD_TASK_BEHAVIOR_POLICY);
+});
+
+test("new Custom Task Type drafts are detached copies of the canonical template", () => {
+  const draft = buildDefaultCustomTaskTypeDraft();
+  assert.deepEqual({ ...draft, id: STANDARD_TASK_BEHAVIOR_POLICY.id }, STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.notEqual(draft, STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.notEqual(draft.availableActions, STANDARD_TASK_BEHAVIOR_POLICY.availableActions);
+  assert.notEqual(draft.needsActionTriggers, STANDARD_TASK_BEHAVIOR_POLICY.needsActionTriggers);
 });
 
 test("Custom Task Type settings expose only active named types and gate deletion behind confirmation", () => {
@@ -123,19 +131,10 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
     needsActionTriggers: ["missed", "due_today", "overdue"],
     effectiveFromLogicalDate: "2026-09-08",
-  }], custom: [{
-    id: "custom-behavior-profile",
-    unresolvedOccurrence: "blank",
-    positiveStreakOnUnhandled: "preserve",
-    missedStreakOnUnhandled: "ignore",
-    rewards: "disabled",
-    availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
-    needsActionTriggers: ["missed", "due_today", "overdue"],
-    effectiveFromLogicalDate: "2026-09-08",
   }] });
-  assert.deepEqual(taskTypeBehaviorProfileUpsertPayload("user-a", "custom", STANDARD_TASK_BEHAVIOR_POLICY, "2026-09-08"), {
+  assert.deepEqual(taskTypeBehaviorProfileUpsertPayload("user-a", "task", STANDARD_TASK_BEHAVIOR_POLICY, "2026-09-08"), {
     user_id: "user-a",
-    task_type: "custom",
+    task_type: "task",
     effective_from_logical_date: "2026-09-08",
     unresolved_occurrence: "missed",
     positive_streak_on_unhandled: "break",
@@ -151,10 +150,10 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     missedStreakOnUnhandled: "ignore",
     rewards: "disabled",
   }, "custom");
-  assert.equal(taskTypeBehaviorProfileUpsertPayload("user-a", "custom", legacyPreservePolicy, "2026-09-08").positive_streak_on_unhandled, "break");
+  assert.equal(taskTypeBehaviorProfileUpsertPayload("user-a", "task", legacyPreservePolicy, "2026-09-08").positive_streak_on_unhandled, "break");
   assert.equal(customBehaviorRulesetRevisionUpsertPayload("ruleset-practice", "2026-09-08", legacyPreservePolicy).positive_streak_on_unhandled, "break");
   assert.equal(resolveTaskBehaviorPolicy("task", result.data), result.data.task);
-  assert.equal(resolveTaskBehaviorPolicy("custom", result.data), result.data.custom);
+  assert.equal(resolveTaskBehaviorPolicy("custom", result.data), STANDARD_TASK_BEHAVIOR_POLICY);
   assert.equal(resolveTaskBehaviorPolicy("goal", result.data), STANDARD_TASK_BEHAVIOR_POLICY);
 });
 
@@ -627,9 +626,9 @@ test("explicit persisted Missed History remains factual under a blank/ignore bas
   assert.equal(timeline.days["2026-09-05"]?.unhandled, false);
 });
 
-test("settings UI model exposes configurable Task and Custom tabs while keeping Goal legacy-only", () => {
+test("settings UI model exposes Task and named Custom settings while keeping Goal legacy-only", () => {
   const settingsSource = readFileSync("src/components/task-app/task-type-behavior-settings.tsx", "utf8");
-  assert.deepEqual(TASK_TYPE_BEHAVIOR_TABS.map((tab) => tab.value), ["task", "custom"]);
+  assert.deepEqual(TASK_TYPE_BEHAVIOR_TABS.map((tab) => tab.value), ["task"]);
   assert.match(settingsSource, /Unfinished scheduled occurrence/);
   assert.match(settingsSource, /Missed streak when scheduled occurrence is unfinished/);
   assert.doesNotMatch(settingsSource, /positiveStreakOnUnhandled|Positive streak when scheduled occurrence is unfinished|Preserve streak/);
@@ -637,14 +636,13 @@ test("settings UI model exposes configurable Task and Custom tabs while keeping 
   assert.doesNotMatch(settingsSource, /System rule/);
   assert.match(settingsSource, /\+ New Custom Task Type/);
   assert.match(settingsSource, /Custom Task Type name/);
-  assert.match(settingsSource, /Task uses standard behavior, Custom Default uses generic custom behavior/);
+  assert.doesNotMatch(settingsSource, /Custom Default|generic custom/);
   assert.doesNotMatch(settingsSource, /\+ New Ruleset|Ruleset name/);
   assert.match(settingsSource, /onCustomRulesetChange/);
   assert.equal(taskTypeBehaviorTabDescription("goal"), "Behavior profile not configured yet.");
-  assert.equal(taskTypeBehaviorTabDescription("custom"), null);
-  assert.match(settingsSource, /activeTab === "task" \|\| \(activeTab === "custom" && !selectedRuleset\)/);
+  assert.match(settingsSource, /activeTab === "task"/);
   assert.match(settingsSource, /updateActiveProfile\("unresolvedOccurrence"/);
-  assert.match(settingsSource, /Reset \$\{activeTab === "custom" \? "Custom Default" : "Task"\} Defaults/);
+  assert.match(settingsSource, /Reset Task Defaults/);
   assert.match(settingsSource, /leaves Task History unchanged/);
   assert.match(settingsSource, /Available Actions/);
   assert.match(settingsSource, /Done/);
@@ -659,6 +657,13 @@ test("settings UI model exposes configurable Task and Custom tabs while keeping 
   assert.match(settingsSource, /if \(isSavingPolicyArray \|\| isSavingPolicyArrayRef\.current\) return;/);
   assert.match(settingsSource, /onChange\(activeTab, "availableActions", nextActions\)/);
   assert.match(settingsSource, /onCustomRulesetChange\?\.\(selectedRuleset\.id, "availableActions", nextActions\)/);
+  assert.match(settingsSource, /onCreateCustomRuleset\(newRulesetName, customTaskTypeDraft\)/);
+  assert.match(settingsSource, /buildDefaultCustomTaskTypeDraft/);
+  assert.match(settingsSource, /Nothing is saved until you choose Create/);
+  assert.match(settingsSource, /onClick=\{cancelCreate\}/);
+  assert.match(behaviorProfilesHookSource, /nameInput: string, draftPolicy: TaskBehaviorPolicy/);
+  assert.doesNotMatch(behaviorProfilesHookSource, /profiles\.custom/);
+  assert.doesNotMatch(behaviorProfilesHookSource, /CONFIGURABLE_TASK_TYPES/);
   assert.doesNotMatch(settingsSource, /toggleNeedsActionTrigger/);
   assert.doesNotMatch(settingsSource, /nextTriggers/);
   assert.match(behaviorProfilesHookSource, /policySaveInFlightRef/);

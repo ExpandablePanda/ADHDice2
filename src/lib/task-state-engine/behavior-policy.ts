@@ -7,8 +7,8 @@
  * or reward rules.
  *
  * The semantic fields below describe decisions the one Task Engine can
- * consume. Task and Custom are the currently active configurable profiles;
- * Goal retains the Standard fallback for legacy rows.
+ * consume. Task and named Custom Task Types are the currently active
+ * configurable profiles; Goal retains the Standard fallback for legacy rows.
  */
 import type { TaskType } from "../task-type.ts";
 import { isTaskType } from "../task-type.ts";
@@ -139,6 +139,9 @@ export const STANDARD_TASK_BEHAVIOR_POLICY: TaskBehaviorPolicy = Object.freeze({
   availableActions: STANDARD_TASK_AVAILABLE_ACTIONS,
   needsActionTriggers: STANDARD_TASK_NEEDS_ACTION_TRIGGERS,
 });
+
+/** The unsaved starting policy for a newly named Custom Task Type. */
+export const DEFAULT_CUSTOM_TASK_TYPE_TEMPLATE: TaskBehaviorPolicy = STANDARD_TASK_BEHAVIOR_POLICY;
 
 /** Only these TaskTypes may supply revision timelines to the shared engine. */
 export function isActiveTaskBehaviorProfileTaskType(taskType: TaskType): taskType is ActiveTaskBehaviorProfileTaskType {
@@ -498,7 +501,7 @@ function buildBehaviorSelectionPolicyRevisions(input: {
       ...policy,
       id: policy === STANDARD_TASK_BEHAVIOR_POLICY
         ? policy.id
-        : `behavior-selection:${selection.taskType}:${selection.customRulesetId ?? "generic"}:${logicalDate}`,
+        : `behavior-selection:${selection.taskType}:${selection.customRulesetId ?? "legacy"}:${logicalDate}`,
       effectiveFromLogicalDate: logicalDate,
     };
   });

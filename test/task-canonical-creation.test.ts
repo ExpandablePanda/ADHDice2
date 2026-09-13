@@ -246,6 +246,18 @@ test("canonical creation accepts a named Custom ruleset but rejects it for a nor
   );
 });
 
+test("canonical creation rejects an anonymous Custom Task Type", () => {
+  assert.throws(
+    () => buildCanonicalTaskCreationPlan({
+      draft: draft({ task_type: "custom", custom_ruleset_id: null }),
+      entityKind: "parent",
+      now,
+      profile,
+    }),
+    (error: unknown) => error instanceof CanonicalTaskCreationValidationError && error.code === "MISSING_CUSTOM_RULESET",
+  );
+});
+
 test("canonical creation keeps legacy Goal readable but rejects it for new Tasks", () => {
   assert.throws(
     () => buildCanonicalTaskCreationPlan({

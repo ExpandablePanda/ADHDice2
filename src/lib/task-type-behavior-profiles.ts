@@ -60,7 +60,7 @@ export function isMissingTaskTypeBehaviorProfilesAdditiveSchemaError(error: unkn
     || missingRelation;
 }
 
-export function taskTypeBehaviorProfileUpsertPayload(userId: string, taskType: TaskType, policy: TaskBehaviorPolicy, effectiveFromLogicalDate: string) {
+export function taskTypeBehaviorProfileUpsertPayload(userId: string, taskType: Exclude<TaskType, "custom">, policy: TaskBehaviorPolicy, effectiveFromLogicalDate: string) {
   return {
     user_id: userId,
     task_type: taskType,
@@ -98,10 +98,14 @@ export async function loadTaskTypeBehaviorProfiles(
     .select("task_type,effective_from_logical_date,unresolved_occurrence,positive_streak_on_unhandled,missed_streak_on_unhandled,rewards,available_actions,needs_action_triggers,created_at,updated_at")
     .eq("user_id", userId);
   if (result.error) return { data: {}, revisions: {}, error: result.error };
+  // The table still retains Goal compatibility rows, but the old generic
+  // Custom profile is no longer a product authority. Named Custom Task Types
+  // resolve through their own ruleset revision timelines instead.
+  const compatibleRows = (result.data ?? []).filter((row) => row.task_type !== "custom");
   const revisions: Partial<Record<TaskType, TaskBehaviorPolicyRevisions>> = {};
-  for (const revision of normalizeTaskBehaviorPolicyRevisions(result.data ?? [])) {
+  for (const revision of normalizeTaskBehaviorPolicyRevisions(compatibleRows)) {
     const { taskType, ...policyRevision } = revision;
     revisions[taskType] = [...(revisions[taskType] ?? []), policyRevision];
   }
-  return { data: normalizeTaskBehaviorProfiles(result.data ?? []), revisions, error: null };
+  return { data: normalizeTaskBehaviorProfiles(compatibleRows), revisions, error: null };
 }

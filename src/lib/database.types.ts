@@ -144,7 +144,7 @@ export type CustomBehaviorRulesetRevisionInsert = Omit<CustomBehaviorRulesetRevi
 
 export type CustomBehaviorRulesetRevisionUpdate = Partial<Pick<CustomBehaviorRulesetRevision, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "available_actions" | "needs_action_triggers" | "updated_at">>;
 
-/** Effective-dated Task behavior selection authority. Null is generic Custom. */
+/** Effective-dated Task behavior selection authority. Custom requires a named ruleset. */
 export type TaskBehaviorSelection = {
   id: string;
   user_id: string;

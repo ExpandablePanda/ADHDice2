@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.57`.
+- Current working app version: `7.13.58`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,28 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.58 Remove Anonymous Custom Default
+
+Custom Default is no longer a saved or selectable Task Type. `custom` now
+means a named Custom Task Type backed by a required `custom_ruleset_id`; Task
+Type selectors expose Task and saved named Custom Task Types only. Goal remains
+legacy-readable and is not assignable, while Pursuit remains fully retired.
+
+Behavior Settings no longer loads, edits, resets, or writes the obsolete
+generic `task_type = 'custom'` profile. `+ New Custom Task Type` opens a local
+draft initialized from the canonical `DEFAULT_CUSTOM_TASK_TYPE_TEMPLATE`
+(currently the Standard Task policy). The name and behavior controls persist
+only after Create/Save; Cancel discards the draft. Creation retains atomic
+named identity plus first behavior revision persistence and its orphan cleanup.
+
+The source-only migration
+`supabase/20260913000000_remove_anonymous_custom_task_type_7_13_58.sql`
+normalizes anonymous legacy Custom Task assignments and selections to Task,
+deletes only generic Custom profile rows, and tightens current Task and
+selection constraints so Custom requires a named ruleset. Named Custom Task
+Type identities, revisions, behavior selections, and valid assignments are
+preserved. The migration was not applied to live Supabase in this run.
 
 ## 2026-09-13 7.13.57 Promote Named Custom Rulesets to Custom Task Types
 

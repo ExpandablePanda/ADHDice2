@@ -1265,7 +1265,7 @@ type TaskManagementTableV2Props = {
   behaviorPolicyLoading?: boolean;
   customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
-  onCreateCustomRuleset?: (name: string) => Promise<CustomBehaviorRuleset | null>;
+  onCreateCustomRuleset?: (name: string, policy: TaskBehaviorPolicy) => Promise<CustomBehaviorRuleset | null>;
   onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
   onShowCustomRulesetTasks?: (rulesetId: string) => void;
   onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
@@ -9672,7 +9672,7 @@ export function TaskManagementTableV2({
                             Behavior Settings
                           </TaskTableChipButton>
                           <p className="text-xs leading-5 text-[#7d7597] dark:text-white/50">
-                            TaskType selects a behavior profile. Task, Custom Default, and named Custom Task Types are configurable; Goal is legacy-only.
+                            Task Type selects a behavior profile. Task and named Custom Task Types are configurable; Goal is legacy-only.
                           </p>
                         </>
                       )}

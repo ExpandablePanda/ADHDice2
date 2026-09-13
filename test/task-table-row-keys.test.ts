@@ -86,7 +86,7 @@ test("Table parent, expanded Step/Substep, editor, and overlay rows have stable 
   assert.deepEqual(overlayWarnings, []);
 });
 
-test("Table Task Type cells use Task, Custom Default, and named ruleset labels", () => {
+test("Table Task Type cells use Task, neutral legacy fallback, and named ruleset labels", () => {
   const markup = renderToStaticMarkup(createElement(TaskManagementTableV2, {
     customBehaviorRulesets: [{ id: "practice", name: "Practice", task_type: "custom" }],
     rows: [
@@ -99,6 +99,6 @@ test("Table Task Type cells use Task, Custom Default, and named ruleset labels",
   }));
 
   assert.match(markup, />Task<\/span>/);
-  assert.match(markup, />Custom Default<\/span>/);
+  assert.match(markup, />Custom Task Type \(legacy\)<\/span>/);
   assert.match(markup, />Practice<\/span>/);
 });

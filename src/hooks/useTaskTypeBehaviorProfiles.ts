@@ -42,8 +42,7 @@ import {
 type Message = { text: string; tone: "neutral" | "good" | "warn" };
 type ConfigurableTaskBehaviorField = Exclude<TaskBehaviorPolicyField, never>;
 type BrowserSupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
-const TASK_TYPE_VALUES: readonly TaskType[] = ["task", "goal", "custom"];
-const CONFIGURABLE_TASK_TYPES = new Set<TaskType>(["task", "custom"]);
+const TASK_TYPE_VALUES: readonly TaskType[] = ["task", "goal"];
 
 export function useTaskTypeBehaviorProfiles(
   client: BrowserSupabaseClient,
@@ -168,8 +167,8 @@ export function useTaskTypeBehaviorProfiles(
     return () => { cancelled = true; };
   }, [client, publishCustomRulesetState, setMessage, userId]);
 
-  const persist = useCallback(async (taskType: TaskType, nextPolicy: TaskBehaviorPolicy) => {
-    if (!client || !userId || !CONFIGURABLE_TASK_TYPES.has(taskType)) return false;
+  const persist = useCallback(async (taskType: "task", nextPolicy: TaskBehaviorPolicy) => {
+    if (!client || !userId) return false;
     let result: { error: { code?: string; message?: string } | null };
     try {
       result = await client.from("adhdice_task_type_behavior_profiles").upsert(
@@ -208,7 +207,7 @@ export function useTaskTypeBehaviorProfiles(
     field: ConfigurableTaskBehaviorField,
     value: TaskBehaviorPolicy[typeof field],
   ) => {
-    if (!CONFIGURABLE_TASK_TYPES.has(taskType)) return false;
+    if (taskType !== "task") return false;
     const saveKey = `task:${taskType}`;
     if (policySaveInFlightRef.current.has(saveKey)) return false;
     policySaveInFlightRef.current.add(saveKey);
@@ -226,7 +225,7 @@ export function useTaskTypeBehaviorProfiles(
   }, [currentLogicalDate, persist, profileRevisions, profiles, replaceCurrentRevision]);
 
   const resetTaskBehaviorProfile = useCallback(async (taskType: TaskType) => {
-    if (!CONFIGURABLE_TASK_TYPES.has(taskType)) return false;
+    if (taskType !== "task") return false;
     const saveKey = `task:${taskType}`;
     if (policySaveInFlightRef.current.has(saveKey)) return false;
     policySaveInFlightRef.current.add(saveKey);
@@ -274,7 +273,7 @@ export function useTaskTypeBehaviorProfiles(
     }
   }, [client, currentLogicalDate, customBehaviorRulesetProfiles, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage]);
 
-  const createCustomRuleset = useCallback(async (nameInput: string): Promise<CustomBehaviorRuleset | null> => {
+  const createCustomRuleset = useCallback(async (nameInput: string, draftPolicy: TaskBehaviorPolicy): Promise<CustomBehaviorRuleset | null> => {
     const validation = validateCustomBehaviorRulesetName(nameInput, customBehaviorRulesets);
     if (validation.error) {
       setMessage({ tone: "warn", text: validation.error });
@@ -284,7 +283,7 @@ export function useTaskTypeBehaviorProfiles(
       client as unknown as CustomBehaviorRulesetClient,
       userId ?? "",
       normalizeCustomBehaviorRulesetName(nameInput),
-      profiles.custom ?? STANDARD_TASK_BEHAVIOR_POLICY,
+      normalizeTaskBehaviorProfile(draftPolicy, "custom"),
       currentLogicalDate,
       customBehaviorRulesets,
     );
@@ -294,7 +293,7 @@ export function useTaskTypeBehaviorProfiles(
     }
     if (!(await refreshCustomBehaviorRulesets())) return null;
     return result.data;
-  }, [client, currentLogicalDate, customBehaviorRulesets, profiles.custom, refreshCustomBehaviorRulesets, setMessage, userId]);
+  }, [client, currentLogicalDate, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage, userId]);
 
   const renameCustomRuleset = useCallback(async (rulesetId: string, nameInput: string) => {
     const ruleset = customBehaviorRulesets.find((entry) => entry.id === rulesetId);

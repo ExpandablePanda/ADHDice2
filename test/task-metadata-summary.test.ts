@@ -78,7 +78,7 @@ test("Task Settings exposes the compact TaskType selector and routes changes thr
   assert.match(taskTypeBranch, /<AdhdDropdownSelect/);
   assert.match(taskTypeBranch, /options=\{buildTaskTypeSelectionOptions\(customBehaviorRulesets\)\}/);
   assert.match(taskTypeBranch, /setTaskType\(metadataTask\.id, value\)/);
-  assert.match(taskTypeBranch, /Custom Default/);
+  assert.doesNotMatch(taskTypeBranch, /Custom Default/);
   assert.match(taskTypeBranch, /onCustomRulesetBehaviorProfileChange/);
   assert.match(adapterSource, /onTaskTypeChange=\{tableProps\.onSetTaskType\}/);
 });
@@ -168,10 +168,10 @@ test("Summary formatting keeps configured values visible and uses displayed actu
   assert.equal(summary.Notes.value, "Needs final review · 2 linked notes");
 });
 
-test("Task metadata displays a named ruleset and Custom Default through the shared resolver", () => {
+test("Task metadata displays a named ruleset and neutral legacy fallback through the shared resolver", () => {
   const rulesets = [{ id: "practice", name: "Practice", task_type: "custom" as const }];
   assert.equal(summaryByLabel({ ...baseTask, taskType: "custom", customRulesetId: "practice", customBehaviorRulesets: rulesets })["Task Type"]?.value, "Practice");
-  assert.equal(summaryByLabel({ ...baseTask, taskType: "custom", customRulesetId: null, customBehaviorRulesets: rulesets })["Task Type"]?.value, "Custom Default");
+  assert.equal(summaryByLabel({ ...baseTask, taskType: "custom", customRulesetId: null, customBehaviorRulesets: rulesets })["Task Type"]?.value, "Custom Task Type (legacy)");
 });
 
 test("Summary keeps empty metadata rows readable and falls back from link label to URL", () => {

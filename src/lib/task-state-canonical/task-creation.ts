@@ -122,6 +122,9 @@ function normalizedDraft(input: Omit<TaskInsert, "user_id">): CanonicalTaskCreat
   if (customRulesetId !== null && taskType !== "custom") {
     fail("INVALID_CUSTOM_RULESET_TASK_TYPE", "Only Custom Tasks may reference a Custom Task Type.");
   }
+  if (taskType === "custom" && customRulesetId === null) {
+    fail("MISSING_CUSTOM_RULESET", "Named Custom Task Type identity is required.");
+  }
 
   return {
     parent_task_id: input.parent_task_id ?? null,

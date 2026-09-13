@@ -439,6 +439,7 @@ test("named ruleset loader keeps historical identities while ignoring non-Custom
   const assignments = [
     { id: "assignment-practice", user_id: "owner-1", task_id: task.id, effective_from_logical_date: "2026-09-01", task_type: "custom" as const, custom_ruleset_id: "ruleset-practice", created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
     { id: "assignment-routine", user_id: "owner-1", task_id: task.id, effective_from_logical_date: "2026-09-21", task_type: "custom" as const, custom_ruleset_id: "ruleset-routine", created_at: "2026-09-21T00:00:00.000Z", updated_at: "2026-09-21T00:00:00.000Z" },
+    { id: "assignment-anonymous", user_id: "owner-1", task_id: "legacy-task", effective_from_logical_date: "2026-09-01", task_type: "custom" as const, custom_ruleset_id: null, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
   ];
   const client = {
     from(table: string) {
@@ -470,6 +471,7 @@ test("named ruleset loader keeps historical identities while ignoring non-Custom
     { effectiveFromLogicalDate: "2026-09-01", taskType: "custom", customRulesetId: "ruleset-practice" },
     { effectiveFromLogicalDate: "2026-09-21", taskType: "custom", customRulesetId: "ruleset-routine" },
   ]);
+  assert.equal(loaded.behaviorSelectionsByTaskId["legacy-task"], undefined);
 });
 
 test("Custom Task Type management trims names, rejects blanks and loaded duplicates case-insensitively", () => {
@@ -506,7 +508,7 @@ test("user-facing ruleset deletion delegates to the owner-scoped RPC and preserv
   assert.equal(failed?.message, "Practice is currently assigned to 1 Task. Change those Tasks to another type or ruleset before deleting it.");
 });
 
-test("named ruleset creation seeds Custom Default policy and does not publish a partial identity", async () => {
+test("named ruleset creation persists the supplied draft policy and does not publish a partial identity", async () => {
   const calls: Array<{ table: string; operation: string; values?: unknown }> = [];
   const identity = { id: "ruleset-practice", user_id: "owner-1", name: "Practice", task_type: "custom" as const, created_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-10T00:00:00.000Z" };
   const client = {
