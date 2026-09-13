@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.46`.
+- Current working app version: `7.13.47`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-12 7.13.47 Journal QA Corrections
+
+Journal Event and Start/End check-in controls now use the compact 26px time
+presentation, with a unified keyboard-accessible AM/PM control. Event Feeling
+occurrence editing is viewport-safe through a body-level floating panel, and
+Start of Day and End of Day expose explicit mutually exclusive Yes/No choices.
+The direct Event editor no longer asks for a second notes response; historical
+Event notes remain preserved in structured answers and summaries. Browser QA
+remains unverified.
 
 ## 2026-09-12 7.13.46 Event-Centered Feeling Logging
 

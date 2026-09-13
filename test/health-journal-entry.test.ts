@@ -59,6 +59,7 @@ const multipleEntriesMigrationSource = readFileSync(
 const healthHookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const standardTimeInputSource = readFileSync(new URL("../src/components/task-app/health-standard-time-input.tsx", import.meta.url), "utf8");
+const healthDropdownSource = readFileSync(new URL("../src/components/task-app/health-dropdown.tsx", import.meta.url), "utf8");
 
 function signal(id: string, overrides: Partial<HealthJournalSignal> = {}): HealthJournalSignal {
   return {
@@ -231,7 +232,13 @@ test("Journal display uses explicit standard 12-hour time and distinguishes Jour
   assert.match(standardTimeInputSource, /value=\{parts\.minute\}/);
   assert.match(standardTimeInputSource, /<option value="AM">AM<\/option>/);
   assert.doesNotMatch(standardTimeInputSource, /type="time"/);
-  assert.match(standardTimeInputSource, /inline-flex h-8 min-h-8 w-\[8\.5rem\] min-w-0 max-w-full/);
+  assert.match(standardTimeInputSource, /inline-flex h-8 min-h-8 w-\[8\.5rem\] rounded-\[0\.9rem\]/);
+  assert.match(standardTimeInputSource, /compact\?: boolean/);
+  assert.match(standardTimeInputSource, /HEALTH_COMPACT_CONTROL_CLASS/);
+  assert.match(standardTimeInputSource, /!w-\[8\.5rem\]/);
+  assert.match(healthDropdownSource, /HEALTH_COMPACT_CONTROL_CLASS = "health-input !h-\[26px\] !min-h-\[26px\] !rounded-full/);
+  assert.match(standardTimeInputSource, /appearance-none/);
+  assert.match(standardTimeInputSource, /WebkitAppearance: "none"/);
   const journalSource = healthPageSource.slice(
     healthPageSource.indexOf('{activeTab === "Journal" ? ('),
     healthPageSource.indexOf('{activeTab === "Food" ? ('),

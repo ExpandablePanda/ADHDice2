@@ -177,7 +177,7 @@ test("Occurrence references include local date and time while preserving identit
   assert.match(eventCaptureSource, /formatHealthJournalOccurrenceReference/);
   assert.match(eventCaptureSource, /occurredAt: occurrence\.logged_at/);
   assert.match(eventCaptureSource, /occurredAt: occurrence\.occurred_at/);
-  assert.match(eventCaptureSource, /Array\.from\(\{ length: getHealthJournalScaleDenominator/);
+  assert.match(eventCaptureSource, /Array\.from\(\{ length: denominator \}/);
   assert.match(eventCaptureSource, /scale_labels\[score\]/);
   assert.match(eventCaptureSource, /HealthStandardTimeInput/);
   assert.match(formSource, /journal_entry_id/);
@@ -198,6 +198,35 @@ test("Occurrence references include local date and time while preserving identit
   assert.match(healthPageSource, /JournalScaleLabelsEditor/);
   assert.match(formSource, /hasStructuredJournalContent/);
   assert.match(formSource, /selectedJournalEntry\?\.reflection/);
+});
+
+test("7.13.47 Journal QA corrections keep compact controls, floating Event Feeling editing, and legacy Event notes", () => {
+  const eventChoiceSource = formSource.slice(formSource.indexOf("function EventCaptureChoice"), formSource.indexOf("function StartOfDayQuestions"));
+
+  assert.match(formSource, /HealthStandardTimeInput ariaLabel=\{topTimeLabel\} compact/);
+  assert.match(eventCaptureSource, /HealthStandardTimeInput ariaLabel="When did it happen\?" compact/);
+  assert.match(eventCaptureSource, /HealthStandardTimeInput ariaLabel="Event Feeling occurrence time" compact/);
+  assert.doesNotMatch(eventCaptureSource, /What do you want to record about it\?/);
+  assert.doesNotMatch(eventCaptureSource, /Event notes/);
+  assert.match(eventCaptureSource, /createPortal/);
+  assert.match(eventCaptureSource, /data-journal-floating-overlay="true"/);
+  assert.match(eventCaptureSource, /style=\{\{ left: position\.left, position: "fixed", top: position\.top \}\}/);
+  assert.match(eventCaptureSource, /max-h-\[calc\(100dvh-1rem\)\].*overflow-y-auto/);
+  assert.match(eventCaptureSource, /window\.addEventListener\("scroll", updatePosition, true\)/);
+  assert.match(eventCaptureSource, /event\.key === "Escape"/);
+
+  assert.match(eventChoiceSource, /role="radiogroup"/);
+  assert.match(eventChoiceSource, /role="radio"/);
+  assert.match(eventChoiceSource, />Yes<\/AdhdChip>/);
+  assert.match(eventChoiceSource, />No<\/AdhdChip>/);
+  assert.doesNotMatch(eventChoiceSource, /type="checkbox"/);
+  assert.match(formSource, /setEventCaptureEnabled\(false\)/);
+  assert.match(formSource, /setEventCaptureEnabled\(nextEntryType !== "event" && Boolean\(linkedEventId\)\)/);
+  assert.match(formSource, /linked_event_ids: entryType === "event" \? answers\.linked_event_ids : eventCaptureEnabled && eventDraft\.id \? \[eventDraft\.id\] : \[\]/);
+  assert.match(formSource, /event_record: eventDraft\.notes/);
+  assert.match(summarySource, /label: "Event notes"/);
+  assert.match(formSource, /eventWasSaved/);
+  assert.match(eventCaptureSource, /journal_entry_id === entry\.id/);
 });
 
 test("Breakfast states link consumed Food snapshots and keep planned breakfast out of Food persistence", () => {

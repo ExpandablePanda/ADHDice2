@@ -1,7 +1,8 @@
 "use client";
 
 import { Pencil, X } from "lucide-react";
-import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 
 import type { HealthJournalSignal, HealthJournalSignalInsert, HealthSymptom } from "@/lib/database.types";
 import {
@@ -100,11 +101,9 @@ export function JournalEventCapture({
   date,
   description,
   eventDateTime = false,
-  notes,
   occurrences,
   onChangeDate,
   onChangeDescription,
-  onChangeNotes,
   onChangeTime,
   onCreateSignal,
   onRemoveOccurrence,
@@ -117,11 +116,9 @@ export function JournalEventCapture({
   date: string;
   description: string;
   eventDateTime?: boolean;
-  notes: string;
   occurrences: readonly JournalEventOccurrenceDraft[];
   onChangeDate?: (value: string) => void;
   onChangeDescription: (value: string) => void;
-  onChangeNotes: (value: string) => void;
   onChangeTime?: (value: string) => void;
   onCreateSignal?: (input: Omit<HealthJournalSignalInsert, "user_id">) => Promise<HealthJournalSignal | null>;
   onRemoveOccurrence: (draftKey: string) => void;
@@ -288,23 +285,126 @@ export function JournalEventCapture({
             </div>)}
             {visibleTagOptions.length === 0 ? <p className={`${QUESTION_HINT_CLASS} px-3 py-2`}>No matching Feelings.</p> : null}
           </div> : null}
-          {tagOverlay ? <AdhdDropdownPanel aria-label={`Log ${getHealthJournalSignalDisplayName(overlaySignal ?? tagOverlay.signal, symptoms)}`} className="right-0 bottom-2 left-auto top-auto z-40 grid max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-2rem)] gap-3 overflow-y-auto" id="journal-event-tag-overlay" role="dialog" tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setTagOverlay(null); } }} widthClassName="w-[min(25rem,calc(100vw-2rem))]">
-            <div className="grid gap-3">
-              <p className={`${QUESTION_HINT_CLASS} font-semibold uppercase tracking-[0.16em]`}>Log {getHealthJournalSignalDisplayName(overlaySignal ?? tagOverlay.signal, symptoms)}</p>
-              <div className="grid gap-2"><p className={`${QUESTION_HINT_CLASS} font-semibold uppercase tracking-[0.16em]`}>{(overlaySignal ?? tagOverlay.signal).kind === "symptom" ? "Severity" : "Intensity"} · 1–{getHealthJournalScaleDenominator(overlaySignal)}</p><div className="grid grid-cols-2 gap-1.5">{Array.from({ length: getHealthJournalScaleDenominator(overlaySignal) }, (_, index) => index + 1).map((score) => <button aria-label={`${getHealthJournalSignalDisplayName(overlaySignal ?? tagOverlay.signal, symptoms)} ${score}, ${(overlaySignal ?? tagOverlay.signal).scale_labels[score] ?? ""}`} aria-pressed={tagOverlay.score === score} className={`flex min-h-9 min-w-0 items-start justify-start gap-2 rounded-[0.7rem] px-2 py-2 text-left text-xs font-semibold ${tagOverlay.score === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => setTagOverlay((current) => current ? { ...current, error: null, score } : current)} type="button"><span className="shrink-0 font-semibold">{score}</span><span className="min-w-0 flex-1 break-words whitespace-normal">{(overlaySignal ?? tagOverlay.signal).scale_labels[score] ?? ""}</span></button>)}</div></div>
-              <label className="grid gap-2"><span className={QUESTION_HINT_CLASS}>Occurrence time</span><HealthStandardTimeInput ariaLabel="Event Feeling occurrence time" onChange={(value) => setTagOverlay((current) => current ? { ...current, error: null, time: value } : current)} value={tagOverlay.time} /></label>
-              {tagOverlay.error ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{tagOverlay.error}</p> : null}
-              <div className="flex justify-end gap-2"><AdhdChip onClick={() => setTagOverlay(null)} type="button">Skip</AdhdChip><AdhdChip onClick={saveTagOccurrence} tone="purple" type="button">{tagOverlay.draftKey ? "Update occurrence" : "Add occurrence"}</AdhdChip></div>
-            </div>
-          </AdhdDropdownPanel> : null}
+          {tagOverlay ? <JournalEventOccurrenceOverlay
+            anchorRef={descriptionRef}
+            onChange={(updates) => setTagOverlay((current) => current ? { ...current, ...updates } : current)}
+            onClose={() => setTagOverlay(null)}
+            onSave={saveTagOccurrence}
+            overlay={tagOverlay}
+            signal={overlaySignal ?? tagOverlay.signal}
+            symptoms={symptoms}
+          /> : null}
         </div>
       </label>
       <p className={QUESTION_HINT_CLASS}>Type # while writing to tag a symptom or feeling. Choosing one logs a timestamped occurrence owned by this Event.</p>
     </QuestionSection>
-    {eventDateTime ? <QuestionSection title="When did it happen?"><div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-2"><span className={QUESTION_LABEL_CLASS}>Event date</span><input aria-label="Event date" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => onChangeDate?.(event.target.value)} type="date" value={date} /></label><label className="grid gap-2"><span className={QUESTION_LABEL_CLASS}>When did it happen?</span><HealthStandardTimeInput ariaLabel="When did it happen?" onChange={(value) => onChangeTime?.(value)} value={time} /></label></div></QuestionSection> : null}
+    {eventDateTime ? <QuestionSection title="When did it happen?"><div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-2"><span className={QUESTION_LABEL_CLASS}>Event date</span><input aria-label="Event date" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => onChangeDate?.(event.target.value)} type="date" value={date} /></label><label className="grid gap-2"><span className={QUESTION_LABEL_CLASS}>When did it happen?</span><HealthStandardTimeInput ariaLabel="When did it happen?" compact onChange={(value) => onChangeTime?.(value)} value={time} /></label></div></QuestionSection> : null}
     {occurrences.length > 0 ? <QuestionSection title="Tagged Feeling occurrences"><div className="grid gap-2">{occurrences.map((occurrence) => { const signal = getJournalEventSignalForDraft(occurrence.signalId, signals, symptoms); const name = signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Archived Feeling"; const occurredAt = buildHealthMealLoggedAt(date, occurrence.time) ?? occurrence.occurredAt; return <div className="flex flex-wrap items-center gap-2 rounded-[0.8rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={occurrence.draftKey}><span className="min-w-0 flex-1 text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthJournalOccurrenceReference({ name, occurredAt, score: occurrence.score, signal })}</span><span className="text-xs text-[#7d88a3] dark:text-white/50">{signal?.scale_labels[occurrence.score] ?? ""}</span><AdhdIconButton aria-label={`Edit ${name} occurrence`} onClick={() => beginOccurrenceEdit(occurrence)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Remove ${name} occurrence`} onClick={() => onRemoveOccurrence(occurrence.draftKey)} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton></div>; })}</div></QuestionSection> : null}
-    <QuestionSection title="What do you want to record about it?"><label className="grid gap-2"><span className={QUESTION_HINT_CLASS}>Event notes</span><textarea aria-label="What do you want to record about it?" className={LONG_TEXT_CLASS} onChange={(event) => onChangeNotes(event.target.value)} value={notes} /></label></QuestionSection>
   </div>;
+}
+
+function JournalEventOccurrenceOverlay({
+  anchorRef,
+  onChange,
+  onClose,
+  onSave,
+  overlay,
+  signal,
+  symptoms,
+}: {
+  anchorRef: RefObject<HTMLTextAreaElement | null>;
+  onChange: (updates: Partial<Pick<JournalTagOverlay, "error" | "score" | "time">>) => void;
+  onClose: () => void;
+  onSave: () => void;
+  overlay: Exclude<JournalTagOverlay, null>;
+  signal: HealthJournalSignal;
+  symptoms: readonly HealthSymptom[];
+}) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState({ left: 8, top: 8 });
+  const denominator = getHealthJournalScaleDenominator(signal);
+  const displayName = getHealthJournalSignalDisplayName(signal, symptoms);
+
+  useLayoutEffect(() => {
+    function updatePosition() {
+      const anchor = anchorRef.current;
+      if (!anchor || typeof window === "undefined") return;
+      const anchorRect = anchor.getBoundingClientRect();
+      const panelRect = panelRef.current?.getBoundingClientRect();
+      const panelWidth = panelRect?.width ?? Math.min(400, window.innerWidth - 16);
+      const panelHeight = panelRect?.height ?? Math.min(520, window.innerHeight - 16);
+      const maxLeft = Math.max(8, window.innerWidth - panelWidth - 8);
+      const belowTop = anchorRect.bottom + 8;
+      const maxTop = Math.max(8, window.innerHeight - panelHeight - 8);
+      const top = belowTop + panelHeight <= window.innerHeight - 8
+        ? belowTop
+        : Math.max(8, Math.min(anchorRect.top - panelHeight - 8, maxTop));
+      setPosition({ left: Math.max(8, Math.min(anchorRect.right - panelWidth, maxLeft)), top });
+    }
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchorRef]);
+
+  useEffect(() => {
+    panelRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    }
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (!panelRef.current?.contains(target) && !anchorRef.current?.contains(target)) onClose();
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [anchorRef, onClose]);
+
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <AdhdDropdownPanel
+      aria-label={`Log ${displayName}`}
+      className="z-[160] grid max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] gap-3 overflow-y-auto"
+      data-journal-floating-overlay="true"
+      id="journal-event-tag-overlay"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onClose();
+        }
+      }}
+      ref={panelRef}
+      role="dialog"
+      style={{ left: position.left, position: "fixed", top: position.top }}
+      tabIndex={-1}
+      widthClassName="w-[min(25rem,calc(100vw-1rem))]"
+    >
+      <div className="grid gap-3">
+        <p className={`${QUESTION_HINT_CLASS} font-semibold uppercase tracking-[0.16em]`}>Log {displayName}</p>
+        <div className="grid gap-2"><p className={`${QUESTION_HINT_CLASS} font-semibold uppercase tracking-[0.16em]`}>{signal.kind === "symptom" ? "Severity" : "Intensity"} · 1–{denominator}</p><div className="grid grid-cols-2 gap-1.5">{Array.from({ length: denominator }, (_, index) => index + 1).map((score) => <button aria-label={`${displayName} ${score}, ${signal.scale_labels[score] ?? ""}`} aria-pressed={overlay.score === score} className={`flex min-h-9 min-w-0 items-start justify-start gap-2 rounded-[0.7rem] px-2 py-2 text-left text-xs font-semibold ${overlay.score === score ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onChange({ error: null, score })} type="button"><span className="shrink-0 font-semibold">{score}</span><span className="min-w-0 flex-1 break-words whitespace-normal">{signal.scale_labels[score] ?? ""}</span></button>)}</div></div>
+        <label className="grid gap-2"><span className={QUESTION_HINT_CLASS}>Occurrence time</span><HealthStandardTimeInput ariaLabel="Event Feeling occurrence time" compact onChange={(value) => onChange({ error: null, time: value })} value={overlay.time} /></label>
+        {overlay.error ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{overlay.error}</p> : null}
+        <div className="flex justify-end gap-2"><AdhdChip onClick={onClose} type="button">Skip</AdhdChip><AdhdChip onClick={onSave} tone="purple" type="button">{overlay.draftKey ? "Update occurrence" : "Add occurrence"}</AdhdChip></div>
+      </div>
+    </AdhdDropdownPanel>,
+    document.body,
+  );
 }
 
 export function hydrateJournalEventOccurrences(

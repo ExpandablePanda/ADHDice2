@@ -1,10 +1,14 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
+
 import { formatHealthStandardTime, normalizeHealthMealTime } from "@/lib/health-utils";
+import { HEALTH_COMPACT_CONTROL_CLASS } from "./health-dropdown";
 
 type HealthStandardTimeInputProps = {
   ariaLabel?: string;
   className?: string;
+  compact?: boolean;
   onChange?: (value: string) => void;
   readOnly?: boolean;
   readOnlyPlaceholder?: string;
@@ -31,7 +35,7 @@ function toNormalizedTime(hour: string, minute: string, period: string) {
   return `${String(hours24).padStart(2, "0")}:${String(parsedMinute).padStart(2, "0")}`;
 }
 
-export function HealthStandardTimeInput({ ariaLabel = "Time", className, onChange, readOnly = false, readOnlyPlaceholder, value }: HealthStandardTimeInputProps) {
+export function HealthStandardTimeInput({ ariaLabel = "Time", className, compact = false, onChange, readOnly = false, readOnlyPlaceholder, value }: HealthStandardTimeInputProps) {
   const parts = getTimeParts(value);
   const emitChange = (next: Partial<typeof parts>) => {
     const normalized = toNormalizedTime(next.hour ?? parts.hour, next.minute ?? parts.minute, next.period ?? parts.period);
@@ -39,11 +43,11 @@ export function HealthStandardTimeInput({ ariaLabel = "Time", className, onChang
   };
 
   return (
-    <div className={`inline-flex h-8 min-h-8 w-[8.5rem] min-w-0 max-w-full items-center gap-1 rounded-[0.9rem] border border-[#e6e8f5] bg-white px-2.5 py-1.5 text-[13px] text-[#2f294a] dark:border-white/10 dark:bg-white/[0.04] dark:text-white ${className ?? ""}`}>
+    <div className={`${compact ? `${HEALTH_COMPACT_CONTROL_CLASS} !w-[8.5rem]` : "inline-flex h-8 min-h-8 w-[8.5rem] rounded-[0.9rem] px-2.5 py-1.5"} inline-flex min-w-0 max-w-full items-center gap-1 border border-[#e6e8f5] bg-white text-[13px] text-[#2f294a] dark:border-white/10 dark:bg-white/[0.04] dark:text-white ${className ?? ""}`}>
       {readOnly ? <span aria-label={ariaLabel} aria-readonly="true">{readOnlyPlaceholder ?? formatHealthStandardTime(value) ?? "Time unavailable"}</span> : <>
         <input
           aria-label={`${ariaLabel} hour`}
-          className="w-7 min-w-0 bg-transparent text-center outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80"
+          className={`${compact ? "h-4 leading-4" : ""} w-7 min-w-0 bg-transparent text-center outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80`}
           inputMode="numeric"
           max={12}
           min={1}
@@ -54,7 +58,7 @@ export function HealthStandardTimeInput({ ariaLabel = "Time", className, onChang
         <span aria-hidden="true">:</span>
         <input
           aria-label={`${ariaLabel} minute`}
-          className="w-8 min-w-0 bg-transparent text-center outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80"
+          className={`${compact ? "h-4 leading-4" : ""} w-8 min-w-0 bg-transparent text-center outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80`}
           inputMode="numeric"
           max={59}
           min={0}
@@ -62,15 +66,19 @@ export function HealthStandardTimeInput({ ariaLabel = "Time", className, onChang
           onFocus={(event) => event.currentTarget.select()}
           value={parts.minute}
         />
-        <select
-          aria-label={`${ariaLabel} AM or PM`}
-          className="bg-transparent font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80"
-          onChange={(event) => emitChange({ period: event.target.value })}
-          value={parts.period}
-        >
-          <option value="AM">AM</option>
-          <option value="PM">PM</option>
-        </select>
+        <span className="relative inline-flex min-w-0 shrink-0 items-center">
+          <select
+            aria-label={`${ariaLabel} AM or PM`}
+            className={`${compact ? "h-4 w-[2.85rem] leading-4" : "w-[3.25rem]"} appearance-none bg-transparent pr-3 font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80`}
+            onChange={(event) => emitChange({ period: event.target.value })}
+            style={{ WebkitAppearance: "none" }}
+            value={parts.period}
+          >
+            <option value="AM">AM</option>
+            <option value="PM">PM</option>
+          </select>
+          <ChevronDown aria-hidden="true" className={`${compact ? "h-3 w-3" : "h-3.5 w-3.5"} pointer-events-none absolute right-0 shrink-0`} />
+        </span>
       </>}
     </div>
   );
