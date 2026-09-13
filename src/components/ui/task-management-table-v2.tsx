@@ -2990,11 +2990,6 @@ export function TaskManagementTableV2({
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const tableUserScrollIntentRef = useRef(false);
   const tableScrollTopHoldFrameRef = useRef<number | null>(null);
-  const isFullInspectorOpen = Boolean(
-    selectedTaskId
-    && overlayMode === "full"
-    && (enableInspector || allowInlineInspector),
-  );
   const isMobileFullOverlayOpen = Boolean(
     selectedTaskId
     && overlayMode === "full"
@@ -9201,7 +9196,7 @@ export function TaskManagementTableV2({
         <div className={`${showHeader ? "mt-1" : ""} overflow-hidden rounded-[1.7rem]`} style={{ overflowAnchor: "none" }}>
           <motion.div
             animate="visible"
-            className={`adhdice-scrollbar relative min-h-[min(28rem,65vh)] max-h-[65vh] ${isFullInspectorOpen ? "overflow-hidden" : "overflow-x-auto overflow-y-auto"}`}
+            className="adhdice-scrollbar relative min-h-[min(28rem,65vh)] max-h-[65vh] overflow-x-auto overflow-y-auto"
             initial="hidden"
             onPointerDown={(event) => {
               if (event.target === event.currentTarget) {
@@ -10580,7 +10575,7 @@ export function TaskManagementTableV2({
                     <div className="flex min-w-0 items-center justify-center" data-task-editor-navigation-gutter="previous">
                       {renderEditorNavigationControls("side", "previous")}
                     </div>
-                    <div className="pointer-events-auto relative min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent adhdice-scrollbar-hidden">
+                    <div className="pointer-events-auto relative min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent adhdice-scrollbar">
                       <div className="p-4">
                         {fullDesktopEditorContent}
                       </div>
@@ -10595,7 +10590,7 @@ export function TaskManagementTableV2({
                   : useMobileFullOverlay
                     ? "flex min-h-0 flex-1 items-start justify-center overscroll-none px-3 pt-[calc(env(safe-area-inset-top)+0.25rem)] pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-5"
                   : overlayMode === "full"
-                    ? "adhdice-scrollbar-hidden flex flex-1 items-start justify-center overflow-x-hidden overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))]"
+                    ? "adhdice-scrollbar flex flex-1 items-start justify-center overflow-x-hidden overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))]"
                     : "grid flex-1 gap-3 overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))] lg:grid-cols-[1.1fr_0.9fr]";
 
                 return (
@@ -10697,7 +10692,7 @@ export function TaskManagementTableV2({
                     ref={overlayMode === "full" ? editorInteractionRef : inspectorPanelRef}
                   >
                     <div className="relative flex max-h-[calc(100dvh-1.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden overscroll-contain rounded-[1.6rem] border border-[#e7defc] bg-white shadow-[0_26px_70px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]">
-                      <div className="adhdice-scrollbar adhdice-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+                      <div className="adhdice-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
                         <div className="px-0 pb-3">
                           {fullDesktopEditorContent}
                         </div>

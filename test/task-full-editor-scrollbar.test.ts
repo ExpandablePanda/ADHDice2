@@ -5,19 +5,19 @@ import test from "node:test";
 const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
 const cssSource = readFileSync("src/app/globals.css", "utf8");
 
-test("the background Table suppresses overflow only while the full Edit Task is open", () => {
-  const tableScrollOwnerStart = tableSource.indexOf("className={`adhdice-scrollbar relative min-h");
-  const tableScrollOwner = tableSource.slice(tableScrollOwnerStart, tableSource.indexOf("variants={{", tableScrollOwnerStart));
+test("the normal Table scroll owner keeps canonical hidden chrome and scrolling enabled", () => {
+  const tableScrollOwner = tableSource.slice(
+    tableSource.indexOf('className="adhdice-scrollbar relative min-h'),
+    tableSource.indexOf("variants={{", tableSource.indexOf('className="adhdice-scrollbar relative min-h')),
+  );
 
-  assert.ok(tableScrollOwnerStart >= 0);
-  assert.match(tableSource, /const isFullInspectorOpen = Boolean\([\s\S]*selectedTaskId[\s\S]*overlayMode === "full"[\s\S]*\(enableInspector \|\| allowInlineInspector\)/);
-  assert.match(tableScrollOwner, /className=\{`adhdice-scrollbar relative min-h-\[min\(28rem,65vh\)\] max-h-\[65vh\] \$\{isFullInspectorOpen \? "overflow-hidden" : "overflow-x-auto overflow-y-auto"\}`\}/);
-  assert.match(tableScrollOwner, /isFullInspectorOpen \? "overflow-hidden"/);
-  assert.match(tableScrollOwner, /: "overflow-x-auto overflow-y-auto"/);
+  assert.match(tableScrollOwner, /className="adhdice-scrollbar relative min-h-\[min\(28rem,65vh\)\] max-h-\[65vh\] overflow-x-auto overflow-y-auto"/);
+  assert.doesNotMatch(tableSource, /isFullInspectorOpen/);
+  assert.doesNotMatch(tableScrollOwner, /overflow-hidden/);
   assert.doesNotMatch(tableScrollOwner, /(?:scrollTop|scrollLeft)\s*=[^=]|scrollTo\(|scrollIntoView\(/);
 });
 
-test("desktop and mobile full Edit Task scroll containers hide scrollbar chrome while retaining vertical scrolling", () => {
+test("every full Edit Task scroll owner uses the canonical utility while retaining vertical scrolling", () => {
   const desktopFullEditor = tableSource.slice(
     tableSource.indexOf("const fullDesktopEditorNode"),
     tableSource.indexOf("const overlayContentClass"),
@@ -32,31 +32,30 @@ test("desktop and mobile full Edit Task scroll containers hide scrollbar chrome 
   );
   const quickOverlayClassSource = overlayContentClassSource.slice(overlayContentClassSource.indexOf(": \"grid flex-1"));
 
-  assert.match(desktopFullEditor, /className="pointer-events-auto relative[\s\S]*overflow-y-auto overscroll-contain[^\"]*adhdice-scrollbar-hidden/);
-  assert.match(mobileFullEditor, /className="adhdice-scrollbar adhdice-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"/);
-  assert.match(overlayContentClassSource, /overlayMode === "full"[\s\S]*\? "adhdice-scrollbar-hidden flex flex-1 items-start justify-center overflow-x-hidden overflow-y-auto/);
+  assert.match(desktopFullEditor, /className="pointer-events-auto relative[\s\S]*overflow-y-auto overscroll-contain[^\"]*adhdice-scrollbar/);
+  assert.match(mobileFullEditor, /className="adhdice-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"/);
+  assert.match(overlayContentClassSource, /overlayMode === "full"[\s\S]*\? "adhdice-scrollbar flex flex-1 items-start justify-center overflow-x-hidden overflow-y-auto/);
   assert.match(quickOverlayClassSource, /overflow-y-auto/);
-  assert.doesNotMatch(quickOverlayClassSource, /adhdice-scrollbar-hidden/);
+  assert.doesNotMatch(tableSource, /adhdice-scrollbar-hidden/);
+  assert.doesNotMatch(desktopFullEditor, /scrollTo\(|scrollIntoView\(|(?:scrollTop|scrollLeft)\s*=/);
+  assert.doesNotMatch(mobileFullEditor, /scrollTo\(|scrollIntoView\(|(?:scrollTop|scrollLeft)\s*=/);
 });
 
-test("the dedicated scrollbar utility hides native chrome without disabling overflow", () => {
-  const utility = cssSource.slice(
-    cssSource.indexOf(".adhdice-scrollbar-hidden"),
-    cssSource.indexOf(".adhdice-native-interaction-suppressed"),
-  );
-
-  assert.match(utility, /scrollbar-width:\s*none;/);
-  assert.match(utility, /-ms-overflow-style:\s*none;/);
-  assert.match(utility, /\.adhdice-scrollbar-hidden::-webkit-scrollbar\s*\{[\s\S]*display:\s*none;/);
-  assert.doesNotMatch(utility, /overflow(?:-x|-y)?\s*:/);
+test("the canonical scrollbar utility covers Firefox, legacy Edge, and WebKit chrome", () => {
+  assert.match(cssSource, /\.adhdice-scrollbar\s*\{\s*scrollbar-width:\s*none;\s*-ms-overflow-style:\s*none;\s*\}/);
+  assert.match(cssSource, /html::-webkit-scrollbar,[\s\S]*\.adhdice-scrollbar::-webkit-scrollbar\s*\{[\s\S]*display:\s*none;[\s\S]*width:\s*0 !important;[\s\S]*height:\s*0 !important;/);
+  assert.match(cssSource, /html::-webkit-scrollbar-track,[\s\S]*\.adhdice-scrollbar::-webkit-scrollbar-track\s*\{[\s\S]*background:\s*transparent !important;/);
+  assert.match(cssSource, /html::-webkit-scrollbar-thumb,[\s\S]*\.adhdice-scrollbar::-webkit-scrollbar-thumb\s*\{[\s\S]*background:\s*transparent !important;/);
+  assert.match(cssSource, /html::-webkit-scrollbar-thumb:hover,[\s\S]*\.adhdice-scrollbar::-webkit-scrollbar-thumb:hover\s*\{[\s\S]*background:\s*transparent !important;/);
+  assert.doesNotMatch(cssSource, /adhdice-scrollbar-hidden/);
 });
 
-test("quick overlays do not automatically receive the full-editor scrollbar treatment", () => {
-  const quickOverlaySource = tableSource.slice(
-    tableSource.indexOf(": \"grid flex-1", tableSource.indexOf("const overlayContentClass")),
-    tableSource.indexOf(";", tableSource.indexOf(": \"grid flex-1", tableSource.indexOf("const overlayContentClass"))),
+test("full Edit Task does not reset scroll positions or depend on a duplicate utility", () => {
+  const fullEditorSource = tableSource.slice(
+    tableSource.indexOf("const fullDesktopEditorNode"),
+    tableSource.indexOf("return (", tableSource.indexOf("const fullDesktopEditorNode")),
   );
 
-  assert.match(quickOverlaySource, /overflow-y-auto/);
-  assert.doesNotMatch(quickOverlaySource, /adhdice-scrollbar-hidden/);
+  assert.doesNotMatch(fullEditorSource, /scrollTo\(|scrollIntoView\(|(?:scrollTop|scrollLeft)\s*=/);
+  assert.doesNotMatch(tableSource, /adhdice-scrollbar-hidden/);
 });

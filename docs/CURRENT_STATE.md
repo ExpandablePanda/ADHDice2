@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.52`.
+- Current working app version: `7.13.53`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.53 Reuse Canonical Scrollbar Suppression for Full Edit Task
+
+Safari QA still failed for 7.13.50, 7.13.51, and 7.13.52. Re-diagnosis
+compared the failing full Edit Task implementation with ADHDice's existing
+working site-wide `adhdice-scrollbar` utility, which already suppresses
+Firefox, legacy Edge, and WebKit scrollbar chrome including track, thumb, and
+hover treatment. The unnecessary 7.13.50 `adhdice-scrollbar-hidden` duplicate
+was removed, and the desktop inner editor, desktop full-overlay owner, and
+mobile full-editor owner now all reuse the canonical utility while retaining
+scrolling. The unsuccessful 7.13.52 background-Table `overflow-hidden`
+conditional was removed and the normal Table owner is restored to
+`adhdice-scrollbar overflow-x-auto overflow-y-auto`. No scroll position reset,
+Task/state/persistence, layout, navigation, or dismissal behavior changed. No
+SQL, schema, migration, Supabase, or Edge Function changes were made; Safari
+manual QA remains assigned to Andrew.
 
 ## 2026-09-13 7.13.52 Suppress Background Table Scrollbars During Full Edit Task
 
