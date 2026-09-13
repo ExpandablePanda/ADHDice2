@@ -246,6 +246,19 @@ test("canonical creation accepts a named Custom ruleset but rejects it for a nor
   );
 });
 
+test("canonical creation keeps legacy Goal readable but rejects it for new Tasks", () => {
+  assert.throws(
+    () => buildCanonicalTaskCreationPlan({
+      draft: draft({ task_type: "goal" }),
+      entityKind: "parent",
+      now,
+      profile,
+    }),
+    (error: unknown) => error instanceof CanonicalTaskCreationValidationError
+      && error.code === "INVALID_TASK_TYPE",
+  );
+});
+
 test("canonical creation source validates ownership and persists initial assignment authority", () => {
   assert.match(canonicalCreationEdgeSource, /custom_ruleset_id/);
   assert.match(assignmentMigration, /Only Custom Tasks may consume a named Custom ruleset/);

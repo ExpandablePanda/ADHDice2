@@ -700,7 +700,7 @@ export function planTaskStateCommand(
     if (!availability.available) {
       throw new CanonicalCommandPlanningError(
         "TASK_ACTION_NOT_AVAILABLE",
-        `${taskManualActionLabel(manualAction)} is not available for this Task ruleset.`,
+        `${taskManualActionLabel(manualAction)} is not available for this Task Type.`,
       );
     }
   }

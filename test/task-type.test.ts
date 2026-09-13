@@ -33,7 +33,7 @@ test("TaskType exposes only selectable Task and Custom labels while retaining Go
   assert.equal(normalizeTaskType("legacy"), "task");
 });
 
-test("named Custom rulesets extend the shared selection model without becoming TaskType values", () => {
+test("named Custom Task Types extend the shared selection model without becoming TaskType values", () => {
   const rulesets = [
     { id: "routine", name: "Routine", task_type: "custom" as const },
     { id: "practice", name: "Practice", task_type: "custom" as const },
@@ -42,6 +42,7 @@ test("named Custom rulesets extend the shared selection model without becoming T
   assert.deepEqual(resolveTaskTypeSelection("practice", rulesets), { taskType: "custom", customRulesetId: "practice" });
   assert.deepEqual(resolveTaskTypeSelection("custom", rulesets), { taskType: "custom", customRulesetId: null });
   assert.deepEqual(resolveTaskTypeSelection("task", rulesets), { taskType: "task", customRulesetId: null });
+  assert.equal(resolveTaskTypeSelection("goal", rulesets), null);
   assert.equal(taskTypeSelectionValue("custom", "practice", rulesets), "practice");
   assert.equal(formatTaskTypeLabel("custom", "practice", rulesets), "Practice");
   assert.equal(formatTaskTypeLabel("custom", "practice", [{ id: "practice", name: "Guitar Practice", task_type: "custom" }]), "Guitar Practice");

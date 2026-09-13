@@ -16,6 +16,7 @@ import type { TaskType } from "@/lib/task-type";
 import {
   createCustomBehaviorRuleset,
   deleteCustomBehaviorRuleset,
+  formatCustomTaskTypeMessage,
   normalizeCustomBehaviorRulesetName,
   isMissingCustomBehaviorRulesetsTableError,
   loadCustomBehaviorRulesets,
@@ -110,7 +111,7 @@ export function useTaskTypeBehaviorProfiles(
       if (customRulesetLoadGenerationRef.current !== loadGeneration) return false;
       const customRulesetError = result.error ?? result.behaviorSelectionError;
       if (customRulesetError && !isMissingCustomBehaviorRulesetsTableError(customRulesetError)) {
-        setMessage({ tone: "warn", text: customRulesetError.message ?? "Could not refresh Custom behavior rulesets." });
+        setMessage({ tone: "warn", text: formatCustomTaskTypeMessage(customRulesetError.message, "Could not refresh Custom Task Types.") });
         return false;
       }
       publishCustomRulesetState(result);
@@ -119,7 +120,7 @@ export function useTaskTypeBehaviorProfiles(
       if (customRulesetLoadGenerationRef.current !== loadGeneration) return false;
       setMessage({
         tone: "warn",
-        text: error instanceof Error ? error.message : "Could not refresh Custom behavior rulesets.",
+        text: formatCustomTaskTypeMessage(error instanceof Error ? error.message : null, "Could not refresh Custom Task Types."),
       });
       return false;
     } finally {
@@ -156,7 +157,7 @@ export function useTaskTypeBehaviorProfiles(
       }
       const customRulesetError = customRulesetsResult.error ?? customRulesetsResult.behaviorSelectionError;
       if (customRulesetError && !isMissingCustomBehaviorRulesetsTableError(customRulesetError)) {
-        setMessage({ tone: "warn", text: customRulesetError.message ?? "Could not load Custom behavior rulesets." });
+        setMessage({ tone: "warn", text: formatCustomTaskTypeMessage(customRulesetError.message, "Could not load Custom Task Types.") });
       }
       setProfileRevisions(result.revisions);
       if (!customRulesetError || isMissingCustomBehaviorRulesetsTableError(customRulesetError)) {
@@ -264,7 +265,7 @@ export function useTaskTypeBehaviorProfiles(
         next,
       );
       if (error) {
-        setMessage({ tone: "warn", text: error.message ?? "Could not save the Custom ruleset policy." });
+        setMessage({ tone: "warn", text: formatCustomTaskTypeMessage(error.message, "Could not save the Custom Task Type policy.") });
         return false;
       }
       return refreshCustomBehaviorRulesets();
@@ -288,7 +289,7 @@ export function useTaskTypeBehaviorProfiles(
       customBehaviorRulesets,
     );
     if (result.error || !result.data) {
-      setMessage({ tone: "warn", text: result.error?.message ?? "Could not create the Custom ruleset." });
+      setMessage({ tone: "warn", text: formatCustomTaskTypeMessage(result.error?.message, "Could not create the Custom Task Type.") });
       return null;
     }
     if (!(await refreshCustomBehaviorRulesets())) return null;
@@ -298,7 +299,7 @@ export function useTaskTypeBehaviorProfiles(
   const renameCustomRuleset = useCallback(async (rulesetId: string, nameInput: string) => {
     const ruleset = customBehaviorRulesets.find((entry) => entry.id === rulesetId);
     if (!ruleset || ruleset.deleted_at != null) {
-      setMessage({ tone: "warn", text: "The Custom ruleset has already been deleted." });
+      setMessage({ tone: "warn", text: "The Custom Task Type has already been deleted." });
       return false;
     }
     const result = await renameCustomBehaviorRuleset(
@@ -309,7 +310,7 @@ export function useTaskTypeBehaviorProfiles(
       customBehaviorRulesets,
     );
     if (result.error || !result.data) {
-      setMessage({ tone: "warn", text: result.error?.message ?? "Could not rename the Custom ruleset." });
+      setMessage({ tone: "warn", text: formatCustomTaskTypeMessage(result.error?.message, "Could not rename the Custom Task Type.") });
       return false;
     }
     if (!(await refreshCustomBehaviorRulesets())) return false;
@@ -319,15 +320,15 @@ export function useTaskTypeBehaviorProfiles(
   const deleteCustomRuleset = useCallback(async (rulesetId: string): Promise<CustomBehaviorRulesetDeleteActionResult> => {
     const ruleset = customBehaviorRulesets.find((entry) => entry.id === rulesetId);
     if (!ruleset || ruleset.deleted_at != null) {
-      setMessage({ tone: "warn", text: "The Custom ruleset has already been deleted." });
-      return { assignedTaskCount: null, error: "The Custom ruleset has already been deleted.", ok: false };
+      setMessage({ tone: "warn", text: "The Custom Task Type has already been deleted." });
+      return { assignedTaskCount: null, error: "The Custom Task Type has already been deleted.", ok: false };
     }
     const error = await deleteCustomBehaviorRuleset(
       client as unknown as CustomBehaviorRulesetClient,
       rulesetId,
     );
     if (error) {
-      const message = error.message ?? "Could not delete the Custom ruleset.";
+      const message = formatCustomTaskTypeMessage(error.message, "Could not delete the Custom Task Type.");
       const assignedTaskCount = getCustomRulesetAssignedTaskCount(message);
       if (assignedTaskCount === null) {
         setMessage({ tone: "warn", text: message });
@@ -337,7 +338,7 @@ export function useTaskTypeBehaviorProfiles(
     const refreshed = await refreshCustomBehaviorRulesets();
     return refreshed
       ? { assignedTaskCount: null, error: null, ok: true }
-      : { assignedTaskCount: null, error: "Could not refresh the Custom ruleset state.", ok: false };
+      : { assignedTaskCount: null, error: "Could not refresh the Custom Task Type state.", ok: false };
   }, [client, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage]);
 
   return {

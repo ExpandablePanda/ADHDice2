@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   createCustomBehaviorRuleset,
   deleteCustomBehaviorRuleset,
+  formatCustomTaskTypeMessage,
   getCustomRulesetAssignedTaskCount,
   loadCustomBehaviorRulesets,
   renameCustomBehaviorRuleset,
@@ -471,13 +472,21 @@ test("named ruleset loader keeps historical identities while ignoring non-Custom
   ]);
 });
 
-test("named ruleset management trims names, rejects blanks and loaded duplicates case-insensitively", () => {
+test("Custom Task Type management trims names, rejects blanks and loaded duplicates case-insensitively", () => {
   const loaded = [{ id: "practice", name: "Practice" }];
   assert.deepEqual(validateCustomBehaviorRulesetName("  Routine  ", loaded), { name: "Routine", error: null });
-  assert.deepEqual(validateCustomBehaviorRulesetName("  ", loaded), { name: "", error: "Ruleset name cannot be blank." });
-  assert.deepEqual(validateCustomBehaviorRulesetName(" practice ", loaded), { name: "practice", error: "A ruleset with that name already exists." });
+  assert.deepEqual(validateCustomBehaviorRulesetName("  ", loaded), { name: "", error: "Custom Task Type name cannot be blank." });
+  assert.deepEqual(validateCustomBehaviorRulesetName(" practice ", loaded), { name: "practice", error: "A Custom Task Type with that name already exists." });
   assert.deepEqual(validateCustomBehaviorRulesetName(" practice ", loaded, "practice"), { name: "practice", error: null });
   assert.deepEqual(validateCustomBehaviorRulesetName(" Practice ", [{ id: "deleted", name: "Practice", deleted_at: "2026-09-11T00:00:00.000Z" }]), { name: "Practice", error: null });
+});
+
+test("Custom Task Type presentation maps server ruleset wording without changing persistence names", () => {
+  assert.equal(
+    formatCustomTaskTypeMessage("Practice is currently assigned to 1 Task. Change those Tasks to another type or ruleset before deleting it.", "fallback"),
+    "Practice is currently assigned to 1 Task. Change those Tasks to another Task Type before deleting it.",
+  );
+  assert.equal(formatCustomTaskTypeMessage(null, "Could not load Custom Task Types."), "Could not load Custom Task Types.");
 });
 
 test("user-facing ruleset deletion delegates to the owner-scoped RPC and preserves server errors", async () => {
@@ -824,7 +833,7 @@ test("a refreshed assignment loader retains earlier rows while replacing the sam
 test("blocked deletion copy parses singular and plural assignment counts", () => {
   assert.equal(getCustomRulesetAssignedTaskCount("Practice is currently assigned to 1 Task. Change those Tasks before deleting it."), 1);
   assert.equal(getCustomRulesetAssignedTaskCount("Practice is currently assigned to 2 Tasks. Change those Tasks before deleting it."), 2);
-  assert.equal(getCustomRulesetAssignedTaskCount("Could not delete the Custom ruleset."), null);
+  assert.equal(getCustomRulesetAssignedTaskCount("Could not delete the Custom Task Type."), null);
 });
 
 test("ruleset resolution moves every assigned Task before attempting tombstone deletion", async () => {

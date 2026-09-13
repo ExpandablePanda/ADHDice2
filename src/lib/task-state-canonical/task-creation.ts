@@ -112,15 +112,15 @@ function normalizedDraft(input: Omit<TaskInsert, "user_id">): CanonicalTaskCreat
   }
 
   const taskType = parseTaskType(input.task_type ?? "task");
-  if (!taskType) {
+  if (!taskType || taskType === "goal") {
     fail("INVALID_TASK_TYPE", "Task Type is invalid or retired.");
   }
   const customRulesetId = input.custom_ruleset_id ?? null;
   if (customRulesetId !== null && !UUID_KEY.test(customRulesetId)) {
-    fail("INVALID_CUSTOM_RULESET", "Custom ruleset identity is invalid.");
+    fail("INVALID_CUSTOM_RULESET", "Custom Task Type identity is invalid.");
   }
   if (customRulesetId !== null && taskType !== "custom") {
-    fail("INVALID_CUSTOM_RULESET_TASK_TYPE", "Only Custom Tasks may reference a Custom behavior ruleset.");
+    fail("INVALID_CUSTOM_RULESET_TASK_TYPE", "Only Custom Tasks may reference a Custom Task Type.");
   }
 
   return {

@@ -323,7 +323,7 @@ test("canonical planning rejects every unavailable manual occurrence action with
       (error: unknown) => error instanceof Error
         && "code" in error
         && error.code === "TASK_ACTION_NOT_AVAILABLE"
-        && error.message.endsWith("is not available for this Task ruleset."),
+        && error.message.endsWith("is not available for this Task Type."),
       input.type,
     );
   }

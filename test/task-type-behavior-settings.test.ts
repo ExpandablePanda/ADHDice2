@@ -46,10 +46,12 @@ test("missing Task profile falls back to the current Standard policy", () => {
   assert.deepEqual(normalizeTaskBehaviorProfile({ unresolvedOccurrence: "invalid" }), STANDARD_TASK_BEHAVIOR_POLICY);
 });
 
-test("Behavior Settings exposes only active named rulesets and gates deletion behind confirmation", () => {
+test("Custom Task Type settings expose only active named types and gate deletion behind confirmation", () => {
   assert.match(behaviorSettingsSource, /buildTaskTypeSelectionOptions\(customBehaviorRulesets\)/);
   assert.match(behaviorSettingsSource, /deleted_at == null/);
-  assert.match(behaviorSettingsSource, /Delete Ruleset/);
+  assert.match(behaviorSettingsSource, /Delete Custom Task Type/);
+  assert.match(behaviorSettingsSource, /Custom Task Type name/);
+  assert.doesNotMatch(behaviorSettingsSource, /Delete Ruleset|New Ruleset|Ruleset name/);
   assert.match(behaviorSettingsSource, /window\.confirm\(`Delete/);
   assert.doesNotMatch(behaviorSettingsSource, /Preserve positive streak/);
   assert.match(behaviorProfilesHookSource, /deleteCustomBehaviorRuleset/);
@@ -633,8 +635,10 @@ test("settings UI model exposes configurable Task and Custom tabs while keeping 
   assert.doesNotMatch(settingsSource, /positiveStreakOnUnhandled|Positive streak when scheduled occurrence is unfinished|Preserve streak/);
   assert.match(settingsSource, /Derived effects/);
   assert.doesNotMatch(settingsSource, /System rule/);
-  assert.match(settingsSource, /\+ New Ruleset/);
-  assert.match(settingsSource, /Ruleset name/);
+  assert.match(settingsSource, /\+ New Custom Task Type/);
+  assert.match(settingsSource, /Custom Task Type name/);
+  assert.match(settingsSource, /Task uses standard behavior, Custom Default uses generic custom behavior/);
+  assert.doesNotMatch(settingsSource, /\+ New Ruleset|Ruleset name/);
   assert.match(settingsSource, /onCustomRulesetChange/);
   assert.equal(taskTypeBehaviorTabDescription("goal"), "Behavior profile not configured yet.");
   assert.equal(taskTypeBehaviorTabDescription("custom"), null);

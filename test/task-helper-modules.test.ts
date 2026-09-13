@@ -96,7 +96,7 @@ test("Task behavior selection edits use the atomic effective-dated selection RPC
   });
 });
 
-test("TaskType/ruleset transitions send both metadata fields through the selection RPC", async () => {
+test("Task Type/Custom Task Type transitions send both metadata fields through the selection RPC", async () => {
   const task = createTask({ id: "task-type-transition", revision: 4, task_type: "custom", custom_ruleset_id: "ruleset-practice" });
   const calls: Array<{ p_task_patch: Record<string, unknown> }> = [];
   const client = {

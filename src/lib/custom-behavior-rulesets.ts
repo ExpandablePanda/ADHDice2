@@ -100,6 +100,17 @@ export type CustomBehaviorRulesetDeleteActionResult = {
   ok: boolean;
 };
 
+/** Keep server-originated named-type errors in product language at the UI boundary. */
+export function formatCustomTaskTypeMessage(message: string | null | undefined, fallback: string) {
+  const source = message?.trim() || fallback;
+  return source
+    .replace(/\bCustom behavior rulesets?\b/gi, (value) => value.toLocaleLowerCase().endsWith("s") ? "Custom Task Types" : "Custom Task Type")
+    .replace(/\bCustom rulesets?\b/gi, (value) => value.toLocaleLowerCase().endsWith("s") ? "Custom Task Types" : "Custom Task Type")
+    .replace(/\bTask rulesets?\b/gi, "Task Type")
+    .replace(/\brulesets?\b/gi, (value) => value.toLocaleLowerCase().endsWith("s") ? "Custom Task Types" : "Custom Task Type")
+    .replace(/\banother type or Custom Task Type\b/gi, "another Task Type");
+}
+
 export function getCustomRulesetAssignedTaskCount(message: string | null | undefined) {
   const match = message?.match(/currently assigned to\s+(\d+)\s+Tasks?\b/i);
   return match ? Number(match[1]) : null;
@@ -187,12 +198,12 @@ export function validateCustomBehaviorRulesetName(
   excludedRulesetId?: string | null,
 ) {
   const name = normalizeCustomBehaviorRulesetName(value);
-  if (!name) return { name, error: "Ruleset name cannot be blank." };
+  if (!name) return { name, error: "Custom Task Type name cannot be blank." };
   const normalizedName = name.toLocaleLowerCase();
   if (rulesets.some((ruleset) => ruleset.id !== excludedRulesetId
     && ruleset.deleted_at == null
     && normalizeCustomBehaviorRulesetName(ruleset.name).toLocaleLowerCase() === normalizedName)) {
-    return { name, error: "A ruleset with that name already exists." };
+    return { name, error: "A Custom Task Type with that name already exists." };
   }
   return { name, error: null };
 }
@@ -221,7 +232,7 @@ export async function createCustomBehaviorRuleset(
 ): Promise<CustomBehaviorRulesetMutationResult<CustomBehaviorRuleset>> {
   const validation = validateCustomBehaviorRulesetName(nameInput, loadedRulesets);
   if (validation.error) return rulesetMutationError(validation.error);
-  if (!userId) return rulesetMutationError("Ruleset creation requires an authenticated user.");
+  if (!userId) return rulesetMutationError("Custom Task Type creation requires an authenticated user.");
 
   let identityResult: RulesetQueryResult<CustomBehaviorRuleset>;
   try {
@@ -230,12 +241,12 @@ export async function createCustomBehaviorRuleset(
       .insert(customBehaviorRulesetUpsertPayload(userId, validation.name))
       .select("id,user_id,name,task_type,deleted_at,created_at,updated_at");
   } catch (error) {
-    return rulesetMutationError(error instanceof Error ? error.message : "Could not create the Custom ruleset.");
+    return rulesetMutationError(error instanceof Error ? error.message : "Could not create the Custom Task Type.");
   }
   if (identityResult.error) return { data: null, error: identityResult.error };
   const identity = identityResult.data?.[0];
   if (!isValidCustomBehaviorRulesetIdentity(identity) || identity.user_id !== userId) {
-    return rulesetMutationError("Custom ruleset creation returned an unusable identity.");
+    return rulesetMutationError("Custom Task Type creation returned an unusable identity.");
   }
 
   let revisionResult: { error: RulesetError | null };
@@ -246,7 +257,7 @@ export async function createCustomBehaviorRuleset(
         onConflict: "ruleset_id,effective_from_logical_date",
       });
   } catch (error) {
-    revisionResult = { error: { message: error instanceof Error ? error.message : "Could not save the Custom ruleset policy." } };
+    revisionResult = { error: { message: error instanceof Error ? error.message : "Could not save the Custom Task Type policy." } };
   }
   if (revisionResult.error) {
     // No Task or assignment can reference this just-created identity yet. Remove
@@ -282,7 +293,7 @@ export async function upsertCustomBehaviorRulesetRevision(
       });
     return result.error;
   } catch (error) {
-    return { message: error instanceof Error ? error.message : "Could not save the Custom ruleset policy." };
+    return { message: error instanceof Error ? error.message : "Could not save the Custom Task Type policy." };
   }
 }
 
@@ -291,16 +302,16 @@ export async function deleteCustomBehaviorRuleset(
   client: CustomBehaviorRulesetClient,
   rulesetId: string,
 ) {
-  if (!rulesetId.trim()) return { message: "Custom ruleset identity is required." };
+  if (!rulesetId.trim()) return { message: "Custom Task Type identity is required." };
   try {
     const result = await client.rpc("adhdice_delete_custom_behavior_ruleset", { p_ruleset_id: rulesetId });
     if (result.error) return result.error;
     if (!Array.isArray(result.data) || result.data.length !== 1) {
-      return { message: "Custom ruleset deletion returned an unusable result." };
+      return { message: "Custom Task Type deletion returned an unusable result." };
     }
     return null;
   } catch (error) {
-    return { message: error instanceof Error ? error.message : "Could not delete the Custom ruleset." };
+    return { message: error instanceof Error ? error.message : "Could not delete the Custom Task Type." };
   }
 }
 
@@ -313,7 +324,7 @@ export async function renameCustomBehaviorRuleset(
   loadedRulesets: readonly CustomBehaviorRulesetNameCandidate[] = [],
 ): Promise<CustomBehaviorRulesetMutationResult<CustomBehaviorRuleset>> {
   const current = loadedRulesets.find((ruleset) => ruleset.id === rulesetId);
-  if (current?.deleted_at != null) return rulesetMutationError("The Custom ruleset has already been deleted.");
+  if (current?.deleted_at != null) return rulesetMutationError("The Custom Task Type has already been deleted.");
   const validation = validateCustomBehaviorRulesetName(nameInput, loadedRulesets, rulesetId);
   if (validation.error) return rulesetMutationError(validation.error);
   let result: RulesetQueryResult<CustomBehaviorRuleset>;
@@ -325,12 +336,12 @@ export async function renameCustomBehaviorRuleset(
       .eq("user_id", userId)
       .select("id,user_id,name,task_type,deleted_at,created_at,updated_at");
   } catch (error) {
-    return rulesetMutationError(error instanceof Error ? error.message : "Could not rename the Custom ruleset.");
+    return rulesetMutationError(error instanceof Error ? error.message : "Could not rename the Custom Task Type.");
   }
   if (result.error) return { data: null, error: result.error };
   const updated = result.data?.[0];
   if (!isValidCustomBehaviorRulesetIdentity(updated) || updated.id !== rulesetId || updated.user_id !== userId) {
-    return rulesetMutationError("Custom ruleset rename did not return the updated identity.");
+    return rulesetMutationError("Custom Task Type rename did not return the updated identity.");
   }
   return { data: updated, error: null };
 }

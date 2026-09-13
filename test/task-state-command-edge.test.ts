@@ -774,7 +774,7 @@ test("trusted manual Complete reports action-unavailable only for a resolved res
   assert.deepEqual(result.body, {
     error: {
       code: "TASK_ACTION_NOT_AVAILABLE",
-      message: "Complete is not available for this Task ruleset.",
+      message: "Complete is not available for this Task Type.",
     },
   });
   assert.equal(rpcCalls, 0);
@@ -823,7 +823,7 @@ test("trusted manual occurrence enforcement rejects a policy-hidden outcome befo
   assert.deepEqual(result.body, {
     error: {
       code: "TASK_ACTION_NOT_AVAILABLE",
-      message: "Did My Best is not available for this Task ruleset.",
+      message: "Did My Best is not available for this Task Type.",
     },
   });
   assert.equal(rpcCalls, 0);

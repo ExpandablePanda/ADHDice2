@@ -157,13 +157,13 @@ export function TaskTypeBehaviorSettings({
 
   async function deleteRuleset() {
     if (!selectedRuleset || !onDeleteCustomRuleset || isDeleting) return;
-    if (!window.confirm(`Delete “${selectedRuleset.name}”?\n\nIt will disappear from ruleset settings and Task selectors. Historical Task behavior that used ${selectedRuleset.name} will remain intact.`)) return;
+    if (!window.confirm(`Delete “${selectedRuleset.name}”?\n\nIt will disappear from Custom Task Type settings and Task Type selectors. Historical Task behavior that used ${selectedRuleset.name} will remain intact.`)) return;
     setIsDeleting(true);
     let result: CustomBehaviorRulesetDeleteActionResult = { assignedTaskCount: null, error: null, ok: false };
     try {
       result = normalizeDeleteActionResult(await onDeleteCustomRuleset(selectedRuleset.id));
     } catch {
-      result = { assignedTaskCount: null, error: "Could not delete the Custom ruleset.", ok: false };
+      result = { assignedTaskCount: null, error: "Could not delete the Custom Task Type.", ok: false };
     } finally {
       setIsDeleting(false);
     }
@@ -245,10 +245,10 @@ export function TaskTypeBehaviorSettings({
       header={(
         <div className="flex items-start justify-between gap-3">
       <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">TaskType</p>
+            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Task Types</p>
             <h3 className="mt-1 text-lg font-semibold text-[#2f294a] dark:text-white">Behavior settings</h3>
-            <p className="mt-1 text-sm leading-5 text-[#7d7598] dark:text-white/55">Profiles shape one shared Task Engine. Custom behavior can use the default profile or a named ruleset.</p>
-            <p className="mt-2 text-xs leading-5 text-[#988eb9] dark:text-white/45">Named rulesets keep their own effective-dated behavior revisions.</p>
+            <p className="mt-1 text-sm leading-5 text-[#7d7598] dark:text-white/55">Profiles shape one shared Task Engine. Task uses standard behavior, Custom Default uses generic custom behavior, and named Custom Task Types use saved behavior configurations.</p>
+            <p className="mt-2 text-xs leading-5 text-[#988eb9] dark:text-white/45">Custom Task Types keep their own effective-dated behavior revisions.</p>
           </div>
           <div className="flex flex-wrap justify-end gap-1.5">
           {activeTab === "task" || (activeTab === "custom" && !selectedRuleset) ? (
@@ -257,7 +257,7 @@ export function TaskTypeBehaviorSettings({
             </AdhdChip>
           ) : null}
           <AdhdChip className="gap-1.5" disabled={!onCreateCustomRuleset || isCreating} onClick={() => setIsCreateOpen(true)} tone="purple">
-            + New Ruleset
+            + New Custom Task Type
           </AdhdChip>
           </div>
         </div>
@@ -268,9 +268,9 @@ export function TaskTypeBehaviorSettings({
       {isCreateOpen ? (
         <form className="mb-4 rounded-[1rem] border border-[#ddd6f5] bg-white p-3 dark:border-white/12 dark:bg-white/[0.025]" onSubmit={(event) => { event.preventDefault(); void createRuleset(); }}>
           <label className="grid gap-1.5 text-xs font-semibold text-[#655d7d] dark:text-white/65" htmlFor="new-custom-ruleset-name">
-            New ruleset name
+            Custom Task Type name
             <input
-              aria-label="New ruleset name"
+              aria-label="Custom Task Type name"
               autoFocus
               className={TASK_TABLE_INPUT_CLASS}
               disabled={isCreating}
@@ -284,11 +284,11 @@ export function TaskTypeBehaviorSettings({
           </label>
           <div className="mt-2 flex flex-wrap justify-end gap-1.5">
             <AdhdChip disabled={isCreating} icon={<X aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { setIsCreateOpen(false); setNewRulesetName(""); }} tone="default">Cancel</AdhdChip>
-            <AdhdChip disabled={isCreating} icon={<Check aria-hidden="true" className="h-3.5 w-3.5" />} type="submit" tone="purple">{isCreating ? "Creating…" : "Create ruleset"}</AdhdChip>
+            <AdhdChip disabled={isCreating} icon={<Check aria-hidden="true" className="h-3.5 w-3.5" />} type="submit" tone="purple">{isCreating ? "Creating…" : "Create Custom Task Type"}</AdhdChip>
           </div>
         </form>
       ) : null}
-      <div className="mb-4 flex flex-wrap gap-1.5" role="tablist" aria-label="TaskType behavior profiles">
+      <div className="mb-4 flex flex-wrap gap-1.5" role="tablist" aria-label="Task Type behavior profiles">
         {selectionOptions.map((option) => (
           <AdhdChip disabled={isSavingPolicyArray} key={option.value} onClick={() => selectProfile(option.value)} selected={activeSelection === option.value} type="button" role="tab" aria-selected={activeSelection === option.value}>
             {option.label}
@@ -299,7 +299,7 @@ export function TaskTypeBehaviorSettings({
       {selectedRuleset ? (
         <div className="mb-4 rounded-[1rem] border border-[#eee9f8] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.035]">
           <label className="grid gap-1.5 text-xs font-semibold text-[#655d7d] dark:text-white/65" htmlFor="selected-custom-ruleset-name">
-            Ruleset name
+            Custom Task Type name
             <div className="flex flex-wrap gap-2">
               <input
                 aria-label={`Rename ${selectedRuleset.name}`}
@@ -311,7 +311,7 @@ export function TaskTypeBehaviorSettings({
                 value={rulesetNameDraft}
               />
               <AdhdChip disabled={isRenaming || isDeleting || isResolvingDelete} icon={<Pencil aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void renameRuleset(); }} tone="default">{isRenaming ? "Saving…" : "Rename"}</AdhdChip>
-              <AdhdChip disabled={!onDeleteCustomRuleset || isRenaming || isDeleting || isResolvingDelete} icon={<Trash2 aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void deleteRuleset(); }} tone="danger">{isDeleting ? "Deleting…" : "Delete Ruleset"}</AdhdChip>
+              <AdhdChip disabled={!onDeleteCustomRuleset || isRenaming || isDeleting || isResolvingDelete} icon={<Trash2 aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void deleteRuleset(); }} tone="danger">{isDeleting ? "Deleting…" : "Delete Custom Task Type"}</AdhdChip>
             </div>
           </label>
         </div>

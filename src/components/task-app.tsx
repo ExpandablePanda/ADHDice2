@@ -4299,7 +4299,7 @@ export function TaskApp() {
   }, [setActivePage, setIsTaskFiltersOpen, setTaskUiState]);
 
   const moveCustomRulesetTasksToTaskAndDelete = useCallback(async (rulesetId: string) => {
-    const rulesetName = customBehaviorRulesets.find((ruleset) => ruleset.id === rulesetId)?.name ?? "the Custom ruleset";
+    const rulesetName = customBehaviorRulesets.find((ruleset) => ruleset.id === rulesetId)?.name ?? "the Custom Task Type";
     const assignedTaskIds = tasks
       .filter((task) => task.task_type === "custom" && task.custom_ruleset_id === rulesetId)
       .map((task) => task.id);
@@ -4315,7 +4315,7 @@ export function TaskApp() {
       setMessage({ tone: "warn", text: message });
       return { assignedTaskCount: null, error: message, ok: false };
     }
-    return resolution.deleteResult ?? { assignedTaskCount: null, error: "Could not delete the Custom ruleset.", ok: false };
+    return resolution.deleteResult ?? { assignedTaskCount: null, error: "Could not delete the Custom Task Type.", ok: false };
   }, [customBehaviorRulesets, deleteCustomRuleset, setMessage, tasks, updateTask]);
 
   const openTaskInNewWorkspaceTab = useCallback((taskId: string) => {

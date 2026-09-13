@@ -63,7 +63,7 @@ function sortNamedCustomRulesets(
     .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) || left.id.localeCompare(right.id));
 }
 
-/** Build the one shared user-facing TaskType/ruleset choice model. */
+/** Build the one shared user-facing Task Type choice model. */
 export function buildTaskTypeSelectionOptions(
   rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & { deleted_at?: string | null })[] = [],
 ): ReadonlyArray<TaskTypeSelectionOption> {
@@ -94,7 +94,7 @@ export function resolveTaskTypeSelection(
     return { customRulesetId: namedRuleset.id, taskType: "custom" };
   }
   const taskType = parseTaskType(value);
-  return taskType ? { customRulesetId: null, taskType } : null;
+  return taskType && taskType !== "goal" ? { customRulesetId: null, taskType } : null;
 }
 
 export function formatTaskTypeLabel(

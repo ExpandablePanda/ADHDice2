@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.56`.
+- Current working app version: `7.13.57`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.57 Promote Named Custom Rulesets to Custom Task Types
+
+Named custom behavior rulesets are now presented as first-class Custom Task
+Types in active Task Type selectors and the existing management surface. Tasks
+remain the single primary work object, and Custom Task Types still use the
+existing Task behavior engine; no parallel type engine was added.
+
+Persistence remains `task_type = 'custom'` plus the existing
+`custom_ruleset_id` identity. No persistence or schema migration occurred.
+Goal remains legacy-readable only and is not selectable for new Tasks. Pursuit
+remains retired.
 
 ## 2026-09-13 7.13.56 Correct Pursuit Retirement Task-State Cleanup
 
