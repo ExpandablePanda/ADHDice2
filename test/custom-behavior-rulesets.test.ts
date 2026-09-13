@@ -201,9 +201,9 @@ test("historical behavior selection resolves TaskType and named ruleset transiti
     custom: [revision("custom-default", "2026-09-01")],
   };
   const resolve = (
-    selections: Array<{ effectiveFromLogicalDate: string; taskType: "task" | "goal" | "custom"; customRulesetId: string | null }>,
+    selections: Array<{ effectiveFromLogicalDate: string; taskType: "task" | "custom"; customRulesetId: string | null }>,
     logicalDate: string,
-    taskType: "task" | "goal" | "custom",
+    taskType: "task" | "custom",
     customRulesetId: string | null = null,
   ) => resolveTaskBehaviorPolicyForTask({
     behaviorPolicyRevisions,
@@ -250,32 +250,6 @@ test("historical behavior selection resolves TaskType and named ruleset transiti
   assert.equal(resolve(practiceToCustomDefault, "2026-09-05", "custom").unresolvedOccurrence, "blank");
   assert.equal(resolve(practiceToCustomDefault, "2026-09-12", "custom").unresolvedOccurrence, "missed");
 
-  for (const taskType of ["goal"] as const) {
-    const customToInactive = [
-      { effectiveFromLogicalDate: "2026-09-01", taskType: "custom" as const, customRulesetId: "ruleset-practice" },
-      { effectiveFromLogicalDate: "2026-09-10", taskType, customRulesetId: null },
-    ];
-    assert.equal(resolve(customToInactive, "2026-09-05", taskType).unresolvedOccurrence, "blank", taskType);
-    assert.equal(resolve(customToInactive, "2026-09-12", taskType).unresolvedOccurrence, "missed", taskType);
-  }
-});
-
-test("legacy Goal cannot activate a named Custom ruleset", () => {
-  for (const taskType of ["goal"] as const) {
-    const input = buildCompatibilityTaskStateEngineInput({
-      ...task,
-      task_type: taskType,
-      custom_ruleset_id: "ruleset-practice",
-    }, [], {
-      ...context,
-      behaviorProfiles: { custom: { id: "legacy", unresolvedOccurrence: "blank", positiveStreakOnUnhandled: "preserve", missedStreakOnUnhandled: "ignore", rewards: "disabled" } },
-      behaviorPolicyRevisions: { custom: [revision("legacy", "2026-09-01", { unresolvedOccurrence: "blank" })] },
-      behaviorSelectionsByTaskId: { [task.id]: [{ effectiveFromLogicalDate: "2026-09-01", taskType, customRulesetId: null }] },
-      namedCustomRulesetBehaviorPolicyRevisions: namedRulesets(),
-    });
-    assert.equal(input.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY, taskType);
-    assert.deepEqual(input.behaviorPolicyRevisions?.map((revision) => revision.effectiveFromLogicalDate), ["2026-09-01"], taskType);
-  }
 });
 
 test("explicit existing History remains factual across a Custom ruleset assignment change", () => {
@@ -428,13 +402,11 @@ test("named ruleset loader keeps historical identities while ignoring non-Custom
     { id: "ruleset-practice", user_id: "owner-1", name: "Practice", task_type: "custom" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
     { id: "ruleset-routine", user_id: "owner-1", name: "Routine", task_type: "custom" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
     { id: "ruleset-retired", user_id: "owner-1", name: "Retired Practice", task_type: "custom" as const, deleted_at: "2026-09-11T00:00:00.000Z", created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-11T00:00:00.000Z" },
-    { id: "ruleset-goal", user_id: "owner-1", name: "Goal", task_type: "goal" as never, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
   ];
   const revisions = [
     { ruleset_id: "ruleset-practice", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank" as const, positive_streak_on_unhandled: "preserve" as const, missed_streak_on_unhandled: "ignore" as const, rewards: "disabled" as const, available_actions: ["missed", "done", "missed"], created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
     { ruleset_id: "ruleset-routine", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "missed" as const, positive_streak_on_unhandled: "break" as const, missed_streak_on_unhandled: "increment" as const, rewards: "enabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
     { ruleset_id: "ruleset-retired", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "missed" as const, positive_streak_on_unhandled: "break" as const, missed_streak_on_unhandled: "increment" as const, rewards: "enabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-11T00:00:00.000Z" },
-    { ruleset_id: "ruleset-goal", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "blank" as const, positive_streak_on_unhandled: "preserve" as const, missed_streak_on_unhandled: "ignore" as const, rewards: "disabled" as const, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },
   ];
   const assignments = [
     { id: "assignment-practice", user_id: "owner-1", task_id: task.id, effective_from_logical_date: "2026-09-01", task_type: "custom" as const, custom_ruleset_id: "ruleset-practice", created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z" },

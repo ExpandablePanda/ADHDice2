@@ -57,7 +57,7 @@ create table public.adhdice_clean_tasks (
   constraint adhdice_clean_tasks_parent_task_not_self
     check (parent_task_id is null or parent_task_id <> id),
   constraint adhdice_clean_tasks_task_type_check
-    check (task_type in ('task', 'goal', 'custom'))
+    check (task_type in ('task', 'custom'))
 );
 
 create table public.adhdice_task_type_behavior_profiles (
@@ -74,7 +74,7 @@ create table public.adhdice_task_type_behavior_profiles (
   updated_at timestamptz not null default now(),
   primary key (user_id, task_type, effective_from_logical_date),
   constraint adhdice_task_type_behavior_profiles_task_type_check
-    check (task_type in ('task', 'goal')),
+    check (task_type in ('task', 'custom')),
   constraint adhdice_task_type_behavior_profiles_unresolved_occurrence_check
     check (unresolved_occurrence in ('missed', 'blank')),
   constraint adhdice_task_type_behavior_profiles_positive_streak_check
@@ -141,7 +141,7 @@ alter table public.adhdice_clean_tasks
   add constraint adhdice_clean_tasks_custom_ruleset_task_type_check
     check (
       (task_type = 'custom' and custom_ruleset_id is not null)
-      or (task_type in ('task', 'goal') and custom_ruleset_id is null)
+      or (task_type = 'task' and custom_ruleset_id is null)
     ),
   add constraint adhdice_clean_tasks_custom_ruleset_owner_fkey
     foreign key (user_id, custom_ruleset_id)
@@ -166,11 +166,11 @@ create table public.adhdice_task_behavior_selections (
     references public.adhdice_custom_behavior_rulesets(user_id, id)
     on delete restrict,
   constraint adhdice_task_behavior_selections_task_type_check
-    check (task_type in ('task', 'goal', 'custom')),
+    check (task_type in ('task', 'custom')),
   constraint adhdice_task_behavior_selections_custom_ruleset_task_type_check
     check (
       (task_type = 'custom' and custom_ruleset_id is not null)
-      or (task_type in ('task', 'goal') and custom_ruleset_id is null)
+      or (task_type = 'task' and custom_ruleset_id is null)
     )
 );
 
@@ -1843,7 +1843,7 @@ begin
   ) then
     raise exception 'Behavior selection Task does not belong to the selection owner.' using errcode = '23503';
   end if;
-  if new.task_type not in ('task', 'goal', 'custom') then
+  if new.task_type not in ('task', 'custom') then
     raise exception 'Behavior selection TaskType is invalid.' using errcode = '23514';
   end if;
   if new.custom_ruleset_id is not null and new.task_type <> 'custom' then

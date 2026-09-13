@@ -42,7 +42,7 @@ import {
 type Message = { text: string; tone: "neutral" | "good" | "warn" };
 type ConfigurableTaskBehaviorField = Exclude<TaskBehaviorPolicyField, never>;
 type BrowserSupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
-const TASK_TYPE_VALUES: readonly TaskType[] = ["task", "goal"];
+const TASK_TYPE_VALUES: readonly TaskType[] = ["task"];
 
 export function useTaskTypeBehaviorProfiles(
   client: BrowserSupabaseClient,

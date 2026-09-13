@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.60`.
+- Current working app version: `7.13.61`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,20 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.61 Fully Retire Goal Task Type
+
+Goal Task Type is fully retired. The sole remaining Goal row was disposable
+test data and was intentionally deleted; its Task State, History, reward, and
+schedule-boundary dependencies were deleted rather than mapped, migrated,
+archived, converted, or translated. The final Task Type model is ordinary Task
+plus named Custom Task Type, with Pursuit and Custom Default still retired.
+Milestones, milestone persistence, promotion, completion, trophy/Aura behavior,
+and milestone targets remain unchanged.
+
+The source-only migration
+`supabase/retire_goal_task_type_7_13_61.sql` is not applied to live Supabase in
+this run and must be applied separately before browser QA.
 
 ## 2026-09-13 7.13.60 Add Custom Task Types to Home To-do New Task Creator
 

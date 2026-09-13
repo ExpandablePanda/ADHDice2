@@ -112,7 +112,7 @@ function normalizedDraft(input: Omit<TaskInsert, "user_id">): CanonicalTaskCreat
   }
 
   const taskType = parseTaskType(input.task_type ?? "task");
-  if (!taskType || taskType === "goal") {
+  if (!taskType) {
     fail("INVALID_TASK_TYPE", "Task Type is invalid or retired.");
   }
   const customRulesetId = input.custom_ruleset_id ?? null;

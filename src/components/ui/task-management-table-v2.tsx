@@ -9672,7 +9672,7 @@ export function TaskManagementTableV2({
                             Behavior Settings
                           </TaskTableChipButton>
                           <p className="text-xs leading-5 text-[#7d7597] dark:text-white/50">
-                            Task Type selects a behavior profile. Task and named Custom Task Types are configurable; Goal is legacy-only.
+                            Task Type selects a behavior profile. Task and named Custom Task Types are configurable.
                           </p>
                         </>
                       )}

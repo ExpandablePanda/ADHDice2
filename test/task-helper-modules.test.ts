@@ -2204,37 +2204,6 @@ test("guarded task update succeeds when the expected revision still matches", as
   assert.equal(client.getUpdateAttemptCount(), 1);
 });
 
-test("TaskType metadata persists through the guarded update path without changing Task state", async () => {
-  const task = createTask({
-    created_at: "2026-06-11T12:00:00.000Z",
-    due_on: "2026-06-12",
-    id: "task-type-metadata",
-    repeat_frequency: "daily",
-    revision: 3,
-    sort_order: 1,
-    status: "pending",
-    title: "Profile label",
-  });
-  const client = createTaskUpdateTestClient(task);
-
-  const result = await updateTaskRowWithLegacyEnergyFallback(
-    client as never,
-    task.id,
-    { task_type: "goal" },
-    () => false,
-    () => false,
-    { expectedTask: task },
-  );
-
-  assert.equal(result.error, null);
-  assert.equal(result.data?.task_type, "goal");
-  assert.equal(result.data?.status, "pending");
-  assert.equal(result.data?.due_on, "2026-06-12");
-  assert.equal(result.data?.repeat_frequency, "daily");
-  assert.equal(result.data?.revision, 4);
-  assert.equal(client.getUpdateAttemptCount(), 1);
-});
-
 test("guarded task update reports a same-field remote conflict without retrying the write", async () => {
   const expectedTask = createTask({
     created_at: "2026-06-11T12:00:00.000Z",

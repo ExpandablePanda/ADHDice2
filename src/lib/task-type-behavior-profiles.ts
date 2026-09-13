@@ -98,9 +98,8 @@ export async function loadTaskTypeBehaviorProfiles(
     .select("task_type,effective_from_logical_date,unresolved_occurrence,positive_streak_on_unhandled,missed_streak_on_unhandled,rewards,available_actions,needs_action_triggers,created_at,updated_at")
     .eq("user_id", userId);
   if (result.error) return { data: {}, revisions: {}, error: result.error };
-  // The table still retains Goal compatibility rows, but the old generic
-  // Custom profile is no longer a product authority. Named Custom Task Types
-  // resolve through their own ruleset revision timelines instead.
+  // The old generic Custom profile is not a product authority. Named Custom
+  // Task Types resolve through their own ruleset revision timelines instead.
   const compatibleRows = (result.data ?? []).filter((row) => row.task_type !== "custom");
   const revisions: Partial<Record<TaskType, TaskBehaviorPolicyRevisions>> = {};
   for (const revision of normalizeTaskBehaviorPolicyRevisions(compatibleRows)) {

@@ -258,7 +258,7 @@ test("canonical creation rejects an anonymous Custom Task Type", () => {
   );
 });
 
-test("canonical creation keeps legacy Goal readable but rejects it for new Tasks", () => {
+test("canonical creation rejects the retired Goal Task Type for new Tasks", () => {
   assert.throws(
     () => buildCanonicalTaskCreationPlan({
       draft: draft({ task_type: "goal" }),

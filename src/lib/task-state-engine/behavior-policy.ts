@@ -8,10 +8,11 @@
  *
  * The semantic fields below describe decisions the one Task Engine can
  * consume. Task and named Custom Task Types are the currently active
- * configurable profiles; Goal retains the Standard fallback for legacy rows.
+ * configurable profiles; invalid retired Task Types are rejected before they
+ * reach the engine.
  */
 import type { TaskType } from "../task-type.ts";
-import { isTaskType } from "../task-type.ts";
+import { isTaskType, normalizeTaskType } from "../task-type.ts";
 
 export type UnresolvedOccurrenceBehavior = "missed" | "blank";
 /**
@@ -287,7 +288,7 @@ export function normalizeTaskBehaviorProfiles(rows: readonly unknown[], logicalD
   const revisions = normalizeTaskBehaviorPolicyRevisions(rows);
   const profiles: Partial<Record<TaskType, TaskBehaviorPolicy>> = {};
   const targetDate = logicalDate ?? revisions.map((revision) => revision.effectiveFromLogicalDate).sort().at(-1) ?? "0000-00-00";
-  for (const taskType of ["task", "goal", "custom"] as const) {
+  for (const taskType of ["task", "custom"] as const) {
     const taskRevision = revisions
       .filter((candidate) => candidate.taskType === taskType && candidate.effectiveFromLogicalDate <= targetDate)
       .at(-1);
@@ -378,12 +379,13 @@ export function resolveTaskBehaviorPolicy(
   if (input && typeof input === "object") {
     return normalizeTaskBehaviorProfile(input);
   }
-  if (isTaskType(input)) {
-    if (isActiveTaskBehaviorProfileTaskType(input)) {
-      if (logicalDate && revisions?.[input]?.length) {
-        return resolveTaskBehaviorPolicyForLogicalDate({ revisions: revisions[input], logicalDate });
+  if (typeof input === "string") {
+    const taskType = normalizeTaskType(input);
+    if (isActiveTaskBehaviorProfileTaskType(taskType)) {
+      if (logicalDate && revisions?.[taskType]?.length) {
+        return resolveTaskBehaviorPolicyForLogicalDate({ revisions: revisions[taskType], logicalDate });
       }
-      if (profiles?.[input]) return normalizeTaskBehaviorProfile(profiles[input], input);
+      if (profiles?.[taskType]) return normalizeTaskBehaviorProfile(profiles[taskType], taskType);
     }
     return STANDARD_TASK_BEHAVIOR_POLICY;
   }
@@ -402,6 +404,7 @@ export function resolveTaskBehaviorPolicyForTask(input: TaskBehaviorPolicyResolu
   taskId?: string;
   taskType: TaskType;
 }) {
+  normalizeTaskType(input.taskType);
   const selectionRows = input.taskId
     ? [...(input.behaviorSelectionsByTaskId?.[input.taskId] ?? [])]
       .filter((selection) => isTaskTypeSelection(selection))

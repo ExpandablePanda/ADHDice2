@@ -154,7 +154,6 @@ test("stored Task profile normalization and ownership filter are narrow", async 
   assert.equal(customBehaviorRulesetRevisionUpsertPayload("ruleset-practice", "2026-09-08", legacyPreservePolicy).positive_streak_on_unhandled, "break");
   assert.equal(resolveTaskBehaviorPolicy("task", result.data), result.data.task);
   assert.equal(resolveTaskBehaviorPolicy("custom", result.data), STANDARD_TASK_BEHAVIOR_POLICY);
-  assert.equal(resolveTaskBehaviorPolicy("goal", result.data), STANDARD_TASK_BEHAVIOR_POLICY);
 });
 
 test("type-aware optimistic replacement and rollback do not cross TaskType boundaries", () => {
@@ -374,10 +373,6 @@ test("Custom policy changes invalidate the same semantic projections while stayi
   assert.notDeepEqual(customSemantics.activeStatus, taskSemantics.activeStatus);
   assert.notDeepEqual(customSemantics.streak, taskSemantics.streak);
   assert.notDeepEqual(customSemantics.rewards, taskSemantics.rewards);
-  assert.deepEqual(
-    selectTaskBehaviorProjectionSemantics({ behaviorPolicyRevisions: { task: [task], custom: [custom] }, taskType: "goal" }),
-    selectTaskBehaviorProjectionSemantics({ taskType: "goal" }),
-  );
 });
 
 test("Task profile selection follows the ADHDice logical-day rollover and first-revision baseline", () => {
@@ -626,7 +621,7 @@ test("explicit persisted Missed History remains factual under a blank/ignore bas
   assert.equal(timeline.days["2026-09-05"]?.unhandled, false);
 });
 
-test("settings UI model exposes Task and named Custom settings while keeping Goal legacy-only", () => {
+test("settings UI model exposes Task and named Custom settings", () => {
   const settingsSource = readFileSync("src/components/task-app/task-type-behavior-settings.tsx", "utf8");
   assert.deepEqual(TASK_TYPE_BEHAVIOR_TABS.map((tab) => tab.value), ["task"]);
   assert.match(settingsSource, /Unfinished scheduled occurrence/);
@@ -639,7 +634,6 @@ test("settings UI model exposes Task and named Custom settings while keeping Goa
   assert.doesNotMatch(settingsSource, /Custom Default|generic custom/);
   assert.doesNotMatch(settingsSource, /\+ New Ruleset|Ruleset name/);
   assert.match(settingsSource, /onCustomRulesetChange/);
-  assert.equal(taskTypeBehaviorTabDescription("goal"), "Behavior profile not configured yet.");
   assert.match(settingsSource, /activeTab === "task"/);
   assert.match(settingsSource, /updateActiveProfile\("unresolvedOccurrence"/);
   assert.match(settingsSource, /Reset Task Defaults/);

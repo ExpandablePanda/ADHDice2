@@ -68,7 +68,7 @@ const storedTask = {
 test("missing and every supported persisted TaskType resolve to the frozen standard profile", () => {
   assert.equal(resolveTaskBehaviorPolicy(undefined), STANDARD_TASK_BEHAVIOR_POLICY);
   assert.equal(resolveTaskBehaviorPolicy(null), STANDARD_TASK_BEHAVIOR_POLICY);
-  for (const taskType of ["task", "goal", "custom"] as TaskType[]) {
+  for (const taskType of ["task", "custom"] as TaskType[]) {
     assert.equal(normalizeTaskType(taskType), taskType);
     assert.equal(resolveTaskBehaviorPolicy(taskType), STANDARD_TASK_BEHAVIOR_POLICY);
   }
@@ -233,7 +233,7 @@ test("stored Task normalization explicitly supplies Standard Task policy", () =>
 
 test("direct and compatibility inputs resolve policy from stored TaskType without changing the engine input", () => {
   const context = { now: input.now, timezone: input.timezone, logicalDayRollover: input.logicalDayRollover };
-  for (const taskType of ["task", "goal", "custom"] as TaskType[]) {
+  for (const taskType of ["task", "custom"] as TaskType[]) {
     const direct = buildDirectTaskStateEngineInput({ ...storedTask, task_type: taskType }, [], context);
     const compatibility = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: taskType }, [], context);
     assert.equal(direct.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY, taskType);
@@ -279,7 +279,7 @@ test("Task and Custom resolve independent effective-dated profiles through the s
 
   assert.equal(resolveTaskBehaviorPolicy("custom", profiles, revisions, "2026-09-15").unresolvedOccurrence, "blank");
   assert.equal(resolveTaskBehaviorPolicy("task", profiles, revisions, "2026-09-15").unresolvedOccurrence, "missed");
-  assert.equal(resolveTaskBehaviorPolicy("goal", profiles, revisions, "2026-09-15"), STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.throws(() => resolveTaskBehaviorPolicy("goal" as TaskType, profiles, revisions, "2026-09-15"), /retired/);
 
   const customInput = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: "custom" }, [], context);
   const taskInput = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: "task" }, [], context);
@@ -298,41 +298,6 @@ test("Task and Custom resolve independent effective-dated profiles through the s
     calendarEnd: "2026-09-15",
   });
   assert.equal(customTimeline.days["2026-09-11"]?.behaviorPolicy.unresolvedOccurrence, "blank");
-});
-
-test("legacy Goal rows cannot enter the effective timeline through direct input", () => {
-  const inactiveRevision = {
-    id: "inactive-profile",
-    effectiveFromLogicalDate: "2026-09-01",
-    unresolvedOccurrence: "blank" as const,
-    positiveStreakOnUnhandled: "preserve" as const,
-    missedStreakOnUnhandled: "ignore" as const,
-    rewards: "disabled" as const,
-  };
-  for (const taskType of ["goal"] as const) {
-    const context = {
-      behaviorProfiles: {
-        [taskType]: normalizeTaskBehaviorProfile(inactiveRevision, taskType),
-      },
-      behaviorPolicyRevisions: { goal: [inactiveRevision] },
-      now: input.now,
-      timezone: input.timezone,
-      logicalDayRollover: input.logicalDayRollover,
-    };
-    const engineInput = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: taskType }, [], context);
-    assert.equal(engineInput.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY, taskType);
-    assert.equal(engineInput.behaviorPolicyRevisions, undefined, taskType);
-    const timeline = buildTaskEffectiveTimeline({
-      behaviorPolicy: engineInput.behaviorPolicy,
-      behaviorPolicyRevisions: engineInput.behaviorPolicyRevisions,
-      task: engineInput.task,
-      history: engineInput.history,
-      logicalDate: "2026-09-10",
-      calendarStart: "2026-09-08",
-      calendarEnd: "2026-09-10",
-    });
-    assert.equal(timeline.days["2026-09-10"]?.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY, taskType);
-  }
 });
 
 test("the Task Engine resolves the standard policy without changing current evaluation", () => {

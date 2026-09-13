@@ -19,13 +19,17 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import { buildNewTaskDraft } from "../src/components/task-app/task-editor-model.ts";
 import { buildChildTaskCreationDraft } from "../src/lib/task-child-creation.ts";
 
-test("TaskType exposes only selectable Task while retaining Goal and named Custom read compatibility", () => {
+test("TaskType exposes only current Task and named Custom values", () => {
   assert.deepEqual(TASK_TYPE_OPTIONS.map((option) => option.value), ["task"]);
-  for (const taskType of ["task", "goal", "custom"] as TaskType[]) {
+  for (const taskType of ["task", "custom"] as TaskType[]) {
     assert.equal(isTaskType(taskType), true);
     assert.equal(normalizeTaskType(taskType), taskType);
     assert.equal(formatTaskTypeLabel(taskType), taskType === "custom" ? "Custom Task Type (legacy)" : taskType[0].toUpperCase() + taskType.slice(1));
   }
+  assert.equal(isTaskType("goal"), false);
+  assert.equal(parseTaskType("goal"), null);
+  assert.throws(() => normalizeTaskType("goal"), /retired/);
+  assert.throws(() => formatTaskTypeLabel("goal"), /retired/);
   assert.equal(isTaskType("pursuit"), false);
   assert.equal(parseTaskType("pursuit"), null);
   assert.equal(normalizeTaskType(undefined), "task");
@@ -94,7 +98,7 @@ test("anonymous Custom assignments are invalid while named Custom display remain
   assert.match(migration, /update\s+public\.adhdice_task_behavior_selections[\s\S]*where task_type = 'custom'[\s\S]*custom_ruleset_id is null/i);
   assert.match(migration, /delete\s+from\s+public\.adhdice_task_type_behavior_profiles[\s\S]*where task_type = 'custom'/i);
   assert.doesNotMatch(migration, /custom_ruleset_id is not null[\s\S]*set task_type = 'task'/i);
-  assert.match(schema, /\(task_type = 'custom' and custom_ruleset_id is not null\)[\s\S]*\(task_type in \('task', 'goal'\) and custom_ruleset_id is null\)/i);
+  assert.match(schema, /\(task_type = 'custom' and custom_ruleset_id is not null\)[\s\S]*\(task_type = 'task' and custom_ruleset_id is null\)/i);
   assert.match(schema, /Custom behavior selections require a named Custom Task Type/i);
   assert.doesNotMatch(schema, /constraint adhdice_task_type_behavior_profiles_task_type_check\s*\n\s*check \(task_type in \('task', 'goal', 'custom'\)\)/i);
 });
@@ -183,7 +187,7 @@ test("Pursuit retirement deletes only typed/domain data and tightens current Tas
   assert.doesNotMatch(migration, /update[\s\S]*task_type\s*=\s*'task'/i);
   assert.match(schema, /task_type text not null default 'task'/i);
   assert.match(schema, /constraint adhdice_clean_tasks_task_type_check/i);
-  assert.match(schema, /task_type in \('task', 'goal', 'custom'\)/i);
+  assert.match(schema, /task_type in \('task', 'custom'\)/i);
   assert.doesNotMatch(schema, /task_type in \([^)]*'pursuit'/i);
   assert.doesNotMatch(schema, /create table public\.adhdice_pursuits/i);
   assert.doesNotMatch(schema, /create table public\.adhdice_pursuit_activities/i);
