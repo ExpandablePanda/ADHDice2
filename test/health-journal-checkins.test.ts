@@ -200,7 +200,7 @@ test("Occurrence references include local date and time while preserving identit
   assert.match(formSource, /selectedJournalEntry\?\.reflection/);
 });
 
-test("7.13.50 Journal QA correction polishes the centered Event Feeling dialog and preserves legacy behavior", () => {
+test("7.13.51 Journal QA correction reduces Event Feeling scale-description typography and preserves legacy behavior", () => {
   const eventChoiceSource = formSource.slice(formSource.indexOf("function EventCaptureChoice"), formSource.indexOf("function StartOfDayQuestions"));
   const centeredHeaderClass = /className=\{`\$\{QUESTION_HINT_CLASS\} text-center font-semibold uppercase tracking-\[0\.16em\]`\}/g;
 
@@ -218,6 +218,9 @@ test("7.13.50 Journal QA correction polishes the centered Event Feeling dialog a
   assert.match(eventCaptureSource, /className="grid grid-cols-2 gap-1\.5 sm:grid-cols-3"/);
   assert.match(eventCaptureSource, /Array\.from\(\{ length: denominator \}, \(_, index\) => index \+ 1\)\.map\(\(score\)/);
   assert.match(eventCaptureSource, /className=\{`flex min-h-8 w-full min-w-0/);
+  assert.match(eventCaptureSource, /<span className="shrink-0 text-xs font-semibold">\{score\}<\/span>/);
+  assert.match(eventCaptureSource, /<span className="min-w-0 flex-1 text-\[11px\] font-medium leading-tight break-words whitespace-normal">\{signal\.scale_labels\[score\] \?\? ""\}<\/span>/);
+  assert.doesNotMatch(eventCaptureSource, /text-left text-xs font-semibold/);
   assert.doesNotMatch(eventCaptureSource, /col-span/);
   assert.equal(eventCaptureSource.match(centeredHeaderClass)?.length, 2);
   assert.match(eventCaptureSource, /border-\[#5d49c7\] bg-\[#6f57f6\] text-white/);
