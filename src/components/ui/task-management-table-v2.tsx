@@ -1267,7 +1267,7 @@ type TaskManagementTableV2Props = {
   behaviorPolicyLoading?: boolean;
   customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
-  onCreateCustomRuleset?: (name: string, policy: TaskBehaviorPolicy) => Promise<CustomBehaviorRuleset | null>;
+  onCreateCustomRuleset?: (name: string, policy: TaskBehaviorPolicy, presentation?: Partial<TaskTypePresentation>) => Promise<CustomBehaviorRuleset | null>;
   onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
   onShowCustomRulesetTasks?: (rulesetId: string) => void;
   onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;

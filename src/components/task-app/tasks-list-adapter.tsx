@@ -338,7 +338,7 @@ type TasksTableSourceProps = {
   namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
   behaviorSelectionsByTaskId?: TaskBehaviorPolicyResolutionContext["behaviorSelectionsByTaskId"];
   behaviorPolicyLoading?: boolean;
-  onCreateCustomRuleset?: (name: string, policy: TaskBehaviorPolicy) => Promise<CustomBehaviorRuleset | null>;
+  onCreateCustomRuleset?: (name: string, policy: TaskBehaviorPolicy, presentation?: Partial<TaskTypePresentation>) => Promise<CustomBehaviorRuleset | null>;
   onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
   onShowCustomRulesetTasks?: (rulesetId: string) => void;
   onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
