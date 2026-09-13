@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowLeft,
+  ArrowRight,
   ArrowUp,
   ArrowDown,
   CalendarDays,
@@ -73,8 +74,9 @@ import {
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, taskTypeSelectionValue } from "@/lib/task-type";
 import { preserveCurrentTaskStatusForPresentation, resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask, taskManualActionForStatus } from "@/lib/task-state-engine/action-authority";
+import { getTaskEditorNavigationNeighbor, getTaskEditorNavigationPosition } from "@/lib/task-editor-navigation";
 import type { TaskBehaviorPolicyResolutionContext, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
-import { AdhdDropdownSelect } from "@/components/ui-system";
+import { AdhdDropdownSelect, AdhdIconButton } from "@/components/ui-system";
 import {
   TASK_TABLE_BODY_MUTED_VALUE_CLASS as BODY_MUTED_VALUE_CLASS,
   TASK_TABLE_BODY_VALUE_CLASS as BODY_VALUE_CLASS,
@@ -966,6 +968,7 @@ function InlineSubtaskEditor({
               <TaskStatusCircleRail<TaskStatus>
                 className="mt-2 pl-8"
                 currentStatus={subtask.status as TaskStatus}
+                emphasizeMissed
                 onSetStatus={(status) => {
                   if (status === "delayed") {
                     onRequestDelay?.(subtask.id);
@@ -1216,7 +1219,8 @@ type TaskManagementTableV2Props = {
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenFocusTimer?: (taskId: string) => void;
   onOpenNote?: (noteId: string) => void;
-  onOpenTaskEditor?: (taskId: string) => void;
+  onOpenTaskEditor?: (taskId: string, navigationTaskIds?: string[]) => void;
+  onTaskEditorNavigate?: (taskId: string) => void;
   onOpenTaskInNewTab?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
   onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
@@ -1306,6 +1310,7 @@ type TaskManagementTableV2Props = {
   visibleColumns?: TaskManagementTableColumnId[];
   activeTaskTimerIndex?: number;
   getFollowTaskDestination?: (taskId: string) => TaskFollowDestination | null;
+  editorNavigationTaskIds?: string[];
   hasMoreRows?: boolean;
   expandAllColumnsToken?: number;
   shrinkAllColumnsToken?: number;
@@ -1641,7 +1646,7 @@ export function getTableHierarchyTitleGeometry(depth: number) {
 }
 
 function renderTableCurrentStatusCircle(status: TaskDisplayStatus, attention = false) {
-  return renderTaskStatusCircle(status, TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE, { attention });
+  return renderTaskStatusCircle(status, TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE, { attention, emphasizeMissed: status === "missed" });
 }
 
 const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
@@ -2706,6 +2711,7 @@ export function TaskManagementTableV2({
   onOpenTaskHistory,
   onOpenNote,
   onOpenTaskEditor,
+  onTaskEditorNavigate,
   onOpenTaskInNewTab,
   onOpenChildTask,
   onMoveTaskIntoParent,
@@ -2802,6 +2808,7 @@ export function TaskManagementTableV2({
   title = "Table #2 Prototype",
   visibleColumns,
   activeTaskTimerIndex,
+  editorNavigationTaskIds,
   getFollowTaskDestination,
   hasMoreRows = false,
   persistedLayoutPreferences,
@@ -2812,6 +2819,7 @@ export function TaskManagementTableV2({
   const [tasks, setTasks] = useState<PrototypeTaskRow[]>(rows);
   const [renderedTaskCount, setRenderedTaskCount] = useState(INITIAL_RENDERED_TASK_COUNT);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [capturedEditorNavigationTaskIds, setCapturedEditorNavigationTaskIds] = useState<string[] | null>(null);
   const [retainedSelectedTask, setRetainedSelectedTask] = useState<PrototypeTaskRow | null>(null);
   const [metadataTargetTaskId, setMetadataTargetTaskId] = useState<string | null>(null);
   const [retainedMetadataTargetTask, setRetainedMetadataTargetTask] = useState<PrototypeTaskRow | null>(null);
@@ -2996,6 +3004,7 @@ export function TaskManagementTableV2({
   const pendingMetadataTargetTaskIdRef = useRef<string | null>(null);
   const estimatedTimeInputRef = useRef<HTMLInputElement | null>(null);
   const pendingEditorFocusFrameRef = useRef<{ frame: number; token: number } | null>(null);
+  const editorNavigationTaskIdRef = useRef<string | null>(null);
   const handledEditorFocusTokensRef = useRef(new Set<number>());
   const statusRailLongPressTimeoutRef = useRef<number | null>(null);
   const statusRailLongPressTriggeredRef = useRef(false);
@@ -3035,6 +3044,10 @@ export function TaskManagementTableV2({
     () => selectedTaskFromRows ?? (selectedTaskId && retainedSelectedTask?.id === selectedTaskId ? retainedSelectedTask : null),
     [retainedSelectedTask, selectedTaskFromRows, selectedTaskId],
   );
+  const activeEditorNavigationTaskIds = editorNavigationTaskIds ?? capturedEditorNavigationTaskIds ?? [];
+  const editorNavigationPosition = selectedTaskId
+    ? getTaskEditorNavigationPosition(activeEditorNavigationTaskIds, selectedTaskId)
+    : null;
   const metadataTargetTaskFromRows = useMemo(
     () => (metadataTargetTaskId ? tasks.find((task) => task.id === metadataTargetTaskId) ?? null : null),
     [metadataTargetTaskId, tasks],
@@ -3665,6 +3678,7 @@ export function TaskManagementTableV2({
     setRetainedSelectedTask(clonePrototypeTaskRow(requestedTask));
     setSelectedTaskLeftCurrentList(true);
     setQuickEditTargetTaskIds(null);
+    editorNavigationTaskIdRef.current = requestedOpenTaskId;
     setSelectedTaskId(requestedOpenTaskId);
     setOverlayMode("full");
     setOpenColumnMenuId(null);
@@ -4523,6 +4537,11 @@ export function TaskManagementTableV2({
     if (task) {
       return task;
     }
+    const liveRows = getAllRows?.() ?? allRows ?? [];
+    const liveRow = liveRows.find((entry) => entry.id === taskId);
+    if (liveRow) {
+      return liveRow;
+    }
     for (const group of Object.values(childTaskPreviewByParentTaskId)) {
       const item = group.items.find((entry) => entry.id === taskId);
       if (item) {
@@ -4653,57 +4672,58 @@ export function TaskManagementTableV2({
     }
   }
 
-  function closeInspector(options?: {
+  function commitEditorDrafts(taskId: string, options?: {
+    skipLinkCommit?: boolean;
+    skipNotesCommit?: boolean;
+    skipTitleCommit?: boolean;
+  }) {
+    if (!options?.skipTitleCommit) {
+      commitTaskTitle(taskId);
+    }
+    if (!options?.skipNotesCommit) {
+      commitTaskNotes(taskId);
+    }
+    if (!options?.skipLinkCommit) {
+      commitTaskLink(taskId);
+    }
+    const currentTask = getTaskById(taskId);
+    const dueDraft = dueDrafts[taskId];
+    if (dueDraft && currentTask && (dueDraft.dueOn !== currentTask.dueOn || dueDraft.dueTime !== currentTask.dueTime)) {
+      setTaskDue(taskId, dueDraft.dueOn, dueDraft.dueTime);
+    }
+    const estimatedDraft = estimatedMinutesDrafts[taskId];
+    if (estimatedDraft && currentTask) {
+      const estimatedMinutes = Number.parseInt(estimatedDraft, 10);
+      if (Number.isFinite(estimatedMinutes) && estimatedMinutes !== currentTask.estimatedMinutes) {
+        setTaskEstimatedMinutes(taskId, estimatedMinutes);
+      }
+    }
+  }
+
+  function commitOpenEditorDrafts(options?: {
     skipLinkCommit?: boolean;
     skipNotesCommit?: boolean;
     skipTitleCommit?: boolean;
   }) {
     if (selectedTaskId) {
-      if (!options?.skipTitleCommit) {
-        commitTaskTitle(selectedTaskId);
-      }
-      if (!options?.skipNotesCommit) {
-        commitTaskNotes(selectedTaskId);
-      }
-      if (!options?.skipLinkCommit) {
-        commitTaskLink(selectedTaskId);
-      }
-      const currentTask = getTaskById(selectedTaskId);
-      const dueDraft = dueDrafts[selectedTaskId];
-      if (dueDraft && currentTask && (dueDraft.dueOn !== currentTask.dueOn || dueDraft.dueTime !== currentTask.dueTime)) {
-        setTaskDue(selectedTaskId, dueDraft.dueOn, dueDraft.dueTime);
-      }
-      const estimatedDraft = estimatedMinutesDrafts[selectedTaskId];
-      if (estimatedDraft && currentTask) {
-        const estimatedMinutes = Number.parseInt(estimatedDraft, 10);
-        if (Number.isFinite(estimatedMinutes) && estimatedMinutes !== currentTask.estimatedMinutes) {
-          setTaskEstimatedMinutes(selectedTaskId, estimatedMinutes);
-        }
-      }
+      commitEditorDrafts(selectedTaskId, options);
     }
     if (metadataTargetTaskId && metadataTargetTaskId !== selectedTaskId) {
-      if (!options?.skipNotesCommit) {
-        commitTaskNotes(metadataTargetTaskId);
-      }
-      if (!options?.skipLinkCommit) {
-        commitTaskLink(metadataTargetTaskId);
-      }
-      const currentTask = getTaskById(metadataTargetTaskId);
-      const dueDraft = dueDrafts[metadataTargetTaskId];
-      if (dueDraft && currentTask && (dueDraft.dueOn !== currentTask.dueOn || dueDraft.dueTime !== currentTask.dueTime)) {
-        setTaskDue(metadataTargetTaskId, dueDraft.dueOn, dueDraft.dueTime);
-      }
-      const estimatedDraft = estimatedMinutesDrafts[metadataTargetTaskId];
-      if (estimatedDraft && currentTask) {
-        const estimatedMinutes = Number.parseInt(estimatedDraft, 10);
-        if (Number.isFinite(estimatedMinutes) && estimatedMinutes !== currentTask.estimatedMinutes) {
-          setTaskEstimatedMinutes(metadataTargetTaskId, estimatedMinutes);
-        }
-      }
+      commitEditorDrafts(metadataTargetTaskId, options);
     }
+  }
+
+  function closeInspector(options?: {
+    skipLinkCommit?: boolean;
+    skipNotesCommit?: boolean;
+    skipTitleCommit?: boolean;
+  }) {
+    commitOpenEditorDrafts(options);
     setEditingTaskTitleId(null);
     setEditingSubtaskId(null);
     hasSeenSelectedTaskInCurrentListRef.current = false;
+    editorNavigationTaskIdRef.current = null;
+    setCapturedEditorNavigationTaskIds(null);
     setSelectedTaskId(null);
     setRetainedSelectedTask(null);
     setMetadataTargetTaskId(null);
@@ -5459,6 +5479,7 @@ export function TaskManagementTableV2({
     const nextTask = getTaskById(taskId);
     const isTaskInRows = tasks.some((task) => task.id === taskId);
     cancelTableScrollTopHold();
+    editorNavigationTaskIdRef.current = taskId;
     setEditingTaskTitleId(null);
     setActiveMetadataPanelByTaskId({});
     setMetadataTargetTaskId(null);
@@ -5590,10 +5611,11 @@ export function TaskManagementTableV2({
     }
 
     if (onOpenTaskEditor) {
-      onOpenTaskEditor(taskId);
+      onOpenTaskEditor(taskId, effectiveDisplayedTasks.map((task) => task.id));
       return;
     }
 
+    setCapturedEditorNavigationTaskIds(effectiveDisplayedTasks.map((task) => task.id));
     if (revealChildTaskInParentEditor(taskId)) {
       return;
     }
@@ -5608,6 +5630,107 @@ export function TaskManagementTableV2({
     }
 
     onOpenChildTask?.(taskId);
+  }
+
+  function navigateEditorTask(direction: "next" | "previous") {
+    if (overlayMode !== "full") {
+      return;
+    }
+
+    const currentTaskId = editorNavigationTaskIdRef.current ?? selectedTaskId;
+    if (!currentTaskId || activeEditorNavigationTaskIds.length === 0) {
+      return;
+    }
+
+    const nextTaskId = getTaskEditorNavigationNeighbor({
+      currentTaskId,
+      direction,
+      isTaskAvailable: (taskId) => Boolean(getTaskById(taskId)),
+      taskIds: activeEditorNavigationTaskIds,
+    });
+    if (!nextTaskId || nextTaskId === currentTaskId) {
+      return;
+    }
+
+    commitOpenEditorDrafts();
+    setEditingTaskTitleId(null);
+    setEditingSubtaskId(null);
+    setActiveMetadataPanelByTaskId({});
+    setMetadataTargetTaskId(null);
+    setRetainedMetadataTargetTask(null);
+    pendingMetadataTargetTaskIdRef.current = null;
+    setQuickEditTargetTaskIds(null);
+    openInspector(nextTaskId, "full");
+    onTaskEditorNavigate?.(nextTaskId);
+  }
+
+  function getEditorNavigationNeighborId(direction: "next" | "previous") {
+    const currentTaskId = editorNavigationTaskIdRef.current ?? selectedTaskId;
+    if (!currentTaskId) {
+      return null;
+    }
+    return getTaskEditorNavigationNeighbor({
+      currentTaskId,
+      direction,
+      isTaskAvailable: (taskId) => Boolean(getTaskById(taskId)),
+      taskIds: activeEditorNavigationTaskIds,
+    });
+  }
+
+  function renderEditorNavigationControls(layout: "mobile" | "side") {
+    if (overlayMode !== "full" || !editorNavigationPosition) {
+      return null;
+    }
+
+    const previousTaskId = getEditorNavigationNeighborId("previous");
+    const nextTaskId = getEditorNavigationNeighborId("next");
+    const previousButton = (
+      <AdhdIconButton
+        aria-label="Previous task"
+        className={layout === "side" ? "bg-white/95 shadow-[0_10px_28px_rgba(81,61,168,0.14)] dark:bg-[#1b1530]/95" : undefined}
+        disabled={!previousTaskId}
+        onClick={(event) => {
+          event.stopPropagation();
+          navigateEditorTask("previous");
+        }}
+        size="md"
+        type="button"
+      >
+        <ArrowLeft aria-hidden="true" />
+      </AdhdIconButton>
+    );
+    const nextButton = (
+      <AdhdIconButton
+        aria-label="Next task"
+        className={layout === "side" ? "bg-white/95 shadow-[0_10px_28px_rgba(81,61,168,0.14)] dark:bg-[#1b1530]/95" : undefined}
+        disabled={!nextTaskId}
+        onClick={(event) => {
+          event.stopPropagation();
+          navigateEditorTask("next");
+        }}
+        size="md"
+        type="button"
+      >
+        <ArrowRight aria-hidden="true" />
+      </AdhdIconButton>
+    );
+
+    return (
+      <div
+        className={layout === "side"
+          ? "pointer-events-none absolute inset-x-1 top-1/2 z-30 flex -translate-y-1/2 items-center justify-between"
+          : "mt-3 flex items-center justify-between gap-3 rounded-[0.9rem] border border-[#ede7f7] bg-[#fbfaff] px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]"}
+        data-task-editor-navigation={layout}
+      >
+        <span className={layout === "side" ? "pointer-events-auto" : "shrink-0"}>{previousButton}</span>
+        {layout === "mobile" ? (
+          <span className="text-xs font-medium text-[#8d87a7] dark:text-white/45" data-task-editor-position="true">
+            {`${editorNavigationPosition.index} of ${editorNavigationPosition.count}`}
+          </span>
+        ) : null}
+        <span className={layout === "side" ? "pointer-events-auto" : "shrink-0"}>{nextButton}</span>
+      </div>
+    );
   }
 
   function openTableStepActions(taskId: string, mode: OverlayMode = "status") {
@@ -6879,7 +7002,7 @@ export function TaskManagementTableV2({
     setRowContextMenu(null);
 
     if (onOpenTaskEditor) {
-      onOpenTaskEditor(taskId);
+      onOpenTaskEditor(taskId, effectiveDisplayedTasks.map((task) => task.id));
       return;
     }
 
@@ -6909,7 +7032,7 @@ export function TaskManagementTableV2({
 
   function openRowPrimaryAction(taskId: string, sourceElement: HTMLElement) {
     if (onOpenTaskEditor) {
-      onOpenTaskEditor(taskId);
+      onOpenTaskEditor(taskId, effectiveDisplayedTasks.map((task) => task.id));
       return;
     }
 
@@ -7132,6 +7255,7 @@ export function TaskManagementTableV2({
                 <TaskStatusCircleRail<TaskDisplayStatus>
                   className="w-max max-w-none flex-nowrap"
                   currentStatus={task.status}
+                  emphasizeMissed
                   onSetStatus={(status, event) => {
                     if (statusRailLongPressTriggeredRef.current) {
                       statusRailLongPressTriggeredRef.current = false;
@@ -7210,6 +7334,7 @@ export function TaskManagementTableV2({
               <TaskStatusCircleRail<TaskDisplayStatus>
                 className="w-max max-w-none flex-nowrap"
                 currentStatus={task.status}
+                emphasizeMissed
                 onSetStatus={(status, event) => {
                   if (statusRailLongPressTriggeredRef.current) {
                     statusRailLongPressTriggeredRef.current = false;
@@ -8225,6 +8350,7 @@ export function TaskManagementTableV2({
               <TaskStatusCircleRail<TaskDisplayStatus>
                 className="w-max max-w-none flex-nowrap"
                 currentStatus={item.status}
+                emphasizeMissed
                 onSetStatus={(status, event) => {
                   if (status === "delayed") {
                     openTaskDelay(item.id, event.currentTarget);
@@ -9232,7 +9358,7 @@ export function TaskManagementTableV2({
                   {selectedTaskIds.length === 1 && onOpenTaskEditor ? (
                     <button
                       className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] transition hover:bg-[#e9e1ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2a204c]`}
-                      onClick={() => onOpenTaskEditor(selectedTaskIds[0])}
+                      onClick={() => onOpenTaskEditor(selectedTaskIds[0], effectiveDisplayedTasks.map((task) => task.id))}
                       type="button"
                     >
                       Edit task
@@ -9487,7 +9613,7 @@ export function TaskManagementTableV2({
               } : undefined}
               onEditTask={onOpenTaskEditor ? () => {
                 setRowContextMenu(null);
-                onOpenTaskEditor(rowContextMenuTask.id);
+                onOpenTaskEditor(rowContextMenuTask.id, effectiveDisplayedTasks.map((task) => task.id));
               } : undefined}
               onMoveIntoParent={onMoveTaskIntoParent ? async (parentTaskId) => {
                 setRowContextMenu(null);
@@ -10328,6 +10454,12 @@ export function TaskManagementTableV2({
                           ) : null}
                         </div>
                       )}
+                      {!useMobileFullOverlay && editorNavigationPosition && editorNavigationPosition.count > 1 ? (
+                        <p className="mt-1 text-xs font-medium text-[#8d87a7] dark:text-white/45" data-task-editor-position="true">
+                          {`${editorNavigationPosition.index} of ${editorNavigationPosition.count}`}
+                        </p>
+                      ) : null}
+                      {useMobileFullOverlay ? renderEditorNavigationControls("mobile") : null}
                       <div className="mt-2 flex items-center gap-2">
                         <button
                           aria-label="Edit status"
@@ -10335,7 +10467,10 @@ export function TaskManagementTableV2({
                           onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: "status" }))}
                           type="button"
                         >
-                          {renderTaskStatusCircle(selectedTask.status, "md")}
+                          {renderTaskStatusCircle(selectedTask.status, "md", {
+                            attention: Boolean(attentionReasonByTaskId[selectedTask.id] ?? selectedTask.attentionReason),
+                            emphasizeMissed: selectedTask.status === "missed",
+                          })}
                         </button>
                         <label className="block min-w-0 flex-1">
                           <span className="sr-only">Rename task</span>
@@ -10407,7 +10542,8 @@ export function TaskManagementTableV2({
                 );
 
                 const fullDesktopEditorNode = (
-                  <div className="min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
+                  <div className="relative min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
+                    {renderEditorNavigationControls("side")}
                     <div className="p-4">
                       {fullDesktopEditorContent}
                     </div>
@@ -10437,7 +10573,10 @@ export function TaskManagementTableV2({
                       onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: "status" }))}
                       type="button"
                     >
-                      {renderTaskStatusCircle(selectedTask.status, "md")}
+                      {renderTaskStatusCircle(selectedTask.status, "md", {
+                        attention: Boolean(attentionReasonByTaskId[selectedTask.id] ?? selectedTask.attentionReason),
+                        emphasizeMissed: selectedTask.status === "missed",
+                      })}
                     </button>
                     <label className="block min-w-0 flex-1">
                       <span className="sr-only">Rename task</span>

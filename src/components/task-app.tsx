@@ -123,6 +123,7 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
+import { normalizeTaskEditorNavigationTaskIds } from "@/lib/task-editor-navigation";
 import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievementNotifications, useAchievementProgress } from "@/hooks/useAchievementProgress";
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
@@ -1631,6 +1632,7 @@ export function TaskApp() {
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
+  const [taskEditorNavigationTaskIds, setTaskEditorNavigationTaskIds] = useState<string[] | null>(null);
   const [pursuitEditorState, setPursuitEditorState] = useState<{ initialSection: "overview" | "calendar"; parentPursuitId: string | null; pursuitId: string | null; parentTaskId: string | null; returnToTaskEditorId: string | null } | null>(null);
   const openNewPursuitEditor = useCallback((parentTaskId: string | null = null, returnToTaskEditorId: string | null = null, parentPursuitId: string | null = null) => {
     setPursuitEditorState({ initialSection: "overview", parentPursuitId, parentTaskId, pursuitId: null, returnToTaskEditorId });
@@ -2322,6 +2324,7 @@ export function TaskApp() {
         : { ...current, tasksSurface: "tasks" }
     ));
     setRequestedListOverlayTaskId(null);
+    setTaskEditorNavigationTaskIds(null);
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorFocusRequest(null);
     setSharedTaskEditorOverlayTaskId(taskId);
@@ -3524,6 +3527,7 @@ export function TaskApp() {
         subtasks: taskSubtasksByTaskId[task.id] ?? [],
         taskHistory: taskHistoryByTaskId[task.id] ?? [],
         taskHistoryStreakSummary: taskHistoryStreakSummaries[task.id],
+        attentionReason: taskAttentionReasonByTaskId[task.id],
         todayDateKey: todayKey,
       }))
       : [],
@@ -3535,6 +3539,7 @@ export function TaskApp() {
       taskHistoryByTaskId,
       taskHistoryStreakSummaries,
       taskDisplayStatusByTaskId,
+      taskAttentionReasonByTaskId,
       taskLinkedNotesByTaskId,
       taskListMembershipsByTaskId,
       taskSubtasksByTaskId,
@@ -4499,11 +4504,12 @@ export function TaskApp() {
     }
   }, [clearPageShellNavigationHighlight, handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, setActivePage, setTaskUiState]);
 
-  const openExistingTaskEditor = useCallback((task: Task) => {
+  const openExistingTaskEditor = useCallback((task: Task, navigationTaskIds?: string[]) => {
     setSuppressDetachedListNoticeTaskId(null);
+    setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(navigationTaskIds ?? selectedBucketTasks.map((entry) => entry.id)));
     setSharedTaskEditorOverlayTaskId(task.id);
     setTaskEditorFocusRequest(null);
-  }, []);
+  }, [selectedBucketTasks]);
 
   const createTaskAndOpenSharedEditor = useCallback(async (
     initialTaskValues: TaskDraft,
@@ -5373,7 +5379,7 @@ export function TaskApp() {
     setIsActiveTimersTrayOpen(true);
   }
 
-  function openSharedTaskEditor(taskId: string, options?: { initialField?: TaskEditorInitialField; preserveActivePage?: boolean; timer?: RunningTaskTimer | null }) {
+  function openSharedTaskEditor(taskId: string, options?: { initialField?: TaskEditorInitialField; navigationTaskIds?: string[]; preserveActivePage?: boolean; timer?: RunningTaskTimer | null }) {
     const task = tasks.find((entry) => entry.id === taskId) ?? null;
     const timer = options?.timer ?? null;
     const taskOccurrence = task ? buildTaskOccurrenceIdentity(task) : null;
@@ -5385,6 +5391,7 @@ export function TaskApp() {
     }
 
     setSuppressDetachedListNoticeTaskId(null);
+    setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(options?.navigationTaskIds ?? selectedBucketTasks.map((entry) => entry.id)));
     setSharedTaskEditorOverlayTaskId(taskId);
     setTaskEditorFocusRequest(options?.initialField
       ? { field: options.initialField, taskId, token: ++taskEditorFocusTokenRef.current }
@@ -5448,7 +5455,7 @@ export function TaskApp() {
       onResizeWidget={(widgetId, nextWidth, nextHeight) => {
         void handleResizeGridWidget(widgetId, nextWidth, nextHeight);
       }}
-      onEditTask={openExistingTaskEditor}
+      onEditTask={(task) => openExistingTaskEditor(task, selectedBucketTasks.map((entry) => entry.id))}
       onSelectWidget={setSelectedGridWidgetId}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       onSetSubtaskStatus={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
@@ -5475,7 +5482,7 @@ export function TaskApp() {
     <TaskMatrixView
       currentStreakByTaskId={currentStreakByTaskId}
       getTaskStatusOptions={resolveCurrentTaskStatusOptions}
-      onEditTask={openExistingTaskEditor}
+      onEditTask={(task) => openExistingTaskEditor(task, selectedBucketTasks.filter(isTaskOpen).map((entry) => entry.id))}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       subtasksByTaskId={taskSubtasksByTaskId}
       tasks={selectedBucketTasks.filter(isTaskOpen)}
@@ -5486,7 +5493,7 @@ export function TaskApp() {
       currentStreakByTaskId={currentStreakByTaskId}
       focusedTaskIds={focusedTaskIds}
       getTaskStatusOptions={resolveCurrentTaskStatusOptions}
-      onEditTask={openExistingTaskEditor}
+      onEditTask={(task) => openExistingTaskEditor(task, selectedBucketTasks.map((entry) => entry.id))}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       subtasksByTaskId={taskSubtasksByTaskId}
       tasks={selectedBucketTasks}
@@ -5495,7 +5502,7 @@ export function TaskApp() {
   const calendarContentNode = (
     <TaskCalendarView
       onAddTask={openCalendarDateTaskEditor}
-      onOpenTask={openExistingTaskEditor}
+      onOpenTask={(task) => openExistingTaskEditor(task, calendarTasks.map((entry) => entry.id))}
       currentStreakByTaskId={currentStreakByTaskId}
       taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
       tasks={calendarTasks}
@@ -6823,7 +6830,12 @@ export function TaskApp() {
   };
   const closeSharedTaskEditorOverlay = () => {
     setSharedTaskEditorOverlayTaskId(null);
+    setTaskEditorNavigationTaskIds(null);
     setTaskEditorFocusRequest(null);
+  };
+  const closeRequestedListTaskEditorOverlay = () => {
+    setRequestedListOverlayTaskId(null);
+    setTaskEditorNavigationTaskIds(null);
   };
   const scratchPaperData: ScratchPaperData = {
     error: scratchNotes.error,
@@ -7058,10 +7070,12 @@ export function TaskApp() {
           allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
           allRows={sharedTaskEditorRows}
           allTagOptions={allTaskTags}
+          attentionReasonByTaskId={taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={childTaskPreviewByParentTaskId}
           className="m-0 max-w-none p-0"
           enableInspector
+          editorNavigationTaskIds={taskEditorNavigationTaskIds ?? undefined}
           getFollowTaskDestination={getFollowTaskDestination}
           milestoneDetachPromotionTaskIds={milestoneDetachPromotionTaskIds}
           milestonePromotionTaskIds={milestonePromotionTaskIds}
@@ -7077,6 +7091,7 @@ export function TaskApp() {
           }}
           onFollowDetachedTask={followDetachedTask}
           onInspectorClose={closeSharedTaskEditorOverlay}
+          onTaskEditorNavigate={(taskId) => setSharedTaskEditorOverlayTaskId(taskId)}
           onMoveTaskIntoParent={moveTaskIntoParent}
           onNextTaskTimer={() => cycleHudTaskTimer("next")}
           onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
@@ -7597,7 +7612,10 @@ export function TaskApp() {
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
                   onSetActualSeconds: (taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); },
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
-                  onOpenTaskEditor: openSharedTaskEditor,
+                  onOpenTaskEditor: (taskId, navigationTaskIds) => openSharedTaskEditor(taskId, {
+                    navigationTaskIds,
+                    preserveActivePage: true,
+                  }),
                   onOpenTaskInNewTab: openTaskInNewWorkspaceTab,
                   onOpenChildTask: openChildTaskFromPreview,
                   onMoveTaskIntoParent: moveTaskIntoParent,
@@ -7803,7 +7821,11 @@ export function TaskApp() {
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
                   onSetActualSeconds: (taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); },
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
-                  onOpenTaskEditor: (taskId) => setRequestedListOverlayTaskId(taskId),
+                  onOpenTaskEditor: (taskId, navigationTaskIds) => {
+                    setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(navigationTaskIds ?? selectedBucketTasks.map((task) => task.id)));
+                    setRequestedListOverlayTaskId(taskId);
+                  },
+                  onTaskEditorNavigate: (taskId) => setRequestedListOverlayTaskId(taskId),
                   onOpenTaskInNewTab: openTaskInNewWorkspaceTab,
                   onOpenChildTask: openChildTaskFromPreview,
                   onMoveTaskIntoParent: moveTaskIntoParent,
@@ -7818,9 +7840,8 @@ export function TaskApp() {
                   },
                   onDelayTask: (taskId, days) => delaySameTableTask(taskId, days),
                   onDelayTaskUntil: (taskId, dueOn) => delayTaskToDate(taskId, dueOn),
-                  onRequestedOpenTaskHandled: (taskId) => {
-                    setRequestedListOverlayTaskId((current) => (current === taskId ? null : current));
-                  },
+                  onRequestedOpenTaskHandled: () => undefined,
+                  onRequestedOpenTaskOverlayClose: closeRequestedListTaskEditorOverlay,
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
                   onSetTaskType: (taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); },
@@ -7896,6 +7917,7 @@ export function TaskApp() {
                   renderFullInspectorExtension: renderMilestoneInspectorExtension,
                   requestedOpenTask: requestedOpenListTask,
                   requestedOpenTaskId: requestedListOverlayTaskId,
+                  editorNavigationTaskIds: taskEditorNavigationTaskIds ?? undefined,
                   suppressDetachedNoticeTaskId: suppressDetachedListNoticeTaskId,
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,

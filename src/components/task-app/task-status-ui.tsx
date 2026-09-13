@@ -182,10 +182,12 @@ export function renderTaskStatusGlyph(
 export function renderTaskStatusCircle(
   status: TaskDisplayStatus,
   size: "sm" | "md" = "md",
-  options: { attention?: boolean; className?: string; glyphClassName?: string; inverted?: boolean } = {},
+  options: { attention?: boolean; className?: string; emphasizeMissed?: boolean; glyphClassName?: string; inverted?: boolean } = {},
 ) {
   const sizeClasses = size === "sm" ? "h-5 w-5" : "h-5.5 w-5.5";
   const statusLabel = formatTaskStatusLabel(status);
+  const hasMissedEmphasis = options.emphasizeMissed && status === "missed";
+  const hasStatusEmphasis = Boolean(options.attention || hasMissedEmphasis);
   const badgeProps = {
     "aria-label": statusLabel,
     title: statusLabel,
@@ -196,11 +198,13 @@ export function renderTaskStatusCircle(
       className={[
         "flex items-center justify-center rounded-full transition-colors",
         sizeClasses,
-        options.attention ? "task-status-circle-attention relative" : "",
+        hasStatusEmphasis ? "task-status-circle-emphasis relative" : "",
+        options.attention ? "task-status-circle-attention" : "",
         getTaskStatusCircleClassName(status, { inverted: options.inverted }),
         options.className ?? "",
       ].join(" ").trim()}
       data-task-attention-status={options.attention ? "true" : undefined}
+      data-task-status-emphasis={hasMissedEmphasis ? "missed" : options.attention ? "attention" : undefined}
     >
       {options.attention ? (
         <>
@@ -223,12 +227,14 @@ export function TaskStatusCircleRail<Status extends TaskDisplayStatus>({
   options,
   preserveCurrentStatus = false,
   attention = false,
+  emphasizeMissed = false,
   statusLabelPrefix = "Set status to",
   wrap = true,
 }: {
   attention?: boolean;
   className?: string;
   currentStatus: Status;
+  emphasizeMissed?: boolean;
   onSetStatus: (status: Status, event: MouseEvent<HTMLButtonElement>) => void;
   options: Array<{ label: string; value: Status }>;
   preserveCurrentStatus?: boolean;
@@ -256,6 +262,7 @@ export function TaskStatusCircleRail<Status extends TaskDisplayStatus>({
         >
           {renderTaskStatusCircle(option.value, "sm", {
             attention: attention && currentStatus === option.value,
+            emphasizeMissed: emphasizeMissed && currentStatus === option.value,
             inverted: currentStatus === option.value && !attention,
           })}
         </button>

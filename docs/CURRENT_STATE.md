@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.46`.
+- Current working app version: `7.13.47`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,20 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-12 7.13.47 Edit Task Browsing + Status Glow Refinement
+
+The shared Attention status-circle breathing cycle is now 6 seconds. Active
+Missed current-status circles receive the same status-color red breathing
+emphasis; Missed alone keeps its canonical X, while Missed plus final
+Attention membership uses the existing X/Bell crossfade. Full Edit Task now
+supports Previous and Next controls using a captured current-view sequence for
+Table and List, keeping that order stable for the editor session while each
+target resolves live Task data. Missing captured IDs are skipped, boundary
+controls do not wrap, and existing draft commit and detached-task behavior is
+preserved. No Task status, Attention membership, persistence, SQL, schema,
+Supabase, or Edge Function changes were made. Browser QA for 7.13.47 remains
+unverified.
 
 ## 2026-09-12 7.13.46 Attention Status Signal Polish
 
@@ -23,8 +37,7 @@ Attention remains presentation metadata and is still NOT a Task status; the
 status-circle interaction remains status interaction. Reduced-motion and Low
 Stimulation modes use a static status-color treatment with the normal glyph.
 No membership, persistence, SQL, schema, Supabase, or Edge Function changes
-were made. Browser QA for 7.13.46 remains unverified and is assigned to
-Andrew.
+were made. Browser QA for 7.13.46 passed and is assigned to Andrew.
 
 ## 2026-09-12 7.13.45 Attention Rule Authority + Editable System List
 

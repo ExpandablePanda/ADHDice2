@@ -123,9 +123,17 @@
   }
 }
 
+.task-status-circle-emphasis {
+  isolation: isolate;
+  animation: task-status-attention-glow 6s ease-in-out infinite;
+}
+
 .task-status-circle-attention {
   isolation: isolate;
-  animation: task-status-attention-glow 5s ease-in-out infinite;
+}
+
+.task-status-circle-emphasis[data-task-status-emphasis="missed"] {
+  --task-status-circle-glow-color: #d94e67;
 }
 
 .task-status-circle-attention__glyph {
@@ -139,35 +147,35 @@
 
 .task-status-circle-attention__status {
   opacity: 1;
-  animation: task-status-attention-status-glyph 5s ease-in-out infinite;
+  animation: task-status-attention-status-glyph 6s ease-in-out infinite;
 }
 
 .task-status-circle-attention__bell {
   opacity: 0;
-  animation: task-status-attention-bell-glyph 5s ease-in-out infinite;
+  animation: task-status-attention-bell-glyph 6s ease-in-out infinite;
 }
 
 @keyframes task-status-attention-glow {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--task-status-circle-glow-color, currentColor) 0%, transparent);
   }
 
   30% {
     box-shadow:
-      0 0 0 1px color-mix(in srgb, currentColor 9%, transparent),
-      0 0 7px 1px color-mix(in srgb, currentColor 12%, transparent);
+      0 0 0 1px color-mix(in srgb, var(--task-status-circle-glow-color, currentColor) 9%, transparent),
+      0 0 7px 1px color-mix(in srgb, var(--task-status-circle-glow-color, currentColor) 12%, transparent);
   }
 
   50%,
   72% {
     box-shadow:
-      0 0 0 2px color-mix(in srgb, currentColor 18%, transparent),
-      0 0 11px 2px color-mix(in srgb, currentColor 24%, transparent);
+      0 0 0 2px color-mix(in srgb, var(--task-status-circle-glow-color, currentColor) 18%, transparent),
+      0 0 11px 2px color-mix(in srgb, var(--task-status-circle-glow-color, currentColor) 24%, transparent);
   }
 
   90% {
-    box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 5%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--task-status-circle-glow-color, currentColor) 5%, transparent);
   }
 }
 
@@ -205,9 +213,10 @@
   }
 }
 
+[data-lowstim] .task-status-circle-emphasis,
 [data-lowstim] .task-status-circle-attention {
   animation: none !important;
-  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 18%, transparent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--task-status-circle-glow-color, currentColor) 18%, transparent) !important;
 }
 
 [data-lowstim] .task-status-circle-attention__status {
@@ -241,9 +250,10 @@
     box-shadow: 0 0 0 4px rgba(111, 87, 246, 0.18);
   }
 
+  .task-status-circle-emphasis,
   .task-status-circle-attention {
     animation: none;
-    box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 18%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--task-status-circle-glow-color, currentColor) 18%, transparent);
   }
 
   .task-status-circle-attention__status {

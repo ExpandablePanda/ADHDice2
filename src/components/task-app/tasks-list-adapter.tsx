@@ -313,7 +313,8 @@ type TasksTableSourceProps = {
   onDelayTaskUntil?: (taskId: string, dueOn: string | null) => Promise<boolean> | boolean;
   onRestoreTask?: (taskId: string) => void;
   onOpenTaskHistory?: (taskId: string) => void;
-  onOpenTaskEditor?: (taskId: string) => void;
+  onOpenTaskEditor?: (taskId: string, navigationTaskIds?: string[]) => void;
+  onTaskEditorNavigate?: (taskId: string) => void;
   onOpenTaskInNewTab?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
   onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
@@ -395,6 +396,7 @@ type TasksTableSourceProps = {
   runningTaskTimers?: RunningTaskTimer[];
   activeTaskTimerIndex?: number;
   requestedOpenTask?: Task | null;
+  editorNavigationTaskIds?: string[];
   suppressDetachedNoticeTaskId?: string | null;
   tasks: Task[];
   rowContext: {
@@ -681,6 +683,7 @@ export function TasksTableAdapter({
             }
           }}
           enableInspector
+          editorNavigationTaskIds={tableProps.editorNavigationTaskIds}
           getFollowTaskDestination={tableProps.getFollowTaskDestination}
           onClearSelection={tableProps.onClearSelection}
           overlayNode={tableProps.overlayNode}
@@ -712,6 +715,7 @@ export function TasksTableAdapter({
           onOpenFocusTimer={tableProps.onOpenFocusTimer}
           onOpenNote={tableProps.onOpenNote}
           onOpenTaskEditor={tableProps.onOpenTaskEditor}
+          onTaskEditorNavigate={tableProps.onTaskEditorNavigate}
           onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
           onOpenChildTask={tableProps.onOpenChildTask}
           onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
@@ -1676,6 +1680,7 @@ function StepsCardPreview({
                         <TaskStatusCircleRail
                           className="min-w-max flex-nowrap"
                           currentStatus={displayStatus}
+                          emphasizeMissed
                           onSetStatus={(status) => {
                             if (status === "delayed") {
                               if (canTaskDelay({ dueOn: item.dueOn, status: displayStatus }) && (isManualActionAllowed?.(item, "delay") ?? true) && onDelayTaskUntil) {
@@ -3154,6 +3159,19 @@ function TasksSimpleList({
                 }
               }}
               enableInspector
+              editorNavigationTaskIds={tableProps.editorNavigationTaskIds}
+              getAllRows={() => (tableProps.allTasks ?? tableProps.tasks).map((task) => rowModelCache.getOrCreate(task, {
+                displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[task.id],
+                focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
+                linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
+                listDefinitions: tableProps.rowContext.listDefinitions,
+                listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
+                subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
+                taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+                taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+                attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
+                todayDateKey: tableProps.rowContext.todayDateKey,
+              }))}
               getFollowTaskDestination={tableProps.getFollowTaskDestination}
               onClearSelection={tableProps.onClearSelection}
               onCreateChildTask={tableProps.onCreateChildTask}
@@ -3182,6 +3200,7 @@ function TasksSimpleList({
               onOpenFocusTimer={tableProps.onOpenFocusTimer}
               onOpenNote={tableProps.onOpenNote}
               onOpenTaskEditor={tableProps.onOpenTaskEditor}
+              onTaskEditorNavigate={tableProps.onTaskEditorNavigate}
               onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
               onOpenTaskHistory={tableProps.onOpenTaskHistory}
               onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
@@ -3367,7 +3386,7 @@ function TasksSimpleList({
                 }
                 setRowContextMenu(null);
                 closeQuickPanel();
-                tableProps.onOpenTaskEditor?.(task.id);
+                tableProps.onOpenTaskEditor?.(task.id, visibleTaskIds);
               }}
               onContextMenu={(event) => {
                 if (openRowContextMenu(task.id, event.clientX, event.clientY)) {
@@ -3389,7 +3408,7 @@ function TasksSimpleList({
                         event.preventDefault();
                         setRowContextMenu(null);
                         closeQuickPanel();
-                        tableProps.onOpenTaskEditor?.(task.id);
+                        tableProps.onOpenTaskEditor?.(task.id, visibleTaskIds);
                       }
                     }}
                     role="button"
@@ -3576,6 +3595,7 @@ function TasksSimpleList({
                     className="min-w-max flex-nowrap"
                     currentStatus={displayStatus}
                     attention={Boolean(taskRow.attentionReason)}
+                    emphasizeMissed
                     onSetStatus={(status) => {
                       if (status === "delayed") {
                         setRowContextMenu(null);
@@ -3816,7 +3836,7 @@ function TasksSimpleList({
                     tableProps.onOpenChildTask(taskId);
                     return;
                   }
-                  tableProps.onOpenTaskEditor?.(taskId);
+                  tableProps.onOpenTaskEditor?.(taskId, visibleTaskIds);
                 }}
                 onOpenQuickPanel={openQuickPanel}
                 onRenameStep={tableProps.onSetTitle}
@@ -3968,7 +3988,7 @@ function TasksSimpleList({
                 setRowContextMenu(null);
               } : undefined}
               onEditTask={tableProps.onOpenTaskEditor ? () => {
-                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id);
+                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id, visibleTaskIds);
                 setRowContextMenu(null);
               } : undefined}
               onMoveIntoParent={tableProps.onMoveTaskIntoParent ? async (parentTaskId) => {
@@ -3982,7 +4002,7 @@ function TasksSimpleList({
               onOpenDetails={() => {
                 setRowContextMenu(null);
                 closeQuickPanel();
-                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id);
+                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id, visibleTaskIds);
               }}
               onOpenHistory={tableProps.onOpenTaskHistory ? () => {
                 tableProps.onOpenTaskHistory?.(rowContextMenuTask.id);
@@ -4008,7 +4028,7 @@ function TasksSimpleList({
                   openQuickPanel(rowContextMenuTask.id, mappedMode);
                   return;
                 }
-                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id);
+                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id, visibleTaskIds);
               }}
               onRemoveFromCurrentList={canRemoveFromCurrentList(rowContextMenuTask.id) && tableProps.onToggleTaskList ? () => {
                 const currentListId = tableProps.currentListId ?? selectedBucket;
