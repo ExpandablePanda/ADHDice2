@@ -10575,7 +10575,7 @@ export function TaskManagementTableV2({
                     <div className="flex min-w-0 items-center justify-center" data-task-editor-navigation-gutter="previous">
                       {renderEditorNavigationControls("side", "previous")}
                     </div>
-                    <div className="pointer-events-auto relative min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent">
+                    <div className="pointer-events-auto relative min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent adhdice-scrollbar-hidden">
                       <div className="p-4">
                         {fullDesktopEditorContent}
                       </div>
@@ -10692,7 +10692,7 @@ export function TaskManagementTableV2({
                     ref={overlayMode === "full" ? editorInteractionRef : inspectorPanelRef}
                   >
                     <div className="relative flex max-h-[calc(100dvh-1.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden overscroll-contain rounded-[1.6rem] border border-[#e7defc] bg-white shadow-[0_26px_70px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]">
-                      <div className="adhdice-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+                      <div className="adhdice-scrollbar adhdice-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
                         <div className="px-0 pb-3">
                           {fullDesktopEditorContent}
                         </div>

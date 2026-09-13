@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.49`.
+- Current working app version: `7.13.50`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.50 Hide Full Edit Task System Scrollbar
+
+Browser QA for 7.13.49 passed, including Edit Task navigation, dismissal,
+draft-safety, and status presentation. The full Edit Task native scrollbar
+chrome is now hidden while scrolling remains enabled. The dedicated treatment
+covers only the desktop and mobile full editor scroll containers; quick
+overlays and other application scroll surfaces are unchanged. No navigation,
+state, or persistence behavior changed. No SQL, schema, migration, Supabase,
+or Edge Function changes were made; browser QA for this release remains
+assigned to Andrew.
 
 ## 2026-09-13 7.13.49 List Edit Task Navigation Performance + Backdrop Dismissal
 
