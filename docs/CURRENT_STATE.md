@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.58`.
+- Current working app version: `7.13.59`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.59 Show Named Custom Task Types in Tasks New Menu
+
+The Tasks workspace New dropdown now exposes Task first, followed by every
+active named Custom Task Type. Its choices reuse the shared Task Type model,
+so Custom Default, Goal, Pursuit, and deleted named Custom Task Types remain
+absent. Selecting a named type carries `task_type = 'custom'` and its
+`custom_ruleset_id` in the initial canonical Task creation intent, so the
+shared editor opens with the assignment already persisted. Other Task
+quick-create surfaces continue creating ordinary Tasks.
+
+No persistence or schema change occurred; no SQL or Supabase change was made.
 
 ## 2026-09-13 7.13.58 Remove Anonymous Custom Default
 

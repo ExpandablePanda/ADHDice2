@@ -17,6 +17,7 @@ import type { Task } from "@/lib/database.types";
 import type { TaskRailListOption } from "@/lib/task-app-derived";
 import { getTaskListContainerKey } from "@/lib/task-list-folders";
 import type { AllTaskListDirectoryEntry } from "@/lib/task-list-folders";
+import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import {
   getTaskListRailIndicatorLeft,
   reorderTaskListRailItemsByStructuralKeys,
@@ -1345,7 +1346,7 @@ export function TaskOperationsHeader({
   metric,
   onCycleMomentum,
   onOpenArchive,
-  onOpenTaskComposer,
+  onOpenTaskComposerForType,
   onOpenFocusPlanner,
   onOpenImport,
   onOpenListSettings,
@@ -1370,6 +1371,7 @@ export function TaskOperationsHeader({
   search,
   selectedBucket,
   shortcuts,
+  taskTypeOptions,
   trashCount,
   todayCount,
   view,
@@ -1403,7 +1405,8 @@ export function TaskOperationsHeader({
   };
   onCycleMomentum: () => void;
   onOpenArchive: () => void;
-  onOpenTaskComposer: () => void;
+  onOpenTaskComposerForType: (selectionValue: string) => void;
+  taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
   onOpenFocusPlanner: () => void;
   onOpenImport: () => void;
   onOpenListSettings: () => void;
@@ -1532,7 +1535,11 @@ export function TaskOperationsHeader({
                 {isNewMenuOpen ? (
                   <AdhdDropdownPanel className="p-1.5" widthClassName="min-w-32">
                     <div className="grid gap-1" role="menu">
-                      <button className={MENU_ROW_ACTION_CLASS + " rounded-[0.6rem] px-2.5 py-2 text-left hover:bg-[#f1ecff] dark:hover:bg-white/10"} onClick={() => { setIsNewMenuOpen(false); onOpenTaskComposer(); }} role="menuitem" type="button">Task</button>
+                      {taskTypeOptions.map((option) => (
+                        <button className={MENU_ROW_ACTION_CLASS + " rounded-[0.6rem] px-2.5 py-2 text-left hover:bg-[#f1ecff] dark:hover:bg-white/10"} key={option.value} onClick={() => { setIsNewMenuOpen(false); onOpenTaskComposerForType(option.value); }} role="menuitem" type="button">
+                          {option.label}
+                        </button>
+                      ))}
                     </div>
                   </AdhdDropdownPanel>
                 ) : null}

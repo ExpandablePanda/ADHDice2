@@ -113,12 +113,34 @@ test("active Task creation and hierarchy surfaces expose no retired Pursuit acti
   const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
   const listSource = readFileSync("src/components/task-app/tasks-list-adapter.tsx", "utf8");
 
-  assert.match(newMenuSource, /role="menuitem"[^>]*>Task<\/button>/);
+  assert.match(newMenuSource, /taskTypeOptions\.map\(\(option\) =>/);
+  assert.match(newMenuSource, /role="menuitem"/);
+  assert.match(newMenuSource, /onOpenTaskComposerForType\(option\.value\)/);
   assert.match(tableSource, /export function ChildTypeChooser/);
   assert.match(tableSource, /onChooseTask/);
   for (const source of [appSource, newMenuSource, tableSource, listSource]) {
     assert.doesNotMatch(source, /pursuit/i);
   }
+});
+
+test("Tasks New menu uses shared Task Type choices and canonical typed creation", () => {
+  const appSource = readFileSync("src/components/task-app.tsx", "utf8");
+  const newMenuSource = readFileSync("src/components/task-app/tasks-page.tsx", "utf8");
+  const creationHandlerStart = appSource.indexOf("const openTaskComposerForType");
+  const creationHandlerEnd = appSource.indexOf("const duplicateTaskInPlace", creationHandlerStart);
+  const creationHandler = appSource.slice(creationHandlerStart, creationHandlerEnd);
+
+  assert.ok(creationHandlerStart >= 0);
+  assert.ok(creationHandlerEnd > creationHandlerStart);
+  assert.match(appSource, /const taskTypeOptions = useMemo\([\s\S]*buildTaskTypeSelectionOptions\(customBehaviorRulesets\)/);
+  assert.match(appSource, /onOpenTaskComposerForType: openTaskComposerForType/);
+  assert.match(newMenuSource, /taskTypeOptions\.map\(\(option\) =>/);
+  assert.match(creationHandler, /resolveTaskTypeSelection\(selectionValue, customBehaviorRulesets\)/);
+  assert.match(creationHandler, /custom_ruleset_id: selection\.customRulesetId/);
+  assert.match(creationHandler, /task_type: selection\.taskType/);
+  assert.match(creationHandler, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task"\)/);
+  assert.match(creationHandler, /routeToCurrentBucket: true/);
+  assert.doesNotMatch(creationHandler, /updateTask\(/);
 });
 
 test("Pursuit retirement deletes only typed/domain data and tightens current TaskType constraints", () => {

@@ -122,6 +122,7 @@ import {
 } from "@/components/ui/task-table-primitives";
 import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
 import { normalizeTaskEditorNavigationTaskIds } from "@/lib/task-editor-navigation";
+import { buildTaskTypeSelectionOptions, resolveTaskTypeSelection } from "@/lib/task-type";
 import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievementNotifications, useAchievementProgress } from "@/hooks/useAchievementProgress";
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
@@ -4459,6 +4460,25 @@ export function TaskApp() {
     await createTaskAndOpenSharedEditor(buildNewTaskDraft("New Task"), { routeToCurrentBucket: true });
   }, [createTaskAndOpenSharedEditor]);
 
+  const openTaskComposerForType = useCallback(async (selectionValue: string) => {
+    const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
+    if (!selection) {
+      setMessage({ tone: "warn", text: "That Task Type is no longer available." });
+      return;
+    }
+
+    await createTaskAndOpenSharedEditor({
+      ...buildNewTaskDraft("New Task"),
+      custom_ruleset_id: selection.customRulesetId,
+      task_type: selection.taskType,
+    }, { routeToCurrentBucket: true });
+  }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage]);
+
+  const taskTypeOptions = useMemo(
+    () => buildTaskTypeSelectionOptions(customBehaviorRulesets),
+    [customBehaviorRulesets],
+  );
+
   const duplicateTaskInPlace = useCallback(async (task: Task) => {
     const duplicateValues: TaskDraft = {
       actual_seconds: 0,
@@ -6785,7 +6805,7 @@ export function TaskApp() {
     openFolderRails: taskListRailStructureOptions.openFolderRails,
     metric: momentumMetric,
     onCycleMomentum: () => setMomentumView(getNextMomentumView(momentumView)),
-    onOpenTaskComposer: openInlineNewListTaskComposer,
+    onOpenTaskComposerForType: openTaskComposerForType,
     onOpenFocusPlanner: openFocusPlanner,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
@@ -6820,6 +6840,7 @@ export function TaskApp() {
     onToggleKeyboardShortcutsMenu: () => setIsKeyboardShortcutsMenuOpen((current) => !current),
     onToggleListColumn: toggleListColumn,
     onToggleListColumnMenu: () => setIsListColumnMenuOpen((current) => !current),
+    taskTypeOptions,
     search: taskUiState.search,
     selectedBucket: taskUiState.selectedBucket,
     shortcuts: TASK_KEYBOARD_SHORTCUTS,
