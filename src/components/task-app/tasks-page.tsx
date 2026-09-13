@@ -18,6 +18,7 @@ import type { TaskRailListOption } from "@/lib/task-app-derived";
 import { getTaskListContainerKey } from "@/lib/task-list-folders";
 import type { AllTaskListDirectoryEntry } from "@/lib/task-list-folders";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
+import { TaskTypeIdentity } from "./task-type-identity";
 import {
   getTaskListRailIndicatorLeft,
   reorderTaskListRailItemsByStructuralKeys,
@@ -1536,8 +1537,8 @@ export function TaskOperationsHeader({
                   <AdhdDropdownPanel className="p-1.5" widthClassName="min-w-32">
                     <div className="grid gap-1" role="menu">
                       {taskTypeOptions.map((option) => (
-                        <button className={MENU_ROW_ACTION_CLASS + " rounded-[0.6rem] px-2.5 py-2 text-left hover:bg-[#f1ecff] dark:hover:bg-white/10"} key={option.value} onClick={() => { setIsNewMenuOpen(false); onOpenTaskComposerForType(option.value); }} role="menuitem" type="button">
-                          {option.label}
+                        <button aria-label={`New ${option.label}`} className={MENU_ROW_ACTION_CLASS + " rounded-[0.6rem] px-2.5 py-2 text-left hover:bg-[#f1ecff] dark:hover:bg-white/10"} key={option.value} onClick={() => { setIsNewMenuOpen(false); onOpenTaskComposerForType(option.value); }} role="menuitem" type="button">
+                          <TaskTypeIdentity option={option} />
                         </button>
                       ))}
                     </div>

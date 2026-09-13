@@ -19,6 +19,8 @@ import {
 import { buildDefaultCustomTaskTypeDraft, taskTypeBehaviorTabDescription, type TaskTypeBehaviorTab } from "@/lib/task-type-behavior-settings";
 import { buildTaskTypeSelectionOptions, normalizeTaskType, type TaskType } from "@/lib/task-type";
 import { TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
+import { TaskTypeIdentity } from "./task-type-identity";
+import { DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, TASK_TYPE_ACCENT_OPTIONS, TASK_TYPE_ICON_OPTIONS, normalizeTaskTypePresentation, validateTaskTypeDescription, type TaskTypePresentation } from "@/lib/task-type-presentation";
 
 export type BehaviorTab = TaskTypeBehaviorTab;
 type ConfigurableField = "availableActions" | "missedStreakOnUnhandled" | "rewards" | "unresolvedOccurrence";
@@ -26,6 +28,59 @@ type ConfigurableField = "availableActions" | "missedStreakOnUnhandled" | "rewar
 const SECTION_CLASS = "rounded-[1rem] border border-[#eee9f8] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.035]";
 
 type DeleteActionResult = boolean | CustomBehaviorRulesetDeleteActionResult;
+
+function PresentationControls({
+  disabled,
+  onChange,
+  presentation,
+}: {
+  disabled: boolean;
+  onChange: (next: Partial<TaskTypePresentation>) => void;
+  presentation: TaskTypePresentation;
+}) {
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="mb-2 text-xs font-semibold text-[#655d7d] dark:text-white/65">Icon</p>
+        <div aria-label="Custom Task Type icon" className="flex flex-wrap gap-1.5" role="group">
+          {TASK_TYPE_ICON_OPTIONS.map(({ icon: Icon, key, label }) => (
+            <button
+              aria-label={label}
+              aria-pressed={presentation.iconKey === key}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition ${presentation.iconKey === key ? "border-[#6f57f6] bg-[#f1ecff] text-[#6f57f6] dark:border-[#c9bbff] dark:bg-[#42306f] dark:text-[#cabfff]" : "border-[#e5e0f5] bg-white text-[#7d7598] hover:bg-[#f6f2ff] dark:border-white/15 dark:bg-white/5 dark:text-white/60 dark:hover:bg-white/10"}`}
+              disabled={disabled}
+              key={key}
+              onClick={() => onChange({ iconKey: key })}
+              title={label}
+              type="button"
+            >
+              <Icon aria-hidden="true" className="h-4 w-4" />
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <p className="mb-2 text-xs font-semibold text-[#655d7d] dark:text-white/65">Accent color</p>
+        <div aria-label="Custom Task Type accent color" className="flex flex-wrap gap-1.5" role="group">
+          {TASK_TYPE_ACCENT_OPTIONS.map(({ className, key, label }) => (
+            <button
+              aria-label={label}
+              aria-pressed={presentation.accentKey === key}
+              className={`h-7 min-w-7 rounded-full border px-2 text-[10px] font-semibold transition ${className} ${presentation.accentKey === key ? "ring-2 ring-[#6f57f6]/45 ring-offset-1 dark:ring-offset-[#201a35]" : "opacity-80 hover:opacity-100"}`}
+              disabled={disabled}
+              key={key}
+              onClick={() => onChange({ accentKey: key })}
+              title={label}
+              type="button"
+            >
+              <span className="sr-only">{label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function normalizeDeleteActionResult(result: DeleteActionResult): CustomBehaviorRulesetDeleteActionResult {
   return typeof result === "boolean"
@@ -164,6 +219,7 @@ export function TaskTypeBehaviorSettings({
   onChange,
   onCustomRulesetChange,
   onRenameCustomRuleset,
+  onUpdateCustomRulesetPresentation,
   onReset,
   onShowCustomRulesetTasks,
   profiles,
@@ -172,13 +228,14 @@ export function TaskTypeBehaviorSettings({
   customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   initialTaskType?: TaskType;
   initialCustomRulesetId?: string | null;
-  onCreateCustomRuleset?: (name: string, policy: TaskBehaviorPolicy) => Promise<CustomBehaviorRuleset | null>;
+  onCreateCustomRuleset?: (name: string, policy: TaskBehaviorPolicy, presentation: Partial<TaskTypePresentation>) => Promise<CustomBehaviorRuleset | null>;
   onDeleteCustomRuleset?: (rulesetId: string) => Promise<DeleteActionResult> | DeleteActionResult;
   onShowCustomRulesetTasks?: (rulesetId: string) => void;
   onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<DeleteActionResult> | DeleteActionResult;
   onChange: (taskType: TaskTypeBehaviorTab, field: ConfigurableField, value: TaskBehaviorPolicy[ConfigurableField]) => Promise<boolean> | boolean;
   onCustomRulesetChange?: (rulesetId: string, field: ConfigurableField, value: TaskBehaviorPolicy[ConfigurableField]) => Promise<boolean> | boolean;
   onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean> | boolean;
+  onUpdateCustomRulesetPresentation?: (rulesetId: string, presentation: Partial<TaskTypePresentation>) => Promise<boolean> | boolean;
   onReset: (taskType: TaskTypeBehaviorTab) => Promise<boolean> | boolean;
   profiles: Partial<Record<TaskType, TaskBehaviorPolicy>>;
 }) {
@@ -187,6 +244,7 @@ export function TaskTypeBehaviorSettings({
   const [isCreating, setIsCreating] = useState(false);
   const [newRulesetName, setNewRulesetName] = useState("");
   const [customTaskTypeDraft, setCustomTaskTypeDraft] = useState<TaskBehaviorPolicy>(buildDefaultCustomTaskTypeDraft);
+  const [customTaskTypePresentationDraft, setCustomTaskTypePresentationDraft] = useState<TaskTypePresentation>(DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION);
   const [isRenaming, setIsRenaming] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isResolvingDelete, setIsResolvingDelete] = useState(false);
@@ -194,19 +252,23 @@ export function TaskTypeBehaviorSettings({
   const isSavingPolicyArrayRef = useRef(false);
   const [blockedDelete, setBlockedDelete] = useState<{ count: number; name: string; rulesetId: string } | null>(null);
   const [rulesetNameDraft, setRulesetNameDraft] = useState(() => customBehaviorRulesets.find((ruleset) => ruleset.id === initialCustomRulesetId && ruleset.deleted_at == null)?.name ?? "");
+  const [rulesetDescriptionDraft, setRulesetDescriptionDraft] = useState(() => customBehaviorRulesets.find((ruleset) => ruleset.id === initialCustomRulesetId && ruleset.deleted_at == null)?.description ?? "");
+  const [isSavingPresentation, setIsSavingPresentation] = useState(false);
   const selectionOptions = buildTaskTypeSelectionOptions(customBehaviorRulesets);
   const selectedRuleset = customBehaviorRulesets.find((ruleset) => ruleset.id === activeSelection && ruleset.deleted_at == null) ?? null;
   const selectedRulesetId = selectedRuleset?.id ?? null;
   const selectedRulesetName = selectedRuleset?.name ?? null;
   const activeTab: BehaviorTab = selectedRuleset ? "custom" : normalizeTaskType(activeSelection);
+  const selectedOption = selectionOptions.find((option) => option.value === activeSelection) ?? selectionOptions[0];
   const [resetting, setResetting] = useState(false);
   useEffect(() => {
-    if (selectedRulesetName) {
+    if (selectedRulesetName && selectedRuleset) {
       // This mirrors the confirmed server-owned identity after a load/rename.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setRulesetNameDraft(selectedRulesetName);
+      setRulesetDescriptionDraft(selectedRuleset.description ?? "");
     }
-  }, [selectedRulesetId, selectedRulesetName]);
+  }, [selectedRuleset, selectedRulesetId, selectedRulesetName]);
   const activeProfile: Pick<TaskBehaviorPolicy, "id" | ConfigurableField> = isCreateOpen
     ? customTaskTypeDraft
     : (selectedRuleset ? customBehaviorRulesetProfiles[selectedRuleset.id] : profiles[activeTab]) ?? {
@@ -220,6 +282,7 @@ export function TaskTypeBehaviorSettings({
   function openCreate() {
     setNewRulesetName("");
     setCustomTaskTypeDraft(buildDefaultCustomTaskTypeDraft());
+    setCustomTaskTypePresentationDraft(DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION);
     setBlockedDelete(null);
     setIsCreateOpen(true);
   }
@@ -228,6 +291,7 @@ export function TaskTypeBehaviorSettings({
     setIsCreateOpen(false);
     setNewRulesetName("");
     setCustomTaskTypeDraft(buildDefaultCustomTaskTypeDraft());
+    setCustomTaskTypePresentationDraft(DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION);
   }
 
   function selectProfile(value: string) {
@@ -242,7 +306,7 @@ export function TaskTypeBehaviorSettings({
     setIsCreating(true);
     let created: CustomBehaviorRuleset | null = null;
     try {
-      created = await onCreateCustomRuleset(newRulesetName, customTaskTypeDraft);
+      created = await onCreateCustomRuleset(newRulesetName, customTaskTypeDraft, customTaskTypePresentationDraft);
     } catch {
       created = null;
     } finally {
@@ -253,6 +317,7 @@ export function TaskTypeBehaviorSettings({
     setIsCreateOpen(false);
     setActiveSelection(created.id);
     setRulesetNameDraft(created.name);
+    setRulesetDescriptionDraft(created.description);
   }
 
   async function renameRuleset() {
@@ -267,6 +332,47 @@ export function TaskTypeBehaviorSettings({
       setIsRenaming(false);
     }
     setRulesetNameDraft(renamed ? rulesetNameDraft.trim() : selectedRuleset.name);
+  }
+
+  async function savePresentation() {
+    if (!selectedRuleset || !onUpdateCustomRulesetPresentation || isSavingPresentation) return;
+    const descriptionValidation = validateTaskTypeDescription(rulesetDescriptionDraft);
+    if (descriptionValidation.error) return;
+    setIsSavingPresentation(true);
+    try {
+      const currentPresentation = normalizeTaskTypePresentation({
+        accentKey: selectedRuleset.accent_key,
+        description: rulesetDescriptionDraft,
+        iconKey: selectedRuleset.icon_key,
+      });
+      await onUpdateCustomRulesetPresentation(selectedRuleset.id, {
+        accentKey: currentPresentation.accentKey,
+        description: descriptionValidation.description,
+        iconKey: currentPresentation.iconKey,
+      });
+    } finally {
+      setIsSavingPresentation(false);
+    }
+  }
+
+  function updateSelectedPresentation(next: Partial<TaskTypePresentation>) {
+    if (!selectedRuleset || !onUpdateCustomRulesetPresentation) return;
+    void (async () => {
+      setIsSavingPresentation(true);
+      try {
+        const currentPresentation = normalizeTaskTypePresentation({
+          accentKey: selectedRuleset.accent_key,
+          description: rulesetDescriptionDraft,
+          iconKey: selectedRuleset.icon_key,
+        });
+        await onUpdateCustomRulesetPresentation(selectedRuleset.id, {
+          ...currentPresentation,
+          ...next,
+        });
+      } finally {
+        setIsSavingPresentation(false);
+      }
+    })();
   }
 
   async function deleteRuleset() {
@@ -420,6 +526,14 @@ export function TaskTypeBehaviorSettings({
               value={newRulesetName}
             />
           </label>
+          <div className="mt-4 rounded-[1rem] border border-[#eee9f8] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.035]">
+            <p className="mb-3 text-xs font-semibold text-[#655d7d] dark:text-white/65">Presentation identity</p>
+            <PresentationControls disabled={isCreating} onChange={(next) => setCustomTaskTypePresentationDraft((current) => normalizeTaskTypePresentation({ ...current, ...next }))} presentation={customTaskTypePresentationDraft} />
+            <label className="mt-3 grid gap-1.5 text-xs font-semibold text-[#655d7d] dark:text-white/65" htmlFor="new-custom-ruleset-description">
+              Short description
+              <textarea aria-label="Custom Task Type description" className={`${TASK_TABLE_INPUT_CLASS} min-h-16 resize-y`} disabled={isCreating} id="new-custom-ruleset-description" maxLength={240} onChange={(event) => setCustomTaskTypePresentationDraft((current) => ({ ...current, description: event.target.value }))} placeholder="What is this type for?" value={customTaskTypePresentationDraft.description} />
+            </label>
+          </div>
           <div className="mt-4">
             <p className="mb-3 text-xs leading-5 text-[#7d7598] dark:text-white/50">Configure the behavior before creating this named Custom Task Type. Nothing is saved until you choose Create.</p>
             {behaviorControls}
@@ -434,13 +548,14 @@ export function TaskTypeBehaviorSettings({
       <div className="mb-4 flex flex-wrap gap-1.5" role="tablist" aria-label="Task Type behavior profiles">
         {selectionOptions.map((option) => (
           <AdhdChip disabled={isSavingPolicyArray} key={option.value} onClick={() => selectProfile(option.value)} selected={activeSelection === option.value} type="button" role="tab" aria-selected={activeSelection === option.value}>
-            {option.label}
+            <TaskTypeIdentity compact option={option} />
           </AdhdChip>
         ))}
       </div>
 
       {selectedRuleset ? (
         <div className="mb-4 rounded-[1rem] border border-[#eee9f8] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.035]">
+          {selectedOption ? <div className="mb-3"><TaskTypeIdentity option={selectedOption} /></div> : null}
           <label className="grid gap-1.5 text-xs font-semibold text-[#655d7d] dark:text-white/65" htmlFor="selected-custom-ruleset-name">
             Custom Task Type name
             <div className="flex flex-wrap gap-2">
@@ -457,6 +572,14 @@ export function TaskTypeBehaviorSettings({
               <AdhdChip disabled={!onDeleteCustomRuleset || isRenaming || isDeleting || isResolvingDelete} icon={<Trash2 aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void deleteRuleset(); }} tone="danger">{isDeleting ? "Deleting…" : "Delete Custom Task Type"}</AdhdChip>
             </div>
           </label>
+          <div className="mt-4 border-t border-[#eee9f8] pt-3 dark:border-white/10">
+              <PresentationControls disabled={isSavingPresentation || isDeleting} onChange={updateSelectedPresentation} presentation={normalizeTaskTypePresentation({ accentKey: selectedRuleset.accent_key, description: rulesetDescriptionDraft, iconKey: selectedRuleset.icon_key })} />
+              <label className="mt-3 grid gap-1.5 text-xs font-semibold text-[#655d7d] dark:text-white/65" htmlFor="selected-custom-ruleset-description">
+                Short description
+                <textarea aria-label={`Description for ${selectedRuleset.name}`} className={`${TASK_TABLE_INPUT_CLASS} min-h-16 resize-y`} disabled={isSavingPresentation || isDeleting} id="selected-custom-ruleset-description" maxLength={240} onChange={(event) => setRulesetDescriptionDraft(event.target.value)} value={rulesetDescriptionDraft} />
+              </label>
+              <div className="mt-2 flex justify-end"><AdhdChip disabled={isSavingPresentation || isDeleting} onClick={() => { void savePresentation(); }} tone="default">{isSavingPresentation ? "Saving…" : "Save description"}</AdhdChip></div>
+          </div>
         </div>
       ) : null}
 

@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
-import { AdhdDropdownSelect } from "@/components/ui-system/adhd-dropdown-select";
+import { TaskTypeSelect } from "./task-type-identity";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
@@ -448,7 +448,7 @@ export function HomePage({
               </label>
               <label className="w-full sm:w-44 sm:shrink-0">
                 <span className="sr-only">Task Type</span>
-                <AdhdDropdownSelect
+                <TaskTypeSelect
                   ariaLabel="Task Type"
                   disabled={isCreating}
                   label="Task Type"

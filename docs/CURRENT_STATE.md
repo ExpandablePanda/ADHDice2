@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.61`.
+- Current working app version: `7.13.62`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.62 Custom Task Type Presentation Identity
+
+Named Custom Task Types now have presentation identity: an icon key, semantic
+accent key, and optional short description. These fields live on the stable
+`adhdice_custom_behavior_rulesets` identity row, not on effective-dated behavior
+revisions, so presentation edits do not create policy revisions. Current Task
+Type selectors and displays share the same presentation registry and renderer;
+Standard Task uses an application-owned fallback only. No Task defaults were
+added and no behavior semantics changed. The migration
+`supabase/20260913000000_add_custom_task_type_presentation_identity_7_13_62.sql`
+is source-only and remains pending separate live application.
 
 ## 2026-09-13 7.13.61 Fully Retire Goal Task Type
 

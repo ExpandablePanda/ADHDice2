@@ -76,6 +76,7 @@ import {
 } from "@/lib/task-list-sort";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import type { TaskBehaviorPolicy, TaskBehaviorPolicyField, TaskBehaviorPolicyResolutionContext, TaskBehaviorProfiles, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
+import type { TaskTypePresentation } from "@/lib/task-type-presentation";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 
@@ -342,6 +343,7 @@ type TasksTableSourceProps = {
   onShowCustomRulesetTasks?: (rulesetId: string) => void;
   onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
   onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean>;
+  onUpdateCustomRulesetPresentation?: (rulesetId: string, presentation: Partial<TaskTypePresentation>) => Promise<boolean> | boolean;
   onSetTaskBehaviorProfile?: (taskType: TaskType, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
   onSetCustomRulesetBehaviorProfile?: (rulesetId: string, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
   onResetTaskBehaviorProfile?: (taskType: TaskType) => Promise<boolean> | boolean;
@@ -718,6 +720,7 @@ export function TasksTableAdapter({
           onShowCustomRulesetTasks={tableProps.onShowCustomRulesetTasks}
           onMoveCustomRulesetTasksToTaskAndDelete={tableProps.onMoveCustomRulesetTasksToTaskAndDelete}
           onRenameCustomRuleset={tableProps.onRenameCustomRuleset}
+          onUpdateCustomRulesetPresentation={tableProps.onUpdateCustomRulesetPresentation}
           onTaskBehaviorProfileChange={tableProps.onSetTaskBehaviorProfile}
           onCustomRulesetBehaviorProfileChange={tableProps.onSetCustomRulesetBehaviorProfile}
           onResetTaskBehaviorProfile={tableProps.onResetTaskBehaviorProfile}
@@ -3109,6 +3112,7 @@ function TasksSimpleList({
               onShowCustomRulesetTasks={tableProps.onShowCustomRulesetTasks}
               onMoveCustomRulesetTasksToTaskAndDelete={tableProps.onMoveCustomRulesetTasksToTaskAndDelete}
               onRenameCustomRuleset={tableProps.onRenameCustomRuleset}
+              onUpdateCustomRulesetPresentation={tableProps.onUpdateCustomRulesetPresentation}
               onTaskBehaviorProfileChange={tableProps.onSetTaskBehaviorProfile}
               onCustomRulesetBehaviorProfileChange={tableProps.onSetCustomRulesetBehaviorProfile}
               onResetTaskBehaviorProfile={tableProps.onResetTaskBehaviorProfile}

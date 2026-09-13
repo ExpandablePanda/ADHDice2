@@ -21,6 +21,7 @@ import {
   isMissingCustomBehaviorRulesetsTableError,
   loadCustomBehaviorRulesets,
   renameCustomBehaviorRuleset,
+  updateCustomBehaviorRulesetPresentation as persistCustomBehaviorRulesetPresentation,
   upsertCustomBehaviorRulesetRevision,
   validateCustomBehaviorRulesetName,
   getCustomRulesetAssignedTaskCount,
@@ -29,6 +30,7 @@ import {
   type CustomBehaviorRulesetClient,
   type LoadedCustomBehaviorRulesets,
 } from "@/lib/custom-behavior-rulesets";
+import type { TaskTypePresentation } from "@/lib/task-type-presentation";
 import type { CustomBehaviorRuleset } from "@/lib/database.types";
 import { resolveTaskBehaviorPolicyForLogicalDate } from "@/lib/task-state-engine/behavior-policy";
 import {
@@ -273,7 +275,7 @@ export function useTaskTypeBehaviorProfiles(
     }
   }, [client, currentLogicalDate, customBehaviorRulesetProfiles, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage]);
 
-  const createCustomRuleset = useCallback(async (nameInput: string, draftPolicy: TaskBehaviorPolicy): Promise<CustomBehaviorRuleset | null> => {
+  const createCustomRuleset = useCallback(async (nameInput: string, draftPolicy: TaskBehaviorPolicy, presentation: Partial<TaskTypePresentation> = {}): Promise<CustomBehaviorRuleset | null> => {
     const validation = validateCustomBehaviorRulesetName(nameInput, customBehaviorRulesets);
     if (validation.error) {
       setMessage({ tone: "warn", text: validation.error });
@@ -286,6 +288,7 @@ export function useTaskTypeBehaviorProfiles(
       normalizeTaskBehaviorProfile(draftPolicy, "custom"),
       currentLogicalDate,
       customBehaviorRulesets,
+      presentation,
     );
     if (result.error || !result.data) {
       setMessage({ tone: "warn", text: formatCustomTaskTypeMessage(result.error?.message, "Could not create the Custom Task Type.") });
@@ -314,6 +317,26 @@ export function useTaskTypeBehaviorProfiles(
     }
     if (!(await refreshCustomBehaviorRulesets())) return false;
     return true;
+  }, [client, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage, userId]);
+
+  const updateCustomRulesetPresentation = useCallback(async (rulesetId: string, presentation: Partial<TaskTypePresentation>) => {
+    const ruleset = customBehaviorRulesets.find((entry) => entry.id === rulesetId);
+    if (!ruleset || ruleset.deleted_at != null) {
+      setMessage({ tone: "warn", text: "The Custom Task Type has already been deleted." });
+      return false;
+    }
+    const result = await persistCustomBehaviorRulesetPresentation(
+      client as unknown as CustomBehaviorRulesetClient,
+      userId ?? "",
+      rulesetId,
+      presentation,
+      customBehaviorRulesets,
+    );
+    if (result.error || !result.data) {
+      setMessage({ tone: "warn", text: formatCustomTaskTypeMessage(result.error?.message, "Could not update the Custom Task Type presentation.") });
+      return false;
+    }
+    return refreshCustomBehaviorRulesets();
   }, [client, customBehaviorRulesets, refreshCustomBehaviorRulesets, setMessage, userId]);
 
   const deleteCustomRuleset = useCallback(async (rulesetId: string): Promise<CustomBehaviorRulesetDeleteActionResult> => {
@@ -353,6 +376,7 @@ export function useTaskTypeBehaviorProfiles(
     createCustomRuleset,
     deleteCustomRuleset,
     renameCustomRuleset,
+    updateCustomRulesetPresentation,
     resetTaskBehaviorProfile,
     updateTaskBehaviorProfile,
     updateCustomBehaviorRulesetProfile,

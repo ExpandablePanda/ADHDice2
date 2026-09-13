@@ -1842,6 +1842,7 @@ export function TaskApp() {
     createCustomRuleset,
     deleteCustomRuleset,
     renameCustomRuleset,
+    updateCustomRulesetPresentation,
     refreshCustomBehaviorRulesets,
     resetTaskBehaviorProfile,
     updateTaskBehaviorProfile,
@@ -7062,6 +7063,7 @@ export function TaskApp() {
           onShowCustomRulesetTasks={showCustomRulesetTasks}
           onMoveCustomRulesetTasksToTaskAndDelete={moveCustomRulesetTasksToTaskAndDelete}
           onRenameCustomRuleset={renameCustomRuleset}
+          onUpdateCustomRulesetPresentation={updateCustomRulesetPresentation}
           onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
           onTaskPriorityChange={applyTaskPriorityChange}
           onTaskRepeatChange={handleSharedTaskRepeatChange}
@@ -7536,6 +7538,7 @@ export function TaskApp() {
                   onShowCustomRulesetTasks: showCustomRulesetTasks,
                   onMoveCustomRulesetTasksToTaskAndDelete: moveCustomRulesetTasksToTaskAndDelete,
                   onRenameCustomRuleset: renameCustomRuleset,
+                  onUpdateCustomRulesetPresentation: updateCustomRulesetPresentation,
                   onSetTaskBehaviorProfile: updateTaskBehaviorProfile,
                   onSetCustomRulesetBehaviorProfile: updateCustomBehaviorRulesetProfile,
                   onResetTaskBehaviorProfile: resetTaskBehaviorProfile,
@@ -7718,6 +7721,7 @@ export function TaskApp() {
                   onShowCustomRulesetTasks: showCustomRulesetTasks,
                   onMoveCustomRulesetTasksToTaskAndDelete: moveCustomRulesetTasksToTaskAndDelete,
                   onRenameCustomRuleset: renameCustomRuleset,
+                  onUpdateCustomRulesetPresentation: updateCustomRulesetPresentation,
                   onSetTaskBehaviorProfile: updateTaskBehaviorProfile,
                   onSetCustomRulesetBehaviorProfile: updateCustomBehaviorRulesetProfile,
                   onResetTaskBehaviorProfile: resetTaskBehaviorProfile,

@@ -69,7 +69,9 @@ import {
   isWeekdaysRepeatSelection,
 } from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
-import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, taskTypeSelectionValue } from "@/lib/task-type";
+import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, resolveTaskTypeSelectionOption, taskTypeSelectionValue } from "@/lib/task-type";
+import type { TaskTypePresentation } from "@/lib/task-type-presentation";
+import { TaskTypeIdentity, TaskTypeSelect } from "@/components/task-app/task-type-identity";
 import { preserveCurrentTaskStatusForPresentation, resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask, taskManualActionForStatus } from "@/lib/task-state-engine/action-authority";
 import { getTaskEditorNavigationNeighbor, getTaskEditorNavigationPosition } from "@/lib/task-editor-navigation";
 import type { TaskBehaviorPolicyResolutionContext, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
@@ -1270,6 +1272,7 @@ type TaskManagementTableV2Props = {
   onShowCustomRulesetTasks?: (rulesetId: string) => void;
   onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
   onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean>;
+  onUpdateCustomRulesetPresentation?: (rulesetId: string, presentation: Partial<TaskTypePresentation>) => Promise<boolean> | boolean;
   onTaskBehaviorProfileChange?: (taskType: TaskType, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
   onCustomRulesetBehaviorProfileChange?: (rulesetId: string, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
   onResetTaskBehaviorProfile?: (taskType: TaskType) => Promise<boolean> | boolean;
@@ -2632,6 +2635,7 @@ export function TaskManagementTableV2({
   onShowCustomRulesetTasks,
   onMoveCustomRulesetTasksToTaskAndDelete,
   onRenameCustomRuleset,
+  onUpdateCustomRulesetPresentation,
   onTaskBehaviorProfileChange,
   onCustomRulesetBehaviorProfileChange,
   onResetTaskBehaviorProfile,
@@ -7391,11 +7395,7 @@ export function TaskManagementTableV2({
 
     if (columnId === "task_type") {
       return wrapMeasuredContent(
-        <div>
-          <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>
-            {formatTaskTypeLabel(task.taskType, task.customRulesetId, customBehaviorRulesets)}
-          </span>
-        </div>,
+        <TaskTypeIdentity compact option={resolveTaskTypeSelectionOption(task.taskType, task.customRulesetId, customBehaviorRulesets)} />,
         "justify-center",
       );
     }
@@ -8332,11 +8332,7 @@ export function TaskManagementTableV2({
 
     if (columnId === "task_type") {
       return (
-        <div>
-          <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>
-            {formatTaskTypeLabel(item.taskType, item.customRulesetId, customBehaviorRulesets)}
-          </span>
-        </div>
+        <TaskTypeIdentity compact option={resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets)} />
       );
     }
 
@@ -8810,7 +8806,7 @@ export function TaskManagementTableV2({
     }
 
     if (columnId === "task_type") {
-      return <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>{formatTaskTypeLabel(subtask.taskType, subtask.customRulesetId, customBehaviorRulesets)}</span>;
+      return <TaskTypeIdentity compact option={resolveTaskTypeSelectionOption(subtask.taskType, subtask.customRulesetId, customBehaviorRulesets)} />;
     }
 
     return <div aria-hidden="true" />;
@@ -9648,6 +9644,7 @@ export function TaskManagementTableV2({
                               onChange={(taskType, field, value) => onTaskBehaviorProfileChange?.(taskType, field, value) ?? false}
                               onCustomRulesetChange={(rulesetId, field, value) => onCustomRulesetBehaviorProfileChange?.(rulesetId, field, value) ?? false}
                               onRenameCustomRuleset={onRenameCustomRuleset}
+                              onUpdateCustomRulesetPresentation={onUpdateCustomRulesetPresentation}
                               onReset={(taskType) => onResetTaskBehaviorProfile?.(taskType) ?? false}
                               profiles={taskTypeBehaviorProfiles ?? {}}
                             />
@@ -9655,7 +9652,7 @@ export function TaskManagementTableV2({
                         </>
                       ) : (
                         <>
-                          <AdhdDropdownSelect
+                          <TaskTypeSelect
                             ariaLabel="Task type"
                             label="Task type"
                             onChange={(value) => {

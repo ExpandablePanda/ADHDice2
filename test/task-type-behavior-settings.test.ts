@@ -651,7 +651,7 @@ test("settings UI model exposes Task and named Custom settings", () => {
   assert.match(settingsSource, /if \(isSavingPolicyArray \|\| isSavingPolicyArrayRef\.current\) return;/);
   assert.match(settingsSource, /onChange\(activeTab, "availableActions", nextActions\)/);
   assert.match(settingsSource, /onCustomRulesetChange\?\.\(selectedRuleset\.id, "availableActions", nextActions\)/);
-  assert.match(settingsSource, /onCreateCustomRuleset\(newRulesetName, customTaskTypeDraft\)/);
+  assert.match(settingsSource, /onCreateCustomRuleset\(newRulesetName, customTaskTypeDraft, customTaskTypePresentationDraft\)/);
   assert.match(settingsSource, /buildDefaultCustomTaskTypeDraft/);
   assert.match(settingsSource, /Nothing is saved until you choose Create/);
   assert.match(settingsSource, /onClick=\{cancelCreate\}/);

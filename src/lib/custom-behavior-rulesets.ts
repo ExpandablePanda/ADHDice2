@@ -17,12 +17,16 @@ import {
   type TaskManualAction,
   type TaskNeedsActionTrigger,
 } from "./task-state-engine/behavior-policy.ts";
+import { DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, normalizeTaskTypePresentation, validateTaskTypeDescription, type TaskTypePresentation } from "./task-type-presentation.ts";
 
 type RulesetError = { code?: string; message?: string };
 type RulesetQueryResult<T> = { data: T[] | null; error: RulesetError | null };
 type CustomBehaviorRulesetNameCandidate = Pick<CustomBehaviorRuleset, "id" | "name"> & {
   /** Optional keeps pre-tombstone test/read fixtures compatible. */
+  accent_key?: string;
+  description?: string;
   deleted_at?: string | null;
+  icon_key?: string;
 };
 
 type RulesetSelectQuery<T> = {
@@ -167,8 +171,16 @@ function toBehaviorSelection(row: PersistedTaskBehaviorSelection, userId: string
 }
 
 /** Build a ruleset row without embedding user-created names into TaskType. */
-export function customBehaviorRulesetUpsertPayload(userId: string, name: string) {
-  return { user_id: userId, name: name.trim(), task_type: "custom" as const };
+export function customBehaviorRulesetUpsertPayload(userId: string, name: string, presentation: Partial<TaskTypePresentation> = DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION) {
+  const normalized = normalizeTaskTypePresentation(presentation);
+  return {
+    accent_key: normalized.accentKey,
+    description: normalized.description,
+    icon_key: normalized.iconKey,
+    name: name.trim(),
+    task_type: "custom" as const,
+    user_id: userId,
+  };
 }
 
 /** Build one independent effective-dated revision for a named ruleset. */
@@ -214,12 +226,29 @@ function rulesetMutationError(message: string): CustomBehaviorRulesetMutationRes
 }
 
 function isValidCustomBehaviorRulesetIdentity(row: CustomBehaviorRuleset | null | undefined): row is CustomBehaviorRuleset {
-  return Boolean(row)
-    && typeof row.id === "string"
+  if (!row) return false;
+  return typeof row.id === "string"
     && typeof row.user_id === "string"
     && typeof row.name === "string"
     && row.task_type === "custom"
     && (row.deleted_at === undefined || row.deleted_at === null || typeof row.deleted_at === "string");
+}
+
+const RULESET_IDENTITY_SELECT = "id,user_id,name,task_type,icon_key,accent_key,description,deleted_at,created_at,updated_at";
+
+function normalizeCustomBehaviorRulesetIdentity(row: CustomBehaviorRuleset | null | undefined): CustomBehaviorRuleset | null {
+  if (!isValidCustomBehaviorRulesetIdentity(row)) return null;
+  const presentation = normalizeTaskTypePresentation({
+    accentKey: row.accent_key,
+    description: row.description,
+    iconKey: row.icon_key,
+  });
+  return {
+    ...row,
+    accent_key: typeof row.accent_key === "string" && row.accent_key.trim() ? row.accent_key.trim() : presentation.accentKey,
+    description: validateTaskTypeDescription(row.description).description,
+    icon_key: typeof row.icon_key === "string" && row.icon_key.trim() ? row.icon_key.trim() : presentation.iconKey,
+  };
 }
 
 /** Persist a named identity and its first revision without publishing a partial browser state. */
@@ -230,23 +259,26 @@ export async function createCustomBehaviorRuleset(
   policy: TaskBehaviorPolicy,
   effectiveFromLogicalDate: string,
   loadedRulesets: readonly CustomBehaviorRulesetNameCandidate[] = [],
+  presentation: Partial<TaskTypePresentation> = DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION,
 ): Promise<CustomBehaviorRulesetMutationResult<CustomBehaviorRuleset>> {
   const validation = validateCustomBehaviorRulesetName(nameInput, loadedRulesets);
   if (validation.error) return rulesetMutationError(validation.error);
+  const descriptionValidation = validateTaskTypeDescription(presentation.description);
+  if (descriptionValidation.error) return rulesetMutationError(descriptionValidation.error);
   if (!userId) return rulesetMutationError("Custom Task Type creation requires an authenticated user.");
 
   let identityResult: RulesetQueryResult<CustomBehaviorRuleset>;
   try {
     identityResult = await client
       .from("adhdice_custom_behavior_rulesets")
-      .insert(customBehaviorRulesetUpsertPayload(userId, validation.name))
-      .select("id,user_id,name,task_type,deleted_at,created_at,updated_at");
+      .insert(customBehaviorRulesetUpsertPayload(userId, validation.name, presentation))
+      .select(RULESET_IDENTITY_SELECT);
   } catch (error) {
     return rulesetMutationError(error instanceof Error ? error.message : "Could not create the Custom Task Type.");
   }
   if (identityResult.error) return { data: null, error: identityResult.error };
-  const identity = identityResult.data?.[0];
-  if (!isValidCustomBehaviorRulesetIdentity(identity) || identity.user_id !== userId) {
+  const identity = normalizeCustomBehaviorRulesetIdentity(identityResult.data?.[0]);
+  if (!identity || identity.user_id !== userId) {
     return rulesetMutationError("Custom Task Type creation returned an unusable identity.");
   }
 
@@ -335,14 +367,51 @@ export async function renameCustomBehaviorRuleset(
       .update({ name: validation.name, updated_at: new Date().toISOString() })
       .eq("id", rulesetId)
       .eq("user_id", userId)
-      .select("id,user_id,name,task_type,deleted_at,created_at,updated_at");
+      .select(RULESET_IDENTITY_SELECT);
   } catch (error) {
     return rulesetMutationError(error instanceof Error ? error.message : "Could not rename the Custom Task Type.");
   }
   if (result.error) return { data: null, error: result.error };
-  const updated = result.data?.[0];
-  if (!isValidCustomBehaviorRulesetIdentity(updated) || updated.id !== rulesetId || updated.user_id !== userId) {
+  const updated = normalizeCustomBehaviorRulesetIdentity(result.data?.[0]);
+  if (!updated || updated.id !== rulesetId || updated.user_id !== userId) {
     return rulesetMutationError("Custom Task Type rename did not return the updated identity.");
+  }
+  return { data: updated, error: null };
+}
+
+/** Update presentation metadata on the stable identity row without creating a policy revision. */
+export async function updateCustomBehaviorRulesetPresentation(
+  client: CustomBehaviorRulesetClient,
+  userId: string,
+  rulesetId: string,
+  presentation: Partial<TaskTypePresentation>,
+  loadedRulesets: readonly CustomBehaviorRulesetNameCandidate[] = [],
+): Promise<CustomBehaviorRulesetMutationResult<CustomBehaviorRuleset>> {
+  const current = loadedRulesets.find((ruleset) => ruleset.id === rulesetId);
+  if (current?.deleted_at != null) return rulesetMutationError("The Custom Task Type has already been deleted.");
+  const currentPresentation = normalizeTaskTypePresentation({
+    accentKey: current?.accent_key,
+    description: current?.description,
+    iconKey: current?.icon_key,
+  });
+  const descriptionValidation = validateTaskTypeDescription(presentation.description ?? currentPresentation.description);
+  if (descriptionValidation.error) return rulesetMutationError(descriptionValidation.error);
+  const normalized = normalizeTaskTypePresentation({ ...currentPresentation, ...presentation, description: descriptionValidation.description });
+  let result: RulesetQueryResult<CustomBehaviorRuleset>;
+  try {
+    result = await client
+      .from("adhdice_custom_behavior_rulesets")
+      .update({ accent_key: normalized.accentKey, description: normalized.description, icon_key: normalized.iconKey, updated_at: new Date().toISOString() })
+      .eq("id", rulesetId)
+      .eq("user_id", userId)
+      .select(RULESET_IDENTITY_SELECT);
+  } catch (error) {
+    return rulesetMutationError(error instanceof Error ? error.message : "Could not update the Custom Task Type presentation.");
+  }
+  if (result.error) return { data: null, error: result.error };
+  const updated = normalizeCustomBehaviorRulesetIdentity(result.data?.[0]);
+  if (!updated || updated.id !== rulesetId || updated.user_id !== userId) {
+    return rulesetMutationError("Custom Task Type presentation update did not return the updated identity.");
   }
   return { data: updated, error: null };
 }
@@ -350,7 +419,7 @@ export async function renameCustomBehaviorRuleset(
 export function isMissingCustomBehaviorRulesetsTableError(error: RulesetError | null | undefined) {
   const message = error?.message ?? "";
   return error?.code === "42P01"
-    || /adhdice_(?:custom_behavior_ruleset|task_behavior_selection)|relation .* does not exist|column .*(?:available_actions|needs_action_triggers).* does not exist/i.test(message);
+    || /adhdice_(?:custom_behavior_ruleset|task_behavior_selection)|relation .* does not exist|column .*(?:available_actions|needs_action_triggers|icon_key|accent_key|description).* does not exist/i.test(message);
 }
 
 /**
@@ -377,11 +446,18 @@ export async function loadCustomBehaviorRulesets(
   userId: string,
 ): Promise<LoadedCustomBehaviorRulesets> {
   if (!userId) return { data: [], revisions: {}, behaviorSelectionsByTaskId: {}, error: null, behaviorSelectionError: null };
+  const rulesetsPromise = client
+    .from("adhdice_custom_behavior_rulesets")
+    .select(RULESET_IDENTITY_SELECT)
+    .eq("user_id", userId);
   const [rulesetsResult, revisionsResult, behaviorSelectionsResult] = await Promise.all([
-    client
-      .from("adhdice_custom_behavior_rulesets")
-      .select("id,user_id,name,task_type,deleted_at,created_at,updated_at")
-      .eq("user_id", userId),
+    rulesetsPromise.then(async (result) => {
+      if (!result.error || !/column .*(?:icon_key|accent_key|description).* does not exist/i.test(result.error.message ?? "")) return result;
+      return client
+        .from("adhdice_custom_behavior_rulesets")
+        .select("id,user_id,name,task_type,deleted_at,created_at,updated_at")
+        .eq("user_id", userId);
+    }),
     client
       .from("adhdice_custom_behavior_ruleset_revisions")
       .select("ruleset_id,effective_from_logical_date,unresolved_occurrence,positive_streak_on_unhandled,missed_streak_on_unhandled,rewards,available_actions,needs_action_triggers,created_at,updated_at"),
@@ -393,7 +469,7 @@ export async function loadCustomBehaviorRulesets(
   if (rulesetsResult.error) return { data: [], revisions: {}, behaviorSelectionsByTaskId: {}, error: rulesetsResult.error, behaviorSelectionError: null };
   if (revisionsResult.error) return { data: [], revisions: {}, behaviorSelectionsByTaskId: {}, error: revisionsResult.error, behaviorSelectionError: null };
 
-  const rulesets = (rulesetsResult.data ?? []).filter(isValidCustomBehaviorRulesetIdentity);
+  const rulesets = (rulesetsResult.data ?? []).map(normalizeCustomBehaviorRulesetIdentity).filter((row): row is CustomBehaviorRuleset => Boolean(row));
   const rulesetIds = new Set(rulesets.map((ruleset) => ruleset.id));
   const revisions: Record<string, TaskBehaviorPolicyRevisions> = {};
   for (const row of revisionsResult.data ?? []) {

@@ -75,7 +75,7 @@ test("Summary is derived from the active metadataTask and exposes every property
 
 test("Task Settings exposes the compact TaskType selector and routes changes through the existing metadata callback", () => {
   const taskTypeBranch = tableSource.slice(tableSource.indexOf('metadataPanelId === "task_type"'), tableSource.indexOf('metadataPanelId === "due"'));
-  assert.match(taskTypeBranch, /<AdhdDropdownSelect/);
+  assert.match(taskTypeBranch, /<TaskTypeSelect/);
   assert.match(taskTypeBranch, /options=\{buildTaskTypeSelectionOptions\(customBehaviorRulesets\)\}/);
   assert.match(taskTypeBranch, /setTaskType\(metadataTask\.id, value\)/);
   assert.doesNotMatch(taskTypeBranch, /Custom Default/);

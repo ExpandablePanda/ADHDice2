@@ -15,6 +15,7 @@ import {
   taskTypeSelectionValue,
   type TaskType,
 } from "../src/lib/task-type.ts";
+import { DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, resolveTaskTypeAccent, resolveTaskTypeIcon } from "../src/lib/task-type-presentation.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import { buildNewTaskDraft } from "../src/components/task-app/task-editor-model.ts";
 import { buildChildTaskCreationDraft } from "../src/lib/task-child-creation.ts";
@@ -39,10 +40,11 @@ test("TaskType exposes only current Task and named Custom values", () => {
 
 test("named Custom Task Types extend the shared selection model without becoming TaskType values", () => {
   const rulesets = [
-    { id: "routine", name: "Routine", task_type: "custom" as const },
-    { id: "practice", name: "Practice", task_type: "custom" as const },
+    { id: "routine", name: "Routine", task_type: "custom" as const, icon_key: "repeat", accent_key: "blue", description: "Repeats" },
+    { id: "practice", name: "Practice", task_type: "custom" as const, icon_key: "music", accent_key: "teal", description: "Practice time" },
   ];
   assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Practice", "Routine"]);
+  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).find((option) => option.value === "practice"), { accentKey: "teal", description: "Practice time", iconKey: "music", label: "Practice", value: "practice" });
   assert.deepEqual(resolveTaskTypeSelection("practice", rulesets), { taskType: "custom", customRulesetId: "practice" });
   assert.equal(resolveTaskTypeSelection("custom", rulesets), null);
   assert.deepEqual(resolveTaskTypeSelection("task", rulesets), { taskType: "task", customRulesetId: null });
@@ -51,6 +53,15 @@ test("named Custom Task Types extend the shared selection model without becoming
   assert.equal(formatTaskTypeLabel("custom", "practice", rulesets), "Practice");
   assert.equal(formatTaskTypeLabel("custom", "practice", [{ id: "practice", name: "Guitar Practice", task_type: "custom" }]), "Guitar Practice");
   assert.equal(formatTaskTypeLabel("custom", null, rulesets), "Custom Task Type (legacy)");
+});
+
+test("Task Type presentation registry fails closed for unknown persisted keys", () => {
+  const option = buildTaskTypeSelectionOptions([{ id: "legacy", name: "Legacy", task_type: "custom" as const, icon_key: "unknown-icon", accent_key: "unknown-accent", description: "  legacy copy  " }])[1];
+  assert.equal(option?.iconKey, DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION.iconKey);
+  assert.equal(option?.accentKey, DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION.accentKey);
+  assert.equal(option?.description, "legacy copy");
+  assert.equal(resolveTaskTypeIcon("unknown-icon"), resolveTaskTypeIcon("list-todo"));
+  assert.equal(resolveTaskTypeAccent("unknown-accent").key, "purple");
 });
 
 test("deleted named rulesets stay available to historical labels but not current selectors", () => {
@@ -120,6 +131,7 @@ test("active Task creation and hierarchy surfaces expose no retired Pursuit acti
   assert.match(newMenuSource, /taskTypeOptions\.map\(\(option\) =>/);
   assert.match(newMenuSource, /role="menuitem"/);
   assert.match(newMenuSource, /onOpenTaskComposerForType\(option\.value\)/);
+  assert.match(newMenuSource, /<TaskTypeIdentity option=\{option\}/);
   assert.match(tableSource, /export function ChildTypeChooser/);
   assert.match(tableSource, /onChooseTask/);
   for (const source of [appSource, newMenuSource, tableSource, listSource]) {

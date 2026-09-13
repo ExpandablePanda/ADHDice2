@@ -541,7 +541,7 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
   assert.match(source, /onSubmit=\{handleCreateTask\}/);
   assert.match(source, /const \[newTaskTypeSelection, setNewTaskTypeSelection\] = useState\("task"\)/);
-  assert.match(source, /<AdhdDropdownSelect[\s\S]*ariaLabel="Task Type"[\s\S]*options=\{taskTypeOptions\}[\s\S]*value=\{newTaskTypeSelection\}/);
+  assert.match(source, /<TaskTypeSelect[\s\S]*ariaLabel="Task Type"[\s\S]*options=\{taskTypeOptions\}[\s\S]*value=\{newTaskTypeSelection\}/);
   assert.match(source, /setNewTaskTypeSelection\("task"\)/);
   assert.match(source, /New task/);
   assert.match(source, /type="submit"/);

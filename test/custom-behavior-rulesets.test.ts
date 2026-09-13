@@ -9,9 +9,11 @@ import {
   getCustomRulesetAssignedTaskCount,
   loadCustomBehaviorRulesets,
   renameCustomBehaviorRuleset,
+  updateCustomBehaviorRulesetPresentation,
   upsertCustomBehaviorRulesetRevision,
   validateCustomBehaviorRulesetName,
 } from "../src/lib/custom-behavior-rulesets.ts";
+import { DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, validateTaskTypeDescription } from "../src/lib/task-type-presentation.ts";
 import { moveAssignedTasksToTaskAndDeleteRuleset } from "../src/lib/custom-ruleset-delete-resolution.ts";
 import { updateTaskRowWithLegacyEnergyFallback } from "../src/lib/task-db-mutations.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
@@ -32,6 +34,7 @@ const context = {
 };
 
 const migration = readFileSync(new URL("../supabase/add_custom_behavior_rulesets_7_13_27.sql", import.meta.url), "utf8");
+const presentationMigration = readFileSync(new URL("../supabase/20260913000000_add_custom_task_type_presentation_identity_7_13_62.sql", import.meta.url), "utf8");
 const assignmentMigration = readFileSync(new URL("../supabase/add_task_custom_ruleset_assignments_7_13_28.sql", import.meta.url), "utf8");
 const behaviorSelectionMigration = readFileSync(new URL("../supabase/add_task_behavior_selections_7_13_31.sql", import.meta.url), "utf8");
 const softDeleteMigration = readFileSync(new URL("../supabase/add_custom_behavior_ruleset_soft_delete_7_13_33.sql", import.meta.url), "utf8");
@@ -444,6 +447,43 @@ test("named ruleset loader keeps historical identities while ignoring non-Custom
     { effectiveFromLogicalDate: "2026-09-21", taskType: "custom", customRulesetId: "ruleset-routine" },
   ]);
   assert.equal(loaded.behaviorSelectionsByTaskId["legacy-task"], undefined);
+  assert.deepEqual({ iconKey: loaded.data[0]?.icon_key, accentKey: loaded.data[0]?.accent_key, description: loaded.data[0]?.description }, DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION);
+});
+
+test("Custom Task Type identity presentation has bounded descriptions and additive migration parity", () => {
+  assert.deepEqual(validateTaskTypeDescription("  "), { description: "", error: null });
+  assert.equal(validateTaskTypeDescription("x".repeat(240)).error, null);
+  assert.equal(validateTaskTypeDescription("x".repeat(241)).error, "Description must be 240 characters or fewer.");
+  assert.match(presentationMigration, /alter table public\.adhdice_custom_behavior_rulesets/i);
+  assert.match(presentationMigration, /icon_key text not null default 'list-todo'/i);
+  assert.match(presentationMigration, /accent_key text not null default 'purple'/i);
+  assert.match(presentationMigration, /description text not null default ''/i);
+  assert.match(presentationMigration, /char_length\(description\) <= 240/i);
+  assert.match(schema, /icon_key text not null default 'list-todo'/i);
+  assert.match(schema, /accent_key text not null default 'purple'/i);
+  assert.match(schema, /description text not null default ''/i);
+});
+
+test("presentation editing updates only the identity row and never creates a behavior revision", async () => {
+  const calls: string[] = [];
+  const updated = { id: "ruleset-practice", user_id: "owner-1", name: "Practice", task_type: "custom" as const, icon_key: "music", accent_key: "teal", description: "Guitar time", deleted_at: null, created_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-12T00:00:00.000Z" };
+  const client = {
+    from(table: string) {
+      calls.push(table);
+      if (table === "adhdice_custom_behavior_rulesets") {
+        return {
+          update() {
+            return { eq() { return this; }, select: async () => ({ data: [updated], error: null }) };
+          },
+        };
+      }
+      throw new Error(`unexpected table ${table}`);
+    },
+  };
+  const result = await updateCustomBehaviorRulesetPresentation(client as never, "owner-1", "ruleset-practice", { iconKey: "music", accentKey: "teal", description: "  Guitar time " }, [{ id: updated.id, name: updated.name }]);
+  assert.equal(result.error, null);
+  assert.deepEqual(result.data && { icon_key: result.data.icon_key, accent_key: result.data.accent_key, description: result.data.description }, { icon_key: "music", accent_key: "teal", description: "Guitar time" });
+  assert.deepEqual(calls, ["adhdice_custom_behavior_rulesets"]);
 });
 
 test("Custom Task Type management trims names, rejects blanks and loaded duplicates case-insensitively", () => {
@@ -514,12 +554,12 @@ test("named ruleset creation persists the supplied draft policy and does not pub
     rewards: "disabled",
     availableActions: ["done", "delay"],
     needsActionTriggers: ["overdue", "missed"] as const,
-  }, "2026-09-10");
+  }, "2026-09-10", [], { iconKey: "music", accentKey: "teal", description: "Practice music" });
 
   assert.equal(result.error, null);
   assert.equal(result.data?.id, identity.id);
   assert.deepEqual(calls, [
-    { table: "adhdice_custom_behavior_rulesets", operation: "insert", values: { user_id: "owner-1", name: "Practice", task_type: "custom" } },
+    { table: "adhdice_custom_behavior_rulesets", operation: "insert", values: { accent_key: "teal", description: "Practice music", icon_key: "music", name: "Practice", task_type: "custom", user_id: "owner-1" } },
     {
       table: "adhdice_custom_behavior_ruleset_revisions",
       operation: "upsert",

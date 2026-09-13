@@ -99,7 +99,10 @@ export type TaskTypeBehaviorProfileInsert = Omit<TaskTypeBehaviorProfile, "creat
 export type TaskTypeBehaviorProfileUpdate = Partial<Pick<TaskTypeBehaviorProfile, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "available_actions" | "needs_action_triggers" | "updated_at">>;
 
 export type CustomBehaviorRuleset = {
+  accent_key: string;
+  description: string;
   id: string;
+  icon_key: string;
   user_id: string;
   name: string;
   task_type: "custom";
@@ -115,7 +118,7 @@ export type CustomBehaviorRulesetInsert = Omit<CustomBehaviorRuleset, "created_a
   updated_at?: string;
 };
 
-export type CustomBehaviorRulesetUpdate = Partial<Pick<CustomBehaviorRuleset, "deleted_at" | "name" | "updated_at">>;
+export type CustomBehaviorRulesetUpdate = Partial<Pick<CustomBehaviorRuleset, "accent_key" | "deleted_at" | "description" | "icon_key" | "name" | "updated_at">>;
 
 export type CustomBehaviorRulesetDeleteResult = {
   ruleset_id: string;
