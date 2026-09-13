@@ -85,6 +85,43 @@ test("Table and List capture their actual presentation sequences and keep full-e
   assert.match(tableSource, /disabled=\{!nextTaskId\}/);
 });
 
+test("Task lookup prefers a direct row before the compatibility collection fallback", () => {
+  const lookupSource = tableSource.slice(
+    tableSource.indexOf("function getTaskById"),
+    tableSource.indexOf("function modeSupportsBatchQuickEdit"),
+  );
+  const directLookupIndex = lookupSource.indexOf("getRowById?.(taskId)");
+  const collectionFallbackIndex = lookupSource.indexOf("const liveRows = getAllRows?.() ?? allRows ?? []");
+
+  assert.ok(directLookupIndex >= 0);
+  assert.ok(collectionFallbackIndex > directLookupIndex);
+  assert.match(lookupSource, /const directlyResolvedRow = getRowById\?\.\(taskId\);[\s\S]*return directlyResolvedRow;/);
+});
+
+test("List direct row lookup uses taskById and projects only the requested Task", () => {
+  const listLookupSource = listSource.slice(
+    listSource.indexOf("const taskById = useMemo", listSource.indexOf("function TasksSimpleList")),
+    listSource.indexOf("useEffect(() => {", listSource.indexOf("const taskById = useMemo", listSource.indexOf("function TasksSimpleList"))),
+  );
+
+  assert.match(listLookupSource, /const taskById = useMemo\([\s\S]*new Map\(\[\.\.\.\(tableProps\.allTasks \?\? tasks\), \.\.\.tasks\]/);
+  assert.match(listLookupSource, /const getRowById = useCallback\([\s\S]*const task = taskById\.get\(taskId\);[\s\S]*return task \? getOrCreateTaskRow\(task\) : null;/);
+  assert.doesNotMatch(
+    listLookupSource.slice(listLookupSource.indexOf("const getRowById")),
+    /\.map\(/,
+  );
+});
+
+test("List overlay supplies direct lookup before retaining getAllRows compatibility", () => {
+  const simpleListSource = listSource.slice(listSource.indexOf("function TasksSimpleList"));
+  const directPropIndex = simpleListSource.indexOf("getRowById={getRowById}");
+  const collectionPropIndex = simpleListSource.indexOf("getAllRows={() =>");
+
+  assert.ok(directPropIndex >= 0);
+  assert.ok(collectionPropIndex > directPropIndex);
+  assert.match(simpleListSource, /getAllRows=\{\(\) => \(tableProps\.allTasks \?\? tableProps\.tasks\)\.map\(getOrCreateTaskRow\)\}/);
+});
+
 test("full editor keeps a stable shell identity while quick overlays remain Task-keyed", () => {
   assert.match(tableSource, /key=\{overlayMode === "full"\s*\? "task-table-inspector-full"\s*:\s*`task-table-inspector-\$\{selectedTask\.id \|\| "blank"\}-\$\{overlayMode\}`\}/);
   assert.doesNotMatch(tableSource, /key=\{`task-table-inspector-\$\{selectedTask\.id/);
@@ -114,14 +151,22 @@ test("repeated forward and reverse navigation stays within one open editor sessi
   assert.doesNotMatch(navigationSource, /closeInspector\(/);
 });
 
-test("full editor outside-click handling includes external navigation gutters", () => {
+test("full editor outside-click handling isolates the surface and side controls from gutters", () => {
   assert.match(tableSource, /const editorInteractionRef = useRef<HTMLDivElement \| null>\(null\)/);
   assert.match(tableSource, /const interactionRef = overlayMode === "full" \? editorInteractionRef : inspectorPanelRef/);
-  assert.match(tableSource, /if \(!interactionRef\.current\?\.contains\(target\)\) \{\s*closeInspector\(\);\s*\}/);
+  assert.match(tableSource, /const isNavigationControl = overlayMode === "full"[\s\S]*previousEditorNavigationRef\.current\?\.contains\(target\)[\s\S]*nextEditorNavigationRef\.current\?\.contains\(target\)/);
+  assert.match(tableSource, /if \(!interactionRef\.current\?\.contains\(target\) && !isNavigationControl\) \{\s*closeInspector\(\);\s*\}/);
   assert.match(tableSource, /data-task-editor-interaction="true"/);
   assert.match(tableSource, /data-task-editor-navigation-gutter="previous"[\s\S]*renderEditorNavigationControls\("side", "previous"\)/);
   assert.match(tableSource, /data-task-editor-navigation-gutter="next"[\s\S]*renderEditorNavigationControls\("side", "next"\)/);
   assert.match(tableSource, /data-task-editor-navigation=\{`side-\$\{side\}`\}/);
+  assert.match(tableSource, /data-full-inspector-content="true" ref=\{useMobileFullOverlay \? undefined : editorInteractionRef\}/);
+  assert.match(tableSource, /ref=\{overlayMode === "full"\s*\n\s*\? \(useMobileFullOverlay \? editorInteractionRef : undefined\)\s*\n\s*: inspectorPanelRef\}/);
+  assert.match(tableSource, /className="w-full max-w-\[60rem\]"[\s\S]*ref=\{overlayMode === "full" \? editorInteractionRef : inspectorPanelRef\}/);
+  assert.match(tableSource, /className="pointer-events-none grid min-w-0 w-full/);
+  assert.match(tableSource, /className="pointer-events-auto relative min-w-0 w-full max-w-\[80rem\]/);
+  assert.match(tableSource, /ref=\{side === "previous" \? previousEditorNavigationRef : nextEditorNavigationRef\}/);
+  assert.match(tableSource, /onClick=\{\(\) => closeInspector\(\)\}/);
 });
 
 test("Navigation commits the current editor drafts before retargeting and clears target-local draft state", () => {

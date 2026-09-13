@@ -33,7 +33,7 @@ import type { CustomBehaviorRulesetDeleteActionResult } from "@/lib/custom-behav
 import { createStableTaskRowModelCache, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
-import { Fragment, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
@@ -2808,37 +2808,35 @@ function TasksSimpleList({
     () => new Map([...(tableProps.allTasks ?? tasks), ...tasks].map((task) => [task.id, task])),
     [tableProps.allTasks, tasks],
   );
+  const getOrCreateTaskRow = useCallback(
+    (task: Task) => rowModelCache.getOrCreate(task, {
+      displayStatus: rowContext.taskDisplayStatusByTaskId[task.id],
+      focusedTaskIdSet: rowContext.focusedTaskIdSet,
+      linkedNotes: rowContext.linkedNotesByTaskId[task.id] ?? [],
+      listDefinitions: rowContext.listDefinitions,
+      listMemberships: rowContext.listMembershipsByTaskId[task.id] ?? [],
+      subtasks: rowContext.subtasksByTaskId[task.id] ?? [],
+      taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
+      taskHistoryStreakSummary: rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+      attentionReason: rowContext.taskAttentionReasonByTaskId[task.id],
+      todayDateKey: rowContext.todayDateKey,
+    }),
+    [rowContext, rowModelCache],
+  );
+  const getRowById = useCallback(
+    (taskId: string) => {
+      const task = taskById.get(taskId);
+      return task ? getOrCreateTaskRow(task) : null;
+    },
+    [getOrCreateTaskRow, taskById],
+  );
   const overlayRows = useMemo(
-    () => tableProps.requestedOpenTask ? [rowModelCache.getOrCreate(tableProps.requestedOpenTask, {
-      displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[tableProps.requestedOpenTask.id],
-      focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
-      linkedNotes: tableProps.rowContext.linkedNotesByTaskId[tableProps.requestedOpenTask.id] ?? [],
-      listDefinitions: tableProps.rowContext.listDefinitions,
-      listMemberships: tableProps.rowContext.listMembershipsByTaskId[tableProps.requestedOpenTask.id] ?? [],
-      subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
-      taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
-      taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
-      attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[tableProps.requestedOpenTask.id],
-      todayDateKey: tableProps.rowContext.todayDateKey,
-    })] : [],
-    [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
+    () => tableProps.requestedOpenTask ? [getOrCreateTaskRow(tableProps.requestedOpenTask)] : [],
+    [getOrCreateTaskRow, tableProps.requestedOpenTask],
   );
   const requestedOpenTaskRow = useMemo(
-    () => tableProps.requestedOpenTask
-      ? rowModelCache.getOrCreate(tableProps.requestedOpenTask, {
-        displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[tableProps.requestedOpenTask.id],
-        focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
-        linkedNotes: tableProps.rowContext.linkedNotesByTaskId[tableProps.requestedOpenTask.id] ?? [],
-        listDefinitions: tableProps.rowContext.listDefinitions,
-        listMemberships: tableProps.rowContext.listMembershipsByTaskId[tableProps.requestedOpenTask.id] ?? [],
-        subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
-        taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
-        taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
-        attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[tableProps.requestedOpenTask.id],
-        todayDateKey: tableProps.rowContext.todayDateKey,
-      })
-      : null,
-    [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
+    () => tableProps.requestedOpenTask ? getOrCreateTaskRow(tableProps.requestedOpenTask) : null,
+    [getOrCreateTaskRow, tableProps.requestedOpenTask],
   );
   useEffect(() => {
     if (!isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -3160,18 +3158,8 @@ function TasksSimpleList({
               }}
               enableInspector
               editorNavigationTaskIds={tableProps.editorNavigationTaskIds}
-              getAllRows={() => (tableProps.allTasks ?? tableProps.tasks).map((task) => rowModelCache.getOrCreate(task, {
-                displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[task.id],
-                focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
-                linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
-                listDefinitions: tableProps.rowContext.listDefinitions,
-                listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
-                subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
-                taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
-                taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
-                attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
-                todayDateKey: tableProps.rowContext.todayDateKey,
-              }))}
+              getRowById={getRowById}
+              getAllRows={() => (tableProps.allTasks ?? tableProps.tasks).map(getOrCreateTaskRow)}
               getFollowTaskDestination={tableProps.getFollowTaskDestination}
               onClearSelection={tableProps.onClearSelection}
               onCreateChildTask={tableProps.onCreateChildTask}

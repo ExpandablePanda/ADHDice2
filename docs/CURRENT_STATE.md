@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-12
+Last reviewed: 2026-09-13
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.48`.
+- Current working app version: `7.13.49`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,20 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.49 List Edit Task Navigation Performance + Backdrop Dismissal
+
+The 7.13.48 repeated-navigation shell stability fix worked, but browser QA
+found List Edit Task Previous/Next switching slower than Table. The root cause
+was full List row materialization through `getAllRows` during neighbor lookup.
+The List editor now uses its existing `taskById` map for direct live Task-row
+lookup and converts only the requested row, while preserving `getAllRows` for
+compatibility paths that require the complete collection. Empty transparent
+desktop gutters and dimmed backdrop space dismiss Edit Task again; the
+Previous and Next controls remain safe interaction targets in their approved
+side-gutter placement. Navigation ordering, shell stability, and persistence
+semantics are unchanged. No SQL, schema, persistence, Supabase, or Edge
+Function changes were made; browser acceptance remains assigned to Andrew.
 
 ## 2026-09-12 7.13.47 Edit Task Browsing + Status Glow Refinement
 

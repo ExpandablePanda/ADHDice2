@@ -1171,6 +1171,7 @@ type TaskManagementTableV2Props = {
   allowInlineInspector?: boolean;
   allRows?: PrototypeTaskRow[];
   getAllRows?: () => PrototypeTaskRow[];
+  getRowById?: (taskId: string) => PrototypeTaskRow | null;
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: Array<{ id: string; title: string }>;
   allTagOptions?: string[];
@@ -2665,6 +2666,7 @@ export function TaskManagementTableV2({
   allowInlineInspector = false,
   allRows,
   getAllRows,
+  getRowById,
   allListOptions = [],
   allNoteOptions = [],
   allTagOptions = [],
@@ -2983,6 +2985,8 @@ export function TaskManagementTableV2({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const inspectorPanelRef = useRef<HTMLDivElement | null>(null);
   const editorInteractionRef = useRef<HTMLDivElement | null>(null);
+  const previousEditorNavigationRef = useRef<HTMLDivElement | null>(null);
+  const nextEditorNavigationRef = useRef<HTMLDivElement | null>(null);
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const tableUserScrollIntentRef = useRef(false);
   const tableScrollTopHoldFrameRef = useRef<number | null>(null);
@@ -3861,7 +3865,9 @@ export function TaskManagementTableV2({
       }
 
       const interactionRef = overlayMode === "full" ? editorInteractionRef : inspectorPanelRef;
-      if (!interactionRef.current?.contains(target)) {
+      const isNavigationControl = overlayMode === "full"
+        && (previousEditorNavigationRef.current?.contains(target) || nextEditorNavigationRef.current?.contains(target));
+      if (!interactionRef.current?.contains(target) && !isNavigationControl) {
         closeInspector();
       }
     };
@@ -4538,6 +4544,10 @@ export function TaskManagementTableV2({
       ?? (retainedMetadataTargetTask?.id === taskId ? retainedMetadataTargetTask : null);
     if (task) {
       return task;
+    }
+    const directlyResolvedRow = getRowById?.(taskId);
+    if (directlyResolvedRow) {
+      return directlyResolvedRow;
     }
     const liveRows = getAllRows?.() ?? allRows ?? [];
     const liveRow = liveRows.find((entry) => entry.id === taskId);
@@ -5722,6 +5732,7 @@ export function TaskManagementTableV2({
         <div
           className="pointer-events-auto flex items-center justify-center"
           data-task-editor-navigation={`side-${side}`}
+          ref={side === "previous" ? previousEditorNavigationRef : nextEditorNavigationRef}
         >
           {side === "previous" ? previousButton : nextButton}
         </div>
@@ -10430,7 +10441,7 @@ export function TaskManagementTableV2({
                   ? "mt-5 min-w-0 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]"
                   : "mt-4 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]";
                 const fullDesktopEditorContent = (
-                  <div className="min-w-0 max-w-full" data-full-inspector-content="true">
+                  <div className="min-w-0 max-w-full" data-full-inspector-content="true" ref={useMobileFullOverlay ? undefined : editorInteractionRef}>
                     <div className={fullEditorGridClass} data-full-inspector-columns="true">
                     <div className={fullEditorCardClass}>
                       {selectedTaskParentInfo ? (
@@ -10558,14 +10569,13 @@ export function TaskManagementTableV2({
 
                 const fullDesktopEditorNode = (
                   <div
-                    className="grid min-w-0 w-full max-w-[calc(100vw-2rem)] grid-cols-[minmax(2.75rem,1fr)_minmax(0,80rem)_minmax(2.75rem,1fr)] items-center gap-3"
+                    className="pointer-events-none grid min-w-0 w-full max-w-[calc(100vw-2rem)] grid-cols-[minmax(2.75rem,1fr)_minmax(0,80rem)_minmax(2.75rem,1fr)] items-center gap-3"
                     data-task-editor-interaction="true"
-                    ref={isFocusedOverlay || useMobileFullOverlay ? undefined : editorInteractionRef}
                   >
                     <div className="flex min-w-0 items-center justify-center" data-task-editor-navigation-gutter="previous">
                       {renderEditorNavigationControls("side", "previous")}
                     </div>
-                    <div className="relative min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent">
+                    <div className="pointer-events-auto relative min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent">
                       <div className="p-4">
                         {fullDesktopEditorContent}
                       </div>
@@ -10644,7 +10654,9 @@ export function TaskManagementTableV2({
                   <div
                     className={`absolute w-full ${overlayMode === "full" ? "left-1/2 max-w-[calc(100vw-2rem)] -translate-x-1/2" : "max-w-[32rem]"}`}
                     onClick={(event) => event.stopPropagation()}
-                    ref={overlayMode === "full" ? editorInteractionRef : inspectorPanelRef}
+                    ref={overlayMode === "full"
+                      ? (useMobileFullOverlay ? editorInteractionRef : undefined)
+                      : inspectorPanelRef}
                     style={
                       overlayMode === "full"
                         ? {
