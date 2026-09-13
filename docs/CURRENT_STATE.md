@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.54`.
+- Current working app version: `7.13.55`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.55 Correct Pursuit Retirement TRUNCATE Dependency
+
+The 7.13.54 live migration attempt failed before commit because PostgreSQL
+rejected separate Pursuit-table `TRUNCATE` operations across the foreign key
+from `adhdice_pursuit_activities` to `adhdice_pursuits`. The transaction rolled
+back completely, so live data was unchanged: no Pursuit or Goal data was
+deleted. The live project still has 3 `task_type = 'pursuit'` Task rows, 6
+standalone Pursuits, 5 Pursuit activities, and 1 Goal Task row.
+
+Version 7.13.55 changes the migration to truncate
+`adhdice_pursuit_activities` and `adhdice_pursuits` together in one explicit
+two-table operation, without `CASCADE`. Goal data remains untouched. The
+corrected live migration still requires explicit application after this
+correction; no live database change is claimed here.
 
 ## 2026-09-13 7.13.54 Tasks + Custom Task Types; Retire Pursuit Experiment
 

@@ -30,19 +30,10 @@ select user_id, id
 from public.adhdice_clean_tasks
 where task_type = 'pursuit';
 
--- Standalone Pursuit activity/history is test data and is deleted before the
--- parent table.  TRUNCATE handles the experiment's self-referential parent FK
--- without touching any shared Task table.
-do $cleanup_pursuits$
-begin
-  if to_regclass('public.adhdice_pursuit_activities') is not null then
-    execute 'truncate table public.adhdice_pursuit_activities';
-  end if;
-  if to_regclass('public.adhdice_pursuits') is not null then
-    execute 'truncate table public.adhdice_pursuits';
-  end if;
-end;
-$cleanup_pursuits$;
+-- Standalone Pursuit activity/history is test data.  Both tables are included
+-- in one TRUNCATE operation so PostgreSQL can satisfy the activity FK and the
+-- self-referential parent FK without touching any shared Task table.
+truncate table public.adhdice_pursuit_activities, public.adhdice_pursuits;
 
 -- Preserve any non-Pursuit Task child as a normal Task by detaching it before
 -- deleting a Pursuit-typed parent.  Pursuit-typed children remain in the
