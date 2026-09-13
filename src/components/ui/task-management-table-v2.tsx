@@ -1640,8 +1640,8 @@ export function getTableHierarchyTitleGeometry(depth: number) {
   };
 }
 
-function renderTableCurrentStatusCircle(status: TaskDisplayStatus) {
-  return renderTaskStatusCircle(status, TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE);
+function renderTableCurrentStatusCircle(status: TaskDisplayStatus, attention = false) {
+  return renderTaskStatusCircle(status, TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE, { attention });
 }
 
 const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
@@ -7107,7 +7107,7 @@ export function TaskManagementTableV2({
                 onPointerUp={endStatusRailLongPress}
                 type="button"
               >
-                {renderTableCurrentStatusCircle(task.status)}
+                {renderTableCurrentStatusCircle(task.status, Boolean(task.attentionReason))}
               </button>
             ) : null}
             {isStatusRailColumnExpanded ? (
@@ -7184,7 +7184,7 @@ export function TaskManagementTableV2({
               type="button"
             >
               <span className="inline-flex w-max items-center" data-column-content-measure={columnId}>
-                {renderTableCurrentStatusCircle(task.status)}
+                {renderTableCurrentStatusCircle(task.status, Boolean(task.attentionReason))}
               </span>
             </button>
           ) : null}
@@ -8249,7 +8249,7 @@ export function TaskManagementTableV2({
         item,
         columnId,
         <div className="inline-flex min-w-0 self-center">
-          {renderTableCurrentStatusCircle(item.status)}
+          {renderTableCurrentStatusCircle(item.status, Boolean(attentionReasonByTaskId[item.id]))}
         </div>,
       );
     }
@@ -8896,7 +8896,7 @@ export function TaskManagementTableV2({
     const { depth, subtask } = row;
 
     if (columnId === "status_icon") {
-      return <div className="flex self-center">{renderTableCurrentStatusCircle(subtask.status)}</div>;
+      return <div className="flex self-center">{renderTableCurrentStatusCircle(subtask.status, Boolean(attentionReasonByTaskId[subtask.id]))}</div>;
     }
 
     if (columnId === "title") {

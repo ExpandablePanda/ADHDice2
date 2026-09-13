@@ -123,6 +123,103 @@
   }
 }
 
+.task-status-circle-attention {
+  isolation: isolate;
+  animation: task-status-attention-glow 5s ease-in-out infinite;
+}
+
+.task-status-circle-attention__glyph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.task-status-circle-attention__status {
+  opacity: 1;
+  animation: task-status-attention-status-glyph 5s ease-in-out infinite;
+}
+
+.task-status-circle-attention__bell {
+  opacity: 0;
+  animation: task-status-attention-bell-glyph 5s ease-in-out infinite;
+}
+
+@keyframes task-status-attention-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent);
+  }
+
+  30% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, currentColor 9%, transparent),
+      0 0 7px 1px color-mix(in srgb, currentColor 12%, transparent);
+  }
+
+  50%,
+  72% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, currentColor 18%, transparent),
+      0 0 11px 2px color-mix(in srgb, currentColor 24%, transparent);
+  }
+
+  90% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 5%, transparent);
+  }
+}
+
+@keyframes task-status-attention-status-glyph {
+  0%,
+  44%,
+  100% {
+    opacity: 1;
+  }
+
+  58%,
+  80% {
+    opacity: 0;
+  }
+
+  94% {
+    opacity: 1;
+  }
+}
+
+@keyframes task-status-attention-bell-glyph {
+  0%,
+  44%,
+  100% {
+    opacity: 0;
+  }
+
+  58%,
+  80% {
+    opacity: 1;
+  }
+
+  94% {
+    opacity: 0;
+  }
+}
+
+[data-lowstim] .task-status-circle-attention {
+  animation: none !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 18%, transparent) !important;
+}
+
+[data-lowstim] .task-status-circle-attention__status {
+  animation: none !important;
+  opacity: 1 !important;
+}
+
+[data-lowstim] .task-status-circle-attention__bell {
+  animation: none !important;
+  opacity: 0 !important;
+}
+
 [data-page-shell-navigation-target="true"] {
   outline: 3px solid rgba(111, 87, 246, 0.58);
   outline-offset: 4px;
@@ -142,6 +239,21 @@
   [data-page-shell-navigation-target="true"] {
     animation: none;
     box-shadow: 0 0 0 4px rgba(111, 87, 246, 0.18);
+  }
+
+  .task-status-circle-attention {
+    animation: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 18%, transparent);
+  }
+
+  .task-status-circle-attention__status {
+    animation: none;
+    opacity: 1;
+  }
+
+  .task-status-circle-attention__bell {
+    animation: none;
+    opacity: 0;
   }
 }
 

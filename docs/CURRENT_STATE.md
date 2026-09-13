@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.45`.
+- Current working app version: `7.13.46`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-12 7.13.46 Attention Status Signal Polish
+
+The Attention row Bell is now a filled yellow Bell. Final Attention members
+receive a status-color breathing signal on the primary current-status circle,
+with a crossfade between the canonical status glyph and a decorative Bell.
+Attention remains presentation metadata and is still NOT a Task status; the
+status-circle interaction remains status interaction. Reduced-motion and Low
+Stimulation modes use a static status-color treatment with the normal glyph.
+No membership, persistence, SQL, schema, Supabase, or Edge Function changes
+were made. Browser QA for 7.13.46 remains unverified and is assigned to
+Andrew.
 
 ## 2026-09-12 7.13.45 Attention Rule Authority + Editable System List
 
@@ -29,7 +41,8 @@ and popover all consume final Attention list membership. Attention settings use
 the normal list rule editor below a read-only eligibility explanation; the
 system list remains fixed-name, non-deletable, and unavailable for manual
 membership. No SQL migration, schema change, Supabase data migration, or Edge
-Function deployment was performed. Browser QA remains unverified.
+Function deployment was performed. Browser QA passed for Attention rule
+behavior, settings, and popover.
 
 ## 2026-09-12 7.13.44 Attention Correction
 

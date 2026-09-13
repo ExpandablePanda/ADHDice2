@@ -209,7 +209,8 @@ test("Attention remains a canonical row presentation with the working accessible
   assert.match(attentionChipSource, /AdhdIconButton/);
   assert.match(attentionChipSource, /tone="warning"/);
   assert.match(attentionChipSource, /variant="rowToolbar"/);
-  assert.match(attentionChipSource, /<Bell aria-hidden="true" \/>/);
+  assert.match(attentionChipSource, /<Bell aria-hidden="true" fill="currentColor" \/>/);
+  assert.match(attentionChipSource, /if \(!notification\) \{[\s\S]*return null;/);
   assert.doesNotMatch(attentionChipSource, /tone="danger"/);
   assert.doesNotMatch(attentionChipSource, />\s*Attention\s*</);
   assert.match(attentionChipSource, /aria-label=\{`Needs attention: \$\{notification\.title\}`\}/);

@@ -114,7 +114,7 @@ export function TaskAttentionChip({
         tone="warning"
         variant="rowToolbar"
       >
-        <Bell aria-hidden="true" />
+        <Bell aria-hidden="true" fill="currentColor" />
       </AdhdIconButton>
       {isOpen && panelPosition && typeof document !== "undefined" ? createPortal(
         <AdhdDropdownPanel

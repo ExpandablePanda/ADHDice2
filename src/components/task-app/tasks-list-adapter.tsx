@@ -3575,6 +3575,7 @@ function TasksSimpleList({
                   <TaskStatusCircleRail
                     className="min-w-max flex-nowrap"
                     currentStatus={displayStatus}
+                    attention={Boolean(taskRow.attentionReason)}
                     onSetStatus={(status) => {
                       if (status === "delayed") {
                         setRowContextMenu(null);

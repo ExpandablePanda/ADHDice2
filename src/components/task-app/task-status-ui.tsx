@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, CalendarClock, CalendarDays, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
+import { ArrowRight, Bell, BookOpen, CalendarClock, CalendarDays, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
 import type { MouseEvent } from "react";
 
 import type { TaskStatus } from "@/lib/database.types";
@@ -182,7 +182,7 @@ export function renderTaskStatusGlyph(
 export function renderTaskStatusCircle(
   status: TaskDisplayStatus,
   size: "sm" | "md" = "md",
-  options: { className?: string; glyphClassName?: string; inverted?: boolean } = {},
+  options: { attention?: boolean; className?: string; glyphClassName?: string; inverted?: boolean } = {},
 ) {
   const sizeClasses = size === "sm" ? "h-5 w-5" : "h-5.5 w-5.5";
   const statusLabel = formatTaskStatusLabel(status);
@@ -196,11 +196,22 @@ export function renderTaskStatusCircle(
       className={[
         "flex items-center justify-center rounded-full transition-colors",
         sizeClasses,
+        options.attention ? "task-status-circle-attention relative" : "",
         getTaskStatusCircleClassName(status, { inverted: options.inverted }),
         options.className ?? "",
       ].join(" ").trim()}
+      data-task-attention-status={options.attention ? "true" : undefined}
     >
-      {renderTaskStatusGlyph(status, size, { className: options.glyphClassName })}
+      {options.attention ? (
+        <>
+          <span aria-hidden="true" className="task-status-circle-attention__glyph task-status-circle-attention__status">
+            {renderTaskStatusGlyph(status, size, { className: options.glyphClassName })}
+          </span>
+          <span aria-hidden="true" className="task-status-circle-attention__glyph task-status-circle-attention__bell">
+            <Bell aria-hidden="true" className={size === "sm" ? "h-3 w-3" : "h-3.25 w-3.25"} fill="currentColor" />
+          </span>
+        </>
+      ) : renderTaskStatusGlyph(status, size, { className: options.glyphClassName })}
     </span>
   );
 }
@@ -211,9 +222,11 @@ export function TaskStatusCircleRail<Status extends TaskDisplayStatus>({
   onSetStatus,
   options,
   preserveCurrentStatus = false,
+  attention = false,
   statusLabelPrefix = "Set status to",
   wrap = true,
 }: {
+  attention?: boolean;
   className?: string;
   currentStatus: Status;
   onSetStatus: (status: Status, event: MouseEvent<HTMLButtonElement>) => void;
@@ -241,7 +254,10 @@ export function TaskStatusCircleRail<Status extends TaskDisplayStatus>({
           }}
           type="button"
         >
-          {renderTaskStatusCircle(option.value, "sm", { inverted: currentStatus === option.value })}
+          {renderTaskStatusCircle(option.value, "sm", {
+            attention: attention && currentStatus === option.value,
+            inverted: currentStatus === option.value && !attention,
+          })}
         </button>
       ))}
     </div>
