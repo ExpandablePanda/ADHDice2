@@ -200,7 +200,7 @@ test("Occurrence references include local date and time while preserving identit
   assert.match(formSource, /selectedJournalEntry\?\.reflection/);
 });
 
-test("7.13.48 Journal QA correction centers compact Event Feeling editing and preserves legacy behavior", () => {
+test("7.13.49 Journal QA correction widens the centered Event Feeling dialog and preserves legacy behavior", () => {
   const eventChoiceSource = formSource.slice(formSource.indexOf("function EventCaptureChoice"), formSource.indexOf("function StartOfDayQuestions"));
 
   assert.match(formSource, /HealthStandardTimeInput ariaLabel=\{topTimeLabel\} compact/);
@@ -212,8 +212,12 @@ test("7.13.48 Journal QA correction centers compact Event Feeling editing and pr
   assert.match(eventCaptureSource, /data-journal-floating-overlay="true"/);
   assert.match(eventCaptureSource, /style=\{\{ left: "50%", position: "fixed", top: "50%", transform: "translate\(-50%, -50%\)" \}\}/);
   assert.doesNotMatch(eventCaptureSource, /useLayoutEffect|updatePosition|getBoundingClientRect|window\.addEventListener\("scroll"/);
-  assert.match(eventCaptureSource, /w-\[min\(23rem,calc\(100vw-1rem\)\)\]/);
-  assert.doesNotMatch(eventCaptureSource, /w-\[min\(25rem/);
+  assert.match(eventCaptureSource, /w-\[min\(44rem,calc\(100vw-1rem\)\)\]/);
+  assert.doesNotMatch(eventCaptureSource, /w-\[min\(23rem/);
+  assert.match(eventCaptureSource, /className="grid grid-cols-2 gap-1\.5 sm:grid-cols-3"/);
+  assert.match(eventCaptureSource, /Array\.from\(\{ length: denominator \}, \(_, index\) => index \+ 1\)\.map\(\(score\)/);
+  assert.match(eventCaptureSource, /className=\{`flex min-h-8 w-full min-w-0/);
+  assert.doesNotMatch(eventCaptureSource, /col-span/);
   assert.match(eventCaptureSource, /max-w-\[calc\(100vw-1rem\)\]/);
   assert.match(eventCaptureSource, /max-h-\[calc\(100dvh-1rem\)\].*overflow-y-auto/);
   assert.match(eventCaptureSource, /event\.key === "Escape"/);
