@@ -85,6 +85,45 @@ test("Table and List capture their actual presentation sequences and keep full-e
   assert.match(tableSource, /disabled=\{!nextTaskId\}/);
 });
 
+test("full editor keeps a stable shell identity while quick overlays remain Task-keyed", () => {
+  assert.match(tableSource, /key=\{overlayMode === "full"\s*\? "task-table-inspector-full"\s*:\s*`task-table-inspector-\$\{selectedTask\.id \|\| "blank"\}-\$\{overlayMode\}`\}/);
+  assert.doesNotMatch(tableSource, /key=\{`task-table-inspector-\$\{selectedTask\.id/);
+});
+
+test("repeated forward and reverse navigation stays within one open editor session", () => {
+  const capturedOrder = ["A", "B", "C", "D"];
+  const walk = (direction: "next" | "previous", startTaskId: string) => {
+    const visited = [startTaskId];
+    let currentTaskId = startTaskId;
+    while (true) {
+      const nextTaskId = neighbor(capturedOrder, currentTaskId, direction);
+      if (!nextTaskId) {
+        return visited;
+      }
+      visited.push(nextTaskId);
+      currentTaskId = nextTaskId;
+    }
+  };
+
+  assert.deepEqual(walk("next", "A"), capturedOrder);
+  assert.deepEqual(walk("previous", "D"), [...capturedOrder].reverse());
+  const navigationSource = tableSource.slice(
+    tableSource.indexOf("function navigateEditorTask"),
+    tableSource.indexOf("function getEditorNavigationNeighborId"),
+  );
+  assert.doesNotMatch(navigationSource, /closeInspector\(/);
+});
+
+test("full editor outside-click handling includes external navigation gutters", () => {
+  assert.match(tableSource, /const editorInteractionRef = useRef<HTMLDivElement \| null>\(null\)/);
+  assert.match(tableSource, /const interactionRef = overlayMode === "full" \? editorInteractionRef : inspectorPanelRef/);
+  assert.match(tableSource, /if \(!interactionRef\.current\?\.contains\(target\)\) \{\s*closeInspector\(\);\s*\}/);
+  assert.match(tableSource, /data-task-editor-interaction="true"/);
+  assert.match(tableSource, /data-task-editor-navigation-gutter="previous"[\s\S]*renderEditorNavigationControls\("side", "previous"\)/);
+  assert.match(tableSource, /data-task-editor-navigation-gutter="next"[\s\S]*renderEditorNavigationControls\("side", "next"\)/);
+  assert.match(tableSource, /data-task-editor-navigation=\{`side-\$\{side\}`\}/);
+});
+
 test("Navigation commits the current editor drafts before retargeting and clears target-local draft state", () => {
   const navigationSource = tableSource.slice(
     tableSource.indexOf("function navigateEditorTask"),
@@ -96,4 +135,7 @@ test("Navigation commits the current editor drafts before retargeting and clears
   assert.match(navigationSource, /setMetadataTargetTaskId\(null\)/);
   assert.match(navigationSource, /openInspector\(nextTaskId, "full"\)/);
   assert.match(navigationSource, /onTaskEditorNavigate\?\.\(nextTaskId\)/);
+  assert.match(tableSource, /const titleDraft = titleDraftsRef\.current\[selectedTask\.id\] \?\? selectedTask\.title/);
+  assert.match(tableSource, /const selectedTaskNotesDraft = notesDrafts\[selectedTask\.id\] \?\? selectedTask\.notes/);
+  assert.match(tableSource, /setDraft\(initialValue\);\s*\}, \[initialValue, taskId\]\)/);
 });

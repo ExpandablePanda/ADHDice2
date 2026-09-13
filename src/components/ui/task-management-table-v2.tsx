@@ -2982,6 +2982,7 @@ export function TaskManagementTableV2({
   } | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const inspectorPanelRef = useRef<HTMLDivElement | null>(null);
+  const editorInteractionRef = useRef<HTMLDivElement | null>(null);
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const tableUserScrollIntentRef = useRef(false);
   const tableScrollTopHoldFrameRef = useRef<number | null>(null);
@@ -3859,7 +3860,8 @@ export function TaskManagementTableV2({
         return;
       }
 
-      if (!inspectorPanelRef.current?.contains(target)) {
+      const interactionRef = overlayMode === "full" ? editorInteractionRef : inspectorPanelRef;
+      if (!interactionRef.current?.contains(target)) {
         closeInspector();
       }
     };
@@ -5677,7 +5679,7 @@ export function TaskManagementTableV2({
     });
   }
 
-  function renderEditorNavigationControls(layout: "mobile" | "side") {
+  function renderEditorNavigationControls(layout: "mobile" | "side", side?: "previous" | "next") {
     if (overlayMode !== "full" || !editorNavigationPosition) {
       return null;
     }
@@ -5714,6 +5716,17 @@ export function TaskManagementTableV2({
         <ArrowRight aria-hidden="true" />
       </AdhdIconButton>
     );
+
+    if (layout === "side" && side) {
+      return (
+        <div
+          className="pointer-events-auto flex items-center justify-center"
+          data-task-editor-navigation={`side-${side}`}
+        >
+          {side === "previous" ? previousButton : nextButton}
+        </div>
+      );
+    }
 
     return (
       <div
@@ -9708,7 +9721,9 @@ export function TaskManagementTableV2({
               onClick={() => closeInspector()}
               exit={{ opacity: 0 }}
               initial={{ opacity: 0 }}
-              key={`task-table-inspector-${selectedTask.id || "blank"}-${overlayMode}`}
+              key={overlayMode === "full"
+                ? "task-table-inspector-full"
+                : `task-table-inspector-${selectedTask.id || "blank"}-${overlayMode}`}
               transition={{ duration: 0.18 }}
             >
               {(() => {
@@ -10542,10 +10557,21 @@ export function TaskManagementTableV2({
                 );
 
                 const fullDesktopEditorNode = (
-                  <div className="relative min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
-                    {renderEditorNavigationControls("side")}
-                    <div className="p-4">
-                      {fullDesktopEditorContent}
+                  <div
+                    className="grid min-w-0 w-full max-w-[calc(100vw-2rem)] grid-cols-[minmax(2.75rem,1fr)_minmax(0,80rem)_minmax(2.75rem,1fr)] items-center gap-3"
+                    data-task-editor-interaction="true"
+                    ref={isFocusedOverlay || useMobileFullOverlay ? undefined : editorInteractionRef}
+                  >
+                    <div className="flex min-w-0 items-center justify-center" data-task-editor-navigation-gutter="previous">
+                      {renderEditorNavigationControls("side", "previous")}
+                    </div>
+                    <div className="relative min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent">
+                      <div className="p-4">
+                        {fullDesktopEditorContent}
+                      </div>
+                    </div>
+                    <div className="flex min-w-0 items-center justify-center" data-task-editor-navigation-gutter="next">
+                      {renderEditorNavigationControls("side", "next")}
                     </div>
                   </div>
                 );
@@ -10616,9 +10642,9 @@ export function TaskManagementTableV2({
               >
                 {isFocusedOverlay ? (
                   <div
-                    className={`absolute w-full ${overlayMode === "full" ? "left-1/2 max-w-[80rem] -translate-x-1/2" : "max-w-[32rem]"}`}
+                    className={`absolute w-full ${overlayMode === "full" ? "left-1/2 max-w-[calc(100vw-2rem)] -translate-x-1/2" : "max-w-[32rem]"}`}
                     onClick={(event) => event.stopPropagation()}
-                    ref={inspectorPanelRef}
+                    ref={overlayMode === "full" ? editorInteractionRef : inspectorPanelRef}
                     style={
                       overlayMode === "full"
                         ? {
@@ -10651,7 +10677,7 @@ export function TaskManagementTableV2({
                   <div
                     className="w-full max-w-[60rem]"
                     onClick={(event) => event.stopPropagation()}
-                    ref={inspectorPanelRef}
+                    ref={overlayMode === "full" ? editorInteractionRef : inspectorPanelRef}
                   >
                     <div className="relative flex max-h-[calc(100dvh-1.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden overscroll-contain rounded-[1.6rem] border border-[#e7defc] bg-white shadow-[0_26px_70px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]">
                       <div className="adhdice-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">

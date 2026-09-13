@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.47`.
+- Current working app version: `7.13.48`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -25,8 +25,20 @@ Table and List, keeping that order stable for the editor session while each
 target resolves live Task data. Missing captured IDs are skipped, boundary
 controls do not wrap, and existing draft commit and detached-task behavior is
 preserved. No Task status, Attention membership, persistence, SQL, schema,
-Supabase, or Edge Function changes were made. Browser QA for 7.13.47 remains
-unverified.
+Supabase, or Edge Function changes were made. The 7.13.47 glow behavior passed
+browser QA; Edit Task navigation browser QA exposed the repeated-navigation
+dismissal corrected in 7.13.48.
+
+## 2026-09-12 7.13.48 Edit Task Navigation Stability
+
+The full Edit Task shell now keeps a stable identity across Previous/Next Task
+changes, so repeated Table and List browsing updates live editor content without
+remounting the outer session or triggering dismissal. Desktop arrows occupy
+transparent side gutters and belong to the same interaction boundary as the
+editor surface; genuine outside clicks still close the editor. Navigation
+ordering and snapshot semantics are unchanged, including missing-ID skipping,
+boundary disabling, live Task resolution, and draft-safe switching. No
+persistence, schema, SQL, Supabase, or Edge Function changes were made.
 
 ## 2026-09-12 7.13.46 Attention Status Signal Polish
 
