@@ -1,6 +1,6 @@
 import type { CustomBehaviorRuleset } from "./database.types.ts";
 
-export type TaskType = "task" | "pursuit" | "goal" | "custom";
+export type TaskType = "task" | "goal" | "custom";
 
 export type TaskTypeSelection = Readonly<{
   customRulesetId: string | null;
@@ -14,23 +14,27 @@ export type TaskTypeSelectionOption = {
 
 export const TASK_TYPE_OPTIONS: ReadonlyArray<{ label: string; value: TaskType }> = [
   { label: "Task", value: "task" },
-  { label: "Pursuit", value: "pursuit" },
-  { label: "Goal", value: "goal" },
   { label: "Custom Default", value: "custom" },
 ];
 
 const BASE_TASK_TYPE_SELECTION_OPTIONS: ReadonlyArray<TaskTypeSelectionOption> = [
   { label: "Task", value: "task" },
-  { label: "Pursuit", value: "pursuit" },
-  { label: "Goal", value: "goal" },
   { label: "Custom Default", value: "custom" },
 ];
 
 export function isTaskType(value: unknown): value is TaskType {
-  return value === "task" || value === "pursuit" || value === "goal" || value === "custom";
+  return value === "task" || value === "goal" || value === "custom";
+}
+
+/** Parse explicit Task Type input without silently translating retired values. */
+export function parseTaskType(value: unknown): TaskType | null {
+  return isTaskType(value) ? value : null;
 }
 
 export function normalizeTaskType(value: unknown): TaskType {
+  if (value === "pursuit") {
+    throw new Error("Task Type 'pursuit' is retired and cannot be normalized.");
+  }
   return isTaskType(value) ? value : "task";
 }
 
@@ -84,12 +88,13 @@ export function taskTypeSelectionValue(
 export function resolveTaskTypeSelection(
   value: unknown,
   rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & { deleted_at?: string | null })[] = [],
-): TaskTypeSelection {
+): TaskTypeSelection | null {
   const namedRuleset = sortNamedCustomRulesets(rulesets).find((ruleset) => ruleset.id === value);
   if (namedRuleset) {
     return { customRulesetId: namedRuleset.id, taskType: "custom" };
   }
-  return { customRulesetId: null, taskType: normalizeTaskType(value) };
+  const taskType = parseTaskType(value);
+  return taskType ? { customRulesetId: null, taskType } : null;
 }
 
 export function formatTaskTypeLabel(
@@ -102,6 +107,7 @@ export function formatTaskTypeLabel(
     const namedRuleset = sortNamedCustomRulesets(rulesets, true).find((ruleset) => ruleset.id === customRulesetId);
     return namedRuleset?.name.trim() || "Custom Default";
   }
+  if (normalizedTaskType === "goal") return "Goal";
   return TASK_TYPE_OPTIONS.find((option) => option.value === normalizedTaskType)?.label ?? "Task";
 }
 

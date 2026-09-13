@@ -29,7 +29,7 @@ import {
   TaskMatrixViewComponent,
 } from "./task-secondary-views";
 import { UrgentTasksPanelComponent } from "./task-grid-widgets";
-import { formatPursuitCalendarDay, formatPursuitCalendarMonth, getPursuitCalendarMonthDays, PursuitCalendarDay, PursuitCalendarPresentation } from "./pursuit-calendar-presentation";
+import { formatTaskHistoryCalendarDay, formatTaskHistoryCalendarMonth, getTaskHistoryCalendarMonthDays, TaskHistoryCalendarDay, TaskHistoryCalendarPresentation } from "./task-history-calendar-presentation";
 import type { TaskDraft } from "./task-editor-model";
 import {
   buildTaskHistoryCalendarDateKeys,
@@ -842,7 +842,7 @@ export function TaskHistoryModal({
     ? ["clear", ...calendarActionStatuses as CalendarActionStatus[]]
     : calendarActionStatuses as CalendarActionStatus[];
   const taskCalendarMonthKey = `${displayedMonth.year}-${String(displayedMonth.month + 1).padStart(2, "0")}`;
-  const taskCalendarMonthDays = getPursuitCalendarMonthDays(taskCalendarMonthKey).map((dateKey) => dateKey && knownDateKeys.has(dateKey) ? dateKey : null);
+  const taskCalendarMonthDays = getTaskHistoryCalendarMonthDays(taskCalendarMonthKey).map((dateKey) => dateKey && knownDateKeys.has(dateKey) ? dateKey : null);
 
   function cellTone(dateKey: string) {
     const entry = historyByDate.get(dateKey);
@@ -1021,7 +1021,7 @@ export function TaskHistoryModal({
   );
 
   const taskCalendarSection = calendarRead ? (
-    <PursuitCalendarPresentation
+    <TaskHistoryCalendarPresentation
       ariaLabel={taskHistoryLabel}
       description="Review and update this task’s outcomes by date."
       historyDescription="Chronological task outcomes, due dates, and attached notes."
@@ -1035,7 +1035,7 @@ export function TaskHistoryModal({
           {row.isCalculated ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">Calculated from task timeline</p> : null}
         </>,
         key: row.logicalDate,
-        label: formatPursuitCalendarDay(row.logicalDate, stateEngineContext?.timezone ?? "UTC"),
+        label: formatTaskHistoryCalendarDay(row.logicalDate, stateEngineContext?.timezone ?? "UTC"),
         status: <span className={`text-xs font-semibold ${taskHistoryStatusClass(row.status)}`}>{row.status === "complete" && row.entry?.event_type === "completed_permanently" ? "Marked Complete" : formatTaskStatusLabel(row.status)}</span>,
       }))}
       historySummary={[
@@ -1046,14 +1046,14 @@ export function TaskHistoryModal({
       ]}
       historyTitle={taskHistoryLabel}
       monthDays={taskCalendarMonthDays}
-      monthLabel={formatPursuitCalendarMonth(taskCalendarMonthKey, stateEngineContext?.timezone ?? "UTC")}
+      monthLabel={formatTaskHistoryCalendarMonth(taskCalendarMonthKey, stateEngineContext?.timezone ?? "UTC")}
       nextMonthDisabled={monthValue(displayedMonth) >= monthValue(lastCalendarMonth)}
       onChangeMonth={(amount) => setDisplayedMonth((current) => shiftTaskCalendarMonth(current, amount))}
       previousMonthDisabled={monthValue(displayedMonth) <= monthValue(firstCalendarMonth)}
       renderDay={(day) => {
         const dateKey = day && knownDateKeys.has(day) ? day : null;
         const stateLabel = dateKey ? calendarStateLabel(dateKey) : undefined;
-        return <PursuitCalendarDay ariaLabel={dateKey ? `${formatCalendarDate(dateKey)}, ${stateLabel}` : undefined} day={dateKey} onClick={() => { if (dateKey) selectDate(dateKey); }} selected={dateKey ? selectedDateSet.has(dateKey) : false} stateClassName={dateKey ? cellTone(dateKey) : undefined} title={dateKey ? `${formatCalendarDate(dateKey)} · ${stateLabel}` : undefined} />;
+        return <TaskHistoryCalendarDay ariaLabel={dateKey ? `${formatCalendarDate(dateKey)}, ${stateLabel}` : undefined} day={dateKey} onClick={() => { if (dateKey) selectDate(dateKey); }} selected={dateKey ? selectedDateSet.has(dateKey) : false} stateClassName={dateKey ? cellTone(dateKey) : undefined} title={dateKey ? `${formatCalendarDate(dateKey)} · ${stateLabel}` : undefined} />;
       }}
       selectedDayAction={taskSelectedActions}
       selectedDayContent={<div className="mt-3">
@@ -1061,7 +1061,7 @@ export function TaskHistoryModal({
         {!isMultiSelect && selectedEntry ? <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">{[formatTaskHistoryLoggedLine(selectedEntry) ?? "Logged time unavailable", formatTaskHistoryEditedLine(selectedEntry)].filter((value): value is string => Boolean(value)).join(" • ")}</p> : null}
         {showDelayEditor && canDelaySelectedDate ? <div className="mt-3"><TaskDelayPicker anchorDateKey={selectedDate === today ? today : selectedDate} description={selectedDate === today ? "Delay today’s live task without changing past rewards or completion history." : "Correct this saved occurrence to Delayed using the app’s existing history semantics without double-counting rewards."} inputClassName="h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]" onCancel={() => setShowDelayEditor(false)} onSave={(nextDueOn) => handleSaveDelayedStatus(nextDueOn)} primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" saveLabel="Save delayed status" /></div> : null}
       </div>}
-      selectedDayLabel={formatPursuitCalendarDay(selectedDate, stateEngineContext?.timezone ?? "UTC")}
+      selectedDayLabel={formatTaskHistoryCalendarDay(selectedDate, stateEngineContext?.timezone ?? "UTC")}
       selectedDayStatus={calendarStateLabel(selectedDate)}
     />
   ) : null;

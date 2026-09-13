@@ -8,9 +8,8 @@ import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-di
 import { formatAttentionTaskTiming } from "@/lib/task-attention";
 import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
 import { formatTaskStatusLabel } from "./task-status-ui";
-import { PursuitsWorkspace, type PursuitsWorkspaceProps } from "./pursuits-workspace";
 
-type AttentionWorkspaceProps = PursuitsWorkspaceProps & {
+type AttentionWorkspaceProps = {
   dueOnByTaskId: Record<string, string | null>;
   onOpenTask: (taskId: string) => void;
   statusesByTaskId: TaskDisplayStatusByTaskId;
@@ -24,11 +23,10 @@ export function AttentionWorkspace({
   statusesByTaskId,
   tasks,
   todayKey,
-  ...pursuitProps
 }: AttentionWorkspaceProps) {
   // This legacy workspace is not the active TaskApp route. If rendered, its
   // caller supplies the already-derived final Attention members as `tasks`.
-  const sections = { comingUp: [], inProgress: [], needsAction: tasks };
+  const sections: { comingUp: Task[]; inProgress: Task[]; needsAction: Task[] } = { comingUp: [], inProgress: [], needsAction: tasks };
   const taskSectionEmptyText = undefined;
   const [showAllComingUp, setShowAllComingUp] = useState(false);
   const visibleComingUp = showAllComingUp ? sections.comingUp : sections.comingUp.slice(0, 6);
@@ -41,7 +39,7 @@ export function AttentionWorkspace({
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[#39334b] dark:text-white/88">Attention</h1>
           <p className="mt-1 max-w-xl text-sm leading-6 text-[#7b748e] dark:text-white/55">A compact working view for what needs a decision now and what is coming up.</p>
         </div>
-        <AdhdChip icon={<ListTodo className="h-3.5 w-3.5" />} tone="purple">Task + Pursuit view</AdhdChip>
+        <AdhdChip icon={<ListTodo className="h-3.5 w-3.5" />} tone="purple">Task view</AdhdChip>
       </div>
 
       <AttentionTaskSection
@@ -66,8 +64,6 @@ export function AttentionWorkspace({
         dueOnByTaskId={dueOnByTaskId}
         onOpenTask={onOpenTask}
       />
-
-      <PursuitsWorkspace {...pursuitProps} todayKey={todayKey} />
 
       <AdhdPanel title="Coming Up" subtitle="Future Tasks remain awareness, not urgency.">
         {visibleComingUp.length === 0 ? (

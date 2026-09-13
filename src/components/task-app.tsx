@@ -90,8 +90,6 @@ import { DetachAndPromoteMilestoneModal, MilestoneCorrectionModal, MilestoneSetu
 import { MilestoneInspectorSection } from "./task-app/milestone-detail-section";
 import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-app/milestone-lifecycle-modal";
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
-import { PursuitEditorModal } from "./task-app/pursuits-workspace";
-import type { PursuitInlineCreateInput } from "./task-app/pursuit-workspace-row";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { TaskCalendarView } from "./task-app/task-calendar-view";
@@ -152,8 +150,6 @@ import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
-import { usePursuits } from "@/hooks/usePursuits";
-import { buildPursuitAttentionMap, getPursuitSearchContextTaskIds } from "@/lib/pursuit-domain";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
 import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
@@ -177,7 +173,7 @@ import { persistHealthTabPreference, readHealthTabPreference, subscribeToHealthT
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { getLevelProgress } from "@/lib/economy-levels";
 import { buildHealthReminderTemplate, HEALTH_TABS, type HealthReminderTemplateKey, type HealthSleepKind } from "@/lib/health-utils";
-import { isPursuitVisibleInTaskWorkspace, isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
+import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { sortTasksForUi } from "@/lib/task-sorting";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "@/lib/task-filter-state";
@@ -1633,25 +1629,6 @@ export function TaskApp() {
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
   const [taskEditorNavigationTaskIds, setTaskEditorNavigationTaskIds] = useState<string[] | null>(null);
-  const [pursuitEditorState, setPursuitEditorState] = useState<{ initialSection: "overview" | "calendar"; parentPursuitId: string | null; pursuitId: string | null; parentTaskId: string | null; returnToTaskEditorId: string | null } | null>(null);
-  const openNewPursuitEditor = useCallback((parentTaskId: string | null = null, returnToTaskEditorId: string | null = null, parentPursuitId: string | null = null) => {
-    setPursuitEditorState({ initialSection: "overview", parentPursuitId, parentTaskId, pursuitId: null, returnToTaskEditorId });
-  }, []);
-  const openPursuitEditor = useCallback((pursuitId: string, returnToTaskEditorId: string | null = null, initialSection: "overview" | "calendar" = "overview") => {
-    setPursuitEditorState({ initialSection, parentPursuitId: null, parentTaskId: null, pursuitId, returnToTaskEditorId });
-  }, []);
-  const openPursuitCalendar = useCallback((pursuitId: string) => {
-    openPursuitEditor(pursuitId, null, "calendar");
-  }, [openPursuitEditor]);
-  const openNewPursuitEditorFromPursuit = useCallback((parentPursuitId: string) => {
-    openNewPursuitEditor(null, null, parentPursuitId);
-  }, [openNewPursuitEditor]);
-  const openNewPursuitEditorFromTaskEditor = useCallback((parentTaskId: string) => {
-    openNewPursuitEditor(parentTaskId, sharedTaskEditorOverlayTaskId);
-  }, [openNewPursuitEditor, sharedTaskEditorOverlayTaskId]);
-  const openPursuitEditorFromTaskEditor = useCallback((pursuitId: string) => {
-    openPursuitEditor(pursuitId, sharedTaskEditorOverlayTaskId);
-  }, [openPursuitEditor, sharedTaskEditorOverlayTaskId]);
   const [milestoneSetupTaskId, setMilestoneSetupTaskId] = useState<string | null>(null);
   const [milestoneCorrectionId, setMilestoneCorrectionId] = useState<string | null>(null);
   const [pendingDetachMilestoneTaskId, setPendingDetachMilestoneTaskId] = useState<string | null>(null);
@@ -1661,14 +1638,6 @@ export function TaskApp() {
   const milestoneOperationIdsRef = useRef(new Map<string, string>());
   const [taskEditorFocusRequest, setTaskEditorFocusRequest] = useState<TaskEditorFocusRequest | null>(null);
   const taskEditorFocusTokenRef = useRef(0);
-  const closePursuitEditor = useCallback(() => {
-    const returnToTaskEditorId = pursuitEditorState?.returnToTaskEditorId ?? null;
-    setPursuitEditorState(null);
-    if (returnToTaskEditorId) {
-      setSharedTaskEditorOverlayTaskId(returnToTaskEditorId);
-      setTaskEditorFocusRequest(null);
-    }
-  }, [pursuitEditorState]);
   const [suppressDetachedListNoticeTaskId, setSuppressDetachedListNoticeTaskId] = useState<string | null>(null);
   const [activeTaskTimerIndex, setActiveTaskTimerIndex] = useState(0);
   const [isActiveTimersTrayOpen, setIsActiveTimersTrayOpen] = useState(false);
@@ -1707,21 +1676,6 @@ export function TaskApp() {
   });
   const [dayStartTime, setDayStartTime] = useState<string>("06:00");
   const [userTimeZone, setUserTimeZone] = useState<string>(getBrowserTimeZone());
-  const pursuitData = usePursuits(
-    supabase,
-    currentUserId,
-    setMessage,
-    activePage === "Tasks",
-    { dayStartTime, timezone: userTimeZone },
-  );
-  const createInlinePursuit = useCallback((input: PursuitInlineCreateInput) => pursuitData.createPursuit(input), [pursuitData.createPursuit]);
-  const deletePursuit = useCallback(async (pursuitId: string) => {
-    const deleted = await pursuitData.deletePursuit(pursuitId);
-    if (deleted && pursuitEditorState?.pursuitId === pursuitId) {
-      closePursuitEditor();
-    }
-    return deleted;
-  }, [closePursuitEditor, pursuitData.deletePursuit, pursuitEditorState?.pursuitId]);
   const onTimePlan = useOnTimePlan(
     currentUserId,
     userTimeZone,
@@ -3472,49 +3426,6 @@ export function TaskApp() {
     }),
     [attentionRuleGroup, taskDisplayDueOnByTaskId, taskDisplayStatusByTaskId, taskListMembershipsByTaskId, tasksForActiveStatusRead, todayKey],
   );
-  const pursuitAttentionMap = useMemo(
-    () => buildPursuitAttentionMap(pursuitData.pursuits, pursuitData.activities, {
-      dayStartTime,
-      now: new Date(logicalDayNow),
-      timezone: userTimeZone,
-      todayKey,
-    }),
-    [dayStartTime, logicalDayNow, pursuitData.activities, pursuitData.pursuits, todayKey, userTimeZone],
-  );
-  const allPursuitTags = useMemo(
-    () => Array.from(new Set([
-      ...allTaskTags,
-      ...pursuitData.pursuits.flatMap((pursuit) => pursuit.tags ?? []),
-    ])).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" })),
-    [allTaskTags, pursuitData.pursuits],
-  );
-  const pursuitCompletionSummaryMap = useMemo(
-    () => new Map(Array.from(pursuitAttentionMap.entries()).map(([id, row]) => [id, row.completionSummary])),
-    [pursuitAttentionMap],
-  );
-  const togglePursuitDoneToday = (pursuitId: string) => {
-    if (pursuitAttentionMap.get(pursuitId)?.completionSummary.completedToday) {
-      void pursuitData.removeCompletionOnLogicalDay(pursuitId, todayKey);
-    } else {
-      void pursuitData.markDoneToday(pursuitId);
-    }
-  };
-  const taskWorkspacePursuits = useMemo(
-    () => isPursuitVisibleInTaskWorkspace(taskUiState.selectedBucket) ? pursuitData.pursuits : [],
-    [pursuitData.pursuits, taskUiState.selectedBucket],
-  );
-  const pursuitSearchContextTaskIds = useMemo(
-    () => getPursuitSearchContextTaskIds(taskWorkspacePursuits, effectiveSearchQuery),
-    [effectiveSearchQuery, taskWorkspacePursuits],
-  );
-  const pursuitSearchContextTasks = useMemo(() => {
-    if (pursuitSearchContextTaskIds.length === 0) return [] as Task[];
-
-    const visibleRootTaskIds = new Set(canonicalVisibleRootTasksSorted.map((task) => task.id));
-    return pursuitSearchContextTaskIds
-      .map((taskId) => stableCanonicalTaskIndex.taskById.get(taskId))
-      .filter((task): task is Task => Boolean(task && visibleRootTaskIds.has(task.id)));
-  }, [canonicalVisibleRootTasksSorted, pursuitSearchContextTaskIds, stableCanonicalTaskIndex]);
   const [sharedEditorRowModelCache] = useState(createStableTaskRowModelCache);
   const sharedTaskEditorRows = useMemo(
     () => sharedTaskEditorOverlayTaskId
@@ -5514,9 +5425,6 @@ export function TaskApp() {
   const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
     ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
     : null;
-  const pursuitEditorTarget = pursuitEditorState?.pursuitId
-    ? pursuitData.pursuits.find((pursuit) => pursuit.id === pursuitEditorState.pursuitId) ?? null
-    : null;
   const effectiveTaskUiState = { ...taskUiState, duplicateTitleMode: duplicateTitleModeActive };
   const toggleDuplicateTitleMode = () => {
     setTaskUiState((prev) => {
@@ -6878,7 +6786,6 @@ export function TaskApp() {
     metric: momentumMetric,
     onCycleMomentum: () => setMomentumView(getNextMomentumView(momentumView)),
     onOpenTaskComposer: openInlineNewListTaskComposer,
-    onOpenPursuitComposer: () => openNewPursuitEditor(),
     onOpenFocusPlanner: openFocusPlanner,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
@@ -7040,30 +6947,6 @@ export function TaskApp() {
       data-lowstim={lowStim ? "" : undefined}
       className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
     >
-      {pursuitEditorState ? (
-        <PursuitEditorModal
-          allTagOptions={allPursuitTags}
-          completionSummaryByPursuitId={pursuitCompletionSummaryMap}
-          completionSummary={pursuitEditorTarget ? pursuitAttentionMap.get(pursuitEditorTarget.id)?.completionSummary : undefined}
-          dayStartTime={dayStartTime}
-          activities={pursuitData.activities}
-          initialParentPursuitId={pursuitEditorState.parentPursuitId}
-          initialParentTaskId={pursuitEditorState.parentTaskId}
-          initialSection={pursuitEditorState.initialSection}
-          onClose={closePursuitEditor}
-          onCreate={pursuitData.createPursuit}
-          onMarkCompletedOnLogicalDay={pursuitData.markCompletedOnLogicalDay}
-          onMarkDoneToday={pursuitData.markDoneToday}
-          onOpenPursuit={(pursuitId) => openPursuitEditor(pursuitId, pursuitEditorState.returnToTaskEditorId)}
-          onRemoveCompletionOnLogicalDay={pursuitData.removeCompletionOnLogicalDay}
-          onUpdate={pursuitData.updatePursuit}
-          pursuit={pursuitEditorTarget}
-          pursuits={pursuitData.pursuits}
-          taskOptions={tasks.map((task) => ({ id: task.id, title: task.title }))}
-          todayKey={todayKey}
-          timezone={userTimeZone}
-        />
-      ) : null}
       {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
         <TaskManagementTableV2
           allListOptions={availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name }))}
@@ -7080,8 +6963,6 @@ export function TaskApp() {
           milestoneDetachPromotionTaskIds={milestoneDetachPromotionTaskIds}
           milestonePromotionTaskIds={milestonePromotionTaskIds}
           onCreateChildTask={createChildTaskFromPreview}
-          onCreateChildPursuit={openNewPursuitEditorFromTaskEditor}
-          onCreatePursuitInline={createInlinePursuit}
           onCreateTaskList={async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null })}
           onDetachAndPromoteTaskToMilestone={requestDetachAndPromoteMilestone}
           onDiscardTaskTimer={requestTaskTimerDiscard}
@@ -7095,13 +6976,6 @@ export function TaskApp() {
           onMoveTaskIntoParent={moveTaskIntoParent}
           onNextTaskTimer={() => cycleHudTaskTimer("next")}
           onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
-          onOpenPursuit={openPursuitEditorFromTaskEditor}
-          onMarkDonePursuit={togglePursuitDoneToday}
-          onOpenPursuitCalendar={(pursuitId) => openPursuitEditor(pursuitId, sharedTaskEditorOverlayTaskId, "calendar")}
-          onCreatePursuitChild={(pursuitId) => openNewPursuitEditor(null, sharedTaskEditorOverlayTaskId, pursuitId)}
-          onDeletePursuit={deletePursuit}
-          onRemovePursuitCompletion={pursuitData.removeCompletionOnLogicalDay}
-          onUpdatePursuit={pursuitData.updatePursuit}
           onOpenNote={(noteId) => {
             closeSharedTaskEditorOverlay();
             setNotePageOpenNoteId(noteId);
@@ -7166,11 +7040,6 @@ export function TaskApp() {
           onTaskSubtaskRename={(subtaskId, title) => { void renameTaskSubtask(subtaskId, title); }}
           onTaskSubtasksAutoResetChange={(taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); }}
           onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
-          pursuits={pursuitData.pursuits}
-          pursuitAttentionById={pursuitAttentionMap}
-          pursuitSearch=""
-          pursuitTimezone={userTimeZone}
-          pursuitTodayKey={todayKey}
           onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
           onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
           onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
@@ -7531,28 +7400,6 @@ export function TaskApp() {
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
                   allTasks: tasksForActiveStatusRead,
-                  pursuits: taskWorkspacePursuits,
-                  pursuitSearchContextTaskIds,
-                  pursuitSearchContextTasks,
-                  pursuitAttentionById: pursuitAttentionMap,
-                  pursuitSearch: effectiveSearchQuery,
-                  onOpenPursuit: openPursuitEditor,
-                  onOpenPursuitCalendar: openPursuitCalendar,
-                  onCreateChildPursuit: openNewPursuitEditor,
-                  onCreatePursuitInline: createInlinePursuit,
-                  onCreatePursuitChild: openNewPursuitEditorFromPursuit,
-                  onDeletePursuit: deletePursuit,
-                  onMarkDonePursuit: (pursuitId, notes) => {
-                    if (pursuitAttentionMap.get(pursuitId)?.completionSummary.completedToday) {
-                      void pursuitData.removeCompletionOnLogicalDay(pursuitId, todayKey);
-                    } else {
-                      void pursuitData.markDoneToday(pursuitId, notes);
-                    }
-                  },
-                  onRemovePursuitCompletion: (pursuitId, logicalDay) => pursuitData.removeCompletionOnLogicalDay(pursuitId, logicalDay),
-                  onUpdatePursuit: pursuitData.updatePursuit,
-                  pursuitTodayKey: todayKey,
-                  pursuitTimezone: userTimeZone,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
                   columnFilters: taskUiState.tableColumnFilters,
@@ -7742,28 +7589,6 @@ export function TaskApp() {
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
                   allTasks: tasksForActiveStatusRead,
-                  pursuits: taskWorkspacePursuits,
-                  pursuitSearchContextTaskIds,
-                  pursuitSearchContextTasks,
-                  pursuitAttentionById: pursuitAttentionMap,
-                  pursuitSearch: effectiveSearchQuery,
-                  onOpenPursuit: openPursuitEditor,
-                  onOpenPursuitCalendar: openPursuitCalendar,
-                  onCreateChildPursuit: openNewPursuitEditor,
-                  onCreatePursuitInline: createInlinePursuit,
-                  onCreatePursuitChild: openNewPursuitEditorFromPursuit,
-                  onDeletePursuit: deletePursuit,
-                  onMarkDonePursuit: (pursuitId, notes) => {
-                    if (pursuitAttentionMap.get(pursuitId)?.completionSummary.completedToday) {
-                      void pursuitData.removeCompletionOnLogicalDay(pursuitId, todayKey);
-                    } else {
-                      void pursuitData.markDoneToday(pursuitId, notes);
-                    }
-                  },
-                  onRemovePursuitCompletion: (pursuitId, logicalDay) => pursuitData.removeCompletionOnLogicalDay(pursuitId, logicalDay),
-                  onUpdatePursuit: pursuitData.updatePursuit,
-                  pursuitTodayKey: todayKey,
-                  pursuitTimezone: userTimeZone,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
                   columnFilters: taskUiState.tableColumnFilters,

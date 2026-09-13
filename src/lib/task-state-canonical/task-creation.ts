@@ -6,7 +6,7 @@ import type {
   TaskStatus,
 } from "../database.types";
 import { logicalDateForTimestamp } from "../task-state-engine/calendar.ts";
-import { normalizeTaskType } from "../task-type.ts";
+import { parseTaskType } from "../task-type.ts";
 import type { CanonicalEntityKind } from "./types.ts";
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
@@ -111,7 +111,10 @@ function normalizedDraft(input: Omit<TaskInsert, "user_id">): CanonicalTaskCreat
     fail("UNSAFE_TRASH_SNAPSHOT", "Imported Trash timestamps require canonical container provenance and were not accepted.");
   }
 
-  const taskType = normalizeTaskType(input.task_type);
+  const taskType = parseTaskType(input.task_type ?? "task");
+  if (!taskType) {
+    fail("INVALID_TASK_TYPE", "Task Type is invalid or retired.");
+  }
   const customRulesetId = input.custom_ruleset_id ?? null;
   if (customRulesetId !== null && !UUID_KEY.test(customRulesetId)) {
     fail("INVALID_CUSTOM_RULESET", "Custom ruleset identity is invalid.");

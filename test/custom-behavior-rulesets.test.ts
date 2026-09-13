@@ -200,9 +200,9 @@ test("historical behavior selection resolves TaskType and named ruleset transiti
     custom: [revision("custom-default", "2026-09-01")],
   };
   const resolve = (
-    selections: Array<{ effectiveFromLogicalDate: string; taskType: "task" | "pursuit" | "goal" | "custom"; customRulesetId: string | null }>,
+    selections: Array<{ effectiveFromLogicalDate: string; taskType: "task" | "goal" | "custom"; customRulesetId: string | null }>,
     logicalDate: string,
-    taskType: "task" | "pursuit" | "goal" | "custom",
+    taskType: "task" | "goal" | "custom",
     customRulesetId: string | null = null,
   ) => resolveTaskBehaviorPolicyForTask({
     behaviorPolicyRevisions,
@@ -249,7 +249,7 @@ test("historical behavior selection resolves TaskType and named ruleset transiti
   assert.equal(resolve(practiceToCustomDefault, "2026-09-05", "custom").unresolvedOccurrence, "blank");
   assert.equal(resolve(practiceToCustomDefault, "2026-09-12", "custom").unresolvedOccurrence, "missed");
 
-  for (const taskType of ["pursuit", "goal"] as const) {
+  for (const taskType of ["goal"] as const) {
     const customToInactive = [
       { effectiveFromLogicalDate: "2026-09-01", taskType: "custom" as const, customRulesetId: "ruleset-practice" },
       { effectiveFromLogicalDate: "2026-09-10", taskType, customRulesetId: null },
@@ -259,8 +259,8 @@ test("historical behavior selection resolves TaskType and named ruleset transiti
   }
 });
 
-test("Pursuit and Goal cannot activate a named Custom ruleset", () => {
-  for (const taskType of ["pursuit", "goal"] as const) {
+test("legacy Goal cannot activate a named Custom ruleset", () => {
+  for (const taskType of ["goal"] as const) {
     const input = buildCompatibilityTaskStateEngineInput({
       ...task,
       task_type: taskType,

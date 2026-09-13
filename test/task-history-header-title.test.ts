@@ -6,17 +6,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { EditableEntityHeaderTitle } from "../src/components/ui-system/editable-entity-header-title.tsx";
 
 const sharedTitleSource = readFileSync(new URL("../src/components/ui-system/editable-entity-header-title.tsx", import.meta.url), "utf8");
-const pursuitSource = readFileSync(new URL("../src/components/task-app/pursuits-workspace.tsx", import.meta.url), "utf8");
 const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
-test("Task and Pursuit headers use the same shared editable title control", () => {
-  assert.match(pursuitSource, /<EditableEntityHeaderTitle aria-label="Pursuit title" onChange=\{setTitle\} placeholder="Name this Pursuit" value=\{title\} \/>/);
+test("Task History uses the shared editable title control", () => {
   assert.match(modalSource, /<EditableEntityHeaderTitle aria-label="Task title" onCancel=\{cancelTaskTitle\} onChange=\{setTaskTitleDraft\} onCommit=\{commitTaskTitle\} placeholder="Name this Task" value=\{taskTitleDraft\} \/>/);
   assert.doesNotMatch(modalSource, /<h2[^>]*>\{taskTitle\}<\/h2>/);
 });
 
-test("shared title control preserves the approved Pursuit input presentation", () => {
+test("shared title control preserves the approved Task input presentation", () => {
   const markup = renderToStaticMarkup(createElement(EditableEntityHeaderTitle, {
     "aria-label": "Task title",
     onChange: () => undefined,
@@ -43,10 +41,4 @@ test("Task title editing commits through the canonical Task update and supports 
   assert.match(modal, /onCommit=\{commitTaskTitle\}/);
   assert.match(modal, /onRenameTaskTitle\(task\.id, nextTitle\)/);
   assert.match(flow, /onRenameTaskTitle: \(taskId: string, nextTitle: string\): Promise<boolean> => updateTask\(taskId, \{ title: nextTitle \}\)/);
-});
-
-test("Pursuit keeps its existing form-owned title editing behavior", () => {
-  assert.match(pursuitSource, /<EditableEntityHeaderTitle aria-label="Pursuit title" onChange=\{setTitle\}/);
-  assert.doesNotMatch(pursuitSource, /onCommit=\{.*Pursuit/);
-  assert.match(pursuitSource, /<form className="flex min-h-0 flex-1 flex-col" onSubmit=\{handleSubmit\}>/);
 });

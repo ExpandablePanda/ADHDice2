@@ -153,7 +153,7 @@ test("stored Task profile normalization and ownership filter are narrow", async 
   assert.equal(customBehaviorRulesetRevisionUpsertPayload("ruleset-practice", "2026-09-08", legacyPreservePolicy).positive_streak_on_unhandled, "break");
   assert.equal(resolveTaskBehaviorPolicy("task", result.data), result.data.task);
   assert.equal(resolveTaskBehaviorPolicy("custom", result.data), result.data.custom);
-  assert.equal(resolveTaskBehaviorPolicy("pursuit", result.data), STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.equal(resolveTaskBehaviorPolicy("goal", result.data), STANDARD_TASK_BEHAVIOR_POLICY);
 });
 
 test("type-aware optimistic replacement and rollback do not cross TaskType boundaries", () => {
@@ -373,10 +373,6 @@ test("Custom policy changes invalidate the same semantic projections while stayi
   assert.notDeepEqual(customSemantics.activeStatus, taskSemantics.activeStatus);
   assert.notDeepEqual(customSemantics.streak, taskSemantics.streak);
   assert.notDeepEqual(customSemantics.rewards, taskSemantics.rewards);
-  assert.deepEqual(
-    selectTaskBehaviorProjectionSemantics({ behaviorPolicyRevisions: { task: [task], custom: [custom] }, taskType: "pursuit" }),
-    selectTaskBehaviorProjectionSemantics({ taskType: "pursuit" }),
-  );
   assert.deepEqual(
     selectTaskBehaviorProjectionSemantics({ behaviorPolicyRevisions: { task: [task], custom: [custom] }, taskType: "goal" }),
     selectTaskBehaviorProjectionSemantics({ taskType: "goal" }),
@@ -629,9 +625,9 @@ test("explicit persisted Missed History remains factual under a blank/ignore bas
   assert.equal(timeline.days["2026-09-05"]?.unhandled, false);
 });
 
-test("settings UI model exposes configurable Task and Custom tabs with inactive Pursuit and Goal tabs", () => {
+test("settings UI model exposes configurable Task and Custom tabs while keeping Goal legacy-only", () => {
   const settingsSource = readFileSync("src/components/task-app/task-type-behavior-settings.tsx", "utf8");
-  assert.deepEqual(TASK_TYPE_BEHAVIOR_TABS.map((tab) => tab.value), ["task", "pursuit", "goal", "custom"]);
+  assert.deepEqual(TASK_TYPE_BEHAVIOR_TABS.map((tab) => tab.value), ["task", "custom"]);
   assert.match(settingsSource, /Unfinished scheduled occurrence/);
   assert.match(settingsSource, /Missed streak when scheduled occurrence is unfinished/);
   assert.doesNotMatch(settingsSource, /positiveStreakOnUnhandled|Positive streak when scheduled occurrence is unfinished|Preserve streak/);
@@ -640,7 +636,6 @@ test("settings UI model exposes configurable Task and Custom tabs with inactive 
   assert.match(settingsSource, /\+ New Ruleset/);
   assert.match(settingsSource, /Ruleset name/);
   assert.match(settingsSource, /onCustomRulesetChange/);
-  assert.equal(taskTypeBehaviorTabDescription("pursuit"), "Behavior profile not configured yet.");
   assert.equal(taskTypeBehaviorTabDescription("goal"), "Behavior profile not configured yet.");
   assert.equal(taskTypeBehaviorTabDescription("custom"), null);
   assert.match(settingsSource, /activeTab === "task" \|\| \(activeTab === "custom" && !selectedRuleset\)/);

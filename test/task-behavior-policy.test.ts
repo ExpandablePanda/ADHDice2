@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createTask } from "../src/lib/task-buckets.ts";
-import { normalizeTaskType, type TaskType } from "../src/lib/task-type.ts";
+import { normalizeTaskType, parseTaskType, type TaskType } from "../src/lib/task-type.ts";
 import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import {
   buildCompatibilityTaskStateEngineInput,
@@ -26,7 +26,6 @@ import {
   normalizeTaskNeedsActionTriggers,
   taskManualActionForCanonicalCommand,
   taskManualActionForStatus,
-  type TaskBehaviorPolicy,
   type TaskStateEngineInput,
 } from "../src/lib/task-state-engine/index.ts";
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
@@ -66,15 +65,17 @@ const storedTask = {
   } as unknown as CanonicalTaskScheduleBoundary,
 };
 
-test("missing and every persisted TaskType resolve to the frozen standard profile", () => {
+test("missing and every supported persisted TaskType resolve to the frozen standard profile", () => {
   assert.equal(resolveTaskBehaviorPolicy(undefined), STANDARD_TASK_BEHAVIOR_POLICY);
   assert.equal(resolveTaskBehaviorPolicy(null), STANDARD_TASK_BEHAVIOR_POLICY);
-  for (const taskType of ["task", "pursuit", "goal", "custom"] as TaskType[]) {
+  for (const taskType of ["task", "goal", "custom"] as TaskType[]) {
     assert.equal(normalizeTaskType(taskType), taskType);
     assert.equal(resolveTaskBehaviorPolicy(taskType), STANDARD_TASK_BEHAVIOR_POLICY);
   }
-  assert.equal(normalizeTaskType("legacy-pursuit"), "task");
-  assert.equal(resolveTaskBehaviorPolicy("legacy-pursuit" as TaskType), STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.equal(parseTaskType("pursuit"), null);
+  assert.throws(() => normalizeTaskType("pursuit"), /retired/);
+  assert.equal(normalizeTaskType("legacy"), "task");
+  assert.equal(resolveTaskBehaviorPolicy("legacy" as TaskType), STANDARD_TASK_BEHAVIOR_POLICY);
   assert.equal(Object.isFrozen(STANDARD_TASK_BEHAVIOR_POLICY), true);
   assert.deepEqual(STANDARD_TASK_BEHAVIOR_POLICY, {
     id: "standard-task",
@@ -232,7 +233,7 @@ test("stored Task normalization explicitly supplies Standard Task policy", () =>
 
 test("direct and compatibility inputs resolve policy from stored TaskType without changing the engine input", () => {
   const context = { now: input.now, timezone: input.timezone, logicalDayRollover: input.logicalDayRollover };
-  for (const taskType of ["task", "pursuit", "goal", "custom"] as TaskType[]) {
+  for (const taskType of ["task", "goal", "custom"] as TaskType[]) {
     const direct = buildDirectTaskStateEngineInput({ ...storedTask, task_type: taskType }, [], context);
     const compatibility = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: taskType }, [], context);
     assert.equal(direct.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY, taskType);
@@ -278,7 +279,6 @@ test("Task and Custom resolve independent effective-dated profiles through the s
 
   assert.equal(resolveTaskBehaviorPolicy("custom", profiles, revisions, "2026-09-15").unresolvedOccurrence, "blank");
   assert.equal(resolveTaskBehaviorPolicy("task", profiles, revisions, "2026-09-15").unresolvedOccurrence, "missed");
-  assert.equal(resolveTaskBehaviorPolicy("pursuit", profiles, revisions, "2026-09-15"), STANDARD_TASK_BEHAVIOR_POLICY);
   assert.equal(resolveTaskBehaviorPolicy("goal", profiles, revisions, "2026-09-15"), STANDARD_TASK_BEHAVIOR_POLICY);
 
   const customInput = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: "custom" }, [], context);
@@ -300,7 +300,7 @@ test("Task and Custom resolve independent effective-dated profiles through the s
   assert.equal(customTimeline.days["2026-09-11"]?.behaviorPolicy.unresolvedOccurrence, "blank");
 });
 
-test("inactive Pursuit and Goal rows cannot enter the effective timeline through direct input", () => {
+test("legacy Goal rows cannot enter the effective timeline through direct input", () => {
   const inactiveRevision = {
     id: "inactive-profile",
     effectiveFromLogicalDate: "2026-09-01",
@@ -309,14 +309,12 @@ test("inactive Pursuit and Goal rows cannot enter the effective timeline through
     missedStreakOnUnhandled: "ignore" as const,
     rewards: "disabled" as const,
   };
-  for (const taskType of ["pursuit", "goal"] as const) {
+  for (const taskType of ["goal"] as const) {
     const context = {
       behaviorProfiles: {
         [taskType]: normalizeTaskBehaviorProfile(inactiveRevision, taskType),
       },
-      behaviorPolicyRevisions: taskType === "pursuit"
-        ? { pursuit: [inactiveRevision] }
-        : { goal: [inactiveRevision] },
+      behaviorPolicyRevisions: { goal: [inactiveRevision] },
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.logicalDayRollover,
@@ -343,28 +341,4 @@ test("the Task Engine resolves the standard policy without changing current eval
 
   assert.equal(implicit.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY);
   assert.deepEqual(implicit, explicit);
-});
-
-test("a future Pursuit-like semantic policy is representable but inactive", () => {
-  const futurePursuitExample: TaskBehaviorPolicy = {
-    id: "future-pursuit-example",
-    unresolvedOccurrence: "blank",
-    positiveStreakOnUnhandled: "break",
-    missedStreakOnUnhandled: "ignore",
-    rewards: "enabled",
-    availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
-    needsActionTriggers: ["missed", "due_today", "overdue"],
-  };
-
-  assert.deepEqual(futurePursuitExample, {
-    id: "future-pursuit-example",
-    unresolvedOccurrence: "blank",
-    positiveStreakOnUnhandled: "break",
-    missedStreakOnUnhandled: "ignore",
-    rewards: "enabled",
-    availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
-    needsActionTriggers: ["missed", "due_today", "overdue"],
-  });
-  assert.deepEqual(resolveTaskBehaviorPolicy(futurePursuitExample), futurePursuitExample);
-  assert.deepEqual(evaluateTaskState({ ...input, behaviorPolicy: futurePursuitExample }).behaviorPolicy, futurePursuitExample);
 });

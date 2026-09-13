@@ -142,7 +142,7 @@ function toBehaviorSelection(row: PersistedTaskBehaviorSelection, userId: string
   if (row.user_id !== userId
     || typeof row.task_id !== "string"
     || !LOGICAL_DATE.test(row.effective_from_logical_date)
-    || !["task", "pursuit", "goal", "custom"].includes(row.task_type)
+    || !["task", "goal", "custom"].includes(row.task_type)
     || (row.custom_ruleset_id !== null && typeof row.custom_ruleset_id !== "string")
     || (row.custom_ruleset_id !== null && row.task_type !== "custom")) {
     return null;

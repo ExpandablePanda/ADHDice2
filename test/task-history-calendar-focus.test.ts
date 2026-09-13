@@ -48,10 +48,10 @@ test("Task History opens its month calendar at the requested date", () => {
   assert.match(taskHistoryModalSource, /getTaskCalendarMonth\(new Date\(`\$\{initialSelectedDate\}T12:00:00`\)\)/);
 });
 
-test("Task History uses the promoted shared Pursuit-style month presentation and bounded navigation", () => {
-  assert.match(taskHistoryModalSource, /<PursuitCalendarPresentation/);
-  assert.match(taskHistoryModalSource, /getPursuitCalendarMonthDays\(taskCalendarMonthKey\)/);
-  assert.match(taskHistoryModalSource, /formatPursuitCalendarMonth\(taskCalendarMonthKey/);
+test("Task History uses the shared month presentation and bounded navigation", () => {
+  assert.match(taskHistoryModalSource, /<TaskHistoryCalendarPresentation/);
+  assert.match(taskHistoryModalSource, /getTaskHistoryCalendarMonthDays\(taskCalendarMonthKey\)/);
+  assert.match(taskHistoryModalSource, /formatTaskHistoryCalendarMonth\(taskCalendarMonthKey/);
   assert.match(taskHistoryModalSource, /previousMonthDisabled=/);
   assert.match(taskHistoryModalSource, /nextMonthDisabled=/);
   assert.doesNotMatch(taskHistoryModalSource, /CalendarMonthPresentation/);

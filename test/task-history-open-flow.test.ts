@@ -97,7 +97,7 @@ test("Task History modal passes active Calendar overrides into the Calendar read
 
 test("Task History uses the supplied timeline in the promoted shared history presentation", () => {
   assert.match(modalSource, /buildTaskHistoryRowProjections/);
-  assert.match(modalSource, /<PursuitCalendarPresentation/);
+  assert.match(modalSource, /<TaskHistoryCalendarPresentation/);
   assert.match(modalSource, /const taskTypeLabel = formatTaskTypeLabel\(task\.task_type, task\.custom_ruleset_id, customBehaviorRulesets\)/);
   assert.match(modalSource, /historyTitle=\{taskHistoryLabel\}/);
   assert.match(modalSource, /historyDescription="Chronological task outcomes/);

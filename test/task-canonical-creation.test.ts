@@ -212,14 +212,16 @@ test("canonical creation plan initializes runtime state without action facts or 
   assert.deepEqual(importedOpenPlan.task.tags, ["planning"]);
   assert.equal(importedOpenPlan.schedule.schedule_model, "rolling");
 
-  const pursuitPlan = buildCanonicalTaskCreationPlan({
-    draft: draft({ task_type: "pursuit" }),
-    entityKind: "step",
-    now,
-    profile,
-  });
-  assert.equal(pursuitPlan.task.task_type, "pursuit");
-  assert.equal(pursuitPlan.canonical.entity_kind, "step");
+  assert.throws(
+    () => buildCanonicalTaskCreationPlan({
+      draft: draft({ task_type: "pursuit" as never }),
+      entityKind: "step",
+      now,
+      profile,
+    }),
+    (error: unknown) => error instanceof CanonicalTaskCreationValidationError
+      && error.code === "INVALID_TASK_TYPE",
+  );
 });
 
 test("canonical creation accepts a named Custom ruleset but rejects it for a normal Task", () => {

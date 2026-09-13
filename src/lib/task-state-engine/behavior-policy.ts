@@ -8,8 +8,7 @@
  *
  * The semantic fields below describe decisions the one Task Engine can
  * consume. Task and Custom are the currently active configurable profiles;
- * Pursuit and Goal retain the Standard fallback until their semantics are
- * approved.
+ * Goal retains the Standard fallback for legacy rows.
  */
 import type { TaskType } from "../task-type.ts";
 import { isTaskType } from "../task-type.ts";
@@ -285,7 +284,7 @@ export function normalizeTaskBehaviorProfiles(rows: readonly unknown[], logicalD
   const revisions = normalizeTaskBehaviorPolicyRevisions(rows);
   const profiles: Partial<Record<TaskType, TaskBehaviorPolicy>> = {};
   const targetDate = logicalDate ?? revisions.map((revision) => revision.effectiveFromLogicalDate).sort().at(-1) ?? "0000-00-00";
-  for (const taskType of ["task", "pursuit", "goal", "custom"] as const) {
+  for (const taskType of ["task", "goal", "custom"] as const) {
     const taskRevision = revisions
       .filter((candidate) => candidate.taskType === taskType && candidate.effectiveFromLogicalDate <= targetDate)
       .at(-1);

@@ -1345,7 +1345,6 @@ export function TaskOperationsHeader({
   metric,
   onCycleMomentum,
   onOpenArchive,
-  onOpenPursuitComposer,
   onOpenTaskComposer,
   onOpenFocusPlanner,
   onOpenImport,
@@ -1404,7 +1403,6 @@ export function TaskOperationsHeader({
   };
   onCycleMomentum: () => void;
   onOpenArchive: () => void;
-  onOpenPursuitComposer: () => void;
   onOpenTaskComposer: () => void;
   onOpenFocusPlanner: () => void;
   onOpenImport: () => void;
@@ -1535,7 +1533,6 @@ export function TaskOperationsHeader({
                   <AdhdDropdownPanel className="p-1.5" widthClassName="min-w-32">
                     <div className="grid gap-1" role="menu">
                       <button className={MENU_ROW_ACTION_CLASS + " rounded-[0.6rem] px-2.5 py-2 text-left hover:bg-[#f1ecff] dark:hover:bg-white/10"} onClick={() => { setIsNewMenuOpen(false); onOpenTaskComposer(); }} role="menuitem" type="button">Task</button>
-                      <button className={MENU_ROW_ACTION_CLASS + " rounded-[0.6rem] px-2.5 py-2 text-left text-[#6f57f6] hover:bg-[#f1ecff] dark:text-[#cabfff] dark:hover:bg-white/10"} onClick={() => { setIsNewMenuOpen(false); onOpenPursuitComposer(); }} role="menuitem" type="button">Pursuit</button>
                     </div>
                   </AdhdDropdownPanel>
                 ) : null}

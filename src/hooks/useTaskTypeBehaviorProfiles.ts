@@ -41,7 +41,7 @@ import {
 type Message = { text: string; tone: "neutral" | "good" | "warn" };
 type ConfigurableTaskBehaviorField = Exclude<TaskBehaviorPolicyField, never>;
 type BrowserSupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
-const TASK_TYPE_VALUES: readonly TaskType[] = ["task", "pursuit", "goal", "custom"];
+const TASK_TYPE_VALUES: readonly TaskType[] = ["task", "goal", "custom"];
 const CONFIGURABLE_TASK_TYPES = new Set<TaskType>(["task", "custom"]);
 
 export function useTaskTypeBehaviorProfiles(

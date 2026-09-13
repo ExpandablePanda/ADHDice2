@@ -9,6 +9,7 @@ import {
   matchesTaskTypeSelection,
   matchesTaskTypeSelections,
   normalizeTaskType,
+  parseTaskType,
   resolveTaskTypeSelection,
   TASK_TYPE_OPTIONS,
   taskTypeSelectionValue,
@@ -18,13 +19,15 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import { buildNewTaskDraft } from "../src/components/task-app/task-editor-model.ts";
 import { buildChildTaskCreationDraft } from "../src/lib/task-child-creation.ts";
 
-test("TaskType exposes the four product labels and safely normalizes compatibility input", () => {
-  assert.deepEqual(TASK_TYPE_OPTIONS.map((option) => option.value), ["task", "pursuit", "goal", "custom"]);
-  for (const taskType of ["task", "pursuit", "goal", "custom"] as TaskType[]) {
+test("TaskType exposes only selectable Task and Custom labels while retaining Goal read compatibility", () => {
+  assert.deepEqual(TASK_TYPE_OPTIONS.map((option) => option.value), ["task", "custom"]);
+  for (const taskType of ["task", "goal", "custom"] as TaskType[]) {
     assert.equal(isTaskType(taskType), true);
     assert.equal(normalizeTaskType(taskType), taskType);
     assert.equal(formatTaskTypeLabel(taskType), taskType === "custom" ? "Custom Default" : taskType[0].toUpperCase() + taskType.slice(1));
   }
+  assert.equal(isTaskType("pursuit"), false);
+  assert.equal(parseTaskType("pursuit"), null);
   assert.equal(normalizeTaskType(undefined), "task");
   assert.equal(normalizeTaskType(null), "task");
   assert.equal(normalizeTaskType("legacy"), "task");
@@ -35,7 +38,7 @@ test("named Custom rulesets extend the shared selection model without becoming T
     { id: "routine", name: "Routine", task_type: "custom" as const },
     { id: "practice", name: "Practice", task_type: "custom" as const },
   ];
-  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Pursuit", "Goal", "Custom Default", "Practice", "Routine"]);
+  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Custom Default", "Practice", "Routine"]);
   assert.deepEqual(resolveTaskTypeSelection("practice", rulesets), { taskType: "custom", customRulesetId: "practice" });
   assert.deepEqual(resolveTaskTypeSelection("custom", rulesets), { taskType: "custom", customRulesetId: null });
   assert.deepEqual(resolveTaskTypeSelection("task", rulesets), { taskType: "task", customRulesetId: null });
@@ -47,8 +50,8 @@ test("named Custom rulesets extend the shared selection model without becoming T
 
 test("deleted named rulesets stay available to historical labels but not current selectors", () => {
   const rulesets = [{ id: "retired", name: "Practice", task_type: "custom" as const, deleted_at: "2026-09-11T00:00:00.000Z" }];
-  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Pursuit", "Goal", "Custom Default"]);
-  assert.deepEqual(resolveTaskTypeSelection("retired", rulesets), { taskType: "task", customRulesetId: null });
+  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Custom Default"]);
+  assert.equal(resolveTaskTypeSelection("retired", rulesets), null);
   assert.equal(taskTypeSelectionValue("custom", "retired", rulesets), "custom");
   assert.equal(formatTaskTypeLabel("custom", "retired", rulesets), "Practice");
 });
@@ -90,19 +93,39 @@ test("normal and child Task creation default TaskType to task", () => {
   assert.equal(createTask({ id: "task-1", title: "Task", status: "pending", created_at: "2026-09-08", sort_order: 0 }).task_type, "task");
 });
 
-test("TaskType migration is additive and does not touch legacy Pursuit tables", () => {
-  const migration = readFileSync("supabase/add_task_type_7_13_16.sql", "utf8");
+test("active Task creation and hierarchy surfaces expose no retired Pursuit action", () => {
+  const appSource = readFileSync("src/components/task-app.tsx", "utf8");
+  const newMenuSource = readFileSync("src/components/task-app/tasks-page.tsx", "utf8");
+  const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
+  const listSource = readFileSync("src/components/task-app/tasks-list-adapter.tsx", "utf8");
+
+  assert.match(newMenuSource, /role="menuitem"[^>]*>Task<\/button>/);
+  assert.match(tableSource, /export function ChildTypeChooser/);
+  assert.match(tableSource, /onChooseTask/);
+  for (const source of [appSource, newMenuSource, tableSource, listSource]) {
+    assert.doesNotMatch(source, /pursuit/i);
+  }
+});
+
+test("Pursuit retirement deletes only typed/domain data and tightens current TaskType constraints", () => {
+  const migration = readFileSync("supabase/retire_pursuit_experiment_7_13_54.sql", "utf8");
   const schema = readFileSync("supabase/schema.sql", "utf8");
-  assert.match(migration, /add column if not exists task_type text/i);
-  assert.match(migration, /set task_type = 'task'/i);
-  assert.match(migration, /alter column task_type set default 'task'/i);
-  assert.match(migration, /alter column task_type set not null/i);
-  assert.match(migration, /adhdice_clean_tasks_task_type_check/i);
-  assert.match(migration, /'task', 'pursuit', 'goal', 'custom'/i);
-  assert.doesNotMatch(migration, /adhdice_pursuits|adhdice_pursuit_activities/i);
-  assert.doesNotMatch(migration, /entity_kind/i);
+  assert.match(migration, /task_type\s*=\s*'pursuit'/i);
+  assert.match(migration, /adhdice_pursuit_activities/i);
+  assert.match(migration, /adhdice_pursuits/i);
+  assert.match(migration, /delete\s+from\s+public\.adhdice_clean_tasks/i);
+  assert.match(migration, /delete\s+from\s+public\.adhdice_task_type_behavior_profiles[\s\S]*task_type\s*=\s*'pursuit'/i);
+  assert.match(migration, /delete\s+from\s+public\.adhdice_task_behavior_selections[\s\S]*task_type\s*=\s*'pursuit'/i);
+  assert.match(migration, /drop table if exists public\.adhdice_pursuit_activities/i);
+  assert.match(migration, /drop table if exists public\.adhdice_pursuits/i);
+  assert.match(migration, /'task', 'goal', 'custom'/i);
+  assert.doesNotMatch(migration, /insert\s+into[\s\S]*task_type\s*=\s*'task'/i);
+  assert.doesNotMatch(migration, /update[\s\S]*task_type\s*=\s*'task'/i);
   assert.match(schema, /task_type text not null default 'task'/i);
   assert.match(schema, /constraint adhdice_clean_tasks_task_type_check/i);
+  assert.match(schema, /task_type in \('task', 'goal', 'custom'\)/i);
+  assert.doesNotMatch(schema, /create table public\.adhdice_pursuits/i);
+  assert.doesNotMatch(schema, /create table public\.adhdice_pursuit_activities/i);
 });
 
 test("Task duplication preserves TaskType through the shared editor draft", () => {

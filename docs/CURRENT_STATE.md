@@ -5,14 +5,33 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.53`.
-- Current release group: `7.13.x` Pursuits and Attention vertical slice.
+- Current working app version: `7.13.54`.
+- Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.54 Tasks + Custom Task Types; Retire Pursuit Experiment
+
+Tasks are the primary work object. Named Custom Task Types configure the
+existing Task behavior engine; they do not create a parallel work-object
+domain. The Pursuit experiment has been retired. All standalone Pursuit
+records, Pursuit activity/history, and Task rows explicitly typed as Pursuit
+were test data and are intentionally deleted by the 7.13.54 retirement
+migration. The standalone Pursuit persistence and application domain were
+removed, and no Pursuit history migration, translation, archive, or snapshot
+was performed.
+
+Goal creation and assignment are retired for new Tasks, but existing Goal rows
+and Goal history were not destructively removed in this ticket. Goal remains
+only as the minimum legacy-read compatibility needed by the existing Task
+engine and persistence boundary. Custom Task Types continue to use the normal
+Task lifecycle, recurrence, History, Attention, policy, rewards, and other
+shared Task infrastructure. The migration is source-only until explicitly
+applied; browser QA remains assigned to Andrew.
 
 ## 2026-09-13 7.13.53 Reuse Canonical Scrollbar Suppression for Full Edit Task
 

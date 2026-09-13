@@ -2220,14 +2220,14 @@ test("TaskType metadata persists through the guarded update path without changin
   const result = await updateTaskRowWithLegacyEnergyFallback(
     client as never,
     task.id,
-    { task_type: "pursuit" },
+    { task_type: "goal" },
     () => false,
     () => false,
     { expectedTask: task },
   );
 
   assert.equal(result.error, null);
-  assert.equal(result.data?.task_type, "pursuit");
+  assert.equal(result.data?.task_type, "goal");
   assert.equal(result.data?.status, "pending");
   assert.equal(result.data?.due_on, "2026-06-12");
   assert.equal(result.data?.repeat_frequency, "daily");
