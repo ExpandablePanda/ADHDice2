@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import type { TaskDraft } from "../src/components/task-app/task-editor-model.ts";
 import type { Task } from "../src/lib/database.types.ts";
 import {
   buildHomeTodoDaySections,
@@ -237,6 +236,7 @@ test("Home task creation ignores whitespace-only titles without calling canonica
 
   const createdTask = await createHomeTodoTask(
     " \t\n ",
+    "task",
     async () => {
       createCalls += 1;
       return task("should-not-exist");
@@ -251,14 +251,17 @@ test("Home task creation ignores whitespace-only titles without calling canonica
 
 test("Home task creation trims the title and creates exactly one canonical task", async () => {
   let createCalls = 0;
-  let receivedDraft: TaskDraft | null = null;
+  let receivedTitle = "";
+  let receivedTaskTypeSelection = "";
   const canonicalTask = task("canonical-task", { title: "Capture this task" });
 
   const createdTask = await createHomeTodoTask(
     "  Capture this task  ",
-    async (draft) => {
+    "practice",
+    async (title, taskTypeSelectionValue) => {
       createCalls += 1;
-      receivedDraft = draft;
+      receivedTitle = title;
+      receivedTaskTypeSelection = taskTypeSelectionValue;
       return canonicalTask;
     },
     () => {},
@@ -266,30 +269,29 @@ test("Home task creation trims the title and creates exactly one canonical task"
 
   assert.equal(createdTask, canonicalTask);
   assert.equal(createCalls, 1);
-  assert.equal(receivedDraft?.title, "Capture this task");
+  assert.equal(receivedTitle, "Capture this task");
+  assert.equal(receivedTaskTypeSelection, "practice");
 });
 
-test("Home task creation uses current new-task defaults and appends the returned canonical id", async () => {
+test("Home task creation forwards the Task selection and appends the returned canonical id", async () => {
   const appendedTaskIds: string[] = [];
-  let receivedDraft: TaskDraft | null = null;
+  let receivedTitle = "";
+  let receivedTaskTypeSelection = "";
   const canonicalTask = task("canonical-task");
 
   await createHomeTodoTask(
     "New task",
-    async (draft) => {
-      receivedDraft = draft;
+    "task",
+    async (title, taskTypeSelectionValue) => {
+      receivedTitle = title;
+      receivedTaskTypeSelection = taskTypeSelectionValue;
       return canonicalTask;
     },
     (taskId) => appendedTaskIds.push(taskId),
   );
 
-  assert.equal(receivedDraft?.status, "pending");
-  assert.equal(receivedDraft?.priority_level, 0);
-  assert.equal(receivedDraft?.priority, "low");
-  assert.equal(receivedDraft?.energy, "none");
-  assert.equal(receivedDraft?.repeat_frequency, "none");
-  assert.equal(receivedDraft?.repeat_interval, 1);
-  assert.equal(receivedDraft?.actual_seconds, 0);
+  assert.equal(receivedTitle, "New task");
+  assert.equal(receivedTaskTypeSelection, "task");
   assert.deepEqual(appendedTaskIds, [canonicalTask.id]);
 });
 
@@ -298,6 +300,7 @@ test("Home task creation does not append a phantom id when canonical creation fa
 
   const createdTask = await createHomeTodoTask(
     "Retry me",
+    "task",
     async () => null,
     (taskId) => appendedTaskIds.push(taskId),
   );
@@ -531,12 +534,15 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(sharedIconButton, /sm: "h-3\.5 w-3\.5"/);
   assert.match(source, /tone="danger"/);
   assert.doesNotMatch(source, /variant="rowToolbar"/);
-  assert.match(source, /-mx-\[15px\] w-auto max-w-4xl px-3 pb-32 pt-6 sm:mx-auto sm:px-4/);
+  assert.match(source, /-mx-\[15px\] w-auto px-3 pb-32 pt-6 sm:mx-auto sm:px-4/);
   assert.doesNotMatch(source, /Search your Tasks and arrange the order you want to work through\./);
   assert.match(source, /<div className="relative mt-2" ref=\{searchRef\}>/);
   assert.match(source, /<TaskStatusCircleRail/);
   assert.match(source, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
   assert.match(source, /onSubmit=\{handleCreateTask\}/);
+  assert.match(source, /const \[newTaskTypeSelection, setNewTaskTypeSelection\] = useState\("task"\)/);
+  assert.match(source, /<AdhdDropdownSelect[\s\S]*ariaLabel="Task Type"[\s\S]*options=\{taskTypeOptions\}[\s\S]*value=\{newTaskTypeSelection\}/);
+  assert.match(source, /setNewTaskTypeSelection\("task"\)/);
   assert.match(source, /New task/);
   assert.match(source, /type="submit"/);
   assert.match(source, /Cancel/);
@@ -549,8 +555,19 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
 
 test("TaskApp passes Home creation through the shared canonical addTask seam", () => {
   const source = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
-  assert.match(source, /<TaskHomePage[\s\S]*onCreateTask=\{addTask\}/);
-  assert.match(source, /addTask\(buildNewTaskDraft\("New Task"\)\)/);
+  assert.match(source, /<TaskHomePage[\s\S]*onCreateTaskWithType=\{createHomeTodoTaskWithType\}/);
+  assert.match(source, /<TaskHomePage[\s\S]*taskTypeOptions=\{taskTypeOptions\}/);
+  assert.match(source, /createTaskAndOpenSharedEditor\(buildNewTaskDraft\("New Task"\)/);
+  const homeCreationStart = source.indexOf("const createHomeTodoTaskWithType");
+  const homeCreationEnd = source.indexOf("const taskTypeOptions", homeCreationStart);
+  const homeCreation = source.slice(homeCreationStart, homeCreationEnd);
+  assert.match(homeCreation, /resolveTaskTypeSelection\(selectionValue, customBehaviorRulesets\)/);
+  assert.match(homeCreation, /custom_ruleset_id: selection\.customRulesetId/);
+  assert.match(homeCreation, /task_type: selection\.taskType/);
+  assert.match(homeCreation, /addTask\([\s\S]*buildNewTaskDraft\(title\)/);
+  assert.match(homeCreation, /if \(!selection\) \{[\s\S]*setMessage\(\{ tone: "warn", text: "That Task Type is no longer available\." \}\);[\s\S]*return null;/);
+  assert.doesNotMatch(homeCreation, /selection \?\?/);
+  assert.doesNotMatch(homeCreation, /updateTask\(/);
   const homeStart = source.indexOf("<TaskHomePage");
   const homeSource = source.slice(homeStart, source.indexOf("/>", homeStart) + 2);
   assert.match(homeSource, /tasks=\{tasks\}/);

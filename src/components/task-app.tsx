@@ -4474,6 +4474,20 @@ export function TaskApp() {
     }, { routeToCurrentBucket: true });
   }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage]);
 
+  const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string) => {
+    const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
+    if (!selection) {
+      setMessage({ tone: "warn", text: "That Task Type is no longer available." });
+      return null;
+    }
+
+    return addTask({
+      ...buildNewTaskDraft(title),
+      custom_ruleset_id: selection.customRulesetId,
+      task_type: selection.taskType,
+    });
+  }, [addTask, customBehaviorRulesets, setMessage]);
+
   const taskTypeOptions = useMemo(
     () => buildTaskTypeSelectionOptions(customBehaviorRulesets),
     [customBehaviorRulesets],
@@ -7250,7 +7264,7 @@ export function TaskApp() {
         ) : activePage === "Home" ? (
           <TaskHomePage
             listMembershipsByTaskId={taskListMembershipsByTaskId}
-            onCreateTask={addTask}
+            onCreateTaskWithType={createHomeTodoTaskWithType}
             onOpenTask={openTaskEditorFromId}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
@@ -7263,6 +7277,7 @@ export function TaskApp() {
             calendarNowMs={logicalDayNow}
             calendarTimeZone={userTimeZone}
             tasks={tasks}
+            taskTypeOptions={taskTypeOptions}
             userId={currentUserId}
           />
         ) : activePage === "Achievements" ? (

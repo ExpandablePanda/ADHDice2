@@ -1,4 +1,3 @@
-import { buildNewTaskDraft, type TaskDraft } from "@/components/task-app/task-editor-model";
 import type { Task } from "@/lib/database.types";
 import { getCalendarDayKey } from "@/lib/logical-day";
 import type { TaskListMembership } from "@/lib/task-lists";
@@ -44,6 +43,11 @@ export type HomeTodoDaySection<T = string> = {
   startIndex: number;
   taskIds: T[];
 };
+
+export type HomeTodoTaskCreator = (
+  title: string,
+  taskTypeSelectionValue: string,
+) => Promise<Task | null>;
 
 export function normalizeHomeTodoTasksPerDay(value: unknown): HomeTodoTasksPerDay {
   return HOME_TODO_TASKS_PER_DAY_OPTIONS.includes(value as HomeTodoTasksPerDay)
@@ -128,13 +132,14 @@ export function buildHomeTodoDaySections<T>(
 
 export async function createHomeTodoTask(
   title: string,
-  onCreateTask: (draft: TaskDraft) => Promise<Task | null>,
+  taskTypeSelectionValue: string,
+  onCreateTask: HomeTodoTaskCreator,
   appendTaskId: (taskId: string) => void,
 ) {
   const trimmedTitle = title.trim();
   if (!trimmedTitle) return null;
 
-  const createdTask = await onCreateTask(buildNewTaskDraft(trimmedTitle));
+  const createdTask = await onCreateTask(trimmedTitle, taskTypeSelectionValue);
   if (!createdTask) return null;
 
   appendTaskId(createdTask.id);
