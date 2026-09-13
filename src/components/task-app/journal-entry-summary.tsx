@@ -22,6 +22,7 @@ function SummaryLine({ children, label }: { children: ReactNode; label: string }
 }
 
 export function JournalEntrySummary({
+  checkIns,
   entry,
   journalSignalOccurrences,
   journalSignals,
@@ -29,12 +30,16 @@ export function JournalEntrySummary({
   symptoms,
 }: {
   entry: HealthCheckIn;
+  checkIns: readonly HealthCheckIn[];
   journalSignalOccurrences: readonly HealthJournalSignalOccurrence[];
   journalSignals: readonly HealthJournalSignal[];
   symptomEntries: readonly HealthSymptomEntry[];
   symptoms: readonly HealthSymptom[];
 }) {
   const answers = normalizeHealthJournalStructuredAnswers(entry.structured_answers);
+  const linkedEvents = (answers.linked_event_ids ?? [])
+    .map((eventId) => checkIns.find((candidate) => candidate.id === eventId) ?? null)
+    .filter((event): event is HealthCheckIn => event !== null);
   const ownedSymptomOccurrences = symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id);
   const ownedFeelingOccurrences = journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id);
   const linkedOccurrenceKeys = new Set((answers.linked_occurrence_ids ?? []).map((reference) => `${reference.kind}:${reference.id}`));
@@ -86,6 +91,7 @@ export function JournalEntrySummary({
     || answers.wins?.some(Boolean)
     || answers.morning_reframes?.some((row) => row.negative || row.positive)
     || answers.evening_reframes?.some((row) => row.negative || row.positive)
+    || answers.linked_event_ids?.length
     || answers.custom_answers?.some((answer) => answer.value !== null && answer.value !== "" && (!Array.isArray(answer.value) || answer.value.length > 0))
     || occurrenceLines.length > 0
     || freeFormLines.some((line) => line.value?.trim())
@@ -98,6 +104,7 @@ export function JournalEntrySummary({
     {answers.sleep_link ? <SummaryLine label="Sleep">{formatHealthJournalSleepLink(answers.sleep_link)}</SummaryLine> : null}
     {answers.sleep_quality_score ? <SummaryLine label="Sleep quality">{answers.sleep_quality_score}/10{answers.sleep_quality_note ? ` · ${answers.sleep_quality_note}` : ""}</SummaryLine> : null}
     {answers.breakfast_state ? <SummaryLine label="Breakfast">{answers.breakfast_state === "already_ate" ? `${answers.breakfast_meals?.map((meal) => `${meal.food_name} (${formatHealthNutritionNumber(meal.calories)} kcal)`).join(", ") || "Already ate"}` : answers.breakfast_state === "planning_to_eat" ? `Planning to eat${answers.planned_breakfast ? ` · ${answers.planned_breakfast}` : ""}` : answers.breakfast_state === "skipping" ? "Skipping / not having breakfast" : "Not sure yet"}</SummaryLine> : null}
+    {answers.linked_event_ids?.length ? <SummaryLine label="Linked Event">{linkedEvents.length > 0 ? linkedEvents.map((event) => { const eventAnswers = normalizeHealthJournalStructuredAnswers(event.structured_answers); return `${eventAnswers.event_description || "Event"} · ${event.entry_date} ${event.entry_time}`; }).join(" · ") : "Linked Event details are retained."}</SummaryLine> : null}
     {answers.energy_now || answers.energy_overall ? <SummaryLine label="Energy">{answers.energy_now ?? answers.energy_overall}/10{answers.energy_note ? ` · ${answers.energy_note}` : ""}</SummaryLine> : null}
     {answers.focus_now || answers.focus_overall ? <SummaryLine label="Focus">{answers.focus_now ?? answers.focus_overall}/10{answers.focus_note ? ` · ${answers.focus_note}` : ""}</SummaryLine> : null}
     {occurrenceLines.length > 0 ? <SummaryLine label="Feeling occurrences"><span className="inline-flex flex-wrap gap-x-2 gap-y-1">{occurrenceLines.map((line) => <span key={line.key}>{line.text}</span>)}</span></SummaryLine> : linkedOccurrenceKeys.size > 0 ? <SummaryLine label="Feeling occurrences">Linked occurrence details are retained.</SummaryLine> : null}

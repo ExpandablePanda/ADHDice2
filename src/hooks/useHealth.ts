@@ -80,7 +80,7 @@ import {
   sortHealthJournalSignals,
   type HealthJournalDraftValue,
 } from "@/lib/health-journal";
-import { getHealthJournalScaleDenominator, normalizeHealthJournalCustomQuestions } from "@/lib/health-journal-checkins";
+import { getHealthJournalScaleDenominator, normalizeHealthJournalCustomQuestions, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
 import {
   getHealthFoodIdentityKey,
   normalizeHealthWaterEntry,
@@ -119,6 +119,7 @@ export type HealthImportSaveProgress = {
 };
 
 export type HealthJournalEntrySaveInput = {
+  allowInsertWithId?: boolean;
   checkIn: Omit<HealthCheckInInsert, "user_id">;
   signalValues: HealthJournalDraftValue[];
   symptomOccurrences: Omit<HealthSymptomEntryInsert, "user_id" | "journal_entry_id">[];
@@ -229,9 +230,7 @@ function normalizeHealthCheckIn(checkIn: HealthCheckIn): HealthCheckIn {
     stress_score: checkIn.stress_score ?? null,
     symptom_tags: Array.isArray(checkIn.symptom_tags) ? checkIn.symptom_tags : [],
     reflection: typeof checkIn.reflection === "string" ? checkIn.reflection : "",
-    structured_answers: checkIn.structured_answers && typeof checkIn.structured_answers === "object"
-      ? checkIn.structured_answers
-      : { custom_answers: [], schema_version: 1 },
+    structured_answers: normalizeHealthJournalStructuredAnswers(checkIn.structured_answers),
   };
 }
 
@@ -1344,7 +1343,7 @@ export function useHealth(
     const existingRow = requestedEntryId
       ? currentSnapshot.checkIns.find((entry) => entry.id === requestedEntryId) ?? null
       : null;
-    if (requestedEntryId && !existingRow) {
+    if (requestedEntryId && !existingRow && !input.allowInsertWithId) {
       setMessage({ tone: "warn", text: "That Journal Entry is no longer available." });
       return null;
     }
@@ -1384,7 +1383,7 @@ export function useHealth(
         symptom_tags: input.checkIn.symptom_tags !== undefined ? input.checkIn.symptom_tags : existingRow?.symptom_tags ?? [],
         structured_answers: localRow.structured_answers,
       };
-      const result = requestedEntryId
+      const result = requestedEntryId && existingRow
         ? await client
           .from("adhdice_health_checkins")
           .update(remoteCheckInFields)
@@ -1394,7 +1393,7 @@ export function useHealth(
           .single()
         : await client
           .from("adhdice_health_checkins")
-          .insert({ ...remoteCheckInFields, user_id: userId })
+          .insert({ ...(requestedEntryId ? { id: requestedEntryId } : {}), ...remoteCheckInFields, user_id: userId })
           .select("*")
           .single();
       const { data, error } = result;

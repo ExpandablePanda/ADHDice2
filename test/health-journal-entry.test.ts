@@ -537,7 +537,7 @@ test("7.12.41 source contract covers multiple entries, occurrence ownership, RLS
   assert.match(multipleEntriesMigrationSource, /notify pgrst, 'reload schema'/);
   assert.doesNotMatch(schemaSource, /unique \(user_id, entry_date\)/);
   assert.match(schemaSource, /entry_time time without time zone not null/);
-  assert.match(healthHookSource, /\.from\("adhdice_health_checkins"\)[\s\S]*\.insert\(\{ \.\.\.remoteCheckInFields, user_id: userId \}\)/);
+  assert.match(healthHookSource, /\.from\("adhdice_health_checkins"\)[\s\S]*\.insert\(\{ \.\.\.\(requestedEntryId \? \{ id: requestedEntryId \} : \{\}\), \.\.\.remoteCheckInFields, user_id: userId \}\)/);
   assert.match(healthHookSource, /\.from\("adhdice_health_checkins"\)[\s\S]*\.update\(remoteCheckInFields\)[\s\S]*\.eq\("id", requestedEntryId\)/);
   assert.doesNotMatch(healthHookSource, /onConflict: "user_id,entry_date"/);
   assert.match(healthHookSource, /\.from\("adhdice_health_journal_signal_values"\)[\s\S]*\.upsert\(scoredValues/);

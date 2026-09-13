@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.45`.
+- Current working app version: `7.13.46`.
 - Current release group: `7.13.x` Pursuits and Attention vertical slice.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-12 7.13.46 Event-Centered Feeling Logging
+
+Type-driven Journal Events now own tagged symptom and Feeling occurrences. Start
+of Day and End of Day can optionally create and link one canonical Event while
+preserving independent Event date/time and edit/retry identity. Browser QA
+remains unverified.
 
 ## 2026-09-12 7.13.45 Journal Occurrence Date and Time Labels
 

@@ -1506,6 +1506,7 @@ export type HealthJournalStructuredAnswers = {
   planned_breakfast?: string;
   breakfast_meal_ids?: string[];
   breakfast_meals?: HealthJournalBreakfastMeal[];
+  linked_event_ids?: string[];
   linked_occurrence_ids?: HealthJournalLinkedOccurrence[];
   waking_feeling_note?: string;
   current_feeling_note?: string;

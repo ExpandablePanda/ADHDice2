@@ -145,9 +145,15 @@ export function normalizeHealthJournalStructuredAnswers(value: unknown): HealthJ
   const customAnswers = Array.isArray(record.custom_answers)
     ? record.custom_answers.filter((answer): answer is HealthJournalCustomAnswer => Boolean(answer && typeof answer === "object" && typeof (answer as HealthJournalCustomAnswer).question_id === "string"))
     : [];
+  const linkedEventIds = Array.isArray(record.linked_event_ids)
+    ? [...new Set(record.linked_event_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0))]
+    : [];
+  const normalizedRecord = { ...record };
+  delete normalizedRecord.linked_event_ids;
   return {
-    ...record,
+    ...normalizedRecord,
     custom_answers: customAnswers,
+    ...(Array.isArray(record.linked_event_ids) ? { linked_event_ids: linkedEventIds } : {}),
     schema_version: 1,
   } as HealthJournalStructuredAnswers;
 }

@@ -157,7 +157,7 @@ import {
   type HealthJournalDraftValue,
   updateHealthJournalDraftValue,
 } from "@/lib/health-journal";
-import { formatHealthJournalOccurrenceReference } from "@/lib/health-journal-checkins";
+import { formatHealthJournalOccurrenceReference, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
 import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
 import {
@@ -865,6 +865,7 @@ function JournalHistoryReflection({
   historyTagOptions,
   historyTagOptionsByKey,
   onToggleTag,
+  reflection,
   selectedTag,
   journalSignalOccurrences,
   symptomEntries,
@@ -875,13 +876,14 @@ function JournalHistoryReflection({
   historyTagOptions: readonly JournalTagOption[];
   historyTagOptionsByKey: ReadonlyMap<string, JournalTagOption>;
   onToggleTag: (match: { key: string; start: number }) => void;
+  reflection: string;
   selectedTag: JournalHistoryTagOverlay;
   journalSignalOccurrences: readonly HealthJournalSignalOccurrence[];
   symptomEntries: readonly HealthSymptomEntry[];
   symptoms: readonly HealthSymptom[];
 }) {
   const matches = findHealthJournalReflectionTagMatches(
-    entry.reflection,
+    reflection,
     historyTagOptions.map((option) => ({ key: getJournalTagOptionKey(option), kind: option.kind, name: option.name })),
   );
   const nodes: ReactNode[] = [];
@@ -889,7 +891,7 @@ function JournalHistoryReflection({
   matches.forEach((match) => {
     const option = historyTagOptionsByKey.get(match.key);
     if (!option) return;
-    if (match.start > cursor) nodes.push(entry.reflection.slice(cursor, match.start));
+    if (match.start > cursor) nodes.push(reflection.slice(cursor, match.start));
     const isOpen = selectedTag?.entryId === entry.id
       && selectedTag.optionKey === match.key
       && selectedTag.start === match.start;
@@ -917,7 +919,7 @@ function JournalHistoryReflection({
     );
     cursor = match.end;
   });
-  if (cursor < entry.reflection.length) nodes.push(entry.reflection.slice(cursor));
+  if (cursor < reflection.length) nodes.push(reflection.slice(cursor));
 
   return <div className="mt-2 text-sm leading-6 text-[#66718f] dark:text-white/60">{nodes}</div>;
 }
@@ -3454,6 +3456,7 @@ export function HealthPage({
               <JournalCheckInForm
                 checkIns={checkIns}
                 customQuestions={activeProfile.journal_questions ?? []}
+                createJournalSignal={createJournalSignal}
                 focusCategories={focusCategories}
                 focusHistory={focusHistory}
                 journalSignalOccurrences={journalSignalOccurrences}
@@ -3678,6 +3681,10 @@ export function HealthPage({
                         <div className="grid gap-2" hidden={isJournalHistoryDateCollapsed} id={`journal-history-date-${group.date}`}>
                           {group.entries.map((entry) => {
                       const entryValues = journalSignalValues.filter((value) => value.journal_entry_id === entry.id);
+                      const entryAnswers = normalizeHealthJournalStructuredAnswers(entry.structured_answers);
+                      const historyReflection = entry.entry_type === "event"
+                        ? entryAnswers.event_description?.trim() || entry.reflection
+                        : entry.reflection;
                       const entryOccurrences = [
                         ...symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => {
                           const signal = journalSignals.find((candidate) => candidate.kind === "symptom" && candidate.symptom_id === occurrence.symptom_id) ?? null;
@@ -3746,8 +3753,8 @@ export function HealthPage({
                         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#68738c] dark:text-white/60">{entry.mood_score !== null ? <span>Mood {entry.mood_score}</span> : null}{entry.energy_score !== null ? <span>Energy {entry.energy_score}</span> : null}{entry.stress_score !== null ? <span>Stress {entry.stress_score}</span> : null}{entry.clarity_score !== null ? <span>Clarity {entry.clarity_score}</span> : null}</div>
                         {entryValues.length > 0 ? <p className="mt-2 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Snapshot ratings:</span> {entryValues.map((value) => { const signal = journalSignals.find((candidate) => candidate.id === value.signal_id); return `${signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Feeling"} ${value.score}`; }).join(" · ")}</p> : null}
                         {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span> {entryOccurrences.map((occurrence) => formatHealthJournalOccurrenceReference({ name: occurrence.label, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: occurrence.signal })).join(" · ")}</p> : null}
-                        {entry.reflection ? <JournalHistoryReflection entry={entry} entryValues={entryValues} historyTagOptions={journalHistoryTagOptions} historyTagOptionsByKey={journalHistoryTagOptionsByKey} journalSignalOccurrences={journalSignalOccurrences} onToggleTag={(tag) => toggleJournalHistoryTag(entry.id, tag)} selectedTag={journalHistoryTagOverlay} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
-                        <JournalEntrySummary entry={entry} journalSignalOccurrences={journalSignalOccurrences} journalSignals={journalSignals} symptomEntries={symptomEntries} symptoms={symptoms} />
+                        {historyReflection ? <JournalHistoryReflection entry={entry} entryValues={entryValues} historyTagOptions={journalHistoryTagOptions} historyTagOptionsByKey={journalHistoryTagOptionsByKey} journalSignalOccurrences={journalSignalOccurrences} onToggleTag={(tag) => toggleJournalHistoryTag(entry.id, tag)} reflection={historyReflection} selectedTag={journalHistoryTagOverlay} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
+                        <JournalEntrySummary checkIns={checkIns} entry={entry} journalSignalOccurrences={journalSignalOccurrences} journalSignals={journalSignals} symptomEntries={symptomEntries} symptoms={symptoms} />
                         {entry.symptom_tags.length > 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Legacy tags: {entry.symptom_tags.join(", ")}</p> : null}
                           </div>;
                           })}

@@ -25,6 +25,7 @@ import {
 import { formatHealthTimestampDate, formatHealthTimestampTime } from "../src/lib/health-utils.ts";
 
 const formSource = readFileSync(new URL("../src/components/task-app/journal-check-in-form.tsx", import.meta.url), "utf8");
+const eventCaptureSource = readFileSync(new URL("../src/components/task-app/journal-event-capture.tsx", import.meta.url), "utf8");
 const summarySource = readFileSync(new URL("../src/components/task-app/journal-entry-summary.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("../src/components/task-app/journal-question-settings.tsx", import.meta.url), "utf8");
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
@@ -89,6 +90,9 @@ test("Journal entry types, legacy fallback, optional answers, paired rows, and w
   assert.equal(getHealthJournalEntryType(undefined), "event");
   assert.equal(getHealthJournalEntryType({ entry_type: "start_of_day" }), "start_of_day");
   assert.deepEqual(normalizeHealthJournalStructuredAnswers(undefined), { custom_answers: [], schema_version: 1 });
+  assert.deepEqual(normalizeHealthJournalStructuredAnswers({ linked_event_ids: ["event-1", "", "event-1", "event-2"] }).linked_event_ids, ["event-1", "event-2"]);
+  assert.deepEqual(normalizeHealthJournalStructuredAnswers({ linked_event_ids: [] }).linked_event_ids, []);
+  assert.equal(normalizeHealthJournalStructuredAnswers({ linked_event_ids: "not-an-array" }).linked_event_ids, undefined);
   assert.deepEqual(normalizeHealthJournalReframes([{ negative: "one", positive: "reframe" }, {}, {}, {}, {}, { negative: "ignored" }]), [
     { negative: "one", positive: "reframe" },
     { negative: "", positive: "" },
@@ -158,14 +162,38 @@ test("Occurrence references include local date and time while preserving identit
     { id: "occurrence-morning", kind: "symptom" },
   ]);
   assert.deepEqual(references.map((reference) => reference.id), ["occurrence-morning", "occurrence-evening"]);
-  assert.match(formSource, /specific logged occurrence/);
-  assert.match(formSource, /formatHealthJournalOccurrenceReference/);
-  assert.match(formSource, /occurredAt: occurrence\.logged_at/);
-  assert.match(formSource, /occurredAt: occurrence\.occurred_at/);
-  assert.match(formSource, /occurredAt: draft\.occurredAt/);
-  assert.match(formSource, /scale_labels\[score\]/);
+  assert.doesNotMatch(formSource, /FeelingQuestionSection|How did you feel\?|How do you feel waking up\?|How do you feel right now\?|specific logged occurrence/);
+  assert.match(formSource, /JournalEventCapture/);
+  assert.match(formSource, /Any feelings or events to log\?/);
+  assert.match(formSource, /linked_event_ids/);
+  assert.match(formSource, /eventWasSaved/);
+  assert.match(formSource, /allowInsertWithId: true/);
+  assert.match(eventCaptureSource, /readJournalTagQuery/);
+  assert.match(eventCaptureSource, /replaceHealthJournalReflectionTag/);
+  assert.match(eventCaptureSource, /onCreateSignal/);
+  assert.match(eventCaptureSource, /Symptoms/);
+  assert.match(eventCaptureSource, /Emotions/);
+  assert.match(eventCaptureSource, /Other Feelings/);
+  assert.match(eventCaptureSource, /formatHealthJournalOccurrenceReference/);
+  assert.match(eventCaptureSource, /occurredAt: occurrence\.logged_at/);
+  assert.match(eventCaptureSource, /occurredAt: occurrence\.occurred_at/);
+  assert.match(eventCaptureSource, /Array\.from\(\{ length: getHealthJournalScaleDenominator/);
+  assert.match(eventCaptureSource, /scale_labels\[score\]/);
+  assert.match(eventCaptureSource, /HealthStandardTimeInput/);
+  assert.match(formSource, /journal_entry_id/);
+  assert.match(formSource, /saveJournalEntry\({\n        allowInsertWithId: true,\n        checkIn: \{\n          id: nextEventId/);
+  assert.match(formSource, /eventDateTime=\{entryType !== "event"\}/);
+  assert.match(formSource, /sm:grid-cols-\[auto_auto_auto\]/);
+  assert.match(formSource, /The Event was saved, but the check-in could not be saved/);
+  assert.match(formSource, /hydrateJournalEventOccurrences/);
+  assert.match(healthHookSource, /allowInsertWithId/);
+  assert.match(healthHookSource, /insert\(\{ \.\.\.\(requestedEntryId \? \{ id: requestedEntryId \} : \{\}\)/);
   assert.match(summarySource, /Feeling occurrences/);
+  assert.match(summarySource, /Linked Event/);
+  assert.match(summarySource, /checkIns: readonly HealthCheckIn\[\]/);
   assert.match(healthPageSource, /formatHealthJournalOccurrenceReference\(\{ name: displayName, occurredAt: occurrence\.occurredAt/);
+  assert.match(healthPageSource, /historyReflection/);
+  assert.match(healthPageSource, /reflection=\{historyReflection\}/);
   assert.doesNotMatch(healthPageSource, /formatJournalHistoryOccurrenceTime/);
   assert.match(healthPageSource, /JournalScaleLabelsEditor/);
   assert.match(formSource, /hasStructuredJournalContent/);
