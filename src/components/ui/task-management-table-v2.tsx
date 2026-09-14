@@ -70,7 +70,7 @@ import {
 } from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, resolveTaskTypeSelectionOption, taskTypeSelectionValue } from "@/lib/task-type";
-import type { TaskTypePresentation } from "@/lib/task-type-presentation";
+import { getTaskTypeSurfaceClassName, type TaskTypePresentation } from "@/lib/task-type-presentation";
 import { TaskTypeIdentity, TaskTypeSelect } from "@/components/task-app/task-type-identity";
 import { preserveCurrentTaskStatusForPresentation, resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask, taskManualActionForStatus } from "@/lib/task-state-engine/action-authority";
 import { getTaskEditorNavigationNeighbor, getTaskEditorNavigationPosition } from "@/lib/task-editor-navigation";
@@ -8679,6 +8679,8 @@ export function TaskManagementTableV2({
         ) : null}
         {displayedItems.map((item, itemIndex) => {
           const inlineStepTask = childPreviewToPrototypeTaskRow(item);
+          const childTaskTypeOption = resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets);
+          const childTaskSurface = getTaskTypeSurfaceClassName(childTaskTypeOption.accentKey);
           const titleGeometry = getTableHierarchyTitleGeometry(item.depth);
           return (
             <Fragment key={item.id}>
@@ -8688,7 +8690,7 @@ export function TaskManagementTableV2({
                 data-same-table-step-row={item.id}
               >
                 <div
-                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-0.5 pl-[3px] pr-0 text-center transition ${selectedTaskIdSet.has(item.id) ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]" : "border-transparent bg-transparent dark:bg-transparent"} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-0.5 pl-[3px] pr-0 text-center transition ${childTaskSurface} ${selectedTaskIdSet.has(item.id) ? childTaskTypeOption.accentKey === "neutral" ? "bg-[#f7f2ff] dark:bg-[#201733]" : "ring-2 ring-[#6f57f6]/35 dark:ring-[#cabfff]/35" : ""} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                   data-task-table-child-grid={item.id}
                   onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                   onDrop={(event) => dropChildTaskOnItem(event, item)}
@@ -8822,6 +8824,10 @@ export function TaskManagementTableV2({
     return (
       <div className="w-max min-w-full" data-task-table-source-step-rows={task.id}>
       {rows.map((row) => (
+        (() => {
+          const sourceTaskTypeOption = resolveTaskTypeSelectionOption(row.subtask.taskType, row.subtask.customRulesetId, customBehaviorRulesets);
+          const sourceTaskSurface = getTaskTypeSurfaceClassName(sourceTaskTypeOption.accentKey);
+          return (
           <div
             className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${getHighlightedRowClassName(row.subtask.id)}`}
             data-same-table-step-row={row.subtask.id}
@@ -8847,7 +8853,7 @@ export function TaskManagementTableV2({
             tabIndex={0}
           >
             <div
-              className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-transparent py-0.5 pl-[3px] pr-0 text-center transition dark:bg-transparent`}
+              className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-0.5 pl-[3px] pr-0 text-center transition ${sourceTaskSurface}`}
               data-task-table-source-step-grid={row.subtask.id}
               style={{ gridTemplateColumns }}
             >
@@ -8862,7 +8868,9 @@ export function TaskManagementTableV2({
               ))}
             </div>
           </div>
-        ))}
+          );
+        })()
+      ))}
       </div>
     );
   };
@@ -9148,6 +9156,8 @@ export function TaskManagementTableV2({
                 No rows match the current table filters.
               </div>
             ) : renderedTasks.map((task) => {
+              const taskTypeOption = resolveTaskTypeSelectionOption(task.taskType, task.customRulesetId, customBehaviorRulesets);
+              const taskSurface = getTaskTypeSurfaceClassName(taskTypeOption.accentKey);
               const visibleSubtasks = filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds);
               const hasSourceStepRows = visibleSubtasks.length > 0;
               const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
@@ -9188,7 +9198,7 @@ export function TaskManagementTableV2({
                   data-task-table-hierarchy-group={task.id}
                 >
                   <motion.div
-                    className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center focus:outline-none ${hasRenderedDescendants ? "sticky top-8 z-10 bg-white dark:bg-[#181226]" : ""}`}
+                    className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center focus:outline-none ${hasRenderedDescendants ? "sticky top-8 z-10" : ""}`}
                     data-task-table-row={task.id}
                     initial={shouldAnimateRows ? undefined : false}
                     onClick={(event) => {
@@ -9255,12 +9265,12 @@ export function TaskManagementTableV2({
                     variants={tableRowVariants}
                     whileHover={shouldAnimateRows ? { y: -0.5 } : undefined}
                   >
-                    <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] ${getHighlightedRowClassName(task.id)} ${
+                    <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition ${taskSurface} hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] ${getHighlightedRowClassName(task.id)} ${
                       selectedTaskIdSet.has(task.id)
-                        ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]"
+                        ? taskTypeOption.accentKey === "neutral" ? "bg-[#f7f2ff] dark:bg-[#201733]" : "ring-2 ring-[#6f57f6]/35 dark:ring-[#cabfff]/35"
                         : showInlineAccordion || rowContextMenu?.taskId === task.id
-                          ? "border-transparent bg-white dark:bg-[#181226]"
-                          : "border-transparent bg-white dark:bg-white/[0.04]"
+                          ? "ring-2 ring-[#6f57f6]/25 dark:ring-[#cabfff]/25"
+                          : ""
                     }`} data-task-table-parent-grid={task.id} style={{ gridTemplateColumns }}>
                       {visibleHeaderColumns.map((column) => (
                         <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} data-column-measure={column.id} key={`${task.id || "task"}-${column.id || "column"}`}>

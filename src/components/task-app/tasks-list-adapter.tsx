@@ -76,6 +76,8 @@ import {
 } from "@/lib/task-list-sort";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import type { TaskBehaviorPolicy, TaskBehaviorPolicyField, TaskBehaviorPolicyResolutionContext, TaskBehaviorProfiles, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
+import { getTaskTypeSurfaceClassName } from "@/lib/task-type-presentation";
+import { resolveTaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskTypePresentation } from "@/lib/task-type-presentation";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
@@ -1040,6 +1042,7 @@ function StepsCardPreview({
   allTagOptions: string[];
   childTasksById: Map<string, Task>;
   closeQuickPanel: () => void;
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   currentListLabel?: string | null;
   group: ChildTaskPreviewGroup;
   isExpanded?: boolean;
@@ -1338,6 +1341,8 @@ function StepsCardPreview({
             const siblingItems = group.items.filter((candidate) => candidate.parentTaskId === item.parentTaskId && candidate.depth === item.depth);
             const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
             const childTask = childTasksById.get(item.id) ?? null;
+            const childTaskTypeOption = resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets);
+            const childTaskSurface = getTaskTypeSurfaceClassName(childTaskTypeOption.accentKey);
             const scheduleLabel = formatStepPreviewSchedule(item);
             const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.75;
             const activePanelMode = activeQuickPanel?.taskId === item.id ? activeQuickPanel.mode : null;
@@ -1380,7 +1385,7 @@ function StepsCardPreview({
               <Fragment key={item.id}>
               {itemIndex === groupedItems.normalItems.length ? completedStepsHeader : null}
               <li
-                className={`cursor-pointer rounded-[0.95rem] border px-1.5 py-2.5 transition hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90 ${getHighlightedListRowClassName(item.id, highlightedActiveTaskId, highlightedTaskIdSet) || "border-transparent bg-transparent"} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                className={`cursor-pointer rounded-[0.95rem] border px-1.5 py-2.5 transition ${childTaskSurface} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90 ${getHighlightedListRowClassName(item.id, highlightedActiveTaskId, highlightedTaskIdSet) || ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                 data-same-table-step-row={item.id}
                 onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                 onDrop={(event) => dropChildTaskOnItem(event, item)}
@@ -3160,6 +3165,8 @@ function TasksSimpleList({
             />
           ) : null}
             {windowedTasks.map((task) => {
+        const taskTypeOption = resolveTaskTypeSelectionOption(task.task_type, task.custom_ruleset_id, tableProps.customBehaviorRulesets);
+        const taskSurface = getTaskTypeSurfaceClassName(taskTypeOption.accentKey);
         const displayStatus = rowContext.taskDisplayStatusByTaskId[task.id] ?? task.status;
         const dueLabel = formatListDueDateChip(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
@@ -3233,15 +3240,15 @@ function TasksSimpleList({
         return (
           <div className="space-y-3" data-task-list-hierarchy-group={task.id} key={task.id}>
             <article
-              className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${
+              className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${taskSurface} ${
                 selectedTaskIdSet.has(task.id)
-                  ? "border-[#d8d1ef] bg-white/92 ring-2 ring-[#e7e0fb] ring-offset-0 dark:border-[#4f466d] dark:bg-white/[0.05] dark:ring-[#342b50]"
-                  : "border-[#ece8f8] bg-white/92 dark:border-white/10 dark:bg-white/[0.05]"
+                  ? "ring-2 ring-[#6f57f6]/35 ring-offset-0 dark:ring-[#cabfff]/35"
+                  : ""
               } ${
                 isQuickPanelOpen
-                  ? "border-[#cfc2ff] dark:border-[#4f3d86]"
-                  : "hover:border-[#ddd2fb] hover:bg-white dark:hover:border-white/15"
-              } ${hasVisibleRenderedDescendants ? "sticky top-[4.75rem] z-10 bg-white dark:bg-[#181226]" : ""}`}
+                  ? "ring-2 ring-[#6f57f6]/25 dark:ring-[#cabfff]/25"
+                  : ""
+              } ${hasVisibleRenderedDescendants ? "sticky top-[4.75rem] z-10" : ""}`}
               data-task-list-row={task.id}
               onClick={(event) => {
                 if (shouldIgnoreListOverlayOpen(event.target)) {
@@ -3646,6 +3653,7 @@ function TasksSimpleList({
                 allTagOptions={tableProps.allTagOptions ?? []}
                 childTasksById={taskById}
                 closeQuickPanel={closeQuickPanel}
+                customBehaviorRulesets={tableProps.customBehaviorRulesets}
                 currentListLabel={currentListLabel}
                 group={effectiveStepPreviewGroup}
                 isExpanded={isStepSectionExpanded}

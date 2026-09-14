@@ -11,18 +11,20 @@ export function TaskTypeIdentity({
   description,
   label,
   option,
+  selected = false,
 }: {
   compact?: boolean;
   description?: string;
   label?: string;
   option: Pick<TaskTypeSelectionOption, "label" | "iconKey" | "accentKey" | "description">;
+  selected?: boolean;
 }) {
   const accent = resolveTaskTypeAccent(option.accentKey);
   const icon = createElement(resolveTaskTypeIcon(option.iconKey), { "aria-hidden": true, className: "h-3.5 w-3.5" });
   const detail = description ?? option.description;
   return (
-    <span className={`inline-flex min-w-0 items-center gap-1.5 ${compact ? "" : "rounded-[0.7rem] border px-2 py-1"} ${compact ? "text-[#4b4469] dark:text-white/85" : accent.className}`}>
-      <span aria-hidden="true" className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${accent.iconClassName}`}>
+    <span className={`inline-flex min-w-0 items-center gap-1.5 ${compact ? "" : "rounded-[0.7rem] border px-2 py-1"} ${compact ? "text-inherit" : accent.className}`}>
+      <span aria-hidden="true" className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${selected ? "bg-white/15 text-white" : accent.iconClassName}`}>
         {icon}
       </span>
       <span className="min-w-0 truncate">{label ?? option.label}</span>

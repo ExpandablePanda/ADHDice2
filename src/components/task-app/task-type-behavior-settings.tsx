@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Pencil, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, Pencil, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownSelect } from "@/components/ui-system/adhd-dropdown-select";
@@ -20,7 +20,7 @@ import { buildDefaultCustomTaskTypeDraft, taskTypeBehaviorTabDescription, type T
 import { buildTaskTypeSelectionOptions, normalizeTaskType, type TaskType } from "@/lib/task-type";
 import { TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
 import { TaskTypeIdentity } from "./task-type-identity";
-import { DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, TASK_TYPE_ACCENT_OPTIONS, TASK_TYPE_ICON_OPTIONS, normalizeTaskTypePresentation, validateTaskTypeDescription, type TaskTypePresentation } from "@/lib/task-type-presentation";
+import { DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, searchTaskTypeIcons, TASK_TYPE_ACCENT_OPTIONS, normalizeTaskTypePresentation, validateTaskTypeDescription, type TaskTypePresentation } from "@/lib/task-type-presentation";
 
 export type BehaviorTab = TaskTypeBehaviorTab;
 type ConfigurableField = "availableActions" | "missedStreakOnUnhandled" | "rewards" | "unresolvedOccurrence";
@@ -38,12 +38,20 @@ function PresentationControls({
   onChange: (next: Partial<TaskTypePresentation>) => void;
   presentation: TaskTypePresentation;
 }) {
+  const [iconQuery, setIconQuery] = useState("");
+  const filteredIcons = searchTaskTypeIcons(iconQuery);
+
   return (
     <div className="space-y-3">
       <div>
         <p className="mb-2 text-xs font-semibold text-[#655d7d] dark:text-white/65">Icon</p>
-        <div aria-label="Custom Task Type icon" className="flex flex-wrap gap-1.5" role="group">
-          {TASK_TYPE_ICON_OPTIONS.map(({ icon: Icon, key, label }) => (
+        <label className="relative block">
+          <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9b92be] dark:text-white/35" />
+          <input aria-label="Search icons" className={`${TASK_TABLE_INPUT_CLASS} h-9 rounded-full pl-8 pr-3 text-[13px]`} onChange={(event) => setIconQuery(event.target.value)} placeholder="Search icons..." type="search" value={iconQuery} />
+        </label>
+        {filteredIcons.length > 0 ? (
+          <div aria-label="Custom Task Type icon" className="adhdice-scrollbar mt-2 grid max-h-40 grid-cols-8 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-10" role="group">
+          {filteredIcons.map(({ icon: Icon, key, label }) => (
             <button
               aria-label={label}
               aria-pressed={presentation.iconKey === key}
@@ -57,7 +65,8 @@ function PresentationControls({
               <Icon aria-hidden="true" className="h-4 w-4" />
             </button>
           ))}
-        </div>
+          </div>
+        ) : <p className="mt-2 rounded-[0.8rem] border border-dashed border-[#e5e0f5] px-3 py-2 text-xs text-[#7d7598] dark:border-white/10 dark:text-white/45">No icons found.</p>}
       </div>
       <div>
         <p className="mb-2 text-xs font-semibold text-[#655d7d] dark:text-white/65">Accent color</p>
@@ -548,7 +557,7 @@ export function TaskTypeBehaviorSettings({
       <div className="mb-4 flex flex-wrap gap-1.5" role="tablist" aria-label="Task Type behavior profiles">
         {selectionOptions.map((option) => (
           <AdhdChip disabled={isSavingPolicyArray} key={option.value} onClick={() => selectProfile(option.value)} selected={activeSelection === option.value} type="button" role="tab" aria-selected={activeSelection === option.value}>
-            <TaskTypeIdentity compact option={option} />
+          <TaskTypeIdentity compact option={option} selected={activeSelection === option.value} />
           </AdhdChip>
         ))}
       </div>

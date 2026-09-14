@@ -3,7 +3,7 @@
 import { Archive, Bed, BookOpen, Briefcase, Car, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Footprints, GripVertical, Home, Link2, Minus, Moon, Plus, RotateCcw, Search, ShowerHead, Sparkles, Target, Trash2, Unlink, Utensils, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Task, TaskStatus } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, Task, TaskStatus } from "@/lib/database.types";
 import { formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import {
   createLocalStoragePathsStorageAdapter,
@@ -31,6 +31,8 @@ import {
 import { AdhdChip, AdhdDropdownPanel, AdhdIconButton } from "@/components/ui-system";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import type { TaskListDefinition, TaskListId, TaskListMembership } from "@/lib/task-lists";
+import { getTaskTypeSurfaceClassName } from "@/lib/task-type-presentation";
+import { resolveTaskTypeSelectionOption } from "@/lib/task-type";
 
 type LinkedTaskOption = Task;
 type TaskStatusOptionsResolver = (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[];
@@ -41,6 +43,7 @@ type InspectorSectionId = "actions" | "endpoint" | "path" | "selectedChip";
 
 type PathsWorkspaceProps = {
   availableTaskLists?: TaskListDefinition[];
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   listMembershipsByTaskId?: Record<string, TaskListMembership[]>;
   onOpenTask?: (taskId: string) => void;
   onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
@@ -403,20 +406,23 @@ function PathTaskStatusControl({
 }
 
 function PathTaskHierarchyChip({
+  customBehaviorRulesets,
   getTaskStatusOptions,
   onOpenTask,
   onSetTaskStatus,
   task,
 }: {
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   getTaskStatusOptions?: TaskStatusOptionsResolver;
   onOpenTask?: (taskId: string) => void;
   onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
   task: Task;
 }) {
+  const taskTypeOption = resolveTaskTypeSelectionOption(task.task_type, task.custom_ruleset_id, customBehaviorRulesets);
   return (
     <div className="inline-flex max-w-[250px] items-center gap-0" data-path-node-control>
       <AdhdChip
-        className={task.status === "complete" ? "max-w-[210px] line-through opacity-70" : "max-w-[210px]"}
+        className={`${getTaskTypeSurfaceClassName(taskTypeOption.accentKey)} ${task.status === "complete" ? "max-w-[210px] line-through opacity-70" : "max-w-[210px]"}`}
         onClick={(event) => {
           event.stopPropagation();
           onOpenTask?.(task.id);
@@ -431,11 +437,13 @@ function PathTaskHierarchyChip({
 }
 
 function PathTaskNodeStepList({
+  customBehaviorRulesets,
   getTaskStatusOptions,
   onOpenTask,
   onSetTaskStatus,
   steps,
 }: {
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   getTaskStatusOptions?: TaskStatusOptionsResolver;
   onOpenTask?: (taskId: string) => void;
   onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
@@ -446,13 +454,13 @@ function PathTaskNodeStepList({
       {steps.map((step) => (
         <div className="relative" key={step.task.id}>
           <span className="absolute -left-5 top-[13px] h-0.5 w-5 bg-[#cfc3f8] dark:bg-[#5d48ab]" />
-          <PathTaskHierarchyChip getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={step.task} />
+          <PathTaskHierarchyChip customBehaviorRulesets={customBehaviorRulesets} getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={step.task} />
           {step.substeps.length > 0 ? (
             <div className="relative ml-4 mt-2 space-y-2 border-l-2 border-[#ddd5ef] pl-5 dark:border-white/15">
               {step.substeps.map((substep) => (
                 <div className="relative" key={substep.id}>
                   <span className="absolute -left-5 top-[13px] h-0.5 w-5 bg-[#ddd5ef] dark:bg-white/15" />
-                  <PathTaskHierarchyChip getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={substep} />
+                  <PathTaskHierarchyChip customBehaviorRulesets={customBehaviorRulesets} getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={substep} />
                 </div>
               ))}
             </div>
@@ -464,12 +472,14 @@ function PathTaskNodeStepList({
 }
 
 function PathTaskNodeCard({
+  customBehaviorRulesets,
   getTaskStatusOptions,
   onOpenTask,
   onSetTaskStatus,
   onUnlink,
   view,
 }: {
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   getTaskStatusOptions?: TaskStatusOptionsResolver;
   onOpenTask?: (taskId: string) => void;
   onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
@@ -497,10 +507,10 @@ function PathTaskNodeCard({
         <span className="relative -m-2 flex h-8 w-8 shrink-0 touch-none items-center justify-center cursor-grab text-[#8d86a4] active:cursor-grabbing" data-path-node-drag-surface>
           <GripVertical className="h-4 w-4" />
         </span>
-        <PathTaskHierarchyChip getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={view.task} />
+        <PathTaskHierarchyChip customBehaviorRulesets={customBehaviorRulesets} getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={view.task} />
       </div>
       {visibleSteps.length > 0 ? (
-        <PathTaskNodeStepList getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} steps={visibleSteps} />
+        <PathTaskNodeStepList customBehaviorRulesets={customBehaviorRulesets} getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} steps={visibleSteps} />
       ) : null}
     </div>
   );
@@ -844,6 +854,7 @@ function InspectorSection({
 
 export function PathsWorkspace({
   availableTaskLists = [],
+  customBehaviorRulesets = [],
   listMembershipsByTaskId = {},
   onOpenTask,
   onSetTaskStatus,
@@ -1853,6 +1864,7 @@ export function PathsWorkspace({
                         >
                           {isTaskNode && taskNodeView ? (
                             <PathTaskNodeCard
+                              customBehaviorRulesets={customBehaviorRulesets}
                               getTaskStatusOptions={getTaskStatusOptions}
                               onOpenTask={onOpenTask}
                               onSetTaskStatus={onSetTaskStatus}

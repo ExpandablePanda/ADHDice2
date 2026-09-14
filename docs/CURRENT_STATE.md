@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.62`.
+- Current working app version: `7.13.63`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-13 7.13.63 Custom Task Type Presentation QA Correction
+
+Browser QA for 7.13.62 exposed three presentation issues: selected Custom Task
+Type tabs did not maintain white text on the selected purple chip, Custom Task
+Type accent identity stopped at Task Type controls instead of identifying the
+actual Task row/card, and the icon registry was too limited to discover useful
+choices. Version 7.13.63 corrects these presentation-only issues. The shared
+Task Type presentation authority now supplies restrained accent-tinted surfaces
+for real Task rows, cards, secondary Task surfaces, and PATHS Task nodes while
+preserving normal content/status colors and selected/open/hover states. The icon
+registry is substantially expanded and searchable by labels and keywords.
+
+No Task behavior semantics changed, including Task State, History, recurrence,
+streaks, rewards, Available Actions, behavior policy, defaults, or persistence
+shape. No SQL or schema migration was required or applied.
 
 ## 2026-09-13 7.13.62 Custom Task Type Presentation Identity
 
@@ -22,9 +38,9 @@ accent key, and optional short description. These fields live on the stable
 revisions, so presentation edits do not create policy revisions. Current Task
 Type selectors and displays share the same presentation registry and renderer;
 Standard Task uses an application-owned fallback only. No Task defaults were
-added and no behavior semantics changed. The migration
+added and no behavior semantics changed. The presentation identity migration
 `supabase/20260913000000_add_custom_task_type_presentation_identity_7_13_62.sql`
-is source-only and remains pending separate live application.
+was already applied live before this presentation correction.
 
 ## 2026-09-13 7.13.61 Fully Retire Goal Task Type
 

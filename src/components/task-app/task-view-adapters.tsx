@@ -374,6 +374,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
   activeCount,
   currentColumns,
   currentStreakByTaskId,
+  customBehaviorRulesets = [],
   doneCount,
   draggedWidgetId,
   focusedTaskIds,
@@ -408,6 +409,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
   activeCount: number;
   currentColumns: number;
   currentStreakByTaskId: Readonly<Record<string, number>>;
+  customBehaviorRulesets?: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type" | "icon_key" | "accent_key" | "description">[];
   doneCount: number;
   draggedWidgetId: string | null;
   focusedTaskIds: string[];
@@ -469,6 +471,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
           return (
             <UrgentTasksPanelAdapter
               currentStreakByTaskId={currentStreakByTaskId}
+              customBehaviorRulesets={customBehaviorRulesets}
               focusedTaskIds={focusedTaskIds}
               getTaskStatusOptions={getTaskStatusOptions}
               onEditTask={onEditTask}
@@ -484,6 +487,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
             <TaskLaneAdapter
               count={tasksByWidget.focusToday.length}
               currentStreakByTaskId={currentStreakByTaskId}
+              customBehaviorRulesets={customBehaviorRulesets}
               defaultExpanded
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
@@ -498,6 +502,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
             <TaskLaneAdapter
               count={tasksByWidget.dueToday.length}
               currentStreakByTaskId={currentStreakByTaskId}
+              customBehaviorRulesets={customBehaviorRulesets}
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
               tasks={tasksByWidget.dueToday}
@@ -511,6 +516,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
             <TaskLaneAdapter
               count={tasksByWidget.activeQueue.length}
               currentStreakByTaskId={currentStreakByTaskId}
+              customBehaviorRulesets={customBehaviorRulesets}
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
               tasks={tasksByWidget.activeQueue}
@@ -524,6 +530,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
             <TaskLaneAdapter
               count={tasksByWidget.completed.length}
               currentStreakByTaskId={currentStreakByTaskId}
+              customBehaviorRulesets={customBehaviorRulesets}
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
               tasks={tasksByWidget.completed}

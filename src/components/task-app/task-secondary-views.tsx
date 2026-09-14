@@ -12,8 +12,10 @@ import { buildTaskPriorityUpdate, formatTaskPriorityLevel, getTaskPriorityLevel,
 import { getNextPendingSubtask } from "@/lib/task-subtasks";
 import { isTaskUrgent } from "@/lib/task-buckets";
 import { formatDueLabel } from "@/lib/task-cockpit";
-import type { Task, TaskEnergy, TaskStatus } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, Task, TaskEnergy, TaskStatus } from "@/lib/database.types";
 import { TaskCurrentStreakChip } from "@/components/ui/task-table-primitives";
+import { getTaskTypeSurfaceClassName } from "@/lib/task-type-presentation";
+import { resolveTaskTypeSelectionOption } from "@/lib/task-type";
 
 type SelectProps<T extends string> = {
   label: string;
@@ -29,6 +31,12 @@ type Message = {
 };
 
 const ENERGY_OPTIONS: TaskEnergy[] = ["none", "low", "medium", "high"];
+type CustomTaskTypeIdentity = Pick<CustomBehaviorRuleset, "id" | "name" | "task_type" | "icon_key" | "accent_key" | "description">;
+
+function taskSurfaceClassName(task: Pick<Task, "task_type" | "custom_ruleset_id">, customBehaviorRulesets: readonly CustomTaskTypeIdentity[]) {
+  const option = resolveTaskTypeSelectionOption(task.task_type, task.custom_ruleset_id, customBehaviorRulesets);
+  return getTaskTypeSurfaceClassName(option.accentKey);
+}
 function EmptyTaskState({ text }: { text: string }) {
   return (
     <div className="rounded-[1.25rem] border border-dashed px-4 py-5 text-sm border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
@@ -200,7 +208,7 @@ export function SupportPanelComponent({ doneCount, lowEnergyTasks, message, onIm
   );
 }
 
-export function TaskLaneComponent({ count, currentStreakByTaskId, defaultExpanded = false, onEditTask, subtasksByTaskId, title, tasks, tone }: { count: number; currentStreakByTaskId: Readonly<Record<string, number>>; defaultExpanded?: boolean; onEditTask: (task: Task) => void; subtasksByTaskId: Record<string, Task[]>; title: string; tasks: Task[]; tone: "purple" | "soft"; }) {
+export function TaskLaneComponent({ count, currentStreakByTaskId, customBehaviorRulesets = [], defaultExpanded = false, onEditTask, subtasksByTaskId, title, tasks, tone }: { count: number; currentStreakByTaskId: Readonly<Record<string, number>>; customBehaviorRulesets?: readonly CustomTaskTypeIdentity[]; defaultExpanded?: boolean; onEditTask: (task: Task) => void; subtasksByTaskId: Record<string, Task[]>; title: string; tasks: Task[]; tone: "purple" | "soft"; }) {
   const DEFAULT_VISIBLE_COUNT = 3;
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const visibleTasks = isExpanded ? tasks : tasks.slice(0, DEFAULT_VISIBLE_COUNT);
@@ -218,7 +226,7 @@ export function TaskLaneComponent({ count, currentStreakByTaskId, defaultExpande
       <div className="mt-4 space-y-3">
         {tasks.length === 0 ? <EmptyTaskState text={`No tasks in ${title.toLowerCase()} right now.`} /> : null}
         {visibleTasks.map((task, index) => (
-          <div className="w-full overflow-hidden rounded-[1.25rem] border px-4 py-3 border-[#efeaf9] bg-[#fdfcff] dark:border-white/10 dark:bg-white/[0.04]" key={task.id}>
+          <div className={`w-full overflow-hidden rounded-[1.25rem] border px-4 py-3 ${taskSurfaceClassName(task, customBehaviorRulesets)}`} key={task.id}>
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">
                 <button className="truncate text-left text-lg font-semibold text-[#27304c] dark:text-white" onClick={() => onEditTask(task)} type="button">{task.title}</button>
@@ -241,13 +249,13 @@ export function TaskLaneComponent({ count, currentStreakByTaskId, defaultExpande
   );
 }
 
-export function TaskCardGalleryComponent({ currentStreakByTaskId, focusedTaskIds, getTaskStatusOptions, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; focusedTaskIds: string[]; getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
+export function TaskCardGalleryComponent({ currentStreakByTaskId, customBehaviorRulesets = [], focusedTaskIds, getTaskStatusOptions, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; customBehaviorRulesets?: readonly CustomTaskTypeIdentity[]; focusedTaskIds: string[]; getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
   return (
     <section className="mt-7">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {tasks.length === 0 ? <EmptyTaskState text="No tasks match the current filters." /> : null}
         {tasks.map((task) => (
-          <article className="w-full overflow-hidden rounded-[1.7rem] border p-5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6" key={task.id}>
+          <article className={`w-full overflow-hidden rounded-[1.7rem] border p-5 shadow-[0_18px_50px_rgba(81,61,168,0.07)] ${taskSurfaceClassName(task, customBehaviorRulesets)}`} key={task.id}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <button className="text-left text-xl font-bold text-[#1f2746] dark:text-white" onClick={() => onEditTask(task)} type="button">{task.title}</button>
@@ -293,7 +301,7 @@ export function TaskCardGalleryComponent({ currentStreakByTaskId, focusedTaskIds
   );
 }
 
-export function TaskMatrixViewComponent({ currentStreakByTaskId, getTaskStatusOptions, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
+export function TaskMatrixViewComponent({ currentStreakByTaskId, customBehaviorRulesets = [], getTaskStatusOptions, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; customBehaviorRulesets?: readonly CustomTaskTypeIdentity[]; getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
   const cells = [
     { key: "urgent-high", title: "Urgent + Higher Energy", tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy !== "low") },
     { key: "urgent-low", title: "Urgent + Low Energy", tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy === "low") },
@@ -312,7 +320,7 @@ export function TaskMatrixViewComponent({ currentStreakByTaskId, getTaskStatusOp
           <div className="mt-4 space-y-3">
             {cell.tasks.length === 0 ? <EmptyTaskState text="No tasks in this bucket." /> : null}
             {cell.tasks.map((task) => (
-              <div className="flex w-full items-center justify-between gap-3 rounded-[1.2rem] border px-4 py-3 border-[#efeaf9] bg-[#fdfcff] dark:border-white/10 dark:bg-white/[0.04]" key={task.id}>
+              <div className={`flex w-full items-center justify-between gap-3 rounded-[1.2rem] border px-4 py-3 ${taskSurfaceClassName(task, customBehaviorRulesets)}`} key={task.id}>
                 <div className="min-w-0">
                   <button className="truncate text-left text-base font-semibold text-[#27304c] dark:text-white" onClick={() => onEditTask(task)} type="button">{task.title}</button>
                   <div className="mt-1 flex flex-wrap items-center gap-2">

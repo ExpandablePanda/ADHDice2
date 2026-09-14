@@ -5368,6 +5368,7 @@ export function TaskApp() {
       activeCount={filteredActiveTasks.length}
       currentColumns={gridColumns}
       currentStreakByTaskId={currentStreakByTaskId}
+      customBehaviorRulesets={customBehaviorRulesets}
       doneCount={filteredDoneTasks.length}
       draggedWidgetId={draggedGridWidgetId}
       focusedTaskIds={focusedTaskIds}
@@ -5427,6 +5428,7 @@ export function TaskApp() {
   const matrixContentNode = (
     <TaskMatrixView
       currentStreakByTaskId={currentStreakByTaskId}
+      customBehaviorRulesets={customBehaviorRulesets}
       getTaskStatusOptions={resolveCurrentTaskStatusOptions}
       onEditTask={(task) => openExistingTaskEditor(task, selectedBucketTasks.filter(isTaskOpen).map((entry) => entry.id))}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
@@ -5437,6 +5439,7 @@ export function TaskApp() {
   const cardsContentNode = (
     <TaskCardGallery
       currentStreakByTaskId={currentStreakByTaskId}
+      customBehaviorRulesets={customBehaviorRulesets}
       focusedTaskIds={focusedTaskIds}
       getTaskStatusOptions={resolveCurrentTaskStatusOptions}
       onEditTask={(task) => openExistingTaskEditor(task, selectedBucketTasks.map((entry) => entry.id))}
@@ -7378,6 +7381,7 @@ export function TaskApp() {
             pathsWorkspacePanel={(
               <PathsWorkspace
                 availableTaskLists={availableTaskLists}
+                customBehaviorRulesets={customBehaviorRulesets}
                 getTaskStatusOptions={resolveCurrentTaskStatusOptions}
                 listMembershipsByTaskId={taskListMembershipsByTaskId}
                 onOpenTask={openTaskInSharedTasksEditorFromPaths}
