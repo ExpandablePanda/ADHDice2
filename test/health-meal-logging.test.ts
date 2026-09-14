@@ -167,7 +167,7 @@ test("Done uses the local date RPC input, server timestamp, and plan snapshots",
   assert.match(source, /todayHealthDate\(\)/);
   assert.match(useHealthSource, /p_actual_entry_date: actualEntryDate/);
   assert.match(useHealthSource, /buildActualMealEntryInputFromPlan\(plan, \{ entryDate: actualEntryDate, loggedAt: confirmedAt \}\)/);
-  assert.match(useHealthSource, /setMessage\(\{ tone: "good", text: newlyCreated \? "Meal plan marked Done\."/);
+  assert.match(useHealthSource, /setHealthSuccessMessage\(\{ tone: "good", text: newlyCreated \? "Meal plan marked Done\."/);
 });
 
 test("the reusable barcode scanner prefers the rear camera and cleans up on every exit", () => {

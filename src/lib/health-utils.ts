@@ -232,6 +232,7 @@ export const DEFAULT_HEALTH_PROFILE: Omit<HealthProfile, "created_at" | "updated
   workout_type_options: [...HEALTH_WORKOUT_TYPES],
   workout_title_options: [],
   workout_import_aliases: {},
+  journal_questions: [],
   user_id: "",
   fat_goal_grams: 75,
 };
@@ -267,6 +268,9 @@ export function normalizeHealthProfile(profile: Partial<HealthProfile> | null | 
     : [];
   const workoutTypeOptions = normalizeHealthWorkoutOptionValues(profile?.workout_type_options);
   const workoutImportAliases = normalizeHealthWorkoutImportAliases(profile?.workout_import_aliases);
+  const journalQuestions = Array.isArray(profile?.journal_questions)
+    ? profile.journal_questions.filter((question) => question && typeof question === "object" && typeof question.id === "string")
+    : [];
   const waterGoalMl = Number(profile?.water_goal_ml);
   return {
     ...fallback,
@@ -280,6 +284,7 @@ export function normalizeHealthProfile(profile: Partial<HealthProfile> | null | 
     workout_type_options: workoutTypeOptions.length > 0 ? workoutTypeOptions : [...HEALTH_WORKOUT_TYPES],
     workout_title_options: workoutTitleOptions,
     workout_import_aliases: workoutImportAliases,
+    journal_questions: journalQuestions,
   };
 }
 

@@ -308,6 +308,41 @@ popover; no Task status, persistence field, manual membership, behavior
 engine, SQL/schema change, or Edge deployment was added. Legacy persisted
 `attention` surface state migrates to Tasks with the Attention list selected.
 Browser QA remains unverified.
+## 2026-09-12 7.13.47 Journal QA Corrections
+
+Journal Event and Start/End check-in controls now use the compact 26px time
+presentation, with a unified keyboard-accessible AM/PM control. Event Feeling
+occurrence editing is viewport-safe through a body-level floating panel, and
+Start of Day and End of Day expose explicit mutually exclusive Yes/No choices.
+The direct Event editor no longer asks for a second notes response; historical
+Event notes remain preserved in structured answers and summaries. Browser QA
+remains unverified.
+
+## 2026-09-12 7.13.46 Event-Centered Feeling Logging
+
+Type-driven Journal Events now own tagged symptom and Feeling occurrences. Start
+of Day and End of Day can optionally create and link one canonical Event while
+preserving independent Event date/time and edit/retry identity. Browser QA
+remains unverified.
+
+## 2026-09-12 7.13.45 Journal Occurrence Date and Time Labels
+
+Journal Feeling and symptom occurrence references now show the occurrence name,
+canonical score denominator, local calendar date, and local time. Start of Day,
+End of Day, and Event pickers, edit/reopen rows, saved Journal summaries, and
+linked history references use the same timestamp-based local formatting. No
+occurrence identity, persistence, schema, or Health local-storage behavior
+changed; browser QA remains unverified.
+
+## 2026-09-12 7.13.44 Health/Journal LocalStorage Quota Hotfix
+
+Health local-cache persistence now treats quota and unexpected browser storage
+write failures as non-fatal. React state updates before the cache pass, quota
+failure stops remaining cache writes without deleting Health or pending
+meal-plan keys, and remote Supabase hydration continues. Local-only actions
+surface a warning when their durable browser write did not succeed. No schema,
+Supabase deployment, or Journal product behavior changed; browser QA remains
+unverified.
 
 ## 2026-09-12 7.13.41 Effective-Dated Needs Action Triggers
 
@@ -335,6 +370,14 @@ deployed from commit `378d2cb7580f6ab5221434322859e6ed0ea1b114`; the deployed
 Edge Function version was 35 at QA time, and browser QA for the Blank/Ignore
 unresolved-backlog correction passed. No SQL migration or schema change was
 required.
+
+## 2026-09-12 7.13.43 Type-Driven Journal Check-ins
+
+Journal now supports Start of Day, End of Day, and Event entry types with
+structured answers, linked Sleep/Food/Feeling data, open-ended writing, and
+configurable historical-safe custom check-in questions. The additive Journal
+schema migration is source-only; no SQL deployment was performed, and browser
+QA remains unverified.
 
 ## 2026-09-12 7.13.40 Available Actions UI Enforcement
 
