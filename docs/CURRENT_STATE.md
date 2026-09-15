@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.65`.
+- Current working app version: `7.13.66`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,6 +23,16 @@ default, restoring List rendering with no behavior or persistence change.
 
 No behavior policy, Task State, History, recurrence, streak, reward, or Task
 Type creation semantics changed. No SQL or schema change was made.
+
+## 2026-09-14 7.13.66 Table Step Task Type Selector Placement
+
+Version 7.13.65 fixed the List View child-preview crash. Continued browser QA
+found that the Table Step selector depended on the optional Task Type column:
+when that column was hidden, the inline Step draft exposed no Task Type control.
+Version 7.13.66 makes Task Type part of the inline title creation control itself
+and renders the visible Task Type column as a read-only mirror.
+
+No persistence or Task behavior change was made.
 
 ## 2026-09-14 7.13.64 Custom Task Type Presentation QA and Child Creation
 

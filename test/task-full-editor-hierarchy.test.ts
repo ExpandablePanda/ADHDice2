@@ -33,9 +33,20 @@ const fullEditorSource = tableSource.slice(fullEditorStart, fullEditorEnd);
 const editorChildRowsStart = tableSource.indexOf("const renderEditorChildTaskRows");
 const editorChildRowsEnd = tableSource.indexOf("const getStepMiniCellActionMode", editorChildRowsStart);
 const editorChildRowsSource = tableSource.slice(editorChildRowsStart, editorChildRowsEnd);
+const tableStepDraftCellStart = tableSource.indexOf("const renderTableStepDraftCell");
+const tableStepDraftCellEnd = tableSource.indexOf("const renderChildTaskMiniRows", tableStepDraftCellStart);
+const tableStepDraftCellSource = tableSource.slice(tableStepDraftCellStart, tableStepDraftCellEnd);
+const tableStepDraftTitleStart = tableStepDraftCellSource.indexOf('if (columnId === "title")');
+const tableStepDraftTitleEnd = tableStepDraftCellSource.indexOf('if (columnId === "status")', tableStepDraftTitleStart);
+const tableStepDraftTitleSource = tableStepDraftCellSource.slice(tableStepDraftTitleStart, tableStepDraftTitleEnd);
+const tableStepDraftTaskTypeStart = tableStepDraftCellSource.indexOf('if (columnId === "task_type")');
+const tableStepDraftTaskTypeEnd = tableStepDraftCellSource.indexOf('if (columnId === "due")', tableStepDraftTaskTypeStart);
+const tableStepDraftTaskTypeSource = tableStepDraftCellSource.slice(tableStepDraftTaskTypeStart, tableStepDraftTaskTypeEnd);
 
 assert.ok(fullEditorStart >= 0, "full editor child section should be discoverable");
 assert.ok(fullEditorEnd > fullEditorStart, "full editor child section boundary should be discoverable");
+assert.ok(tableStepDraftCellStart >= 0, "Table Step draft cell renderer should be discoverable");
+assert.ok(tableStepDraftCellEnd > tableStepDraftCellStart, "Table Step draft cell renderer boundary should be discoverable");
 
 test("root full editor uses Steps and Add Step", () => {
   assert.deepEqual(getFullEditorChildSectionLabels(0), { action: "Add Step", heading: "Steps" });
@@ -112,11 +123,27 @@ test("Step and Substep title handoff remains atomic when the prior rename blurs"
 });
 
 test("row child creation uses the clicked row ID and renders its form beneath that row", () => {
-  assert.match(tableSource, /onCreateChildTask\(parentTaskId, nextTitle\)/);
+  assert.match(tableSource, /onCreateChildTask\(parentTaskId, nextTitle, tableStepDraftTaskTypeValues/);
   assert.match(editorChildRowsSource, /data-full-editor-child-draft-row=\{item\.id\}/);
   assert.ok(editorChildRowsSource.indexOf("data-same-table-step-row={item.id}") < editorChildRowsSource.indexOf("data-full-editor-child-draft-row={item.id}"));
   assert.match(editorChildRowsSource, /placeholder="Substep title\.\.\."/);
   assert.match(editorChildRowsSource, /Add Substep\s*<\/TaskTableChipButton>/);
+});
+
+test("Table Step draft owns one Task Type editor in the title cell and mirrors it in the visible Task Type column", () => {
+  assert.match(tableStepDraftTitleSource, /<TaskInlineChildDraftInput[\s\S]*<TaskTypeSelect/);
+  assert.match(tableStepDraftTitleSource, /onChange=\{\(value\) => setTableStepDraftTaskTypeValues[\s\S]*value=\{draftTaskTypeSelectionValue\}/);
+  assert.equal((tableStepDraftCellSource.match(/<TaskTypeSelect/g) ?? []).length, 1, "the draft renderer should expose one interactive Task Type editor");
+  assert.match(tableStepDraftTaskTypeSource, /<TaskTypeIdentity compact option=\{draftTaskTypeOption\}/);
+  assert.doesNotMatch(tableStepDraftTaskTypeSource, /<TaskTypeSelect/);
+  assert.match(tableSource, /visibleHeaderColumns\.map\(\(column\) => \([\s\S]*renderTableStepDraftCell\(task\.id, column\.id\)/);
+});
+
+test("Table Step Task Type selection is protected from title blur and resets with the draft", () => {
+  assert.match(tableStepDraftTitleSource, /event\.relatedTarget instanceof HTMLElement && event\.relatedTarget\.closest\("\[data-task-type-select\]"\)[\s\S]*return;[\s\S]*commitTableStepDraft/);
+  assert.match(tableSource, /current\[parentTaskId\] === undefined \? \{ \.\.\.current, \[parentTaskId\]: "task" \}/);
+  assert.match(tableSource, /function cancelTableStepDraft\(parentTaskId: string\)[\s\S]*setTableStepDraftTaskTypeValues\([\s\S]*delete next\[parentTaskId\]/);
+  assert.match(tableSource, /cancelTableStepDraft\(parentTaskId\);[\s\S]*setExpandedStepsByTaskId/);
 });
 
 test("blocked hierarchy rows cannot open row child creation", () => {
@@ -157,8 +184,8 @@ test("recursive child display and editor save remain wired", () => {
 });
 
 test("Table and List child creation still use the shared callback", () => {
-  assert.match(tableSource, /onCreateChildTask\(parentTaskId, nextTitle\)/);
-  assert.match(listSource, /onCreateChildTask\?\.\(parentTaskId, title\)/);
+  assert.match(tableSource, /onCreateChildTask\(parentTaskId, nextTitle, tableStepDraftTaskTypeValues/);
+  assert.match(listSource, /onCreateChildTask\?\.\(parentTaskId, title, substepTaskTypeSelectionValue\)/);
   assert.match(appSource, /const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics\.cycleTaskIds;/);
   assert.match(appSource, /buildChildTaskCreationDraft\([\s\S]*blockedParentTaskIds: childTaskCreationBlockedTaskIds/);
 });

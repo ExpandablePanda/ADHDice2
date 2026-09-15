@@ -8550,6 +8550,9 @@ export function TaskManagementTableV2({
     const draft = tableStepTitleDrafts[parentTaskId] ?? "";
     const creationError = tableStepCreationErrorByParentId[parentTaskId];
     const childLabel = tableStepDraftChildLabels[parentTaskId] ?? "Step";
+    const draftTaskTypeSelectionValue = tableStepDraftTaskTypeValues[parentTaskId] ?? "task";
+    const draftTaskTypeOption = taskTypeFilterOptions.find((option) => option.value === draftTaskTypeSelectionValue)
+      ?? resolveTaskTypeSelectionOption("task", null, customBehaviorRulesets);
 
     if (columnId === "status_icon") {
       return <div className="flex self-center">{renderTableCurrentStatusCircle("pending")}</div>;
@@ -8560,37 +8563,47 @@ export function TaskManagementTableV2({
         <div className="flex w-full min-w-0 items-center gap-1.5 text-left" style={{ paddingLeft: "0.2rem" }}>
           <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
           <div className="min-w-0 flex-1">
-            <TaskInlineChildDraftInput
-              ariaLabel={`New ${childLabel.toLowerCase()} title`}
-              childLabel={childLabel}
-              inputRef={tableStepDraftParentId === parentTaskId ? tableStepDraftInputRef : undefined}
-              onBlur={(event) => {
-                if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select]")) {
-                  return;
-                }
-                if (draft.trim()) {
-                  void commitTableStepDraft(parentTaskId);
-                  return;
-                }
-                cancelTableStepDraft(parentTaskId);
-              }}
-              onCancel={() => cancelTableStepDraft(parentTaskId)}
-              onChange={(value) => {
-                setTableStepTitleDrafts((current) => ({
-                  ...current,
-                  [parentTaskId]: value,
-                }));
-                if (creationError) {
-                  setTableStepCreationErrorByParentId((current) => ({
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <TaskInlineChildDraftInput
+                ariaLabel={`New ${childLabel.toLowerCase()} title`}
+                childLabel={childLabel}
+                inputRef={tableStepDraftParentId === parentTaskId ? tableStepDraftInputRef : undefined}
+                onBlur={(event) => {
+                  if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select]")) {
+                    return;
+                  }
+                  if (draft.trim()) {
+                    void commitTableStepDraft(parentTaskId);
+                    return;
+                  }
+                  cancelTableStepDraft(parentTaskId);
+                }}
+                onCancel={() => cancelTableStepDraft(parentTaskId)}
+                onChange={(value) => {
+                  setTableStepTitleDrafts((current) => ({
                     ...current,
-                    [parentTaskId]: null,
+                    [parentTaskId]: value,
                   }));
-                }
-              }}
-              onCommit={() => commitTableStepDraft(parentTaskId)}
-              placeholder={`${childLabel} title...`}
-              value={draft}
-            />
+                  if (creationError) {
+                    setTableStepCreationErrorByParentId((current) => ({
+                      ...current,
+                      [parentTaskId]: null,
+                    }));
+                  }
+                }}
+                onCommit={() => commitTableStepDraft(parentTaskId)}
+                placeholder={`${childLabel} title...`}
+                value={draft}
+              />
+              <TaskTypeSelect
+                ariaLabel={`${childLabel} Task Type`}
+                className="mt-0 min-w-[10rem] max-w-full flex-[1_1_10rem]"
+                label={`${childLabel} Task Type`}
+                onChange={(value) => setTableStepDraftTaskTypeValues((current) => ({ ...current, [parentTaskId]: value }))}
+                options={taskTypeFilterOptions}
+                value={draftTaskTypeSelectionValue}
+              />
+            </div>
             {creationError ? (
               <p className="mt-1 text-[11px] font-medium text-[#d94e67] dark:text-[#ff9eaf]">{creationError}</p>
             ) : (
@@ -8610,16 +8623,7 @@ export function TaskManagementTableV2({
     }
 
     if (columnId === "task_type") {
-      return (
-        <TaskTypeSelect
-          ariaLabel={`${childLabel} Task Type`}
-          className="mt-0 min-w-[10rem]"
-          label={`${childLabel} Task Type`}
-          onChange={(value) => setTableStepDraftTaskTypeValues((current) => ({ ...current, [parentTaskId]: value }))}
-          options={taskTypeFilterOptions}
-          value={tableStepDraftTaskTypeValues[parentTaskId] ?? "task"}
-        />
-      );
+      return <TaskTypeIdentity compact option={draftTaskTypeOption} />;
     }
 
     if (columnId === "due") {

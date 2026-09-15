@@ -119,6 +119,7 @@ test("normal and child Task creation default TaskType to task", () => {
   const child = buildChildTaskCreationDraft({ parentTaskId: "parent-1", title: "Step" });
   assert.equal(child.ok, true);
   assert.equal(child.draft?.task_type, "task");
+  assert.equal(child.draft?.custom_ruleset_id, null);
   assert.equal(createTask({ id: "task-1", title: "Task", status: "pending", created_at: "2026-09-08", sort_order: 0 }).task_type, "task");
 });
 
