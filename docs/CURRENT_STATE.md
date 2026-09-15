@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.64`.
+- Current working app version: `7.13.65`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-14 7.13.65 List View Child Preview Crash Hotfix
+
+Browser QA for 7.13.64 exposed a List View runtime `ReferenceError` because
+`StepsCardPreview` used `customBehaviorRulesets` without destructuring it from
+its props. Version 7.13.65 binds the existing optional prop with an empty-array
+default, restoring List rendering with no behavior or persistence change.
+
+No behavior policy, Task State, History, recurrence, streak, reward, or Task
+Type creation semantics changed. No SQL or schema change was made.
 
 ## 2026-09-14 7.13.64 Custom Task Type Presentation QA and Child Creation
 

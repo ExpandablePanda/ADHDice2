@@ -991,6 +991,7 @@ function StepsCardPreview({
   allTagOptions,
   childTasksById,
   closeQuickPanel,
+  customBehaviorRulesets = [],
   currentListLabel,
   group,
   isExpanded = true,

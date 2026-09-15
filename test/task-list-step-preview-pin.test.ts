@@ -18,8 +18,15 @@ test("StepsCardPreview owns explicit pin callback wiring", () => {
   assert.equal((previewSource.match(/item\.depth > 1 \? \"substep\" : \"step\"/g) ?? []).length >= 2, true);
 });
 
+test("StepsCardPreview binds optional custom Task Type rulesets before building child options", () => {
+  assert.match(previewSource, /closeQuickPanel,\s*customBehaviorRulesets = \[\],/);
+  assert.match(previewSource, /const taskTypeOptions = useMemo\(\(\) => buildTaskTypeSelectionOptions\(customBehaviorRulesets\)/);
+  assert.match(previewSource, /resolveTaskTypeSelectionOption\(item\.taskType, item\.customRulesetId, customBehaviorRulesets\)/);
+  assert.match(source, /<StepsCardPreview[\s\S]*?customBehaviorRulesets=\{tableProps\.customBehaviorRulesets\}/);
+});
+
 test("TasksSimpleList forwards pinning and preserves child creation wiring", () => {
   assert.match(source, /<StepsCardPreview[\s\S]*?onTogglePinned=\{tableProps\.onTogglePinned\}/);
   assert.match(source, /<StepsCardPreview[\s\S]*?onCreateChildTask=\{tableProps\.onCreateChildTask\}/);
-  assert.match(previewSource, /const result = await onCreateChildTask\?\.\(parentTaskId, title\);/);
+  assert.match(previewSource, /const result = await onCreateChildTask\?\.\(parentTaskId, title, substepTaskTypeSelectionValue\);/);
 });
