@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.70`.
+- Current working app version: `7.13.71`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -45,6 +45,16 @@ rename geometry and makes only the new Step/Substep creation field taller at
 approximately 24px, with no persistence or behavior change.
 
 No SQL or schema change was made.
+
+## 2026-09-15 7.13.71 Safari Task Type Selection Child Draft Guard
+
+Browser QA for 7.13.70 confirmed the child-title typography and vertical
+breathing room, then exposed Safari blur-to-commit firing during portaled Task
+Type interaction. Version 7.13.71 replaces relatedTarget-only inference with an
+explicit Task Type pointer-interaction guard. Selecting a Task Type closes only
+the dropdown and preserves the open child draft and title.
+
+No persistence, SQL, schema, or behavior-policy change was made.
 
 ## 2026-09-14 7.13.68 Inline Table Child Title Typography
 

@@ -2753,6 +2753,7 @@ export function TaskManagementTableV2({
   const [tableStepDraftChildLabels, setTableStepDraftChildLabels] = useState<Record<string, "Step" | "Substep">>({});
   const [tableStepDraftTaskTypeValues, setTableStepDraftTaskTypeValues] = useState<Record<string, string>>({});
   const tableStepDraftInputRef = useRef<HTMLInputElement | null>(null);
+  const taskTypeInteractionParentIdRef = useRef<string | null>(null);
   const [pendingSubtaskAutoExpandByTaskId, setPendingSubtaskAutoExpandByTaskId] = useState<Record<string, boolean>>({});
   const [hiddenSubtaskIds, setHiddenSubtaskIds] = useState<Record<string, boolean>>({});
   const [openColumnMenuId, setOpenColumnMenuId] = useState<SortColumnId | null>(null);
@@ -2790,6 +2791,10 @@ export function TaskManagementTableV2({
       tableStepDraftInputRef.current?.focus();
     }
   }, [tableStepDraftParentId]);
+
+  useEffect(() => () => {
+    taskTypeInteractionParentIdRef.current = null;
+  }, []);
 
   useEffect(() => {
     return () => clearStatusRailLongPress();
@@ -5623,6 +5628,7 @@ export function TaskManagementTableV2({
       return;
     }
 
+    taskTypeInteractionParentIdRef.current = null;
     setExpandedStepsByTaskId((current) => ({
       ...current,
       [parentTaskId]: true,
@@ -5642,6 +5648,9 @@ export function TaskManagementTableV2({
   }
 
   function cancelTableStepDraft(parentTaskId: string) {
+    if (taskTypeInteractionParentIdRef.current === parentTaskId) {
+      taskTypeInteractionParentIdRef.current = null;
+    }
     setTableStepDraftParentId((current) => (current === parentTaskId ? null : current));
     setTableStepCreationErrorByParentId((current) => ({
       ...current,
@@ -8557,6 +8566,9 @@ export function TaskManagementTableV2({
                 childLabel={childLabel}
                 inputRef={tableStepDraftParentId === parentTaskId ? tableStepDraftInputRef : undefined}
                 onBlur={(event) => {
+                  if (taskTypeInteractionParentIdRef.current === parentTaskId) {
+                    return;
+                  }
                   if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select], [data-task-type-select-menu]")) {
                     return;
                   }
@@ -8580,6 +8592,14 @@ export function TaskManagementTableV2({
                   }
                 }}
                 onCommit={() => commitTableStepDraft(parentTaskId)}
+                onInteractionEnd={() => {
+                  if (taskTypeInteractionParentIdRef.current === parentTaskId) {
+                    taskTypeInteractionParentIdRef.current = null;
+                  }
+                }}
+                onInteractionStart={() => {
+                  taskTypeInteractionParentIdRef.current = parentTaskId;
+                }}
                 placeholder={`${childLabel} title...`}
                 value={draft}
               />

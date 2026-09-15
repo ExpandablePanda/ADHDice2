@@ -999,6 +999,7 @@ function StepsCardPreview({
   matchingChildTaskIds,
   listDefinitions,
   listMembershipsByTaskId,
+  parentTaskId,
   onCreateChildTask,
   onDeleteStep,
   onOpenHistory,
@@ -1054,6 +1055,7 @@ function StepsCardPreview({
   matchingChildTaskIds?: ReadonlySet<string>;
   listDefinitions: TaskListDefinition[];
   listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
+  parentTaskId: string;
   onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string) => Promise<{ error: string | null; taskId: string | null }>;
   onDeleteStep?: (taskId: string) => void;
   onOpenHistory?: (taskId: string) => void;
@@ -1117,7 +1119,24 @@ function StepsCardPreview({
   const [substepTitleDrafts, setSubstepTitleDrafts] = useState<Record<string, string>>({});
   const [substepCreationErrors, setSubstepCreationErrors] = useState<Record<string, string | null>>({});
   const [substepTaskTypeSelectionValue, setSubstepTaskTypeSelectionValue] = useState("task");
+  const taskTypeInteractionParentIdRef = useRef<string | null>(null);
   const taskTypeOptions = useMemo(() => buildTaskTypeSelectionOptions(customBehaviorRulesets), [customBehaviorRulesets]);
+
+  const beginTaskTypeInteraction = (parentTaskId: string) => {
+    taskTypeInteractionParentIdRef.current = parentTaskId;
+  };
+  const endTaskTypeInteraction = (parentTaskId: string) => {
+    if (taskTypeInteractionParentIdRef.current === parentTaskId) {
+      taskTypeInteractionParentIdRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    taskTypeInteractionParentIdRef.current = null;
+  }, [parentTaskId]);
+  useEffect(() => () => {
+    taskTypeInteractionParentIdRef.current = null;
+  }, []);
 
   const highlightedTaskIdSet = useMemo(() => new Set(highlightedTaskIds ?? []), [highlightedTaskIds]);
   const collapsedStepIdSet = useMemo(
@@ -1178,6 +1197,7 @@ function StepsCardPreview({
   }
 
   const commitSubstepDraft = async (parentTaskId: string) => {
+    endTaskTypeInteraction(parentTaskId);
     const title = (substepTitleDrafts[parentTaskId] ?? "").trim();
     if (!title) {
       setSubstepDraftParentId(null);
@@ -1197,6 +1217,9 @@ function StepsCardPreview({
   };
 
   const cancelSubstepDraft = (parentTaskId = substepDraftParentId) => {
+    if (parentTaskId) {
+      endTaskTypeInteraction(parentTaskId);
+    }
     setSubstepDraftParentId(null);
     if (parentTaskId) {
       setSubstepTitleDrafts((current) => ({ ...current, [parentTaskId]: "" }));
@@ -1329,17 +1352,23 @@ function StepsCardPreview({
               className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} min-w-[14rem] flex-1`}
               onChange={(event) => onParentStepDraftChange?.(event.target.value)}
               onBlur={(event) => {
+                if (taskTypeInteractionParentIdRef.current === parentTaskId) return;
                 if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select], [data-task-type-select-menu]")) return;
-                if (parentStepDraftValue.trim()) onCommitParentStepDraft?.(parentStepTaskTypeSelectionValue);
+                if (parentStepDraftValue.trim()) {
+                  endTaskTypeInteraction(parentTaskId);
+                  onCommitParentStepDraft?.(parentStepTaskTypeSelectionValue);
+                }
               }}
               onKeyDown={(event) => {
                 event.stopPropagation();
                 if (event.key === "Enter") {
                   event.preventDefault();
+                  endTaskTypeInteraction(parentTaskId);
                   onCommitParentStepDraft?.(parentStepTaskTypeSelectionValue);
                 }
                 if (event.key === "Escape") {
                   event.preventDefault();
+                  endTaskTypeInteraction(parentTaskId);
                   onCancelParentStepDraft?.();
                 }
               }}
@@ -1351,13 +1380,15 @@ function StepsCardPreview({
               ariaLabel="Step Task Type"
               className="mt-0"
               label="Step Task Type"
+              onInteractionEnd={() => endTaskTypeInteraction(parentTaskId)}
+              onInteractionStart={() => beginTaskTypeInteraction(parentTaskId)}
               onChange={onParentStepTaskTypeSelectionChange ?? (() => undefined)}
               options={taskTypeOptions}
               size="compact"
               value={parentStepTaskTypeSelectionValue}
             />
-            <TaskTableChipButton onClick={() => onCommitParentStepDraft?.(parentStepTaskTypeSelectionValue)} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Add Step</TaskTableChipButton>
-            <TaskTableChipButton onClick={() => onCancelParentStepDraft?.()} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
+            <TaskTableChipButton onClick={() => { endTaskTypeInteraction(parentTaskId); onCommitParentStepDraft?.(parentStepTaskTypeSelectionValue); }} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Add Step</TaskTableChipButton>
+            <TaskTableChipButton onClick={() => { endTaskTypeInteraction(parentTaskId); onCancelParentStepDraft?.(); }} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
           </div>
           {parentStepCreationError ? (
             <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">{parentStepCreationError}</p>
@@ -1535,6 +1566,7 @@ function StepsCardPreview({
                                   aria-label={`Add substep to ${item.title || "Untitled step"}`}
                                   childLabel="Substep"
                                   onChooseTask={() => {
+                                    taskTypeInteractionParentIdRef.current = null;
                                     setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
                                     setSubstepDraftParentId(item.id);
                                   }}
@@ -1617,6 +1649,7 @@ function StepsCardPreview({
                               aria-label={`Add substep to ${item.title || "Untitled step"}`}
                               childLabel="Substep"
                               onChooseTask={() => {
+                                taskTypeInteractionParentIdRef.current = null;
                                 setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
                                 setSubstepDraftParentId(item.id);
                               }}
@@ -1784,6 +1817,7 @@ function StepsCardPreview({
                       autoFocus
                       className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
                       onBlur={(event) => {
+                        if (taskTypeInteractionParentIdRef.current === item.id) return;
                         if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select], [data-task-type-select-menu]")) return;
                         if ((substepTitleDrafts[item.id] ?? "").trim()) {
                           void commitSubstepDraft(item.id);
@@ -1809,6 +1843,8 @@ function StepsCardPreview({
                       ariaLabel="Substep Task Type"
                       className="mt-0"
                       label="Substep Task Type"
+                      onInteractionEnd={() => endTaskTypeInteraction(item.id)}
+                      onInteractionStart={() => beginTaskTypeInteraction(item.id)}
                       onChange={setSubstepTaskTypeSelectionValue}
                       options={taskTypeOptions}
                       size="compact"
@@ -3707,6 +3743,7 @@ function TasksSimpleList({
                 matchingChildTaskIds={!showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)] && activeHierarchyParentMatch
                   ? activeHierarchyChildTaskIds
                   : undefined}
+                parentTaskId={task.id}
                 onToggleShowAllSearchSteps={activeHierarchyParentMatch
                   ? () => {
                     const key = getShowAllSearchStepsKey(task.id);

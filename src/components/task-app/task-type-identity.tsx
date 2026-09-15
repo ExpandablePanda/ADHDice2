@@ -2,7 +2,7 @@
 
 import { ChevronDown } from "lucide-react";
 import { createPortal } from "react-dom";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AdhdDropdownPanel } from "@/components/ui-system";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
@@ -79,6 +79,8 @@ export function TaskTypeSelect({
   className,
   disabled = false,
   label,
+  onInteractionEnd,
+  onInteractionStart,
   onChange,
   options,
   size = "default",
@@ -88,6 +90,8 @@ export function TaskTypeSelect({
   className?: string;
   disabled?: boolean;
   label: string;
+  onInteractionEnd?: () => void;
+  onInteractionStart?: () => void;
   onChange: (value: string) => void;
   options: ReadonlyArray<TaskTypeSelectionOption>;
   size?: TaskTypeSelectSize;
@@ -97,7 +101,40 @@ export function TaskTypeSelect({
   const [menuPosition, setMenuPosition] = useState<TaskTypeSelectMenuPosition | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const interactionEndFrameRef = useRef<number | null>(null);
+  const onInteractionEndRef = useRef(onInteractionEnd);
   const selectedOption = options.find((option) => option.value === value) ?? options[0];
+
+  const scheduleInteractionEnd = () => {
+    if (typeof window === "undefined") {
+      onInteractionEndRef.current?.();
+      return;
+    }
+    if (interactionEndFrameRef.current !== null) {
+      window.cancelAnimationFrame(interactionEndFrameRef.current);
+    }
+    interactionEndFrameRef.current = window.requestAnimationFrame(() => {
+      interactionEndFrameRef.current = null;
+      onInteractionEndRef.current?.();
+    });
+  };
+
+  const handleInteractionPointerDown = () => {
+    onInteractionStart?.();
+    scheduleInteractionEnd();
+  };
+
+  useEffect(() => {
+    onInteractionEndRef.current = onInteractionEnd;
+  }, [onInteractionEnd]);
+
+  useEffect(() => () => {
+    if (interactionEndFrameRef.current !== null) {
+      window.cancelAnimationFrame(interactionEndFrameRef.current);
+      interactionEndFrameRef.current = null;
+    }
+    onInteractionEndRef.current?.();
+  }, []);
 
   useLayoutEffect(() => {
     if (!isOpen) return;
@@ -153,7 +190,10 @@ export function TaskTypeSelect({
       className={`${isCompact ? "max-h-64 p-1" : "max-h-72 p-1.5"} z-[160] max-w-[calc(100vw-1rem)] overflow-y-auto`}
       data-task-type-select-menu="true"
       onClick={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        handleInteractionPointerDown();
+      }}
       ref={menuRef}
       role="listbox"
       style={{ left: menuPosition.left, position: "fixed", top: menuPosition.top, width: menuPosition.width, zIndex: 160 }}
@@ -186,6 +226,7 @@ export function TaskTypeSelect({
         aria-label={ariaLabel ?? label}
         className={triggerClassName}
         disabled={disabled}
+        onPointerDown={handleInteractionPointerDown}
         onClick={() => {
           if (isOpen) {
             setIsOpen(false);

@@ -177,6 +177,32 @@ test("Task Type selectors keep full-size defaults and use compact portaled contr
   assert.doesNotMatch(tableStepDraftTitleSource, /min-w-\[10rem\]|flex-\[1_1_10rem\]/);
 });
 
+test("Task Type selection exposes an early pointer interaction lifecycle while preserving the portal", () => {
+  assert.match(taskTypeSelectSource, /onInteractionEnd\?: \(\) => void/);
+  assert.match(taskTypeSelectSource, /onInteractionStart\?: \(\) => void/);
+  assert.match(taskTypeSelectSource, /const handleInteractionPointerDown = \(\) => \{[\s\S]*onInteractionStart\?\.\(\);[\s\S]*scheduleInteractionEnd\(\);/);
+  assert.match(taskTypeSelectSource, /onPointerDown=\{handleInteractionPointerDown\}/);
+  assert.match(taskTypeSelectSource, /onPointerDown=\{\(event\) => \{[\s\S]*event\.stopPropagation\(\);[\s\S]*handleInteractionPointerDown\(\);/);
+  assert.match(taskTypeSelectSource, /requestAnimationFrame\(/);
+  assert.match(taskTypeSelectSource, /cancelAnimationFrame\(/);
+  assert.match(taskTypeSelectSource, /onClick=\{\(\) => \{ onChange\(option\.value\); setIsOpen\(false\); \}\}/);
+  assert.match(taskTypeSelectSource, /createPortal\(panel, document\.body\)/);
+  assert.match(taskTypeSelectSource, /position: "fixed"/);
+});
+
+test("Table child draft guards blur before relatedTarget inference and clears its interaction ref", () => {
+  assert.match(tableSource, /const taskTypeInteractionParentIdRef = useRef<string \| null>\(null\)/);
+  assert.match(tableStepDraftTitleSource, /if \(taskTypeInteractionParentIdRef\.current === parentTaskId\) \{\s*return;\s*\}[\s\S]*event\.relatedTarget/);
+  assert.match(tableStepDraftTitleSource, /onInteractionStart=\{\(\) => \{\s*taskTypeInteractionParentIdRef\.current = parentTaskId;/);
+  assert.match(tableStepDraftTitleSource, /onInteractionEnd=\{\(\) => \{[\s\S]*taskTypeInteractionParentIdRef\.current = null;/);
+  assert.match(tableSource, /taskTypeInteractionParentIdRef\.current = null;[\s\S]*function cancelTableStepDraft/);
+  assert.match(tableSource, /function cancelTableStepDraft[\s\S]*taskTypeInteractionParentIdRef\.current = null/);
+  assert.match(tableSource, /const result = await onCreateChildTask[\s\S]*cancelTableStepDraft\(parentTaskId\);/);
+  assert.match(tableSource, /void commitTableStepDraft\(parentTaskId\);/);
+  assert.match(editorChildRowsSource, /beginTableStepDraft\(item\.id, "Substep"\)/);
+  assert.doesNotMatch(editorChildRowsSource, /onBlur=\{[\s\S]*commitTableStepDraft/);
+});
+
 test("Task Type menu placement stays viewport-safe and flips above when needed", () => {
   assert.deepEqual(
     getTaskTypeSelectMenuPosition(

@@ -30,3 +30,14 @@ test("TasksSimpleList forwards pinning and preserves child creation wiring", () 
   assert.match(source, /<StepsCardPreview[\s\S]*?onCreateChildTask=\{tableProps\.onCreateChildTask\}/);
   assert.match(previewSource, /const result = await onCreateChildTask\?\.\(parentTaskId, title, substepTaskTypeSelectionValue\);/);
 });
+
+test("List Step and Substep drafts guard blur with the shared Task Type interaction lifecycle", () => {
+  assert.match(previewSource, /const taskTypeInteractionParentIdRef = useRef<string \| null>\(null\)/);
+  assert.match(previewSource, /if \(taskTypeInteractionParentIdRef\.current === parentTaskId\) return;/);
+  assert.match(previewSource, /if \(taskTypeInteractionParentIdRef\.current === item\.id\) return;/);
+  assert.equal((previewSource.match(/onInteractionStart=\{\(\) => beginTaskTypeInteraction/g) ?? []).length, 2);
+  assert.equal((previewSource.match(/onInteractionEnd=\{\(\) => endTaskTypeInteraction/g) ?? []).length, 2);
+  assert.match(previewSource, /const commitSubstepDraft = async \(parentTaskId: string\) => \{\s*endTaskTypeInteraction\(parentTaskId\);/);
+  assert.match(previewSource, /const cancelSubstepDraft = \(parentTaskId = substepDraftParentId\) => \{[\s\S]*endTaskTypeInteraction\(parentTaskId\)/);
+  assert.match(source, /<StepsCardPreview[\s\S]*parentTaskId=\{task\.id\}/);
+});
