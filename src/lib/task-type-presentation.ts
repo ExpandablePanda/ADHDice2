@@ -63,9 +63,11 @@ import {
   Wifi,
   Wrench,
 } from "lucide-react";
+import { LUCIDE_ICON_NAME_SET } from "./lucide-icon.ts";
 
-export type TaskTypeIconKey =
-  | "activity" | "bed" | "book-open" | "bookmark" | "briefcase" | "building" | "bug" | "camera" | "calendar" | "car" | "check" | "clipboard" | "clipboard-check" | "code" | "coffee" | "database" | "dumbbell" | "file" | "flag" | "folder" | "food" | "gamepad" | "graduation" | "guitar" | "headphones" | "heart" | "hospital" | "house" | "key" | "laptop" | "lightbulb" | "list-todo" | "mail" | "map" | "microphone" | "monitor" | "music" | "package" | "palette" | "pencil" | "phone" | "pill" | "plane" | "presentation" | "repeat" | "settings" | "shopping-cart" | "smartphone" | "sparkles" | "star" | "stethoscope" | "target" | "terminal" | "ticket" | "trash" | "users" | "video" | "walking" | "washing-machine" | "water" | "wifi" | "wrench";
+export { isLucideIconName } from "./lucide-icon.ts";
+
+export type TaskTypeIconKey = string;
 
 export type TaskTypeAccentKey = "neutral" | "purple" | "blue" | "cyan" | "teal" | "green" | "yellow" | "orange" | "red" | "pink";
 
@@ -97,7 +99,9 @@ export const STANDARD_TASK_TYPE_PRESENTATION: TaskTypePresentation = {
   description: "",
 };
 
-export const TASK_TYPE_ICON_OPTIONS: ReadonlyArray<{ key: TaskTypeIconKey; label: string; keywords: ReadonlyArray<string>; icon: LucideIcon }> = [
+export type TaskTypeIconOption = { key: TaskTypeIconKey; label: string; keywords: ReadonlyArray<string>; icon?: LucideIcon };
+
+export const TASK_TYPE_ICON_OPTIONS: ReadonlyArray<TaskTypeIconOption> = [
   { key: "list-todo", label: "Generic task", keywords: ["todo", "work", "item"], icon: ListTodo },
   { key: "check", label: "Check", keywords: ["done", "complete", "task"], icon: CheckSquare2 },
   { key: "star", label: "Star", keywords: ["favorite", "important"], icon: Star },
@@ -160,6 +164,82 @@ export const TASK_TYPE_ICON_OPTIONS: ReadonlyArray<{ key: TaskTypeIconKey; label
   { key: "map", label: "Map", keywords: ["location", "directions", "travel"], icon: MapIcon },
   { key: "ticket", label: "Ticket", keywords: ["event", "travel", "movie"], icon: Ticket },
   { key: "coffee", label: "Coffee", keywords: ["break", "cafe", "drink"], icon: Coffee },
+  { key: "accessibility", label: "Accessibility", keywords: ["assistive", "inclusive"] },
+  { key: "airplay", label: "Airplay", keywords: ["cast", "screen", "media"] },
+  { key: "alarm-clock", label: "Alarm clock", keywords: ["alarm", "reminder", "time"] },
+  { key: "archive", label: "Archive", keywords: ["store", "saved"] },
+  { key: "at-sign", label: "At sign", keywords: ["mention", "email"] },
+  { key: "award", label: "Award", keywords: ["achievement", "badge"] },
+  { key: "backpack", label: "Backpack", keywords: ["school", "travel"] },
+  { key: "badge-check", label: "Verified badge", keywords: ["approved", "done"] },
+  { key: "ban", label: "Blocked", keywords: ["stop", "prohibited"] },
+  { key: "battery", label: "Battery", keywords: ["power", "charge"] },
+  { key: "bell", label: "Bell", keywords: ["alert", "notification"] },
+  { key: "bike", label: "Bike", keywords: ["cycling", "exercise", "transport"] },
+  { key: "bluetooth", label: "Bluetooth", keywords: ["wireless", "device"] },
+  { key: "bot", label: "Bot", keywords: ["automation", "assistant", "technology"] },
+  { key: "calculator", label: "Calculator", keywords: ["math", "finance"] },
+  { key: "cake", label: "Cake", keywords: ["birthday", "food", "celebrate"] },
+  { key: "calendar-clock", label: "Calendar clock", keywords: ["schedule", "appointment"] },
+  { key: "calendar-plus", label: "Add to calendar", keywords: ["event", "schedule"] },
+  { key: "chart-no-axes-column", label: "Bar chart", keywords: ["report", "analytics", "data"] },
+  { key: "chart-pie", label: "Pie chart", keywords: ["report", "analytics", "data"] },
+  { key: "circle-check", label: "Circle check", keywords: ["done", "complete"] },
+  { key: "circle-help", label: "Help", keywords: ["question", "support"] },
+  { key: "circle-user", label: "User circle", keywords: ["account", "profile", "people"] },
+  { key: "cloud", label: "Cloud", keywords: ["weather", "online", "storage"] },
+  { key: "cloud-sun", label: "Partly cloudy", keywords: ["weather", "nature"] },
+  { key: "contact", label: "Contact", keywords: ["person", "people", "address book"] },
+  { key: "cooking-pot", label: "Cooking pot", keywords: ["food", "kitchen", "meal"] },
+  { key: "credit-card", label: "Credit card", keywords: ["payment", "finance", "shopping"] },
+  { key: "download", label: "Download", keywords: ["save", "import"] },
+  { key: "earth", label: "Earth", keywords: ["world", "nature", "travel"] },
+  { key: "external-link", label: "External link", keywords: ["open", "web"] },
+  { key: "eye", label: "Eye", keywords: ["view", "watch"] },
+  { key: "file-check", label: "Checked file", keywords: ["document", "done"] },
+  { key: "file-plus", label: "New file", keywords: ["document", "create"] },
+  { key: "filter", label: "Filter", keywords: ["sort", "search"] },
+  { key: "flame", label: "Flame", keywords: ["fire", "streak", "energy"] },
+  { key: "gift", label: "Gift", keywords: ["present", "reward"] },
+  { key: "globe", label: "Globe", keywords: ["world", "travel", "web"] },
+  { key: "hash", label: "Hashtag", keywords: ["tag", "number"] },
+  { key: "image", label: "Image", keywords: ["photo", "picture", "creative"] },
+  { key: "inbox", label: "Inbox", keywords: ["mail", "email", "work"] },
+  { key: "info", label: "Information", keywords: ["help", "details"] },
+  { key: "library", label: "Library", keywords: ["books", "learning"] },
+  { key: "link", label: "Link", keywords: ["url", "web"] },
+  { key: "list-check", label: "Checklist", keywords: ["todo", "tasks", "complete"] },
+  { key: "map-pin", label: "Location pin", keywords: ["place", "address", "travel"] },
+  { key: "message-circle", label: "Chat", keywords: ["message", "communication"] },
+  { key: "message-square", label: "Message", keywords: ["chat", "communication"] },
+  { key: "moon", label: "Moon", keywords: ["night", "sleep", "weather"] },
+  { key: "notebook", label: "Notebook", keywords: ["notes", "learning", "writing"] },
+  { key: "paperclip", label: "Paperclip", keywords: ["attachment", "link"] },
+  { key: "pen-line", label: "Pen", keywords: ["write", "sign", "creative"] },
+  { key: "printer", label: "Printer", keywords: ["document", "office"] },
+  { key: "qr-code", label: "QR code", keywords: ["scan", "technology"] },
+  { key: "receipt", label: "Receipt", keywords: ["shopping", "finance"] },
+  { key: "refresh-cw", label: "Refresh", keywords: ["repeat", "reload", "sync"] },
+  { key: "rocket", label: "Rocket", keywords: ["launch", "space", "project"] },
+  { key: "save", label: "Save", keywords: ["store", "file"] },
+  { key: "search", label: "Search", keywords: ["find", "lookup"] },
+  { key: "send", label: "Send", keywords: ["message", "communication", "email"] },
+  { key: "shield-check", label: "Shield check", keywords: ["safe", "security", "done"] },
+  { key: "shopping-bag", label: "Shopping bag", keywords: ["buy", "store", "finance"] },
+  { key: "smile", label: "Smile", keywords: ["feeling", "people", "social"] },
+  { key: "luggage", label: "Luggage", keywords: ["travel", "trip"] },
+  { key: "sun", label: "Sun", keywords: ["weather", "day", "nature"] },
+  { key: "thumbs-up", label: "Thumbs up", keywords: ["like", "approval", "social"] },
+  { key: "timer", label: "Timer", keywords: ["time", "focus", "duration"] },
+  { key: "train-front", label: "Train", keywords: ["travel", "transport"] },
+  { key: "tree-pine", label: "Pine tree", keywords: ["nature", "outdoors"] },
+  { key: "truck", label: "Truck", keywords: ["delivery", "transport"] },
+  { key: "upload", label: "Upload", keywords: ["export", "share"] },
+  { key: "user", label: "Person", keywords: ["people", "profile", "social"] },
+  { key: "wallet-cards", label: "Wallet", keywords: ["money", "finance", "payment"] },
+  { key: "watch", label: "Watch", keywords: ["time", "wearable"] },
+  { key: "zap", label: "Lightning", keywords: ["energy", "power", "fast"] },
+  { key: "zoom-in", label: "Zoom in", keywords: ["magnify", "view"] },
 ];
 
 export const TASK_TYPE_ACCENT_OPTIONS: ReadonlyArray<TaskTypeAccentPresentation> = [
@@ -175,17 +255,49 @@ export const TASK_TYPE_ACCENT_OPTIONS: ReadonlyArray<TaskTypeAccentPresentation>
   { key: "pink", label: "Pink", className: "border-[#efc9df] bg-[#fff0f8] text-[#aa4e7d] dark:border-[#733653] dark:bg-[#421d30] dark:text-[#f0a9cb]", iconClassName: "bg-[#ffdeee] text-[#aa4e7d] dark:bg-[#733653] dark:text-[#f0a9cb]", surfaceClassName: "bg-[#fffafd] dark:bg-[#421d30]", surfaceBorderClassName: "border-[#efc9df] dark:border-[#733653]", surfaceHoverClassName: "hover:bg-[#fff4fa] dark:hover:bg-[#4d2639]" },
 ];
 
-const iconByKey = new Map(TASK_TYPE_ICON_OPTIONS.map((option) => [option.key, option.icon]));
+const iconByKey = new Map(TASK_TYPE_ICON_OPTIONS.filter((option): option is TaskTypeIconOption & { icon: LucideIcon } => Boolean(option.icon)).map((option) => [option.key, option.icon]));
 const accentByKey = new Map(TASK_TYPE_ACCENT_OPTIONS.map((option) => [option.key, option]));
 
+function normalizeIconSearchText(value: string) {
+  return value.trim().toLocaleLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
+}
+
+function formatLucideIconLabel(key: string) {
+  return key.split("-").map((part) => part ? part[0].toLocaleUpperCase() + part.slice(1) : part).join(" ");
+}
+
 export function searchTaskTypeIcons(query: string) {
-  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const normalizedQuery = normalizeIconSearchText(query);
   if (!normalizedQuery) return TASK_TYPE_ICON_OPTIONS;
-  return TASK_TYPE_ICON_OPTIONS.filter((option) => [option.label, option.key, ...option.keywords].some((value) => value.toLocaleLowerCase().includes(normalizedQuery)));
+  const featuredByKey = new Map(TASK_TYPE_ICON_OPTIONS.map((option, index) => [option.key, { index, option }]));
+  return Array.from(new Set([...TASK_TYPE_ICON_OPTIONS.map((option) => option.key), ...LUCIDE_ICON_NAME_SET]))
+    .map((key) => {
+      const featured = featuredByKey.get(key);
+      const normalizedKey = normalizeIconSearchText(key);
+      const normalizedLabel = normalizeIconSearchText(featured?.option.label ?? formatLucideIconLabel(key));
+      const normalizedKeywords = (featured?.option.keywords ?? []).map(normalizeIconSearchText);
+      const rank = normalizedKey === normalizedQuery || normalizedLabel === normalizedQuery
+        ? 0
+        : normalizedKey.startsWith(normalizedQuery) || normalizedLabel.startsWith(normalizedQuery)
+          ? 1
+          : normalizedKeywords.some((keyword) => keyword.includes(normalizedQuery))
+            ? 2
+            : normalizedKey.includes(normalizedQuery) || normalizedLabel.includes(normalizedQuery)
+              ? 3
+              : null;
+      return rank === null ? null : {
+        index: featured?.index ?? Number.MAX_SAFE_INTEGER,
+        option: featured?.option ?? { key, label: formatLucideIconLabel(key), keywords: [] },
+        rank,
+      };
+    })
+    .filter((result): result is { index: number; option: TaskTypeIconOption; rank: number } => result !== null)
+    .sort((left, right) => left.rank - right.rank || left.index - right.index || left.option.key.localeCompare(right.option.key))
+    .map((result) => result.option);
 }
 
 export function normalizeTaskTypePresentation(value: Partial<Record<"iconKey" | "accentKey" | "description", unknown>> | null | undefined): TaskTypePresentation {
-  const iconKey = iconByKey.has(value?.iconKey as TaskTypeIconKey) ? value?.iconKey as TaskTypeIconKey : DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION.iconKey;
+  const iconKey = (iconByKey.has(value?.iconKey as TaskTypeIconKey) || LUCIDE_ICON_NAME_SET.has(value?.iconKey)) ? value?.iconKey as TaskTypeIconKey : DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION.iconKey;
   const accentKey = accentByKey.has(value?.accentKey as TaskTypeAccentKey) ? value?.accentKey as TaskTypeAccentKey : DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION.accentKey;
   const description = typeof value?.description === "string" ? value.description.trim().slice(0, 240) : "";
   return { iconKey, accentKey, description };
@@ -202,6 +314,11 @@ export function resolveTaskTypeAccent(accentKey: unknown): TaskTypeAccentPresent
 export function getTaskTypeSurfaceClassName(accentKey: unknown) {
   const accent = resolveTaskTypeAccent(accentKey);
   return `${accent.surfaceBorderClassName} ${accent.surfaceClassName} ${accent.surfaceHoverClassName}`;
+}
+
+export function getTaskTypeTableSurfaceClassName(accentKey: unknown) {
+  const accent = resolveTaskTypeAccent(accentKey);
+  return `border-transparent ${accent.surfaceClassName} ${accent.surfaceHoverClassName}`;
 }
 
 export function validateTaskTypeDescription(value: unknown) {

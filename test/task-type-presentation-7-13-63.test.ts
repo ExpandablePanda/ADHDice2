@@ -4,6 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   getTaskTypeSurfaceClassName,
+  getTaskTypeTableSurfaceClassName,
+  isLucideIconName,
   resolveTaskTypeAccent,
   resolveTaskTypeIcon,
   searchTaskTypeIcons,
@@ -12,6 +14,7 @@ import {
 import { resolveTaskTypeSelectionOption } from "../src/lib/task-type.ts";
 
 const identitySource = readFileSync("src/components/task-app/task-type-identity.tsx", "utf8");
+const iconRendererSource = readFileSync("src/components/ui/lucide-icon.tsx", "utf8");
 const settingsSource = readFileSync("src/components/task-app/task-type-behavior-settings.tsx", "utf8");
 const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
 const listSource = readFileSync("src/components/task-app/tasks-list-adapter.tsx", "utf8");
@@ -46,8 +49,20 @@ test("Standard Task resolves to the neutral default surface", () => {
   assert.doesNotMatch(surface, /fffdf5|f1ecff|f7f5fb/);
 });
 
-test("Table and List production containers use the shared named Task Type surface authority", () => {
-  assert.match(tableSource, /getTaskTypeSurfaceClassName\(taskTypeOption\.accentKey\)/);
+test("Table surfaces retain geometry without a persistent outline", () => {
+  const neutralSurface = getTaskTypeTableSurfaceClassName("neutral");
+  const customSurface = getTaskTypeTableSurfaceClassName("purple");
+  assert.match(neutralSurface, /border-transparent/);
+  assert.match(neutralSurface, /bg-white/);
+  assert.doesNotMatch(neutralSurface, /border-\[#/);
+  assert.match(customSurface, /border-transparent/);
+  assert.match(customSurface, /bg-\[#fcfaff\]/);
+});
+
+test("Table and List production containers use their shared Task Type surface authorities", () => {
+  assert.match(tableSource, /getTaskTypeTableSurfaceClassName\(taskTypeOption\.accentKey\)/);
+  assert.match(tableSource, /getTaskTypeTableSurfaceClassName\(childTaskTypeOption\.accentKey\)/);
+  assert.match(tableSource, /getTaskTypeTableSurfaceClassName\(sourceTaskTypeOption\.accentKey\)/);
   assert.match(tableSource, /data-task-table-parent-grid=\{task\.id\}/);
   assert.match(listSource, /getTaskTypeSurfaceClassName\(taskTypeOption\.accentKey\)/);
   assert.match(listSource, /<article[\s\S]*\$\{taskSurface\}/);
@@ -56,7 +71,7 @@ test("Table and List production containers use the shared named Task Type surfac
 test("Table and List selected, hover, open, and highlighted states preserve surface and selection visibility", () => {
   assert.match(tableSource, /\$\{taskSurface\}[\s\S]*selectedTaskIdSet\.has\(task\.id\)/);
   assert.match(tableSource, /rowContextMenu\?\.taskId === task\.id/);
-  assert.match(tableSource, /getTaskTypeSurfaceClassName/);
+  assert.match(tableSource, /getTaskTypeTableSurfaceClassName/);
   assert.match(listSource, /\$\{taskSurface\}[\s\S]*selectedTaskIdSet\.has\(task\.id\)/);
   assert.match(listSource, /isQuickPanelOpen/);
   assert.match(listSource, /getHighlightedListRowClassName/);
@@ -87,10 +102,10 @@ test("surface presentation does not alter Task behavior or status values", () =>
   assert.doesNotMatch(surface, /status|complete|missed|pending/);
 });
 
-test("the icon registry is substantially larger than the previous 14 choices and keys are unique", () => {
-  assert.ok(TASK_TYPE_ICON_OPTIONS.length >= 50);
+test("the featured icon registry exposes 120 or more choices and keys are unique", () => {
+  assert.ok(TASK_TYPE_ICON_OPTIONS.length >= 120);
   assert.equal(new Set(TASK_TYPE_ICON_OPTIONS.map((option) => option.key)).size, TASK_TYPE_ICON_OPTIONS.length);
-  assert.ok(TASK_TYPE_ICON_OPTIONS.every((option) => option.key && option.label && option.icon && Array.isArray(option.keywords)));
+  assert.ok(TASK_TYPE_ICON_OPTIONS.every((option) => option.key && option.label && Array.isArray(option.keywords) && (option.icon || isLucideIconName(option.key))));
 });
 
 test("icon search matches labels, keywords, synonyms, and case-insensitively", () => {
@@ -99,6 +114,15 @@ test("icon search matches labels, keywords, synonyms, and case-insensitively", (
   assert.ok(searchTaskTypeIcons("MUSIC").some((option) => option.key === "guitar"));
   assert.ok(searchTaskTypeIcons("practice").some((option) => option.key === "music"));
   assert.ok(searchTaskTypeIcons("learning").some((option) => option.key === "book-open"));
+  assert.ok(searchTaskTypeIcons("alarm clock").some((option) => option.key === "alarm-clock"));
+  assert.ok(searchTaskTypeIcons("ALARM-CLOCK").some((option) => option.key === "alarm-clock"));
+  assert.ok(searchTaskTypeIcons("alarm-clock").some((option) => option.key === "alarm-clock"));
+  assert.ok(searchTaskTypeIcons("chart no axes").some((option) => option.key === "chart-no-axes-column"));
+});
+
+test("full Lucide search finds valid directory icons outside the featured set", () => {
+  assert.equal(TASK_TYPE_ICON_OPTIONS.some((option) => option.key === "satellite-dish"), false);
+  assert.ok(searchTaskTypeIcons("satellite dish").some((option) => option.key === "satellite-dish"));
 });
 
 test("clearing icon search restores every icon", () => {
@@ -114,7 +138,15 @@ test("unknown icon and accent keys use safe fallbacks", () => {
   assert.match(getTaskTypeSurfaceClassName("unknown-accent"), /bg-\[#fcfaff\]/);
 });
 
-test("the 7.13.63 presentation patch contains no SQL, schema, or behavior-policy persistence change", () => {
+test("raw Lucide icon keys remain valid and TaskTypeIdentity uses the shared dynamic renderer", () => {
+  assert.equal(isLucideIconName("alarm-clock"), true);
+  assert.equal(isLucideIconName("not-a-real-icon"), false);
+  assert.match(identitySource, /<TaskTypeIcon[\s\S]*iconKey=\{option\.iconKey\}/);
+  assert.match(settingsSource, /<TaskTypeIcon[\s\S]*iconKey=\{key\}/);
+  assert.match(iconRendererSource, /if \(!featuredOption\?\.icon && isLucideIconName\(iconKey\)\)/);
+});
+
+test("the 7.13.64 presentation patch contains no SQL, schema, or behavior-policy persistence change", () => {
   const changedFiles = execFileSync("git", ["diff", "--name-only", "HEAD"], { encoding: "utf8" }).split("\n").filter(Boolean);
   assert.doesNotMatch(changedFiles.join("\n"), /(^|\/)supabase\/|schema|behavior-policy|task-state/);
 });

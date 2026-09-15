@@ -1,20 +1,23 @@
 import type { TaskInsert } from "@/lib/database.types";
+import type { TaskTypeSelection } from "@/lib/task-type";
 
 export type ChildTaskCreationDraft = Omit<TaskInsert, "user_id">;
 
 export type ChildTaskCreationDraftResult =
   | { draft: ChildTaskCreationDraft; error: null; ok: true }
-  | { draft: null; error: "blocked_parent" | "empty_title" | "missing_parent"; ok: false };
+  | { draft: null; error: "blocked_parent" | "empty_title" | "invalid_task_type" | "missing_parent"; ok: false };
 
 type BuildChildTaskCreationDraftInput = {
   blockedParentTaskIds?: readonly string[];
   parentTaskId: string | null | undefined;
+  taskTypeSelection?: TaskTypeSelection | null;
   title: string;
 };
 
 export function buildChildTaskCreationDraft({
   blockedParentTaskIds = [],
   parentTaskId,
+  taskTypeSelection = { customRulesetId: null, taskType: "task" },
   title,
 }: BuildChildTaskCreationDraftInput): ChildTaskCreationDraftResult {
   const trimmedTitle = title.trim();
@@ -29,6 +32,10 @@ export function buildChildTaskCreationDraft({
 
   if (!trimmedTitle) {
     return { draft: null, error: "empty_title", ok: false };
+  }
+
+  if (!taskTypeSelection) {
+    return { draft: null, error: "invalid_task_type", ok: false };
   }
 
   return {
@@ -54,7 +61,8 @@ export function buildChildTaskCreationDraft({
       status: "pending",
       subtasks_auto_reset: false,
       tags: [],
-      task_type: "task",
+      custom_ruleset_id: taskTypeSelection.customRulesetId,
+      task_type: taskTypeSelection.taskType,
       title: trimmedTitle,
       trashed_at: null,
     },

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.63`.
+- Current working app version: `7.13.64`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-14 7.13.64 Custom Task Type Presentation QA and Child Creation
+
+Browser QA for 7.13.63 passed the primary presentation checks, then identified
+three follow-up issues: neutral Table rows had visible outlines, icon browsing
+and search were limited to the featured registry, and inline child creation
+was still hardcoded to Standard Task. Version 7.13.64 corrects these paths.
+
+Table neutral Tasks now visually blend into the Table background while named
+Custom Task Type fills remain visible. Default icon browsing offers 120+ common
+icons, while non-empty searches cover the full installed Lucide directory using
+the shared dynamic-icon authority. Inline Step/Substep creation now supports
+Task and active named Custom Task Types, with the selected identity persisted in
+the initial canonical child draft and reset after success or Cancel.
+
+No Task behavior semantics changed. No SQL or schema change was made.
 
 ## 2026-09-13 7.13.63 Custom Task Type Presentation QA Correction
 

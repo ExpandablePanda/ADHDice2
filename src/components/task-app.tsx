@@ -66,7 +66,6 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import dynamicIconImports from "lucide-react/dynamicIconImports";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -121,6 +120,8 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
+import { isLucideIconName } from "@/lib/lucide-icon";
+import { RawLucideIcon } from "@/components/ui/lucide-icon";
 import { normalizeTaskEditorNavigationTaskIds } from "@/lib/task-editor-navigation";
 import { buildTaskTypeSelectionOptions, resolveTaskTypeSelection } from "@/lib/task-type";
 import { useEconomy } from "@/hooks/useEconomy";
@@ -854,38 +855,6 @@ const ICONS_MAP: Record<string, LucideIcon> = {
   basketball: BasketballIcon as unknown as LucideIcon,
 };
 
-type RawLucideIconName = keyof typeof dynamicIconImports;
-const LUCIDE_ICON_NAME_SET = new Set<string>(Object.keys(dynamicIconImports));
-
-function RawLucideIcon({
-  name,
-  ...props
-}: {
-  name: RawLucideIconName;
-} & React.SVGProps<SVGSVGElement>) {
-  const [IconComponent, setIconComponent] = useState<LucideIcon | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void dynamicIconImports[name]().then((module) => {
-      if (!cancelled) {
-        setIconComponent(() => module.default);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [name]);
-
-  if (!IconComponent) {
-    return <Code2 {...props} />;
-  }
-
-  return <IconComponent {...props} />;
-}
-
 export function CategoryIcon({ name, ...props }: { name: string } & React.SVGProps<SVGSVGElement>) {
   const aliasedIcon = ICONS_MAP[name];
   if (aliasedIcon) {
@@ -893,8 +862,8 @@ export function CategoryIcon({ name, ...props }: { name: string } & React.SVGPro
     return <AliasedIcon {...props} />;
   }
 
-  if (LUCIDE_ICON_NAME_SET.has(name)) {
-    return <RawLucideIcon name={name as RawLucideIconName} {...props} />;
+  if (isLucideIconName(name)) {
+    return <RawLucideIcon name={name} {...props} />;
   }
 
   return <Code2 {...props} />;
@@ -4891,16 +4860,20 @@ export function TaskApp() {
   }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, requestedPageShell, requestedPageShellLayoutReady]);
   useEffect(() => () => clearPageShellNavigationHighlight(), [clearPageShellNavigationHighlight]);
   const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
-  const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string) => {
+  const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string, selectionValue = "task") => {
+    const taskTypeSelection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     const result = buildChildTaskCreationDraft({
       blockedParentTaskIds: childTaskCreationBlockedTaskIds,
       parentTaskId,
+      taskTypeSelection,
       title,
     });
 
     if (!result.ok) {
       const text = result.error === "empty_title"
         ? "Enter a child task title."
+        : result.error === "invalid_task_type"
+          ? "That Task Type is no longer available."
         : result.error === "blocked_parent"
           ? "Child task creation is blocked for this task until its hierarchy issue is fixed."
           : "Choose a parent task before adding a child.";
@@ -4912,7 +4885,7 @@ export function TaskApp() {
     return createdTask
       ? { error: null, taskId: createdTask.id }
       : { error: "Child task was not created.", taskId: null };
-  }, [addTask, childTaskCreationBlockedTaskIds, setMessage]);
+  }, [addTask, childTaskCreationBlockedTaskIds, customBehaviorRulesets, setMessage]);
   const openChildTaskFromPreview = useCallback((taskId: string) => {
     setSuppressDetachedListNoticeTaskId(null);
     setRequestedListOverlayTaskId(taskId);

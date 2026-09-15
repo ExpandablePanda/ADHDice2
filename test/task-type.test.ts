@@ -122,6 +122,37 @@ test("normal and child Task creation default TaskType to task", () => {
   assert.equal(createTask({ id: "task-1", title: "Task", status: "pending", created_at: "2026-09-08", sort_order: 0 }).task_type, "task");
 });
 
+test("child Task creation persists the resolved type in its initial draft and fails closed for stale choices", () => {
+  const rulesets = [{ id: "practice", name: "Practice", task_type: "custom" as const }];
+  const namedSelection = resolveTaskTypeSelection("practice", rulesets);
+  const namedChild = buildChildTaskCreationDraft({ parentTaskId: "parent-1", taskTypeSelection: namedSelection, title: "Practice step" });
+  assert.equal(namedChild.ok, true);
+  assert.equal(namedChild.draft?.task_type, "custom");
+  assert.equal(namedChild.draft?.custom_ruleset_id, "practice");
+
+  const staleChild = buildChildTaskCreationDraft({ parentTaskId: "parent-1", taskTypeSelection: null, title: "Stale step" });
+  assert.deepEqual(staleChild, { draft: null, error: "invalid_task_type", ok: false });
+});
+
+test("Table and List child creators expose shared Task Type choices and pass them to canonical creation", () => {
+  const appSource = readFileSync("src/components/task-app.tsx", "utf8");
+  const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
+  const listSource = readFileSync("src/components/task-app/tasks-list-adapter.tsx", "utf8");
+  assert.match(appSource, /const taskTypeSelection = resolveTaskTypeSelection\(selectionValue, customBehaviorRulesets\)/);
+  assert.match(appSource, /taskTypeSelection,\s*title/);
+  assert.match(appSource, /invalid_task_type/);
+  assert.match(tableSource, /<TaskTypeSelect[\s\S]*options=\{taskTypeFilterOptions\}/);
+  assert.match(listSource, /<TaskTypeSelect[\s\S]*options=\{taskTypeOptions\}/);
+  assert.match(tableSource, /onCreateChildTask\(parentTaskId, nextTitle, tableStepDraftTaskTypeValues/);
+  assert.match(listSource, /onCreateChildTask\(parentTaskId, nextTitle, taskTypeSelectionValue\)/);
+  assert.match(listSource, /onCreateChildTask\?\.\(parentTaskId, title, substepTaskTypeSelectionValue\)/);
+  assert.match(tableSource, /setTaskTypeSelectionValue\("task"\)/);
+  assert.match(tableSource, /setTableStepDraftTaskTypeValues\(\(current\) =>/);
+  assert.match(listSource, /setSubstepTaskTypeSelectionValue\("task"\)/);
+  assert.match(listSource, /setParentStepTaskTypeSelectionValues\(\(current\) =>/);
+  assert.doesNotMatch(appSource.slice(appSource.indexOf("const createChildTaskFromPreview"), appSource.indexOf("const openChildTaskFromPreview")), /updateTask\(/);
+});
+
 test("active Task creation and hierarchy surfaces expose no retired Pursuit action", () => {
   const appSource = readFileSync("src/components/task-app.tsx", "utf8");
   const newMenuSource = readFileSync("src/components/task-app/tasks-page.tsx", "utf8");

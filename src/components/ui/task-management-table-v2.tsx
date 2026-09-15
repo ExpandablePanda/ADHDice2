@@ -70,7 +70,7 @@ import {
 } from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, resolveTaskTypeSelectionOption, taskTypeSelectionValue } from "@/lib/task-type";
-import { getTaskTypeSurfaceClassName, type TaskTypePresentation } from "@/lib/task-type-presentation";
+import { getTaskTypeTableSurfaceClassName, type TaskTypePresentation } from "@/lib/task-type-presentation";
 import { TaskTypeIdentity, TaskTypeSelect } from "@/components/task-app/task-type-identity";
 import { preserveCurrentTaskStatusForPresentation, resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask, taskManualActionForStatus } from "@/lib/task-state-engine/action-authority";
 import { getTaskEditorNavigationNeighbor, getTaskEditorNavigationPosition } from "@/lib/task-editor-navigation";
@@ -1200,7 +1200,7 @@ type TaskManagementTableV2Props = {
   shellClassName?: string;
   showHeader?: boolean;
   onClearSelection?: () => void;
-  onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string) => Promise<{ error: string | null; taskId: string | null }>;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenBatchDelete?: () => void;
   onOpenBatchEdit?: () => void;
@@ -1960,17 +1960,20 @@ function SameTableStepCreationControl({
   iconOnly = false,
   onCreateChildTask,
   parentTaskId,
+  taskTypeOptions,
 }: {
   childLabel?: "Step" | "Substep";
   creationBlocked?: boolean;
   iconOnly?: boolean;
-  onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string) => Promise<{ error: string | null; taskId: string | null }>;
   parentTaskId: string;
+  taskTypeOptions: ReadonlyArray<import("@/lib/task-type").TaskTypeSelectionOption>;
 }) {
   const childLabelLower = childLabel.toLowerCase();
   const [isCreating, setIsCreating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [taskTypeSelectionValue, setTaskTypeSelectionValue] = useState("task");
   const [creationError, setCreationError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const showCreationBlockedMessage = Boolean(onCreateChildTask) && creationBlocked;
@@ -1994,7 +1997,7 @@ function SameTableStepCreationControl({
 
     setIsSubmitting(true);
     setCreationError(null);
-    const result = await onCreateChildTask(parentTaskId, nextTitle);
+    const result = await onCreateChildTask(parentTaskId, nextTitle, taskTypeSelectionValue);
     setIsSubmitting(false);
 
     if (result.error || !result.taskId) {
@@ -2003,11 +2006,13 @@ function SameTableStepCreationControl({
     }
 
     setTitleDraft("");
+    setTaskTypeSelectionValue("task");
     setIsCreating(false);
   }
 
   function cancelCreateChildTask() {
     setTitleDraft("");
+    setTaskTypeSelectionValue("task");
     setCreationError(null);
     setIsCreating(false);
   }
@@ -2073,6 +2078,14 @@ function SameTableStepCreationControl({
             value={titleDraft}
           />
         </label>
+        <TaskTypeSelect
+          ariaLabel={`${childLabel} Task Type`}
+          className="mt-2"
+          label={`${childLabel} Task Type`}
+          onChange={setTaskTypeSelectionValue}
+          options={taskTypeOptions}
+          value={taskTypeSelectionValue}
+        />
         {creationError ? <p className="mt-2 text-xs text-[#d94e67] dark:text-[#ff9eaf]">{creationError}</p> : null}
         <div className="mt-2 flex flex-wrap justify-end gap-1.5">
           <TaskTableChipButton onClick={cancelCreateChildTask} toneClassName={INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
@@ -2751,6 +2764,7 @@ export function TaskManagementTableV2({
   const [tableStepTitleDrafts, setTableStepTitleDrafts] = useState<Record<string, string>>({});
   const [tableStepCreationErrorByParentId, setTableStepCreationErrorByParentId] = useState<Record<string, string | null>>({});
   const [tableStepDraftChildLabels, setTableStepDraftChildLabels] = useState<Record<string, "Step" | "Substep">>({});
+  const [tableStepDraftTaskTypeValues, setTableStepDraftTaskTypeValues] = useState<Record<string, string>>({});
   const tableStepDraftInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingSubtaskAutoExpandByTaskId, setPendingSubtaskAutoExpandByTaskId] = useState<Record<string, boolean>>({});
   const [hiddenSubtaskIds, setHiddenSubtaskIds] = useState<Record<string, boolean>>({});
@@ -5633,6 +5647,9 @@ export function TaskManagementTableV2({
     setTableStepTitleDrafts((current) => (
       current[parentTaskId] === undefined ? { ...current, [parentTaskId]: "" } : current
     ));
+    setTableStepDraftTaskTypeValues((current) => (
+      current[parentTaskId] === undefined ? { ...current, [parentTaskId]: "task" } : current
+    ));
     setTableStepDraftChildLabels((current) => ({ ...current, [parentTaskId]: childLabel }));
     setTableStepDraftParentId(parentTaskId);
   }
@@ -5649,6 +5666,11 @@ export function TaskManagementTableV2({
       return next;
     });
     setTableStepDraftChildLabels((current) => {
+      const next = { ...current };
+      delete next[parentTaskId];
+      return next;
+    });
+    setTableStepDraftTaskTypeValues((current) => {
       const next = { ...current };
       delete next[parentTaskId];
       return next;
@@ -5675,7 +5697,7 @@ export function TaskManagementTableV2({
       return;
     }
 
-    const result = await onCreateChildTask(parentTaskId, nextTitle);
+    const result = await onCreateChildTask(parentTaskId, nextTitle, tableStepDraftTaskTypeValues[parentTaskId] ?? "task");
     if (result.error || !result.taskId) {
       setTableStepCreationErrorByParentId((current) => ({
         ...current,
@@ -8041,6 +8063,14 @@ export function TaskManagementTableV2({
                       value={tableStepTitleDrafts[item.id] ?? ""}
                     />
                   </label>
+                  <TaskTypeSelect
+                    ariaLabel="Substep Task Type"
+                    className="mt-0 min-w-[10rem]"
+                    label="Substep Task Type"
+                    onChange={(value) => setTableStepDraftTaskTypeValues((current) => ({ ...current, [item.id]: value }))}
+                    options={taskTypeFilterOptions}
+                    value={tableStepDraftTaskTypeValues[item.id] ?? "task"}
+                  />
                   <TaskTableChipButton
                     disabled={childTaskCreationBlockedTaskIds.includes(item.id)}
                     type="submit"
@@ -8534,7 +8564,10 @@ export function TaskManagementTableV2({
               ariaLabel={`New ${childLabel.toLowerCase()} title`}
               childLabel={childLabel}
               inputRef={tableStepDraftParentId === parentTaskId ? tableStepDraftInputRef : undefined}
-              onBlur={() => {
+              onBlur={(event) => {
+                if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select]")) {
+                  return;
+                }
                 if (draft.trim()) {
                   void commitTableStepDraft(parentTaskId);
                   return;
@@ -8577,7 +8610,16 @@ export function TaskManagementTableV2({
     }
 
     if (columnId === "task_type") {
-      return <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>Task</span>;
+      return (
+        <TaskTypeSelect
+          ariaLabel={`${childLabel} Task Type`}
+          className="mt-0 min-w-[10rem]"
+          label={`${childLabel} Task Type`}
+          onChange={(value) => setTableStepDraftTaskTypeValues((current) => ({ ...current, [parentTaskId]: value }))}
+          options={taskTypeFilterOptions}
+          value={tableStepDraftTaskTypeValues[parentTaskId] ?? "task"}
+        />
+      );
     }
 
     if (columnId === "due") {
@@ -8680,7 +8722,7 @@ export function TaskManagementTableV2({
         {displayedItems.map((item, itemIndex) => {
           const inlineStepTask = childPreviewToPrototypeTaskRow(item);
           const childTaskTypeOption = resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets);
-          const childTaskSurface = getTaskTypeSurfaceClassName(childTaskTypeOption.accentKey);
+          const childTaskSurface = getTaskTypeTableSurfaceClassName(childTaskTypeOption.accentKey);
           const titleGeometry = getTableHierarchyTitleGeometry(item.depth);
           return (
             <Fragment key={item.id}>
@@ -8826,7 +8868,7 @@ export function TaskManagementTableV2({
       {rows.map((row) => (
         (() => {
           const sourceTaskTypeOption = resolveTaskTypeSelectionOption(row.subtask.taskType, row.subtask.customRulesetId, customBehaviorRulesets);
-          const sourceTaskSurface = getTaskTypeSurfaceClassName(sourceTaskTypeOption.accentKey);
+          const sourceTaskSurface = getTaskTypeTableSurfaceClassName(sourceTaskTypeOption.accentKey);
           return (
           <div
             className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${getHighlightedRowClassName(row.subtask.id)}`}
@@ -9157,7 +9199,7 @@ export function TaskManagementTableV2({
               </div>
             ) : renderedTasks.map((task) => {
               const taskTypeOption = resolveTaskTypeSelectionOption(task.taskType, task.customRulesetId, customBehaviorRulesets);
-              const taskSurface = getTaskTypeSurfaceClassName(taskTypeOption.accentKey);
+              const taskSurface = getTaskTypeTableSurfaceClassName(taskTypeOption.accentKey);
               const visibleSubtasks = filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds);
               const hasSourceStepRows = visibleSubtasks.length > 0;
               const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
@@ -10060,10 +10102,11 @@ export function TaskManagementTableV2({
                         <SameTableStepCreationControl
                           childLabel={fullEditorChildSectionLabels.action === "Add Step" ? "Step" : "Substep"}
                           creationBlocked={childTaskCreationBlockedTaskIds.includes(selectedTask.id)}
-                          iconOnly
-                          onCreateChildTask={onCreateChildTask}
-                          parentTaskId={selectedTask.id}
-                        />
+                        iconOnly
+                        onCreateChildTask={onCreateChildTask}
+                        parentTaskId={selectedTask.id}
+                        taskTypeOptions={taskTypeFilterOptions}
+                      />
                       </div>
                     </div>
                     {hasUnifiedStepRows ? (

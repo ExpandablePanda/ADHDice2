@@ -20,6 +20,7 @@ import { buildDefaultCustomTaskTypeDraft, taskTypeBehaviorTabDescription, type T
 import { buildTaskTypeSelectionOptions, normalizeTaskType, type TaskType } from "@/lib/task-type";
 import { TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
 import { TaskTypeIdentity } from "./task-type-identity";
+import { TaskTypeIcon } from "@/components/ui/lucide-icon";
 import { DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, searchTaskTypeIcons, TASK_TYPE_ACCENT_OPTIONS, normalizeTaskTypePresentation, validateTaskTypeDescription, type TaskTypePresentation } from "@/lib/task-type-presentation";
 
 export type BehaviorTab = TaskTypeBehaviorTab;
@@ -51,7 +52,7 @@ function PresentationControls({
         </label>
         {filteredIcons.length > 0 ? (
           <div aria-label="Custom Task Type icon" className="adhdice-scrollbar mt-2 grid max-h-40 grid-cols-8 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-10" role="group">
-          {filteredIcons.map(({ icon: Icon, key, label }) => (
+          {filteredIcons.map(({ key, label }) => (
             <button
               aria-label={label}
               aria-pressed={presentation.iconKey === key}
@@ -62,7 +63,7 @@ function PresentationControls({
               title={label}
               type="button"
             >
-              <Icon aria-hidden="true" className="h-4 w-4" />
+              <TaskTypeIcon aria-hidden="true" className="h-4 w-4" iconKey={key} />
             </button>
           ))}
           </div>
