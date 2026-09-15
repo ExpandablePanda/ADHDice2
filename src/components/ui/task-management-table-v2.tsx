@@ -89,6 +89,8 @@ import {
   TASK_TABLE_TAG_CHIP_CLASS as TAG_CHIP_CLASS,
   TASK_TABLE_TEXT_CLASS as UNIFIED_TABLE_TEXT_CLASS,
   TASK_TABLE_TITLE_CELL_CLASS as TITLE_CELL_CLASS,
+  TASK_TABLE_INLINE_TITLE_EDITOR_CLASS,
+  TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS as VISIBLE_TITLE_TEXT_CLASS,
   CompactRepeatCadenceControls,
   formatTaskTableEntryTimestamp,
@@ -812,23 +814,7 @@ function collectAllPrototypeSubtaskIds(subtasks: PrototypeTaskSubtask[]): string
   return subtasks.flatMap((subtask) => [subtask.id, ...collectAllPrototypeSubtaskIds(subtask.children)]);
 }
 
-const SUBTASK_RENAME_INPUT_TEXT_CLASS = `[font-family:inherit] min-w-0 flex-1 appearance-none bg-transparent p-0 text-[13px] font-medium leading-none tracking-normal text-left text-[#7a7592] outline-none placeholder:text-[#9b92be] dark:text-white/58 dark:placeholder:text-white/35`;
-const SUBTASK_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
-  color: "rgb(122, 117, 146)",
-  fontFamily: "inherit",
-  fontSize: "13px",
-  fontWeight: 500,
-  letterSpacing: "normal",
-  lineHeight: "13px",
-};
-export const PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
-  color: "rgb(122, 117, 146)",
-  fontFamily: "inherit",
-  fontSize: "13px",
-  fontWeight: 500,
-  letterSpacing: "normal",
-  lineHeight: "13px",
-};
+const SUBTASK_RENAME_INPUT_TEXT_CLASS = `${TASK_TABLE_INLINE_TITLE_EDITOR_CLASS} min-w-0 flex-1 appearance-none bg-transparent text-left outline-none placeholder:text-[#9b92be] dark:placeholder:text-white/35`;
 function normalizeTaskListLabel(value: string) {
   return value.trim().toLowerCase();
 }
@@ -941,7 +927,7 @@ function InlineSubtaskEditor({
                   }
                 }}
                 placeholder="Step title..."
-                style={SUBTASK_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                 type="text"
                 value={drafts[subtask.id] ?? subtask.title}
               />
@@ -7206,12 +7192,12 @@ export function TaskManagementTableV2({
                 {isRenamingTitle ? (
                   <TaskTitleDraftInput
                     autoFocus
-                    className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 min-w-0 max-w-full rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                    className={`${TASK_TABLE_INLINE_TITLE_EDITOR_CLASS} min-w-0 max-w-full rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                     initialValue={titleDraft}
                     onCommit={commitTaskTitle}
                     onDone={() => setEditingTaskTitleId((current) => (current === task.id ? null : current))}
                     onDraftChange={setTitleDraft}
-                    style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                    style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                     taskId={task.id}
                   />
                 ) : (
@@ -7799,7 +7785,7 @@ export function TaskManagementTableV2({
                       <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
                         <TaskTitleDraftInput
                           autoFocus
-                          className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 min-w-0 max-w-full rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                          className={`${TASK_TABLE_INLINE_TITLE_EDITOR_CLASS} min-w-0 max-w-full rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                           initialValue={item.title}
                           onCommit={commitTaskTitle}
                           onDone={() => {
@@ -7812,7 +7798,7 @@ export function TaskManagementTableV2({
                             setEditingTaskTitleId((current) => (current === item.id ? null : current));
                           }}
                           onDraftChange={setTitleDraft}
-                          style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                          style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                           taskId={item.id}
                         />
                       </span>
@@ -8193,12 +8179,12 @@ export function TaskManagementTableV2({
               <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()}>
                 <TaskTitleDraftInput
                   autoFocus
-                  className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 w-full min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                  className={`${TASK_TABLE_INLINE_TITLE_EDITOR_CLASS} w-full min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                   initialValue={item.title}
                   onCommit={commitTaskTitle}
                   onDone={() => setEditingTaskTitleId((current) => (current === item.id ? null : current))}
                   onDraftChange={setTitleDraft}
-                  style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                  style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                   taskId={item.id}
                 />
               </span>

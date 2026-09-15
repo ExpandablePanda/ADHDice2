@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.68`.
+- Current working app version: `7.13.69`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,6 +23,16 @@ default, restoring List rendering with no behavior or persistence change.
 
 No behavior policy, Task State, History, recurrence, streak, reward, or Task
 Type creation semantics changed. No SQL or schema change was made.
+
+## 2026-09-15 7.13.69 Exact Inline Table Child Title Editor Treatment
+
+Version 7.13.68 aligned the inline child title with the shared Table text class,
+but browser QA still showed a visual mismatch. The remaining difference was
+the draft input geometry and the explicit parent inline-title typography style.
+Version 7.13.69 makes parent Task rename, existing Step/Substep rename, and new
+Step/Substep creation consume the same exact inline-title authority.
+
+No persistence or behavior change was made. No SQL or schema change was made.
 
 ## 2026-09-14 7.13.68 Inline Table Child Title Typography
 

@@ -4,7 +4,6 @@ import {
   buildMoveIntoParentOptions,
   buildTaskRowContextMenuState,
   ChildTypeChooser,
-  PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE,
   TaskManagementTableV2,
   TaskTitleDraftInput,
   TaskRowContextMenu,
@@ -53,10 +52,12 @@ import { formatLocalDate } from "@/lib/utils";
 import { formatTaskPriorityLevel, getSelectedTaskPriorityToneClass, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
+  TASK_TABLE_INLINE_TITLE_EDITOR_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TASK_TABLE_LIST_CHIP_CLASS,
   TASK_TABLE_TAG_CHIP_CLASS,
   TASK_TABLE_TITLE_CELL_CLASS,
+  TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS,
   CompactRepeatCadenceControls,
   TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS,
@@ -1454,12 +1455,12 @@ function StepsCardPreview({
                             <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
                               <TaskTitleDraftInput
                                 autoFocus
-                                className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                                className={`${TASK_TABLE_INLINE_TITLE_EDITOR_CLASS} min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                                 initialValue={titleDraft}
                                 onCommit={commitTitle}
                                 onDone={() => setEditingStepTitleId((current) => (current === item.id ? null : current))}
                                 onDraftChange={setStepTitleDraft}
-                                style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                                style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                                 taskId={item.id}
                               />
                             </span>

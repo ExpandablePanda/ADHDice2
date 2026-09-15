@@ -3,7 +3,7 @@
 import { Flame, X } from "lucide-react";
 import { motion } from "framer-motion";
 import type { TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal } from "@/lib/database.types";
-import type { ButtonHTMLAttributes, FormEvent, InputHTMLAttributes, ReactNode, Ref, RefObject } from "react";
+import type { ButtonHTMLAttributes, CSSProperties, FormEvent, InputHTMLAttributes, ReactNode, Ref, RefObject } from "react";
 import { TASK_TABLE_GRID_ORIGIN_CLASS } from "@/lib/task-table-alignment";
 
 function joinClasses(...values: Array<string | false | null | undefined>) {
@@ -21,6 +21,15 @@ export const TASK_TABLE_BODY_MUTED_VALUE_CLASS = `${TASK_TABLE_TEXT_CLASS} text-
 export const TASK_TABLE_TITLE_CELL_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} text-[#7a7592] dark:text-white/58`;
 // Visible task and step titles use the same text size and font treatment as table chips.
 export const TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} text-[#7a7592] dark:text-white/58`;
+export const TASK_TABLE_INLINE_TITLE_EDITOR_CLASS = `${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 px-1 py-0`;
+export const TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
+  color: "rgb(122, 117, 146)",
+  fontFamily: "inherit",
+  fontSize: "13px",
+  fontWeight: 500,
+  letterSpacing: "normal",
+  lineHeight: "13px",
+};
 export const TASK_TABLE_LIST_CHIP_CLASS = "border-[#ece7f5] bg-[#f7f5fb] text-[#7a7592] dark:border-white/8 dark:bg-white/[0.045] dark:text-white/58";
 export const TASK_TABLE_ACTIVE_LIST_CHIP_CLASS = "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white";
 export const TASK_TABLE_TAG_CHIP_CLASS = "border-[#e8defe] bg-[#f3eeff] text-[#7762f3] dark:border-[#3a2e63] dark:bg-[#21183d] dark:text-[#c7bcff]";
@@ -168,7 +177,8 @@ export function TaskInlineChildDraftInput({
   return (
     <input
       aria-label={ariaLabel}
-      className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} h-7 min-h-0 min-w-0 flex-1 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1.5 py-0 outline-none transition placeholder:text-[#aaa2c8] focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+      className={`${TASK_TABLE_INLINE_TITLE_EDITOR_CLASS} min-w-0 flex-1 rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition placeholder:text-[#aaa2c8] focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+      style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
       disabled={disabled}
       onBlur={onBlur}
       onChange={(event) => onChange(event.target.value)}
