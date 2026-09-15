@@ -63,6 +63,9 @@ test("Table and List production containers use their shared Task Type surface au
   assert.match(tableSource, /getTaskTypeTableSurfaceClassName\(taskTypeOption\.accentKey\)/);
   assert.match(tableSource, /getTaskTypeTableSurfaceClassName\(childTaskTypeOption\.accentKey\)/);
   assert.match(tableSource, /getTaskTypeTableSurfaceClassName\(sourceTaskTypeOption\.accentKey\)/);
+  assert.match(tableSource, /py-1\.5[\s\S]*\$\{childTaskSurface\}[\s\S]*data-task-table-child-grid=\{item\.id\}/);
+  assert.match(tableSource, /py-1\.5[\s\S]*\$\{sourceTaskSurface\}[\s\S]*data-task-table-source-step-grid=\{row\.subtask\.id\}/);
+  assert.match(tableSource, /py-1\.5[\s\S]*\$\{taskSurface\}[\s\S]*data-task-table-parent-grid=\{task\.id\}/);
   assert.match(tableSource, /data-task-table-parent-grid=\{task\.id\}/);
   assert.match(listSource, /getTaskTypeSurfaceClassName\(taskTypeOption\.accentKey\)/);
   assert.match(listSource, /<article[\s\S]*\$\{taskSurface\}/);
@@ -84,6 +87,14 @@ test("child Tasks resolve their own accent instead of inheriting the parent", ()
   assert.notEqual(getTaskTypeSurfaceClassName(parent.accentKey), getTaskTypeSurfaceClassName(child.accentKey));
   assert.match(tableSource, /resolveTaskTypeSelectionOption\(item\.taskType, item\.customRulesetId/);
   assert.match(listSource, /resolveTaskTypeSelectionOption\(item\.taskType, item\.customRulesetId/);
+});
+
+test("Standard child rows remain neutral while named child identity stays independent", () => {
+  const standardChild = resolveTaskTypeSelectionOption("task", null, customRulesets);
+  assert.equal(standardChild.accentKey, "neutral");
+  assert.match(tableSource, /const childTaskTypeOption = resolveTaskTypeSelectionOption\(item\.taskType, item\.customRulesetId, customBehaviorRulesets\)/);
+  assert.match(tableSource, /const sourceTaskTypeOption = resolveTaskTypeSelectionOption\(row\.subtask\.taskType, row\.subtask\.customRulesetId, customBehaviorRulesets\)/);
+  assert.doesNotMatch(tableSource, /childTaskTypeOption = resolveTaskTypeSelectionOption\(task\.taskType/);
 });
 
 test("secondary Task cards, Grid widgets, and Paths nodes reuse the shared surface helper", () => {

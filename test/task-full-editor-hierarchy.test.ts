@@ -21,13 +21,26 @@ const { getFullEditorChildSectionLabels, performEditorChildTitleRenameHandoff } 
 }>(
   "../src/components/ui/task-management-table-v2.tsx",
 );
-const { getTaskTypeSelectMenuPosition } = await jiti.import<{
+const {
+  getTaskTypeSelectInitialActiveOptionIndex,
+  getTaskTypeSelectMenuPosition,
+  moveTaskTypeSelectActiveOptionIndex,
+} = await jiti.import<{
+  getTaskTypeSelectInitialActiveOptionIndex: (
+    options: ReadonlyArray<{ value: string }>,
+    value: string,
+  ) => number | null;
   getTaskTypeSelectMenuPosition: (
     triggerRect: { bottom: number; left: number; top: number; width: number },
     viewport: { height: number; width: number },
     panel?: { height?: number; width?: number },
     size?: "default" | "compact",
   ) => { left: number; top: number; width: number };
+  moveTaskTypeSelectActiveOptionIndex: (
+    optionCount: number,
+    currentIndex: number | null,
+    direction: "next" | "previous",
+  ) => number | null;
 }>("../src/components/task-app/task-type-identity.tsx");
 
 const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
@@ -204,9 +217,47 @@ test("Task Type selection exposes an early pointer interaction lifecycle while p
   assert.match(taskTypeSelectSource, /onPointerDown=\{\(event\) => \{[\s\S]*event\.stopPropagation\(\);[\s\S]*handleInteractionPointerDown\(\);/);
   assert.match(taskTypeSelectSource, /requestAnimationFrame\(/);
   assert.match(taskTypeSelectSource, /cancelAnimationFrame\(/);
-  assert.match(taskTypeSelectSource, /onClick=\{\(\) => \{ onChange\(option\.value\); setIsOpen\(false\); \}\}/);
+  assert.match(taskTypeSelectSource, /onClick=\{\(\) => selectOption\(option\)\}/);
   assert.match(taskTypeSelectSource, /createPortal\(panel, document\.body\)/);
   assert.match(taskTypeSelectSource, /position: "fixed"/);
+});
+
+test("Task Type keyboard navigation keeps focus on the trigger and never commits while moving", () => {
+  const options = [{ value: "task" }, { value: "practice" }, { value: "routine" }];
+  assert.equal(getTaskTypeSelectInitialActiveOptionIndex(options, "practice"), 1);
+  assert.equal(getTaskTypeSelectInitialActiveOptionIndex(options, "stale"), 0);
+  assert.equal(moveTaskTypeSelectActiveOptionIndex(options.length, 1, "next"), 2);
+  assert.equal(moveTaskTypeSelectActiveOptionIndex(options.length, 1, "previous"), 0);
+  assert.equal(moveTaskTypeSelectActiveOptionIndex(options.length, 2, "next"), 2);
+  assert.equal(moveTaskTypeSelectActiveOptionIndex(options.length, 0, "previous"), 0);
+  assert.equal(moveTaskTypeSelectActiveOptionIndex(0, null, "next"), null);
+
+  assert.match(taskTypeSelectSource, /onKeyDown=\{\(event\) => \{/);
+  assert.match(taskTypeSelectSource, /event\.key === "ArrowDown" \|\| event\.key === "ArrowUp"[\s\S]*event\.preventDefault\(\)/);
+  assert.match(taskTypeSelectSource, /if \(!isOpen\) \{\s*openMenu\(\);\s*return;\s*\}/);
+  assert.match(taskTypeSelectSource, /event\.key === "Home" \? 0 : Math\.max\(0, options\.length - 1\)/);
+  assert.match(taskTypeSelectSource, /event\.key === "Enter" \|\| event\.key === " "/);
+  assert.match(taskTypeSelectSource, /selectActiveOption\(\)/);
+  assert.match(taskTypeSelectSource, /onChange\(option\.value\);[\s\S]*closeMenu\(true\)/);
+  assert.match(taskTypeSelectSource, /data-task-type-select-option-index=\{optionIndex\}/);
+  assert.match(taskTypeSelectSource, /scrollIntoView\?\.\(\{ block: "nearest" \}\)/);
+  assert.match(taskTypeSelectSource, /aria-activedescendant=\{isOpen && activeOptionIndex !== null/);
+  assert.match(taskTypeSelectSource, /aria-controls=\{menuId\}/);
+  assert.match(taskTypeSelectSource, /role="combobox"/);
+  assert.doesNotMatch(taskTypeSelectSource, /ArrowDown[\s\S]*onChange\(option\.value\)/);
+});
+
+test("Task Type keyboard close semantics preserve normal Tab movement and child draft safety", () => {
+  const tabHandlerStart = taskTypeSelectSource.indexOf('if (event.key === "Tab")');
+  const tabHandlerEnd = taskTypeSelectSource.indexOf('if (event.key === "Escape")', tabHandlerStart);
+  const tabHandlerSource = taskTypeSelectSource.slice(tabHandlerStart, tabHandlerEnd);
+  assert.match(tabHandlerSource, /if \(isOpen\) closeMenu\(\);/);
+  assert.doesNotMatch(tabHandlerSource, /preventDefault/);
+  assert.match(taskTypeSelectSource, /event\.key === "Escape"[\s\S]*event\.stopPropagation\(\)[\s\S]*closeMenu\(true\)/);
+  assert.match(taskTypeSelectSource, /id=\{menuId\}/);
+  assert.doesNotMatch(taskTypeSelectSource, /selectActiveOption\(\)[\s\S]*commitTableStepDraft|selectActiveOption\(\)[\s\S]*onCreateChildTask/);
+  assert.match(tableStepDraftTitleSource, /if \(taskTypeInteractionParentIdRef\.current === parentTaskId\) \{\s*return;/);
+  assert.match(tableStepDraftTaskTypeSelectSource, /onChange=\{\(value\) => setTableStepDraftTaskTypeValues/);
 });
 
 test("Table child draft guards blur before relatedTarget inference and clears its interaction ref", () => {

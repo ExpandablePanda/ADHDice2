@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.72`.
+- Current working app version: `7.13.73`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-15 7.13.73 Child Task Type Surface and Keyboard Navigation
+
+Version 7.13.72 fixed selected Task Type retention in an open Table child draft;
+browser QA passed pointer selection and Substep creation. The remaining
+presentation polish was the reduced child accent footprint compared with parent
+rows, and the remaining accessibility/input issue was browser page scrolling
+on arrow keys while TaskTypeSelect had focus.
+
+Version 7.13.73 aligns Table Step/Substep surface padding with the parent Task
+row and adds explicit keyboard listbox navigation with trigger-retained focus.
+No persistence, schema, or behavior-policy change was made.
 
 ## 2026-09-14 7.13.65 List View Child Preview Crash Hotfix
 

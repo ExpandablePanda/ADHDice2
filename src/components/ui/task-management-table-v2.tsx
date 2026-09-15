@@ -8745,7 +8745,7 @@ export function TaskManagementTableV2({
                 data-same-table-step-row={item.id}
               >
                 <div
-                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-0.5 pl-[3px] pr-0 text-center transition ${childTaskSurface} ${selectedTaskIdSet.has(item.id) ? childTaskTypeOption.accentKey === "neutral" ? "bg-[#f7f2ff] dark:bg-[#201733]" : "ring-2 ring-[#6f57f6]/35 dark:ring-[#cabfff]/35" : ""} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-1.5 pl-[3px] pr-0 text-center transition ${childTaskSurface} ${selectedTaskIdSet.has(item.id) ? childTaskTypeOption.accentKey === "neutral" ? "bg-[#f7f2ff] dark:bg-[#201733]" : "ring-2 ring-[#6f57f6]/35 dark:ring-[#cabfff]/35" : ""} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                   data-task-table-child-grid={item.id}
                   onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                   onDrop={(event) => dropChildTaskOnItem(event, item)}
@@ -8908,7 +8908,7 @@ export function TaskManagementTableV2({
             tabIndex={0}
           >
             <div
-              className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-0.5 pl-[3px] pr-0 text-center transition ${sourceTaskSurface}`}
+              className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-1.5 pl-[3px] pr-0 text-center transition ${sourceTaskSurface}`}
               data-task-table-source-step-grid={row.subtask.id}
               style={{ gridTemplateColumns }}
             >

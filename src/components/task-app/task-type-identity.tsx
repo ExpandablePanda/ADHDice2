@@ -2,7 +2,7 @@
 
 import { ChevronDown } from "lucide-react";
 import { createPortal } from "react-dom";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { AdhdDropdownPanel } from "@/components/ui-system";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
@@ -49,6 +49,30 @@ const TASK_TYPE_SELECT_MENU_GAP = 6;
 const TASK_TYPE_SELECT_COMPACT_MENU_WIDTH = 160;
 const TASK_TYPE_SELECT_COMPACT_MENU_HEIGHT = 220;
 const TASK_TYPE_SELECT_DEFAULT_MENU_HEIGHT = 288;
+
+export function getTaskTypeSelectInitialActiveOptionIndex(
+  options: ReadonlyArray<Pick<TaskTypeSelectionOption, "value">>,
+  value: string,
+) {
+  if (options.length === 0) return null;
+  const selectedIndex = options.findIndex((option) => option.value === value);
+  return selectedIndex >= 0 ? selectedIndex : 0;
+}
+
+export function moveTaskTypeSelectActiveOptionIndex(
+  optionCount: number,
+  currentIndex: number | null,
+  direction: "next" | "previous",
+) {
+  if (optionCount <= 0) return null;
+  const fallbackIndex = direction === "next" ? -1 : optionCount;
+  const baseIndex = currentIndex === null || currentIndex < 0 || currentIndex >= optionCount
+    ? fallbackIndex
+    : currentIndex;
+  return direction === "next"
+    ? Math.min(optionCount - 1, baseIndex + 1)
+    : Math.max(0, baseIndex - 1);
+}
 
 export function getTaskTypeSelectMenuPosition(
   triggerRect: Pick<DOMRect, "bottom" | "left" | "top" | "width">,
@@ -99,11 +123,41 @@ export function TaskTypeSelect({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<TaskTypeSelectMenuPosition | null>(null);
+  const [activeOptionIndex, setActiveOptionIndex] = useState<number | null>(() => getTaskTypeSelectInitialActiveOptionIndex(options, value));
+  const selectId = useId();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const interactionEndFrameRef = useRef<number | null>(null);
   const onInteractionEndRef = useRef(onInteractionEnd);
   const selectedOption = options.find((option) => option.value === value) ?? options[0];
+  const selectedOptionIndex = getTaskTypeSelectInitialActiveOptionIndex(options, value) ?? 0;
+  const menuId = `${selectId}-menu`;
+
+  const closeMenu = (restoreFocus = false) => {
+    setIsOpen(false);
+    setActiveOptionIndex(null);
+    if (restoreFocus) {
+      triggerRef.current?.focus();
+    }
+  };
+
+  const openMenu = () => {
+    setActiveOptionIndex(selectedOptionIndex);
+    setMenuPosition(null);
+    setIsOpen(true);
+  };
+
+  const selectOption = (option: TaskTypeSelectionOption) => {
+    onChange(option.value);
+    closeMenu(true);
+  };
+
+  const selectActiveOption = () => {
+    const activeOption = options[activeOptionIndex ?? selectedOptionIndex];
+    if (activeOption) {
+      selectOption(activeOption);
+    }
+  };
 
   const scheduleInteractionEnd = () => {
     if (typeof window === "undefined") {
@@ -143,6 +197,7 @@ export function TaskTypeSelect({
       const trigger = triggerRef.current;
       if (!trigger || !trigger.isConnected) {
         setIsOpen(false);
+        setActiveOptionIndex(null);
         return;
       }
       const rect = trigger.getBoundingClientRect();
@@ -159,11 +214,14 @@ export function TaskTypeSelect({
       if (!(target instanceof Node)) return;
       if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
       setIsOpen(false);
+      setActiveOptionIndex(null);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
       setIsOpen(false);
+      setActiveOptionIndex(null);
+      triggerRef.current?.focus();
     };
 
     updatePosition();
@@ -179,6 +237,14 @@ export function TaskTypeSelect({
     };
   }, [isOpen, size]);
 
+  useEffect(() => {
+    if (!isOpen || activeOptionIndex === null) return;
+    const activeOption = menuRef.current?.querySelector<HTMLElement>(
+      `[data-task-type-select-option-index="${activeOptionIndex}"]`,
+    );
+    activeOption?.scrollIntoView?.({ block: "nearest" });
+  }, [activeOptionIndex, isOpen, menuPosition]);
+
   if (!selectedOption) return null;
   const isCompact = size === "compact";
   const triggerClassName = isCompact
@@ -189,6 +255,7 @@ export function TaskTypeSelect({
       aria-label={`${label} options`}
       className={`${isCompact ? "max-h-64 p-1" : "max-h-72 p-1.5"} z-[160] max-w-[calc(100vw-1rem)] overflow-y-auto`}
       data-task-type-select-menu="true"
+      id={menuId}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => {
         event.stopPropagation();
@@ -200,14 +267,16 @@ export function TaskTypeSelect({
       widthClassName="w-auto"
     >
       <div className={`grid ${isCompact ? "gap-0.5" : "gap-1"}`}>
-        {options.map((option) => (
+        {options.map((option, optionIndex) => (
           <button
             aria-selected={option.value === value}
             className={isCompact
-              ? `min-h-7 w-full rounded-[0.55rem] px-2 py-1 text-left text-xs transition hover:bg-[#f1ecff] dark:hover:bg-white/10 ${option.value === value ? "bg-[#f1ecff] dark:bg-white/10" : ""}`
-              : `w-full rounded-[0.7rem] px-2.5 py-2 text-left transition hover:bg-[#f1ecff] dark:hover:bg-white/10 ${option.value === value ? "bg-[#f1ecff] dark:bg-white/10" : ""}`}
+              ? `min-h-7 w-full rounded-[0.55rem] px-2 py-1 text-left text-xs transition hover:bg-[#f1ecff] dark:hover:bg-white/10 ${activeOptionIndex === optionIndex || option.value === value ? "bg-[#f1ecff] dark:bg-white/10" : ""}`
+              : `w-full rounded-[0.7rem] px-2.5 py-2 text-left transition hover:bg-[#f1ecff] dark:hover:bg-white/10 ${activeOptionIndex === optionIndex || option.value === value ? "bg-[#f1ecff] dark:bg-white/10" : ""}`}
+            data-task-type-select-option-index={optionIndex}
+            id={`${selectId}-option-${optionIndex}`}
             key={option.value}
-            onClick={() => { onChange(option.value); setIsOpen(false); }}
+            onClick={() => selectOption(option)}
             role="option"
             type="button"
           >
@@ -221,21 +290,63 @@ export function TaskTypeSelect({
   return (
     <div className={`${isCompact ? "relative mt-1 inline-block max-w-full align-middle" : "relative mt-1"} ${className ?? ""}`} data-task-type-select="true">
       <button
+        aria-activedescendant={isOpen && activeOptionIndex !== null ? `${selectId}-option-${activeOptionIndex}` : undefined}
+        aria-controls={menuId}
         aria-expanded={isOpen}
         aria-haspopup="listbox"
         aria-label={ariaLabel ?? label}
         className={triggerClassName}
         disabled={disabled}
+        onKeyDown={(event) => {
+          if (event.key === "Tab") {
+            if (isOpen) closeMenu();
+            return;
+          }
+          if (event.key === "Escape") {
+            if (!isOpen) return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeMenu(true);
+            return;
+          }
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            if (!isOpen) {
+              openMenu();
+              return;
+            }
+            setActiveOptionIndex((currentIndex) => moveTaskTypeSelectActiveOptionIndex(
+              options.length,
+              currentIndex,
+              event.key === "ArrowDown" ? "next" : "previous",
+            ));
+            return;
+          }
+          if (event.key === "Home" || event.key === "End") {
+            if (!isOpen) return;
+            event.preventDefault();
+            setActiveOptionIndex(event.key === "Home" ? 0 : Math.max(0, options.length - 1));
+            return;
+          }
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            if (!isOpen) {
+              openMenu();
+              return;
+            }
+            selectActiveOption();
+          }
+        }}
         onPointerDown={handleInteractionPointerDown}
         onClick={() => {
           if (isOpen) {
-            setIsOpen(false);
+            closeMenu(true);
             return;
           }
-          setMenuPosition(null);
-          setIsOpen(true);
+          openMenu();
         }}
         ref={triggerRef}
+        role="combobox"
         type="button"
       >
         <TaskTypeIdentity compact dense={isCompact} option={selectedOption} />

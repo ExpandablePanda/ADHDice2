@@ -220,6 +220,7 @@ test("Table renders the active same-table QA hierarchy on a plain descendant pla
   const continuationTag = markup.match(/<div class="([^"]*)" data-task-table-step-mini-rows="qa-parent"/)?.[1] ?? "";
   const childGridTag = markup.match(/class="([^"]*)" data-task-table-child-grid="qa-step"/)?.[1] ?? "";
   const selectedChildGridTag = selectedMarkup.match(/class="([^"]*)" data-task-table-child-grid="qa-step"/)?.[1] ?? "";
+  const parentGridTag = markup.match(/class="([^"]*)" data-task-table-parent-grid="qa-parent"/)?.[1] ?? "";
   const parentRowTag = markup.match(/class="([^"]*)" data-task-table-row="qa-parent"/)?.[1] ?? "";
   const parentGridStyle = markup.match(/data-task-table-parent-grid="qa-parent" style="([^"]*)"/)?.[1] ?? "";
   const childGridStyles = [...markup.matchAll(/data-task-table-child-grid="qa-(?:step|substep)"[^>]*style="([^"]*)"/g)].map((match) => match[1]);
@@ -235,6 +236,8 @@ test("Table renders the active same-table QA hierarchy on a plain descendant pla
   assert.match(markup, /data-task-table-row="qa-parent"/);
   assert.doesNotMatch(tableSource, /sticky top-8 z-10 bg-white shadow-\[0_8px_18px/);
   assert.match(childGridTag, /border-transparent bg-transparent dark:bg-transparent/);
+  assert.match(childGridTag, /py-1\.5/);
+  assert.match(parentGridTag, /py-1\.5/);
   assert.match(childGridTag, /hover:(?:bg-\[#fbfaff\]|shadow-\[)/);
   assert.doesNotMatch(childGridTag, /bg-gradient|linear-gradient/);
   assert.ok(stepGeometry.titleContentOffsetPx > stepGeometry.parentTitleContentOffsetPx);
