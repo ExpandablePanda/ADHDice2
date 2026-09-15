@@ -8592,14 +8592,6 @@ export function TaskManagementTableV2({
                   }
                 }}
                 onCommit={() => commitTableStepDraft(parentTaskId)}
-                onInteractionEnd={() => {
-                  if (taskTypeInteractionParentIdRef.current === parentTaskId) {
-                    taskTypeInteractionParentIdRef.current = null;
-                  }
-                }}
-                onInteractionStart={() => {
-                  taskTypeInteractionParentIdRef.current = parentTaskId;
-                }}
                 placeholder={`${childLabel} title...`}
                 value={draft}
               />
@@ -8607,6 +8599,14 @@ export function TaskManagementTableV2({
                 ariaLabel={`${childLabel} Task Type`}
                 className="mt-0"
                 label={`${childLabel} Task Type`}
+                onInteractionStart={() => {
+                  taskTypeInteractionParentIdRef.current = parentTaskId;
+                }}
+                onInteractionEnd={() => {
+                  if (taskTypeInteractionParentIdRef.current === parentTaskId) {
+                    taskTypeInteractionParentIdRef.current = null;
+                  }
+                }}
                 onChange={(value) => setTableStepDraftTaskTypeValues((current) => ({ ...current, [parentTaskId]: value }))}
                 options={taskTypeFilterOptions}
                 size="compact"

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.71`.
+- Current working app version: `7.13.72`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -53,6 +53,17 @@ breathing room, then exposed Safari blur-to-commit firing during portaled Task
 Type interaction. Version 7.13.71 replaces relatedTarget-only inference with an
 explicit Task Type pointer-interaction guard. Selecting a Task Type closes only
 the dropdown and preserves the open child draft and title.
+
+No persistence, SQL, schema, or behavior-policy change was made.
+
+## 2026-09-15 7.13.72 Preserve Selected Task Type in Table Child Draft
+
+Version 7.13.71 added explicit Task Type interaction authority, but Table View
+mistakenly attached its callbacks to the title input instead of `TaskTypeSelect`.
+Version 7.13.72 corrects that wiring so a chosen named Custom Task Type remains
+selected in the open Table child draft until explicit child creation. List View
+was already wired correctly, and full-editor child creation does not use the
+same blur-to-commit path.
 
 No persistence, SQL, schema, or behavior-policy change was made.
 

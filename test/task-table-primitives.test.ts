@@ -46,3 +46,18 @@ test("Table Step and Substep title-cell drafts retain the shared input and creat
   assert.equal((tableSource.match(/style=\{TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE\}/g) ?? []).length, 4);
   assert.match(tableSource, /TASK_TABLE_INLINE_RENAME_EDITOR_CLASS/);
 });
+
+test("Table child Task Type interaction belongs to TaskTypeSelect and leaves the title input API unchanged", () => {
+  const titleDraftStart = tableStepDraftSource.indexOf("<TaskInlineChildDraftInput");
+  const titleDraftEnd = tableStepDraftSource.indexOf("/>", titleDraftStart) + 2;
+  const taskTypeStart = tableStepDraftSource.indexOf("<TaskTypeSelect");
+  const taskTypeEnd = tableStepDraftSource.indexOf("/>", taskTypeStart) + 2;
+  const titleDraftSource = tableStepDraftSource.slice(titleDraftStart, titleDraftEnd);
+  const taskTypeSource = tableStepDraftSource.slice(taskTypeStart, taskTypeEnd);
+
+  assert.doesNotMatch(inputSource, /onInteractionStart|onInteractionEnd/);
+  assert.doesNotMatch(titleDraftSource, /onInteractionStart|onInteractionEnd/);
+  assert.match(taskTypeSource, /onInteractionStart=\{\(\) => \{\s*taskTypeInteractionParentIdRef\.current = parentTaskId;/);
+  assert.match(taskTypeSource, /onInteractionEnd=\{\(\) => \{[\s\S]*taskTypeInteractionParentIdRef\.current = null;/);
+  assert.match(taskTypeSource, /onChange=\{\(value\) => setTableStepDraftTaskTypeValues/);
+});

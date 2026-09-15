@@ -33,6 +33,7 @@ const { getTaskTypeSelectMenuPosition } = await jiti.import<{
 const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
 const appSource = readFileSync("src/components/task-app.tsx", "utf8");
 const listSource = readFileSync("src/components/task-app/tasks-list-adapter.tsx", "utf8");
+const primitivesSource = readFileSync("src/components/ui/task-table-primitives.tsx", "utf8");
 const taskTypeSelectSource = readFileSync("src/components/task-app/task-type-identity.tsx", "utf8");
 const homeSource = readFileSync("src/components/task-app/home-page.tsx", "utf8");
 const subtaskActionsSource = readFileSync("src/hooks/useTaskSubtaskActions.ts", "utf8");
@@ -49,6 +50,12 @@ const tableStepDraftCellSource = tableSource.slice(tableStepDraftCellStart, tabl
 const tableStepDraftTitleStart = tableStepDraftCellSource.indexOf('if (columnId === "title")');
 const tableStepDraftTitleEnd = tableStepDraftCellSource.indexOf('if (columnId === "status")', tableStepDraftTitleStart);
 const tableStepDraftTitleSource = tableStepDraftCellSource.slice(tableStepDraftTitleStart, tableStepDraftTitleEnd);
+const tableStepDraftInputStart = tableStepDraftTitleSource.indexOf("<TaskInlineChildDraftInput");
+const tableStepDraftInputEnd = tableStepDraftTitleSource.indexOf("/>", tableStepDraftInputStart) + 2;
+const tableStepDraftInputSource = tableStepDraftTitleSource.slice(tableStepDraftInputStart, tableStepDraftInputEnd);
+const tableStepDraftTaskTypeSelectStart = tableStepDraftTitleSource.indexOf("<TaskTypeSelect");
+const tableStepDraftTaskTypeSelectEnd = tableStepDraftTitleSource.indexOf("/>", tableStepDraftTaskTypeSelectStart) + 2;
+const tableStepDraftTaskTypeSelectSource = tableStepDraftTitleSource.slice(tableStepDraftTaskTypeSelectStart, tableStepDraftTaskTypeSelectEnd);
 const tableStepDraftTaskTypeStart = tableStepDraftCellSource.indexOf('if (columnId === "task_type")');
 const tableStepDraftTaskTypeEnd = tableStepDraftCellSource.indexOf('if (columnId === "due")', tableStepDraftTaskTypeStart);
 const tableStepDraftTaskTypeSource = tableStepDraftCellSource.slice(tableStepDraftTaskTypeStart, tableStepDraftTaskTypeEnd);
@@ -149,11 +156,23 @@ test("Table Step draft owns one Task Type editor in the title cell and mirrors i
   assert.match(tableSource, /visibleHeaderColumns\.map\(\(column\) => \([\s\S]*renderTableStepDraftCell\(task\.id, column\.id\)/);
 });
 
-test("Table Step Task Type selection is protected from title blur and resets with the draft", () => {
+test("Table Task Type interaction callbacks stay on TaskTypeSelect, not the title input", () => {
+  assert.doesNotMatch(primitivesSource, /onInteractionStart|onInteractionEnd/);
+  assert.doesNotMatch(tableStepDraftInputSource, /onInteractionStart|onInteractionEnd/);
+  assert.match(tableStepDraftTaskTypeSelectSource, /onInteractionStart=\{\(\) => \{\s*taskTypeInteractionParentIdRef\.current = parentTaskId;/);
+  assert.match(tableStepDraftTaskTypeSelectSource, /onInteractionEnd=\{\(\) => \{[\s\S]*taskTypeInteractionParentIdRef\.current = null;/);
+});
+
+test("Table Step Task Type selection is protected from title blur, retained for creation, and resets with the draft", () => {
   assert.match(tableStepDraftTitleSource, /event\.relatedTarget instanceof HTMLElement && event\.relatedTarget\.closest\("\[data-task-type-select\], \[data-task-type-select-menu\]"\)[\s\S]*return;[\s\S]*commitTableStepDraft/);
   assert.match(tableSource, /current\[parentTaskId\] === undefined \? \{ \.\.\.current, \[parentTaskId\]: "task" \}/);
   assert.match(tableSource, /function cancelTableStepDraft\(parentTaskId: string\)[\s\S]*setTableStepDraftTaskTypeValues\([\s\S]*delete next\[parentTaskId\]/);
   assert.match(tableSource, /cancelTableStepDraft\(parentTaskId\);[\s\S]*setExpandedStepsByTaskId/);
+  assert.match(tableStepDraftTaskTypeSelectSource, /onChange=\{\(value\) => setTableStepDraftTaskTypeValues\(\(current\) => \(\{ \.\.\.current, \[parentTaskId\]: value \}\)\)\}/);
+  assert.match(tableStepDraftTaskTypeSelectSource, /onChange=[\s\S]*value=\{draftTaskTypeSelectionValue\}/);
+  assert.match(tableSource, /const result = await onCreateChildTask\(parentTaskId, nextTitle, tableStepDraftTaskTypeValues\[parentTaskId\] \?\? "task"\)/);
+  assert.match(tableSource, /type="submit"[\s\S]*Add Substep/);
+  assert.doesNotMatch(tableStepDraftTaskTypeSelectSource, /commitTableStepDraft|onCreateChildTask/);
 });
 
 test("Task Type selectors keep full-size defaults and use compact portaled controls for dense child creation", () => {
@@ -193,8 +212,8 @@ test("Task Type selection exposes an early pointer interaction lifecycle while p
 test("Table child draft guards blur before relatedTarget inference and clears its interaction ref", () => {
   assert.match(tableSource, /const taskTypeInteractionParentIdRef = useRef<string \| null>\(null\)/);
   assert.match(tableStepDraftTitleSource, /if \(taskTypeInteractionParentIdRef\.current === parentTaskId\) \{\s*return;\s*\}[\s\S]*event\.relatedTarget/);
-  assert.match(tableStepDraftTitleSource, /onInteractionStart=\{\(\) => \{\s*taskTypeInteractionParentIdRef\.current = parentTaskId;/);
-  assert.match(tableStepDraftTitleSource, /onInteractionEnd=\{\(\) => \{[\s\S]*taskTypeInteractionParentIdRef\.current = null;/);
+  assert.match(tableStepDraftTaskTypeSelectSource, /onInteractionStart=\{\(\) => \{\s*taskTypeInteractionParentIdRef\.current = parentTaskId;/);
+  assert.match(tableStepDraftTaskTypeSelectSource, /onInteractionEnd=\{\(\) => \{[\s\S]*taskTypeInteractionParentIdRef\.current = null;/);
   assert.match(tableSource, /taskTypeInteractionParentIdRef\.current = null;[\s\S]*function cancelTableStepDraft/);
   assert.match(tableSource, /function cancelTableStepDraft[\s\S]*taskTypeInteractionParentIdRef\.current = null/);
   assert.match(tableSource, /const result = await onCreateChildTask[\s\S]*cancelTableStepDraft\(parentTaskId\);/);
