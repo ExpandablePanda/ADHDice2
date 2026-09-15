@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-13
+Last reviewed: 2026-09-15
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.69`.
+- Current working app version: `7.13.70`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -33,6 +33,18 @@ Version 7.13.69 makes parent Task rename, existing Step/Substep rename, and new
 Step/Substep creation consume the same exact inline-title authority.
 
 No persistence or behavior change was made. No SQL or schema change was made.
+
+## 2026-09-15 7.13.70 Vertical Breathing Room for New Child Title Input
+
+Version 7.13.69 fixed the Step/Substep draft typography mismatch, and browser
+QA confirmed that the text size, weight, line height, and general typography
+were correct. The remaining issue was insufficient vertical space inside the
+new child creation input because it inherited the compact `h-[15px]` rename
+geometry. Version 7.13.70 separates the shared inline-title typography from
+rename geometry and makes only the new Step/Substep creation field taller at
+approximately 24px, with no persistence or behavior change.
+
+No SQL or schema change was made.
 
 ## 2026-09-14 7.13.68 Inline Table Child Title Typography
 

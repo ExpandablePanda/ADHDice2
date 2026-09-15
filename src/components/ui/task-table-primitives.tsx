@@ -20,8 +20,10 @@ export const TASK_TABLE_BODY_VALUE_CLASS = `${TASK_TABLE_TEXT_CLASS} text-[#5953
 export const TASK_TABLE_BODY_MUTED_VALUE_CLASS = `${TASK_TABLE_TEXT_CLASS} text-[#80799c] dark:text-white/52`;
 export const TASK_TABLE_TITLE_CELL_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} text-[#7a7592] dark:text-white/58`;
 // Visible task and step titles use the same text size and font treatment as table chips.
-export const TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} text-[#7a7592] dark:text-white/58`;
-export const TASK_TABLE_INLINE_TITLE_EDITOR_CLASS = `${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 px-1 py-0`;
+export const TASK_TABLE_INLINE_TITLE_TEXT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} text-[#7a7592] dark:text-white/58`;
+export const TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS = TASK_TABLE_INLINE_TITLE_TEXT_CLASS;
+export const TASK_TABLE_INLINE_RENAME_EDITOR_CLASS = `${TASK_TABLE_INLINE_TITLE_TEXT_CLASS} h-[15px] min-h-0 px-1 py-0`;
+export const TASK_TABLE_INLINE_CHILD_CREATION_INPUT_CLASS = `${TASK_TABLE_INLINE_TITLE_TEXT_CLASS} h-6 min-h-0 px-1.5`;
 export const TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
   color: "rgb(122, 117, 146)",
   fontFamily: "inherit",
@@ -177,7 +179,7 @@ export function TaskInlineChildDraftInput({
   return (
     <input
       aria-label={ariaLabel}
-      className={`${TASK_TABLE_INLINE_TITLE_EDITOR_CLASS} min-w-0 flex-1 rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition placeholder:text-[#aaa2c8] focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+      className={`${TASK_TABLE_INLINE_CHILD_CREATION_INPUT_CLASS} min-w-0 flex-1 rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition placeholder:text-[#aaa2c8] focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
       style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
       disabled={disabled}
       onBlur={onBlur}
