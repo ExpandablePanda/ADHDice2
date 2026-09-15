@@ -2084,6 +2084,7 @@ function SameTableStepCreationControl({
           label={`${childLabel} Task Type`}
           onChange={setTaskTypeSelectionValue}
           options={taskTypeOptions}
+          size="compact"
           value={taskTypeSelectionValue}
         />
         {creationError ? <p className="mt-2 text-xs text-[#d94e67] dark:text-[#ff9eaf]">{creationError}</p> : null}
@@ -8065,10 +8066,11 @@ export function TaskManagementTableV2({
                   </label>
                   <TaskTypeSelect
                     ariaLabel="Substep Task Type"
-                    className="mt-0 min-w-[10rem]"
+                    className="mt-0"
                     label="Substep Task Type"
                     onChange={(value) => setTableStepDraftTaskTypeValues((current) => ({ ...current, [item.id]: value }))}
                     options={taskTypeFilterOptions}
+                    size="compact"
                     value={tableStepDraftTaskTypeValues[item.id] ?? "task"}
                   />
                   <TaskTableChipButton
@@ -8569,7 +8571,7 @@ export function TaskManagementTableV2({
                 childLabel={childLabel}
                 inputRef={tableStepDraftParentId === parentTaskId ? tableStepDraftInputRef : undefined}
                 onBlur={(event) => {
-                  if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select]")) {
+                  if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select], [data-task-type-select-menu]")) {
                     return;
                   }
                   if (draft.trim()) {
@@ -8597,10 +8599,11 @@ export function TaskManagementTableV2({
               />
               <TaskTypeSelect
                 ariaLabel={`${childLabel} Task Type`}
-                className="mt-0 min-w-[10rem] max-w-full flex-[1_1_10rem]"
+                className="mt-0"
                 label={`${childLabel} Task Type`}
                 onChange={(value) => setTableStepDraftTaskTypeValues((current) => ({ ...current, [parentTaskId]: value }))}
                 options={taskTypeFilterOptions}
+                size="compact"
                 value={draftTaskTypeSelectionValue}
               />
             </div>

@@ -1328,7 +1328,7 @@ function StepsCardPreview({
               className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} min-w-[14rem] flex-1`}
               onChange={(event) => onParentStepDraftChange?.(event.target.value)}
               onBlur={(event) => {
-                if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select]")) return;
+                if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select], [data-task-type-select-menu]")) return;
                 if (parentStepDraftValue.trim()) onCommitParentStepDraft?.(parentStepTaskTypeSelectionValue);
               }}
               onKeyDown={(event) => {
@@ -1348,10 +1348,11 @@ function StepsCardPreview({
             />
             <TaskTypeSelect
               ariaLabel="Step Task Type"
-              className="mt-0 min-w-[10rem]"
+              className="mt-0"
               label="Step Task Type"
               onChange={onParentStepTaskTypeSelectionChange ?? (() => undefined)}
               options={taskTypeOptions}
+              size="compact"
               value={parentStepTaskTypeSelectionValue}
             />
             <TaskTableChipButton onClick={() => onCommitParentStepDraft?.(parentStepTaskTypeSelectionValue)} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Add Step</TaskTableChipButton>
@@ -1782,7 +1783,7 @@ function StepsCardPreview({
                       autoFocus
                       className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
                       onBlur={(event) => {
-                        if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select]")) return;
+                        if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select], [data-task-type-select-menu]")) return;
                         if ((substepTitleDrafts[item.id] ?? "").trim()) {
                           void commitSubstepDraft(item.id);
                           return;
@@ -1805,10 +1806,11 @@ function StepsCardPreview({
                     />
                     <TaskTypeSelect
                       ariaLabel="Substep Task Type"
-                      className="mt-0 min-w-[10rem]"
+                      className="mt-0"
                       label="Substep Task Type"
                       onChange={setSubstepTaskTypeSelectionValue}
                       options={taskTypeOptions}
+                      size="compact"
                       value={substepTaskTypeSelectionValue}
                     />
                     <TaskTableChipButton toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS} type="submit">Add</TaskTableChipButton>

@@ -21,10 +21,20 @@ const { getFullEditorChildSectionLabels, performEditorChildTitleRenameHandoff } 
 }>(
   "../src/components/ui/task-management-table-v2.tsx",
 );
+const { getTaskTypeSelectMenuPosition } = await jiti.import<{
+  getTaskTypeSelectMenuPosition: (
+    triggerRect: { bottom: number; left: number; top: number; width: number },
+    viewport: { height: number; width: number },
+    panel?: { height?: number; width?: number },
+    size?: "default" | "compact",
+  ) => { left: number; top: number; width: number };
+}>("../src/components/task-app/task-type-identity.tsx");
 
 const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
 const appSource = readFileSync("src/components/task-app.tsx", "utf8");
 const listSource = readFileSync("src/components/task-app/tasks-list-adapter.tsx", "utf8");
+const taskTypeSelectSource = readFileSync("src/components/task-app/task-type-identity.tsx", "utf8");
+const homeSource = readFileSync("src/components/task-app/home-page.tsx", "utf8");
 const subtaskActionsSource = readFileSync("src/hooks/useTaskSubtaskActions.ts", "utf8");
 const editorSaveSource = readFileSync("src/hooks/useTaskEditorSaveAction.ts", "utf8");
 const fullEditorStart = tableSource.indexOf("const childTaskPreviewGroup = overlayMode === \"full\"");
@@ -140,10 +150,52 @@ test("Table Step draft owns one Task Type editor in the title cell and mirrors i
 });
 
 test("Table Step Task Type selection is protected from title blur and resets with the draft", () => {
-  assert.match(tableStepDraftTitleSource, /event\.relatedTarget instanceof HTMLElement && event\.relatedTarget\.closest\("\[data-task-type-select\]"\)[\s\S]*return;[\s\S]*commitTableStepDraft/);
+  assert.match(tableStepDraftTitleSource, /event\.relatedTarget instanceof HTMLElement && event\.relatedTarget\.closest\("\[data-task-type-select\], \[data-task-type-select-menu\]"\)[\s\S]*return;[\s\S]*commitTableStepDraft/);
   assert.match(tableSource, /current\[parentTaskId\] === undefined \? \{ \.\.\.current, \[parentTaskId\]: "task" \}/);
   assert.match(tableSource, /function cancelTableStepDraft\(parentTaskId: string\)[\s\S]*setTableStepDraftTaskTypeValues\([\s\S]*delete next\[parentTaskId\]/);
   assert.match(tableSource, /cancelTableStepDraft\(parentTaskId\);[\s\S]*setExpandedStepsByTaskId/);
+});
+
+test("Task Type selectors keep full-size defaults and use compact portaled controls for dense child creation", () => {
+  assert.match(taskTypeSelectSource, /export type TaskTypeSelectSize = "default" \| "compact"/);
+  assert.match(taskTypeSelectSource, /size = "default"/);
+  assert.match(taskTypeSelectSource, /min-h-10 w-full/);
+  assert.match(taskTypeSelectSource, /min-h-7 min-w-\[7rem\] max-w-\[13rem\] w-auto/);
+  assert.match(taskTypeSelectSource, /createPortal\(panel, document\.body\)/);
+  assert.match(taskTypeSelectSource, /position: "fixed"/);
+  assert.match(taskTypeSelectSource, /getBoundingClientRect\(\)/);
+  assert.match(taskTypeSelectSource, /document\.addEventListener\("pointerdown"/);
+  assert.match(taskTypeSelectSource, /event\.key !== "Escape"/);
+  assert.match(taskTypeSelectSource, /data-task-type-select-menu="true"/);
+  assert.match(taskTypeSelectSource, /role="listbox"/);
+  assert.match(taskTypeSelectSource, /role="option"/);
+  assert.match(homeSource, /<TaskTypeSelect[\s\S]*options=\{taskTypeOptions\}[\s\S]*value=\{newTaskTypeSelection\}/);
+  assert.doesNotMatch(homeSource.slice(homeSource.indexOf("<TaskTypeSelect"), homeSource.indexOf("</label>", homeSource.indexOf("<TaskTypeSelect"))), /size="compact"/);
+  assert.match(tableStepDraftTitleSource, /<TaskTypeSelect[\s\S]*className="mt-0"[\s\S]*size="compact"/);
+  assert.match(editorChildRowsSource, /<TaskTypeSelect[\s\S]*className="mt-0"[\s\S]*size="compact"/);
+  assert.match(listSource, /<TaskTypeSelect[\s\S]*className="mt-0"[\s\S]*size="compact"/);
+  assert.doesNotMatch(tableStepDraftTitleSource, /min-w-\[10rem\]|flex-\[1_1_10rem\]/);
+});
+
+test("Task Type menu placement stays viewport-safe and flips above when needed", () => {
+  assert.deepEqual(
+    getTaskTypeSelectMenuPosition(
+      { bottom: 120, left: 300, top: 92, width: 112 },
+      { height: 800, width: 320 },
+      { height: 140 },
+      "compact",
+    ),
+    { left: 152, top: 126, width: 160 },
+  );
+  assert.deepEqual(
+    getTaskTypeSelectMenuPosition(
+      { bottom: 470, left: 20, top: 440, width: 200 },
+      { height: 500, width: 500 },
+      { height: 120 },
+      "compact",
+    ),
+    { left: 20, top: 314, width: 200 },
+  );
 });
 
 test("blocked hierarchy rows cannot open row child creation", () => {

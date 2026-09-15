@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.66`.
+- Current working app version: `7.13.67`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,6 +23,18 @@ default, restoring List rendering with no behavior or persistence change.
 
 No behavior policy, Task State, History, recurrence, streak, reward, or Task
 Type creation semantics changed. No SQL or schema change was made.
+
+## 2026-09-14 7.13.67 Compact Table Child Task Type Chooser
+
+Version 7.13.66 made Step Task Type selection column-independent, but browser QA
+then found that the inline control was oversized and its locally positioned
+dropdown could be obscured by later Table rows. Version 7.13.67 adds a compact
+inline presentation for dense Step/Substep creation and renders the selector
+menu through the existing top-level dropdown shell with viewport-safe anchored
+placement.
+
+No persistence or Task behavior change was made. No SQL or schema change was
+made.
 
 ## 2026-09-14 7.13.66 Table Step Task Type Selector Placement
 
