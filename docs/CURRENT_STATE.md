@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.67`.
+- Current working app version: `7.13.68`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,6 +23,16 @@ default, restoring List rendering with no behavior or persistence change.
 
 No behavior policy, Task State, History, recurrence, streak, reward, or Task
 Type creation semantics changed. No SQL or schema change was made.
+
+## 2026-09-14 7.13.68 Inline Table Child Title Typography
+
+Version 7.13.67 fixed compact Task Type chooser sizing and layering for inline
+child creation. Final browser polish found that the inline child title input
+looked visually larger than existing written Table titles. Version 7.13.68
+reuses the shared visible-title typography and aligns the draft input to the
+same compact control height as the inline Task Type chooser.
+
+No behavior or persistence change was made. No SQL or schema change was made.
 
 ## 2026-09-14 7.13.67 Compact Table Child Task Type Chooser
 

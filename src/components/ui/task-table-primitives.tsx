@@ -168,7 +168,7 @@ export function TaskInlineChildDraftInput({
   return (
     <input
       aria-label={ariaLabel}
-      className="min-w-0 flex-1 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1.5 py-1 text-[13px] font-medium text-[#27304c] outline-none transition placeholder:text-[#aaa2c8] focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
+      className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} h-7 min-h-0 min-w-0 flex-1 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1.5 py-0 outline-none transition placeholder:text-[#aaa2c8] focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
       disabled={disabled}
       onBlur={onBlur}
       onChange={(event) => onChange(event.target.value)}
