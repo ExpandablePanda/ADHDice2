@@ -5,14 +5,22 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.81`.
-- Current release group: `7.13.x` Tasks + Custom Task Types.
+- Current working app version: `7.14.0`.
+- Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-16 7.14.0 Start Development Line
+
+Version 7.13.81 was the completed consolidated 7.13 web release, and `main`
+was advanced to that release. `ios/native-development` was merged with
+consolidated `main`, and the native device build passed. Version 7.14.0 starts
+the next active development line. No product behavior changed in this version
+bump.
 
 ## 2026-09-16 7.13.81 Consolidate Side and Journal Web Work
 
