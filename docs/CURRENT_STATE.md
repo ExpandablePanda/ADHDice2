@@ -26,9 +26,18 @@ Food retains projected-calorie goal warnings and status coloring.
 The current 7.13 Task, Task State, Effective Timeline, current-policy backlog,
 Success Outcomes, named Custom Task Type, presentation, child-creation,
 Attention, recurrence, and reward architecture remains authoritative. The
-additive Journal migration remains source-only; no SQL or DDL was applied, and
-no Edge Function was redeployed. `task-state-command` v37 is live on 7.13.80
-at commit `f9fa56c`.
+Journal migration was originally authored as source-only during implementation,
+but is now verified live in production project `mnwcuinnshsncqrhvsks` as
+registry migration `20260912160312 add_health_journal_checkin_types_7_13_43`.
+Production schema verification confirmed `journal_questions` and
+`structured_answers` are non-null JSONB with their array/object defaults,
+`entry_type` is nullable text with the expected three-value check, and all
+expected Journal constraints exist. HealthKit persistence migration
+`20260828210906 patch_healthkit_persistence_7_11_99` and Active Energy calorie
+goal migration `20260829015901 add_health_active_energy_calorie_goal_7_12_3`
+are also recorded live. `task-state-command` v37 remains the current deployed
+Edge Function, pinned to 7.13.80 commit
+`f9fa56cd7c03ba8e2c9a20511d5b2d2b8529c886`; no redeploy was required for 7.13.81.
 
 ## 2026-09-16 7.13.67 Color Projected Calories by Goal Status
 
@@ -93,8 +102,9 @@ and remote Supabase hydration continues. Browser QA remains unverified.
 Journal supports Start of Day, End of Day, and Event entry types with structured
 answers, linked Sleep/Food/Feeling data, open-ended writing, and configurable
 historical-safe custom check-in questions. The additive Journal schema
-migration is source-only; no SQL deployment was performed, and browser QA
-remains unverified.
+migration was authored source-only and was not deployed during that
+implementation run; its current live production application is recorded in
+the 7.13.81 entry above. Browser QA remains unverified.
 
 ## 2026-09-15 7.13.73 Child Task Type Surface and Keyboard Navigation
 
