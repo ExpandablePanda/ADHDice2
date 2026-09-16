@@ -233,6 +233,13 @@ test("7.13.78 adds constrained Success Outcomes to both behavior revision tables
   assert.doesNotMatch(successOutcomesMigration, /array_length\(success_outcomes/i);
   assert.doesNotMatch(successOutcomesMigration, /insert\s+into\s+public\.adhdice_/i);
   assert.doesNotMatch(successOutcomesMigration, /delete\s+from\s+public\.adhdice_/i);
+  for (const table of ["adhdice_task_type_behavior_profiles", "adhdice_custom_behavior_ruleset_revisions"]) {
+    const tableSource = schemaSource.match(new RegExp(`create table public\\.${table}([\\s\\S]*?);`, "i"))?.[1] ?? "";
+    assert.match(tableSource, /success_outcomes text\[\] not null\s+default array\['done', 'did_my_best', 'complete'\]::text\[\]/i);
+    assert.match(tableSource, /success_outcomes <@ array\['done', 'did_my_best', 'complete'\]::text\[\]/i);
+    assert.match(tableSource, /array_position\(success_outcomes, null\) is null/i);
+    assert.doesNotMatch(tableSource, /array_length\(success_outcomes/i);
+  }
 });
 
 test("profile revisions use the earliest revision as a baseline and remain deterministic by logical date", () => {

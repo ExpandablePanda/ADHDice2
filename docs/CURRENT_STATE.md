@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.78`.
+- Current working app version: `7.13.79`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -94,6 +94,18 @@ shared policy loader and requires live Edge redeployment review after
 merge/push; it was not deployed by this ticket. No SQL/schema change is live,
 and no behavior-policy beyond the requested Success Outcomes setting was
 changed.
+
+## 2026-09-16 7.13.79 Consolidated Schema Consistency
+
+Version 7.13.79 is a source-schema consistency correction only. The
+consolidated `supabase/schema.sql` now matches the 7.13.78 Success Outcomes
+migration for both behavior tables, including the default, allowed vocabulary,
+null-element prohibition, and valid empty-array behavior.
+
+7.13.78 Success Outcomes behavior is unchanged. Live
+`add_success_outcomes_policy_7_13_78.sql` application is still pending, and
+`task-state-command` redeployment is still pending. No SQL was applied by this
+ticket.
 
 ## 2026-09-14 7.13.65 List View Child Preview Crash Hotfix
 
