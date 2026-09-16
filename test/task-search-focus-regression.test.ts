@@ -418,8 +418,9 @@ test("real Table reveal gate does not focus a result while search owns focus", (
 });
 
 test("Table reveal uses the same passive guard through both animation frames and keeps requested focus paths", () => {
-  const revealStart = tableSource.lastIndexOf("useEffect(() =>", tableSource.indexOf("const getHighlightedRowClassName"));
-  const revealEnd = tableSource.indexOf("const getHighlightedRowClassName", revealStart);
+  const revealTargetStart = tableSource.indexOf("const revealTaskId = highlightedRevealTaskId");
+  const revealStart = tableSource.lastIndexOf("useEffect(() =>", revealTargetStart);
+  const revealEnd = tableSource.indexOf("\n\n  useEffect(() =>", revealTargetStart);
   const revealEffect = tableSource.slice(revealStart, revealEnd);
 
   assert.match(revealEffect, /shouldFocusTaskTableRevealTarget\(highlightedRevealShouldFocus\)/);

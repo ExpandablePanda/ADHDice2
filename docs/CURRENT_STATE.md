@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.74`.
+- Current working app version: `7.13.76`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -53,6 +53,19 @@ The stronger shared child accent surfaces, neutral Standard child treatment,
 `py-1.5`, focus-visible treatment, selection/accessibility treatment, parent
 Task styling, TaskTypeSelect behavior, and child creation semantics are
 unchanged. No persistence, schema, or behavior-policy change was made.
+
+## 2026-09-15 7.13.76 Unified Table Parent/Child Accent Surface
+
+Version 7.13.75 removed child row shadows, but browser QA still showed a
+parent/child shade mismatch. Diagnosis confirmed that parents used the weaker
+Table surface authority while children used the stronger child-only authority;
+parents also retained purple hover/reveal shadows.
+
+Version 7.13.76 gives all Table hierarchy rows one shared stronger accent
+authority and removes Table row hover/reveal shadows. Each child still resolves
+its own Task Type independently, Standard rows remain neutral, and non-Table
+surfaces are unchanged. No persistence, schema, or behavior-policy change was
+made.
 
 ## 2026-09-14 7.13.65 List View Child Preview Crash Hotfix
 

@@ -70,7 +70,7 @@ import {
 } from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, resolveTaskTypeSelectionOption, taskTypeSelectionValue } from "@/lib/task-type";
-import { getTaskTypeTableChildSurfaceClassName, getTaskTypeTableSurfaceClassName, type TaskTypePresentation } from "@/lib/task-type-presentation";
+import { getTaskTypeTableRowSurfaceClassName, type TaskTypePresentation } from "@/lib/task-type-presentation";
 import { TaskTypeIdentity, TaskTypeSelect } from "@/components/task-app/task-type-identity";
 import { preserveCurrentTaskStatusForPresentation, resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask, taskManualActionForStatus } from "@/lib/task-state-engine/action-authority";
 import { getTaskEditorNavigationNeighbor, getTaskEditorNavigationPosition } from "@/lib/task-editor-navigation";
@@ -4236,13 +4236,6 @@ export function TaskManagementTableV2({
       window.cancelAnimationFrame(secondFrameId);
     };
   }, [effectiveDisplayedTasks, highlightedActiveTaskId, highlightedRevealShouldFocus, highlightedRevealTaskId, highlightedScrollToken, renderedTaskCount]);
-
-  const getHighlightedRowClassName = (taskId: string) => {
-    if (highlightedRevealTaskId === taskId) {
-      return "shadow-[0_18px_40px_rgba(109,61,208,0.10)]";
-    }
-    return "";
-  };
 
   useEffect(() => {
     if (!selectedTaskId || !allowInlineInspector || !isInlineAccordionMode(overlayMode)) {
@@ -8735,7 +8728,7 @@ export function TaskManagementTableV2({
         {displayedItems.map((item, itemIndex) => {
           const inlineStepTask = childPreviewToPrototypeTaskRow(item);
           const childTaskTypeOption = resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets);
-          const childTaskSurface = getTaskTypeTableChildSurfaceClassName(childTaskTypeOption.accentKey);
+          const childTaskSurface = getTaskTypeTableRowSurfaceClassName(childTaskTypeOption.accentKey);
           const titleGeometry = getTableHierarchyTitleGeometry(item.depth);
           return (
             <Fragment key={item.id}>
@@ -8881,7 +8874,7 @@ export function TaskManagementTableV2({
       {rows.map((row) => (
         (() => {
           const sourceTaskTypeOption = resolveTaskTypeSelectionOption(row.subtask.taskType, row.subtask.customRulesetId, customBehaviorRulesets);
-          const sourceTaskSurface = getTaskTypeTableChildSurfaceClassName(sourceTaskTypeOption.accentKey);
+          const sourceTaskSurface = getTaskTypeTableRowSurfaceClassName(sourceTaskTypeOption.accentKey);
           return (
           <div
             className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center`}
@@ -9212,7 +9205,7 @@ export function TaskManagementTableV2({
               </div>
             ) : renderedTasks.map((task) => {
               const taskTypeOption = resolveTaskTypeSelectionOption(task.taskType, task.customRulesetId, customBehaviorRulesets);
-              const taskSurface = getTaskTypeTableSurfaceClassName(taskTypeOption.accentKey);
+              const taskSurface = getTaskTypeTableRowSurfaceClassName(taskTypeOption.accentKey);
               const visibleSubtasks = filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds);
               const hasSourceStepRows = visibleSubtasks.length > 0;
               const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
@@ -9320,7 +9313,7 @@ export function TaskManagementTableV2({
                     variants={tableRowVariants}
                     whileHover={shouldAnimateRows ? { y: -0.5 } : undefined}
                   >
-                    <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition ${taskSurface} hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] ${getHighlightedRowClassName(task.id)} ${
+                    <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition ${taskSurface} ${
                       selectedTaskIdSet.has(task.id)
                         ? taskTypeOption.accentKey === "neutral" ? "bg-[#f7f2ff] dark:bg-[#201733]" : "ring-2 ring-[#6f57f6]/35 dark:ring-[#cabfff]/35"
                         : showInlineAccordion || rowContextMenu?.taskId === task.id
