@@ -346,6 +346,20 @@ test("canonical persistence, editing, deletion, and totals remain unchanged", ()
   assert.match(source, /sumMealNutritionForDate\(mealEntries, foodHistoryDate\)/);
 });
 
+test("Food totals and the meal editor use projected calorie authority without blocking save", () => {
+  assert.match(source, /const selectedProjectedCalories = selectedNutrition\.calories \+ selectedPlannedNutrition\.calories/);
+  assert.match(source, /progressPercent=\{selectedCalorieBudget \? clampPercent\(\(selectedCalorieProgressCalories \/ selectedCalorieBudget\) \* 100\) : null\}/);
+  assert.match(source, /Projected \$\{formatHealthCalorieTarget\(selectedProjectedCalories\)\} kcal/);
+  assert.match(source, /sumMealNutritionForDate\(mealEntries, mealDate\)/);
+  assert.match(source, /sumMetricValueForDate\(metricEntries, mealDate, \["active_energy_kcal"\]\)/);
+  assert.match(source, /sumHealthMealPlanNutritionForDate\([\s\S]*?mealDate,[\s\S]*?mealEditorMode === "plan" \? editingMealPlanId : undefined/);
+  assert.match(source, /calculateHealthProjectedCalories\([\s\S]*?mealCalculation\.nutrientTotals\.calories/);
+  assert.match(inlineEditorSource, /mealCalorieWarning/);
+  assert.match(inlineEditorSource, /Projected \{formatHealthCalorieTarget\(mealCalorieWarning\.projectedCalories\)\} kcal/);
+  assert.match(inlineEditorSource, /role="status"/);
+  assert.match(inlineEditorSource, /disabled=\{!canSaveMeal\}/);
+});
+
 test("logged food cards expose one prominent effective-calorie line and preserve planned cards", () => {
   const loggedCard = foodSource.slice(foodSource.indexOf("{slotMeals.length === 0"), foodSource.indexOf("{editingMealId === entry.id"));
   assert.match(loggedCard, /getHealthMealSummaryParts\(entry\)\.map\(\(part, index\) =>/);

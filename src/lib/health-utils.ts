@@ -795,6 +795,28 @@ export function calculateHealthDailyCalorieBudget(
   return baseCalorieGoal + activityAdjustment;
 }
 
+export function calculateHealthProjectedCalories(consumedCalories: number, plannedCalories: number, candidateCalories: number) {
+  return [consumedCalories, plannedCalories, candidateCalories]
+    .reduce((total, value) => total + (Number.isFinite(value) ? value : 0), 0);
+}
+
+export type HealthCalorieGoalWarning = {
+  overBy: number;
+  projectedCalories: number;
+  targetCalories: number;
+};
+
+export function getHealthCalorieGoalWarning(projectedCalories: number | null, targetCalories: number | null): HealthCalorieGoalWarning | null {
+  if (projectedCalories === null || !Number.isFinite(projectedCalories) || targetCalories === null || !Number.isFinite(targetCalories) || projectedCalories <= targetCalories) {
+    return null;
+  }
+  return {
+    overBy: projectedCalories - targetCalories,
+    projectedCalories,
+    targetCalories,
+  };
+}
+
 export type HealthDailyCalorieTargetPoint = {
   date: string;
   label: string;

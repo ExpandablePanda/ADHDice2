@@ -80,6 +80,7 @@ import {
 import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
   calculateHealthDailyCalorieBudget,
+  calculateHealthProjectedCalories,
   buildHealthDailyCalorieTargetSeries,
   clampPercent,
   buildHealthMealLoggedAt,
@@ -102,6 +103,7 @@ import {
   getHealthSleepDayTotal,
   getHealthMealNutritionValue,
   getHealthMealSummaryParts,
+  getHealthCalorieGoalWarning,
   buildHealthDailySleepSeries,
   getSleepFocusSessions,
   sortHealthSleepSessionsByStart,
@@ -1719,9 +1721,6 @@ export function HealthPage({
     ),
     [profile?.calorie_goal, selectedActiveEnergyKcal],
   );
-  const selectedCalorieTargetDetail = selectedCalorieBudget === null
-    ? "set in goals"
-    : `target ${formatHealthCalorieTarget(selectedCalorieBudget)} kcal${selectedActiveEnergyKcal > 0 ? ` (+${formatHealthCalorieTarget(selectedActiveEnergyKcal)} active kcal)` : ""}`;
   const selectedMealPlans = useMemo(
     () => getActiveHealthMealPlans(mealPlanEntries, foodHistoryDate),
     [foodHistoryDate, mealPlanEntries],
@@ -1730,6 +1729,15 @@ export function HealthPage({
     () => sumHealthMealPlanNutritionForDate(mealPlanEntries, foodHistoryDate),
     [foodHistoryDate, mealPlanEntries],
   );
+  const selectedProjectedCalories = selectedNutrition.calories + selectedPlannedNutrition.calories;
+  const selectedCalorieProgressCalories = selectedMealPlans.length > 0 ? selectedProjectedCalories : selectedNutrition.calories;
+  const selectedCalorieTargetDetail = selectedMealPlans.length > 0
+    ? selectedCalorieBudget === null
+      ? `Projected ${formatHealthCalorieTarget(selectedProjectedCalories)} kcal · no target`
+      : `Projected ${formatHealthCalorieTarget(selectedProjectedCalories)} kcal · target ${formatHealthCalorieTarget(selectedCalorieBudget)} kcal${selectedActiveEnergyKcal > 0 ? ` (+${formatHealthCalorieTarget(selectedActiveEnergyKcal)} active kcal)` : ""}`
+    : selectedCalorieBudget === null
+      ? "set in goals"
+      : `target ${formatHealthCalorieTarget(selectedCalorieBudget)} kcal${selectedActiveEnergyKcal > 0 ? ` (+${formatHealthCalorieTarget(selectedActiveEnergyKcal)} active kcal)` : ""}`;
   const foodLogHistoryIndex = useMemo(
     () => buildHealthFoodLogHistoryIndex(mealEntries),
     [mealEntries],
@@ -1872,6 +1880,34 @@ export function HealthPage({
     [mealDraft],
   );
   const mealDate = mealEditorMode === "plan" ? mealDraft.date : foodHistoryDate;
+  const mealEditorNutrition = useMemo(
+    () => sumMealNutritionForDate(mealEntries, mealDate),
+    [mealDate, mealEntries],
+  );
+  const mealEditorActiveEnergyKcal = useMemo(
+    () => sumMetricValueForDate(metricEntries, mealDate, ["active_energy_kcal"]),
+    [mealDate, metricEntries],
+  );
+  const mealEditorCalorieBudget = useMemo(
+    () => calculateHealthDailyCalorieBudget(profile?.calorie_goal, mealEditorActiveEnergyKcal),
+    [mealEditorActiveEnergyKcal, profile?.calorie_goal],
+  );
+  const mealEditorPlannedNutrition = useMemo(
+    () => sumHealthMealPlanNutritionForDate(
+      mealPlanEntries,
+      mealDate,
+      mealEditorMode === "plan" ? editingMealPlanId : undefined,
+    ),
+    [editingMealPlanId, mealDate, mealEditorMode, mealPlanEntries],
+  );
+  const mealProjectedCalories = mealCalculation
+    ? calculateHealthProjectedCalories(
+      mealEditorNutrition.calories,
+      mealEditorPlannedNutrition.calories,
+      mealCalculation.nutrientTotals.calories,
+    )
+    : null;
+  const mealCalorieWarning = getHealthCalorieGoalWarning(mealProjectedCalories, mealEditorCalorieBudget);
   const mealLoggedAt = buildHealthMealLoggedAt(mealDate, mealDraft.time);
   const mealTimestampError = mealLoggedAt === null
     ? "Choose a valid meal date and time."
@@ -3264,6 +3300,11 @@ export function HealthPage({
           </div>
         ) : null}
         {mealTimestampError ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">{mealTimestampError}</p> : null}
+        {mealCalorieWarning ? (
+          <p aria-live="polite" className="rounded-[0.8rem] border border-[#f1d6a0] bg-[#fff9e8] px-3 py-2 text-xs font-semibold text-[#9a6a11] dark:border-[#70571b] dark:bg-[#382f15] dark:text-[#ffd76e]" role="status">
+            Projected {formatHealthCalorieTarget(mealCalorieWarning.projectedCalories)} kcal, {formatHealthCalorieTarget(mealCalorieWarning.overBy)} kcal over your {formatHealthCalorieTarget(mealCalorieWarning.targetCalories)} kcal target.
+          </p>
+        ) : null}
         {mealDraft.foodName ? (
           <div aria-live="polite" className="rounded-[1rem] border border-[#e8e2f7] bg-white px-4 py-3 text-sm text-[#5d6783] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/65">
             {mealCalculation ? <><div className="mb-1">{composeHealthFoodServingDefinition({ ...mealCalculation.serving, servingLabel: mealDraft.servingLabel })}</div><div>Nutrition preview: <strong className="text-[#3d4670] dark:text-white">{formatHealthNutritionNumber(mealCalculation.nutrientTotals.calories)} kcal</strong> / Protein {formatHealthNutritionNumber(mealCalculation.nutrientTotals.protein_g)}g / Carbs {formatHealthNutritionNumber(mealCalculation.nutrientTotals.carbs_g)}g / Fat {formatHealthNutritionNumber(mealCalculation.nutrientTotals.fat_g)}g</div><NutritionDetailsDisclosure details={mealCalculation.nutrientTotals.nutrition_details} /></> : "Enter a positive amount using one of this food’s supported measurements."}
@@ -4166,7 +4207,7 @@ export function HealthPage({
             subtitle="Daily totals"
           >
             <div className="grid gap-3 sm:grid-cols-2">
-              <CompactStat detail={selectedCalorieTargetDetail} label="Calories" progressPercent={selectedCalorieBudget ? clampPercent((selectedNutrition.calories / selectedCalorieBudget) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
+              <CompactStat detail={selectedCalorieTargetDetail} label="Calories" progressPercent={selectedCalorieBudget ? clampPercent((selectedCalorieProgressCalories / selectedCalorieBudget) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
               <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" progressPercent={profile.protein_goal_grams ? clampPercent((selectedNutrition.protein / profile.protein_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.protein)}g`} />
               <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.carbs)}g`} />
               <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.fat)}g`} />

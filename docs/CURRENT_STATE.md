@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.65`.
+- Current working app version: `7.13.66`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -28,6 +28,14 @@ Goal-backed Focus Activity bars keep their fixed full-height tracks and capped
 fills. When actual activity exceeds the displayed goal, a dashed goal marker
 moves downward using the goal-to-actual ratio; no-goal bars retain their
 relative-duration fallback and show no marker.
+
+## 2026-09-16 7.13.66 Add Projected Food Calories and Goal Warning
+
+Food Daily Totals keeps consumed calories as the main value while showing
+projected calories from active planned food when present. The shared meal
+editor warns informationally when consumed, active planned, and live candidate
+calories exceed the date-specific Active Energy-adjusted target; editing a plan
+excludes that plan's prior calories before adding the candidate.
 
 ## 2026-09-13 7.13.63 Custom Task Type Presentation QA Correction
 
