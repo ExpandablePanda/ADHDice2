@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-15
+Last reviewed: 2026-09-16
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.76`.
+- Current working app version: `7.13.78`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -75,6 +75,25 @@ Version 7.13.77 adds a semantic Task Type hover border for every Table
 hierarchy row while preserving the exact row fill, reserved border width,
 selection rings, focus-visible treatment, and existing hover motion. No
 persistence, schema, or behavior-policy change was made.
+
+## 2026-09-16 7.13.78 Configurable Success Outcomes
+
+Version 7.13.77 closed the Custom Task Type presentation and child-creation QA
+loop. Version 7.13.78 adds effective-dated configurable Success Outcomes to
+Standard Task profiles and named Custom Task Type revisions. The allowed
+outcomes are Done, Did My Best, and Complete; selected outcomes advance the
+positive streak, while a handled positive outcome that is not selected breaks
+it. An unresolved scheduled occurrence still breaks the positive streak.
+
+Operational handled-outcome, reward, and recurrence semantics remain
+independent and unchanged, and no positive-streak tracking toggle was added.
+The source-only migration is
+`supabase/add_success_outcomes_policy_7_13_78.sql`; live Supabase application
+is pending review/application. The trusted `task-state-command` uses the same
+shared policy loader and requires live Edge redeployment review after
+merge/push; it was not deployed by this ticket. No SQL/schema change is live,
+and no behavior-policy beyond the requested Success Outcomes setting was
+changed.
 
 ## 2026-09-14 7.13.65 List View Child Preview Crash Hotfix
 

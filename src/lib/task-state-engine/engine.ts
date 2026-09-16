@@ -18,6 +18,7 @@ import {
 } from "./recurrence.ts";
 import {
   resolveTaskBehaviorPolicy,
+  isTaskSuccessOutcome,
   type TaskBehaviorPolicy,
 } from "./behavior-policy.ts";
 import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
@@ -58,7 +59,8 @@ function streakFor(
   policy: TaskBehaviorPolicy,
   unhandled: boolean,
 ): StreakDisposition {
-  if (outcome && SUCCESS.has(outcome)) return "increment_positive";
+  if (outcome && isTaskSuccessOutcome(outcome, policy)) return "increment_positive";
+  if (outcome && SUCCESS.has(outcome)) return "break_positive";
   if (outcome === "delayed") return "preserve_positive";
   if (outcome === "missed") {
     return unhandled && policy.missedStreakOnUnhandled === "ignore" ? "preserve_missed" : "increment_missed";

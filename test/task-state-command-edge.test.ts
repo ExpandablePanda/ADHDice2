@@ -285,6 +285,7 @@ function behaviorRevision(
     rewards: "enabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
     needsActionTriggers: ["missed", "due_today", "overdue"],
+    successOutcomes: ["done", "did_my_best", "complete"],
     ...values,
   };
 }
@@ -299,6 +300,7 @@ function behaviorProfile(revision: TaskBehaviorPolicyRevision): TaskBehaviorProf
       rewards: revision.rewards,
       availableActions: revision.availableActions,
       needsActionTriggers: revision.needsActionTriggers,
+      successOutcomes: revision.successOutcomes,
     },
   };
 }
@@ -357,6 +359,7 @@ test("trusted orchestration forwards the complete Task behavior revision timelin
   assert.deepEqual(capturedContext?.behaviorPolicyRevisions, behaviorRevisions);
   assert.equal(capturedContext?.behaviorProfiles?.task?.rewards, "disabled");
   assert.equal(capturedContext?.behaviorProfiles?.custom?.unresolvedOccurrence, "blank");
+  assert.deepEqual(capturedContext?.behaviorProfiles?.task?.successOutcomes, ["done", "did_my_best", "complete"]);
 });
 
 test("trusted cross-TaskType selection planning matches browser/direct policy resolution", async () => {
@@ -946,6 +949,48 @@ test("canonical server and browser/direct normalization make the same historical
     serverResult.proposedHistoryChanges.map((change) => change.type === "insert" ? change.row.logicalDate : change.rowId),
     browserResult.proposedHistoryChanges.map((change) => change.type === "insert" ? change.row.logicalDate : change.rowId),
   );
+});
+
+test("trusted planning carries a named Custom Success Outcomes policy to the canonical engine", async () => {
+  const namedRevision = behaviorRevision("2026-09-01", { successOutcomes: ["done"] });
+  const namedCustomReadModel = {
+    ...canonicalReadModel,
+    task: { ...canonicalReadModel.task, task_type: "custom", custom_ruleset_id: "ruleset-practice" },
+  } as unknown as CanonicalTaskStateReadModel;
+  let capturedEngineInput: TaskStateEngineInput | undefined;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: "outcome:named-success-policy",
+      expected_revision: 4,
+      outcome: "done",
+      logical_date: "2026-09-15",
+    },
+    adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: namedCustomReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: {}, revisions: {}, error: null }),
+      loadCustomRulesets: async () => ({
+        data: [],
+        revisions: { "ruleset-practice": [namedRevision] },
+        behaviorSelectionsByTaskId: {},
+        error: null,
+        behaviorSelectionError: null,
+      }),
+      buildEngineInput: (readModel, context) => {
+        capturedEngineInput = buildCanonicalTaskStateEngineInput(readModel, context);
+        return capturedEngineInput;
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(capturedEngineInput?.behaviorPolicy?.successOutcomes, ["done"]);
+  assert.equal(capturedEngineInput?.behaviorPolicyRevisions?.[0]?.successOutcomes.includes("did_my_best"), false);
 });
 
 test("trusted current-logical-day reward policy prevents a new entitlement while earned rewards remain planning-safe", async () => {

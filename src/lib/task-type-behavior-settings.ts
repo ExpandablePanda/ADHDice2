@@ -13,6 +13,7 @@ export function buildDefaultCustomTaskTypeDraft(): TaskBehaviorPolicy {
     id: "custom-task-type-draft",
     availableActions: [...DEFAULT_CUSTOM_TASK_TYPE_TEMPLATE.availableActions],
     needsActionTriggers: [...DEFAULT_CUSTOM_TASK_TYPE_TEMPLATE.needsActionTriggers],
+    successOutcomes: [...DEFAULT_CUSTOM_TASK_TYPE_TEMPLATE.successOutcomes],
   };
 }
 

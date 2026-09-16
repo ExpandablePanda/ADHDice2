@@ -74,6 +74,7 @@ export function useTaskTypeBehaviorProfiles(
       rewards: revision.rewards,
       available_actions: revision.availableActions,
       needs_action_triggers: revision.needsActionTriggers,
+      success_outcomes: revision.successOutcomes,
     }))),
     currentLogicalDate,
   ), [currentLogicalDate, profileRevisions]);

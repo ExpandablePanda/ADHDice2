@@ -25,6 +25,7 @@ const behaviorProfilesHookSource = readFileSync("src/hooks/useTaskTypeBehaviorPr
 const filterRowsSource = readFileSync("src/components/task-app/task-filter-rows.tsx", "utf8");
 const availableActionsMigration = readFileSync("supabase/add_available_actions_policy_7_13_38.sql", "utf8");
 const needsActionTriggersMigration = readFileSync("supabase/add_needs_action_triggers_policy_7_13_41.sql", "utf8");
+const successOutcomesMigration = readFileSync("supabase/add_success_outcomes_policy_7_13_78.sql", "utf8");
 const schemaSource = readFileSync("supabase/schema.sql", "utf8");
 
 const input: TaskStateEngineInput = {
@@ -121,6 +122,7 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     rewards: "disabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
     needsActionTriggers: ["missed", "due_today", "overdue"],
+    successOutcomes: ["done", "did_my_best", "complete"],
   });
   assert.deepEqual(result.revisions, { task: [{
     id: "task-behavior-profile",
@@ -130,6 +132,7 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     rewards: "disabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
     needsActionTriggers: ["missed", "due_today", "overdue"],
+    successOutcomes: ["done", "did_my_best", "complete"],
     effectiveFromLogicalDate: "2026-09-08",
   }] });
   assert.deepEqual(taskTypeBehaviorProfileUpsertPayload("user-a", "task", STANDARD_TASK_BEHAVIOR_POLICY, "2026-09-08"), {
@@ -140,8 +143,9 @@ test("stored Task profile normalization and ownership filter are narrow", async 
     positive_streak_on_unhandled: "break",
     missed_streak_on_unhandled: "increment",
     rewards: "enabled",
-    available_actions: ["done", "did_my_best", "missed", "delay", "complete"],
-    needs_action_triggers: ["missed", "due_today", "overdue"],
+      available_actions: ["done", "did_my_best", "missed", "delay", "complete"],
+      needs_action_triggers: ["missed", "due_today", "overdue"],
+      success_outcomes: ["done", "did_my_best", "complete"],
   });
   const legacyPreservePolicy = normalizeTaskBehaviorProfile({
     id: "legacy-preserve",
@@ -217,6 +221,18 @@ test("7.13.41 adds only additive Needs Action trigger columns and preserves exis
   for (const table of ["adhdice_task_type_behavior_profiles", "adhdice_custom_behavior_ruleset_revisions"]) {
     assert.match(schemaSource, new RegExp(`create table public\\.${table}[\\s\\S]*needs_action_triggers text\\[\\] not null`, "i"));
   }
+});
+
+test("7.13.78 adds constrained Success Outcomes to both behavior revision tables", () => {
+  assert.match(successOutcomesMigration, /alter table public\.adhdice_task_type_behavior_profiles[\s\S]*add column if not exists success_outcomes text\[\]/i);
+  assert.match(successOutcomesMigration, /alter table public\.adhdice_custom_behavior_ruleset_revisions[\s\S]*add column if not exists success_outcomes text\[\]/i);
+  assert.match(successOutcomesMigration, /array\['done', 'did_my_best', 'complete'\]::text\[\]/i);
+  assert.match(successOutcomesMigration, /set success_outcomes = array\['done', 'did_my_best', 'complete'\]::text\[\]/i);
+  assert.match(successOutcomesMigration, /success_outcomes <@ array\['done', 'did_my_best', 'complete'\]::text\[\]/i);
+  assert.match(successOutcomesMigration, /array_position\(success_outcomes, null\) is null/i);
+  assert.doesNotMatch(successOutcomesMigration, /array_length\(success_outcomes/i);
+  assert.doesNotMatch(successOutcomesMigration, /insert\s+into\s+public\.adhdice_/i);
+  assert.doesNotMatch(successOutcomesMigration, /delete\s+from\s+public\.adhdice_/i);
 });
 
 test("profile revisions use the earliest revision as a baseline and remain deterministic by logical date", () => {
@@ -639,6 +655,11 @@ test("settings UI model exposes Task and named Custom settings", () => {
   assert.match(settingsSource, /Reset Task Defaults/);
   assert.match(settingsSource, /leaves Task History unchanged/);
   assert.match(settingsSource, /Available Actions/);
+  assert.match(settingsSource, /Counts as success/);
+  assert.match(settingsSource, /Selected outcomes advance the positive streak\. Other handled outcomes break it\./);
+  assert.match(settingsSource, /onChange\(activeTab, "successOutcomes", nextOutcomes\)/);
+  assert.match(settingsSource, /onCustomRulesetChange\?\.\(selectedRuleset\.id, "successOutcomes", nextOutcomes\)/);
+  assert.doesNotMatch(settingsSource, /\["missed", "Missed"\].*Counts as success/);
   assert.match(settingsSource, /Done/);
   assert.match(settingsSource, /Did My Best/);
   assert.match(settingsSource, /Missed/);

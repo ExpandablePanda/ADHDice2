@@ -23,7 +23,9 @@ import {
   STANDARD_TASK_BEHAVIOR_POLICY,
   STANDARD_TASK_AVAILABLE_ACTIONS,
   STANDARD_TASK_NEEDS_ACTION_TRIGGERS,
+  STANDARD_TASK_SUCCESS_OUTCOMES,
   normalizeTaskNeedsActionTriggers,
+  normalizeTaskSuccessOutcomes,
   taskManualActionForCanonicalCommand,
   taskManualActionForStatus,
   type TaskStateEngineInput,
@@ -85,6 +87,7 @@ test("missing and every supported persisted TaskType resolve to the frozen stand
     rewards: "enabled",
     availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
     needsActionTriggers: ["missed", "due_today", "overdue"],
+    successOutcomes: ["done", "did_my_best", "complete"],
   });
 });
 
@@ -103,6 +106,15 @@ test("manual occurrence actions normalize compatibly, deterministically, and all
   assert.deepEqual(normalizeTaskNeedsActionTriggers("overdue"), STANDARD_TASK_NEEDS_ACTION_TRIGGERS);
   assert.deepEqual(normalizeTaskNeedsActionTriggers(["overdue", "invalid", "missed", "overdue", null, "due_today"]), ["missed", "due_today", "overdue"]);
   assert.deepEqual(normalizeTaskNeedsActionTriggers([]), []);
+  assert.deepEqual(STANDARD_TASK_SUCCESS_OUTCOMES, ["done", "did_my_best", "complete"]);
+  assert.deepEqual(normalizeTaskSuccessOutcomes(undefined), STANDARD_TASK_SUCCESS_OUTCOMES);
+  assert.deepEqual(normalizeTaskSuccessOutcomes(["complete", "missed", "done", "done", "delay", "did_my_best", null]), ["done", "did_my_best", "complete"]);
+  assert.deepEqual(normalizeTaskSuccessOutcomes([]), []);
+  assert.deepEqual(normalizeTaskBehaviorProfile({
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "success-filtered",
+    successOutcomes: ["complete", "invalid", "done", "complete"],
+  }).successOutcomes, ["done", "complete"]);
   assert.deepEqual(normalizeTaskBehaviorProfile({
     ...STANDARD_TASK_BEHAVIOR_POLICY,
     id: "trigger-filtered",

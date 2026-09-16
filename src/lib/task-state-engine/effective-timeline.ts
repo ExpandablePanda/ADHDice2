@@ -26,6 +26,7 @@ import type {
 import {
   resolveTaskBehaviorPolicy,
   resolveTaskBehaviorPolicyForLogicalDate,
+  isTaskSuccessOutcome,
   STANDARD_TASK_BEHAVIOR_POLICY,
   type TaskBehaviorPolicy,
   type TaskBehaviorPolicyRevision,
@@ -77,9 +78,10 @@ function isIgnoredUnhandled(day: TaskEffectiveTimelineStreakDay) {
 function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | undefined): "success" | "missed" | "break" | "neutral" | null {
   if (!day) return null;
   const { state } = day;
-  if (state === "done" || state === "did_my_best") return "success";
+  if (state === "done" || state === "did_my_best" || state === "complete") {
+    return isTaskSuccessOutcome(state, day.behaviorPolicy ?? STANDARD_TASK_BEHAVIOR_POLICY) ? "success" : "break";
+  }
   if (state === "missed" || state === "unhandled_blank") return "missed";
-  if (state === "complete") return "break";
   if (state === "open" || state === "in_progress" || state === "due" || state === "upcoming"
     || state === "scheduled" || state === "not_due" || state === "delayed") return "neutral";
   return "break";

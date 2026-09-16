@@ -4,6 +4,7 @@ import {
   normalizeTaskBehaviorProfiles,
   normalizeTaskManualActions,
   normalizeTaskNeedsActionTriggers,
+  normalizeTaskSuccessOutcomes,
   STANDARD_TASK_BEHAVIOR_POLICY,
   type TaskBehaviorPolicy,
   type TaskBehaviorPolicyRevision,
@@ -12,6 +13,7 @@ import {
   type TaskBehaviorPolicyRevisions,
   type TaskManualAction,
   type TaskNeedsActionTrigger,
+  type TaskSuccessOutcome,
 } from "./task-state-engine/behavior-policy.ts";
 import type { TaskType } from "./task-type.ts";
 
@@ -20,6 +22,8 @@ type ProfileQueryRow = Pick<TaskTypeBehaviorProfile, "task_type" | "effective_fr
   available_actions?: readonly TaskManualAction[] | null;
   /** Optional keeps pre-7.13.41 source/test rows compatible. */
   needs_action_triggers?: readonly TaskNeedsActionTrigger[] | null;
+  /** Optional keeps pre-7.13.78 source/test rows compatible. */
+  success_outcomes?: readonly TaskSuccessOutcome[] | null;
 };
 
 type ProfileQueryResult = {
@@ -39,7 +43,7 @@ export type TaskTypeBehaviorProfileClient = {
 export function isMissingTaskTypeBehaviorProfilesTableError(error: { code?: string; message?: string } | null | undefined) {
   const message = error?.message ?? "";
   return error?.code === "42P01"
-    || /adhdice_task_type_behavior_profiles|relation .* does not exist|column .*(?:available_actions|needs_action_triggers).* does not exist/i.test(message);
+    || /adhdice_task_type_behavior_profiles|relation .* does not exist|column .*(?:available_actions|needs_action_triggers|success_outcomes).* does not exist/i.test(message);
 }
 
 /**
@@ -54,9 +58,11 @@ export function isMissingTaskTypeBehaviorProfilesAdditiveSchemaError(error: unkn
   const missingRelation = /relation .* does not exist|could not find the table .* in the schema cache/i.test(message);
   const missingAvailableActionsColumn = /available_actions.*(?:does not exist|not found)|could not find the ['"]available_actions['"] column/i.test(message);
   const missingNeedsActionTriggersColumn = /needs_action_triggers.*(?:does not exist|not found)|could not find the ['"]needs_action_triggers['"] column/i.test(message);
+  const missingSuccessOutcomesColumn = /success_outcomes.*(?:does not exist|not found)|could not find the ['"]success_outcomes['"] column/i.test(message);
   return (code === "42P01" && (!message || missingRelation))
     || missingAvailableActionsColumn
     || missingNeedsActionTriggersColumn
+    || missingSuccessOutcomesColumn
     || missingRelation;
 }
 
@@ -71,6 +77,7 @@ export function taskTypeBehaviorProfileUpsertPayload(userId: string, taskType: E
     rewards: policy.rewards,
     available_actions: [...normalizeTaskManualActions(policy.availableActions)],
     needs_action_triggers: [...normalizeTaskNeedsActionTriggers(policy.needsActionTriggers)],
+    success_outcomes: [...normalizeTaskSuccessOutcomes(policy.successOutcomes)],
   };
 }
 
@@ -95,7 +102,7 @@ export async function loadTaskTypeBehaviorProfiles(
   if (!userId) return { data: {}, revisions: {}, error: null };
   const result = await client
     .from("adhdice_task_type_behavior_profiles")
-    .select("task_type,effective_from_logical_date,unresolved_occurrence,positive_streak_on_unhandled,missed_streak_on_unhandled,rewards,available_actions,needs_action_triggers,created_at,updated_at")
+    .select("task_type,effective_from_logical_date,unresolved_occurrence,positive_streak_on_unhandled,missed_streak_on_unhandled,rewards,available_actions,needs_action_triggers,success_outcomes,created_at,updated_at")
     .eq("user_id", userId);
   if (result.error) return { data: {}, revisions: {}, error: result.error };
   // The old generic Custom profile is not a product authority. Named Custom

@@ -9,6 +9,8 @@ import {
   type TaskStateHistoryRow,
   type TaskStateSnapshot,
   projectPersistableTaskStatePatch,
+  normalizeTaskBehaviorProfile,
+  STANDARD_TASK_BEHAVIOR_POLICY,
 } from "../src/lib/task-state-engine/index.ts";
 
 const NOW = "2026-07-30T14:00:00.000Z"; // 10:00 America/New_York
@@ -382,6 +384,34 @@ test("Unscheduled tasks never become Missed and inactivity only breaks a positiv
   assert.equal(result.calendar["2026-07-30"], "open");
   assert.equal(result.streakDisposition, "break_positive");
   assert.equal(result.proposedHistoryChanges.length, 0);
+});
+
+test("Success Outcomes control only positive streak advancement, not handled outcome or reward semantics", () => {
+  for (const outcome of ["done", "did_my_best", "complete"] as const) {
+    const excludedPolicy = normalizeTaskBehaviorProfile({
+      ...STANDARD_TASK_BEHAVIOR_POLICY,
+      id: `excluded-${outcome}`,
+      successOutcomes: [],
+    });
+    const excluded = evaluateTaskState(input({
+      behaviorPolicy: excludedPolicy,
+      action: { type: "record_outcome", outcome },
+    }));
+    assert.equal(excluded.streakDisposition, "break_positive", outcome);
+    assert.equal(excluded.rewardEligibility.eligible, true, outcome);
+    assert.equal(excluded.proposedHistoryChanges.some((change) => change.type === "insert" && change.row.outcome === outcome), true, outcome);
+
+    const configured = evaluateTaskState(input({
+      behaviorPolicy: normalizeTaskBehaviorProfile({
+        ...excludedPolicy,
+        id: `configured-${outcome}`,
+        successOutcomes: [outcome],
+      }),
+      action: { type: "record_outcome", outcome },
+    }));
+    assert.equal(configured.streakDisposition, "increment_positive", outcome);
+    assert.equal(excluded.nextDueDate, configured.nextDueDate, outcome);
+  }
 });
 
 test("Calendar Open and active Missed coexist while Missed Today remains false", () => {

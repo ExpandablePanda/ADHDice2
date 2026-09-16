@@ -9,6 +9,8 @@ import {
   type TaskStateHistoryRow,
   type TaskStateSnapshot,
   type TaskWorkflowState,
+  type TaskBehaviorPolicyRevision,
+  STANDARD_TASK_BEHAVIOR_POLICY,
 } from "../src/lib/task-state-engine/index.ts";
 
 const TASK_ID = "task-effective-timeline";
@@ -49,6 +51,8 @@ function timeline(
     calendarEnd?: string;
     calendarOverrides?: TaskCalendarOverride[];
     workflow?: TaskWorkflowState;
+    behaviorPolicy?: TaskBehaviorPolicy;
+    behaviorPolicyRevisions?: TaskBehaviorPolicyRevision[];
   } = {},
 ) {
   return buildTaskEffectiveTimeline({
@@ -58,6 +62,8 @@ function timeline(
     calendarStart: overrides.calendarStart ?? "2026-08-01",
     calendarEnd: overrides.calendarEnd ?? "2026-08-10",
     calendarOverrides: overrides.calendarOverrides,
+    behaviorPolicy: overrides.behaviorPolicy,
+    behaviorPolicyRevisions: overrides.behaviorPolicyRevisions,
     workflow: overrides.workflow,
   });
 }
@@ -444,6 +450,47 @@ test("current Did My Best counts as a successful completion", () => {
 
   assert.equal(result.currentCompletedStreak, 3);
   assert.equal(result.currentMissedStreak, 0);
+});
+
+test("historical Complete and configurable positive outcomes use the policy effective on each logical date", () => {
+  const baseline = {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "timeline-policy-baseline",
+    effectiveFromLogicalDate: "2026-08-01",
+    successOutcomes: ["done", "did_my_best", "complete"] as const,
+  };
+  const later = {
+    ...baseline,
+    id: "timeline-policy-later",
+    effectiveFromLogicalDate: "2026-08-03",
+    successOutcomes: ["done", "complete"] as const,
+  };
+  const result = timeline({
+    task: { dueOn: "2026-08-01", activeOccurrenceDueOn: "2026-08-01" },
+    history: [
+      history("2026-08-01", "did_my_best", { occurrenceDueOn: "2026-08-01" }),
+      history("2026-08-02", "complete", { occurrenceDueOn: "2026-08-02" }),
+      history("2026-08-03", "did_my_best", { occurrenceDueOn: "2026-08-03" }),
+    ],
+    behaviorPolicy: baseline,
+    behaviorPolicyRevisions: [baseline, later],
+    logicalDate: "2026-08-03",
+    calendarStart: "2026-08-01",
+    calendarEnd: "2026-08-03",
+  });
+
+  assert.equal(result.days["2026-08-01"]?.behaviorPolicy.successOutcomes.includes("did_my_best"), true);
+  assert.equal(result.days["2026-08-03"]?.behaviorPolicy.successOutcomes.includes("did_my_best"), false);
+  assert.equal(result.currentCompletedStreak, 0);
+  assert.equal(result.days["2026-08-02"]?.state, "complete");
+
+  const defaultComplete = timeline({
+    history: [history("2026-08-01", "complete", { occurrenceDueOn: "2026-08-01" })],
+    logicalDate: "2026-08-01",
+    calendarStart: "2026-08-01",
+    calendarEnd: "2026-08-01",
+  });
+  assert.equal(defaultComplete.currentCompletedStreak, 1);
 });
 
 test("explicit History keeps saved outcomes distinct from unsaved past dates", () => {

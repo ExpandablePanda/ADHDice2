@@ -439,8 +439,10 @@ test("named ruleset loader keeps historical identities while ignoring non-Custom
   assert.equal(loaded.revisions["ruleset-practice"]?.[0]?.unresolvedOccurrence, "blank");
   assert.deepEqual(loaded.revisions["ruleset-practice"]?.[0]?.availableActions, ["done", "missed"]);
   assert.deepEqual(loaded.revisions["ruleset-practice"]?.[0]?.needsActionTriggers, ["missed", "due_today", "overdue"]);
+  assert.deepEqual(loaded.revisions["ruleset-practice"]?.[0]?.successOutcomes, ["done", "did_my_best", "complete"]);
   assert.equal(loaded.revisions["ruleset-routine"]?.[0]?.unresolvedOccurrence, "missed");
   assert.deepEqual(loaded.revisions["ruleset-routine"]?.[0]?.availableActions, ["done", "did_my_best", "missed", "delay", "complete"]);
+  assert.deepEqual(loaded.revisions["ruleset-routine"]?.[0]?.successOutcomes, ["done", "did_my_best", "complete"]);
   assert.equal(loaded.revisions["ruleset-retired"]?.[0]?.unresolvedOccurrence, "missed");
   assert.deepEqual(loaded.behaviorSelectionsByTaskId[task.id], [
     { effectiveFromLogicalDate: "2026-09-01", taskType: "custom", customRulesetId: "ruleset-practice" },
@@ -573,6 +575,7 @@ test("named ruleset creation persists the supplied draft policy and does not pub
           rewards: "disabled",
           available_actions: ["done", "delay"],
           needs_action_triggers: ["missed", "overdue"],
+          success_outcomes: ["done", "did_my_best", "complete"],
         },
         options: { onConflict: "ruleset_id,effective_from_logical_date" },
       },
@@ -608,6 +611,7 @@ test("named ruleset revision updates replace today without rewriting prior revis
       rewards: "enabled",
       available_actions: ["done", "did_my_best", "missed", "delay", "complete"],
       needs_action_triggers: ["missed", "due_today", "overdue"],
+      success_outcomes: ["done", "did_my_best", "complete"],
     },
     options: { onConflict: "ruleset_id,effective_from_logical_date" },
   });

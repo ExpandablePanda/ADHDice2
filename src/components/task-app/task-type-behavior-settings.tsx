@@ -9,11 +9,14 @@ import type { CustomBehaviorRuleset } from "@/lib/database.types";
 import type { CustomBehaviorRulesetDeleteActionResult } from "@/lib/custom-behavior-rulesets";
 import {
   STANDARD_TASK_AVAILABLE_ACTIONS,
+  STANDARD_TASK_SUCCESS_OUTCOMES,
   normalizeTaskManualActions,
+  normalizeTaskSuccessOutcomes,
   type MissedStreakUnhandledBehavior,
   type RewardBehavior,
   type TaskBehaviorPolicy,
   type TaskManualAction,
+  type TaskSuccessOutcome,
   type UnresolvedOccurrenceBehavior,
 } from "@/lib/task-state-engine/behavior-policy";
 import { buildDefaultCustomTaskTypeDraft, taskTypeBehaviorTabDescription, type TaskTypeBehaviorTab } from "@/lib/task-type-behavior-settings";
@@ -24,7 +27,7 @@ import { TaskTypeIcon } from "@/components/ui/lucide-icon";
 import { DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, searchTaskTypeIcons, TASK_TYPE_ACCENT_OPTIONS, normalizeTaskTypePresentation, validateTaskTypeDescription, type TaskTypePresentation } from "@/lib/task-type-presentation";
 
 export type BehaviorTab = TaskTypeBehaviorTab;
-type ConfigurableField = "availableActions" | "missedStreakOnUnhandled" | "rewards" | "unresolvedOccurrence";
+type ConfigurableField = "availableActions" | "missedStreakOnUnhandled" | "rewards" | "unresolvedOccurrence" | "successOutcomes";
 
 const SECTION_CLASS = "rounded-[1rem] border border-[#eee9f8] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.035]";
 
@@ -127,6 +130,7 @@ function BehaviorControls({
   disabled,
   onChange,
   onToggleAvailableAction,
+  onToggleSuccessOutcome,
 }: {
   activeProfile: BehaviorControlProfile;
   disabled: boolean;
@@ -136,6 +140,7 @@ function BehaviorControls({
     rewards: (value: RewardBehavior) => void;
   };
   onToggleAvailableAction: (action: TaskManualAction) => void | Promise<void>;
+  onToggleSuccessOutcome: (outcome: TaskSuccessOutcome) => void | Promise<void>;
 }) {
   return (
     <div className="space-y-3">
@@ -155,6 +160,28 @@ function BehaviorControls({
               disabled={disabled}
               onClick={() => { void onToggleAvailableAction(action); }}
               selected={activeProfile.availableActions.includes(action)}
+              type="button"
+            >
+              {label}
+            </AdhdChip>
+          ))}
+        </div>
+      </section>
+
+      <section className={SECTION_CLASS}>
+        <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#655d7d] dark:text-white/60">Counts as success</h4>
+        <p className="mt-2 text-xs leading-5 text-[#7d7598] dark:text-white/50">Selected outcomes advance the positive streak. Other handled outcomes break it.</p>
+        <div aria-label="Counts as success" className="mt-3 flex flex-wrap gap-1.5" role="group">
+          {([
+            ["done", "Done"],
+            ["did_my_best", "Did My Best"],
+            ["complete", "Complete"],
+          ] as const).map(([outcome, label]) => (
+            <AdhdChip
+              key={outcome}
+              disabled={disabled}
+              onClick={() => { void onToggleSuccessOutcome(outcome); }}
+              selected={activeProfile.successOutcomes.includes(outcome)}
               type="button"
             >
               {label}
@@ -287,6 +314,7 @@ export function TaskTypeBehaviorSettings({
     unresolvedOccurrence: "missed" as const,
     missedStreakOnUnhandled: "increment" as const,
     rewards: "enabled" as const,
+    successOutcomes: STANDARD_TASK_SUCCESS_OUTCOMES,
     };
 
   function openCreate() {
@@ -430,7 +458,7 @@ export function TaskTypeBehaviorSettings({
     setBlockedDelete(null);
   }
 
-  function updateActiveProfile(field: Exclude<ConfigurableField, "availableActions">, value: TaskBehaviorPolicy[typeof field]) {
+  function updateActiveProfile(field: Exclude<ConfigurableField, "availableActions" | "successOutcomes">, value: TaskBehaviorPolicy[typeof field]) {
     if (isSavingPolicyArray || isSavingPolicyArrayRef.current) return;
     if (isCreateOpen) {
       setCustomTaskTypeDraft((current) => ({ ...current, [field]: value }));
@@ -471,6 +499,31 @@ export function TaskTypeBehaviorSettings({
     }
   }
 
+  async function toggleSuccessOutcome(outcome: TaskSuccessOutcome) {
+    if (isSavingPolicyArray || isSavingPolicyArrayRef.current) return;
+    const currentOutcomes = normalizeTaskSuccessOutcomes(activeProfile.successOutcomes);
+    const nextOutcomes = normalizeTaskSuccessOutcomes(
+      currentOutcomes.includes(outcome)
+        ? currentOutcomes.filter((current) => current !== outcome)
+        : [...currentOutcomes, outcome],
+    );
+    if (isCreateOpen) {
+      setCustomTaskTypeDraft((current) => ({ ...current, successOutcomes: nextOutcomes }));
+      return;
+    }
+    isSavingPolicyArrayRef.current = true;
+    setIsSavingPolicyArray(true);
+    try {
+      const saved = selectedRuleset
+        ? await onCustomRulesetChange?.(selectedRuleset.id, "successOutcomes", nextOutcomes)
+        : await onChange(activeTab, "successOutcomes", nextOutcomes);
+      if (saved === false) return;
+    } finally {
+      isSavingPolicyArrayRef.current = false;
+      setIsSavingPolicyArray(false);
+    }
+  }
+
   async function resetDefaults() {
     if (isSavingPolicyArray || isSavingPolicyArrayRef.current) return;
     const label = "Task";
@@ -490,6 +543,7 @@ export function TaskTypeBehaviorSettings({
         rewards: (value) => { updateActiveProfile("rewards", value); },
       }}
       onToggleAvailableAction={toggleAvailableAction}
+      onToggleSuccessOutcome={toggleSuccessOutcome}
     />
   );
 
