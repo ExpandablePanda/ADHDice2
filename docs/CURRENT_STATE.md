@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.79`.
+- Current working app version: `7.13.80`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -89,10 +89,9 @@ Operational handled-outcome, reward, and recurrence semantics remain
 independent and unchanged, and no positive-streak tracking toggle was added.
 The source-only migration is
 `supabase/add_success_outcomes_policy_7_13_78.sql`; live Supabase application
-is pending review/application. The trusted `task-state-command` uses the same
-shared policy loader and requires live Edge redeployment review after
-merge/push; it was not deployed by this ticket. No SQL/schema change is live,
-and no behavior-policy beyond the requested Success Outcomes setting was
+is recorded as live in 7.13.79 below. The trusted `task-state-command` uses the
+same shared policy loader and its v36 / 7.13.79 deployment is also recorded
+below. No behavior-policy beyond the requested Success Outcomes setting was
 changed.
 
 ## 2026-09-16 7.13.79 Consolidated Schema Consistency
@@ -102,10 +101,22 @@ consolidated `supabase/schema.sql` now matches the 7.13.78 Success Outcomes
 migration for both behavior tables, including the default, allowed vocabulary,
 null-element prohibition, and valid empty-array behavior.
 
-7.13.78 Success Outcomes behavior is unchanged. Live
-`add_success_outcomes_policy_7_13_78.sql` application is still pending, and
-`task-state-command` redeployment is still pending. No SQL was applied by this
-ticket.
+7.13.78 Success Outcomes behavior is unchanged. The Success Outcomes SQL is
+live, and task-state-command v36 / 7.13.79 was deployed.
+
+## 2026-09-16 7.13.80 Current-Policy Backlog Resolution During Schedule Replay
+
+Live QA exposed that schedule replay used the historical effective-dated
+policy when deciding whether newly unresolved backdated obligations should
+become automatic Missed facts. Version 7.13.80 restores the invariant that the
+current behavior policy controls new unresolved backlog resolution: a current
+`blank` policy leaves past obligations calculated as unhandled blank, while a
+current `missed` policy continues to materialize automatic Missed facts.
+
+Existing explicit History facts remain interpreted by the behavior policy
+effective on their historical logical date. Success Outcomes semantics remain
+unchanged, no existing QA History rows are rewritten, and no schema change was
+made.
 
 ## 2026-09-14 7.13.65 List View Child Preview Crash Hotfix
 

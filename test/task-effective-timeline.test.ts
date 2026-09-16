@@ -493,6 +493,133 @@ test("historical Complete and configurable positive outcomes use the policy effe
   assert.equal(defaultComplete.currentCompletedStreak, 1);
 });
 
+test("schedule replay resolves calculated backlog with the current policy, not the historical policy", () => {
+  const historicalStandard = {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "timeline-standard-before-custom",
+    effectiveFromLogicalDate: "2026-09-12",
+  };
+  const currentBlank = {
+    ...historicalStandard,
+    id: "timeline-custom-blank-current",
+    effectiveFromLogicalDate: "2026-09-16",
+    unresolvedOccurrence: "blank" as const,
+    missedStreakOnUnhandled: "ignore" as const,
+  };
+  const blankReplay = buildTaskEffectiveTimeline({
+    task: task({
+      dueOn: "2026-09-16",
+      activeOccurrenceDueOn: "2026-09-16",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    }),
+    history: [],
+    behaviorPolicy: currentBlank,
+    behaviorPolicyRevisions: [historicalStandard, currentBlank],
+    logicalDate: "2026-09-16",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-16",
+    replay: {
+      changedLogicalDate: "2026-09-16",
+      kind: "due_date",
+      manualDueOn: "2026-09-01",
+      materializeAutomaticMissed: true,
+    },
+  });
+
+  assert.deepEqual(blankReplay.automaticHistoryRows, []);
+  for (const date of ["2026-09-01", "2026-09-15"]) {
+    assert.equal(blankReplay.days[date]?.state, "unhandled_blank", date);
+    assert.equal(blankReplay.days[date]?.sourceKind, "calculated", date);
+    assert.equal(blankReplay.days[date]?.unhandled, true, date);
+    assert.equal(blankReplay.days[date]?.behaviorPolicy.unresolvedOccurrence, "blank", date);
+  }
+  assert.equal(blankReplay.days["2026-09-16"]?.state, "open");
+  assert.equal(blankReplay.days["2026-09-16"]?.obligation, "overdue");
+
+  const historicalBlank = {
+    ...historicalStandard,
+    id: "timeline-blank-before-missed",
+    unresolvedOccurrence: "blank" as const,
+    missedStreakOnUnhandled: "ignore" as const,
+  };
+  const currentMissed = {
+    ...historicalStandard,
+    id: "timeline-missed-current",
+    effectiveFromLogicalDate: "2026-09-16",
+  };
+  const missedReplay = buildTaskEffectiveTimeline({
+    task: task({
+      dueOn: "2026-09-16",
+      activeOccurrenceDueOn: "2026-09-16",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    }),
+    history: [],
+    behaviorPolicy: currentMissed,
+    behaviorPolicyRevisions: [historicalBlank, currentMissed],
+    logicalDate: "2026-09-16",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-16",
+    replay: {
+      changedLogicalDate: "2026-09-16",
+      kind: "due_date",
+      manualDueOn: "2026-09-01",
+      materializeAutomaticMissed: true,
+    },
+  });
+
+  assert.deepEqual(
+    missedReplay.automaticHistoryRows?.map((row) => row.logicalDate),
+    ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-12", "2026-09-13", "2026-09-14", "2026-09-15"],
+  );
+  assert.equal(missedReplay.days["2026-09-01"]?.state, "missed");
+  assert.equal(missedReplay.days["2026-09-01"]?.behaviorPolicy.unresolvedOccurrence, "missed");
+});
+
+test("explicit historical facts retain date-effective Success Outcomes semantics", () => {
+  const historicalStandard = {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "timeline-success-standard",
+    effectiveFromLogicalDate: "2026-09-12",
+    successOutcomes: ["done", "did_my_best", "complete"] as const,
+  };
+  const currentCustom = {
+    ...historicalStandard,
+    id: "timeline-success-custom",
+    effectiveFromLogicalDate: "2026-09-16",
+    unresolvedOccurrence: "blank" as const,
+    missedStreakOnUnhandled: "ignore" as const,
+    successOutcomes: ["done", "complete"] as const,
+  };
+
+  const historical = timeline({
+    task: { dueOn: "2026-09-15", activeOccurrenceDueOn: "2026-09-15" },
+    history: [history("2026-09-15", "did_my_best", { occurrenceDueOn: "2026-09-15" })],
+    behaviorPolicy: currentCustom,
+    behaviorPolicyRevisions: [historicalStandard, currentCustom],
+    logicalDate: "2026-09-15",
+    calendarStart: "2026-09-15",
+    calendarEnd: "2026-09-15",
+  });
+  assert.equal(historical.days["2026-09-15"]?.behaviorPolicy.successOutcomes.includes("did_my_best"), true);
+  assert.equal(historical.currentCompletedStreak, 1);
+
+  const current = timeline({
+    task: { dueOn: "2026-09-15", activeOccurrenceDueOn: "2026-09-15" },
+    history: [
+      history("2026-09-15", "did_my_best", { occurrenceDueOn: "2026-09-15" }),
+      history("2026-09-16", "did_my_best", { occurrenceDueOn: "2026-09-16" }),
+    ],
+    behaviorPolicy: currentCustom,
+    behaviorPolicyRevisions: [historicalStandard, currentCustom],
+    logicalDate: "2026-09-16",
+    calendarStart: "2026-09-15",
+    calendarEnd: "2026-09-16",
+  });
+  assert.equal(current.days["2026-09-15"]?.behaviorPolicy.successOutcomes.includes("did_my_best"), true);
+  assert.equal(current.days["2026-09-16"]?.behaviorPolicy.successOutcomes.includes("did_my_best"), false);
+  assert.equal(current.currentCompletedStreak, 0);
+});
+
 test("explicit History keeps saved outcomes distinct from unsaved past dates", () => {
   const done = history("2026-08-04", "done", {
     occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,

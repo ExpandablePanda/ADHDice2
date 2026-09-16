@@ -89,9 +89,9 @@ function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | unde
 
 /**
  * Calculate streaks from resolved Effective Timeline days, not persisted rows.
- * Positive and missed streaks are independent. Automatically unresolved days
- * consult the policy effective on that logical date, while explicit History
- * remains factual and keeps its existing semantics.
+ * Positive and missed streaks are independent. Calculated unresolved days use
+ * the current policy, while explicit History remains factual and keeps the
+ * policy effective on its logical date.
  */
 export function computeTaskEffectiveTimelineStreaks(
   days: Readonly<Record<string, TaskEffectiveTimelineStreakDay>>,
@@ -370,7 +370,10 @@ export function buildTaskEffectiveTimeline(
   input: BuildTaskEffectiveTimelineInput,
 ): TaskEffectiveTimeline {
   const behaviorPolicy = resolveTaskBehaviorPolicy(input.behaviorPolicy);
-  const policyForDate = (logicalDate: string) => input.behaviorPolicyRevisions?.length
+  // Effective-dated policy is authoritative only when interpreting an
+  // existing explicit History fact. Calculated obligations are unresolved
+  // backlog and must use the Task's current policy below.
+  const historicalPolicyForDate = (logicalDate: string) => input.behaviorPolicyRevisions?.length
     ? resolveTaskBehaviorPolicyForLogicalDate({ revisions: input.behaviorPolicyRevisions, logicalDate })
     : behaviorPolicy;
   const rows = input.history
@@ -560,7 +563,7 @@ export function buildTaskEffectiveTimeline(
     let day: TaskEffectiveTimelineDay;
 
     if (row) {
-      day = explicitDay(row, policyForDate(date));
+      day = explicitDay(row, historicalPolicyForDate(date));
       if (recurrenceRow) applyExplicitRow(recurrenceRow);
     } else {
       let calculated: TaskEffectiveTimelineDay;
@@ -577,15 +580,14 @@ export function buildTaskEffectiveTimeline(
       } else if (isFixedRecurrence && !isFixedScheduledDate) {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       } else if (date < input.logicalDate) {
-        // Policy is prospective: explicit History remains a fact, while only
+        // Policy is prospective: explicit History remains a fact, while
         // unhandled/calculated occurrences use the current profile. Standard
         // Tasks remain neutral until trusted reconciliation materializes
-        // Missed; a future profile may keep the scheduled-but-blank obligation
-        // visibly distinct.
-        const datePolicy = policyForDate(date);
-        calculated = datePolicy.unresolvedOccurrence === "missed"
+        // Missed; a current blank profile keeps the obligation visibly
+        // distinct without inventing a historical fact.
+        calculated = behaviorPolicy.unresolvedOccurrence === "missed"
           ? calculatedDay(input.task.id, date, "not_due", "none")
-          : calculatedDay(input.task.id, date, "unhandled_blank", "overdue", date, datePolicy, true);
+          : calculatedDay(input.task.id, date, "unhandled_blank", "overdue", date, behaviorPolicy, true);
       } else if (date === input.logicalDate) {
         if (activeDueOn < input.logicalDate) {
           if (isFixedRecurrence) {
@@ -604,8 +606,7 @@ export function buildTaskEffectiveTimeline(
       } else {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       }
-      const datePolicy = policyForDate(date);
-      if (datePolicy.unresolvedOccurrence === "missed"
+      if (behaviorPolicy.unresolvedOccurrence === "missed"
         && input.replay?.materializeAutomaticMissed
         && date < input.logicalDate
         && !completed
@@ -634,7 +635,7 @@ export function buildTaskEffectiveTimeline(
         };
         automaticHistoryRows.push(automaticRow);
         unresolvedDueOn ??= activeDueOn;
-        calculated = calculatedDay(input.task.id, date, "missed", "overdue", occurrenceDueOn, datePolicy, true);
+        calculated = calculatedDay(input.task.id, date, "missed", "overdue", occurrenceDueOn, behaviorPolicy, true);
       }
       const baseDay = override
         ? calendarOverrideDay(input.task.id, date, override, input.logicalDate)

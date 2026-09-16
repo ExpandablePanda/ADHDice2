@@ -1192,10 +1192,24 @@ test("trusted due-date planner replays with the proposed due date", () => {
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
 });
 
-test("trusted backdated schedule planner carries one automatic Missed batch without rewards", () => {
+test("trusted backdated schedule planner uses the current Missed policy without rewards", () => {
   const planningState = state({ due_on: "2026-08-27", repeat_frequency: "daily", repeat_interval: 4 });
+  const historicalBlank = {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "standard-blank-before-current-missed",
+    effectiveFromLogicalDate: "2026-08-01",
+    unresolvedOccurrence: "blank" as const,
+    missedStreakOnUnhandled: "ignore" as const,
+  };
+  const currentMissed = {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "standard-missed-current",
+    effectiveFromLogicalDate: "2026-08-27",
+  };
   planningState.engineInput = {
     ...planningState.engineInput!,
+    behaviorPolicy: currentMissed,
+    behaviorPolicyRevisions: [historicalBlank, currentMissed],
     now: "2026-08-27T12:00:00.000Z",
     timezone: "UTC",
     logicalDayRollover: "00:00",
@@ -1249,11 +1263,16 @@ test("trusted backdated schedule planner carries one automatic Missed batch with
   assert.equal("reward_program_version" in payload, false);
 });
 
-test("trusted backdated Custom Daily schedule with a blank baseline does not materialize automatic Missed facts", () => {
+test("trusted backdated Custom Daily schedule with a current blank policy does not materialize automatic Missed facts", () => {
   const planningState = state({ due_on: "2026-08-27", repeat_frequency: "daily", repeat_interval: 1, task_type: "custom" });
+  const historicalStandard = {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "standard-before-custom-blank",
+    effectiveFromLogicalDate: "2026-08-01",
+  };
   const customBaseline = {
     id: "custom-behavior-profile",
-    effectiveFromLogicalDate: "2026-09-09",
+    effectiveFromLogicalDate: "2026-08-27",
     unresolvedOccurrence: "blank" as const,
     positiveStreakOnUnhandled: "break" as const,
     missedStreakOnUnhandled: "ignore" as const,
@@ -1262,7 +1281,7 @@ test("trusted backdated Custom Daily schedule with a blank baseline does not mat
   planningState.engineInput = {
     ...planningState.engineInput!,
     behaviorPolicy: customBaseline,
-    behaviorPolicyRevisions: [customBaseline],
+    behaviorPolicyRevisions: [historicalStandard, customBaseline],
     now: "2026-08-27T12:00:00.000Z",
     timezone: "UTC",
     logicalDayRollover: "00:00",

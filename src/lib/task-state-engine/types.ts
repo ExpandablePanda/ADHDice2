@@ -134,7 +134,7 @@ export type TaskEffectiveTimelineDay = {
   occurrenceIdentity: string | null;
   occurrenceDueOn: string | null;
   obligation: TaskEffectiveTimelineObligation;
-  /** Policy that governed this logical date; present for historical resolution. */
+  /** Historical policy for explicit facts; current policy for calculated days. */
   behaviorPolicy: TaskBehaviorPolicy;
   /** True only for an automatically unresolved scheduled occurrence. */
   unhandled: boolean;
