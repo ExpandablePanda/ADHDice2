@@ -67,6 +67,15 @@ its own Task Type independently, Standard rows remain neutral, and non-Table
 surfaces are unchanged. No persistence, schema, or behavior-policy change was
 made.
 
+## 2026-09-15 7.13.77 Accent-Aware Table Row Hover Border
+
+Browser QA for 7.13.76 passed the unified parent/child Table fills and removed
+shadows, but the loss of shadow made row hover identification too subtle.
+Version 7.13.77 adds a semantic Task Type hover border for every Table
+hierarchy row while preserving the exact row fill, reserved border width,
+selection rings, focus-visible treatment, and existing hover motion. No
+persistence, schema, or behavior-policy change was made.
+
 ## 2026-09-14 7.13.65 List View Child Preview Crash Hotfix
 
 Browser QA for 7.13.64 exposed a List View runtime `ReferenceError` because

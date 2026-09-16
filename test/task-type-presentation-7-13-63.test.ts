@@ -50,25 +50,36 @@ test("Standard Task resolves to the neutral default surface", () => {
   assert.doesNotMatch(surface, /fffdf5|f1ecff|f7f5fb/);
 });
 
-test("Table surfaces retain geometry without a persistent outline", () => {
+test("Table surfaces reserve a transparent border and retain geometry without a persistent outline", () => {
   const neutralSurface = getTaskTypeTableRowSurfaceClassName("neutral");
   const customSurface = getTaskTypeTableRowSurfaceClassName("purple");
   assert.match(neutralSurface, /border-transparent/);
   assert.match(neutralSurface, /bg-white/);
-  assert.doesNotMatch(neutralSurface, /border-\[#/);
+  assert.doesNotMatch(neutralSurface, /(?:^| )border-\[#/);
+  assert.match(neutralSurface, /hover:border-\[#ece8f8\]/);
   assert.match(customSurface, /border-transparent/);
   assert.match(customSurface, /bg-\[#f1ecff\]/);
+  assert.match(customSurface, /hover:border-\[#e7defc\]/);
 });
 
-test("Table rows use one stronger semantic accent authority while Standard remains neutral", () => {
+test("Every supported accent provides an accent-aware Table hover-border authority", () => {
   for (const accent of TASK_TYPE_ACCENT_OPTIONS) {
     const surface = getTaskTypeTableRowSurfaceClassName(accent.key);
     assert.match(surface, /^border-transparent bg-/);
     assert.ok(surface.includes(accent.tableRowSurfaceClassName));
+    assert.match(accent.tableRowHoverBorderClassName, /(^| )hover:border-/);
+    assert.ok(surface.includes(accent.tableRowHoverBorderClassName));
     assert.equal(surface, getTaskTypeTableRowSurfaceClassName(accent.key));
   }
   assert.match(getTaskTypeTableRowSurfaceClassName("neutral"), /bg-white/);
   assert.match(getTaskTypeTableRowSurfaceClassName("yellow"), /bg-\[#fff9e8\]/);
+});
+
+test("Table hover borders preserve the row fill and never add row shadows", () => {
+  for (const accent of TASK_TYPE_ACCENT_OPTIONS) {
+    const surface = getTaskTypeTableRowSurfaceClassName(accent.key);
+    assert.doesNotMatch(surface, /hover:bg-|shadow-/);
+  }
 });
 
 test("Table and List production containers use their shared Task Type surface authorities", () => {
@@ -107,6 +118,9 @@ test("Table and List selected, hover, open, and highlighted states preserve surf
   assert.match(tableSource, /\$\{taskSurface\}[\s\S]*selectedTaskIdSet\.has\(task\.id\)/);
   assert.match(tableSource, /rowContextMenu\?\.taskId === task\.id/);
   assert.match(tableSource, /getTaskTypeTableRowSurfaceClassName/);
+  assert.match(tableSource, /whileHover=\{shouldAnimateRows \? \{ y: -0\.5 \} : undefined\}/);
+  assert.match(tableSource, /selectedTaskIdSet\.has\(task\.id\)[\s\S]*ring-2 ring-\[#6f57f6\]\/35/);
+  assert.match(tableSource, /focus-visible:ring-2/);
   assert.match(listSource, /\$\{taskSurface\}[\s\S]*selectedTaskIdSet\.has\(task\.id\)/);
   assert.match(listSource, /isQuickPanelOpen/);
   assert.match(listSource, /getHighlightedListRowClassName/);
@@ -117,6 +131,9 @@ test("child Tasks resolve their own accent instead of inheriting the parent", ()
   const child = resolveTaskTypeSelectionOption("custom", "blue-type", customRulesets);
   assert.notEqual(parent.accentKey, child.accentKey);
   assert.notEqual(getTaskTypeSurfaceClassName(parent.accentKey), getTaskTypeSurfaceClassName(child.accentKey));
+  assert.notEqual(getTaskTypeTableRowSurfaceClassName(parent.accentKey), getTaskTypeTableRowSurfaceClassName(child.accentKey));
+  assert.equal(getTaskTypeTableRowSurfaceClassName(parent.accentKey), getTaskTypeTableRowSurfaceClassName("yellow"));
+  assert.equal(getTaskTypeTableRowSurfaceClassName(child.accentKey), getTaskTypeTableRowSurfaceClassName("blue"));
   assert.match(tableSource, /resolveTaskTypeSelectionOption\(item\.taskType, item\.customRulesetId/);
   assert.match(listSource, /resolveTaskTypeSelectionOption\(item\.taskType, item\.customRulesetId/);
 });
@@ -189,7 +206,7 @@ test("raw Lucide icon keys remain valid and TaskTypeIdentity uses the shared dyn
   assert.match(iconRendererSource, /if \(!featuredOption\?\.icon && isLucideIconName\(iconKey\)\)/);
 });
 
-test("the 7.13.64 presentation patch contains no SQL, schema, or behavior-policy persistence change", () => {
+test("the 7.13.77 presentation patch contains no SQL, schema, or behavior-policy persistence change", () => {
   const changedFiles = execFileSync("git", ["diff", "--name-only", "HEAD"], { encoding: "utf8" }).split("\n").filter(Boolean);
   assert.doesNotMatch(changedFiles.join("\n"), /(^|\/)supabase\/|schema|behavior-policy|task-state/);
 });
