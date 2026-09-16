@@ -138,6 +138,7 @@ export function useTaskCrudActions({
         sort_order: Date.now() + index,
         status: parsedTask.status,
         tags: parsedTask.tags,
+        task_type: "task",
         title: parsedTask.title,
         user_id: currentUserId,
       });

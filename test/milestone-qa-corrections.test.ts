@@ -109,9 +109,9 @@ test("full inspector bounds sticky columns before the full-width extension", () 
 });
 
 test("desktop full inspector uses wider responsive bounds and viewport-safe scrolling", () => {
-  assert.match(tableSource, /const fullDesktopEditorNode = \(\s*<div className="min-w-0 w-full max-w-\[80rem\] min-h-\[calc\(100dvh-4rem\)\] max-h-\[calc\(100dvh-2rem\)\] overflow-y-auto overscroll-contain rounded-\[2rem\] bg-transparent"/);
-  assert.match(tableSource, /fullDesktopEditorNode = \(\s*<div[\s\S]*<div className="p-4">\s*\{fullDesktopEditorContent\}/);
-  assert.match(tableSource, /overlayMode === "full" \? "left-1\/2 max-w-\[80rem\] -translate-x-1\/2"/);
+  assert.match(tableSource, /const fullDesktopEditorNode = \(\s*<div\s+className="grid min-w-0 w-full max-w-\[calc\(100vw-2rem\)\] grid-cols-\[minmax\(2\.75rem,1fr\)_minmax\(0,80rem\)_minmax\(2\.75rem,1fr\)\] items-center gap-3"/);
+  assert.match(tableSource, /fullDesktopEditorNode = \(\s*<div[\s\S]*data-task-editor-interaction="true"[\s\S]*<div className="p-4">\s*\{fullDesktopEditorContent\}/);
+  assert.match(tableSource, /overlayMode === "full" \? "left-1\/2 max-w-\[calc\(100vw-2rem\)\] -translate-x-1\/2"/);
   assert.match(tableSource, /: "grid min-w-0 min-h-\[70vh\] gap-3 lg:grid-cols-\[minmax\(0,1\.05fr\)_minmax\(0,0\.95fr\)\]"/);
   assert.match(tableSource, /fullMetadataCardClass[\s\S]*lg:self-start/);
   assert.match(tableSource, /className="w-full max-w-\[60rem\]"/);

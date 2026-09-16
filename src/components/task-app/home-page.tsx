@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
+import { TaskTypeSelect } from "./task-type-identity";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
@@ -14,10 +15,12 @@ import { useHomeTodoState } from "@/hooks/useHomeTodoState";
 import { TaskStatusCircleRail, formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import { PageShellHeader } from "./page-shell-header";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
+import { resolveTaskStatusOptionsForTask } from "@/lib/task-state-engine/action-authority";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import type { Task, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
-import type { TaskDraft } from "@/components/task-app/task-editor-model";
 import type { TaskListMembership } from "@/lib/task-lists";
+import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import {
   buildHomeTodoHierarchy,
   buildHomeTodoDaySections,
@@ -37,7 +40,7 @@ const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-[12.25px] max-sm:!w-[12.25px]";
 
 export function HomePage({
   listMembershipsByTaskId,
-  onCreateTask,
+  onCreateTaskWithType,
   onOpenTask,
   onSetStatus,
   taskDisplayStatusByTaskId,
@@ -45,9 +48,16 @@ export function HomePage({
   calendarTimeZone,
   tasks,
   userId,
+  behaviorProfiles,
+  behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
+  behaviorSelectionsByTaskId,
+  behaviorPolicyLoading = false,
+  behaviorPolicyLogicalDate,
+  taskTypeOptions,
 }: {
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
-  onCreateTask: (draft: TaskDraft) => Promise<Task | null>;
+  onCreateTaskWithType: (title: string, taskTypeSelectionValue: string) => Promise<Task | null>;
   onOpenTask: (taskId: string) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
@@ -55,6 +65,13 @@ export function HomePage({
   calendarTimeZone: string;
   tasks: Task[];
   userId: string | null;
+  behaviorProfiles?: TaskBehaviorPolicyResolutionContext["behaviorProfiles"];
+  behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
+  namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
+  behaviorSelectionsByTaskId?: TaskBehaviorPolicyResolutionContext["behaviorSelectionsByTaskId"];
+  behaviorPolicyLoading?: boolean;
+  behaviorPolicyLogicalDate: string;
+  taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
 }) {
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
   const { state, syncStatus, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
@@ -62,6 +79,7 @@ export function HomePage({
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskTypeSelection, setNewTaskTypeSelection] = useState("task");
   const [isCreating, setIsCreating] = useState(false);
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -115,11 +133,13 @@ export function HomePage({
     try {
       const createdTask = await createHomeTodoTask(
         newTaskTitle,
-        onCreateTask,
+        newTaskTypeSelection,
+        onCreateTaskWithType,
         (taskId) => updateTaskIds((taskIds) => [...taskIds, taskId]),
       );
       if (createdTask) {
         setNewTaskTitle("");
+        setNewTaskTypeSelection("task");
         setIsCreateOpen(false);
       }
     } finally {
@@ -130,6 +150,7 @@ export function HomePage({
   function cancelCreateTask() {
     if (isCreating) return;
     setNewTaskTitle("");
+    setNewTaskTypeSelection("task");
     setIsCreateOpen(false);
   }
 
@@ -231,7 +252,19 @@ export function HomePage({
                   onSetStatus(task, status);
                   setStatusMenuTaskId(null);
                 }}
-                options={getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus }).map((status) => ({ label: formatTaskStatusLabel(status), value: status }))}
+                options={resolveTaskStatusOptionsForTask({
+                  behaviorPolicyRevisions,
+                  behaviorProfiles,
+                  behaviorSelectionsByTaskId,
+                  customRulesetId: task.custom_ruleset_id,
+                  logicalDate: behaviorPolicyLogicalDate,
+                  namedCustomRulesetBehaviorPolicyRevisions,
+                  policyLoading: behaviorPolicyLoading,
+                  statuses: getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus }),
+                  taskId: task.id,
+                  taskType: task.task_type,
+                }).map((status) => ({ label: formatTaskStatusLabel(status), value: status }))}
+                preserveCurrentStatus
                 statusLabelPrefix="Set task status to"
                 wrap={false}
               />
@@ -373,6 +406,7 @@ export function HomePage({
               disabled={isCreating}
               onClick={() => {
                 setIsSearchOpen(false);
+                setNewTaskTypeSelection("task");
                 setIsCreateOpen(true);
               }}
               selected={isCreateOpen}
@@ -410,6 +444,17 @@ export function HomePage({
                   placeholder="Task title"
                   ref={newTaskInputRef}
                   value={newTaskTitle}
+                />
+              </label>
+              <label className="w-full sm:w-44 sm:shrink-0">
+                <span className="sr-only">Task Type</span>
+                <TaskTypeSelect
+                  ariaLabel="Task Type"
+                  disabled={isCreating}
+                  label="Task Type"
+                  onChange={setNewTaskTypeSelection}
+                  options={taskTypeOptions}
+                  value={newTaskTypeSelection}
                 />
               </label>
               <div className="flex shrink-0 gap-1.5">

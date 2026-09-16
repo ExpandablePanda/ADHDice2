@@ -7,7 +7,11 @@ import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/t
 type TaskUpdateField = Exclude<keyof TaskUpdate, "revision">;
 
 export type TaskRowUpdateOptions = {
+  /** Logical date on which a Task behavior selection change takes effect. */
+  effectiveFromLogicalDate?: string;
   expectedTask?: Task | null;
+  /** Refresh the browser-owned behavior-selection state after the selection RPC commits. */
+  refreshCustomBehaviorRulesets?: () => Promise<boolean>;
 };
 
 export type TaskRowDeleteOptions = {
@@ -31,6 +35,7 @@ export type UpdateTaskRowResult = {
   data: Task | null;
   error: { message: string } | null;
   conflict: TaskRowUpdateConflict | null;
+  behaviorSelectionStateRefreshError?: string;
   reappliedOnLatestRevision: boolean;
   usedActualSecondsFallback: boolean;
   usedEnergyFallback: boolean;
@@ -213,6 +218,15 @@ export async function updateTaskRowWithLegacyEnergyFallback(
   isMissingTaskEnergyNoneEnumError: (message: string) => boolean,
   options?: TaskRowUpdateOptions,
 ): Promise<UpdateTaskRowResult> {
+  if (Object.hasOwn(values, "task_type") || Object.hasOwn(values, "custom_ruleset_id")) {
+    return updateTaskBehaviorSelection(
+      client,
+      taskId,
+      values,
+      isMissingTaskEnergyNoneEnumError,
+      options,
+    );
+  }
   const expectedTask = options?.expectedTask ?? null;
   const expectedRevision = typeof expectedTask?.revision === "number" ? expectedTask.revision : undefined;
   const initialResult = await runTaskUpdateAttempt(
@@ -332,6 +346,73 @@ export async function updateTaskRowWithLegacyEnergyFallback(
     reappliedOnLatestRevision: false,
     usedActualSecondsFallback: initialResult.usedActualSecondsFallback || retryResult.usedActualSecondsFallback,
     usedEnergyFallback: initialResult.usedEnergyFallback || retryResult.usedEnergyFallback,
+  };
+}
+
+/**
+ * TaskType + named-ruleset selection is a historical authority, so the Task
+ * projection and its effective-dated selection must be committed by one RPC.
+ */
+async function updateTaskBehaviorSelection(
+  client: SupabaseClient,
+  taskId: string,
+  values: TaskUpdate,
+  isMissingTaskEnergyNoneEnumError: (message: string) => boolean,
+  options?: TaskRowUpdateOptions,
+): Promise<UpdateTaskRowResult> {
+  let patch = values;
+  let usedEnergyFallback = false;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await client.rpc("adhdice_update_task_behavior_selection", {
+      p_effective_from_logical_date: options?.effectiveFromLogicalDate ?? null,
+      p_expected_task_revision: typeof options?.expectedTask?.revision === "number" ? options.expectedTask.revision : null,
+      p_task_id: taskId,
+      p_task_patch: patch,
+    });
+    if (!result.error) {
+      let behaviorSelectionStateRefreshError: string | undefined;
+      if (result.data && options?.refreshCustomBehaviorRulesets) {
+        try {
+          if (!(await options.refreshCustomBehaviorRulesets())) {
+            behaviorSelectionStateRefreshError = "The committed Task behavior selection could not be refreshed in the browser.";
+          }
+        } catch (error) {
+          behaviorSelectionStateRefreshError = error instanceof Error
+            ? error.message
+            : "The committed Task behavior selection could not be refreshed in the browser.";
+        }
+      }
+      return {
+        data: (result.data as Task | null) ?? null,
+        error: null,
+        conflict: null,
+        ...(behaviorSelectionStateRefreshError ? { behaviorSelectionStateRefreshError } : {}),
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback,
+      };
+    }
+    if (patch.energy === "none" && isMissingTaskEnergyNoneEnumError(result.error.message)) {
+      patch = { ...patch, energy: "low" };
+      usedEnergyFallback = true;
+      continue;
+    }
+    return {
+      data: null,
+      error: result.error,
+      conflict: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback,
+    };
+  }
+  return {
+    data: null,
+    error: { message: "Task behavior selection update retries were exhausted." },
+    conflict: null,
+    reappliedOnLatestRevision: false,
+    usedActualSecondsFallback: false,
+    usedEnergyFallback,
   };
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import type { TaskList as DbTaskList, TaskListManualMembership as DbTaskListManualMembership } from "@/lib/database.types";
-import { isBuiltInTaskListId, parseTaskListRules, resolveAppTaskListMembershipMode, type TaskListDefinition, type TaskListId, type TaskListManualMembership } from "@/lib/task-lists";
+import { isAttentionTaskList, isBuiltInTaskListId, parseTaskListRules, resolveAppTaskListMembershipMode, resolveEffectiveTaskListRules, type TaskListDefinition, type TaskListId, type TaskListManualMembership, type TaskListRuleGroup } from "@/lib/task-lists";
 
 const LEGACY_SYSTEM_LIST_ID_MAP = {
   important: "priority_3_4",
@@ -39,7 +39,7 @@ const LEGACY_SYSTEM_LIST_METADATA: Partial<Record<string, Pick<TaskListDefinitio
 export function mapTaskListRow(row: DbTaskList): TaskListDefinition | null {
   const normalizedBuiltInKey = normalizeTaskListSourceId(row.built_in_key);
   const normalizedIdValue = normalizeTaskListSourceId(row.id) ?? row.id;
-  let rules = null;
+  let rules: TaskListRuleGroup | null = null;
   if (row.rules_json) {
     try {
       rules = parseTaskListRules(JSON.parse(row.rules_json));
@@ -66,20 +66,25 @@ export function mapTaskListRow(row: DbTaskList): TaskListDefinition | null {
     ? normalizedIdValue as TaskListId
     : `list:${normalizedIdValue}` as TaskListId;
   const legacyMetadata = normalizedBuiltInKey ? LEGACY_SYSTEM_LIST_METADATA[normalizedBuiltInKey] : null;
+  const effectiveRules = resolveEffectiveTaskListRules({
+    id,
+    rules: legacyMetadata?.rules ?? rules,
+  });
+  const isAttention = isAttentionTaskList({ id });
 
   return {
-    description: legacyMetadata?.description ?? (normalizedBuiltInKey ? TASK_BUCKET_DESCRIPTIONS[normalizedBuiltInKey] ?? row.name : row.name),
+    description: isAttention ? "Eligible tasks matching your Attention rules." : legacyMetadata?.description ?? (normalizedBuiltInKey ? TASK_BUCKET_DESCRIPTIONS[normalizedBuiltInKey] ?? row.name : row.name),
     folderId: row.folder_id,
     id,
-    isDeletable: row.is_deletable,
-    isEditable: row.is_editable,
+    isDeletable: isAttention ? false : row.is_deletable,
+    isEditable: isAttention ? true : row.is_editable,
     isVisible: row.is_visible,
     membershipMode: resolveAppTaskListMembershipMode(id, normalizedBuiltInKey, row.membership_mode),
-    name: legacyMetadata?.name ?? row.name,
-    rules: legacyMetadata?.rules ?? rules,
+    name: isAttention ? "Attention" : legacyMetadata?.name ?? row.name,
+    rules: effectiveRules,
     revision: row.revision,
     sortOrder: row.sort_order,
-    type: row.list_type,
+    type: isAttention ? "system" : row.list_type,
   };
 }
 

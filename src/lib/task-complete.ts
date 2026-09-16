@@ -122,13 +122,13 @@ export function getTaskHistoryCalendarVisibleActionStatuses({
   const configuredStatuses = historicalOverride
     ? [...HISTORY_OVERRIDE_ACTION_STATUSES]
     : getTaskHistoryCalendarActionStatuses(task);
-  if (isMultiSelect) {
-    return configuredStatuses.filter((status) => status !== "complete" && status !== "delayed");
-  }
+  const visibleStatuses = isMultiSelect
+    ? configuredStatuses.filter((status) => status !== "complete" && status !== "delayed")
+    : configuredStatuses;
   if (!engineStatuses) {
-    return [...configuredStatuses];
+    return [...visibleStatuses];
   }
-  return configuredStatuses.filter((status) => (
+  return visibleStatuses.filter((status) => (
     engineStatuses.includes(status)
   ));
 }

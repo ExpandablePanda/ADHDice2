@@ -7,11 +7,14 @@ import type { TaskHistory } from "../src/lib/database.types.ts";
 import { TASK_STATE_HISTORY_CUTOVER_DATE } from "../src/lib/task-history-cutover.ts";
 import { computeTaskEffectiveTimelineStreaks } from "../src/lib/task-state-engine/effective-timeline.ts";
 import {
+  buildTaskHistoryStreakSummary,
   buildTaskHistoryStreakSummaryMap as buildCanonicalTaskHistoryStreakSummaryMap,
+  buildTaskHistoryStreakSummaryMapCooperatively,
   type TaskHistoryStreakSummaryContext,
   updateTaskHistoryStreakSummaryMap,
 } from "../src/lib/task-history-streak-summaries.ts";
 import { computeTaskSpecificHistoryStats, deduplicateTaskHistoryByLogicalDate } from "../src/lib/task-history.ts";
+import { buildTaskHistoryLastHandledSummaryMap } from "../src/lib/task-history-last-handled.ts";
 import { resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/calendar-authority.ts";
 import type { TaskCalendarOverride } from "../src/lib/task-state-engine/types.ts";
 
@@ -79,6 +82,31 @@ test("narrow critical History can coexist with a three-day compact completion st
   const summaries = buildTaskHistoryStreakSummaryMap([currentTask], rows, "2026-08-03");
 
   assert.equal(summaries[currentTask.id]?.currentStreak, 3);
+});
+
+test("bulk streak summaries preserve the per-Task summary results", () => {
+  const tasks = [task("bulk-a"), task("bulk-b")];
+  const rows = [
+    history("bulk-a-done", "2026-08-01", "done", true, "bulk-a"),
+    history("bulk-a-done-2", "2026-08-02", "done", true, "bulk-a"),
+    history("bulk-b-missed", "2026-08-01", "missed", false, "bulk-b"),
+  ];
+  const context = {
+    compatibilityOnly: true,
+    manualActionSummaryByTaskId: buildTaskHistoryLastHandledSummaryMap(tasks, rows, [], [], "2026-08-02"),
+  } as const;
+  const bulk = buildTaskHistoryStreakSummaryMap(tasks, rows, "2026-08-02", context);
+  const perTask = Object.fromEntries(tasks.map((currentTask) => [
+    currentTask.id,
+    buildTaskHistoryStreakSummary(
+      currentTask,
+      rows.filter((row) => row.task_id === currentTask.id),
+      "2026-08-02",
+      context,
+    ),
+  ]));
+
+  assert.deepEqual(bulk, perTask);
 });
 
 test("compact summaries count three trailing missed entries", () => {
@@ -448,6 +476,43 @@ test("an affected task summary updates without rebuilding other task summaries",
   assert.strictEqual(updated[otherTask.id], initial[otherTask.id]);
 });
 
+test("bulk streak-summary chunking yields and preserves the canonical summary map", async () => {
+  const tasks = [task("bulk-a"), task("bulk-b"), task("bulk-c"), task("bulk-d")];
+  const rows = tasks.map((candidate, index) => history(`bulk-${index}`, "2026-08-03", "done", true, candidate.id));
+  let clock = 0;
+  let yields = 0;
+  const expected = buildCanonicalTaskHistoryStreakSummaryMap(tasks, rows, "2026-08-03", { compatibilityOnly: true });
+  const actual = await buildTaskHistoryStreakSummaryMapCooperatively(tasks, rows, "2026-08-03", { compatibilityOnly: true }, {
+    budgetMs: 1,
+    now: () => clock++,
+    yieldToBrowser: async () => { yields += 1; },
+  });
+
+  assert.ok(yields > 0);
+  assert.ok(actual.chunks > 1);
+  assert.equal(actual.completed, true);
+  assert.deepEqual(actual.summaries, expected);
+});
+
+test("superseded bulk streak-summary work does not expose its partial map", async () => {
+  let current = true;
+  const result = await buildTaskHistoryStreakSummaryMapCooperatively(
+    [task("stale-a"), task("stale-b")],
+    [],
+    "2026-08-03",
+    { compatibilityOnly: true },
+    {
+      budgetMs: 0,
+      now: () => 0,
+      isCurrent: () => current,
+      yieldToBrowser: async () => { current = false; },
+    },
+  );
+
+  assert.equal(result.completed, false);
+  assert.deepEqual(result.summaries, {});
+});
+
 test("parent and child Table/List title paths consume compact summary fields", () => {
   assert.match(appSource, /taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries/);
   assert.match(tableSource, /task\.currentStreak > 0/);
@@ -461,10 +526,10 @@ test("parent and child Table/List title paths consume compact summary fields", (
 test("modal calendar and statistics normalize saved Done, Did My Best, and Missed rows", () => {
   const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
 
-  assert.match(modalSource, /const normalizedTaskHistory = deduplicateTaskHistoryByLogicalDate\(taskHistory\)/);
+  assert.match(modalSource, /const normalizedTaskHistory = useMemo\(\s*\(\) => deduplicateTaskHistoryByLogicalDate\(taskHistory\)/);
   assert.match(modalSource, /const historyByDate = new Map\(normalizedTaskHistory\.map/);
   assert.match(modalSource, /computeTaskSpecificHistoryStats\(task, normalizedTaskHistory/);
-  assert.match(modalSource, /resolveTaskHistoryCalendarActionStatuses\(\{\s*\.\.\.stateEngineContext, history: normalizedTaskHistory/);
+  assert.match(modalSource, /resolveTaskHistoryCalendarActionStatuses\(\{[\s\S]*history: normalizedTaskHistory/);
   assert.match(modalSource, /selectedEntry\?\.status === status/);
   assert.doesNotMatch(modalSource, /<span>Clear<\/span>/);
   assert.match(modalSource, /entry\.status === "missed"/);

@@ -5,6 +5,159 @@ import { evaluateTaskState } from "./engine.ts";
 import { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
 import type { TaskHistoryChange, TaskHistoryOutcome, TaskStateHistoryRow } from "./types.ts";
+import {
+  normalizeTaskBehaviorProfile,
+  resolveTaskBehaviorPolicyForLogicalDate,
+  resolveTaskBehaviorPolicyForTask,
+  STANDARD_TASK_BEHAVIOR_POLICY,
+  type TaskBehaviorPolicy,
+  type TaskBehaviorPolicyResolutionContext,
+  type TaskBehaviorPolicyRevision,
+  type TaskManualAction,
+} from "./behavior-policy.ts";
+
+const TASK_MANUAL_ACTION_LABELS: Readonly<Record<TaskManualAction, string>> = {
+  done: "Done",
+  did_my_best: "Did My Best",
+  missed: "Missed",
+  delay: "Delay",
+  complete: "Complete",
+};
+
+/** Map display statuses to the manual-action vocabulary without changing status semantics. */
+export function taskManualActionForStatus(status: string): TaskManualAction | null {
+  if (status === "done" || status === "did_my_best" || status === "missed" || status === "complete") return status;
+  if (status === "delayed") return "delay";
+  return null;
+}
+
+/** Map canonical manual occurrence commands to the policy vocabulary. */
+export function taskManualActionForCanonicalCommand(input: { type: string; outcome?: unknown }): TaskManualAction | null {
+  if (input.type === "handled_outcome" || input.type === "set_outcome") {
+    return input.outcome === "done" || input.outcome === "did_my_best" || input.outcome === "missed"
+      ? input.outcome
+      : null;
+  }
+  if (input.type === "complete" || input.type === "complete_task") return "complete";
+  if (input.type === "delay" || input.type === "delay_occurrence") return "delay";
+  return null;
+}
+
+export function taskManualActionLabel(action: TaskManualAction) {
+  return TASK_MANUAL_ACTION_LABELS[action];
+}
+
+/** Read the policy upper bound without changing contextual eligibility rules. */
+export function getAvailableTaskManualActions(policy?: Pick<TaskBehaviorPolicy, "availableActions"> | null): readonly TaskManualAction[] {
+  return normalizeTaskBehaviorProfile({
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    availableActions: policy?.availableActions,
+  }).availableActions;
+}
+
+export function isTaskManualActionAvailable(
+  policy: Pick<TaskBehaviorPolicy, "availableActions"> | null | undefined,
+  action: TaskManualAction,
+) {
+  return getAvailableTaskManualActions(policy).includes(action);
+}
+
+/** Resolve policy availability against the effective date carried by a command. */
+export function resolveTaskManualActionAvailability(input: {
+  action: TaskManualAction;
+  behaviorPolicy?: TaskBehaviorPolicy;
+  behaviorPolicyRevisions?: readonly TaskBehaviorPolicyRevision[];
+  logicalDate: string;
+}) {
+  const policy = input.behaviorPolicyRevisions?.length
+    ? resolveTaskBehaviorPolicyForLogicalDate({
+      revisions: input.behaviorPolicyRevisions,
+      logicalDate: input.logicalDate,
+    })
+    : normalizeTaskBehaviorProfile(input.behaviorPolicy);
+  return {
+    action: input.action,
+    logicalDate: input.logicalDate,
+    policy,
+    available: isTaskManualActionAvailable(policy, input.action),
+  };
+}
+
+/** Resolve a Task's historical selection and policy timeline for one date. */
+export function resolveTaskManualActionAvailabilityForTask(input: TaskBehaviorPolicyResolutionContext & {
+  action: TaskManualAction;
+  customRulesetId?: string | null;
+  logicalDate: string;
+  taskId?: string;
+  taskType: Parameters<typeof resolveTaskBehaviorPolicyForTask>[0]["taskType"];
+}) {
+  const resolution = resolveTaskBehaviorPolicyForTask(input);
+  return {
+    action: input.action,
+    logicalDate: input.logicalDate,
+    policy: resolution.policy,
+    available: isTaskManualActionAvailable(resolution.policy, input.action),
+  };
+}
+
+/** Apply the resolved policy as an upper bound over already-contextual status choices. */
+export function filterTaskStatusesByAvailableActions<Status extends string>(
+  statuses: readonly Status[],
+  policy: Pick<TaskBehaviorPolicy, "availableActions"> | null | undefined,
+) {
+  return statuses.filter((status) => {
+    const action = taskManualActionForStatus(status);
+    return action === null || isTaskManualActionAvailable(policy, action);
+  });
+}
+
+/** Keep an existing status visible in a filtered control without making it a new choice. */
+export function preserveCurrentTaskStatusForPresentation<Status extends string>(
+  statuses: readonly Status[],
+  currentStatus: Status,
+) {
+  return statuses.includes(currentStatus) ? statuses : [currentStatus, ...statuses];
+}
+
+/** Resolve policy once for one Task/date, then filter its contextual status choices. */
+export function resolveTaskStatusOptionsForTask<Status extends string>(input: TaskBehaviorPolicyResolutionContext & {
+  customRulesetId?: string | null;
+  logicalDate: string;
+  policyLoading?: boolean;
+  statuses: readonly Status[];
+  taskId?: string;
+  taskType: Parameters<typeof resolveTaskBehaviorPolicyForTask>[0]["taskType"];
+}) {
+  if (input.policyLoading) {
+    return input.statuses.filter((status) => taskManualActionForStatus(status) === null);
+  }
+  const resolution = resolveTaskBehaviorPolicyForTask(input);
+  return filterTaskStatusesByAvailableActions(input.statuses, resolution.policy);
+}
+
+/** Intersect policy availability across Tasks for an existing batch status set. */
+export function filterTaskStatusesForTasksByAvailableActions<Status extends string>(input: TaskBehaviorPolicyResolutionContext & {
+  logicalDate: string;
+  policyLoading?: boolean;
+  statuses: readonly Status[];
+  tasks: ReadonlyArray<{
+    customRulesetId?: string | null;
+    taskId?: string;
+    taskType: Parameters<typeof resolveTaskBehaviorPolicyForTask>[0]["taskType"];
+  }>;
+}) {
+  if (input.policyLoading) {
+    return input.statuses.filter((status) => taskManualActionForStatus(status) === null);
+  }
+  const policies = input.tasks.map((task) => resolveTaskBehaviorPolicyForTask({
+    ...input,
+    ...task,
+  }).policy);
+  return input.statuses.filter((status) => {
+    const action = taskManualActionForStatus(status);
+    return action === null || policies.every((policy) => isTaskManualActionAvailable(policy, action));
+  });
+}
 
 const OCCURRENCE_SENSITIVE_TASK_UPDATE_FIELDS = [
   "status",
@@ -103,7 +256,7 @@ export function taskStateHistoryRowToCanonicalIntent(
   };
 }
 
-export function evaluateTaskActionAuthority(input: {
+export function evaluateTaskActionAuthority(input: TaskBehaviorPolicyResolutionContext & {
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];
@@ -178,7 +331,7 @@ export function evaluateTaskActionAuthority(input: {
  * proposed task is the schedule snapshot, while complete task-scoped History
  * remains the only source for unresolved outcomes and occurrence identity.
  */
-export function evaluateTaskScheduleAuthority(input: {
+export function evaluateTaskScheduleAuthority(input: TaskBehaviorPolicyResolutionContext & {
   compatibilityOnly?: boolean;
   enabled?: boolean;
   history: TaskHistory[];

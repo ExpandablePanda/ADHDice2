@@ -233,6 +233,7 @@ export const DEFAULT_HEALTH_PROFILE: Omit<HealthProfile, "created_at" | "updated
   workout_type_options: [...HEALTH_WORKOUT_TYPES],
   workout_title_options: [],
   workout_import_aliases: {},
+  journal_questions: [],
   user_id: "",
   fat_goal_grams: 75,
 };
@@ -268,6 +269,9 @@ export function normalizeHealthProfile(profile: Partial<HealthProfile> | null | 
     : [];
   const workoutTypeOptions = normalizeHealthWorkoutOptionValues(profile?.workout_type_options);
   const workoutImportAliases = normalizeHealthWorkoutImportAliases(profile?.workout_import_aliases);
+  const journalQuestions = Array.isArray(profile?.journal_questions)
+    ? profile.journal_questions.filter((question) => question && typeof question === "object" && typeof question.id === "string")
+    : [];
   const waterGoalMl = Number(profile?.water_goal_ml);
   return {
     ...fallback,
@@ -282,6 +286,7 @@ export function normalizeHealthProfile(profile: Partial<HealthProfile> | null | 
     workout_type_options: workoutTypeOptions.length > 0 ? workoutTypeOptions : [...HEALTH_WORKOUT_TYPES],
     workout_title_options: workoutTitleOptions,
     workout_import_aliases: workoutImportAliases,
+    journal_questions: journalQuestions,
   };
 }
 
@@ -790,6 +795,37 @@ export function calculateHealthDailyCalorieBudget(
     ? activeEnergyKcal
     : 0;
   return baseCalorieGoal + activityAdjustment;
+}
+
+export function calculateHealthProjectedCalories(consumedCalories: number, plannedCalories: number, candidateCalories: number) {
+  return [consumedCalories, plannedCalories, candidateCalories]
+    .reduce((total, value) => total + (Number.isFinite(value) ? value : 0), 0);
+}
+
+export type HealthCalorieGoalWarning = {
+  overBy: number;
+  projectedCalories: number;
+  targetCalories: number;
+};
+
+export function getHealthCalorieGoalWarning(projectedCalories: number | null, targetCalories: number | null): HealthCalorieGoalWarning | null {
+  if (projectedCalories === null || !Number.isFinite(projectedCalories) || targetCalories === null || !Number.isFinite(targetCalories) || projectedCalories <= targetCalories) {
+    return null;
+  }
+  return {
+    overBy: projectedCalories - targetCalories,
+    projectedCalories,
+    targetCalories,
+  };
+}
+
+export type HealthCalorieGoalStatus = "no-target" | "over" | "within";
+
+export function getHealthCalorieGoalStatus(projectedCalories: number, targetCalories: number | null): HealthCalorieGoalStatus {
+  if (!Number.isFinite(projectedCalories) || targetCalories === null || !Number.isFinite(targetCalories)) {
+    return "no-target";
+  }
+  return projectedCalories <= targetCalories ? "within" : "over";
 }
 
 export type HealthDailyCalorieTargetPoint = {

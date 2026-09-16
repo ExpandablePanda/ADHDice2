@@ -1,0 +1,321 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { createTask } from "../src/lib/task-buckets.ts";
+import { normalizeTaskType, parseTaskType, type TaskType } from "../src/lib/task-type.ts";
+import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
+import {
+  buildCompatibilityTaskStateEngineInput,
+  buildDirectTaskStateEngineInput,
+} from "../src/lib/task-state-engine/direct-input.ts";
+import {
+  evaluateTaskState,
+  filterTaskStatusesByAvailableActions,
+  filterTaskStatusesForTasksByAvailableActions,
+  getAvailableTaskManualActions,
+  isTaskManualActionAvailable,
+  normalizeTaskBehaviorPolicyRevisions,
+  normalizeTaskBehaviorProfile,
+  resolveTaskManualActionAvailability,
+  resolveTaskManualActionAvailabilityForTask,
+  resolveTaskStatusOptionsForTask,
+  resolveTaskBehaviorPolicy,
+  STANDARD_TASK_BEHAVIOR_POLICY,
+  STANDARD_TASK_AVAILABLE_ACTIONS,
+  STANDARD_TASK_NEEDS_ACTION_TRIGGERS,
+  STANDARD_TASK_SUCCESS_OUTCOMES,
+  normalizeTaskNeedsActionTriggers,
+  normalizeTaskSuccessOutcomes,
+  taskManualActionForCanonicalCommand,
+  taskManualActionForStatus,
+  type TaskStateEngineInput,
+} from "../src/lib/task-state-engine/index.ts";
+import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
+
+const input: TaskStateEngineInput = {
+  task: {
+    id: "task-1",
+    lifecycle: "active",
+    activeStatus: "pending",
+    dueOn: "2026-09-08",
+    recurrence: { kind: "rolling", intervalDays: 1 },
+  },
+  history: [],
+  now: "2026-09-08T14:00:00.000Z",
+  timezone: "UTC",
+  logicalDayRollover: "00:00",
+};
+
+const storedTask = {
+  ...createTask({ id: "task-1", title: "Policy boundary", status: "pending", due_on: "2026-09-08", repeat_frequency: "daily" }),
+  canonicalization_status: "canonical_proven" as const,
+  entity_kind: "parent" as const,
+  terminal_state: "active" as const,
+  container_state: "active" as const,
+  workflow_state: "none" as const,
+  canonical_schedule_boundary: {
+    schedule_model: "rolling",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    one_time_due_on: null,
+    anchor_date: "2026-09-08",
+  } as unknown as CanonicalTaskScheduleBoundary,
+};
+
+test("missing and every supported persisted TaskType resolve to the frozen standard profile", () => {
+  assert.equal(resolveTaskBehaviorPolicy(undefined), STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.equal(resolveTaskBehaviorPolicy(null), STANDARD_TASK_BEHAVIOR_POLICY);
+  for (const taskType of ["task", "custom"] as TaskType[]) {
+    assert.equal(normalizeTaskType(taskType), taskType);
+    assert.equal(resolveTaskBehaviorPolicy(taskType), STANDARD_TASK_BEHAVIOR_POLICY);
+  }
+  assert.equal(parseTaskType("pursuit"), null);
+  assert.throws(() => normalizeTaskType("pursuit"), /retired/);
+  assert.equal(normalizeTaskType("legacy"), "task");
+  assert.equal(resolveTaskBehaviorPolicy("legacy" as TaskType), STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.equal(Object.isFrozen(STANDARD_TASK_BEHAVIOR_POLICY), true);
+  assert.deepEqual(STANDARD_TASK_BEHAVIOR_POLICY, {
+    id: "standard-task",
+    unresolvedOccurrence: "missed",
+    positiveStreakOnUnhandled: "break",
+    missedStreakOnUnhandled: "increment",
+    rewards: "enabled",
+    availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
+    needsActionTriggers: ["missed", "due_today", "overdue"],
+    successOutcomes: ["done", "did_my_best", "complete"],
+  });
+});
+
+test("manual occurrence actions normalize compatibly, deterministically, and allow an intentional empty set", () => {
+  assert.deepEqual(STANDARD_TASK_AVAILABLE_ACTIONS, ["done", "did_my_best", "missed", "delay", "complete"]);
+  assert.deepEqual(getAvailableTaskManualActions(undefined), STANDARD_TASK_AVAILABLE_ACTIONS);
+  assert.deepEqual(normalizeTaskBehaviorProfile({
+    id: "legacy-custom",
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "preserve",
+    missedStreakOnUnhandled: "ignore",
+    rewards: "disabled",
+  }, "custom").availableActions, STANDARD_TASK_AVAILABLE_ACTIONS);
+  assert.deepEqual(STANDARD_TASK_NEEDS_ACTION_TRIGGERS, ["missed", "due_today", "overdue"]);
+  assert.deepEqual(normalizeTaskNeedsActionTriggers(undefined), STANDARD_TASK_NEEDS_ACTION_TRIGGERS);
+  assert.deepEqual(normalizeTaskNeedsActionTriggers("overdue"), STANDARD_TASK_NEEDS_ACTION_TRIGGERS);
+  assert.deepEqual(normalizeTaskNeedsActionTriggers(["overdue", "invalid", "missed", "overdue", null, "due_today"]), ["missed", "due_today", "overdue"]);
+  assert.deepEqual(normalizeTaskNeedsActionTriggers([]), []);
+  assert.deepEqual(STANDARD_TASK_SUCCESS_OUTCOMES, ["done", "did_my_best", "complete"]);
+  assert.deepEqual(normalizeTaskSuccessOutcomes(undefined), STANDARD_TASK_SUCCESS_OUTCOMES);
+  assert.deepEqual(normalizeTaskSuccessOutcomes(["complete", "missed", "done", "done", "delay", "did_my_best", null]), ["done", "did_my_best", "complete"]);
+  assert.deepEqual(normalizeTaskSuccessOutcomes([]), []);
+  assert.deepEqual(normalizeTaskBehaviorProfile({
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "success-filtered",
+    successOutcomes: ["complete", "invalid", "done", "complete"],
+  }).successOutcomes, ["done", "complete"]);
+  assert.deepEqual(normalizeTaskBehaviorProfile({
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "trigger-filtered",
+    needsActionTriggers: ["overdue", "missed", "overdue", "invalid", "due_today"],
+  }).needsActionTriggers, STANDARD_TASK_NEEDS_ACTION_TRIGGERS);
+  assert.deepEqual(normalizeTaskBehaviorProfile({
+    id: "restricted-custom",
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "preserve",
+    missedStreakOnUnhandled: "ignore",
+    rewards: "disabled",
+    availableActions: ["missed", "invalid", "done", "done", "complete", null],
+  }, "custom").availableActions, ["done", "missed", "complete"]);
+  assert.deepEqual(normalizeTaskBehaviorProfile({
+    id: "empty-custom",
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "preserve",
+    missedStreakOnUnhandled: "ignore",
+    rewards: "disabled",
+    availableActions: [],
+  }, "custom").availableActions, []);
+  assert.equal(isTaskManualActionAvailable({ availableActions: [] }, "done"), false);
+  assert.equal(isTaskManualActionAvailable({ availableActions: ["done"] }, "done"), true);
+});
+
+test("manual action mapping leaves workflow, lifecycle, Calendar, and historical correction commands outside policy", () => {
+  assert.equal(taskManualActionForCanonicalCommand({ type: "handled_outcome", outcome: "done" }), "done");
+  assert.equal(taskManualActionForCanonicalCommand({ type: "set_outcome", outcome: "did_my_best" }), "did_my_best");
+  assert.equal(taskManualActionForCanonicalCommand({ type: "set_outcome", outcome: "missed" }), "missed");
+  assert.equal(taskManualActionForCanonicalCommand({ type: "delay_occurrence" }), "delay");
+  assert.equal(taskManualActionForCanonicalCommand({ type: "complete_task" }), "complete");
+  for (const type of ["start_in_progress", "clear_in_progress", "archive_task", "trash_task", "restore_task", "calendar_override", "clear_outcome", "reconcile_rollover"]) {
+    assert.equal(taskManualActionForCanonicalCommand({ type }), null, type);
+  }
+});
+
+test("display statuses map to manual actions and policy filtering preserves contextual non-manual statuses", () => {
+  assert.equal(taskManualActionForStatus("done"), "done");
+  assert.equal(taskManualActionForStatus("did_my_best"), "did_my_best");
+  assert.equal(taskManualActionForStatus("missed"), "missed");
+  assert.equal(taskManualActionForStatus("delayed"), "delay");
+  assert.equal(taskManualActionForStatus("complete"), "complete");
+  for (const status of ["pending", "in_progress", "upcoming", "not_due", "archived", "trashed"]) {
+    assert.equal(taskManualActionForStatus(status), null, status);
+  }
+
+  const contextualStatuses = ["pending", "done", "did_my_best", "delayed", "missed", "complete", "archived"] as const;
+  assert.deepEqual(
+    filterTaskStatusesByAvailableActions(contextualStatuses, { availableActions: ["done", "delay"] }),
+    ["pending", "done", "delayed", "archived"],
+  );
+  assert.deepEqual(
+    filterTaskStatusesByAvailableActions(contextualStatuses, { availableActions: [] }),
+    ["pending", "archived"],
+  );
+});
+
+test("task status resolver intersects contextual eligibility with effective policy for one Task and batches", () => {
+  const taskPolicy = normalizeTaskBehaviorProfile({ ...STANDARD_TASK_BEHAVIOR_POLICY, availableActions: ["done", "delay"] });
+  const restrictedPolicy = normalizeTaskBehaviorProfile({ ...STANDARD_TASK_BEHAVIOR_POLICY, availableActions: ["done"] });
+  const context = {
+    behaviorProfiles: { task: taskPolicy, custom: restrictedPolicy },
+    behaviorPolicyRevisions: { task: [{ ...taskPolicy, effectiveFromLogicalDate: "2026-09-01" }] },
+  };
+  const statuses = ["pending", "done", "missed", "delayed", "complete"] as const;
+  assert.deepEqual(resolveTaskStatusOptionsForTask({
+    ...context,
+    logicalDate: "2026-09-12",
+    statuses,
+    taskId: "task-1",
+    taskType: "task",
+  }), ["pending", "done", "delayed"]);
+  assert.deepEqual(filterTaskStatusesForTasksByAvailableActions({
+    ...context,
+    logicalDate: "2026-09-12",
+    statuses,
+    tasks: [
+      { taskId: "task-1", taskType: "task" },
+      { taskId: "task-2", taskType: "custom" },
+    ],
+  }), ["pending", "done"]);
+});
+
+test("available actions resolve by effective logical date and complete historical Task behavior selections", () => {
+  const revisions = normalizeTaskBehaviorPolicyRevisions([
+    { task_type: "task", effective_from_logical_date: "2026-09-01", unresolved_occurrence: "missed", positive_streak_on_unhandled: "break", missed_streak_on_unhandled: "increment", rewards: "enabled", available_actions: ["done"] },
+    { task_type: "task", effective_from_logical_date: "2026-09-11", unresolved_occurrence: "missed", positive_streak_on_unhandled: "break", missed_streak_on_unhandled: "increment", rewards: "enabled", available_actions: ["missed", "done"] },
+  ]);
+  assert.equal(resolveTaskManualActionAvailability({ action: "done", behaviorPolicyRevisions: revisions, logicalDate: "2026-09-05" }).available, true);
+  assert.equal(resolveTaskManualActionAvailability({ action: "missed", behaviorPolicyRevisions: revisions, logicalDate: "2026-09-05" }).available, false);
+  assert.equal(resolveTaskManualActionAvailability({ action: "missed", behaviorPolicyRevisions: revisions, logicalDate: "2026-09-11" }).available, true);
+
+  const taskRevision = normalizeTaskBehaviorProfile({ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "task", availableActions: ["done"] }, "task");
+  const practiceRevision = normalizeTaskBehaviorProfile({ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "practice", availableActions: ["done", "missed"] }, "custom");
+  const disciplineRevision = normalizeTaskBehaviorProfile({ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "discipline", availableActions: ["complete"] }, "custom");
+  const context = {
+    behaviorProfiles: { task: taskRevision, custom: practiceRevision },
+    behaviorPolicyRevisions: { task: [{ ...taskRevision, effectiveFromLogicalDate: "2026-09-01" }] },
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      practice: [{ ...practiceRevision, effectiveFromLogicalDate: "2026-09-11" }],
+      discipline: [{ ...disciplineRevision, effectiveFromLogicalDate: "2026-09-21" }],
+    },
+    behaviorSelectionsByTaskId: {
+      "task-1": [
+        { effectiveFromLogicalDate: "2026-09-01", taskType: "task" as const, customRulesetId: null },
+        { effectiveFromLogicalDate: "2026-09-11", taskType: "custom" as const, customRulesetId: "practice" },
+        { effectiveFromLogicalDate: "2026-09-21", taskType: "custom" as const, customRulesetId: "discipline" },
+        { effectiveFromLogicalDate: "2026-10-01", taskType: "custom" as const, customRulesetId: null },
+      ],
+    },
+  };
+  assert.equal(resolveTaskManualActionAvailabilityForTask({ ...context, action: "missed", taskId: "task-1", taskType: "task", logicalDate: "2026-09-05" }).available, false);
+  assert.equal(resolveTaskManualActionAvailabilityForTask({ ...context, action: "missed", taskId: "task-1", taskType: "task", logicalDate: "2026-09-15" }).available, true);
+  assert.equal(resolveTaskManualActionAvailabilityForTask({ ...context, action: "complete", taskId: "task-1", taskType: "task", logicalDate: "2026-09-25" }).available, true);
+  assert.equal(resolveTaskManualActionAvailabilityForTask({ ...context, action: "missed", taskId: "task-1", taskType: "task", logicalDate: "2026-09-25" }).available, false);
+  assert.equal(resolveTaskManualActionAvailabilityForTask({ ...context, action: "missed", taskId: "task-1", taskType: "task", logicalDate: "2026-10-05" }).available, true);
+  assert.equal(resolveTaskManualActionAvailabilityForTask({ ...context, action: "complete", taskId: "task-1", taskType: "task", logicalDate: "2026-10-05" }).available, false);
+});
+
+test("stored Task normalization explicitly supplies Standard Task policy", () => {
+  const context = { now: input.now, timezone: input.timezone, logicalDayRollover: input.logicalDayRollover };
+  const direct = buildDirectTaskStateEngineInput(storedTask, [], context);
+  const compatibility = buildCompatibilityTaskStateEngineInput(storedTask, [], context);
+
+  assert.equal(direct.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.equal(compatibility.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY);
+});
+
+test("direct and compatibility inputs resolve policy from stored TaskType without changing the engine input", () => {
+  const context = { now: input.now, timezone: input.timezone, logicalDayRollover: input.logicalDayRollover };
+  for (const taskType of ["task", "custom"] as TaskType[]) {
+    const direct = buildDirectTaskStateEngineInput({ ...storedTask, task_type: taskType }, [], context);
+    const compatibility = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: taskType }, [], context);
+    assert.equal(direct.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY, taskType);
+    assert.equal(compatibility.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY, taskType);
+    assert.equal(direct.task.id, storedTask.id);
+    assert.equal(compatibility.task.id, storedTask.id);
+  }
+});
+
+test("Task and Custom resolve independent effective-dated profiles through the shared engine input", () => {
+  const taskRevision = {
+    id: "task-profile",
+    effectiveFromLogicalDate: "2026-09-01",
+    unresolvedOccurrence: "missed" as const,
+    positiveStreakOnUnhandled: "break" as const,
+    missedStreakOnUnhandled: "increment" as const,
+    rewards: "enabled" as const,
+  };
+  const customRevisions = [
+    taskRevision,
+    {
+      ...taskRevision,
+      id: "custom-profile",
+      effectiveFromLogicalDate: "2026-09-10",
+      unresolvedOccurrence: "blank" as const,
+      positiveStreakOnUnhandled: "preserve" as const,
+      missedStreakOnUnhandled: "ignore" as const,
+      rewards: "disabled" as const,
+    },
+  ];
+  const profiles = {
+    task: normalizeTaskBehaviorProfile({ id: "task", ...taskRevision }),
+    custom: normalizeTaskBehaviorProfile({ id: "custom", ...customRevisions[1] }, "custom"),
+  };
+  const revisions = { task: [taskRevision], custom: customRevisions };
+  const context = {
+    behaviorProfiles: profiles,
+    behaviorPolicyRevisions: revisions,
+    now: "2026-09-15T14:00:00.000Z",
+    timezone: "UTC",
+    logicalDayRollover: "00:00",
+  };
+
+  assert.equal(resolveTaskBehaviorPolicy("custom", profiles, revisions, "2026-09-15").unresolvedOccurrence, "blank");
+  assert.equal(resolveTaskBehaviorPolicy("task", profiles, revisions, "2026-09-15").unresolvedOccurrence, "missed");
+  assert.throws(() => resolveTaskBehaviorPolicy("goal" as TaskType, profiles, revisions, "2026-09-15"), /retired/);
+
+  const customInput = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: "custom" }, [], context);
+  const taskInput = buildCompatibilityTaskStateEngineInput({ ...storedTask, task_type: "task" }, [], context);
+  assert.equal(customInput.behaviorPolicy?.unresolvedOccurrence, "blank");
+  assert.equal(taskInput.behaviorPolicy?.unresolvedOccurrence, "missed");
+  assert.deepEqual(customInput.behaviorPolicyRevisions, customRevisions);
+  assert.deepEqual(taskInput.behaviorPolicyRevisions, [taskRevision]);
+  assert.equal(evaluateTaskState({ ...customInput, action: { type: "reconcile_rollover" } }).behaviorPolicy.unresolvedOccurrence, "blank");
+  const customTimeline = buildTaskEffectiveTimeline({
+    behaviorPolicy: customInput.behaviorPolicy,
+    behaviorPolicyRevisions: customInput.behaviorPolicyRevisions,
+    task: customInput.task,
+    history: customInput.history,
+    logicalDate: "2026-09-15",
+    calendarStart: "2026-09-08",
+    calendarEnd: "2026-09-15",
+  });
+  assert.equal(customTimeline.days["2026-09-11"]?.behaviorPolicy.unresolvedOccurrence, "blank");
+});
+
+test("the Task Engine resolves the standard policy without changing current evaluation", () => {
+  const implicit = evaluateTaskState(input);
+  const explicit = evaluateTaskState({ ...input, behaviorPolicy: STANDARD_TASK_BEHAVIOR_POLICY });
+
+  assert.equal(implicit.behaviorPolicy, STANDARD_TASK_BEHAVIOR_POLICY);
+  assert.deepEqual(implicit, explicit);
+});

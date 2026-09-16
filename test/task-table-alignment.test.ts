@@ -61,8 +61,8 @@ test("all normal Table current-status indicators use one shared size helper", ()
     tableSource.indexOf("function renderRowCell"),
     tableSource.indexOf("const renderSourceStepMiniRows"),
   );
-  assert.match(tableSource, /function renderTableCurrentStatusCircle\(status: TaskDisplayStatus\)/);
-  assert.match(tableSource, /renderTaskStatusCircle\(status, TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE\)/);
+  assert.match(tableSource, /function renderTableCurrentStatusCircle\(status: TaskDisplayStatus, attention = false\)/);
+  assert.match(tableSource, /renderTaskStatusCircle\(status, TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE, \{ attention \}\)/);
   assert.equal((tableSource.match(/renderTableCurrentStatusCircle\((?:task|item|subtask|\"pending\")/g) ?? []).length, 5);
   for (const renderer of [
     tableSource.slice(tableSource.indexOf("const renderChildTaskMiniCell"), tableSource.indexOf("const renderTableStepDraftCell")),
@@ -72,7 +72,7 @@ test("all normal Table current-status indicators use one shared size helper", ()
     assert.doesNotMatch(renderer, /renderTaskStatusCircle\((?:task|item|subtask)\.status, \"(?:sm|md)\"/);
     assert.doesNotMatch(renderer, /renderTaskStatusCircle\(\"pending\", \"(?:sm|md)\"/);
   }
-  assert.match(tableCurrentStatusSource, /renderTableCurrentStatusCircle\(task\.status\)/);
+  assert.match(tableCurrentStatusSource, /renderTableCurrentStatusCircle\(task\.status, Boolean\(task\.attentionReason\)\)/);
 });
 
 test("Step and Substep mini-cell paths use one shared child-cell placement authority", () => {

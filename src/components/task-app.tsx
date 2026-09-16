@@ -67,7 +67,6 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import dynamicIconImports from "lucide-react/dynamicIconImports";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -122,6 +121,10 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
+import { isLucideIconName } from "@/lib/lucide-icon";
+import { RawLucideIcon } from "@/components/ui/lucide-icon";
+import { normalizeTaskEditorNavigationTaskIds } from "@/lib/task-editor-navigation";
+import { buildTaskTypeSelectionOptions, resolveTaskTypeSelection } from "@/lib/task-type";
 import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievementNotifications, useAchievementProgress } from "@/hooks/useAchievementProgress";
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
@@ -139,6 +142,8 @@ import type { TaskCanonicalMutationState } from "@/hooks/useTaskUpdateAction";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
 import { useWorkspaceData } from "@/hooks/useWorkspaceData";
+import { useTaskTypeBehaviorProfiles } from "@/hooks/useTaskTypeBehaviorProfiles";
+import { moveAssignedTasksToTaskAndDeleteRuleset } from "@/lib/custom-ruleset-delete-resolution";
 import { useTaskListFolderActions } from "@/hooks/useTaskListFolderActions";
 import { useResponsiveTaskGridColumns } from "@/hooks/useResponsiveTaskGridColumns";
 import { useTaskListSelection } from "@/hooks/useTaskListSelection";
@@ -205,10 +210,15 @@ import {
   createEngineRolloverPlan,
   engineRolloverPlanTaskMutationCandidates,
   evaluateTaskActionAuthority,
+  resolveTaskManualActionAvailabilityForTask,
+  resolveTaskStatusOptionsForTask,
+  taskManualActionForStatus,
   taskStateHistoryRowToCanonicalIntent,
   projectTasksForActiveStatusRead,
-  resolveActiveTaskStatuses,
+  resolveActiveTaskStatusesIncrementally,
+  resolveActiveTaskStatusesIncrementallyChunked,
 } from "@/lib/task-state-engine";
+import { resolveTaskBehaviorPolicyForTask, selectTaskBehaviorProjectionSemantics, type TaskBehaviorPolicy, type TaskBehaviorProjectionSemantics } from "@/lib/task-state-engine/behavior-policy";
 import {
   getMomentumMetric,
   getNextMomentumView,
@@ -286,6 +296,7 @@ import {
   canTaskBeMarkedComplete,
   COMPLETE_BLOCKED_MESSAGE,
   getTaskCompleteConfirmationDescription,
+  getSelectableTaskStatusesForTask,
 } from "@/lib/task-complete";
 import { buildMilestoneLifecycleArgs, canDetachAndPromoteTaskToMilestone, canPromoteTaskToMilestone, formatMilestoneRpcError, getMilestoneEligibility, mergeAuthoritativeMilestoneTask, shouldReverseCompletedMilestoneForStatusChange } from "@/lib/milestones";
 import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
@@ -300,6 +311,7 @@ import {
   type TaskHistoryStats,
 } from "@/lib/task-history";
 import { groupTaskSubtasksByTaskId } from "@/lib/task-subtasks";
+import { buildTaskAttentionProjection, buildTaskAttentionReasonMap, type TaskAttentionBehaviorPolicy } from "@/lib/task-attention";
 import {
   buildManualMembershipMap,
   getBuiltInTaskLists,
@@ -848,38 +860,6 @@ const ICONS_MAP: Record<string, LucideIcon> = {
   basketball: BasketballIcon as unknown as LucideIcon,
 };
 
-type RawLucideIconName = keyof typeof dynamicIconImports;
-const LUCIDE_ICON_NAME_SET = new Set<string>(Object.keys(dynamicIconImports));
-
-function RawLucideIcon({
-  name,
-  ...props
-}: {
-  name: RawLucideIconName;
-} & React.SVGProps<SVGSVGElement>) {
-  const [IconComponent, setIconComponent] = useState<LucideIcon | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void dynamicIconImports[name]().then((module) => {
-      if (!cancelled) {
-        setIconComponent(() => module.default);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [name]);
-
-  if (!IconComponent) {
-    return <Code2 {...props} />;
-  }
-
-  return <IconComponent {...props} />;
-}
-
 export function CategoryIcon({ name, ...props }: { name: string } & React.SVGProps<SVGSVGElement>) {
   const aliasedIcon = ICONS_MAP[name];
   if (aliasedIcon) {
@@ -887,8 +867,8 @@ export function CategoryIcon({ name, ...props }: { name: string } & React.SVGPro
     return <AliasedIcon {...props} />;
   }
 
-  if (LUCIDE_ICON_NAME_SET.has(name)) {
-    return <RawLucideIcon name={name as RawLucideIconName} {...props} />;
+  if (isLucideIconName(name)) {
+    return <RawLucideIcon name={name} {...props} />;
   }
 
   return <Code2 {...props} />;
@@ -903,6 +883,7 @@ const MAX_FOCUS_ALARM_INTERVAL_MINUTES = 120;
 const FOCUS_ALARM_INTERVAL_STEP_MINUTES = 5;
 const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   bucket: "Lists",
+  task_type: "Task Type",
   date_added: "Date Added",
   date_completed: "Date Completed",
   last_done: "Last Done",
@@ -919,7 +900,7 @@ const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   repeat: "Repeat",
   signal: "Indicators",
 };
-const LIST_COLUMN_PICKER_ORDER: AgentPlanColumnId[] = ["bucket", "date_added", "last_done", "last_handled", "due", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "energy", "repeat", "signal"];
+const LIST_COLUMN_PICKER_ORDER: AgentPlanColumnId[] = ["bucket", "task_type", "date_added", "last_done", "last_handled", "due", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "energy", "repeat", "signal"];
 const TASK_KEYBOARD_SHORTCUTS: TaskKeyboardShortcut[] = [
   { action: "Search tasks", keys: ["/"] },
   { action: "New task", keys: ["N"], alternateKeys: ["A"] },
@@ -1249,6 +1230,7 @@ export function TaskApp() {
     journalSignalValues: healthJournalSignalValues,
     journalSignalOccurrences: healthJournalSignalOccurrences,
     saveJournalEntry,
+    saveJournalQuestions,
     createJournalSignal,
     updateJournalSignal,
     setJournalSignalTemplate,
@@ -1696,6 +1678,7 @@ export function TaskApp() {
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
+  const [taskEditorNavigationTaskIds, setTaskEditorNavigationTaskIds] = useState<string[] | null>(null);
   const [milestoneSetupTaskId, setMilestoneSetupTaskId] = useState<string | null>(null);
   const [milestoneCorrectionId, setMilestoneCorrectionId] = useState<string | null>(null);
   const [pendingDetachMilestoneTaskId, setPendingDetachMilestoneTaskId] = useState<string | null>(null);
@@ -1896,6 +1879,37 @@ export function TaskApp() {
     () => getLogicalDayKey(new Date(logicalDayNow), { dayStartTime, timezone: userTimeZone }),
     [dayStartTime, logicalDayNow, userTimeZone],
   );
+  const {
+    isLoading: isTaskTypeBehaviorProfilesLoading,
+    profileRevisions: taskTypeBehaviorProfileRevisions,
+    profiles: taskTypeBehaviorProfiles,
+    customBehaviorRulesets,
+    customBehaviorRulesetProfiles,
+    behaviorSelectionStateRef,
+    customRulesetBehaviorPolicyRevisions,
+    behaviorSelectionsByTaskId,
+    createCustomRuleset,
+    deleteCustomRuleset,
+    renameCustomRuleset,
+    updateCustomRulesetPresentation,
+    refreshCustomBehaviorRulesets,
+    resetTaskBehaviorProfile,
+    updateTaskBehaviorProfile,
+    updateCustomBehaviorRulesetProfile,
+  } = useTaskTypeBehaviorProfiles(supabase, todayKey, session?.user?.id ?? null, setMessage);
+
+  const resolveCurrentTaskStatusOptions = (task: Task, currentStatus: TaskStatus = task.status) => resolveTaskStatusOptionsForTask({
+    behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorSelectionsByTaskId,
+    customRulesetId: task.custom_ruleset_id,
+    logicalDate: todayKey,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+    policyLoading: isTaskTypeBehaviorProfilesLoading,
+    statuses: getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: currentStatus }),
+    taskId: task.id,
+    taskType: task.task_type,
+  });
 
   const {
     isSoftWorkspaceRefreshing,
@@ -1911,6 +1925,7 @@ export function TaskApp() {
     reconcileRolloverWorkspace,
     retryTaskHistoryForTask,
     refreshTaskHistoryStreakSummary,
+    refreshTaskHistoryStreakSummaries,
     softRefreshWorkspace,
     taskHistoryByTaskId: sharedTaskHistoryByTaskId,
     taskHistoryLoadStateByTaskId,
@@ -1919,6 +1934,10 @@ export function TaskApp() {
     workspaceGenerationRef,
   } = useWorkspaceData({
     activePage,
+    behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+    behaviorSelectionStateRef,
     currentUser: session?.user,
     isMissingTaskListManualMembershipsTableError,
     isMissingTaskListsTableError,
@@ -1996,6 +2015,54 @@ export function TaskApp() {
     todayKey,
     timezone: userTimeZone,
   });
+  const taskTypeBehaviorProjectionSemantics = useMemo(() => ({
+    task: selectTaskBehaviorProjectionSemantics({
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      taskType: "task",
+    }),
+    custom: selectTaskBehaviorProjectionSemantics({
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      taskType: "custom",
+    }),
+  }), [customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles]);
+  const namedCustomRulesetProjectionSemantics = useMemo<Readonly<Record<string, TaskBehaviorProjectionSemantics>>>(() => Object.fromEntries(
+    Object.keys(customRulesetBehaviorPolicyRevisions).map((rulesetId) => [
+      rulesetId,
+      selectTaskBehaviorProjectionSemantics({
+        behaviorProfiles: taskTypeBehaviorProfiles,
+        behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+        customRulesetId: rulesetId,
+        namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+        taskType: "custom",
+      }),
+    ]),
+  ) as Readonly<Record<string, TaskBehaviorProjectionSemantics>>, [customRulesetBehaviorPolicyRevisions, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles]);
+  const taskTypeBehaviorProfilesRevision = useMemo(
+    () => createProjectionDomainRevision("task-history-streak-policy", {
+      task: taskTypeBehaviorProjectionSemantics.task.streak,
+      custom: taskTypeBehaviorProjectionSemantics.custom.streak,
+      namedCustomRulesetBehaviorPolicyRevisions: Object.fromEntries(
+        Object.entries(namedCustomRulesetProjectionSemantics).map(([rulesetId, semantics]) => [rulesetId, semantics.streak]),
+      ),
+      behaviorSelectionsByTaskId,
+    }),
+    [behaviorSelectionsByTaskId, namedCustomRulesetProjectionSemantics, taskTypeBehaviorProjectionSemantics],
+  );
+  const refreshedBehaviorProfilesRevisionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isTaskHistoryLoaded || tasks.length === 0 || refreshedBehaviorProfilesRevisionRef.current === taskTypeBehaviorProfilesRevision) return;
+    const hasPreviouslyObservedPolicy = refreshedBehaviorProfilesRevisionRef.current !== null;
+    refreshedBehaviorProfilesRevisionRef.current = taskTypeBehaviorProfilesRevision;
+    if (!hasPreviouslyObservedPolicy) return;
+    if (isWorkspacePerformanceDiagnosticsEnabled()) {
+      console.info(`[workspace:streak-summary] mode=bulk reason=behavior-policy tasks=${tasks.length}`);
+    }
+    void refreshTaskHistoryStreakSummaries(tasks, { supersede: true });
+  }, [isTaskHistoryLoaded, refreshTaskHistoryStreakSummaries, taskTypeBehaviorProfilesRevision, tasks]);
   const actionWorkspaceGeneration = workspaceGenerationRef.current;
 
   const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[], nextTask?: Task) => {
@@ -2262,6 +2329,7 @@ export function TaskApp() {
         : { ...current, tasksSurface: "tasks" }
     ));
     setRequestedListOverlayTaskId(null);
+    setTaskEditorNavigationTaskIds(null);
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorFocusRequest(null);
     setSharedTaskEditorOverlayTaskId(taskId);
@@ -2432,7 +2500,10 @@ export function TaskApp() {
     [logicalDayNow, userTimeZone],
   );
   const nextTaskStateHistory = taskHistory;
-  const taskStateHistoryContentRevision = createProjectionDomainRevision("task-state-history", nextTaskStateHistory);
+  const taskStateHistoryContentRevision = useMemo(
+    () => createProjectionDomainRevision("task-state-history", nextTaskStateHistory),
+    [nextTaskStateHistory],
+  );
   const [stabilizeTaskStateHistory] = useState(() => {
     let cached = { revision: "", value: nextTaskStateHistory };
     return (revision: string, value: typeof nextTaskStateHistory) => {
@@ -2505,6 +2576,10 @@ export function TaskApp() {
         ]);
         const plan = createEngineRolloverPlan({
             allowCanonicalAutomaticMissed: true,
+            behaviorProfiles: taskTypeBehaviorProfiles,
+            behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+            namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+            behaviorSelectionsByTaskId,
             history: rolloverHistory,
             includeDiagnostics: diagnosticsEnabled,
             now: new Date(),
@@ -2778,37 +2853,103 @@ export function TaskApp() {
     () => createProjectionDomainRevision("task-history-readiness", isTaskHistoryLoaded),
     [isTaskHistoryLoaded],
   );
-  const taskStatusSettingsRevision = useMemo(
+  const taskActiveStatusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("task-status-settings", {
+      behavior: {
+        task: taskTypeBehaviorProjectionSemantics.task.activeStatus,
+        custom: taskTypeBehaviorProjectionSemantics.custom.activeStatus,
+      },
       dayStartTime,
       timezone: userTimeZone,
       todayKey,
     }),
-    [dayStartTime, todayKey, userTimeZone],
+    [dayStartTime, taskTypeBehaviorProjectionSemantics, todayKey, userTimeZone],
+  );
+  const taskActiveStatusBehaviorRevision = useMemo(
+    () => createProjectionDomainRevision("task-status-behavior", {
+      task: taskTypeBehaviorProjectionSemantics.task.activeStatus,
+      custom: taskTypeBehaviorProjectionSemantics.custom.activeStatus,
+      namedCustomRulesetBehaviorPolicyRevisions: Object.fromEntries(
+        Object.entries(namedCustomRulesetProjectionSemantics).map(([rulesetId, semantics]) => [rulesetId, semantics.activeStatus]),
+      ),
+    }),
+    [namedCustomRulesetProjectionSemantics, taskTypeBehaviorProjectionSemantics],
+  );
+  const taskActiveStatusAssignmentsRevision = useMemo(
+    () => createProjectionDomainRevision("task-status-behavior-selections", behaviorSelectionsByTaskId),
+    [behaviorSelectionsByTaskId],
   );
   const [projectionCache] = useState(createStableTaskProjectionCache);
   const activeStatusInputRevision = combineProjectionRevisions(
     taskDomainRevision,
     taskHistoryRevision,
-    taskStatusSettingsRevision,
+    taskActiveStatusSettingsRevision,
+    taskActiveStatusAssignmentsRevision,
     taskHistoryReadinessRevision,
   );
-  const activeStatusRead = useMemo(
-    () => {
-      if (!isTaskHistoryLoaded) return null;
-      return projectionCache.getOrCreate("active-status", activeStatusInputRevision, () => resolveActiveTaskStatuses({
-        historyByTaskId: taskHistoryByTaskId,
-        logicalDayRollover: dayStartTime,
-        now: new Date(logicalDayNow),
-        tasks,
-        timezone: userTimeZone,
-      }));
-    },
+  const [activeStatusRead, setActiveStatusRead] = useState<Awaited<ReturnType<typeof resolveActiveTaskStatusesIncrementally>> | null>(null);
+  const activeStatusCalculationTokenRef = useRef(0);
+  const committedActiveStatusBehaviorRevisionRef = useRef<string | null>(null);
+  const latestActiveStatusInputRevisionRef = useRef(activeStatusInputRevision);
+  const latestActiveStatusBehaviorRevisionRef = useRef(taskActiveStatusBehaviorRevision);
+  latestActiveStatusInputRevisionRef.current = activeStatusInputRevision;
+  latestActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
+  useEffect(() => {
+    const calculationToken = activeStatusCalculationTokenRef.current + 1;
+    activeStatusCalculationTokenRef.current = calculationToken;
+    if (!isTaskHistoryLoaded) {
+      committedActiveStatusBehaviorRevisionRef.current = null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the user-scoped projection when History is unavailable.
+      setActiveStatusRead(null);
+      return () => {
+        if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
+      };
+    }
+
+    const activeStatusInput = {
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      behaviorSelectionsByTaskId,
+      historyByTaskId: taskHistoryByTaskId,
+      logicalDayRollover: dayStartTime,
+      now: new Date(logicalDayNow),
+      tasks,
+      timezone: userTimeZone,
+    };
+    const isGlobalBehaviorChange = committedActiveStatusBehaviorRevisionRef.current !== null
+      && committedActiveStatusBehaviorRevisionRef.current !== taskActiveStatusBehaviorRevision;
+
+    if (isGlobalBehaviorChange) {
+      void resolveActiveTaskStatusesIncrementallyChunked(activeStatusInput, projectionCache, {
+        budgetMs: 10,
+        isCurrent: () => activeStatusCalculationTokenRef.current === calculationToken
+          && latestActiveStatusInputRevisionRef.current === activeStatusInputRevision
+          && latestActiveStatusBehaviorRevisionRef.current === taskActiveStatusBehaviorRevision,
+      }).then((result) => {
+        if (!result.completed || activeStatusCalculationTokenRef.current !== calculationToken) return;
+        committedActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          console.info(`[workspace:active-status] mode=global-chunked tasks=${tasks.length} chunks=${result.chunks}`);
+        }
+        setActiveStatusRead(result);
+      });
+    } else {
+      const result = resolveActiveTaskStatusesIncrementally(activeStatusInput, projectionCache);
+      committedActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
+      if (isWorkspacePerformanceDiagnosticsEnabled()) {
+        console.info(`[workspace:active-status] evaluatedTasks=${result.evaluatedTasks} reusedTasks=${result.reusedTasks}`);
+      }
+      setActiveStatusRead(result);
+    }
+
+    return () => {
+      if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
+    };
     // Status evaluation is logical-day based. The minute clock must not clone
     // or replace the canonical Task collection while the logical day is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache],
-  );
+  }, [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache, taskActiveStatusBehaviorRevision]);
   const taskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId ?? persistedTaskDisplayStatusByTaskId;
   const taskDisplayDueOnByTaskId = activeStatusRead?.dueOnByTaskId ?? {};
   const activeStatusRevision = useMemo(
@@ -2829,6 +2970,33 @@ export function TaskApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [canonicalEntityRevision, projectionCache],
   );
+  const attentionBehaviorPoliciesByTaskId = useMemo<Readonly<Record<string, TaskAttentionBehaviorPolicy>> | null>(() => {
+    if (isTaskTypeBehaviorProfilesLoading) return null;
+    return Object.fromEntries(tasksForActiveStatusRead.map((task) => {
+      const resolvedPolicy = resolveTaskBehaviorPolicyForTask({
+        behaviorProfiles: taskTypeBehaviorProfiles,
+        behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+        behaviorSelectionsByTaskId,
+        customRulesetId: task.custom_ruleset_id,
+        logicalDate: todayKey,
+        namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+        taskId: task.id,
+        taskType: task.task_type,
+      }).policy;
+      return [task.id, {
+        missedStreakOnUnhandled: resolvedPolicy.missedStreakOnUnhandled,
+      } satisfies TaskAttentionBehaviorPolicy];
+    })) as Readonly<Record<string, TaskAttentionBehaviorPolicy>>;
+  }, [behaviorSelectionsByTaskId, customRulesetBehaviorPolicyRevisions, isTaskTypeBehaviorProfilesLoading, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles, tasksForActiveStatusRead, todayKey]);
+  const taskAttentionProjection = useMemo(
+    () => buildTaskAttentionProjection({
+      behaviorPoliciesByTaskId: attentionBehaviorPoliciesByTaskId ?? undefined,
+      behaviorPolicyLoading: attentionBehaviorPoliciesByTaskId === null,
+      statusesByTaskId: taskDisplayStatusByTaskId,
+      tasks: tasksForActiveStatusRead,
+    }),
+    [attentionBehaviorPoliciesByTaskId, taskDisplayStatusByTaskId, tasksForActiveStatusRead],
+  );
   useEffect(() => {
     if (isTaskHistoryLoaded && activeStatusRead && process.env.NODE_ENV === "development" && typeof window !== "undefined") {
       window.__ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__ = activeStatusRead.authority;
@@ -2841,7 +3009,14 @@ export function TaskApp() {
     options?: TaskRowUpdateOptions,
   ) => {
     const refreshedBeforeMutation = await prepareTaskMutation();
-    let nextOptions = options;
+    const refreshBehaviorSelectionState = (Object.hasOwn(values, "task_type") || Object.hasOwn(values, "custom_ruleset_id"))
+      ? refreshCustomBehaviorRulesets
+      : options?.refreshCustomBehaviorRulesets;
+    let nextOptions: TaskRowUpdateOptions = {
+      ...options,
+      effectiveFromLogicalDate: options?.effectiveFromLogicalDate ?? todayKey,
+      refreshCustomBehaviorRulesets: refreshBehaviorSelectionState,
+    };
 
     if (refreshedBeforeMutation) {
       const latestTaskResult = await client
@@ -2854,7 +3029,9 @@ export function TaskApp() {
       if (!latestTaskResult.error) {
         nextOptions = {
           ...options,
+          effectiveFromLogicalDate: options?.effectiveFromLogicalDate ?? todayKey,
           expectedTask: latestTaskResult.data ?? null,
+          refreshCustomBehaviorRulesets: refreshBehaviorSelectionState,
         };
       }
     }
@@ -2867,7 +3044,7 @@ export function TaskApp() {
       isMissingTaskEnergyNoneEnumError,
       nextOptions,
     );
-  }, [client, prepareTaskMutation]);
+  }, [client, prepareTaskMutation, refreshCustomBehaviorRulesets, todayKey]);
   const currentUserIdText = session?.user?.id ?? "";
   const loadTaskCalendarOverridesForTask = useCallback(async (taskId: string) => {
     if (!currentUserIdText) return null;
@@ -2932,10 +3109,11 @@ export function TaskApp() {
     isTaskHistoryLoaded,
     historyFactsByTaskId: taskHistoryFactsByTaskId,
     manualMembershipsByTaskId,
+    attentionEligibleTaskIds: taskAttentionProjection.attentionEligibleTaskIds,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
     todayDateKey: todayKey,
-  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
+  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskAttentionProjection.attentionEligibleTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
   const parsedTaskSearch = useMemo(
     () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
     [taskUiState.duplicateTitleMode, taskUiState.search],
@@ -2972,16 +3150,17 @@ export function TaskApp() {
     () => createProjectionDomainRevision("lists-memberships", {
       lists: availableTaskLists,
       manualMembershipsByTaskId,
+      attentionEligibleTaskIds: Array.from(taskAttentionProjection.attentionEligibleTaskIds).sort(),
       taskSubtasksByTaskId,
     }),
-    [availableTaskLists, manualMembershipsByTaskId, taskSubtasksByTaskId],
+    [availableTaskLists, manualMembershipsByTaskId, taskAttentionProjection.attentionEligibleTaskIds, taskSubtasksByTaskId],
   );
   const statusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("status-settings", {
       focusedTaskIds,
-      taskStatusSettingsRevision,
+      taskActiveStatusSettingsRevision,
     }),
-    [focusedTaskIds, taskStatusSettingsRevision],
+    [focusedTaskIds, taskActiveStatusSettingsRevision],
   );
   const milestoneProjectionRevision = useMemo(
     () => createProjectionDomainRevision("milestones", {
@@ -3129,13 +3308,17 @@ export function TaskApp() {
     () => createProjectionDomainRevision("task-notes", availableTaskNotes),
     [availableTaskNotes],
   );
-  const workspaceFactsRevision = combineProjectionRevisions(
-    canonicalIndexRevision,
-    taskNotesRevision,
-    createProjectionDomainRevision("bucket-context", {
+  const bucketContextRevision = useMemo(
+    () => createProjectionDomainRevision("bucket-context", {
       focusedTaskIds,
       routing: taskRouting,
     }),
+    [focusedTaskIds, taskRouting],
+  );
+  const workspaceFactsRevision = combineProjectionRevisions(
+    canonicalIndexRevision,
+    taskNotesRevision,
+    bucketContextRevision,
   );
   const taskAppWorkspaceFacts = useMemo(
     () => projectionCache.getOrCreate("workspace-facts", workspaceFactsRevision, () => buildTaskAppWorkspaceFacts({
@@ -3151,11 +3334,17 @@ export function TaskApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [projectionCache, workspaceFactsRevision],
   );
-  const derivationViewRevision = createProjectionDomainRevision("view", taskUiStateForDerivedData);
-  const derivationSettingsRevision = createProjectionDomainRevision("view-settings", {
-    grid: taskGridLayout,
-    listVisibleColumns: taskUiState.visibleColumnsByView.table,
-  });
+  const derivationViewRevision = useMemo(
+    () => createProjectionDomainRevision("view", taskUiStateForDerivedData),
+    [taskUiStateForDerivedData],
+  );
+  const derivationSettingsRevision = useMemo(
+    () => createProjectionDomainRevision("view-settings", {
+      grid: taskGridLayout,
+      listVisibleColumns: taskUiState.visibleColumnsByView.table,
+    }),
+    [taskGridLayout, taskUiState.visibleColumnsByView.table],
+  );
   const taskDerivationRevision = createTaskDerivationRevisionKey({
     historyRevision: taskHistoryRevision,
     listRevision: workspaceFactsRevision,
@@ -3276,6 +3465,18 @@ export function TaskApp() {
     urgentTasks,
     visibleListCounts,
   } = derivedData;
+  const attentionRuleGroup = availableTaskLists.find((list) => list.id === "attention")?.rules ?? null;
+  const taskAttentionReasonByTaskId = useMemo(
+    () => buildTaskAttentionReasonMap({
+      attentionRuleGroup,
+      dueOnByTaskId: taskDisplayDueOnByTaskId,
+      listMembershipsByTaskId: taskListMembershipsByTaskId,
+      statusesByTaskId: taskDisplayStatusByTaskId,
+      tasks: tasksForActiveStatusRead,
+      todayKey,
+    }),
+    [attentionRuleGroup, taskDisplayDueOnByTaskId, taskDisplayStatusByTaskId, taskListMembershipsByTaskId, tasksForActiveStatusRead, todayKey],
+  );
   const [sharedEditorRowModelCache] = useState(createStableTaskRowModelCache);
   const sharedTaskEditorRows = useMemo(
     () => sharedTaskEditorOverlayTaskId
@@ -3288,6 +3489,7 @@ export function TaskApp() {
         subtasks: taskSubtasksByTaskId[task.id] ?? [],
         taskHistory: taskHistoryByTaskId[task.id] ?? [],
         taskHistoryStreakSummary: taskHistoryStreakSummaries[task.id],
+        attentionReason: taskAttentionReasonByTaskId[task.id],
         todayDateKey: todayKey,
       }))
       : [],
@@ -3299,6 +3501,7 @@ export function TaskApp() {
       taskHistoryByTaskId,
       taskHistoryStreakSummaries,
       taskDisplayStatusByTaskId,
+      taskAttentionReasonByTaskId,
       taskLinkedNotesByTaskId,
       taskListMembershipsByTaskId,
       taskSubtasksByTaskId,
@@ -3451,6 +3654,7 @@ export function TaskApp() {
     || taskUiState.quickFilters.length > 0
     || taskUiState.tableColumnFilters.priority.length > 0
     || taskUiState.tableColumnFilters.repeat.length > 0
+    || (taskUiState.tableColumnFilters.taskType?.length ?? 0) > 0
     || Object.values(taskUiState.tableColumnFilters.text).some((value) => Boolean(value?.trim()))
   );
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
@@ -3485,6 +3689,7 @@ export function TaskApp() {
     listDefinitions: availableTaskLists,
     listMembershipsByTaskId: taskListMembershipsByTaskId,
     manualMembershipsByTaskId,
+    taskAttentionReasonByTaskId,
     subtasksByTaskId: taskSubtasksByTaskId,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
@@ -3500,6 +3705,7 @@ export function TaskApp() {
     taskListMembershipsByTaskId,
     taskSubtasksByTaskId,
     taskDisplayStatusByTaskId,
+    taskAttentionReasonByTaskId,
     todayKey,
   ]);
   const taskHighlightMatches = useMemo(
@@ -3828,6 +4034,10 @@ export function TaskApp() {
       sortTasksForUi,
     },
     batchEdit: {
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      behaviorSelectionsByTaskId,
       clearListTaskSelection,
       dayStartTime,
       focusedTaskIds,
@@ -3874,6 +4084,10 @@ export function TaskApp() {
       taskLists,
     },
     editorSave: {
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      behaviorSelectionsByTaskId,
       canonicalTaskCreator: (payload, source) => insertTaskRowWithCanonicalCreation(client, payload, source),
       currentUserId: currentUserIdText,
       dayStartTime,
@@ -3921,6 +4135,7 @@ export function TaskApp() {
       setMessage,
       setTaskListManualMemberships,
       setTaskRouting,
+      taskListDefinitions: availableTaskLists,
       taskListManualMemberships,
     },
     subtask: {
@@ -3932,6 +4147,10 @@ export function TaskApp() {
       tasks,
     },
     update: {
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      behaviorSelectionsByTaskId,
       canonicalTaskMutationState: canonicalTaskMutationStateRef.current,
       clearPendingTaskMutations,
       markPendingTaskMutations,
@@ -3960,6 +4179,24 @@ export function TaskApp() {
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
   });
+  async function updateTaskSubtaskStatusWithPolicy(subtaskId: string, status: TaskStatus) {
+    const subtask = tasks.find((task) => task.id === subtaskId) ?? null;
+    const action = taskManualActionForStatus(status);
+    if (action && (isTaskTypeBehaviorProfilesLoading || !subtask || !resolveTaskManualActionAvailabilityForTask({
+      action,
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: subtask.custom_ruleset_id,
+      logicalDate: todayKey,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      taskId: subtask.id,
+      taskType: subtask.task_type,
+    }).available)) {
+      return false;
+    }
+    return updateTaskSubtaskStatus(subtaskId, status);
+  }
   async function reorderChildTask(taskId: string, instruction: TaskSiblingReorderInstruction) {
     const plan = buildTaskSiblingReorderPlan(tasks, taskId, instruction);
     if (!plan.ok) {
@@ -4089,6 +4326,49 @@ export function TaskApp() {
     });
   }, [updateTask]);
 
+  const showCustomRulesetTasks = useCallback((rulesetId: string) => {
+    setActivePage("Tasks");
+    setIsTaskFiltersOpen(true);
+    setTaskUiState((prev) => ({
+      ...prev,
+      duplicateTitleMode: false,
+      energyFilters: [],
+      includeStepsByView: { ...prev.includeStepsByView, table: true },
+      quickFilters: [],
+      search: "",
+      selectedBucket: "all",
+      statusFilters: [],
+      tableColumnFilters: {
+        ...prev.tableColumnFilters,
+        priority: [],
+        repeat: [],
+        taskType: [rulesetId],
+        text: {},
+      },
+      view: "table",
+    }));
+  }, [setActivePage, setIsTaskFiltersOpen, setTaskUiState]);
+
+  const moveCustomRulesetTasksToTaskAndDelete = useCallback(async (rulesetId: string) => {
+    const rulesetName = customBehaviorRulesets.find((ruleset) => ruleset.id === rulesetId)?.name ?? "the Custom Task Type";
+    const assignedTaskIds = tasks
+      .filter((task) => task.task_type === "custom" && task.custom_ruleset_id === rulesetId)
+      .map((task) => task.id);
+    const resolution = await moveAssignedTasksToTaskAndDeleteRuleset({
+      deleteRuleset: () => deleteCustomRuleset(rulesetId),
+      moveTask: (taskId) => updateTask(taskId, { task_type: "task", custom_ruleset_id: null }),
+      taskIds: assignedTaskIds,
+    });
+    if (resolution.failedTaskId) {
+      const failedTask = tasks.find((task) => task.id === resolution.failedTaskId);
+      const taskLabel = failedTask?.title.trim() ? `Task “${failedTask.title.trim()}”` : "an assigned Task";
+      const message = `Could not move ${taskLabel} to Task, so ${rulesetName} was not deleted.`;
+      setMessage({ tone: "warn", text: message });
+      return { assignedTaskCount: null, error: message, ok: false };
+    }
+    return resolution.deleteResult ?? { assignedTaskCount: null, error: "Could not delete the Custom Task Type.", ok: false };
+  }, [customBehaviorRulesets, deleteCustomRuleset, setMessage, tasks, updateTask]);
+
   const openTaskInNewWorkspaceTab = useCallback((taskId: string) => {
     const task = tasks.find((entry) => entry.id === taskId);
     const nextLabel = task?.title.trim() ? task.title.trim() : "Task";
@@ -4109,6 +4389,10 @@ export function TaskApp() {
   }, [activeTaskWorkspaceTab.isRailHidden, activeTaskWorkspaceTab.taskUiState, createTaskWorkspaceTab, setActivePage, taskUiState.view, tasks]);
 
   const handleTaskWorkspaceSurfaceChange = useCallback((surface: TaskUiState["tasksSurface"]) => {
+    if (surface === "attention") {
+      setTaskUiState((prev) => ({ ...prev, selectedBucket: "attention", tasksSurface: "tasks" }));
+      return;
+    }
     if (surface === "report") {
       const existingReportTab = taskWorkspaceTabsState.tabs.find((tab) => isReportTaskWorkspaceTab(tab));
       if (existingReportTab) {
@@ -4182,11 +4466,12 @@ export function TaskApp() {
     }
   }, [clearPageShellNavigationHighlight, handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, setActivePage, setTaskUiState]);
 
-  const openExistingTaskEditor = useCallback((task: Task) => {
+  const openExistingTaskEditor = useCallback((task: Task, navigationTaskIds?: string[]) => {
     setSuppressDetachedListNoticeTaskId(null);
+    setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(navigationTaskIds ?? selectedBucketTasks.map((entry) => entry.id)));
     setSharedTaskEditorOverlayTaskId(task.id);
     setTaskEditorFocusRequest(null);
-  }, []);
+  }, [selectedBucketTasks]);
 
   const createTaskAndOpenSharedEditor = useCallback(async (
     initialTaskValues: TaskDraft,
@@ -4225,6 +4510,39 @@ export function TaskApp() {
     await createTaskAndOpenSharedEditor(buildNewTaskDraft("New Task"), { routeToCurrentBucket: true });
   }, [createTaskAndOpenSharedEditor]);
 
+  const openTaskComposerForType = useCallback(async (selectionValue: string) => {
+    const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
+    if (!selection) {
+      setMessage({ tone: "warn", text: "That Task Type is no longer available." });
+      return;
+    }
+
+    await createTaskAndOpenSharedEditor({
+      ...buildNewTaskDraft("New Task"),
+      custom_ruleset_id: selection.customRulesetId,
+      task_type: selection.taskType,
+    }, { routeToCurrentBucket: true });
+  }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage]);
+
+  const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string) => {
+    const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
+    if (!selection) {
+      setMessage({ tone: "warn", text: "That Task Type is no longer available." });
+      return null;
+    }
+
+    return addTask({
+      ...buildNewTaskDraft(title),
+      custom_ruleset_id: selection.customRulesetId,
+      task_type: selection.taskType,
+    });
+  }, [addTask, customBehaviorRulesets, setMessage]);
+
+  const taskTypeOptions = useMemo(
+    () => buildTaskTypeSelectionOptions(customBehaviorRulesets),
+    [customBehaviorRulesets],
+  );
+
   const duplicateTaskInPlace = useCallback(async (task: Task) => {
     const duplicateValues: TaskDraft = {
       actual_seconds: 0,
@@ -4243,6 +4561,7 @@ export function TaskApp() {
       repeat_frequency: task.repeat_frequency,
       repeat_interval: task.repeat_interval,
       status: "pending",
+      task_type: task.task_type,
       subtasks_auto_reset: task.subtasks_auto_reset,
       tags: [...task.tags],
       title: task.title.trim() ? `Copy of ${task.title.trim()}` : "Copy of task",
@@ -4621,16 +4940,20 @@ export function TaskApp() {
   }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, requestedPageShell, requestedPageShellLayoutReady]);
   useEffect(() => () => clearPageShellNavigationHighlight(), [clearPageShellNavigationHighlight]);
   const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
-  const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string) => {
+  const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string, selectionValue = "task") => {
+    const taskTypeSelection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     const result = buildChildTaskCreationDraft({
       blockedParentTaskIds: childTaskCreationBlockedTaskIds,
       parentTaskId,
+      taskTypeSelection,
       title,
     });
 
     if (!result.ok) {
       const text = result.error === "empty_title"
         ? "Enter a child task title."
+        : result.error === "invalid_task_type"
+          ? "That Task Type is no longer available."
         : result.error === "blocked_parent"
           ? "Child task creation is blocked for this task until its hierarchy issue is fixed."
           : "Choose a parent task before adding a child.";
@@ -4642,7 +4965,7 @@ export function TaskApp() {
     return createdTask
       ? { error: null, taskId: createdTask.id }
       : { error: "Child task was not created.", taskId: null };
-  }, [addTask, childTaskCreationBlockedTaskIds, setMessage]);
+  }, [addTask, childTaskCreationBlockedTaskIds, customBehaviorRulesets, setMessage]);
   const openChildTaskFromPreview = useCallback((taskId: string) => {
     setSuppressDetachedListNoticeTaskId(null);
     setRequestedListOverlayTaskId(taskId);
@@ -4797,7 +5120,17 @@ export function TaskApp() {
 
   const delayTaskToDate = useCallback(async (taskId: string, nextDueOn: string | null) => {
     const task = tasks.find((entry) => entry.id === taskId);
-    if (!task || !canTaskDelay({ dueOn: task.due_on, status: task.status })) {
+    if (!task || !canTaskDelay({ dueOn: task.due_on, status: task.status }) || isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
+      action: "delay",
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: task.custom_ruleset_id,
+      logicalDate: todayKey,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      taskId: task.id,
+      taskType: task.task_type,
+    }).available) {
       return false;
     }
 
@@ -4825,7 +5158,7 @@ export function TaskApp() {
       return true;
     }
 
-  }, [currentUserId, dayStartTime, getTaskDelayAnchorDate, loadTaskHistoryForTasks, logicalDayNow, setMessage, supabase, tasks, todayKey, updateTask, userTimeZone]);
+  }, [behaviorSelectionsByTaskId, customRulesetBehaviorPolicyRevisions, currentUserId, dayStartTime, getTaskDelayAnchorDate, isTaskTypeBehaviorProfilesLoading, loadTaskHistoryForTasks, logicalDayNow, setMessage, supabase, taskTypeBehaviorProfileRevisions, taskTypeBehaviorProfiles, tasks, todayKey, updateTask, userTimeZone]);
 
   const delaySameTableTask = useCallback(async (taskId: string, days: number) => {
     const task = tasks.find((entry) => entry.id === taskId);
@@ -5045,7 +5378,7 @@ export function TaskApp() {
     setIsActiveTimersTrayOpen(true);
   }
 
-  function openSharedTaskEditor(taskId: string, options?: { initialField?: TaskEditorInitialField; preserveActivePage?: boolean; timer?: RunningTaskTimer | null }) {
+  function openSharedTaskEditor(taskId: string, options?: { initialField?: TaskEditorInitialField; navigationTaskIds?: string[]; preserveActivePage?: boolean; timer?: RunningTaskTimer | null }) {
     const task = tasks.find((entry) => entry.id === taskId) ?? null;
     const timer = options?.timer ?? null;
     const taskOccurrence = task ? buildTaskOccurrenceIdentity(task) : null;
@@ -5057,6 +5390,7 @@ export function TaskApp() {
     }
 
     setSuppressDetachedListNoticeTaskId(null);
+    setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(options?.navigationTaskIds ?? selectedBucketTasks.map((entry) => entry.id)));
     setSharedTaskEditorOverlayTaskId(taskId);
     setTaskEditorFocusRequest(options?.initialField
       ? { field: options.initialField, taskId, token: ++taskEditorFocusTokenRef.current }
@@ -5086,9 +5420,12 @@ export function TaskApp() {
     <TaskGridView
       activeCount={filteredActiveTasks.length}
       currentColumns={gridColumns}
+      currentStreakByTaskId={currentStreakByTaskId}
+      customBehaviorRulesets={customBehaviorRulesets}
       doneCount={filteredDoneTasks.length}
       draggedWidgetId={draggedGridWidgetId}
       focusedTaskIds={focusedTaskIds}
+      getTaskStatusOptions={resolveCurrentTaskStatusOptions}
       gridAutoRowHeight={TASK_GRID_ROW_HEIGHT}
       gridLayout={taskGridLayout}
       isEditMode={isGridEditMode}
@@ -5118,10 +5455,10 @@ export function TaskApp() {
       onResizeWidget={(widgetId, nextWidth, nextHeight) => {
         void handleResizeGridWidget(widgetId, nextWidth, nextHeight);
       }}
-      onEditTask={openExistingTaskEditor}
+      onEditTask={(task) => openExistingTaskEditor(task, selectedBucketTasks.map((entry) => entry.id))}
       onSelectWidget={setSelectedGridWidgetId}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
-      onSetSubtaskStatus={(subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); }}
+      onSetSubtaskStatus={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
       onSetDraggedWidget={setDraggedGridWidgetId}
       overdueCount={filteredOverdueTasks.length}
       selectedWidgetId={selectedGridWidget?.id ?? null}
@@ -5143,7 +5480,10 @@ export function TaskApp() {
   );
   const matrixContentNode = (
     <TaskMatrixView
-      onEditTask={openExistingTaskEditor}
+      currentStreakByTaskId={currentStreakByTaskId}
+      customBehaviorRulesets={customBehaviorRulesets}
+      getTaskStatusOptions={resolveCurrentTaskStatusOptions}
+      onEditTask={(task) => openExistingTaskEditor(task, selectedBucketTasks.filter(isTaskOpen).map((entry) => entry.id))}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       subtasksByTaskId={taskSubtasksByTaskId}
       tasks={selectedBucketTasks.filter(isTaskOpen)}
@@ -5151,8 +5491,11 @@ export function TaskApp() {
   );
   const cardsContentNode = (
     <TaskCardGallery
+      currentStreakByTaskId={currentStreakByTaskId}
+      customBehaviorRulesets={customBehaviorRulesets}
       focusedTaskIds={focusedTaskIds}
-      onEditTask={openExistingTaskEditor}
+      getTaskStatusOptions={resolveCurrentTaskStatusOptions}
+      onEditTask={(task) => openExistingTaskEditor(task, selectedBucketTasks.map((entry) => entry.id))}
       onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       subtasksByTaskId={taskSubtasksByTaskId}
       tasks={selectedBucketTasks}
@@ -5161,7 +5504,8 @@ export function TaskApp() {
   const calendarContentNode = (
     <TaskCalendarView
       onAddTask={openCalendarDateTaskEditor}
-      onOpenTask={openExistingTaskEditor}
+      onOpenTask={(task) => openExistingTaskEditor(task, calendarTasks.map((entry) => entry.id))}
+      currentStreakByTaskId={currentStreakByTaskId}
       taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
       tasks={calendarTasks}
     />
@@ -5214,9 +5558,9 @@ export function TaskApp() {
       waitingCount={waitingTasks.length}
     />
   );
-  const clearTableColumnFilter = (dimension: "priority" | "repeat" | "title" | "lists" | "tags" | "link" | "notes") => {
+  const clearTableColumnFilter = (dimension: "priority" | "repeat" | "taskType" | "title" | "lists" | "tags" | "link" | "notes") => {
     setTaskUiState((prev) => {
-      if (dimension === "priority" || dimension === "repeat") {
+      if (dimension === "priority" || dimension === "repeat" || dimension === "taskType") {
         return {
           ...prev,
           tableColumnFilters: { ...prev.tableColumnFilters, [dimension]: [] },
@@ -5269,6 +5613,7 @@ export function TaskApp() {
       selectedStatuses={taskUiState.statusFilters}
       selectedEnergies={taskUiState.energyFilters}
       tableColumnFilters={taskUiState.tableColumnFilters}
+      customBehaviorRulesets={customBehaviorRulesets}
       onClearTableColumnFilter={clearTableColumnFilter}
     />
   );
@@ -5387,6 +5732,19 @@ export function TaskApp() {
       onTimeOrigin?: OnTimeLinkedItemOrigin;
     },
   ) {
+    if (isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
+      action: "complete",
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: task.custom_ruleset_id,
+      logicalDate: todayKey,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      taskId: task.id,
+      taskType: task.task_type,
+    }).available) {
+      return false;
+    }
     const eligibility = canTaskBeMarkedComplete(task.id, tasks);
     if (!eligibility.canComplete) {
       setMessage({ tone: "warn", text: COMPLETE_BLOCKED_MESSAGE });
@@ -5488,6 +5846,10 @@ export function TaskApp() {
     }
     const scopedHistory = historyLoad.history;
     const completeAuthority = evaluateTaskActionAuthority({
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      behaviorSelectionsByTaskId,
       history: scopedHistory,
       logicalDayRollover: dayStartTime,
       now: new Date(logicalDayNow),
@@ -5626,6 +5988,21 @@ export function TaskApp() {
       return false;
     }
 
+    const manualAction = taskManualActionForStatus(status);
+    if (manualAction && (isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
+      action: manualAction,
+      behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: canonicalTask.custom_ruleset_id,
+      logicalDate: todayKey,
+      namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+      taskId: canonicalTask.id,
+      taskType: canonicalTask.task_type,
+    }).available)) {
+      return false;
+    }
+
     const activeMutation = taskStatusMutationInFlightRef.current.get(canonicalTask.id);
     if (activeMutation) {
       return await activeMutation;
@@ -5687,6 +6064,10 @@ export function TaskApp() {
     const scopedHistory = historyLoad.history;
     const action = status === "done" || status === "did_my_best" || status === "missed" || status === "delayed"
       ? evaluateTaskActionAuthority({
+        behaviorProfiles: taskTypeBehaviorProfiles,
+        behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+        namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+        behaviorSelectionsByTaskId,
         history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: new Date(logicalDayNow),
@@ -6054,6 +6435,13 @@ export function TaskApp() {
     priorityOptions,
     repeatFrequencyOptions,
     repeatWeekdayOptions,
+    selectedTasks: selectedListTasks,
+    behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+    behaviorSelectionsByTaskId,
+    behaviorPolicyLogicalDate: todayKey,
+    behaviorPolicyLoading: isTaskTypeBehaviorProfilesLoading,
   } : null;
 
   const focusPlannerFlow = showFocusPlanner ? {
@@ -6193,6 +6581,7 @@ export function TaskApp() {
 
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
+    onRenameTaskTitle: (taskId: string, nextTitle: string): Promise<boolean> => updateTask(taskId, { title: nextTitle }),
     onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "due_open"): Promise<boolean> => {
       if (!taskHistoryModalTaskId) return false;
       if (overrideState === "not_due") {
@@ -6290,6 +6679,12 @@ export function TaskApp() {
     onRetryTaskHistoryLoad: () => retryTaskHistoryForTask(taskHistoryModalTaskId),
     todayDateKey: todayKey,
     stateEngineContext: { logicalDayRollover: dayStartTime, now: new Date(logicalDayNow), timezone: userTimeZone },
+    behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+    behaviorSelectionsByTaskId,
+    behaviorPolicyLoading: isTaskTypeBehaviorProfilesLoading,
+    customBehaviorRulesets,
   } : null;
   function togglePinnedFilter() {
     setTaskUiState((prev) => ({
@@ -6350,6 +6745,7 @@ export function TaskApp() {
         selectedStatuses={taskUiState.statusFilters}
         selectedEnergies={taskUiState.energyFilters}
         tableColumnFilters={taskUiState.tableColumnFilters}
+        customBehaviorRulesets={customBehaviorRulesets}
         onClearTableColumnFilter={clearTableColumnFilter}
         listSortPreference={taskUiState.view === "list" && !duplicateTitleModeActive ? activeListSortPreference : undefined}
         onListSortPreferenceChange={taskUiState.view === "list" && !duplicateTitleModeActive ? (preference) => setTaskUiState((current) => ({
@@ -6433,7 +6829,12 @@ export function TaskApp() {
   };
   const closeSharedTaskEditorOverlay = () => {
     setSharedTaskEditorOverlayTaskId(null);
+    setTaskEditorNavigationTaskIds(null);
     setTaskEditorFocusRequest(null);
+  };
+  const closeRequestedListTaskEditorOverlay = () => {
+    setRequestedListOverlayTaskId(null);
+    setTaskEditorNavigationTaskIds(null);
   };
   const scratchPaperData: ScratchPaperData = {
     error: scratchNotes.error,
@@ -6443,6 +6844,7 @@ export function TaskApp() {
     onCreate: scratchNotes.createNote,
     onCreateTask: openScratchLinkedTaskTemplate,
     onOpenTask: openTaskEditorFromId,
+    getTaskStatusOptions: resolveCurrentTaskStatusOptions,
     onSetStatus: scratchNotes.setNoteStatus,
     onSetTaskStatus: (taskId, status) => {
       const task = tasks.find((entry) => entry.id === taskId);
@@ -6474,7 +6876,7 @@ export function TaskApp() {
     openFolderRails: taskListRailStructureOptions.openFolderRails,
     metric: momentumMetric,
     onCycleMomentum: () => setMomentumView(getNextMomentumView(momentumView)),
-    onOpenComposer: openInlineNewListTaskComposer,
+    onOpenTaskComposerForType: openTaskComposerForType,
     onOpenFocusPlanner: openFocusPlanner,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
@@ -6509,6 +6911,7 @@ export function TaskApp() {
     onToggleKeyboardShortcutsMenu: () => setIsKeyboardShortcutsMenuOpen((current) => !current),
     onToggleListColumn: toggleListColumn,
     onToggleListColumnMenu: () => setIsListColumnMenuOpen((current) => !current),
+    taskTypeOptions,
     search: taskUiState.search,
     selectedBucket: taskUiState.selectedBucket,
     shortcuts: TASK_KEYBOARD_SHORTCUTS,
@@ -6642,10 +7045,12 @@ export function TaskApp() {
           allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
           allRows={sharedTaskEditorRows}
           allTagOptions={allTaskTags}
+          attentionReasonByTaskId={taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={childTaskPreviewByParentTaskId}
           className="m-0 max-w-none p-0"
           enableInspector
+          editorNavigationTaskIds={taskEditorNavigationTaskIds ?? undefined}
           getFollowTaskDestination={getFollowTaskDestination}
           milestoneDetachPromotionTaskIds={milestoneDetachPromotionTaskIds}
           milestonePromotionTaskIds={milestonePromotionTaskIds}
@@ -6659,6 +7064,7 @@ export function TaskApp() {
           }}
           onFollowDetachedTask={followDetachedTask}
           onInspectorClose={closeSharedTaskEditorOverlay}
+          onTaskEditorNavigate={(taskId) => setSharedTaskEditorOverlayTaskId(taskId)}
           onMoveTaskIntoParent={moveTaskIntoParent}
           onNextTaskTimer={() => cycleHudTaskTimer("next")}
           onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
@@ -6696,6 +7102,24 @@ export function TaskApp() {
           onTaskLinkChange={(taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); }}
           onTaskLinkedNoteIdsChange={(taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); }}
           onTaskNotesChange={(taskId, notes) => { void updateTask(taskId, { notes: notes || null }); }}
+          onTaskTypeChange={(taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); }}
+          onTaskBehaviorProfileChange={updateTaskBehaviorProfile}
+          onCustomRulesetBehaviorProfileChange={updateCustomBehaviorRulesetProfile}
+          onResetTaskBehaviorProfile={resetTaskBehaviorProfile}
+          taskTypeBehaviorProfiles={taskTypeBehaviorProfiles}
+          behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
+          namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
+          behaviorSelectionsByTaskId={behaviorSelectionsByTaskId}
+          behaviorPolicyLogicalDate={todayKey}
+          behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
+          customBehaviorRulesets={customBehaviorRulesets}
+          customBehaviorRulesetProfiles={customBehaviorRulesetProfiles}
+          onCreateCustomRuleset={createCustomRuleset}
+          onDeleteCustomRuleset={deleteCustomRuleset}
+          onShowCustomRulesetTasks={showCustomRulesetTasks}
+          onMoveCustomRulesetTasksToTaskAndDelete={moveCustomRulesetTasksToTaskAndDelete}
+          onRenameCustomRuleset={renameCustomRuleset}
+          onUpdateCustomRulesetPresentation={updateCustomRulesetPresentation}
           onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
           onTaskPriorityChange={applyTaskPriorityChange}
           onTaskRepeatChange={handleSharedTaskRepeatChange}
@@ -6708,7 +7132,7 @@ export function TaskApp() {
           onTaskSubtaskDelete={(subtaskId) => { void deleteTaskSubtask(subtaskId); }}
           onTaskSubtaskRename={(subtaskId, title) => { void renameTaskSubtask(subtaskId, title); }}
           onTaskSubtasksAutoResetChange={(taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); }}
-          onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); }}
+          onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
           onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
           onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
           onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
@@ -6898,13 +7322,20 @@ export function TaskApp() {
         ) : activePage === "Home" ? (
           <TaskHomePage
             listMembershipsByTaskId={taskListMembershipsByTaskId}
-            onCreateTask={addTask}
+            onCreateTaskWithType={createHomeTodoTaskWithType}
             onOpenTask={openTaskEditorFromId}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
+            behaviorProfiles={taskTypeBehaviorProfiles}
+            behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
+            namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
+            behaviorSelectionsByTaskId={behaviorSelectionsByTaskId}
+            behaviorPolicyLogicalDate={todayKey}
+            behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
             calendarNowMs={logicalDayNow}
             calendarTimeZone={userTimeZone}
             tasks={tasks}
+            taskTypeOptions={taskTypeOptions}
             userId={currentUserId}
           />
         ) : activePage === "Achievements" ? (
@@ -6970,6 +7401,12 @@ export function TaskApp() {
             onCloseTab={closeTaskWorkspaceTab}
             onTimeWorkspacePanel={(
               <OnTimePlannerWorkspace
+                behaviorProfiles={taskTypeBehaviorProfiles}
+                behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
+                namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
+                behaviorSelectionsByTaskId={behaviorSelectionsByTaskId}
+                behaviorPolicyLogicalDate={todayKey}
+                behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
                 error={onTimePlan.error}
                 onOpenTask={openTaskInSharedTasksEditorFromOnTime}
                 onSetTaskStatus={(task, status, origin) => { void updateTaskStatus(task, status, false, origin); }}
@@ -6997,6 +7434,8 @@ export function TaskApp() {
             pathsWorkspacePanel={(
               <PathsWorkspace
                 availableTaskLists={availableTaskLists}
+                customBehaviorRulesets={customBehaviorRulesets}
+                getTaskStatusOptions={resolveCurrentTaskStatusOptions}
                 listMembershipsByTaskId={taskListMembershipsByTaskId}
                 onOpenTask={openTaskInSharedTasksEditorFromPaths}
                 onSetTaskStatus={(taskId, status) => {
@@ -7115,7 +7554,10 @@ export function TaskApp() {
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
                   onSetActualSeconds: (taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); },
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
-                  onOpenTaskEditor: openSharedTaskEditor,
+                  onOpenTaskEditor: (taskId, navigationTaskIds) => openSharedTaskEditor(taskId, {
+                    navigationTaskIds,
+                    preserveActivePage: true,
+                  }),
                   onOpenTaskInNewTab: openTaskInNewWorkspaceTab,
                   onOpenChildTask: openChildTaskFromPreview,
                   onMoveTaskIntoParent: moveTaskIntoParent,
@@ -7140,6 +7582,23 @@ export function TaskApp() {
                   onRequestedOpenTaskOverlayClose: closeSharedTaskEditorOverlay,
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
+                  onSetTaskType: (taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); },
+                  customBehaviorRulesets,
+                  customBehaviorRulesetProfiles,
+                  taskTypeBehaviorProfiles,
+                  behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+                  namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+                  behaviorSelectionsByTaskId,
+                  behaviorPolicyLoading: isTaskTypeBehaviorProfilesLoading,
+                  onCreateCustomRuleset: createCustomRuleset,
+                  onDeleteCustomRuleset: deleteCustomRuleset,
+                  onShowCustomRulesetTasks: showCustomRulesetTasks,
+                  onMoveCustomRulesetTasksToTaskAndDelete: moveCustomRulesetTasksToTaskAndDelete,
+                  onRenameCustomRuleset: renameCustomRuleset,
+                  onUpdateCustomRulesetPresentation: updateCustomRulesetPresentation,
+                  onSetTaskBehaviorProfile: updateTaskBehaviorProfile,
+                  onSetCustomRulesetBehaviorProfile: updateCustomBehaviorRulesetProfile,
+                  onResetTaskBehaviorProfile: resetTaskBehaviorProfile,
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
@@ -7183,7 +7642,7 @@ export function TaskApp() {
                   onAddChildTaskSubtask: (subtaskId) => addChildTaskSubtask(subtaskId),
                   onDeleteTaskSubtask: (subtaskId) => { void deleteTaskSubtask(subtaskId); },
                   onRenameTaskSubtask: (subtaskId, title) => { void renameTaskSubtask(subtaskId, title); },
-                  onSetTaskSubtaskStatus: (subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); },
+                  onSetTaskSubtaskStatus: (subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); },
                   onSetTaskSubtasksAutoReset: (taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); },
                   onSetTags: (taskId, tags) => { void updateTask(taskId, { tags }); },
                   onSetTitle: (taskId, title) => { void updateTask(taskId, { title }); },
@@ -7283,7 +7742,11 @@ export function TaskApp() {
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
                   onSetActualSeconds: (taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); },
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
-                  onOpenTaskEditor: (taskId) => setRequestedListOverlayTaskId(taskId),
+                  onOpenTaskEditor: (taskId, navigationTaskIds) => {
+                    setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(navigationTaskIds ?? selectedBucketTasks.map((task) => task.id)));
+                    setRequestedListOverlayTaskId(taskId);
+                  },
+                  onTaskEditorNavigate: (taskId) => setRequestedListOverlayTaskId(taskId),
                   onOpenTaskInNewTab: openTaskInNewWorkspaceTab,
                   onOpenChildTask: openChildTaskFromPreview,
                   onMoveTaskIntoParent: moveTaskIntoParent,
@@ -7298,11 +7761,27 @@ export function TaskApp() {
                   },
                   onDelayTask: (taskId, days) => delaySameTableTask(taskId, days),
                   onDelayTaskUntil: (taskId, dueOn) => delayTaskToDate(taskId, dueOn),
-                  onRequestedOpenTaskHandled: (taskId) => {
-                    setRequestedListOverlayTaskId((current) => (current === taskId ? null : current));
-                  },
+                  onRequestedOpenTaskHandled: () => undefined,
+                  onRequestedOpenTaskOverlayClose: closeRequestedListTaskEditorOverlay,
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
+                  onSetTaskType: (taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); },
+                  customBehaviorRulesets,
+                  customBehaviorRulesetProfiles,
+                  taskTypeBehaviorProfiles,
+                  behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+                  namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+                  behaviorSelectionsByTaskId,
+                  behaviorPolicyLoading: isTaskTypeBehaviorProfilesLoading,
+                  onCreateCustomRuleset: createCustomRuleset,
+                  onDeleteCustomRuleset: deleteCustomRuleset,
+                  onShowCustomRulesetTasks: showCustomRulesetTasks,
+                  onMoveCustomRulesetTasksToTaskAndDelete: moveCustomRulesetTasksToTaskAndDelete,
+                  onRenameCustomRuleset: renameCustomRuleset,
+                  onUpdateCustomRulesetPresentation: updateCustomRulesetPresentation,
+                  onSetTaskBehaviorProfile: updateTaskBehaviorProfile,
+                  onSetCustomRulesetBehaviorProfile: updateCustomBehaviorRulesetProfile,
+                  onResetTaskBehaviorProfile: resetTaskBehaviorProfile,
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
@@ -7346,7 +7825,7 @@ export function TaskApp() {
                   onAddChildTaskSubtask: (subtaskId) => addChildTaskSubtask(subtaskId),
                   onDeleteTaskSubtask: (subtaskId) => { void deleteTaskSubtask(subtaskId); },
                   onRenameTaskSubtask: (subtaskId, title) => { void renameTaskSubtask(subtaskId, title); },
-                  onSetTaskSubtaskStatus: (subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); },
+                  onSetTaskSubtaskStatus: (subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); },
                   onSetTaskSubtasksAutoReset: (taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); },
                   onSetTags: (taskId, tags) => { void updateTask(taskId, { tags }); },
                   onSetTitle: (taskId, title) => { void updateTask(taskId, { title }); },
@@ -7360,6 +7839,7 @@ export function TaskApp() {
                   renderFullInspectorExtension: renderMilestoneInspectorExtension,
                   requestedOpenTask: requestedOpenListTask,
                   requestedOpenTaskId: requestedListOverlayTaskId,
+                  editorNavigationTaskIds: taskEditorNavigationTaskIds ?? undefined,
                   suppressDetachedNoticeTaskId: suppressDetachedListNoticeTaskId,
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,
@@ -7444,6 +7924,7 @@ export function TaskApp() {
             journalSignalValues={healthJournalSignalValues}
             journalSignalOccurrences={healthJournalSignalOccurrences}
             saveJournalEntry={saveJournalEntry}
+            saveJournalQuestions={saveJournalQuestions}
             createJournalSignal={createJournalSignal}
             updateJournalSignal={updateJournalSignal}
             setJournalSignalTemplate={setJournalSignalTemplate}

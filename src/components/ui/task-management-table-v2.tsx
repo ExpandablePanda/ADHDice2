@@ -1,9 +1,11 @@
 "use client";
 
-import { Children, Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Children, Fragment, lazy, Suspense, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowLeft,
+  ArrowRight,
   ArrowUp,
   ArrowDown,
   CalendarDays,
@@ -32,9 +34,12 @@ import {
   Trophy,
   X,
 } from "lucide-react";
-import type { TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
+import { TaskAttentionChip } from "@/components/task-app/task-attention-chip";
+import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
+import type { CustomBehaviorRulesetDeleteActionResult } from "@/lib/custom-behavior-rulesets";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy, groupChildTaskPreviewItemsByStoredCompletion, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import { isTaskEditorChildRouteSettled, resolveTaskEditorFocusPhase } from "@/lib/task-editor-focus-request";
@@ -64,6 +69,13 @@ import {
   isWeekdaysRepeatSelection,
 } from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
+import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, resolveTaskTypeSelectionOption, taskTypeSelectionValue } from "@/lib/task-type";
+import { getTaskTypeTableRowSurfaceClassName, type TaskTypePresentation } from "@/lib/task-type-presentation";
+import { TaskTypeIdentity, TaskTypeSelect } from "@/components/task-app/task-type-identity";
+import { preserveCurrentTaskStatusForPresentation, resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask, taskManualActionForStatus } from "@/lib/task-state-engine/action-authority";
+import { getTaskEditorNavigationNeighbor, getTaskEditorNavigationPosition } from "@/lib/task-editor-navigation";
+import type { TaskBehaviorPolicyResolutionContext, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
+import { AdhdDropdownSelect, AdhdIconButton } from "@/components/ui-system";
 import {
   TASK_TABLE_BODY_MUTED_VALUE_CLASS as BODY_MUTED_VALUE_CLASS,
   TASK_TABLE_BODY_VALUE_CLASS as BODY_VALUE_CLASS,
@@ -77,11 +89,19 @@ import {
   TASK_TABLE_TAG_CHIP_CLASS as TAG_CHIP_CLASS,
   TASK_TABLE_TEXT_CLASS as UNIFIED_TABLE_TEXT_CLASS,
   TASK_TABLE_TITLE_CELL_CLASS as TITLE_CELL_CLASS,
+  TASK_TABLE_INLINE_RENAME_EDITOR_CLASS,
+  TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS as VISIBLE_TITLE_TEXT_CLASS,
   CompactRepeatCadenceControls,
+  formatTaskTableEntryTimestamp,
   ScrollUpButton,
+  TaskCurrentStreakChip,
+  TaskInlineChildDraft,
+  TaskInlineChildDraftInput,
   TaskHierarchySearchChip,
   TaskTableChipButton,
+  TaskTableInlineActionRow,
+  type TaskTableViewportMetrics,
 } from "@/components/ui/task-table-primitives";
 import { mergeMeasuredColumnWidths, normalizeMeasuredColumnWidth } from "@/lib/task-table-measurements";
 import {
@@ -93,6 +113,7 @@ import {
 } from "@/lib/task-table-alignment";
 import { TaskTimerDial } from "@/components/task-app/task-timer-display";
 import { resolveTaskTableLayoutPublishDecision, type TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
+import type { TaskBehaviorProfiles, TaskBehaviorPolicy, TaskBehaviorPolicyField } from "@/lib/task-state-engine/behavior-policy";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = TaskPriorityLevelOption;
@@ -136,6 +157,7 @@ type SortColumnId =
   | "tags"
   | "link"
   | "notes"
+  | "task_type"
   | "priority"
   | "energy"
   | "repeat"
@@ -149,16 +171,17 @@ type HeaderColumn = {
   options: Array<{ id: SortOptionId; label: string }>;
 };
 type TextFilterColumnId = "title" | "lists" | "tags" | "link" | "notes";
-type StructuredFilterColumnId = "status" | "priority" | "energy" | "repeat";
+type StructuredFilterColumnId = "status" | "priority" | "energy" | "repeat" | "task_type";
 type StructuredFilters = {
   energy: TaskEnergy[];
   priority: TaskPriority[];
   repeat: TaskRepeatCategory[];
   status: TaskDisplayStatus[];
+  task_type: string[];
 };
 type OverlayMode = "actual" | "delay" | "due" | "energy" | "estimated" | "full" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type OverlaySectionId = "actual" | "due" | "energyStatus" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "tags";
-export type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "summary" | "tags";
+export type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "summary" | "tags" | "task_type";
 type ColumnAlignment = "center" | "left" | "right";
 export type RowContextMenuState = { left: number; taskId: string; top: number };
 type ColumnMenuPosition = { left: number; maxHeight: number; placement: "down" | "up"; top: number };
@@ -187,9 +210,11 @@ export type TaskRowContextMenuQuickEditItem = {
 };
 export type PrototypeTaskSubtask = {
   children: PrototypeTaskSubtask[];
+  customRulesetId?: string | null;
   dueOn: string | null;
   id: string;
   status: TaskDisplayStatus;
+  taskType?: TaskType;
   title: string;
 };
 type PrototypeSubtaskMiniRow = {
@@ -204,6 +229,9 @@ const TABLE_REVEAL_BOTTOM_PADDING = 16;
 const TABLE_REVEAL_VIEWPORT_SAFE_BOTTOM = 104;
 const TABLE_REVEAL_INLINE_MIN_VISIBLE_HEIGHT = 104;
 const TABLE_REVEAL_STEPS_MIN_VISIBLE_HEIGHT = 144;
+const TaskTypeBehaviorSettings = lazy(
+  () => import("@/components/task-app/task-type-behavior-settings").then((module) => ({ default: module.TaskTypeBehaviorSettings })),
+);
 
 export function shouldFocusTaskTableRevealTarget(
   shouldFocusResult: boolean | undefined,
@@ -306,9 +334,11 @@ function findPreviewAncestorIdsForTask(
 function buildPrototypeSubtaskSignature(subtasks: PrototypeTaskSubtask[]): string {
   return JSON.stringify(subtasks.map((subtask) => ({
     children: buildPrototypeSubtaskSignature(subtask.children),
+    customRulesetId: subtask.customRulesetId,
     dueOn: subtask.dueOn,
     id: subtask.id,
     status: subtask.status,
+    taskType: subtask.taskType,
     title: subtask.title,
   })));
 }
@@ -323,6 +353,8 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
     lastHandledAt: row.lastHandledAt,
     lastHandledDate: row.lastHandledDate,
     updatedAt: row.updatedAt,
+    taskType: row.taskType,
+    customRulesetId: row.customRulesetId,
     dueOn: row.dueOn,
     dueTime: row.dueTime,
     energy: row.energy,
@@ -336,6 +368,7 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
     priorities: row.priorities,
     currentStreak: row.currentStreak,
     missedStreak: row.missedStreak,
+    attentionReason: row.attentionReason,
   repeat: row.repeat,
   repeatInterval: row.repeatInterval,
   repeatDaysOfWeek: row.repeatDaysOfWeek,
@@ -781,23 +814,7 @@ function collectAllPrototypeSubtaskIds(subtasks: PrototypeTaskSubtask[]): string
   return subtasks.flatMap((subtask) => [subtask.id, ...collectAllPrototypeSubtaskIds(subtask.children)]);
 }
 
-const SUBTASK_RENAME_INPUT_TEXT_CLASS = `[font-family:inherit] min-w-0 flex-1 appearance-none bg-transparent p-0 text-[13px] font-medium leading-none tracking-normal text-left text-[#7a7592] outline-none placeholder:text-[#9b92be] dark:text-white/58 dark:placeholder:text-white/35`;
-const SUBTASK_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
-  color: "rgb(122, 117, 146)",
-  fontFamily: "inherit",
-  fontSize: "13px",
-  fontWeight: 500,
-  letterSpacing: "normal",
-  lineHeight: "13px",
-};
-export const PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
-  color: "rgb(122, 117, 146)",
-  fontFamily: "inherit",
-  fontSize: "13px",
-  fontWeight: 500,
-  letterSpacing: "normal",
-  lineHeight: "13px",
-};
+const SUBTASK_RENAME_INPUT_TEXT_CLASS = `${TASK_TABLE_INLINE_RENAME_EDITOR_CLASS} min-w-0 flex-1 appearance-none bg-transparent text-left outline-none placeholder:text-[#9b92be] dark:placeholder:text-white/35`;
 function normalizeTaskListLabel(value: string) {
   return value.trim().toLowerCase();
 }
@@ -854,6 +871,7 @@ function InlineSubtaskEditor({
   onCommitTitle,
   onDelete,
   onDraftChange,
+  getAvailableStatuses,
   onRequestDelay,
   onSetStatus,
   subtasks,
@@ -865,6 +883,7 @@ function InlineSubtaskEditor({
   onCommitTitle?: (subtaskId: string) => void;
   onDelete?: (subtaskId: string) => void;
   onDraftChange: (subtaskId: string, value: string) => void;
+  getAvailableStatuses?: (subtask: PrototypeTaskSubtask) => readonly TaskStatus[];
   onRequestDelay?: (subtaskId: string) => void;
   onSetStatus?: (subtaskId: string, nextStatus: TaskStatus) => void;
   subtasks: PrototypeTaskSubtask[];
@@ -908,18 +927,16 @@ function InlineSubtaskEditor({
                   }
                 }}
                 placeholder="Step title..."
-                style={SUBTASK_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                 type="text"
                 value={drafts[subtask.id] ?? subtask.title}
               />
               <div className="flex flex-none items-center gap-1">
-                <button
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
-                  onClick={() => onAddChild?.(subtask.id)}
-                  type="button"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
+                <ChildTypeChooser
+                  aria-label={`Add child to ${subtask.title || "step"}`}
+                  childLabel="Substep"
+                  onChooseTask={() => onAddChild?.(subtask.id)}
+                />
                 <button
                   className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
                   onClick={() => onDelete?.(subtask.id)}
@@ -933,6 +950,7 @@ function InlineSubtaskEditor({
               <TaskStatusCircleRail<TaskStatus>
                 className="mt-2 pl-8"
                 currentStatus={subtask.status as TaskStatus}
+                emphasizeMissed
                 onSetStatus={(status) => {
                   if (status === "delayed") {
                     onRequestDelay?.(subtask.id);
@@ -942,10 +960,11 @@ function InlineSubtaskEditor({
                   onSetStatus?.(subtask.id, status);
                   setOpenStatusPickerSubtaskId(null);
                 }}
-                options={TASK_SUBTASK_STATUS_OPTIONS.filter((option) => (
-                  option.value !== "delayed"
-                  || canTaskDelay({ dueOn: subtask.dueOn, status: subtask.status })
-                ))}
+                options={(getAvailableStatuses?.(subtask) ?? TASK_SUBTASK_STATUS_OPTIONS.filter((option) => option.value !== "delayed" || canTaskDelay({ dueOn: subtask.dueOn, status: subtask.status })).map((option) => option.value)).map((status) => ({
+                  label: formatTaskStatusLabel(status),
+                  value: status,
+                }))}
+                preserveCurrentStatus
                 statusLabelPrefix="Set step status to"
               />
             ) : null}
@@ -960,6 +979,7 @@ function InlineSubtaskEditor({
                 onCommitTitle={onCommitTitle}
                 onDelete={onDelete}
                 onDraftChange={onDraftChange}
+                getAvailableStatuses={getAvailableStatuses}
                 onRequestDelay={onRequestDelay}
                 onSetStatus={onSetStatus}
                 subtasks={subtask.children}
@@ -983,6 +1003,8 @@ export type PrototypeTaskRow = {
   energy: TaskEnergy;
   estimatedMinutes: number | null;
   id: string;
+  taskType?: TaskType;
+  customRulesetId?: string | null;
   linkLabel: string;
   linkUrl: string;
   lastDoneAt: string | null;
@@ -997,6 +1019,7 @@ export type PrototypeTaskRow = {
   priorities: TaskPriority[];
   currentStreak: number;
   missedStreak: number;
+  attentionReason?: TaskAttentionReason | null;
   repeat: TaskRepeat;
   repeatInterval: number;
   repeatDaysOfWeek: number[];
@@ -1129,9 +1152,11 @@ type TaskManagementTableV2Props = {
   allowInlineInspector?: boolean;
   allRows?: PrototypeTaskRow[];
   getAllRows?: () => PrototypeTaskRow[];
+  getRowById?: (taskId: string) => PrototypeTaskRow | null;
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: Array<{ id: string; title: string }>;
   allTagOptions?: string[];
+  attentionReasonByTaskId?: Readonly<Record<string, TaskAttentionReason>>;
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
   highlightedActiveTaskId?: string | null;
@@ -1161,7 +1186,7 @@ type TaskManagementTableV2Props = {
   shellClassName?: string;
   showHeader?: boolean;
   onClearSelection?: () => void;
-  onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string) => Promise<{ error: string | null; taskId: string | null }>;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenBatchDelete?: () => void;
   onOpenBatchEdit?: () => void;
@@ -1173,7 +1198,8 @@ type TaskManagementTableV2Props = {
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenFocusTimer?: (taskId: string) => void;
   onOpenNote?: (noteId: string) => void;
-  onOpenTaskEditor?: (taskId: string) => void;
+  onOpenTaskEditor?: (taskId: string, navigationTaskIds?: string[]) => void;
+  onTaskEditorNavigate?: (taskId: string) => void;
   onOpenTaskInNewTab?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
   onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
@@ -1218,6 +1244,24 @@ type TaskManagementTableV2Props = {
   onTaskSubtaskStatusChange?: (subtaskId: string, status: TaskStatus) => void;
   onTaskSubtasksAutoResetChange?: (taskId: string, subtasksAutoReset: boolean) => void;
   onTaskTagsChange?: (taskId: string, tags: string[]) => void;
+  onTaskTypeChange?: (taskId: string, taskType: TaskType, customRulesetId?: string | null) => void;
+  taskTypeBehaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
+  namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
+  behaviorSelectionsByTaskId?: TaskBehaviorPolicyResolutionContext["behaviorSelectionsByTaskId"];
+  behaviorPolicyLogicalDate?: string;
+  behaviorPolicyLoading?: boolean;
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
+  customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
+  onCreateCustomRuleset?: (name: string, policy: TaskBehaviorPolicy, presentation?: Partial<TaskTypePresentation>) => Promise<CustomBehaviorRuleset | null>;
+  onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
+  onShowCustomRulesetTasks?: (rulesetId: string) => void;
+  onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
+  onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean>;
+  onUpdateCustomRulesetPresentation?: (rulesetId: string, presentation: Partial<TaskTypePresentation>) => Promise<boolean> | boolean;
+  onTaskBehaviorProfileChange?: (taskType: TaskType, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
+  onCustomRulesetBehaviorProfileChange?: (rulesetId: string, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
+  onResetTaskBehaviorProfile?: (taskType: TaskType) => Promise<boolean> | boolean;
   onTaskTitleChange?: (taskId: string, title: string) => void;
   onToggleTaskSelection?: (taskId: string, options?: { additive?: boolean; range?: boolean; visibleTaskIds?: string[] }) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
@@ -1234,6 +1278,7 @@ type TaskManagementTableV2Props = {
   visibleColumns?: TaskManagementTableColumnId[];
   activeTaskTimerIndex?: number;
   getFollowTaskDestination?: (taskId: string) => TaskFollowDestination | null;
+  editorNavigationTaskIds?: string[];
   hasMoreRows?: boolean;
   expandAllColumnsToken?: number;
   shrinkAllColumnsToken?: number;
@@ -1404,7 +1449,7 @@ function readTaskTablePreferences(): TaskTablePreferences | null {
   }
 }
 
-function normalizePersistedSortState(sortState: TaskTableLayoutPreferences["sortState"] | TaskTablePreferences["sortState"] | undefined) {
+function normalizePersistedSortState(sortState: TaskTableLayoutPreferences["sortState"] | TaskTablePreferences["sortState"] | undefined): { columnId: SortColumnId; optionId: SortOptionId } | null {
   const nextSortState = sortState ?? null;
   if (!nextSortState) {
     return null;
@@ -1413,7 +1458,9 @@ function normalizePersistedSortState(sortState: TaskTableLayoutPreferences["sort
   const hasValidColumn = HEADER_COLUMNS.some((column) => column.id === nextSortState.columnId);
   const matchingColumn = HEADER_COLUMNS.find((column) => column.id === nextSortState.columnId);
   const hasValidOption = matchingColumn?.options.some((option) => option.id === nextSortState.optionId) ?? false;
-  return hasValidColumn && hasValidOption ? nextSortState : null;
+  return hasValidColumn && hasValidOption
+    ? { columnId: nextSortState.columnId as SortColumnId, optionId: nextSortState.optionId as SortOptionId }
+    : null;
 }
 
 function getInitialSortState(persistedLayoutPreferences?: TaskTableLayoutPreferences) {
@@ -1436,9 +1483,9 @@ function getInitialColumnWidths() {
   }, { ...DEFAULT_COLUMN_WIDTHS });
 }
 
-function normalizePersistedColumnOrder(columnOrder: TaskTableLayoutPreferences["columnOrder"] | TaskTablePreferences["columnOrder"] | undefined) {
+function normalizePersistedColumnOrder(columnOrder: TaskTableLayoutPreferences["columnOrder"] | TaskTablePreferences["columnOrder"] | undefined): TaskManagementTableColumnId[] {
   const storedOrder = columnOrder ?? [];
-  const validStoredOrder = storedOrder.filter((columnId) => HEADER_COLUMNS.some((column) => column.id === columnId));
+  const validStoredOrder = storedOrder.filter((columnId): columnId is TaskManagementTableColumnId => HEADER_COLUMNS.some((column) => column.id === columnId));
   const missingColumns = HEADER_COLUMNS.map((column) => column.id).filter((columnId) => !validStoredOrder.includes(columnId));
   const lastHandledIndex = missingColumns.indexOf("last_handled");
   const lastDoneIndex = validStoredOrder.indexOf("last_done");
@@ -1566,8 +1613,8 @@ export function getTableHierarchyTitleGeometry(depth: number) {
   };
 }
 
-function renderTableCurrentStatusCircle(status: TaskDisplayStatus) {
-  return renderTaskStatusCircle(status, TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE);
+function renderTableCurrentStatusCircle(status: TaskDisplayStatus, attention = false) {
+  return renderTaskStatusCircle(status, TASK_TABLE_CURRENT_STATUS_CIRCLE_SIZE, { attention, emphasizeMissed: status === "missed" });
 }
 
 const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
@@ -1585,6 +1632,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   tags: 82,
   link: 80,
   notes: 92,
+  task_type: 128,
   priority: 92,
   energy: 80,
   repeat: 92,
@@ -1608,6 +1656,7 @@ const MIN_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   tags: 58,
   link: 58,
   notes: 70,
+  task_type: 92,
   priority: 70,
   energy: 64,
   repeat: 72,
@@ -1628,6 +1677,7 @@ const COLUMN_WIDTH_BUFFER: Record<TaskManagementTableColumnId, number> = {
   tags: 2,
   link: 2,
   notes: 4,
+  task_type: 4,
   priority: 4,
   energy: 4,
   repeat: 6,
@@ -1639,6 +1689,7 @@ const TABLE_FONT_STYLE = {
 const HEADER_COLUMNS: HeaderColumn[] = [
   { id: "status_icon", label: "Status", menuLabel: "Status", options: [{ id: "status_asc", label: "Status A-Z" }, { id: "status_desc", label: "Status Z-A" }] },
   { id: "title", label: "Task", menuLabel: "Task", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search tasks" },
+  { id: "task_type", label: "Task Type", menuLabel: "Task Type", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }] },
   { id: "lists", label: "Lists", menuLabel: "Lists", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search lists" },
   { id: "date_added", label: "Date Added", menuLabel: "Date Added", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
   { id: "date_completed", label: "Date Completed", menuLabel: "Date Completed", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
@@ -1660,6 +1711,7 @@ const DEFAULT_STRUCTURED_FILTERS: StructuredFilters = {
   priority: [],
   repeat: [],
   status: [],
+  task_type: [],
 };
 
 function summarizeInlineItems<T>(items: T[], maxVisible = 1) {
@@ -1734,8 +1786,14 @@ function renderStepLayerChip(depth: number) {
   );
 }
 
-function renderStepHistoryChips(currentStreak: number, missedStreak: number) {
-  if (currentStreak <= 0 && missedStreak <= 0) {
+function renderStepHistoryChips(
+  currentStreak: number,
+  missedStreak: number,
+  attentionReason?: TaskAttentionReason | null,
+  dueOn?: string | null,
+  taskId?: string,
+) {
+  if (currentStreak <= 0 && missedStreak <= 0 && !attentionReason) {
     return null;
   }
 
@@ -1753,6 +1811,7 @@ function renderStepHistoryChips(currentStreak: number, missedStreak: number) {
           {missedStreak}
         </span>
       ) : null}
+      {attentionReason && taskId ? <TaskAttentionChip dueOn={dueOn ?? null} reason={attentionReason} taskId={taskId} /> : null}
     </>
   );
 }
@@ -1799,21 +1858,6 @@ function formatClockTime(value: string) {
   const suffix = hour >= 12 ? "pm" : "am";
   const hour12 = hour % 12 === 0 ? 12 : hour % 12;
   return `${hour12}:${String(minute).padStart(2, "0")}${suffix}`;
-}
-
-function formatEntryTimestamp(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString([], {
-    month: "numeric",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 function formatDue(dueOn: string, dueTime: string) {
@@ -1871,23 +1915,51 @@ export function getFullEditorChildSectionLabels(depth: number) {
     : { action: "Add Substep", heading: "Substeps" };
 }
 
+export function ChildTypeChooser({
+  "aria-label": ariaLabel,
+  childLabel,
+  onChooseTask,
+}: {
+  "aria-label"?: string;
+  childLabel: "Step" | "Substep";
+  onChooseTask: () => void;
+}) {
+  return (
+    <button
+      aria-label={ariaLabel ?? `Add ${childLabel}`}
+      className={ROW_ACTION_ICON_BUTTON_CLASS}
+      onClick={(event) => {
+        event.stopPropagation();
+        onChooseTask();
+      }}
+      onPointerDown={stopRowActionPointerEvent}
+      type="button"
+    >
+      <Footprints className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
 function SameTableStepCreationControl({
   childLabel = "Step",
   creationBlocked,
   iconOnly = false,
   onCreateChildTask,
   parentTaskId,
+  taskTypeOptions,
 }: {
   childLabel?: "Step" | "Substep";
   creationBlocked?: boolean;
   iconOnly?: boolean;
-  onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string) => Promise<{ error: string | null; taskId: string | null }>;
   parentTaskId: string;
+  taskTypeOptions: ReadonlyArray<import("@/lib/task-type").TaskTypeSelectionOption>;
 }) {
   const childLabelLower = childLabel.toLowerCase();
   const [isCreating, setIsCreating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [taskTypeSelectionValue, setTaskTypeSelectionValue] = useState("task");
   const [creationError, setCreationError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const showCreationBlockedMessage = Boolean(onCreateChildTask) && creationBlocked;
@@ -1911,7 +1983,7 @@ function SameTableStepCreationControl({
 
     setIsSubmitting(true);
     setCreationError(null);
-    const result = await onCreateChildTask(parentTaskId, nextTitle);
+    const result = await onCreateChildTask(parentTaskId, nextTitle, taskTypeSelectionValue);
     setIsSubmitting(false);
 
     if (result.error || !result.taskId) {
@@ -1920,11 +1992,13 @@ function SameTableStepCreationControl({
     }
 
     setTitleDraft("");
+    setTaskTypeSelectionValue("task");
     setIsCreating(false);
   }
 
   function cancelCreateChildTask() {
     setTitleDraft("");
+    setTaskTypeSelectionValue("task");
     setCreationError(null);
     setIsCreating(false);
   }
@@ -1940,27 +2014,11 @@ function SameTableStepCreationControl({
   }
 
   if (!isCreating) {
-    if (iconOnly) {
-      return (
-        <button
-          aria-label={`Add ${childLabel}`}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
-          data-step-row-add={parentTaskId}
-          onClick={() => {
-            setCreationError(null);
-            setIsCreating(true);
-          }}
-          type="button"
-        >
-          <Footprints className="h-3.5 w-3.5" />
-        </button>
-      );
-    }
-
     return (
       <button
         aria-label={`Add ${childLabel}`}
         className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+        data-step-row-add={iconOnly ? parentTaskId : undefined}
         onClick={() => {
           setCreationError(null);
           setIsCreating(true);
@@ -2006,6 +2064,15 @@ function SameTableStepCreationControl({
             value={titleDraft}
           />
         </label>
+        <TaskTypeSelect
+          ariaLabel={`${childLabel} Task Type`}
+          className="mt-2"
+          label={`${childLabel} Task Type`}
+          onChange={setTaskTypeSelectionValue}
+          options={taskTypeOptions}
+          size="compact"
+          value={taskTypeSelectionValue}
+        />
         {creationError ? <p className="mt-2 text-xs text-[#d94e67] dark:text-[#ff9eaf]">{creationError}</p> : null}
         <div className="mt-2 flex flex-wrap justify-end gap-1.5">
           <TaskTableChipButton onClick={cancelCreateChildTask} toneClassName={INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
@@ -2120,7 +2187,9 @@ export type TaskMetadataSummaryRow = {
 };
 
 export function buildTaskMetadataSummary(
-  task: Pick<PrototypeTaskRow, "actualSeconds" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "status" | "tags" | "title">,
+  task: Pick<PrototypeTaskRow, "actualSeconds" | "customRulesetId" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "status" | "tags" | "taskType" | "title"> & {
+    customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
+  },
   actualSeconds: number,
 ): TaskMetadataSummaryRow[] {
   const priority = getTaskPrioritySelection(task.priorities);
@@ -2143,6 +2212,7 @@ export function buildTaskMetadataSummary(
   return [
     { label: "Title", panelId: null, value: task.title.trim() || "Untitled task" },
     { label: "Status", panelId: "status", value: formatTaskStatusLabel(task.status) },
+    { label: "Task Type", panelId: "task_type", value: formatTaskTypeLabel(task.taskType, task.customRulesetId, task.customBehaviorRulesets) },
     { label: "Priority", panelId: "priority", value: priority ? formatPriorityLabel(priority) : "None" },
     { label: "Energy", panelId: "energy", value: task.energy === "none" ? "None" : formatEnergyLabel(task.energy) },
     { label: "Due", panelId: "due", value: formatDue(task.dueOn, task.dueTime) },
@@ -2270,7 +2340,7 @@ export function TaskTitleDraftInput({
   );
 }
 
-function textSortValue(task: PrototypeTaskRow, columnId: SortColumnId) {
+function textSortValue(task: PrototypeTaskRow, columnId: SortColumnId, customBehaviorRulesets: readonly CustomBehaviorRuleset[] = []) {
   switch (columnId) {
     case "title":
       return task.title;
@@ -2282,6 +2352,8 @@ function textSortValue(task: PrototypeTaskRow, columnId: SortColumnId) {
       return task.linkLabel || "No link";
     case "notes":
       return task.notes;
+    case "task_type":
+      return formatTaskTypeLabel(task.taskType, task.customRulesetId, customBehaviorRulesets);
     case "priority":
       return task.priorities.join(", ");
     case "energy":
@@ -2306,7 +2378,7 @@ function isTextFilterColumn(columnId: SortColumnId): columnId is TextFilterColum
 }
 
 function isStructuredFilterColumn(columnId: SortColumnId): columnId is StructuredFilterColumnId {
-  return columnId === "status" || columnId === "priority" || columnId === "energy" || columnId === "repeat";
+  return columnId === "status" || columnId === "priority" || columnId === "energy" || columnId === "repeat" || columnId === "task_type";
 }
 
 function prioritySortValue(task: PrototypeTaskRow) {
@@ -2384,7 +2456,7 @@ function sortRows(
   rows: PrototypeTaskRow[],
   columnId: SortColumnId,
   optionId: SortOptionId,
-  options?: { activeTaskTimerIds?: Set<string>; liveActualSecondsByTaskId?: Map<string, number> },
+  options?: { activeTaskTimerIds?: Set<string>; customBehaviorRulesets?: readonly CustomBehaviorRuleset[]; liveActualSecondsByTaskId?: Map<string, number> },
 ) {
   const sorted = [...rows];
 
@@ -2404,7 +2476,7 @@ function sortRows(
     let comparison = 0;
 
     if (optionId === "text_asc" || optionId === "text_desc") {
-      comparison = compareText(textSortValue(left, columnId), textSortValue(right, columnId));
+      comparison = compareText(textSortValue(left, columnId, options?.customBehaviorRulesets), textSortValue(right, columnId, options?.customBehaviorRulesets));
     } else if (optionId === "active_first") {
       comparison = Number(hasActiveTimer(right, options?.activeTaskTimerIds ?? new Set<string>()))
         - Number(hasActiveTimer(left, options?.activeTaskTimerIds ?? new Set<string>()));
@@ -2460,9 +2532,11 @@ export function TaskManagementTableV2({
   allowInlineInspector = false,
   allRows,
   getAllRows,
+  getRowById,
   allListOptions = [],
   allNoteOptions = [],
   allTagOptions = [],
+  attentionReasonByTaskId = {},
   childTaskCreationBlockedTaskIds = [],
   childTaskPreviewByParentTaskId = {},
   highlightedActiveTaskId = null,
@@ -2502,6 +2576,7 @@ export function TaskManagementTableV2({
   onOpenTaskHistory,
   onOpenNote,
   onOpenTaskEditor,
+  onTaskEditorNavigate,
   onOpenTaskInNewTab,
   onOpenChildTask,
   onMoveTaskIntoParent,
@@ -2546,6 +2621,24 @@ export function TaskManagementTableV2({
   onTaskSubtaskRename,
   onTaskSubtaskStatusChange,
   onTaskTagsChange,
+  onTaskTypeChange,
+  taskTypeBehaviorProfiles,
+  behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
+  behaviorSelectionsByTaskId,
+  behaviorPolicyLogicalDate = "",
+  behaviorPolicyLoading = false,
+  customBehaviorRulesets = [],
+  customBehaviorRulesetProfiles,
+  onCreateCustomRuleset,
+  onDeleteCustomRuleset,
+  onShowCustomRulesetTasks,
+  onMoveCustomRulesetTasksToTaskAndDelete,
+  onRenameCustomRuleset,
+  onUpdateCustomRulesetPresentation,
+  onTaskBehaviorProfileChange,
+  onCustomRulesetBehaviorProfileChange,
+  onResetTaskBehaviorProfile,
   onTaskTitleChange,
   onToggleTaskSelection,
   onToggleTaskList,
@@ -2569,6 +2662,7 @@ export function TaskManagementTableV2({
   title = "Table #2 Prototype",
   visibleColumns,
   activeTaskTimerIndex,
+  editorNavigationTaskIds,
   getFollowTaskDestination,
   hasMoreRows = false,
   persistedLayoutPreferences,
@@ -2579,6 +2673,7 @@ export function TaskManagementTableV2({
   const [tasks, setTasks] = useState<PrototypeTaskRow[]>(rows);
   const [renderedTaskCount, setRenderedTaskCount] = useState(INITIAL_RENDERED_TASK_COUNT);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [capturedEditorNavigationTaskIds, setCapturedEditorNavigationTaskIds] = useState<string[] | null>(null);
   const [retainedSelectedTask, setRetainedSelectedTask] = useState<PrototypeTaskRow | null>(null);
   const [metadataTargetTaskId, setMetadataTargetTaskId] = useState<string | null>(null);
   const [retainedMetadataTargetTask, setRetainedMetadataTargetTask] = useState<PrototypeTaskRow | null>(null);
@@ -2594,6 +2689,43 @@ export function TaskManagementTableV2({
   const titleDraftsRef = useRef<Record<string, string>>({});
   const pendingEditorChildTitleRenameRef = useRef<{ taskId: string; title: string } | null>(null);
   const [subtaskTitleDrafts, setSubtaskTitleDrafts] = useState<Record<string, string>>({});
+
+  function getPolicyFilteredStatuses(input: {
+    dueOn: string | null;
+    repeatFrequency: TaskRepeat;
+    status: TaskDisplayStatus;
+    taskId?: string;
+    taskType?: TaskType;
+    customRulesetId?: string | null;
+  }) {
+    return resolveTaskStatusOptionsForTask({
+      behaviorPolicyRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: input.customRulesetId,
+      logicalDate: behaviorPolicyLogicalDate,
+      namedCustomRulesetBehaviorPolicyRevisions,
+      policyLoading: behaviorPolicyLoading,
+      statuses: getSelectableTaskDisplayStatusesForTask(input),
+      taskId: input.taskId,
+      taskType: input.taskType ?? "task",
+    });
+  }
+
+  function isManualActionAllowed(task: Pick<PrototypeTaskRow, "id" | "taskType" | "customRulesetId">, action: TaskManualAction) {
+    if (behaviorPolicyLoading || !behaviorPolicyLogicalDate) return false;
+    return resolveTaskManualActionAvailabilityForTask({
+      action,
+      behaviorPolicyRevisions,
+      behaviorProfiles: taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId,
+      customRulesetId: task.customRulesetId,
+      logicalDate: behaviorPolicyLogicalDate,
+      namedCustomRulesetBehaviorPolicyRevisions,
+      taskId: task.id,
+      taskType: task.taskType ?? "task",
+    }).available;
+  }
   const [linkDrafts, setLinkDrafts] = useState<Record<string, { label: string; url: string }>>({});
   const [notesDrafts, setNotesDrafts] = useState<Record<string, string>>({});
   const [linkedNoteDrafts, setLinkedNoteDrafts] = useState<Record<string, string[]>>({});
@@ -2603,6 +2735,7 @@ export function TaskManagementTableV2({
   const [repeatDayOfMonthDrafts, setRepeatDayOfMonthDrafts] = useState<Record<string, string>>({});
   const [collapsedOverlaySectionsByTaskId, setCollapsedOverlaySectionsByTaskId] = useState<Record<string, Partial<Record<OverlaySectionId, boolean>>>>({});
   const [activeMetadataPanelByTaskId, setActiveMetadataPanelByTaskId] = useState<Record<string, MetadataPanelId>>({});
+  const [taskTypeBehaviorSettingsOpenByTaskId, setTaskTypeBehaviorSettingsOpenByTaskId] = useState<Record<string, boolean>>({});
   const [notePickerOpenByTaskId, setNotePickerOpenByTaskId] = useState<Record<string, boolean>>({});
   const [tagPickerOpenByTaskId, setTagPickerOpenByTaskId] = useState<Record<string, boolean>>({});
   const [expandedSubtasksByTaskId, setExpandedSubtasksByTaskId] = useState<Record<string, boolean>>({});
@@ -2618,14 +2751,16 @@ export function TaskManagementTableV2({
   const [tableStepTitleDrafts, setTableStepTitleDrafts] = useState<Record<string, string>>({});
   const [tableStepCreationErrorByParentId, setTableStepCreationErrorByParentId] = useState<Record<string, string | null>>({});
   const [tableStepDraftChildLabels, setTableStepDraftChildLabels] = useState<Record<string, "Step" | "Substep">>({});
+  const [tableStepDraftTaskTypeValues, setTableStepDraftTaskTypeValues] = useState<Record<string, string>>({});
   const tableStepDraftInputRef = useRef<HTMLInputElement | null>(null);
+  const taskTypeInteractionParentIdRef = useRef<string | null>(null);
   const [pendingSubtaskAutoExpandByTaskId, setPendingSubtaskAutoExpandByTaskId] = useState<Record<string, boolean>>({});
   const [hiddenSubtaskIds, setHiddenSubtaskIds] = useState<Record<string, boolean>>({});
   const [openColumnMenuId, setOpenColumnMenuId] = useState<SortColumnId | null>(null);
   const [columnMenuPosition, setColumnMenuPosition] = useState<ColumnMenuPosition | null>(null);
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [pendingCustomCadenceTaskId, setPendingCustomCadenceTaskId] = useState<string | null>(null);
-  const [tableViewportMetrics, setTableViewportMetrics] = useState({ clientWidth: 0, scrollLeft: 0 });
+  const [tableViewportMetrics, setTableViewportMetrics] = useState<TaskTableViewportMetrics>({ clientWidth: 0, scrollLeft: 0 });
   const [sortState, setSortState] = useState<{ columnId: SortColumnId; optionId: SortOptionId } | null>(() => getInitialSortState(persistedLayoutPreferences));
   const [localTextFilters, setTextFilters] = useState<Partial<Record<TextFilterColumnId, string>>>({});
   const [localStructuredFilters, setStructuredFilters] = useState<StructuredFilters>(DEFAULT_STRUCTURED_FILTERS);
@@ -2643,7 +2778,12 @@ export function TaskManagementTableV2({
     priority: columnFilters?.priority ?? localStructuredFilters.priority,
     repeat: (columnFilters?.repeat as TaskRepeatCategory[] | undefined) ?? localStructuredFilters.repeat,
     status: statusColumnFilters ?? localStructuredFilters.status,
+    task_type: columnFilters?.taskType ?? localStructuredFilters.task_type,
   }), [columnFilters, energyColumnFilters, localStructuredFilters, statusColumnFilters]);
+  const taskTypeFilterOptions = useMemo(
+    () => buildTaskTypeSelectionOptions(customBehaviorRulesets),
+    [customBehaviorRulesets],
+  );
   const getShowAllSearchStepsKey = (taskId: string) => `${hierarchyScopeKey}:${taskId}`;
 
   useEffect(() => {
@@ -2651,6 +2791,10 @@ export function TaskManagementTableV2({
       tableStepDraftInputRef.current?.focus();
     }
   }, [tableStepDraftParentId]);
+
+  useEffect(() => () => {
+    taskTypeInteractionParentIdRef.current = null;
+  }, []);
 
   useEffect(() => {
     return () => clearStatusRailLongPress();
@@ -2687,6 +2831,9 @@ export function TaskManagementTableV2({
   } | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const inspectorPanelRef = useRef<HTMLDivElement | null>(null);
+  const editorInteractionRef = useRef<HTMLDivElement | null>(null);
+  const previousEditorNavigationRef = useRef<HTMLDivElement | null>(null);
+  const nextEditorNavigationRef = useRef<HTMLDivElement | null>(null);
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const tableUserScrollIntentRef = useRef(false);
   const tableScrollTopHoldFrameRef = useRef<number | null>(null);
@@ -2709,6 +2856,7 @@ export function TaskManagementTableV2({
   const pendingMetadataTargetTaskIdRef = useRef<string | null>(null);
   const estimatedTimeInputRef = useRef<HTMLInputElement | null>(null);
   const pendingEditorFocusFrameRef = useRef<{ frame: number; token: number } | null>(null);
+  const editorNavigationTaskIdRef = useRef<string | null>(null);
   const handledEditorFocusTokensRef = useRef(new Set<number>());
   const statusRailLongPressTimeoutRef = useRef<number | null>(null);
   const statusRailLongPressTriggeredRef = useRef(false);
@@ -2748,6 +2896,10 @@ export function TaskManagementTableV2({
     () => selectedTaskFromRows ?? (selectedTaskId && retainedSelectedTask?.id === selectedTaskId ? retainedSelectedTask : null),
     [retainedSelectedTask, selectedTaskFromRows, selectedTaskId],
   );
+  const activeEditorNavigationTaskIds = editorNavigationTaskIds ?? capturedEditorNavigationTaskIds ?? [];
+  const editorNavigationPosition = selectedTaskId
+    ? getTaskEditorNavigationPosition(activeEditorNavigationTaskIds, selectedTaskId)
+    : null;
   const metadataTargetTaskFromRows = useMemo(
     () => (metadataTargetTaskId ? tasks.find((task) => task.id === metadataTargetTaskId) ?? null : null),
     [metadataTargetTaskId, tasks],
@@ -2855,11 +3007,13 @@ export function TaskManagementTableV2({
       && (structuredFilters.status.length === 0 || structuredFilters.status.includes(task.status))
       && (structuredFilters.priority.length === 0 || task.priorities.some((priority) => structuredFilters.priority.includes(priority)))
       && (structuredFilters.energy.length === 0 || structuredFilters.energy.includes(task.energy))
-      && (structuredFilters.repeat.length === 0 || structuredFilters.repeat.includes(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval))));
+      && (structuredFilters.repeat.length === 0 || structuredFilters.repeat.includes(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval)))
+      && matchesTaskTypeSelections(task.taskType, task.customRulesetId, structuredFilters.task_type));
 
     const nextDisplayedTasks = sortState
       ? sortRows(filtered, sortState.columnId, sortState.optionId, {
         activeTaskTimerIds,
+        customBehaviorRulesets,
         liveActualSecondsByTaskId,
       })
       : filtered;
@@ -2874,7 +3028,7 @@ export function TaskManagementTableV2({
     }
 
     return nextDisplayedTasks;
-  }, [activeTaskTimerIds, liveActualSecondsByTaskId, onColumnFiltersChange, onEnergyColumnFiltersChange, onStatusColumnFiltersChange, sortState, structuredFilters, tasks, textFilters]);
+  }, [activeTaskTimerIds, customBehaviorRulesets, liveActualSecondsByTaskId, onColumnFiltersChange, onEnergyColumnFiltersChange, onStatusColumnFiltersChange, sortState, structuredFilters, tasks, textFilters]);
   const cancelTableScrollTopHold = useCallback(() => {
     if (tableScrollTopHoldFrameRef.current !== null) {
       window.cancelAnimationFrame(tableScrollTopHoldFrameRef.current);
@@ -3185,7 +3339,8 @@ export function TaskManagementTableV2({
       || structuredFilters.status.length > 0
       || structuredFilters.priority.length > 0
       || structuredFilters.energy.length > 0
-      || structuredFilters.repeat.length > 0,
+      || structuredFilters.repeat.length > 0
+      || structuredFilters.task_type.length > 0,
     [structuredFilters, textFilters],
   );
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
@@ -3332,6 +3487,7 @@ export function TaskManagementTableV2({
     setRetainedSelectedTask(clonePrototypeTaskRow(requestedTask));
     setSelectedTaskLeftCurrentList(true);
     setQuickEditTargetTaskIds(null);
+    editorNavigationTaskIdRef.current = requestedOpenTaskId;
     setSelectedTaskId(requestedOpenTaskId);
     setOverlayMode("full");
     setOpenColumnMenuId(null);
@@ -3512,7 +3668,10 @@ export function TaskManagementTableV2({
         return;
       }
 
-      if (!inspectorPanelRef.current?.contains(target)) {
+      const interactionRef = overlayMode === "full" ? editorInteractionRef : inspectorPanelRef;
+      const isNavigationControl = overlayMode === "full"
+        && (previousEditorNavigationRef.current?.contains(target) || nextEditorNavigationRef.current?.contains(target));
+      if (!interactionRef.current?.contains(target) && !isNavigationControl) {
         closeInspector();
       }
     };
@@ -4078,13 +4237,6 @@ export function TaskManagementTableV2({
     };
   }, [effectiveDisplayedTasks, highlightedActiveTaskId, highlightedRevealShouldFocus, highlightedRevealTaskId, highlightedScrollToken, renderedTaskCount]);
 
-  const getHighlightedRowClassName = (taskId: string) => {
-    if (highlightedRevealTaskId === taskId) {
-      return "shadow-[0_18px_40px_rgba(109,61,208,0.10)]";
-    }
-    return "";
-  };
-
   useEffect(() => {
     if (!selectedTaskId || !allowInlineInspector || !isInlineAccordionMode(overlayMode)) {
       return;
@@ -4189,6 +4341,15 @@ export function TaskManagementTableV2({
       ?? (retainedMetadataTargetTask?.id === taskId ? retainedMetadataTargetTask : null);
     if (task) {
       return task;
+    }
+    const directlyResolvedRow = getRowById?.(taskId);
+    if (directlyResolvedRow) {
+      return directlyResolvedRow;
+    }
+    const liveRows = getAllRows?.() ?? allRows ?? [];
+    const liveRow = liveRows.find((entry) => entry.id === taskId);
+    if (liveRow) {
+      return liveRow;
     }
     for (const group of Object.values(childTaskPreviewByParentTaskId)) {
       const item = group.items.find((entry) => entry.id === taskId);
@@ -4320,57 +4481,58 @@ export function TaskManagementTableV2({
     }
   }
 
-  function closeInspector(options?: {
+  function commitEditorDrafts(taskId: string, options?: {
+    skipLinkCommit?: boolean;
+    skipNotesCommit?: boolean;
+    skipTitleCommit?: boolean;
+  }) {
+    if (!options?.skipTitleCommit) {
+      commitTaskTitle(taskId);
+    }
+    if (!options?.skipNotesCommit) {
+      commitTaskNotes(taskId);
+    }
+    if (!options?.skipLinkCommit) {
+      commitTaskLink(taskId);
+    }
+    const currentTask = getTaskById(taskId);
+    const dueDraft = dueDrafts[taskId];
+    if (dueDraft && currentTask && (dueDraft.dueOn !== currentTask.dueOn || dueDraft.dueTime !== currentTask.dueTime)) {
+      setTaskDue(taskId, dueDraft.dueOn, dueDraft.dueTime);
+    }
+    const estimatedDraft = estimatedMinutesDrafts[taskId];
+    if (estimatedDraft && currentTask) {
+      const estimatedMinutes = Number.parseInt(estimatedDraft, 10);
+      if (Number.isFinite(estimatedMinutes) && estimatedMinutes !== currentTask.estimatedMinutes) {
+        setTaskEstimatedMinutes(taskId, estimatedMinutes);
+      }
+    }
+  }
+
+  function commitOpenEditorDrafts(options?: {
     skipLinkCommit?: boolean;
     skipNotesCommit?: boolean;
     skipTitleCommit?: boolean;
   }) {
     if (selectedTaskId) {
-      if (!options?.skipTitleCommit) {
-        commitTaskTitle(selectedTaskId);
-      }
-      if (!options?.skipNotesCommit) {
-        commitTaskNotes(selectedTaskId);
-      }
-      if (!options?.skipLinkCommit) {
-        commitTaskLink(selectedTaskId);
-      }
-      const currentTask = getTaskById(selectedTaskId);
-      const dueDraft = dueDrafts[selectedTaskId];
-      if (dueDraft && currentTask && (dueDraft.dueOn !== currentTask.dueOn || dueDraft.dueTime !== currentTask.dueTime)) {
-        setTaskDue(selectedTaskId, dueDraft.dueOn, dueDraft.dueTime);
-      }
-      const estimatedDraft = estimatedMinutesDrafts[selectedTaskId];
-      if (estimatedDraft && currentTask) {
-        const estimatedMinutes = Number.parseInt(estimatedDraft, 10);
-        if (Number.isFinite(estimatedMinutes) && estimatedMinutes !== currentTask.estimatedMinutes) {
-          setTaskEstimatedMinutes(selectedTaskId, estimatedMinutes);
-        }
-      }
+      commitEditorDrafts(selectedTaskId, options);
     }
     if (metadataTargetTaskId && metadataTargetTaskId !== selectedTaskId) {
-      if (!options?.skipNotesCommit) {
-        commitTaskNotes(metadataTargetTaskId);
-      }
-      if (!options?.skipLinkCommit) {
-        commitTaskLink(metadataTargetTaskId);
-      }
-      const currentTask = getTaskById(metadataTargetTaskId);
-      const dueDraft = dueDrafts[metadataTargetTaskId];
-      if (dueDraft && currentTask && (dueDraft.dueOn !== currentTask.dueOn || dueDraft.dueTime !== currentTask.dueTime)) {
-        setTaskDue(metadataTargetTaskId, dueDraft.dueOn, dueDraft.dueTime);
-      }
-      const estimatedDraft = estimatedMinutesDrafts[metadataTargetTaskId];
-      if (estimatedDraft && currentTask) {
-        const estimatedMinutes = Number.parseInt(estimatedDraft, 10);
-        if (Number.isFinite(estimatedMinutes) && estimatedMinutes !== currentTask.estimatedMinutes) {
-          setTaskEstimatedMinutes(metadataTargetTaskId, estimatedMinutes);
-        }
-      }
+      commitEditorDrafts(metadataTargetTaskId, options);
     }
+  }
+
+  function closeInspector(options?: {
+    skipLinkCommit?: boolean;
+    skipNotesCommit?: boolean;
+    skipTitleCommit?: boolean;
+  }) {
+    commitOpenEditorDrafts(options);
     setEditingTaskTitleId(null);
     setEditingSubtaskId(null);
     hasSeenSelectedTaskInCurrentListRef.current = false;
+    editorNavigationTaskIdRef.current = null;
+    setCapturedEditorNavigationTaskIds(null);
     setSelectedTaskId(null);
     setRetainedSelectedTask(null);
     setMetadataTargetTaskId(null);
@@ -4554,7 +4716,7 @@ export function TaskManagementTableV2({
   }
 
   function canDelayTask(task: PrototypeTaskRow) {
-    return canTaskDelay({ dueOn: task.dueOn, status: task.status });
+    return canTaskDelay({ dueOn: task.dueOn, status: task.status }) && isManualActionAllowed(task, "delay");
   }
 
   function clearStatusRailLongPress() {
@@ -4599,6 +4761,13 @@ export function TaskManagementTableV2({
     // completion, recurrence, rewards, and trash/archive side effects still run.
     queueTableMutationScrollTopHold(taskId);
     const targetTaskIds = resolveTableActionTargetTaskIds(taskId);
+    const manualAction = taskManualActionForStatus(status);
+    if (manualAction && !targetTaskIds.every((targetTaskId) => {
+      const targetTask = getTaskById(targetTaskId);
+      return targetTask ? isManualActionAllowed(targetTask, manualAction) : false;
+    })) {
+      return;
+    }
     for (const targetTaskId of targetTaskIds) {
       onTaskStatusChange?.(targetTaskId, status, undefined, { suppressSharedScrollAnchor: true });
     }
@@ -4641,6 +4810,17 @@ export function TaskManagementTableV2({
     patchTasks(targetTaskIds, (task) => ({ ...task, energy }));
     for (const targetTaskId of targetTaskIds) {
       onTaskEnergyChange?.(targetTaskId, energy);
+    }
+  }
+
+  function setTaskType(taskId: string, selectionValue: string) {
+    const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
+    if (!selection) return;
+    const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
+    queueTableMutationScrollTopHold(taskId);
+    patchTasks(targetTaskIds, (task) => ({ ...task, customRulesetId: selection.customRulesetId, taskType: selection.taskType }));
+    for (const targetTaskId of targetTaskIds) {
+      onTaskTypeChange?.(targetTaskId, selection.taskType, selection.customRulesetId);
     }
   }
 
@@ -5082,10 +5262,11 @@ export function TaskManagementTableV2({
     setStructuredFilters(next);
     if (columnId === "status") onStatusColumnFiltersChange?.(next.status);
     if (columnId === "energy") onEnergyColumnFiltersChange?.(next.energy);
-    if (columnId === "priority" || columnId === "repeat") {
+    if (columnId === "priority" || columnId === "repeat" || columnId === "task_type") {
       onColumnFiltersChange?.({
         priority: next.priority,
         repeat: next.repeat,
+        taskType: next.task_type,
         text: textFilters,
       });
     }
@@ -5094,7 +5275,7 @@ export function TaskManagementTableV2({
   function clearAllFilters() {
     setTextFilters({});
     setStructuredFilters(DEFAULT_STRUCTURED_FILTERS);
-    onColumnFiltersChange?.({ priority: [], repeat: [], text: {} });
+    onColumnFiltersChange?.({ priority: [], repeat: [], taskType: [], text: {} });
     onEnergyColumnFiltersChange?.([]);
     onStatusColumnFiltersChange?.([]);
   }
@@ -5108,6 +5289,7 @@ export function TaskManagementTableV2({
     const nextTask = getTaskById(taskId);
     const isTaskInRows = tasks.some((task) => task.id === taskId);
     cancelTableScrollTopHold();
+    editorNavigationTaskIdRef.current = taskId;
     setEditingTaskTitleId(null);
     setActiveMetadataPanelByTaskId({});
     setMetadataTargetTaskId(null);
@@ -5239,10 +5421,11 @@ export function TaskManagementTableV2({
     }
 
     if (onOpenTaskEditor) {
-      onOpenTaskEditor(taskId);
+      onOpenTaskEditor(taskId, effectiveDisplayedTasks.map((task) => task.id));
       return;
     }
 
+    setCapturedEditorNavigationTaskIds(effectiveDisplayedTasks.map((task) => task.id));
     if (revealChildTaskInParentEditor(taskId)) {
       return;
     }
@@ -5259,6 +5442,119 @@ export function TaskManagementTableV2({
     onOpenChildTask?.(taskId);
   }
 
+  function navigateEditorTask(direction: "next" | "previous") {
+    if (overlayMode !== "full") {
+      return;
+    }
+
+    const currentTaskId = editorNavigationTaskIdRef.current ?? selectedTaskId;
+    if (!currentTaskId || activeEditorNavigationTaskIds.length === 0) {
+      return;
+    }
+
+    const nextTaskId = getTaskEditorNavigationNeighbor({
+      currentTaskId,
+      direction,
+      isTaskAvailable: (taskId) => Boolean(getTaskById(taskId)),
+      taskIds: activeEditorNavigationTaskIds,
+    });
+    if (!nextTaskId || nextTaskId === currentTaskId) {
+      return;
+    }
+
+    commitOpenEditorDrafts();
+    setEditingTaskTitleId(null);
+    setEditingSubtaskId(null);
+    setActiveMetadataPanelByTaskId({});
+    setMetadataTargetTaskId(null);
+    setRetainedMetadataTargetTask(null);
+    pendingMetadataTargetTaskIdRef.current = null;
+    setQuickEditTargetTaskIds(null);
+    openInspector(nextTaskId, "full");
+    onTaskEditorNavigate?.(nextTaskId);
+  }
+
+  function getEditorNavigationNeighborId(direction: "next" | "previous") {
+    const currentTaskId = editorNavigationTaskIdRef.current ?? selectedTaskId;
+    if (!currentTaskId) {
+      return null;
+    }
+    return getTaskEditorNavigationNeighbor({
+      currentTaskId,
+      direction,
+      isTaskAvailable: (taskId) => Boolean(getTaskById(taskId)),
+      taskIds: activeEditorNavigationTaskIds,
+    });
+  }
+
+  function renderEditorNavigationControls(layout: "mobile" | "side", side?: "previous" | "next") {
+    if (overlayMode !== "full" || !editorNavigationPosition) {
+      return null;
+    }
+
+    const previousTaskId = getEditorNavigationNeighborId("previous");
+    const nextTaskId = getEditorNavigationNeighborId("next");
+    const previousButton = (
+      <AdhdIconButton
+        aria-label="Previous task"
+        className={layout === "side" ? "bg-white/95 shadow-[0_10px_28px_rgba(81,61,168,0.14)] dark:bg-[#1b1530]/95" : undefined}
+        disabled={!previousTaskId}
+        onClick={(event) => {
+          event.stopPropagation();
+          navigateEditorTask("previous");
+        }}
+        size="md"
+        type="button"
+      >
+        <ArrowLeft aria-hidden="true" />
+      </AdhdIconButton>
+    );
+    const nextButton = (
+      <AdhdIconButton
+        aria-label="Next task"
+        className={layout === "side" ? "bg-white/95 shadow-[0_10px_28px_rgba(81,61,168,0.14)] dark:bg-[#1b1530]/95" : undefined}
+        disabled={!nextTaskId}
+        onClick={(event) => {
+          event.stopPropagation();
+          navigateEditorTask("next");
+        }}
+        size="md"
+        type="button"
+      >
+        <ArrowRight aria-hidden="true" />
+      </AdhdIconButton>
+    );
+
+    if (layout === "side" && side) {
+      return (
+        <div
+          className="pointer-events-auto flex items-center justify-center"
+          data-task-editor-navigation={`side-${side}`}
+          ref={side === "previous" ? previousEditorNavigationRef : nextEditorNavigationRef}
+        >
+          {side === "previous" ? previousButton : nextButton}
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className={layout === "side"
+          ? "pointer-events-none absolute inset-x-1 top-1/2 z-30 flex -translate-y-1/2 items-center justify-between"
+          : "mt-3 flex items-center justify-between gap-3 rounded-[0.9rem] border border-[#ede7f7] bg-[#fbfaff] px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]"}
+        data-task-editor-navigation={layout}
+      >
+        <span className={layout === "side" ? "pointer-events-auto" : "shrink-0"}>{previousButton}</span>
+        {layout === "mobile" ? (
+          <span className="text-xs font-medium text-[#8d87a7] dark:text-white/45" data-task-editor-position="true">
+            {`${editorNavigationPosition.index} of ${editorNavigationPosition.count}`}
+          </span>
+        ) : null}
+        <span className={layout === "side" ? "pointer-events-auto" : "shrink-0"}>{nextButton}</span>
+      </div>
+    );
+  }
+
   function openTableStepActions(taskId: string, mode: OverlayMode = "status") {
     if (allowInlineInspector && isInlineAccordionMode(mode)) {
       toggleInlineActionRow(taskId, mode);
@@ -5273,7 +5569,10 @@ export function TaskManagementTableV2({
       ?? (retainedSelectedTask?.id === item.id ? retainedSelectedTask : null)
       ?? (retainedMetadataTargetTask?.id === item.id ? retainedMetadataTargetTask : null);
     if (retainedTask) {
-      return retainedTask;
+      return {
+        ...retainedTask,
+        attentionReason: attentionReasonByTaskId[item.id] ?? null,
+      };
     }
 
     return {
@@ -5285,6 +5584,8 @@ export function TaskManagementTableV2({
       energy: item.energy,
       estimatedMinutes: item.estimatedMinutes,
       id: item.id,
+      taskType: normalizeTaskType(item.taskType),
+      customRulesetId: item.customRulesetId,
       lastDoneAt: item.lastDoneAt,
       lastDoneDate: item.lastDoneDate,
       lastHandledAt: item.lastHandledAt,
@@ -5295,6 +5596,7 @@ export function TaskManagementTableV2({
       lists: [],
       currentStreak: item.currentStreak,
       missedStreak: item.missedStreak,
+      attentionReason: attentionReasonByTaskId[item.id] ?? null,
       notes: item.notes,
       priorities: [...item.priorityFlags],
       repeat: item.repeat,
@@ -5319,6 +5621,7 @@ export function TaskManagementTableV2({
       return;
     }
 
+    taskTypeInteractionParentIdRef.current = null;
     setExpandedStepsByTaskId((current) => ({
       ...current,
       [parentTaskId]: true,
@@ -5330,11 +5633,17 @@ export function TaskManagementTableV2({
     setTableStepTitleDrafts((current) => (
       current[parentTaskId] === undefined ? { ...current, [parentTaskId]: "" } : current
     ));
+    setTableStepDraftTaskTypeValues((current) => (
+      current[parentTaskId] === undefined ? { ...current, [parentTaskId]: "task" } : current
+    ));
     setTableStepDraftChildLabels((current) => ({ ...current, [parentTaskId]: childLabel }));
     setTableStepDraftParentId(parentTaskId);
   }
 
   function cancelTableStepDraft(parentTaskId: string) {
+    if (taskTypeInteractionParentIdRef.current === parentTaskId) {
+      taskTypeInteractionParentIdRef.current = null;
+    }
     setTableStepDraftParentId((current) => (current === parentTaskId ? null : current));
     setTableStepCreationErrorByParentId((current) => ({
       ...current,
@@ -5346,6 +5655,11 @@ export function TaskManagementTableV2({
       return next;
     });
     setTableStepDraftChildLabels((current) => {
+      const next = { ...current };
+      delete next[parentTaskId];
+      return next;
+    });
+    setTableStepDraftTaskTypeValues((current) => {
       const next = { ...current };
       delete next[parentTaskId];
       return next;
@@ -5372,7 +5686,7 @@ export function TaskManagementTableV2({
       return;
     }
 
-    const result = await onCreateChildTask(parentTaskId, nextTitle);
+    const result = await onCreateChildTask(parentTaskId, nextTitle, tableStepDraftTaskTypeValues[parentTaskId] ?? "task");
     if (result.error || !result.taskId) {
       setTableStepCreationErrorByParentId((current) => ({
         ...current,
@@ -5401,9 +5715,12 @@ export function TaskManagementTableV2({
     }
 
     if (overlayMode === "status") {
-      return getSelectableTaskDisplayStatusesForTask({ dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status }).map((status, optionIndex) => (
+      const availableStatuses = getPolicyFilteredStatuses({ customRulesetId: task.customRulesetId, dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status, taskId: task.id, taskType: task.taskType });
+      const statusOptions = preserveCurrentTaskStatusForPresentation(availableStatuses, task.status);
+      return statusOptions.map((status, optionIndex) => (
         <button
           className={inlineAccordionButtonClass()}
+          disabled={!availableStatuses.includes(status)}
           key={`${status || "status-option"}-${optionIndex}`}
           onClick={() => {
             if (status === "delayed") {
@@ -5936,70 +6253,40 @@ export function TaskManagementTableV2({
       return null;
     }
 
-    const actionRowMaxWidth = tableViewportMetrics.clientWidth > 0
-      ? Math.max(280, tableViewportMetrics.clientWidth - 24)
-      : undefined;
-
     return (
-      <motion.div
-        animate={{ height: "auto", opacity: 1, y: 0 }}
-        className={`${TASK_TABLE_GRID_ORIGIN_CLASS} mt-2 w-max min-w-full overflow-hidden rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-2.5 shadow-[0_18px_45px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#1b1530]`}
-        data-task-table-inline-editor={task.id}
-        exit={{ height: 0, opacity: 0, y: -6 }}
-        initial={{ height: 0, opacity: 0, y: -6 }}
-        onClick={(event) => event.stopPropagation()}
-        ref={(node) => {
+      <TaskTableInlineActionRow
+        ariaLabel={`${overlayMode} actions`}
+        contentOverflow={overlayMode === "tags" ? "visible" : "auto"}
+        heading={overlayMode === "status"
+          ? "Status actions"
+          : overlayMode === "due"
+            ? "Due actions"
+            : overlayMode === "estimated"
+              ? "Estimated time"
+              : overlayMode === "actual"
+                ? "Actual time"
+                : overlayMode === "priority"
+                  ? "Priority actions"
+                  : overlayMode === "energy"
+                    ? "Energy actions"
+                    : overlayMode === "repeat"
+                      ? "Repeat actions"
+                      : overlayMode === "tags"
+                        ? "Tag actions"
+                        : overlayMode === "link"
+                          ? "Link actions"
+                          : overlayMode === "notes"
+                            ? "Notes actions"
+                            : "List actions"}
+        onClose={closeInspector}
+        containerRef={(node) => {
           activeInlineActionRowRef.current = node;
         }}
-        transition={{ duration: 0.18 }}
+        rowId={task.id}
+        viewportMetrics={tableViewportMetrics}
       >
-        <div
-          className="min-w-0"
-          style={{
-            maxWidth: actionRowMaxWidth,
-            transform: tableViewportMetrics.scrollLeft > 0 ? `translateX(${tableViewportMetrics.scrollLeft}px)` : undefined,
-          }}
-        >
-          <div className="mb-1 flex items-center gap-2">
-            <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
-              {overlayMode === "status"
-                ? "Status actions"
-                : overlayMode === "due"
-                  ? "Due actions"
-                  : overlayMode === "estimated"
-                    ? "Estimated time"
-                    : overlayMode === "actual"
-                      ? "Actual time"
-                      : overlayMode === "priority"
-                        ? "Priority actions"
-                        : overlayMode === "energy"
-                          ? "Energy actions"
-                          : overlayMode === "repeat"
-                            ? "Repeat actions"
-                            : overlayMode === "tags"
-                              ? "Tag actions"
-                              : overlayMode === "link"
-                                ? "Link actions"
-                                : overlayMode === "notes"
-                                  ? "Notes actions"
-                                  : "List actions"}
-            </p>
-            <button
-              aria-label="Close actions"
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#e4deef] bg-[#f4f5f8] text-[#8a82a7] transition hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/8 dark:text-white/55 dark:hover:text-[#cabfff]"
-              onClick={() => closeInspector()}
-              type="button"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          <div className={overlayMode === "tags" ? "overflow-visible" : "overflow-x-auto"}>
-            <div className={overlayMode === "tags" ? "flex w-full items-start gap-1.5" : "flex min-w-max items-start gap-1.5"}>
-              {inlineAccordionContent}
-            </div>
-          </div>
-        </div>
-      </motion.div>
+        {inlineAccordionContent}
+      </TaskTableInlineActionRow>
     );
   }
 
@@ -6272,6 +6559,7 @@ export function TaskManagementTableV2({
                 onColumnFiltersChange?.({
                   priority: structuredFilters.priority,
                   repeat: structuredFilters.repeat,
+                  taskType: structuredFilters.task_type,
                   text: next,
                 });
               }}
@@ -6344,6 +6632,23 @@ export function TaskManagementTableV2({
                   className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? repeatTone(option.value) : LIST_CHIP_CLASS}`}
                   key={`${option.value || "repeat-filter"}-${optionIndex}`}
                   onClick={() => toggleStructuredFilter("repeat", option.value)}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {column.id === "task_type" ? (
+          <div className="mb-2 flex flex-wrap gap-2 px-1">
+            {taskTypeFilterOptions.map((option) => {
+              const selected = structuredFilters.task_type.includes(option.value);
+              return (
+                <button
+                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : LIST_CHIP_CLASS}`}
+                  key={option.value}
+                  onClick={() => toggleStructuredFilter("task_type", option.value)}
                   type="button"
                 >
                   {option.label}
@@ -6449,6 +6754,14 @@ export function TaskManagementTableV2({
               }
               if (isStructuredFilterColumn(column.id)) {
                 setStructuredFilters((current) => ({ ...current, [column.id]: [] }));
+                if (column.id === "task_type") {
+                  onColumnFiltersChange?.({
+                    priority: structuredFilters.priority,
+                    repeat: structuredFilters.repeat,
+                    taskType: [],
+                    text: textFilters,
+                  });
+                }
               }
               setOpenColumnMenuId(null);
             }}
@@ -6475,7 +6788,7 @@ export function TaskManagementTableV2({
     setRowContextMenu(null);
 
     if (onOpenTaskEditor) {
-      onOpenTaskEditor(taskId);
+      onOpenTaskEditor(taskId, effectiveDisplayedTasks.map((task) => task.id));
       return;
     }
 
@@ -6505,7 +6818,7 @@ export function TaskManagementTableV2({
 
   function openRowPrimaryAction(taskId: string, sourceElement: HTMLElement) {
     if (onOpenTaskEditor) {
-      onOpenTaskEditor(taskId);
+      onOpenTaskEditor(taskId, effectiveDisplayedTasks.map((task) => task.id));
       return;
     }
 
@@ -6587,7 +6900,9 @@ export function TaskManagementTableV2({
       const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false)
         || activeHierarchyParentTaskIdSet.has(task.id);
       return [{
-        expanded: hasStepPreview ? stepsExpanded : (expandedSubtasksByTaskId[task.id] ?? false),
+        expanded: hasStepPreview
+          ? stepsExpanded
+          : (expandedSubtasksByTaskId[task.id] ?? false),
         taskId: task.id,
       }];
     });
@@ -6599,7 +6914,9 @@ export function TaskManagementTableV2({
       return next;
     }, { ...current }));
     setExpandedSubtasksByTaskId((current) => renderedTasks.reduce<Record<string, boolean>>((next, task) => {
-      if (eligibleTaskIdSet.has(task.id) && filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds).length > 0) next[task.id] = expandAll;
+      if (eligibleTaskIdSet.has(task.id) && (
+        filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds).length > 0
+      )) next[task.id] = expandAll;
       return next;
     }, { ...current }));
   }
@@ -6637,12 +6954,7 @@ export function TaskManagementTableV2({
       return wrapMeasuredContent(
         task.currentStreak > 0 || task.missedStreak > 0 ? (
           <span className="inline-flex flex-wrap items-center justify-center gap-1">
-            {task.currentStreak > 0 ? (
-              <span className={`${CHIP_BASE} gap-1 border-[#ffd8be] bg-[#fff1e7] px-2 text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]`}>
-                <Flame className="h-3 w-3" />
-                {task.currentStreak}
-              </span>
-            ) : null}
+            <TaskCurrentStreakChip currentStreak={task.currentStreak} />
             {task.missedStreak > 0 ? (
               <span className={`${CHIP_BASE} gap-1 border-[#ffd6de] bg-[#fff1f3] px-2 text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]`}>
                 <Skull className="h-3 w-3" />
@@ -6701,7 +7013,7 @@ export function TaskManagementTableV2({
                 onPointerUp={endStatusRailLongPress}
                 type="button"
               >
-                {renderTableCurrentStatusCircle(task.status)}
+                {renderTableCurrentStatusCircle(task.status, Boolean(task.attentionReason))}
               </button>
             ) : null}
             {isStatusRailColumnExpanded ? (
@@ -6726,6 +7038,7 @@ export function TaskManagementTableV2({
                 <TaskStatusCircleRail<TaskDisplayStatus>
                   className="w-max max-w-none flex-nowrap"
                   currentStatus={task.status}
+                  emphasizeMissed
                   onSetStatus={(status, event) => {
                     if (statusRailLongPressTriggeredRef.current) {
                       statusRailLongPressTriggeredRef.current = false;
@@ -6737,10 +7050,11 @@ export function TaskManagementTableV2({
                     }
                   setTaskDisplayStatus(task.id, status);
                   }}
-                  options={getSelectableTaskDisplayStatusesForTask({ dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status }).map((status) => ({
+                  options={getPolicyFilteredStatuses({ customRulesetId: task.customRulesetId, dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status, taskId: task.id, taskType: task.taskType }).map((status) => ({
                     label: formatTaskStatusLabel(status),
                     value: status,
                   }))}
+                  preserveCurrentStatus
                   statusLabelPrefix="Set task status to"
                   wrap={false}
                 />
@@ -6777,7 +7091,7 @@ export function TaskManagementTableV2({
               type="button"
             >
               <span className="inline-flex w-max items-center" data-column-content-measure={columnId}>
-                {renderTableCurrentStatusCircle(task.status)}
+                {renderTableCurrentStatusCircle(task.status, Boolean(task.attentionReason))}
               </span>
             </button>
           ) : null}
@@ -6803,6 +7117,7 @@ export function TaskManagementTableV2({
               <TaskStatusCircleRail<TaskDisplayStatus>
                 className="w-max max-w-none flex-nowrap"
                 currentStatus={task.status}
+                emphasizeMissed
                 onSetStatus={(status, event) => {
                   if (statusRailLongPressTriggeredRef.current) {
                     statusRailLongPressTriggeredRef.current = false;
@@ -6814,10 +7129,11 @@ export function TaskManagementTableV2({
                   }
                   setTaskDisplayStatus(task.id, status);
                 }}
-                options={getSelectableTaskDisplayStatusesForTask({ dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status }).map((status) => ({
+                options={getPolicyFilteredStatuses({ customRulesetId: task.customRulesetId, dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status, taskId: task.id, taskType: task.taskType }).map((status) => ({
                   label: formatTaskStatusLabel(status),
                   value: status,
                 }))}
+                preserveCurrentStatus
                 statusLabelPrefix="Set task status to"
                 wrap={false}
               />
@@ -6832,7 +7148,8 @@ export function TaskManagementTableV2({
       const hasSubtasks = visibleSubtasks.length > 0;
       const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
       const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
-      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || activeHierarchyParentTaskIdSet.has(task.id);
+      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false)
+        || activeHierarchyParentTaskIdSet.has(task.id);
       const subtasksExpanded = expandedSubtasksByTaskId[task.id] ?? false;
       const hasUnifiedSteps = hasStepPreview || hasSubtasks;
       const unifiedStepsExpanded = hasStepPreview ? stepsExpanded : subtasksExpanded;
@@ -6877,12 +7194,12 @@ export function TaskManagementTableV2({
                 {isRenamingTitle ? (
                   <TaskTitleDraftInput
                     autoFocus
-                    className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 min-w-0 max-w-full rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                    className={`${TASK_TABLE_INLINE_RENAME_EDITOR_CLASS} min-w-0 max-w-full rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                     initialValue={titleDraft}
                     onCommit={commitTaskTitle}
                     onDone={() => setEditingTaskTitleId((current) => (current === task.id ? null : current))}
                     onDraftChange={setTitleDraft}
-                    style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                    style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                     taskId={task.id}
                   />
                 ) : (
@@ -6957,18 +7274,10 @@ export function TaskManagementTableV2({
                 </button>
               ) : null}
               {onCreateChildTask ? (
-                <button
-                  aria-label="Add Step"
-                  className={ROW_ACTION_ICON_BUTTON_CLASS}
-                  onPointerDown={stopRowActionPointerEvent}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    beginTableStepDraft(task.id);
-                  }}
-                  type="button"
-                >
-                  <Footprints className="h-3.5 w-3.5" />
-                </button>
+                <ChildTypeChooser
+                  childLabel="Step"
+                  onChooseTask={() => beginTableStepDraft(task.id)}
+                />
               ) : null}
               {onOpenTaskHistory ? (
                 <button
@@ -7010,6 +7319,7 @@ export function TaskManagementTableV2({
                   {task.missedStreak}
                 </span>
               ) : null}
+              <TaskAttentionChip dueOn={task.dueOn || null} reason={task.attentionReason} taskId={task.id} />
               </div>
             </div>
             {hasDescription ? (
@@ -7094,6 +7404,13 @@ export function TaskManagementTableV2({
       );
     }
 
+    if (columnId === "task_type") {
+      return wrapMeasuredContent(
+        <TaskTypeIdentity compact option={resolveTaskTypeSelectionOption(task.taskType, task.customRulesetId, customBehaviorRulesets)} />,
+        "justify-center",
+      );
+    }
+
     if (columnId === "due") {
       return wrapInteractiveCell(
         wrapMeasuredContent(
@@ -7111,7 +7428,7 @@ export function TaskManagementTableV2({
       return wrapMeasuredContent(
         <div>
           <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>
-            {formatEntryTimestamp(task.createdAt)}
+            {formatTaskTableEntryTimestamp(task.createdAt)}
           </span>
         </div>
       );
@@ -7121,7 +7438,7 @@ export function TaskManagementTableV2({
       return wrapMeasuredContent(
         <div>
           <span className={`${CHIP_BASE} ${task.completedAt ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
-            {task.completedAt ? formatEntryTimestamp(task.completedAt) : "Not completed"}
+            {task.completedAt ? formatTaskTableEntryTimestamp(task.completedAt) : "Not completed"}
           </span>
         </div>
       );
@@ -7132,7 +7449,7 @@ export function TaskManagementTableV2({
       return wrapMeasuredContent(
         <div>
           <span className={`${CHIP_BASE} ${lastDoneValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
-            {task.lastDoneAt ? formatEntryTimestamp(task.lastDoneAt) : task.lastDoneDate ? formatCalendarDate(task.lastDoneDate) : "No done yet"}
+            {task.lastDoneAt ? formatTaskTableEntryTimestamp(task.lastDoneAt) : task.lastDoneDate ? formatCalendarDate(task.lastDoneDate) : "No done yet"}
           </span>
         </div>
       );
@@ -7143,7 +7460,7 @@ export function TaskManagementTableV2({
       return wrapMeasuredContent(
         <div>
           <span className={`${CHIP_BASE} ${lastHandledValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
-            {task.lastHandledAt ? formatEntryTimestamp(task.lastHandledAt) : task.lastHandledDate ? formatCalendarDate(task.lastHandledDate) : "No handled"}
+            {task.lastHandledAt ? formatTaskTableEntryTimestamp(task.lastHandledAt) : task.lastHandledDate ? formatCalendarDate(task.lastHandledDate) : "No handled"}
           </span>
         </div>
       );
@@ -7470,7 +7787,7 @@ export function TaskManagementTableV2({
                       <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
                         <TaskTitleDraftInput
                           autoFocus
-                          className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 min-w-0 max-w-full rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                          className={`${TASK_TABLE_INLINE_RENAME_EDITOR_CLASS} min-w-0 max-w-full rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                           initialValue={item.title}
                           onCommit={commitTaskTitle}
                           onDone={() => {
@@ -7483,7 +7800,7 @@ export function TaskManagementTableV2({
                             setEditingTaskTitleId((current) => (current === item.id ? null : current));
                           }}
                           onDraftChange={setTitleDraft}
-                          style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                          style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                           taskId={item.id}
                         />
                       </span>
@@ -7528,19 +7845,13 @@ export function TaskManagementTableV2({
                   </div>
                   <div className="flex flex-none items-center gap-0.5">
                     {onCreateChildTask && !childTaskCreationBlockedTaskIds.includes(item.id) ? (
-                      <button
-                        aria-label={`Add substep to ${item.title || "Untitled step"}`}
-                        className={ROW_ACTION_ICON_BUTTON_CLASS}
-                        data-same-table-step-add={item.id}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          beginTableStepDraft(item.id, "Substep");
-                        }}
-                        onPointerDown={stopRowActionPointerEvent}
-                        type="button"
-                      >
-                        <Footprints className="h-3.5 w-3.5" />
-                      </button>
+                      <div data-same-table-step-add={item.id}>
+                        <ChildTypeChooser
+                          aria-label={`Add substep to ${item.title || "Untitled step"}`}
+                          childLabel="Substep"
+                          onChooseTask={() => beginTableStepDraft(item.id, "Substep")}
+                        />
+                      </div>
                     ) : null}
                     {onReorderChildTask ? (
                       <button
@@ -7662,7 +7973,7 @@ export function TaskManagementTableV2({
                     onPointerDown={stopRowActionPointerEvent}
                   >
                     <div className="flex flex-wrap gap-1.5" data-step-row-status-icons={item.id}>
-                      {getSelectableTaskDisplayStatusesForTask({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status }).map((status) => (
+                      {getPolicyFilteredStatuses({ customRulesetId: item.customRulesetId, dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status, taskId: item.id, taskType: item.taskType }).map((status) => (
                         <button
                           aria-label={`Set step status to ${formatTaskStatusLabel(status)}`}
                           className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${item.status === status ? "" : "opacity-78 hover:opacity-100"}`}
@@ -7741,6 +8052,15 @@ export function TaskManagementTableV2({
                       value={tableStepTitleDrafts[item.id] ?? ""}
                     />
                   </label>
+                  <TaskTypeSelect
+                    ariaLabel="Substep Task Type"
+                    className="mt-0"
+                    label="Substep Task Type"
+                    onChange={(value) => setTableStepDraftTaskTypeValues((current) => ({ ...current, [item.id]: value }))}
+                    options={taskTypeFilterOptions}
+                    size="compact"
+                    value={tableStepDraftTaskTypeValues[item.id] ?? "task"}
+                  />
                   <TaskTableChipButton
                     disabled={childTaskCreationBlockedTaskIds.includes(item.id)}
                     type="submit"
@@ -7814,6 +8134,7 @@ export function TaskManagementTableV2({
               <TaskStatusCircleRail<TaskDisplayStatus>
                 className="w-max max-w-none flex-nowrap"
                 currentStatus={item.status}
+                emphasizeMissed
                 onSetStatus={(status, event) => {
                   if (status === "delayed") {
                     openTaskDelay(item.id, event.currentTarget);
@@ -7821,11 +8142,12 @@ export function TaskManagementTableV2({
                   }
                   setTaskDisplayStatus(item.id, status);
                 }}
-                options={getSelectableTaskDisplayStatusesForTask({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status }).map((status) => ({
-                  label: formatTaskStatusLabel(status),
-                  value: status,
-                }))}
-                statusLabelPrefix="Set step status to"
+                  options={getPolicyFilteredStatuses({ customRulesetId: item.customRulesetId, dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status, taskId: item.id, taskType: item.taskType }).map((status) => ({
+                    label: formatTaskStatusLabel(status),
+                    value: status,
+                  }))}
+                  preserveCurrentStatus
+                  statusLabelPrefix="Set step status to"
                 wrap={false}
               />
             </div>
@@ -7837,7 +8159,7 @@ export function TaskManagementTableV2({
         item,
         columnId,
         <div className="inline-flex min-w-0 self-center">
-          {renderTableCurrentStatusCircle(item.status)}
+          {renderTableCurrentStatusCircle(item.status, Boolean(attentionReasonByTaskId[item.id]))}
         </div>,
       );
     }
@@ -7859,12 +8181,12 @@ export function TaskManagementTableV2({
               <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()}>
                 <TaskTitleDraftInput
                   autoFocus
-                  className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 w-full min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                  className={`${TASK_TABLE_INLINE_RENAME_EDITOR_CLASS} w-full min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                   initialValue={item.title}
                   onCommit={commitTaskTitle}
                   onDone={() => setEditingTaskTitleId((current) => (current === item.id ? null : current))}
                   onDraftChange={setTitleDraft}
-                  style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                  style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                   taskId={item.id}
                 />
               </span>
@@ -7886,7 +8208,13 @@ export function TaskManagementTableV2({
                     </p>
                   </button>
                   {renderStepLayerChip(item.depth)}
-                  {renderStepHistoryChips(item.currentStreak, item.missedStreak)}
+                  {renderStepHistoryChips(
+                    item.currentStreak,
+                    item.missedStreak,
+                    attentionReasonByTaskId[item.id],
+                    item.dueOn ?? item.scheduledOn ?? null,
+                    item.id,
+                  )}
                   {canCollapse ? (
                     <button
                       aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
@@ -7920,19 +8248,10 @@ export function TaskManagementTableV2({
           </div>
           <div className="flex shrink-0 items-center gap-0 [&>button]:h-6 [&>button]:w-6">
             {onCreateChildTask ? (
-              <button
-                aria-label={`Add substep to ${item.title || "Untitled step"}`}
-                className={ROW_ACTION_ICON_BUTTON_CLASS}
-                data-same-table-step-add={item.id}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  beginTableStepDraft(item.id);
-                }}
-                onPointerDown={stopRowActionPointerEvent}
-                type="button"
-              >
-                <Footprints className="h-3.5 w-3.5" />
-              </button>
+              <ChildTypeChooser
+                childLabel="Step"
+                onChooseTask={() => beginTableStepDraft(item.id)}
+              />
             ) : null}
             {onTaskPinToggle ? (
               <button
@@ -8031,11 +8350,17 @@ export function TaskManagementTableV2({
       ));
     }
 
+    if (columnId === "task_type") {
+      return (
+        <TaskTypeIdentity compact option={resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets)} />
+      );
+    }
+
     if (columnId === "date_added") {
       return (
         <div>
           <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>
-            {formatEntryTimestamp(item.createdAt)}
+            {formatTaskTableEntryTimestamp(item.createdAt)}
           </span>
         </div>
       );
@@ -8046,7 +8371,7 @@ export function TaskManagementTableV2({
       return (
         <div>
           <span className={`${CHIP_BASE} ${lastDoneValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
-            {item.lastDoneAt ? formatEntryTimestamp(item.lastDoneAt) : item.lastDoneDate ? formatCalendarDate(item.lastDoneDate) : "No done yet"}
+            {item.lastDoneAt ? formatTaskTableEntryTimestamp(item.lastDoneAt) : item.lastDoneDate ? formatCalendarDate(item.lastDoneDate) : "No done yet"}
           </span>
         </div>
       );
@@ -8057,7 +8382,7 @@ export function TaskManagementTableV2({
       return (
         <div>
           <span className={`${CHIP_BASE} ${lastHandledValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
-            {item.lastHandledAt ? formatEntryTimestamp(item.lastHandledAt) : item.lastHandledDate ? formatCalendarDate(item.lastHandledDate) : "No handled"}
+            {item.lastHandledAt ? formatTaskTableEntryTimestamp(item.lastHandledAt) : item.lastHandledDate ? formatCalendarDate(item.lastHandledDate) : "No handled"}
           </span>
         </div>
       );
@@ -8215,6 +8540,9 @@ export function TaskManagementTableV2({
     const draft = tableStepTitleDrafts[parentTaskId] ?? "";
     const creationError = tableStepCreationErrorByParentId[parentTaskId];
     const childLabel = tableStepDraftChildLabels[parentTaskId] ?? "Step";
+    const draftTaskTypeSelectionValue = tableStepDraftTaskTypeValues[parentTaskId] ?? "task";
+    const draftTaskTypeOption = taskTypeFilterOptions.find((option) => option.value === draftTaskTypeSelectionValue)
+      ?? resolveTaskTypeSelectionOption("task", null, customBehaviorRulesets);
 
     if (columnId === "status_icon") {
       return <div className="flex self-center">{renderTableCurrentStatusCircle("pending")}</div>;
@@ -8225,45 +8553,59 @@ export function TaskManagementTableV2({
         <div className="flex w-full min-w-0 items-center gap-1.5 text-left" style={{ paddingLeft: "0.2rem" }}>
           <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
           <div className="min-w-0 flex-1">
-            <input
-              aria-label={`New ${childLabel.toLowerCase()} title`}
-              className="w-full min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1.5 py-1 text-[13px] font-medium text-[#27304c] outline-none transition placeholder:text-[#aaa2c8] focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
-              onBlur={() => {
-                if (draft.trim()) {
-                  void commitTableStepDraft(parentTaskId);
-                  return;
-                }
-                cancelTableStepDraft(parentTaskId);
-              }}
-              onChange={(event) => {
-                setTableStepTitleDrafts((current) => ({
-                  ...current,
-                  [parentTaskId]: event.target.value,
-                }));
-                if (creationError) {
-                  setTableStepCreationErrorByParentId((current) => ({
-                    ...current,
-                    [parentTaskId]: null,
-                  }));
-                }
-              }}
-              onClick={(event) => event.stopPropagation()}
-              onKeyDown={(event) => {
-                event.stopPropagation();
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void commitTableStepDraft(parentTaskId);
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <TaskInlineChildDraftInput
+                ariaLabel={`New ${childLabel.toLowerCase()} title`}
+                childLabel={childLabel}
+                inputRef={tableStepDraftParentId === parentTaskId ? tableStepDraftInputRef : undefined}
+                onBlur={(event) => {
+                  if (taskTypeInteractionParentIdRef.current === parentTaskId) {
+                    return;
+                  }
+                  if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select], [data-task-type-select-menu]")) {
+                    return;
+                  }
+                  if (draft.trim()) {
+                    void commitTableStepDraft(parentTaskId);
+                    return;
+                  }
                   cancelTableStepDraft(parentTaskId);
-                }
-              }}
-              placeholder={`${childLabel} title...`}
-              ref={tableStepDraftParentId === parentTaskId ? tableStepDraftInputRef : undefined}
-              type="text"
-              value={draft}
-            />
+                }}
+                onCancel={() => cancelTableStepDraft(parentTaskId)}
+                onChange={(value) => {
+                  setTableStepTitleDrafts((current) => ({
+                    ...current,
+                    [parentTaskId]: value,
+                  }));
+                  if (creationError) {
+                    setTableStepCreationErrorByParentId((current) => ({
+                      ...current,
+                      [parentTaskId]: null,
+                    }));
+                  }
+                }}
+                onCommit={() => commitTableStepDraft(parentTaskId)}
+                placeholder={`${childLabel} title...`}
+                value={draft}
+              />
+              <TaskTypeSelect
+                ariaLabel={`${childLabel} Task Type`}
+                className="mt-0"
+                label={`${childLabel} Task Type`}
+                onInteractionStart={() => {
+                  taskTypeInteractionParentIdRef.current = parentTaskId;
+                }}
+                onInteractionEnd={() => {
+                  if (taskTypeInteractionParentIdRef.current === parentTaskId) {
+                    taskTypeInteractionParentIdRef.current = null;
+                  }
+                }}
+                onChange={(value) => setTableStepDraftTaskTypeValues((current) => ({ ...current, [parentTaskId]: value }))}
+                options={taskTypeFilterOptions}
+                size="compact"
+                value={draftTaskTypeSelectionValue}
+              />
+            </div>
             {creationError ? (
               <p className="mt-1 text-[11px] font-medium text-[#d94e67] dark:text-[#ff9eaf]">{creationError}</p>
             ) : (
@@ -8280,6 +8622,10 @@ export function TaskManagementTableV2({
           <span className={`${CHIP_BASE} ${statusTone("pending")}`}>Pending</span>
         </div>
       );
+    }
+
+    if (columnId === "task_type") {
+      return <TaskTypeIdentity compact option={draftTaskTypeOption} />;
     }
 
     if (columnId === "due") {
@@ -8381,16 +8727,18 @@ export function TaskManagementTableV2({
         ) : null}
         {displayedItems.map((item, itemIndex) => {
           const inlineStepTask = childPreviewToPrototypeTaskRow(item);
+          const childTaskTypeOption = resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets);
+          const childTaskSurface = getTaskTypeTableRowSurfaceClassName(childTaskTypeOption.accentKey);
           const titleGeometry = getTableHierarchyTitleGeometry(item.depth);
           return (
             <Fragment key={item.id}>
               {itemIndex === groupedItems.normalItems.length ? completedStepsHeader : null}
               <div
-                className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${getHighlightedRowClassName(item.id)}`}
+                className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center`}
                 data-same-table-step-row={item.id}
               >
                 <div
-                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-0.5 pl-[3px] pr-0 text-center transition ${selectedTaskIdSet.has(item.id) ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]" : "border-transparent bg-transparent dark:bg-transparent"} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-1.5 pl-[3px] pr-0 text-center transition ${childTaskSurface} ${selectedTaskIdSet.has(item.id) ? childTaskTypeOption.accentKey === "neutral" ? "bg-[#f7f2ff] dark:bg-[#201733]" : "ring-2 ring-[#6f57f6]/35 dark:ring-[#cabfff]/35" : ""} ${canOpenStepActions ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                   data-task-table-child-grid={item.id}
                   onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                   onDrop={(event) => dropChildTaskOnItem(event, item)}
@@ -8482,7 +8830,7 @@ export function TaskManagementTableV2({
     const { depth, subtask } = row;
 
     if (columnId === "status_icon") {
-      return <div className="flex self-center">{renderTableCurrentStatusCircle(subtask.status)}</div>;
+      return <div className="flex self-center">{renderTableCurrentStatusCircle(subtask.status, Boolean(attentionReasonByTaskId[subtask.id]))}</div>;
     }
 
     if (columnId === "title") {
@@ -8507,6 +8855,10 @@ export function TaskManagementTableV2({
       );
     }
 
+    if (columnId === "task_type") {
+      return <TaskTypeIdentity compact option={resolveTaskTypeSelectionOption(subtask.taskType, subtask.customRulesetId, customBehaviorRulesets)} />;
+    }
+
     return <div aria-hidden="true" />;
   };
 
@@ -8520,8 +8872,12 @@ export function TaskManagementTableV2({
     return (
       <div className="w-max min-w-full" data-task-table-source-step-rows={task.id}>
       {rows.map((row) => (
+        (() => {
+          const sourceTaskTypeOption = resolveTaskTypeSelectionOption(row.subtask.taskType, row.subtask.customRulesetId, customBehaviorRulesets);
+          const sourceTaskSurface = getTaskTypeTableRowSurfaceClassName(sourceTaskTypeOption.accentKey);
+          return (
           <div
-            className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${getHighlightedRowClassName(row.subtask.id)}`}
+            className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center`}
             data-same-table-step-row={row.subtask.id}
             key={row.subtask.id}
             onClick={(event) => {
@@ -8545,7 +8901,7 @@ export function TaskManagementTableV2({
             tabIndex={0}
           >
             <div
-              className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-transparent py-0.5 pl-[3px] pr-0 text-center transition dark:bg-transparent`}
+              className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-1.5 pl-[3px] pr-0 text-center transition ${sourceTaskSurface}`}
               data-task-table-source-step-grid={row.subtask.id}
               style={{ gridTemplateColumns }}
             >
@@ -8560,7 +8916,9 @@ export function TaskManagementTableV2({
               ))}
             </div>
           </div>
-        ))}
+          );
+        })()
+      ))}
       </div>
     );
   };
@@ -8814,7 +9172,7 @@ export function TaskManagementTableV2({
                   {selectedTaskIds.length === 1 && onOpenTaskEditor ? (
                     <button
                       className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] transition hover:bg-[#e9e1ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2a204c]`}
-                      onClick={() => onOpenTaskEditor(selectedTaskIds[0])}
+                      onClick={() => onOpenTaskEditor(selectedTaskIds[0], effectiveDisplayedTasks.map((task) => task.id))}
                       type="button"
                     >
                       Edit task
@@ -8846,13 +9204,19 @@ export function TaskManagementTableV2({
                 No rows match the current table filters.
               </div>
             ) : renderedTasks.map((task) => {
+              const taskTypeOption = resolveTaskTypeSelectionOption(task.taskType, task.customRulesetId, customBehaviorRulesets);
+              const taskSurface = getTaskTypeTableRowSurfaceClassName(taskTypeOption.accentKey);
               const visibleSubtasks = filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds);
               const hasSourceStepRows = visibleSubtasks.length > 0;
               const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
               const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
-              const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || activeHierarchyParentTaskIdSet.has(task.id);
+              const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false)
+                || activeHierarchyParentTaskIdSet.has(task.id)
+                || highlightedTaskIdSet.has(task.id);
               const hasTableStepDraft = tableStepDraftParentId === task.id;
-              const sourceStepsExpanded = hasStepPreview ? stepsExpanded : (expandedSubtasksByTaskId[task.id] ?? false);
+              const sourceStepsExpanded = hasStepPreview
+                ? stepsExpanded
+                : (expandedSubtasksByTaskId[task.id] ?? false);
               const activeHierarchyParentMatch = statusFilterActive
                 ? statusMatchedStepParentTaskIdSet.has(task.id)
                 : searchMatchedStepParentTaskIdSet.has(task.id);
@@ -8882,7 +9246,7 @@ export function TaskManagementTableV2({
                   data-task-table-hierarchy-group={task.id}
                 >
                   <motion.div
-                    className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center focus:outline-none ${hasRenderedDescendants ? "sticky top-8 z-10 bg-white dark:bg-[#181226]" : ""}`}
+                    className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center focus:outline-none ${hasRenderedDescendants ? "sticky top-8 z-10" : ""}`}
                     data-task-table-row={task.id}
                     initial={shouldAnimateRows ? undefined : false}
                     onClick={(event) => {
@@ -8949,12 +9313,12 @@ export function TaskManagementTableV2({
                     variants={tableRowVariants}
                     whileHover={shouldAnimateRows ? { y: -0.5 } : undefined}
                   >
-                    <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] ${getHighlightedRowClassName(task.id)} ${
+                    <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition ${taskSurface} ${
                       selectedTaskIdSet.has(task.id)
-                        ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]"
+                        ? taskTypeOption.accentKey === "neutral" ? "bg-[#f7f2ff] dark:bg-[#201733]" : "ring-2 ring-[#6f57f6]/35 dark:ring-[#cabfff]/35"
                         : showInlineAccordion || rowContextMenu?.taskId === task.id
-                          ? "border-transparent bg-white dark:bg-[#181226]"
-                          : "border-transparent bg-white dark:bg-white/[0.04]"
+                          ? "ring-2 ring-[#6f57f6]/25 dark:ring-[#cabfff]/25"
+                          : ""
                     }`} data-task-table-parent-grid={task.id} style={{ gridTemplateColumns }}>
                       {visibleHeaderColumns.map((column) => (
                         <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} data-column-measure={column.id} key={`${task.id || "task"}-${column.id || "column"}`}>
@@ -9054,7 +9418,7 @@ export function TaskManagementTableV2({
               } : undefined}
               onEditTask={onOpenTaskEditor ? () => {
                 setRowContextMenu(null);
-                onOpenTaskEditor(rowContextMenuTask.id);
+                onOpenTaskEditor(rowContextMenuTask.id, effectiveDisplayedTasks.map((task) => task.id));
               } : undefined}
               onMoveIntoParent={onMoveTaskIntoParent ? async (parentTaskId) => {
                 setRowContextMenu(null);
@@ -9149,7 +9513,9 @@ export function TaskManagementTableV2({
               onClick={() => closeInspector()}
               exit={{ opacity: 0 }}
               initial={{ opacity: 0 }}
-              key={`task-table-inspector-${selectedTask.id || "blank"}-${overlayMode}`}
+              key={overlayMode === "full"
+                ? "task-table-inspector-full"
+                : `task-table-inspector-${selectedTask.id || "blank"}-${overlayMode}`}
               transition={{ duration: 0.18 }}
             >
               {(() => {
@@ -9243,8 +9609,9 @@ export function TaskManagementTableV2({
                   status: "Status",
                   summary: "Summary",
                   tags: "Tags",
+                  task_type: "Task Type",
                 };
-                const metadataSummaryRows = buildTaskMetadataSummary(metadataTask, getDisplayedActualSeconds(metadataTask));
+                const metadataSummaryRows = buildTaskMetadataSummary({ ...metadataTask, customBehaviorRulesets }, getDisplayedActualSeconds(metadataTask));
                 const activeMetadataPanelLabel = metadataPanelLabels[metadataPanelId] ?? "Meta Data";
                 function renderInlineTextChoices<T extends string>(
                   options: Array<{ label: string; value: T }>,
@@ -9305,6 +9672,65 @@ export function TaskManagementTableV2({
                           <span className="mt-0.5 block min-w-0 break-words text-sm text-[#2f294a] dark:text-white">{row.value}</span>
                         </div>
                       ))}
+                    </div>
+                  );
+                } else if (metadataPanelId === "task_type") {
+                  metadataPanelContent = (
+                    <div className="space-y-3">
+                      {taskTypeBehaviorSettingsOpenByTaskId[metadataTask.id] ? (
+                        <>
+                          <TaskTableChipButton
+                            onClick={() => setTaskTypeBehaviorSettingsOpenByTaskId((current) => ({ ...current, [metadataTask.id]: false }))}
+                            toneClassName={INACTIVE_CHIP_CLASS}
+                          >
+                            Back to Task Type
+                          </TaskTableChipButton>
+                          <Suspense fallback={<p className="text-sm text-[#7d7598] dark:text-white/55">Loading behavior settings…</p>}>
+                            <TaskTypeBehaviorSettings
+                              key={`${metadataTask.id}:${taskTypeSelectionValue(metadataTask.taskType, metadataTask.customRulesetId, customBehaviorRulesets)}`}
+                              customBehaviorRulesetProfiles={customBehaviorRulesetProfiles}
+                              customBehaviorRulesets={customBehaviorRulesets}
+                              initialTaskType={normalizeTaskType(metadataTask.taskType)}
+                              initialCustomRulesetId={metadataTask.customRulesetId}
+                              onCreateCustomRuleset={onCreateCustomRuleset}
+                              onDeleteCustomRuleset={onDeleteCustomRuleset}
+                              onShowCustomRulesetTasks={(rulesetId) => {
+                                onShowCustomRulesetTasks?.(rulesetId);
+                                closeInspector();
+                              }}
+                              onMoveCustomRulesetTasksToTaskAndDelete={onMoveCustomRulesetTasksToTaskAndDelete}
+                              onChange={(taskType, field, value) => onTaskBehaviorProfileChange?.(taskType, field, value) ?? false}
+                              onCustomRulesetChange={(rulesetId, field, value) => onCustomRulesetBehaviorProfileChange?.(rulesetId, field, value) ?? false}
+                              onRenameCustomRuleset={onRenameCustomRuleset}
+                              onUpdateCustomRulesetPresentation={onUpdateCustomRulesetPresentation}
+                              onReset={(taskType) => onResetTaskBehaviorProfile?.(taskType) ?? false}
+                              profiles={taskTypeBehaviorProfiles ?? {}}
+                            />
+                          </Suspense>
+                        </>
+                      ) : (
+                        <>
+                          <TaskTypeSelect
+                            ariaLabel="Task type"
+                            label="Task type"
+                            onChange={(value) => {
+                              setTaskType(metadataTask.id, value);
+                              returnFullMetadataToSummary();
+                            }}
+                            options={buildTaskTypeSelectionOptions(customBehaviorRulesets)}
+                            value={taskTypeSelectionValue(metadataTask.taskType, metadataTask.customRulesetId, customBehaviorRulesets)}
+                          />
+                          <TaskTableChipButton
+                            onClick={() => setTaskTypeBehaviorSettingsOpenByTaskId((current) => ({ ...current, [metadataTask.id]: true }))}
+                            toneClassName={INACTIVE_CHIP_CLASS}
+                          >
+                            Behavior Settings
+                          </TaskTableChipButton>
+                          <p className="text-xs leading-5 text-[#7d7597] dark:text-white/50">
+                            Task Type selects a behavior profile. Task and named Custom Task Types are configurable.
+                          </p>
+                        </>
+                      )}
                     </div>
                   );
                 } else if (metadataPanelId === "due") {
@@ -9564,10 +9990,12 @@ export function TaskManagementTableV2({
                     </div>
                   );
                 } else if (metadataPanelId === "status") {
+                  const availableStatuses = getPolicyFilteredStatuses({ customRulesetId: metadataTask.customRulesetId, dueOn: metadataTask.dueOn, repeatFrequency: metadataTask.repeat, status: metadataTask.status, taskId: metadataTask.id, taskType: metadataTask.taskType });
+                  const statusOptions = preserveCurrentTaskStatusForPresentation(availableStatuses, metadataTask.status);
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
-                      {getSelectableTaskDisplayStatusesForTask({ dueOn: metadataTask.dueOn, repeatFrequency: metadataTask.repeat, status: metadataTask.status }).map((status, optionIndex) => (
-                        <TaskTableChipButton className="gap-1.5" key={`${status || "status-option"}-${optionIndex}`} onClick={() => {
+                      {statusOptions.map((status, optionIndex) => (
+                        <TaskTableChipButton className="gap-1.5" disabled={!availableStatuses.includes(status)} key={`${status || "status-option"}-${optionIndex}`} onClick={() => {
                           if (status === "delayed") {
                             if (canDelayTask(metadataTask)) {
                               setActiveMetadataPanelByTaskId((current) => ({ ...current, [metadataTask.id]: "delay" }));
@@ -9680,10 +10108,11 @@ export function TaskManagementTableV2({
                         <SameTableStepCreationControl
                           childLabel={fullEditorChildSectionLabels.action === "Add Step" ? "Step" : "Substep"}
                           creationBlocked={childTaskCreationBlockedTaskIds.includes(selectedTask.id)}
-                          iconOnly
-                          onCreateChildTask={onCreateChildTask}
-                          parentTaskId={selectedTask.id}
-                        />
+                        iconOnly
+                        onCreateChildTask={onCreateChildTask}
+                        parentTaskId={selectedTask.id}
+                        taskTypeOptions={taskTypeFilterOptions}
+                      />
                       </div>
                     </div>
                     {hasUnifiedStepRows ? (
@@ -9703,6 +10132,7 @@ export function TaskManagementTableV2({
                                 [subtaskId]: value,
                               }));
                             }}
+                            getAvailableStatuses={(subtask) => getPolicyFilteredStatuses({ customRulesetId: subtask.customRulesetId, dueOn: subtask.dueOn, repeatFrequency: "none", status: subtask.status, taskId: subtask.id, taskType: subtask.taskType }).filter((status): status is TaskStatus => status !== "unscheduled")}
                             onRequestDelay={(subtaskId) => openTaskDelay(subtaskId)}
                             onSetStatus={(subtaskId, nextStatus) => onTaskSubtaskStatusChange?.(subtaskId, nextStatus)}
                             subtasks={selectedTaskVisibleSubtasks}
@@ -9767,7 +10197,7 @@ export function TaskManagementTableV2({
                   ? "mt-5 min-w-0 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]"
                   : "mt-4 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]";
                 const fullDesktopEditorContent = (
-                  <div className="min-w-0 max-w-full" data-full-inspector-content="true">
+                  <div className="min-w-0 max-w-full" data-full-inspector-content="true" ref={useMobileFullOverlay ? undefined : editorInteractionRef}>
                     <div className={fullEditorGridClass} data-full-inspector-columns="true">
                     <div className={fullEditorCardClass}>
                       {selectedTaskParentInfo ? (
@@ -9806,6 +10236,12 @@ export function TaskManagementTableV2({
                           ) : null}
                         </div>
                       )}
+                      {!useMobileFullOverlay && editorNavigationPosition && editorNavigationPosition.count > 1 ? (
+                        <p className="mt-1 text-xs font-medium text-[#8d87a7] dark:text-white/45" data-task-editor-position="true">
+                          {`${editorNavigationPosition.index} of ${editorNavigationPosition.count}`}
+                        </p>
+                      ) : null}
+                      {useMobileFullOverlay ? renderEditorNavigationControls("mobile") : null}
                       <div className="mt-2 flex items-center gap-2">
                         <button
                           aria-label="Edit status"
@@ -9813,7 +10249,10 @@ export function TaskManagementTableV2({
                           onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: "status" }))}
                           type="button"
                         >
-                          {renderTaskStatusCircle(selectedTask.status, "md")}
+                          {renderTaskStatusCircle(selectedTask.status, "md", {
+                            attention: Boolean(attentionReasonByTaskId[selectedTask.id] ?? selectedTask.attentionReason),
+                            emphasizeMissed: selectedTask.status === "missed",
+                          })}
                         </button>
                         <label className="block min-w-0 flex-1">
                           <span className="sr-only">Rename task</span>
@@ -9885,9 +10324,20 @@ export function TaskManagementTableV2({
                 );
 
                 const fullDesktopEditorNode = (
-                  <div className="min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
-                    <div className="p-4">
-                      {fullDesktopEditorContent}
+                  <div
+                    className="pointer-events-none grid min-w-0 w-full max-w-[calc(100vw-2rem)] grid-cols-[minmax(2.75rem,1fr)_minmax(0,80rem)_minmax(2.75rem,1fr)] items-center gap-3"
+                    data-task-editor-interaction="true"
+                  >
+                    <div className="flex min-w-0 items-center justify-center" data-task-editor-navigation-gutter="previous">
+                      {renderEditorNavigationControls("side", "previous")}
+                    </div>
+                    <div className="pointer-events-auto relative min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent adhdice-scrollbar">
+                      <div className="p-4">
+                        {fullDesktopEditorContent}
+                      </div>
+                    </div>
+                    <div className="flex min-w-0 items-center justify-center" data-task-editor-navigation-gutter="next">
+                      {renderEditorNavigationControls("side", "next")}
                     </div>
                   </div>
                 );
@@ -9896,7 +10346,7 @@ export function TaskManagementTableV2({
                   : useMobileFullOverlay
                     ? "flex min-h-0 flex-1 items-start justify-center overscroll-none px-3 pt-[calc(env(safe-area-inset-top)+0.25rem)] pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-5"
                   : overlayMode === "full"
-                    ? "flex flex-1 items-start justify-center overflow-x-hidden overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))]"
+                    ? "adhdice-scrollbar flex flex-1 items-start justify-center overflow-x-hidden overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))]"
                     : "grid flex-1 gap-3 overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))] lg:grid-cols-[1.1fr_0.9fr]";
 
                 return (
@@ -9915,7 +10365,10 @@ export function TaskManagementTableV2({
                       onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: "status" }))}
                       type="button"
                     >
-                      {renderTaskStatusCircle(selectedTask.status, "md")}
+                      {renderTaskStatusCircle(selectedTask.status, "md", {
+                        attention: Boolean(attentionReasonByTaskId[selectedTask.id] ?? selectedTask.attentionReason),
+                        emphasizeMissed: selectedTask.status === "missed",
+                      })}
                     </button>
                     <label className="block min-w-0 flex-1">
                       <span className="sr-only">Rename task</span>
@@ -9955,9 +10408,11 @@ export function TaskManagementTableV2({
               >
                 {isFocusedOverlay ? (
                   <div
-                    className={`absolute w-full ${overlayMode === "full" ? "left-1/2 max-w-[80rem] -translate-x-1/2" : "max-w-[32rem]"}`}
+                    className={`absolute w-full ${overlayMode === "full" ? "left-1/2 max-w-[calc(100vw-2rem)] -translate-x-1/2" : "max-w-[32rem]"}`}
                     onClick={(event) => event.stopPropagation()}
-                    ref={inspectorPanelRef}
+                    ref={overlayMode === "full"
+                      ? (useMobileFullOverlay ? editorInteractionRef : undefined)
+                      : inspectorPanelRef}
                     style={
                       overlayMode === "full"
                         ? {
@@ -9990,7 +10445,7 @@ export function TaskManagementTableV2({
                   <div
                     className="w-full max-w-[60rem]"
                     onClick={(event) => event.stopPropagation()}
-                    ref={inspectorPanelRef}
+                    ref={overlayMode === "full" ? editorInteractionRef : inspectorPanelRef}
                   >
                     <div className="relative flex max-h-[calc(100dvh-1.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden overscroll-contain rounded-[1.6rem] border border-[#e7defc] bg-white shadow-[0_26px_70px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]">
                       <div className="adhdice-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
@@ -10250,9 +10705,12 @@ export function TaskManagementTableV2({
                     ) : null}
                     {overlayMode !== "energy" ? (
                     <div className={`${overlayMode === "status" ? "" : "mt-4"} flex flex-wrap gap-2`}>
-                      {getSelectableTaskDisplayStatusesForTask({ dueOn: selectedTask.dueOn, repeatFrequency: selectedTask.repeat, status: selectedTask.status }).map((status, optionIndex) => (
+                      {(() => {
+                        const availableStatuses = getPolicyFilteredStatuses({ customRulesetId: selectedTask.customRulesetId, dueOn: selectedTask.dueOn, repeatFrequency: selectedTask.repeat, status: selectedTask.status, taskId: selectedTask.id, taskType: selectedTask.taskType });
+                        return preserveCurrentTaskStatusForPresentation(availableStatuses, selectedTask.status).map((status, optionIndex) => (
                         <TaskTableChipButton
                           className="gap-1.5"
+                          disabled={!availableStatuses.includes(status)}
                           key={`${status || "status-option"}-${optionIndex}`}
                           onClick={() => {
                             if (status === "delayed") {
@@ -10275,7 +10733,8 @@ export function TaskManagementTableV2({
                           {renderTaskStatusCircle(status, "sm", { inverted: selectedTask.status === status })}
                           <span>{formatTaskStatusLabel(status)}</span>
                         </TaskTableChipButton>
-                      ))}
+                        ));
+                      })()}
                     </div>
                     ) : null}
                   </section>

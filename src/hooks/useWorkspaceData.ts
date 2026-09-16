@@ -19,6 +19,7 @@ import type {
 } from "@/lib/database.types";
 import { loadProfileMedia, setActiveProfileUserId, WORKSPACE_PROFILE_COLUMNS, type WorkspaceProfileRow } from "@/lib/profile-store";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
+import type { CustomBehaviorRulesetState } from "@/lib/custom-behavior-rulesets";
 import type { CanonicalTaskCalendarOverride, CanonicalTaskCommandOperation, CanonicalTaskHistoryFact, CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
 import { taskCalendarOverrideFromCanonical } from "@/lib/task-state-canonical/engine-input";
 import { projectTasksWithCanonicalScheduleBoundaries } from "@/lib/task-state-canonical/schedule-projection";
@@ -42,13 +43,14 @@ import {
 import { workspaceStartupRequestRegistry } from "@/lib/workspace-startup-request";
 import {
   buildTaskHistoryStreakSummary,
-  buildTaskHistoryStreakSummaryMap,
+  buildTaskHistoryStreakSummaryMapCooperatively,
   updateTaskHistoryStreakSummaryMap,
   type TaskHistoryStreakSummaryMap,
 } from "@/lib/task-history-streak-summaries";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type ResolvedSupabaseClient = NonNullable<SupabaseClient>;
@@ -58,6 +60,10 @@ type OwnedWorkspacePromise<T> = {
   promise: Promise<T>;
 };
 
+type TaskHistoryStreakSummaryRefreshOptions = {
+  supersede?: boolean;
+};
+
 type Message = {
   text: string;
   tone: "neutral" | "good" | "warn";
@@ -65,6 +71,10 @@ type Message = {
 
 type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   activePage: AppPage;
+  behaviorProfiles: NonNullable<TaskBehaviorPolicyResolutionContext["behaviorProfiles"]>;
+  behaviorPolicyRevisions: NonNullable<TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"]>;
+  namedCustomRulesetBehaviorPolicyRevisions: NonNullable<TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"]>;
+  behaviorSelectionStateRef: MutableRefObject<CustomBehaviorRulesetState>;
   currentUser: User | null | undefined;
   mapFocusCategoryRow: (row: DbFocusCategory) => FocusCategory;
   mapFocusSessionRow: (row: DbFocusSession) => HistoricalFocusSession;
@@ -248,6 +258,10 @@ function logWorkspaceTiming(step: string, startedAt: number, details: Record<str
 
 export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   activePage,
+  behaviorProfiles,
+  behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
+  behaviorSelectionStateRef,
   currentUser,
   mapFocusCategoryRow,
   mapFocusSessionRow,
@@ -310,7 +324,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const taskHistoryLoadStateByTaskIdRef = useRef<Record<string, TaskHistoryTaskLoadState>>({});
   const taskHistoryTaskLoadPromisesRef = useRef(new Map<string, OwnedWorkspacePromise<TaskHistoryLoadResult>>());
   const loadTaskHistoryForTasksRef = useRef<((taskIds: string[]) => Promise<TaskHistoryLoadMap>) | null>(null);
+  const loadTaskHistoryStreakSummariesRef = useRef<((nextTasks?: Task[], options?: TaskHistoryStreakSummaryRefreshOptions) => Promise<boolean>) | null>(null);
   const taskHistoryStreakSummaryLoadPromiseRef = useRef<OwnedWorkspacePromise<boolean> | null>(null);
+  const taskHistoryStreakSummaryCalculationTokenRef = useRef(0);
   const taskHistoryStreakSummaryTaskReloadsRef = useRef(new Map<string, OwnedWorkspacePromise<boolean>>());
   const taskReloadInFlightRef = useRef(false);
   const queuedTaskReloadRef = useRef(false);
@@ -348,6 +364,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const retryTaskHistoryForTaskRef = useRef<((taskId: string) => Promise<boolean>) | null>(null);
   const fetchTaskHistoryForRolloverRef = useRef<((taskIds: string[]) => Promise<TaskHistoryLoadMap>) | null>(null);
   const tasksRef = useRef(tasks);
+  const behaviorProfilesRef = useRef(behaviorProfiles);
+  const behaviorPolicyRevisionsRef = useRef(behaviorPolicyRevisions);
+  const namedCustomRulesetBehaviorPolicyRevisionsRef = useRef(namedCustomRulesetBehaviorPolicyRevisions);
 
   const setTaskHistoryTaskLoadState = useCallback((taskId: string, state: TaskHistoryTaskLoadState) => {
     taskHistoryLoadStateByTaskIdRef.current = {
@@ -413,6 +432,18 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   }, [tasks]);
 
   useEffect(() => {
+    behaviorProfilesRef.current = behaviorProfiles;
+  }, [behaviorProfiles]);
+
+  useEffect(() => {
+    behaviorPolicyRevisionsRef.current = behaviorPolicyRevisions;
+  }, [behaviorPolicyRevisions]);
+
+  useEffect(() => {
+    namedCustomRulesetBehaviorPolicyRevisionsRef.current = namedCustomRulesetBehaviorPolicyRevisions;
+  }, [namedCustomRulesetBehaviorPolicyRevisions]);
+
+  useEffect(() => {
     shouldSkipTaskReloadRef.current = shouldSkipTaskReload;
   }, [shouldSkipTaskReload]);
 
@@ -437,7 +468,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       taskHistoryLoadInFlightRef.current = false;
       queuedTaskHistoryReloadRef.current = false;
       taskHistoryLoadPromiseRef.current = null;
+      loadTaskHistoryStreakSummariesRef.current = null;
       taskHistoryStreakSummaryLoadPromiseRef.current = null;
+      taskHistoryStreakSummaryCalculationTokenRef.current += 1;
       taskHistoryStreakSummaryTaskReloadsRef.current.clear();
       taskReloadInFlightRef.current = false;
       queuedTaskReloadRef.current = false;
@@ -476,6 +509,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     taskHistoryLoadInFlightRef.current = false;
     queuedTaskHistoryReloadRef.current = false;
     taskHistoryLoadPromiseRef.current = null;
+    loadTaskHistoryStreakSummariesRef.current = null;
     taskHistoryStreakSummaryLoadPromiseRef.current = null;
     taskHistoryStreakSummaryTaskReloadsRef.current.clear();
     setActiveProfileUserId(userId);
@@ -875,9 +909,17 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       return Object.fromEntries(results) as TaskHistoryLoadMap;
     }
 
-    async function loadTaskHistoryStreakSummaries(nextTasks: Task[] = tasksRef.current) {
+    async function loadTaskHistoryStreakSummaries(
+      nextTasks: Task[] = tasksRef.current,
+      options: TaskHistoryStreakSummaryRefreshOptions = {},
+    ) {
       if (!isActive || !canApplyCoreWorkspaceResult()) {
         return false;
+      }
+
+      if (options.supersede) {
+        taskHistoryStreakSummaryCalculationTokenRef.current += 1;
+        taskHistoryStreakSummaryLoadPromiseRef.current = null;
       }
 
       const existingSummaryLoad = taskHistoryStreakSummaryLoadPromiseRef.current;
@@ -892,6 +934,13 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         generation: workspaceGeneration,
         promise: Promise.resolve(false),
       };
+      const calculationToken = taskHistoryStreakSummaryCalculationTokenRef.current + 1;
+      taskHistoryStreakSummaryCalculationTokenRef.current = calculationToken;
+      const canApplySummaryCalculation = () => (
+        isActive
+        && canApplyCoreWorkspaceResult()
+        && taskHistoryStreakSummaryCalculationTokenRef.current === calculationToken
+      );
       const summaryLoadPromise = Promise.resolve().then(async () => {
         try {
           const fullHistoryLoad = taskHistoryLoadPromiseRef.current;
@@ -903,7 +952,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
               return false;
             }
           }
-          if (!isActive || !canApplyCoreWorkspaceResult()) {
+          if (!canApplySummaryCalculation()) {
             return false;
           }
 
@@ -916,7 +965,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             compactHistory = mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[]);
           }
 
-          if (!isActive || !canApplyCoreWorkspaceResult()) {
+          if (!canApplySummaryCalculation()) {
             return false;
           }
 
@@ -924,19 +973,30 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             loadActiveCalendarOverrides(),
             loadManualActionCommandOperations(),
           ]);
-          if (!activeCalendarOverrides || !isActive || !canApplyCoreWorkspaceResult()) {
+          if (!activeCalendarOverrides || !canApplySummaryCalculation()) {
             return false;
           }
 
-          const nextSummaries = buildTaskHistoryStreakSummaryMap(nextTasks, compactHistory, todayKeyRef.current, {
+          const nextSummaries = await buildTaskHistoryStreakSummaryMapCooperatively(nextTasks, compactHistory, todayKeyRef.current, {
+            behaviorProfiles: behaviorProfilesRef.current,
+            behaviorPolicyRevisions: behaviorPolicyRevisionsRef.current,
+            namedCustomRulesetBehaviorPolicyRevisions: namedCustomRulesetBehaviorPolicyRevisionsRef.current,
+            behaviorSelectionsByTaskId: behaviorSelectionStateRef.current.behaviorSelectionsByTaskId,
             calendarOverridesByTaskId: indexActiveCalendarOverrides(activeCalendarOverrides),
             logicalDayRollover,
             manualActionCalendarOverrides: activeCalendarOverrides,
             manualActionCommandOperations,
             now,
             timezone,
+          }, {
+            budgetMs: 10,
+            isCurrent: canApplySummaryCalculation,
           });
-          setTaskHistoryStreakSummaries((current) => keepCurrentIfStructurallyEqual(current, nextSummaries));
+          if (!nextSummaries.completed || !canApplySummaryCalculation()) return false;
+          setTaskHistoryStreakSummaries((current) => keepCurrentIfStructurallyEqual(current, nextSummaries.summaries));
+          if (options.supersede && isWorkspacePerformanceDiagnosticsEnabled()) {
+            console.info(`[workspace:streak-summary] mode=bulk-chunked reason=behavior-policy tasks=${nextTasks.length} chunks=${nextSummaries.chunks}`);
+          }
           return true;
         } finally {
           if (taskHistoryStreakSummaryLoadPromiseRef.current === summaryLoadOwner) {
@@ -979,6 +1039,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           ]);
           if (!activeCalendarOverrides || !isActive || !canApplyCoreWorkspaceResult()) return false;
           const summaryContext = {
+            behaviorProfiles: behaviorProfilesRef.current,
+            behaviorPolicyRevisions: behaviorPolicyRevisionsRef.current,
+            namedCustomRulesetBehaviorPolicyRevisions: namedCustomRulesetBehaviorPolicyRevisionsRef.current,
+            behaviorSelectionsByTaskId: behaviorSelectionStateRef.current.behaviorSelectionsByTaskId,
             calendarOverrides: activeCalendarOverrides.map(taskCalendarOverrideFromCanonical),
             manualActionCalendarOverrides: activeCalendarOverrides,
             manualActionCommandOperations,
@@ -1058,6 +1122,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     loadNotesRef.current = () => loadNotes({ silent: true });
     loadTaskHistoryForTaskRef.current = (taskId, options) => loadTaskHistoryForTask(taskId, { ...options, silent: true }).then((result) => result.status === "ready");
     loadTaskHistoryForTasksRef.current = loadTaskHistoryForTasks;
+    loadTaskHistoryStreakSummariesRef.current = loadTaskHistoryStreakSummaries;
     fetchTaskHistoryForRolloverRef.current = fetchTaskHistoryForRollover;
     refreshTaskHistoryStreakSummaryRef.current = reloadTaskHistoryStreakSummaryForTask;
     retryTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { force: true }).then((result) => result.status === "ready");
@@ -1691,6 +1756,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       rolloverWorkspaceReconciliationRef.current = null;
       prepareTaskMutationRef.current = null;
       fetchTaskHistoryForRolloverRef.current = null;
+      loadTaskHistoryStreakSummariesRef.current = null;
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
       taskChannelRemovalPromiseRef.current = null;
@@ -1703,7 +1769,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
       void client.removeChannel(workspaceChannel);
     };
-  }, [currentUser?.id, supabase, suppressCategoryReload]);
+  }, [currentUser?.id, behaviorSelectionStateRef, supabase, suppressCategoryReload]);
 
   useEffect(() => {
     if (!currentUser) {
@@ -1749,6 +1815,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     async (taskIds: string[]) => await loadTaskHistoryForTasksRef.current?.(taskIds) ?? {},
     [],
   );
+  const refreshTaskHistoryStreakSummaries = useCallback(
+    async (nextTasks?: Task[], options?: TaskHistoryStreakSummaryRefreshOptions) => await loadTaskHistoryStreakSummariesRef.current?.(nextTasks, options) ?? false,
+    [],
+  );
   const fetchTaskHistoryForRollover = useCallback(
     async (taskIds: string[]) => await fetchTaskHistoryForRolloverRef.current?.(taskIds) ?? {},
     [],
@@ -1780,6 +1850,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     softRefreshWorkspace,
     loadTaskHistoryForTask,
     loadTaskHistoryForTasks,
+    refreshTaskHistoryStreakSummaries,
     fetchTaskHistoryForRollover,
     retryTaskHistoryForTask,
     loadTaskNotes,

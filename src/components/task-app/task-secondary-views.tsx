@@ -6,12 +6,16 @@ import type { TaskDraft } from "./task-editor-model";
 import { renderTaskStatusCircle } from "./task-status-ui";
 import { formatActualSecondsLabel, formatRepeatSummary, formatTaskMetaLine } from "@/lib/task-formatting";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
+import { preserveCurrentTaskStatusForPresentation } from "@/lib/task-state-engine/action-authority";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { buildTaskPriorityUpdate, formatTaskPriorityLevel, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import { getNextPendingSubtask } from "@/lib/task-subtasks";
 import { isTaskUrgent } from "@/lib/task-buckets";
 import { formatDueLabel } from "@/lib/task-cockpit";
-import type { Task, TaskEnergy, TaskStatus } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, Task, TaskEnergy, TaskStatus } from "@/lib/database.types";
+import { TaskCurrentStreakChip } from "@/components/ui/task-table-primitives";
+import { getTaskTypeSurfaceClassName } from "@/lib/task-type-presentation";
+import { resolveTaskTypeSelectionOption } from "@/lib/task-type";
 
 type SelectProps<T extends string> = {
   label: string;
@@ -27,6 +31,12 @@ type Message = {
 };
 
 const ENERGY_OPTIONS: TaskEnergy[] = ["none", "low", "medium", "high"];
+type CustomTaskTypeIdentity = Pick<CustomBehaviorRuleset, "id" | "name" | "task_type" | "icon_key" | "accent_key" | "description">;
+
+function taskSurfaceClassName(task: Pick<Task, "task_type" | "custom_ruleset_id">, customBehaviorRulesets: readonly CustomTaskTypeIdentity[]) {
+  const option = resolveTaskTypeSelectionOption(task.task_type, task.custom_ruleset_id, customBehaviorRulesets);
+  return getTaskTypeSurfaceClassName(option.accentKey);
+}
 function EmptyTaskState({ text }: { text: string }) {
   return (
     <div className="rounded-[1.25rem] border border-dashed px-4 py-5 text-sm border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
@@ -198,7 +208,7 @@ export function SupportPanelComponent({ doneCount, lowEnergyTasks, message, onIm
   );
 }
 
-export function TaskLaneComponent({ count, defaultExpanded = false, onEditTask, subtasksByTaskId, title, tasks, tone }: { count: number; defaultExpanded?: boolean; onEditTask: (task: Task) => void; subtasksByTaskId: Record<string, Task[]>; title: string; tasks: Task[]; tone: "purple" | "soft"; }) {
+export function TaskLaneComponent({ count, currentStreakByTaskId, customBehaviorRulesets = [], defaultExpanded = false, onEditTask, subtasksByTaskId, title, tasks, tone }: { count: number; currentStreakByTaskId: Readonly<Record<string, number>>; customBehaviorRulesets?: readonly CustomTaskTypeIdentity[]; defaultExpanded?: boolean; onEditTask: (task: Task) => void; subtasksByTaskId: Record<string, Task[]>; title: string; tasks: Task[]; tone: "purple" | "soft"; }) {
   const DEFAULT_VISIBLE_COUNT = 3;
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const visibleTasks = isExpanded ? tasks : tasks.slice(0, DEFAULT_VISIBLE_COUNT);
@@ -216,11 +226,14 @@ export function TaskLaneComponent({ count, defaultExpanded = false, onEditTask, 
       <div className="mt-4 space-y-3">
         {tasks.length === 0 ? <EmptyTaskState text={`No tasks in ${title.toLowerCase()} right now.`} /> : null}
         {visibleTasks.map((task, index) => (
-          <div className="w-full overflow-hidden rounded-[1.25rem] border px-4 py-3 border-[#efeaf9] bg-[#fdfcff] dark:border-white/10 dark:bg-white/[0.04]" key={task.id}>
+          <div className={`w-full overflow-hidden rounded-[1.25rem] border px-4 py-3 ${taskSurfaceClassName(task, customBehaviorRulesets)}`} key={task.id}>
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">
                 <button className="truncate text-left text-lg font-semibold text-[#27304c] dark:text-white" onClick={() => onEditTask(task)} type="button">{task.title}</button>
-                <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-[#7d88a1] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                  <TaskCurrentStreakChip currentStreak={currentStreakByTaskId[task.id] ?? 0} />
+                </div>
                 <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
               </div>
               <div className="flex items-center gap-2 sm:shrink-0">
@@ -236,17 +249,20 @@ export function TaskLaneComponent({ count, defaultExpanded = false, onEditTask, 
   );
 }
 
-export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { focusedTaskIds: string[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
+export function TaskCardGalleryComponent({ currentStreakByTaskId, customBehaviorRulesets = [], focusedTaskIds, getTaskStatusOptions, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; customBehaviorRulesets?: readonly CustomTaskTypeIdentity[]; focusedTaskIds: string[]; getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
   return (
     <section className="mt-7">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {tasks.length === 0 ? <EmptyTaskState text="No tasks match the current filters." /> : null}
         {tasks.map((task) => (
-          <article className="w-full overflow-hidden rounded-[1.7rem] border p-5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6" key={task.id}>
+          <article className={`w-full overflow-hidden rounded-[1.7rem] border p-5 shadow-[0_18px_50px_rgba(81,61,168,0.07)] ${taskSurfaceClassName(task, customBehaviorRulesets)}`} key={task.id}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <button className="text-left text-xl font-bold text-[#1f2746] dark:text-white" onClick={() => onEditTask(task)} type="button">{task.title}</button>
-                <p className="mt-2 text-sm text-[#77829f] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-[#77829f] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                  <TaskCurrentStreakChip currentStreak={currentStreakByTaskId[task.id] ?? 0} />
+                </div>
               </div>
               <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${getTaskPriorityToneClass(getTaskPriorityLevel(task))}`}>{formatTaskPriorityLevel(getTaskPriorityLevel(task))}</span>
             </div>
@@ -258,14 +274,21 @@ export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStat
               </TaskMetaChip>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              {getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }).map((status) => {
-                const isActive = task.status === status;
-                return (
-                  <button aria-label={`Set status to ${formatOptionLabel(status)}`} className={`h-7 w-7 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">
-                    <span className="flex h-full w-full items-center justify-center">{renderTaskStatusCircle(status, "sm")}</span>
-                  </button>
-                );
-              })}
+              {(() => {
+                const availableStatuses = getTaskStatusOptions?.(task, task.status);
+                const statusOptions = availableStatuses
+                  ? preserveCurrentTaskStatusForPresentation(availableStatuses, task.status)
+                  : getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status });
+                return statusOptions.map((status) => {
+                  const isActive = task.status === status;
+                  const presentationOnly = Boolean(availableStatuses && !availableStatuses.includes(status));
+                  return (
+                    <button aria-label={`${presentationOnly ? "Current status" : "Set status to"} ${formatOptionLabel(status)}`} className={`h-7 w-7 rounded-full border-2 transition ${presentationOnly ? "cursor-default opacity-45" : isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} disabled={presentationOnly} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">
+                      <span className="flex h-full w-full items-center justify-center">{renderTaskStatusCircle(status, "sm")}</span>
+                    </button>
+                  );
+                });
+              })()}
             </div>
             <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
             <div className="mt-5">
@@ -278,7 +301,7 @@ export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStat
   );
 }
 
-export function TaskMatrixViewComponent({ onEditTask, onSetStatus, subtasksByTaskId, tasks }: { onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
+export function TaskMatrixViewComponent({ currentStreakByTaskId, customBehaviorRulesets = [], getTaskStatusOptions, onEditTask, onSetStatus, subtasksByTaskId, tasks }: { currentStreakByTaskId: Readonly<Record<string, number>>; customBehaviorRulesets?: readonly CustomTaskTypeIdentity[]; getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[]; onEditTask: (task: Task) => void; onSetStatus: (task: Task, status: TaskStatus) => void; subtasksByTaskId: Record<string, Task[]>; tasks: Task[]; }) {
   const cells = [
     { key: "urgent-high", title: "Urgent + Higher Energy", tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy !== "low") },
     { key: "urgent-low", title: "Urgent + Low Energy", tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy === "low") },
@@ -297,21 +320,31 @@ export function TaskMatrixViewComponent({ onEditTask, onSetStatus, subtasksByTas
           <div className="mt-4 space-y-3">
             {cell.tasks.length === 0 ? <EmptyTaskState text="No tasks in this bucket." /> : null}
             {cell.tasks.map((task) => (
-              <div className="flex w-full items-center justify-between gap-3 rounded-[1.2rem] border px-4 py-3 border-[#efeaf9] bg-[#fdfcff] dark:border-white/10 dark:bg-white/[0.04]" key={task.id}>
+              <div className={`flex w-full items-center justify-between gap-3 rounded-[1.2rem] border px-4 py-3 ${taskSurfaceClassName(task, customBehaviorRulesets)}`} key={task.id}>
                 <div className="min-w-0">
                   <button className="truncate text-left text-base font-semibold text-[#27304c] dark:text-white" onClick={() => onEditTask(task)} type="button">{task.title}</button>
-                  <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <p className="text-xs text-[#7d88a1] dark:text-white/55">{formatTaskMetaLine(task)}</p>
+                    <TaskCurrentStreakChip currentStreak={currentStreakByTaskId[task.id] ?? 0} />
+                  </div>
                   {task.one_step_at_a_time && getNextPendingSubtask(task.id, subtasksByTaskId) ? <p className="mt-1 text-xs font-semibold text-[#6f57f6] dark:text-[#cabfff]">Next: {getNextPendingSubtask(task.id, subtasksByTaskId)?.title}</p> : null}
                 </div>
                 <div className="flex items-center gap-2">
-                  {getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }).map((status) => {
-                    const isActive = task.status === status;
-                    return (
-                      <button aria-label={`Set status to ${formatOptionLabel(status)}`} className={`h-6 w-6 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">
-                        <span className="flex h-full w-full items-center justify-center">{renderTaskStatusCircle(status, "sm")}</span>
-                      </button>
-                    );
-                  })}
+                  {(() => {
+                    const availableStatuses = getTaskStatusOptions?.(task, task.status);
+                    const statusOptions = availableStatuses
+                      ? preserveCurrentTaskStatusForPresentation(availableStatuses, task.status)
+                      : getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status });
+                    return statusOptions.map((status) => {
+                      const isActive = task.status === status;
+                      const presentationOnly = Boolean(availableStatuses && !availableStatuses.includes(status));
+                      return (
+                        <button aria-label={`${presentationOnly ? "Current status" : "Set status to"} ${formatOptionLabel(status)}`} className={`h-6 w-6 rounded-full border-2 transition ${presentationOnly ? "cursor-default opacity-45" : isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} disabled={presentationOnly} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">
+                          <span className="flex h-full w-full items-center justify-center">{renderTaskStatusCircle(status, "sm")}</span>
+                        </button>
+                      );
+                    });
+                  })()}
                   <button className="ui-pill-button-strong-light" onClick={() => onEditTask(task)} type="button">Edit</button>
                 </div>
               </div>

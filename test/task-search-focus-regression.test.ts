@@ -121,7 +121,15 @@ function compileModule(runtime: ReturnType<typeof createHookRuntime>) {
           TASK_TABLE_LIST_CHIP_CLASS: "list",
         };
       }
-      if (id === "@/components/ui-system") return { AdhdChip: () => null, AdhdDropdownPanel: () => null };
+      if (id === "@/components/ui-system") {
+        return {
+          AdhdChip: ({ children, onClick }: { children: unknown; onClick?: () => void }) => ({
+            type: "button",
+            props: { children, onClick },
+          }),
+          AdhdDropdownPanel: ({ children }: { children: unknown }) => children,
+        };
+      }
       if (id === "@/lib/task-list-folders") return { getTaskListContainerKey: (folderId: string | null) => folderId ?? "root" };
       if (id === "@/lib/task-list-rail-order") {
         return {
@@ -149,7 +157,11 @@ function materialize(
   if (!value || typeof value !== "object") return [];
   const element = value as { props?: Record<string, unknown>; type?: unknown };
   if (element.type === Fragment) return materialize(element.props?.children, `${path}/fragment`, runtime, nodes);
-  if (typeof element.type === "function" && "onSearchChange" in (element.props ?? {})) {
+  if (typeof element.type === "function" && (
+    "onSearchChange" in (element.props ?? {})
+    || "onClick" in (element.props ?? {})
+    || "widthClassName" in (element.props ?? {})
+  )) {
     return materialize(runtime.renderComponent(`${path}/search-box`, element.type as (props: Record<string, unknown>) => unknown, element.props ?? {}), `${path}/search-box-output`, runtime, nodes);
   }
   if (typeof element.type !== "string") return [];
@@ -177,6 +189,20 @@ function findInput(nodes: ElementNode[]): ElementNode | null {
     if (child) return child;
   }
   return null;
+}
+
+function findButtons(nodes: ElementNode[]): ElementNode[] {
+  return nodes.flatMap((node) => [
+    ...(node.type === "button" ? [node] : []),
+    ...findButtons(node.children ?? []),
+  ]);
+}
+
+function textContent(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(textContent).join("");
+  if (!value || typeof value !== "object") return "";
+  return textContent((value as { props?: { children?: unknown } }).props?.children);
 }
 
 test("Tasks header search keeps focus and DOM identity across the 180ms commit", async () => {
@@ -211,7 +237,7 @@ test("Tasks header search keeps focus and DOM identity across the 180ms commit",
     metric: { doneTasks: [], label: "1", percent: 50, remainingTasks: [], summary: "1 task", totalCount: 1 },
     onCycleMomentum: () => undefined,
     onOpenArchive: () => undefined,
-    onOpenComposer: () => undefined,
+    onOpenTaskComposerForType: () => undefined,
     onOpenFocusPlanner: () => undefined,
     onOpenImport: () => undefined,
     onOpenListSettings: () => undefined,
@@ -236,6 +262,7 @@ test("Tasks header search keeps focus and DOM identity across the 180ms commit",
     search: committedSearch,
     selectedBucket: "all",
     shortcuts: [],
+    taskTypeOptions: [{ label: "Task", value: "task" }],
     trashCount: 0,
     todayCount: 1,
     view: "list",
@@ -275,6 +302,95 @@ test("Tasks header search keeps focus and DOM identity across the 180ms commit",
   assert.equal(submittedSearch, "ab");
 });
 
+test("Tasks header New menu keeps Task first, requests named types, and closes after selection", () => {
+  (globalThis as { window?: unknown }).window = { clearTimeout, setTimeout };
+  (globalThis as { document?: { activeElement: ElementNode | null } }).document = { activeElement: null };
+
+  const runtime = createHookRuntime();
+  const components = compileModule(runtime);
+  const nodes = new Map<string, ElementNode>();
+  const requestedSelections: string[] = [];
+  let rendered: ElementNode[] = [];
+  const props: Record<string, unknown> = {
+    actionLabel: "Focus",
+    activeCount: 1,
+    allListDirectoryEntries: [],
+    appVersion: "7.13.59",
+    archiveCount: 0,
+    currentFolderBreadcrumbs: [],
+    currentFolderId: null,
+    filterRowsNode: null,
+    hideSearch: false,
+    isKeyboardShortcutsMenuOpen: false,
+    isRailHidden: false,
+    isListColumnMenuOpen: false,
+    keyboardShortcutsMenuRef: { current: null },
+    listColumnLabels: {},
+    listColumnMenuRef: { current: null },
+    listColumnPickerColumns: [],
+    listVisibleColumns: [],
+    lists: [],
+    metric: { doneTasks: [], label: "1", percent: 50, remainingTasks: [], summary: "1 task", totalCount: 1 },
+    onCycleMomentum: () => undefined,
+    onOpenArchive: () => undefined,
+    onOpenTaskComposerForType: (selectionValue: string) => requestedSelections.push(selectionValue),
+    onOpenFocusPlanner: () => undefined,
+    onOpenImport: () => undefined,
+    onOpenListSettings: () => undefined,
+    onOpenMomentumDetails: () => undefined,
+    onOpenTrash: () => undefined,
+    onSelectBucket: () => undefined,
+    onToggleRail: () => undefined,
+    onExpandAllColumns: () => undefined,
+    onShrinkAllColumns: () => undefined,
+    onSearchChange: () => undefined,
+    onViewChange: () => undefined,
+    onToggleKeyboardShortcutsMenu: () => undefined,
+    onToggleListColumn: () => undefined,
+    onToggleListColumnMenu: () => undefined,
+    search: "",
+    selectedBucket: "all",
+    shortcuts: [],
+    taskTypeOptions: [
+      { label: "Task", value: "task" },
+      { label: "Exercise", value: "exercise" },
+      { label: "Morning Routine", value: "morning-routine" },
+    ],
+    trashCount: 0,
+    todayCount: 1,
+    view: "list",
+  };
+  function render() {
+    rendered = materialize(
+      runtime.renderComponent("header-new-menu", components.TaskOperationsHeader, props),
+      "header-new-menu-output",
+      runtime,
+      nodes,
+    );
+  }
+  runtime.bindRerender(render);
+  render();
+
+  const newButton = findButtons(rendered).find((button) => textContent(button.props.children) === "New");
+  assert.ok(newButton);
+  (newButton.props.onClick as () => void)();
+
+  const menuItems = () => findButtons(rendered).filter((button) => button.props.role === "menuitem");
+  assert.deepEqual(menuItems().map((button) => textContent(button.props.children)), ["Task", "Exercise", "Morning Routine"]);
+
+  (menuItems()[0].props.onClick as () => void)();
+  assert.deepEqual(requestedSelections, ["task"]);
+  assert.equal(menuItems().length, 0);
+
+  const reopenedNewButton = findButtons(rendered).find((button) => textContent(button.props.children) === "New");
+  assert.ok(reopenedNewButton);
+  (reopenedNewButton.props.onClick as () => void)();
+  const reopenedItems = menuItems();
+  (reopenedItems[2].props.onClick as () => void)();
+  assert.deepEqual(requestedSelections, ["task", "morning-routine"]);
+  assert.equal(menuItems().length, 0);
+});
+
 test("real Table reveal gate does not focus a result while search owns focus", () => {
   const previousDocument = (globalThis as { document?: unknown }).document;
   const focusCalls: string[] = [];
@@ -302,8 +418,9 @@ test("real Table reveal gate does not focus a result while search owns focus", (
 });
 
 test("Table reveal uses the same passive guard through both animation frames and keeps requested focus paths", () => {
-  const revealStart = tableSource.lastIndexOf("useEffect(() =>", tableSource.indexOf("const getHighlightedRowClassName"));
-  const revealEnd = tableSource.indexOf("const getHighlightedRowClassName", revealStart);
+  const revealTargetStart = tableSource.indexOf("const revealTaskId = highlightedRevealTaskId");
+  const revealStart = tableSource.lastIndexOf("useEffect(() =>", revealTargetStart);
+  const revealEnd = tableSource.indexOf("\n\n  useEffect(() =>", revealTargetStart);
   const revealEffect = tableSource.slice(revealStart, revealEnd);
 
   assert.match(revealEffect, /shouldFocusTaskTableRevealTarget\(highlightedRevealShouldFocus\)/);

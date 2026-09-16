@@ -7,6 +7,7 @@ import { evaluateTaskActionAuthority as evaluateCanonicalTaskActionAuthority, ev
 import { resolveTaskHistoryCalendarActionStatuses as resolveCanonicalTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates as resolveCanonicalTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
 import { createEngineRolloverPlan as createCanonicalEngineRolloverPlan } from "../src/lib/task-state-engine/rollover-authority.ts";
 import { resolveCompatibilityTaskStatuses as resolveCanonicalCompatibilityTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
+import { normalizeTaskBehaviorProfile, STANDARD_TASK_BEHAVIOR_POLICY } from "../src/lib/task-state-engine/behavior-policy.ts";
 
 const evaluateTaskActionAuthority = (input: Parameters<typeof evaluateCanonicalTaskActionAuthority>[0]) => evaluateCanonicalTaskActionAuthority({ ...input, compatibilityOnly: true });
 const evaluateTaskScheduleAuthority = (input: Parameters<typeof evaluateCanonicalTaskScheduleAuthority>[0]) => evaluateCanonicalTaskScheduleAuthority({ ...input, compatibilityOnly: true });
@@ -353,6 +354,37 @@ test("Calendar action availability uses one normalized logical-date History resu
   });
 
   assert.deepEqual(actual, expected);
+});
+
+test("Calendar manual actions use the historical TaskType policy and intersect multiple dates", () => {
+  const taskPolicy = normalizeTaskBehaviorProfile({ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "task-policy", availableActions: ["done"] });
+  const practicePolicy = normalizeTaskBehaviorProfile({ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "practice-policy", availableActions: ["done", "missed"] }, "custom");
+  const policyContext = {
+    behaviorProfiles: { task: taskPolicy, custom: practicePolicy },
+    behaviorPolicyRevisions: { task: [{ ...taskPolicy, effectiveFromLogicalDate: "2026-09-01" }] },
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      practice: [{ ...practicePolicy, effectiveFromLogicalDate: "2026-09-11" }],
+    },
+    behaviorSelectionsByTaskId: {
+      "task-1": [
+        { effectiveFromLogicalDate: "2026-09-01", taskType: "task" as const, customRulesetId: null },
+        { effectiveFromLogicalDate: "2026-09-11", taskType: "custom" as const, customRulesetId: "practice" },
+      ],
+    },
+  };
+  const calendarTask = task({ task_type: "task", due_on: "2026-09-01", repeat_frequency: "daily" });
+  const baseInput = {
+    ...policyContext,
+    history: [],
+    historicalOverride: true,
+    logicalDayRollover: "06:00",
+    now: "2026-09-12T14:00:00.000Z",
+    task: calendarTask,
+    timezone: "America/New_York",
+  };
+  assert.deepEqual(resolveTaskHistoryCalendarActionStatuses({ ...baseInput, logicalDate: "2026-09-05" }), ["done"]);
+  assert.deepEqual(resolveTaskHistoryCalendarActionStatuses({ ...baseInput, logicalDate: "2026-09-12" }), ["done", "missed"]);
+  assert.deepEqual(resolveTaskHistoryCalendarActionStatuses({ ...baseInput, logicalDate: "2026-09-12", logicalDates: ["2026-09-05", "2026-09-12"] }), ["done"]);
 });
 
 test("action authority projects only supported fields and preserves legacy fallback", () => {

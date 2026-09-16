@@ -317,7 +317,40 @@ test("streak-summary resolution is rejected after the owning effect unmounts", a
 
   assert.match(summaryLoader, /if \(!isActive \|\| !canApplyCoreWorkspaceResult\(\)\)/);
   assert.match(summaryLoader, /await fetchAllPagedRows<CanonicalTaskHistoryFact>/);
-  assert.match(summaryLoader, /if \(!isActive \|\| !canApplyCoreWorkspaceResult\(\)\)[\s\S]*buildTaskHistoryStreakSummaryMap/);
+  assert.match(summaryLoader, /if \(!canApplySummaryCalculation\(\)\)[\s\S]*buildTaskHistoryStreakSummaryMapCooperatively/);
+});
+
+test("global streak-policy refresh uses one stable bulk workspace authority", async () => {
+  const workspaceSource = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const appSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const policyEffect = appSource.slice(
+    appSource.indexOf("const refreshedBehaviorProfilesRevisionRef"),
+    appSource.indexOf("const actionWorkspaceGeneration"),
+  );
+  const policyRevision = appSource.slice(
+    appSource.indexOf("const taskTypeBehaviorProjectionSemantics"),
+    appSource.indexOf("const refreshedBehaviorProfilesRevisionRef"),
+  );
+  const summaryLoader = workspaceSource.slice(
+    workspaceSource.indexOf("async function loadTaskHistoryStreakSummaries"),
+    workspaceSource.indexOf("async function reloadTaskHistoryStreakSummaryForTask"),
+  );
+
+  assert.match(workspaceSource, /const loadTaskHistoryStreakSummariesRef = useRef/);
+  assert.match(workspaceSource, /loadTaskHistoryStreakSummariesRef\.current = loadTaskHistoryStreakSummaries/);
+  assert.match(workspaceSource, /const refreshTaskHistoryStreakSummaries = useCallback/);
+  assert.match(policyEffect, /refreshTaskHistoryStreakSummaries\(tasks, \{ supersede: true \}\)/);
+  assert.match(policyEffect, /\[workspace:streak-summary\] mode=bulk reason=behavior-policy tasks=\$\{tasks\.length\}/);
+  assert.doesNotMatch(policyEffect, /Promise\.all\(tasks\.map/);
+  assert.doesNotMatch(policyEffect, /refreshTaskHistoryStreakSummary\(task\.id\)/);
+  assert.match(policyRevision, /selectTaskBehaviorProjectionSemantics/);
+  assert.match(policyRevision, /task: taskTypeBehaviorProjectionSemantics\.task\.streak/);
+  assert.doesNotMatch(policyRevision, /rewards/);
+  assert.match(summaryLoader, /buildTaskHistoryStreakSummaryMapCooperatively\(nextTasks/);
+  assert.match(summaryLoader, /setTaskHistoryStreakSummaries\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextSummaries\.summaries\)\)/);
+  assert.match(summaryLoader, /taskHistoryStreakSummaryCalculationTokenRef/);
+  assert.match(summaryLoader, /mode=bulk-chunked reason=behavior-policy/);
+  assert.doesNotMatch(summaryLoader, /nextTasks\.map\(/);
 });
 
 test("workspace streak summaries batch-load active Calendar overrides and index them by task", async () => {
@@ -408,7 +441,7 @@ test("the full-History summary branch rechecks ownership after waiting for the f
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const summaryLoader = source.slice(source.indexOf("async function loadTaskHistoryStreakSummaries"), source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"));
 
-  assert.match(summaryLoader, /const fullHistoryLoaded = await fullHistoryLoad\.promise;\s*if \(!fullHistoryLoaded\) return false;[\s\S]*?catch \{\s*return false;\s*\}[\s\S]*?\}\s*if \(!isActive \|\| !canApplyCoreWorkspaceResult\(\)\)/);
+  assert.match(summaryLoader, /const fullHistoryLoaded = await fullHistoryLoad\.promise;\s*if \(!fullHistoryLoaded\) return false;[\s\S]*?catch \{\s*return false;\s*\}[\s\S]*?\}\s*if \(!canApplySummaryCalculation\(\)\)/);
   assert.match(summaryLoader, /catch \{\s*return false;\s*\}/);
 });
 
@@ -599,7 +632,7 @@ test("History query pages have a stable logical row order and compact summaries 
 test("History loading feeds the same non-modal status, search, and hierarchy derivations", async () => {
   const appSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const modalAlias = appSource.slice(appSource.indexOf("taskHistoryByTaskId: sharedTaskHistoryByTaskId"), appSource.indexOf("taskHistoryStreakSummaries,") + "taskHistoryStreakSummaries,".length);
-  const statusRead = appSource.slice(appSource.indexOf("const activeStatusRead"), appSource.indexOf("const taskDisplayStatusByTaskId"));
+  const statusRead = appSource.slice(appSource.indexOf("const [activeStatusRead"), appSource.indexOf("const taskDisplayStatusByTaskId"));
 
   assert.match(modalAlias, /taskHistoryByTaskId: sharedTaskHistoryByTaskId/);
   assert.match(statusRead, /historyByTaskId: taskHistoryByTaskId/);

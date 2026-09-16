@@ -67,6 +67,72 @@ import {
   resolveTaskRewardTier,
 } from "../src/lib/task-rewards.ts";
 
+test("Task behavior selection edits use the atomic effective-dated selection RPC", async () => {
+  let call: { functionName: string; args: Record<string, unknown> } | null = null;
+  const expectedTask = createTask({ id: "assignment-task", revision: 7, task_type: "custom", custom_ruleset_id: "ruleset-a" });
+  const updatedTask = { ...expectedTask, custom_ruleset_id: null, revision: 8 };
+  const result = await updateTaskRowWithLegacyEnergyFallback(
+    {
+      rpc: async (functionName: string, args: Record<string, unknown>) => {
+        call = { functionName, args };
+        return { data: updatedTask, error: null };
+      },
+    } as never,
+    expectedTask.id,
+    { custom_ruleset_id: null, title: "Return to generic Custom" },
+    () => false,
+    () => false,
+    { effectiveFromLogicalDate: "2026-09-21", expectedTask },
+  );
+
+  assert.equal(result.error, null);
+  assert.equal(result.data?.custom_ruleset_id, null);
+  assert.equal(call?.functionName, "adhdice_update_task_behavior_selection");
+  assert.deepEqual(call?.args, {
+    p_effective_from_logical_date: "2026-09-21",
+    p_expected_task_revision: 7,
+    p_task_id: "assignment-task",
+    p_task_patch: { custom_ruleset_id: null, title: "Return to generic Custom" },
+  });
+});
+
+test("Task Type/Custom Task Type transitions send both metadata fields through the selection RPC", async () => {
+  const task = createTask({ id: "task-type-transition", revision: 4, task_type: "custom", custom_ruleset_id: "ruleset-practice" });
+  const calls: Array<{ p_task_patch: Record<string, unknown> }> = [];
+  const client = {
+    rpc: async (_functionName: string, args: { p_task_patch: Record<string, unknown> }) => {
+      calls.push(args);
+      return { data: { ...task, ...args.p_task_patch, revision: task.revision + calls.length }, error: null };
+    },
+  };
+
+  const namedToTask = await updateTaskRowWithLegacyEnergyFallback(
+    client as never,
+    task.id,
+    { task_type: "task", custom_ruleset_id: null },
+    () => false,
+    () => false,
+    { effectiveFromLogicalDate: "2026-09-21", expectedTask: task },
+  );
+  const taskToNamed = await updateTaskRowWithLegacyEnergyFallback(
+    client as never,
+    task.id,
+    { task_type: "custom", custom_ruleset_id: "ruleset-routine" },
+    () => false,
+    () => false,
+    { effectiveFromLogicalDate: "2026-09-21", expectedTask: task },
+  );
+
+  assert.equal(namedToTask.data?.task_type, "task");
+  assert.equal(namedToTask.data?.custom_ruleset_id, null);
+  assert.equal(taskToNamed.data?.task_type, "custom");
+  assert.equal(taskToNamed.data?.custom_ruleset_id, "ruleset-routine");
+  assert.deepEqual(calls.map(({ p_task_patch }) => p_task_patch), [
+    { task_type: "task", custom_ruleset_id: null },
+    { task_type: "custom", custom_ruleset_id: "ruleset-routine" },
+  ]);
+});
+
 function computeDerivedForHierarchyDiagnostics(
   tasks: ReturnType<typeof createTask>[],
   overrides: Partial<{
@@ -1819,6 +1885,8 @@ test("child task preview lookup exposes direct same-table children", () => {
     energy: "low",
     estimatedMinutes: 25,
     id: "child",
+    taskType: "task",
+    customRulesetId: null,
     isFocused: false,
     issueTypes: [],
     lastDoneAt: null,
@@ -2436,6 +2504,16 @@ function createTaskUpdateTestClient(initialTask: ReturnType<typeof createTask>) 
   let deleteAttemptCount = 0;
 
   return {
+    async rpc(_functionName: string, args: { p_task_patch: Record<string, unknown> }) {
+      updateAttemptCount += 1;
+      if (!currentTask) return { data: null, error: null };
+      currentTask = {
+        ...currentTask,
+        ...args.p_task_patch,
+        revision: currentTask.revision + 1,
+      };
+      return { data: { ...currentTask }, error: null };
+    },
     from() {
       return {
         delete() {

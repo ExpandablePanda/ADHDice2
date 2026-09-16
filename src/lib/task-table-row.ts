@@ -6,11 +6,13 @@ import type {
 import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import type { TaskListDefinition } from "@/lib/task-lists";
+import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { createProjectionDomainRevision } from "@/lib/stable-task-projection";
 import { getTaskTrashTimestamp } from "@/lib/task-trash";
+import { normalizeTaskType } from "@/lib/task-type";
 
 const isDevelopment = process.env.NODE_ENV !== "production";
 let buildTaskTableRowDebugCount = 0;
@@ -24,6 +26,7 @@ export type TaskTableRowContext = {
   subtasks: Task[];
   taskHistory: TaskHistory[];
   taskHistoryStreakSummary?: TaskHistoryStreakSummary;
+  attentionReason?: TaskAttentionReason | null;
   todayDateKey: string;
 };
 
@@ -41,6 +44,7 @@ export function createStableTaskRowModelCache() {
         subtasks: context.subtasks,
         task,
         taskHistoryStreakSummary: context.taskHistoryStreakSummary,
+        attentionReason: context.attentionReason,
         todayDateKey: context.todayDateKey,
       });
       const cached = rowsByTaskId.get(task.id);
@@ -64,9 +68,11 @@ function buildTaskTableSubtasks(subtasks: Task[], parentId: string | null = null
     .sort((left, right) => left.sort_order - right.sort_order)
     .map((subtask) => ({
       children: buildTaskTableSubtasks(subtasks, subtask.id),
+      customRulesetId: subtask.custom_ruleset_id,
       dueOn: subtask.due_on,
       id: subtask.id,
       status: subtask.status,
+      taskType: normalizeTaskType(subtask.task_type),
       title: subtask.title,
     }));
 }
@@ -114,6 +120,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     energy: task.energy,
     estimatedMinutes: task.estimated_minutes ?? null,
     id: task.id,
+    taskType: normalizeTaskType(task.task_type),
+    customRulesetId: task.custom_ruleset_id,
     linkLabel: task.external_link_label ?? "",
     linkUrl: task.external_link_url ?? "",
     lastDoneAt: lastDone?.timestamp ?? null,
@@ -128,6 +136,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     priorities,
     currentStreak,
     missedStreak,
+    attentionReason: context.attentionReason ?? null,
     repeat: task.repeat_frequency,
     repeatInterval: Math.max(1, task.repeat_interval ?? 1),
     repeatDaysOfWeek: task.repeat_days_of_week ?? [],

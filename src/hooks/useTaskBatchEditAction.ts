@@ -28,6 +28,7 @@ import {
   projectTaskWithCanonicalScheduleBoundary,
 } from "@/lib/task-state-canonical/schedule-projection";
 import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 
 type Message = {
   text: string;
@@ -37,11 +38,12 @@ type Message = {
 type UpdateTaskRowResult = {
   data: Task | null;
   error: { message: string } | null;
+  behaviorSelectionStateRefreshError?: string;
   usedActualSecondsFallback: boolean;
   usedEnergyFallback: boolean;
 };
 
-type UseTaskBatchEditActionOptions = {
+type UseTaskBatchEditActionOptions = TaskBehaviorPolicyResolutionContext & {
   canonicalCommandExecutor?: (action: Extract<TaskStateRuntimeAction, { kind: "canonical_action" }>, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   clearListTaskSelection: () => void;
   currentDayKey: string;
@@ -71,6 +73,10 @@ type UseTaskBatchEditActionOptions = {
 };
 
 export function useTaskBatchEditAction({
+  behaviorProfiles,
+  behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
+  behaviorSelectionsByTaskId,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   clearListTaskSelection,
   currentDayKey,
@@ -223,6 +229,10 @@ export function useTaskBatchEditAction({
         : null;
       const actionAuthority = outcome
         ? evaluateTaskActionAuthority({
+          behaviorProfiles,
+          behaviorPolicyRevisions,
+          namedCustomRulesetBehaviorPolicyRevisions,
+          behaviorSelectionsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -233,6 +243,10 @@ export function useTaskBatchEditAction({
         : null;
       const scheduleAuthority = !actionAuthority && dueDateOnlyEdit
         ? evaluateTaskScheduleAuthority({
+          behaviorProfiles,
+          behaviorPolicyRevisions,
+          namedCustomRulesetBehaviorPolicyRevisions,
+          behaviorSelectionsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -315,18 +329,20 @@ export function useTaskBatchEditAction({
             planSuccess = true;
           }
         } else {
-          const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues, { expectedTask: task });
+          const { data, error, behaviorSelectionStateRefreshError, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues, { expectedTask: task });
           planFallbackUsed = usedEnergyFallback;
 
           if (error) {
             planErrorMessage = error.message;
+          } else if (behaviorSelectionStateRefreshError) {
+            planErrorMessage = behaviorSelectionStateRefreshError;
           } else if (!data) {
             planErrorMessage = `Task "${task.title}" updated, but no task row came back from Supabase.`;
           } else {
             const nextData = mergeTaskWithCanonicalScheduleProjection(task, data);
             nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? nextData : currentTask);
             hasAuthoritativeTaskRowsToReconcile = true;
-            if (dueDateOnlyEdit) {
+            if (dueDateOnlyEdit || Object.hasOwn(trackedUpdateValues, "task_type") || Object.hasOwn(trackedUpdateValues, "custom_ruleset_id")) {
               void onTaskHistoryMutation?.(task.id, scopedHistory, nextData);
             }
 

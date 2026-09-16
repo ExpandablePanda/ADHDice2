@@ -1,4 +1,6 @@
 import type { PersistedRecordCurrent, PersistedRecordEvent } from "./records/persisted-types.ts";
+import type { TaskType } from "./task-type.ts";
+import type { TaskManualAction, TaskNeedsActionTrigger, TaskSuccessOutcome } from "./task-state-engine/behavior-policy.ts";
 import type {
   CanonicalTaskCalendarOverride,
   CanonicalTaskCommandOperation,
@@ -73,6 +75,99 @@ export type TaskEnergy = "none" | "low" | "medium" | "high";
 export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
 export type TaskRepeatMonthlyMode = "day_of_month" | "ordinal_weekday";
 export type TaskRepeatMonthlyOrdinal = "first" | "second" | "third" | "fourth" | "last";
+export type { TaskType } from "./task-type.ts";
+export type TaskTypeBehaviorProfile = {
+  user_id: string;
+  task_type: TaskType;
+  effective_from_logical_date: string;
+  unresolved_occurrence: "missed" | "blank";
+  /** Deprecated compatibility column; current engine semantics always break. */
+  positive_streak_on_unhandled: "break" | "preserve";
+  missed_streak_on_unhandled: "increment" | "ignore";
+  rewards: "enabled" | "disabled";
+  available_actions: TaskManualAction[];
+  needs_action_triggers: TaskNeedsActionTrigger[];
+  success_outcomes: TaskSuccessOutcome[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskTypeBehaviorProfileInsert = Omit<TaskTypeBehaviorProfile, "created_at" | "updated_at"> & {
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type TaskTypeBehaviorProfileUpdate = Partial<Pick<TaskTypeBehaviorProfile, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "available_actions" | "needs_action_triggers" | "success_outcomes" | "updated_at">>;
+
+export type CustomBehaviorRuleset = {
+  accent_key: string;
+  description: string;
+  id: string;
+  icon_key: string;
+  user_id: string;
+  name: string;
+  task_type: "custom";
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CustomBehaviorRulesetInsert = Omit<CustomBehaviorRuleset, "created_at" | "deleted_at" | "id" | "updated_at"> & {
+  created_at?: string;
+  deleted_at?: string | null;
+  id?: string;
+  updated_at?: string;
+};
+
+export type CustomBehaviorRulesetUpdate = Partial<Pick<CustomBehaviorRuleset, "accent_key" | "deleted_at" | "description" | "icon_key" | "name" | "updated_at">>;
+
+export type CustomBehaviorRulesetDeleteResult = {
+  ruleset_id: string;
+  ruleset_name: string;
+  deleted_at: string;
+};
+
+export type CustomBehaviorRulesetRevision = {
+  ruleset_id: string;
+  effective_from_logical_date: string;
+  unresolved_occurrence: "missed" | "blank";
+  /** Deprecated compatibility column; current engine semantics always break. */
+  positive_streak_on_unhandled: "break" | "preserve";
+  missed_streak_on_unhandled: "increment" | "ignore";
+  rewards: "enabled" | "disabled";
+  available_actions: TaskManualAction[];
+  needs_action_triggers: TaskNeedsActionTrigger[];
+  success_outcomes: TaskSuccessOutcome[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type CustomBehaviorRulesetRevisionInsert = Omit<CustomBehaviorRulesetRevision, "created_at" | "updated_at"> & {
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type CustomBehaviorRulesetRevisionUpdate = Partial<Pick<CustomBehaviorRulesetRevision, "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "available_actions" | "needs_action_triggers" | "success_outcomes" | "updated_at">>;
+
+/** Effective-dated Task behavior selection authority. Custom requires a named ruleset. */
+export type TaskBehaviorSelection = {
+  id: string;
+  user_id: string;
+  task_id: string;
+  effective_from_logical_date: string;
+  task_type: TaskType;
+  custom_ruleset_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskBehaviorSelectionInsert = Omit<TaskBehaviorSelection, "created_at" | "id" | "updated_at"> & {
+  created_at?: string;
+  id?: string;
+  updated_at?: string;
+};
+
+export type TaskBehaviorSelectionUpdate = Partial<Pick<TaskBehaviorSelection, "task_type" | "custom_ruleset_id" | "updated_at">>;
 export type FocusType = string;
 export type FocusSubtype = string;
 export type TaskFocusDay = {
@@ -311,6 +406,9 @@ export type Task = {
   parent_task_id: string | null;
   revision: number;
   title: string;
+  task_type: import("./task-type.ts").TaskType;
+  /** Nullable assignment; optional for rows/fixtures read before 7.13.27 is applied. */
+  custom_ruleset_id?: string | null;
   notes: string | null;
   status: TaskStatus;
   priority: TaskPriority;
@@ -353,6 +451,8 @@ export type TaskInsert = {
   parent_task_id?: string | null;
   revision?: number;
   title: string;
+  task_type?: import("./task-type.ts").TaskType;
+  custom_ruleset_id?: string | null;
   notes?: string | null;
   status?: TaskStatus;
   priority?: TaskPriority;
@@ -391,6 +491,8 @@ export type TaskUpdate = Partial<
     Task,
     | "revision"
     | "title"
+    | "task_type"
+    | "custom_ruleset_id"
     | "notes"
     | "status"
     | "priority"
@@ -1297,6 +1399,106 @@ export type HealthNutritionDetails = {
 
 export type HealthNutritionDetailKey = keyof HealthNutritionDetails;
 
+export type HealthJournalEntryType = "start_of_day" | "end_of_day" | "event";
+export type HealthJournalQuestionTarget = "start_of_day" | "end_of_day" | "both";
+export type HealthJournalCustomInputType =
+  | "short_text"
+  | "long_text"
+  | "number"
+  | "scale_1_10"
+  | "yes_no"
+  | "single_choice"
+  | "multiple_choice";
+
+export type HealthJournalCustomQuestion = {
+  id: string;
+  question: string;
+  target: HealthJournalQuestionTarget;
+  input_type: HealthJournalCustomInputType;
+  options: string[];
+  enabled: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthJournalCustomAnswerValue = string | number | boolean | string[] | null;
+
+export type HealthJournalCustomAnswer = {
+  question_id: string;
+  question: string;
+  target: HealthJournalQuestionTarget;
+  input_type: HealthJournalCustomInputType;
+  options: string[];
+  value: HealthJournalCustomAnswerValue;
+};
+
+export type HealthJournalLinkedOccurrence = {
+  id: string;
+  kind: "symptom" | "feeling";
+};
+
+export type HealthJournalSleepLink = {
+  date: string;
+  total_minutes: number;
+  focus_session_ids: string[];
+  imported_metric_ids: string[];
+  sources: Array<"focus" | "apple_health">;
+};
+
+export type HealthJournalBreakfastMeal = {
+  id: string;
+  food_name: string;
+  brand_name: string | null;
+  calories: number;
+  logged_at: string;
+};
+
+export type HealthJournalReframe = {
+  negative: string;
+  positive: string;
+};
+
+export type HealthJournalStructuredAnswers = {
+  schema_version: 1;
+  sleep_link?: HealthJournalSleepLink | null;
+  sleep_quality_score?: number | null;
+  sleep_quality_note?: string;
+  breakfast_state?: "already_ate" | "planning_to_eat" | "skipping" | "not_sure_yet" | null;
+  planned_breakfast?: string;
+  breakfast_meal_ids?: string[];
+  breakfast_meals?: HealthJournalBreakfastMeal[];
+  linked_event_ids?: string[];
+  linked_occurrence_ids?: HealthJournalLinkedOccurrence[];
+  waking_feeling_note?: string;
+  current_feeling_note?: string;
+  event_feeling_note?: string;
+  energy_now?: number | null;
+  focus_now?: number | null;
+  energy_overall?: number | null;
+  focus_overall?: number | null;
+  energy_note?: string;
+  focus_note?: string;
+  morning_thoughts?: string;
+  morning_reframes?: HealthJournalReframe[];
+  matters_most?: string;
+  harder_today?: string;
+  successful_today?: string;
+  evening_reflection?: string;
+  went_well?: string;
+  wins?: string[];
+  difficult_today?: string;
+  evening_reframes?: HealthJournalReframe[];
+  still_on_mind?: string;
+  remember_tomorrow?: string;
+  event_description?: string;
+  event_time?: string;
+  event_record?: string;
+  anything_else?: string;
+  custom_answers?: HealthJournalCustomAnswer[];
+  [key: string]: unknown;
+};
+
 export type HealthProfile = {
   user_id: string;
   preferred_weight_unit: HealthWeightUnit;
@@ -1314,6 +1516,7 @@ export type HealthProfile = {
   workout_type_options: string[];
   workout_title_options: string[];
   workout_import_aliases: Record<string, string>;
+  journal_questions?: HealthJournalCustomQuestion[];
   created_at: string;
   updated_at: string;
 };
@@ -1335,6 +1538,7 @@ export type HealthProfileInsert = {
   workout_type_options?: string[];
   workout_title_options?: string[];
   workout_import_aliases?: Record<string, string>;
+  journal_questions?: HealthJournalCustomQuestion[];
 };
 
 export type HealthProfileUpdate = Partial<
@@ -1355,6 +1559,7 @@ export type HealthProfileUpdate = Partial<
     | "workout_type_options"
     | "workout_title_options"
     | "workout_import_aliases"
+    | "journal_questions"
   >
 >;
 
@@ -1369,6 +1574,8 @@ export type HealthCheckIn = {
   clarity_score: number | null;
   symptom_tags: string[];
   reflection: string;
+  entry_type?: HealthJournalEntryType | null;
+  structured_answers?: HealthJournalStructuredAnswers;
   created_at: string;
   updated_at: string;
 };
@@ -1384,10 +1591,12 @@ export type HealthCheckInInsert = {
   clarity_score?: number | null;
   symptom_tags?: string[];
   reflection?: string;
+  entry_type?: HealthJournalEntryType | null;
+  structured_answers?: HealthJournalStructuredAnswers;
 };
 
 export type HealthCheckInUpdate = Partial<
-  Pick<HealthCheckIn, "entry_date" | "entry_time" | "mood_score" | "energy_score" | "stress_score" | "clarity_score" | "symptom_tags" | "reflection">
+  Pick<HealthCheckIn, "entry_date" | "entry_time" | "mood_score" | "energy_score" | "stress_score" | "clarity_score" | "symptom_tags" | "reflection" | "entry_type" | "structured_answers">
 >;
 
 export type HealthJournalSignalKind = "symptom" | "emotion" | "other";
@@ -2474,6 +2683,30 @@ export type Database = {
         Update: TaskUpdate;
         Relationships: [];
       };
+      adhdice_task_type_behavior_profiles: {
+        Row: TaskTypeBehaviorProfile;
+        Insert: TaskTypeBehaviorProfileInsert;
+        Update: TaskTypeBehaviorProfileUpdate;
+        Relationships: [];
+      };
+      adhdice_custom_behavior_rulesets: {
+        Row: CustomBehaviorRuleset;
+        Insert: CustomBehaviorRulesetInsert;
+        Update: CustomBehaviorRulesetUpdate;
+        Relationships: [];
+      };
+      adhdice_custom_behavior_ruleset_revisions: {
+        Row: CustomBehaviorRulesetRevision;
+        Insert: CustomBehaviorRulesetRevisionInsert;
+        Update: CustomBehaviorRulesetRevisionUpdate;
+        Relationships: [];
+      };
+      adhdice_task_behavior_selections: {
+        Row: TaskBehaviorSelection;
+        Insert: TaskBehaviorSelectionInsert;
+        Update: TaskBehaviorSelectionUpdate;
+        Relationships: [];
+      };
       adhdice_task_command_operations: {
         Row: CanonicalTaskCommandOperation;
         Insert: Partial<CanonicalTaskCommandOperation>;
@@ -2993,6 +3226,10 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_delete_custom_behavior_ruleset: {
+        Args: { p_ruleset_id: string };
+        Returns: CustomBehaviorRulesetDeleteResult[];
+      };
       adhdice_mark_tasks_permanently_deleted: {
         Args: { p_task_ids: string[] };
         Returns: string[];

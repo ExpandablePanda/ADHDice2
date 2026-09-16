@@ -30,6 +30,7 @@ export function buildNewTaskDraft(title: string): TaskDraft {
     status: "pending",
     subtasks_auto_reset: false,
     tags: [],
+    task_type: "task",
     title,
   };
 }

@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, CalendarClock, CalendarDays, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
+import { ArrowRight, Bell, BookOpen, CalendarClock, CalendarDays, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
 import type { MouseEvent } from "react";
 
 import type { TaskStatus } from "@/lib/database.types";
@@ -99,6 +99,9 @@ export function getTaskStatusCircleHoverInvertedClassName(status: TaskDisplaySta
 }
 
 export function formatTaskStatusLabel(value: string) {
+  if (value === "blank") {
+    return "Blank";
+  }
   if (value === "pending") {
     return "Open";
   }
@@ -179,10 +182,12 @@ export function renderTaskStatusGlyph(
 export function renderTaskStatusCircle(
   status: TaskDisplayStatus,
   size: "sm" | "md" = "md",
-  options: { className?: string; glyphClassName?: string; inverted?: boolean } = {},
+  options: { attention?: boolean; className?: string; emphasizeMissed?: boolean; glyphClassName?: string; inverted?: boolean } = {},
 ) {
   const sizeClasses = size === "sm" ? "h-5 w-5" : "h-5.5 w-5.5";
   const statusLabel = formatTaskStatusLabel(status);
+  const hasMissedEmphasis = options.emphasizeMissed && status === "missed";
+  const hasStatusEmphasis = Boolean(options.attention || hasMissedEmphasis);
   const badgeProps = {
     "aria-label": statusLabel,
     title: statusLabel,
@@ -193,11 +198,24 @@ export function renderTaskStatusCircle(
       className={[
         "flex items-center justify-center rounded-full transition-colors",
         sizeClasses,
+        hasStatusEmphasis ? "task-status-circle-emphasis relative" : "",
+        options.attention ? "task-status-circle-attention" : "",
         getTaskStatusCircleClassName(status, { inverted: options.inverted }),
         options.className ?? "",
       ].join(" ").trim()}
+      data-task-attention-status={options.attention ? "true" : undefined}
+      data-task-status-emphasis={hasMissedEmphasis ? "missed" : options.attention ? "attention" : undefined}
     >
-      {renderTaskStatusGlyph(status, size, { className: options.glyphClassName })}
+      {options.attention ? (
+        <>
+          <span aria-hidden="true" className="task-status-circle-attention__glyph task-status-circle-attention__status">
+            {renderTaskStatusGlyph(status, size, { className: options.glyphClassName })}
+          </span>
+          <span aria-hidden="true" className="task-status-circle-attention__glyph task-status-circle-attention__bell">
+            <Bell aria-hidden="true" className={size === "sm" ? "h-3 w-3" : "h-3.25 w-3.25"} fill="currentColor" />
+          </span>
+        </>
+      ) : renderTaskStatusGlyph(status, size, { className: options.glyphClassName })}
     </span>
   );
 }
@@ -207,30 +225,46 @@ export function TaskStatusCircleRail<Status extends TaskDisplayStatus>({
   currentStatus,
   onSetStatus,
   options,
+  preserveCurrentStatus = false,
+  attention = false,
+  emphasizeMissed = false,
   statusLabelPrefix = "Set status to",
   wrap = true,
 }: {
+  attention?: boolean;
   className?: string;
   currentStatus: Status;
+  emphasizeMissed?: boolean;
   onSetStatus: (status: Status, event: MouseEvent<HTMLButtonElement>) => void;
   options: Array<{ label: string; value: Status }>;
+  preserveCurrentStatus?: boolean;
   statusLabelPrefix?: string;
   wrap?: boolean;
 }) {
+  const renderedOptions = preserveCurrentStatus && !options.some((option) => option.value === currentStatus)
+    ? [{ label: formatTaskStatusLabel(currentStatus), value: currentStatus, presentationOnly: true }, ...options]
+    : options.map((option) => ({ ...option, presentationOnly: false }));
   return (
     <div className={["flex gap-1.5", wrap ? "flex-wrap" : "flex-nowrap", className].join(" ").trim()}>
-      {options.map((option) => (
+      {renderedOptions.map((option) => (
         <button
           aria-label={`${statusLabelPrefix} ${option.label}`}
-          className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${currentStatus === option.value ? "" : "opacity-78 hover:opacity-100"}`}
+          aria-disabled={option.presentationOnly || undefined}
+          className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${option.presentationOnly ? "cursor-default opacity-45" : currentStatus === option.value ? "" : "opacity-78 hover:opacity-100"}`}
+          disabled={option.presentationOnly}
           key={option.value}
           onClick={(event) => {
             event.stopPropagation();
+            if (option.presentationOnly) return;
             onSetStatus(option.value, event);
           }}
           type="button"
         >
-          {renderTaskStatusCircle(option.value, "sm", { inverted: currentStatus === option.value })}
+          {renderTaskStatusCircle(option.value, "sm", {
+            attention: attention && currentStatus === option.value,
+            emphasizeMissed: emphasizeMissed && currentStatus === option.value,
+            inverted: currentStatus === option.value && !attention,
+          })}
         </button>
       ))}
     </div>

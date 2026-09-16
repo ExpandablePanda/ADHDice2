@@ -21,6 +21,7 @@ import {
   projectTaskWithCanonicalScheduleBoundary,
 } from "@/lib/task-state-canonical/schedule-projection";
 import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 
 type Message = {
   text: string;
@@ -52,7 +53,7 @@ type UpdateTaskActionOptions = {
   rewardEligible?: boolean;
 };
 
-type UseTaskUpdateActionOptions = {
+type UseTaskUpdateActionOptions = TaskBehaviorPolicyResolutionContext & {
   /** Test seam for the canonical executor; normal callers use the real executor. */
   canonicalCommandExecutor?: (action: TaskStateRuntimeCanonicalAction, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   clearPendingTaskMutations?: (taskIds: string[]) => void;
@@ -111,6 +112,10 @@ function canonicalMutationFingerprint(
 }
 
 export function useTaskUpdateAction({
+  behaviorProfiles,
+  behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
+  behaviorSelectionsByTaskId,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   canonicalTaskMutationState,
   clearPendingTaskMutations,
@@ -353,6 +358,10 @@ export function useTaskUpdateAction({
     }
     const scheduleAuthority = previousTask && scheduleOnlyEdit
       ? evaluateTaskScheduleAuthority({
+        behaviorProfiles,
+        behaviorPolicyRevisions,
+        namedCustomRulesetBehaviorPolicyRevisions,
+        behaviorSelectionsByTaskId,
         history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: logicalDayNow,
@@ -388,6 +397,7 @@ export function useTaskUpdateAction({
       error,
       usedEnergyFallback,
       usedActualSecondsFallback,
+      behaviorSelectionStateRefreshError,
     } = result;
 
     if (error) {
@@ -411,6 +421,12 @@ export function useTaskUpdateAction({
       return false;
     }
 
+    if (behaviorSelectionStateRefreshError) {
+      clearPendingTaskMutations?.([taskId]);
+      setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(behaviorSelectionStateRefreshError) });
+      return false;
+    }
+
     if (data) {
       const rawNextData = usedActualSecondsFallback && typeof values.actual_seconds === "number"
         ? { ...data, actual_seconds: values.actual_seconds }
@@ -420,7 +436,7 @@ export function useTaskUpdateAction({
         : rawNextData;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
-      if (scheduleOnlyEdit) {
+      if (scheduleOnlyEdit || Object.hasOwn(nextValues, "task_type") || Object.hasOwn(nextValues, "custom_ruleset_id")) {
         void onTaskHistoryMutation?.(taskId, scopedHistory, nextData);
       }
       if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {

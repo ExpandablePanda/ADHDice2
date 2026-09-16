@@ -10,6 +10,7 @@ import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import { isTaskStateRuntimeLifecycleTransition, TASK_METADATA_UPDATE_FIELDS, TASK_STATE_OWNED_UPDATE_FIELDS } from "@/lib/task-state-runtime-actions";
 import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
 
@@ -36,7 +37,7 @@ type SaveTaskEditorOptions = {
   taskId?: string | null;
 };
 
-type UseTaskEditorSaveActionOptions = {
+type UseTaskEditorSaveActionOptions = TaskBehaviorPolicyResolutionContext & {
   canonicalTaskCreator?: CanonicalTaskCreator;
   canonicalTaskStateUpdate?: (taskId: string, values: TaskUpdate, options?: { manualAction?: "unscheduled_status" }) => Promise<boolean>;
   currentDayKey: string;
@@ -62,6 +63,10 @@ type UseTaskEditorSaveActionOptions = {
 };
 
 export function useTaskEditorSaveAction({
+  behaviorProfiles,
+  behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
+  behaviorSelectionsByTaskId,
   canonicalTaskCreator,
   canonicalTaskStateUpdate,
   currentDayKey,
@@ -156,10 +161,10 @@ export function useTaskEditorSaveAction({
         let metadataTask: Task | null = null;
         if (Object.keys(changedMetadataValues).length > 0) {
           const metadataResult = await updateTaskRowWithLegacyEnergyFallback(taskId, changedMetadataValues);
-          if (metadataResult.error || metadataResult.conflict || !metadataResult.data) {
+          if (metadataResult.error || metadataResult.conflict || metadataResult.behaviorSelectionStateRefreshError || !metadataResult.data) {
             setMessage({
               tone: "warn",
-              text: taskCommitReconciliationFailureMessage(metadataResult.error?.message ?? (metadataResult.conflict ? buildTaskUpdateConflictMessage(metadataResult.conflict) : "No updated metadata row was returned.")),
+              text: taskCommitReconciliationFailureMessage(metadataResult.error?.message ?? metadataResult.behaviorSelectionStateRefreshError ?? (metadataResult.conflict ? buildTaskUpdateConflictMessage(metadataResult.conflict) : "No updated metadata row was returned.")),
             });
             return null;
           }
@@ -199,6 +204,10 @@ export function useTaskEditorSaveAction({
         : null;
       const actionAuthority = previousTask && outcome
         ? evaluateTaskActionAuthority({
+          behaviorProfiles,
+          behaviorPolicyRevisions,
+          namedCustomRulesetBehaviorPolicyRevisions,
+          behaviorSelectionsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -209,6 +218,10 @@ export function useTaskEditorSaveAction({
         : null;
       const scheduleAuthority = previousTask && scheduleOnlyEdit
         ? evaluateTaskScheduleAuthority({
+          behaviorProfiles,
+          behaviorPolicyRevisions,
+          namedCustomRulesetBehaviorPolicyRevisions,
+          behaviorSelectionsByTaskId,
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
@@ -242,6 +255,7 @@ export function useTaskEditorSaveAction({
         error,
         usedEnergyFallback,
         usedActualSecondsFallback,
+        behaviorSelectionStateRefreshError,
       } = result;
 
       if (error) {
@@ -260,6 +274,11 @@ export function useTaskEditorSaveAction({
         return null;
       }
 
+      if (behaviorSelectionStateRefreshError) {
+        setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(behaviorSelectionStateRefreshError) });
+        return null;
+      }
+
       if (!data) {
         setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage("Supabase did not return the updated Task row.") });
         return null;
@@ -273,7 +292,7 @@ export function useTaskEditorSaveAction({
         : rawNextData;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
-      if (scheduleOnlyEdit) {
+      if (scheduleOnlyEdit || Object.hasOwn(updateValues, "custom_ruleset_id")) {
         try {
           await onTaskHistoryMutation?.(taskId, scopedHistory, nextData);
         } catch (error) {

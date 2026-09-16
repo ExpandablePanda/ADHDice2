@@ -24,6 +24,7 @@ import type {
   HealthFoodLibraryItem,
   HealthImportAudit,
   HealthJournalSignal,
+  HealthJournalCustomQuestion,
   HealthJournalSignalKind,
   HealthJournalSignalOccurrence,
   HealthJournalSignalOccurrenceInsert,
@@ -81,6 +82,7 @@ import {
 import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
   calculateHealthDailyCalorieBudget,
+  calculateHealthProjectedCalories,
   buildHealthDailyCalorieTargetSeries,
   clampPercent,
   buildHealthMealLoggedAt,
@@ -101,8 +103,10 @@ import {
   getHealthSleepElapsedSeconds,
   getHealthSleepStartTimestamp,
   getHealthSleepDayTotal,
+  getHealthCalorieGoalStatus,
   getHealthMealNutritionValue,
   getHealthMealSummaryParts,
+  getHealthCalorieGoalWarning,
   buildHealthDailySleepSeries,
   getSleepFocusSessions,
   sortHealthSleepSessionsByStart,
@@ -158,6 +162,7 @@ import {
   type HealthJournalDraftValue,
   updateHealthJournalDraftValue,
 } from "@/lib/health-journal";
+import { formatHealthJournalOccurrenceReference, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
 import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
 import {
@@ -212,6 +217,9 @@ import { AppleHealthNativeSection } from "./apple-health-native-section";
 import { HealthStandardTimeInput } from "./health-standard-time-input";
 import { HealthTodayTab } from "./health-today-tab";
 import { PageShellHeader } from "./page-shell-header";
+import { JournalCheckInForm } from "./journal-check-in-form";
+import { JournalEntrySummary } from "./journal-entry-summary";
+import { JournalQuestionSettings } from "./journal-question-settings";
 
 type HealthPageProps = {
   awards: HealthAchievementAward[];
@@ -264,6 +272,7 @@ type HealthPageProps = {
   profile: HealthProfile | null;
   recipes: HealthRecipe[];
   saveJournalEntry: (input: HealthJournalEntrySaveInput) => Promise<HealthCheckIn | null>;
+  saveJournalQuestions: (questions: readonly HealthJournalCustomQuestion[]) => Promise<boolean>;
   createJournalSignal: (input: Omit<import("@/lib/database.types").HealthJournalSignalInsert, "user_id">) => Promise<HealthJournalSignal | null>;
   updateJournalSignal: (signalId: string, input: import("@/lib/database.types").HealthJournalSignalUpdate) => Promise<boolean>;
   setJournalSignalTemplate: (signalId: string, inTemplate: boolean) => Promise<boolean>;
@@ -641,10 +650,6 @@ function getJournalTagOptionColor(option: JournalTagOption, symptoms: readonly H
   return option.signal ? getHealthJournalSignalDisplayColor(option.signal) : "#6f57f6";
 }
 
-function formatJournalHistoryOccurrenceTime(timestamp: string) {
-  return formatHealthTimestampTime(timestamp) ?? "Time unavailable";
-}
-
 function formatJournalLoggedAt(timestamp: string) {
   const date = formatHealthJournalMetadataDate(timestamp);
   const time = formatHealthTimestampTime(timestamp);
@@ -844,8 +849,8 @@ function JournalHistoryTagPopover({
             {occurrenceRows.length > 0 ? occurrenceRows.map((occurrence) => (
                 <div className="grid gap-0.5" key={occurrence.id}>
                   <div className="flex items-baseline justify-between gap-3">
-                    <span>{formatJournalHistoryOccurrenceTime(occurrence.occurredAt)}</span>
-                    <span className="text-right font-semibold text-[#26324f] dark:text-white">{occurrence.score} · {scaleLabels[occurrence.score] ?? ""}</span>
+                    <span>{formatHealthJournalOccurrenceReference({ name: displayName, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: option.signal })}</span>
+                    <span className="text-right font-semibold text-[#26324f] dark:text-white">{scaleLabels[occurrence.score] ?? ""}</span>
                   </div>
                   {occurrence.note?.trim() ? <p className="text-[#4f5872] dark:text-white/75">{occurrence.note}</p> : null}
                 </div>
@@ -869,6 +874,7 @@ function JournalHistoryReflection({
   historyTagOptions,
   historyTagOptionsByKey,
   onToggleTag,
+  reflection,
   selectedTag,
   journalSignalOccurrences,
   symptomEntries,
@@ -879,13 +885,14 @@ function JournalHistoryReflection({
   historyTagOptions: readonly JournalTagOption[];
   historyTagOptionsByKey: ReadonlyMap<string, JournalTagOption>;
   onToggleTag: (match: { key: string; start: number }) => void;
+  reflection: string;
   selectedTag: JournalHistoryTagOverlay;
   journalSignalOccurrences: readonly HealthJournalSignalOccurrence[];
   symptomEntries: readonly HealthSymptomEntry[];
   symptoms: readonly HealthSymptom[];
 }) {
   const matches = findHealthJournalReflectionTagMatches(
-    entry.reflection,
+    reflection,
     historyTagOptions.map((option) => ({ key: getJournalTagOptionKey(option), kind: option.kind, name: option.name })),
   );
   const nodes: ReactNode[] = [];
@@ -893,7 +900,7 @@ function JournalHistoryReflection({
   matches.forEach((match) => {
     const option = historyTagOptionsByKey.get(match.key);
     if (!option) return;
-    if (match.start > cursor) nodes.push(entry.reflection.slice(cursor, match.start));
+    if (match.start > cursor) nodes.push(reflection.slice(cursor, match.start));
     const isOpen = selectedTag?.entryId === entry.id
       && selectedTag.optionKey === match.key
       && selectedTag.start === match.start;
@@ -921,7 +928,7 @@ function JournalHistoryReflection({
     );
     cursor = match.end;
   });
-  if (cursor < entry.reflection.length) nodes.push(entry.reflection.slice(cursor));
+  if (cursor < reflection.length) nodes.push(reflection.slice(cursor));
 
   return <div className="mt-2 text-sm leading-6 text-[#66718f] dark:text-white/60">{nodes}</div>;
 }
@@ -1205,6 +1212,7 @@ export function HealthPage({
   profile,
   recipes,
   saveJournalEntry,
+  saveJournalQuestions,
   createJournalSignal,
   updateJournalSignal,
   setJournalSignalTemplate,
@@ -1723,9 +1731,6 @@ export function HealthPage({
     ),
     [profile?.calorie_goal, selectedActiveEnergyKcal],
   );
-  const selectedCalorieTargetDetail = selectedCalorieBudget === null
-    ? "set in goals"
-    : `target ${formatHealthCalorieTarget(selectedCalorieBudget)} kcal${selectedActiveEnergyKcal > 0 ? ` (+${formatHealthCalorieTarget(selectedActiveEnergyKcal)} active kcal)` : ""}`;
   const selectedMealPlans = useMemo(
     () => getActiveHealthMealPlans(mealPlanEntries, foodHistoryDate),
     [foodHistoryDate, mealPlanEntries],
@@ -1734,6 +1739,21 @@ export function HealthPage({
     () => sumHealthMealPlanNutritionForDate(mealPlanEntries, foodHistoryDate),
     [foodHistoryDate, mealPlanEntries],
   );
+  const selectedProjectedCalories = selectedNutrition.calories + selectedPlannedNutrition.calories;
+  const selectedCalorieProgressCalories = selectedMealPlans.length > 0 ? selectedProjectedCalories : selectedNutrition.calories;
+  const selectedCalorieStatus = getHealthCalorieGoalStatus(selectedProjectedCalories, selectedCalorieBudget);
+  const selectedProjectedCaloriesClassName = selectedCalorieStatus === "within"
+    ? "text-emerald-500 dark:text-emerald-400"
+    : selectedCalorieStatus === "over"
+      ? "text-[#d64f78] dark:text-[#ff9fbc]"
+      : undefined;
+  const selectedCalorieTargetDetail = selectedMealPlans.length > 0
+    ? selectedCalorieBudget === null
+      ? <>Projected <span className={selectedProjectedCaloriesClassName}>{formatHealthCalorieTarget(selectedProjectedCalories)} kcal</span> · no target</>
+      : <>Projected <span className={selectedProjectedCaloriesClassName}>{formatHealthCalorieTarget(selectedProjectedCalories)} kcal</span> · target {formatHealthCalorieTarget(selectedCalorieBudget)} kcal{selectedActiveEnergyKcal > 0 ? ` (+${formatHealthCalorieTarget(selectedActiveEnergyKcal)} active kcal)` : ""}</>
+    : selectedCalorieBudget === null
+      ? "set in goals"
+      : `target ${formatHealthCalorieTarget(selectedCalorieBudget)} kcal${selectedActiveEnergyKcal > 0 ? ` (+${formatHealthCalorieTarget(selectedActiveEnergyKcal)} active kcal)` : ""}`;
   const foodLogHistoryIndex = useMemo(
     () => buildHealthFoodLogHistoryIndex(mealEntries),
     [mealEntries],
@@ -1876,6 +1896,34 @@ export function HealthPage({
     [mealDraft],
   );
   const mealDate = mealEditorMode === "plan" ? mealDraft.date : foodHistoryDate;
+  const mealEditorNutrition = useMemo(
+    () => sumMealNutritionForDate(mealEntries, mealDate),
+    [mealDate, mealEntries],
+  );
+  const mealEditorActiveEnergyKcal = useMemo(
+    () => sumMetricValueForDate(metricEntries, mealDate, ["active_energy_kcal"]),
+    [mealDate, metricEntries],
+  );
+  const mealEditorCalorieBudget = useMemo(
+    () => calculateHealthDailyCalorieBudget(profile?.calorie_goal, mealEditorActiveEnergyKcal),
+    [mealEditorActiveEnergyKcal, profile?.calorie_goal],
+  );
+  const mealEditorPlannedNutrition = useMemo(
+    () => sumHealthMealPlanNutritionForDate(
+      mealPlanEntries,
+      mealDate,
+      mealEditorMode === "plan" ? editingMealPlanId : undefined,
+    ),
+    [editingMealPlanId, mealDate, mealEditorMode, mealPlanEntries],
+  );
+  const mealProjectedCalories = mealCalculation
+    ? calculateHealthProjectedCalories(
+      mealEditorNutrition.calories,
+      mealEditorPlannedNutrition.calories,
+      mealCalculation.nutrientTotals.calories,
+    )
+    : null;
+  const mealCalorieWarning = getHealthCalorieGoalWarning(mealProjectedCalories, mealEditorCalorieBudget);
   const mealLoggedAt = buildHealthMealLoggedAt(mealDate, mealDraft.time);
   const mealTimestampError = mealLoggedAt === null
     ? "Choose a valid meal date and time."
@@ -3268,6 +3316,11 @@ export function HealthPage({
           </div>
         ) : null}
         {mealTimestampError ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">{mealTimestampError}</p> : null}
+        {mealCalorieWarning ? (
+          <p aria-live="polite" className="rounded-[0.8rem] border border-[#f1d6a0] bg-[#fff9e8] px-3 py-2 text-xs font-semibold text-[#9a6a11] dark:border-[#70571b] dark:bg-[#382f15] dark:text-[#ffd76e]" role="status">
+            Projected {formatHealthCalorieTarget(mealCalorieWarning.projectedCalories)} kcal, {formatHealthCalorieTarget(mealCalorieWarning.overBy)} kcal over your {formatHealthCalorieTarget(mealCalorieWarning.targetCalories)} kcal target.
+          </p>
+        ) : null}
         {mealDraft.foodName ? (
           <div aria-live="polite" className="rounded-[1rem] border border-[#e8e2f7] bg-white px-4 py-3 text-sm text-[#5d6783] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/65">
             {mealCalculation ? <><div className="mb-1">{composeHealthFoodServingDefinition({ ...mealCalculation.serving, servingLabel: mealDraft.servingLabel })}</div><div>Nutrition preview: <strong className="text-[#3d4670] dark:text-white">{formatHealthNutritionNumber(mealCalculation.nutrientTotals.calories)} kcal</strong> / Protein {formatHealthNutritionNumber(mealCalculation.nutrientTotals.protein_g)}g / Carbs {formatHealthNutritionNumber(mealCalculation.nutrientTotals.carbs_g)}g / Fat {formatHealthNutritionNumber(mealCalculation.nutrientTotals.fat_g)}g</div><NutritionDetailsDisclosure details={mealCalculation.nutrientTotals.nutrition_details} /></> : "Enter a positive amount using one of this food’s supported measurements."}
@@ -3457,6 +3510,27 @@ export function HealthPage({
             >
             <div className={(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? "grid min-w-0 gap-5 md:grid-cols-2" : "min-w-0"}>
             {journalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? journalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
+              <JournalCheckInForm
+                checkIns={checkIns}
+                customQuestions={activeProfile.journal_questions ?? []}
+                createJournalSignal={createJournalSignal}
+                focusCategories={focusCategories}
+                focusHistory={focusHistory}
+                journalSignalOccurrences={journalSignalOccurrences}
+                journalSignalValues={journalSignalValues}
+                journalSignals={journalSignals}
+                mealEntries={mealEntries}
+                metricEntries={metricEntries}
+                onAfterSave={startNewJournalEntry}
+                onOpenFood={() => persistHealthTabPreference("Food")}
+                onOpenSleep={() => persistHealthTabPreference("Sleep")}
+                saveJournalEntry={saveJournalEntry}
+                selectedJournalEntry={selectedJournalEntry}
+                symptomEntries={symptomEntries}
+                symptoms={symptoms}
+              />
+            </div> : null}
+            {false && journalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? journalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
               <div className="grid min-w-0 gap-5">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="flex flex-wrap gap-3">
@@ -3664,19 +3738,46 @@ export function HealthPage({
                         <div className="grid gap-2" hidden={isJournalHistoryDateCollapsed} id={`journal-history-date-${group.date}`}>
                           {group.entries.map((entry) => {
                       const entryValues = journalSignalValues.filter((value) => value.journal_entry_id === entry.id);
+                      const entryAnswers = normalizeHealthJournalStructuredAnswers(entry.structured_answers);
+                      const historyReflection = entry.entry_type === "event"
+                        ? entryAnswers.event_description?.trim() || entry.reflection
+                        : entry.reflection;
                       const entryOccurrences = [
-                        ...symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => ({
-                          id: occurrence.id,
-                          label: symptoms.find((symptom) => symptom.id === occurrence.symptom_id)?.name ?? "Archived symptom",
-                          score: occurrence.severity,
-                          occurredAt: occurrence.logged_at,
-                        })),
-                        ...journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => ({
-                          id: occurrence.id,
-                          label: getHealthJournalSignalDisplayName(journalSignals.find((signal) => signal.id === occurrence.signal_id) ?? { id: occurrence.signal_id, user_id: entry.user_id, kind: "other", symptom_id: null, name: "Archived Feeling", color: null, low_label: "None", high_label: "Extreme", scale_labels: getDefaultHealthJournalScaleLabels("other"), in_template: false, template_sort_order: null, archived_at: null, created_at: entry.created_at, updated_at: entry.updated_at }, symptoms),
-                          score: occurrence.score,
-                          occurredAt: occurrence.occurred_at,
-                        })),
+                        ...symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => {
+                          const signal = journalSignals.find((candidate) => candidate.kind === "symptom" && candidate.symptom_id === occurrence.symptom_id) ?? null;
+                          return {
+                            id: occurrence.id,
+                            label: symptoms.find((symptom) => symptom.id === occurrence.symptom_id)?.name ?? "Archived symptom",
+                            score: occurrence.severity,
+                            occurredAt: occurrence.logged_at,
+                            signal,
+                          };
+                        }),
+                        ...journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => {
+                          const signal = journalSignals.find((candidate) => candidate.id === occurrence.signal_id) ?? {
+                            id: occurrence.signal_id,
+                            user_id: entry.user_id,
+                            kind: "other" as const,
+                            symptom_id: null,
+                            name: "Archived Feeling",
+                            color: null,
+                            low_label: "None",
+                            high_label: "Extreme",
+                            scale_labels: getDefaultHealthJournalScaleLabels("other"),
+                            in_template: false,
+                            template_sort_order: null,
+                            archived_at: null,
+                            created_at: entry.created_at,
+                            updated_at: entry.updated_at,
+                          } satisfies HealthJournalSignal;
+                          return {
+                            id: occurrence.id,
+                            label: getHealthJournalSignalDisplayName(signal, symptoms),
+                            score: occurrence.score,
+                            occurredAt: occurrence.occurred_at,
+                            signal,
+                          };
+                        }),
                       ].sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt));
                       const isLoggedMetadataOpen = expandedJournalHistoryEntryIds.has(entry.id);
                       return <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
@@ -3708,8 +3809,9 @@ export function HealthPage({
                         </div>
                         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#68738c] dark:text-white/60">{entry.mood_score !== null ? <span>Mood {entry.mood_score}</span> : null}{entry.energy_score !== null ? <span>Energy {entry.energy_score}</span> : null}{entry.stress_score !== null ? <span>Stress {entry.stress_score}</span> : null}{entry.clarity_score !== null ? <span>Clarity {entry.clarity_score}</span> : null}</div>
                         {entryValues.length > 0 ? <p className="mt-2 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Snapshot ratings:</span> {entryValues.map((value) => { const signal = journalSignals.find((candidate) => candidate.id === value.signal_id); return `${signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Feeling"} ${value.score}`; }).join(" · ")}</p> : null}
-                        {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span> {entryOccurrences.map((occurrence) => `${occurrence.label} ${occurrence.score} @ ${formatJournalHistoryOccurrenceTime(occurrence.occurredAt)}`).join(" · ")}</p> : null}
-                        {entry.reflection ? <JournalHistoryReflection entry={entry} entryValues={entryValues} historyTagOptions={journalHistoryTagOptions} historyTagOptionsByKey={journalHistoryTagOptionsByKey} journalSignalOccurrences={journalSignalOccurrences} onToggleTag={(tag) => toggleJournalHistoryTag(entry.id, tag)} selectedTag={journalHistoryTagOverlay} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
+                        {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span> {entryOccurrences.map((occurrence) => formatHealthJournalOccurrenceReference({ name: occurrence.label, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: occurrence.signal })).join(" · ")}</p> : null}
+                        {historyReflection ? <JournalHistoryReflection entry={entry} entryValues={entryValues} historyTagOptions={journalHistoryTagOptions} historyTagOptionsByKey={journalHistoryTagOptionsByKey} journalSignalOccurrences={journalSignalOccurrences} onToggleTag={(tag) => toggleJournalHistoryTag(entry.id, tag)} reflection={historyReflection} selectedTag={journalHistoryTagOverlay} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
+                        <JournalEntrySummary checkIns={checkIns} entry={entry} journalSignalOccurrences={journalSignalOccurrences} journalSignals={journalSignals} symptomEntries={symptomEntries} symptoms={symptoms} />
                         {entry.symptom_tags.length > 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Legacy tags: {entry.symptom_tags.join(", ")}</p> : null}
                           </div>;
                           })}
@@ -4121,7 +4223,7 @@ export function HealthPage({
             subtitle="Daily totals"
           >
             <div className="grid gap-3 sm:grid-cols-2">
-              <CompactStat detail={selectedCalorieTargetDetail} label="Calories" progressPercent={selectedCalorieBudget ? clampPercent((selectedNutrition.calories / selectedCalorieBudget) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
+              <CompactStat detail={selectedCalorieTargetDetail} label="Calories" progressPercent={selectedCalorieBudget ? clampPercent((selectedCalorieProgressCalories / selectedCalorieBudget) * 100) : null} value={formatHealthNutritionNumber(selectedNutrition.calories)} />
               <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" progressPercent={profile.protein_goal_grams ? clampPercent((selectedNutrition.protein / profile.protein_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.protein)}g`} />
               <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.carbs)}g`} />
               <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.fat)}g`} />
@@ -4639,6 +4741,7 @@ export function HealthPage({
                 Save Goals
               </button>
             </div>
+            <JournalQuestionSettings onSave={saveJournalQuestions} questions={activeProfile.journal_questions ?? []} />
             <WeightForecastCard forecast={weightForecast} unit={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit} />
           </HealthPanel>
           </PageShell>
@@ -4771,7 +4874,7 @@ function HealthPanel({
   );
 }
 
-function CompactStat({ detail, label, progressPercent, value }: { detail: string; label: string; progressPercent: number | null; value: string }) {
+function CompactStat({ detail, label, progressPercent, value }: { detail: ReactNode; label: string; progressPercent: number | null; value: string }) {
   return (
     <div className="flex items-center justify-between gap-4 rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
       <div>

@@ -3,8 +3,10 @@
 import { X } from "lucide-react";
 import { useState } from "react";
 
-import type { TaskEnergy, TaskRepeatFrequency } from "@/lib/database.types";
+import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
 import { getBatchSelectableTaskStatuses } from "@/lib/task-complete";
+import { filterTaskStatusesForTasksByAvailableActions } from "@/lib/task-state-engine/action-authority";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskPriorityLevelOption } from "@/lib/task-priority";
 import { formatTaskPriorityMenuLabel, getSelectedTaskPriorityToneClass, getTaskPriorityToneClass } from "@/lib/task-priority";
@@ -23,8 +25,7 @@ type BatchFieldMode = "clear" | "set" | "unchanged";
 type BatchBooleanChoice = "false" | "true" | "unchanged";
 type BatchRouteChoice = TaskRoutingBucket | "clear" | "focus" | "unchanged";
 type BatchTagsMode = "clear" | "replace" | "unchanged";
-const batchStatusOptions = ["unchanged", ...getBatchSelectableTaskStatuses()] as const;
-type BatchStatusChoice = typeof batchStatusOptions[number];
+type BatchStatusChoice = TaskStatus | "unchanged";
 
 export type BatchTaskEditDraft = {
   dueOn: string;
@@ -55,6 +56,13 @@ export function TaskBatchEditModal({
   priorityOptions,
   repeatFrequencyOptions,
   repeatWeekdayOptions,
+  selectedTasks,
+  behaviorProfiles,
+  behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
+  behaviorSelectionsByTaskId,
+  behaviorPolicyLogicalDate,
+  behaviorPolicyLoading = false,
 }: {
   allTags: string[];
   count: number;
@@ -64,6 +72,13 @@ export function TaskBatchEditModal({
   priorityOptions: TaskPriorityLevelOption[];
   repeatFrequencyOptions: TaskRepeatFrequency[];
   repeatWeekdayOptions: readonly { label: string; value: number }[];
+  selectedTasks: readonly Pick<Task, "id" | "task_type" | "custom_ruleset_id">[];
+  behaviorProfiles?: TaskBehaviorPolicyResolutionContext["behaviorProfiles"];
+  behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
+  namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
+  behaviorSelectionsByTaskId?: TaskBehaviorPolicyResolutionContext["behaviorSelectionsByTaskId"];
+  behaviorPolicyLogicalDate: string;
+  behaviorPolicyLoading?: boolean;
 }) {
   const [draft, setDraft] = useState<BatchTaskEditDraft>(() => createEmptyBatchTaskEditDraft());
   const [isSaving, setIsSaving] = useState(false);
@@ -76,6 +91,16 @@ export function TaskBatchEditModal({
   const booleanOptions = ["unchanged", "true", "false"] as const;
   const fieldModeOptions = ["unchanged", "set", "clear"] as const;
   const tagsModeOptions = ["unchanged", "replace", "clear"] as const;
+  const batchStatusOptions = ["unchanged", ...filterTaskStatusesForTasksByAvailableActions({
+    behaviorPolicyRevisions,
+    behaviorProfiles,
+    behaviorSelectionsByTaskId,
+    logicalDate: behaviorPolicyLogicalDate,
+    namedCustomRulesetBehaviorPolicyRevisions,
+    policyLoading: behaviorPolicyLoading,
+    statuses: getBatchSelectableTaskStatuses(),
+    tasks: selectedTasks.map((task) => ({ customRulesetId: task.custom_ruleset_id, taskId: task.id, taskType: task.task_type })),
+  })] as const;
 
   return (
     <ModalShell className="adhdice-scrollbar max-h-[92vh] w-full max-w-[42rem] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Batch edit tasks" onClose={onClose}>

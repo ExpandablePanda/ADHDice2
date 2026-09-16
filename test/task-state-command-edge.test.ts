@@ -11,6 +11,9 @@ import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonica
 import type { CanonicalTaskCommandOperation } from "../src/lib/task-state-canonical/types.ts";
 import { planTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
 import { buildCanonicalTaskStateEngineInput } from "../src/lib/task-state-canonical/engine-input.ts";
+import { buildCompatibilityTaskStateEngineInput } from "../src/lib/task-state-engine/direct-input.ts";
+import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
+import type { TaskBehaviorPolicyRevision, TaskBehaviorProfiles } from "../src/lib/task-state-engine/behavior-policy.ts";
 
 const edgeSource = readFileSync(new URL("../supabase/functions/task-state-command/index.ts", import.meta.url), "utf8");
 const domainSource = readFileSync(new URL("../supabase/functions/task-state-command/domain.ts", import.meta.url), "utf8");
@@ -215,12 +218,44 @@ const canonicalReadModel = {
     revision: 4,
     canonical_revision: 4,
     status: "pending",
-    due_on: "2026-08-10",
+    due_on: "2026-09-01",
+    task_type: "task",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    canonicalization_status: "canonical_runtime",
     terminal_state: "active",
     container_state: "active",
     workflow_state: "none",
   },
-  scheduleBoundaries: [],
+  scheduleBoundaries: [{
+    id: "boundary-task-1",
+    user_id: "owner-1",
+    entity_id: "task-1",
+    entity_kind: "parent",
+    effective_from_logical_date: "2026-09-01",
+    boundary_sequence: 1,
+    boundary_type: "initial",
+    schedule_model: "rolling",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    one_time_due_on: null,
+    due_time: null,
+    anchor_date: "2026-09-01",
+    anchor_kind: "user_selected",
+    anchor_confidence: "proven",
+    historical_scope_known: true,
+    prospective_only: false,
+  }],
   occurrences: [],
   occurrenceEffectiveOverrides: [],
   historyFacts: [],
@@ -236,6 +271,774 @@ const canonicalReadModel = {
     settings_revision: 3,
   },
 } as unknown as CanonicalTaskStateReadModel;
+
+function behaviorRevision(
+  effectiveFromLogicalDate: string,
+  values: Partial<TaskBehaviorPolicyRevision> = {},
+): TaskBehaviorPolicyRevision {
+  return {
+    id: `task-behavior-${effectiveFromLogicalDate}`,
+    effectiveFromLogicalDate,
+    unresolvedOccurrence: "missed",
+    positiveStreakOnUnhandled: "break",
+    missedStreakOnUnhandled: "increment",
+    rewards: "enabled",
+    availableActions: ["done", "did_my_best", "missed", "delay", "complete"],
+    needsActionTriggers: ["missed", "due_today", "overdue"],
+    successOutcomes: ["done", "did_my_best", "complete"],
+    ...values,
+  };
+}
+
+function behaviorProfile(revision: TaskBehaviorPolicyRevision): TaskBehaviorProfiles {
+  return {
+    task: {
+      id: "task-behavior-profile",
+      unresolvedOccurrence: revision.unresolvedOccurrence,
+      positiveStreakOnUnhandled: revision.positiveStreakOnUnhandled,
+      missedStreakOnUnhandled: revision.missedStreakOnUnhandled,
+      rewards: revision.rewards,
+      availableActions: revision.availableActions,
+      needsActionTriggers: revision.needsActionTriggers,
+      successOutcomes: revision.successOutcomes,
+    },
+  };
+}
+
+function emptyCustomRulesetsResult() {
+  return {
+    data: [],
+    revisions: {},
+    behaviorSelectionsByTaskId: {},
+    error: null,
+    behaviorSelectionError: null,
+  };
+}
+
+test("trusted orchestration forwards the complete Task behavior revision timeline", async () => {
+  const revisions = [
+    behaviorRevision("2026-09-01"),
+    behaviorRevision("2026-09-10", {
+      unresolvedOccurrence: "blank",
+      positiveStreakOnUnhandled: "preserve",
+      missedStreakOnUnhandled: "ignore",
+      rewards: "disabled",
+    }),
+  ];
+  const customRevision = behaviorRevision("2026-09-01", { unresolvedOccurrence: "blank" });
+  const behaviorRevisions = { task: revisions, custom: [customRevision] };
+  const behaviorProfiles = {
+    ...behaviorProfile(revisions[1]!),
+    custom: {
+      id: "custom-behavior-profile",
+      unresolvedOccurrence: customRevision.unresolvedOccurrence,
+      positiveStreakOnUnhandled: customRevision.positiveStreakOnUnhandled,
+      missedStreakOnUnhandled: customRevision.missedStreakOnUnhandled,
+      rewards: customRevision.rewards,
+    },
+  };
+  let capturedContext: Parameters<typeof buildCanonicalTaskStateEngineInput>[1] | undefined;
+
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: archiveIntent("behavior-revisions-forwarded"),
+    adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: behaviorProfiles, revisions: behaviorRevisions, error: null }),
+      buildEngineInput: (readModel, context) => {
+        capturedContext = context;
+        return buildCanonicalTaskStateEngineInput(readModel, context);
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(capturedContext?.behaviorPolicyRevisions, behaviorRevisions);
+  assert.equal(capturedContext?.behaviorProfiles?.task?.rewards, "disabled");
+  assert.equal(capturedContext?.behaviorProfiles?.custom?.unresolvedOccurrence, "blank");
+  assert.deepEqual(capturedContext?.behaviorProfiles?.task?.successOutcomes, ["done", "did_my_best", "complete"]);
+});
+
+test("trusted cross-TaskType selection planning matches browser/direct policy resolution", async () => {
+  const namedRevision = behaviorRevision("2026-09-01", {
+    unresolvedOccurrence: "blank",
+    positiveStreakOnUnhandled: "preserve",
+    missedStreakOnUnhandled: "ignore",
+    rewards: "disabled",
+  });
+  const assignments = [
+    { effectiveFromLogicalDate: "2026-09-01", taskType: "task" as const, customRulesetId: null },
+    { effectiveFromLogicalDate: "2026-09-10", taskType: "custom" as const, customRulesetId: "ruleset-practice" },
+    { effectiveFromLogicalDate: "2026-09-21", taskType: "task" as const, customRulesetId: null },
+  ];
+  const assignedReadModel = {
+    ...canonicalReadModel,
+    task: {
+      ...canonicalReadModel.task,
+      task_type: "task",
+      // Current projection is Task; the historical selection was Practice.
+      custom_ruleset_id: null,
+    },
+    behaviorSelections: assignments.map((assignment, index) => ({
+      id: `assignment-${index + 1}`,
+      user_id: "owner-1",
+      task_id: "task-1",
+      effective_from_logical_date: assignment.effectiveFromLogicalDate,
+      task_type: assignment.taskType,
+      custom_ruleset_id: assignment.customRulesetId,
+      created_at: `${assignment.effectiveFromLogicalDate}T00:00:00.000Z`,
+      updated_at: `${assignment.effectiveFromLogicalDate}T00:00:00.000Z`,
+    })),
+  } as unknown as CanonicalTaskStateReadModel;
+  let capturedEngineInput: TaskStateEngineInput | undefined;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: archiveIntent("cross-tasktype-selection"),
+    adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: assignedReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({
+        data: {
+          custom: {
+            id: "legacy-custom",
+            unresolvedOccurrence: "missed",
+            positiveStreakOnUnhandled: "break",
+            missedStreakOnUnhandled: "increment",
+            rewards: "enabled",
+          },
+        },
+        revisions: { custom: [behaviorRevision("2026-09-01")] },
+        error: null,
+      }),
+      loadCustomRulesets: async () => ({
+        data: [],
+        revisions: { "ruleset-practice": [namedRevision] },
+        error: null,
+      }),
+      buildEngineInput: (readModel, context) => {
+        capturedEngineInput = buildCanonicalTaskStateEngineInput(readModel, context);
+        return capturedEngineInput;
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  const browserInput = buildCompatibilityTaskStateEngineInput(assignedReadModel.task, [], {
+    behaviorProfiles: {
+      custom: {
+        id: "legacy-custom",
+        unresolvedOccurrence: "missed",
+        positiveStreakOnUnhandled: "break",
+        missedStreakOnUnhandled: "increment",
+        rewards: "enabled",
+      },
+    },
+    behaviorPolicyRevisions: { custom: [behaviorRevision("2026-09-01")] },
+    behaviorSelectionsByTaskId: {
+      "task-1": assignments,
+    },
+    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": [namedRevision] },
+    now: "2026-09-15T16:00:00.000Z",
+    timezone: "America/New_York",
+    logicalDayRollover: "06:00",
+  });
+  assert.equal(capturedEngineInput?.behaviorPolicy?.unresolvedOccurrence, "blank");
+  assert.equal(capturedEngineInput?.behaviorPolicy?.rewards, "disabled");
+  assert.deepEqual(capturedEngineInput?.behaviorPolicy, browserInput.behaviorPolicy);
+  assert.deepEqual(capturedEngineInput?.behaviorPolicyRevisions, browserInput.behaviorPolicyRevisions);
+
+  const laterServerInput = buildCanonicalTaskStateEngineInput(assignedReadModel, {
+    behaviorPolicyRevisions: { custom: [behaviorRevision("2026-09-01")] },
+    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": [namedRevision] },
+    now: "2026-09-25T16:00:00.000Z",
+    timezone: "America/New_York",
+    logicalDayRollover: "06:00",
+  });
+  const laterBrowserInput = buildCompatibilityTaskStateEngineInput(assignedReadModel.task, [], {
+    behaviorPolicyRevisions: { custom: [behaviorRevision("2026-09-01")] },
+    behaviorSelectionsByTaskId: { "task-1": assignments },
+    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": [namedRevision] },
+    now: "2026-09-25T16:00:00.000Z",
+    timezone: "America/New_York",
+    logicalDayRollover: "06:00",
+  });
+  assert.equal(laterServerInput.behaviorPolicy?.unresolvedOccurrence, "missed");
+  assert.deepEqual(laterServerInput.behaviorPolicy, laterBrowserInput.behaviorPolicy);
+});
+
+test("trusted orchestration uses the Standard fallback for empty or unavailable profile storage", async () => {
+  for (const [label, behaviorResult] of [
+    ["no rows", { data: {}, revisions: {}, error: null }],
+    ["unavailable table", { data: {}, revisions: {}, error: { code: "42P01", message: "relation does not exist" } }],
+  ] as const) {
+    let capturedEngineInput: TaskStateEngineInput | undefined;
+    const result = await executeTrustedTaskStateCommand({
+      userId: "owner-1",
+      intent: archiveIntent(`behavior-fallback:${label}`),
+      adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+      dependencies: {
+        loadReplayOperation: async () => ({ data: null, error: null }),
+        loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+        loadBehaviorProfiles: async () => behaviorResult,
+        buildEngineInput: (readModel, context) => {
+          capturedEngineInput = buildCanonicalTaskStateEngineInput(readModel, context);
+          return capturedEngineInput;
+        },
+      },
+    });
+
+    assert.equal(result.status, 200, label);
+    assert.equal(capturedEngineInput?.behaviorPolicy?.id, "standard-task", label);
+    assert.equal(capturedEngineInput?.behaviorPolicyRevisions, undefined, label);
+  }
+});
+
+test("trusted manual Complete fails closed when TaskType policy authority fails", async () => {
+  let rpcCalls = 0;
+  let engineInputCalls = 0;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "complete_task",
+      task_id: "task-1",
+      replay_identity: "complete:policy-authority-failure",
+      expected_revision: 4,
+      logical_date: "2026-09-15",
+    },
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: { state: "committed" }, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => { throw new Error("permission denied"); },
+      loadCustomRulesets: async () => emptyCustomRulesetsResult(),
+      buildEngineInput: () => {
+        engineInputCalls += 1;
+        return buildCanonicalTaskStateEngineInput(canonicalReadModel, {});
+      },
+    },
+  });
+
+  assert.equal(result.status, 503);
+  assert.deepEqual(result.body, {
+    error: {
+      code: "behavior_policy_unavailable",
+      message: "Task behavior policy authority is unavailable.",
+    },
+  });
+  assert.equal(engineInputCalls, 0);
+  assert.equal(rpcCalls, 0);
+});
+
+test("trusted manual action fails closed for a malformed behavior loader result", async () => {
+  let rpcCalls = 0;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: "outcome:malformed-policy-result",
+      expected_revision: 4,
+      outcome: "done",
+    },
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: { state: "committed" }, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: {}, revisions: "malformed", error: null }),
+      loadCustomRulesets: async () => emptyCustomRulesetsResult(),
+    },
+  });
+
+  assert.equal(result.status, 503);
+  assert.deepEqual(result.body, {
+    error: {
+      code: "behavior_policy_unavailable",
+      message: "Task behavior policy authority is unavailable.",
+    },
+  });
+  assert.equal(rpcCalls, 0);
+});
+
+test("trusted manual Complete uses a resolved policy and reaches persistence when allowed", async () => {
+  let rpcCalls = 0;
+  const allowedRevision = behaviorRevision("2026-09-01");
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "complete_task",
+      task_id: "task-1",
+      replay_identity: "complete:policy-allows",
+      expected_revision: 4,
+      logical_date: "2026-09-15",
+    },
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: { state: "committed" }, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: behaviorProfile(allowedRevision), revisions: { task: [allowedRevision] }, error: null }),
+      loadCustomRulesets: async () => emptyCustomRulesetsResult(),
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, { state: "committed" });
+  assert.equal(rpcCalls, 1);
+});
+
+test("missing Available Actions column keeps pre-deployment manual compatibility", async () => {
+  let rpcCalls = 0;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "complete_task",
+      task_id: "task-1",
+      replay_identity: "complete:missing-available-actions-column",
+      expected_revision: 4,
+      logical_date: "2026-09-15",
+    },
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: { state: "committed" }, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({
+        data: {},
+        revisions: {},
+        error: { code: "42703", message: "column available_actions does not exist" },
+      }),
+      loadCustomRulesets: async () => emptyCustomRulesetsResult(),
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(rpcCalls, 1);
+});
+
+test("named Custom Task fails closed when named-ruleset authority fails", async () => {
+  let rpcCalls = 0;
+  const namedCustomReadModel = {
+    ...canonicalReadModel,
+    task: {
+      ...canonicalReadModel.task,
+      task_type: "custom",
+      custom_ruleset_id: "ruleset-discipline",
+    },
+  } as unknown as CanonicalTaskStateReadModel;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "complete_task",
+      task_id: "task-1",
+      replay_identity: "complete:named-ruleset-authority-failure",
+      expected_revision: 4,
+      logical_date: "2026-09-15",
+    },
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: { state: "committed" }, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: namedCustomReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: {}, revisions: {}, error: null }),
+      loadCustomRulesets: async () => ({
+        data: [],
+        revisions: {},
+        behaviorSelectionsByTaskId: {},
+        error: { code: "42501", message: "permission denied for table adhdice_custom_behavior_ruleset_revisions" },
+        behaviorSelectionError: null,
+      }),
+    },
+  });
+
+  assert.equal(result.status, 503);
+  assert.deepEqual(result.body, {
+    error: {
+      code: "behavior_policy_unavailable",
+      message: "Task behavior policy authority is unavailable.",
+    },
+  });
+  assert.equal(rpcCalls, 0);
+});
+
+test("named Custom Task fails closed when behavior-selection authority fails", async () => {
+  let rpcCalls = 0;
+  const namedCustomReadModel = {
+    ...canonicalReadModel,
+    task: {
+      ...canonicalReadModel.task,
+      task_type: "custom",
+      custom_ruleset_id: "ruleset-discipline",
+    },
+  } as unknown as CanonicalTaskStateReadModel;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "complete_task",
+      task_id: "task-1",
+      replay_identity: "complete:selection-authority-failure",
+      expected_revision: 4,
+      logical_date: "2026-09-15",
+    },
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: { state: "committed" }, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: namedCustomReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: {}, revisions: {}, error: null }),
+      loadCustomRulesets: async () => ({
+        data: [],
+        revisions: { "ruleset-discipline": [behaviorRevision("2026-09-01")] },
+        behaviorSelectionsByTaskId: {},
+        error: null,
+        behaviorSelectionError: { code: "42501", message: "permission denied for table adhdice_task_behavior_selections" },
+      }),
+    },
+  });
+
+  assert.equal(result.status, 503);
+  assert.deepEqual(result.body, {
+    error: {
+      code: "behavior_policy_unavailable",
+      message: "Task behavior policy authority is unavailable.",
+    },
+  });
+  assert.equal(rpcCalls, 0);
+});
+
+test("trusted manual Complete reports action-unavailable only for a resolved restrictive policy", async () => {
+  let rpcCalls = 0;
+  const restrictedRevision = behaviorRevision("2026-09-01", { availableActions: ["done", "missed"] });
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "complete_task",
+      task_id: "task-1",
+      replay_identity: "complete:resolved-policy-forbids",
+      expected_revision: 4,
+      logical_date: "2026-09-15",
+    },
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: { state: "committed" }, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({
+        data: behaviorProfile(restrictedRevision),
+        revisions: { task: [restrictedRevision] },
+        error: null,
+      }),
+      loadCustomRulesets: async () => emptyCustomRulesetsResult(),
+    },
+  });
+
+  assert.equal(result.status, 422);
+  assert.deepEqual(result.body, {
+    error: {
+      code: "TASK_ACTION_NOT_AVAILABLE",
+      message: "Complete is not available for this Task Type.",
+    },
+  });
+  assert.equal(rpcCalls, 0);
+});
+
+test("trusted manual occurrence enforcement rejects a policy-hidden outcome before the RPC", async () => {
+  let rpcCalls = 0;
+  const restrictedRevision = behaviorRevision("2026-09-01", { availableActions: ["done"] });
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: "outcome:unavailable-did-my-best",
+      expected_revision: 4,
+      outcome: "did_my_best",
+      logical_date: "2026-09-15",
+    },
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: { state: "committed" }, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({
+        data: behaviorProfile(restrictedRevision),
+        revisions: { task: [restrictedRevision] },
+        error: null,
+      }),
+      loadCustomRulesets: async () => ({
+        data: [],
+        revisions: {},
+        behaviorSelectionsByTaskId: {},
+        error: null,
+        behaviorSelectionError: null,
+      }),
+      buildEngineInput: (readModel, context) => buildCanonicalTaskStateEngineInput(readModel, context),
+    },
+  });
+
+  assert.equal(result.status, 422);
+  assert.deepEqual(result.body, {
+    error: {
+      code: "TASK_ACTION_NOT_AVAILABLE",
+      message: "Did My Best is not available for this Task Type.",
+    },
+  });
+  assert.equal(rpcCalls, 0);
+});
+
+test("trusted reconciliation uses the current Task policy for unresolved historical backlog", async () => {
+  const revisions = [
+    behaviorRevision("2026-09-01"),
+    behaviorRevision("2026-09-10", {
+      unresolvedOccurrence: "blank",
+      positiveStreakOnUnhandled: "preserve",
+      missedStreakOnUnhandled: "ignore",
+      rewards: "disabled",
+    }),
+    behaviorRevision("2026-09-20"),
+  ];
+  let capturedEngineInput: TaskStateEngineInput | undefined;
+  let capturedPlan: ReturnType<typeof planTaskStateCommand> | undefined;
+
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "reconcile_rollover",
+      task_id: "task-1",
+      replay_identity: "rollover:historical-behavior-revisions",
+      expected_revision: 4,
+    },
+    adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-25T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: behaviorProfile(revisions[2]!), revisions: { task: revisions }, error: null }),
+      buildEngineInput: (readModel, context) => {
+        capturedEngineInput = buildCanonicalTaskStateEngineInput(readModel, context);
+        return capturedEngineInput;
+      },
+      planCommand: (state, command) => {
+        capturedPlan = planTaskStateCommand(state, command);
+        return capturedPlan;
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(capturedEngineInput?.behaviorPolicy?.unresolvedOccurrence, "missed");
+  assert.deepEqual(capturedEngineInput?.behaviorPolicyRevisions, revisions);
+  const automaticDates = capturedPlan?.normalizedResult.automaticHistoryFacts.map((fact) => fact.logical_date) ?? [];
+  assert.deepEqual(automaticDates, [
+    "2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05",
+    "2026-09-06", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10",
+    "2026-09-11", "2026-09-12", "2026-09-13", "2026-09-14", "2026-09-15",
+    "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20",
+    "2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24",
+  ]);
+  assert.ok(!automaticDates.includes("2026-09-25"));
+});
+
+test("automatic rollover remains permitted when behavior-policy loading fails unexpectedly", async () => {
+  let rpcCalls = 0;
+  let capturedPlan: ReturnType<typeof planTaskStateCommand> | undefined;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "reconcile_rollover",
+      task_id: "task-1",
+      replay_identity: "rollover:behavior-policy-loader-failure",
+      expected_revision: 4,
+    },
+    adminClient: {
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: { state: "committed" }, error: null };
+      },
+    } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => { throw new Error("database query failed"); },
+      loadCustomRulesets: async () => { throw new Error("network failure"); },
+      planCommand: (state, command) => {
+        capturedPlan = planTaskStateCommand(state, command);
+        return capturedPlan;
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(rpcCalls, 1);
+  assert.ok(capturedPlan?.normalizedResult.automaticHistoryFacts.some((fact) => fact.outcome === "missed"));
+});
+
+test("canonical server and browser/direct normalization make the same historical policy decisions", () => {
+  const revisions = [
+    behaviorRevision("2026-09-01"),
+    behaviorRevision("2026-09-10", {
+      unresolvedOccurrence: "blank",
+      positiveStreakOnUnhandled: "preserve",
+      missedStreakOnUnhandled: "ignore",
+      rewards: "disabled",
+    }),
+    behaviorRevision("2026-09-20"),
+  ];
+  const context = {
+    behaviorProfiles: behaviorProfile(revisions[2]!),
+    behaviorPolicyRevisions: { task: revisions },
+    now: "2026-09-25T16:00:00.000Z",
+    timezone: "America/New_York",
+    logicalDayRollover: "06:00",
+  };
+  const serverInput = buildCanonicalTaskStateEngineInput(canonicalReadModel, context);
+  const browserInput = buildCompatibilityTaskStateEngineInput(canonicalReadModel.task, [], context);
+  const serverResult = evaluateTaskState({ ...serverInput, action: { type: "reconcile_rollover" } });
+  const browserResult = evaluateTaskState({ ...browserInput, action: { type: "reconcile_rollover" } });
+
+  assert.deepEqual(serverInput.behaviorPolicy, browserInput.behaviorPolicy);
+  assert.deepEqual(serverInput.behaviorPolicyRevisions, browserInput.behaviorPolicyRevisions);
+  assert.deepEqual(
+    serverResult.proposedHistoryChanges.map((change) => change.type === "insert" ? change.row.logicalDate : change.rowId),
+    browserResult.proposedHistoryChanges.map((change) => change.type === "insert" ? change.row.logicalDate : change.rowId),
+  );
+});
+
+test("trusted planning carries a named Custom Success Outcomes policy to the canonical engine", async () => {
+  const namedRevision = behaviorRevision("2026-09-01", { successOutcomes: ["done"] });
+  const namedCustomReadModel = {
+    ...canonicalReadModel,
+    task: { ...canonicalReadModel.task, task_type: "custom", custom_ruleset_id: "ruleset-practice" },
+  } as unknown as CanonicalTaskStateReadModel;
+  let capturedEngineInput: TaskStateEngineInput | undefined;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: "outcome:named-success-policy",
+      expected_revision: 4,
+      outcome: "done",
+      logical_date: "2026-09-15",
+    },
+    adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: namedCustomReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: {}, revisions: {}, error: null }),
+      loadCustomRulesets: async () => ({
+        data: [],
+        revisions: { "ruleset-practice": [namedRevision] },
+        behaviorSelectionsByTaskId: {},
+        error: null,
+        behaviorSelectionError: null,
+      }),
+      buildEngineInput: (readModel, context) => {
+        capturedEngineInput = buildCanonicalTaskStateEngineInput(readModel, context);
+        return capturedEngineInput;
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(capturedEngineInput?.behaviorPolicy?.successOutcomes, ["done"]);
+  assert.equal(capturedEngineInput?.behaviorPolicyRevisions?.[0]?.successOutcomes.includes("did_my_best"), false);
+});
+
+test("trusted current-logical-day reward policy prevents a new entitlement while earned rewards remain planning-safe", async () => {
+  const revisions = [
+    behaviorRevision("2026-09-01"),
+    behaviorRevision("2026-09-10", {
+      unresolvedOccurrence: "blank",
+      positiveStreakOnUnhandled: "preserve",
+      missedStreakOnUnhandled: "ignore",
+      rewards: "disabled",
+    }),
+    behaviorRevision("2026-09-20"),
+  ];
+  let capturedPlan: ReturnType<typeof planTaskStateCommand> | undefined;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: {
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: "outcome:current-disabled-rewards",
+      expected_revision: 4,
+      outcome: "done",
+    },
+    adminClient: { rpc: async () => ({ data: { state: "committed" }, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-15T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+      loadBehaviorProfiles: async () => ({ data: behaviorProfile(revisions[2]!), revisions: { task: revisions }, error: null }),
+      loadCustomRulesets: async () => ({
+        data: [],
+        revisions: {},
+        behaviorSelectionsByTaskId: {},
+        error: null,
+        behaviorSelectionError: null,
+      }),
+      planCommand: (state, command) => {
+        capturedPlan = planTaskStateCommand(state, command);
+        return capturedPlan;
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(capturedPlan?.command.logicalDay.logicalDate, "2026-09-15");
+  assert.equal(capturedPlan?.normalizedResult.rewardEntitlement, null);
+  assert.deepEqual(capturedPlan?.normalizedResult.automaticHistoryDeleteIds, []);
+});
 
 function archiveIntent(replayIdentity: string, taskId = "task-1", expectedRevision = 4): TaskStateCommandIntent {
   return {

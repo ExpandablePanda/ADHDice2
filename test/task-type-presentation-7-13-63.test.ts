@@ -1,0 +1,212 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  getTaskTypeSurfaceClassName,
+  getTaskTypeTableRowSurfaceClassName,
+  isLucideIconName,
+  resolveTaskTypeAccent,
+  resolveTaskTypeIcon,
+  searchTaskTypeIcons,
+  TASK_TYPE_ACCENT_OPTIONS,
+  TASK_TYPE_ICON_OPTIONS,
+} from "../src/lib/task-type-presentation.ts";
+import { resolveTaskTypeSelectionOption } from "../src/lib/task-type.ts";
+
+const identitySource = readFileSync("src/components/task-app/task-type-identity.tsx", "utf8");
+const iconRendererSource = readFileSync("src/components/ui/lucide-icon.tsx", "utf8");
+const settingsSource = readFileSync("src/components/task-app/task-type-behavior-settings.tsx", "utf8");
+const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
+const listSource = readFileSync("src/components/task-app/tasks-list-adapter.tsx", "utf8");
+const secondarySource = readFileSync("src/components/task-app/task-secondary-views.tsx", "utf8");
+const gridSource = readFileSync("src/components/task-app/task-grid-widgets.tsx", "utf8");
+const pathsSource = readFileSync("src/components/task-app/paths-workspace.tsx", "utf8");
+const taskAppSource = readFileSync("src/components/task-app.tsx", "utf8");
+
+const customRulesets = [
+  { id: "yellow-type", name: "Home", task_type: "custom" as const, icon_key: "house", accent_key: "yellow", description: "Home tasks" },
+  { id: "blue-type", name: "Work", task_type: "custom" as const, icon_key: "briefcase", accent_key: "blue", description: "Work tasks" },
+];
+
+test("compact TaskTypeIdentity inherits parent foreground and selected Behavior Settings tabs pass selected state", () => {
+  assert.match(identitySource, /\$\{compact \? "text-inherit"/);
+  assert.doesNotMatch(identitySource, /compact \? "text-\[#4b4469\]/);
+  assert.match(settingsSource, /<TaskTypeIdentity compact option=\{option\} selected=\{activeSelection === option\.value\} \/>/);
+  assert.match(settingsSource, /<AdhdChip[\s\S]*selected=\{activeSelection === option\.value\}/);
+});
+
+test("unselected Task Type tabs retain the normal readable chip treatment", () => {
+  assert.match(settingsSource, /<AdhdChip[\s\S]*selected=\{activeSelection === option\.value\}/);
+  assert.match(identitySource, /selected \? "bg-white\/15 text-white" : accent\.iconClassName/);
+  assert.match(identitySource, /compact \? "text-inherit"/);
+});
+
+test("Standard Task resolves to the neutral default surface", () => {
+  const option = resolveTaskTypeSelectionOption("task", null, customRulesets);
+  const surface = getTaskTypeSurfaceClassName(option.accentKey);
+  assert.equal(option.accentKey, "neutral");
+  assert.match(surface, /bg-white/);
+  assert.doesNotMatch(surface, /fffdf5|f1ecff|f7f5fb/);
+});
+
+test("Table surfaces reserve a transparent border and retain geometry without a persistent outline", () => {
+  const neutralSurface = getTaskTypeTableRowSurfaceClassName("neutral");
+  const customSurface = getTaskTypeTableRowSurfaceClassName("purple");
+  assert.match(neutralSurface, /border-transparent/);
+  assert.match(neutralSurface, /bg-white/);
+  assert.doesNotMatch(neutralSurface, /(?:^| )border-\[#/);
+  assert.match(neutralSurface, /hover:border-\[#ece8f8\]/);
+  assert.match(customSurface, /border-transparent/);
+  assert.match(customSurface, /bg-\[#f1ecff\]/);
+  assert.match(customSurface, /hover:border-\[#e7defc\]/);
+});
+
+test("Every supported accent provides an accent-aware Table hover-border authority", () => {
+  for (const accent of TASK_TYPE_ACCENT_OPTIONS) {
+    const surface = getTaskTypeTableRowSurfaceClassName(accent.key);
+    assert.match(surface, /^border-transparent bg-/);
+    assert.ok(surface.includes(accent.tableRowSurfaceClassName));
+    assert.match(accent.tableRowHoverBorderClassName, /(^| )hover:border-/);
+    assert.ok(surface.includes(accent.tableRowHoverBorderClassName));
+    assert.equal(surface, getTaskTypeTableRowSurfaceClassName(accent.key));
+  }
+  assert.match(getTaskTypeTableRowSurfaceClassName("neutral"), /bg-white/);
+  assert.match(getTaskTypeTableRowSurfaceClassName("yellow"), /bg-\[#fff9e8\]/);
+});
+
+test("Table hover borders preserve the row fill and never add row shadows", () => {
+  for (const accent of TASK_TYPE_ACCENT_OPTIONS) {
+    const surface = getTaskTypeTableRowSurfaceClassName(accent.key);
+    assert.doesNotMatch(surface, /hover:bg-|shadow-/);
+  }
+});
+
+test("Table and List production containers use their shared Task Type surface authorities", () => {
+  assert.match(tableSource, /getTaskTypeTableRowSurfaceClassName\(taskTypeOption\.accentKey\)/);
+  assert.match(tableSource, /getTaskTypeTableRowSurfaceClassName\(childTaskTypeOption\.accentKey\)/);
+  assert.match(tableSource, /getTaskTypeTableRowSurfaceClassName\(sourceTaskTypeOption\.accentKey\)/);
+  assert.doesNotMatch(tableSource, /getTaskTypeTableSurfaceClassName|getTaskTypeTableChildSurfaceClassName/);
+  assert.match(tableSource, /py-1\.5[\s\S]*\$\{childTaskSurface\}[\s\S]*data-task-table-child-grid=\{item\.id\}/);
+  assert.match(tableSource, /py-1\.5[\s\S]*\$\{sourceTaskSurface\}[\s\S]*data-task-table-source-step-grid=\{row\.subtask\.id\}/);
+  assert.match(tableSource, /py-1\.5[\s\S]*\$\{taskSurface\}[\s\S]*data-task-table-parent-grid=\{task\.id\}/);
+  assert.match(tableSource, /data-task-table-parent-grid=\{task\.id\}/);
+  assert.match(listSource, /getTaskTypeSurfaceClassName\(taskTypeOption\.accentKey\)/);
+  assert.match(listSource, /<article[\s\S]*\$\{taskSurface\}/);
+});
+
+test("Table child paths retain compact geometry, focus treatment, and no row shadows", () => {
+  const normalChildStart = tableSource.indexOf("const childTaskTypeOption = resolveTaskTypeSelectionOption");
+  const sourceChildStart = tableSource.indexOf("const sourceTaskTypeOption = resolveTaskTypeSelectionOption");
+  const normalChildEnd = tableSource.indexOf("data-task-table-child-grid={item.id}", normalChildStart) + 200;
+  const sourceChildEnd = tableSource.indexOf("data-task-table-source-step-grid={row.subtask.id}", sourceChildStart) + 200;
+  const normalChildSource = tableSource.slice(normalChildStart, normalChildEnd);
+  const sourceChildSource = tableSource.slice(sourceChildStart, sourceChildEnd);
+  assert.match(normalChildSource, /py-1\.5/);
+  assert.match(normalChildSource, /focus-visible:ring-2/);
+  assert.doesNotMatch(normalChildSource, /shadow-/);
+  assert.match(sourceChildSource, /py-1\.5/);
+  assert.doesNotMatch(sourceChildSource, /shadow-/);
+  const parentStart = tableSource.indexOf("const taskSurface = getTaskTypeTableRowSurfaceClassName");
+  const parentEnd = tableSource.indexOf("data-task-table-parent-grid={task.id}", parentStart) + 100;
+  const parentSource = tableSource.slice(parentStart, parentEnd);
+  assert.doesNotMatch(parentSource, /shadow-|getHighlightedRowClassName/);
+  assert.doesNotMatch(tableSource, /const getHighlightedRowClassName/);
+});
+
+test("Table and List selected, hover, open, and highlighted states preserve surface and selection visibility", () => {
+  assert.match(tableSource, /\$\{taskSurface\}[\s\S]*selectedTaskIdSet\.has\(task\.id\)/);
+  assert.match(tableSource, /rowContextMenu\?\.taskId === task\.id/);
+  assert.match(tableSource, /getTaskTypeTableRowSurfaceClassName/);
+  assert.match(tableSource, /whileHover=\{shouldAnimateRows \? \{ y: -0\.5 \} : undefined\}/);
+  assert.match(tableSource, /selectedTaskIdSet\.has\(task\.id\)[\s\S]*ring-2 ring-\[#6f57f6\]\/35/);
+  assert.match(tableSource, /focus-visible:ring-2/);
+  assert.match(listSource, /\$\{taskSurface\}[\s\S]*selectedTaskIdSet\.has\(task\.id\)/);
+  assert.match(listSource, /isQuickPanelOpen/);
+  assert.match(listSource, /getHighlightedListRowClassName/);
+});
+
+test("child Tasks resolve their own accent instead of inheriting the parent", () => {
+  const parent = resolveTaskTypeSelectionOption("custom", "yellow-type", customRulesets);
+  const child = resolveTaskTypeSelectionOption("custom", "blue-type", customRulesets);
+  assert.notEqual(parent.accentKey, child.accentKey);
+  assert.notEqual(getTaskTypeSurfaceClassName(parent.accentKey), getTaskTypeSurfaceClassName(child.accentKey));
+  assert.notEqual(getTaskTypeTableRowSurfaceClassName(parent.accentKey), getTaskTypeTableRowSurfaceClassName(child.accentKey));
+  assert.equal(getTaskTypeTableRowSurfaceClassName(parent.accentKey), getTaskTypeTableRowSurfaceClassName("yellow"));
+  assert.equal(getTaskTypeTableRowSurfaceClassName(child.accentKey), getTaskTypeTableRowSurfaceClassName("blue"));
+  assert.match(tableSource, /resolveTaskTypeSelectionOption\(item\.taskType, item\.customRulesetId/);
+  assert.match(listSource, /resolveTaskTypeSelectionOption\(item\.taskType, item\.customRulesetId/);
+});
+
+test("Standard child rows remain neutral while named child identity stays independent", () => {
+  const standardChild = resolveTaskTypeSelectionOption("task", null, customRulesets);
+  assert.equal(standardChild.accentKey, "neutral");
+  assert.match(tableSource, /const childTaskTypeOption = resolveTaskTypeSelectionOption\(item\.taskType, item\.customRulesetId, customBehaviorRulesets\)/);
+  assert.match(tableSource, /const sourceTaskTypeOption = resolveTaskTypeSelectionOption\(row\.subtask\.taskType, row\.subtask\.customRulesetId, customBehaviorRulesets\)/);
+  assert.doesNotMatch(tableSource, /childTaskTypeOption = resolveTaskTypeSelectionOption\(task\.taskType/);
+});
+
+test("secondary Task cards, Grid widgets, and Paths nodes reuse the shared surface helper", () => {
+  assert.match(secondarySource, /getTaskTypeSurfaceClassName\(option\.accentKey\)/);
+  assert.match(gridSource, /getTaskTypeSurfaceClassName\(option\.accentKey\)/);
+  assert.match(pathsSource, /getTaskTypeSurfaceClassName\(taskTypeOption\.accentKey\)/);
+  assert.match(taskAppSource, /customBehaviorRulesets=\{customBehaviorRulesets\}[\s\S]*tasksByWidget/);
+});
+
+test("surface presentation does not alter Task behavior or status values", () => {
+  const task = { status: "pending", task_type: "custom", custom_ruleset_id: "yellow-type" };
+  const before = task.status;
+  const surface = getTaskTypeSurfaceClassName(resolveTaskTypeSelectionOption(task.task_type, task.custom_ruleset_id, customRulesets).accentKey);
+  assert.equal(task.status, before);
+  assert.match(surface, /bg-/);
+  assert.doesNotMatch(surface, /status|complete|missed|pending/);
+});
+
+test("the featured icon registry exposes 120 or more choices and keys are unique", () => {
+  assert.ok(TASK_TYPE_ICON_OPTIONS.length >= 120);
+  assert.equal(new Set(TASK_TYPE_ICON_OPTIONS.map((option) => option.key)).size, TASK_TYPE_ICON_OPTIONS.length);
+  assert.ok(TASK_TYPE_ICON_OPTIONS.every((option) => option.key && option.label && Array.isArray(option.keywords) && (option.icon || isLucideIconName(option.key))));
+});
+
+test("icon search matches labels, keywords, synonyms, and case-insensitively", () => {
+  assert.ok(searchTaskTypeIcons("phone").some((option) => option.key === "phone"));
+  assert.ok(searchTaskTypeIcons("phone").some((option) => option.key === "smartphone"));
+  assert.ok(searchTaskTypeIcons("MUSIC").some((option) => option.key === "guitar"));
+  assert.ok(searchTaskTypeIcons("practice").some((option) => option.key === "music"));
+  assert.ok(searchTaskTypeIcons("learning").some((option) => option.key === "book-open"));
+  assert.ok(searchTaskTypeIcons("alarm clock").some((option) => option.key === "alarm-clock"));
+  assert.ok(searchTaskTypeIcons("ALARM-CLOCK").some((option) => option.key === "alarm-clock"));
+  assert.ok(searchTaskTypeIcons("alarm-clock").some((option) => option.key === "alarm-clock"));
+  assert.ok(searchTaskTypeIcons("chart no axes").some((option) => option.key === "chart-no-axes-column"));
+});
+
+test("full Lucide search finds valid directory icons outside the featured set", () => {
+  assert.equal(TASK_TYPE_ICON_OPTIONS.some((option) => option.key === "satellite-dish"), false);
+  assert.ok(searchTaskTypeIcons("satellite dish").some((option) => option.key === "satellite-dish"));
+});
+
+test("clearing icon search restores every icon", () => {
+  assert.strictEqual(searchTaskTypeIcons(""), TASK_TYPE_ICON_OPTIONS);
+  assert.strictEqual(searchTaskTypeIcons("   "), TASK_TYPE_ICON_OPTIONS);
+  assert.ok(searchTaskTypeIcons("not-a-real-icon").length === 0);
+  assert.match(settingsSource, /value=\{iconQuery\}/);
+});
+
+test("unknown icon and accent keys use safe fallbacks", () => {
+  assert.equal(resolveTaskTypeIcon("unknown-icon"), resolveTaskTypeIcon("list-todo"));
+  assert.equal(resolveTaskTypeAccent("unknown-accent").key, "purple");
+  assert.match(getTaskTypeSurfaceClassName("unknown-accent"), /bg-\[#fcfaff\]/);
+});
+
+test("raw Lucide icon keys remain valid and TaskTypeIdentity uses the shared dynamic renderer", () => {
+  assert.equal(isLucideIconName("alarm-clock"), true);
+  assert.equal(isLucideIconName("not-a-real-icon"), false);
+  assert.match(identitySource, /<TaskTypeIcon[\s\S]*iconKey=\{option\.iconKey\}/);
+  assert.match(settingsSource, /<TaskTypeIcon[\s\S]*iconKey=\{key\}/);
+  assert.match(iconRendererSource, /if \(!featuredOption\?\.icon && isLucideIconName\(iconKey\)\)/);
+});
+
+test("the 7.13.77 presentation patch contains no SQL, schema, or behavior-policy persistence change", () => {
+  const changedFiles = execFileSync("git", ["diff", "--name-only", "HEAD"], { encoding: "utf8" }).split("\n").filter(Boolean);
+  assert.doesNotMatch(changedFiles.join("\n"), /(^|\/)supabase\/|schema|behavior-policy|task-state/);
+});

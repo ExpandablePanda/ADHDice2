@@ -2,6 +2,9 @@ import type { Task, TaskHistory } from "../database.types.ts";
 import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
 import type { CanonicalTaskScheduleBoundary } from "../task-state-canonical/types.ts";
 import { occurrenceIdentity } from "./recurrence.ts";
+import { logicalDateForTimestamp } from "./calendar.ts";
+import { normalizeTaskType } from "../task-type.ts";
+import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "./behavior-policy.ts";
 import type {
   TaskCalendarOverride,
   TaskHistoryOutcome,
@@ -35,7 +38,7 @@ export class CanonicalTaskStateAuthorityRequiredError extends Error {
   }
 }
 
-type DirectTaskStateContext = {
+type DirectTaskStateContext = TaskBehaviorPolicyResolutionContext & {
   now: string | Date;
   timezone: string;
   logicalDayRollover: string;
@@ -220,8 +223,22 @@ function buildTaskStateEngineInput(
         ? null
         : boundary.anchor_date
     : task.canonical_schedule_anchor_date ?? task.due_on;
+  const taskType = normalizeTaskType(task.task_type);
+  const policyResolution = resolveTaskBehaviorPolicyForTask({
+    ...context,
+    customRulesetId: taskType === "custom" ? task.custom_ruleset_id : null,
+    logicalDate: logicalDateForTimestamp(context.now, context.timezone, context.logicalDayRollover),
+    taskId: task.id,
+    taskType,
+  });
 
   return {
+    // Policy selection belongs to the stored-Task normalization boundary.
+    // TaskType is metadata; resolve its current profile before the pure engine sees it.
+    behaviorPolicy: policyResolution.policy,
+    ...(policyResolution.revisions.length
+      ? { behaviorPolicyRevisions: [...policyResolution.revisions] }
+      : {}),
     task: {
       id: task.id,
       lifecycle,

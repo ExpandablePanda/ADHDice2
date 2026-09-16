@@ -219,8 +219,9 @@ export function replayHealthMealPlanPendingMutations(
   return [...mergedMealPlans.values()].sort(sortHealthMealPlans);
 }
 
-export function sumHealthMealPlanNutritionForDate(entries: HealthMealPlanEntry[], plannedDate: string): PlannedNutritionTotals {
-  const datedEntries = getActiveHealthMealPlans(entries, plannedDate);
+export function sumHealthMealPlanNutritionForDate(entries: HealthMealPlanEntry[], plannedDate: string, excludedPlanId?: string | null): PlannedNutritionTotals {
+  const datedEntries = getActiveHealthMealPlans(entries, plannedDate)
+    .filter((entry) => entry.id !== excludedPlanId);
   const expanded = aggregateHealthNutritionDetails(datedEntries.map((entry) => ({
     nutritionDetails: entry.nutrition_snapshot?.nutrition_details,
   })));

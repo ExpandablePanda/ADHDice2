@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
-import { useEffect, useRef, useState, type ComponentProps, type JSX, type ReactNode } from "react";
+import { ChevronDown, X } from "lucide-react";
+import { useMemo, useRef, useState, type ComponentProps, type JSX, type ReactNode } from "react";
 import { ModalShell } from "../modal-shell";
 import { BottomDockComponent } from "./bottom-dock";
 import { FilterRowsComponent } from "./task-filter-rows";
@@ -10,16 +10,15 @@ import { Select } from "./task-status-select";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { formatTaskStatusLabel, renderTaskStatusCircle, TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES } from "./task-status-ui";
 import {
-  TASK_TABLE_CHIP_BASE_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
+import { AdhdIconButton, EditableEntityHeaderTitle } from "@/components/ui-system";
 import { TaskGridViewComponent } from "./task-grid-view";
 import {
   computeTaskSpecificHistoryStats,
   buildTaskHistoryRowProjections,
   deduplicateTaskHistoryByLogicalDate,
-  formatTaskHistoryEntryLabel,
   getTaskHistoryLastDone,
   type TaskHistoryStats,
 } from "@/lib/task-history";
@@ -30,25 +29,34 @@ import {
   TaskMatrixViewComponent,
 } from "./task-secondary-views";
 import { UrgentTasksPanelComponent } from "./task-grid-widgets";
+import { formatTaskHistoryCalendarDay, formatTaskHistoryCalendarMonth, getTaskHistoryCalendarMonthDays, TaskHistoryCalendarDay, TaskHistoryCalendarPresentation } from "./task-history-calendar-presentation";
 import type { TaskDraft } from "./task-editor-model";
 import {
   buildTaskHistoryCalendarDateKeys,
-  getComfortableTaskHistoryScrollOffset,
   getTaskHistoryInitialFocusDateKey,
 } from "@/lib/task-history-calendar-focus";
+import {
+  getTaskCalendarMonth,
+  shiftTaskCalendarMonth,
+  type TaskCalendarMonth,
+} from "@/lib/task-calendar";
 import type { AppPage } from "@/lib/task-ui-state";
 import type { NavigatorSearchTarget } from "@/lib/navigator-search";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import type { ImportTasksResult, TaskImportOptions, TaskImportProgress } from "@/hooks/useTaskCrudActions";
 import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleActionStatuses } from "@/lib/task-complete";
-import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
+import { createTaskHistoryCalendarReadRevision, logicalDateForTimestamp, resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
+import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import type {
+  CustomBehaviorRuleset,
   Task,
   TaskHistory as DbTaskHistory,
   TaskStatus,
 } from "@/lib/database.types";
+import { formatTaskTypeLabel } from "@/lib/task-type";
 
 type Message = {
   text: string;
@@ -132,7 +140,6 @@ function formatTaskCalendarOverrideChangedLine(override: TaskCalendarOverride) {
   return override.createdAt ? `Changed ${formatHistoryDateTime(override.createdAt)}` : null;
 }
 
-const HISTORY_STATUS_CHIP_BASE = "inline-flex items-center justify-center rounded-full border px-2 py-1 text-[13px] font-medium leading-none whitespace-nowrap";
 function statusTone(status: TaskStatus) {
   return TASK_STATUS_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
 }
@@ -366,9 +373,12 @@ export function FocusPlannerModalAdapter({
 export function TaskGridViewAdapter<TWidgetType extends string>({
   activeCount,
   currentColumns,
+  currentStreakByTaskId,
+  customBehaviorRulesets = [],
   doneCount,
   draggedWidgetId,
   focusedTaskIds,
+  getTaskStatusOptions,
   gridAutoRowHeight,
   gridLayout,
   isEditMode,
@@ -398,9 +408,12 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
 }: {
   activeCount: number;
   currentColumns: number;
+  currentStreakByTaskId: Readonly<Record<string, number>>;
+  customBehaviorRulesets?: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type" | "icon_key" | "accent_key" | "description">[];
   doneCount: number;
   draggedWidgetId: string | null;
   focusedTaskIds: string[];
+  getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[];
   gridAutoRowHeight: number;
   gridLayout: GridItem[];
   isEditMode: boolean;
@@ -457,7 +470,10 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
         if (widgetType === "urgent") {
           return (
             <UrgentTasksPanelAdapter
+              currentStreakByTaskId={currentStreakByTaskId}
+              customBehaviorRulesets={customBehaviorRulesets}
               focusedTaskIds={focusedTaskIds}
+              getTaskStatusOptions={getTaskStatusOptions}
               onEditTask={onEditTask}
               onSetStatus={onSetStatus}
               onSetSubtaskStatus={onSetSubtaskStatus}
@@ -470,6 +486,8 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
           return (
             <TaskLaneAdapter
               count={tasksByWidget.focusToday.length}
+              currentStreakByTaskId={currentStreakByTaskId}
+              customBehaviorRulesets={customBehaviorRulesets}
               defaultExpanded
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
@@ -483,6 +501,8 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
           return (
             <TaskLaneAdapter
               count={tasksByWidget.dueToday.length}
+              currentStreakByTaskId={currentStreakByTaskId}
+              customBehaviorRulesets={customBehaviorRulesets}
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
               tasks={tasksByWidget.dueToday}
@@ -495,6 +515,8 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
           return (
             <TaskLaneAdapter
               count={tasksByWidget.activeQueue.length}
+              currentStreakByTaskId={currentStreakByTaskId}
+              customBehaviorRulesets={customBehaviorRulesets}
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
               tasks={tasksByWidget.activeQueue}
@@ -507,6 +529,8 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
           return (
             <TaskLaneAdapter
               count={tasksByWidget.completed.length}
+              currentStreakByTaskId={currentStreakByTaskId}
+              customBehaviorRulesets={customBehaviorRulesets}
               onEditTask={onEditTask}
               subtasksByTaskId={subtasksByTaskId}
               tasks={tasksByWidget.completed}
@@ -590,6 +614,7 @@ export function MomentumTaskModal({
 
 export function TaskHistoryModal({
   onClose,
+  onRenameTaskTitle,
   onRetryTaskHistoryLoad,
   onSetDelayedStatus,
   onSetCalendarOverride,
@@ -602,9 +627,16 @@ export function TaskHistoryModal({
   todayDateKey,
   initialDateKey,
   stateEngineContext,
+  behaviorProfiles,
+  behaviorPolicyRevisions,
+  namedCustomRulesetBehaviorPolicyRevisions,
+  behaviorSelectionsByTaskId,
+  behaviorPolicyLoading = false,
+  customBehaviorRulesets = [],
   calendarOverrides,
 }: {
   onClose: () => void;
+  onRenameTaskTitle: (taskId: string, nextTitle: string) => Promise<boolean | void> | boolean | void;
   onRetryTaskHistoryLoad?: () => Promise<boolean> | void;
   onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<boolean | void>;
   onSetDelayedStatus?: (entryDate: string, nextDueOn: string) => Promise<void>;
@@ -617,35 +649,117 @@ export function TaskHistoryModal({
   todayDateKey: string;
   initialDateKey?: string | null;
   stateEngineContext?: { logicalDayRollover: string; now: Date | string; timezone: string };
+  behaviorProfiles?: TaskBehaviorPolicyResolutionContext["behaviorProfiles"];
+  behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
+  namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
+  behaviorSelectionsByTaskId?: TaskBehaviorPolicyResolutionContext["behaviorSelectionsByTaskId"];
+  behaviorPolicyLoading?: boolean;
+  customBehaviorRulesets?: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type">[];
   calendarOverrides?: TaskCalendarOverride[];
 }) {
   const today = todayDateKey;
+  const taskTypeLabel = formatTaskTypeLabel(task.task_type, task.custom_ruleset_id, customBehaviorRulesets);
+  const taskHistoryLabel = `${taskTypeLabel} History`;
   const days = buildTaskHistoryCalendarDateKeys(today);
-  const normalizedTaskHistory = deduplicateTaskHistoryByLogicalDate(taskHistory);
+  const normalizedTaskHistory = useMemo(
+    () => deduplicateTaskHistoryByLogicalDate(taskHistory),
+    [taskHistory],
+  );
   const historyByDate = new Map(normalizedTaskHistory.map((historyEntry) => [historyEntry.entry_date, historyEntry]));
   const [initialFocusDate] = useState(() => getTaskHistoryInitialFocusDateKey({ initialDateKey, todayDateKey }));
   const initialSelectedDate = initialFocusDate;
   const [selectedDate, setSelectedDate] = useState(initialSelectedDate);
   const [selectedDates, setSelectedDates] = useState<string[]>([initialSelectedDate]);
-  const [mobileSection, setMobileSection] = useState<"calendar" | "history" | "stats">("calendar");
+  const [displayedMonth, setDisplayedMonth] = useState<TaskCalendarMonth>(() => getTaskCalendarMonth(new Date(`${initialSelectedDate}T12:00:00`)));
   const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const isSavingRef = useRef(false);
+  const [taskTitleDraft, setTaskTitleDraft] = useState(taskTitle);
+  const isTaskTitleSaveInFlightRef = useRef(false);
   const [showDelayEditor, setShowDelayEditor] = useState(false);
-  const desktopCalendarViewportRef = useRef<HTMLDivElement>(null);
-  const mobileCalendarViewportRef = useRef<HTMLDivElement>(null);
-  const mobileScrollRef = useRef<HTMLDivElement>(null);
-  const weeks: string[][] = [];
-  const calendarRead = stateEngineContext
-    ? resolveTaskHistoryCalendarRead({
-      ...stateEngineContext,
-      calendarEnd: days.at(-1) ?? today,
-      calendarStart: days[0] ?? today,
-      history: normalizedTaskHistory,
-      calendarOverrides,
-      task,
-    })
+
+  async function commitTaskTitle() {
+    const nextTitle = taskTitleDraft.trim();
+    if (!nextTitle || nextTitle === taskTitle) {
+      setTaskTitleDraft(taskTitle);
+      return true;
+    }
+    if (isTaskTitleSaveInFlightRef.current) return false;
+    isTaskTitleSaveInFlightRef.current = true;
+    try {
+      const committed = await onRenameTaskTitle(task.id, nextTitle);
+      if (committed === false) return false;
+      setTaskTitleDraft(nextTitle);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      isTaskTitleSaveInFlightRef.current = false;
+    }
+  }
+
+  function cancelTaskTitle() {
+    setTaskTitleDraft(taskTitle);
+  }
+  const firstCalendarMonth = getTaskCalendarMonth(new Date(`${days[0]}T12:00:00`));
+  const lastCalendarMonth = getTaskCalendarMonth(new Date(`${days.at(-1)}T12:00:00`));
+  const monthValue = (month: TaskCalendarMonth) => month.year * 12 + month.month;
+  const knownDateKeys = new Set(days);
+  const calendarStart = days[0] ?? today;
+  const calendarEnd = days.at(-1) ?? today;
+  const calendarLogicalDate = stateEngineContext
+    ? logicalDateForTimestamp(stateEngineContext.now, stateEngineContext.timezone, stateEngineContext.logicalDayRollover)
     : null;
+  // The semantic logical date is the dependency boundary; minute-level `now`
+  // identity must not rebuild the canonical Calendar read.
+  const calendarReadInput = useMemo(
+    () => stateEngineContext
+      ? {
+        ...stateEngineContext,
+        calendarEnd,
+        calendarStart,
+        history: normalizedTaskHistory,
+        calendarOverrides,
+        task,
+        behaviorProfiles,
+        behaviorPolicyRevisions,
+        namedCustomRulesetBehaviorPolicyRevisions,
+        behaviorSelectionsByTaskId,
+      }
+      : null,
+    // Semantic logical-date dependencies intentionally exclude minute-level `now`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      behaviorPolicyRevisions,
+      behaviorProfiles,
+      namedCustomRulesetBehaviorPolicyRevisions,
+      behaviorSelectionsByTaskId,
+      calendarOverrides,
+      calendarLogicalDate,
+      calendarEnd,
+      calendarStart,
+      normalizedTaskHistory,
+      stateEngineContext?.logicalDayRollover,
+      stateEngineContext?.timezone,
+      task,
+      today,
+    ],
+  );
+  const calendarReadRevision = useMemo(
+    () => calendarReadInput
+      ? createTaskHistoryCalendarReadRevision(calendarReadInput)
+      : "task-history-calendar:unavailable",
+    [calendarReadInput],
+  );
+  const calendarRead = useMemo(() => {
+    if (!calendarReadInput) return null;
+    if (isWorkspacePerformanceDiagnosticsEnabled()) {
+      console.info(`[workspace:task-history-calendar] recomputed taskId=${task.id}`);
+    }
+    return resolveTaskHistoryCalendarRead(calendarReadInput);
+    // The semantic revision above is the dependency boundary for this pure read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calendarReadRevision]);
   const dueDates = new Set(Object.entries(calendarRead?.states ?? {})
     .filter(([, state]) => state === "due")
     .map(([dateKey]) => dateKey));
@@ -676,13 +790,33 @@ export function TaskHistoryModal({
   const selectedIsFuture = selectedDate > today;
   const selectedTimelineDay = calendarRead?.timeline?.days[selectedDate] ?? null;
   const selectedCalendarState = calendarRead?.states[selectedDate] ?? null;
-  const selectedIsDue = selectedTimelineDay
+  const selectedIsDue = selectedTimelineDay?.state === "unhandled_blank"
+    ? false
+    : selectedTimelineDay
     ? selectedTimelineDay.obligation === "due" || selectedTimelineDay.obligation === "overdue"
     : selectedCalendarState === "due";
-  const selectedVirtualState = selectedCalendarState;
-  const engineCalendarActionStatuses = stateEngineContext && calendarRead
-    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, historicalOverride: true, logicalDate: selectedDate, task })
-    : null;
+  const engineCalendarActionStatuses = useMemo(
+    () => calendarReadInput && calendarRead
+      ? resolveTaskHistoryCalendarActionStatuses({
+        behaviorPolicyRevisions,
+        behaviorProfiles,
+        namedCustomRulesetBehaviorPolicyRevisions,
+        behaviorSelectionsByTaskId,
+        policyLoading: behaviorPolicyLoading,
+        history: normalizedTaskHistory,
+        historicalOverride: true,
+        logicalDate: selectedDate,
+        logicalDates: isMultiSelect ? selectedDates : [selectedDate],
+        logicalDayRollover: calendarReadInput.logicalDayRollover,
+        now: calendarReadInput.now,
+        task,
+        timezone: calendarReadInput.timezone,
+      })
+      : null,
+    // The calendar revision already covers these semantic inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [behaviorPolicyLoading, behaviorPolicyRevisions, behaviorProfiles, behaviorSelectionsByTaskId, calendarRead, calendarReadRevision, isMultiSelect, namedCustomRulesetBehaviorPolicyRevisions, normalizedTaskHistory, selectedDate, selectedDates, task],
+  );
   const calendarActionStatuses = calendarRead
     ? getTaskHistoryCalendarVisibleActionStatuses({
       engineStatuses: engineCalendarActionStatuses,
@@ -699,7 +833,8 @@ export function TaskHistoryModal({
     && Boolean(onSetDelayedStatus)
     && task.status !== "complete"
     && task.status !== "archived"
-    && task.status !== "trashed";
+    && task.status !== "trashed"
+    && calendarActionStatuses.includes("delayed");
   const canClearSelectedDate = !isMultiSelect
     && !selectedIsFuture
     && Boolean(selectedEntry)
@@ -713,15 +848,16 @@ export function TaskHistoryModal({
   const visibleCalendarActionStatuses: CalendarActionStatus[] = canClearSelectedDate
     ? ["clear", ...calendarActionStatuses as CalendarActionStatus[]]
     : calendarActionStatuses as CalendarActionStatus[];
-
-  for (let weekIndex = 0; weekIndex < days.length / 7; weekIndex += 1) {
-    weeks.push(days.slice(weekIndex * 7, weekIndex * 7 + 7));
-  }
+  const taskCalendarMonthKey = `${displayedMonth.year}-${String(displayedMonth.month + 1).padStart(2, "0")}`;
+  const taskCalendarMonthDays = getTaskHistoryCalendarMonthDays(taskCalendarMonthKey).map((dateKey) => dateKey && knownDateKeys.has(dateKey) ? dateKey : null);
 
   function cellTone(dateKey: string) {
     const entry = historyByDate.get(dateKey);
     if (!entry) {
       const virtualState = calendarRead?.states[dateKey] ?? null;
+      if (virtualState === "blank") {
+        return "border-transparent bg-transparent text-[#6b6681] dark:border-transparent dark:bg-transparent dark:text-white/60";
+      }
       if (virtualState === "delayed") {
         return "border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]";
       }
@@ -741,11 +877,20 @@ export function TaskHistoryModal({
     return "border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]";
   }
 
+  function calendarStateLabel(dateKey: string) {
+    const entry = historyByDate.get(dateKey);
+    const state = entry?.status ?? calendarRead?.states[dateKey] ?? "not_due";
+    if (state === "blank") return "Blank";
+    if (state === "complete" && entry?.event_type === "completed_permanently") return "Marked Complete";
+    return formatTaskStatusLabel(state);
+  }
+
   function selectDate(dateKey: string) {
     setShowDelayEditor(false);
     if (!isMultiSelect) {
       setSelectedDate(dateKey);
       setSelectedDates([dateKey]);
+      setDisplayedMonth(getTaskCalendarMonth(new Date(`${dateKey}T12:00:00`)));
       return;
     }
 
@@ -763,6 +908,7 @@ export function TaskHistoryModal({
 
     setSelectedDate(dateKey);
     setSelectedDates([...selectedDates, dateKey].sort());
+    setDisplayedMonth(getTaskCalendarMonth(new Date(`${dateKey}T12:00:00`)));
   }
 
   function toggleMultiSelect() {
@@ -827,220 +973,109 @@ export function TaskHistoryModal({
     }
   }
 
-  function renderOfficialStatusChip(status: TaskStatus, label?: string) {
-    return (
-      <span className={`${TASK_TABLE_CHIP_BASE_CLASS} ${statusTone(status)} gap-2`}>
-        {renderTaskStatusCircle(status, "sm")}
-        <span>{label ?? formatTaskStatusLabel(status)}</span>
-      </span>
-    );
-  }
-
-  function renderStatusPill(entry: DbTaskHistory | null, virtualState: "delayed" | "due" | "not_due" | "in_progress" | "missed" | "done" | "did_my_best" | "complete" | null = null) {
-    if (!entry) {
-      if (virtualState === "delayed") {
-        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]`}>Delayed</span>;
-      }
-      if (virtualState === "due") {
-        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]`}>Due</span>;
-      }
-      if (virtualState === "in_progress") {
-        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#a9c2ff] bg-[#eef3ff] text-[#4473df] dark:border-[#36559d] dark:bg-[#1d2a4a] dark:text-[#b4c7ff]`}>In Progress</span>;
-      }
-      if (virtualState === "missed") {
-        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]`}>Missed</span>;
-      }
-      if (virtualState === "not_due") {
-        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]`}>Not Due</span>;
-      }
-      return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60`}>No Entry</span>;
-    }
-    if (entry.status === "complete" && entry.event_type === "completed_permanently") {
-      return renderOfficialStatusChip("complete", formatTaskHistoryEntryLabel(entry));
-    }
-
-    return renderOfficialStatusChip(entry.status, formatTaskHistoryEntryLabel(entry));
-  }
-
   function isSelectedStatus(status: TaskStatus) {
     return isMultiSelect
       ? selectedEntries.length > 0 && selectedEntries.every((entry) => entry?.status === status)
       : selectedEntry?.status === status;
   }
 
-  useEffect(() => {
-    if (taskHistoryLoadStatus !== "ready") {
-      return;
-    }
+  function taskHistoryStatusClass(status: string) {
+    if (status === "blank") return "text-slate-500 dark:text-slate-400";
+    if (status === "delayed") return "text-[#7d54d1] dark:text-[#d5c2ff]";
+    if (status === "missed") return "text-[#d64b5f] dark:text-[#ffb0bd]";
+    if (status === "did_my_best") return "text-[#b28700] dark:text-[#f3d38a]";
+    if (status === "due") return "text-[#d96b1c] dark:text-[#ffb47c]";
+    if (status === "not_due") return "text-[#3388c9] dark:text-[#8ed0f6]";
+    return "text-[#2f8a66] dark:text-[#87ddb7]";
+  }
 
-    const frame = window.requestAnimationFrame(() => {
-      const isMobile = window.matchMedia("(max-width: 1023px)").matches;
-      const container = isMobile ? mobileCalendarViewportRef.current : desktopCalendarViewportRef.current;
-      const target = container?.querySelector<HTMLElement>(`[data-history-date="${initialFocusDate}"]`);
-      if (!container || !target) return;
-
-      const containerRect = container.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
-      if (isMobile) {
-        container.scrollTo({
-          top: getComfortableTaskHistoryScrollOffset({
-            containerSize: container.clientHeight,
-            targetOffset: container.scrollTop + targetRect.top - containerRect.top,
-            targetSize: targetRect.height,
-          }),
-          behavior: "auto",
-        });
-        return;
-      }
-
-      container.scrollTo({
-        left: getComfortableTaskHistoryScrollOffset({
-          containerSize: container.clientWidth,
-          targetOffset: container.scrollLeft + targetRect.left - containerRect.left,
-          targetSize: targetRect.width,
-        }),
-        behavior: "auto",
-      });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [initialFocusDate, task.id, taskHistoryLoadStatus]);
-
-  const calendarButton = (dateKey: string) => (
-    <button aria-pressed={selectedDateSet.has(dateKey)} className={`flex h-9 w-9 items-center justify-center rounded-[0.85rem] border text-[10px] font-black tabular-nums transition ${cellTone(dateKey)} ${selectedDateSet.has(dateKey) ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""} ${isMultiSelect && dateKey > today ? "cursor-not-allowed opacity-45" : ""}`} data-history-date={dateKey} key={dateKey} onClick={() => selectDate(dateKey)} title={dateKey} type="button">{dateKey.slice(-2)}</button>
+  const taskSelectedActions = (
+    <div className="flex flex-wrap gap-2">
+      <TaskTableChipButton onClick={toggleMultiSelect} toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}</TaskTableChipButton>
+      {isMultiSelect && selectedDates.length > 1 ? <TaskTableChipButton onClick={() => setSelectedDates([selectedDate])}>Keep Current Only</TaskTableChipButton> : null}
+      {visibleCalendarActionStatuses.map((status) => (
+        <TaskTableChipButton
+          className="gap-2"
+          disabled={isSaving || selectedDates.length === 0 || (!isMultiSelect && (selectedIsFuture || (status === "delayed" && !canDelaySelectedDate)))}
+          key={status}
+          onClick={() => {
+            if (status === "delayed") {
+              if (!canDelaySelectedDate) return;
+              setShowDelayEditor(true);
+              return;
+            }
+            setShowDelayEditor(false);
+            void handleSetStatus(status);
+          }}
+          toneClassName={status === "clear"
+            ? `${TASK_TABLE_INACTIVE_CHIP_CLASS} disabled:opacity-50`
+            : `${isSelectedStatus(status) ? TASK_STATUS_INVERTED_CHIP_STYLES[status] : `${statusTone(status)} opacity-78 hover:opacity-100`} disabled:opacity-50`}
+        >
+          {status === "clear" ? null : renderTaskStatusCircle(status, "sm")}
+          <span>{status === "clear" ? "Clear" : formatTaskStatusLabel(status)}</span>
+        </TaskTableChipButton>
+      ))}
+      {calendarOverrideActions.map((overrideState) => (
+        <TaskTableChipButton
+          className="gap-2"
+          disabled={isSaving}
+          key={overrideState}
+          onClick={() => { void handleSetCalendarOverride(overrideState); }}
+          toneClassName={`${overrideState === "not_due" ? "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]" : "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]"} disabled:opacity-50`}
+        >{overrideState === "not_due" ? "Not Due" : "Due"}</TaskTableChipButton>
+      ))}
+    </div>
   );
+
+  const taskCalendarSection = calendarRead ? (
+    <TaskHistoryCalendarPresentation
+      ariaLabel={taskHistoryLabel}
+      description="Review and update this task’s outcomes by date."
+      historyDescription="Chronological task outcomes, due dates, and attached notes."
+      historyEntries={historyRows.map((row) => ({
+        detail: <>
+          <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{row.calendarOverride ? "Manual schedule override" : row.isDueOpportunity ? "Due opportunity" : "Manual history entry"}</p>
+          {row.calendarOverride ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">Changed to Not Due</p> : null}
+          {row.calendarOverride && formatTaskCalendarOverrideChangedLine(row.calendarOverride) ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{formatTaskCalendarOverrideChangedLine(row.calendarOverride)}</p> : null}
+          {row.entry && formatTaskHistoryLoggedLine(row.entry) ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{formatTaskHistoryLoggedLine(row.entry)}</p> : null}
+          {row.entry && formatTaskHistoryEditedLine(row.entry) ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{formatTaskHistoryEditedLine(row.entry)}</p> : null}
+          {row.isCalculated ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">Calculated from task timeline</p> : null}
+        </>,
+        key: row.logicalDate,
+        label: formatTaskHistoryCalendarDay(row.logicalDate, stateEngineContext?.timezone ?? "UTC"),
+        status: <span className={`text-xs font-semibold ${taskHistoryStatusClass(row.status)}`}>{row.status === "complete" && row.entry?.event_type === "completed_permanently" ? "Marked Complete" : formatTaskStatusLabel(row.status)}</span>,
+      }))}
+      historySummary={[
+        { label: "Last done", value: lastDone ? formatCalendarDate(lastDone.dateKey) : "None" },
+        { label: "Current streak", value: String(stats.currentStreak) },
+        { label: "Best streak", value: String(stats.bestStreak) },
+        { label: "Logged days", value: String(stats.loggedDays) },
+      ]}
+      historyTitle={taskHistoryLabel}
+      monthDays={taskCalendarMonthDays}
+      monthLabel={formatTaskHistoryCalendarMonth(taskCalendarMonthKey, stateEngineContext?.timezone ?? "UTC")}
+      nextMonthDisabled={monthValue(displayedMonth) >= monthValue(lastCalendarMonth)}
+      onChangeMonth={(amount) => setDisplayedMonth((current) => shiftTaskCalendarMonth(current, amount))}
+      previousMonthDisabled={monthValue(displayedMonth) <= monthValue(firstCalendarMonth)}
+      renderDay={(day) => {
+        const dateKey = day && knownDateKeys.has(day) ? day : null;
+        const stateLabel = dateKey ? calendarStateLabel(dateKey) : undefined;
+        return <TaskHistoryCalendarDay ariaLabel={dateKey ? `${formatCalendarDate(dateKey)}, ${stateLabel}` : undefined} day={dateKey} onClick={() => { if (dateKey) selectDate(dateKey); }} selected={dateKey ? selectedDateSet.has(dateKey) : false} stateClassName={dateKey ? cellTone(dateKey) : undefined} title={dateKey ? `${formatCalendarDate(dateKey)} · ${stateLabel}` : undefined} />;
+      }}
+      selectedDayAction={taskSelectedActions}
+      selectedDayContent={<div className="mt-3">
+        <p className="text-xs text-[#827a97] dark:text-white/52">{isMultiSelect ? `${selectedDates.length} dates selected. The selected result will be saved to every selected date.` : selectedIsFuture ? "Future dates cannot be edited yet." : selectedIsDue ? "This date is part of the task's due schedule." : "This date is outside the inferred due schedule and will be treated as a manual history entry."}</p>
+        {!isMultiSelect && selectedEntry ? <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">{[formatTaskHistoryLoggedLine(selectedEntry) ?? "Logged time unavailable", formatTaskHistoryEditedLine(selectedEntry)].filter((value): value is string => Boolean(value)).join(" • ")}</p> : null}
+        {showDelayEditor && canDelaySelectedDate ? <div className="mt-3"><TaskDelayPicker anchorDateKey={selectedDate === today ? today : selectedDate} description={selectedDate === today ? "Delay today’s live task without changing past rewards or completion history." : "Correct this saved occurrence to Delayed using the app’s existing history semantics without double-counting rewards."} inputClassName="h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]" onCancel={() => setShowDelayEditor(false)} onSave={(nextDueOn) => handleSaveDelayedStatus(nextDueOn)} primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" saveLabel="Save delayed status" /></div> : null}
+      </div>}
+      selectedDayLabel={formatTaskHistoryCalendarDay(selectedDate, stateEngineContext?.timezone ?? "UTC")}
+      selectedDayStatus={calendarStateLabel(selectedDate)}
+    />
+  ) : null;
+
   const calendarUnavailableSection = (
     <section aria-live="polite" className="rounded-[1.5rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-5 py-6 text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
       Calendar is unavailable until canonical Task State is ready.
-    </section>
-  );
-  function renderCalendarSection() {
-    return (
-      <section className="rounded-[1.5rem] border border-[#ece8f8] bg-[#fcfbff] p-4 dark:border-white/10 dark:bg-white/[0.03]"><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a day to inspect or update it."}</p>{calendarControls}<div className="mt-3">{calendarLegend}</div><div className="adhdice-scrollbar mt-4 h-[7.5rem] overflow-y-auto overscroll-contain touch-pan-y" ref={mobileCalendarViewportRef}><div className="grid grid-cols-7 gap-1.5">{days.map(calendarButton)}</div></div></section>
-    );
-  }
-  const calendarControls = <div className="mt-2 flex flex-wrap gap-2"><TaskTableChipButton onClick={toggleMultiSelect} toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}</TaskTableChipButton>{isMultiSelect && selectedDates.length > 1 ? <TaskTableChipButton onClick={() => setSelectedDates([selectedDate])}>Keep Current Only</TaskTableChipButton> : null}</div>;
-  const calendarLegend = <div className="flex flex-wrap items-center gap-2 text-xs">{renderOfficialStatusChip("done", "Done")}{renderOfficialStatusChip("complete", "Marked Complete")}{renderOfficialStatusChip("delayed", "Delayed")}{renderOfficialStatusChip("did_my_best", "Did My Best")}{renderOfficialStatusChip("missed", "Missed")}<span className="text-[#d96b1c] dark:text-[#ffb47c]">Due</span><span className="text-[#3388c9] dark:text-[#8ed0f6]">Not Due</span></div>;
-  const selectedDetailsSection = (
-    <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">{isMultiSelect ? "Edit Selected Dates" : "Edit Selected Date"}</p>
-                <h3 className="mt-1 text-xl font-black text-[#1f2746] dark:text-white">{isMultiSelect ? `${selectedDates.length} dates selected` : formatCalendarDate(selectedDate)}</h3>
-                <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/50">
-                  {isMultiSelect
-                    ? "The selected result will be saved to every selected date in one update."
-                    : selectedIsFuture
-                    ? "Future dates cannot be edited yet."
-                    : selectedIsDue
-                      ? "This date is part of the task's due schedule."
-                      : "This date is outside the inferred due schedule and will be treated as a manual history entry."}
-                </p>
-                {!isMultiSelect && selectedEntry ? (
-                  <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">
-                    {[
-                      `Credited for ${formatCalendarDate(selectedEntry.entry_date)}`,
-                      formatTaskHistoryLoggedLine(selectedEntry) ?? "Logged time unavailable",
-                      formatTaskHistoryEditedLine(selectedEntry),
-                    ].filter((value): value is string => Boolean(value)).join(" • ")}
-                  </p>
-                ) : null}
-              </div>
-              {isMultiSelect
-                ? <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>{selectedDates.length} Selected</span>
-                : renderStatusPill(selectedEntry, selectedVirtualState)}
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {visibleCalendarActionStatuses.map((status) => (
-                <TaskTableChipButton
-                  className="gap-2"
-                  disabled={isSaving || selectedDates.length === 0 || (!isMultiSelect && (selectedIsFuture || (status === "delayed" && !canDelaySelectedDate)))}
-                  key={status}
-                  onClick={() => {
-                    if (status === "delayed") {
-                      if (!canDelaySelectedDate) {
-                        return;
-                      }
-                      setShowDelayEditor(true);
-                      return;
-                    }
-                    setShowDelayEditor(false);
-                    void handleSetStatus(status);
-                  }}
-                  toneClassName={status === "clear"
-                    ? `${TASK_TABLE_INACTIVE_CHIP_CLASS} disabled:opacity-50`
-                    : `${isSelectedStatus(status) ? TASK_STATUS_INVERTED_CHIP_STYLES[status] : `${statusTone(status)} opacity-78 hover:opacity-100`} disabled:opacity-50`}
-                >
-                  {status === "clear" ? null : renderTaskStatusCircle(status, "sm")}
-                  <span>{status === "clear" ? "Clear" : formatTaskStatusLabel(status)}</span>
-                </TaskTableChipButton>
-              ))}
-              {calendarOverrideActions.map((overrideState) => (
-                <TaskTableChipButton
-                  className="gap-2"
-                  disabled={isSaving}
-                  key={overrideState}
-                  onClick={() => { void handleSetCalendarOverride(overrideState); }}
-                  toneClassName={`${overrideState === "not_due" ? "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]" : "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]"} disabled:opacity-50`}
-                >{overrideState === "not_due" ? "Not Due" : "Due"}</TaskTableChipButton>
-              ))}
-            </div>
-            {showDelayEditor && canDelaySelectedDate ? (
-              <div className="mt-4 rounded-[1.25rem] border border-[#efe9ff] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]">
-                <TaskDelayPicker
-                  anchorDateKey={selectedDate === today ? today : selectedDate}
-                  description={selectedDate === today
-                    ? "Delay today’s live task without changing past rewards or completion history."
-                    : "Correct this saved occurrence to Delayed using the app’s existing history semantics without double-counting rewards."}
-                  inputClassName="h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
-                  onCancel={() => setShowDelayEditor(false)}
-                  onSave={(nextDueOn) => handleSaveDelayedStatus(nextDueOn)}
-                  primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
-                  saveLabel="Save delayed status"
-                />
-              </div>
-            ) : null}
-            <p className="mt-4 text-xs text-[#8d87a7] dark:text-white/40">
-              Calendar edits update saved task history, streaks, and the live task status when the active unresolved state changes. They do not change past rewards or economy.
-            </p>
-    </section>
-  );
-  const historySection = (
-    <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
-      <div className="mb-4 flex items-center justify-between gap-3"><div><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Task Status History</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">Effective results for this task.</p></div><span className="text-xs font-semibold text-[#8d87a7] dark:text-white/40">{historyRows.length} entries</span></div>
-      <div className="space-y-2">{historyRows.length === 0 ? <EmptyTaskState text="No task history entries yet." /> : null}{historyRows.map((row) => <button className={`flex w-full items-center justify-between rounded-[1.25rem] border px-4 py-3 text-left transition ${selectedDateSet.has(row.logicalDate) ? "border-[#cfc3ff] bg-[#f8f5ff] dark:border-[#6f57f6] dark:bg-[#22193d]" : "border-[#efebfb] bg-[#fcfbff] hover:border-[#ddd3ff] dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20"}`} key={row.logicalDate} onClick={() => selectDate(row.logicalDate)} type="button"><div><p className="text-sm font-semibold text-[#27304c] dark:text-white">{formatCalendarDate(row.logicalDate)}</p><p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{row.calendarOverride ? "Manual schedule override" : row.isDueOpportunity ? "Due opportunity" : "Manual history entry"}</p>{row.calendarOverride ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">Changed to Not Due</p> : null}{row.calendarOverride && formatTaskCalendarOverrideChangedLine(row.calendarOverride) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskCalendarOverrideChangedLine(row.calendarOverride)}</p> : null}{row.entry && formatTaskHistoryLoggedLine(row.entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryLoggedLine(row.entry)}</p> : null}{row.entry && formatTaskHistoryEditedLine(row.entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryEditedLine(row.entry)}</p> : null}{row.isCalculated ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">Calculated from task timeline</p> : null}</div>{renderStatusPill(row.entry, row.status)}</button>)}</div>
-    </section>
-  );
-  const statsSection = (
-    <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
-            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Stats</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-              {[
-                { label: "Last Done", value: lastDone ? (lastDone.timestamp ? formatHistoryDateTime(lastDone.timestamp) : formatCalendarDate(lastDone.dateKey)) : "None", detail: "latest Done or Did My Best" },
-                { label: "Current Streak", value: stats.currentStreak, detail: "completed due dates in a row" },
-                { label: "Best Streak", value: stats.bestStreak, detail: "best completion streak" },
-                { label: "Current Missed Streak", value: stats.missedStreak, detail: "missed due dates in a row" },
-                { label: "Longest Missed Streak", value: stats.longestMissedStreak, detail: "longest missed run in range" },
-                { label: "Completion Rate", value: `${stats.completionRate}%`, detail: task.repeat_frequency === "none" ? "based on logged history" : `${stats.dueDays} due dates in range` },
-              ].map((stat) => (
-                <div className="rounded-[1.25rem] bg-[#f8f5ff] px-4 py-4 dark:bg-white/[0.05]" key={stat.label}>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">{stat.label}</p>
-                  <p className="mt-2 text-3xl font-black text-[#1f2746] dark:text-white">{stat.value}</p>
-                  <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/45">{stat.detail}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 grid grid-cols-3 gap-3 text-center">
-              {[
-                { label: "Completed", value: stats.completedDays },
-                { label: "Missed", value: stats.missedDays },
-                { label: "Logged", value: stats.loggedDays },
-              ].map((stat) => (
-                <div className="rounded-[1.1rem] border border-[#ece8f8] bg-[#fcfbff] px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]" key={stat.label}>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">{stat.label}</p>
-                  <p className="mt-1 text-xl font-black text-[#27304c] dark:text-white">{stat.value}</p>
-                </div>
-              ))}
-            </div>
     </section>
   );
   const isHistoryLoading = taskHistoryLoadStatus === "loading";
@@ -1055,19 +1090,16 @@ export function TaskHistoryModal({
   ) : null;
 
   return (
-    <ModalShell className="flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden rounded-none border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] sm:h-auto sm:max-h-[calc(100vh-2rem)] sm:rounded-[2.4rem] sm:p-6 dark:border-white/10 dark:bg-[#171328]" label="Task history" onClose={onClose}>
-      <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-[#efebfb] bg-white px-4 py-3 dark:border-white/10 dark:bg-[#171328] sm:static sm:px-0 sm:pb-5">
-        <div className="min-w-0"><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Task History</p><h2 className="mt-1 truncate text-xl font-black text-[#1f2746] dark:text-white sm:mt-2 sm:text-3xl">{taskTitle}</h2><p className="mt-1 hidden text-sm text-[#7d88a1] dark:text-white/50 sm:block">Edit task history by date without changing past rewards or economy.</p></div>
-        <button aria-label="Close task history" className="shrink-0 p-2 text-2xl leading-none text-[#8e97af] dark:text-white/55" onClick={onClose} type="button">×</button>
-      </div>
-      <div className="sticky top-0 z-20 lg:hidden"><div className="mx-4 mt-3 flex w-fit items-center gap-1 rounded-full border border-[#ece8f8] bg-white/88 p-1 shadow-[0_12px_28px_rgba(81,61,168,0.06)] dark:border-white/10 dark:bg-white/[0.04]">{(["calendar", "history", "stats"] as const).map((section) => <TaskTableChipButton aria-pressed={mobileSection === section} key={section} onClick={() => setMobileSection(section)} toneClassName={mobileSection === section ? "border-[#6f57f6] bg-[#6f57f6] text-white dark:border-[#c9bbff] dark:bg-[#c9bbff] dark:text-[#1a1431]" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{section[0].toUpperCase() + section.slice(1)}</TaskTableChipButton>)}</div></div>
-      <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:mt-6 sm:px-0 sm:py-0" ref={mobileScrollRef}>
-        <div className="space-y-5 lg:hidden">
-          {mobileSection === "calendar" ? calendarRead ? <>{renderCalendarSection()}{selectedDetailsSection}</> : calendarUnavailableSection : null}
-          {mobileSection === "history" ? historySection : null}
-          {mobileSection === "stats" ? statsSection : null}
+    <ModalShell className="flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden rounded-none border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] sm:h-auto sm:max-h-[calc(100vh-2rem)] sm:rounded-[2.4rem] sm:p-6 dark:border-white/10 dark:bg-[#171328]" label={`${taskHistoryLabel} calendar`} onClose={onClose}>
+      <header className="flex shrink-0 items-start justify-between gap-4 border-b border-[#eee9f8] pb-4 dark:border-white/10">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{taskTypeLabel}</p>
+          <EditableEntityHeaderTitle aria-label="Task title" onCancel={cancelTaskTitle} onChange={setTaskTitleDraft} onCommit={commitTaskTitle} placeholder="Name this Task" value={taskTitleDraft} />
         </div>
-        <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6 lg:grid">{calendarRead ? <><div className="space-y-6"><section className="rounded-[2rem] border border-[#ece8f8] bg-[#fcfbff] p-5 dark:border-white/10 dark:bg-white/[0.03]"><div className="mb-4 flex items-start justify-between gap-3"><div><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a square to inspect or update that date."}</p>{calendarControls}</div><div className="max-w-sm">{calendarLegend}</div></div><div className="adhdice-scrollbar -mx-2 overflow-x-auto px-2 pb-2" ref={desktopCalendarViewportRef}><div className="inline-flex w-max gap-1.5 pr-2">{weeks.map((week, weekIndex) => <div className="flex flex-col gap-1.5" key={weekIndex}>{week.map(calendarButton)}</div>)}</div></div></section>{historySection}</div><div className="space-y-6">{selectedDetailsSection}{statsSection}</div></> : <div className="space-y-6">{calendarUnavailableSection}{historySection}{statsSection}</div>}</div>
+        <AdhdIconButton aria-label="Close task history" onClick={onClose} size="sm" title="Close" variant="rowToolbar"><X /></AdhdIconButton>
+      </header>
+      <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:mt-6 sm:px-0 sm:py-0">
+        {calendarRead ? <div className="space-y-5">{taskCalendarSection}</div> : calendarUnavailableSection}
       </div>
       {historyLoadErrorPanel}
       {(isHistoryLoading || isSaving) ? (

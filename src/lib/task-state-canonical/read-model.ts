@@ -1,4 +1,4 @@
-import type { Task } from "../database.types.ts";
+import type { Task, TaskBehaviorSelection, TaskTypeBehaviorProfile } from "../database.types.ts";
 import type {
   CanonicalTaskCalendarOverride,
   CanonicalTaskCommandOperation,
@@ -54,6 +54,8 @@ type CanonicalReadTableRows = {
   adhdice_task_reward_entitlements: CanonicalTaskRewardEntitlement;
   adhdice_task_reward_grants: CanonicalTaskRewardGrant;
   adhdice_task_reward_claim_consumptions: CanonicalTaskRewardClaimConsumption;
+  adhdice_task_type_behavior_profiles: TaskTypeBehaviorProfile;
+  adhdice_task_behavior_selections: TaskBehaviorSelection;
 };
 
 /**
@@ -97,6 +99,8 @@ export type CanonicalTaskStateReadModel = {
   rewardEntitlements: CanonicalTaskRewardEntitlement[];
   rewardGrants: CanonicalTaskRewardGrant[];
   rewardClaimConsumptions: CanonicalTaskRewardClaimConsumption[];
+  /** Optional for compatibility with pre-7.13.31 read-model fixtures. */
+  behaviorSelections?: TaskBehaviorSelection[];
   logicalDayProfile: {
     timezone: string;
     day_start_time: string;
@@ -111,6 +115,10 @@ export type CanonicalTaskStateReadResult = {
 
 function readError(error: { message: string; code?: string } | null): CanonicalReadError | null {
   return error ? { message: error.message, ...(error.code ? { code: error.code } : {}) } : null;
+}
+
+function isMissingBehaviorSelectionsError(error: CanonicalReadError | null) {
+  return Boolean(error && (error.code === "42P01" || /adhdice_task_behavior_selections|relation .* does not exist/i.test(error.message)));
 }
 
 export async function loadCanonicalTaskState(
@@ -129,7 +137,7 @@ export async function loadCanonicalTaskState(
   if (!taskResult.data) return { data: null, error: { message: "Canonical Task was not found for this owner." } };
 
   const [profile, commandOperations, scheduleBoundaries, occurrences, occurrenceEffectiveOverrides, historyFacts, calendarOverrides,
-    rewardEntitlements, rewardGrants, rewardClaimConsumptions] = await Promise.all([
+    rewardEntitlements, rewardGrants, rewardClaimConsumptions, behaviorSelections] = await Promise.all([
     client.from("adhdice_user_profiles").select("timezone,day_start_time,settings_revision").eq("user_id", input.userId).maybeSingle(),
     client.from("adhdice_task_command_operations").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
       .order("created_at", { ascending: false }),
@@ -147,6 +155,8 @@ export async function loadCanonicalTaskState(
       .order("logical_date", { ascending: false }),
     client.from("adhdice_task_reward_grants").select("*").eq("user_id", input.userId),
     client.from("adhdice_task_reward_claim_consumptions").select("*").eq("user_id", input.userId),
+    client.from("adhdice_task_behavior_selections").select("*").eq("user_id", input.userId).eq("task_id", input.taskId)
+      .order("effective_from_logical_date", { ascending: true }),
   ]);
 
   const results = [
@@ -160,8 +170,9 @@ export async function loadCanonicalTaskState(
     rewardEntitlements,
     rewardGrants,
     rewardClaimConsumptions,
+    behaviorSelections,
   ];
-  const failed = results.find((result) => result.error);
+  const failed = results.find((result, index) => result.error && !(index === results.length - 1 && isMissingBehaviorSelectionsError(readError(result.error))));
   if (failed?.error) return { data: null, error: readError(failed.error) };
   if (!profile.data || typeof profile.data.timezone !== "string" || typeof profile.data.day_start_time !== "string"
     || !Number.isInteger(profile.data.settings_revision) || profile.data.settings_revision < 1) {
@@ -184,6 +195,7 @@ export async function loadCanonicalTaskState(
       rewardEntitlements: rewardEntitlements.data ?? [],
       rewardGrants: grantRows,
       rewardClaimConsumptions: (rewardClaimConsumptions.data ?? []).filter((row) => grantIds.has(row.grant_id)),
+      behaviorSelections: behaviorSelections.error ? [] : behaviorSelections.data ?? [],
       logicalDayProfile: profile.data,
     },
     error: null,

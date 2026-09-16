@@ -17,6 +17,8 @@ import type { Task } from "@/lib/database.types";
 import type { TaskRailListOption } from "@/lib/task-app-derived";
 import { getTaskListContainerKey } from "@/lib/task-list-folders";
 import type { AllTaskListDirectoryEntry } from "@/lib/task-list-folders";
+import type { TaskTypeSelectionOption } from "@/lib/task-type";
+import { TaskTypeIdentity } from "./task-type-identity";
 import {
   getTaskListRailIndicatorLeft,
   reorderTaskListRailItemsByStructuralKeys,
@@ -1345,7 +1347,7 @@ export function TaskOperationsHeader({
   metric,
   onCycleMomentum,
   onOpenArchive,
-  onOpenComposer,
+  onOpenTaskComposerForType,
   onOpenFocusPlanner,
   onOpenImport,
   onOpenListSettings,
@@ -1370,6 +1372,7 @@ export function TaskOperationsHeader({
   search,
   selectedBucket,
   shortcuts,
+  taskTypeOptions,
   trashCount,
   todayCount,
   view,
@@ -1403,7 +1406,8 @@ export function TaskOperationsHeader({
   };
   onCycleMomentum: () => void;
   onOpenArchive: () => void;
-  onOpenComposer: () => void;
+  onOpenTaskComposerForType: (selectionValue: string) => void;
+  taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
   onOpenFocusPlanner: () => void;
   onOpenImport: () => void;
   onOpenListSettings: () => void;
@@ -1439,6 +1443,7 @@ export function TaskOperationsHeader({
   view: TaskViewMode;
 }) {
   const [isAllListsOpen, setIsAllListsOpen] = useState(false);
+  const [isNewMenuOpen, setIsNewMenuOpen] = useState(false);
   const [allListsSearch, setAllListsSearch] = useState("");
   const matchingDirectoryEntries = allListDirectoryEntries.filter((entry) => {
     const query = allListsSearch.trim().toLocaleLowerCase();
@@ -1523,9 +1528,23 @@ export function TaskOperationsHeader({
               <TaskChipButton onClick={onOpenImport}>
                 Import
               </TaskChipButton>
-              <TaskChipButton onClick={onOpenComposer} tone="primary">
-                New Task
-              </TaskChipButton>
+              <div className="relative">
+                <TaskChipButton onClick={() => setIsNewMenuOpen((current) => !current)} tone="primary">
+                  New
+                  <ChevronDown className={`h-3.5 w-3.5 transition ${isNewMenuOpen ? "rotate-180" : ""}`} />
+                </TaskChipButton>
+                {isNewMenuOpen ? (
+                  <AdhdDropdownPanel className="p-1.5" widthClassName="min-w-32">
+                    <div className="grid gap-1" role="menu">
+                      {taskTypeOptions.map((option) => (
+                        <button aria-label={`New ${option.label}`} className={MENU_ROW_ACTION_CLASS + " rounded-[0.6rem] px-2.5 py-2 text-left hover:bg-[#f1ecff] dark:hover:bg-white/10"} key={option.value} onClick={() => { setIsNewMenuOpen(false); onOpenTaskComposerForType(option.value); }} role="menuitem" type="button">
+                          <TaskTypeIdentity option={option} />
+                        </button>
+                      ))}
+                    </div>
+                  </AdhdDropdownPanel>
+                ) : null}
+              </div>
               {selectedBucket === "milestones" && onOpenCompletedMilestones ? <TaskChipButton onClick={onOpenCompletedMilestones}>Completed Milestones</TaskChipButton> : null}
               <TaskChipButton active={selectedBucket === "archive"} onClick={() => startTransition(onOpenArchive)}>
                 <span className="inline-flex items-center gap-2">

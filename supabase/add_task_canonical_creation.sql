@@ -80,7 +80,7 @@ begin
     select 1
     from jsonb_object_keys(p_plan->'task') as key_name(key)
     where key not in (
-      'parent_task_id', 'title', 'notes', 'status', 'priority', 'priority_level', 'energy',
+      'parent_task_id', 'title', 'task_type', 'notes', 'status', 'priority', 'priority_level', 'energy',
       'is_urgent', 'is_important', 'due_on', 'active_status_logical_date', 'active_occurrence_due_on',
       'scheduled_on', 'due_time', 'estimated_minutes', 'actual_seconds', 'tags', 'external_link_label',
       'external_link_url', 'one_step_at_a_time', 'subtasks_auto_reset', 'repeat_frequency',
@@ -244,7 +244,7 @@ begin
   end if;
 
   insert into public.adhdice_clean_tasks (
-    user_id, parent_task_id, revision, title, notes, status, priority, priority_level, energy,
+    user_id, parent_task_id, revision, title, task_type, notes, status, priority, priority_level, energy,
     is_urgent, is_important, due_on, active_status_logical_date, active_occurrence_due_on,
     scheduled_on, due_time, estimated_minutes, actual_seconds, tags, external_link_label,
     external_link_url, one_step_at_a_time, subtasks_auto_reset, repeat_frequency, repeat_interval,
@@ -257,7 +257,7 @@ begin
     projection_source_canonical_revision, projection_source_fingerprint, projection_version
   )
   values (
-    p_user_id, v_task_input.parent_task_id, 1, btrim(v_task_input.title), v_task_input.notes,
+    p_user_id, v_task_input.parent_task_id, 1, btrim(v_task_input.title), coalesce(v_task_input.task_type, 'task'), v_task_input.notes,
     coalesce(v_task_input.status, 'pending'::public.adhdice_clean_task_status),
     coalesce(v_task_input.priority, 'normal'::public.adhdice_clean_task_priority),
     coalesce(v_task_input.priority_level, 0), coalesce(v_task_input.energy, 'none'::public.adhdice_clean_task_energy),

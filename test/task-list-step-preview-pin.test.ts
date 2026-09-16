@@ -18,8 +18,26 @@ test("StepsCardPreview owns explicit pin callback wiring", () => {
   assert.equal((previewSource.match(/item\.depth > 1 \? \"substep\" : \"step\"/g) ?? []).length >= 2, true);
 });
 
+test("StepsCardPreview binds optional custom Task Type rulesets before building child options", () => {
+  assert.match(previewSource, /closeQuickPanel,\s*customBehaviorRulesets = \[\],/);
+  assert.match(previewSource, /const taskTypeOptions = useMemo\(\(\) => buildTaskTypeSelectionOptions\(customBehaviorRulesets\)/);
+  assert.match(previewSource, /resolveTaskTypeSelectionOption\(item\.taskType, item\.customRulesetId, customBehaviorRulesets\)/);
+  assert.match(source, /<StepsCardPreview[\s\S]*?customBehaviorRulesets=\{tableProps\.customBehaviorRulesets\}/);
+});
+
 test("TasksSimpleList forwards pinning and preserves child creation wiring", () => {
   assert.match(source, /<StepsCardPreview[\s\S]*?onTogglePinned=\{tableProps\.onTogglePinned\}/);
   assert.match(source, /<StepsCardPreview[\s\S]*?onCreateChildTask=\{tableProps\.onCreateChildTask\}/);
-  assert.match(previewSource, /const result = await onCreateChildTask\?\.\(parentTaskId, title\);/);
+  assert.match(previewSource, /const result = await onCreateChildTask\?\.\(parentTaskId, title, substepTaskTypeSelectionValue\);/);
+});
+
+test("List Step and Substep drafts guard blur with the shared Task Type interaction lifecycle", () => {
+  assert.match(previewSource, /const taskTypeInteractionParentIdRef = useRef<string \| null>\(null\)/);
+  assert.match(previewSource, /if \(taskTypeInteractionParentIdRef\.current === parentTaskId\) return;/);
+  assert.match(previewSource, /if \(taskTypeInteractionParentIdRef\.current === item\.id\) return;/);
+  assert.equal((previewSource.match(/onInteractionStart=\{\(\) => beginTaskTypeInteraction/g) ?? []).length, 2);
+  assert.equal((previewSource.match(/onInteractionEnd=\{\(\) => endTaskTypeInteraction/g) ?? []).length, 2);
+  assert.match(previewSource, /const commitSubstepDraft = async \(parentTaskId: string\) => \{\s*endTaskTypeInteraction\(parentTaskId\);/);
+  assert.match(previewSource, /const cancelSubstepDraft = \(parentTaskId = substepDraftParentId\) => \{[\s\S]*endTaskTypeInteraction\(parentTaskId\)/);
+  assert.match(source, /<StepsCardPreview[\s\S]*parentTaskId=\{task\.id\}/);
 });

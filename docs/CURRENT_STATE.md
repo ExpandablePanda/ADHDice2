@@ -1,18 +1,884 @@
 # Current State
 
-Last reviewed: 2026-09-06
+Last reviewed: 2026-09-16
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.12.119`.
-- Current release group: `7.12.x` overnight Quick Fix bundle.
+- Current working app version: `7.13.81`.
+- Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-16 7.13.81 Consolidate Side and Journal Web Work
+
+Version 7.13.81 consolidates the unique Side and frozen Journal web work into
+the current 7.13 branch. Typed Journal check-ins, event capture, configurable
+questions, structured answers, occurrence display, Journal summaries,
+quota-safe local persistence, and related Health integration are preserved.
+Focus activity bars retain goal-normalized fills and overtime markers, and
+Food retains projected-calorie goal warnings and status coloring.
+
+The current 7.13 Task, Task State, Effective Timeline, current-policy backlog,
+Success Outcomes, named Custom Task Type, presentation, child-creation,
+Attention, recurrence, and reward architecture remains authoritative. The
+Journal migration was originally authored as source-only during implementation,
+but is now verified live in production project `mnwcuinnshsncqrhvsks` as
+registry migration `20260912160312 add_health_journal_checkin_types_7_13_43`.
+Production schema verification confirmed `journal_questions` and
+`structured_answers` are non-null JSONB with their array/object defaults,
+`entry_type` is nullable text with the expected three-value check, and all
+expected Journal constraints exist. HealthKit persistence migration
+`20260828210906 patch_healthkit_persistence_7_11_99` and Active Energy calorie
+goal migration `20260829015901 add_health_active_energy_calorie_goal_7_12_3`
+are also recorded live. `task-state-command` v37 remains the current deployed
+Edge Function, pinned to 7.13.80 commit
+`f9fa56cd7c03ba8e2c9a20511d5b2d2b8529c886`; no redeploy was required for 7.13.81.
+
+## 2026-09-16 7.13.67 Color Projected Calories by Goal Status
+
+Food Daily Totals now colors only the projected calorie amount green when it
+is within the target and red when it exceeds the target. A missing target keeps
+the projected amount neutral; consumed calories and all projection behavior
+are unchanged.
+
+## 2026-09-16 7.13.66 Add Projected Food Calories and Goal Warning
+
+Food Daily Totals keeps consumed calories as the main value while showing
+projected calories from active planned food when present. The shared meal
+editor warns informationally when consumed, active planned, and live candidate
+calories exceed the date-specific Active Energy-adjusted target; editing a plan
+excludes that plan's prior calories before adding the candidate.
+
+## 2026-09-15 7.13.65 Add Overtime Goal Marker to Focus Activity Bars
+
+Goal-backed Focus Activity bars keep their fixed full-height tracks and capped
+fills. When actual activity exceeds the displayed goal, a dashed goal marker
+moves downward using the goal-to-actual ratio; no-goal bars retain their
+relative-duration fallback and show no marker.
+
+## 2026-09-15 7.13.64 Normalize Focus Activity Bars to Goal Completion
+
+Focus Activity bars now use one shared full-height track. Goal-backed fills
+represent actual time divided by the relevant goal and cap visually at 100%;
+no-goal rows retain a relative-duration fallback and continue to show `No goal`.
+Existing Focus Activity labels, modes, ranges, persistence, and goal authority
+are unchanged.
+
+## 2026-09-12 7.13.47 Journal QA Corrections
+
+Journal Event and Start/End check-in controls use the compact time presentation
+with a unified keyboard-accessible AM/PM control. Event Feeling occurrence
+editing is viewport-safe, and Start of Day and End of Day expose explicit
+mutually exclusive Yes/No choices. Historical Event notes remain preserved in
+structured answers and summaries. Browser QA remains unverified.
+
+## 2026-09-12 7.13.46 Event-Centered Feeling Logging
+
+Type-driven Journal Events own tagged symptom and Feeling occurrences. Start of
+Day and End of Day can optionally create and link one canonical Event while
+preserving independent Event date/time and edit/retry identity. Browser QA
+remains unverified.
+
+## 2026-09-12 7.13.45 Journal Occurrence Date and Time Labels
+
+Journal Feeling and symptom occurrence references show the occurrence name,
+canonical score denominator, local calendar date, and local time across saved
+Journal summaries and linked history references. Browser QA remains unverified.
+
+## 2026-09-12 7.13.44 Health/Journal LocalStorage Quota Hotfix
+
+Health local-cache persistence treats quota and unexpected browser storage write
+failures as non-fatal. React state updates before the cache pass, quota failure
+stops remaining cache writes without deleting Health or pending meal-plan keys,
+and remote Supabase hydration continues. Browser QA remains unverified.
+
+## 2026-09-12 7.13.43 Type-Driven Journal Check-ins
+
+Journal supports Start of Day, End of Day, and Event entry types with structured
+answers, linked Sleep/Food/Feeling data, open-ended writing, and configurable
+historical-safe custom check-in questions. The additive Journal schema
+migration was authored source-only and was not deployed during that
+implementation run; its current live production application is recorded in
+the 7.13.81 entry above. Browser QA remains unverified.
+
+## 2026-09-15 7.13.73 Child Task Type Surface and Keyboard Navigation
+
+Version 7.13.72 fixed selected Task Type retention in an open Table child draft;
+browser QA passed pointer selection and Substep creation. The remaining
+presentation polish was the reduced child accent footprint compared with parent
+rows, and the remaining accessibility/input issue was browser page scrolling
+on arrow keys while TaskTypeSelect had focus.
+
+Version 7.13.73 aligns Table Step/Substep surface padding with the parent Task
+row and adds explicit keyboard listbox navigation with trigger-retained focus.
+No persistence, schema, or behavior-policy change was made.
+
+## 2026-09-15 7.13.74 Stronger Custom Table Child Accent Surface
+
+Version 7.13.73 browser QA passed Task Type pointer and keyboard navigation,
+selected-value retention, Step/Substep creation, portal/layering, and title
+geometry. Child surface size matched the parent through `py-1.5`, but named
+Custom Step/Substep fills still appeared too faint; the generic purple Table
+shadow could also muddy a non-purple Custom accent.
+
+Version 7.13.74 adds a stronger TABLE CHILD surface authority to the shared
+Task Type accent registry and applies it to normal same-table Step/Substep
+preview rows and source/same-table child rows. Standard child Tasks remain
+neutral, child rows retain `py-1.5`, and child hover elevation no longer uses
+the generic purple shadow. Parent Task surface styling, TaskTypeSelect keyboard
+behavior, child creation semantics, persistence, schema, and behavior policy
+are unchanged.
+
+## 2026-09-15 7.13.75 Remove Table Child Row Shadows
+
+Browser QA for 7.13.74 confirmed that stronger Custom Step/Substep accent fills
+were correct, but a residual purple hue remained from Table row shadow/elevation.
+Version 7.13.75 removes resting/reveal and hover box shadows from normal
+same-table Step/Substep rows and source/same-table child rows entirely.
+
+The stronger shared child accent surfaces, neutral Standard child treatment,
+`py-1.5`, focus-visible treatment, selection/accessibility treatment, parent
+Task styling, TaskTypeSelect behavior, and child creation semantics are
+unchanged. No persistence, schema, or behavior-policy change was made.
+
+## 2026-09-15 7.13.76 Unified Table Parent/Child Accent Surface
+
+Version 7.13.75 removed child row shadows, but browser QA still showed a
+parent/child shade mismatch. Diagnosis confirmed that parents used the weaker
+Table surface authority while children used the stronger child-only authority;
+parents also retained purple hover/reveal shadows.
+
+Version 7.13.76 gives all Table hierarchy rows one shared stronger accent
+authority and removes Table row hover/reveal shadows. Each child still resolves
+its own Task Type independently, Standard rows remain neutral, and non-Table
+surfaces are unchanged. No persistence, schema, or behavior-policy change was
+made.
+
+## 2026-09-15 7.13.77 Accent-Aware Table Row Hover Border
+
+Browser QA for 7.13.76 passed the unified parent/child Table fills and removed
+shadows, but the loss of shadow made row hover identification too subtle.
+Version 7.13.77 adds a semantic Task Type hover border for every Table
+hierarchy row while preserving the exact row fill, reserved border width,
+selection rings, focus-visible treatment, and existing hover motion. No
+persistence, schema, or behavior-policy change was made.
+
+## 2026-09-16 7.13.78 Configurable Success Outcomes
+
+Version 7.13.77 closed the Custom Task Type presentation and child-creation QA
+loop. Version 7.13.78 adds effective-dated configurable Success Outcomes to
+Standard Task profiles and named Custom Task Type revisions. The allowed
+outcomes are Done, Did My Best, and Complete; selected outcomes advance the
+positive streak, while a handled positive outcome that is not selected breaks
+it. An unresolved scheduled occurrence still breaks the positive streak.
+
+Operational handled-outcome, reward, and recurrence semantics remain
+independent and unchanged, and no positive-streak tracking toggle was added.
+The source-only migration is
+`supabase/add_success_outcomes_policy_7_13_78.sql`; live Supabase application
+is recorded as live in 7.13.79 below. The trusted `task-state-command` uses the
+same shared policy loader and its v36 / 7.13.79 deployment is also recorded
+below. No behavior-policy beyond the requested Success Outcomes setting was
+changed.
+
+## 2026-09-16 7.13.79 Consolidated Schema Consistency
+
+Version 7.13.79 is a source-schema consistency correction only. The
+consolidated `supabase/schema.sql` now matches the 7.13.78 Success Outcomes
+migration for both behavior tables, including the default, allowed vocabulary,
+null-element prohibition, and valid empty-array behavior.
+
+7.13.78 Success Outcomes behavior is unchanged. The Success Outcomes SQL is
+live, and task-state-command v36 / 7.13.79 was deployed.
+
+## 2026-09-16 7.13.80 Current-Policy Backlog Resolution During Schedule Replay
+
+Live QA exposed that schedule replay used the historical effective-dated
+policy when deciding whether newly unresolved backdated obligations should
+become automatic Missed facts. Version 7.13.80 restores the invariant that the
+current behavior policy controls new unresolved backlog resolution: a current
+`blank` policy leaves past obligations calculated as unhandled blank, while a
+current `missed` policy continues to materialize automatic Missed facts.
+
+Existing explicit History facts remain interpreted by the behavior policy
+effective on their historical logical date. Success Outcomes semantics remain
+unchanged, no existing QA History rows are rewritten, and no schema change was
+made.
+
+## 2026-09-14 7.13.65 List View Child Preview Crash Hotfix
+
+Browser QA for 7.13.64 exposed a List View runtime `ReferenceError` because
+`StepsCardPreview` used `customBehaviorRulesets` without destructuring it from
+its props. Version 7.13.65 binds the existing optional prop with an empty-array
+default, restoring List rendering with no behavior or persistence change.
+
+No behavior policy, Task State, History, recurrence, streak, reward, or Task
+Type creation semantics changed. No SQL or schema change was made.
+
+## 2026-09-15 7.13.69 Exact Inline Table Child Title Editor Treatment
+
+Version 7.13.68 aligned the inline child title with the shared Table text class,
+but browser QA still showed a visual mismatch. The remaining difference was
+the draft input geometry and the explicit parent inline-title typography style.
+Version 7.13.69 makes parent Task rename, existing Step/Substep rename, and new
+Step/Substep creation consume the same exact inline-title authority.
+
+No persistence or behavior change was made. No SQL or schema change was made.
+
+## 2026-09-15 7.13.70 Vertical Breathing Room for New Child Title Input
+
+Version 7.13.69 fixed the Step/Substep draft typography mismatch, and browser
+QA confirmed that the text size, weight, line height, and general typography
+were correct. The remaining issue was insufficient vertical space inside the
+new child creation input because it inherited the compact `h-[15px]` rename
+geometry. Version 7.13.70 separates the shared inline-title typography from
+rename geometry and makes only the new Step/Substep creation field taller at
+approximately 24px, with no persistence or behavior change.
+
+No SQL or schema change was made.
+
+## 2026-09-15 7.13.71 Safari Task Type Selection Child Draft Guard
+
+Browser QA for 7.13.70 confirmed the child-title typography and vertical
+breathing room, then exposed Safari blur-to-commit firing during portaled Task
+Type interaction. Version 7.13.71 replaces relatedTarget-only inference with an
+explicit Task Type pointer-interaction guard. Selecting a Task Type closes only
+the dropdown and preserves the open child draft and title.
+
+No persistence, SQL, schema, or behavior-policy change was made.
+
+## 2026-09-15 7.13.72 Preserve Selected Task Type in Table Child Draft
+
+Version 7.13.71 added explicit Task Type interaction authority, but Table View
+mistakenly attached its callbacks to the title input instead of `TaskTypeSelect`.
+Version 7.13.72 corrects that wiring so a chosen named Custom Task Type remains
+selected in the open Table child draft until explicit child creation. List View
+was already wired correctly, and full-editor child creation does not use the
+same blur-to-commit path.
+
+No persistence, SQL, schema, or behavior-policy change was made.
+
+## 2026-09-14 7.13.68 Inline Table Child Title Typography
+
+Version 7.13.67 fixed compact Task Type chooser sizing and layering for inline
+child creation. Final browser polish found that the inline child title input
+looked visually larger than existing written Table titles. Version 7.13.68
+reuses the shared visible-title typography and aligns the draft input to the
+same compact control height as the inline Task Type chooser.
+
+No behavior or persistence change was made. No SQL or schema change was made.
+
+## 2026-09-14 7.13.67 Compact Table Child Task Type Chooser
+
+Version 7.13.66 made Step Task Type selection column-independent, but browser QA
+then found that the inline control was oversized and its locally positioned
+dropdown could be obscured by later Table rows. Version 7.13.67 adds a compact
+inline presentation for dense Step/Substep creation and renders the selector
+menu through the existing top-level dropdown shell with viewport-safe anchored
+placement.
+
+No persistence or Task behavior change was made. No SQL or schema change was
+made.
+
+## 2026-09-14 7.13.66 Table Step Task Type Selector Placement
+
+Version 7.13.65 fixed the List View child-preview crash. Continued browser QA
+found that the Table Step selector depended on the optional Task Type column:
+when that column was hidden, the inline Step draft exposed no Task Type control.
+Version 7.13.66 makes Task Type part of the inline title creation control itself
+and renders the visible Task Type column as a read-only mirror.
+
+No persistence or Task behavior change was made.
+
+## 2026-09-14 7.13.64 Custom Task Type Presentation QA and Child Creation
+
+Browser QA for 7.13.63 passed the primary presentation checks, then identified
+three follow-up issues: neutral Table rows had visible outlines, icon browsing
+and search were limited to the featured registry, and inline child creation
+was still hardcoded to Standard Task. Version 7.13.64 corrects these paths.
+
+Table neutral Tasks now visually blend into the Table background while named
+Custom Task Type fills remain visible. Default icon browsing offers 120+ common
+icons, while non-empty searches cover the full installed Lucide directory using
+the shared dynamic-icon authority. Inline Step/Substep creation now supports
+Task and active named Custom Task Types, with the selected identity persisted in
+the initial canonical child draft and reset after success or Cancel.
+
+No Task behavior semantics changed. No SQL or schema change was made.
+## 2026-09-13 7.13.63 Custom Task Type Presentation QA Correction
+
+Browser QA for 7.13.62 exposed three presentation issues: selected Custom Task
+Type tabs did not maintain white text on the selected purple chip, Custom Task
+Type accent identity stopped at Task Type controls instead of identifying the
+actual Task row/card, and the icon registry was too limited to discover useful
+choices. Version 7.13.63 corrects these presentation-only issues. The shared
+Task Type presentation authority now supplies restrained accent-tinted surfaces
+for real Task rows, cards, secondary Task surfaces, and PATHS Task nodes while
+preserving normal content/status colors and selected/open/hover states. The icon
+registry is substantially expanded and searchable by labels and keywords.
+
+No Task behavior semantics changed, including Task State, History, recurrence,
+streaks, rewards, Available Actions, behavior policy, defaults, or persistence
+shape. No SQL or schema migration was required or applied.
+
+## 2026-09-13 7.13.62 Custom Task Type Presentation Identity
+
+Named Custom Task Types now have presentation identity: an icon key, semantic
+accent key, and optional short description. These fields live on the stable
+`adhdice_custom_behavior_rulesets` identity row, not on effective-dated behavior
+revisions, so presentation edits do not create policy revisions. Current Task
+Type selectors and displays share the same presentation registry and renderer;
+Standard Task uses an application-owned fallback only. No Task defaults were
+added and no behavior semantics changed. The presentation identity migration
+`supabase/20260913000000_add_custom_task_type_presentation_identity_7_13_62.sql`
+was already applied live before this presentation correction.
+
+## 2026-09-13 7.13.61 Fully Retire Goal Task Type
+
+Goal Task Type is fully retired. The sole remaining Goal row was disposable
+test data and was intentionally deleted; its Task State, History, reward, and
+schedule-boundary dependencies were deleted rather than mapped, migrated,
+archived, converted, or translated. The final Task Type model is ordinary Task
+plus named Custom Task Type, with Pursuit and Custom Default still retired.
+Milestones, milestone persistence, promotion, completion, trophy/Aura behavior,
+and milestone targets remain unchanged.
+
+The source-only migration
+`supabase/retire_goal_task_type_7_13_61.sql` is not applied to live Supabase in
+this run and must be applied separately before browser QA.
+
+## 2026-09-13 7.13.60 Add Custom Task Types to Home To-do New Task Creator
+
+The Home To-do inline New task creator now supports Task followed by active
+named Custom Task Types. Task Type is chosen before persistence, and named
+selection is included in the initial canonical creation draft. The existing
+Home To-do membership and ordering semantics remain unchanged. Custom Default,
+Goal, and Pursuit remain unavailable, and deleted named Custom Task Types stay
+hidden through the shared Task Type authority.
+
+No persistence or schema migration occurred; no SQL or Supabase change was
+made.
+
+## 2026-09-13 7.13.59 Show Named Custom Task Types in Tasks New Menu
+
+The Tasks workspace New dropdown now exposes Task first, followed by every
+active named Custom Task Type. Its choices reuse the shared Task Type model,
+so Custom Default, Goal, Pursuit, and deleted named Custom Task Types remain
+absent. Selecting a named type carries `task_type = 'custom'` and its
+`custom_ruleset_id` in the initial canonical Task creation intent, so the
+shared editor opens with the assignment already persisted. Other Task
+quick-create surfaces continue creating ordinary Tasks.
+
+No persistence or schema change occurred; no SQL or Supabase change was made.
+
+## 2026-09-13 7.13.58 Remove Anonymous Custom Default
+
+Custom Default is no longer a saved or selectable Task Type. `custom` now
+means a named Custom Task Type backed by a required `custom_ruleset_id`; Task
+Type selectors expose Task and saved named Custom Task Types only. Goal remains
+legacy-readable and is not assignable, while Pursuit remains fully retired.
+
+Behavior Settings no longer loads, edits, resets, or writes the obsolete
+generic `task_type = 'custom'` profile. `+ New Custom Task Type` opens a local
+draft initialized from the canonical `DEFAULT_CUSTOM_TASK_TYPE_TEMPLATE`
+(currently the Standard Task policy). The name and behavior controls persist
+only after Create/Save; Cancel discards the draft. Creation retains atomic
+named identity plus first behavior revision persistence and its orphan cleanup.
+
+The source-only migration
+`supabase/20260913000000_remove_anonymous_custom_task_type_7_13_58.sql`
+normalizes anonymous legacy Custom Task assignments and selections to Task,
+deletes only generic Custom profile rows, and tightens current Task and
+selection constraints so Custom requires a named ruleset. Named Custom Task
+Type identities, revisions, behavior selections, and valid assignments are
+preserved. The migration was not applied to live Supabase in this run.
+
+## 2026-09-13 7.13.57 Promote Named Custom Rulesets to Custom Task Types
+
+Named custom behavior rulesets are now presented as first-class Custom Task
+Types in active Task Type selectors and the existing management surface. Tasks
+remain the single primary work object, and Custom Task Types still use the
+existing Task behavior engine; no parallel type engine was added.
+
+Persistence remains `task_type = 'custom'` plus the existing
+`custom_ruleset_id` identity. No persistence or schema migration occurred.
+Goal remains legacy-readable only and is not selectable for new Tasks. Pursuit
+remains retired.
+
+## 2026-09-13 7.13.56 Correct Pursuit Retirement Task-State Cleanup
+
+The 7.13.55 live migration attempt successfully passed the combined Pursuit
+table `TRUNCATE`, then rolled back when canonical schedule-boundary cleanup
+violated `adhdice_task_schedule_boundaries_initial_check`. Diagnosis also
+found that the pending history `command_id = null` update would violate
+`adhdice_task_history_facts_runtime_provenance_check`. Both failed attempts
+rolled back transactionally, so live data remains unchanged: 3 Pursuit-typed
+Tasks, 6 standalone Pursuits, 5 Pursuit activities, and 1 Goal Task remain.
+
+Version 7.13.56 replaces temporary invalid nulling with dependency-ordered
+deletion: it clears only incoming workflow/cycle blockers, deletes History
+facts and occurrences, removes schedule boundaries newest-to-oldest, then
+commands and exact Pursuit Tasks. Goal data remains untouched. The corrected
+live migration remains pending explicit application.
+
+## 2026-09-13 7.13.55 Correct Pursuit Retirement TRUNCATE Dependency
+
+The 7.13.54 live migration attempt failed before commit because PostgreSQL
+rejected separate Pursuit-table `TRUNCATE` operations across the foreign key
+from `adhdice_pursuit_activities` to `adhdice_pursuits`. The transaction rolled
+back completely, so live data was unchanged: no Pursuit or Goal data was
+deleted. The live project still has 3 `task_type = 'pursuit'` Task rows, 6
+standalone Pursuits, 5 Pursuit activities, and 1 Goal Task row.
+
+Version 7.13.55 changes the migration to truncate
+`adhdice_pursuit_activities` and `adhdice_pursuits` together in one explicit
+two-table operation, without `CASCADE`. Goal data remains untouched. The
+corrected live migration still requires explicit application after this
+correction; no live database change is claimed here.
+
+## 2026-09-13 7.13.54 Tasks + Custom Task Types; Retire Pursuit Experiment
+
+Tasks are the primary work object. Named Custom Task Types configure the
+existing Task behavior engine; they do not create a parallel work-object
+domain. The Pursuit experiment has been retired. All standalone Pursuit
+records, Pursuit activity/history, and Task rows explicitly typed as Pursuit
+were test data and are intentionally deleted by the 7.13.54 retirement
+migration. The standalone Pursuit persistence and application domain were
+removed, and no Pursuit history migration, translation, archive, or snapshot
+was performed.
+
+Goal creation and assignment are retired for new Tasks, but existing Goal rows
+and Goal history were not destructively removed in this ticket. Goal remains
+only as the minimum legacy-read compatibility needed by the existing Task
+engine and persistence boundary. Custom Task Types continue to use the normal
+Task lifecycle, recurrence, History, Attention, policy, rewards, and other
+shared Task infrastructure. The migration is source-only until explicitly
+applied; browser QA remains assigned to Andrew.
+
+## 2026-09-13 7.13.53 Reuse Canonical Scrollbar Suppression for Full Edit Task
+
+Safari QA still failed for 7.13.50, 7.13.51, and 7.13.52. Re-diagnosis
+compared the failing full Edit Task implementation with ADHDice's existing
+working site-wide `adhdice-scrollbar` utility, which already suppresses
+Firefox, legacy Edge, and WebKit scrollbar chrome including track, thumb, and
+hover treatment. The unnecessary 7.13.50 `adhdice-scrollbar-hidden` duplicate
+was removed, and the desktop inner editor, desktop full-overlay owner, and
+mobile full-editor owner now all reuse the canonical utility while retaining
+scrolling. The unsuccessful 7.13.52 background-Table `overflow-hidden`
+conditional was removed and the normal Table owner is restored to
+`adhdice-scrollbar overflow-x-auto overflow-y-auto`. No scroll position reset,
+Task/state/persistence, layout, navigation, or dismissal behavior changed. No
+SQL, schema, migration, Supabase, or Edge Function changes were made; Safari
+manual QA remains assigned to Andrew.
+
+## 2026-09-13 7.13.52 Suppress Background Table Scrollbars During Full Edit Task
+
+Safari QA for 7.13.51 still showed native scrollbars while full Edit Task was
+open. Re-diagnosis found that the visible vertical and horizontal bars belonged
+to the underlying Table scroll container, not the Edit Task scroll owners. Full
+Edit Task now temporarily suppresses the background Table's overflow while
+preserving its scrollTop and scrollLeft values; closing the editor restores
+normal Table scrolling. Edit Task internal scrolling remains enabled, and the
+previous hidden-scrollbar treatment remains in place. No Task, state, or
+persistence changes were made; no SQL, schema, migration, Supabase, or Edge
+Function changes were made, and browser QA remains assigned to Andrew.
+
+## 2026-09-13 7.13.51 Hide Remaining Full Edit Task Outer Scrollbar
+
+Browser QA for 7.13.50 failed in Safari because the inner desktop and mobile
+Edit Task scrollbar treatment was correct but the outer full-overlay scroll
+owner still displayed native scrollbar chrome. The same dedicated hidden-
+scrollbar utility now covers that remaining outer full Edit Task owner while
+its `overflow-y-auto` behavior remains enabled. No navigation, layout, state,
+or persistence behavior changed. No SQL, schema, migration, Supabase, or Edge
+Function changes were made; manual browser QA for this correction remains
+assigned to Andrew.
+
+## 2026-09-13 7.13.50 Hide Full Edit Task System Scrollbar
+
+Browser QA for 7.13.49 passed, including Edit Task navigation, dismissal,
+draft-safety, and status presentation. The full Edit Task native scrollbar
+chrome is now hidden while scrolling remains enabled. The dedicated treatment
+covers only the desktop and mobile full editor scroll containers; quick
+overlays and other application scroll surfaces are unchanged. No navigation,
+state, or persistence behavior changed. No SQL, schema, migration, Supabase,
+or Edge Function changes were made; browser QA for this release remains
+assigned to Andrew.
+
+## 2026-09-13 7.13.49 List Edit Task Navigation Performance + Backdrop Dismissal
+
+The 7.13.48 repeated-navigation shell stability fix worked, but browser QA
+found List Edit Task Previous/Next switching slower than Table. The root cause
+was full List row materialization through `getAllRows` during neighbor lookup.
+The List editor now uses its existing `taskById` map for direct live Task-row
+lookup and converts only the requested row, while preserving `getAllRows` for
+compatibility paths that require the complete collection. Empty transparent
+desktop gutters and dimmed backdrop space dismiss Edit Task again; the
+Previous and Next controls remain safe interaction targets in their approved
+side-gutter placement. Navigation ordering, shell stability, and persistence
+semantics are unchanged. No SQL, schema, persistence, Supabase, or Edge
+Function changes were made; browser acceptance remains assigned to Andrew.
+
+## 2026-09-12 7.13.47 Edit Task Browsing + Status Glow Refinement
+
+The shared Attention status-circle breathing cycle is now 6 seconds. Active
+Missed current-status circles receive the same status-color red breathing
+emphasis; Missed alone keeps its canonical X, while Missed plus final
+Attention membership uses the existing X/Bell crossfade. Full Edit Task now
+supports Previous and Next controls using a captured current-view sequence for
+Table and List, keeping that order stable for the editor session while each
+target resolves live Task data. Missing captured IDs are skipped, boundary
+controls do not wrap, and existing draft commit and detached-task behavior is
+preserved. No Task status, Attention membership, persistence, SQL, schema,
+Supabase, or Edge Function changes were made. The 7.13.47 glow behavior passed
+browser QA; Edit Task navigation browser QA exposed the repeated-navigation
+dismissal corrected in 7.13.48.
+
+## 2026-09-12 7.13.48 Edit Task Navigation Stability
+
+The full Edit Task shell now keeps a stable identity across Previous/Next Task
+changes, so repeated Table and List browsing updates live editor content without
+remounting the outer session or triggering dismissal. Desktop arrows occupy
+transparent side gutters and belong to the same interaction boundary as the
+editor surface; genuine outside clicks still close the editor. Navigation
+ordering and snapshot semantics are unchanged, including missing-ID skipping,
+boundary disabling, live Task resolution, and draft-safe switching. No
+persistence, schema, SQL, Supabase, or Edge Function changes were made.
+
+## 2026-09-12 7.13.46 Attention Status Signal Polish
+
+The Attention row Bell is now a filled yellow Bell. Final Attention members
+receive a status-color breathing signal on the primary current-status circle,
+with a crossfade between the canonical status glyph and a decorative Bell.
+Attention remains presentation metadata and is still NOT a Task status; the
+status-circle interaction remains status interaction. Reduced-motion and Low
+Stimulation modes use a static status-color treatment with the normal glyph.
+No membership, persistence, SQL, schema, Supabase, or Edge Function changes
+were made. Browser QA for 7.13.46 passed and is assigned to Andrew.
+
+## 2026-09-12 7.13.45 Attention Rule Authority + Editable System List
+
+Attention is now a configurable, app-owned system list. Its locked
+eligibility condition is resolved from effective behavior policy: only Tasks
+whose effective missed-streak behavior is Ignore may participate. The default
+editable Attention rule is `Due is overdue`; explicit rule edits are evaluated
+by the normal Task List rule engine, and an explicit empty rule group matches
+nothing. Legacy persisted Attention rows with `rules = null` use that default.
+
+Behavior-profile `needsActionTriggers` remains persisted for compatibility but
+no longer governs Attention. The yellow Bell, Attention count, list filtering,
+and popover all consume final Attention list membership. Attention settings use
+the normal list rule editor below a read-only eligibility explanation; the
+system list remains fixed-name, non-deletable, and unavailable for manual
+membership. No SQL migration, schema change, Supabase data migration, or Edge
+Function deployment was performed. Browser QA passed for Attention rule
+behavior, settings, and popover.
+
+## 2026-09-12 7.13.44 Attention Correction
+
+Tracked Missed outcomes no longer duplicate Attention when the effective
+behavior profile increments missed streaks; Missed Attention remains available
+when the profile ignores missed streaks and the Missed trigger is enabled. The
+row Attention indicator is now a yellow icon-only Bell using the approved
+row-toolbar primitive. Its informational popover now uses the approved
+floating/portal presentation outside clipped row and table ancestors, with
+viewport-safe anchoring and dismissal on outside click, Escape, scroll, or
+resize. Due Today and Overdue trigger behavior remains unchanged. No SQL,
+schema migration, Supabase data change, or Edge deployment was performed;
+browser QA remains unverified.
+
+## 2026-09-12 7.13.43 Attention System List + Notification Chip
+
+Attention is now surfaced through the canonical Task list system as the
+visible, app-owned `attention` system list. Membership is derived only when
+the existing effective-policy Attention classifier returns `needs_action`, so
+Missed, Due Today, and Overdue remain policy-controlled while In Progress and
+Coming Up remain outside the notification list. Table and List rows expose a
+small informational Attention chip with the current reason in an anchored
+popover; no Task status, persistence field, manual membership, behavior
+engine, SQL/schema change, or Edge deployment was added. Legacy persisted
+`attention` surface state migrates to Tasks with the Attention list selected.
+Browser QA remains unverified.
+## 2026-09-12 7.13.41 Effective-Dated Needs Action Triggers
+
+Task behavior policies now carry the presentation-only Needs Action trigger
+set: Missed, Due Today, and Overdue. Task and Custom Default profiles plus
+named Custom rulesets resolve these triggers through the existing effective-
+dated TaskType selection and revision authority. Missed remains first-match
+classification; disabling it does not make a Missed Task qualify as Overdue,
+and disabling Due Today or Overdue allows the existing Attention classifier to
+fall through to In Progress or Coming Up as applicable. Task facts, History,
+status, due dates, recurrence, projections, streaks, rewards, and Pursuit
+behavior remain unchanged. The Needs Action SQL migration has been applied to
+live ADHDice Supabase and verified. No Edge deployment was required, and
+browser QA remains unverified.
+
+## 2026-09-12 7.13.42 Current-Policy Task Rollover Correction
+
+Automatic rollover now resolves still-unresolved historical scheduled
+occurrences with the Task's current resolved behavior policy. A current Blank
+policy leaves that backlog without automatic Missed History or missed-streak
+materialization; a current Missed policy retains intentional automatic
+backfill. Existing History facts and effective-dated historical policy
+resolution remain unchanged. The `task-state-command` Edge Function was
+deployed from commit `378d2cb7580f6ab5221434322859e6ed0ea1b114`; the deployed
+Edge Function version was 35 at QA time, and browser QA for the Blank/Ignore
+unresolved-backlog correction passed. No SQL migration or schema change was
+required.
+
+## 2026-09-12 7.13.40 Available Actions UI Enforcement
+
+Behavior Settings now exposes the effective-dated Available Actions controls
+for Task, Custom Default, and named Custom rulesets. Existing contextual Task
+status/action choices are filtered through the shared action authority, with
+historical Calendar dates and multi-date selections using policy intersections.
+Current and historical outcomes remain factual; workflow, lifecycle, Calendar
+override, and automatic engine behavior remain unchanged. No SQL or Edge
+deployment changed, and browser QA remains unverified.
+
+## 2026-09-11 7.13.39 Trusted Available Actions Failure-Closed Correction
+
+Trusted manual occurrence commands now distinguish the reviewed missing
+additive-schema compatibility boundary from unexpected behavior-authority
+failures. `set_outcome`, `delay_occurrence`, `complete_task`, and History batch
+preflight return `behavior_policy_unavailable` with HTTP 503 before persistence
+when Task/Custom behavior, named-ruleset, or selection authority is unavailable
+or malformed; successfully resolved restrictive policies still return
+`TASK_ACTION_NOT_AVAILABLE`. Only the recognized undeployed Available Actions
+table/column absence retains the Standard all-actions compatibility fallback.
+Automatic rollover and Missed reconciliation continue through the existing
+compatibility fallback path. No UI or SQL migration changed; SQL and Edge
+deployment were not performed. Browser and live Supabase QA remain unverified.
+
+## 2026-09-11 7.13.38 Available Actions Policy Foundation
+
+TaskType and named Custom ruleset revisions now carry an effective-dated
+manual occurrence Available Actions upper bound: Done, Did My Best, Missed,
+Delay, and Complete. Missing legacy fields normalize to all five actions;
+invalid and duplicate values normalize safely, and an empty set remains valid.
+The shared action authority resolves the policy for the command logical date,
+while canonical planning and trusted `task-state-command` reject unavailable
+manual actions with `TASK_ACTION_NOT_AVAILABLE`. History outcome batches
+preflight all selected dates before any child commit. Automatic rollover and
+Missed reconciliation, existing History facts, lifecycle/workflow commands,
+Calendar overrides, rewards, streaks, and recurrence remain unchanged. The
+focused migration and Edge source are review-only; SQL has not been applied,
+`task-state-command` has not been redeployed, and browser QA remains
+unverified. No Available Actions controls were added to Behavior Settings.
+
+## 2026-09-11 7.13.37 Legacy Pursuit Hard Delete
+
+Old separate Pursuit rows in the Tasks workspace now offer a confirmed Trash
+action. `usePursuits` performs an owner-scoped hard delete for childless rows,
+blocks parents until their loaded child Pursuits are deleted, and removes the
+deleted Pursuit plus its locally loaded completion activities after success.
+The database remains authoritative for the existing Pursuit activity cascade,
+child `ON DELETE RESTRICT`, and Task-parent `ON DELETE SET NULL` behavior. No
+SQL or Edge Function deployment was performed; browser QA and live Supabase
+verification remain unverified.
+
+## 2026-09-11 7.13.36 Ruleset Delete RPC Ambiguity Correction
+
+The named Custom ruleset delete RPC now aliases its target ruleset table and
+qualifies the final UPDATE predicate and returned columns, preventing
+PL/pgSQL output-column variables from making `deleted_at` ambiguous. The
+7.13.35 assignment guard remains unchanged: active, archived, and restorable
+trashed Tasks block deletion, while permanently deleted Task tombstones do
+not. The soft-delete RPC, historical selections, revisions, Task History,
+grants, and security/search_path model are unchanged. The SQL migration and
+consolidated schema are source-only; SQL deployment and browser QA remain
+unverified.
+
+## 2026-09-11 7.13.35 Permanently Deleted Task Ruleset Deletion Correction
+
+Named Custom ruleset deletion now excludes permanently deleted Task tombstones
+from its current-assignment count. Active, archived, and normally trashed
+restorable Tasks still block deletion; a permanently deleted Task can retain
+its historical ruleset identity without blocking the ruleset tombstone. The
+RPC remains the final server-side concurrency guard, and no tombstone,
+historical selection, revision, or Task History row is rewritten. The SQL
+migration and consolidated schema are source-only; Edge Functions and browser
+QA remain unchanged and unverified.
+
+## 2026-09-11 7.13.34 Task Type Table Filtering and Ruleset Resolution
+
+Table View now exposes Task Type as a persisted, reorderable column with
+centralized TaskType/ruleset labels and active-selector-backed filters. Named
+ruleset deletion remains server-blocked while current Tasks use it, but the
+blocked UI can show the matching Task filter or move each assigned Task to
+normal Task through the existing effective-dated selection mutation before
+retrying the tombstone. Historical selections, ruleset identities, Task
+History, SQL source, and Edge Functions are unchanged; browser and live
+Supabase QA remain pending.
+
+## 2026-09-10 7.13.31 Historical Behavior Selection Correction
+
+Effective-dated behavior authority now stores the complete TaskType plus
+optional named Custom ruleset selection in `adhdice_task_behavior_selections`.
+The 7.13.28 Custom-only assignment rows are renamed and normalized as Custom
+selections; a compatibility view supports the older canonical creation RPC
+without retaining a second historical authority. Existing Tasks use the
+current Task projection until their first selection change, which lazily writes
+the creation-date baseline before the new current-date selection. New Tasks are
+seeded at creation, and browser/direct/canonical/trusted resolution feeds the
+same selection timeline into the existing Task Engine. No SQL or Edge source
+has been deployed; browser QA and live Supabase verification remain pending.
+
+## 2026-09-10 7.13.32 Ruleset Streak and Task History Label Cleanup
+
+An unfinished scheduled occurrence now always breaks the derived positive
+success streak, whether the unresolved occurrence is displayed as Missed or
+Blank. Not Due and future dates remain neutral; missed-streak handling,
+rewards, explicit History facts, and existing Delay behavior are unchanged.
+The legacy `positive_streak_on_unhandled` persistence column remains accepted
+as a deprecated compatibility field, but new Task and named Custom ruleset
+writes emit `break` and the engine ignores persisted `preserve` values.
+
+Task Calendar History now resolves its header and calendar label through the
+centralized TaskType/ruleset display helper, so normal Task, Custom Default,
+named Custom, Pursuit, and Goal labels remain consistent. The shared TypeScript
+engine source used by the trusted Edge bundle changed, but no Edge Function or
+SQL deployment was performed; browser and live Supabase QA remain pending.
+
+## 2026-09-11 7.13.33 Named Custom Ruleset Tombstones
+
+Named Custom rulesets can now be deleted from Behavior Settings through a
+soft-delete tombstone. Current Task assignments block deletion with a useful
+owner-scoped count, while revisions, effective-dated behavior selections, and
+historical display identity remain intact. Deleted rulesets are excluded from
+new/current selectors and editable settings; their names remain available to
+historical label and policy resolution, and active name reuse is allowed. The
+The SQL migration and consolidated schema are source-only. The shared ruleset
+loader imported by the trusted Task command bundle changed to retain deleted
+identities, but no Edge Function or SQL deployment was performed; browser/live
+Supabase QA remains pending.
+
+## 2026-09-10 7.13.24 Custom TaskType Behavior Profile
+
+Custom is now the first active non-Task behavior profile and resolves through
+the shared Task Engine using its own effective-dated, user-scoped revision
+timeline. Custom is currently a shared TaskType-level experimental profile;
+Task and Custom revisions remain independent. Pursuit and Goal remain
+intentionally inactive and use the Standard fallback. Browser and trusted
+command paths now receive the complete type-aware profile map, with the Edge
+Function source updated accordingly. No schema or SQL changes were required;
+Edge deployment remains pending review.
+
+## 2026-09-10 7.13.25 Inactive TaskType Revision Boundary
+
+The Task Engine input boundary now forwards effective-dated behavior
+revisions only for Task and Custom. Persisted Pursuit and Goal rows remain
+loadable for future activation, but inactive TaskTypes omit revision timelines
+and retain Standard fallback through downstream projections and command
+planning. No schema, SQL, or persistence changes were required; Edge source
+remains updated and deployment is pending review.
+
+## 2026-09-10 7.13.26 First-Revision Task Behavior Baseline
+
+The shared effective-dated behavior resolver now uses the earliest revision
+for an active TaskType as its baseline before that revision's effective date;
+later revisions remain effective-dated changes. Task and Custom remain active,
+while Pursuit and Goal retain Standard fallback. No schema, SQL, persistence, or
+live-data changes were required; Edge deployment remains pending review.
+
+## 2026-09-10 7.13.27 Named Custom Behavior Ruleset Foundation
+
+Added source-only persistence for reusable named Custom behavior rulesets,
+independent effective-dated revisions, and nullable `custom_ruleset_id` Task
+assignment. Assigned Custom Tasks now select their named ruleset timeline in
+browser/direct and trusted command planning; unassigned Custom Tasks retain the
+7.13.26 TaskType-level Custom profile. Pursuit and Goal remain inactive with
+Standard fallback, and existing History remains factual. No SQL or Edge source
+has been deployed; browser QA and live Supabase verification remain pending.
+
+## 2026-09-10 7.13.30 Named Custom Ruleset Management and Assignment UI
+
+The Behavior Settings panel now manages reusable named Custom rulesets while
+retaining `Custom Default` for the existing TaskType-level Custom profile.
+Named rulesets seed their first effective-dated revision from Custom Default,
+support independent current-day behavior revisions and identity-only renames,
+and are surfaced through the shared Task metadata selector. Task assignment
+changes retain the existing effective-dated assignment RPC authority, and
+canonical Task creation continues to accept `task_type = 'custom'` with a
+named `custom_ruleset_id`. Fixed System Rule cards were removed from the
+customizable panel without changing engine semantics. No SQL or Edge source
+was changed or deployed; browser QA and live Supabase verification remain
+pending.
+
+## 2026-09-10 7.13.28 Effective-Dated Custom Ruleset Assignment Correction
+
+Task-to-named-Custom-ruleset assignment is now a separate effective-dated,
+owner-scoped timeline. The Task row's nullable `custom_ruleset_id` remains a
+current projection only; browser, canonical, and trusted command resolution
+select the assignment effective on the requested logical date, with the first
+assignment serving as the baseline before its effective date. The correction
+migration also protects historical assignment meaning with restrictive
+ruleset deletion FKs, routes assignment edits through an atomic owner-checked
+RPC, and extends canonical creation to persist an owned initial assignment.
+Existing Tasks are not backfilled, explicit History is not rewritten, and
+Pursuit/Goal remain Standard fallback. SQL and Edge source are not deployed;
+browser QA and live Supabase verification remain pending.
+
+## 2026-09-10 7.13.23 Indexed Last-Handled Summary Construction
+
+Global streak-summary preprocessing now indexes the latest manual action by
+Task ID while scanning History, active manual Calendar overrides, and
+committed runtime command operations once each. The existing manual-action
+eligibility, logical-date/timestamp/identity ordering, presentation timestamp,
+atomic publication, 10ms cooperative Task loop, and stale-work cancellation
+remain unchanged. No Task semantics, persistence, SQL, schema, RLS, Realtime,
+or Pursuit behavior changed.
+
+## 2026-09-09 7.13.22 Non-blocking Global Task Behavior Recalculation
+
+Global Active Status and behavior-policy streak-summary recalculations now run
+through short cooperative CPU chunks with browser yields. Each calculation
+keeps its complete result in local maps and publishes once atomically; a
+lightweight token prevents superseded work from committing. The existing
+per-Task Active Status cache remains incremental for ordinary mutations, and
+the bulk streak path still reuses full History plus one collection-wide load
+each for Calendar overrides and manual command operations. Rewards-only policy
+changes remain outside both global recalculations. No Task semantics,
+persistence, SQL, schema, RLS, Realtime, or Pursuit behavior changed.
+
+## 2026-09-09 7.13.20 Task Engine Interaction Performance
+
+Active Status now uses the existing stable projection cache incrementally by
+Task. Each entry is keyed by semantic Task State inputs, that Task's canonical
+History, logical-day context, and only the behavior-policy semantics that can
+change Active Status. A single Task or History mutation therefore reevaluates
+only that Task while unchanged Tasks reuse their in-memory results. Rewards are
+not an Active Status dependency; unresolved-occurrence policy affects Active
+Status; unresolved-occurrence plus positive/missed unhandled behavior affect
+Effective Timeline streaks.
+
+The History Calendar modal now memoizes its canonical Calendar/Effective
+Timeline read and selected-date action authority by semantic dependencies. A
+development-only diagnostic reports `active-status evaluatedTasks=N
+reusedTasks=N` and `task-history-calendar recomputed taskId=...` when the
+existing workspace performance diagnostic flag is enabled.
+
+No Task semantics, canonical History facts, persistence, SQL, schema, RLS,
+Realtime behavior, or Pursuit architecture changed.
+
+## 2026-09-09 7.13.21 Behavior Profile Bulk Streak Reconciliation
+
+Global changes to streak-affecting Task behavior policy now call the existing
+bulk `loadTaskHistoryStreakSummaries()` authority once. It reuses loaded full
+History, loads Calendar overrides and manual command operations collection-wide,
+builds the complete summary map, and publishes one summary state update.
+Single-Task History/task mutations continue using the targeted refresh path.
+Rewards-only policy changes remain outside streak and Active Status revisions.
+
+The existing workspace performance diagnostic reports bulk policy refreshes as
+`[workspace:streak-summary] mode=bulk reason=behavior-policy tasks=N`.
+No Task State, recurrence, History, Calendar, reward, persistence, SQL, schema,
+RLS, Realtime, or Pursuit semantics changed.
 
 ## 2026-09-06 7.12.119 Saved View Editing
 

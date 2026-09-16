@@ -3,7 +3,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TaskList, TaskListInsert } from "@/lib/database.types";
-import { getStoredTaskListMembershipMode, type TaskListDefinition, type TaskListId, type TaskListManualMembership } from "@/lib/task-lists";
+import { getStoredTaskListMembershipMode, getTaskListCapabilities, type TaskListDefinition, type TaskListId, type TaskListManualMembership } from "@/lib/task-lists";
 
 type Message = {
   text: string;
@@ -67,11 +67,12 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
       return false;
     }
 
+    const capabilities = getTaskListCapabilities(baseline);
     const savedDefinition: TaskListDefinition = {
       ...baseline,
       isVisible: input.isVisible,
       name: baseline.type === "custom" ? input.name : baseline.name,
-      rules: baseline.membershipMode === "manual" ? null : (input.rules as TaskListDefinition["rules"]),
+      rules: capabilities.usesRuleEvaluation ? (input.rules as TaskListDefinition["rules"]) : null,
     };
     setTaskLists((current) => [
       ...current.filter((list) => list.id !== savedDefinition.id),

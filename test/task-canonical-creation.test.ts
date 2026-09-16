@@ -16,6 +16,10 @@ import {
 import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import { planTaskStateCommand, type CanonicalTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
 
+const canonicalCreationEdgeSource = readFileSync(new URL("../supabase/functions/task-create-canonical/index.ts", import.meta.url), "utf8");
+const assignmentMigration = readFileSync(new URL("../supabase/add_task_custom_ruleset_assignments_7_13_28.sql", import.meta.url), "utf8");
+const behaviorSelectionMigration = readFileSync(new URL("../supabase/add_task_behavior_selections_7_13_31.sql", import.meta.url), "utf8");
+
 const ownerId = "00000000-0000-4000-8000-000000000001";
 const parentId = "00000000-0000-4000-8000-000000000002";
 const now = "2026-08-11T14:00:00.000Z";
@@ -113,6 +117,7 @@ function canonicalTask(overrides: Partial<CanonicalTaskCreationRow> = {}): Canon
     parent_task_id: null,
     revision: 1,
     title: "New Task",
+    task_type: "task",
     notes: null,
     status: "pending",
     priority: "normal",
@@ -191,6 +196,7 @@ test("canonical creation plan initializes runtime state without action facts or 
   assert.equal(plan.schedule.historical_scope_known, false);
   assert.equal(plan.schedule.prospective_only, true);
   assert.equal(plan.task.status, "pending");
+  assert.equal(plan.task.task_type, "task");
   assert.equal(plan.task.completed_at, null);
   assert.equal(plan.task.trashed_at, null);
 
@@ -205,6 +211,78 @@ test("canonical creation plan initializes runtime state without action facts or 
   assert.equal(importedOpenPlan.task.repeat_frequency, "daily");
   assert.deepEqual(importedOpenPlan.task.tags, ["planning"]);
   assert.equal(importedOpenPlan.schedule.schedule_model, "rolling");
+
+  assert.throws(
+    () => buildCanonicalTaskCreationPlan({
+      draft: draft({ task_type: "pursuit" as never }),
+      entityKind: "step",
+      now,
+      profile,
+    }),
+    (error: unknown) => error instanceof CanonicalTaskCreationValidationError
+      && error.code === "INVALID_TASK_TYPE",
+  );
+});
+
+test("canonical creation accepts a named Custom ruleset but rejects it for a normal Task", () => {
+  const rulesetId = "00000000-0000-4000-8000-000000000011";
+  const customPlan = buildCanonicalTaskCreationPlan({
+    draft: draft({ task_type: "custom", custom_ruleset_id: rulesetId }),
+    entityKind: "parent",
+    now,
+    profile,
+  });
+  assert.equal(customPlan.task.task_type, "custom");
+  assert.equal(customPlan.task.custom_ruleset_id, rulesetId);
+  assert.throws(
+    () => buildCanonicalTaskCreationPlan({
+      draft: draft({ custom_ruleset_id: rulesetId }),
+      entityKind: "parent",
+      now,
+      profile,
+    }),
+    (error: unknown) => error instanceof CanonicalTaskCreationValidationError
+      && error.code === "INVALID_CUSTOM_RULESET_TASK_TYPE",
+  );
+});
+
+test("canonical creation rejects an anonymous Custom Task Type", () => {
+  assert.throws(
+    () => buildCanonicalTaskCreationPlan({
+      draft: draft({ task_type: "custom", custom_ruleset_id: null }),
+      entityKind: "parent",
+      now,
+      profile,
+    }),
+    (error: unknown) => error instanceof CanonicalTaskCreationValidationError && error.code === "MISSING_CUSTOM_RULESET",
+  );
+});
+
+test("canonical creation rejects the retired Goal Task Type for new Tasks", () => {
+  assert.throws(
+    () => buildCanonicalTaskCreationPlan({
+      draft: draft({ task_type: "goal" }),
+      entityKind: "parent",
+      now,
+      profile,
+    }),
+    (error: unknown) => error instanceof CanonicalTaskCreationValidationError
+      && error.code === "INVALID_TASK_TYPE",
+  );
+});
+
+test("canonical creation source validates ownership and persists initial assignment authority", () => {
+  assert.match(canonicalCreationEdgeSource, /custom_ruleset_id/);
+  assert.match(assignmentMigration, /Only Custom Tasks may consume a named Custom ruleset/);
+  assert.match(assignmentMigration, /ruleset\.user_id = p_user_id/);
+  assert.match(assignmentMigration, /insert into public\.adhdice_task_custom_ruleset_assignments/);
+  assert.match(assignmentMigration, /v_effective_from/);
+  assert.match(assignmentMigration, /grant execute on function public\.adhdice_create_canonical_task\(uuid, jsonb\) to service_role/);
+  assert.match(behaviorSelectionMigration, /create or replace function public\.adhdice_seed_task_behavior_selection/);
+  assert.match(behaviorSelectionMigration, /insert into public\.adhdice_task_behavior_selections/);
+  assert.match(behaviorSelectionMigration, /task_type, custom_ruleset_id/);
+  assert.match(behaviorSelectionMigration, /on conflict \(user_id, task_id, effective_from_logical_date\)/i);
+  assert.match(behaviorSelectionMigration, /adhdice_task_custom_ruleset_assignments as/);
 });
 
 test("normal addTask uses trusted canonical creation and fails closed without legacy fallback", async () => {
@@ -236,6 +314,7 @@ test("normal addTask uses trusted canonical creation and fails closed without le
   assert.equal(created?.workflow_state, "none");
   assert.equal(calls[0]?.source, "task_creation");
   assert.equal("user_id" in (calls[0]?.payload ?? {}), true);
+  assert.equal(calls[0]?.payload.task_type, "task");
   assert.deepEqual(tasks.map((task) => task.title), ["Existing Task", "Trusted Task"]);
   assert.deepEqual(revealCalls, [created?.id]);
 
@@ -260,6 +339,28 @@ test("normal addTask uses trusted canonical creation and fails closed without le
   assert.equal(await failedAction.addTask({ title: "Must fail" }), null);
   assert.deepEqual(revealCalls, [created?.id]);
   assert.equal(fallbackCalls, 0);
+});
+
+test("named Custom creation intent reaches the canonical creator with TaskType and ruleset identity", async () => {
+  const calls: TaskInsert[] = [];
+  const rulesetId = "00000000-0000-4000-8000-000000000011";
+  const action = useTaskCreateAction({
+    canonicalTaskCreator: async (payload) => {
+      calls.push(payload);
+      return { data: canonicalTask({ task_type: "custom", custom_ruleset_id: rulesetId }), error: null, usedEnergyFallback: false, usedActualSecondsFallback: false };
+    },
+    client: noDirectTaskInsertClient(),
+    currentUserId: ownerId,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    shouldRouteTaskToInbox: () => false,
+    sortTasksForUi: (value) => value,
+  });
+
+  await action.addTask({ title: "Practice", task_type: "custom", custom_ruleset_id: rulesetId });
+  assert.equal(calls[0]?.task_type, "custom");
+  assert.equal(calls[0]?.custom_ruleset_id, rulesetId);
 });
 
 test("canonical creation returns the persisted boundary and local state without reload", async () => {
@@ -468,6 +569,7 @@ test("Import routes parents, Steps, and Substeps through canonical creation and 
   assert.deepEqual(calls.map((call) => call.source), ["task_import", "task_import", "task_import", "task_import", "task_import"]);
   assert.equal(calls[0]?.payload.due_on, "2026-08-20");
   assert.equal(calls[0]?.payload.repeat_frequency, "daily");
+  assert.equal(calls.every((call) => call.payload.task_type === "task"), true);
   assert.equal(calls[1]?.payload.parent_task_id, tasks[0]?.id);
   assert.equal(calls[2]?.payload.parent_task_id, tasks[1]?.id);
   assert.equal(calls[3]?.payload.parent_task_id, tasks[2]?.id);

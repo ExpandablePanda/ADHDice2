@@ -1,9 +1,9 @@
 "use client";
-import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, CirclePause, CirclePlay, Clock3, Ellipsis, ExternalLink, Eye, EyeOff, Flame, Footprints, GripVertical, ListTodo, Pin, Skull, Tag, TimerReset, Trash2, Trophy, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, CirclePause, CirclePlay, Clock3, Ellipsis, ExternalLink, Eye, EyeOff, Footprints, GripVertical, ListTodo, Pin, Skull, Tag, TimerReset, Trash2, Trophy, X } from "lucide-react";
 import {
   buildMoveIntoParentOptions,
   buildTaskRowContextMenuState,
-  PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE,
+  ChildTypeChooser,
   TaskManagementTableV2,
   TaskTitleDraftInput,
   TaskRowContextMenu,
@@ -19,16 +19,20 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
 import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
+import { resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask } from "@/lib/task-state-engine/action-authority";
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
+import { TaskAttentionChip } from "./task-attention-chip";
+import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
+import type { CustomBehaviorRulesetDeleteActionResult } from "@/lib/custom-behavior-rulesets";
 import { createStableTaskRowModelCache, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
-import { Fragment, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
@@ -48,16 +52,23 @@ import { formatLocalDate } from "@/lib/utils";
 import { formatTaskPriorityLevel, getSelectedTaskPriorityToneClass, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
+  TASK_TABLE_INLINE_RENAME_EDITOR_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TASK_TABLE_LIST_CHIP_CLASS,
   TASK_TABLE_TAG_CHIP_CLASS,
   TASK_TABLE_TITLE_CELL_CLASS,
+  TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS,
   CompactRepeatCadenceControls,
+  TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS,
+  TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS,
   TaskHierarchySearchChip,
+  TaskCurrentStreakChip,
+  TaskListQuickPanelShell,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
-import { AdhdIconButton } from "@/components/ui-system";
+import { AdhdIconButton } from "@/components/ui-system/index";
+import { TaskTypeSelect } from "./task-type-identity";
 import { TaskHierarchyChevronButton } from "./task-hierarchy-chevron-button";
 import { TaskTimerStateChip } from "./task-timer-display";
 import {
@@ -66,6 +77,10 @@ import {
   type ListSortPreference,
 } from "@/lib/task-list-sort";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
+import type { TaskBehaviorPolicy, TaskBehaviorPolicyField, TaskBehaviorPolicyResolutionContext, TaskBehaviorProfiles, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
+import { getTaskTypeSurfaceClassName } from "@/lib/task-type-presentation";
+import { buildTaskTypeSelectionOptions, resolveTaskTypeSelectionOption } from "@/lib/task-type";
+import type { TaskTypePresentation } from "@/lib/task-type-presentation";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 
@@ -143,9 +158,6 @@ function MetadataDisclosureButton({
 type ChildTaskDragState = { depth: number; parentTaskId: string | null; taskId: string };
 type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string };
 
-const QUICK_PANEL_SHELL_CLASS = "mt-2.5 rounded-[1.15rem] border border-[#e7defc] bg-[#fcfbff] px-4 py-3 shadow-[0_14px_34px_rgba(81,61,168,0.08)] dark:border-[#41306c] dark:bg-[#18112d]";
-const QUICK_PANEL_TEXT_INPUT_CLASS = "h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]";
-const QUICK_PANEL_PRIMARY_CHIP_CLASS = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
 const PRIORITY_OPTIONS = [
   ...TASK_PRIORITY_LEVEL_OPTIONS.map((value) => ({ label: value, value })),
 ];
@@ -190,7 +202,7 @@ function formatPreviewPriorityLabel(priority: ChildTaskPreviewPriority) {
 }
 
 function repeatTone(repeat: PrototypeTaskRow["repeat"]) {
-  return repeat === "none" ? TASK_TABLE_INACTIVE_CHIP_CLASS : QUICK_PANEL_PRIMARY_CHIP_CLASS;
+  return repeat === "none" ? TASK_TABLE_INACTIVE_CHIP_CLASS : TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS;
 }
 
 function energyTone(energy: PrototypeTaskRow["energy"]) {
@@ -286,7 +298,7 @@ type TasksTableSourceProps = {
   getFollowTaskDestination?: (taskId: string) => { id: string; label: string } | null;
   overlayNode?: ReactNode;
   overlayOnly?: boolean;
-  onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string) => Promise<{ error: string | null; taskId: string | null }>;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenFocusTimer?: (taskId: string) => void;
   onOpenNote?: (noteId: string) => void;
@@ -298,7 +310,8 @@ type TasksTableSourceProps = {
   onDelayTaskUntil?: (taskId: string, dueOn: string | null) => Promise<boolean> | boolean;
   onRestoreTask?: (taskId: string) => void;
   onOpenTaskHistory?: (taskId: string) => void;
-  onOpenTaskEditor?: (taskId: string) => void;
+  onOpenTaskEditor?: (taskId: string, navigationTaskIds?: string[]) => void;
+  onTaskEditorNavigate?: (taskId: string) => void;
   onOpenTaskInNewTab?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
   onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
@@ -321,6 +334,23 @@ type TasksTableSourceProps = {
   onSetLink?: (taskId: string, nextLink: { label: string; url: string }) => void;
   onSetLinkedNoteIds?: (taskId: string, linkedNoteIds: string[]) => void;
   onSetNotes?: (taskId: string, notes: string) => void;
+  onSetTaskType?: (taskId: string, taskType: TaskType, customRulesetId?: string | null) => void;
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
+  customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
+  taskTypeBehaviorProfiles?: TaskBehaviorProfiles;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
+  namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
+  behaviorSelectionsByTaskId?: TaskBehaviorPolicyResolutionContext["behaviorSelectionsByTaskId"];
+  behaviorPolicyLoading?: boolean;
+  onCreateCustomRuleset?: (name: string, policy: TaskBehaviorPolicy, presentation?: Partial<TaskTypePresentation>) => Promise<CustomBehaviorRuleset | null>;
+  onDeleteCustomRuleset?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
+  onShowCustomRulesetTasks?: (rulesetId: string) => void;
+  onMoveCustomRulesetTasksToTaskAndDelete?: (rulesetId: string) => Promise<boolean | CustomBehaviorRulesetDeleteActionResult> | boolean | CustomBehaviorRulesetDeleteActionResult;
+  onRenameCustomRuleset?: (rulesetId: string, name: string) => Promise<boolean>;
+  onUpdateCustomRulesetPresentation?: (rulesetId: string, presentation: Partial<TaskTypePresentation>) => Promise<boolean> | boolean;
+  onSetTaskBehaviorProfile?: (taskType: TaskType, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
+  onSetCustomRulesetBehaviorProfile?: (rulesetId: string, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
+  onResetTaskBehaviorProfile?: (taskType: TaskType) => Promise<boolean> | boolean;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
   onTogglePinned?: (taskId: string) => void;
   onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
@@ -352,6 +382,7 @@ type TasksTableSourceProps = {
   runningTaskTimers?: RunningTaskTimer[];
   activeTaskTimerIndex?: number;
   requestedOpenTask?: Task | null;
+  editorNavigationTaskIds?: string[];
   suppressDetachedNoticeTaskId?: string | null;
   tasks: Task[];
   rowContext: {
@@ -362,6 +393,7 @@ type TasksTableSourceProps = {
     manualMembershipsByTaskId: Record<string, TaskListId[]>;
     subtasksByTaskId: Record<string, Task[]>;
     taskDisplayStatusByTaskId: Record<string, TaskDisplayStatus>;
+    taskAttentionReasonByTaskId: Readonly<Record<string, TaskAttentionReason>>;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
     taskHistoryStreakSummaryByTaskId: Record<string, TaskHistoryStreakSummary>;
     todayDateKey: string;
@@ -444,6 +476,7 @@ type MeasuredStatusScrollAnchor = {
 
 const TASK_TABLE_COLUMN_MAP: Record<AgentPlanColumnId, TaskManagementTableColumnId> = {
   bucket: "lists",
+  task_type: "task_type",
   date_added: "date_added",
   date_completed: "date_completed",
   last_done: "last_done",
@@ -467,6 +500,7 @@ export function TasksTableAdapter({
   panelProps,
 }: TasksTableAdapterProps) {
   const [rowModelCache] = useState(createStableTaskRowModelCache);
+  const presentationTasks = tableProps.tasks;
   const canRemoveFromCurrentList = (taskId: string) => canRemoveTaskFromCurrentList(
     taskId,
     tableProps.currentListId,
@@ -474,23 +508,23 @@ export function TasksTableAdapter({
     tableProps.rowContext.manualMembershipsByTaskId,
   );
   const committedResultRevision = useMemo(
-    () => tableProps.tasks.map((task) => `${task.id}:${task.revision}`).join("|"),
-    [tableProps.tasks],
+    () => presentationTasks.map((task) => `${task.id}:${task.revision}`).join("|"),
+    [presentationTasks],
   );
   const [rowWindow, setRowWindow] = useState({ count: ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN, revision: committedResultRevision });
   const rowWindowCount = rowWindow.revision === committedResultRevision
     ? rowWindow.count
     : ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN;
   const windowedTasks = useMemo(
-    () => tableProps.tasks.slice(0, rowWindowCount),
-    [rowWindowCount, tableProps.tasks],
+    () => presentationTasks.slice(0, rowWindowCount),
+    [presentationTasks, rowWindowCount],
   );
   useEffect(() => {
     if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
       return;
     }
 
-    const targetIndex = tableProps.tasks.findIndex((task) => task.id === tableProps.highlightedActiveTaskId);
+    const targetIndex = presentationTasks.findIndex((task) => task.id === tableProps.highlightedActiveTaskId);
     if (targetIndex < rowWindowCount) {
       return;
     }
@@ -502,9 +536,9 @@ export function TasksTableAdapter({
       }));
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [committedResultRevision, rowWindowCount, tableProps.highlightedActiveTaskId, tableProps.highlightedScrollToken, tableProps.tasks]);
+  }, [committedResultRevision, presentationTasks, rowWindowCount, tableProps.highlightedActiveTaskId, tableProps.highlightedScrollToken]);
   function buildStatusScrollAnchorTaskIds(taskId: string) {
-    const visibleTaskIds = tableProps.tasks.map((task) => task.id);
+    const visibleTaskIds = presentationTasks.map((task) => task.id);
     const taskIndex = visibleTaskIds.indexOf(taskId);
     if (taskIndex < 0) {
       return [taskId];
@@ -527,11 +561,12 @@ export function TasksTableAdapter({
         subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
         taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+        attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
         todayDateKey: tableProps.rowContext.todayDateKey,
       }));
 
     },
-    [rowModelCache, tableProps.rowContext, tableProps.tasks.length, windowedTasks],
+    [rowModelCache, tableProps.rowContext, windowedTasks],
   );
   const visibleColumns = useMemo<TaskManagementTableColumnId[]>(
     () => [
@@ -558,12 +593,13 @@ export function TasksTableAdapter({
         subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
         taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
+        attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[tableProps.requestedOpenTask.id],
         todayDateKey: tableProps.rowContext.todayDateKey,
       })
       : null,
     [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
   );
-  if (tableProps.tasks.length === 0 && !tableProps.requestedOpenTask) {
+  if (presentationTasks.length === 0 && !tableProps.requestedOpenTask) {
     return (
       <TasksListViewPanel
         {...panelProps}
@@ -594,11 +630,13 @@ export function TasksTableAdapter({
               subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
               taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
               taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+              attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
               todayDateKey: tableProps.rowContext.todayDateKey,
             }))}
           allListOptions={tableProps.allListOptions}
           allNoteOptions={noteOptions}
           allTagOptions={tableProps.allTagOptions}
+          attentionReasonByTaskId={tableProps.rowContext.taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
           highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
@@ -627,6 +665,7 @@ export function TasksTableAdapter({
             }
           }}
           enableInspector
+          editorNavigationTaskIds={tableProps.editorNavigationTaskIds}
           getFollowTaskDestination={tableProps.getFollowTaskDestination}
           onClearSelection={tableProps.onClearSelection}
           overlayNode={tableProps.overlayNode}
@@ -644,6 +683,7 @@ export function TasksTableAdapter({
           onOpenFocusTimer={tableProps.onOpenFocusTimer}
           onOpenNote={tableProps.onOpenNote}
           onOpenTaskEditor={tableProps.onOpenTaskEditor}
+          onTaskEditorNavigate={tableProps.onTaskEditorNavigate}
           onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
           onOpenChildTask={tableProps.onOpenChildTask}
           onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
@@ -670,11 +710,29 @@ export function TasksTableAdapter({
           onTaskLinkChange={tableProps.onSetLink}
           onTaskLinkedNoteIdsChange={tableProps.onSetLinkedNoteIds}
           onTaskNotesChange={tableProps.onSetNotes}
+          onTaskTypeChange={tableProps.onSetTaskType}
+          customBehaviorRulesets={tableProps.customBehaviorRulesets}
+          customBehaviorRulesetProfiles={tableProps.customBehaviorRulesetProfiles}
+          taskTypeBehaviorProfiles={tableProps.taskTypeBehaviorProfiles}
+          behaviorPolicyRevisions={tableProps.behaviorPolicyRevisions}
+          namedCustomRulesetBehaviorPolicyRevisions={tableProps.namedCustomRulesetBehaviorPolicyRevisions}
+          behaviorSelectionsByTaskId={tableProps.behaviorSelectionsByTaskId}
+          behaviorPolicyLogicalDate={tableProps.rowContext.todayDateKey}
+          behaviorPolicyLoading={tableProps.behaviorPolicyLoading}
+          onCreateCustomRuleset={tableProps.onCreateCustomRuleset}
+          onDeleteCustomRuleset={tableProps.onDeleteCustomRuleset}
+          onShowCustomRulesetTasks={tableProps.onShowCustomRulesetTasks}
+          onMoveCustomRulesetTasksToTaskAndDelete={tableProps.onMoveCustomRulesetTasksToTaskAndDelete}
+          onRenameCustomRuleset={tableProps.onRenameCustomRuleset}
+          onUpdateCustomRulesetPresentation={tableProps.onUpdateCustomRulesetPresentation}
+          onTaskBehaviorProfileChange={tableProps.onSetTaskBehaviorProfile}
+          onCustomRulesetBehaviorProfileChange={tableProps.onSetCustomRulesetBehaviorProfile}
+          onResetTaskBehaviorProfile={tableProps.onResetTaskBehaviorProfile}
           onTaskPriorityChange={tableProps.onSetPriority}
           onTaskPinToggle={tableProps.onTogglePinned}
           onTaskRepeatChange={tableProps.onSetRepeat}
           onTaskStatusChange={(taskId, status, scrollAnchorTaskIds, options) => {
-            const expectedTask = tableProps.tasks.find((task) => task.id === taskId) ?? null;
+            const expectedTask = presentationTasks.find((task) => task.id === taskId) ?? null;
             tableProps.onSetStatus?.(
               taskId,
               status,
@@ -696,9 +754,9 @@ export function TasksTableAdapter({
           onToggleTaskList={tableProps.onToggleTaskList}
           primaryBadgeLabel="Live task table"
           rows={rows}
-          hasMoreRows={windowedTasks.length < tableProps.tasks.length}
+          hasMoreRows={windowedTasks.length < presentationTasks.length}
           onLoadMoreRows={() => setRowWindow((current) => ({
-            count: Math.min((current.revision === committedResultRevision ? current.count : rowWindowCount) + ROW_MODEL_WINDOW_BATCH, tableProps.tasks.length),
+            count: Math.min((current.revision === committedResultRevision ? current.count : rowWindowCount) + ROW_MODEL_WINDOW_BATCH, presentationTasks.length),
             revision: committedResultRevision,
           }))}
           runningTaskTimers={tableProps.runningTaskTimers}
@@ -781,7 +839,7 @@ function hasTaskListMembership(listMemberships: Array<{ id: string }>, listId: s
   return listMemberships.some((membership) => membership.id === listId);
 }
 
-function formatPriorityChipLabel(task: Task, focusedTaskIdSet: Set<string>) {
+function formatPriorityChipLabel(task: Task) {
   const activePriorities = buildTaskPrioritySelection(task);
   return activePriorities[0] ? `Priority ${activePriorities[0]}` : "Priority 3";
 }
@@ -819,10 +877,7 @@ function StepHistoryChips({ currentStreak, missedStreak }: { currentStreak: numb
   return (
     <>
       {currentStreak > 0 ? (
-        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#dc6c1c]`}>
-          <Flame className="h-3 w-3" />
-          {currentStreak}
-        </span>
+        <TaskCurrentStreakChip currentStreak={currentStreak} />
       ) : null}
       {missedStreak > 0 ? (
         <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#d94e67]`}>
@@ -850,10 +905,7 @@ function TaskHistoryChips({
   return (
     <>
       {currentStreak > 0 ? (
-        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} ${className ?? ""} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#dc6c1c]`}>
-          <Flame className="h-3 w-3" />
-          {currentStreak}
-        </span>
+        <TaskCurrentStreakChip className={className} currentStreak={currentStreak} />
       ) : null}
       {missedStreak > 0 ? (
         <span className={`${TASK_TABLE_LIST_CHIP_CLASS} ${className ?? ""} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#d94e67]`}>
@@ -940,12 +992,14 @@ function StepsCardPreview({
   allTagOptions,
   childTasksById,
   closeQuickPanel,
+  customBehaviorRulesets = [],
   currentListLabel,
   group,
   isExpanded = true,
   matchingChildTaskIds,
   listDefinitions,
   listMembershipsByTaskId,
+  parentTaskId,
   onCreateChildTask,
   onDeleteStep,
   onOpenHistory,
@@ -964,6 +1018,8 @@ function StepsCardPreview({
   onSetRepeat,
   onSetStatus,
   onSetTags,
+  getAvailableStatuses,
+  isManualActionAllowed,
   onToggleFocusToday,
   onTogglePinned,
   onToggleTaskList,
@@ -972,13 +1028,14 @@ function StepsCardPreview({
   parentStepCreationError,
   parentStepDraftInputRef,
   parentStepDraftValue,
+  parentStepTaskTypeSelectionValue,
   selectedBucket,
   showParentStepDraft,
-  taskHistoryByTaskId,
   todayDateKey,
   onCancelParentStepDraft,
   onCommitParentStepDraft,
   onParentStepDraftChange,
+  onParentStepTaskTypeSelectionChange,
   highlightedActiveTaskId,
   highlightedTaskIds,
   onToggleAllMetadata,
@@ -991,13 +1048,15 @@ function StepsCardPreview({
   allTagOptions: string[];
   childTasksById: Map<string, Task>;
   closeQuickPanel: () => void;
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   currentListLabel?: string | null;
   group: ChildTaskPreviewGroup;
   isExpanded?: boolean;
   matchingChildTaskIds?: ReadonlySet<string>;
   listDefinitions: TaskListDefinition[];
   listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
-  onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
+  parentTaskId: string;
+  onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string) => Promise<{ error: string | null; taskId: string | null }>;
   onDeleteStep?: (taskId: string) => void;
   onOpenHistory?: (taskId: string) => void;
   onOpenStep: (taskId: string) => void;
@@ -1013,6 +1072,8 @@ function StepsCardPreview({
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
   onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
+  getAvailableStatuses?: (item: ChildTaskPreview) => readonly TaskDisplayStatus[];
+  isManualActionAllowed?: (item: ChildTaskPreview, action: TaskManualAction) => boolean;
   onSetStatus?: (
     taskId: string,
     status: TaskStatus,
@@ -1029,13 +1090,14 @@ function StepsCardPreview({
   parentStepCreationError?: string | null;
   parentStepDraftInputRef?: RefObject<HTMLInputElement | null>;
   parentStepDraftValue: string;
+  parentStepTaskTypeSelectionValue: string;
   selectedBucket: string;
   showParentStepDraft: boolean;
-  taskHistoryByTaskId: Record<string, TaskHistory[]>;
   todayDateKey: string;
   onCancelParentStepDraft?: () => void;
-  onCommitParentStepDraft?: () => void;
+  onCommitParentStepDraft?: (taskTypeSelectionValue: string) => void;
   onParentStepDraftChange?: (value: string) => void;
+  onParentStepTaskTypeSelectionChange?: (value: string) => void;
   highlightedActiveTaskId?: string | null;
   highlightedTaskIds?: string[];
   onToggleAllMetadata: () => void;
@@ -1056,6 +1118,26 @@ function StepsCardPreview({
   const [substepDraftParentId, setSubstepDraftParentId] = useState<string | null>(null);
   const [substepTitleDrafts, setSubstepTitleDrafts] = useState<Record<string, string>>({});
   const [substepCreationErrors, setSubstepCreationErrors] = useState<Record<string, string | null>>({});
+  const [substepTaskTypeSelectionValue, setSubstepTaskTypeSelectionValue] = useState("task");
+  const taskTypeInteractionParentIdRef = useRef<string | null>(null);
+  const taskTypeOptions = useMemo(() => buildTaskTypeSelectionOptions(customBehaviorRulesets), [customBehaviorRulesets]);
+
+  const beginTaskTypeInteraction = (parentTaskId: string) => {
+    taskTypeInteractionParentIdRef.current = parentTaskId;
+  };
+  const endTaskTypeInteraction = (parentTaskId: string) => {
+    if (taskTypeInteractionParentIdRef.current === parentTaskId) {
+      taskTypeInteractionParentIdRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    taskTypeInteractionParentIdRef.current = null;
+  }, [parentTaskId]);
+  useEffect(() => () => {
+    taskTypeInteractionParentIdRef.current = null;
+  }, []);
+
   const highlightedTaskIdSet = useMemo(() => new Set(highlightedTaskIds ?? []), [highlightedTaskIds]);
   const collapsedStepIdSet = useMemo(
     () => new Set(Object.entries(collapsedStepIds).flatMap(([taskId, isCollapsed]) => (isCollapsed ? [taskId] : []))),
@@ -1115,13 +1197,15 @@ function StepsCardPreview({
   }
 
   const commitSubstepDraft = async (parentTaskId: string) => {
+    endTaskTypeInteraction(parentTaskId);
     const title = (substepTitleDrafts[parentTaskId] ?? "").trim();
     if (!title) {
       setSubstepDraftParentId(null);
+      setSubstepTaskTypeSelectionValue("task");
       return;
     }
 
-    const result = await onCreateChildTask?.(parentTaskId, title);
+    const result = await onCreateChildTask?.(parentTaskId, title, substepTaskTypeSelectionValue);
     if (result?.error) {
       setSubstepCreationErrors((current) => ({ ...current, [parentTaskId]: result.error }));
       return;
@@ -1129,6 +1213,19 @@ function StepsCardPreview({
     setSubstepTitleDrafts((current) => ({ ...current, [parentTaskId]: "" }));
     setSubstepCreationErrors((current) => ({ ...current, [parentTaskId]: null }));
     setSubstepDraftParentId(null);
+    setSubstepTaskTypeSelectionValue("task");
+  };
+
+  const cancelSubstepDraft = (parentTaskId = substepDraftParentId) => {
+    if (parentTaskId) {
+      endTaskTypeInteraction(parentTaskId);
+    }
+    setSubstepDraftParentId(null);
+    if (parentTaskId) {
+      setSubstepTitleDrafts((current) => ({ ...current, [parentTaskId]: "" }));
+      setSubstepCreationErrors((current) => ({ ...current, [parentTaskId]: null }));
+    }
+    setSubstepTaskTypeSelectionValue("task");
   };
 
   const clearChildTaskDragState = () => {
@@ -1252,16 +1349,26 @@ function StepsCardPreview({
         <div className="mt-2 rounded-[0.95rem] border border-[#e7defc] bg-[#fcfbff] px-3 py-3 dark:border-[#41306c] dark:bg-[#18112d]">
           <div className="flex flex-wrap items-center gap-2">
             <input
-              className={`${QUICK_PANEL_TEXT_INPUT_CLASS} min-w-[14rem] flex-1`}
+              className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} min-w-[14rem] flex-1`}
               onChange={(event) => onParentStepDraftChange?.(event.target.value)}
+              onBlur={(event) => {
+                if (taskTypeInteractionParentIdRef.current === parentTaskId) return;
+                if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select], [data-task-type-select-menu]")) return;
+                if (parentStepDraftValue.trim()) {
+                  endTaskTypeInteraction(parentTaskId);
+                  onCommitParentStepDraft?.(parentStepTaskTypeSelectionValue);
+                }
+              }}
               onKeyDown={(event) => {
                 event.stopPropagation();
                 if (event.key === "Enter") {
                   event.preventDefault();
-                  onCommitParentStepDraft?.();
+                  endTaskTypeInteraction(parentTaskId);
+                  onCommitParentStepDraft?.(parentStepTaskTypeSelectionValue);
                 }
                 if (event.key === "Escape") {
                   event.preventDefault();
+                  endTaskTypeInteraction(parentTaskId);
                   onCancelParentStepDraft?.();
                 }
               }}
@@ -1269,8 +1376,19 @@ function StepsCardPreview({
               ref={parentStepDraftInputRef}
               value={parentStepDraftValue}
             />
-            <TaskTableChipButton onClick={() => onCommitParentStepDraft?.()} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Add Step</TaskTableChipButton>
-            <TaskTableChipButton onClick={() => onCancelParentStepDraft?.()} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
+            <TaskTypeSelect
+              ariaLabel="Step Task Type"
+              className="mt-0"
+              label="Step Task Type"
+              onInteractionEnd={() => endTaskTypeInteraction(parentTaskId)}
+              onInteractionStart={() => beginTaskTypeInteraction(parentTaskId)}
+              onChange={onParentStepTaskTypeSelectionChange ?? (() => undefined)}
+              options={taskTypeOptions}
+              size="compact"
+              value={parentStepTaskTypeSelectionValue}
+            />
+            <TaskTableChipButton onClick={() => { endTaskTypeInteraction(parentTaskId); onCommitParentStepDraft?.(parentStepTaskTypeSelectionValue); }} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Add Step</TaskTableChipButton>
+            <TaskTableChipButton onClick={() => { endTaskTypeInteraction(parentTaskId); onCancelParentStepDraft?.(); }} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
           </div>
           {parentStepCreationError ? (
             <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">{parentStepCreationError}</p>
@@ -1288,6 +1406,8 @@ function StepsCardPreview({
             const siblingItems = group.items.filter((candidate) => candidate.parentTaskId === item.parentTaskId && candidate.depth === item.depth);
             const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
             const childTask = childTasksById.get(item.id) ?? null;
+            const childTaskTypeOption = resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets);
+            const childTaskSurface = getTaskTypeSurfaceClassName(childTaskTypeOption.accentKey);
             const scheduleLabel = formatStepPreviewSchedule(item);
             const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.75;
             const activePanelMode = activeQuickPanel?.taskId === item.id ? activeQuickPanel.mode : null;
@@ -1330,7 +1450,7 @@ function StepsCardPreview({
               <Fragment key={item.id}>
               {itemIndex === groupedItems.normalItems.length ? completedStepsHeader : null}
               <li
-                className={`cursor-pointer rounded-[0.95rem] border px-1.5 py-2.5 transition hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90 ${getHighlightedListRowClassName(item.id, highlightedActiveTaskId, highlightedTaskIdSet) || "border-transparent bg-transparent"} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                className={`cursor-pointer rounded-[0.95rem] border px-1.5 py-2.5 transition ${childTaskSurface} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90 ${getHighlightedListRowClassName(item.id, highlightedActiveTaskId, highlightedTaskIdSet) || ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                 data-same-table-step-row={item.id}
                 onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                 onDrop={(event) => dropChildTaskOnItem(event, item)}
@@ -1366,12 +1486,12 @@ function StepsCardPreview({
                             <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
                               <TaskTitleDraftInput
                                 autoFocus
-                                className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                                className={`${TASK_TABLE_INLINE_RENAME_EDITOR_CLASS} min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                                 initialValue={titleDraft}
                                 onCommit={commitTitle}
                                 onDone={() => setEditingStepTitleId((current) => (current === item.id ? null : current))}
                                 onDraftChange={setStepTitleDraft}
-                                style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                                style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                                 taskId={item.id}
                               />
                             </span>
@@ -1441,20 +1561,17 @@ function StepsCardPreview({
                               </>
                             ) : null}
                             {onCreateChildTask ? (
-                              <button
-                                aria-label={`Add substep to ${item.title || "Untitled step"}`}
-                                className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#6f57f6] opacity-78 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
-                                data-same-table-step-add={item.id}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
-                                  setSubstepDraftParentId(item.id);
-                                }}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                type="button"
-                              >
-                                <Footprints className="h-3.5 w-3.5" />
-                              </button>
+                              <div data-same-table-step-add={item.id}>
+                                <ChildTypeChooser
+                                  aria-label={`Add substep to ${item.title || "Untitled step"}`}
+                                  childLabel="Substep"
+                                  onChooseTask={() => {
+                                    taskTypeInteractionParentIdRef.current = null;
+                                    setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
+                                    setSubstepDraftParentId(item.id);
+                                  }}
+                                />
+                              </div>
                             ) : null}
                             {onTogglePinned ? (
                               <AdhdIconButton
@@ -1527,20 +1644,17 @@ function StepsCardPreview({
                           </>
                         ) : null}
                         {onCreateChildTask ? (
-                          <button
-                            aria-label={`Add substep to ${item.title || "Untitled step"}`}
-                            className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#6f57f6] opacity-78 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
-                            data-same-table-step-add={item.id}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
-                              setSubstepDraftParentId(item.id);
-                            }}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            type="button"
-                          >
-                            <Footprints className="h-3.5 w-3.5" />
-                          </button>
+                          <div data-same-table-step-add={item.id}>
+                            <ChildTypeChooser
+                              aria-label={`Add substep to ${item.title || "Untitled step"}`}
+                              childLabel="Substep"
+                              onChooseTask={() => {
+                                taskTypeInteractionParentIdRef.current = null;
+                                setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
+                                setSubstepDraftParentId(item.id);
+                              }}
+                            />
+                          </div>
                         ) : null}
                         {onTogglePinned ? (
                           <AdhdIconButton
@@ -1597,9 +1711,10 @@ function StepsCardPreview({
                         <TaskStatusCircleRail
                           className="min-w-max flex-nowrap"
                           currentStatus={displayStatus}
+                          emphasizeMissed
                           onSetStatus={(status) => {
                             if (status === "delayed") {
-                              if (canTaskDelay({ dueOn: item.dueOn, status: displayStatus }) && onDelayTaskUntil) {
+                              if (canTaskDelay({ dueOn: item.dueOn, status: displayStatus }) && (isManualActionAllowed?.(item, "delay") ?? true) && onDelayTaskUntil) {
                                 onOpenQuickPanel(item.id, "delay");
                               }
                               return;
@@ -1610,10 +1725,11 @@ function StepsCardPreview({
                               onSetStatus?.(item.id, status, childTask, [item.id]);
                             }
                           }}
-                          options={getSelectableTaskDisplayStatusesForTask({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: displayStatus }).map((status) => ({
+                          options={(getAvailableStatuses?.(item) ?? getSelectableTaskDisplayStatusesForTask({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: displayStatus })).map((status) => ({
                             label: formatTaskStatusLabel(status),
                             value: status,
                           }))}
+                          preserveCurrentStatus
                           statusLabelPrefix={`Set ${item.depth > 1 ? "substep" : "step"} status to`}
                         />
                       </div>
@@ -1623,7 +1739,7 @@ function StepsCardPreview({
                       </MetadataChipButton>
                       <MetadataChipButton
                         active={item.isFocused}
-                        activeToneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}
+                        activeToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
                         onClick={() => onToggleFocusToday?.(item.id)}
                         toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
                       >
@@ -1635,7 +1751,7 @@ function StepsCardPreview({
                         onClick={() => onOpenQuickPanel(item.id, "priority")}
                         toneClassName={activePriorities[0] ? priorityTone(activePriorities[0]) : TASK_TABLE_INACTIVE_CHIP_CLASS}
                       >
-                        {childTask ? formatPriorityChipLabel(childTask, new Set()) : activePriorities[0] ? formatPreviewPriorityLabel(activePriorities[0]) : "Priority 3"}
+                        {childTask ? formatPriorityChipLabel(childTask) : activePriorities[0] ? formatPreviewPriorityLabel(activePriorities[0]) : "Priority 3"}
                       </MetadataChipButton>
                       <MetadataChipButton active={activePanelMode === "repeat"} onClick={() => onOpenQuickPanel(item.id, "repeat")}>
                         {repeatSummary || "No Repeat"}
@@ -1699,13 +1815,15 @@ function StepsCardPreview({
                   >
                     <input
                       autoFocus
-                      className={`${QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
-                      onBlur={() => {
+                      className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
+                      onBlur={(event) => {
+                        if (taskTypeInteractionParentIdRef.current === item.id) return;
+                        if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select], [data-task-type-select-menu]")) return;
                         if ((substepTitleDrafts[item.id] ?? "").trim()) {
                           void commitSubstepDraft(item.id);
                           return;
                         }
-                        setSubstepDraftParentId(null);
+                        cancelSubstepDraft();
                       }}
                       onChange={(event) => {
                         setSubstepTitleDrafts((current) => ({ ...current, [item.id]: event.target.value }));
@@ -1715,13 +1833,24 @@ function StepsCardPreview({
                         event.stopPropagation();
                         if (event.key === "Escape") {
                           event.preventDefault();
-                          setSubstepDraftParentId(null);
+                          cancelSubstepDraft();
                         }
                       }}
                       placeholder="Substep title..."
                       value={substepTitleDrafts[item.id] ?? ""}
                     />
-                    <TaskTableChipButton toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS} type="submit">Add</TaskTableChipButton>
+                    <TaskTypeSelect
+                      ariaLabel="Substep Task Type"
+                      className="mt-0"
+                      label="Substep Task Type"
+                      onInteractionEnd={() => endTaskTypeInteraction(item.id)}
+                      onInteractionStart={() => beginTaskTypeInteraction(item.id)}
+                      onChange={setSubstepTaskTypeSelectionValue}
+                      options={taskTypeOptions}
+                      size="compact"
+                      value={substepTaskTypeSelectionValue}
+                    />
+                    <TaskTableChipButton toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS} type="submit">Add</TaskTableChipButton>
                     {substepCreationErrors[item.id] ? <p className="text-xs font-medium text-[#d94e67] dark:text-[#ff9eaf]">{substepCreationErrors[item.id]}</p> : null}
                   </form>
                 ) : null}
@@ -1861,28 +1990,6 @@ function MetadataChipButton({
   );
 }
 
-function QuickPanelShell({
-  children,
-  onClose,
-  title,
-}: {
-  children: ReactNode;
-  onClose: () => void;
-  title: string;
-}) {
-  return (
-    <div className={QUICK_PANEL_SHELL_CLASS} onClick={(event) => event.stopPropagation()}>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d82b6] dark:text-white/45">
-          {title}
-        </p>
-        <TaskTableChipButton onClick={onClose}>Close</TaskTableChipButton>
-      </div>
-      {children}
-    </div>
-  );
-}
-
 function QuickChipOption({
   active = false,
   activeToneClassName = TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
@@ -1904,13 +2011,15 @@ function QuickChipOption({
   );
 }
 
-function TagsQuickPanel({
+export function TagsQuickPanel({
   allTagOptions,
+  entityLabel = "task",
   onClose,
   onSave,
   tags,
 }: {
   allTagOptions: string[];
+  entityLabel?: string;
   onClose: () => void;
   onSave: (tags: string[]) => void;
   tags: string[];
@@ -1940,11 +2049,11 @@ function TagsQuickPanel({
   };
 
   return (
-    <QuickPanelShell onClose={onClose} title="Tags">
+    <TaskListQuickPanelShell onClose={onClose} title="Tags">
       <div className="space-y-3">
         <div>
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#938ab8] dark:text-white/45">
-            On this task
+            {`On this ${entityLabel}`}
           </p>
           <div className="flex flex-wrap gap-2">
             {tags.length > 0 ? tags.map((tag) => (
@@ -1957,13 +2066,13 @@ function TagsQuickPanel({
                 <X className="ml-1 h-3.5 w-3.5" />
               </TaskTableChipButton>
             )) : (
-              <span className="text-sm text-[#7d7597] dark:text-white/55">No tags on this task yet.</span>
+              <span className="text-sm text-[#7d7597] dark:text-white/55">{`No tags on this ${entityLabel} yet.`}</span>
             )}
           </div>
         </div>
         <div className="space-y-3">
           <input
-            className={`${QUICK_PANEL_TEXT_INPUT_CLASS} w-full`}
+            className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} w-full`}
             onChange={(event) => setTagDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -1975,12 +2084,12 @@ function TagsQuickPanel({
             value={tagDraft}
           />
           {exactMatchTag ? (
-            <TaskTableChipButton onClick={() => onSave(dedupeTaskTagLabels([...tags, exactMatchTag]))} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>
+            <TaskTableChipButton onClick={() => onSave(dedupeTaskTagLabels([...tags, exactMatchTag]))} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>
               Use #{exactMatchTag}
             </TaskTableChipButton>
           ) : null}
           {normalizedDraft && !exactMatchTag ? (
-            <TaskTableChipButton onClick={addTag} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>
+            <TaskTableChipButton onClick={addTag} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>
               {`Add "${formatNewTaskTagLabel(tagDraft)}"`}
             </TaskTableChipButton>
           ) : null}
@@ -2012,7 +2121,7 @@ function TagsQuickPanel({
           )}
         </div>
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2034,7 +2143,7 @@ function DueQuickPanel({
   const today = todayDateKey;
 
   return (
-    <QuickPanelShell onClose={onClose} title="Due Date">
+    <TaskListQuickPanelShell onClose={onClose} title="Due Date">
       <div className="flex flex-wrap gap-2">
         <QuickChipOption active={dateDraft === ""} onClick={() => { setDateDraft(""); setTimeDraft(""); }}>
           No date
@@ -2051,20 +2160,20 @@ function DueQuickPanel({
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
         <input
-          className={QUICK_PANEL_TEXT_INPUT_CLASS}
+          className={TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS}
           onChange={(event) => setDateDraft(event.target.value)}
           type="date"
           value={dateDraft}
         />
         <input
-          className={QUICK_PANEL_TEXT_INPUT_CLASS}
+          className={TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS}
           onChange={(event) => setTimeDraft(event.target.value)}
           type="time"
           value={timeDraft}
         />
-        <TaskTableChipButton onClick={() => onSave({ dueOn: dateDraft, dueTime: timeDraft })} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Apply</TaskTableChipButton>
+        <TaskTableChipButton onClick={() => onSave({ dueOn: dateDraft, dueTime: timeDraft })} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Apply</TaskTableChipButton>
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2082,11 +2191,11 @@ function DelayQuickPanel({
   const anchorDateKey = getDelayAnchorDate(dueOn, todayDateKey);
 
   return (
-    <QuickPanelShell onClose={onClose} title="Delay Task">
+    <TaskListQuickPanelShell onClose={onClose} title="Delay Task">
       <TaskDelayPicker
         anchorDateKey={anchorDateKey}
         description="Move this due date forward and keep the task visibly Delayed until that new date arrives."
-        inputClassName={QUICK_PANEL_TEXT_INPUT_CLASS}
+        inputClassName={TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS}
         onCancel={onClose}
         onSave={async (nextDueOn) => {
           const didSave = await onSave(nextDueOn);
@@ -2095,10 +2204,10 @@ function DelayQuickPanel({
           }
           return didSave;
         }}
-        primaryToneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}
+        primaryToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
         saveLabel="Apply delay"
       />
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2116,7 +2225,7 @@ function PriorityQuickPanel({
   };
 
   return (
-    <QuickPanelShell onClose={onClose} title="Priority">
+    <TaskListQuickPanelShell onClose={onClose} title="Priority">
       <div className="flex flex-wrap gap-2">
         {PRIORITY_OPTIONS.map((option) => (
           <TaskTableChipButton
@@ -2128,7 +2237,7 @@ function PriorityQuickPanel({
           </TaskTableChipButton>
         ))}
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2210,7 +2319,7 @@ function RepeatQuickPanel({
   };
 
   return (
-    <QuickPanelShell onClose={onClose} title="Repeat">
+    <TaskListQuickPanelShell onClose={onClose} title="Repeat">
       <div className="flex flex-wrap gap-2">
         {REPEAT_OPTIONS.map((option) => (
           <QuickChipOption
@@ -2233,7 +2342,7 @@ function RepeatQuickPanel({
       {repeatFrequency !== "none" ? (
         <div className="mt-3 space-y-2">
           <CompactRepeatCadenceControls
-            activeToneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}
+            activeToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
             dayInputProps={{
               inputMode: "numeric",
               max: 31,
@@ -2299,7 +2408,7 @@ function RepeatQuickPanel({
           />
         </div>
       ) : null}
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2317,7 +2426,7 @@ function ListQuickPanel({
   const activeListIds = new Set(listMemberships.map((membership) => membership.id));
 
   return (
-    <QuickPanelShell onClose={onClose} title="Lists">
+    <TaskListQuickPanelShell onClose={onClose} title="Lists">
       <div className="flex flex-wrap gap-2">
         {listDefinitions.map((definition) => (
           <QuickChipOption
@@ -2330,7 +2439,7 @@ function ListQuickPanel({
           </QuickChipOption>
         ))}
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2351,7 +2460,7 @@ function EstimatedQuickPanel({
   };
 
   return (
-    <QuickPanelShell onClose={onClose} title="Estimated Time">
+    <TaskListQuickPanelShell onClose={onClose} title="Estimated Time">
       <div className="flex flex-wrap gap-2">
         {[5, 10, 15, 20, 30, 45, 60].map((option) => (
           <QuickChipOption active={minutes === option} key={option} onClick={() => onSave(option)}>
@@ -2364,7 +2473,7 @@ function EstimatedQuickPanel({
       </div>
       <div className="mt-3 flex flex-col gap-2 sm:flex-row">
         <input
-          className={`${QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
+          className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
           min={0}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -2377,9 +2486,9 @@ function EstimatedQuickPanel({
           type="number"
           value={draft}
         />
-        <TaskTableChipButton onClick={saveDraft} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save</TaskTableChipButton>
+        <TaskTableChipButton onClick={saveDraft} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save</TaskTableChipButton>
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2412,14 +2521,14 @@ function ActualQuickPanel({
   };
 
   return (
-    <QuickPanelShell onClose={onClose} title="Actual Time">
+    <TaskListQuickPanelShell onClose={onClose} title="Actual Time">
       <p className="mb-3 text-sm text-[#7d7597] dark:text-white/55">Current time: {formatListActual(seconds)}</p>
       <div className="mb-3 flex flex-wrap gap-2">
         {timer ? <><TaskTableChipButton className="gap-2" onClick={timer.pausedAt ? onResumeTimer : onPauseTimer} toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}>{timer.pausedAt ? <CirclePlay className="h-3.5 w-3.5" /> : <CirclePause className="h-3.5 w-3.5" />}{timer.pausedAt ? "Resume timer" : "Pause timer"}</TaskTableChipButton><TaskTableChipButton className="gap-2" onClick={onStopTimer} toneClassName="border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]"><TimerReset className="h-3.5 w-3.5" />Stop & Save</TaskTableChipButton></> : <TaskTableChipButton className="gap-2" onClick={onStartTimer} toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}><CirclePlay className="h-3.5 w-3.5" />Start timer</TaskTableChipButton>}
       </div>
       <div className="flex flex-col gap-2 sm:flex-row">
         <input
-          className={`${QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
+          className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
           min={0}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -2432,10 +2541,10 @@ function ActualQuickPanel({
           type="number"
           value={draft}
         />
-        <TaskTableChipButton onClick={saveDraft} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save</TaskTableChipButton>
+        <TaskTableChipButton onClick={saveDraft} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save</TaskTableChipButton>
         {onOpenManual ? <TaskTableChipButton onClick={onOpenManual} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Manual entry</TaskTableChipButton> : null}
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2450,7 +2559,7 @@ function EnergyQuickPanel({
 }) {
   const options: PrototypeTaskRow["energy"][] = ["none", "low", "medium", "high"];
   return (
-    <QuickPanelShell onClose={onClose} title="Energy">
+    <TaskListQuickPanelShell onClose={onClose} title="Energy">
       <div className="flex flex-wrap gap-2">
         {options.map((option) => (
           <QuickChipOption active={energy === option} activeToneClassName={energyTone(option)} key={option} onClick={() => onSave(option)}>
@@ -2458,7 +2567,7 @@ function EnergyQuickPanel({
           </QuickChipOption>
         ))}
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2477,16 +2586,16 @@ function LinkQuickPanel({
   const [urlDraft, setUrlDraft] = useState(url);
 
   return (
-    <QuickPanelShell onClose={onClose} title="Link">
+    <TaskListQuickPanelShell onClose={onClose} title="Link">
       <div className="grid gap-2">
-        <input className={QUICK_PANEL_TEXT_INPUT_CLASS} onChange={(event) => setLabelDraft(event.target.value)} placeholder="Label" value={labelDraft} />
-        <input className={QUICK_PANEL_TEXT_INPUT_CLASS} onChange={(event) => setUrlDraft(event.target.value)} placeholder="https://..." value={urlDraft} />
+        <input className={TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} onChange={(event) => setLabelDraft(event.target.value)} placeholder="Label" value={labelDraft} />
+        <input className={TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} onChange={(event) => setUrlDraft(event.target.value)} placeholder="https://..." value={urlDraft} />
       </div>
       <div className="mt-3 flex justify-end gap-2">
         <TaskTableChipButton onClick={() => onSave({ label: "", url: "" })} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Clear link</TaskTableChipButton>
-        <TaskTableChipButton onClick={() => onSave({ label: labelDraft.trim(), url: urlDraft.trim() })} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save link</TaskTableChipButton>
+        <TaskTableChipButton onClick={() => onSave({ label: labelDraft.trim(), url: urlDraft.trim() })} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save link</TaskTableChipButton>
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2501,18 +2610,18 @@ function NotesQuickPanel({
 }) {
   const [draft, setDraft] = useState(notes);
   return (
-    <QuickPanelShell onClose={onClose} title="Notes">
+    <TaskListQuickPanelShell onClose={onClose} title="Notes">
       <textarea
-        className={`${QUICK_PANEL_TEXT_INPUT_CLASS} min-h-[7rem] w-full resize-none py-3`}
+        className={`${TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS} min-h-[7rem] w-full resize-none py-3`}
         onChange={(event) => setDraft(event.target.value)}
         placeholder="Add notes"
         value={draft}
       />
       <div className="mt-3 flex justify-end gap-2">
         <TaskTableChipButton onClick={() => onSave("")} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Clear notes</TaskTableChipButton>
-        <TaskTableChipButton onClick={() => onSave(draft)} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save notes</TaskTableChipButton>
+        <TaskTableChipButton onClick={() => onSave(draft)} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save notes</TaskTableChipButton>
       </div>
-    </QuickPanelShell>
+    </TaskListQuickPanelShell>
   );
 }
 
@@ -2541,6 +2650,7 @@ function TasksSimpleList({
   const [showAllSearchStepsByTaskId, setShowAllSearchStepsByTaskId] = useState<Record<string, boolean>>({});
   const [parentStepDraftTaskId, setParentStepDraftTaskId] = useState<string | null>(null);
   const [parentStepTitleDrafts, setParentStepTitleDrafts] = useState<Record<string, string>>({});
+  const [parentStepTaskTypeSelectionValues, setParentStepTaskTypeSelectionValues] = useState<Record<string, string>>({});
   const [parentStepCreationErrors, setParentStepCreationErrors] = useState<Record<string, string | null>>({});
   const [taskTitleDrafts, setTaskTitleDrafts] = useState<Record<string, string>>({});
   const listShellRef = useRef<HTMLDivElement | null>(null);
@@ -2549,14 +2659,15 @@ function TasksSimpleList({
   const parentStepDraftInputRef = useRef<HTMLInputElement | null>(null);
   const lastBuildTaskTableRowCountRef = useRef(snapshotBuildTaskTableRowDebugCount());
   const getShowAllSearchStepsKey = (taskId: string) => `${tableProps.hierarchyScopeKey ?? ""}:${taskId}`;
+  const presentationTasks = tableProps.tasks;
   const tasks = useMemo(
-    () => sortListParentTasks(tableProps.tasks, listSortPreference, {
+    () => sortListParentTasks(presentationTasks, listSortPreference, {
       taskDisplayStatusByTaskId: tableProps.rowContext.taskDisplayStatusByTaskId,
       taskHistoryByTaskId: tableProps.rowContext.taskHistoryByTaskId,
       taskHistoryStreakSummaryByTaskId: tableProps.rowContext.taskHistoryStreakSummaryByTaskId,
       todayDateKey: tableProps.rowContext.todayDateKey,
     }),
-    [listSortPreference, tableProps.rowContext.taskDisplayStatusByTaskId, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.taskHistoryStreakSummaryByTaskId, tableProps.rowContext.todayDateKey, tableProps.tasks],
+    [listSortPreference, presentationTasks, tableProps.rowContext.taskDisplayStatusByTaskId, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.taskHistoryStreakSummaryByTaskId, tableProps.rowContext.todayDateKey],
   );
   const committedResultRevision = useMemo(
     () => tasks.map((task) => `${task.id}:${task.revision}`).join("|"),
@@ -2599,6 +2710,44 @@ function TasksSimpleList({
     return () => observer.disconnect();
   }, [committedResultRevision, rowWindowCount, tasks.length, windowedTasks.length]);
   const rowContext = tableProps.rowContext;
+  const getPolicyFilteredTaskStatuses = (input: {
+    customRulesetId?: string | null;
+    dueOn: string | null;
+    repeatFrequency: Task["repeat_frequency"];
+    status: TaskDisplayStatus;
+    taskId: string;
+    taskType: TaskType;
+  }) => resolveTaskStatusOptionsForTask({
+    behaviorPolicyRevisions: tableProps.behaviorPolicyRevisions,
+    behaviorProfiles: tableProps.taskTypeBehaviorProfiles,
+    behaviorSelectionsByTaskId: tableProps.behaviorSelectionsByTaskId,
+    customRulesetId: input.customRulesetId,
+    logicalDate: rowContext.todayDateKey,
+    namedCustomRulesetBehaviorPolicyRevisions: tableProps.namedCustomRulesetBehaviorPolicyRevisions,
+    policyLoading: tableProps.behaviorPolicyLoading,
+    statuses: getSelectableTaskDisplayStatusesForTask(input),
+    taskId: input.taskId,
+    taskType: input.taskType,
+  });
+  const isListManualActionAllowedForIdentity = (task: { customRulesetId?: string | null; id: string; taskType: TaskType }, action: TaskManualAction) => {
+    if (tableProps.behaviorPolicyLoading) return false;
+    return resolveTaskManualActionAvailabilityForTask({
+      action,
+      behaviorPolicyRevisions: tableProps.behaviorPolicyRevisions,
+      behaviorProfiles: tableProps.taskTypeBehaviorProfiles,
+      behaviorSelectionsByTaskId: tableProps.behaviorSelectionsByTaskId,
+      customRulesetId: task.customRulesetId,
+      logicalDate: rowContext.todayDateKey,
+      namedCustomRulesetBehaviorPolicyRevisions: tableProps.namedCustomRulesetBehaviorPolicyRevisions,
+      taskId: task.id,
+      taskType: task.taskType,
+    }).available;
+  };
+  const isListManualActionAllowed = (task: Pick<Task, "id" | "task_type" | "custom_ruleset_id">, action: TaskManualAction) => isListManualActionAllowedForIdentity({
+    customRulesetId: task.custom_ruleset_id,
+    id: task.id,
+    taskType: task.task_type,
+  }, action);
   const runningTimerByTaskId = useMemo(
     () => new Map((tableProps.runningTaskTimers ?? []).map((timer) => [timer.taskId, timer] as const)),
     [tableProps.runningTaskTimers],
@@ -2688,35 +2837,35 @@ function TasksSimpleList({
     () => new Map([...(tableProps.allTasks ?? tasks), ...tasks].map((task) => [task.id, task])),
     [tableProps.allTasks, tasks],
   );
+  const getOrCreateTaskRow = useCallback(
+    (task: Task) => rowModelCache.getOrCreate(task, {
+      displayStatus: rowContext.taskDisplayStatusByTaskId[task.id],
+      focusedTaskIdSet: rowContext.focusedTaskIdSet,
+      linkedNotes: rowContext.linkedNotesByTaskId[task.id] ?? [],
+      listDefinitions: rowContext.listDefinitions,
+      listMemberships: rowContext.listMembershipsByTaskId[task.id] ?? [],
+      subtasks: rowContext.subtasksByTaskId[task.id] ?? [],
+      taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
+      taskHistoryStreakSummary: rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+      attentionReason: rowContext.taskAttentionReasonByTaskId[task.id],
+      todayDateKey: rowContext.todayDateKey,
+    }),
+    [rowContext, rowModelCache],
+  );
+  const getRowById = useCallback(
+    (taskId: string) => {
+      const task = taskById.get(taskId);
+      return task ? getOrCreateTaskRow(task) : null;
+    },
+    [getOrCreateTaskRow, taskById],
+  );
   const overlayRows = useMemo(
-    () => tableProps.requestedOpenTask ? [rowModelCache.getOrCreate(tableProps.requestedOpenTask, {
-      displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[tableProps.requestedOpenTask.id],
-      focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
-      linkedNotes: tableProps.rowContext.linkedNotesByTaskId[tableProps.requestedOpenTask.id] ?? [],
-      listDefinitions: tableProps.rowContext.listDefinitions,
-      listMemberships: tableProps.rowContext.listMembershipsByTaskId[tableProps.requestedOpenTask.id] ?? [],
-      subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
-      taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
-      taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
-      todayDateKey: tableProps.rowContext.todayDateKey,
-    })] : [],
-    [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
+    () => tableProps.requestedOpenTask ? [getOrCreateTaskRow(tableProps.requestedOpenTask)] : [],
+    [getOrCreateTaskRow, tableProps.requestedOpenTask],
   );
   const requestedOpenTaskRow = useMemo(
-    () => tableProps.requestedOpenTask
-      ? rowModelCache.getOrCreate(tableProps.requestedOpenTask, {
-        displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[tableProps.requestedOpenTask.id],
-        focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
-        linkedNotes: tableProps.rowContext.linkedNotesByTaskId[tableProps.requestedOpenTask.id] ?? [],
-        listDefinitions: tableProps.rowContext.listDefinitions,
-        listMemberships: tableProps.rowContext.listMembershipsByTaskId[tableProps.requestedOpenTask.id] ?? [],
-        subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
-        taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
-        taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
-        todayDateKey: tableProps.rowContext.todayDateKey,
-      })
-      : null,
-    [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
+    () => tableProps.requestedOpenTask ? getOrCreateTaskRow(tableProps.requestedOpenTask) : null,
+    [getOrCreateTaskRow, tableProps.requestedOpenTask],
   );
   useEffect(() => {
     if (!isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -2756,6 +2905,7 @@ function TasksSimpleList({
           subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
           taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
           taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+          attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
           todayDateKey: tableProps.rowContext.todayDateKey,
         })),
       })
@@ -2894,7 +3044,7 @@ function TasksSimpleList({
     return true;
   }
 
-  async function commitParentStepDraft(parentTaskId: string) {
+  async function commitParentStepDraft(parentTaskId: string, taskTypeSelectionValue = "task") {
     const nextTitle = parentStepTitleDrafts[parentTaskId]?.trim() ?? "";
     if (!nextTitle) {
       setParentStepCreationErrors((current) => ({
@@ -2911,7 +3061,7 @@ function TasksSimpleList({
       }));
       return;
     }
-    const result = await tableProps.onCreateChildTask(parentTaskId, nextTitle);
+    const result = await tableProps.onCreateChildTask(parentTaskId, nextTitle, taskTypeSelectionValue);
     if (result?.error) {
       setParentStepCreationErrors((current) => ({
         ...current,
@@ -2921,6 +3071,7 @@ function TasksSimpleList({
       return;
     }
     setParentStepTitleDrafts((current) => ({ ...current, [parentTaskId]: "" }));
+    setParentStepTaskTypeSelectionValues((current) => ({ ...current, [parentTaskId]: "task" }));
     setParentStepCreationErrors((current) => ({ ...current, [parentTaskId]: null }));
     setParentStepDraftTaskId((current) => (current === parentTaskId ? null : current));
   }
@@ -2971,6 +3122,7 @@ function TasksSimpleList({
               allListOptions={tableProps.allListOptions}
               allNoteOptions={tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? []}
               allTagOptions={tableProps.allTagOptions}
+              attentionReasonByTaskId={tableProps.rowContext.taskAttentionReasonByTaskId}
               childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
               childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
               highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
@@ -2987,6 +3139,9 @@ function TasksSimpleList({
                 }
               }}
               enableInspector
+              editorNavigationTaskIds={tableProps.editorNavigationTaskIds}
+              getRowById={getRowById}
+              getAllRows={() => (tableProps.allTasks ?? tableProps.tasks).map(getOrCreateTaskRow)}
               getFollowTaskDestination={tableProps.getFollowTaskDestination}
               onClearSelection={tableProps.onClearSelection}
               onCreateChildTask={tableProps.onCreateChildTask}
@@ -3001,6 +3156,7 @@ function TasksSimpleList({
               onOpenFocusTimer={tableProps.onOpenFocusTimer}
               onOpenNote={tableProps.onOpenNote}
               onOpenTaskEditor={tableProps.onOpenTaskEditor}
+              onTaskEditorNavigate={tableProps.onTaskEditorNavigate}
               onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
               onOpenTaskHistory={tableProps.onOpenTaskHistory}
               onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
@@ -3029,6 +3185,24 @@ function TasksSimpleList({
               onTaskLinkChange={tableProps.onSetLink}
               onTaskLinkedNoteIdsChange={tableProps.onSetLinkedNoteIds}
               onTaskNotesChange={tableProps.onSetNotes}
+              onTaskTypeChange={tableProps.onSetTaskType}
+              customBehaviorRulesets={tableProps.customBehaviorRulesets}
+              customBehaviorRulesetProfiles={tableProps.customBehaviorRulesetProfiles}
+              taskTypeBehaviorProfiles={tableProps.taskTypeBehaviorProfiles}
+              behaviorPolicyRevisions={tableProps.behaviorPolicyRevisions}
+              namedCustomRulesetBehaviorPolicyRevisions={tableProps.namedCustomRulesetBehaviorPolicyRevisions}
+              behaviorSelectionsByTaskId={tableProps.behaviorSelectionsByTaskId}
+              behaviorPolicyLogicalDate={tableProps.rowContext.todayDateKey}
+              behaviorPolicyLoading={tableProps.behaviorPolicyLoading}
+              onCreateCustomRuleset={tableProps.onCreateCustomRuleset}
+              onDeleteCustomRuleset={tableProps.onDeleteCustomRuleset}
+              onShowCustomRulesetTasks={tableProps.onShowCustomRulesetTasks}
+              onMoveCustomRulesetTasksToTaskAndDelete={tableProps.onMoveCustomRulesetTasksToTaskAndDelete}
+              onRenameCustomRuleset={tableProps.onRenameCustomRuleset}
+              onUpdateCustomRulesetPresentation={tableProps.onUpdateCustomRulesetPresentation}
+              onTaskBehaviorProfileChange={tableProps.onSetTaskBehaviorProfile}
+              onCustomRulesetBehaviorProfileChange={tableProps.onSetCustomRulesetBehaviorProfile}
+              onResetTaskBehaviorProfile={tableProps.onResetTaskBehaviorProfile}
               onTaskPriorityChange={tableProps.onSetPriority}
               onTaskPinToggle={tableProps.onTogglePinned}
               onTaskRepeatChange={tableProps.onSetRepeat}
@@ -3072,7 +3246,9 @@ function TasksSimpleList({
               visibleColumns={OVERLAY_VISIBLE_COLUMNS}
             />
           ) : null}
-          {windowedTasks.map((task) => {
+            {windowedTasks.map((task) => {
+        const taskTypeOption = resolveTaskTypeSelectionOption(task.task_type, task.custom_ruleset_id, tableProps.customBehaviorRulesets);
+        const taskSurface = getTaskTypeSurfaceClassName(taskTypeOption.accentKey);
         const displayStatus = rowContext.taskDisplayStatusByTaskId[task.id] ?? task.status;
         const dueLabel = formatListDueDateChip(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
@@ -3088,6 +3264,7 @@ function TasksSimpleList({
           subtasks: rowContext.subtasksByTaskId[task.id] ?? [],
           taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
           taskHistoryStreakSummary: rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+          attentionReason: rowContext.taskAttentionReasonByTaskId[task.id],
           todayDateKey: rowContext.todayDateKey,
         });
         const categoryLabel = resolveTaskCategoryLabel({
@@ -3134,25 +3311,26 @@ function TasksSimpleList({
           ? statusMatchedChildTaskIdSet
           : searchMatchedChildTaskIdSet;
         const isStepSectionExpanded = activeHierarchyParentMatch
+          || highlightedTaskIdSet.has(task.id)
           || parentStepDraftTaskId === task.id
           || collapsedStepSectionsByTaskId[task.id] === false;
         const hasVisibleRenderedDescendants = Boolean(
-          isStepSectionExpanded
-          && effectiveStepPreviewGroup
-          && (effectiveStepPreviewGroup.items.length > 0 || parentStepDraftTaskId === task.id),
+          isStepSectionExpanded && (
+            (effectiveStepPreviewGroup && (effectiveStepPreviewGroup.items.length > 0 || parentStepDraftTaskId === task.id))
+          ),
         );
         return (
           <div className="space-y-3" data-task-list-hierarchy-group={task.id} key={task.id}>
             <article
-              className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${
+              className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${taskSurface} ${
                 selectedTaskIdSet.has(task.id)
-                  ? "border-[#d8d1ef] bg-white/92 ring-2 ring-[#e7e0fb] ring-offset-0 dark:border-[#4f466d] dark:bg-white/[0.05] dark:ring-[#342b50]"
-                  : "border-[#ece8f8] bg-white/92 dark:border-white/10 dark:bg-white/[0.05]"
+                  ? "ring-2 ring-[#6f57f6]/35 ring-offset-0 dark:ring-[#cabfff]/35"
+                  : ""
               } ${
                 isQuickPanelOpen
-                  ? "border-[#cfc2ff] dark:border-[#4f3d86]"
-                  : "hover:border-[#ddd2fb] hover:bg-white dark:hover:border-white/15"
-              } ${hasVisibleRenderedDescendants ? "sticky top-[4.75rem] z-10 bg-white dark:bg-[#181226]" : ""}`}
+                  ? "ring-2 ring-[#6f57f6]/25 dark:ring-[#cabfff]/25"
+                  : ""
+              } ${hasVisibleRenderedDescendants ? "sticky top-[4.75rem] z-10" : ""}`}
               data-task-list-row={task.id}
               onClick={(event) => {
                 if (shouldIgnoreListOverlayOpen(event.target)) {
@@ -3160,7 +3338,7 @@ function TasksSimpleList({
                 }
                 setRowContextMenu(null);
                 closeQuickPanel();
-                tableProps.onOpenTaskEditor?.(task.id);
+                tableProps.onOpenTaskEditor?.(task.id, visibleTaskIds);
               }}
               onContextMenu={(event) => {
                 if (openRowContextMenu(task.id, event.clientX, event.clientY)) {
@@ -3182,7 +3360,7 @@ function TasksSimpleList({
                         event.preventDefault();
                         setRowContextMenu(null);
                         closeQuickPanel();
-                        tableProps.onOpenTaskEditor?.(task.id);
+                        tableProps.onOpenTaskEditor?.(task.id, visibleTaskIds);
                       }
                     }}
                     role="button"
@@ -3228,6 +3406,11 @@ function TasksSimpleList({
                       <TaskHistoryChips
                         currentStreak={taskRow.currentStreak}
                         missedStreak={taskRow.missedStreak}
+                      />
+                      <TaskAttentionChip
+                        dueOn={taskRow.dueOn || null}
+                        reason={taskRow.attentionReason}
+                        taskId={task.id}
                       />
                       <MetadataDisclosureButton
                         isVisible={isMetadataVisible}
@@ -3281,25 +3464,18 @@ function TasksSimpleList({
                       </AdhdIconButton>
                     ) : null}
                     {tableProps.onCreateChildTask ? (
-                      <AdhdIconButton
-                        aria-label={`Add step to ${task.title}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
+                      <ChildTypeChooser
+                        childLabel="Step"
+                        onChooseTask={() => {
                           closeQuickPanel();
                           setRowContextMenu(null);
-                          setCollapsedStepSectionsByTaskId((current) => ({
-                            ...current,
-                            [task.id]: false,
-                          }));
+                          setCollapsedStepSectionsByTaskId((current) => ({ ...current, [task.id]: false }));
                           setParentStepCreationErrors((current) => ({ ...current, [task.id]: null }));
                           setParentStepTitleDrafts((current) => ({ ...current, [task.id]: current[task.id] ?? "" }));
+                          setParentStepTaskTypeSelectionValues((current) => ({ ...current, [task.id]: "task" }));
                           setParentStepDraftTaskId(task.id);
                         }}
-                        size="sm"
-                        variant="rowToolbar"
-                      >
-                        <Footprints className="h-3.5 w-3.5" />
-                      </AdhdIconButton>
+                      />
                     ) : null}
                     {tableProps.onOpenTaskHistory ? (
                       <AdhdIconButton
@@ -3345,10 +3521,12 @@ function TasksSimpleList({
                   <TaskStatusCircleRail
                     className="min-w-max flex-nowrap"
                     currentStatus={displayStatus}
+                    attention={Boolean(taskRow.attentionReason)}
+                    emphasizeMissed
                     onSetStatus={(status) => {
                       if (status === "delayed") {
                         setRowContextMenu(null);
-                        if (canTaskDelay({ dueOn: task.due_on, status: displayStatus }) && tableProps.onDelayTaskUntil) {
+                        if (canTaskDelay({ dueOn: task.due_on, status: displayStatus }) && isListManualActionAllowed(task, "delay") && tableProps.onDelayTaskUntil) {
                           openQuickPanel(task.id, "delay");
                         }
                         return;
@@ -3361,10 +3539,11 @@ function TasksSimpleList({
                         tableProps.onSetStatus?.(task.id, status, task, queueMeasuredListStatusScrollAnchor(task.id));
                       }
                     }}
-                    options={getSelectableTaskDisplayStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus }).map((status) => ({
+                    options={getPolicyFilteredTaskStatuses({ customRulesetId: task.custom_ruleset_id, dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus, taskId: task.id, taskType: task.task_type }).map((status) => ({
                       label: formatTaskStatusLabel(status),
                       value: status,
                     }))}
+                    preserveCurrentStatus
                   />
                 </div>
                 <div className={`${isMetadataVisible ? "flex" : "hidden"} -mx-1 mt-2 -my-1 max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:thin]`}>
@@ -3372,7 +3551,7 @@ function TasksSimpleList({
                     {dueMeta}
                   </MetadataChipButton>
                   {isTaskFocusedToday(task.id, rowContext.focusedTaskIdSet) ? (
-                    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold ${QUICK_PANEL_PRIMARY_CHIP_CLASS}`}>
+                    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold ${TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}`}>
                       Focus
                     </span>
                   ) : null}
@@ -3382,7 +3561,7 @@ function TasksSimpleList({
                     onClick={() => openQuickPanel(task.id, "priority")}
                     toneClassName={activePriorities[0] ? priorityTone(activePriorities[0]) : TASK_TABLE_INACTIVE_CHIP_CLASS}
                   >
-                    {formatPriorityChipLabel(task, rowContext.focusedTaskIdSet)}
+                    {formatPriorityChipLabel(task)}
                   </MetadataChipButton>
                   <MetadataChipButton
                     active={activePanelMode === "repeat"}
@@ -3557,12 +3736,14 @@ function TasksSimpleList({
                 allTagOptions={tableProps.allTagOptions ?? []}
                 childTasksById={taskById}
                 closeQuickPanel={closeQuickPanel}
+                customBehaviorRulesets={tableProps.customBehaviorRulesets}
                 currentListLabel={currentListLabel}
                 group={effectiveStepPreviewGroup}
                 isExpanded={isStepSectionExpanded}
                 matchingChildTaskIds={!showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)] && activeHierarchyParentMatch
                   ? activeHierarchyChildTaskIds
                   : undefined}
+                parentTaskId={task.id}
                 onToggleShowAllSearchSteps={activeHierarchyParentMatch
                   ? () => {
                     const key = getShowAllSearchStepsKey(task.id);
@@ -3583,7 +3764,7 @@ function TasksSimpleList({
                     tableProps.onOpenChildTask(taskId);
                     return;
                   }
-                  tableProps.onOpenTaskEditor?.(taskId);
+                  tableProps.onOpenTaskEditor?.(taskId, visibleTaskIds);
                 }}
                 onOpenQuickPanel={openQuickPanel}
                 onRenameStep={tableProps.onSetTitle}
@@ -3598,6 +3779,8 @@ function TasksSimpleList({
                 onSetRepeat={tableProps.onSetRepeat}
                 onSetStatus={tableProps.onSetStatus}
                 onSetTags={tableProps.onSetTags}
+                getAvailableStatuses={(item) => getPolicyFilteredTaskStatuses({ customRulesetId: item.customRulesetId, dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status, taskId: item.id, taskType: item.taskType ?? "task" })}
+                isManualActionAllowed={(item, action) => isListManualActionAllowedForIdentity({ customRulesetId: item.customRulesetId, id: item.id, taskType: item.taskType ?? "task" }, action)}
                 onToggleFocusToday={onToggleFocusToday}
                 onTogglePinned={tableProps.onTogglePinned}
                 onToggleTaskList={tableProps.onToggleTaskList}
@@ -3614,20 +3797,25 @@ function TasksSimpleList({
                 parentStepCreationError={parentStepCreationErrors[task.id] ?? null}
                 parentStepDraftInputRef={parentStepDraftTaskId === task.id ? parentStepDraftInputRef : undefined}
                 parentStepDraftValue={parentStepTitleDrafts[task.id] ?? ""}
+                parentStepTaskTypeSelectionValue={parentStepTaskTypeSelectionValues[task.id] ?? "task"}
                 selectedBucket={selectedBucket}
                 showParentStepDraft={parentStepDraftTaskId === task.id}
-                taskHistoryByTaskId={rowContext.taskHistoryByTaskId}
                 todayDateKey={rowContext.todayDateKey}
                 onCancelParentStepDraft={() => {
                   setParentStepDraftTaskId((current) => (current === task.id ? null : current));
+                  setParentStepTitleDrafts((current) => ({ ...current, [task.id]: "" }));
+                  setParentStepTaskTypeSelectionValues((current) => ({ ...current, [task.id]: "task" }));
                   setParentStepCreationErrors((current) => ({ ...current, [task.id]: null }));
                 }}
-                onCommitParentStepDraft={() => {
-                  void commitParentStepDraft(task.id);
+                onCommitParentStepDraft={(taskTypeSelectionValue) => {
+                  void commitParentStepDraft(task.id, taskTypeSelectionValue);
                 }}
                 onParentStepDraftChange={(value) => {
                   setParentStepTitleDrafts((current) => ({ ...current, [task.id]: value }));
                   setParentStepCreationErrors((current) => ({ ...current, [task.id]: null }));
+                }}
+                onParentStepTaskTypeSelectionChange={(value) => {
+                  setParentStepTaskTypeSelectionValues((current) => ({ ...current, [task.id]: value }));
                 }}
                 highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
                 highlightedTaskIds={tableProps.highlightedTaskIds}
@@ -3661,7 +3849,7 @@ function TasksSimpleList({
                 setRowContextMenu(null);
               } : undefined}
               onEditTask={tableProps.onOpenTaskEditor ? () => {
-                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id);
+                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id, visibleTaskIds);
                 setRowContextMenu(null);
               } : undefined}
               onMoveIntoParent={tableProps.onMoveTaskIntoParent ? async (parentTaskId) => {
@@ -3675,7 +3863,7 @@ function TasksSimpleList({
               onOpenDetails={() => {
                 setRowContextMenu(null);
                 closeQuickPanel();
-                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id);
+                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id, visibleTaskIds);
               }}
               onOpenHistory={tableProps.onOpenTaskHistory ? () => {
                 tableProps.onOpenTaskHistory?.(rowContextMenuTask.id);
@@ -3701,7 +3889,7 @@ function TasksSimpleList({
                   openQuickPanel(rowContextMenuTask.id, mappedMode);
                   return;
                 }
-                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id);
+                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id, visibleTaskIds);
               }}
               onRemoveFromCurrentList={canRemoveFromCurrentList(rowContextMenuTask.id) && tableProps.onToggleTaskList ? () => {
                 const currentListId = tableProps.currentListId ?? selectedBucket;

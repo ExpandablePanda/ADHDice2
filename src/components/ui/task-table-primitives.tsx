@@ -1,7 +1,10 @@
 "use client";
 
+import { Flame, X } from "lucide-react";
+import { motion } from "framer-motion";
 import type { TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal } from "@/lib/database.types";
-import type { ButtonHTMLAttributes, InputHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, CSSProperties, FormEvent, InputHTMLAttributes, ReactNode, Ref, RefObject } from "react";
+import { TASK_TABLE_GRID_ORIGIN_CLASS } from "@/lib/task-table-alignment";
 
 function joinClasses(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -17,7 +20,18 @@ export const TASK_TABLE_BODY_VALUE_CLASS = `${TASK_TABLE_TEXT_CLASS} text-[#5953
 export const TASK_TABLE_BODY_MUTED_VALUE_CLASS = `${TASK_TABLE_TEXT_CLASS} text-[#80799c] dark:text-white/52`;
 export const TASK_TABLE_TITLE_CELL_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} text-[#7a7592] dark:text-white/58`;
 // Visible task and step titles use the same text size and font treatment as table chips.
-export const TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} text-[#7a7592] dark:text-white/58`;
+export const TASK_TABLE_INLINE_TITLE_TEXT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} text-[#7a7592] dark:text-white/58`;
+export const TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS = TASK_TABLE_INLINE_TITLE_TEXT_CLASS;
+export const TASK_TABLE_INLINE_RENAME_EDITOR_CLASS = `${TASK_TABLE_INLINE_TITLE_TEXT_CLASS} h-[15px] min-h-0 px-1 py-0`;
+export const TASK_TABLE_INLINE_CHILD_CREATION_INPUT_CLASS = `${TASK_TABLE_INLINE_TITLE_TEXT_CLASS} h-6 min-h-0 px-1.5`;
+export const TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
+  color: "rgb(122, 117, 146)",
+  fontFamily: "inherit",
+  fontSize: "13px",
+  fontWeight: 500,
+  letterSpacing: "normal",
+  lineHeight: "13px",
+};
 export const TASK_TABLE_LIST_CHIP_CLASS = "border-[#ece7f5] bg-[#f7f5fb] text-[#7a7592] dark:border-white/8 dark:bg-white/[0.045] dark:text-white/58";
 export const TASK_TABLE_ACTIVE_LIST_CHIP_CLASS = "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white";
 export const TASK_TABLE_TAG_CHIP_CLASS = "border-[#e8defe] bg-[#f3eeff] text-[#7762f3] dark:border-[#3a2e63] dark:bg-[#21183d] dark:text-[#c7bcff]";
@@ -25,6 +39,227 @@ export const TASK_TABLE_INACTIVE_CHIP_CLASS = "border border-[#e4deef] bg-[#f4f5
 export const TASK_TABLE_INPUT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_TEXT_CLASS} w-full rounded-[0.95rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-[#2f294a] outline-none placeholder:text-[#9b92be] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/35`;
 export const TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} shrink-0 text-[#7a7592] dark:text-white/58`;
 export const TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} h-[26px] w-[56px] min-w-[56px] max-w-[56px] shrink-0 rounded-full border border-[#e4deef] bg-[#f4f5f8] px-2 text-center text-[#68738c] outline-none transition placeholder:text-[#9b92be] focus:border-[#c9bcff] focus:bg-white focus:text-[#595378] dark:border-white/10 dark:bg-white/8 dark:text-white/60 dark:placeholder:text-white/35 dark:focus:border-[#6d56d6] dark:focus:bg-[#22193f]`;
+export const TASK_TABLE_CURRENT_STREAK_CHIP_CLASS = `${TASK_TABLE_CHIP_BASE_CLASS} gap-1 border-[#ffd8be] bg-[#fff1e7] px-2 text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]`;
+export const TASK_LIST_QUICK_PANEL_SHELL_CLASS = "mt-2.5 rounded-[1.15rem] border border-[#e7defc] bg-[#fcfbff] px-4 py-3 shadow-[0_14px_34px_rgba(81,61,168,0.08)] dark:border-[#41306c] dark:bg-[#18112d]";
+export const TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS = "h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]";
+export const TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
+
+export function formatTaskTableEntryTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString([], {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export function TaskCurrentStreakChip({ className, currentStreak }: { className?: string; currentStreak: number }) {
+  if (currentStreak <= 0) return null;
+  return (
+    <span className={joinClasses(TASK_TABLE_CURRENT_STREAK_CHIP_CLASS, className)}>
+      <Flame className="h-3 w-3" />
+      {currentStreak}
+    </span>
+  );
+}
+
+export type TaskTableViewportMetrics = { clientWidth: number; scrollLeft: number };
+
+export function TaskTableInlineActionRow({
+  ariaLabel,
+  children,
+  className,
+  contentOverflow = "auto",
+  heading,
+  onClose,
+  containerRef,
+  rowId,
+  viewportMetrics,
+}: {
+  ariaLabel?: string;
+  children: ReactNode;
+  className?: string;
+  contentOverflow?: "auto" | "visible";
+  heading: ReactNode;
+  onClose?: () => void;
+  containerRef?: Ref<HTMLDivElement>;
+  rowId?: string;
+  viewportMetrics?: TaskTableViewportMetrics;
+}) {
+  const actionRowMaxWidth = viewportMetrics?.clientWidth
+    ? Math.max(280, viewportMetrics.clientWidth - 24)
+    : undefined;
+
+  return (
+    <motion.div
+      animate={{ height: "auto", opacity: 1, y: 0 }}
+      aria-label={ariaLabel}
+      className={joinClasses(
+        `${TASK_TABLE_GRID_ORIGIN_CLASS} mt-2 w-max min-w-full overflow-hidden rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-2.5 shadow-[0_18px_45px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#1b1530]`,
+        className,
+      )}
+      data-task-table-inline-action-row="true"
+      data-task-table-inline-editor={rowId}
+      exit={{ height: 0, opacity: 0, y: -6 }}
+      initial={{ height: 0, opacity: 0, y: -6 }}
+      onClick={(event) => event.stopPropagation()}
+      ref={containerRef}
+      transition={{ duration: 0.18 }}
+    >
+      <div
+        className="min-w-0"
+        style={{
+          maxWidth: actionRowMaxWidth,
+          transform: viewportMetrics?.scrollLeft ? `translateX(${viewportMetrics.scrollLeft}px)` : undefined,
+        }}
+      >
+        <div className="mb-1 flex items-center gap-2">
+          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{heading}</p>
+          {onClose ? (
+            <button
+              aria-label="Close actions"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#e4deef] bg-[#f4f5f8] text-[#8a82a7] transition hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/8 dark:text-white/55 dark:hover:text-[#cabfff]"
+              onClick={onClose}
+              type="button"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+        <div className={contentOverflow === "visible" ? "overflow-visible" : "overflow-x-auto"}>
+          <div className={contentOverflow === "visible" ? "flex w-full items-start gap-1.5" : "flex min-w-max items-start gap-1.5"}>
+            {children}
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+export function TaskListQuickPanelShell({ children, onClose, title }: { children: ReactNode; onClose: () => void; title: string }) {
+  return (
+    <div className={TASK_LIST_QUICK_PANEL_SHELL_CLASS} onClick={(event) => event.stopPropagation()}>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d82b6] dark:text-white/45">{title}</p>
+        <TaskTableChipButton onClick={onClose}>Close</TaskTableChipButton>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function TaskInlineChildDraftInput({
+  ariaLabel,
+  childLabel,
+  disabled = false,
+  inputRef,
+  onBlur,
+  onCancel,
+  onChange,
+  onCommit,
+  onStopPropagation = true,
+  placeholder,
+  value,
+}: {
+  ariaLabel: string;
+  childLabel: string;
+  disabled?: boolean;
+  inputRef?: RefObject<HTMLInputElement | null>;
+  onBlur?: InputHTMLAttributes<HTMLInputElement>["onBlur"];
+  onCancel: () => void;
+  onChange: (value: string) => void;
+  onCommit: () => void | Promise<unknown>;
+  onStopPropagation?: boolean;
+  placeholder?: string;
+  value: string;
+}) {
+  return (
+    <input
+      aria-label={ariaLabel}
+      className={`${TASK_TABLE_INLINE_CHILD_CREATION_INPUT_CLASS} min-w-0 flex-1 rounded-[0.45rem] border border-[#ddd2ff] bg-white outline-none transition placeholder:text-[#aaa2c8] focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+      style={TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+      disabled={disabled}
+      onBlur={onBlur}
+      onChange={(event) => onChange(event.target.value)}
+      onClick={onStopPropagation ? (event) => event.stopPropagation() : undefined}
+      onKeyDown={(event) => {
+        if (onStopPropagation) event.stopPropagation();
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void onCommit();
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onCancel();
+        }
+      }}
+      placeholder={placeholder ?? `${childLabel} title...`}
+      ref={inputRef}
+      type="text"
+      value={value}
+    />
+  );
+}
+
+export function TaskInlineChildDraft({
+  ariaLabel,
+  childLabel,
+  dataAttribute,
+  error,
+  inputRef,
+  pending = false,
+  onCancel,
+  onChange,
+  onCommit,
+  placeholder,
+  value,
+}: {
+  ariaLabel: string;
+  childLabel: string;
+  dataAttribute?: string;
+  error?: string | null;
+  inputRef?: RefObject<HTMLInputElement | null>;
+  pending?: boolean;
+  onCancel: () => void;
+  onChange: (value: string) => void;
+  onCommit: () => void | Promise<unknown>;
+  placeholder?: string;
+  value: string;
+}) {
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void onCommit();
+  };
+
+  return (
+    <form
+      aria-label={ariaLabel}
+      className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 rounded-[0.85rem] border border-[#e5dcfb] bg-white p-2 dark:border-white/10 dark:bg-[#1b1530]/80"
+      data-inline-child-draft={dataAttribute}
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      onSubmit={handleSubmit}
+    >
+      <TaskInlineChildDraftInput
+        ariaLabel={ariaLabel}
+        childLabel={childLabel}
+        inputRef={inputRef}
+        disabled={pending}
+        onCancel={onCancel}
+        onChange={onChange}
+        onCommit={onCommit}
+        placeholder={placeholder}
+        value={value}
+      />
+      <TaskTableChipButton disabled={pending} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS} type="submit">{pending ? "Adding..." : `Add ${childLabel}`}</TaskTableChipButton>
+      <TaskTableChipButton disabled={pending} onClick={onCancel} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
+      {error ? <p className="basis-full text-xs font-medium text-[#d94e67] dark:text-[#ff9eaf]">{error}</p> : null}
+    </form>
+  );
+}
 
 type TaskTableChipButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   toneClassName?: string;

@@ -14,6 +14,8 @@ create table public.adhdice_clean_tasks (
   parent_task_id uuid references public.adhdice_clean_tasks(id) on delete cascade,
   revision integer not null default 1,
   title text not null check (char_length(trim(title)) > 0),
+  task_type text not null default 'task',
+  custom_ruleset_id uuid,
   notes text,
   status public.adhdice_clean_task_status not null default 'pending',
   priority public.adhdice_clean_task_priority not null default 'normal',
@@ -53,8 +55,228 @@ create table public.adhdice_clean_tasks (
       or (repeat_monthly_mode = 'ordinal_weekday' and repeat_monthly_ordinal is not null and repeat_monthly_weekday is not null)
     ),
   constraint adhdice_clean_tasks_parent_task_not_self
-    check (parent_task_id is null or parent_task_id <> id)
+    check (parent_task_id is null or parent_task_id <> id),
+  constraint adhdice_clean_tasks_task_type_check
+    check (task_type in ('task', 'custom'))
 );
+
+create table public.adhdice_task_type_behavior_profiles (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  task_type text not null,
+  effective_from_logical_date date not null,
+  unresolved_occurrence text not null default 'missed',
+  positive_streak_on_unhandled text not null default 'break',
+  missed_streak_on_unhandled text not null default 'increment',
+  rewards text not null default 'enabled',
+  available_actions text[] not null default array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[],
+  needs_action_triggers text[] not null default array['missed', 'due_today', 'overdue']::text[],
+  success_outcomes text[] not null default array['done', 'did_my_best', 'complete']::text[],
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, task_type, effective_from_logical_date),
+  constraint adhdice_task_type_behavior_profiles_task_type_check
+    check (task_type in ('task', 'custom')),
+  constraint adhdice_task_type_behavior_profiles_unresolved_occurrence_check
+    check (unresolved_occurrence in ('missed', 'blank')),
+  constraint adhdice_task_type_behavior_profiles_positive_streak_check
+    check (positive_streak_on_unhandled in ('break', 'preserve')),
+  constraint adhdice_task_type_behavior_profiles_missed_streak_check
+    check (missed_streak_on_unhandled in ('increment', 'ignore')),
+  constraint adhdice_task_type_behavior_profiles_rewards_check
+    check (rewards in ('enabled', 'disabled')),
+  constraint adhdice_task_type_behavior_profiles_available_actions_check
+    check (available_actions <@ array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[]),
+  constraint adhdice_task_type_behavior_profiles_available_actions_no_null_check
+    check (array_position(available_actions, null) is null),
+  constraint adhdice_task_type_behavior_profiles_needs_action_triggers_check
+    check (needs_action_triggers <@ array['missed', 'due_today', 'overdue']::text[]),
+  constraint adhdice_task_type_behavior_profiles_needs_action_triggers_no_null_check
+    check (array_position(needs_action_triggers, null) is null),
+  constraint adhdice_task_type_behavior_profiles_success_outcomes_check
+    check (success_outcomes <@ array['done', 'did_my_best', 'complete']::text[]),
+  constraint adhdice_task_type_behavior_profiles_success_outcomes_no_null_check
+    check (array_position(success_outcomes, null) is null)
+);
+
+-- 7.13.27/7.13.28/7.13.31 behavior authority. The Task projection is kept
+-- for current reads; effective-dated behavior-selection rows below are the
+-- historical authority for logical-date policy selection.
+-- The canonical creation source accepts custom_ruleset_id only for Custom
+-- Tasks, validates the ruleset owner, and inserts the initial selection at the
+-- creation logical date. Its executable RPC body is kept in the sequential
+-- canonical-creation migration sources because this consolidated schema
+-- snapshot predates the separately applied canonical Task tables.
+-- Canonical RPC contract: public.adhdice_create_canonical_task(uuid, jsonb).
+create table public.adhdice_custom_behavior_rulesets (
+  id uuid not null default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null check (length(btrim(name)) > 0),
+  task_type text not null default 'custom' check (task_type = 'custom'),
+  icon_key text not null default 'list-todo' check (length(btrim(icon_key)) between 1 and 80),
+  accent_key text not null default 'purple' check (length(btrim(accent_key)) between 1 and 40),
+  description text not null default '' check (char_length(description) <= 240),
+  deleted_at timestamptz null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (id),
+  unique (user_id, id)
+);
+
+create table public.adhdice_custom_behavior_ruleset_revisions (
+  ruleset_id uuid not null references public.adhdice_custom_behavior_rulesets(id) on delete cascade,
+  effective_from_logical_date date not null,
+  unresolved_occurrence text not null default 'missed' check (unresolved_occurrence in ('missed', 'blank')),
+  positive_streak_on_unhandled text not null default 'break' check (positive_streak_on_unhandled in ('break', 'preserve')),
+  missed_streak_on_unhandled text not null default 'increment' check (missed_streak_on_unhandled in ('increment', 'ignore')),
+  rewards text not null default 'enabled' check (rewards in ('enabled', 'disabled')),
+  available_actions text[] not null default array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[],
+  needs_action_triggers text[] not null default array['missed', 'due_today', 'overdue']::text[],
+  success_outcomes text[] not null default array['done', 'did_my_best', 'complete']::text[],
+  constraint adhdice_custom_behavior_ruleset_revisions_available_actions_check
+    check (available_actions <@ array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[]),
+  constraint adhdice_custom_behavior_ruleset_revisions_available_actions_no_null_check
+    check (array_position(available_actions, null) is null),
+  constraint adhdice_custom_behavior_ruleset_revisions_needs_action_triggers_check
+    check (needs_action_triggers <@ array['missed', 'due_today', 'overdue']::text[]),
+  constraint adhdice_custom_behavior_ruleset_revisions_needs_action_triggers_no_null_check
+    check (array_position(needs_action_triggers, null) is null),
+  constraint adhdice_custom_behavior_ruleset_revisions_success_outcomes_check
+    check (success_outcomes <@ array['done', 'did_my_best', 'complete']::text[]),
+  constraint adhdice_custom_behavior_ruleset_revisions_success_outcomes_no_null_check
+    check (array_position(success_outcomes, null) is null),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (ruleset_id, effective_from_logical_date)
+);
+
+alter table public.adhdice_clean_tasks
+  add constraint adhdice_clean_tasks_user_id_id_key unique (user_id, id),
+  add constraint adhdice_clean_tasks_custom_ruleset_task_type_check
+    check (
+      (task_type = 'custom' and custom_ruleset_id is not null)
+      or (task_type = 'task' and custom_ruleset_id is null)
+    ),
+  add constraint adhdice_clean_tasks_custom_ruleset_owner_fkey
+    foreign key (user_id, custom_ruleset_id)
+    references public.adhdice_custom_behavior_rulesets(user_id, id)
+    on delete restrict;
+
+create table public.adhdice_task_behavior_selections (
+  id uuid not null default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  task_id uuid not null,
+  effective_from_logical_date date not null,
+  task_type text not null,
+  custom_ruleset_id uuid,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (id),
+  unique (user_id, task_id, effective_from_logical_date),
+  foreign key (user_id, task_id)
+    references public.adhdice_clean_tasks(user_id, id)
+    on delete cascade,
+  foreign key (user_id, custom_ruleset_id)
+    references public.adhdice_custom_behavior_rulesets(user_id, id)
+    on delete restrict,
+  constraint adhdice_task_behavior_selections_task_type_check
+    check (task_type in ('task', 'custom')),
+  constraint adhdice_task_behavior_selections_custom_ruleset_task_type_check
+    check (
+      (task_type = 'custom' and custom_ruleset_id is not null)
+      or (task_type = 'task' and custom_ruleset_id is null)
+    )
+);
+
+-- 7.13.33 tombstones named Custom identities while preserving historical
+-- revisions and selection references. New/current references require an active
+-- identity; historical reads are not filtered by this guard.
+create or replace function public.adhdice_validate_active_custom_behavior_ruleset_reference()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $function$
+begin
+  if new.custom_ruleset_id is null then
+    return new;
+  end if;
+  if not exists (
+    select 1 from public.adhdice_custom_behavior_rulesets ruleset
+     where ruleset.user_id = new.user_id
+       and ruleset.id = new.custom_ruleset_id
+       and ruleset.task_type = 'custom'
+       and ruleset.deleted_at is null
+  ) then
+    raise exception 'The named Custom ruleset is missing, not owned by the owner, or has been deleted.'
+      using errcode = '23503';
+  end if;
+  return new;
+end;
+$function$;
+
+drop trigger if exists adhdice_validate_active_custom_ruleset_task_reference
+  on public.adhdice_clean_tasks;
+create trigger adhdice_validate_active_custom_ruleset_task_reference
+  before insert or update of custom_ruleset_id
+  on public.adhdice_clean_tasks
+  for each row execute function public.adhdice_validate_active_custom_behavior_ruleset_reference();
+
+drop trigger if exists adhdice_validate_active_custom_ruleset_selection_reference
+  on public.adhdice_task_behavior_selections;
+create trigger adhdice_validate_active_custom_ruleset_selection_reference
+  before insert or update of custom_ruleset_id
+  on public.adhdice_task_behavior_selections
+  for each row execute function public.adhdice_validate_active_custom_behavior_ruleset_reference();
+
+create or replace function public.adhdice_delete_custom_behavior_ruleset(
+  p_ruleset_id uuid
+)
+returns table(
+  ruleset_id uuid,
+  ruleset_name text,
+  deleted_at timestamptz
+)
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $function$
+declare
+  v_ruleset public.adhdice_custom_behavior_rulesets%rowtype;
+  v_assigned_task_count integer;
+begin
+  if auth.uid() is null then
+    raise exception 'Custom ruleset deletion requires an authenticated owner.' using errcode = '42501';
+  end if;
+  select * into v_ruleset
+    from public.adhdice_custom_behavior_rulesets
+   where id = p_ruleset_id and user_id = auth.uid()
+   for update;
+  if not found then
+    raise exception 'Custom ruleset was not found or is not owned by the authenticated user.' using errcode = 'P0002';
+  end if;
+  if v_ruleset.deleted_at is not null then
+    raise exception 'Custom ruleset is already deleted.' using errcode = 'P0002';
+  end if;
+  select count(*)::integer into v_assigned_task_count
+    from public.adhdice_clean_tasks task
+   where task.user_id = auth.uid()
+     and task.custom_ruleset_id = p_ruleset_id
+     and task.permanently_deleted_at is null;
+  if v_assigned_task_count > 0 then
+    raise exception '% is currently assigned to % Task%. Change those Tasks to another type or ruleset before deleting it.',
+      v_ruleset.name, v_assigned_task_count,
+      case when v_assigned_task_count = 1 then '' else 's' end
+      using errcode = '23514';
+  end if;
+  return query
+  update public.adhdice_custom_behavior_rulesets as ruleset
+     set deleted_at = now(), updated_at = now()
+   where ruleset.id = p_ruleset_id
+     and ruleset.user_id = auth.uid()
+     and ruleset.deleted_at is null
+  returning ruleset.id, ruleset.name, ruleset.deleted_at;
+end;
+$function$;
 
 create table public.adhdice_user_profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -359,6 +581,8 @@ create table public.adhdice_health_profiles (
   workout_title_options text[] not null default '{}',
   workout_import_aliases jsonb not null default '{}'::jsonb
     check (jsonb_typeof(workout_import_aliases) = 'object'),
+  journal_questions jsonb not null default '[]'::jsonb
+    check (jsonb_typeof(journal_questions) = 'array'),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -374,6 +598,9 @@ create table public.adhdice_health_checkins (
   clarity_score integer,
   symptom_tags text[] not null default '{}',
   reflection text not null default '',
+  entry_type text check (entry_type is null or entry_type in ('start_of_day', 'end_of_day', 'event')),
+  structured_answers jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(structured_answers) = 'object'),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint adhdice_health_checkins_mood_score_range_check
@@ -809,6 +1036,20 @@ create index adhdice_clean_tasks_parent_task_idx
   on public.adhdice_clean_tasks (parent_task_id);
 create index adhdice_clean_tasks_user_pinned_idx
   on public.adhdice_clean_tasks (user_id, pinned_at desc nulls last, pin_order asc nulls last);
+create index adhdice_clean_tasks_custom_ruleset_id_idx
+  on public.adhdice_clean_tasks (custom_ruleset_id)
+  where custom_ruleset_id is not null;
+create index adhdice_task_type_behavior_profiles_user_type_date_idx
+  on public.adhdice_task_type_behavior_profiles (user_id, task_type, effective_from_logical_date);
+create index adhdice_custom_behavior_rulesets_user_id_idx
+  on public.adhdice_custom_behavior_rulesets (user_id);
+create index adhdice_custom_behavior_ruleset_revisions_ruleset_id_idx
+  on public.adhdice_custom_behavior_ruleset_revisions (ruleset_id, effective_from_logical_date);
+create index adhdice_task_behavior_selections_task_date_idx
+  on public.adhdice_task_behavior_selections (user_id, task_id, effective_from_logical_date desc);
+create index adhdice_task_behavior_selections_ruleset_idx
+  on public.adhdice_task_behavior_selections (user_id, custom_ruleset_id)
+  where custom_ruleset_id is not null;
 create index adhdice_user_profiles_updated_at_idx
   on public.adhdice_user_profiles (updated_at desc);
 create index adhdice_focus_categories_user_sort_idx
@@ -914,6 +1155,10 @@ create index adhdice_health_achievement_awards_user_earned_idx
   on public.adhdice_health_achievement_awards (user_id, earned_at desc);
 
 alter table public.adhdice_clean_tasks enable row level security;
+alter table public.adhdice_task_type_behavior_profiles enable row level security;
+alter table public.adhdice_custom_behavior_rulesets enable row level security;
+alter table public.adhdice_custom_behavior_ruleset_revisions enable row level security;
+alter table public.adhdice_task_behavior_selections enable row level security;
 alter table public.adhdice_user_profiles enable row level security;
 alter table public.adhdice_focus_categories enable row level security;
 alter table public.adhdice_focus_sessions enable row level security;
@@ -973,6 +1218,17 @@ revoke all on table public.adhdice_health_journal_signal_occurrences from anon, 
 grant select, insert, update, delete on table public.adhdice_health_journal_signals to authenticated;
 grant select, insert, update, delete on table public.adhdice_health_journal_signal_values to authenticated;
 grant select, insert, update, delete on table public.adhdice_health_journal_signal_occurrences to authenticated;
+revoke all on table public.adhdice_task_type_behavior_profiles from anon, authenticated;
+grant select, insert, update, delete on table public.adhdice_task_type_behavior_profiles to authenticated;
+revoke all on table public.adhdice_custom_behavior_rulesets from anon, authenticated;
+revoke all on table public.adhdice_custom_behavior_ruleset_revisions from anon, authenticated;
+revoke all on table public.adhdice_task_behavior_selections from anon, authenticated;
+grant select, insert, update, delete on table public.adhdice_custom_behavior_rulesets to authenticated;
+grant select, insert, update, delete on table public.adhdice_custom_behavior_ruleset_revisions to authenticated;
+grant select on table public.adhdice_task_behavior_selections to authenticated;
+revoke all on function public.adhdice_validate_active_custom_behavior_ruleset_reference() from public, anon, authenticated;
+revoke all on function public.adhdice_delete_custom_behavior_ruleset(uuid) from public, anon, authenticated;
+grant execute on function public.adhdice_delete_custom_behavior_ruleset(uuid) to authenticated;
 
 create policy "Users can read their own clean tasks"
   on public.adhdice_clean_tasks
@@ -994,6 +1250,64 @@ create policy "Users can delete their own clean tasks"
   on public.adhdice_clean_tasks
   for delete
   using (auth.uid() = user_id);
+
+create policy "Users can read their own Custom behavior rulesets"
+  on public.adhdice_custom_behavior_rulesets for select to authenticated
+  using ((select auth.uid()) = user_id);
+create policy "Users can read their own TaskType behavior profiles"
+  on public.adhdice_task_type_behavior_profiles for select to authenticated
+  using ((select auth.uid()) = user_id);
+create policy "Users can create their own TaskType behavior profiles"
+  on public.adhdice_task_type_behavior_profiles for insert to authenticated
+  with check ((select auth.uid()) = user_id);
+create policy "Users can update their own TaskType behavior profiles"
+  on public.adhdice_task_type_behavior_profiles for update to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+create policy "Users can delete their own TaskType behavior profiles"
+  on public.adhdice_task_type_behavior_profiles for delete to authenticated
+  using ((select auth.uid()) = user_id);
+create policy "Users can create their own Custom behavior rulesets"
+  on public.adhdice_custom_behavior_rulesets for insert to authenticated
+  with check ((select auth.uid()) = user_id and task_type = 'custom');
+create policy "Users can update their own Custom behavior rulesets"
+  on public.adhdice_custom_behavior_rulesets for update to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id and task_type = 'custom');
+create policy "Users can delete their own Custom behavior rulesets"
+  on public.adhdice_custom_behavior_rulesets for delete to authenticated
+  using ((select auth.uid()) = user_id);
+create policy "Users can read their own Custom behavior ruleset revisions"
+  on public.adhdice_custom_behavior_ruleset_revisions for select to authenticated
+  using (exists (
+    select 1 from public.adhdice_custom_behavior_rulesets ruleset
+    where ruleset.id = ruleset_id and ruleset.user_id = (select auth.uid())
+  ));
+create policy "Users can create their own Custom behavior ruleset revisions"
+  on public.adhdice_custom_behavior_ruleset_revisions for insert to authenticated
+  with check (exists (
+    select 1 from public.adhdice_custom_behavior_rulesets ruleset
+    where ruleset.id = ruleset_id and ruleset.user_id = (select auth.uid())
+  ));
+create policy "Users can update their own Custom behavior ruleset revisions"
+  on public.adhdice_custom_behavior_ruleset_revisions for update to authenticated
+  using (exists (
+    select 1 from public.adhdice_custom_behavior_rulesets ruleset
+    where ruleset.id = ruleset_id and ruleset.user_id = (select auth.uid())
+  ))
+  with check (exists (
+    select 1 from public.adhdice_custom_behavior_rulesets ruleset
+    where ruleset.id = ruleset_id and ruleset.user_id = (select auth.uid())
+  ));
+create policy "Users can delete their own Custom behavior ruleset revisions"
+  on public.adhdice_custom_behavior_ruleset_revisions for delete to authenticated
+  using (exists (
+    select 1 from public.adhdice_custom_behavior_rulesets ruleset
+    where ruleset.id = ruleset_id and ruleset.user_id = (select auth.uid())
+  ));
+create policy "Users can read their own Task behavior selections"
+  on public.adhdice_task_behavior_selections for select to authenticated
+  using ((select auth.uid()) = user_id);
 
 create policy "Users can read their own profiles"
   on public.adhdice_user_profiles
@@ -1534,6 +1848,70 @@ begin
   return new;
 end;
 $$;
+
+create or replace function public.adhdice_validate_task_behavior_selection()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $function$
+begin
+  if not exists (
+    select 1 from public.adhdice_clean_tasks task
+    where task.user_id = new.user_id and task.id = new.task_id
+  ) then
+    raise exception 'Behavior selection Task does not belong to the selection owner.' using errcode = '23503';
+  end if;
+  if new.task_type not in ('task', 'custom') then
+    raise exception 'Behavior selection TaskType is invalid.' using errcode = '23514';
+  end if;
+  if new.custom_ruleset_id is not null and new.task_type <> 'custom' then
+    raise exception 'Only Custom behavior selections may consume a named Custom ruleset.' using errcode = '23514';
+  end if;
+  if new.task_type = 'custom' and new.custom_ruleset_id is null then
+    raise exception 'Custom behavior selections require a named Custom Task Type.' using errcode = '23514';
+  end if;
+  return new;
+end;
+$function$;
+
+create or replace function public.adhdice_guard_task_behavior_selection_projection_update()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $function$
+begin
+  if coalesce(
+       current_setting('adhdice.task_behavior_selection_authority', true),
+       current_setting('adhdice.custom_ruleset_assignment_authority', true)
+     ) is distinct from '1'
+     and ((tg_op = 'INSERT' and (new.task_type <> 'task' or new.custom_ruleset_id is not null))
+       or (tg_op = 'UPDATE' and (new.task_type is distinct from old.task_type or new.custom_ruleset_id is distinct from old.custom_ruleset_id))) then
+    raise exception 'Task behavior selection projection may only be assigned through canonical selection authority.' using errcode = '42501';
+  end if;
+  return new;
+end;
+$function$;
+
+revoke all on function public.adhdice_validate_task_behavior_selection() from public, anon, authenticated;
+revoke all on function public.adhdice_guard_task_behavior_selection_projection_update() from public, anon, authenticated;
+
+drop trigger if exists adhdice_validate_task_behavior_selection on public.adhdice_task_behavior_selections;
+create trigger adhdice_validate_task_behavior_selection
+  before insert or update of user_id, task_id, task_type, custom_ruleset_id
+  on public.adhdice_task_behavior_selections
+  for each row execute function public.adhdice_validate_task_behavior_selection();
+
+drop trigger if exists adhdice_guard_task_behavior_selection_projection_update on public.adhdice_clean_tasks;
+create trigger adhdice_guard_task_behavior_selection_projection_update
+  before insert or update of task_type, custom_ruleset_id
+  on public.adhdice_clean_tasks
+  for each row execute function public.adhdice_guard_task_behavior_selection_projection_update();
+
+create trigger adhdice_task_behavior_selections_set_updated_at
+  before update on public.adhdice_task_behavior_selections
+  for each row execute function public.adhdice_clean_set_updated_at();
 
 create or replace function public.adhdice_validate_health_journal_signal_occurrence_kind()
 returns trigger

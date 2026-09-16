@@ -1,3 +1,5 @@
+import type { TaskBehaviorPolicy, TaskBehaviorPolicyRevision } from "./behavior-policy.ts";
+
 export type TaskLifecycleState = "active" | "complete" | "archived" | "trashed";
 
 export type TaskActiveStatus =
@@ -22,7 +24,8 @@ export type TaskCalendarState =
   | "complete"
   | "scheduled"
   | "not_due"
-  | "no_entry";
+  | "no_entry"
+  | "unhandled_blank";
 
 export type TaskHistoryOutcome = "done" | "did_my_best" | "missed" | "delayed" | "complete";
 export type TaskHistoryProvenance = "manual" | "rollover" | "reconciliation" | "import";
@@ -64,6 +67,7 @@ export type TaskStateSnapshot = {
   recurrenceCursor?: string | null;
   satisfiedOccurrenceIdentity?: string | null;
   recurrence: TaskRecurrence;
+  behaviorPolicy?: TaskBehaviorPolicy;
 };
 
 export type TaskStateHistoryRow = {
@@ -130,6 +134,10 @@ export type TaskEffectiveTimelineDay = {
   occurrenceIdentity: string | null;
   occurrenceDueOn: string | null;
   obligation: TaskEffectiveTimelineObligation;
+  /** Historical policy for explicit facts; current policy for calculated days. */
+  behaviorPolicy: TaskBehaviorPolicy;
+  /** True only for an automatically unresolved scheduled occurrence. */
+  unhandled: boolean;
 };
 
 export type TaskEffectiveTimeline = {
@@ -191,6 +199,10 @@ export type TaskStateAction =
   | { type: "reconcile_rollover" };
 
 export type TaskStateEngineInput = {
+  /** Non-persisted behavior selection; omitted Tasks use the standard profile. */
+  behaviorPolicy?: TaskBehaviorPolicy;
+  /** Task-specific revisions selected by the normalization boundary. */
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevision[];
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
   now: string | Date;
@@ -236,7 +248,7 @@ export type RewardEligibility = {
   identity: string | null;
   logicalDate: string | null;
   outcome: TaskHistoryOutcome | null;
-  reason: "eligible" | "already_claimed" | "ineligible_outcome" | "no_outcome";
+  reason: "eligible" | "already_claimed" | "ineligible_outcome" | "no_outcome" | "disabled";
 };
 
 export type CurrentDayOutcomeFacts = {
@@ -247,6 +259,7 @@ export type CurrentDayOutcomeFacts = {
 };
 
 export type TaskStateEngineResult = {
+  behaviorPolicy: TaskBehaviorPolicy;
   logicalDate: string;
   lifecycle: TaskLifecycleState;
   activeStatus: TaskActiveStatus;

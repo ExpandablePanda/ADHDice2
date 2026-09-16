@@ -23,8 +23,18 @@ import type {
   TaskTimelineCheckpoint,
   TaskTimelineReplayRequest,
 } from "./types.ts";
+import {
+  resolveTaskBehaviorPolicy,
+  resolveTaskBehaviorPolicyForLogicalDate,
+  isTaskSuccessOutcome,
+  STANDARD_TASK_BEHAVIOR_POLICY,
+  type TaskBehaviorPolicy,
+  type TaskBehaviorPolicyRevision,
+} from "./behavior-policy.ts";
 
 export type BuildTaskEffectiveTimelineInput = {
+  behaviorPolicy?: TaskBehaviorPolicy;
+  behaviorPolicyRevisions?: TaskBehaviorPolicyRevision[];
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
   logicalDate: string;
@@ -46,6 +56,8 @@ export type TaskEffectiveTimelineStreaks = {
 export type TaskEffectiveTimelineStreakDay = {
   calendarOverrideId: string | null;
   state: TaskEffectiveTimelineDay["state"] | "due" | "upcoming";
+  behaviorPolicy?: TaskBehaviorPolicy;
+  unhandled?: boolean;
 };
 
 export function taskEffectiveTimelineDaysFromStates(
@@ -54,15 +66,22 @@ export function taskEffectiveTimelineDaysFromStates(
   return Object.fromEntries(Object.entries(states).map(([logicalDate, state]) => [logicalDate, {
     calendarOverrideId: null,
     state: state as TaskEffectiveTimelineStreakDay["state"],
+    behaviorPolicy: STANDARD_TASK_BEHAVIOR_POLICY,
+    unhandled: false,
   }]));
+}
+
+function isIgnoredUnhandled(day: TaskEffectiveTimelineStreakDay) {
+  return day.unhandled === true && day.behaviorPolicy?.missedStreakOnUnhandled === "ignore";
 }
 
 function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | undefined): "success" | "missed" | "break" | "neutral" | null {
   if (!day) return null;
   const { state } = day;
-  if (state === "done" || state === "did_my_best") return "success";
-  if (state === "missed") return "missed";
-  if (state === "complete") return "break";
+  if (state === "done" || state === "did_my_best" || state === "complete") {
+    return isTaskSuccessOutcome(state, day.behaviorPolicy ?? STANDARD_TASK_BEHAVIOR_POLICY) ? "success" : "break";
+  }
+  if (state === "missed" || state === "unhandled_blank") return "missed";
   if (state === "open" || state === "in_progress" || state === "due" || state === "upcoming"
     || state === "scheduled" || state === "not_due" || state === "delayed") return "neutral";
   return "break";
@@ -70,37 +89,56 @@ function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | unde
 
 /**
  * Calculate streaks from resolved Effective Timeline days, not persisted rows.
- * Non-obligation dates, including manual Not Due and Delayed, are skipped for
- * both streak types. Only an explicit success, Missed, or terminal Complete
- * changes the respective chronology.
+ * Positive and missed streaks are independent. Calculated unresolved days use
+ * the current policy, while explicit History remains factual and keeps the
+ * policy effective on its logical date.
  */
 export function computeTaskEffectiveTimelineStreaks(
   days: Readonly<Record<string, TaskEffectiveTimelineStreakDay>>,
   logicalDate: string,
 ): TaskEffectiveTimelineStreaks {
   let cursor: string | null = logicalDate;
-  let streakKind: "success" | "missed" | null = null;
-  let streakLength = 0;
-
+  let currentCompletedStreak = 0;
   while (cursor && Object.hasOwn(days, cursor)) {
-    const finalizedKind = classifyFinalizedCalendarDay(days[cursor]);
-    if (!finalizedKind || finalizedKind === "neutral") {
+    const day = days[cursor];
+    const finalizedKind = classifyFinalizedCalendarDay(day);
+    if (!day || !finalizedKind || finalizedKind === "neutral") {
       cursor = shiftDateKey(cursor, -1);
       continue;
     }
-    if (finalizedKind === "break") break;
-    streakKind ??= finalizedKind;
-    if (streakKind !== finalizedKind) break;
-    streakLength += 1;
-    cursor = shiftDateKey(cursor, -1);
+    if (finalizedKind === "success") {
+      currentCompletedStreak += 1;
+      cursor = shiftDateKey(cursor, -1);
+      continue;
+    }
+    break;
+  }
+
+  cursor = logicalDate;
+  let currentMissedStreak = 0;
+  while (cursor && Object.hasOwn(days, cursor)) {
+    const day = days[cursor];
+    const finalizedKind = classifyFinalizedCalendarDay(day);
+    if (!day || !finalizedKind || finalizedKind === "neutral" || isIgnoredUnhandled(day)) {
+      cursor = shiftDateKey(cursor, -1);
+      continue;
+    }
+    if (finalizedKind === "missed") {
+      currentMissedStreak += 1;
+      cursor = shiftDateKey(cursor, -1);
+      continue;
+    }
+    break;
   }
 
   let longestMissedStreak = 0;
   let runningMissedStreak = 0;
   for (const date of Object.keys(days).sort()) {
-    const finalizedKind = classifyFinalizedCalendarDay(days[date]);
+    const day = days[date];
+    const finalizedKind = classifyFinalizedCalendarDay(day);
     if (!finalizedKind || finalizedKind === "neutral") continue;
     if (finalizedKind === "missed") {
+      if (isIgnoredUnhandled(day!)) continue;
       runningMissedStreak += 1;
       longestMissedStreak = Math.max(longestMissedStreak, runningMissedStreak);
     } else {
@@ -109,8 +147,8 @@ export function computeTaskEffectiveTimelineStreaks(
   }
 
   return {
-    currentCompletedStreak: streakKind === "success" ? streakLength : 0,
-    currentMissedStreak: streakKind === "missed" ? streakLength : 0,
+    currentCompletedStreak,
+    currentMissedStreak,
     longestMissedStreak,
   };
 }
@@ -182,9 +220,11 @@ function calculatedDay(
   state: TaskEffectiveTimelineDay["state"],
   obligation: TaskEffectiveTimelineObligation,
   occurrenceDueOn: string | null = null,
+  behaviorPolicy: TaskBehaviorPolicy = STANDARD_TASK_BEHAVIOR_POLICY,
+  unhandled = false,
 ): TaskEffectiveTimelineDay {
   const hasOccurrence = Boolean(occurrenceDueOn)
-    && (state === "missed" || state === "open" || state === "scheduled");
+    && (state === "missed" || state === "unhandled_blank" || state === "open" || state === "scheduled");
   return {
     logicalDate,
     state,
@@ -199,10 +239,12 @@ function calculatedDay(
     occurrenceIdentity: hasOccurrence ? occurrenceIdentity(taskId, occurrenceDueOn as string) : null,
     occurrenceDueOn: hasOccurrence ? occurrenceDueOn : null,
     obligation,
+    behaviorPolicy,
+    unhandled,
   };
 }
 
-function explicitDay(row: TaskStateHistoryRow): TaskEffectiveTimelineDay {
+function explicitDay(row: TaskStateHistoryRow, behaviorPolicy: TaskBehaviorPolicy): TaskEffectiveTimelineDay {
   return {
     logicalDate: row.logicalDate,
     state: calendarStateForOutcome(row.outcome),
@@ -217,6 +259,8 @@ function explicitDay(row: TaskStateHistoryRow): TaskEffectiveTimelineDay {
     occurrenceIdentity: row.occurrenceIdentity ?? null,
     occurrenceDueOn: row.occurrenceDueOn ?? null,
     obligation: "none",
+    behaviorPolicy,
+    unhandled: row.outcome === "missed" && (row.provenance === "rollover" || row.provenance === "reconciliation"),
   };
 }
 
@@ -325,6 +369,13 @@ function initialOccurrenceDueOn(
 export function buildTaskEffectiveTimeline(
   input: BuildTaskEffectiveTimelineInput,
 ): TaskEffectiveTimeline {
+  const behaviorPolicy = resolveTaskBehaviorPolicy(input.behaviorPolicy);
+  // Effective-dated policy is authoritative only when interpreting an
+  // existing explicit History fact. Calculated obligations are unresolved
+  // backlog and must use the Task's current policy below.
+  const historicalPolicyForDate = (logicalDate: string) => input.behaviorPolicyRevisions?.length
+    ? resolveTaskBehaviorPolicyForLogicalDate({ revisions: input.behaviorPolicyRevisions, logicalDate })
+    : behaviorPolicy;
   const rows = input.history
     .filter((row) => row.taskId === input.task.id)
     .map((row) => ({ ...row }));
@@ -464,9 +515,10 @@ export function buildTaskEffectiveTimeline(
         && row.effectiveDueOn !== null,
       );
       if (hasCanonicalEffectiveCursor || hasScheduleReplayEffectiveCursor) {
-        activeDueOn = row.effectiveDueOn;
+        const effectiveDueOn = row.effectiveDueOn ?? null;
+        activeDueOn = effectiveDueOn;
         unresolvedDueOn = null;
-        delayedUntilDate = activeDueOn > input.logicalDate ? activeDueOn : null;
+        delayedUntilDate = effectiveDueOn && effectiveDueOn > input.logicalDate ? effectiveDueOn : null;
         return;
       }
       // Legacy History has no persisted effective cursor. Preserve its prior
@@ -511,7 +563,7 @@ export function buildTaskEffectiveTimeline(
     let day: TaskEffectiveTimelineDay;
 
     if (row) {
-      day = explicitDay(row);
+      day = explicitDay(row, historicalPolicyForDate(date));
       if (recurrenceRow) applyExplicitRow(recurrenceRow);
     } else {
       let calculated: TaskEffectiveTimelineDay;
@@ -528,10 +580,14 @@ export function buildTaskEffectiveTimeline(
       } else if (isFixedRecurrence && !isFixedScheduledDate) {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       } else if (date < input.logicalDate) {
-        // Unhandled past dates are not History. Automatic Missed persistence
-        // belongs to the trusted command path, so reads show Not Due until a
-        // canonical fact exists for that date.
-        calculated = calculatedDay(input.task.id, date, "not_due", "none");
+        // Policy is prospective: explicit History remains a fact, while
+        // unhandled/calculated occurrences use the current profile. Standard
+        // Tasks remain neutral until trusted reconciliation materializes
+        // Missed; a current blank profile keeps the obligation visibly
+        // distinct without inventing a historical fact.
+        calculated = behaviorPolicy.unresolvedOccurrence === "missed"
+          ? calculatedDay(input.task.id, date, "not_due", "none")
+          : calculatedDay(input.task.id, date, "unhandled_blank", "overdue", date, behaviorPolicy, true);
       } else if (date === input.logicalDate) {
         if (activeDueOn < input.logicalDate) {
           if (isFixedRecurrence) {
@@ -550,7 +606,8 @@ export function buildTaskEffectiveTimeline(
       } else {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       }
-      if (input.replay?.materializeAutomaticMissed
+      if (behaviorPolicy.unresolvedOccurrence === "missed"
+        && input.replay?.materializeAutomaticMissed
         && date < input.logicalDate
         && !completed
         && !override
@@ -578,7 +635,7 @@ export function buildTaskEffectiveTimeline(
         };
         automaticHistoryRows.push(automaticRow);
         unresolvedDueOn ??= activeDueOn;
-        calculated = calculatedDay(input.task.id, date, "missed", "overdue", occurrenceDueOn);
+        calculated = calculatedDay(input.task.id, date, "missed", "overdue", occurrenceDueOn, behaviorPolicy, true);
       }
       const baseDay = override
         ? calendarOverrideDay(input.task.id, date, override, input.logicalDate)

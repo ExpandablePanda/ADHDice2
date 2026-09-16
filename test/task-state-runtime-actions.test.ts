@@ -168,7 +168,7 @@ test("derived statuses never invent set_pending, set_upcoming, or set_not_due", 
 });
 
 test("metadata fields are explicit and never become Task State actions", () => {
-  for (const field of ["energy", "tags", "pinned_at", "sort_order"] as const) {
+  for (const field of ["energy", "tags", "pinned_at", "sort_order", "task_type"] as const) {
     const result = classify({ [field]: field === "tags" ? ["new"] : field === "sort_order" ? 2 : null } as TaskUpdate);
     assert.equal(result.kind, "metadata_only", field);
   }

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 
-import type { ScratchNote, ScratchNoteStatus, ScratchNoteTaskLink, Task } from "@/lib/database.types";
+import type { ScratchNote, ScratchNoteStatus, ScratchNoteTaskLink, Task, TaskStatus } from "@/lib/database.types";
 import type { ScratchNoteDraft } from "@/hooks/useScratchNotes";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import {
@@ -18,12 +18,15 @@ import {
 import { formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import { TASK_TABLE_INPUT_CLASS, TaskTableChipButton } from "@/components/ui/task-table-primitives";
 
+type TaskStatusOptionsResolver = (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[];
+
 type ScratchPaperActions = {
   onCreate: (draft: ScratchNoteDraft) => Promise<string | null>;
   onCreateTask: (title: string) => void;
   onOpenTask: (taskId: string) => void;
   onSetStatus: (noteId: string, status: ScratchNoteStatus) => Promise<boolean>;
   onSetTaskStatus: (taskId: string, status: Task["status"]) => void;
+  getTaskStatusOptions?: TaskStatusOptionsResolver;
   onUpdate: (noteId: string, draft: ScratchNoteDraft) => Promise<boolean>;
 };
 
@@ -66,16 +69,18 @@ function isLinkedTaskComplete(task: Task) {
 }
 
 function ScratchTaskPill({
+  getTaskStatusOptions,
   onOpenTask,
   onSetTaskStatus,
   task,
 }: {
+  getTaskStatusOptions?: TaskStatusOptionsResolver;
   onOpenTask: (taskId: string) => void;
   onSetTaskStatus: (taskId: string, status: Task["status"]) => void;
   task: Task;
 }) {
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
-  const statusOptions = getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status });
+  const statusOptions = getTaskStatusOptions?.(task, task.status) ?? getSelectableTaskStatusesForTask({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status });
 
   return (
     <span className="relative inline-flex align-middle">
@@ -125,6 +130,7 @@ function ScratchTaskPill({
 
 function ScratchRenderedBody({
   body,
+  getTaskStatusOptions,
   linkedTaskIds,
   onOpenTask,
   onSetTaskStatus,
@@ -134,6 +140,7 @@ function ScratchRenderedBody({
   linkedTaskIds: string[];
   onOpenTask: (taskId: string) => void;
   onSetTaskStatus: (taskId: string, status: Task["status"]) => void;
+  getTaskStatusOptions?: TaskStatusOptionsResolver;
   tasks: Task[];
 }) {
   const linkedTaskMap = useMemo(
@@ -163,7 +170,7 @@ function ScratchRenderedBody({
 
           const task = linkedTaskMap.get(segment.taskId);
           return task ? (
-            <ScratchTaskPill key={`task-${segment.taskId}-${index}`} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} />
+            <ScratchTaskPill getTaskStatusOptions={getTaskStatusOptions} key={`task-${segment.taskId}-${index}`} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} />
           ) : (
             <span key={`fallback-${segment.taskId}-${index}`} className="rounded-[0.4rem] border border-dashed border-[#d8d1ea] px-1.5 py-0 text-sm leading-[1.25rem] text-[#8d87a7] dark:border-white/15 dark:text-white/45">
               {segment.fallbackTitle}
@@ -171,7 +178,7 @@ function ScratchRenderedBody({
           );
         })}
         {unplacedLinkedTasks.map((task) => (
-          <span key={`linked-${task.id}`}> <ScratchTaskPill onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} /></span>
+          <span key={`linked-${task.id}`}> <ScratchTaskPill getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} /></span>
         ))}
       </div>
     </div>
@@ -248,6 +255,7 @@ function restoreScratchEditorOffset(editor: HTMLElement, offset: number) {
 function ScratchInlineEditor({
   body,
   editorRef,
+  getTaskStatusOptions,
   isPickerOpen,
   minHeightClass = "min-h-20",
   onChange,
@@ -275,6 +283,7 @@ function ScratchInlineEditor({
   onOpenTask: (taskId: string) => void;
   onSelectionRangeChange: (range: { end: number; start: number }) => void;
   onSetTaskStatus: (taskId: string, status: Task["status"]) => void;
+  getTaskStatusOptions?: TaskStatusOptionsResolver;
   onSlashDebug?: (state: ScratchSlashDebugState) => void;
   placeholder: string;
   tasks: Task[];
@@ -400,7 +409,7 @@ function ScratchInlineEditor({
         const token = `[[task:${segment.taskId}|${segment.fallbackTitle}]]`;
         return (
           <span contentEditable={false} data-task-token={token} key={`task-${segment.taskId}-${index}`}>
-            {task ? <ScratchTaskPill onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} /> : segment.fallbackTitle}
+            {task ? <ScratchTaskPill getTaskStatusOptions={getTaskStatusOptions} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} /> : segment.fallbackTitle}
           </span>
         );
       })}
@@ -462,6 +471,7 @@ function TaskLinkPicker({
 }
 
 function ScratchCurrentNoteEditor({
+  getTaskStatusOptions,
   notes,
   onCreate,
   onCreateTask,
@@ -686,6 +696,7 @@ function ScratchCurrentNoteEditor({
           onOpenTask={onOpenTask}
           onSelectionRangeChange={setCaretInsertRange}
           onSetTaskStatus={onSetTaskStatus}
+          getTaskStatusOptions={getTaskStatusOptions}
           onSlashDebug={setSlashDebug}
           placeholder="Jot something down... Type / to link a task."
           tasks={tasks}
@@ -738,7 +749,7 @@ function ScratchCurrentNoteEditor({
   );
 }
 
-function ScratchNoteCard({ links, note, onCreateTask, onOpenTask, onSetStatus, onSetTaskStatus, onUpdate, tasks }: ScratchPaperActions & { links: ScratchNoteTaskLink[]; note: ScratchNote; tasks: Task[] }) {
+function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOpenTask, onSetStatus, onSetTaskStatus, onUpdate, tasks }: ScratchPaperActions & { links: ScratchNoteTaskLink[]; note: ScratchNote; tasks: Task[] }) {
   const noteTaskIds = linkedTaskIdsForNote(note.id, links);
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(note.title ?? "");
@@ -845,6 +856,7 @@ function ScratchNoteCard({ links, note, onCreateTask, onOpenTask, onSetStatus, o
             onOpenTask={onOpenTask}
             onSelectionRangeChange={setCaretInsertRange}
             onSetTaskStatus={onSetTaskStatus}
+            getTaskStatusOptions={getTaskStatusOptions}
             placeholder="Edit note"
             tasks={tasks}
           />
@@ -897,7 +909,7 @@ function ScratchNoteCard({ links, note, onCreateTask, onOpenTask, onSetStatus, o
   return (
     <article className="space-y-2 rounded-[1rem] border border-[#e9e3f7] bg-white/85 p-3 dark:border-white/10 dark:bg-white/[0.04]">
       {note.title ? <h3 className="text-sm font-semibold text-[#2f294a] dark:text-white">{note.title}</h3> : null}
-      {note.body || noteTaskIds.length > 0 ? <ScratchRenderedBody body={note.body} linkedTaskIds={noteTaskIds} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} tasks={tasks} /> : null}
+      {note.body || noteTaskIds.length > 0 ? <ScratchRenderedBody body={note.body} getTaskStatusOptions={getTaskStatusOptions} linkedTaskIds={noteTaskIds} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} tasks={tasks} /> : null}
       {allLinkedComplete && note.status === "active" ? (
         <p className="text-xs font-medium text-[#119a69] dark:text-[#8ff0cc]">All linked tasks complete</p>
       ) : null}

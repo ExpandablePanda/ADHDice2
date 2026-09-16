@@ -7,8 +7,10 @@ import {
 import { resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine/calendar-authority";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
+import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import type { CanonicalTaskCommandOperation, CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/types";
 import { buildTaskHistoryLastHandledSummaryMap, type TaskHistoryLastHandledSummaryMap } from "@/lib/task-history-last-handled";
+import { forEachCooperatively, type CooperativeChunkOptions } from "@/lib/stable-task-projection";
 
 export const TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at";
 
@@ -23,7 +25,13 @@ export type TaskHistoryStreakSummary = {
 
 export type TaskHistoryStreakSummaryMap = Record<string, TaskHistoryStreakSummary>;
 
-export type TaskHistoryStreakSummaryContext = {
+export type ChunkedTaskHistoryStreakSummaryMapResult = {
+  chunks: number;
+  completed: boolean;
+  summaries: TaskHistoryStreakSummaryMap;
+};
+
+export type TaskHistoryStreakSummaryContext = TaskBehaviorPolicyResolutionContext & {
   compatibilityOnly?: boolean;
   calendarOverrides?: TaskCalendarOverride[];
   calendarOverridesByTaskId?: Readonly<Record<string, TaskCalendarOverride[]>>;
@@ -59,6 +67,10 @@ export function buildTaskHistoryStreakSummary(
   const normalizedHistory = deduplicateTaskHistoryByLogicalDate(history);
   const { calendarStart } = resolveCalendarRange(task, normalizedHistory, todayDateKey);
   const calendarRead = resolveTaskHistoryCalendarRead({
+    behaviorProfiles: context.behaviorProfiles,
+    behaviorPolicyRevisions: context.behaviorPolicyRevisions,
+    namedCustomRulesetBehaviorPolicyRevisions: context.namedCustomRulesetBehaviorPolicyRevisions,
+    behaviorSelectionsByTaskId: context.behaviorSelectionsByTaskId,
     compatibilityOnly: context.compatibilityOnly,
     calendarStart,
     calendarEnd: todayDateKey,
@@ -117,6 +129,39 @@ export function buildTaskHistoryStreakSummaryMap(
       }),
     ]),
   );
+}
+
+export async function buildTaskHistoryStreakSummaryMapCooperatively(
+  tasks: readonly Task[],
+  history: readonly TaskHistoryStreakEntry[],
+  todayDateKey: string,
+  context: TaskHistoryStreakSummaryContext = {},
+  options: CooperativeChunkOptions = {},
+): Promise<ChunkedTaskHistoryStreakSummaryMapResult> {
+  const historyByTaskId = new Map<string, TaskHistoryStreakEntry[]>();
+  const normalizedHistory = deduplicateTaskHistoryByLogicalDate(history);
+  for (const entry of normalizedHistory) {
+    const entries = historyByTaskId.get(entry.task_id) ?? [];
+    entries.push(entry);
+    historyByTaskId.set(entry.task_id, entries);
+  }
+
+  const manualActionSummaryByTaskId = context.manualActionSummaryByTaskId ?? buildTaskHistoryLastHandledSummaryMap(
+    tasks,
+    normalizedHistory as TaskHistory[],
+    context.manualActionCalendarOverrides ?? [],
+    context.manualActionCommandOperations ?? [],
+    todayDateKey,
+  );
+  const summaries: TaskHistoryStreakSummaryMap = {};
+  const result = await forEachCooperatively(tasks, (task) => {
+    summaries[task.id] = buildTaskHistoryStreakSummary(task, historyByTaskId.get(task.id) ?? [], todayDateKey, {
+      ...context,
+      calendarOverrides: context.calendarOverridesByTaskId?.[task.id] ?? context.calendarOverrides,
+      manualActionSummaryByTaskId,
+    });
+  }, options);
+  return { chunks: result.chunks, completed: result.completed, summaries: result.completed ? summaries : {} };
 }
 
 export function updateTaskHistoryStreakSummaryMap(

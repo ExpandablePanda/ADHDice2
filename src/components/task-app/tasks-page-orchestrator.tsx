@@ -160,7 +160,7 @@ export function TasksWorkspace({
         pathsWorkspacePanel={pathsWorkspacePanel}
         reportWorkspacePanel={reportWorkspacePanel}
         surface={surface}
-        surfaceSwitch={<TasksSurfaceSwitch onChange={onSurfaceChange} value={surface} />}
+        surfaceSwitch={<TasksSurfaceSwitch onChange={onSurfaceChange} value={surface === "attention" ? "tasks" : surface} />}
         tabs={(
           <div className={`adhdice-scrollbar flex max-w-full items-center overflow-x-auto ${TASKS_SURFACE_GROUP_CLASS}`}>
               {tabs.map((tab, index) => {

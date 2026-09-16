@@ -4,6 +4,7 @@ import type { CanonicalTaskCalendarOverride, CanonicalTaskOccurrence, CanonicalT
 import type { CanonicalTaskStateReadModel } from "./read-model.ts";
 import { mapCanonicalTaskHistoryFacts } from "./history-projection.ts";
 import { latestCanonicalScheduleBoundary } from "./schedule-projection.ts";
+import type { TaskBehaviorPolicyResolutionContext } from "../task-state-engine/behavior-policy.ts";
 
 export { recurrenceFromBoundary } from "../task-state-engine/direct-input.ts";
 
@@ -73,7 +74,7 @@ function activeCalendarOverrides(readModel: CanonicalTaskStateReadModel): TaskCa
  */
 export function buildCanonicalTaskStateEngineInput(
   readModel: CanonicalTaskStateReadModel,
-  context: { now: string; timezone: string; logicalDayRollover: string },
+  context: TaskBehaviorPolicyResolutionContext & { now: string; timezone: string; logicalDayRollover: string },
 ): TaskStateEngineInput {
   const boundary = latestCanonicalScheduleBoundary(readModel.scheduleBoundaries);
   if (!boundary) throw new Error("Canonical schedule state is unavailable.");
@@ -86,7 +87,20 @@ export function buildCanonicalTaskStateEngineInput(
       ? workflowOccurrence?.scheduled_due_on ?? readModel.task.active_occurrence_due_on
       : readModel.task.active_occurrence_due_on,
   } as CanonicalProjectedTaskState;
-  return buildDirectTaskStateEngineInput(task, historyRows(readModel), context, {
+  const engineContext = readModel.behaviorSelections
+    ? {
+      ...context,
+      behaviorSelectionsByTaskId: {
+        ...(context.behaviorSelectionsByTaskId ?? {}),
+        [readModel.task.id]: readModel.behaviorSelections.map((selection) => ({
+          effectiveFromLogicalDate: selection.effective_from_logical_date,
+          taskType: selection.task_type,
+          customRulesetId: selection.custom_ruleset_id,
+        })),
+      },
+    }
+    : context;
+  return buildDirectTaskStateEngineInput(task, historyRows(readModel), engineContext, {
     calendarOverrides: activeCalendarOverrides(readModel),
     workflow: {
       state: readModel.task.workflow_state ?? "none",

@@ -16,6 +16,7 @@ import type { TaskStateHistoryRow } from "../src/lib/task-state-engine/types.ts"
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
 import { buildTrustedTaskStateCommand } from "../supabase/functions/task-state-command/domain.ts";
+import { normalizeTaskBehaviorProfile, STANDARD_TASK_BEHAVIOR_POLICY } from "../src/lib/task-state-engine/behavior-policy.ts";
 
 const logicalDay = {
   identity: "user-1:2026-08-10:America/New_York:06:00:3",
@@ -293,6 +294,41 @@ test("explicit Missed remains a set_outcome History command without reward eligi
   assert.equal(plan.normalizedResult.rewardEntitlement, null);
 });
 
+test("canonical planning rejects every unavailable manual occurrence action with one stable domain code", () => {
+  const planningState = state();
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    behaviorPolicy: normalizeTaskBehaviorProfile({
+      ...STANDARD_TASK_BEHAVIOR_POLICY,
+      id: "restricted",
+      availableActions: [],
+    }),
+  };
+  const commands: CanonicalTaskStateCommand[] = [
+    command({ outcome: "done" }),
+    command({ outcome: "did_my_best" }),
+    command({ outcome: "missed" }),
+    {
+      ...command(),
+      type: "delay",
+      occurrenceId: "occurrence-1",
+      scheduledDueOn: logicalDay.logicalDate,
+      effectiveDueOn: "2026-08-12",
+    },
+    { ...command(), type: "complete" },
+  ];
+  for (const input of commands) {
+    assert.throws(
+      () => planTaskStateCommand(planningState, input),
+      (error: unknown) => error instanceof Error
+        && "code" in error
+        && error.code === "TASK_ACTION_NOT_AVAILABLE"
+        && error.message.endsWith("is not available for this Task Type."),
+      input.type,
+    );
+  }
+});
+
 test("handled Done uses the engine-derived projection for a recurring task", () => {
   const plan = planTaskStateCommand(state({ repeat_frequency: "daily" }), command({
     commandId: "00000000-0000-4000-8000-000000000014",
@@ -470,6 +506,14 @@ function canonicalRolloverReadModel(scheduleModel: "rolling" | "fixed") {
 
 test("trusted rollover derives one automatic DMB, preserves the stale logical date, and reuses reward parity", () => {
   const rolloverState = staleRolloverState();
+  rolloverState.engineInput = {
+    ...rolloverState.engineInput!,
+    behaviorPolicy: normalizeTaskBehaviorProfile({
+      ...STANDARD_TASK_BEHAVIOR_POLICY,
+      id: "manual-actions-hidden",
+      availableActions: [],
+    }),
+  };
   const rolloverCommand = trustedCommand({
     type: "reconcile_rollover",
     task_id: "task-1",
@@ -1148,10 +1192,24 @@ test("trusted due-date planner replays with the proposed due date", () => {
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
 });
 
-test("trusted backdated schedule planner carries one automatic Missed batch without rewards", () => {
+test("trusted backdated schedule planner uses the current Missed policy without rewards", () => {
   const planningState = state({ due_on: "2026-08-27", repeat_frequency: "daily", repeat_interval: 4 });
+  const historicalBlank = {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "standard-blank-before-current-missed",
+    effectiveFromLogicalDate: "2026-08-01",
+    unresolvedOccurrence: "blank" as const,
+    missedStreakOnUnhandled: "ignore" as const,
+  };
+  const currentMissed = {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "standard-missed-current",
+    effectiveFromLogicalDate: "2026-08-27",
+  };
   planningState.engineInput = {
     ...planningState.engineInput!,
+    behaviorPolicy: currentMissed,
+    behaviorPolicyRevisions: [historicalBlank, currentMissed],
     now: "2026-08-27T12:00:00.000Z",
     timezone: "UTC",
     logicalDayRollover: "00:00",
@@ -1203,6 +1261,63 @@ test("trusted backdated schedule planner carries one automatic Missed batch with
       && fact.schedule_boundary_id === command.scheduleBoundary?.id
   )), true);
   assert.equal("reward_program_version" in payload, false);
+});
+
+test("trusted backdated Custom Daily schedule with a current blank policy does not materialize automatic Missed facts", () => {
+  const planningState = state({ due_on: "2026-08-27", repeat_frequency: "daily", repeat_interval: 1, task_type: "custom" });
+  const historicalStandard = {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "standard-before-custom-blank",
+    effectiveFromLogicalDate: "2026-08-01",
+  };
+  const customBaseline = {
+    id: "custom-behavior-profile",
+    effectiveFromLogicalDate: "2026-08-27",
+    unresolvedOccurrence: "blank" as const,
+    positiveStreakOnUnhandled: "break" as const,
+    missedStreakOnUnhandled: "ignore" as const,
+    rewards: "enabled" as const,
+  };
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    behaviorPolicy: customBaseline,
+    behaviorPolicyRevisions: [historicalStandard, customBaseline],
+    now: "2026-08-27T12:00:00.000Z",
+    timezone: "UTC",
+    logicalDayRollover: "00:00",
+    task: {
+      ...planningState.engineInput!.task,
+      dueOn: "2026-08-27",
+      historicalScheduleAnchor: "2026-08-27",
+      historicalScheduleAnchorProven: true,
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    history: [],
+  };
+  const currentBoundary = {
+    ...boundary("rolling"),
+    id: "boundary-custom-blank-backdate",
+    effective_from_logical_date: "2026-08-27",
+    repeat_interval: 1,
+    anchor_date: "2026-08-17",
+  };
+  const command = trustedCommand({
+    type: "set_due_date",
+    task_id: "task-1",
+    replay_identity: "table:due:custom-blank-backdate",
+    logical_date: "2026-08-27",
+    schedule: { schedule_model: "rolling", repeat_frequency: "daily", repeat_interval: 1, anchor_date: "2026-08-17" },
+  }, planningState.task, currentBoundary, {
+    ...logicalDay,
+    identity: "user-1:2026-08-27:UTC:00:00:3",
+    logicalDate: "2026-08-27",
+    timezone: "UTC",
+    dayStartTime: "00:00",
+  });
+  const plan = planTaskStateCommand(planningState, command);
+
+  assert.equal(plan.normalizedResult.automaticHistoryFacts.length, 0);
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
 });
 
 test("trusted Daily backdate from 2026-08-17 to logical day 2026-08-27 preserves the exact automatic Missed facts", () => {

@@ -24,6 +24,24 @@ import {
 } from "./domain.ts";
 import { deterministicUuid } from "../../../src/lib/task-state-canonical/digest.ts";
 import { logicalDateForTimestamp } from "../../../src/lib/task-state-engine/calendar.ts";
+import type {
+  NamedCustomRulesetBehaviorPolicyRevisionMap,
+  TaskBehaviorPolicyRevisionMap,
+  TaskBehaviorProfiles,
+} from "../../../src/lib/task-state-engine/behavior-policy.ts";
+import {
+  isMissingTaskTypeBehaviorProfilesAdditiveSchemaError,
+  loadTaskTypeBehaviorProfiles,
+} from "../../../src/lib/task-type-behavior-profiles.ts";
+import {
+  isMissingCustomBehaviorRulesetsAdditiveSchemaError,
+  loadCustomBehaviorRulesets,
+} from "../../../src/lib/custom-behavior-rulesets.ts";
+import {
+  resolveTaskManualActionAvailability,
+  taskManualActionForCanonicalCommand,
+  taskManualActionLabel,
+} from "../../../src/lib/task-state-engine/action-authority.ts";
 
 export type TrustedTaskStateCommandClient = CanonicalReadClient & {
   rpc(
@@ -37,7 +55,64 @@ export type TrustedTaskStateCommandResponse = {
   body: unknown;
 };
 
+class BehaviorPolicyUnavailableError extends Error {
+  readonly code = "behavior_policy_unavailable";
+
+  constructor() {
+    super("Task behavior policy authority is unavailable.");
+    this.name = "BehaviorPolicyUnavailableError";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isLoaderError(value: unknown): boolean {
+  if (value == null) return true;
+  if (!isRecord(value)) return false;
+  return (value.code === undefined || value.code === null || typeof value.code === "string")
+    && (value.message === undefined || value.message === null || typeof value.message === "string");
+}
+
+function isRevisionMap(value: unknown): value is Record<string, readonly unknown[]> {
+  return isRecord(value)
+    && Object.values(value).every((revisions) => revisions === undefined
+      || (Array.isArray(revisions) && revisions.every(isRecord)));
+}
+
+function isTaskBehaviorProfilesLoaderResult(value: unknown): value is {
+  data: TaskBehaviorProfiles;
+  revisions: TaskBehaviorPolicyRevisionMap;
+  error: { code?: string; message?: string } | null;
+} {
+  return isRecord(value)
+    && isRecord(value.data)
+    && isRevisionMap(value.revisions)
+    && Object.hasOwn(value, "error")
+    && isLoaderError(value.error);
+}
+
+function isCustomRulesetsLoaderResult(value: unknown): value is Awaited<ReturnType<typeof loadCustomBehaviorRulesets>> {
+  return isRecord(value)
+    && Array.isArray(value.data)
+    && isRevisionMap(value.revisions)
+    && (value.behaviorSelectionsByTaskId === undefined || isRecord(value.behaviorSelectionsByTaskId))
+    && Object.hasOwn(value, "error")
+    && isLoaderError(value.error)
+    && (value.behaviorSelectionError === undefined || isLoaderError(value.behaviorSelectionError));
+}
+
+type BehaviorResolutionContext = {
+  behaviorProfiles: TaskBehaviorProfiles;
+  behaviorPolicyRevisions: TaskBehaviorPolicyRevisionMap;
+  namedCustomRulesetBehaviorPolicyRevisions: NamedCustomRulesetBehaviorPolicyRevisionMap;
+  authorityUnavailable: boolean;
+};
+
 type OrchestrationDependencies = {
+  loadBehaviorProfiles: typeof loadTaskTypeBehaviorProfiles;
+  loadCustomRulesets: typeof loadCustomBehaviorRulesets;
   loadReplayOperation: typeof loadCanonicalTaskCommandOperationReplay;
   loadCanonicalState: typeof loadCanonicalTaskState;
   buildEngineInput: typeof buildCanonicalTaskStateEngineInput;
@@ -59,6 +134,8 @@ type OrchestrationDependencies = {
 };
 
 const defaultDependencies: OrchestrationDependencies = {
+  loadBehaviorProfiles: loadTaskTypeBehaviorProfiles,
+  loadCustomRulesets: loadCustomBehaviorRulesets,
   loadReplayOperation: loadCanonicalTaskCommandOperationReplay,
   loadCanonicalState: loadCanonicalTaskState,
   buildEngineInput: buildCanonicalTaskStateEngineInput,
@@ -92,6 +169,65 @@ const defaultDependencies: OrchestrationDependencies = {
     p_operation_id: operationId,
   }),
 };
+
+async function loadBehaviorResolutionContext(
+  dependencies: OrchestrationDependencies,
+  adminClient: TrustedTaskStateCommandClient,
+  userId: string,
+): Promise<BehaviorResolutionContext> {
+  let behaviorProfiles: TaskBehaviorProfiles = {};
+  let behaviorPolicyRevisions: TaskBehaviorPolicyRevisionMap = {};
+  let namedCustomRulesetBehaviorPolicyRevisions: NamedCustomRulesetBehaviorPolicyRevisionMap = {};
+  let authorityUnavailable = false;
+  try {
+    const behaviorProfilesResult: unknown = await dependencies.loadBehaviorProfiles(adminClient, userId);
+    if (!isTaskBehaviorProfilesLoaderResult(behaviorProfilesResult)) {
+      authorityUnavailable = true;
+    } else if (behaviorProfilesResult.error) {
+      if (!isMissingTaskTypeBehaviorProfilesAdditiveSchemaError(behaviorProfilesResult.error)) {
+        authorityUnavailable = true;
+      }
+    } else if (Object.values(behaviorProfilesResult.revisions).some((revisions) => (revisions?.length ?? 0) > 0)) {
+      behaviorProfiles = behaviorProfilesResult.data;
+      behaviorPolicyRevisions = behaviorProfilesResult.revisions;
+    }
+  } catch (error) {
+    if (!isMissingTaskTypeBehaviorProfilesAdditiveSchemaError(error)) {
+      authorityUnavailable = true;
+    }
+  }
+  try {
+    const customRulesetsResult: unknown = await dependencies.loadCustomRulesets(adminClient, userId);
+    if (!isCustomRulesetsLoaderResult(customRulesetsResult)) {
+      authorityUnavailable = true;
+    } else {
+      if (customRulesetsResult.error
+        && !isMissingCustomBehaviorRulesetsAdditiveSchemaError(customRulesetsResult.error)) {
+        authorityUnavailable = true;
+      }
+      if (customRulesetsResult.behaviorSelectionError
+        && !isMissingCustomBehaviorRulesetsAdditiveSchemaError(customRulesetsResult.behaviorSelectionError)) {
+        authorityUnavailable = true;
+      }
+      if (!customRulesetsResult.error) {
+        namedCustomRulesetBehaviorPolicyRevisions = customRulesetsResult.behaviorSelectionError
+          && isMissingCustomBehaviorRulesetsAdditiveSchemaError(customRulesetsResult.behaviorSelectionError)
+          ? {}
+          : customRulesetsResult.revisions;
+      }
+    }
+  } catch (error) {
+    if (!isMissingCustomBehaviorRulesetsAdditiveSchemaError(error)) {
+      authorityUnavailable = true;
+    }
+  }
+  return {
+    behaviorProfiles,
+    behaviorPolicyRevisions,
+    namedCustomRulesetBehaviorPolicyRevisions,
+    authorityUnavailable,
+  };
+}
 
 function errorResponse(code: string, message: string, status = 409): TrustedTaskStateCommandResponse {
   return { status, body: { error: { code, message } } };
@@ -158,6 +294,9 @@ async function lookupReplay(
 }
 
 function planningErrorResponse(error: unknown): TrustedTaskStateCommandResponse {
+  if (error instanceof BehaviorPolicyUnavailableError) {
+    return errorResponse(error.code, error.message, 503);
+  }
   if (error instanceof CanonicalCommandPlanningError) {
     return errorResponse(error.code, error.message, error.code === "STALE_REVISION" ? 409 : 422);
   }
@@ -223,11 +362,16 @@ export async function executeTrustedTaskStateCommand(input: {
   );
   if (initialReplay) return initialReplay;
 
-  const readResult = await dependencies.loadCanonicalState(input.adminClient, {
-    userId: input.userId,
-    taskId: input.intent.task_id,
-  });
-  if (readResult.error || !readResult.data) {
+  let readResult: Awaited<ReturnType<typeof loadCanonicalTaskState>>;
+  try {
+    readResult = await dependencies.loadCanonicalState(input.adminClient, {
+      userId: input.userId,
+      taskId: input.intent.task_id,
+    });
+  } catch {
+    return errorResponse("canonical_state_unavailable", "Canonical Task State is unavailable.", 503);
+  }
+  if (!readResult || typeof readResult !== "object" || readResult.error || !readResult.data) {
     return errorResponse("canonical_state_unavailable", "Canonical Task State is unavailable.", 503);
   }
 
@@ -246,7 +390,17 @@ export async function executeTrustedTaskStateCommand(input: {
       dayStartTime: readResult.data.logicalDayProfile.day_start_time,
       settingsRevision: readResult.data.logicalDayProfile.settings_revision,
     };
+    const behaviorContext = await loadBehaviorResolutionContext(dependencies, input.adminClient, input.userId);
+    const manualAction = taskManualActionForCanonicalCommand(input.intent);
+    const {
+      authorityUnavailable,
+      ...engineBehaviorContext
+    } = behaviorContext;
+    if (manualAction && authorityUnavailable) {
+      throw new BehaviorPolicyUnavailableError();
+    }
     const engineInput = dependencies.buildEngineInput(readResult.data, {
+      ...engineBehaviorContext,
       now,
       timezone: logicalDay.timezone,
       logicalDayRollover: logicalDay.dayStartTime,
@@ -426,6 +580,7 @@ async function partialBatchResponse(input: {
   failedEntryIndex: number;
   currentRevision: number;
   failure: ReturnType<typeof batchFailure>;
+  responseStatus?: number;
 }): Promise<TrustedTaskStateCommandResponse> {
   const childDurationMs = performance.now() - input.startedAt;
   const hasCommittedChild = input.childResults.some((child) => child.state === "committed");
@@ -445,7 +600,7 @@ async function partialBatchResponse(input: {
     totalDurationMs: performance.now() - input.startedAt,
   });
   return {
-    status: 200,
+    status: input.responseStatus ?? 200,
     body: {
       type: "history_outcome_batch",
       state: "partial",
@@ -463,6 +618,107 @@ async function partialBatchResponse(input: {
   };
 }
 
+async function preflightHistoryOutcomeBatchActionAvailability(input: {
+  userId: string;
+  intent: HistoryOutcomeBatchIntent;
+  adminClient: TrustedTaskStateCommandClient;
+  dependencies: OrchestrationDependencies;
+  now?: string;
+  orderedEntries: HistoryOutcomeBatchIntent["entries"];
+}) {
+  const action = taskManualActionForCanonicalCommand({ type: "set_outcome", outcome: input.intent.outcome });
+  if (!action) return null;
+
+  const firstEntry = input.orderedEntries[0];
+  const unavailable = (code: string, message: string) => ({
+    index: 0,
+    logicalDate: firstEntry?.logical_date ?? "",
+    replayIdentity: firstEntry ? childReplayIdentity(input.intent, firstEntry.logical_date) : input.intent.replay_identity,
+    failure: batchFailure({ error: { code, message } }, 503),
+    responseStatus: 503,
+  });
+
+  let readResult: Awaited<ReturnType<typeof loadCanonicalTaskState>>;
+  try {
+    readResult = await input.dependencies.loadCanonicalState(input.adminClient, {
+      userId: input.userId,
+      taskId: input.intent.task_id,
+    });
+  } catch {
+    return unavailable("canonical_state_unavailable", "Canonical Task State is unavailable.");
+  }
+  if (!readResult || typeof readResult !== "object" || readResult.error || !readResult.data) {
+    return unavailable("canonical_state_unavailable", "Canonical Task State is unavailable.");
+  }
+
+  const now = input.now ?? new Date().toISOString();
+  let logicalDay: {
+    identity: string;
+    logicalDate: string;
+    timezone: string;
+    dayStartTime: string;
+    settingsRevision: number;
+  };
+  try {
+    const logicalDate = logicalDateForTimestamp(
+      now,
+      readResult.data.logicalDayProfile.timezone,
+      readResult.data.logicalDayProfile.day_start_time,
+    );
+    logicalDay = {
+      identity: `logical-day:${input.userId}:${readResult.data.logicalDayProfile.settings_revision}:${readResult.data.logicalDayProfile.timezone}:${readResult.data.logicalDayProfile.day_start_time}:${logicalDate}`,
+      logicalDate,
+      timezone: readResult.data.logicalDayProfile.timezone,
+      dayStartTime: readResult.data.logicalDayProfile.day_start_time,
+      settingsRevision: readResult.data.logicalDayProfile.settings_revision,
+    };
+  } catch {
+    return unavailable("canonical_state_unavailable", "Canonical Task State is unavailable.");
+  }
+  let engineInput: ReturnType<OrchestrationDependencies["buildEngineInput"]>;
+  try {
+    const behaviorContext = await loadBehaviorResolutionContext(input.dependencies, input.adminClient, input.userId);
+    const {
+      authorityUnavailable,
+      ...engineBehaviorContext
+    } = behaviorContext;
+    if (authorityUnavailable) {
+      return unavailable("behavior_policy_unavailable", "Task behavior policy authority is unavailable.");
+    }
+    engineInput = input.dependencies.buildEngineInput(readResult.data, {
+      ...engineBehaviorContext,
+      now,
+      timezone: logicalDay.timezone,
+      logicalDayRollover: logicalDay.dayStartTime,
+    });
+  } catch {
+    return unavailable("canonical_state_unavailable", "Canonical Task State could not be prepared for batch preflight.");
+  }
+
+  for (const [index, entry] of input.orderedEntries.entries()) {
+    const availability = resolveTaskManualActionAvailability({
+      action,
+      behaviorPolicy: engineInput.behaviorPolicy,
+      behaviorPolicyRevisions: engineInput.behaviorPolicyRevisions,
+      logicalDate: entry.logical_date,
+    });
+    if (!availability.available) {
+      return {
+        index,
+        logicalDate: entry.logical_date,
+        replayIdentity: childReplayIdentity(input.intent, entry.logical_date),
+        failure: batchFailure({
+          error: {
+            code: "TASK_ACTION_NOT_AVAILABLE",
+            message: `${taskManualActionLabel(action)} is not available for this Task ruleset on ${entry.logical_date}.`,
+          },
+        }, 422),
+      };
+    }
+  }
+  return null;
+}
+
 export async function executeHistoryOutcomeBatch(input: {
   userId: string;
   intent: HistoryOutcomeBatchIntent;
@@ -477,6 +733,38 @@ export async function executeHistoryOutcomeBatch(input: {
   let currentRevision = input.intent.expected_revision;
   const childResults: Array<Record<string, unknown>> = [];
   const completedEntries: string[] = [];
+
+  const preflightFailure = await preflightHistoryOutcomeBatchActionAvailability({
+    userId: input.userId,
+    intent: input.intent,
+    adminClient: input.adminClient,
+    dependencies,
+    now: input.now,
+    orderedEntries,
+  });
+  if (preflightFailure) {
+    return partialBatchResponse({
+      dependencies,
+      adminClient: input.adminClient,
+      userId: input.userId,
+      intent: input.intent,
+      operationId,
+      startedAt,
+      childResults: [{
+        index: preflightFailure.index,
+        logical_date: preflightFailure.logicalDate,
+        replay_identity: preflightFailure.replayIdentity,
+        expected_revision: currentRevision,
+        state: "rejected",
+        error: preflightFailure.failure,
+      }],
+      completedEntries,
+      failedEntryIndex: preflightFailure.index,
+      currentRevision,
+      failure: preflightFailure.failure,
+      responseStatus: preflightFailure.responseStatus,
+    });
+  }
 
   for (const [index, entry] of orderedEntries.entries()) {
     const replayIdentity = childReplayIdentity(input.intent, entry.logical_date);
