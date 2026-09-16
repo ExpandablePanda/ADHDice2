@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { attachDailyOverallGoalSeconds, upsertFocusHistoryEntry } from "../src/lib/focus-activity.ts";
+import { attachDailyOverallGoalSeconds, getFocusActivityBarFillPercent, upsertFocusHistoryEntry } from "../src/lib/focus-activity.ts";
 import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "../src/lib/focus-activity-scroll.ts";
 import { ALL_FOCUS_ACTIVITY_FILTER, filterFocusActivityHistory, getFocusActivitySubtypeOptions, getFocusActivityTypeOptions } from "../src/lib/focus-activity-filters.ts";
 
@@ -180,4 +180,25 @@ test("shared line chart reference lines scale with the data plot and stay non-in
 test("Focus config preserves a plain zero axis label and duration values", () => {
   assert.match(source, /formatAxisValue=\{\(value\) => value === 0 \? "0" : formatRoundedMinuteDuration\(value\)\}/);
   assert.match(sharedChart, /axisValueFormatter = formatAxisValue \?\? formatValue/);
+});
+
+test("Focus Activity bars normalize goal-backed fills to completion percentage", () => {
+  assert.equal(getFocusActivityBarFillPercent(1_800, 3_600, 7_200), 50);
+  assert.equal(getFocusActivityBarFillPercent(7_200, 14_400, 7_200), 50);
+  assert.equal(getFocusActivityBarFillPercent(0, 3_600, 7_200), 0);
+  assert.equal(getFocusActivityBarFillPercent(900, 3_600, 7_200), 25);
+  assert.equal(getFocusActivityBarFillPercent(2_700, 3_600, 7_200), 75);
+  assert.equal(getFocusActivityBarFillPercent(3_600, 3_600, 7_200), 100);
+  assert.equal(getFocusActivityBarFillPercent(5_400, 3_600, 7_200), 100);
+});
+
+test("Focus Activity bars keep uniform tracks and a safe relative fallback without goals", () => {
+  assert.equal(getFocusActivityBarFillPercent(1_800, undefined, 3_600), 50);
+  assert.equal(getFocusActivityBarFillPercent(3_600, undefined, 3_600), 100);
+  assert.equal(getFocusActivityBarFillPercent(1_800, 0, 0), 0);
+  assert.match(source, /className=\{`relative h-full w-full rounded-md border shadow-inner/);
+  assert.match(source, /getFocusActivityBarFillPercent\(item\.seconds, hasGoal \? item\.goalSeconds : undefined, maxActivitySeconds\)/);
+  assert.doesNotMatch(source, /trackHeightPercent|trackHeight/);
+  assert.match(source, /const goalLabel = hasGoal \? `Goal \$\{formatRoundedMinuteDuration\(item\.goalSeconds\)\}` : "No goal"/);
+  assert.match(source, /const valueLabel = formatActivityBarValue\(item\.seconds\)/);
 });

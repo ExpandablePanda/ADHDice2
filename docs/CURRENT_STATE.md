@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.63`.
+- Current working app version: `7.13.64`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-15 7.13.64 Normalize Focus Activity Bars to Goal Completion
+
+Focus Activity bars now use one shared full-height track. Goal-backed fills
+represent actual time divided by the relevant goal and cap visually at 100%;
+no-goal rows retain a relative-duration fallback and continue to show `No goal`.
+Existing Focus Activity labels, modes, ranges, persistence, and goal authority
+are unchanged.
 
 ## 2026-09-13 7.13.63 Custom Task Type Presentation QA Correction
 

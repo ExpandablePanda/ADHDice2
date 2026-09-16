@@ -7,7 +7,7 @@ import {
   TaskTableChipButton,
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
-import { attachDailyOverallGoalSeconds } from "@/lib/focus-activity";
+import { attachDailyOverallGoalSeconds, getFocusActivityBarFillPercent } from "@/lib/focus-activity";
 import { ALL_FOCUS_ACTIVITY_FILTER, filterFocusActivityHistory, getFocusActivitySubtypeOptions, getFocusActivityTypeOptions } from "@/lib/focus-activity-filters";
 import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "@/lib/focus-activity-scroll";
 import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
@@ -1870,8 +1870,8 @@ function FocusActivitySummaryCard({
     })),
     [bars],
   );
-  const maxSeconds = useMemo(() => (
-    data.reduce((max, item) => Math.max(max, item.seconds, item.goalSeconds), 0)
+  const maxActivitySeconds = useMemo(() => (
+    data.reduce((max, item) => Math.max(max, item.seconds), 0)
   ), [data]);
 
   const measureActivityScroll = useCallback(() => {
@@ -2184,11 +2184,7 @@ function FocusActivitySummaryCard({
               >
                 {data.map((item, index) => {
                   const hasGoal = item.goalSeconds > 0;
-                  const trackSeconds = hasGoal ? item.goalSeconds : item.seconds;
-                  const trackHeightPercent = maxSeconds > 0 && trackSeconds > 0 ? (trackSeconds / maxSeconds) * 100 : 0;
-                  const trackHeight = trackSeconds > 0 ? `${Math.max(8, trackHeightPercent)}%` : "0%";
-                  const actualFillPercent = trackSeconds > 0 ? Math.min(100, (item.seconds / trackSeconds) * 100) : 0;
-                  const actualFillHeight = item.seconds > 0 ? `${Math.max(6, actualFillPercent)}%` : "0%";
+                  const actualFillPercent = getFocusActivityBarFillPercent(item.seconds, hasGoal ? item.goalSeconds : undefined, maxActivitySeconds);
                   const valueLabel = formatActivityBarValue(item.seconds);
                   const goalLabel = hasGoal ? `Goal ${formatRoundedMinuteDuration(item.goalSeconds)}` : "No goal";
 
@@ -2207,15 +2203,14 @@ function FocusActivitySummaryCard({
                       <div className="flex h-28 w-full items-end justify-center">
                         <motion.div
                           aria-label={`${item.label}: ${valueLabel}`}
-                          className={`relative w-full rounded-md border shadow-inner ${hasGoal ? "border-white/[0.8] bg-white/[0.85] dark:border-white/25 dark:bg-white/15" : "border-[var(--border-soft)] bg-[var(--surface-muted)] dark:border-white/10 dark:bg-white/[0.06]"}`}
-                          style={{ height: trackHeight }}
+                          className={`relative h-full w-full rounded-md border shadow-inner ${hasGoal ? "border-white/[0.8] bg-white/[0.85] dark:border-white/25 dark:bg-white/15" : "border-[var(--border-soft)] bg-[var(--surface-muted)] dark:border-white/10 dark:bg-white/[0.06]"}`}
                           variants={barVariants}
                         >
                           <div
                             className="absolute bottom-0 left-0 w-full rounded-md transition-all duration-500"
                             style={{
                               backgroundColor: item.color ?? "var(--accent)",
-                              height: actualFillHeight,
+                              height: `${actualFillPercent}%`,
                             }}
                           />
                         </motion.div>
