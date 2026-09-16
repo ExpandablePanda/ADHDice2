@@ -1225,6 +1225,7 @@ export function TaskApp() {
     journalSignalValues: healthJournalSignalValues,
     journalSignalOccurrences: healthJournalSignalOccurrences,
     saveJournalEntry,
+    saveJournalQuestions,
     createJournalSignal,
     updateJournalSignal,
     setJournalSignalTemplate,
@@ -7844,6 +7845,7 @@ export function TaskApp() {
             journalSignalValues={healthJournalSignalValues}
             journalSignalOccurrences={healthJournalSignalOccurrences}
             saveJournalEntry={saveJournalEntry}
+            saveJournalQuestions={saveJournalQuestions}
             createJournalSignal={createJournalSignal}
             updateJournalSignal={updateJournalSignal}
             setJournalSignalTemplate={setJournalSignalTemplate}

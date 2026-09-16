@@ -167,7 +167,7 @@ test("Done uses the local date RPC input, server timestamp, and plan snapshots",
   assert.match(source, /todayHealthDate\(\)/);
   assert.match(useHealthSource, /p_actual_entry_date: actualEntryDate/);
   assert.match(useHealthSource, /buildActualMealEntryInputFromPlan\(plan, \{ entryDate: actualEntryDate, loggedAt: confirmedAt \}\)/);
-  assert.match(useHealthSource, /setMessage\(\{ tone: "good", text: newlyCreated \? "Meal plan marked Done\."/);
+  assert.match(useHealthSource, /setHealthSuccessMessage\(\{ tone: "good", text: newlyCreated \? "Meal plan marked Done\."/);
 });
 
 test("the reusable barcode scanner prefers the rear camera and cleans up on every exit", () => {
@@ -344,6 +344,33 @@ test("canonical persistence, editing, deletion, and totals remain unchanged", ()
   assert.match(source, /function startEditingMeal\(entry: HealthMealEntry\)/);
   assert.match(source, /deleteMealEntry\(entry\.id\)/);
   assert.match(source, /sumMealNutritionForDate\(mealEntries, foodHistoryDate\)/);
+});
+
+test("Food totals and the meal editor use projected calorie authority without blocking save", () => {
+  assert.match(source, /const selectedProjectedCalories = selectedNutrition\.calories \+ selectedPlannedNutrition\.calories/);
+  assert.match(source, /progressPercent=\{selectedCalorieBudget \? clampPercent\(\(selectedCalorieProgressCalories \/ selectedCalorieBudget\) \* 100\) : null\}/);
+  assert.match(source, /<>Projected <span className=\{selectedProjectedCaloriesClassName\}>\{formatHealthCalorieTarget\(selectedProjectedCalories\)\} kcal<\/span>/);
+  assert.match(source, /sumMealNutritionForDate\(mealEntries, mealDate\)/);
+  assert.match(source, /sumMetricValueForDate\(metricEntries, mealDate, \["active_energy_kcal"\]\)/);
+  assert.match(source, /sumHealthMealPlanNutritionForDate\([\s\S]*?mealDate,[\s\S]*?mealEditorMode === "plan" \? editingMealPlanId : undefined/);
+  assert.match(source, /calculateHealthProjectedCalories\([\s\S]*?mealCalculation\.nutrientTotals\.calories/);
+  assert.match(inlineEditorSource, /mealCalorieWarning/);
+  assert.match(inlineEditorSource, /Projected \{formatHealthCalorieTarget\(mealCalorieWarning\.projectedCalories\)\} kcal/);
+  assert.match(inlineEditorSource, /role="status"/);
+  assert.match(inlineEditorSource, /disabled=\{!canSaveMeal\}/);
+});
+
+test("Food projected calorie detail colors only the projected amount and keeps CompactStat string details compatible", () => {
+  const calorieDetailSource = source.slice(source.indexOf("const selectedCalorieStatus ="), source.indexOf("const foodLogHistoryIndex"));
+  assert.match(calorieDetailSource, /getHealthCalorieGoalStatus\(selectedProjectedCalories, selectedCalorieBudget\)/);
+  assert.match(calorieDetailSource, /selectedCalorieStatus === "within"/);
+  assert.match(calorieDetailSource, /text-emerald-500 dark:text-emerald-400/);
+  assert.match(calorieDetailSource, /selectedCalorieStatus === "over"/);
+  assert.match(calorieDetailSource, /text-\[#d64f78\] dark:text-\[#ff9fbc\]/);
+  assert.match(calorieDetailSource, /<>Projected <span className=\{selectedProjectedCaloriesClassName\}>\{formatHealthCalorieTarget\(selectedProjectedCalories\)\} kcal<\/span> · no target<\/>/);
+  assert.match(calorieDetailSource, /<>Projected <span className=\{selectedProjectedCaloriesClassName\}>\{formatHealthCalorieTarget\(selectedProjectedCalories\)\} kcal<\/span> · target/);
+  assert.match(source, /function CompactStat\(\{ detail, label, progressPercent, value \}: \{ detail: ReactNode;/);
+  assert.match(source, /<p className="mt-1 text-xs text-\[#73809c\] dark:text-white\/50">\{detail\}<\/p>/);
 });
 
 test("logged food cards expose one prominent effective-calorie line and preserve planned cards", () => {

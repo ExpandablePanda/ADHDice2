@@ -120,6 +120,13 @@ test("planned rows are a separate authority and cannot change actual totals, his
   assert.equal(getActiveHealthMealPlans([planned], "2026-08-24").length, 0);
   assert.equal(actualRows.length, 1);
 });
+
+test("planned nutrition can exclude the plan currently being edited", () => {
+  const edited = plan();
+  const other = plan({ id: "plan-2", calories: 120, nutrition_snapshot: { calories: 120, carbs_g: 8, fat_g: 4, protein_g: 12 } });
+  assert.equal(sumHealthMealPlanNutritionForDate([edited, other], edited.planned_date).calories, 420);
+  assert.equal(sumHealthMealPlanNutritionForDate([edited, other], edited.planned_date, edited.id).calories, 120);
+});
 test("planned expanded nutrition preserves unknown coverage instead of converting it to zero", () => {
   const totals = sumHealthMealPlanNutritionForDate([plan()], "2026-08-25");
   assert.deepEqual(totals.nutrition_details, { sodium_mg: 500 });

@@ -9,12 +9,15 @@ import {
   buildHealthCoachMessage,
   buildHealthReminderTemplate,
   calculateHealthDailyCalorieBudget,
+  calculateHealthProjectedCalories,
   formatHealthCalorieTarget,
   displayWeightToKilograms,
   formatEditableWeight,
   formatHealthMealSummary,
   formatHealthNutritionNumber,
   getHealthMealNutritionValue,
+  getHealthCalorieGoalStatus,
+  getHealthCalorieGoalWarning,
   getHealthMealSummaryParts,
   formatHealthSleepDuration,
   formatMealLoggedTime,
@@ -44,6 +47,32 @@ test("daily calorie budget adds only the date's canonical Active Energy", () => 
   assert.equal(calculateHealthDailyCalorieBudget(1900, undefined), 1900);
   assert.equal(calculateHealthDailyCalorieBudget(1900, Number.NaN), 1900);
   assert.equal(calculateHealthDailyCalorieBudget(1900, -25), 1900);
+});
+
+test("projected calories combine consumed, planned, and candidate values without a warning at the target", () => {
+  assert.equal(calculateHealthProjectedCalories(1_250, 500, 395), 2_145);
+  assert.equal(calculateHealthDailyCalorieBudget(2_000, 200), 2_200);
+  assert.deepEqual(getHealthCalorieGoalWarning(calculateHealthProjectedCalories(1_250, 500, 250), 2_000), null);
+  assert.deepEqual(getHealthCalorieGoalWarning(calculateHealthProjectedCalories(1_250, 500, 500), calculateHealthDailyCalorieBudget(2_000, 200)), {
+    overBy: 50,
+    projectedCalories: 2_250,
+    targetCalories: 2_200,
+  });
+  assert.deepEqual(getHealthCalorieGoalWarning(calculateHealthProjectedCalories(1_250, 500, 395), 2_000), {
+    overBy: 145,
+    projectedCalories: 2_145,
+    targetCalories: 2_000,
+  });
+  assert.equal(getHealthCalorieGoalWarning(2_145, null), null);
+  assert.equal(getHealthCalorieGoalWarning(Number.NaN, 2_000), null);
+});
+
+test("projected calorie status stays green through the target, red over it, and neutral without a target", () => {
+  assert.equal(getHealthCalorieGoalStatus(1_750, 2_000), "within");
+  assert.equal(getHealthCalorieGoalStatus(2_000, 2_000), "within");
+  assert.equal(getHealthCalorieGoalStatus(2_150, 2_000), "over");
+  assert.equal(getHealthCalorieGoalStatus(2_150, null), "no-target");
+  assert.equal(getHealthCalorieGoalStatus(Number.NaN, 2_000), "no-target");
 });
 
 test("daily calorie target presentation shows positive Active Energy without inventing zero data", () => {

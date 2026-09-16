@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.80`.
+- Current working app version: `7.13.81`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,88 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-16 7.13.81 Consolidate Side and Journal Web Work
+
+Version 7.13.81 consolidates the unique Side and frozen Journal web work into
+the current 7.13 branch. Typed Journal check-ins, event capture, configurable
+questions, structured answers, occurrence display, Journal summaries,
+quota-safe local persistence, and related Health integration are preserved.
+Focus activity bars retain goal-normalized fills and overtime markers, and
+Food retains projected-calorie goal warnings and status coloring.
+
+The current 7.13 Task, Task State, Effective Timeline, current-policy backlog,
+Success Outcomes, named Custom Task Type, presentation, child-creation,
+Attention, recurrence, and reward architecture remains authoritative. The
+additive Journal migration remains source-only; no SQL or DDL was applied, and
+no Edge Function was redeployed. `task-state-command` v37 is live on 7.13.80
+at commit `f9fa56c`.
+
+## 2026-09-16 7.13.67 Color Projected Calories by Goal Status
+
+Food Daily Totals now colors only the projected calorie amount green when it
+is within the target and red when it exceeds the target. A missing target keeps
+the projected amount neutral; consumed calories and all projection behavior
+are unchanged.
+
+## 2026-09-16 7.13.66 Add Projected Food Calories and Goal Warning
+
+Food Daily Totals keeps consumed calories as the main value while showing
+projected calories from active planned food when present. The shared meal
+editor warns informationally when consumed, active planned, and live candidate
+calories exceed the date-specific Active Energy-adjusted target; editing a plan
+excludes that plan's prior calories before adding the candidate.
+
+## 2026-09-15 7.13.65 Add Overtime Goal Marker to Focus Activity Bars
+
+Goal-backed Focus Activity bars keep their fixed full-height tracks and capped
+fills. When actual activity exceeds the displayed goal, a dashed goal marker
+moves downward using the goal-to-actual ratio; no-goal bars retain their
+relative-duration fallback and show no marker.
+
+## 2026-09-15 7.13.64 Normalize Focus Activity Bars to Goal Completion
+
+Focus Activity bars now use one shared full-height track. Goal-backed fills
+represent actual time divided by the relevant goal and cap visually at 100%;
+no-goal rows retain a relative-duration fallback and continue to show `No goal`.
+Existing Focus Activity labels, modes, ranges, persistence, and goal authority
+are unchanged.
+
+## 2026-09-12 7.13.47 Journal QA Corrections
+
+Journal Event and Start/End check-in controls use the compact time presentation
+with a unified keyboard-accessible AM/PM control. Event Feeling occurrence
+editing is viewport-safe, and Start of Day and End of Day expose explicit
+mutually exclusive Yes/No choices. Historical Event notes remain preserved in
+structured answers and summaries. Browser QA remains unverified.
+
+## 2026-09-12 7.13.46 Event-Centered Feeling Logging
+
+Type-driven Journal Events own tagged symptom and Feeling occurrences. Start of
+Day and End of Day can optionally create and link one canonical Event while
+preserving independent Event date/time and edit/retry identity. Browser QA
+remains unverified.
+
+## 2026-09-12 7.13.45 Journal Occurrence Date and Time Labels
+
+Journal Feeling and symptom occurrence references show the occurrence name,
+canonical score denominator, local calendar date, and local time across saved
+Journal summaries and linked history references. Browser QA remains unverified.
+
+## 2026-09-12 7.13.44 Health/Journal LocalStorage Quota Hotfix
+
+Health local-cache persistence treats quota and unexpected browser storage write
+failures as non-fatal. React state updates before the cache pass, quota failure
+stops remaining cache writes without deleting Health or pending meal-plan keys,
+and remote Supabase hydration continues. Browser QA remains unverified.
+
+## 2026-09-12 7.13.43 Type-Driven Journal Check-ins
+
+Journal supports Start of Day, End of Day, and Event entry types with structured
+answers, linked Sleep/Food/Feeling data, open-ended writing, and configurable
+historical-safe custom check-in questions. The additive Journal schema
+migration is source-only; no SQL deployment was performed, and browser QA
+remains unverified.
 
 ## 2026-09-15 7.13.73 Child Task Type Surface and Keyboard Navigation
 
@@ -218,7 +300,6 @@ Task and active named Custom Task Types, with the selected identity persisted in
 the initial canonical child draft and reset after success or Cancel.
 
 No Task behavior semantics changed. No SQL or schema change was made.
-
 ## 2026-09-13 7.13.63 Custom Task Type Presentation QA Correction
 
 Browser QA for 7.13.62 exposed three presentation issues: selected Custom Task
@@ -513,7 +594,6 @@ popover; no Task status, persistence field, manual membership, behavior
 engine, SQL/schema change, or Edge deployment was added. Legacy persisted
 `attention` surface state migrates to Tasks with the Attention list selected.
 Browser QA remains unverified.
-
 ## 2026-09-12 7.13.41 Effective-Dated Needs Action Triggers
 
 Task behavior policies now carry the presentation-only Needs Action trigger

@@ -5,6 +5,33 @@ export function upsertFocusHistoryEntry<TEntry extends { id: string }>(
   return [entry, ...history.filter((candidate) => candidate.id !== entry.id)];
 }
 
+export function getFocusActivityBarFillPercent(
+  actualSeconds: number,
+  goalSeconds: number | undefined,
+  maxActivitySeconds: number,
+) {
+  const safeActualSeconds = Number.isFinite(actualSeconds) ? Math.max(0, actualSeconds) : 0;
+
+  if (goalSeconds && goalSeconds > 0) {
+    return Math.min(100, (safeActualSeconds / goalSeconds) * 100);
+  }
+
+  return maxActivitySeconds > 0
+    ? Math.min(100, (safeActualSeconds / maxActivitySeconds) * 100)
+    : 0;
+}
+
+export function getFocusActivityGoalMarkerPercent(actualSeconds: number, goalSeconds: number | undefined) {
+  if (!Number.isFinite(actualSeconds) || !Number.isFinite(goalSeconds) || goalSeconds === undefined || goalSeconds <= 0) {
+    return null;
+  }
+
+  const safeActualSeconds = Math.max(0, actualSeconds);
+  return safeActualSeconds <= goalSeconds
+    ? 100
+    : Math.min(100, Math.max(0, (goalSeconds / safeActualSeconds) * 100));
+}
+
 export function attachDailyOverallGoalSeconds<
   TBar extends { key: string },
   TSession extends { id: string },
