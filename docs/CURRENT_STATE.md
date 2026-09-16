@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.73`.
+- Current working app version: `7.13.74`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -25,6 +25,22 @@ on arrow keys while TaskTypeSelect had focus.
 Version 7.13.73 aligns Table Step/Substep surface padding with the parent Task
 row and adds explicit keyboard listbox navigation with trigger-retained focus.
 No persistence, schema, or behavior-policy change was made.
+
+## 2026-09-15 7.13.74 Stronger Custom Table Child Accent Surface
+
+Version 7.13.73 browser QA passed Task Type pointer and keyboard navigation,
+selected-value retention, Step/Substep creation, portal/layering, and title
+geometry. Child surface size matched the parent through `py-1.5`, but named
+Custom Step/Substep fills still appeared too faint; the generic purple Table
+shadow could also muddy a non-purple Custom accent.
+
+Version 7.13.74 adds a stronger TABLE CHILD surface authority to the shared
+Task Type accent registry and applies it to normal same-table Step/Substep
+preview rows and source/same-table child rows. Standard child Tasks remain
+neutral, child rows retain `py-1.5`, and child hover elevation no longer uses
+the generic purple shadow. Parent Task surface styling, TaskTypeSelect keyboard
+behavior, child creation semantics, persistence, schema, and behavior policy
+are unchanged.
 
 ## 2026-09-14 7.13.65 List View Child Preview Crash Hotfix
 

@@ -4,11 +4,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   getTaskTypeSurfaceClassName,
+  getTaskTypeTableChildSurfaceClassName,
   getTaskTypeTableSurfaceClassName,
   isLucideIconName,
   resolveTaskTypeAccent,
   resolveTaskTypeIcon,
   searchTaskTypeIcons,
+  TASK_TYPE_ACCENT_OPTIONS,
   TASK_TYPE_ICON_OPTIONS,
 } from "../src/lib/task-type-presentation.ts";
 import { resolveTaskTypeSelectionOption } from "../src/lib/task-type.ts";
@@ -59,16 +61,44 @@ test("Table surfaces retain geometry without a persistent outline", () => {
   assert.match(customSurface, /bg-\[#fcfaff\]/);
 });
 
+test("Table child surfaces use stronger semantic accent fills while Standard remains neutral", () => {
+  assert.match(getTaskTypeTableChildSurfaceClassName("neutral"), /border-transparent bg-white/);
+  assert.match(getTaskTypeTableChildSurfaceClassName("purple"), /bg-\[#f1ecff\]/);
+  assert.match(getTaskTypeTableChildSurfaceClassName("blue"), /bg-\[#edf5ff\]/);
+  assert.doesNotMatch(getTaskTypeTableChildSurfaceClassName("purple"), /fcfaff/);
+});
+
+test("every supported accent has a valid strong Table child surface", () => {
+  for (const accent of TASK_TYPE_ACCENT_OPTIONS) {
+    const surface = getTaskTypeTableChildSurfaceClassName(accent.key);
+    assert.match(surface, /^border-transparent bg-/);
+    assert.ok(surface.includes(accent.tableChildSurfaceClassName));
+  }
+});
+
 test("Table and List production containers use their shared Task Type surface authorities", () => {
   assert.match(tableSource, /getTaskTypeTableSurfaceClassName\(taskTypeOption\.accentKey\)/);
-  assert.match(tableSource, /getTaskTypeTableSurfaceClassName\(childTaskTypeOption\.accentKey\)/);
-  assert.match(tableSource, /getTaskTypeTableSurfaceClassName\(sourceTaskTypeOption\.accentKey\)/);
+  assert.match(tableSource, /getTaskTypeTableChildSurfaceClassName\(childTaskTypeOption\.accentKey\)/);
+  assert.match(tableSource, /getTaskTypeTableChildSurfaceClassName\(sourceTaskTypeOption\.accentKey\)/);
   assert.match(tableSource, /py-1\.5[\s\S]*\$\{childTaskSurface\}[\s\S]*data-task-table-child-grid=\{item\.id\}/);
   assert.match(tableSource, /py-1\.5[\s\S]*\$\{sourceTaskSurface\}[\s\S]*data-task-table-source-step-grid=\{row\.subtask\.id\}/);
   assert.match(tableSource, /py-1\.5[\s\S]*\$\{taskSurface\}[\s\S]*data-task-table-parent-grid=\{task\.id\}/);
   assert.match(tableSource, /data-task-table-parent-grid=\{task\.id\}/);
   assert.match(listSource, /getTaskTypeSurfaceClassName\(taskTypeOption\.accentKey\)/);
   assert.match(listSource, /<article[\s\S]*\$\{taskSurface\}/);
+});
+
+test("Table child paths retain compact geometry, focus treatment, and no purple hover cast", () => {
+  const normalChildStart = tableSource.indexOf("const childTaskTypeOption = resolveTaskTypeSelectionOption");
+  const sourceChildStart = tableSource.indexOf("const sourceTaskTypeOption = resolveTaskTypeSelectionOption");
+  const normalChildSource = tableSource.slice(normalChildStart, normalChildStart + 2200);
+  const sourceChildSource = tableSource.slice(sourceChildStart, sourceChildStart + 2800);
+  assert.match(normalChildSource, /py-1\.5/);
+  assert.match(normalChildSource, /focus-visible:ring-2/);
+  assert.doesNotMatch(normalChildSource, /hover:shadow-\[0_18px_40px_rgba\(109,61,208,0\.10\)\]/);
+  assert.match(sourceChildSource, /py-1\.5/);
+  assert.doesNotMatch(sourceChildSource, /hover:shadow-\[0_18px_40px_rgba\(109,61,208,0\.10\)\]/);
+  assert.match(tableSource, /hover:shadow-\[0_18px_40px_rgba\(109,61,208,0\.10\)\][\s\S]*data-task-table-parent-grid=\{task\.id\}/);
 });
 
 test("Table and List selected, hover, open, and highlighted states preserve surface and selection visibility", () => {
