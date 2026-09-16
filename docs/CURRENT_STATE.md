@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.66`.
+- Current working app version: `7.13.67`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -36,6 +36,13 @@ projected calories from active planned food when present. The shared meal
 editor warns informationally when consumed, active planned, and live candidate
 calories exceed the date-specific Active Energy-adjusted target; editing a plan
 excludes that plan's prior calories before adding the candidate.
+
+## 2026-09-16 7.13.67 Color Projected Calories by Goal Status
+
+Food Daily Totals now colors only the projected calorie amount green when it
+is within the target and red when it exceeds the target. A missing target keeps
+the projected amount neutral; consumed calories and all projection behavior are
+unchanged.
 
 ## 2026-09-13 7.13.63 Custom Task Type Presentation QA Correction
 

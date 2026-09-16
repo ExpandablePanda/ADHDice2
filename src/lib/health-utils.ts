@@ -817,6 +817,15 @@ export function getHealthCalorieGoalWarning(projectedCalories: number | null, ta
   };
 }
 
+export type HealthCalorieGoalStatus = "no-target" | "over" | "within";
+
+export function getHealthCalorieGoalStatus(projectedCalories: number, targetCalories: number | null): HealthCalorieGoalStatus {
+  if (!Number.isFinite(projectedCalories) || targetCalories === null || !Number.isFinite(targetCalories)) {
+    return "no-target";
+  }
+  return projectedCalories <= targetCalories ? "within" : "over";
+}
+
 export type HealthDailyCalorieTargetPoint = {
   date: string;
   label: string;

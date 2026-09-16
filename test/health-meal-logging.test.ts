@@ -349,7 +349,7 @@ test("canonical persistence, editing, deletion, and totals remain unchanged", ()
 test("Food totals and the meal editor use projected calorie authority without blocking save", () => {
   assert.match(source, /const selectedProjectedCalories = selectedNutrition\.calories \+ selectedPlannedNutrition\.calories/);
   assert.match(source, /progressPercent=\{selectedCalorieBudget \? clampPercent\(\(selectedCalorieProgressCalories \/ selectedCalorieBudget\) \* 100\) : null\}/);
-  assert.match(source, /Projected \$\{formatHealthCalorieTarget\(selectedProjectedCalories\)\} kcal/);
+  assert.match(source, /<>Projected <span className=\{selectedProjectedCaloriesClassName\}>\{formatHealthCalorieTarget\(selectedProjectedCalories\)\} kcal<\/span>/);
   assert.match(source, /sumMealNutritionForDate\(mealEntries, mealDate\)/);
   assert.match(source, /sumMetricValueForDate\(metricEntries, mealDate, \["active_energy_kcal"\]\)/);
   assert.match(source, /sumHealthMealPlanNutritionForDate\([\s\S]*?mealDate,[\s\S]*?mealEditorMode === "plan" \? editingMealPlanId : undefined/);
@@ -358,6 +358,19 @@ test("Food totals and the meal editor use projected calorie authority without bl
   assert.match(inlineEditorSource, /Projected \{formatHealthCalorieTarget\(mealCalorieWarning\.projectedCalories\)\} kcal/);
   assert.match(inlineEditorSource, /role="status"/);
   assert.match(inlineEditorSource, /disabled=\{!canSaveMeal\}/);
+});
+
+test("Food projected calorie detail colors only the projected amount and keeps CompactStat string details compatible", () => {
+  const calorieDetailSource = source.slice(source.indexOf("const selectedCalorieStatus ="), source.indexOf("const foodLogHistoryIndex"));
+  assert.match(calorieDetailSource, /getHealthCalorieGoalStatus\(selectedProjectedCalories, selectedCalorieBudget\)/);
+  assert.match(calorieDetailSource, /selectedCalorieStatus === "within"/);
+  assert.match(calorieDetailSource, /text-emerald-500 dark:text-emerald-400/);
+  assert.match(calorieDetailSource, /selectedCalorieStatus === "over"/);
+  assert.match(calorieDetailSource, /text-\[#d64f78\] dark:text-\[#ff9fbc\]/);
+  assert.match(calorieDetailSource, /<>Projected <span className=\{selectedProjectedCaloriesClassName\}>\{formatHealthCalorieTarget\(selectedProjectedCalories\)\} kcal<\/span> · no target<\/>/);
+  assert.match(calorieDetailSource, /<>Projected <span className=\{selectedProjectedCaloriesClassName\}>\{formatHealthCalorieTarget\(selectedProjectedCalories\)\} kcal<\/span> · target/);
+  assert.match(source, /function CompactStat\(\{ detail, label, progressPercent, value \}: \{ detail: ReactNode;/);
+  assert.match(source, /<p className="mt-1 text-xs text-\[#73809c\] dark:text-white\/50">\{detail\}<\/p>/);
 });
 
 test("logged food cards expose one prominent effective-calorie line and preserve planned cards", () => {

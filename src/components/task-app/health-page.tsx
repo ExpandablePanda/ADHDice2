@@ -101,6 +101,7 @@ import {
   getHealthSleepElapsedSeconds,
   getHealthSleepStartTimestamp,
   getHealthSleepDayTotal,
+  getHealthCalorieGoalStatus,
   getHealthMealNutritionValue,
   getHealthMealSummaryParts,
   getHealthCalorieGoalWarning,
@@ -1731,10 +1732,16 @@ export function HealthPage({
   );
   const selectedProjectedCalories = selectedNutrition.calories + selectedPlannedNutrition.calories;
   const selectedCalorieProgressCalories = selectedMealPlans.length > 0 ? selectedProjectedCalories : selectedNutrition.calories;
+  const selectedCalorieStatus = getHealthCalorieGoalStatus(selectedProjectedCalories, selectedCalorieBudget);
+  const selectedProjectedCaloriesClassName = selectedCalorieStatus === "within"
+    ? "text-emerald-500 dark:text-emerald-400"
+    : selectedCalorieStatus === "over"
+      ? "text-[#d64f78] dark:text-[#ff9fbc]"
+      : undefined;
   const selectedCalorieTargetDetail = selectedMealPlans.length > 0
     ? selectedCalorieBudget === null
-      ? `Projected ${formatHealthCalorieTarget(selectedProjectedCalories)} kcal · no target`
-      : `Projected ${formatHealthCalorieTarget(selectedProjectedCalories)} kcal · target ${formatHealthCalorieTarget(selectedCalorieBudget)} kcal${selectedActiveEnergyKcal > 0 ? ` (+${formatHealthCalorieTarget(selectedActiveEnergyKcal)} active kcal)` : ""}`
+      ? <>Projected <span className={selectedProjectedCaloriesClassName}>{formatHealthCalorieTarget(selectedProjectedCalories)} kcal</span> · no target</>
+      : <>Projected <span className={selectedProjectedCaloriesClassName}>{formatHealthCalorieTarget(selectedProjectedCalories)} kcal</span> · target {formatHealthCalorieTarget(selectedCalorieBudget)} kcal{selectedActiveEnergyKcal > 0 ? ` (+${formatHealthCalorieTarget(selectedActiveEnergyKcal)} active kcal)` : ""}</>
     : selectedCalorieBudget === null
       ? "set in goals"
       : `target ${formatHealthCalorieTarget(selectedCalorieBudget)} kcal${selectedActiveEnergyKcal > 0 ? ` (+${formatHealthCalorieTarget(selectedActiveEnergyKcal)} active kcal)` : ""}`;
@@ -4855,7 +4862,7 @@ function HealthPanel({
   );
 }
 
-function CompactStat({ detail, label, progressPercent, value }: { detail: string; label: string; progressPercent: number | null; value: string }) {
+function CompactStat({ detail, label, progressPercent, value }: { detail: ReactNode; label: string; progressPercent: number | null; value: string }) {
   return (
     <div className="flex items-center justify-between gap-4 rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
       <div>

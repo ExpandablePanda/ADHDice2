@@ -16,6 +16,7 @@ import {
   formatHealthMealSummary,
   formatHealthNutritionNumber,
   getHealthMealNutritionValue,
+  getHealthCalorieGoalStatus,
   getHealthCalorieGoalWarning,
   getHealthMealSummaryParts,
   formatHealthSleepDuration,
@@ -64,6 +65,14 @@ test("projected calories combine consumed, planned, and candidate values without
   });
   assert.equal(getHealthCalorieGoalWarning(2_145, null), null);
   assert.equal(getHealthCalorieGoalWarning(Number.NaN, 2_000), null);
+});
+
+test("projected calorie status stays green through the target, red over it, and neutral without a target", () => {
+  assert.equal(getHealthCalorieGoalStatus(1_750, 2_000), "within");
+  assert.equal(getHealthCalorieGoalStatus(2_000, 2_000), "within");
+  assert.equal(getHealthCalorieGoalStatus(2_150, 2_000), "over");
+  assert.equal(getHealthCalorieGoalStatus(2_150, null), "no-target");
+  assert.equal(getHealthCalorieGoalStatus(Number.NaN, 2_000), "no-target");
 });
 
 test("daily calorie target presentation shows positive Active Energy without inventing zero data", () => {
