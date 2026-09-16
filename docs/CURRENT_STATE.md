@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.64`.
+- Current working app version: `7.13.65`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -21,6 +21,13 @@ represent actual time divided by the relevant goal and cap visually at 100%;
 no-goal rows retain a relative-duration fallback and continue to show `No goal`.
 Existing Focus Activity labels, modes, ranges, persistence, and goal authority
 are unchanged.
+
+## 2026-09-15 7.13.65 Add Overtime Goal Marker to Focus Activity Bars
+
+Goal-backed Focus Activity bars keep their fixed full-height tracks and capped
+fills. When actual activity exceeds the displayed goal, a dashed goal marker
+moves downward using the goal-to-actual ratio; no-goal bars retain their
+relative-duration fallback and show no marker.
 
 ## 2026-09-13 7.13.63 Custom Task Type Presentation QA Correction
 

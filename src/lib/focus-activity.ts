@@ -21,6 +21,17 @@ export function getFocusActivityBarFillPercent(
     : 0;
 }
 
+export function getFocusActivityGoalMarkerPercent(actualSeconds: number, goalSeconds: number | undefined) {
+  if (!Number.isFinite(actualSeconds) || !Number.isFinite(goalSeconds) || goalSeconds === undefined || goalSeconds <= 0) {
+    return null;
+  }
+
+  const safeActualSeconds = Math.max(0, actualSeconds);
+  return safeActualSeconds <= goalSeconds
+    ? 100
+    : Math.min(100, Math.max(0, (goalSeconds / safeActualSeconds) * 100));
+}
+
 export function attachDailyOverallGoalSeconds<
   TBar extends { key: string },
   TSession extends { id: string },

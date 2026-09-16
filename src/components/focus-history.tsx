@@ -7,7 +7,7 @@ import {
   TaskTableChipButton,
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
-import { attachDailyOverallGoalSeconds, getFocusActivityBarFillPercent } from "@/lib/focus-activity";
+import { attachDailyOverallGoalSeconds, getFocusActivityBarFillPercent, getFocusActivityGoalMarkerPercent } from "@/lib/focus-activity";
 import { ALL_FOCUS_ACTIVITY_FILTER, filterFocusActivityHistory, getFocusActivitySubtypeOptions, getFocusActivityTypeOptions } from "@/lib/focus-activity-filters";
 import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "@/lib/focus-activity-scroll";
 import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
@@ -2185,6 +2185,7 @@ function FocusActivitySummaryCard({
                 {data.map((item, index) => {
                   const hasGoal = item.goalSeconds > 0;
                   const actualFillPercent = getFocusActivityBarFillPercent(item.seconds, hasGoal ? item.goalSeconds : undefined, maxActivitySeconds);
+                  const goalMarkerPercent = getFocusActivityGoalMarkerPercent(item.seconds, hasGoal ? item.goalSeconds : undefined);
                   const valueLabel = formatActivityBarValue(item.seconds);
                   const goalLabel = hasGoal ? `Goal ${formatRoundedMinuteDuration(item.goalSeconds)}` : "No goal";
 
@@ -2203,7 +2204,7 @@ function FocusActivitySummaryCard({
                       <div className="flex h-28 w-full items-end justify-center">
                         <motion.div
                           aria-label={`${item.label}: ${valueLabel}`}
-                          className={`relative h-full w-full rounded-md border shadow-inner ${hasGoal ? "border-white/[0.8] bg-white/[0.85] dark:border-white/25 dark:bg-white/15" : "border-[var(--border-soft)] bg-[var(--surface-muted)] dark:border-white/10 dark:bg-white/[0.06]"}`}
+                          className={`relative h-full w-full overflow-hidden rounded-md border shadow-inner ${hasGoal ? "border-white/[0.8] bg-white/[0.85] dark:border-white/25 dark:bg-white/15" : "border-[var(--border-soft)] bg-[var(--surface-muted)] dark:border-white/10 dark:bg-white/[0.06]"}`}
                           variants={barVariants}
                         >
                           <div
@@ -2213,6 +2214,13 @@ function FocusActivitySummaryCard({
                               height: `${actualFillPercent}%`,
                             }}
                           />
+                          {goalMarkerPercent !== null ? (
+                            <span
+                              aria-label={`Goal marker ${formatRoundedMinuteDuration(item.goalSeconds)}`}
+                              className="absolute left-0 z-10 w-full border-t-2 border-dashed border-[var(--text-primary)] opacity-80"
+                              style={{ bottom: `${goalMarkerPercent}%` }}
+                            />
+                          ) : null}
                         </motion.div>
                       </div>
                       <span

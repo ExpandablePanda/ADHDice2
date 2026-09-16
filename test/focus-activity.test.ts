@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { attachDailyOverallGoalSeconds, getFocusActivityBarFillPercent, upsertFocusHistoryEntry } from "../src/lib/focus-activity.ts";
+import { attachDailyOverallGoalSeconds, getFocusActivityBarFillPercent, getFocusActivityGoalMarkerPercent, upsertFocusHistoryEntry } from "../src/lib/focus-activity.ts";
 import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "../src/lib/focus-activity-scroll.ts";
 import { ALL_FOCUS_ACTIVITY_FILTER, filterFocusActivityHistory, getFocusActivitySubtypeOptions, getFocusActivityTypeOptions } from "../src/lib/focus-activity-filters.ts";
 
@@ -196,9 +196,26 @@ test("Focus Activity bars keep uniform tracks and a safe relative fallback witho
   assert.equal(getFocusActivityBarFillPercent(1_800, undefined, 3_600), 50);
   assert.equal(getFocusActivityBarFillPercent(3_600, undefined, 3_600), 100);
   assert.equal(getFocusActivityBarFillPercent(1_800, 0, 0), 0);
-  assert.match(source, /className=\{`relative h-full w-full rounded-md border shadow-inner/);
+  assert.match(source, /className=\{`relative h-full w-full overflow-hidden rounded-md border shadow-inner/);
   assert.match(source, /getFocusActivityBarFillPercent\(item\.seconds, hasGoal \? item\.goalSeconds : undefined, maxActivitySeconds\)/);
   assert.doesNotMatch(source, /trackHeightPercent|trackHeight/);
   assert.match(source, /const goalLabel = hasGoal \? `Goal \$\{formatRoundedMinuteDuration\(item\.goalSeconds\)\}` : "No goal"/);
   assert.match(source, /const valueLabel = formatActivityBarValue\(item\.seconds\)/);
+});
+
+test("Focus Activity goal markers move downward through overtime while fills stay capped", () => {
+  assert.equal(getFocusActivityGoalMarkerPercent(3_600, 3_600), 100);
+  assert.equal(getFocusActivityGoalMarkerPercent(4_500, 3_600), 80);
+  assert.ok(Math.abs(getFocusActivityGoalMarkerPercent(5_400, 3_600)! - 66.6666666667) < 0.000001);
+  assert.equal(getFocusActivityGoalMarkerPercent(7_200, 3_600), 50);
+  assert.ok(Math.abs(getFocusActivityGoalMarkerPercent(10_800, 3_600)! - 33.3333333333) < 0.000001);
+  assert.equal(getFocusActivityBarFillPercent(10_800, 3_600, 10_800), 100);
+  assert.equal(getFocusActivityGoalMarkerPercent(10_800, undefined), null);
+  assert.equal(getFocusActivityGoalMarkerPercent(0, 3_600), 100);
+  assert.equal(getFocusActivityGoalMarkerPercent(Number.NaN, 3_600), null);
+  assert.equal(getFocusActivityGoalMarkerPercent(3_600, Number.NaN), null);
+  assert.match(source, /getFocusActivityGoalMarkerPercent\(item\.seconds, hasGoal \? item\.goalSeconds : undefined\)/);
+  assert.match(source, /className="absolute left-0 z-10 w-full border-t-2 border-dashed border-\[var\(--text-primary\)\] opacity-80"/);
+  assert.match(source, /style=\{\{ bottom: `\$\{goalMarkerPercent\}%` \}\}/);
+  assert.match(source, /goalMarkerPercent !== null/);
 });
