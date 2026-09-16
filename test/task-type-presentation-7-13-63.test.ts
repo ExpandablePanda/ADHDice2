@@ -88,16 +88,18 @@ test("Table and List production containers use their shared Task Type surface au
   assert.match(listSource, /<article[\s\S]*\$\{taskSurface\}/);
 });
 
-test("Table child paths retain compact geometry, focus treatment, and no purple hover cast", () => {
+test("Table child paths retain compact geometry, focus treatment, and no row shadows", () => {
   const normalChildStart = tableSource.indexOf("const childTaskTypeOption = resolveTaskTypeSelectionOption");
   const sourceChildStart = tableSource.indexOf("const sourceTaskTypeOption = resolveTaskTypeSelectionOption");
-  const normalChildSource = tableSource.slice(normalChildStart, normalChildStart + 2200);
-  const sourceChildSource = tableSource.slice(sourceChildStart, sourceChildStart + 2800);
+  const normalChildEnd = tableSource.indexOf("data-task-table-child-grid={item.id}", normalChildStart) + 200;
+  const sourceChildEnd = tableSource.indexOf("data-task-table-source-step-grid={row.subtask.id}", sourceChildStart) + 200;
+  const normalChildSource = tableSource.slice(normalChildStart, normalChildEnd);
+  const sourceChildSource = tableSource.slice(sourceChildStart, sourceChildEnd);
   assert.match(normalChildSource, /py-1\.5/);
   assert.match(normalChildSource, /focus-visible:ring-2/);
-  assert.doesNotMatch(normalChildSource, /hover:shadow-\[0_18px_40px_rgba\(109,61,208,0\.10\)\]/);
+  assert.doesNotMatch(normalChildSource, /shadow-/);
   assert.match(sourceChildSource, /py-1\.5/);
-  assert.doesNotMatch(sourceChildSource, /hover:shadow-\[0_18px_40px_rgba\(109,61,208,0\.10\)\]/);
+  assert.doesNotMatch(sourceChildSource, /shadow-/);
   assert.match(tableSource, /hover:shadow-\[0_18px_40px_rgba\(109,61,208,0\.10\)\][\s\S]*data-task-table-parent-grid=\{task\.id\}/);
 });
 

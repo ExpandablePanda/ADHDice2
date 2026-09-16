@@ -42,6 +42,18 @@ the generic purple shadow. Parent Task surface styling, TaskTypeSelect keyboard
 behavior, child creation semantics, persistence, schema, and behavior policy
 are unchanged.
 
+## 2026-09-15 7.13.75 Remove Table Child Row Shadows
+
+Browser QA for 7.13.74 confirmed that stronger Custom Step/Substep accent fills
+were correct, but a residual purple hue remained from Table row shadow/elevation.
+Version 7.13.75 removes resting/reveal and hover box shadows from normal
+same-table Step/Substep rows and source/same-table child rows entirely.
+
+The stronger shared child accent surfaces, neutral Standard child treatment,
+`py-1.5`, focus-visible treatment, selection/accessibility treatment, parent
+Task styling, TaskTypeSelect behavior, and child creation semantics are
+unchanged. No persistence, schema, or behavior-policy change was made.
+
 ## 2026-09-14 7.13.65 List View Child Preview Crash Hotfix
 
 Browser QA for 7.13.64 exposed a List View runtime `ReferenceError` because
