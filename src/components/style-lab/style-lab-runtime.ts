@@ -1,6 +1,7 @@
 import {
   getStyleLabProperty,
   getStyleLabRole,
+  getStyleLabTargetPart,
   getStyleLabTextColorCssValue,
   isStyleLabPropertyAllowed,
   isStyleLabValueAllowed,
@@ -11,6 +12,7 @@ import {
 } from "@/components/style-lab/style-lab-registry";
 
 export const STYLE_LAB_STORAGE_KEY = "adhdice-style-lab:overrides";
+export const STYLE_LAB_PANEL_POSITION_STORAGE_KEY = "adhdice-style-lab:panel-position";
 export const STYLE_LAB_ENABLEMENT_STORAGE_KEY = "adhdice-style-lab:enabled";
 export const STYLE_LAB_RUNTIME_STYLE_ELEMENT_ID = "adhdice-style-lab-runtime-overrides";
 export const STYLE_LAB_WINDOW_ENABLEMENT_KEY = "__ADHDICE_STYLE_LAB_ENABLED__";
@@ -18,6 +20,11 @@ export const STYLE_LAB_WINDOW_ENABLEMENT_KEY = "__ADHDICE_STYLE_LAB_ENABLED__";
 export type StyleLabOverrides = Partial<Record<StyleLabRoleId, Partial<Record<StyleLabPropertyId, string>>>>;
 
 export type StyleLabStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+export type StyleLabPanelPosition = {
+  left: number;
+  top: number;
+};
 
 export type StyleLabWindow = {
   [STYLE_LAB_WINDOW_ENABLEMENT_KEY]?: boolean;
@@ -85,6 +92,64 @@ export function writeStyleLabOverrides(storage: StyleLabStorage | null | undefin
   return normalized;
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isStyleLabPanelPosition(value: unknown): value is StyleLabPanelPosition {
+  return isRecord(value) && isFiniteNumber(value.left) && isFiniteNumber(value.top);
+}
+
+export function normalizeStyleLabPanelPosition(
+  input: unknown,
+  viewportWidth: number,
+  viewportHeight: number,
+  panelWidth: number,
+  panelHeight: number,
+  margin = 16,
+): StyleLabPanelPosition {
+  const safeViewportWidth = Math.max(0, Number.isFinite(viewportWidth) ? viewportWidth : 0);
+  const safeViewportHeight = Math.max(0, Number.isFinite(viewportHeight) ? viewportHeight : 0);
+  const safePanelWidth = Math.max(0, Number.isFinite(panelWidth) ? panelWidth : 0);
+  const safePanelHeight = Math.max(0, Number.isFinite(panelHeight) ? panelHeight : 0);
+  const safeMargin = Math.max(0, Number.isFinite(margin) ? margin : 0);
+  const maxLeft = Math.max(safeMargin, safeViewportWidth - safePanelWidth - safeMargin);
+  const maxTop = Math.max(safeMargin, safeViewportHeight - safePanelHeight - safeMargin);
+  const fallback: StyleLabPanelPosition = { left: maxLeft, top: safeMargin };
+  const candidate = isStyleLabPanelPosition(input) ? input : fallback;
+
+  return {
+    left: Math.min(maxLeft, Math.max(safeMargin, candidate.left)),
+    top: Math.min(maxTop, Math.max(safeMargin, candidate.top)),
+  };
+}
+
+export function readStyleLabPanelPosition(storage: StyleLabStorage | null | undefined): StyleLabPanelPosition | null {
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(STYLE_LAB_PANEL_POSITION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return isStyleLabPanelPosition(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeStyleLabPanelPosition(
+  storage: StyleLabStorage | null | undefined,
+  position: unknown,
+): StyleLabPanelPosition | null {
+  if (!isStyleLabPanelPosition(position)) return null;
+  const normalized = { left: position.left, top: position.top };
+  try {
+    storage?.setItem(STYLE_LAB_PANEL_POSITION_STORAGE_KEY, JSON.stringify(normalized));
+  } catch {
+    // Style Lab panel placement is best effort and must never affect application state.
+  }
+  return normalized;
+}
+
 export function setStyleLabOverride(
   overrides: StyleLabOverrides,
   roleId: string,
@@ -114,19 +179,33 @@ export function getStyleLabCssValue(propertyId: StyleLabPropertyId, value: strin
   return propertyId === "textColor" ? getStyleLabTextColorCssValue(value as StyleLabTextColor) : value;
 }
 
-function selectorForRole(roleId: StyleLabRoleId): string {
-  return `[data-style-role="${roleId}"]:not([data-style-lab-ui] [data-style-role])`;
+function selectorForRole(roleId: StyleLabRoleId, propertyId: StyleLabPropertyId): string {
+  const property = getStyleLabProperty(propertyId);
+  const targetPart = property ? getStyleLabTargetPart(roleId, property.group) : "self";
+  const hostSelector = `[data-style-role="${roleId}"]:not([data-style-lab-ui] [data-style-role])`;
+  return targetPart === "self" ? hostSelector : `${hostSelector} [data-style-part="${targetPart}"]`;
+}
+
+export function getStyleLabPropertyTargetSelector(roleId: string, propertyId: string): string | null {
+  const role = getStyleLabRole(roleId);
+  const property = getStyleLabProperty(propertyId);
+  if (!role || !property || !isStyleLabPropertyAllowed(role.id, property.id)) return null;
+  return selectorForRole(role.id, property.id);
 }
 
 export function buildStyleLabCss(overrides: StyleLabOverrides): string {
   const overrideCss = Object.entries(normalizeStyleLabOverrides(overrides)).flatMap(([roleId, roleOverrides]) => {
-    const declarations = Object.entries(roleOverrides ?? {}).flatMap(([propertyId, value]) => {
+    const declarationsBySelector = new Map<string, string[]>();
+    Object.entries(roleOverrides ?? {}).forEach(([propertyId, value]) => {
       const property = getStyleLabProperty(propertyId);
-      if (!property || typeof value !== "string") return [];
+      if (!property || typeof value !== "string") return;
       const cssValue = getStyleLabCssValue(property.id, value);
-      return property.cssProperties.map((cssProperty) => `  ${cssProperty}: ${cssValue} !important;`);
+      const selector = selectorForRole(roleId as StyleLabRoleId, property.id);
+      const declarations = declarationsBySelector.get(selector) ?? [];
+      declarations.push(...property.cssProperties.map((cssProperty) => `  ${cssProperty}: ${cssValue} !important;`));
+      declarationsBySelector.set(selector, declarations);
     });
-    return declarations.length > 0 ? [`${selectorForRole(roleId as StyleLabRoleId)} {\n${declarations.join("\n")}\n}`] : [];
+    return Array.from(declarationsBySelector, ([selector, declarations]) => `${selector} {\n${declarations.join("\n")}\n}`);
   }).join("\n");
   return [
     `[data-style-lab-hovered="true"] { outline: 2px solid color-mix(in srgb, var(--accent) 56%, transparent) !important; outline-offset: 2px !important; }`,

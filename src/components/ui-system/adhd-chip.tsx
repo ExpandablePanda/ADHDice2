@@ -79,8 +79,9 @@ export function AdhdChip({
     return (
       <TaskTableChipButton
         className={className}
-        data-style-component="AdhdChip"
-        data-style-role="ui.chip"
+        styleComponent="AdhdChip"
+        stylePart="label"
+        styleRole="ui.chip"
         toneClassName={resolvedToneClassName}
         {...props}
       >
@@ -99,7 +100,7 @@ export function AdhdChip({
       {...props}
     >
       <span className={joinClasses(TASK_TABLE_CHIP_BASE_CLASS, resolvedToneClassName, icon ? "pl-1.5 pr-2" : null, className)} data-style-component="AdhdChip" data-style-role="ui.chip">
-        <span className={joinClasses("inline-flex items-center", icon ? TASK_TABLE_ICON_LABEL_GAP_CLASS : null, contentClassName)}>
+        <span className={joinClasses("inline-flex items-center", icon ? TASK_TABLE_ICON_LABEL_GAP_CLASS : null, contentClassName)} data-style-part="label">
           {icon ? <span className="inline-flex items-center justify-center shrink-0">{icon}</span> : null}
           {children}
           {count === undefined ? null : (

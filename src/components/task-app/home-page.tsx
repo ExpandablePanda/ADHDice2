@@ -354,7 +354,7 @@ export function HomePage({
             <div className="flex items-start gap-2">
               <ListTodo aria-hidden="true" className="mt-0.5 h-5 w-5 text-[#6f57f6]" />
               <div>
-                <h1 className="text-xl font-black text-[#27304c] dark:text-white">To-do list</h1>
+                <h1 className="text-xl font-black text-[#27304c] dark:text-white" data-style-component="HomePage" data-style-role="ui.section.title">To-do list</h1>
               </div>
             </div>
             <div className="relative flex items-center gap-2" ref={settingsMenuRef}>

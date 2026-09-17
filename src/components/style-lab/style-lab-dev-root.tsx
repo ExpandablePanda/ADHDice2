@@ -8,11 +8,14 @@ import {
   isStyleLabExplicitlyEnabled,
   applyStyleLabRuntimeStyles,
   canUseStyleLab,
+  readStyleLabPanelPosition,
   readStyleLabOverrides,
   resetStyleLabRole,
   setStyleLabOverride,
+  writeStyleLabPanelPosition,
   writeStyleLabOverrides,
   type StyleLabOverrides,
+  type StyleLabPanelPosition,
   type StyleLabWindow,
 } from "./style-lab-runtime";
 import { getStyleLabRole, type StyleLabPropertyId, type StyleLabRoleId } from "./style-lab-registry";
@@ -32,6 +35,7 @@ export function StyleLabDevRoot() {
   const [inspectionActive, setInspectionActive] = useState(false);
   const [selectedRoleId, setSelectedRoleId] = useState<StyleLabRoleId | null>(null);
   const [overrides, setOverrides] = useState<StyleLabOverrides>({});
+  const [panelPosition, setPanelPosition] = useState<StyleLabPanelPosition | null>(null);
   const [matchCount, setMatchCount] = useState(0);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const hoveredElementRef = useRef<HTMLElement | null>(null);
@@ -42,6 +46,7 @@ export function StyleLabDevRoot() {
     const timeoutId = window.setTimeout(() => {
       if (!canUseStyleLab(process.env.NODE_ENV, isStyleLabExplicitlyEnabled(window as unknown as StyleLabWindow))) return;
       setOverrides(readStyleLabOverrides(window.localStorage));
+      setPanelPosition(readStyleLabPanelPosition(window.localStorage));
       setEnabled(true);
     }, 0);
     return () => window.clearTimeout(timeoutId);
@@ -110,6 +115,13 @@ export function StyleLabDevRoot() {
     setOverrides(normalized);
   }, []);
 
+  const handlePanelPositionChange = useCallback((nextPosition: StyleLabPanelPosition) => {
+    setPanelPosition((currentPosition) => {
+      if (currentPosition?.left === nextPosition.left && currentPosition.top === nextPosition.top) return currentPosition;
+      return writeStyleLabPanelPosition(window.localStorage, nextPosition) ?? currentPosition;
+    });
+  }, []);
+
   const handleSetOverride = useCallback((propertyId: StyleLabPropertyId, value: string) => {
     if (!selectedRoleId) return;
     let nextOverrides = overrides;
@@ -169,8 +181,10 @@ export function StyleLabDevRoot() {
         onResetAll={handleResetAll}
         onResetRole={handleResetRole}
         onSetOverride={handleSetOverride}
+        onPanelPositionChange={handlePanelPositionChange}
         onToggleInspection={() => setInspectionActive((current) => !current)}
         overrides={overrides}
+        panelPosition={panelPosition}
         role={selectedRoleId ? getStyleLabRole(selectedRoleId) : null}
       />
     </div>

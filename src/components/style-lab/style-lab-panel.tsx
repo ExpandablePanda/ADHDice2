@@ -1,13 +1,18 @@
 "use client";
 
 import { Copy, Eye, EyeOff, RotateCcw } from "lucide-react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { AdhdChip, AdhdIconButton, AdhdPanel } from "@/components/ui-system";
 import {
   getStyleLabProperty,
   type StyleLabPropertyId,
   type StyleLabRole,
 } from "./style-lab-registry";
-import type { StyleLabOverrides } from "./style-lab-runtime";
+import {
+  normalizeStyleLabPanelPosition,
+  type StyleLabOverrides,
+  type StyleLabPanelPosition,
+} from "./style-lab-runtime";
 
 const SELECT_CLASS = "h-8 min-w-0 flex-1 rounded-lg border border-[#e6e0f4] bg-white px-2 text-xs text-[#3f3856] outline-none focus:border-[#c9bcff] dark:border-white/10 dark:bg-white/[0.06] dark:text-white";
 
@@ -22,10 +27,12 @@ export function StyleLabPanel({
   onResetAll,
   onResetRole,
   onSetOverride,
+  onPanelPositionChange,
   onToggleInspection,
   role,
   overrides,
   copyStatus,
+  panelPosition,
 }: {
   copyStatus: string | null;
   inspectionActive: boolean;
@@ -34,28 +41,107 @@ export function StyleLabPanel({
   onResetAll: () => void;
   onResetRole: () => void;
   onSetOverride: (propertyId: StyleLabPropertyId, value: string) => void;
+  onPanelPositionChange: (position: StyleLabPanelPosition) => void;
   onToggleInspection: () => void;
   overrides: StyleLabOverrides;
+  panelPosition: StyleLabPanelPosition | null;
   role: StyleLabRole | null;
 }) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ offsetX: number; offsetY: number; pointerId: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    const normalizeCurrentPosition = () => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const rect = panel.getBoundingClientRect();
+      onPanelPositionChange(normalizeStyleLabPanelPosition(
+        panelPosition ?? { left: rect.left, top: rect.top },
+        window.innerWidth,
+        window.innerHeight,
+        rect.width,
+        rect.height,
+      ));
+    };
+    const frameId = window.requestAnimationFrame(normalizeCurrentPosition);
+    window.addEventListener("resize", normalizeCurrentPosition);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", normalizeCurrentPosition);
+    };
+  }, [onPanelPositionChange, panelPosition]);
+
+  function handleDragStart(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      pointerId: event.pointerId,
+    };
+    setIsDragging(true);
+  }
+
+  function handleDragMove(event: PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    const panel = panelRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !panel) return;
+    const rect = panel.getBoundingClientRect();
+    onPanelPositionChange(normalizeStyleLabPanelPosition(
+      { left: event.clientX - drag.offsetX, top: event.clientY - drag.offsetY },
+      window.innerWidth,
+      window.innerHeight,
+      rect.width,
+      rect.height,
+    ));
+  }
+
+  function handleDragEnd(event: PointerEvent<HTMLDivElement>) {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    dragRef.current = null;
+    setIsDragging(false);
+  }
+
   return (
-    <AdhdPanel
-      className="fixed right-4 top-4 z-[1000] max-h-[calc(100vh-2rem)] w-[min(25rem,calc(100vw-2rem))] overflow-y-auto border-[#dcd2fa] bg-white/96 p-3 text-[#403a54] shadow-[0_20px_60px_rgba(81,61,168,0.2)] backdrop-blur dark:border-white/15 dark:bg-[#17132a]/96 dark:text-white/85"
-      data-style-component={undefined}
+    <div
+      className={`fixed z-[1000] w-[min(25rem,calc(100vw-2rem))] ${panelPosition ? "" : "right-4 top-4"}`}
       data-style-lab-ui
-      data-style-role={undefined}
-      padding="none"
-      variant="floating"
+      ref={panelRef}
+      style={panelPosition ? { left: panelPosition.left, top: panelPosition.top } : undefined}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+      <AdhdPanel
+        className="max-h-[calc(100vh-2rem)] w-full overflow-y-auto border-[#dcd2fa] bg-white/96 p-3 text-[#403a54] shadow-[0_20px_60px_rgba(81,61,168,0.2)] backdrop-blur dark:border-white/15 dark:bg-[#17132a]/96 dark:text-white/85"
+        data-style-component={undefined}
+        data-style-role={undefined}
+        padding="none"
+        variant="floating"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div
+            aria-label="Drag Style Lab panel"
+            className={`min-w-0 touch-none select-none ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+            data-style-lab-drag-handle
+            onPointerDown={handleDragStart}
+            onPointerMove={handleDragMove}
+            onPointerUp={handleDragEnd}
+            onPointerCancel={handleDragEnd}
+            title="Drag Style Lab panel"
+          >
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d82b6] dark:text-white/45">Developer infrastructure</p>
           <h2 className="mt-1 text-sm font-bold text-[#2f2944] dark:text-white">ADHDice Style Lab</h2>
+          </div>
+          <AdhdIconButton aria-label={inspectionActive ? "Stop Style Lab inspection" : "Start Style Lab inspection"} data-style-role={undefined} onClick={onToggleInspection} selected={inspectionActive} size="sm" tone="purple">
+            {inspectionActive ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
+          </AdhdIconButton>
         </div>
-        <AdhdIconButton aria-label={inspectionActive ? "Stop Style Lab inspection" : "Start Style Lab inspection"} data-style-role={undefined} onClick={onToggleInspection} selected={inspectionActive} size="sm" tone="purple">
-          {inspectionActive ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
-        </AdhdIconButton>
-      </div>
 
       <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-[#ece8f8] bg-[#faf9ff] px-2.5 py-2 text-xs dark:border-white/10 dark:bg-white/[0.04]">
         <span className="flex min-w-0 items-center gap-2">
@@ -114,6 +200,7 @@ export function StyleLabPanel({
         <span className="text-[10px] text-[#948bab] dark:text-white/40">Drafts stay in this browser only.</span>
         <AdhdChip data-style-role={undefined} onClick={onResetAll} icon={<RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />} tone="danger" type="button">Reset all</AdhdChip>
       </div>
-    </AdhdPanel>
+      </AdhdPanel>
+    </div>
   );
 }

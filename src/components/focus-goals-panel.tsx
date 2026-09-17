@@ -344,9 +344,9 @@ export function FocusGoalsPanel({
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Focus Goals</p>
-                <h2 className="mt-2 text-2xl font-black tracking-tight text-[var(--text-primary)]">Goal Progress</h2>
-                <p className="mt-1 text-sm text-[var(--text-secondary)]">{rangeLabel} • {scope} targets</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]" data-style-component="FocusGoalsPanel" data-style-role="ui.section.label">Focus Goals</p>
+                <h2 className="mt-2 text-2xl font-black tracking-tight text-[var(--text-primary)]" data-style-component="FocusGoalsPanel" data-style-role="ui.section.title">Goal Progress</h2>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]" data-style-component="FocusGoalsPanel" data-style-role="ui.section.subtitle">{rangeLabel} • {scope} targets</p>
               </div>
               <div className="flex flex-wrap items-center gap-2 self-start">
                 <div aria-label="Focus goal range" className="inline-flex items-center" role="group">
@@ -428,8 +428,8 @@ export function FocusGoalsPanel({
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-[var(--text-secondary)]">{formatPriorityLabel(selectedSummary.priorityLevel)} • {typeLine(selectedSummary)}</p>
-                  <h3 className="mt-1 text-3xl font-black tracking-tight text-[var(--text-primary)]">{selectedSummary.category.title}</h3>
-                  <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                  <h3 className="mt-1 text-3xl font-black tracking-tight text-[var(--text-primary)]" data-style-component="FocusGoalsPanel" data-style-role="ui.section.title">{selectedSummary.category.title}</h3>
+                  <p className="mt-2 text-sm text-[var(--text-secondary)]" data-style-component="FocusGoalsPanel" data-style-role="ui.section.subtitle">
                     {isSleepCategory(selectedSummary.category) ? "Excluded from productive totals" : selectedSummary.countsTowardProductiveGoal ? "Included in productive totals" : "Excluded from productive totals"}
                   </p>
                 </div>

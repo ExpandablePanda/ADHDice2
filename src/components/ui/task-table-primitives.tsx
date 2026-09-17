@@ -262,6 +262,9 @@ export function TaskInlineChildDraft({
 }
 
 type TaskTableChipButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  styleComponent?: string;
+  stylePart?: string;
+  styleRole?: string;
   toneClassName?: string;
 };
 
@@ -296,6 +299,9 @@ type CompactRepeatCadenceControlsProps<TRepeat extends string> = {
 export function TaskTableChipButton({
   children,
   className,
+  styleComponent,
+  stylePart,
+  styleRole,
   toneClassName = TASK_TABLE_INACTIVE_CHIP_CLASS,
   type = "button",
   ...props
@@ -315,8 +321,10 @@ export function TaskTableChipButton({
           toneClassName,
           className,
         )}
+        data-style-component={styleComponent}
+        data-style-role={styleRole}
       >
-        {children}
+        {stylePart ? <span className="inline-flex items-center" data-style-part={stylePart}>{children}</span> : children}
       </span>
     </button>
   );

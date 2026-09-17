@@ -31,6 +31,10 @@ export type StyleLabPropertyId = (typeof STYLE_LAB_PROPERTY_IDS)[number];
 
 export type StyleLabCapabilityGroup = "typography" | "sizing" | "container";
 
+export const STYLE_LAB_TARGET_PART_IDS = ["self", "label"] as const;
+
+export type StyleLabTargetPart = (typeof STYLE_LAB_TARGET_PART_IDS)[number];
+
 export type StyleLabPropertyDefinition = {
   cssProperties: readonly string[];
   group: StyleLabCapabilityGroup;
@@ -47,6 +51,9 @@ export type StyleLabRoleId =
   | "ui.chip"
   | "ui.icon-button"
   | "ui.entity-header-title"
+  | "ui.section.label"
+  | "ui.section.title"
+  | "ui.section.subtitle"
   | "typography.field-label"
   | "page.shell.surface"
   | "page.shell.title"
@@ -59,6 +66,7 @@ export type StyleLabRole = {
   context: string;
   id: StyleLabRoleId;
   name: string;
+  targets?: Partial<Record<StyleLabCapabilityGroup, StyleLabTargetPart>>;
 };
 
 const pxValues = ["11px", "12px", "13px", "14px", "16px", "18px", "20px", "24px", "28px", "32px"] as const;
@@ -98,9 +106,12 @@ export const STYLE_LAB_ROLES: readonly StyleLabRole[] = [
   { capabilities: surfaceCapabilities, component: "AdhdPanel", context: "Panel surface", id: "ui.panel.surface", name: "Panel surface" },
   { capabilities: typographyCapabilities, component: "AdhdPanel", context: "Built-in panel title", id: "ui.panel.title", name: "Panel title" },
   { capabilities: typographyCapabilities, component: "AdhdPanel", context: "Built-in panel subtitle", id: "ui.panel.subtitle", name: "Panel subtitle" },
-  { capabilities: typographyCapabilities, component: "AdhdChip", context: "Compact labeled action", id: "ui.chip", name: "Chip" },
+  { capabilities: typographyCapabilities, component: "AdhdChip", context: "Compact labeled action", id: "ui.chip", name: "Chip", targets: { typography: "label" } },
   { capabilities: [...typographyCapabilities, "width", "minWidth", "maxWidth"] as const, component: "AdhdIconButton", context: "Icon-only action", id: "ui.icon-button", name: "Icon button" },
   { capabilities: typographyCapabilities, component: "EditableEntityHeaderTitle", context: "Editable entity title", id: "ui.entity-header-title", name: "Entity header title" },
+  { capabilities: typographyCapabilities, component: "Shared section typography", context: "Section eyebrow or label", id: "ui.section.label", name: "Section label" },
+  { capabilities: typographyCapabilities, component: "Shared section typography", context: "Section or content title", id: "ui.section.title", name: "Section title" },
+  { capabilities: typographyCapabilities, component: "Shared section typography", context: "Section supporting text", id: "ui.section.subtitle", name: "Section subtitle" },
   { capabilities: typographyCapabilities, component: "Shared field-label helpers", context: "Compact form label", id: "typography.field-label", name: "Field label" },
   { capabilities: surfaceCapabilities, component: "PageShellSurface", context: "Page Shell surface", id: "page.shell.surface", name: "Page Shell surface" },
   { capabilities: typographyCapabilities, component: "PageShellHeader", context: "Page title", id: "page.shell.title", name: "Page Shell title" },
@@ -118,6 +129,16 @@ export function getStyleLabProperty(propertyId: string | null | undefined): Styl
   return propertyId && propertyId in STYLE_LAB_PROPERTY_DEFINITIONS
     ? STYLE_LAB_PROPERTY_DEFINITIONS[propertyId as StyleLabPropertyId]
     : null;
+}
+
+export function normalizeStyleLabTargetPart(value: unknown): StyleLabTargetPart {
+  return typeof value === "string" && (STYLE_LAB_TARGET_PART_IDS as readonly string[]).includes(value)
+    ? value as StyleLabTargetPart
+    : "self";
+}
+
+export function getStyleLabTargetPart(roleId: string, group: StyleLabCapabilityGroup): StyleLabTargetPart {
+  return normalizeStyleLabTargetPart(getStyleLabRole(roleId)?.targets?.[group]);
 }
 
 export function isStyleLabPropertyAllowed(roleId: string, propertyId: string): propertyId is StyleLabPropertyId {
