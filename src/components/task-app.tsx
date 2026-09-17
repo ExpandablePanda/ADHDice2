@@ -5437,6 +5437,13 @@ export function TaskApp() {
   const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
     ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
     : null;
+  const isSharedTaskEditorOpen = Boolean(sharedTaskEditorOverlayTaskId && requestedSharedTaskRow);
+  useEffect(() => {
+    if (!isSharedTaskEditorOpen) {
+      return;
+    }
+    void loadTaskNotes();
+  }, [isSharedTaskEditorOpen, loadTaskNotes]);
   const effectiveTaskUiState = { ...taskUiState, duplicateTitleMode: duplicateTitleModeActive };
   const toggleDuplicateTitleMode = () => {
     setTaskUiState((prev) => {

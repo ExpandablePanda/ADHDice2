@@ -28,6 +28,19 @@ test("shared task editor uses one page-independent full-page overlay host", asyn
   assert.match(app, /overlayOnly: false/);
 });
 
+test("shared Task Editor lazily requests Notes only while the shared editor is open", async () => {
+  const app = await source("../src/components/task-app.tsx");
+  const loadEffectStart = app.indexOf("const isSharedTaskEditorOpen = Boolean(");
+  const loadEffectEnd = app.indexOf("\n  }, [isSharedTaskEditorOpen, loadTaskNotes]);", loadEffectStart);
+  const loadEffect = app.slice(loadEffectStart, loadEffectEnd + "\n  }, [isSharedTaskEditorOpen, loadTaskNotes]);".length);
+
+  assert.match(loadEffect, /Boolean\(sharedTaskEditorOverlayTaskId && requestedSharedTaskRow\)/);
+  assert.match(loadEffect, /if \(!isSharedTaskEditorOpen\) \{/);
+  assert.match(loadEffect, /void loadTaskNotes\(\)/);
+  assert.match(loadEffect, /\}, \[isSharedTaskEditorOpen, loadTaskNotes\]\);/);
+  assert.doesNotMatch(loadEffect, /adhdice_notes|from\("adhdice_notes"\)|fetch\(/);
+});
+
 test("Home and Table request the shared overlay without changing the active page", async () => {
   const [app, table] = await Promise.all([
     source("../src/components/task-app.tsx"),
