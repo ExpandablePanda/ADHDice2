@@ -2,7 +2,10 @@
 
 import { GripVertical } from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { reorderListItems } from "@/lib/list-reorder";
+import {
+  getSortableListDragAutoScrollDelta,
+  reorderListItems,
+} from "@/lib/list-reorder";
 
 type DragState = {
   active: boolean;
@@ -32,6 +35,21 @@ function getDropZoneIndex(rawIndex: number, itemCount: number) {
   return Math.max(0, Math.min(Math.max(0, itemCount - 1), rawIndex));
 }
 
+function isScrollableElement(element: HTMLElement) {
+  if (typeof window === "undefined") return false;
+  const computedStyle = window.getComputedStyle(element);
+  return /(auto|scroll|overlay)/.test(computedStyle.overflowY) && element.scrollHeight > element.clientHeight;
+}
+
+function findNearestScrollableContainer(root: HTMLElement) {
+  let current: HTMLElement | null = root;
+  while (current) {
+    if (isScrollableElement(current)) return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+
 export function SortableList<T>({
   children,
   className = "mt-3 space-y-2",
@@ -57,7 +75,10 @@ export function SortableList<T>({
   const snapshotRef = useRef<readonly T[]>(items);
   const holdRef = useRef<number | null>(null);
   const frameRef = useRef<number | null>(null);
+  const autoScrollFrameRef = useRef<number | null>(null);
   const pendingYRef = useRef<number | null>(null);
+  const pointerYRef = useRef<number | null>(null);
+  const scrollOwnerRef = useRef<HTMLElement | null>(null);
   const suppressClickRef = useRef(false);
   const updateDrag = useCallback((next: DragState | null) => {
     dragRef.current = next;
@@ -91,17 +112,26 @@ export function SortableList<T>({
   const processPointerMove = useCallback((pointerY: number) => {
     const current = dragRef.current;
     if (!current?.active) return;
+    pointerYRef.current = pointerY;
     updateDrag({ ...current, ...getDropState(current, pointerY) });
   }, [getDropState, updateDrag]);
+
+  const cancelAutoScroll = useCallback(() => {
+    if (autoScrollFrameRef.current !== null) window.cancelAnimationFrame(autoScrollFrameRef.current);
+    autoScrollFrameRef.current = null;
+    scrollOwnerRef.current = null;
+  }, []);
 
   const cancelDrag = useCallback(() => {
     if (holdRef.current !== null) window.clearTimeout(holdRef.current);
     if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+    cancelAutoScroll();
     holdRef.current = null;
     frameRef.current = null;
     pendingYRef.current = null;
+    pointerYRef.current = null;
     updateDrag(null);
-  }, [updateDrag]);
+  }, [cancelAutoScroll, updateDrag]);
 
   const finish = useCallback((pointerId: number, cancelled = false) => {
     const current = dragRef.current;
@@ -128,6 +158,62 @@ export function SortableList<T>({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [cancelDrag]);
+
+  const runAutoScroll = () => {
+    autoScrollFrameRef.current = null;
+    const current = dragRef.current;
+    const owner = scrollOwnerRef.current;
+    const pointerY = pointerYRef.current;
+    if (!current?.active || !owner?.isConnected || pointerY === null) return;
+    const rect = owner.getBoundingClientRect();
+    const delta = getSortableListDragAutoScrollDelta({
+      clientHeight: owner.clientHeight,
+      pointerY,
+      scrollHeight: owner.scrollHeight,
+      scrollTop: owner.scrollTop,
+      viewportBottom: rect.bottom,
+      viewportTop: rect.top,
+    });
+    if (!delta) return;
+    const previousScrollTop = owner.scrollTop;
+    const maxScrollTop = Math.max(0, owner.scrollHeight - owner.clientHeight);
+    owner.scrollTop = Math.max(0, Math.min(maxScrollTop, previousScrollTop + delta));
+    if (owner.scrollTop === previousScrollTop) return;
+    processPointerMove(pointerY);
+    if (dragRef.current?.active && getSortableListDragAutoScrollDelta({
+      clientHeight: owner.clientHeight,
+      pointerY,
+      scrollHeight: owner.scrollHeight,
+      scrollTop: owner.scrollTop,
+      viewportBottom: rect.bottom,
+      viewportTop: rect.top,
+    })) {
+      autoScrollFrameRef.current = window.requestAnimationFrame(runAutoScroll);
+    }
+  };
+
+  const scheduleAutoScroll = () => {
+    const current = dragRef.current;
+    const root = rootRef.current;
+    const pointerY = pointerYRef.current;
+    if (!current?.active || !root || pointerY === null) return;
+    const owner = scrollOwnerRef.current ?? findNearestScrollableContainer(root);
+    scrollOwnerRef.current = owner;
+    if (!owner) return;
+    const rect = owner.getBoundingClientRect();
+    if (!getSortableListDragAutoScrollDelta({
+      clientHeight: owner.clientHeight,
+      pointerY,
+      scrollHeight: owner.scrollHeight,
+      scrollTop: owner.scrollTop,
+      viewportBottom: rect.bottom,
+      viewportTop: rect.top,
+    })) {
+      cancelAutoScroll();
+      return;
+    }
+    if (autoScrollFrameRef.current === null) autoScrollFrameRef.current = window.requestAnimationFrame(runAutoScroll);
+  };
 
   const queuePointerMove = useCallback((pointerY: number) => {
     pendingYRef.current = pointerY;
@@ -211,6 +297,7 @@ export function SortableList<T>({
                       targetIndex: index,
                       dropZoneId: null,
                     };
+                    pointerYRef.current = event.clientY;
                     updateDrag(next);
                     const handle = event.currentTarget;
                     if (event.pointerType === "mouse") {
@@ -234,6 +321,8 @@ export function SortableList<T>({
                     }
                     event.preventDefault();
                     queuePointerMove(event.clientY);
+                    pointerYRef.current = event.clientY;
+                    scheduleAutoScroll();
                   }}
                   onPointerUp={(event) => {
                     processPointerMove(event.clientY);
