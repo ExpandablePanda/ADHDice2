@@ -267,6 +267,7 @@ import {
   type ChildTaskPreviewLookup,
 } from "@/lib/task-app-derived";
 import { buildStableTaskSearchScope, queryTaskSearch, shouldRunTaskSearch } from "@/lib/task-search-selector";
+import { selectCalendarTasks } from "@/lib/task-calendar-selection";
 import { createPendingTaskMutationTracker } from "@/lib/task-pending-mutations";
 import { createStableTaskRowModelCache } from "@/lib/task-table-row";
 import {
@@ -3545,23 +3546,19 @@ export function TaskApp() {
     urgentTasks,
   }, momentumView);
   const selectedBucketTasks = taskSearchSelection?.visibleTasks ?? canonicalVisibleRootTasksSorted;
+  const calendarSearchMatchingEntityIds = effectiveSearchQuery.length > 0
+    ? taskSearchSelection?.matchingEntityIds
+    : null;
   const calendarTasks = useMemo(() => {
-    const tasksById = new Map(tasksForActiveStatusRead.map((task) => [task.id, task] as const));
-    const selectedTasksById = new Map(selectedBucketTasks.map((task) => [task.id, task] as const));
-
-    if (taskUiState.includeStepsByView.calendar) {
-      for (const group of Object.values(childTaskPreviewByParentTaskId)) {
-        for (const item of group.items) {
-          const task = tasksById.get(item.id);
-          if (task) {
-            selectedTasksById.set(task.id, task);
-          }
-        }
-      }
-    }
-
-    return Array.from(selectedTasksById.values());
-  }, [childTaskPreviewByParentTaskId, selectedBucketTasks, taskUiState.includeStepsByView.calendar, tasksForActiveStatusRead]);
+    return selectCalendarTasks({
+      childTaskIds: Object.values(childTaskPreviewByParentTaskId).flatMap((group) => group.items.map((item) => item.id)),
+      includeSteps: taskUiState.includeStepsByView.calendar,
+      matchingSearchEntityIds: calendarSearchMatchingEntityIds,
+      searchIsActive: effectiveSearchQuery.length > 0,
+      selectedTasks: selectedBucketTasks,
+      tasks: tasksForActiveStatusRead,
+    });
+  }, [calendarSearchMatchingEntityIds, childTaskPreviewByParentTaskId, effectiveSearchQuery, selectedBucketTasks, taskUiState.includeStepsByView.calendar, tasksForActiveStatusRead]);
   const searchMatchedChildTaskIds = taskSearchSelection
     ? Array.from(taskSearchSelection.matchingDescendantIdsByRootParentId.values())
       .flatMap((descendantIds) => Array.from(descendantIds))
