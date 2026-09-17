@@ -4718,6 +4718,17 @@ export function TaskApp() {
   const shouldDeferPageRender = isRestoringPersistedUiState;
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
+  const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
+    ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
+    : null;
+  const isSharedTaskEditorOpen = Boolean(sharedTaskEditorOverlayTaskId && requestedSharedTaskRow);
+
+  useEffect(() => {
+    if (!session?.user || !isAuthenticatedAppBootReady || !isSharedTaskEditorOpen) {
+      return;
+    }
+    void loadTaskNotes();
+  }, [isAuthenticatedAppBootReady, isSharedTaskEditorOpen, loadTaskNotes, session?.user]);
 
   useEffect(() => {
     const requestedNavigation = requestedPageShell;
@@ -5431,16 +5442,6 @@ export function TaskApp() {
   const requestedOpenListTask = requestedListOverlayTaskId
     ? tasks.find((task) => task.id === requestedListOverlayTaskId) ?? null
     : null;
-  const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
-    ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
-    : null;
-  const isSharedTaskEditorOpen = Boolean(sharedTaskEditorOverlayTaskId && requestedSharedTaskRow);
-  useEffect(() => {
-    if (!isSharedTaskEditorOpen) {
-      return;
-    }
-    void loadTaskNotes();
-  }, [isSharedTaskEditorOpen, loadTaskNotes]);
   const effectiveTaskUiState = { ...taskUiState, duplicateTitleMode: duplicateTitleModeActive };
   const toggleDuplicateTitleMode = () => {
     setTaskUiState((prev) => {

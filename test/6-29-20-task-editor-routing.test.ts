@@ -30,15 +30,25 @@ test("shared task editor uses one page-independent full-page overlay host", asyn
 
 test("shared Task Editor lazily requests Notes only while the shared editor is open", async () => {
   const app = await source("../src/components/task-app.tsx");
-  const loadEffectStart = app.indexOf("const isSharedTaskEditorOpen = Boolean(");
-  const loadEffectEnd = app.indexOf("\n  }, [isSharedTaskEditorOpen, loadTaskNotes]);", loadEffectStart);
-  const loadEffect = app.slice(loadEffectStart, loadEffectEnd + "\n  }, [isSharedTaskEditorOpen, loadTaskNotes]);".length);
+  const taskApp = app.slice(app.indexOf("export function TaskApp()"));
+  const loadEffectStart = taskApp.indexOf("const isSharedTaskEditorOpen = Boolean(");
+  const loadEffectEnd = taskApp.indexOf("\n  }, [isAuthenticatedAppBootReady, isSharedTaskEditorOpen, loadTaskNotes, session?.user]);", loadEffectStart);
+  const loadEffect = taskApp.slice(loadEffectStart, loadEffectEnd + "\n  }, [isAuthenticatedAppBootReady, isSharedTaskEditorOpen, loadTaskNotes, session?.user]);".length);
+  const earlyReturnIndexes = [
+    taskApp.indexOf("if (!supabase) {\n    return <ConfigSplash />;"),
+    taskApp.indexOf("if (!isAuthResolved) {\n    return <WorkspaceLoadingScreen theme={theme} />;"),
+    taskApp.indexOf("if (!session?.user) {\n    return (\n      <AuthSplash"),
+    taskApp.indexOf("if (shouldBlockAuthenticatedAppBody) {\n    return <WorkspaceLoadingScreen theme={theme} />;"),
+  ];
 
   assert.match(loadEffect, /Boolean\(sharedTaskEditorOverlayTaskId && requestedSharedTaskRow\)/);
-  assert.match(loadEffect, /if \(!isSharedTaskEditorOpen\) \{/);
+  assert.match(loadEffect, /if \(!session\?\.user \|\| !isAuthenticatedAppBootReady \|\| !isSharedTaskEditorOpen\) \{/);
   assert.match(loadEffect, /void loadTaskNotes\(\)/);
-  assert.match(loadEffect, /\}, \[isSharedTaskEditorOpen, loadTaskNotes\]\);/);
+  assert.match(loadEffect, /\}, \[isAuthenticatedAppBootReady, isSharedTaskEditorOpen, loadTaskNotes, session\?\.user\]\);/);
   assert.doesNotMatch(loadEffect, /adhdice_notes|from\("adhdice_notes"\)|fetch\(/);
+  assert.ok(earlyReturnIndexes.every((index) => index !== -1));
+  assert.ok(loadEffectStart < Math.min(...earlyReturnIndexes));
+  assert.doesNotMatch(taskApp.slice(Math.min(...earlyReturnIndexes)), /const isSharedTaskEditorOpen|loadTaskNotes/);
 });
 
 test("Home and Table request the shared overlay without changing the active page", async () => {
