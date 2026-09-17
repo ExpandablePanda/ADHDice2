@@ -7,6 +7,7 @@ import {
   addHealthWorkoutTypeOption,
   addHealthWorkoutTitleOption,
   buildHealthWorkoutFormPayload,
+  createDefaultHealthWorkoutDraft,
   getHealthDailyMovementMetrics,
   getHealthWorkoutActiveCaloriesForDate,
   getHealthWorkoutDisplayTitle,
@@ -527,6 +528,40 @@ test("Fitness Today has independent historical day navigation and uses the selec
   assert.match(fitnessSource, /formatHealthTimestampDate\(`\$\{selectedFitnessDate\}T12:00:00`\)/);
   const dailyProjectionSection = fitnessSource.slice(fitnessSource.indexOf("const dailyMovement"), fitnessSource.indexOf("const currentWeek"));
   assert.doesNotMatch(dailyProjectionSection, /weekAnchorDate/);
+});
+
+test("new Fitness workout drafts use the selected day while planned defaults survive", () => {
+  const historicalDraft = createDefaultHealthWorkoutDraft(["Walking", "Running"], undefined, "2026-09-10");
+  assert.equal(historicalDraft.date, "2026-09-10");
+
+  const todayDraft = createDefaultHealthWorkoutDraft(["Walking", "Running"], undefined, "2026-09-16");
+  assert.equal(todayDraft.date, "2026-09-16");
+
+  const plannedDraft = createDefaultHealthWorkoutDraft(
+    ["Walking", "Running"],
+    { expected_duration_seconds: 2700, notes: "Easy pace", title: "Planned run", workout_type: "Running" },
+    "2026-09-10",
+  );
+  assert.deepEqual(plannedDraft, {
+    activeCalories: "",
+    date: "2026-09-10",
+    durationMinutes: "45",
+    notes: "Easy pace",
+    startTime: "",
+    title: "Planned run",
+    workoutType: "Running",
+  });
+
+  const createStart = fitnessSource.indexOf("function openWorkoutForm");
+  const createSection = fitnessSource.slice(createStart, fitnessSource.indexOf("\n  }", createStart) + 4);
+  assert.match(createSection, /createDefaultHealthWorkoutDraft\(workoutTypes, plannedItem, selectedFitnessDate\)/);
+});
+
+test("editing a Fitness workout keeps its saved date", () => {
+  const editStart = fitnessSource.indexOf("function openEditForm");
+  const editSection = fitnessSource.slice(editStart, fitnessSource.indexOf("\n  async function handleAddSavedTitle", editStart));
+  assert.match(editSection, /date: workout\.workout_date/);
+  assert.doesNotMatch(editSection, /selectedFitnessDate/);
 });
 
 test("Fitness Today keeps canonical Total Active Calories separate from workout ledger calories", () => {

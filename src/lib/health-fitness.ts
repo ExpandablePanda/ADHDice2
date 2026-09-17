@@ -1,9 +1,10 @@
 "use client";
 
-import type { HealthMetricEntry, HealthWorkout, HealthWorkoutInsert } from "@/lib/database.types";
+import type { HealthFitnessPlanItem, HealthMetricEntry, HealthWorkout, HealthWorkoutInsert } from "@/lib/database.types";
 import { buildHealthMealLoggedAt, shiftHealthDate, sumMetricValueForDate, todayHealthDate } from "@/lib/health-utils";
 import {
   HEALTH_WORKOUT_OPTION_MAX_LENGTH,
+  HEALTH_WORKOUT_TYPES,
 } from "@/lib/health-workout-options";
 
 export { HEALTH_WORKOUT_OPTION_MAX_LENGTH, HEALTH_WORKOUT_TYPES, moveFitnessOption } from "@/lib/health-workout-options";
@@ -26,6 +27,22 @@ export type HealthWorkoutFormInput = {
   title: string;
   workoutType: string;
 };
+
+export function createDefaultHealthWorkoutDraft(
+  workoutTypes: readonly string[] = HEALTH_WORKOUT_TYPES,
+  plannedItem?: Pick<HealthFitnessPlanItem, "expected_duration_seconds" | "notes" | "title" | "workout_type">,
+  date = todayHealthDate(),
+): HealthWorkoutFormInput {
+  return {
+    activeCalories: "",
+    date,
+    durationMinutes: plannedItem?.expected_duration_seconds === null || plannedItem?.expected_duration_seconds === undefined ? "" : String(plannedItem.expected_duration_seconds / 60),
+    notes: plannedItem?.notes ?? "",
+    startTime: "",
+    title: plannedItem?.title ?? "",
+    workoutType: plannedItem?.workout_type ?? workoutTypes[0] ?? HEALTH_WORKOUT_TYPES[0],
+  };
+}
 
 export type HealthWorkoutFormResult = {
   error: string | null;
