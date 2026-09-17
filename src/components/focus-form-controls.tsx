@@ -155,6 +155,7 @@ export function FocusSuggestionInput({
           value={value}
         />
         <button
+          aria-label={isOpen ? `Close ${label} options` : `Open ${label} options`}
           aria-expanded={isOpen}
           className="absolute right-4 top-1/2 flex -translate-y-1/2 items-center justify-center text-[#6f57f6] dark:text-[#cabfff]"
           onClick={() => {
@@ -168,7 +169,7 @@ export function FocusSuggestionInput({
           }}
           type="button"
         >
-          <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+          <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} />
         </button>
         {isOpen && filteredOptions.length > 0 ? (
           <div
@@ -328,7 +329,7 @@ export function FocusPillSelect({
           type="button"
         >
           <span className="truncate pr-3 text-left">{selectedLabel}</span>
-          <ChevronDown className={`h-4 w-4 shrink-0 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
+          <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
         </button>
         {isOpen ? (
           <div
