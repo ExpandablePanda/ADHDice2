@@ -129,6 +129,8 @@ export const AdhdIconButton = forwardRef<HTMLButtonElement, AdhdIconButtonProps>
         toneClass,
         className,
       )}
+      data-style-component="AdhdIconButton"
+      data-style-role="ui.icon-button"
       type={type ?? "button"}
       {...props}
       ref={ref}

@@ -428,7 +428,7 @@ export function PageShell({ children }: PageShellProps) {
 
 export function PageShellSurface({ children, className, ref, ...props }: HTMLAttributes<HTMLDivElement> & { children: ReactNode; ref?: Ref<HTMLDivElement> }) {
   return (
-    <div className={`page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${className ?? ""}`} ref={ref} {...props}>
+    <div className={`page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${className ?? ""}`} data-style-component="PageShellSurface" data-style-role="page.shell.surface" ref={ref} {...props}>
       {children}
     </div>
   );
@@ -436,7 +436,7 @@ export function PageShellSurface({ children, className, ref, ...props }: HTMLAtt
 
 export function PageShellBody({ children, className, ...props }: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
   return (
-    <div className={`page-shell-body adhdice-scrollbar min-w-0 ${className ?? ""}`} {...props}>
+    <div className={`page-shell-body adhdice-scrollbar min-w-0 ${className ?? ""}`} data-style-component="PageShellBody" data-style-role="page.shell.body" {...props}>
       {children}
     </div>
   );

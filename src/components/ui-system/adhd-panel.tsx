@@ -51,18 +51,20 @@ export function AdhdPanel({
   return (
     <Component
       className={joinClasses(PANEL_VARIANT_CLASS[variant], PANEL_PADDING_CLASS[padding], className)}
+      data-style-component="AdhdPanel"
+      data-style-role="ui.panel.surface"
       {...props}
     >
       {header}
       {hasBuiltInHeader ? (
         <div className={joinClasses(header ? "mt-4" : "", children ? "mb-4" : "")}>
           {title !== undefined ? (
-            <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
+            <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35" data-style-component="AdhdPanel" data-style-role="ui.panel.title">
               {title}
             </p>
           ) : null}
           {subtitle !== undefined ? (
-            <p className={joinClasses(title !== undefined ? "mt-1" : "", "text-sm leading-6 text-[#7d7598] dark:text-white/55")}>
+            <p className={joinClasses(title !== undefined ? "mt-1" : "", "text-sm leading-6 text-[#7d7598] dark:text-white/55")} data-style-component="AdhdPanel" data-style-role="ui.panel.subtitle">
               {subtitle}
             </p>
           ) : null}

@@ -35,6 +35,8 @@ export function EditableEntityHeaderTitle({
     <input
       aria-label={ariaLabel}
       className={HEADER_TITLE_CLASS}
+      data-style-component="EditableEntityHeaderTitle"
+      data-style-role="ui.entity-header-title"
       onBlur={onCommit ? () => { void onCommit(); } : undefined}
       onChange={(event) => onChange(event.target.value)}
       onKeyDown={onCommit || onCancel ? handleKeyDown : undefined}

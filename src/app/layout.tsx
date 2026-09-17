@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { StyleLabDevRoot } from "@/components/style-lab/style-lab-dev-root";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -21,6 +22,7 @@ export default function RootLayout({
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         {children}
+        <StyleLabDevRoot />
       </body>
     </html>
   );

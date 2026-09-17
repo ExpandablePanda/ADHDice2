@@ -14,7 +14,7 @@ type ManualSelectOption = {
 };
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <span className="ui-field-label dark:text-white/40">{children}</span>;
+  return <span className="ui-field-label dark:text-white/40" data-style-component="FocusModalFieldLabel" data-style-role="typography.field-label">{children}</span>;
 }
 
 function ManualSuggestionInput({

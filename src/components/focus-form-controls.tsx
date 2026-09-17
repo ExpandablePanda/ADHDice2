@@ -10,7 +10,7 @@ export type FocusSelectOption = {
 const focusFieldInputClassName = "h-12 rounded-full border border-[#ddd6fb] bg-white px-4 text-sm font-semibold text-[#1f2642] shadow-[0_10px_24px_rgba(111,87,246,0.08)] outline-none transition placeholder:text-[#a59cc7] focus:border-[#c8bcff] dark:border-white/10 dark:bg-white/8 dark:text-white dark:placeholder:text-white/35 dark:focus:border-white/20";
 
 function FocusFieldLabel({ children }: { children: React.ReactNode }) {
-  return <span className="ui-field-label dark:text-white/40">{children}</span>;
+  return <span className="ui-field-label dark:text-white/40" data-style-component="FocusFieldLabel" data-style-role="typography.field-label">{children}</span>;
 }
 
 export function FocusSuggestionInput({
