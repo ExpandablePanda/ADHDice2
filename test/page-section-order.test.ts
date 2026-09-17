@@ -76,6 +76,7 @@ import {
   packPageShellLayout,
   pageShellExplicitRectsOverlap,
   planPageShellMove,
+  planPageShellResize,
   placePageShellAtDrop,
   readPageShellLayout,
   readPageShellViews,
@@ -1882,6 +1883,70 @@ test("width changes clamp normal preferred starts to the new legal edge", () => 
   assert.equal(positions.shell.columnStart, 6);
 });
 
+test("width resize planning keeps explicit layouts collision-free and atomic", () => {
+  const order = ["a", "b"];
+  const sizes = sizesFor({ a: 6, b: 6 });
+  const placements = {
+    a: { columnStart: 1, laneOrder: 0, rowIndex: 0, rowOffsetSteps: 0 },
+    b: { columnStart: 7, laneOrder: 0, rowIndex: 0, rowOffsetSteps: 0 },
+  };
+  const original: PageShellLayoutPreference = { order, placements, sizes };
+  const rejected = planPageShellResize({ layout: original, sourceId: "a", span: 8, visibleShellIds: order });
+  assert.equal(rejected.valid, false);
+  if (!rejected.valid) assert.equal(rejected.reason, "COLLISION");
+  assert.deepEqual(original, { order, placements, sizes });
+
+  const sameRow = planPageShellResize({
+    layout: {
+      order: ["a", "b", "c"],
+      placements: {
+        a: { columnStart: 5, laneOrder: 0, rowIndex: 0 },
+        b: { columnStart: 1, laneOrder: 0, rowIndex: 0 },
+        c: { columnStart: 10, laneOrder: 0, rowIndex: 0 },
+      },
+      sizes: sizesFor({ a: 3, b: 3, c: 3 }),
+    },
+    sourceId: "a",
+    span: 6,
+    visibleShellIds: ["a", "b", "c"],
+  });
+  assert.equal(sameRow.valid, true);
+  if (sameRow.valid) {
+    assert.equal(sameRow.layout.placements?.a?.columnStart, 4);
+    assert.deepEqual(getPageShellExplicitLayoutGeometryValidationErrors(sameRow.layout, ["a", "b", "c"]), []);
+  }
+
+  const rightEdge = planPageShellResize({
+    layout: { order: ["edge"], placements: { edge: { columnStart: 9, laneOrder: 0, rowIndex: 0 } }, sizes: sizesFor({ edge: 4 }) },
+    sourceId: "edge",
+    span: 6,
+    visibleShellIds: ["edge"],
+  });
+  assert.equal(rightEdge.valid, true);
+  if (rightEdge.valid) assert.equal(rightEdge.layout.placements?.edge?.columnStart, 7);
+
+  const shrink = planPageShellResize({
+    layout: {
+      order: ["a", "b"],
+      placements: { a: { columnStart: 1, laneOrder: 0, rowIndex: 0 }, b: { columnStart: 9, laneOrder: 0, rowIndex: 0 } },
+      sizes: sizesFor({ a: 8, b: 4 }),
+    },
+    sourceId: "a",
+    span: 6,
+    visibleShellIds: ["a", "b"],
+  });
+  assert.equal(shrink.valid, true);
+  if (shrink.valid) assert.deepEqual(shrink.layout.placements?.a, { columnStart: 1, laneOrder: 0, rowIndex: 0 });
+
+  if (!sameRow.valid) return;
+  const store = storage();
+  const storageKey = getPageShellLayoutStorageKey("resize-test");
+  writePageShellLayout(store, storageKey, "page", sameRow.layout);
+  const reloaded = readPageShellLayout(store, storageKey, "page", ["a", "b", "c"], sameRow.layout.sizes);
+  assert.deepEqual(reloaded, normalizePageShellLayout(sameRow.layout, ["a", "b", "c"], sameRow.layout.sizes));
+  assert.deepEqual(getPageShellExplicitLayoutGeometryValidationErrors(reloaded, ["a", "b", "c"]), []);
+});
+
 test("centered width changes preserve center mode and recalculate exact placement", () => {
   const placement = normalizePageShellPlacement({ columnStart: 8, mode: "centered" }, 7);
   assert.equal(placement.mode, "centered");
@@ -1906,7 +1971,9 @@ test("legacy even Center placements normalize safely through width changes", () 
     normalizePageShellPlacement({ columnStart: 1, laneOrder: 2 }, 7),
     { columnStart: 1, laneOrder: 2 },
   );
-  assert.match(shellSource, /clampPlacementForSpan[\s\S]*normalizePageShellPlacement\(placement, span\)/);
+  // Width edits now use the shared collision-aware planner; the old local
+  // clamp-only helper is intentionally no longer part of the edit path.
+  assert.match(shellSource, /planPageShellResize/);
 });
 
 test("layout normalization preserves order, dimensions, and unrelated placements while clearing even Center", () => {
@@ -2070,7 +2137,7 @@ test("editable shell toolbars render all four directional controls inside the sc
 
 test("directional arrow actions use the normal planner and warning path", () => {
   const moveStart = shellSource.indexOf("  function moveShellDirection");
-  const moveEnd = shellSource.indexOf("\n  function clampPlacementForSpan", moveStart);
+  const moveEnd = shellSource.indexOf("\n  function setShellWidth", moveStart);
   assert.ok(moveStart >= 0);
   assert.ok(moveEnd > moveStart);
   const moveSource = shellSource.slice(moveStart, moveEnd);
@@ -2631,7 +2698,10 @@ test("explicit drag targets write semantic rows for edge insertion, swaps, empty
   const twoRowsGeometries = geometriesFor(twoRowsOrder, twoRowsPositions, grid);
   const rowZero = twoRowsGeometries.find((geometry) => geometry.id === "left");
   assert.ok(rowZero);
-  const emptyTarget = getPageShellDropTarget(twoRowsGeometries, twoRowsPositions, twoRowsOrder, "source", getPageShellGridColumnGeometry(grid, 5, 4)!.left + 20, rowZero.top + 80, grid, 20, twoRowsPlacements);
+  // The old unconstrained helper call selected nearby "right". Current
+  // production vertical drags hold the source column explicitly, so model
+  // that constraint when asserting an empty-space target.
+  const emptyTarget = getPageShellDropTarget(twoRowsGeometries, twoRowsPositions, twoRowsOrder, "source", getPageShellGridColumnGeometry(grid, 5, 4)!.left + 20, rowZero.top + 80, grid, 20, twoRowsPlacements, undefined, 0, undefined, "vertical", { columnStart: 5 });
   assert.equal(emptyTarget.targetId, null);
   assert.equal(emptyTarget.destinationRowIndex, 0);
   const emptyPlan = planPageShellMove({ layout: { order: twoRowsOrder, placements: twoRowsPlacements, sizes: twoRowsSizes }, packedPositions: twoRowsPositions, sourceId: "source", target: emptyTarget, visibleShellIds: twoRowsOrder });
@@ -3480,6 +3550,10 @@ test("width and height resize paths remain separate from move preview mechanics"
   assert.match(shellSource, /function beginResize\(event/);
   assert.match(shellSource, /function beginWidthResize\(event/);
   assert.match(shellSource, /interaction\.kind === "width-resize"/);
+  assert.match(shellSource, /function setShellWidth[\s\S]*planPageShellResize/);
+  assert.match(shellSource, /interaction\.kind === "width-resize"[\s\S]*planPageShellResize/);
+  assert.match(shellSource, /layout\.setPreviewSizes\(resizePlan\.layout\.sizes\)/);
+  assert.match(shellSource, /layout\.setPreviewPlacements\(resizePlan\.layout\.placements \?\? \{\}\)/);
   assert.match(shellSource, /interaction\.initialHeight \+ \(event\.clientY - interaction\.startY\)/);
   assert.match(shellSource, /layout\.setPreviewSizes/);
   assert.match(shellSource, /layout\.setPreviewPlacements/);

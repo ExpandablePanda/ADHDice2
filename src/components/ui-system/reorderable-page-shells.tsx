@@ -24,6 +24,7 @@ import {
   isValidPageShellExplicitLayout,
   migratePageShellLayoutWithMeasuredParity,
   planPageShellMove,
+  planPageShellResize,
   packPageShellLayout,
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_PACKING_GAP_PX,
@@ -1193,10 +1194,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     layout.commitPreview();
   }
 
-  function clampPlacementForSpan(placement: PageShellLayoutState["placements"][string] | undefined, span: PageShellSize["span"]) {
-    return placement ? normalizePageShellPlacement(placement, span) : placement;
-  }
-
   function setShellWidth(id: string, rawValue: string) {
     const currentLayoutValue = currentLayout();
     const currentSize = currentLayoutValue.sizes[id];
@@ -1205,15 +1202,21 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     if (!Number.isFinite(numericValue)) return;
     const span = normalizePageShellSpan(numericValue, currentSize.span);
     if (currentSize.span === span) return;
-    layout.beginPreview(currentLayoutValue);
-    layout.setPreviewSizes((sizes) => ({
-      ...sizes,
-      [id]: { ...currentSize, span },
-    }));
-    const nextPlacement = clampPlacementForSpan(currentLayoutValue.placements?.[id], span);
-    if (nextPlacement) {
-      layout.setPreviewPlacements((placements) => ({ ...placements, [id]: nextPlacement }));
+    const resizePlan = planPageShellResize({
+      chromeHeightPx: layout.isEditing ? 32 : 0,
+      layout: currentLayoutValue,
+      naturalHeights,
+      sourceId: id,
+      span,
+      visibleShellIds,
+    });
+    if (!resizePlan.valid) {
+      showDragMoveWarning(resizePlan.message);
+      return;
     }
+    layout.beginPreview(currentLayoutValue);
+    layout.setPreviewSizes(resizePlan.layout.sizes);
+    layout.setPreviewPlacements(resizePlan.layout.placements ?? {});
     layout.commitPreview();
   }
 
@@ -1262,27 +1265,34 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     if (interaction.kind === "width-resize") {
       const currentSize = layout.sizes[interaction.id];
       if (currentSize?.span === span) return;
-      layout.setPreviewSizes((sizes) => ({
-        ...sizes,
-        [interaction.id]: { ...(sizes[interaction.id] ?? interaction.initialSize), span },
-      }));
-      const nextPlacement = clampPlacementForSpan(interaction.startLayout.placements?.[interaction.id], span);
-      if (nextPlacement) {
-        layout.setPreviewPlacements((placements) => ({ ...placements, [interaction.id]: nextPlacement }));
-      }
+      const resizePlan = planPageShellResize({
+        chromeHeightPx: layout.isEditing ? 32 : 0,
+        layout: interaction.startLayout,
+        naturalHeights,
+        sourceId: interaction.id,
+        span,
+        visibleShellIds,
+      });
+      if (!resizePlan.valid) return;
+      layout.setPreviewSizes(resizePlan.layout.sizes);
+      layout.setPreviewPlacements(resizePlan.layout.placements ?? {});
       return;
     }
     const heightPx = clampPageShellHeight(interaction.initialHeight + (event.clientY - interaction.startY), interaction.naturalHeight);
     const currentSize = layout.sizes[interaction.id];
     if (currentSize?.span === span && currentSize.heightPx === heightPx) return;
-    layout.setPreviewSizes((sizes) => ({
-      ...sizes,
-      [interaction.id]: { heightPx, span },
-    }));
-    const nextPlacement = clampPlacementForSpan(interaction.startLayout.placements?.[interaction.id], span);
-    if (nextPlacement) {
-      layout.setPreviewPlacements((placements) => ({ ...placements, [interaction.id]: nextPlacement }));
-    }
+    const resizePlan = planPageShellResize({
+      chromeHeightPx: layout.isEditing ? 32 : 0,
+      heightPx,
+      layout: interaction.startLayout,
+      naturalHeights,
+      sourceId: interaction.id,
+      span,
+      visibleShellIds,
+    });
+    if (!resizePlan.valid) return;
+    layout.setPreviewSizes(resizePlan.layout.sizes);
+    layout.setPreviewPlacements(resizePlan.layout.placements ?? {});
   }
 
   function endInteraction(event: ShellPointerEvent | null, cancelled: boolean) {
