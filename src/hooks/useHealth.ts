@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { EconomyState } from "@/hooks/useEconomy";
 import type { AppendEconomyEventOpts } from "@/hooks/useEconomy";
@@ -107,6 +107,12 @@ import {
   type HealthMealPlanPendingMutationJournal,
 } from "@/lib/health-meal-planning";
 import { writeLocalStorageEntries, type LocalStorageWriteResult } from "@/lib/health-local-storage";
+import {
+  captureHealthOperation,
+  isCurrentHealthOperation,
+  type HealthOperationOwner,
+  type HealthOperationToken,
+} from "@/lib/health-operation-ownership";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -366,7 +372,7 @@ export function useHealth(
   client: SupabaseClient,
   userId: string | null,
   setMessage: SetMessage,
-  appendEconomyEvent: (opts: AppendEconomyEventOpts) => Promise<void>,
+  appendEconomyEvent: (opts: AppendEconomyEventOpts, isCurrent?: () => boolean) => Promise<void>,
   setEconomy: (updater: EconomyState | ((current: EconomyState) => EconomyState)) => void,
   active = true,
 ) {
@@ -400,6 +406,24 @@ export function useHealth(
   const journalSignalOccurrencesRemoteEnabledRef = useRef(true);
   const mealPlanPendingMutationsRef = useRef<HealthMealPlanPendingMutationJournal>({});
   const healthLocalPersistenceFailureRef = useRef<HealthLocalPersistenceFailure | null>(null);
+  const healthOperationGenerationRef = useRef(0);
+  const healthOwnerRef = useRef<Pick<HealthOperationOwner, "active" | "userId">>({ active, userId });
+  const currentHealthOwner = (): HealthOperationOwner => ({
+    ...healthOwnerRef.current,
+    generation: healthOperationGenerationRef.current,
+  });
+  const captureOperation = () => captureHealthOperation(currentHealthOwner());
+  const isCurrentOperation = (token: HealthOperationToken | null) => isCurrentHealthOperation(currentHealthOwner(), token);
+
+  useLayoutEffect(() => {
+    healthOperationGenerationRef.current += 1;
+    healthOwnerRef.current = { active, userId };
+    healthFoodMutationRevisionRef.current = 0;
+    return () => {
+      healthOperationGenerationRef.current += 1;
+      healthOwnerRef.current = { active: false, userId: null };
+    };
+  }, [active, client, userId]);
 
   function rememberHealthLocalPersistenceFailure(
     result: LocalStorageWriteResult,
@@ -532,8 +556,10 @@ export function useHealth(
 
   async function claimEligibleAwards(
     snapshot: HealthStateSnapshot,
+    operation: HealthOperationToken,
     options?: { persistRemotely?: boolean; silent?: boolean },
   ) {
+    if (!isCurrentOperation(operation)) return snapshot;
     const eligible = getEligibleHealthAchievements({
       awards: snapshot.awards,
       checkIns: snapshot.checkIns,
@@ -592,6 +618,7 @@ export function useHealth(
           p_title: achievement.title,
           p_user_id: snapshot.profile.user_id,
         });
+        if (!isCurrentOperation(operation)) return snapshot;
 
         const rpcRow = Array.isArray(rpcData) ? (rpcData[0] as Record<string, unknown> | null) : null;
         if (!rpcError && rpcRow && rpcRow.created === true) {
@@ -626,6 +653,8 @@ export function useHealth(
             .select("*")
             .single();
 
+          if (!isCurrentOperation(operation)) return snapshot;
+
           if (error) {
             if (error.message.includes("duplicate") || error.message.includes("unique")) {
               continue;
@@ -639,13 +668,15 @@ export function useHealth(
 
       nextAwards.push(insertedAward);
       if (client && options?.persistRemotely && !usedAtomicRemoteClaim) {
+        if (!isCurrentOperation(operation)) return snapshot;
         await appendEconomyEvent({
           points: 0,
           reason: `Health achievement: ${achievement.title}`,
           refId: insertedAward.id,
           source: "health",
           xp: achievement.xp,
-        });
+        }, () => isCurrentOperation(operation));
+        if (!isCurrentOperation(operation)) return snapshot;
       }
     }
 
@@ -653,7 +684,9 @@ export function useHealth(
       return snapshot;
     }
 
+    if (!isCurrentOperation(operation)) return snapshot;
     const nextSnapshot = buildHealthSnapshot({ ...snapshot, awards: nextAwards });
+    if (!isCurrentOperation(operation)) return snapshot;
     applySnapshot(nextSnapshot);
     if (!options?.silent) {
       setHealthSuccessMessage({
@@ -698,6 +731,10 @@ export function useHealth(
     }
 
     if (!active) return;
+
+    healthOperationGenerationRef.current += 1;
+    const hydrationOperation = captureOperation();
+    if (!hydrationOperation) return;
 
     symptomDefinitionsRemoteEnabledRef.current = true;
     symptomEntriesRemoteEnabledRef.current = true;
@@ -758,7 +795,7 @@ export function useHealth(
         client.from("adhdice_health_achievement_awards").select("*").eq("user_id", userId).order("earned_at", { ascending: false }),
       ]);
 
-      if (!isActive) {
+      if (!isActive || !isCurrentOperation(hydrationOperation)) {
         return;
       }
 
@@ -859,7 +896,7 @@ export function useHealth(
       let symptomDefinitionRecoveryError: { message: string } | null = null;
       let symptomEntryRecoveryError: { message: string } | null = null;
 
-      if (!isActive) {
+      if (!isActive || !isCurrentOperation(hydrationOperation)) {
         return;
       }
       if (!symptomsResult.error && symptomRecovery.unreconciledLocalSymptoms.length > 0) {
@@ -878,7 +915,7 @@ export function useHealth(
             { onConflict: "id" },
           )
           .select("*");
-        if (!isActive) {
+        if (!isActive || !isCurrentOperation(hydrationOperation)) {
           return;
         }
         if (error) {
@@ -896,7 +933,7 @@ export function useHealth(
         }
       }
 
-      if (!isActive) {
+      if (!isActive || !isCurrentOperation(hydrationOperation)) {
         return;
       }
       if (!symptomsResult.error && !symptomDefinitionRecoveryError && !symptomEntriesResult.error) {
@@ -919,7 +956,7 @@ export function useHealth(
               { onConflict: "id" },
             )
             .select("*");
-          if (!isActive) {
+          if (!isActive || !isCurrentOperation(hydrationOperation)) {
             return;
           }
           if (error) {
@@ -952,7 +989,7 @@ export function useHealth(
         remoteSymptomEntries,
       );
 
-      if (!isActive) {
+      if (!isActive || !isCurrentOperation(hydrationOperation)) {
         return;
       }
 
@@ -978,7 +1015,7 @@ export function useHealth(
             .from("adhdice_health_checkins")
             .upsert(localCheckInsToRecover.map((entry) => ({ ...entry, user_id: userId })), { onConflict: "id" })
             .select("*");
-          if (!isActive) return;
+          if (!isActive || !isCurrentOperation(hydrationOperation)) return;
           if (error) {
             checkInRecoveryError = error;
           } else {
@@ -1022,7 +1059,7 @@ export function useHealth(
               user_id: userId,
             })), { onConflict: "id" })
             .select("*");
-          if (!isActive) return;
+          if (!isActive || !isCurrentOperation(hydrationOperation)) return;
           if (error) {
             journalRecoveryError = error;
           } else {
@@ -1037,7 +1074,7 @@ export function useHealth(
             .from("adhdice_health_journal_signal_values")
             .upsert(localValuesToRecover.map((value) => ({ ...value, user_id: userId })), { onConflict: "id" })
             .select("*");
-          if (!isActive) return;
+          if (!isActive || !isCurrentOperation(hydrationOperation)) return;
           if (error) {
             journalRecoveryError = error;
           } else {
@@ -1059,7 +1096,7 @@ export function useHealth(
             .from("adhdice_health_journal_signal_occurrences")
             .upsert(localOccurrencesToRecover.map((occurrence) => ({ ...occurrence, user_id: userId })), { onConflict: "id" })
             .select("*");
-          if (!isActive) return;
+          if (!isActive || !isCurrentOperation(hydrationOperation)) return;
           if (error) {
             journalRecoveryError = error;
             journalSignalOccurrencesRemoteEnabledRef.current = false;
@@ -1087,7 +1124,7 @@ export function useHealth(
         ? { mergedWorkouts: latestLocalWorkouts, unreconciledLocalWorkouts: [] }
         : reconcileHealthWorkouts(latestLocalWorkouts, remoteWorkouts);
 
-      if (!isActive) {
+      if (!isActive || !isCurrentOperation(hydrationOperation)) {
         return;
       }
       if (!workoutsResult.error && workoutRecovery.unreconciledLocalWorkouts.length > 0) {
@@ -1097,7 +1134,7 @@ export function useHealth(
             workoutRecovery.unreconciledLocalWorkouts.map((workout) => ({ ...workout, user_id: userId })),
             { ignoreDuplicates: true, onConflict: "id" },
           );
-        if (!isActive) {
+        if (!isActive || !isCurrentOperation(hydrationOperation)) {
           return;
         }
         if (recoveryError) {
@@ -1114,7 +1151,7 @@ export function useHealth(
       let mealPlanRecoveryError: { message: string } | null = null;
       if (!mealPlanEntriesResult.error) {
         for (const [planId, mutation] of Object.entries(pendingMealPlanMutations)) {
-          if (!isActive) {
+          if (!isActive || !isCurrentOperation(hydrationOperation)) {
             return;
           }
           const result = mutation.operation === "upsert"
@@ -1126,7 +1163,7 @@ export function useHealth(
               .delete()
               .eq("id", mutation.planId)
               .eq("user_id", userId);
-          if (!isActive) {
+          if (!isActive || !isCurrentOperation(hydrationOperation)) {
             return;
           }
           if (result.error) {
@@ -1166,7 +1203,7 @@ export function useHealth(
           userId,
         );
 
-      if (!isActive) {
+      if (!isActive || !isCurrentOperation(hydrationOperation)) {
         return;
       }
 
@@ -1204,9 +1241,15 @@ export function useHealth(
       const snapshotToApply = hydratedFavorites === remoteSnapshot.favorites
         ? remoteSnapshot
         : buildHealthSnapshot({ ...remoteSnapshot, favorites: hydratedFavorites });
+      if (!isActive || !isCurrentOperation(hydrationOperation)) {
+        return;
+      }
       setStorageMode("remote");
       applySnapshot(snapshotToApply, { persistenceMode: "remote" });
-      await claimEligibleAwards(snapshotToApply, { persistRemotely: true, silent: true });
+      await claimEligibleAwards(snapshotToApply, hydrationOperation, { persistRemotely: true, silent: true });
+      if (!isActive || !isCurrentOperation(hydrationOperation)) {
+        return;
+      }
       setIsLoading(false);
     })();
 
@@ -1219,6 +1262,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     const nextProfile: HealthProfile = {
       ...profile,
@@ -1233,12 +1278,14 @@ export function useHealth(
           ...updates,
           user_id: userId,
         });
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -1260,6 +1307,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const nextQuestions = normalizeHealthJournalCustomQuestions(questions);
     const now = new Date().toISOString();
     const nextProfile: HealthProfile = {
@@ -1272,6 +1321,7 @@ export function useHealth(
       const { error } = await client
         .from("adhdice_health_profiles")
         .upsert({ journal_questions: nextQuestions, user_id: userId });
+      if (!isCurrentOperation(operation)) return false;
       if (error && !isMissingHealthPersistence(error.message)) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -1281,6 +1331,7 @@ export function useHealth(
         setMessage({ tone: "neutral", text: "Journal questions are saved locally until the 7.13.43 Journal migration is applied." });
       }
     }
+    if (!isCurrentOperation(operation)) return false;
     const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
       awards,
       checkIns,
@@ -1296,6 +1347,7 @@ export function useHealth(
       waterEntries,
       weightEntries,
     });
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({ ...currentSnapshot, profile: nextProfile }), {
       persistenceMode: client && storageMode === "remote" && !savedLocallyBecauseMigrationIsPending ? "remote" : "local",
     });
@@ -1311,6 +1363,8 @@ export function useHealth(
     if (!userId || !profile) {
       return null;
     }
+    const operation = captureOperation();
+    if (!operation) return null;
 
     const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
       awards,
@@ -1397,6 +1451,7 @@ export function useHealth(
           .select("*")
           .single();
       const { data, error } = result;
+      if (!isCurrentOperation(operation)) return null;
       if (error) {
         if (isMissingHealthPersistence(error.message)) {
           journalRemoteEnabledRef.current = false;
@@ -1529,6 +1584,7 @@ export function useHealth(
           .from("adhdice_health_journal_signal_values")
           .upsert(scoredValues, { onConflict: "user_id,journal_entry_id,signal_id" })
           .select("*");
+        if (!isCurrentOperation(operation)) return null;
         if (error) childWriteError = error;
         else if (data) scoredValues.splice(0, scoredValues.length, ...data);
       }
@@ -1539,6 +1595,7 @@ export function useHealth(
             .delete()
             .eq("id", value.id)
             .eq("user_id", userId);
+          if (!isCurrentOperation(operation)) return null;
           if (error) {
             childWriteError = error;
             break;
@@ -1550,6 +1607,7 @@ export function useHealth(
           .from("adhdice_health_symptom_entries")
           .upsert(occurrenceRows, { onConflict: "id" })
           .select("*");
+        if (!isCurrentOperation(operation)) return null;
         if (error) childWriteError = error;
         else if (data) occurrenceRows.splice(0, occurrenceRows.length, ...data);
       }
@@ -1561,6 +1619,7 @@ export function useHealth(
             .eq("id", entry.id)
             .eq("user_id", userId)
             .eq("journal_entry_id", nextRow.id);
+          if (!isCurrentOperation(operation)) return null;
           if (error) {
             childWriteError = error;
             break;
@@ -1572,6 +1631,7 @@ export function useHealth(
           .from("adhdice_health_journal_signal_occurrences")
           .upsert(journalSignalOccurrenceRows, { onConflict: "id" })
           .select("*");
+        if (!isCurrentOperation(operation)) return null;
         if (error) childWriteError = error;
         else if (data) journalSignalOccurrenceRows.splice(0, journalSignalOccurrenceRows.length, ...data.map(normalizeHealthJournalSignalOccurrence));
       }
@@ -1583,6 +1643,7 @@ export function useHealth(
             .eq("id", occurrence.id)
             .eq("user_id", userId)
             .eq("journal_entry_id", nextRow.id);
+          if (!isCurrentOperation(operation)) return null;
           if (error) {
             childWriteError = error;
             break;
@@ -1615,6 +1676,7 @@ export function useHealth(
       journalSignalOccurrences: nextJournalSignalOccurrences,
       symptomEntries: sortHealthSymptomEntries(nextSymptomEntries),
     });
+    if (!isCurrentOperation(operation)) return null;
     applySnapshot(nextSnapshot, {
       persistenceMode: client && storageMode === "remote" && journalRemoteEnabledRef.current ? "remote" : "local",
     });
@@ -1629,7 +1691,8 @@ export function useHealth(
       });
       return null;
     }
-    await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
+    await claimEligibleAwards(nextSnapshot, operation, { persistRemotely: storageMode === "remote" });
+    if (!isCurrentOperation(operation)) return null;
     setHealthSuccessMessage({ tone: "good", text: existingRow ? "Journal Entry updated." : "Journal Entry saved." });
     return nextRow;
   }
@@ -1640,6 +1703,8 @@ export function useHealth(
 
   async function createJournalSignal(input: Omit<HealthJournalSignalInsert, "user_id">) {
     if (!userId || !profile) return null;
+    const operation = captureOperation();
+    if (!operation) return null;
     const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
       awards,
       checkIns,
@@ -1673,6 +1738,7 @@ export function useHealth(
           in_template: input.in_template === true,
           template_sort_order: input.in_template === true ? existingSymptomSignal.template_sort_order : null,
         });
+        if (!isCurrentOperation(operation)) return null;
         if (!restored) return null;
         return healthSnapshotRef.current?.journalSignals.find((signal) => signal.id === existingSymptomSignal.id) ?? null;
       }
@@ -1709,6 +1775,7 @@ export function useHealth(
         .insert({ ...localRow, user_id: userId })
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return null;
       if (error) {
         if (isMissingHealthPersistence(error.message)) {
           journalRemoteEnabledRef.current = false;
@@ -1720,6 +1787,7 @@ export function useHealth(
         nextRow = normalizeHealthJournalSignal(data ?? localRow);
       }
     }
+    if (!isCurrentOperation(operation)) return null;
     applySnapshot(buildHealthSnapshot({
       ...currentSnapshot,
       journalSignals: [...currentSnapshot.journalSignals, nextRow].sort(sortHealthJournalSignals),
@@ -1732,6 +1800,8 @@ export function useHealth(
 
   async function updateJournalSignal(signalId: string, input: HealthJournalSignalUpdate) {
     if (!userId || !profile) return false;
+    const operation = captureOperation();
+    if (!operation) return false;
     const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
       awards,
       checkIns,
@@ -1791,6 +1861,7 @@ export function useHealth(
         .eq("user_id", userId)
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         if (isMissingHealthPersistence(error.message)) journalRemoteEnabledRef.current = false;
         else {
@@ -1801,6 +1872,7 @@ export function useHealth(
         Object.assign(nextRow, normalizeHealthJournalSignal(data));
       }
     }
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       ...currentSnapshot,
       journalSignals: currentSnapshot.journalSignals.map((signal) => signal.id === signalId ? nextRow : signal).sort(sortHealthJournalSignals),
@@ -1819,13 +1891,18 @@ export function useHealth(
   }
 
   async function archiveJournalSignal(signalId: string) {
+    const operation = captureOperation();
+    if (!operation) return false;
     const saved = await updateJournalSignal(signalId, { archived_at: new Date().toISOString(), in_template: false, template_sort_order: null });
+    if (!isCurrentOperation(operation)) return false;
     if (saved) setHealthSuccessMessage({ tone: "good", text: "Feeling archived." });
     return saved;
   }
 
   async function deleteJournalSignal(signalId: string) {
     if (!userId || !profile) return false;
+    const operation = captureOperation();
+    if (!operation) return false;
     const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
       awards,
       checkIns,
@@ -1854,6 +1931,7 @@ export function useHealth(
         .delete()
         .eq("id", signalId)
         .eq("user_id", userId);
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         if (isMissingHealthPersistence(error.message)) journalRemoteEnabledRef.current = false;
         else {
@@ -1862,6 +1940,7 @@ export function useHealth(
         }
       }
     }
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       ...currentSnapshot,
       journalSignals: currentSnapshot.journalSignals.filter((signal) => signal.id !== signalId),
@@ -1874,6 +1953,8 @@ export function useHealth(
 
   async function reorderJournalSignals(orderedSignalIds: readonly string[]) {
     if (!userId || !profile) return false;
+    const operation = captureOperation();
+    if (!operation) return false;
     const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
       awards,
       checkIns,
@@ -1900,12 +1981,14 @@ export function useHealth(
           .update({ in_template: true, template_sort_order: signal.template_sort_order })
           .eq("id", signal.id)
           .eq("user_id", userId);
+        if (!isCurrentOperation(operation)) return false;
         if (error) {
           setMessage({ tone: "warn", text: error.message });
           return false;
         }
       }
     }
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({ ...currentSnapshot, journalSignals: nextSignals.sort(sortHealthJournalSignals) }), {
       persistenceMode: client && storageMode === "remote" && journalRemoteEnabledRef.current ? "remote" : "local",
     });
@@ -1914,12 +1997,15 @@ export function useHealth(
 
   async function deleteJournalEntry(entryId: string) {
     if (!userId || !profile) return false;
+    const operation = captureOperation();
+    if (!operation) return false;
     if (client && storageMode === "remote") {
       const { error } = await client
         .from("adhdice_health_checkins")
         .delete()
         .eq("id", entryId)
         .eq("user_id", userId);
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -1940,6 +2026,7 @@ export function useHealth(
       waterEntries,
       weightEntries,
     });
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       ...currentSnapshot,
       checkIns: currentSnapshot.checkIns.filter((entry) => entry.id !== entryId),
@@ -1961,6 +2048,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     const currentSymptom = symptoms.find((symptom) => symptom.id === symptomId);
     if (!currentSymptom) {
@@ -2004,6 +2093,7 @@ export function useHealth(
         .eq("user_id", userId)
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         if (isMissingHealthSymptomPersistence(error.message)) {
           symptomDefinitionsRemoteEnabledRef.current = false;
@@ -2020,6 +2110,7 @@ export function useHealth(
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2045,6 +2136,8 @@ export function useHealth(
     if (!userId || !profile) {
       return null;
     }
+    const operation = captureOperation();
+    if (!operation) return null;
 
     const name = normalizeHealthSymptomName(input.name);
     if (!name) {
@@ -2075,6 +2168,7 @@ export function useHealth(
         .insert({ ...input, archived_at: null, color: localRow.color, name, user_id: userId })
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return null;
       if (error) {
         if (isMissingHealthSymptomPersistence(error.message)) {
           symptomDefinitionsRemoteEnabledRef.current = false;
@@ -2091,6 +2185,7 @@ export function useHealth(
       }
     }
 
+    if (!isCurrentOperation(operation)) return null;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2128,6 +2223,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const currentSymptoms = healthSnapshotRef.current?.symptoms ?? symptoms;
     const currentSymptomEntries = healthSnapshotRef.current?.symptomEntries ?? symptomEntries;
     const currentCheckIns = healthSnapshotRef.current?.checkIns ?? checkIns;
@@ -2170,6 +2267,7 @@ export function useHealth(
         .insert({ ...normalizedInput, user_id: userId })
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         if (isMissingHealthSymptomPersistence(error.message)) {
           symptomEntriesRemoteEnabledRef.current = false;
@@ -2186,6 +2284,7 @@ export function useHealth(
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2211,6 +2310,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const currentEntry = symptomEntries.find((entry) => entry.id === entryId);
     if (!currentEntry) {
       return false;
@@ -2256,6 +2357,7 @@ export function useHealth(
         .eq("user_id", userId)
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         if (isMissingHealthSymptomPersistence(error.message)) {
           symptomEntriesRemoteEnabledRef.current = false;
@@ -2272,6 +2374,7 @@ export function useHealth(
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2297,12 +2400,15 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
       const { error } = await client
         .from("adhdice_health_symptom_entries")
         .delete()
         .eq("id", entryId)
         .eq("user_id", userId);
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         if (isMissingHealthSymptomPersistence(error.message)) {
           symptomEntriesRemoteEnabledRef.current = false;
@@ -2317,6 +2423,7 @@ export function useHealth(
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2342,6 +2449,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     const now = new Date().toISOString();
     const localRow: HealthMealEntry = {
@@ -2381,6 +2490,7 @@ export function useHealth(
         })
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -2402,8 +2512,10 @@ export function useHealth(
       waterEntries,
       weightEntries,
     });
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(nextSnapshot);
-    await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
+    await claimEligibleAwards(nextSnapshot, operation, { persistRemotely: storageMode === "remote" });
+    if (!isCurrentOperation(operation)) return false;
     setHealthSuccessMessage({ tone: "good", text: "Meal saved." });
     return true;
   }
@@ -2412,15 +2524,19 @@ export function useHealth(
     if (!profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     if (client && storageMode === "remote") {
       const { error } = await client.from("adhdice_health_meal_entries").delete().eq("id", entryId);
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2442,6 +2558,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     const now = new Date().toISOString();
     const currentEntry = mealEntries.find((entry) => entry.id === entryId);
@@ -2464,6 +2582,7 @@ export function useHealth(
         .eq("user_id", userId)
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -2487,8 +2606,10 @@ export function useHealth(
       waterEntries,
       weightEntries,
     });
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(nextSnapshot);
-    await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
+    await claimEligibleAwards(nextSnapshot, operation, { persistRemotely: storageMode === "remote" });
+    if (!isCurrentOperation(operation)) return false;
     setHealthSuccessMessage({ tone: "good", text: "Meal updated." });
     return true;
   }
@@ -2497,6 +2618,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     const now = new Date().toISOString();
     const localRow: HealthMealPlanEntry = {
@@ -2537,6 +2660,7 @@ export function useHealth(
         .insert({ ...input, user_id: userId })
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         if (!isMissingHealthPersistence(error.message)) {
           setMessage({ tone: "warn", text: error.message });
@@ -2550,6 +2674,7 @@ export function useHealth(
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     if (persistedRemotely) {
       clearMealPlanPendingMutation(nextRow.id);
     } else {
@@ -2570,6 +2695,7 @@ export function useHealth(
       waterEntries,
       weightEntries,
     });
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(nextSnapshot, {
       persistenceMode: persistedRemotely ? "remote" : "local",
     });
@@ -2581,6 +2707,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const currentEntry = mealPlanEntries.find((entry) => entry.id === entryId);
     if (!currentEntry || currentEntry.confirmed_at !== null) {
       return false;
@@ -2599,6 +2727,7 @@ export function useHealth(
         .is("confirmed_at", null)
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         if (!isMissingHealthPersistence(error.message)) {
           setMessage({ tone: "warn", text: error.message });
@@ -2612,12 +2741,14 @@ export function useHealth(
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     if (persistedRemotely) {
       clearMealPlanPendingMutation(nextRow.id);
     } else {
       recordMealPlanPendingMutation({ operation: "upsert", plan: nextRow });
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2642,6 +2773,8 @@ export function useHealth(
     if (!profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const currentEntry = mealPlanEntries.find((entry) => entry.id === entryId);
     if (!currentEntry || currentEntry.confirmed_at !== null) {
       return false;
@@ -2655,6 +2788,7 @@ export function useHealth(
         .eq("id", entryId)
         .eq("user_id", profile.user_id)
         .is("confirmed_at", null);
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         if (!isMissingHealthPersistence(error.message)) {
           setMessage({ tone: "warn", text: error.message });
@@ -2667,12 +2801,14 @@ export function useHealth(
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     if (persistedRemotely) {
       clearMealPlanPendingMutation(entryId);
     } else {
       recordMealPlanPendingMutation({ operation: "delete", planId: entryId });
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2697,6 +2833,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const plan = mealPlanEntries.find((entry) => entry.id === planId);
     if (!plan || !isHealthMealPlanConfirmEligible(plan)) {
       setMessage({ tone: "neutral", text: "This meal plan cannot be marked Done yet." });
@@ -2719,6 +2857,7 @@ export function useHealth(
         ) => Promise<{ data: Array<Record<string, unknown>> | Record<string, unknown> | null; error: { message: string } | null }>;
       };
       const { data, error } = await rpcClient.rpc("adhdice_confirm_health_meal_plan_entry", { p_actual_entry_date: actualEntryDate, p_plan_entry_id: planId });
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -2780,10 +2919,12 @@ export function useHealth(
       waterEntries,
       weightEntries,
     });
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(nextSnapshot, {
       persistenceMode: client && storageMode === "remote" ? "remote" : "local",
     });
-    await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
+    await claimEligibleAwards(nextSnapshot, operation, { persistRemotely: storageMode === "remote" });
+    if (!isCurrentOperation(operation)) return false;
     setHealthSuccessMessage({ tone: "good", text: newlyCreated ? "Meal plan marked Done." : "Meal plan Done recovered." });
     return true;
   }
@@ -2792,6 +2933,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     const currentFavorites = healthSnapshotRef.current?.favorites ?? favorites;
     let normalizedInput = input;
@@ -2855,6 +2998,7 @@ export function useHealth(
         })
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -2879,6 +3023,7 @@ export function useHealth(
       ...currentSnapshot.favorites.filter((item) => item.id !== nextRow.id),
       nextRow,
     ].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({ ...currentSnapshot, favorites: nextFavorites }));
     setHealthSuccessMessage({
       tone: "good",
@@ -2889,6 +3034,8 @@ export function useHealth(
 
   async function setFavoriteFoodStatus(itemId: string, isFavorite: boolean) {
     if (!userId || !profile) return false;
+    const operation = captureOperation();
+    if (!operation) return false;
     const existingFood = favorites.find((item) => item.id === itemId);
     if (!existingFood) return false;
 
@@ -2902,6 +3049,7 @@ export function useHealth(
         .eq("user_id", userId)
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -2913,6 +3061,7 @@ export function useHealth(
       ...favorites.filter((item) => item.id !== itemId),
       nextRow,
     ].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2934,15 +3083,19 @@ export function useHealth(
     if (!profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     if (client && storageMode === "remote") {
       const { error } = await client.from("adhdice_health_food_library").delete().eq("id", itemId);
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2964,6 +3117,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     const now = new Date().toISOString();
     const localRow: HealthRecipe = {
@@ -2983,6 +3138,7 @@ export function useHealth(
         .upsert({ ...input, user_id: userId })
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -2990,6 +3146,7 @@ export function useHealth(
       nextRow = data ?? localRow;
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -3012,13 +3169,17 @@ export function useHealth(
     if (!profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     if (client && storageMode === "remote") {
       const { error } = await client.from("adhdice_health_recipes").delete().eq("id", recipeId);
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
     }
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -3040,6 +3201,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const now = new Date().toISOString();
     const localRow: HealthSavedMeal = {
       created_at: now,
@@ -3057,6 +3220,7 @@ export function useHealth(
         .upsert({ ...input, user_id: userId })
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -3064,6 +3228,7 @@ export function useHealth(
       nextRow = data ?? localRow;
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -3086,13 +3251,17 @@ export function useHealth(
     if (!profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     if (client && storageMode === "remote") {
       const { error } = await client.from("adhdice_health_saved_meals").delete().eq("id", mealId);
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
     }
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -3114,6 +3283,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const now = new Date().toISOString();
     const localRow: HealthWaterEntry = {
       amount: input.amount,
@@ -3133,12 +3304,14 @@ export function useHealth(
         .insert({ ...input, user_id: userId })
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
       nextRow = data ? normalizeHealthWaterEntry(data) : localRow;
     }
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -3160,13 +3333,17 @@ export function useHealth(
     if (!profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     if (client && storageMode === "remote") {
       const { error } = await client.from("adhdice_health_water_entries").delete().eq("id", entryId);
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
     }
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -3188,6 +3365,8 @@ export function useHealth(
     if (!profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const existingEntry = waterEntries.find((entry) => entry.id === entryId);
     if (!existingEntry) {
       setMessage({ tone: "warn", text: "Water entry was not found." });
@@ -3204,12 +3383,14 @@ export function useHealth(
         .eq("id", entryId)
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
       nextEntry = data ? normalizeHealthWaterEntry(data) : nextEntry;
     }
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -3233,6 +3414,8 @@ export function useHealth(
     if (!profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const existingEntry = waterEntries.find((entry) => entry.id === entryId);
     if (!existingEntry || existingEntry.confirmed_at !== null) {
       return Boolean(existingEntry);
@@ -3251,6 +3434,7 @@ export function useHealth(
         .is("confirmed_at", null)
         .select("*")
         .maybeSingle();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -3261,6 +3445,7 @@ export function useHealth(
           .select("confirmed_at")
           .eq("id", entryId)
           .maybeSingle();
+        if (!isCurrentOperation(operation)) return false;
         if (currentRowError) {
           setMessage({ tone: "warn", text: currentRowError.message });
           return false;
@@ -3270,6 +3455,7 @@ export function useHealth(
       nextEntry = normalizeHealthWaterEntry(data);
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -3293,6 +3479,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     const now = new Date().toISOString();
     const localRow: HealthWeightEntry = {
@@ -3317,6 +3505,7 @@ export function useHealth(
         })
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
@@ -3338,8 +3527,10 @@ export function useHealth(
       waterEntries,
       weightEntries: nextWeightEntries,
     });
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(nextSnapshot);
-    await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
+    await claimEligibleAwards(nextSnapshot, operation, { persistRemotely: storageMode === "remote" });
+    if (!isCurrentOperation(operation)) return false;
     setHealthSuccessMessage({ tone: "good", text: "Weight saved." });
     return true;
   }
@@ -3348,6 +3539,8 @@ export function useHealth(
     if (!userId || !profile) {
       return null;
     }
+    const operation = captureOperation();
+    if (!operation) return null;
 
     const now = new Date().toISOString();
     const normalizedInput: Omit<HealthWorkoutInsert, "user_id"> = {
@@ -3391,6 +3584,7 @@ export function useHealth(
           .insert({ ...normalizedInput, user_id: userId })
           .select("*")
           .single();
+      if (!isCurrentOperation(operation)) return null;
       if (error) {
         if (isMissingHealthPersistence(error.message)) {
           workoutRemoteEnabledRef.current = false;
@@ -3404,6 +3598,7 @@ export function useHealth(
       }
     }
 
+    if (!isCurrentOperation(operation)) return null;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -3428,6 +3623,8 @@ export function useHealth(
     if (!profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const existingWorkout = workouts.find((workout) => workout.id === workoutId);
     if (!existingWorkout) {
       setMessage({ tone: "warn", text: "Workout was not found." });
@@ -3457,6 +3654,7 @@ export function useHealth(
         .eq("id", workoutId)
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         if (isMissingHealthPersistence(error.message)) {
           workoutRemoteEnabledRef.current = false;
@@ -3470,6 +3668,7 @@ export function useHealth(
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -3494,6 +3693,8 @@ export function useHealth(
     if (!profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
     const existingWorkout = workouts.find((workout) => workout.id === workoutId);
     if (!existingWorkout) {
       setMessage({ tone: "warn", text: "Workout was not found." });
@@ -3506,6 +3707,7 @@ export function useHealth(
 
     if (client && storageMode === "remote" && workoutRemoteEnabledRef.current) {
       const { error } = await client.from("adhdice_health_workouts").delete().eq("id", workoutId);
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         if (isMissingHealthPersistence(error.message)) {
           workoutRemoteEnabledRef.current = false;
@@ -3517,6 +3719,7 @@ export function useHealth(
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -3544,6 +3747,8 @@ export function useHealth(
     if (!userId || !profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     const existingFingerprints = new Set(metricEntries.map((entry) => entry.source_fingerprint));
     const freshMetricInputs = preview.metricEntries.filter((entry) => !existingFingerprints.has(entry.source_fingerprint));
@@ -3638,6 +3843,7 @@ export function useHealth(
             .from("adhdice_health_metric_entries")
             .insert(chunk)
             .select("*");
+          if (!isCurrentOperation(operation)) return false;
           if (metricError) {
             setMessage({ tone: "warn", text: metricError.message });
             return false;
@@ -3665,6 +3871,7 @@ export function useHealth(
             .from("adhdice_health_weight_entries")
             .insert(chunk)
             .select("*");
+          if (!isCurrentOperation(operation)) return false;
           if (weightError) {
             setMessage({ tone: "warn", text: weightError.message });
             return false;
@@ -3688,6 +3895,7 @@ export function useHealth(
         .insert(auditPayload)
         .select("*")
         .single();
+      if (!isCurrentOperation(operation)) return false;
       if (auditError) {
         setMessage({ tone: "warn", text: auditError.message });
         return false;
@@ -3712,10 +3920,12 @@ export function useHealth(
       waterEntries,
       weightEntries: [...insertedWeightRows, ...weightEntries].sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
     });
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(nextSnapshot, {
       persistenceMode: client && storageMode === "remote" ? "remote" : "local",
     });
-    await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
+    await claimEligibleAwards(nextSnapshot, operation, { persistRemotely: storageMode === "remote" });
+    if (!isCurrentOperation(operation)) return false;
     options?.onProgress?.({
       completed: totalWrites,
       message: `Import saved with ${freshMetricInputs.length} new metrics and ${auditPayload.duplicate_count ?? 0} duplicates skipped.`,
@@ -3733,15 +3943,19 @@ export function useHealth(
     if (!profile) {
       return false;
     }
+    const operation = captureOperation();
+    if (!operation) return false;
 
     if (client && storageMode === "remote") {
       const { error } = await client.from("adhdice_health_weight_entries").delete().eq("id", entryId);
+      if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
     }
 
+    if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,

@@ -20,10 +20,11 @@ export type AppendEconomyEventOpts = {
 export function useEconomy(client: SupabaseClient, userId: string | null) {
   const [economy, setEconomy] = useState<EconomyState>({ level: 1, xp: 0, points: 0, tokens: 0 });
 
-  async function appendEconomyEvent(opts: AppendEconomyEventOpts) {
+  async function appendEconomyEvent(opts: AppendEconomyEventOpts, isCurrent: () => boolean = () => true) {
     if (!client || !userId) return;
     try {
       const { data: profile } = await client.from("adhdice_user_profiles").select("points, xp, level, tokens, free_roll_bank").eq("user_id", userId).single();
+      if (!isCurrent()) return;
       const currentPoints = profile?.points ?? 0;
       const currentXp = profile?.xp ?? 0;
       const currentTokens = profile?.tokens ?? 0;
@@ -35,9 +36,12 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
       const profileUpdate: UserProfileInsert = { user_id: userId, level: newLevel, points: newPoints, tokens: currentTokens + levelUpsEarned, xp: newXp };
       if (levelUpsEarned > 0) profileUpdate.free_roll_bank = currentFreeRollBank + levelUpsEarned;
       await client.from("adhdice_user_profiles").upsert(profileUpdate);
+      if (!isCurrent()) return;
       setEconomy({ level: newLevel, xp: newXp, points: newPoints, tokens: profileUpdate.tokens ?? 0 });
+      if (!isCurrent()) return;
       await client.from("adhdice_point_ledger").insert({ user_id: userId, delta: opts.points, reason: opts.reason, balance_after: newPoints, source: opts.source, ref_id: opts.refId });
       if (opts.source === "task" && opts.taskId && opts.eventType) {
+        if (!isCurrent()) return;
         await client.from("adhdice_task_events").insert({ user_id: userId, task_id: opts.taskId, event_type: opts.eventType, awarded_points: opts.points, awarded_xp: opts.xp });
       }
     } catch (error) {
