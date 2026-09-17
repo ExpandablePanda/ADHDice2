@@ -16,8 +16,21 @@ export const STYLE_LAB_PANEL_POSITION_STORAGE_KEY = "adhdice-style-lab:panel-pos
 export const STYLE_LAB_ENABLEMENT_STORAGE_KEY = "adhdice-style-lab:enabled";
 export const STYLE_LAB_RUNTIME_STYLE_ELEMENT_ID = "adhdice-style-lab-runtime-overrides";
 export const STYLE_LAB_WINDOW_ENABLEMENT_KEY = "__ADHDICE_STYLE_LAB_ENABLED__";
+export const STYLE_LAB_INSTANCE_ATTRIBUTE = "data-style-lab-instance";
 
 export type StyleLabOverrides = Partial<Record<StyleLabRoleId, Partial<Record<StyleLabPropertyId, string>>>>;
+
+export type StyleLabScope = "role" | "instance";
+
+export type StyleLabInstanceOverride = {
+  originalText: string;
+  overrides: Partial<Record<StyleLabPropertyId, string>>;
+  previewText: string;
+  previewTextEligible: boolean;
+  roleId: StyleLabRoleId;
+};
+
+export type StyleLabInstanceOverrides = Record<string, StyleLabInstanceOverride>;
 
 export type StyleLabStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -33,6 +46,16 @@ export type StyleLabWindow = {
 
 export function canUseStyleLab(nodeEnv: string | undefined, explicitBrowserEnablement: boolean): boolean {
   return nodeEnv === "development" && explicitBrowserEnablement;
+}
+
+export function writeStyleLabEnablement(storage: StyleLabStorage | null | undefined, enabled: boolean): boolean {
+  try {
+    if (enabled) storage?.setItem(STYLE_LAB_ENABLEMENT_STORAGE_KEY, "true");
+    else storage?.removeItem(STYLE_LAB_ENABLEMENT_STORAGE_KEY);
+  } catch {
+    // Style Lab enablement is best effort and must never affect application state.
+  }
+  return enabled;
 }
 
 export function isStyleLabExplicitlyEnabled(windowLike: StyleLabWindow): boolean {
@@ -175,42 +198,121 @@ export function resetStyleLabRole(overrides: StyleLabOverrides, roleId: string):
   return next;
 }
 
+export function setStyleLabInstanceOverride(
+  instances: StyleLabInstanceOverrides,
+  instanceId: string,
+  roleId: string,
+  propertyId: string,
+  value: string,
+): StyleLabInstanceOverrides {
+  const instance = instances[instanceId];
+  if (!instance || instance.roleId !== roleId || !isStyleLabPropertyAllowed(roleId, propertyId) || !isStyleLabValueAllowed(propertyId, value)) {
+    return instances;
+  }
+  return {
+    ...instances,
+    [instanceId]: {
+      ...instance,
+      overrides: {
+        ...instance.overrides,
+        [propertyId]: value,
+      },
+    },
+  };
+}
+
+export function clearStyleLabInstanceOverride(
+  instances: StyleLabInstanceOverrides,
+  instanceId: string,
+  propertyId: string,
+): StyleLabInstanceOverrides {
+  const instance = instances[instanceId];
+  if (!instance || !(propertyId in instance.overrides)) return instances;
+  const nextOverrides = { ...instance.overrides };
+  delete nextOverrides[propertyId as StyleLabPropertyId];
+  return {
+    ...instances,
+    [instanceId]: {
+      ...instance,
+      overrides: nextOverrides,
+    },
+  };
+}
+
+export function setStyleLabPreviewText(
+  instances: StyleLabInstanceOverrides,
+  instanceId: string,
+  previewText: string,
+): StyleLabInstanceOverrides {
+  const instance = instances[instanceId];
+  if (!instance) return instances;
+  return {
+    ...instances,
+    [instanceId]: {
+      ...instance,
+      previewText,
+    },
+  };
+}
+
+export function resetStyleLabInstance(instances: StyleLabInstanceOverrides, instanceId: string): StyleLabInstanceOverrides {
+  if (!(instanceId in instances)) return instances;
+  const next = { ...instances };
+  delete next[instanceId];
+  return next;
+}
+
+export function resetStyleLabInstances(): StyleLabInstanceOverrides {
+  return {};
+}
+
 export function getStyleLabCssValue(propertyId: StyleLabPropertyId, value: string): string {
   return propertyId === "textColor" ? getStyleLabTextColorCssValue(value as StyleLabTextColor) : value;
 }
 
-function selectorForRole(roleId: StyleLabRoleId, propertyId: StyleLabPropertyId): string {
+function selectorForRole(roleId: StyleLabRoleId, propertyId: StyleLabPropertyId, instanceId?: string): string {
   const property = getStyleLabProperty(propertyId);
   const targetPart = property ? getStyleLabTargetPart(roleId, property.group) : "self";
-  const hostSelector = `[data-style-role="${roleId}"]:not([data-style-lab-ui] [data-style-role])`;
+  const instanceSelector = instanceId ? `[${STYLE_LAB_INSTANCE_ATTRIBUTE}="${instanceId}"]` : "";
+  const hostSelector = `[data-style-role="${roleId}"]${instanceSelector}:not([data-style-lab-ui] [data-style-role])`;
   return targetPart === "self" ? hostSelector : `${hostSelector} [data-style-part="${targetPart}"]`;
 }
 
-export function getStyleLabPropertyTargetSelector(roleId: string, propertyId: string): string | null {
+export function getStyleLabPropertyTargetSelector(roleId: string, propertyId: string, instanceId?: string): string | null {
   const role = getStyleLabRole(roleId);
   const property = getStyleLabProperty(propertyId);
   if (!role || !property || !isStyleLabPropertyAllowed(role.id, property.id)) return null;
-  return selectorForRole(role.id, property.id);
+  return selectorForRole(role.id, property.id, instanceId);
 }
 
-export function buildStyleLabCss(overrides: StyleLabOverrides): string {
-  const overrideCss = Object.entries(normalizeStyleLabOverrides(overrides)).flatMap(([roleId, roleOverrides]) => {
-    const declarationsBySelector = new Map<string, string[]>();
-    Object.entries(roleOverrides ?? {}).forEach(([propertyId, value]) => {
-      const property = getStyleLabProperty(propertyId);
-      if (!property || typeof value !== "string") return;
-      const cssValue = getStyleLabCssValue(property.id, value);
-      const selector = selectorForRole(roleId as StyleLabRoleId, property.id);
-      const declarations = declarationsBySelector.get(selector) ?? [];
-      declarations.push(...property.cssProperties.map((cssProperty) => `  ${cssProperty}: ${cssValue} !important;`));
-      declarationsBySelector.set(selector, declarations);
-    });
-    return Array.from(declarationsBySelector, ([selector, declarations]) => `${selector} {\n${declarations.join("\n")}\n}`);
-  }).join("\n");
+function buildStyleLabOverrideCss(roleId: string, roleOverrides: Partial<Record<StyleLabPropertyId, string>>, instanceId?: string): string {
+  const declarationsBySelector = new Map<string, string[]>();
+  Object.entries(roleOverrides).forEach(([propertyId, value]) => {
+    const property = getStyleLabProperty(propertyId);
+    if (!property || typeof value !== "string" || !isStyleLabPropertyAllowed(roleId, property.id) || !isStyleLabValueAllowed(property.id, value)) return;
+    const cssValue = getStyleLabCssValue(property.id, value);
+    const selector = selectorForRole(roleId as StyleLabRoleId, property.id, instanceId);
+    const declarations = declarationsBySelector.get(selector) ?? [];
+    declarations.push(...property.cssProperties.map((cssProperty) => `  ${cssProperty}: ${cssValue} !important;`));
+    declarationsBySelector.set(selector, declarations);
+  });
+  return Array.from(declarationsBySelector, ([selector, declarations]) => `${selector} {\n${declarations.join("\n")}\n}`).join("\n");
+}
+
+export function buildStyleLabCss(overrides: StyleLabOverrides, instanceOverrides: StyleLabInstanceOverrides = {}): string {
+  const roleCss = Object.entries(normalizeStyleLabOverrides(overrides))
+    .map(([roleId, roleOverrides]) => buildStyleLabOverrideCss(roleId, roleOverrides ?? {}))
+    .filter(Boolean)
+    .join("\n");
+  const instanceCss = Object.entries(instanceOverrides)
+    .map(([instanceId, instance]) => buildStyleLabOverrideCss(instance.roleId, instance.overrides, instanceId))
+    .filter(Boolean)
+    .join("\n");
   return [
     `[data-style-lab-hovered="true"] { outline: 2px solid color-mix(in srgb, var(--accent) 56%, transparent) !important; outline-offset: 2px !important; }`,
     `[data-style-lab-selected="true"] { outline: 2px solid color-mix(in srgb, var(--accent-strong) 78%, transparent) !important; outline-offset: 3px !important; }`,
-    overrideCss,
+    roleCss,
+    instanceCss,
   ].filter(Boolean).join("\n");
 }
 
@@ -219,10 +321,20 @@ export function getStyleLabMatchCount(documentLike: Pick<Document, "querySelecto
     .length;
 }
 
-export function getStyleLabDesignSpec(roleId: string, overrides: StyleLabOverrides): string {
+export type StyleLabDesignSpecOptions = {
+  instance?: StyleLabInstanceOverride | null;
+  scope?: StyleLabScope;
+};
+
+export function getStyleLabDesignSpec(
+  roleId: string,
+  overrides: StyleLabOverrides,
+  options: StyleLabDesignSpecOptions = {},
+): string {
   const role = getStyleLabRole(roleId);
   if (!role) return "";
-  const roleOverrides = overrides[role.id] ?? {};
+  const scope = options.scope ?? "role";
+  const roleOverrides = scope === "instance" ? options.instance?.overrides ?? {} : overrides[role.id] ?? {};
   const desired = role.capabilities.flatMap((propertyId) => {
     const value = roleOverrides[propertyId];
     const property = getStyleLabProperty(propertyId);
@@ -234,7 +346,8 @@ export function getStyleLabDesignSpec(roleId: string, overrides: StyleLabOverrid
     "",
     `Role: ${role.id}`,
     `Component: ${role.component}`,
-    "Scope: semantic role",
+    scope === "instance" ? "Scope: this instance" : "Scope: semantic role",
+    ...(scope === "instance" ? [`Original text: ${options.instance?.originalText || "(not safely replaceable)"}`] : []),
     "",
     "Desired:",
     ...(desired.length > 0 ? desired : ["- No properties overridden"]),
@@ -246,6 +359,7 @@ export function getStyleLabDesignSpec(roleId: string, overrides: StyleLabOverrid
 export function applyStyleLabRuntimeStyles(
   documentLike: Document,
   overrides: StyleLabOverrides,
+  instanceOverrides: StyleLabInstanceOverrides = {},
 ): HTMLStyleElement {
   let styleElement = documentLike.getElementById(STYLE_LAB_RUNTIME_STYLE_ELEMENT_ID) as HTMLStyleElement | null;
   if (!styleElement) {
@@ -254,6 +368,37 @@ export function applyStyleLabRuntimeStyles(
     styleElement.dataset.styleLabRuntime = "true";
     documentLike.head.appendChild(styleElement);
   }
-  styleElement.textContent = buildStyleLabCss(overrides);
+  styleElement.textContent = buildStyleLabCss(overrides, instanceOverrides);
   return styleElement;
+}
+
+const PREVIEW_TEXT_BLOCKED_TAGS = new Set(["input", "textarea", "select", "option"]);
+
+function isStyleLabPreviewTextBlocked(element: HTMLElement): boolean {
+  return PREVIEW_TEXT_BLOCKED_TAGS.has(element.tagName.toLowerCase())
+    || element.isContentEditable
+    || Boolean(element.closest("[contenteditable]"));
+}
+
+export function getStyleLabPreviewTextTarget(element: HTMLElement | null): HTMLElement | null {
+  if (!element || isStyleLabPreviewTextBlocked(element)) return null;
+  const labelPart = element.querySelector<HTMLElement>(":scope > [data-style-part=\"label\"]");
+  const candidate = labelPart ?? element;
+  if (isStyleLabPreviewTextBlocked(candidate) || candidate.children.length > 0) return null;
+  return candidate;
+}
+
+export function isStyleLabPreviewTextEligible(element: HTMLElement | null): boolean {
+  return getStyleLabPreviewTextTarget(element) !== null;
+}
+
+export function setStyleLabPreviewTextOnElement(element: HTMLElement | null, text: string): boolean {
+  const target = getStyleLabPreviewTextTarget(element);
+  if (!target) return false;
+  target.textContent = text;
+  return true;
+}
+
+export function restoreStyleLabPreviewText(element: HTMLElement | null, originalText: string): boolean {
+  return setStyleLabPreviewTextOnElement(element, originalText);
 }

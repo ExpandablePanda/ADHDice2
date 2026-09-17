@@ -10,42 +10,51 @@ import {
 } from "./style-lab-registry";
 import {
   normalizeStyleLabPanelPosition,
+  type StyleLabInstanceOverride,
+  type StyleLabScope,
   type StyleLabOverrides,
   type StyleLabPanelPosition,
 } from "./style-lab-runtime";
 
 const SELECT_CLASS = "h-8 min-w-0 flex-1 rounded-lg border border-[#e6e0f4] bg-white px-2 text-xs text-[#3f3856] outline-none focus:border-[#c9bcff] dark:border-white/10 dark:bg-white/[0.06] dark:text-white";
-
-function getPropertyValue(overrides: StyleLabOverrides, role: StyleLabRole, propertyId: StyleLabPropertyId): string {
-  return overrides[role.id]?.[propertyId] ?? "";
-}
+const INPUT_CLASS = "h-8 min-w-0 flex-1 rounded-lg border border-[#e6e0f4] bg-white px-2 text-xs text-[#3f3856] outline-none focus:border-[#c9bcff] disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/10 dark:bg-white/[0.06] dark:text-white";
 
 export function StyleLabPanel({
   inspectionActive,
+  instanceOverride,
   matchCount,
   onCopySpec,
+  onDisable,
   onResetAll,
   onResetRole,
   onSetOverride,
+  onSetPreviewText,
   onPanelPositionChange,
+  onScopeChange,
   onToggleInspection,
   role,
   overrides,
   copyStatus,
   panelPosition,
+  scope,
 }: {
   copyStatus: string | null;
   inspectionActive: boolean;
+  instanceOverride: StyleLabInstanceOverride | null;
   matchCount: number;
   onCopySpec: () => void;
+  onDisable: () => void;
   onResetAll: () => void;
   onResetRole: () => void;
   onSetOverride: (propertyId: StyleLabPropertyId, value: string) => void;
+  onSetPreviewText: (value: string) => void;
   onPanelPositionChange: (position: StyleLabPanelPosition) => void;
+  onScopeChange: (scope: StyleLabScope) => void;
   onToggleInspection: () => void;
   overrides: StyleLabOverrides;
   panelPosition: StyleLabPanelPosition | null;
   role: StyleLabRole | null;
+  scope: StyleLabScope;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ offsetX: number; offsetY: number; pointerId: number } | null>(null);
@@ -138,9 +147,14 @@ export function StyleLabPanel({
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d82b6] dark:text-white/45">Developer infrastructure</p>
           <h2 className="mt-1 text-sm font-bold text-[#2f2944] dark:text-white">ADHDice Style Lab</h2>
           </div>
-          <AdhdIconButton aria-label={inspectionActive ? "Stop Style Lab inspection" : "Start Style Lab inspection"} data-style-role={undefined} onClick={onToggleInspection} selected={inspectionActive} size="sm" tone="purple">
-            {inspectionActive ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
-          </AdhdIconButton>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <AdhdIconButton aria-label={inspectionActive ? "Stop Style Lab inspection" : "Start Style Lab inspection"} data-style-role={undefined} onClick={onToggleInspection} selected={inspectionActive} size="sm" tone="purple">
+              {inspectionActive ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
+            </AdhdIconButton>
+            <button className="rounded-lg px-2 py-1 text-[10px] font-semibold text-[#8075a3] transition hover:bg-[#f3efff] hover:text-[#5d4bb6] dark:text-white/55 dark:hover:bg-white/10 dark:hover:text-white" onClick={onDisable} type="button">
+              Disable
+            </button>
+          </div>
         </div>
 
       <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-[#ece8f8] bg-[#faf9ff] px-2.5 py-2 text-xs dark:border-white/10 dark:bg-white/[0.04]">
@@ -164,17 +178,58 @@ export function StyleLabPanel({
             <p className="mt-2 text-[11px] text-[#756c91] dark:text-white/55">{role.component} · {role.context}</p>
           </div>
 
+          <div className="mt-3 rounded-lg border border-[#e4dcfb] bg-[#fbfaff] px-2.5 py-2.5 dark:border-white/10 dark:bg-white/[0.04]">
+            <label className="flex items-center gap-2">
+              <span className="w-28 shrink-0 text-[11px] font-semibold text-[#6f6785] dark:text-white/60">Scope</span>
+              <select aria-label="Style Lab scope" className={SELECT_CLASS} onChange={(event) => onScopeChange(event.target.value as StyleLabScope)} value={scope}>
+                <option value="role">All matching</option>
+                <option value="instance">This one</option>
+              </select>
+            </label>
+            <p className="mt-1.5 text-[10px] text-[#807898] dark:text-white/45">
+              Scope: {scope === "instance" ? "this instance" : "semantic role"}
+            </p>
+            {scope === "instance" ? (
+              <p className="mt-1 truncate text-[10px] text-[#807898] dark:text-white/45" title={instanceOverride?.originalText || undefined}>
+                Selected: {instanceOverride?.originalText || "Selected rendered instance"}
+              </p>
+            ) : null}
+          </div>
+
+          {scope === "instance" ? (
+            <div className="mt-3 rounded-lg border border-[#e4dcfb] bg-[#fbfaff] px-2.5 py-2.5 dark:border-white/10 dark:bg-white/[0.04]">
+              <div className="flex items-center gap-2">
+                <span className="w-28 shrink-0 text-[11px] font-medium text-[#6f6785] dark:text-white/60">Original</span>
+                <span className="min-w-0 truncate text-[11px] text-[#4f466c] dark:text-white/70">{instanceOverride?.originalText || "Not available"}</span>
+              </div>
+              <label className="mt-2 flex items-center gap-2">
+                <span className="w-28 shrink-0 text-[11px] font-medium text-[#6f6785] dark:text-white/60">Preview text</span>
+                <input
+                  aria-label="Preview text"
+                  className={INPUT_CLASS}
+                  disabled={!instanceOverride?.previewTextEligible}
+                  onChange={(event) => onSetPreviewText(event.target.value)}
+                  placeholder={instanceOverride?.originalText || "Unavailable"}
+                  type="text"
+                  value={instanceOverride?.previewText ?? ""}
+                />
+              </label>
+              {!instanceOverride?.previewTextEligible ? <p className="mt-1.5 text-[10px] text-[#9a91b1] dark:text-white/40">Preview text is unavailable for this element.</p> : null}
+            </div>
+          ) : null}
+
           <div className="mt-3 grid gap-2">
             {role.capabilities.map((propertyId) => {
               const property = getStyleLabProperty(propertyId);
               if (!property) return null;
+              const activeOverrides = scope === "instance" ? instanceOverride?.overrides : overrides[role.id];
               return (
                 <label className="flex items-center gap-2" key={property.id}>
                   <span className="w-28 shrink-0 text-[11px] font-medium text-[#6f6785] dark:text-white/60">{property.label}</span>
                   <select
                     className={SELECT_CLASS}
                     onChange={(event) => onSetOverride(property.id, event.target.value)}
-                    value={getPropertyValue(overrides, role, property.id)}
+                    value={activeOverrides?.[property.id] ?? ""}
                   >
                     <option value="">Default</option>
                     {property.values.map((value) => <option key={value} value={value}>{value}</option>)}
@@ -185,7 +240,7 @@ export function StyleLabPanel({
           </div>
 
           <div className="mt-3 flex flex-wrap gap-2">
-            <AdhdChip data-style-role={undefined} onClick={onResetRole} type="button">Reset role</AdhdChip>
+            <AdhdChip data-style-role={undefined} onClick={onResetRole} type="button">{scope === "instance" ? "Reset this instance" : "Reset role"}</AdhdChip>
             <AdhdChip data-style-role={undefined} onClick={onCopySpec} icon={<Copy aria-hidden="true" className="h-3.5 w-3.5" />} tone="purple" type="button">Copy Design Spec</AdhdChip>
           </div>
           {copyStatus ? <p className="mt-2 text-[11px] text-[#4d8c68] dark:text-[#a5ddb6]" role="status">{copyStatus}</p> : null}

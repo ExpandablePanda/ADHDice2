@@ -11,18 +11,30 @@ import {
 import {
   buildStyleLabCss,
   canUseStyleLab,
+  clearStyleLabInstanceOverride,
   getStyleLabDesignSpec,
+  getStyleLabPreviewTextTarget,
+  isStyleLabPreviewTextEligible,
   isStyleLabExplicitlyEnabled,
   getStyleLabPropertyTargetSelector,
   normalizeStyleLabPanelPosition,
   normalizeStyleLabOverrides,
   readStyleLabPanelPosition,
   readStyleLabOverrides,
+  resetStyleLabInstance,
+  resetStyleLabInstances,
   resetStyleLabRole,
+  restoreStyleLabPreviewText,
   setStyleLabOverride,
+  setStyleLabInstanceOverride,
+  setStyleLabPreviewText,
+  setStyleLabPreviewTextOnElement,
+  STYLE_LAB_INSTANCE_ATTRIBUTE,
   STYLE_LAB_PANEL_POSITION_STORAGE_KEY,
   writeStyleLabPanelPosition,
+  writeStyleLabEnablement,
   writeStyleLabOverrides,
+  type StyleLabInstanceOverrides,
   type StyleLabStorage,
 } from "@/components/style-lab/style-lab-runtime";
 
@@ -125,6 +137,94 @@ test("runtime CSS targets the semantic role and design specs include only overri
   assert.match(spec, /No source files were modified\./);
 });
 
+test("enablement persistence keeps Style Lab development-only and launcher-controlled", () => {
+  const storage = new MemoryStorage();
+
+  assert.equal(writeStyleLabEnablement(storage, true), true);
+  assert.equal(storage.getItem("adhdice-style-lab:enabled"), "true");
+  assert.equal(isStyleLabExplicitlyEnabled({ localStorage: storage }), true);
+  assert.equal(writeStyleLabEnablement(storage, false), false);
+  assert.equal(storage.getItem("adhdice-style-lab:enabled"), null);
+  assert.equal(isStyleLabExplicitlyEnabled({ localStorage: storage }), false);
+  assert.equal(canUseStyleLab("production", true), false);
+});
+
+test("instance scope generates temporary selectors without changing role-wide selectors", () => {
+  const instanceId = "style-lab-instance-1";
+  const instances: StyleLabInstanceOverrides = {
+    [instanceId]: {
+      originalText: "New Task",
+      overrides: { fontSize: "18px" },
+      previewText: "",
+      previewTextEligible: true,
+      roleId: "ui.chip",
+    },
+  };
+  const css = buildStyleLabCss({ "ui.chip": { fontSize: "14px" } }, instances);
+
+  assert.equal(STYLE_LAB_INSTANCE_ATTRIBUTE, "data-style-lab-instance");
+  assert.equal(getStyleLabPropertyTargetSelector("ui.chip", "fontSize", instanceId), '[data-style-role="ui.chip"][data-style-lab-instance="style-lab-instance-1"]:not([data-style-lab-ui] [data-style-role]) [data-style-part="label"]');
+  assert.match(css, /data-style-role="ui\.chip"[^}]*font-size: 14px/);
+  assert.match(css, /data-style-lab-instance="style-lab-instance-1"[^}]*font-size: 18px/);
+});
+
+test("instance reset clears only the selected preview while Reset All clears all instance state", () => {
+  const initial: StyleLabInstanceOverrides = {
+    one: { originalText: "New Task", overrides: { fontSize: "18px" }, previewText: "Add Task", previewTextEligible: true, roleId: "ui.chip" },
+    two: { originalText: "Save", overrides: { fontWeight: "700" }, previewText: "", previewTextEligible: true, roleId: "ui.chip" },
+  };
+  const withClearedProperty = clearStyleLabInstanceOverride(initial, "one", "fontSize");
+  const withOverride = setStyleLabInstanceOverride(withClearedProperty, "one", "ui.chip", "fontWeight", "600");
+  const withPreview = setStyleLabPreviewText(withOverride, "one", "Add this task");
+
+  assert.deepEqual(resetStyleLabInstance(withPreview, "one"), { two: initial.two });
+  assert.deepEqual(resetStyleLabInstances(), {});
+});
+
+test("preview text is limited to safe direct text and restores the original content", () => {
+  const safeElement = {
+    children: [],
+    closest: () => null,
+    isContentEditable: false,
+    querySelector: () => null,
+    tagName: "P",
+    textContent: "New Task",
+  } as unknown as HTMLElement;
+  const inputElement = { ...safeElement, tagName: "INPUT" } as unknown as HTMLElement;
+  const complexElement = { ...safeElement, children: [{}] } as unknown as HTMLElement;
+
+  assert.equal(isStyleLabPreviewTextEligible(safeElement), true);
+  assert.equal(getStyleLabPreviewTextTarget(safeElement), safeElement);
+  assert.equal(setStyleLabPreviewTextOnElement(safeElement, "Add Task"), true);
+  assert.equal(safeElement.textContent, "Add Task");
+  assert.equal(setStyleLabPreviewTextOnElement(inputElement, "Add Task"), false);
+  assert.equal(setStyleLabPreviewTextOnElement(complexElement, "Add Task"), false);
+  assert.equal(setStyleLabPreviewTextOnElement(safeElement, ""), true);
+  assert.equal(safeElement.textContent, "");
+  assert.equal(restoreStyleLabPreviewText(safeElement, "New Task"), true);
+  assert.equal(safeElement.textContent, "New Task");
+});
+
+test("instance design specs identify scope and original text", () => {
+  const spec = getStyleLabDesignSpec("ui.chip", {}, {
+    instance: {
+      originalText: "New Task",
+      overrides: { fontSize: "14px", fontWeight: "600" },
+      previewText: "Add Task",
+      previewTextEligible: true,
+      roleId: "ui.chip",
+    },
+    scope: "instance",
+  });
+
+  assert.match(spec, /Role: ui\.chip/);
+  assert.match(spec, /Component: AdhdChip/);
+  assert.match(spec, /Scope: this instance/);
+  assert.match(spec, /Original text: New Task/);
+  assert.match(spec, /- Font size: 14px/);
+  assert.doesNotMatch(spec, /Scope: semantic role/);
+});
+
 test("role property targeting routes Chip typography to its explicit label part", () => {
   const overrides = {
     "ui.chip": { fontSize: "18px", fontWeight: "700", textColor: "Accent", lineHeight: "1.4", letterSpacing: "0.02em", textAlign: "center" },
@@ -162,7 +262,7 @@ test("Style Lab panel positions clamp, normalize invalid values, and use their o
   assert.equal(writeStyleLabPanelPosition(storage, { left: Number.NaN, top: 2 }), null);
 });
 
-test("Style Lab requires development mode and explicit browser enablement", () => {
+test("Style Lab enablement remains development-only", () => {
   assert.equal(canUseStyleLab("development", true), true);
   assert.equal(canUseStyleLab("development", false), false);
   assert.equal(canUseStyleLab("production", true), false);
@@ -175,11 +275,21 @@ test("production mounting is global while inspection listeners stay behind both 
   const rootSource = readFileSync(new URL("../src/components/style-lab/style-lab-dev-root.tsx", import.meta.url), "utf8");
   const panelSource = readFileSync(new URL("../src/components/ui-system/adhd-panel.tsx", import.meta.url), "utf8");
   const activitySource = readFileSync(new URL("../src/components/activity-line-chart-card.tsx", import.meta.url), "utf8");
+  const panelStyleSource = readFileSync(new URL("../src/components/style-lab/style-lab-panel.tsx", import.meta.url), "utf8");
 
   assert.match(layoutSource, /<StyleLabDevRoot \/>/);
-  assert.match(rootSource, /if \(process\.env\.NODE_ENV !== "development"\) return;/);
+  assert.match(rootSource, /if \(process\.env\.NODE_ENV !== "development"\) return null;/);
+  assert.match(rootSource, /Open Style Lab/);
+  assert.match(rootSource, /writeStyleLabEnablement/);
   assert.match(rootSource, /if \(!enabled \|\| !inspectionActive\) return;/);
   assert.match(rootSource, /document\.addEventListener\("click", handleClick, true\)/);
+  assert.match(rootSource, /STYLE_LAB_INSTANCE_ATTRIBUTE/);
+  assert.match(rootSource, /restoreStyleLabPreviewText/);
+  assert.match(rootSource, /setInstanceOverrides\(resetStyleLabInstances\(\)\)/);
+  assert.match(panelStyleSource, /All matching/);
+  assert.match(panelStyleSource, /This one/);
+  assert.match(panelStyleSource, /Preview text/);
+  assert.match(panelStyleSource, /Disable/);
   assert.match(panelSource, /data-style-role="ui\.panel\.surface"/);
   assert.match(activitySource, /data-style-role="ui\.section\.title"/);
   assert.match(activitySource, /data-style-role="ui\.section\.subtitle"/);
