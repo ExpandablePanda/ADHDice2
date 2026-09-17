@@ -256,6 +256,14 @@ function formatHealthCaloriePointLabel(dateKey: string) {
   return Number.isNaN(date.getTime()) ? dateKey : date.toLocaleDateString(undefined, { weekday: "short" });
 }
 
+function getHealthMealCaloriesForSeries(entry: HealthMealEntry) {
+  const snapshotCalories = entry.nutrition_snapshot?.calories;
+  if (typeof snapshotCalories === "number" && Number.isFinite(snapshotCalories)) {
+    return snapshotCalories;
+  }
+  return typeof entry.calories === "number" && Number.isFinite(entry.calories) ? entry.calories : 0;
+}
+
 export function buildHealthDailyCalorieSeries({
   endDate,
   mealEntries,
@@ -268,7 +276,7 @@ export function buildHealthDailyCalorieSeries({
   const pointCount = Number.isFinite(days) ? Math.max(1, Math.floor(days)) : 7;
   const caloriesByDate = new Map<string, number>();
   mealEntries.forEach((entry) => {
-    caloriesByDate.set(entry.entry_date, (caloriesByDate.get(entry.entry_date) ?? 0) + (Number.isFinite(entry.calories) ? entry.calories : 0));
+    caloriesByDate.set(entry.entry_date, (caloriesByDate.get(entry.entry_date) ?? 0) + getHealthMealCaloriesForSeries(entry));
   });
 
   return Array.from({ length: pointCount }, (_, index) => {
