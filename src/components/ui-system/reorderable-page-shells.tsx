@@ -1404,6 +1404,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       <div
         className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${dragDropTarget?.targetId === shell.id && dragDropTarget.relationship === "replace" ? (dragMovePlan?.valid === false ? "ring-2 ring-[#d65775]/70 ring-offset-2 ring-offset-[#fff8fa] dark:ring-[#ffb0c1]/70 dark:ring-offset-[#31141b]" : "ring-2 ring-[#6f57f6]/55 ring-offset-2 ring-offset-[#faf8ff] dark:ring-[#a99bff]/60 dark:ring-offset-[#171228]") : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
         data-page-shell-id={shell.id}
+        data-page-shell-label={shell.label}
         data-page-shell-dragging={draggingId === shell.id ? "true" : "false"}
         data-page-shell-resizing={resizingId === shell.id ? "true" : "false"}
         data-page-shell-centered={isCentered ? "true" : "false"}

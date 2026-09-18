@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Eye, EyeOff, RotateCcw, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, Eye, EyeOff, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { AdhdChip, AdhdIconButton, AdhdPanel } from "@/components/ui-system";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
@@ -19,16 +19,32 @@ import {
   type StyleLabOverrides,
   type StyleLabPanelPosition,
 } from "./style-lab-runtime";
+import type { StyleLabHiddenTarget, StyleLabMockHost, StyleLabMockNode, StyleLabMockNodeType, StyleLabStructuralTarget } from "./style-lab-mock-types";
 
 const SELECT_CLASS = "h-8 min-w-0 flex-1 rounded-lg border border-[#e6e0f4] bg-white px-2 text-xs text-[#3f3856] outline-none focus:border-[#c9bcff] dark:border-white/10 dark:bg-white/[0.06] dark:text-white";
 const INPUT_CLASS = "h-8 min-w-0 flex-1 rounded-lg border border-[#e6e0f4] bg-white px-2 text-xs text-[#3f3856] outline-none focus:border-[#c9bcff] disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/10 dark:bg-white/[0.06] dark:text-white";
+const MOCK_TYPE_LABELS: Record<StyleLabMockNodeType, string> = { chip: "Add Chip", item: "Add Item", section: "Add Section" };
 
 export function StyleLabPanel({
   inspectionActive,
   instanceOverride,
   matchCount,
+  mockHost,
+  mockNode,
+  mockPosition,
+  hiddenTargets,
+  selectedStructuralTarget,
+  selectedTargetIsHidden,
+  onAddMock,
   onCopySpec,
   onDisable,
+  onHideSelected,
+  onRestoreSelected,
+  onRestoreHiddenTarget,
+  onRestoreAllHidden,
+  onClearMockStructure,
+  onMoveMock,
+  onRemoveMock,
   onResetAll,
   onResetRole,
   onSetOverride,
@@ -47,8 +63,22 @@ export function StyleLabPanel({
   inspectionActive: boolean;
   instanceOverride: StyleLabInstanceOverride | null;
   matchCount: number;
+  mockHost: StyleLabMockHost | null;
+  mockNode: StyleLabMockNode | null;
+  mockPosition: { position: number; siblingCount: number } | null;
+  hiddenTargets: StyleLabHiddenTarget[];
+  selectedStructuralTarget: StyleLabStructuralTarget | null;
+  selectedTargetIsHidden: boolean;
+  onAddMock: (type: StyleLabMockNodeType) => void;
   onCopySpec: () => void;
   onDisable: () => void;
+  onHideSelected: () => void;
+  onRestoreSelected: () => void;
+  onRestoreHiddenTarget: (key: string) => void;
+  onRestoreAllHidden: () => void;
+  onClearMockStructure: () => void;
+  onMoveMock: (direction: "earlier" | "later") => void;
+  onRemoveMock: () => void;
   onResetAll: () => void;
   onResetRole: () => void;
   onSetOverride: (propertyId: StyleLabPropertyId, value: string) => void;
@@ -344,6 +374,73 @@ export function StyleLabPanel({
           {inspectionActive ? "Hover a supported role, then click to inspect it." : "Enable inspection to select supported semantic roles."}
         </p>
       )}
+
+      <div className="mt-3 rounded-lg border border-[#e4dcfb] bg-[#fbfaff] px-2.5 py-2.5 dark:border-white/10 dark:bg-white/[0.04]">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <p className="text-xs font-bold text-[#4f4471] dark:text-[#d8ceff]">Structure Preview</p>
+            <p className="mt-0.5 text-[10px] text-[#807898] dark:text-white/45">Development-only structural ideas stay separate from app data.</p>
+          </div>
+          <span className="shrink-0 rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold text-[#7f74a2] dark:bg-white/10 dark:text-white/55">{hiddenTargets.length} hidden</span>
+        </div>
+
+        {mockHost ? (
+          <div className="mt-2 rounded-md border border-[#ece8f8] bg-white/70 px-2 py-1.5 text-[10px] text-[#756c91] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/55">
+            Adding to: <span className="font-semibold text-[#4f4471] dark:text-white/75">{mockHost.label}</span>
+          </div>
+        ) : null}
+        {mockHost ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {mockHost.allowedTypes.map((type) => (
+              <AdhdChip data-style-role={undefined} icon={<Plus aria-hidden="true" className="h-3.5 w-3.5" />} key={type} onClick={() => onAddMock(type)} tone="purple" type="button">
+                {MOCK_TYPE_LABELS[type]}
+              </AdhdChip>
+            ))}
+          </div>
+        ) : null}
+
+        {mockNode && mockPosition ? (
+          <div className="mt-2 border-t border-[#eae5f6] pt-2 dark:border-white/10">
+            <p className="text-[10px] font-semibold text-[#6f6785] dark:text-white/60">Selected mock: {mockNode.text}</p>
+            <p className="mt-0.5 text-[10px] text-[#807898] dark:text-white/45">Position {mockPosition.position} of {mockPosition.siblingCount} mock elements</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <AdhdChip data-style-role={undefined} disabled={mockPosition.position <= 1} icon={<ArrowUp aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => onMoveMock("earlier")} type="button">Move earlier</AdhdChip>
+              <AdhdChip data-style-role={undefined} disabled={mockPosition.position >= mockPosition.siblingCount} icon={<ArrowDown aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => onMoveMock("later")} type="button">Move later</AdhdChip>
+              <AdhdChip data-style-role={undefined} icon={<Trash2 aria-hidden="true" className="h-3.5 w-3.5" />} onClick={onRemoveMock} tone="danger" type="button">Remove Mock</AdhdChip>
+            </div>
+          </div>
+        ) : null}
+
+        {selectedStructuralTarget ? (
+          <div className="mt-2 border-t border-[#eae5f6] pt-2 dark:border-white/10">
+            <p className="truncate text-[10px] text-[#807898] dark:text-white/45" title={selectedStructuralTarget.label}>Selected structure: {selectedStructuralTarget.label}</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {selectedTargetIsHidden ? (
+                <AdhdChip data-style-role={undefined} onClick={onRestoreSelected} type="button">Restore selected</AdhdChip>
+              ) : (
+                <AdhdChip data-style-role={undefined} onClick={onHideSelected} type="button">Hide from Preview</AdhdChip>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {hiddenTargets.length > 0 ? (
+          <div className="mt-2 border-t border-[#eae5f6] pt-2 dark:border-white/10">
+            <p className="text-[10px] font-semibold text-[#6f6785] dark:text-white/60">Hidden from preview: {hiddenTargets.length}</p>
+            <div className="mt-1.5 grid gap-1">
+              {hiddenTargets.map((target) => (
+                <div className="flex items-center justify-between gap-2 rounded-md bg-white/65 px-2 py-1 dark:bg-white/[0.04]" key={target.key}>
+                  <span className="min-w-0 truncate text-[10px] text-[#756c91] dark:text-white/55" title={`${target.label} · ${target.context}`}>{target.label}</span>
+                  <button className="shrink-0 text-[10px] font-semibold text-[#6f57f6] hover:underline dark:text-[#cabfff]" onClick={() => onRestoreHiddenTarget(target.key)} type="button">Restore</button>
+                </div>
+              ))}
+            </div>
+            <button className="mt-1.5 text-[10px] font-semibold text-[#6f57f6] hover:underline dark:text-[#cabfff]" onClick={onRestoreAllHidden} type="button">Restore all hidden</button>
+          </div>
+        ) : null}
+
+        <AdhdChip data-style-role={undefined} className="mt-2" onClick={onClearMockStructure} tone="danger" type="button">Clear Mock Structure</AdhdChip>
+      </div>
 
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#eeeaf6] pt-2.5 dark:border-white/10">
         <span className="text-[10px] text-[#948bab] dark:text-white/40">Drafts stay in this browser only.</span>

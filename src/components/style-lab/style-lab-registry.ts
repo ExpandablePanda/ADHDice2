@@ -115,7 +115,15 @@ export type StyleLabRoleId =
   | "page.shell.surface"
   | "page.shell.title"
   | "page.shell.subtitle"
-  | "page.shell.body";
+  | "page.shell.body"
+  | "mock.chip"
+  | "mock.item.surface"
+  | "mock.item.title"
+  | "mock.item.subtitle"
+  | "mock.section.surface"
+  | "mock.section.title"
+  | "mock.section.subtitle"
+  | "mock.section.body";
 
 export type StyleLabRole = {
   capabilities: readonly StyleLabPropertyId[];
@@ -200,6 +208,14 @@ export const STYLE_LAB_ROLES: readonly StyleLabRole[] = [
   { capabilities: typographyCapabilities, component: "PageShellHeader", context: "Page title", id: "page.shell.title", name: "Page Shell title" },
   { capabilities: typographyCapabilities, component: "PageShellHeader", context: "Page subtitle", id: "page.shell.subtitle", name: "Page Shell subtitle" },
   { capabilities: pageBodyCapabilities, component: "PageShellBody", context: "Page Shell content body", id: "page.shell.body", name: "Page Shell body" },
+  { capabilities: chipCapabilities, component: "Style Lab Mock Chip", context: "Temporary structural chip", id: "mock.chip", name: "Mock Chip", targets: { typography: "label", background: "surface", sizing: "surface", container: "surface" } },
+  { capabilities: surfaceCapabilities, component: "Style Lab Mock Item", context: "Temporary structural item", id: "mock.item.surface", name: "Mock Item surface" },
+  { capabilities: typographyCapabilities, component: "Style Lab Mock Item", context: "Temporary item title", id: "mock.item.title", name: "Mock Item title" },
+  { capabilities: typographyCapabilities, component: "Style Lab Mock Item", context: "Temporary item supporting text", id: "mock.item.subtitle", name: "Mock Item subtitle" },
+  { capabilities: surfaceCapabilities, component: "Style Lab Mock Section", context: "Temporary structural section", id: "mock.section.surface", name: "Mock Section surface" },
+  { capabilities: typographyCapabilities, component: "Style Lab Mock Section", context: "Temporary section title", id: "mock.section.title", name: "Mock Section title" },
+  { capabilities: typographyCapabilities, component: "Style Lab Mock Section", context: "Temporary section supporting text", id: "mock.section.subtitle", name: "Mock Section subtitle" },
+  { capabilities: pageBodyCapabilities, component: "Style Lab Mock Section", context: "Temporary nested mock body", id: "mock.section.body", name: "Mock Section body" },
 ];
 
 const roleById = new Map(STYLE_LAB_ROLES.map((role) => [role.id, role]));

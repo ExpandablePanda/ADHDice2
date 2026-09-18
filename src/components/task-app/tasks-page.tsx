@@ -1088,6 +1088,7 @@ export function ReorderableTaskChipRail({
             userSelect: draggedListId === list.structuralKey ? "none" : undefined,
           } : undefined}
           data-style-component="TasksRailChip"
+          data-style-lab-structure-key={list.structuralKey ?? list.id}
           data-style-role="tasks.rail.chip"
           title={accessibleFolderSummary}
           type="button"

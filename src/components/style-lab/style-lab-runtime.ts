@@ -14,6 +14,8 @@ import {
   type StyleLabIconName,
   type StyleLabTextColor,
 } from "@/components/style-lab/style-lab-registry";
+import type { StyleLabHiddenTarget, StyleLabStructuralProposal } from "@/components/style-lab/style-lab-mock-types";
+import { STYLE_LAB_HIDDEN_ATTRIBUTE, resolveStyleLabHiddenTargetElement } from "@/components/style-lab/style-lab-mock-registry";
 
 export const STYLE_LAB_STORAGE_KEY = "adhdice-style-lab:overrides";
 export const STYLE_LAB_PANEL_POSITION_STORAGE_KEY = "adhdice-style-lab:panel-position";
@@ -369,9 +371,28 @@ export function buildStyleLabCss(overrides: StyleLabOverrides, instanceOverrides
   return [
     `[data-style-lab-hovered="true"] { outline: 2px solid color-mix(in srgb, var(--accent) 56%, transparent) !important; outline-offset: 2px !important; }`,
     `[data-style-lab-selected="true"] { outline: 2px solid color-mix(in srgb, var(--accent-strong) 78%, transparent) !important; outline-offset: 3px !important; }`,
+    `[${STYLE_LAB_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }`,
     roleCss,
     instanceCss,
   ].filter(Boolean).join("\n");
+}
+
+export function applyStyleLabHiddenTargets(
+  documentLike: Pick<Document, "querySelectorAll">,
+  targets: StyleLabHiddenTarget[],
+): void {
+  for (const element of Array.from(documentLike.querySelectorAll<HTMLElement>(`[${STYLE_LAB_HIDDEN_ATTRIBUTE}]`))) {
+    element.removeAttribute(STYLE_LAB_HIDDEN_ATTRIBUTE);
+  }
+  for (const target of targets) {
+    resolveStyleLabHiddenTargetElement(documentLike, target)?.setAttribute(STYLE_LAB_HIDDEN_ATTRIBUTE, "true");
+  }
+}
+
+export function clearStyleLabHiddenTargets(documentLike: Pick<Document, "querySelectorAll">): void {
+  for (const element of Array.from(documentLike.querySelectorAll<HTMLElement>(`[${STYLE_LAB_HIDDEN_ATTRIBUTE}]`))) {
+    element.removeAttribute(STYLE_LAB_HIDDEN_ATTRIBUTE);
+  }
 }
 
 export function getStyleLabMatchCount(documentLike: Pick<Document, "querySelectorAll">, roleId: string): number {
@@ -405,6 +426,7 @@ export function restoreStyleLabIcon(element: HTMLElement | null): boolean {
 export type StyleLabDesignSpecOptions = {
   instance?: StyleLabInstanceOverride | null;
   scope?: StyleLabScope;
+  structural?: StyleLabStructuralProposal | null;
 };
 
 export function getStyleLabDesignSpec(
@@ -415,6 +437,7 @@ export function getStyleLabDesignSpec(
   const role = getStyleLabRole(roleId);
   if (!role) return "";
   const scope = options.scope ?? "role";
+  const structural = options.structural ?? null;
   const roleOverrides = scope === "instance" ? options.instance?.overrides ?? {} : overrides[role.id] ?? {};
   const desired = role.capabilities.flatMap((propertyId) => {
     const value = roleOverrides[propertyId];
@@ -431,7 +454,7 @@ export function getStyleLabDesignSpec(
     "",
     `Role: ${role.id}`,
     `Component: ${role.component}`,
-    scope === "instance" ? "Scope: this instance" : "Scope: semantic role",
+    structural ? "Scope: this instance" : scope === "instance" ? "Scope: this instance" : "Scope: semantic role",
     ...(scope === "instance" ? [
       `Original text: ${options.instance?.originalText || "(not safely replaceable)"}`,
       ...(options.instance?.previewText && options.instance.previewText !== options.instance.originalText
@@ -445,6 +468,24 @@ export function getStyleLabDesignSpec(
     "",
     "Desired:",
     ...(desired.length > 0 ? desired : ["- No properties overridden"]),
+    ...(structural ? [
+      "",
+      "Structural proposal:",
+      ...(structural.action === "hide" ? [
+        "- Action: Remove / hide existing element",
+        `- Target: ${structural.target}`,
+        `- Label: ${structural.label}`,
+        `- Context: ${structural.context}`,
+      ] : [
+        "- Action: Add",
+        `- Type: ${structural.node.type[0].toUpperCase()}${structural.node.type.slice(1)}`,
+        `- Parent: ${structural.parent}`,
+        `- Text: ${structural.node.text}`,
+        ...(structural.node.subtitle ? [`- Subtitle: ${structural.node.subtitle}`] : []),
+        ...(structural.node.icon ? [`- Icon: ${structural.node.icon}`] : []),
+        `- Position: ${structural.position} of ${structural.siblingCount} mock elements`,
+      ]),
+    ] : []),
     "",
     "No source files were modified.",
   ].join("\n");

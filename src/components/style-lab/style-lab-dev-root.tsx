@@ -7,6 +7,8 @@ import {
   getStyleLabMatchCount,
   isStyleLabExplicitlyEnabled,
   applyStyleLabRuntimeStyles,
+  applyStyleLabHiddenTargets,
+  clearStyleLabHiddenTargets,
   canUseStyleLab,
   clearStyleLabInstanceOverride,
   clearStyleLabPreviewIcon,
@@ -39,6 +41,27 @@ import {
   type StyleLabWindow,
 } from "./style-lab-runtime";
 import { getStyleLabRole, type StyleLabPropertyId, type StyleLabRoleId } from "./style-lab-registry";
+import {
+  addStyleLabMockNode,
+  collectStyleLabMockHosts,
+  createStyleLabMockNode,
+  getStyleLabMockNodeById,
+  getStyleLabMockSectionHostKey,
+  getStyleLabMockSiblingPosition,
+  normalizeStyleLabMockDraft,
+  readStyleLabMockDraft,
+  removeStyleLabMockNode,
+  reorderStyleLabMockNode,
+  resolveStyleLabMockHostForElement,
+  resolveStyleLabStructuralTarget,
+  restoreAllStyleLabHiddenTargets,
+  restoreStyleLabHiddenTarget,
+  setStyleLabHiddenTarget,
+  STYLE_LAB_SESSION_TARGET_ATTRIBUTE,
+  writeStyleLabMockDraft,
+} from "./style-lab-mock-registry";
+import { StyleLabMockRuntime } from "./style-lab-mock-elements";
+import type { StyleLabMockDraft, StyleLabMockHost, StyleLabMockNodeType, StyleLabStructuralProposal, StyleLabStructuralTarget } from "./style-lab-mock-types";
 
 function getInspectableElement(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element) || target.closest("[data-style-lab-ui]")) return null;
@@ -75,20 +98,31 @@ export function StyleLabDevRoot() {
   const [panelPosition, setPanelPosition] = useState<StyleLabPanelPosition | null>(null);
   const [matchCount, setMatchCount] = useState(0);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [mockDraft, setMockDraft] = useState<StyleLabMockDraft>({ hiddenTargets: [], nodes: [] });
+  const [selectedStructuralTarget, setSelectedStructuralTarget] = useState<StyleLabStructuralTarget | null>(null);
+  const [selectedMockHost, setSelectedMockHost] = useState<StyleLabMockHost | null>(null);
   const hoveredElementRef = useRef<HTMLElement | null>(null);
   const selectedElementRef = useRef<HTMLElement | null>(null);
   const instanceOverridesRef = useRef<StyleLabInstanceOverrides>({});
+  const mockDraftRef = useRef<StyleLabMockDraft>({ hiddenTargets: [], nodes: [] });
+  const sessionStructuralElementsRef = useRef(new Set<HTMLElement>());
   const trackedInstanceElementsRef = useRef(new Map<string, HTMLElement>());
   const nextInstanceIdRef = useRef(0);
+  const nextMockIdRef = useRef(0);
 
   useEffect(() => {
     instanceOverridesRef.current = instanceOverrides;
   }, [instanceOverrides]);
 
   useEffect(() => {
+    mockDraftRef.current = mockDraft;
+  }, [mockDraft]);
+
+  useEffect(() => {
     if (!canUseStyleLab(process.env.NODE_ENV, true)) return;
     const timeoutId = window.setTimeout(() => {
       setOverrides(readStyleLabOverrides(window.localStorage));
+      setMockDraft(readStyleLabMockDraft(window.localStorage));
       setPanelPosition(readStyleLabPanelPosition(window.localStorage));
       setEnabled(isStyleLabExplicitlyEnabled(window as unknown as StyleLabWindow));
     }, 0);
@@ -111,6 +145,11 @@ export function StyleLabDevRoot() {
     }
     applyStyleLabRuntimeStyles(document, overrides, instanceOverrides);
   }, [enabled, instanceOverrides, overrides]);
+
+  useEffect(() => {
+    if (enabled) applyStyleLabHiddenTargets(document, mockDraft.hiddenTargets);
+    else clearStyleLabHiddenTargets(document);
+  }, [enabled, mockDraft]);
 
   useEffect(() => {
     for (const [instanceId, instance] of Object.entries(instanceOverrides)) {
@@ -154,6 +193,11 @@ export function StyleLabDevRoot() {
       if (!role) return;
       event.preventDefault();
       event.stopPropagation();
+      if ((role.id === "ui.card.surface" || role.id === "ui.panel.surface") && !element.hasAttribute(STYLE_LAB_SESSION_TARGET_ATTRIBUTE)) {
+        const sessionTargetId = `structural-target-${sessionStructuralElementsRef.current.size + 1}`;
+        element.setAttribute(STYLE_LAB_SESSION_TARGET_ATTRIBUTE, sessionTargetId);
+        sessionStructuralElementsRef.current.add(element);
+      }
       let instanceId = element.getAttribute(STYLE_LAB_INSTANCE_ATTRIBUTE);
       if (!instanceId) {
         nextInstanceIdRef.current += 1;
@@ -171,6 +215,8 @@ export function StyleLabDevRoot() {
       selectedElementRef.current?.removeAttribute("data-style-lab-selected");
       selectedElementRef.current = element;
       element.setAttribute("data-style-lab-selected", "true");
+      setSelectedStructuralTarget(resolveStyleLabStructuralTarget(element));
+      setSelectedMockHost(resolveStyleLabMockHostForElement(element));
       setSelectedRoleId(role.id);
       setSelectedInstanceId(instanceId);
       setScope("role");
@@ -204,6 +250,13 @@ export function StyleLabDevRoot() {
     setOverrides(normalized);
   }, []);
 
+  const persistMockDraft = useCallback((nextDraft: StyleLabMockDraft) => {
+    const normalized = normalizeStyleLabMockDraft(nextDraft);
+    writeStyleLabMockDraft(window.localStorage, normalized);
+    setMockDraft(normalized);
+    if (enabled) applyStyleLabHiddenTargets(document, normalized.hiddenTargets);
+  }, [enabled]);
+
   const handlePanelPositionChange = useCallback((nextPosition: StyleLabPanelPosition) => {
     setPanelPosition((currentPosition) => {
       if (currentPosition?.left === nextPosition.left && currentPosition.top === nextPosition.top) return currentPosition;
@@ -213,11 +266,22 @@ export function StyleLabDevRoot() {
 
   const handleDisable = useCallback(() => {
     writeStyleLabEnablement(window.localStorage, false);
+    clearStyleLabHiddenTargets(document);
+    const stableDraft = normalizeStyleLabMockDraft({
+      ...mockDraftRef.current,
+      hiddenTargets: mockDraftRef.current.hiddenTargets.filter((target) => target.stable),
+    });
+    writeStyleLabMockDraft(window.localStorage, stableDraft);
+    setMockDraft(stableDraft);
     hoveredElementRef.current?.removeAttribute("data-style-lab-hovered");
     hoveredElementRef.current = null;
     selectedElementRef.current?.removeAttribute("data-style-lab-selected");
+    for (const element of sessionStructuralElementsRef.current) element.removeAttribute(STYLE_LAB_SESSION_TARGET_ATTRIBUTE);
+    sessionStructuralElementsRef.current.clear();
     setInspectionActive(false);
     setEnabled(false);
+    setSelectedStructuralTarget(null);
+    setSelectedMockHost(null);
   }, []);
 
   const handleScopeChange = useCallback((nextScope: StyleLabScope) => {
@@ -318,17 +382,133 @@ export function StyleLabDevRoot() {
     }
     hoveredElementRef.current = null;
     selectedElementRef.current = null;
+    setSelectedStructuralTarget(null);
+    setSelectedMockHost(null);
     trackedInstanceElementsRef.current.clear();
     setInstanceOverrides(resetStyleLabInstances());
     setSelectedInstanceId(null);
     setScope("role");
   }, [instanceOverrides, persistOverrides]);
 
+  const handleAddMock = useCallback((type: StyleLabMockNodeType) => {
+    const host = resolveStyleLabMockHostForElement(selectedElementRef.current);
+    if (!host || !host.allowedTypes.includes(type)) return;
+    let id = "";
+    do {
+      nextMockIdRef.current += 1;
+      id = `mock-${nextMockIdRef.current}`;
+    } while (mockDraftRef.current.nodes.some((node) => node.id === id));
+    const siblingCount = mockDraftRef.current.nodes.filter((node) => node.parentHostKey === host.key).length;
+    persistMockDraft(addStyleLabMockNode(mockDraftRef.current, createStyleLabMockNode(id, type, host.key, siblingCount)));
+  }, [persistMockDraft]);
+
+  const handleHideSelected = useCallback(() => {
+    const target = resolveStyleLabStructuralTarget(selectedElementRef.current);
+    if (!target) return;
+    const nextDraft = setStyleLabHiddenTarget(mockDraftRef.current, {
+      context: target.context,
+      key: target.key,
+      kind: target.kind,
+      label: target.label,
+      roleId: target.roleId,
+      stable: target.stable,
+    });
+    persistMockDraft(nextDraft);
+    applyStyleLabHiddenTargets(document, nextDraft.hiddenTargets);
+  }, [persistMockDraft]);
+
+  const handleRestoreSelected = useCallback(() => {
+    const target = resolveStyleLabStructuralTarget(selectedElementRef.current);
+    if (!target) return;
+    const nextDraft = restoreStyleLabHiddenTarget(mockDraftRef.current, target.key);
+    persistMockDraft(nextDraft);
+    applyStyleLabHiddenTargets(document, nextDraft.hiddenTargets);
+  }, [persistMockDraft]);
+
+  const handleRestoreHiddenTarget = useCallback((key: string) => {
+    const nextDraft = restoreStyleLabHiddenTarget(mockDraftRef.current, key);
+    persistMockDraft(nextDraft);
+    applyStyleLabHiddenTargets(document, nextDraft.hiddenTargets);
+  }, [persistMockDraft]);
+
+  const handleRestoreAllHidden = useCallback(() => {
+    const nextDraft = restoreAllStyleLabHiddenTargets(mockDraftRef.current);
+    persistMockDraft(nextDraft);
+    applyStyleLabHiddenTargets(document, nextDraft.hiddenTargets);
+  }, [persistMockDraft]);
+
+  const handleClearMockStructure = useCallback(() => {
+    if (typeof window !== "undefined" && !window.confirm("Clear all Style Lab mock structure and restore hidden preview elements?")) return;
+    const nextDraft = { hiddenTargets: [], nodes: [] } satisfies StyleLabMockDraft;
+    persistMockDraft(nextDraft);
+    clearStyleLabHiddenTargets(document);
+    selectedElementRef.current?.removeAttribute("data-style-lab-selected");
+    selectedElementRef.current = null;
+    setSelectedStructuralTarget(null);
+    setSelectedMockHost(null);
+    setSelectedRoleId(null);
+    setSelectedInstanceId(null);
+    setScope("role");
+  }, [persistMockDraft]);
+
+  const handleMoveMock = useCallback((direction: "earlier" | "later") => {
+    const target = resolveStyleLabStructuralTarget(selectedElementRef.current);
+    if (!target?.mockId) return;
+    persistMockDraft(reorderStyleLabMockNode(mockDraftRef.current, target.mockId, direction));
+  }, [persistMockDraft]);
+
+  const handleRemoveMock = useCallback(() => {
+    const target = resolveStyleLabStructuralTarget(selectedElementRef.current);
+    if (!target?.mockId) return;
+    const node = getStyleLabMockNodeById(mockDraftRef.current, target.mockId);
+    if (!node) return;
+    const hasChildren = node.type === "section" && mockDraftRef.current.nodes.some((current) => current.parentHostKey === getStyleLabMockSectionHostKey(node.id));
+    if (hasChildren && typeof window !== "undefined" && !window.confirm("Remove this Mock Section and its nested mock elements?")) return;
+    persistMockDraft(removeStyleLabMockNode(mockDraftRef.current, node.id));
+    selectedElementRef.current?.removeAttribute("data-style-lab-selected");
+    selectedElementRef.current = null;
+    setSelectedStructuralTarget(null);
+    setSelectedMockHost(null);
+    setSelectedRoleId(null);
+    setSelectedInstanceId(null);
+    setScope("role");
+  }, [persistMockDraft]);
+
   const handleCopySpec = useCallback(async () => {
     if (!selectedRoleId) return;
+    const selectedInstance = selectedInstanceId ? instanceOverrides[selectedInstanceId] ?? null : null;
+    const target = resolveStyleLabStructuralTarget(selectedElementRef.current);
+    const hiddenTarget = target ? mockDraft.hiddenTargets.find((hidden) => hidden.key === target.key) : null;
+    let structural: StyleLabStructuralProposal | null = hiddenTarget ? {
+      action: "hide",
+      context: hiddenTarget.context,
+      label: hiddenTarget.label,
+      roleId: hiddenTarget.roleId,
+      target: hiddenTarget.kind === "page-shell" ? "Page Shell" : hiddenTarget.kind === "tasks-rail-chip" ? "Tasks rail chip" : hiddenTarget.kind === "mock" ? "Mock element" : hiddenTarget.kind === "card" ? "Card" : "Panel",
+    } : null;
+    if (!structural && target?.kind === "mock" && target.mockId) {
+      const node = getStyleLabMockNodeById(mockDraft, target.mockId);
+      const position = node ? getStyleLabMockSiblingPosition(mockDraft, node.id) : null;
+      const parentHost = node ? collectStyleLabMockHosts(document).find((host) => host.key === node.parentHostKey) : null;
+      if (node && position) {
+        structural = {
+          action: "add",
+          context: "Style Lab mock structure",
+          node: {
+            ...node,
+            icon: selectedInstance?.previewIconName ?? node.icon,
+            text: selectedInstance?.previewText || node.text,
+          },
+          parent: parentHost?.label ?? (node.parentHostKey.startsWith("tasks-rail:") ? "Tasks page · Lists rail" : node.parentHostKey.startsWith("page-shell:") ? "Page Shell body" : "Mock Section body"),
+          position: position.position,
+          siblingCount: position.siblingCount,
+        };
+      }
+    }
     const spec = getStyleLabDesignSpec(selectedRoleId, overrides, {
-      instance: selectedInstanceId ? instanceOverrides[selectedInstanceId] : null,
+      instance: selectedInstance,
       scope,
+      structural,
     });
     try {
       if (navigator.clipboard?.writeText) {
@@ -348,23 +528,41 @@ export function StyleLabDevRoot() {
       setCopyStatus("Clipboard unavailable; copy the generated spec from the browser console.");
       console.info(spec);
     }
-  }, [instanceOverrides, overrides, scope, selectedInstanceId, selectedRoleId]);
+  }, [instanceOverrides, mockDraft, overrides, scope, selectedInstanceId, selectedRoleId]);
 
   if (process.env.NODE_ENV !== "development") return null;
 
   if (!enabled) return null;
 
   const selectedInstance = selectedInstanceId ? instanceOverrides[selectedInstanceId] ?? null : null;
+  const selectedMockNode = selectedStructuralTarget?.mockId ? getStyleLabMockNodeById(mockDraft, selectedStructuralTarget.mockId) : null;
+  const selectedMockPosition = selectedMockNode ? getStyleLabMockSiblingPosition(mockDraft, selectedMockNode.id) : null;
+  const selectedTargetIsHidden = Boolean(selectedStructuralTarget && mockDraft.hiddenTargets.some((target) => target.key === selectedStructuralTarget.key));
 
   return (
     <div data-style-lab-ui>
+      <StyleLabMockRuntime draft={mockDraft} />
       <StyleLabPanel
         copyStatus={copyStatus}
         inspectionActive={inspectionActive}
         instanceOverride={selectedInstance}
         matchCount={matchCount}
+        mockHost={selectedMockHost}
+        mockNode={selectedMockNode}
+        mockPosition={selectedMockPosition}
+        hiddenTargets={mockDraft.hiddenTargets}
+        selectedStructuralTarget={selectedStructuralTarget}
+        selectedTargetIsHidden={selectedTargetIsHidden}
+        onAddMock={handleAddMock}
         onCopySpec={() => { void handleCopySpec(); }}
         onDisable={handleDisable}
+        onHideSelected={handleHideSelected}
+        onRestoreSelected={handleRestoreSelected}
+        onRestoreHiddenTarget={handleRestoreHiddenTarget}
+        onRestoreAllHidden={handleRestoreAllHidden}
+        onClearMockStructure={handleClearMockStructure}
+        onMoveMock={handleMoveMock}
+        onRemoveMock={handleRemoveMock}
         onResetAll={handleResetAll}
         onResetRole={handleResetRole}
         onSetOverride={handleSetOverride}
