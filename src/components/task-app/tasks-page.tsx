@@ -12,6 +12,7 @@ import {
   TASK_TABLE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
 import { AdhdChip, AdhdDropdownPanel } from "@/components/ui-system";
+import { StyleLabIconPreviewSlot } from "@/components/style-lab/style-lab-icon-slot";
 
 import type { Task } from "@/lib/database.types";
 import type { TaskRailListOption } from "@/lib/task-app-derived";
@@ -959,7 +960,7 @@ export function ReorderableTaskChipRail({
         <button
           aria-label={accessibleFolderSummary ? `${list.label}. ${accessibleFolderSummary}` : undefined}
           aria-pressed={selected}
-          className={`${TASK_RAIL_CHIP_BUTTON_CLASS} ${reorderable ? "cursor-grab" : ""} ${draggedListId === list.structuralKey ? "adhdice-native-interaction-suppressed cursor-grabbing relative z-10 opacity-[0.55]" : ""}`}
+          className={`${TASK_RAIL_CHIP_BUTTON_CLASS} ${TASK_TABLE_CHIP_BASE_CLASS} ${selected ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS} ${reorderable ? "cursor-grab" : ""} ${draggedListId === list.structuralKey ? "adhdice-native-interaction-suppressed cursor-grabbing relative z-10 opacity-[0.55]" : ""} ${outlinedFolderStructuralKey === list.structuralKey ? "ring-2 ring-inset ring-[#6f57f6] dark:ring-[#cabfff]" : ""}`}
           data-folder-drop-id={list.structureKind === "folder" ? list.entityId : undefined}
           data-rail-chip-surface
           data-rail-container-key={reorderable ? listRailContainerKey : undefined}
@@ -1087,15 +1088,21 @@ export function ReorderableTaskChipRail({
             WebkitUserSelect: draggedListId === list.structuralKey ? "none" : undefined,
             userSelect: draggedListId === list.structuralKey ? "none" : undefined,
           } : undefined}
+          data-style-component="TasksRailChip"
+          data-style-role="tasks.rail.chip"
           title={accessibleFolderSummary}
           type="button"
         >
-          <span className={`pointer-events-none cursor-inherit ${TASK_TABLE_CHIP_BASE_CLASS} ${selected ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS} ${draggedListId === list.structuralKey ? "shadow-lg ring-2 ring-[#c9bcff] dark:ring-[#6e5ab2]" : ""} ${outlinedFolderStructuralKey === list.structuralKey ? "ring-2 ring-inset ring-[#6f57f6] dark:ring-[#cabfff]" : ""}`} data-style-component="TasksRailChip" data-style-role="tasks.rail.chip">
+          <span className={`pointer-events-none cursor-inherit inline-flex items-center ${draggedListId === list.structuralKey ? "shadow-lg ring-2 ring-[#c9bcff] dark:ring-[#6e5ab2]" : ""}`}>
             <span className="inline-flex items-center">
-              {list.structureKind === "folder" ? <Folder className="mr-1.5 h-3.5 w-3.5 shrink-0" /> : null}
-              {list.label}
-              {folderCountLabel ? <span className="ml-1 opacity-70">{folderCountLabel}</span> : null}
-              {list.structureKind === "folder" ? null : <span className="ml-1 opacity-70">{list.count}</span>}
+              {list.structureKind === "folder" ? (
+                <StyleLabIconPreviewSlot iconName="folder">
+                  <Folder className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                </StyleLabIconPreviewSlot>
+              ) : null}
+              <span data-style-text-part="label">{list.label}</span>
+              {folderCountLabel ? <span className="ml-1 opacity-70" data-style-part="count">{folderCountLabel}</span> : null}
+              {list.structureKind === "folder" ? null : <span className="ml-1 opacity-70" data-style-part="count">{list.count}</span>}
             </span>
           </span>
         </button>

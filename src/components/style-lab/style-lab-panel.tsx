@@ -1,7 +1,7 @@
 "use client";
 
 import { Copy, Eye, EyeOff, RotateCcw, Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { AdhdChip, AdhdIconButton, AdhdPanel } from "@/components/ui-system";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
 import {
@@ -12,6 +12,7 @@ import {
 } from "./style-lab-registry";
 import {
   normalizeStyleLabPanelPosition,
+  getStyleLabAvailablePanelHeight,
   type StyleLabInstanceOverride,
   type StyleLabScope,
   type StyleLabOverrides,
@@ -61,35 +62,69 @@ export function StyleLabPanel({
   scope: StyleLabScope;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const panelHeaderRef = useRef<HTMLDivElement | null>(null);
+  const panelBodyRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ offsetX: number; offsetY: number; pointerId: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [iconQuery, setIconQuery] = useState("");
+  const [availablePanelHeight, setAvailablePanelHeight] = useState<number | null>(null);
   const filteredIconOptions = useMemo(() => {
     const normalizedQuery = iconQuery.trim().toLowerCase();
     if (!normalizedQuery) return STYLE_LAB_ICON_OPTIONS;
     return STYLE_LAB_ICON_OPTIONS.filter((option) => `${option.label} ${option.key} ${option.keywords.join(" ")}`.toLowerCase().includes(normalizedQuery));
   }, [iconQuery]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const getViewportHeight = () => window.visualViewport?.height ?? window.innerHeight;
     const normalizeCurrentPosition = () => {
       const panel = panelRef.current;
       if (!panel) return;
       const rect = panel.getBoundingClientRect();
-      onPanelPositionChange(normalizeStyleLabPanelPosition(
-        panelPosition ?? { left: rect.left, top: rect.top },
-        window.innerWidth,
-        window.innerHeight,
-        rect.width,
+      const viewportHeight = getViewportHeight();
+      const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+      const naturalHeight = Math.max(
         rect.height,
-      ));
+        (panelHeaderRef.current?.getBoundingClientRect().height ?? 0)
+          + (panelBodyRef.current?.scrollHeight ?? 0)
+          + 24,
+      );
+      const normalizedPosition = normalizeStyleLabPanelPosition(
+        panelPosition ?? { left: rect.left, top: rect.top },
+        viewportWidth,
+        viewportHeight,
+        rect.width,
+        naturalHeight,
+      );
+      const nextTop = normalizedPosition.top;
+      setAvailablePanelHeight(getStyleLabAvailablePanelHeight(viewportHeight, nextTop));
+      if (panelPosition?.left !== normalizedPosition.left || panelPosition?.top !== normalizedPosition.top) {
+        onPanelPositionChange(normalizedPosition);
+      }
     };
+
     const frameId = window.requestAnimationFrame(normalizeCurrentPosition);
     window.addEventListener("resize", normalizeCurrentPosition);
+    window.visualViewport?.addEventListener("resize", normalizeCurrentPosition);
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(normalizeCurrentPosition);
+    if (panelRef.current) resizeObserver?.observe(panelRef.current);
+    if (panelBodyRef.current) resizeObserver?.observe(panelBodyRef.current);
     return () => {
       window.cancelAnimationFrame(frameId);
       window.removeEventListener("resize", normalizeCurrentPosition);
+      window.visualViewport?.removeEventListener("resize", normalizeCurrentPosition);
+      resizeObserver?.disconnect();
     };
-  }, [onPanelPositionChange, panelPosition]);
+  }, [onPanelPositionChange, panelPosition, role?.id, scope, matchCount, instanceOverride?.iconPreviewEligible, instanceOverride?.previewTextEligible, filteredIconOptions.length]);
+
+  const fallbackPanelTop = Math.max(16, panelPosition?.top ?? 16);
+  const panelMaxHeight = availablePanelHeight === null
+    ? `calc(100dvh - ${fallbackPanelTop}px - 1rem)`
+    : `${availablePanelHeight}px`;
+
+  /* Keep the panel's measured remaining height separate from its persisted position. */
+  const panelSurfaceStyle = {
+    maxHeight: panelMaxHeight,
+  };
 
   function handleDragStart(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
@@ -113,10 +148,15 @@ export function StyleLabPanel({
     const rect = panel.getBoundingClientRect();
     onPanelPositionChange(normalizeStyleLabPanelPosition(
       { left: event.clientX - drag.offsetX, top: event.clientY - drag.offsetY },
-      window.innerWidth,
-      window.innerHeight,
+      window.visualViewport?.width ?? window.innerWidth,
+      window.visualViewport?.height ?? window.innerHeight,
       rect.width,
-      rect.height,
+      Math.max(
+        rect.height,
+        (panelHeaderRef.current?.getBoundingClientRect().height ?? 0)
+          + (panelBodyRef.current?.scrollHeight ?? 0)
+          + 24,
+      ),
     ));
   }
 
@@ -137,13 +177,14 @@ export function StyleLabPanel({
       style={panelPosition ? { left: panelPosition.left, top: panelPosition.top } : undefined}
     >
       <AdhdPanel
-        className="max-h-[calc(100vh-2rem)] w-full overflow-y-auto border-[#dcd2fa] bg-white/96 p-3 text-[#403a54] shadow-[0_20px_60px_rgba(81,61,168,0.2)] backdrop-blur dark:border-white/15 dark:bg-[#17132a]/96 dark:text-white/85"
+        className="flex min-h-0 w-full flex-col overflow-hidden border-[#dcd2fa] bg-white/96 p-3 text-[#403a54] shadow-[0_20px_60px_rgba(81,61,168,0.2)] backdrop-blur dark:border-white/15 dark:bg-[#17132a]/96 dark:text-white/85"
         data-style-component={undefined}
         data-style-role={undefined}
         padding="none"
+        style={panelSurfaceStyle}
         variant="floating"
       >
-        <div className="flex items-start justify-between gap-3">
+        <div className="sticky top-0 z-10 flex shrink-0 items-start justify-between gap-3 bg-white/96 pb-1 dark:bg-[#17132a]/96" ref={panelHeaderRef}>
           <div
             aria-label="Drag Style Lab panel"
             className={`min-w-0 touch-none select-none ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
@@ -167,6 +208,7 @@ export function StyleLabPanel({
           </div>
         </div>
 
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5" ref={panelBodyRef}>
       <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-[#ece8f8] bg-[#faf9ff] px-2.5 py-2 text-xs dark:border-white/10 dark:bg-white/[0.04]">
         <span className="flex min-w-0 items-center gap-2">
           <span className={`h-2 w-2 shrink-0 rounded-full ${inspectionActive ? "bg-[#12a876]" : "bg-[#a8a0bd]"}`} />
@@ -294,6 +336,7 @@ export function StyleLabPanel({
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#eeeaf6] pt-2.5 dark:border-white/10">
         <span className="text-[10px] text-[#948bab] dark:text-white/40">Drafts stay in this browser only.</span>
         <AdhdChip data-style-role={undefined} onClick={onResetAll} icon={<RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />} tone="danger" type="button">Reset all</AdhdChip>
+      </div>
       </div>
       </AdhdPanel>
     </div>

@@ -162,6 +162,13 @@ export function normalizeStyleLabPanelPosition(
   };
 }
 
+export function getStyleLabAvailablePanelHeight(viewportHeight: number, panelTop: number, margin = 16): number {
+  const safeViewportHeight = Math.max(0, Number.isFinite(viewportHeight) ? viewportHeight : 0);
+  const safePanelTop = Math.max(0, Number.isFinite(panelTop) ? panelTop : margin);
+  const safeMargin = Math.max(0, Number.isFinite(margin) ? margin : 0);
+  return Math.max(0, safeViewportHeight - safePanelTop - safeMargin);
+}
+
 export function readStyleLabPanelPosition(storage: StyleLabStorage | null | undefined): StyleLabPanelPosition | null {
   if (!storage) return null;
   try {
@@ -369,7 +376,12 @@ export function getStyleLabMatchCount(documentLike: Pick<Document, "querySelecto
 }
 
 export function getStyleLabIconTarget(element: HTMLElement | null): HTMLElement | null {
-  return element?.querySelector<HTMLElement>('[data-style-part="icon"]') ?? null;
+  if (!element) return null;
+  if (typeof element.querySelectorAll !== "function") {
+    return element.querySelector<HTMLElement>('[data-style-part="icon"]') ?? null;
+  }
+  const iconTargets = element.querySelectorAll<HTMLElement>('[data-style-part="icon"]');
+  return iconTargets.length === 1 ? iconTargets[0] ?? null : null;
 }
 
 export function setStyleLabIconPreviewOnElement(element: HTMLElement | null, iconName: string): boolean {
@@ -447,6 +459,7 @@ export function applyStyleLabRuntimeStyles(
 }
 
 const PREVIEW_TEXT_BLOCKED_TAGS = new Set(["input", "textarea", "select", "option"]);
+const STYLE_LAB_TEXT_PART_SELECTOR = '[data-style-text-part="label"]';
 
 function isStyleLabPreviewTextBlocked(element: HTMLElement): boolean {
   return PREVIEW_TEXT_BLOCKED_TAGS.has(element.tagName.toLowerCase())
@@ -456,8 +469,12 @@ function isStyleLabPreviewTextBlocked(element: HTMLElement): boolean {
 
 export function getStyleLabPreviewTextTarget(element: HTMLElement | null): HTMLElement | null {
   if (!element || isStyleLabPreviewTextBlocked(element)) return null;
+  const explicitTextParts = typeof element.querySelectorAll === "function"
+    ? Array.from(element.querySelectorAll<HTMLElement>(STYLE_LAB_TEXT_PART_SELECTOR))
+    : [];
+  if (explicitTextParts.length > 1) return null;
   const labelPart = element.querySelector<HTMLElement>(":scope > [data-style-part=\"label\"]");
-  const candidate = labelPart ?? element;
+  const candidate = explicitTextParts[0] ?? labelPart ?? element;
   if (isStyleLabPreviewTextBlocked(candidate) || candidate.children.length > 0) return null;
   return candidate;
 }

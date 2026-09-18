@@ -5,6 +5,8 @@ import { motion } from "framer-motion";
 import type { TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal } from "@/lib/database.types";
 import type { ButtonHTMLAttributes, CSSProperties, FormEvent, InputHTMLAttributes, ReactNode, Ref, RefObject } from "react";
 import { TASK_TABLE_GRID_ORIGIN_CLASS } from "@/lib/task-table-alignment";
+import { StyleLabIconPreviewSlot } from "@/components/style-lab/style-lab-icon-slot";
+import { StyleLabTextPart } from "@/components/style-lab/style-lab-text-part";
 
 function joinClasses(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -263,8 +265,11 @@ export function TaskInlineChildDraft({
 
 type TaskTableChipButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   styleComponent?: string;
+  styleIcon?: ReactNode;
+  styleIconName?: string;
   stylePart?: string;
   styleRole?: string;
+  styleTextPart?: boolean;
   toneClassName?: string;
 };
 
@@ -300,8 +305,11 @@ export function TaskTableChipButton({
   children,
   className,
   styleComponent,
+  styleIcon,
+  styleIconName,
   stylePart,
   styleRole,
+  styleTextPart = false,
   toneClassName = TASK_TABLE_INACTIVE_CHIP_CLASS,
   type = "button",
   ...props
@@ -324,7 +332,12 @@ export function TaskTableChipButton({
         data-style-component={styleComponent}
         data-style-role={styleRole}
       >
-        {stylePart ? <span className="inline-flex items-center" data-style-part={stylePart}>{children}</span> : children}
+        {stylePart ? (
+          <span className="inline-flex items-center" data-style-part={stylePart}>
+            {styleIcon ? <StyleLabIconPreviewSlot iconName={styleIconName}>{styleIcon}</StyleLabIconPreviewSlot> : null}
+            {styleTextPart ? <StyleLabTextPart>{children}</StyleLabTextPart> : children}
+          </span>
+        ) : children}
       </span>
     </button>
   );

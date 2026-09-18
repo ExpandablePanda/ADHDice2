@@ -9077,6 +9077,8 @@ function CommandCenterHeader({
           <div className={isNativeIosPlatform
             ? "grid w-max shrink-0 grid-flow-col grid-rows-[min-content_min-content] items-center gap-x-2 gap-y-0 rounded-[1.15rem] bg-[var(--hud-surface)] px-0 py-1"
             : "mx-auto flex w-max items-center gap-2 rounded-[1.15rem] bg-[var(--hud-surface)] px-2 py-1"}
+            data-style-component="CollapsedHudSurface"
+            data-style-role="hud.collapsed.surface"
           >
             <button
               aria-label="Expand HUD"
@@ -9086,12 +9088,14 @@ function CommandCenterHeader({
               onClick={() => setHudCollapsed(!isHudCollapsed)}
               type="button"
             >
-              <span className="pointer-events-none flex items-center">
-                <BrandMark compact profile={profile} />
+              <span className="flex items-center">
+                <BrandMark compact profile={profile} styleRole="hud.brand.logo" />
               </span>
               <span className={isNativeIosPlatform
-                ? "pointer-events-none rounded-full bg-[var(--hud-surface)] px-1 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]"
-                : "pointer-events-none rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]"}
+                ? "rounded-full bg-[var(--hud-surface)] px-1 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]"
+                : "rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]"}
+                data-style-component="HudVersion"
+                data-style-role="hud.version"
               >
                 {HUD_VERSION}
               </span>
@@ -9101,9 +9105,13 @@ function CommandCenterHeader({
                 aria-label={`${collapsedHudFocusTimer.isPaused ? "Resume" : "Pause"} timer for ${collapsedHudFocusTimer.title}`}
                 className="shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
                 onClick={() => onToggleFocusTimer(collapsedHudFocusTimer.categoryId)}
+                styleIcon={collapsedHudFocusTimer.isPaused ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
+                styleIconName={collapsedHudFocusTimer.isPaused ? "circle-play" : "circle-pause"}
+                stylePart="label"
                 toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
+                styleRole="hud.collapsed.timer"
+                styleTextPart
               >
-                {collapsedHudFocusTimer.isPaused ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
                 <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
                   {formatCollapsedHudTimerLabel(collapsedHudFocusTimer.seconds)}
                 </span>
@@ -9114,9 +9122,13 @@ function CommandCenterHeader({
                 aria-label={`${collapsedHudTaskTimer.pausedAt ? "Resume" : "Pause"} timer for ${collapsedHudTaskTimer.title}`}
                 className="shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
                 onClick={() => collapsedHudTaskTimer.pausedAt ? onResumeTaskTimer(collapsedHudTaskTimer.taskId) : onPauseTaskTimer(collapsedHudTaskTimer.taskId)}
+                styleIcon={collapsedHudTaskTimer.pausedAt ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
+                styleIconName={collapsedHudTaskTimer.pausedAt ? "circle-play" : "circle-pause"}
+                stylePart="label"
                 toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
+                styleRole="hud.collapsed.timer"
+                styleTextPart
               >
-                {collapsedHudTaskTimer.pausedAt ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
                 <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
                   {formatCollapsedHudTimerLabel(getTaskTimerDisplaySeconds(collapsedHudTaskTimer, taskTimerNow))}
                 </span>
@@ -9125,12 +9137,12 @@ function CommandCenterHeader({
             ) : null}
             {currentHudPageId !== "overview" ? (
               <span className="hidden shrink-0 sm:inline">
-                <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`}>
+                <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`} data-style-component="HudCollapsedChip" data-style-role="hud.collapsed.chip">
                   {activeHudPageTitle}
                 </span>
               </span>
             ) : null}
-            <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>
+            <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`} data-style-component="HudCollapsedChip" data-style-role="hud.collapsed.chip">
               Points {economy.points}
             </span>
             {pendingRewardDiceCount > 0 ? (
@@ -9138,9 +9150,13 @@ function CommandCenterHeader({
                 aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}
                 className="shrink-0 gap-1.5 text-[#119a69] dark:text-[#8ff0cc]"
                 onClick={onOpenPendingRewardBank}
+                styleIcon={<Dice5 className="h-3.5 w-3.5" />}
+                styleIconName="dice-5"
+                stylePart="label"
                 toneClassName="border-[#cfeedd] bg-[#ecfbf3] dark:border-[#1e5a42] dark:bg-[#103726]"
+                styleRole="hud.collapsed.chip"
+                styleTextPart
               >
-                <Dice5 className="h-3.5 w-3.5" />
                 {formatPendingDiceChipLabel(pendingRewardDiceCount)}
               </TaskTableChipButton>
             ) : null}
@@ -9149,16 +9165,23 @@ function CommandCenterHeader({
               className={`${isNativeIosPlatform ? "-translate-y-0.5 " : ""}shrink-0 gap-1.5 text-[#5f56a6] dark:text-white/72`}
               disabled={isWorkspaceRefreshing}
               onClick={onRefreshWorkspace}
+              styleIcon={<Wifi className={`h-3.5 w-3.5 ${isWorkspaceRefreshing ? "animate-pulse" : ""}`} />}
+              styleIconName="wifi"
+              stylePart="label"
               toneClassName="border-[#e4deef] bg-[#f8f5ff] dark:border-white/10 dark:bg-white/[0.05]"
+              styleRole="hud.collapsed.chip"
+              styleTextPart
             >
-              <Wifi className={`h-3.5 w-3.5 ${isWorkspaceRefreshing ? "animate-pulse" : ""}`} />
               {refreshStatus === "updating" ? "Updating" : isWorkspaceRefreshing ? "Syncing" : "Refresh"}
             </TaskTableChipButton>
             <TaskTableChipButton
               aria-label="Open Scratch Paper notes"
               className="shrink-0 text-[#6f57f6] dark:text-[#cabfff]"
               onClick={onViewScratchPaper}
+              stylePart="label"
               toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+              styleRole="hud.collapsed.chip"
+              styleTextPart
             >
               Scratch Paper
             </TaskTableChipButton>
@@ -9166,15 +9189,19 @@ function CommandCenterHeader({
               aria-label="Expand HUD"
               className={`${isNativeIosPlatform ? "-translate-y-0.5 " : ""}shrink-0 gap-1.5 text-[#6f57f6] dark:text-[#cabfff]`}
               onClick={() => setHudCollapsed(false)}
+              styleIcon={<ChevronUp className="h-3.5 w-3.5" />}
+              styleIconName="chevron-up"
+              stylePart="label"
               toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+              styleRole="hud.collapsed.chip"
+              styleTextPart
             >
-              <ChevronUp className="h-3.5 w-3.5" />
               Open
             </TaskTableChipButton>
             <div className={isNativeIosPlatform ? "row-span-2 shrink-0" : "shrink-0"}>{accountButton}</div>
           </div>
         </div>
-        {hudDateTime ? <span className="mt-1 block text-left text-[11px] font-medium leading-none tabular-nums text-[#817a9d] dark:text-white/55">{hudDateTime}</span> : null}
+        {hudDateTime ? <span className="mt-1 block text-left text-[11px] font-medium leading-none tabular-nums text-[#817a9d] dark:text-white/55" data-style-component="HudDateTime" data-style-role="hud.datetime">{hudDateTime}</span> : null}
       </header>
     );
   }
@@ -9263,9 +9290,11 @@ function ProfileAvatarImage({ avatarSrc }: { avatarSrc: string }) {
 function BrandMark({
   compact = false,
   profile,
+  styleRole,
 }: {
   compact?: boolean;
   profile: UserProfile;
+  styleRole?: string;
 }) {
   const [errored, setErrored] = useState(false);
   const logoSrc = (!errored && profile.logoSrc) || "/logo.png";
@@ -9278,6 +9307,8 @@ function BrandMark({
       onError={() => setErrored(true)}
       priority
       src={withBasePath(logoSrc)}
+      data-style-component={styleRole ? "HudBrandLogo" : undefined}
+      data-style-role={styleRole}
       unoptimized={logoSrc.startsWith("data:")}
       width={compact ? 122 : 170}
     />

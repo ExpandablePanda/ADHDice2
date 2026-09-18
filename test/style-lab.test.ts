@@ -18,6 +18,7 @@ import {
   clearStyleLabInstanceOverride,
   clearStyleLabPreviewIcon,
   getStyleLabDesignSpec,
+  getStyleLabAvailablePanelHeight,
   getStyleLabIconTarget,
   getStyleLabPreviewTextTarget,
   isStyleLabPreviewTextEligible,
@@ -304,6 +305,43 @@ test("Chip icon previews are curated, instance-scoped, resettable, and exported 
   assert.match(spec, /Preview icon: star/);
 });
 
+test("Chip preview text supports plain, icon, trailing chevron, count, and icon-text-count cases", () => {
+  const textPart = {
+    children: [],
+    closest: () => null,
+    isContentEditable: false,
+    tagName: "SPAN",
+    textContent: "Columns",
+  } as unknown as HTMLElement;
+  const iconPart = { kind: "chevron" };
+  const countPart = { kind: "count" };
+  const compoundChip = {
+    children: [textPart, iconPart, countPart],
+    closest: () => null,
+    isContentEditable: false,
+    querySelector: () => null,
+    querySelectorAll: (selector: string) => selector === '[data-style-text-part="label"]' ? [textPart] : [],
+    tagName: "SPAN",
+    textContent: "Columns2",
+  } as unknown as HTMLElement;
+
+  assert.equal(isStyleLabPreviewTextEligible(compoundChip), true);
+  assert.equal(getStyleLabPreviewTextTarget(compoundChip), textPart);
+  assert.equal(setStyleLabPreviewTextOnElement(compoundChip, "Visible columns"), true);
+  assert.equal(textPart.textContent, "Visible columns");
+  assert.deepEqual(compoundChip.children, [textPart, iconPart, countPart]);
+});
+
+test("icon preview requires one explicit icon slot and rejects ambiguous multi-icon hosts", () => {
+  const firstIcon = { dispatchEvent: () => true } as unknown as HTMLElement;
+  const secondIcon = { dispatchEvent: () => true } as unknown as HTMLElement;
+  const oneIconHost = { querySelectorAll: () => [firstIcon] } as unknown as HTMLElement;
+  const twoIconHost = { querySelectorAll: () => [firstIcon, secondIcon] } as unknown as HTMLElement;
+
+  assert.equal(getStyleLabIconTarget(oneIconHost), firstIcon);
+  assert.equal(getStyleLabIconTarget(twoIconHost), null);
+});
+
 test("role property targeting routes Chip typography to its explicit label part", () => {
   const overrides = {
     "ui.chip": { fontSize: "18px", fontWeight: "700", textColor: "Accent", lineHeight: "1.4", letterSpacing: "0.02em", textAlign: "center" },
@@ -324,13 +362,19 @@ test("role property targeting routes Chip typography to its explicit label part"
 test("Chip render paths expose one explicit visible label target", () => {
   const chipSource = readFileSync(new URL("../src/components/ui-system/adhd-chip.tsx", import.meta.url), "utf8");
   const primitiveSource = readFileSync(new URL("../src/components/ui/task-table-primitives.tsx", import.meta.url), "utf8");
+  const iconSlotSource = readFileSync(new URL("../src/components/style-lab/style-lab-icon-slot.tsx", import.meta.url), "utf8");
 
   assert.match(chipSource, /data-style-part="label"/);
   assert.match(chipSource, /stylePart="label"/);
   assert.match(chipSource, /data-style-part="icon"/);
+  assert.match(chipSource, /StyleLabTextPart/);
   assert.match(chipSource, /STYLE_LAB_ICON_PREVIEW_EVENT/);
   assert.match(chipSource, /<TaskTypeIcon/);
   assert.match(primitiveSource, /data-style-part=\{stylePart\}/);
+  assert.match(primitiveSource, /StyleLabIconPreviewSlot/);
+  assert.match(primitiveSource, /styleTextPart/);
+  assert.match(iconSlotSource, /data-style-part="icon"/);
+  assert.match(iconSlotSource, /STYLE_LAB_ICON_PREVIEW_EVENT/);
 });
 
 test("Tasks, HUD, and shared launchers expose deliberate Style Lab seams", () => {
@@ -343,6 +387,8 @@ test("Tasks, HUD, and shared launchers expose deliberate Style Lab seams", () =>
 
   assert.match(railSource, /data-style-role="tasks\.rail\.surface"/);
   assert.match(railSource, /data-style-role="tasks\.rail\.chip"/);
+  assert.match(railSource, /StyleLabIconPreviewSlot/);
+  assert.match(railSource, /data-style-text-part="label"/);
   assert.match(filterSource, /data-style-role="tasks\.filter\.surface"/);
   assert.match(filterSource, /styleRole="tasks\.filter\.chip"/);
   assert.match(hudSource, /data-style-role="hud\.workspace\.surface"/);
@@ -350,6 +396,14 @@ test("Tasks, HUD, and shared launchers expose deliberate Style Lab seams", () =>
   assert.match(hudSource, /styleRole="hud\.widget\.chip"/);
   assert.match(settingsSource, /<StyleLabLauncher \/>/);
   assert.match(testWorkspaceSource, /<StyleLabLauncher \/>/);
+  assert.match(testWorkspaceSource, /hud\.collapsed\.surface/);
+  assert.match(testWorkspaceSource, /hud\.brand\.logo/);
+  assert.match(testWorkspaceSource, /hud\.version/);
+  assert.match(testWorkspaceSource, /hud\.datetime/);
+  assert.match(testWorkspaceSource, /hud\.collapsed\.chip/);
+  assert.match(testWorkspaceSource, /hud\.collapsed\.timer/);
+  assert.match(testWorkspaceSource, /styleIconName="wifi"/);
+  assert.match(testWorkspaceSource, /styleIconName=\{collapsedHudFocusTimer\.isPaused \? "circle-play" : "circle-pause"\}/);
   assert.match(launcherSource, /process\.env\.NODE_ENV !== "development"/);
   assert.match(launcherSource, /requestStyleLabEnablement/);
 });
@@ -363,6 +417,8 @@ test("Style Lab panel positions clamp, normalize invalid values, and use their o
   assert.equal(storage.getItem(STYLE_LAB_PANEL_POSITION_STORAGE_KEY), JSON.stringify({ left: 120, top: 240 }));
   assert.deepEqual(readStyleLabPanelPosition(storage), { left: 120, top: 240 });
   assert.equal(writeStyleLabPanelPosition(storage, { left: Number.NaN, top: 2 }), null);
+  assert.equal(getStyleLabAvailablePanelHeight(800, 16), 768);
+  assert.equal(getStyleLabAvailablePanelHeight(800, 240), 544);
 });
 
 test("Style Lab enablement remains development-only", () => {
@@ -382,7 +438,8 @@ test("production mounting is global while inspection listeners stay behind both 
 
   assert.match(layoutSource, /<StyleLabDevRoot \/>/);
   assert.match(rootSource, /if \(process\.env\.NODE_ENV !== "development"\) return null;/);
-  assert.match(rootSource, /Open Style Lab/);
+  assert.doesNotMatch(rootSource, /Open Style Lab/);
+  assert.match(rootSource, /if \(!enabled\) return null;/);
   assert.match(rootSource, /writeStyleLabEnablement/);
   assert.match(rootSource, /if \(!enabled \|\| !inspectionActive\) return;/);
   assert.match(rootSource, /document\.addEventListener\("click", handleClick, true\)/);
@@ -392,6 +449,9 @@ test("production mounting is global while inspection listeners stay behind both 
   assert.match(panelStyleSource, /All matching/);
   assert.match(panelStyleSource, /This one/);
   assert.match(panelStyleSource, /Preview text/);
+  assert.match(panelStyleSource, /getStyleLabAvailablePanelHeight/);
+  assert.match(panelStyleSource, /overflow-y-auto overscroll-contain/);
+  assert.match(panelStyleSource, /sticky top-0/);
   assert.match(panelStyleSource, /Disable/);
   assert.match(panelSource, /data-style-role="ui\.panel\.surface"/);
   assert.match(activitySource, /data-style-role="ui\.section\.title"/);

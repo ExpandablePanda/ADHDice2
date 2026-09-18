@@ -84,6 +84,12 @@ export type StyleLabRoleId =
   | "hud.widget.label"
   | "hud.widget.value"
   | "hud.widget.chip"
+  | "hud.collapsed.surface"
+  | "hud.brand.logo"
+  | "hud.version"
+  | "hud.datetime"
+  | "hud.collapsed.chip"
+  | "hud.collapsed.timer"
   | "page.shell.surface"
   | "page.shell.title"
   | "page.shell.subtitle"
@@ -132,6 +138,7 @@ const surfaceCapabilities = [...typographyCapabilities, "backgroundColor", "widt
 const chipCapabilities = [...typographyCapabilities, "backgroundColor", "minWidth", "maxWidth", "paddingX", "paddingY", "gap", "alignItems", "justifyContent"] as const satisfies readonly StyleLabPropertyId[];
 const railSurfaceCapabilities = ["backgroundColor", "paddingX", "paddingY", "gap", "alignItems", "justifyContent"] as const satisfies readonly StyleLabPropertyId[];
 const pageBodyCapabilities = ["width", "minWidth", "maxWidth", "paddingX", "paddingY", "gap", "alignItems", "justifyContent"] as const satisfies readonly StyleLabPropertyId[];
+const logoCapabilities = ["width", "minWidth", "maxWidth"] as const satisfies readonly StyleLabPropertyId[];
 
 export const STYLE_LAB_ROLES: readonly StyleLabRole[] = [
   { capabilities: surfaceCapabilities, component: "AdhdCard", context: "Card surface", id: "ui.card.surface", name: "Card surface" },
@@ -154,6 +161,12 @@ export const STYLE_LAB_ROLES: readonly StyleLabRole[] = [
   { capabilities: typographyCapabilities, component: "HUD widgets", context: "HUD widget label", id: "hud.widget.label", name: "HUD widget label" },
   { capabilities: typographyCapabilities, component: "HUD widgets", context: "HUD displayed value", id: "hud.widget.value", name: "HUD widget value" },
   { capabilities: chipCapabilities, component: "HUD widgets", context: "HUD compact action chip", id: "hud.widget.chip", name: "HUD widget chip" },
+  { capabilities: surfaceCapabilities, component: "Collapsed HUD", context: "Collapsed HUD surface", id: "hud.collapsed.surface", name: "Collapsed HUD surface" },
+  { capabilities: logoCapabilities, component: "Collapsed HUD", context: "ADHDice brand logo", id: "hud.brand.logo", name: "HUD brand logo" },
+  { capabilities: typographyCapabilities, component: "Collapsed HUD", context: "HUD version number", id: "hud.version", name: "HUD version" },
+  { capabilities: typographyCapabilities, component: "Collapsed HUD", context: "HUD date and time", id: "hud.datetime", name: "HUD date and time" },
+  { capabilities: chipCapabilities, component: "Collapsed HUD", context: "Collapsed HUD chip", id: "hud.collapsed.chip", name: "Collapsed HUD chip", targets: { typography: "label" } },
+  { capabilities: chipCapabilities, component: "Collapsed HUD", context: "Collapsed HUD timer chip", id: "hud.collapsed.timer", name: "Collapsed HUD timer", targets: { typography: "label" } },
   { capabilities: surfaceCapabilities, component: "PageShellSurface", context: "Page Shell surface", id: "page.shell.surface", name: "Page Shell surface" },
   { capabilities: typographyCapabilities, component: "PageShellHeader", context: "Page title", id: "page.shell.title", name: "Page Shell title" },
   { capabilities: typographyCapabilities, component: "PageShellHeader", context: "Page subtitle", id: "page.shell.subtitle", name: "Page Shell subtitle" },

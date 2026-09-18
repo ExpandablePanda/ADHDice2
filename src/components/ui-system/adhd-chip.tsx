@@ -12,6 +12,7 @@ import {
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
 import { isStyleLabIconName } from "@/components/style-lab/style-lab-registry";
 import { STYLE_LAB_ICON_PREVIEW_EVENT } from "@/components/style-lab/style-lab-runtime";
+import { StyleLabTextPart } from "@/components/style-lab/style-lab-text-part";
 
 function joinClasses(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -114,6 +115,7 @@ export function AdhdChip({
         className={className}
         styleComponent="AdhdChip"
         stylePart="label"
+        styleTextPart
         styleRole="ui.chip"
         toneClassName={resolvedToneClassName}
         {...props}
@@ -135,9 +137,9 @@ export function AdhdChip({
       <span className={joinClasses(TASK_TABLE_CHIP_BASE_CLASS, resolvedToneClassName, icon ? "pl-1.5 pr-2" : null, className)} data-style-component="AdhdChip" data-style-role="ui.chip">
         <span className={joinClasses("inline-flex items-center", icon ? TASK_TABLE_ICON_LABEL_GAP_CLASS : null, contentClassName)} data-style-part="label">
           {icon ? <AdhdChipIcon icon={icon} iconName={iconName} /> : null}
-          {children}
+          <StyleLabTextPart>{children}</StyleLabTextPart>
           {count === undefined ? null : (
-            <span className={joinClasses("ml-1 opacity-70", countClassName)}>{count}</span>
+            <span className={joinClasses("ml-1 opacity-70", countClassName)} data-style-part="count">{count}</span>
           )}
         </span>
       </span>
