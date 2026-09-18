@@ -108,6 +108,7 @@ import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
 import { WorkspaceLoadingScreen } from "./workspace-loading-screen";
@@ -9654,7 +9655,10 @@ function TestPageWorkspace({ isDark, userId }: { isDark: boolean; userId: string
           <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#9b92be] dark:text-white/35">Test workspace</p>
           <p className="mt-1 text-sm text-[#726a96] dark:text-white/60">Outer tools can be arranged independently; the D20 mapper has its own inner layout.</p>
         </div>
-        <PageShellLayoutControls layout={layout} />
+        <div className="flex flex-wrap items-center gap-2">
+          <StyleLabLauncher />
+          <PageShellLayoutControls layout={layout} />
+        </div>
       </div>
 
       <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-12">

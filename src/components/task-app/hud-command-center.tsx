@@ -868,7 +868,7 @@ export function HudCommandCenter({
             </button>
           </div>
         ) : null}
-        <div className={`h-full rounded-[1rem] border border-[#ece8f8] bg-[var(--hud-surface)] dark:border-white/10 ${hudUiState.isHudEditMode ? "px-[5px] py-[5px]" : "px-1.5 py-1.5"} ${overflowClass} ${hudUiState.isHudEditMode ? "pointer-events-none" : ""}`}>
+        <div className={`h-full rounded-[1rem] border border-[#ece8f8] bg-[var(--hud-surface)] dark:border-white/10 ${hudUiState.isHudEditMode ? "px-[5px] py-[5px]" : "px-1.5 py-1.5"} ${overflowClass} ${hudUiState.isHudEditMode ? "pointer-events-none" : ""}`} data-style-component="HudWidgetSurface" data-style-role="hud.widget.surface">
           {renderWidget(widget.type)}
         </div>
       </div>
@@ -902,6 +902,8 @@ export function HudCommandCenter({
             >
               <div
                 className="adhdice-hud-workspace-scrollbar w-full min-w-0 overflow-auto rounded-[1.2rem] border border-[#ece8f8] bg-[var(--hud-surface)] dark:border-white/10"
+                data-style-component="HudWorkspaceSurface"
+                data-style-role="hud.workspace.surface"
                 ref={workspaceScrollRef}
                 style={{
                   height: hudUiState.hudWorkspace.heightPx,
@@ -1054,6 +1056,8 @@ export function HudCommandCenter({
             <TaskTableChipButton
               disabled={!canAddSnapshot}
               onClick={handleNewLayout}
+              styleComponent="HudWidgetChip"
+              styleRole="hud.widget.chip"
               toneClassName="border-[#ddd2ff] bg-white text-[#6f57f6] dark:border-[#493a78] dark:bg-[#241b42] dark:text-[#cabfff]"
             >
               <Plus className="mr-1 h-3.5 w-3.5" />

@@ -940,6 +940,8 @@ export function ReorderableTaskChipRail({
       data-list-reorder-rail="true"
       data-rail-container-id={currentFolderId ?? ""}
       data-rail-container-key={railContainerKey}
+      data-style-component="TasksRailSurface"
+      data-style-role="tasks.rail.surface"
       ref={railElementRef}
     >
       {renderedLists.map((list) => {
@@ -1088,7 +1090,7 @@ export function ReorderableTaskChipRail({
           title={accessibleFolderSummary}
           type="button"
         >
-          <span className={`pointer-events-none cursor-inherit ${TASK_TABLE_CHIP_BASE_CLASS} ${selected ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS} ${draggedListId === list.structuralKey ? "shadow-lg ring-2 ring-[#c9bcff] dark:ring-[#6e5ab2]" : ""} ${outlinedFolderStructuralKey === list.structuralKey ? "ring-2 ring-inset ring-[#6f57f6] dark:ring-[#cabfff]" : ""}`}>
+          <span className={`pointer-events-none cursor-inherit ${TASK_TABLE_CHIP_BASE_CLASS} ${selected ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS} ${draggedListId === list.structuralKey ? "shadow-lg ring-2 ring-[#c9bcff] dark:ring-[#6e5ab2]" : ""} ${outlinedFolderStructuralKey === list.structuralKey ? "ring-2 ring-inset ring-[#6f57f6] dark:ring-[#cabfff]" : ""}`} data-style-component="TasksRailChip" data-style-role="tasks.rail.chip">
             <span className="inline-flex items-center">
               {list.structureKind === "folder" ? <Folder className="mr-1.5 h-3.5 w-3.5 shrink-0" /> : null}
               {list.label}

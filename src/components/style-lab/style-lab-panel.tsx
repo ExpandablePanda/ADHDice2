@@ -1,10 +1,12 @@
 "use client";
 
-import { Copy, Eye, EyeOff, RotateCcw } from "lucide-react";
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { Copy, Eye, EyeOff, RotateCcw, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { AdhdChip, AdhdIconButton, AdhdPanel } from "@/components/ui-system";
+import { TaskTypeIcon } from "@/components/ui/lucide-icon";
 import {
   getStyleLabProperty,
+  STYLE_LAB_ICON_OPTIONS,
   type StyleLabPropertyId,
   type StyleLabRole,
 } from "./style-lab-registry";
@@ -28,6 +30,7 @@ export function StyleLabPanel({
   onResetAll,
   onResetRole,
   onSetOverride,
+  onSetIcon,
   onSetPreviewText,
   onPanelPositionChange,
   onScopeChange,
@@ -47,6 +50,7 @@ export function StyleLabPanel({
   onResetAll: () => void;
   onResetRole: () => void;
   onSetOverride: (propertyId: StyleLabPropertyId, value: string) => void;
+  onSetIcon: (value: string) => void;
   onSetPreviewText: (value: string) => void;
   onPanelPositionChange: (position: StyleLabPanelPosition) => void;
   onScopeChange: (scope: StyleLabScope) => void;
@@ -59,6 +63,12 @@ export function StyleLabPanel({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ offsetX: number; offsetY: number; pointerId: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [iconQuery, setIconQuery] = useState("");
+  const filteredIconOptions = useMemo(() => {
+    const normalizedQuery = iconQuery.trim().toLowerCase();
+    if (!normalizedQuery) return STYLE_LAB_ICON_OPTIONS;
+    return STYLE_LAB_ICON_OPTIONS.filter((option) => `${option.label} ${option.key} ${option.keywords.join(" ")}`.toLowerCase().includes(normalizedQuery));
+  }, [iconQuery]);
 
   useEffect(() => {
     const normalizeCurrentPosition = () => {
@@ -215,6 +225,36 @@ export function StyleLabPanel({
                 />
               </label>
               {!instanceOverride?.previewTextEligible ? <p className="mt-1.5 text-[10px] text-[#9a91b1] dark:text-white/40">Preview text is unavailable for this element.</p> : null}
+              {instanceOverride?.iconPreviewEligible ? (
+                <div className="mt-3 border-t border-[#eae5f6] pt-2.5 dark:border-white/10">
+                  <div className="flex items-center gap-2">
+                    <span className="w-28 shrink-0 text-[11px] font-medium text-[#6f6785] dark:text-white/60">Original icon</span>
+                    <span className="min-w-0 truncate text-[11px] text-[#4f466c] dark:text-white/70">{instanceOverride.originalIconName || "unknown"}</span>
+                  </div>
+                  <label className="mt-2 flex items-center gap-2">
+                    <span className="w-28 shrink-0 text-[11px] font-medium text-[#6f6785] dark:text-white/60">Preview icon</span>
+                    <select aria-label="Preview icon" className={SELECT_CLASS} onChange={(event) => onSetIcon(event.target.value)} value={instanceOverride.previewIconName ?? ""}>
+                      <option value="">Original icon</option>
+                      {filteredIconOptions.map((option) => (
+                        <option key={option.key} value={option.key}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="mt-2 flex items-center gap-2">
+                    <span className="w-28 shrink-0 text-[11px] font-medium text-[#6f6785] dark:text-white/60">Search icons</span>
+                    <span className="relative min-w-0 flex-1">
+                      <Search aria-hidden="true" className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8d82b6]" />
+                      <input aria-label="Search icons" className={`${INPUT_CLASS} pl-7`} onChange={(event) => setIconQuery(event.target.value)} placeholder="Search icons" type="search" value={iconQuery} />
+                    </span>
+                  </label>
+                  {instanceOverride.previewIconName ? (
+                    <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-[#e4dcfb] bg-white px-2 py-1 text-[10px] font-semibold text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.06] dark:text-[#cabfff]">
+                      <TaskTypeIcon aria-hidden="true" className="h-3.5 w-3.5" iconKey={instanceOverride.previewIconName} />
+                      {STYLE_LAB_ICON_OPTIONS.find((option) => option.key === instanceOverride.previewIconName)?.label ?? instanceOverride.previewIconName}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
 

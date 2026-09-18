@@ -9,7 +9,9 @@ import {
   applyStyleLabRuntimeStyles,
   canUseStyleLab,
   clearStyleLabInstanceOverride,
+  clearStyleLabPreviewIcon,
   getStyleLabPreviewTextTarget,
+  getStyleLabIconTarget,
   readStyleLabPanelPosition,
   readStyleLabOverrides,
   resetStyleLabInstance,
@@ -17,15 +19,21 @@ import {
   resetStyleLabRole,
   setStyleLabOverride,
   setStyleLabInstanceOverride,
+  setStyleLabPreviewIcon,
   setStyleLabPreviewText,
+  setStyleLabIconPreviewOnElement,
   setStyleLabPreviewTextOnElement,
   STYLE_LAB_INSTANCE_ATTRIBUTE,
+  STYLE_LAB_ENABLEMENT_EVENT,
   STYLE_LAB_RUNTIME_STYLE_ELEMENT_ID,
   restoreStyleLabPreviewText,
+  restoreStyleLabIcon,
+  requestStyleLabEnablement,
   writeStyleLabPanelPosition,
   writeStyleLabEnablement,
   writeStyleLabOverrides,
   type StyleLabInstanceOverrides,
+  type StyleLabInstanceOverride,
   type StyleLabOverrides,
   type StyleLabPanelPosition,
   type StyleLabScope,
@@ -41,6 +49,20 @@ function getInspectableElement(target: EventTarget | null): HTMLElement | null {
     element = element.parentElement;
   }
   return null;
+}
+
+function createStyleLabInstanceOverride(element: HTMLElement, roleId: StyleLabRoleId): StyleLabInstanceOverride {
+  const previewTarget = getStyleLabPreviewTextTarget(element);
+  const iconTarget = getStyleLabIconTarget(element);
+  return {
+    iconPreviewEligible: Boolean(iconTarget),
+    originalIconName: iconTarget?.dataset.styleIconName ?? null,
+    originalText: previewTarget?.textContent?.trim() ?? element.textContent?.trim() ?? "",
+    overrides: {},
+    previewText: "",
+    previewTextEligible: Boolean(previewTarget),
+    roleId,
+  };
 }
 
 export function StyleLabDevRoot() {
@@ -75,6 +97,14 @@ export function StyleLabDevRoot() {
   }, []);
 
   useEffect(() => {
+    const handleEnablementChange = () => {
+      setEnabled(isStyleLabExplicitlyEnabled(window as unknown as StyleLabWindow));
+    };
+    window.addEventListener(STYLE_LAB_ENABLEMENT_EVENT, handleEnablementChange);
+    return () => window.removeEventListener(STYLE_LAB_ENABLEMENT_EVENT, handleEnablementChange);
+  }, []);
+
+  useEffect(() => {
     if (!enabled) {
       const styleElement = document.getElementById(STYLE_LAB_RUNTIME_STYLE_ELEMENT_ID);
       if (styleElement) styleElement.textContent = "";
@@ -89,6 +119,15 @@ export function StyleLabDevRoot() {
       if (!element || !instance.previewTextEligible) continue;
       if (enabled && instance.previewText) setStyleLabPreviewTextOnElement(element, instance.previewText);
       else restoreStyleLabPreviewText(element, instance.originalText);
+    }
+  }, [enabled, instanceOverrides]);
+
+  useEffect(() => {
+    for (const [instanceId, instance] of Object.entries(instanceOverrides)) {
+      const element = trackedInstanceElementsRef.current.get(instanceId);
+      if (!element || !instance.iconPreviewEligible) continue;
+      if (enabled && instance.previewIconName) setStyleLabIconPreviewOnElement(element, instance.previewIconName);
+      else restoreStyleLabIcon(element);
     }
   }, [enabled, instanceOverrides]);
 
@@ -125,16 +164,9 @@ export function StyleLabDevRoot() {
       trackedInstanceElementsRef.current.set(instanceId, element);
       const existingInstance = instanceOverridesRef.current[instanceId];
       if (!existingInstance) {
-        const previewTarget = getStyleLabPreviewTextTarget(element);
         setInstanceOverrides((current) => ({
           ...current,
-          [instanceId as string]: {
-            originalText: previewTarget?.textContent?.trim() ?? element.textContent?.trim() ?? "",
-            overrides: {},
-            previewText: "",
-            previewTextEligible: Boolean(previewTarget),
-            roleId: role.id,
-          },
+          [instanceId as string]: createStyleLabInstanceOverride(element, role.id),
         }));
       }
       selectedElementRef.current?.removeAttribute("data-style-lab-selected");
@@ -182,7 +214,7 @@ export function StyleLabDevRoot() {
 
   const handleEnable = useCallback(() => {
     if (!canUseStyleLab(process.env.NODE_ENV, true)) return;
-    writeStyleLabEnablement(window.localStorage, true);
+    requestStyleLabEnablement();
     setEnabled(true);
   }, []);
 
@@ -210,16 +242,9 @@ export function StyleLabDevRoot() {
     }
     trackedInstanceElementsRef.current.set(instanceId, element);
     if (!instanceOverridesRef.current[instanceId]) {
-      const previewTarget = getStyleLabPreviewTextTarget(element);
       setInstanceOverrides((current) => ({
         ...current,
-        [instanceId as string]: {
-          originalText: previewTarget?.textContent?.trim() ?? element.textContent?.trim() ?? "",
-          overrides: {},
-          previewText: "",
-          previewTextEligible: Boolean(previewTarget),
-          roleId: selectedRoleId,
-        },
+        [instanceId as string]: createStyleLabInstanceOverride(element, selectedRoleId),
       }));
     }
     setSelectedInstanceId(instanceId);
@@ -254,6 +279,17 @@ export function StyleLabDevRoot() {
     setInstanceOverrides(setStyleLabPreviewText(instanceOverrides, selectedInstanceId, previewText));
   }, [instanceOverrides, scope, selectedInstanceId]);
 
+  const handleSetIcon = useCallback((iconName: string) => {
+    if (scope !== "instance" || !selectedInstanceId) return;
+    const element = trackedInstanceElementsRef.current.get(selectedInstanceId) ?? selectedElementRef.current;
+    const nextInstances = iconName
+      ? setStyleLabPreviewIcon(instanceOverrides, selectedInstanceId, iconName)
+      : clearStyleLabPreviewIcon(instanceOverrides, selectedInstanceId);
+    setInstanceOverrides(nextInstances);
+    if (iconName) setStyleLabIconPreviewOnElement(element ?? null, iconName);
+    else restoreStyleLabIcon(element ?? null);
+  }, [instanceOverrides, scope, selectedInstanceId]);
+
   const handleResetRole = useCallback(() => {
     if (!selectedRoleId) return;
     if (scope === "instance") {
@@ -261,6 +297,7 @@ export function StyleLabDevRoot() {
       const element = trackedInstanceElementsRef.current.get(selectedInstanceId) ?? selectedElementRef.current;
       const instance = instanceOverrides[selectedInstanceId];
       if (instance) restoreStyleLabPreviewText(element ?? null, instance.originalText);
+      if (instance?.iconPreviewEligible) restoreStyleLabIcon(element ?? null);
       element?.removeAttribute(STYLE_LAB_INSTANCE_ATTRIBUTE);
       setInstanceOverrides(resetStyleLabInstance(instanceOverrides, selectedInstanceId));
       setSelectedInstanceId(null);
@@ -275,6 +312,7 @@ export function StyleLabDevRoot() {
     for (const [instanceId, instance] of Object.entries(instanceOverrides)) {
       const element = trackedInstanceElementsRef.current.get(instanceId);
       if (instance.previewTextEligible) restoreStyleLabPreviewText(element ?? null, instance.originalText);
+      if (instance.iconPreviewEligible) restoreStyleLabIcon(element ?? null);
       element?.removeAttribute(STYLE_LAB_INSTANCE_ATTRIBUTE);
     }
     setInstanceOverrides(resetStyleLabInstances());
@@ -338,6 +376,7 @@ export function StyleLabDevRoot() {
         onResetAll={handleResetAll}
         onResetRole={handleResetRole}
         onSetOverride={handleSetOverride}
+        onSetIcon={handleSetIcon}
         onSetPreviewText={handleSetPreviewText}
         onPanelPositionChange={handlePanelPositionChange}
         onScopeChange={handleScopeChange}

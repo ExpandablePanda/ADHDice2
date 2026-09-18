@@ -2,17 +2,23 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  getStyleLabBackgroundColorCssValue,
   getStyleLabRole,
   getStyleLabTargetPart,
+  isStyleLabIconName,
   isStyleLabPropertyAllowed,
   isStyleLabValueAllowed,
   normalizeStyleLabTargetPart,
+  STYLE_LAB_BACKGROUND_COLORS,
+  STYLE_LAB_ICON_OPTIONS,
 } from "@/components/style-lab/style-lab-registry";
 import {
   buildStyleLabCss,
   canUseStyleLab,
   clearStyleLabInstanceOverride,
+  clearStyleLabPreviewIcon,
   getStyleLabDesignSpec,
+  getStyleLabIconTarget,
   getStyleLabPreviewTextTarget,
   isStyleLabPreviewTextEligible,
   isStyleLabExplicitlyEnabled,
@@ -27,6 +33,7 @@ import {
   restoreStyleLabPreviewText,
   setStyleLabOverride,
   setStyleLabInstanceOverride,
+  setStyleLabPreviewIcon,
   setStyleLabPreviewText,
   setStyleLabPreviewTextOnElement,
   STYLE_LAB_INSTANCE_ATTRIBUTE,
@@ -65,6 +72,10 @@ test("registry exposes constrained capabilities for representative roles", () =>
   assert.ok(panelTitle.capabilities.includes("textColor"));
   assert.ok(!panelTitle.capabilities.includes("paddingX"));
   assert.ok(panelSurface.capabilities.includes("paddingX"));
+  assert.ok(panelSurface.capabilities.includes("backgroundColor"));
+  assert.deepEqual(STYLE_LAB_BACKGROUND_COLORS, ["Surface", "Subtle", "Accent", "Success", "Warning", "Danger", "Transparent"]);
+  assert.equal(getStyleLabBackgroundColorCssValue("Danger"), "var(--danger-soft)");
+  assert.equal(getStyleLabBackgroundColorCssValue("Transparent"), "transparent");
   assert.ok(isStyleLabPropertyAllowed("ui.panel.title", "lineHeight"));
   assert.ok(!isStyleLabPropertyAllowed("ui.panel.title", "gap"));
   assert.ok(isStyleLabValueAllowed("textColor", "Secondary"));
@@ -76,6 +87,15 @@ test("registry exposes constrained capabilities for representative roles", () =>
   assert.equal(getStyleLabTargetPart("ui.chip", "typography"), "label");
   assert.equal(getStyleLabTargetPart("ui.chip", "sizing"), "self");
   assert.equal(normalizeStyleLabTargetPart("unrestricted-descendant"), "self");
+
+  for (const roleId of ["tasks.rail.surface", "tasks.rail.chip", "tasks.filter.surface", "tasks.filter.chip", "hud.workspace.surface", "hud.widget.surface"]) {
+    assert.ok(getStyleLabRole(roleId));
+  }
+  assert.ok(isStyleLabPropertyAllowed("tasks.filter.chip", "backgroundColor"));
+  assert.ok(isStyleLabPropertyAllowed("hud.widget.surface", "backgroundColor"));
+  assert.ok(!isStyleLabPropertyAllowed("hud.widget.label", "backgroundColor"));
+  assert.ok(isStyleLabValueAllowed("backgroundColor", "Accent"));
+  assert.ok(!isStyleLabValueAllowed("backgroundColor", "#ff00ff"));
 });
 
 test("override updates accept only registered role properties and values", () => {
@@ -135,6 +155,27 @@ test("runtime CSS targets the semantic role and design specs include only overri
   assert.match(spec, /- Text color: Secondary/);
   assert.doesNotMatch(spec, /Padding|Margin|Letter spacing/);
   assert.match(spec, /No source files were modified\./);
+});
+
+test("background overrides use semantic tokens and remain separate by scope", () => {
+  const instanceId = "style-lab-background-instance";
+  const css = buildStyleLabCss(
+    { "ui.card.surface": { backgroundColor: "Danger" } },
+    {
+      [instanceId]: {
+        originalText: "Card",
+        overrides: { backgroundColor: "Accent" },
+        previewText: "",
+        previewTextEligible: false,
+        roleId: "ui.card.surface",
+      },
+    },
+  );
+
+  assert.match(css, /background-color: var\(--danger-soft\) !important/);
+  assert.match(css, /background-color: var\(--accent-soft\) !important/);
+  assert.match(css, /data-style-lab-instance="style-lab-background-instance"/);
+  assert.equal(getStyleLabPropertyTargetSelector("ui.card.surface", "backgroundColor"), '[data-style-role="ui.card.surface"]:not([data-style-lab-ui] [data-style-role])');
 });
 
 test("enablement persistence keeps Style Lab development-only and launcher-controlled", () => {
@@ -216,13 +257,51 @@ test("instance design specs identify scope and original text", () => {
     },
     scope: "instance",
   });
+  const unchangedSpec = getStyleLabDesignSpec("ui.chip", {}, {
+    instance: {
+      originalText: "New Task",
+      overrides: {},
+      previewText: "New Task",
+      previewTextEligible: true,
+      roleId: "ui.chip",
+    },
+    scope: "instance",
+  });
 
   assert.match(spec, /Role: ui\.chip/);
   assert.match(spec, /Component: AdhdChip/);
   assert.match(spec, /Scope: this instance/);
   assert.match(spec, /Original text: New Task/);
+  assert.match(spec, /Preview text: Add Task/);
+  assert.doesNotMatch(unchangedSpec, /Preview text:/);
   assert.match(spec, /- Font size: 14px/);
   assert.doesNotMatch(spec, /Scope: semantic role/);
+});
+
+test("Chip icon previews are curated, instance-scoped, resettable, and exported safely", () => {
+  const initial: StyleLabInstanceOverrides = {
+    one: {
+      iconPreviewEligible: true,
+      originalIconName: null,
+      originalText: "New Task",
+      overrides: {},
+      previewText: "",
+      previewTextEligible: true,
+      roleId: "ui.chip",
+    },
+  };
+  const withPreview = setStyleLabPreviewIcon(initial, "one", "star");
+  const cleared = clearStyleLabPreviewIcon(withPreview, "one");
+  const spec = getStyleLabDesignSpec("ui.chip", {}, { instance: withPreview.one, scope: "instance" });
+
+  assert.ok(STYLE_LAB_ICON_OPTIONS.length > 10);
+  assert.ok(isStyleLabIconName("star"));
+  assert.deepEqual(setStyleLabPreviewIcon(initial, "one", "not-a-real-icon"), initial);
+  assert.equal(getStyleLabIconTarget(null), null);
+  assert.equal(withPreview.one.previewIconName, "star");
+  assert.equal(cleared.one.previewIconName, undefined);
+  assert.match(spec, /Original icon: unknown/);
+  assert.match(spec, /Preview icon: star/);
 });
 
 test("role property targeting routes Chip typography to its explicit label part", () => {
@@ -248,7 +327,31 @@ test("Chip render paths expose one explicit visible label target", () => {
 
   assert.match(chipSource, /data-style-part="label"/);
   assert.match(chipSource, /stylePart="label"/);
+  assert.match(chipSource, /data-style-part="icon"/);
+  assert.match(chipSource, /STYLE_LAB_ICON_PREVIEW_EVENT/);
+  assert.match(chipSource, /<TaskTypeIcon/);
   assert.match(primitiveSource, /data-style-part=\{stylePart\}/);
+});
+
+test("Tasks, HUD, and shared launchers expose deliberate Style Lab seams", () => {
+  const railSource = readFileSync(new URL("../src/components/task-app/tasks-page.tsx", import.meta.url), "utf8");
+  const filterSource = readFileSync(new URL("../src/components/task-app/task-filter-rows.tsx", import.meta.url), "utf8");
+  const hudSource = readFileSync(new URL("../src/components/task-app/hud-command-center.tsx", import.meta.url), "utf8");
+  const settingsSource = readFileSync(new URL("../src/components/task-app/settings-page.tsx", import.meta.url), "utf8");
+  const testWorkspaceSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const launcherSource = readFileSync(new URL("../src/components/style-lab/style-lab-launcher.tsx", import.meta.url), "utf8");
+
+  assert.match(railSource, /data-style-role="tasks\.rail\.surface"/);
+  assert.match(railSource, /data-style-role="tasks\.rail\.chip"/);
+  assert.match(filterSource, /data-style-role="tasks\.filter\.surface"/);
+  assert.match(filterSource, /styleRole="tasks\.filter\.chip"/);
+  assert.match(hudSource, /data-style-role="hud\.workspace\.surface"/);
+  assert.match(hudSource, /data-style-role="hud\.widget\.surface"/);
+  assert.match(hudSource, /styleRole="hud\.widget\.chip"/);
+  assert.match(settingsSource, /<StyleLabLauncher \/>/);
+  assert.match(testWorkspaceSource, /<StyleLabLauncher \/>/);
+  assert.match(launcherSource, /process\.env\.NODE_ENV !== "development"/);
+  assert.match(launcherSource, /requestStyleLabEnablement/);
 });
 
 test("Style Lab panel positions clamp, normalize invalid values, and use their own storage key", () => {

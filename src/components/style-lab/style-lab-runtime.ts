@@ -2,12 +2,15 @@ import {
   getStyleLabProperty,
   getStyleLabRole,
   getStyleLabTargetPart,
+  getStyleLabBackgroundColorCssValue,
   getStyleLabTextColorCssValue,
+  isStyleLabIconName,
   isStyleLabPropertyAllowed,
   isStyleLabValueAllowed,
   STYLE_LAB_PROPERTY_IDS,
   type StyleLabPropertyId,
   type StyleLabRoleId,
+  type StyleLabIconName,
   type StyleLabTextColor,
 } from "@/components/style-lab/style-lab-registry";
 
@@ -17,14 +20,19 @@ export const STYLE_LAB_ENABLEMENT_STORAGE_KEY = "adhdice-style-lab:enabled";
 export const STYLE_LAB_RUNTIME_STYLE_ELEMENT_ID = "adhdice-style-lab-runtime-overrides";
 export const STYLE_LAB_WINDOW_ENABLEMENT_KEY = "__ADHDICE_STYLE_LAB_ENABLED__";
 export const STYLE_LAB_INSTANCE_ATTRIBUTE = "data-style-lab-instance";
+export const STYLE_LAB_ENABLEMENT_EVENT = "adhdice-style-lab:enablement-change";
+export const STYLE_LAB_ICON_PREVIEW_EVENT = "adhdice-style-lab:icon-preview";
 
 export type StyleLabOverrides = Partial<Record<StyleLabRoleId, Partial<Record<StyleLabPropertyId, string>>>>;
 
 export type StyleLabScope = "role" | "instance";
 
 export type StyleLabInstanceOverride = {
+  iconPreviewEligible?: boolean;
+  originalIconName?: string | null;
   originalText: string;
   overrides: Partial<Record<StyleLabPropertyId, string>>;
+  previewIconName?: StyleLabIconName;
   previewText: string;
   previewTextEligible: boolean;
   roleId: StyleLabRoleId;
@@ -55,6 +63,13 @@ export function writeStyleLabEnablement(storage: StyleLabStorage | null | undefi
   } catch {
     // Style Lab enablement is best effort and must never affect application state.
   }
+  return enabled;
+}
+
+export function requestStyleLabEnablement(): boolean {
+  if (typeof window === "undefined") return false;
+  const enabled = writeStyleLabEnablement(window.localStorage, true);
+  window.dispatchEvent(new CustomEvent(STYLE_LAB_ENABLEMENT_EVENT, { detail: { enabled } }));
   return enabled;
 }
 
@@ -255,6 +270,36 @@ export function setStyleLabPreviewText(
   };
 }
 
+export function setStyleLabPreviewIcon(
+  instances: StyleLabInstanceOverrides,
+  instanceId: string,
+  iconName: string,
+): StyleLabInstanceOverrides {
+  const instance = instances[instanceId];
+  if (!instance || !instance.iconPreviewEligible || !isStyleLabIconName(iconName)) return instances;
+  return {
+    ...instances,
+    [instanceId]: {
+      ...instance,
+      previewIconName: iconName,
+    },
+  };
+}
+
+export function clearStyleLabPreviewIcon(
+  instances: StyleLabInstanceOverrides,
+  instanceId: string,
+): StyleLabInstanceOverrides {
+  const instance = instances[instanceId];
+  if (!instance || instance.previewIconName === undefined) return instances;
+  const next = { ...instance };
+  delete next.previewIconName;
+  return {
+    ...instances,
+    [instanceId]: next,
+  };
+}
+
 export function resetStyleLabInstance(instances: StyleLabInstanceOverrides, instanceId: string): StyleLabInstanceOverrides {
   if (!(instanceId in instances)) return instances;
   const next = { ...instances };
@@ -267,7 +312,9 @@ export function resetStyleLabInstances(): StyleLabInstanceOverrides {
 }
 
 export function getStyleLabCssValue(propertyId: StyleLabPropertyId, value: string): string {
-  return propertyId === "textColor" ? getStyleLabTextColorCssValue(value as StyleLabTextColor) : value;
+  if (propertyId === "textColor") return getStyleLabTextColorCssValue(value as StyleLabTextColor);
+  if (propertyId === "backgroundColor") return getStyleLabBackgroundColorCssValue(value as Parameters<typeof getStyleLabBackgroundColorCssValue>[0]);
+  return value;
 }
 
 function selectorForRole(roleId: StyleLabRoleId, propertyId: StyleLabPropertyId, instanceId?: string): string {
@@ -321,6 +368,24 @@ export function getStyleLabMatchCount(documentLike: Pick<Document, "querySelecto
     .length;
 }
 
+export function getStyleLabIconTarget(element: HTMLElement | null): HTMLElement | null {
+  return element?.querySelector<HTMLElement>('[data-style-part="icon"]') ?? null;
+}
+
+export function setStyleLabIconPreviewOnElement(element: HTMLElement | null, iconName: string): boolean {
+  const target = getStyleLabIconTarget(element);
+  if (!target || !isStyleLabIconName(iconName)) return false;
+  target.dispatchEvent(new CustomEvent(STYLE_LAB_ICON_PREVIEW_EVENT, { detail: { iconName } }));
+  return true;
+}
+
+export function restoreStyleLabIcon(element: HTMLElement | null): boolean {
+  const target = getStyleLabIconTarget(element);
+  if (!target) return false;
+  target.dispatchEvent(new CustomEvent(STYLE_LAB_ICON_PREVIEW_EVENT, { detail: { iconName: null } }));
+  return true;
+}
+
 export type StyleLabDesignSpecOptions = {
   instance?: StyleLabInstanceOverride | null;
   scope?: StyleLabScope;
@@ -347,7 +412,16 @@ export function getStyleLabDesignSpec(
     `Role: ${role.id}`,
     `Component: ${role.component}`,
     scope === "instance" ? "Scope: this instance" : "Scope: semantic role",
-    ...(scope === "instance" ? [`Original text: ${options.instance?.originalText || "(not safely replaceable)"}`] : []),
+    ...(scope === "instance" ? [
+      `Original text: ${options.instance?.originalText || "(not safely replaceable)"}`,
+      ...(options.instance?.previewText && options.instance.previewText !== options.instance.originalText
+        ? [`Preview text: ${options.instance.previewText}`]
+        : []),
+      ...(options.instance?.previewIconName ? [
+        `Original icon: ${options.instance.originalIconName || "unknown"}`,
+        `Preview icon: ${options.instance.previewIconName}`,
+      ] : []),
+    ] : []),
     "",
     "Desired:",
     ...(desired.length > 0 ? desired : ["- No properties overridden"]),

@@ -1,3 +1,6 @@
+import { TASK_TYPE_ICON_OPTIONS } from "@/lib/task-type-presentation";
+import { isLucideIconName } from "@/lib/lucide-icon";
+
 export const STYLE_LAB_TEXT_COLORS = [
   "Primary",
   "Secondary",
@@ -10,10 +13,27 @@ export const STYLE_LAB_TEXT_COLORS = [
 
 export type StyleLabTextColor = (typeof STYLE_LAB_TEXT_COLORS)[number];
 
+export const STYLE_LAB_BACKGROUND_COLORS = [
+  "Surface",
+  "Subtle",
+  "Accent",
+  "Success",
+  "Warning",
+  "Danger",
+  "Transparent",
+] as const;
+
+export type StyleLabBackgroundColor = (typeof STYLE_LAB_BACKGROUND_COLORS)[number];
+
+export const STYLE_LAB_ICON_OPTIONS = TASK_TYPE_ICON_OPTIONS.filter((option) => Boolean(option.icon) || isLucideIconName(option.key));
+
+export type StyleLabIconName = (typeof STYLE_LAB_ICON_OPTIONS)[number]["key"];
+
 export const STYLE_LAB_PROPERTY_IDS = [
   "fontSize",
   "fontWeight",
   "textColor",
+  "backgroundColor",
   "lineHeight",
   "letterSpacing",
   "textAlign",
@@ -29,7 +49,7 @@ export const STYLE_LAB_PROPERTY_IDS = [
 
 export type StyleLabPropertyId = (typeof STYLE_LAB_PROPERTY_IDS)[number];
 
-export type StyleLabCapabilityGroup = "typography" | "sizing" | "container";
+export type StyleLabCapabilityGroup = "typography" | "background" | "sizing" | "container";
 
 export const STYLE_LAB_TARGET_PART_IDS = ["self", "label"] as const;
 
@@ -55,6 +75,15 @@ export type StyleLabRoleId =
   | "ui.section.title"
   | "ui.section.subtitle"
   | "typography.field-label"
+  | "tasks.rail.surface"
+  | "tasks.rail.chip"
+  | "tasks.filter.surface"
+  | "tasks.filter.chip"
+  | "hud.workspace.surface"
+  | "hud.widget.surface"
+  | "hud.widget.label"
+  | "hud.widget.value"
+  | "hud.widget.chip"
   | "page.shell.surface"
   | "page.shell.title"
   | "page.shell.subtitle"
@@ -84,6 +113,7 @@ export const STYLE_LAB_PROPERTY_DEFINITIONS: Readonly<Record<StyleLabPropertyId,
   fontSize: { cssProperties: ["font-size"], group: "typography", id: "fontSize", label: "Font size", values: pxValues },
   fontWeight: { cssProperties: ["font-weight"], group: "typography", id: "fontWeight", label: "Font weight", values: fontWeightValues },
   textColor: { cssProperties: ["color"], group: "typography", id: "textColor", label: "Text color", values: STYLE_LAB_TEXT_COLORS },
+  backgroundColor: { cssProperties: ["background-color"], group: "background", id: "backgroundColor", label: "Background color", values: STYLE_LAB_BACKGROUND_COLORS },
   lineHeight: { cssProperties: ["line-height"], group: "typography", id: "lineHeight", label: "Line height", values: lineHeightValues },
   letterSpacing: { cssProperties: ["letter-spacing"], group: "typography", id: "letterSpacing", label: "Letter spacing", values: letterSpacingValues },
   textAlign: { cssProperties: ["text-align"], group: "typography", id: "textAlign", label: "Text alignment", values: textAlignValues },
@@ -98,7 +128,9 @@ export const STYLE_LAB_PROPERTY_DEFINITIONS: Readonly<Record<StyleLabPropertyId,
 };
 
 const typographyCapabilities = ["fontSize", "fontWeight", "textColor", "lineHeight", "letterSpacing", "textAlign"] as const satisfies readonly StyleLabPropertyId[];
-const surfaceCapabilities = [...typographyCapabilities, "width", "minWidth", "maxWidth", "paddingX", "paddingY", "gap", "alignItems", "justifyContent"] as const satisfies readonly StyleLabPropertyId[];
+const surfaceCapabilities = [...typographyCapabilities, "backgroundColor", "width", "minWidth", "maxWidth", "paddingX", "paddingY", "gap", "alignItems", "justifyContent"] as const satisfies readonly StyleLabPropertyId[];
+const chipCapabilities = [...typographyCapabilities, "backgroundColor", "minWidth", "maxWidth", "paddingX", "paddingY", "gap", "alignItems", "justifyContent"] as const satisfies readonly StyleLabPropertyId[];
+const railSurfaceCapabilities = ["backgroundColor", "paddingX", "paddingY", "gap", "alignItems", "justifyContent"] as const satisfies readonly StyleLabPropertyId[];
 const pageBodyCapabilities = ["width", "minWidth", "maxWidth", "paddingX", "paddingY", "gap", "alignItems", "justifyContent"] as const satisfies readonly StyleLabPropertyId[];
 
 export const STYLE_LAB_ROLES: readonly StyleLabRole[] = [
@@ -106,13 +138,22 @@ export const STYLE_LAB_ROLES: readonly StyleLabRole[] = [
   { capabilities: surfaceCapabilities, component: "AdhdPanel", context: "Panel surface", id: "ui.panel.surface", name: "Panel surface" },
   { capabilities: typographyCapabilities, component: "AdhdPanel", context: "Built-in panel title", id: "ui.panel.title", name: "Panel title" },
   { capabilities: typographyCapabilities, component: "AdhdPanel", context: "Built-in panel subtitle", id: "ui.panel.subtitle", name: "Panel subtitle" },
-  { capabilities: typographyCapabilities, component: "AdhdChip", context: "Compact labeled action", id: "ui.chip", name: "Chip", targets: { typography: "label" } },
+  { capabilities: chipCapabilities, component: "AdhdChip", context: "Compact labeled action", id: "ui.chip", name: "Chip", targets: { typography: "label" } },
   { capabilities: [...typographyCapabilities, "width", "minWidth", "maxWidth"] as const, component: "AdhdIconButton", context: "Icon-only action", id: "ui.icon-button", name: "Icon button" },
   { capabilities: typographyCapabilities, component: "EditableEntityHeaderTitle", context: "Editable entity title", id: "ui.entity-header-title", name: "Entity header title" },
   { capabilities: typographyCapabilities, component: "Shared section typography", context: "Section eyebrow or label", id: "ui.section.label", name: "Section label" },
   { capabilities: typographyCapabilities, component: "Shared section typography", context: "Section or content title", id: "ui.section.title", name: "Section title" },
   { capabilities: typographyCapabilities, component: "Shared section typography", context: "Section supporting text", id: "ui.section.subtitle", name: "Section subtitle" },
   { capabilities: typographyCapabilities, component: "Shared field-label helpers", context: "Compact form label", id: "typography.field-label", name: "Field label" },
+  { capabilities: railSurfaceCapabilities, component: "Tasks list rail", context: "Lists and folders navigation rail", id: "tasks.rail.surface", name: "Tasks rail surface" },
+  { capabilities: chipCapabilities, component: "Tasks list rail", context: "List or folder navigation chip", id: "tasks.rail.chip", name: "Tasks rail chip" },
+  { capabilities: railSurfaceCapabilities, component: "Tasks filters", context: "Task filter and sort surface", id: "tasks.filter.surface", name: "Tasks filter surface" },
+  { capabilities: chipCapabilities, component: "Tasks filters", context: "Task filter or sort chip", id: "tasks.filter.chip", name: "Tasks filter chip" },
+  { capabilities: surfaceCapabilities, component: "HudCommandCenter", context: "HUD workspace surface", id: "hud.workspace.surface", name: "HUD workspace surface" },
+  { capabilities: surfaceCapabilities, component: "HudCommandCenter", context: "HUD widget surface", id: "hud.widget.surface", name: "HUD widget surface" },
+  { capabilities: typographyCapabilities, component: "HUD widgets", context: "HUD widget label", id: "hud.widget.label", name: "HUD widget label" },
+  { capabilities: typographyCapabilities, component: "HUD widgets", context: "HUD displayed value", id: "hud.widget.value", name: "HUD widget value" },
+  { capabilities: chipCapabilities, component: "HUD widgets", context: "HUD compact action chip", id: "hud.widget.chip", name: "HUD widget chip" },
   { capabilities: surfaceCapabilities, component: "PageShellSurface", context: "Page Shell surface", id: "page.shell.surface", name: "Page Shell surface" },
   { capabilities: typographyCapabilities, component: "PageShellHeader", context: "Page title", id: "page.shell.title", name: "Page Shell title" },
   { capabilities: typographyCapabilities, component: "PageShellHeader", context: "Page subtitle", id: "page.shell.subtitle", name: "Page Shell subtitle" },
@@ -149,6 +190,10 @@ export function isStyleLabValueAllowed(propertyId: string, value: string): boole
   return getStyleLabProperty(propertyId)?.values.includes(value) ?? false;
 }
 
+export function isStyleLabIconName(value: unknown): value is StyleLabIconName {
+  return typeof value === "string" && STYLE_LAB_ICON_OPTIONS.some((option) => option.key === value);
+}
+
 export function getStyleLabTextColorCssValue(value: StyleLabTextColor): string {
   const tokenByColor: Record<StyleLabTextColor, string> = {
     Primary: "var(--text-primary)",
@@ -158,6 +203,19 @@ export function getStyleLabTextColorCssValue(value: StyleLabTextColor): string {
     Success: "var(--success)",
     Warning: "var(--warning)",
     Danger: "var(--danger)",
+  };
+  return tokenByColor[value];
+}
+
+export function getStyleLabBackgroundColorCssValue(value: StyleLabBackgroundColor): string {
+  const tokenByColor: Record<StyleLabBackgroundColor, string> = {
+    Surface: "var(--surface)",
+    Subtle: "var(--surface-muted)",
+    Accent: "var(--accent-soft)",
+    Success: "var(--success-soft)",
+    Warning: "var(--warning-soft)",
+    Danger: "var(--danger-soft)",
+    Transparent: "transparent",
   };
   return tokenByColor[value];
 }

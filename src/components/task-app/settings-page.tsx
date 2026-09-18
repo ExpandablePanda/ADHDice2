@@ -8,6 +8,7 @@ import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT, SETTINGS_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import { PageShellHeader } from "./page-shell-header";
 import { ThemeToggle } from "./theme-toggle";
+import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 
 type ThemeMode = "light" | "dark";
 
@@ -162,6 +163,13 @@ export function SettingsPage({
             ))}
           </div>
         </div>
+        {process.env.NODE_ENV === "development" ? (
+          <div className="border-t border-[#e5e0f5] px-5 py-4 dark:border-white/10">
+            <p className={label}>Developer tools</p>
+            <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">Inspect registered UI roles and preview semantic styling locally.</p>
+            <div className="mt-3"><StyleLabLauncher /></div>
+          </div>
+        ) : null}
       </PageShellBody>
       </PageShellSurface>
       </PageShell>

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { isValidElement, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode, type SVGProps } from "react";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
   TASK_TABLE_CHIP_BASE_CLASS,
@@ -9,6 +9,9 @@ import {
   TASK_TABLE_LIST_CHIP_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
+import { TaskTypeIcon } from "@/components/ui/lucide-icon";
+import { isStyleLabIconName } from "@/components/style-lab/style-lab-registry";
+import { STYLE_LAB_ICON_PREVIEW_EVENT } from "@/components/style-lab/style-lab-runtime";
 
 function joinClasses(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -54,10 +57,39 @@ export type AdhdChipProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "child
   count?: ReactNode;
   countClassName?: string;
   icon?: ReactNode;
+  iconName?: string;
   selected?: boolean;
   tone?: AdhdChipTone;
   toneClassName?: string;
 };
+
+function AdhdChipIcon({ icon, iconName }: { icon: ReactNode; iconName?: string }) {
+  const iconPartRef = useRef<HTMLSpanElement | null>(null);
+  const [previewIconName, setPreviewIconName] = useState<string | null>(null);
+  const originalIconProps = isValidElement<SVGProps<SVGSVGElement>>(icon) ? icon.props : {};
+
+  useEffect(() => {
+    const iconPart = iconPartRef.current;
+    if (!iconPart) return;
+    const handlePreviewEvent = (event: Event) => {
+      const nextIconName = (event as CustomEvent<{ iconName?: unknown }>).detail?.iconName;
+      setPreviewIconName(isStyleLabIconName(nextIconName) ? nextIconName : null);
+    };
+    iconPart.addEventListener(STYLE_LAB_ICON_PREVIEW_EVENT, handlePreviewEvent);
+    return () => iconPart.removeEventListener(STYLE_LAB_ICON_PREVIEW_EVENT, handlePreviewEvent);
+  }, []);
+
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center"
+      data-style-icon-name={isStyleLabIconName(iconName) ? iconName : undefined}
+      data-style-part="icon"
+      ref={iconPartRef}
+    >
+      {previewIconName ? <TaskTypeIcon iconKey={previewIconName} {...originalIconProps} /> : icon}
+    </span>
+  );
+}
 
 export function AdhdChip({
   children,
@@ -66,6 +98,7 @@ export function AdhdChip({
   count,
   countClassName,
   icon,
+  iconName,
   selected = false,
   tone = "default",
   toneClassName,
@@ -101,7 +134,7 @@ export function AdhdChip({
     >
       <span className={joinClasses(TASK_TABLE_CHIP_BASE_CLASS, resolvedToneClassName, icon ? "pl-1.5 pr-2" : null, className)} data-style-component="AdhdChip" data-style-role="ui.chip">
         <span className={joinClasses("inline-flex items-center", icon ? TASK_TABLE_ICON_LABEL_GAP_CLASS : null, contentClassName)} data-style-part="label">
-          {icon ? <span className="inline-flex items-center justify-center shrink-0">{icon}</span> : null}
+          {icon ? <AdhdChipIcon icon={icon} iconName={iconName} /> : null}
           {children}
           {count === undefined ? null : (
             <span className={joinClasses("ml-1 opacity-70", countClassName)}>{count}</span>
