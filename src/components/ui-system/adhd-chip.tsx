@@ -59,6 +59,8 @@ export type AdhdChipProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "child
   countClassName?: string;
   icon?: ReactNode;
   iconName?: string;
+  trailingIcon?: ReactNode;
+  trailingIconName?: string;
   selected?: boolean;
   tone?: AdhdChipTone;
   toneClassName?: string;
@@ -82,7 +84,7 @@ function AdhdChipIcon({ icon, iconName }: { icon: ReactNode; iconName?: string }
 
   return (
     <span
-      className="inline-flex shrink-0 items-center justify-center"
+      className="inline-flex items-center justify-center shrink-0"
       data-style-icon-name={isStyleLabIconName(iconName) ? iconName : undefined}
       data-style-part="icon"
       ref={iconPartRef}
@@ -100,6 +102,8 @@ export function AdhdChip({
   countClassName,
   icon,
   iconName,
+  trailingIcon,
+  trailingIconName,
   selected = false,
   tone = "default",
   toneClassName,
@@ -109,7 +113,7 @@ export function AdhdChip({
     ? ADHD_CHIP_SELECTED_CLASS
     : toneClassName ?? ADHD_CHIP_TONE_CLASS[tone];
 
-  if (!icon && count === undefined && !contentClassName && !countClassName) {
+  if (!icon && !trailingIcon && count === undefined && !contentClassName && !countClassName) {
     return (
       <TaskTableChipButton
         className={className}
@@ -125,6 +129,9 @@ export function AdhdChip({
     );
   }
 
+  const iconPaddingClass = icon ? "pl-1.5 pr-2" : null;
+  const trailingIconPaddingClass = trailingIcon ? "pl-1.5 pr-2" : null;
+
   return (
     <button
       className={joinClasses(
@@ -134,7 +141,7 @@ export function AdhdChip({
       type={props.type ?? "button"}
       {...props}
     >
-      <span className={joinClasses(TASK_TABLE_CHIP_BASE_CLASS, resolvedToneClassName, icon ? "pl-1.5 pr-2" : null, className)} data-style-component="AdhdChip" data-style-role="ui.chip">
+      <span className={joinClasses(TASK_TABLE_CHIP_BASE_CLASS, resolvedToneClassName, iconPaddingClass ?? trailingIconPaddingClass, trailingIcon ? TASK_TABLE_ICON_LABEL_GAP_CLASS : null, className)} data-style-component="AdhdChip" data-style-role="ui.chip">
         <span className={joinClasses("inline-flex items-center", icon ? TASK_TABLE_ICON_LABEL_GAP_CLASS : null, contentClassName)} data-style-part="label">
           {icon ? <AdhdChipIcon icon={icon} iconName={iconName} /> : null}
           <StyleLabTextPart>{children}</StyleLabTextPart>
@@ -142,6 +149,7 @@ export function AdhdChip({
             <span className={joinClasses("ml-1 opacity-70", countClassName)} data-style-part="count">{count}</span>
           )}
         </span>
+        {trailingIcon ? <AdhdChipIcon icon={trailingIcon} iconName={trailingIconName} /> : null}
       </span>
     </button>
   );

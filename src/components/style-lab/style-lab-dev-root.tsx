@@ -306,8 +306,19 @@ export function StyleLabDevRoot() {
       const element = trackedInstanceElementsRef.current.get(instanceId);
       if (instance.previewTextEligible) restoreStyleLabPreviewText(element ?? null, instance.originalText);
       if (instance.iconPreviewEligible) restoreStyleLabIcon(element ?? null);
-      element?.removeAttribute(STYLE_LAB_INSTANCE_ATTRIBUTE);
     }
+    applyStyleLabRuntimeStyles(document, {}, {});
+    const trackedElements = new Set(trackedInstanceElementsRef.current.values());
+    if (hoveredElementRef.current) trackedElements.add(hoveredElementRef.current);
+    if (selectedElementRef.current) trackedElements.add(selectedElementRef.current);
+    for (const element of trackedElements) {
+      element.removeAttribute(STYLE_LAB_INSTANCE_ATTRIBUTE);
+      element.removeAttribute("data-style-lab-hovered");
+      element.removeAttribute("data-style-lab-selected");
+    }
+    hoveredElementRef.current = null;
+    selectedElementRef.current = null;
+    trackedInstanceElementsRef.current.clear();
     setInstanceOverrides(resetStyleLabInstances());
     setSelectedInstanceId(null);
     setScope("role");

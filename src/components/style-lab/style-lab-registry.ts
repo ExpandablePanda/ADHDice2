@@ -25,6 +25,16 @@ export const STYLE_LAB_BACKGROUND_COLORS = [
 
 export type StyleLabBackgroundColor = (typeof STYLE_LAB_BACKGROUND_COLORS)[number];
 
+export const STYLE_LAB_BACKGROUND_PALETTE = [
+  { label: "Surface", token: "--surface", value: "Surface" },
+  { label: "Subtle", token: "--surface-muted", value: "Subtle" },
+  { label: "Accent", token: "--accent-soft", value: "Accent" },
+  { label: "Success", token: "--success-soft", value: "Success" },
+  { label: "Warning", token: "--warning-soft", value: "Warning" },
+  { label: "Danger", token: "--danger-soft", value: "Danger" },
+  { label: "Transparent", token: "transparent", value: "Transparent" },
+] as const satisfies ReadonlyArray<{ label: string; token: string; value: StyleLabBackgroundColor }>;
+
 export const STYLE_LAB_ICON_OPTIONS = TASK_TYPE_ICON_OPTIONS.filter((option) => Boolean(option.icon) || isLucideIconName(option.key));
 
 export type StyleLabIconName = (typeof STYLE_LAB_ICON_OPTIONS)[number]["key"];
@@ -51,7 +61,7 @@ export type StyleLabPropertyId = (typeof STYLE_LAB_PROPERTY_IDS)[number];
 
 export type StyleLabCapabilityGroup = "typography" | "background" | "sizing" | "container";
 
-export const STYLE_LAB_TARGET_PART_IDS = ["self", "label"] as const;
+export const STYLE_LAB_TARGET_PART_IDS = ["self", "label", "surface"] as const;
 
 export type StyleLabTargetPart = (typeof STYLE_LAB_TARGET_PART_IDS)[number];
 
@@ -153,7 +163,14 @@ export const STYLE_LAB_ROLES: readonly StyleLabRole[] = [
   { capabilities: typographyCapabilities, component: "Shared section typography", context: "Section supporting text", id: "ui.section.subtitle", name: "Section subtitle" },
   { capabilities: typographyCapabilities, component: "Shared field-label helpers", context: "Compact form label", id: "typography.field-label", name: "Field label" },
   { capabilities: railSurfaceCapabilities, component: "Tasks list rail", context: "Lists and folders navigation rail", id: "tasks.rail.surface", name: "Tasks rail surface" },
-  { capabilities: chipCapabilities, component: "Tasks list rail", context: "List or folder navigation chip", id: "tasks.rail.chip", name: "Tasks rail chip" },
+  {
+    capabilities: chipCapabilities,
+    component: "Tasks list rail",
+    context: "List or folder navigation chip",
+    id: "tasks.rail.chip",
+    name: "Tasks rail chip",
+    targets: { background: "surface", container: "surface", sizing: "surface", typography: "label" },
+  },
   { capabilities: railSurfaceCapabilities, component: "Tasks filters", context: "Task filter and sort surface", id: "tasks.filter.surface", name: "Tasks filter surface" },
   { capabilities: chipCapabilities, component: "Tasks filters", context: "Task filter or sort chip", id: "tasks.filter.chip", name: "Tasks filter chip" },
   { capabilities: surfaceCapabilities, component: "HudCommandCenter", context: "HUD workspace surface", id: "hud.workspace.surface", name: "HUD workspace surface" },

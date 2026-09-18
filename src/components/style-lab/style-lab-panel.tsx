@@ -4,6 +4,7 @@ import { Copy, Eye, EyeOff, RotateCcw, Search } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { AdhdChip, AdhdIconButton, AdhdPanel } from "@/components/ui-system";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
+import { StyleLabColorPalette } from "./style-lab-color-palette";
 import {
   getStyleLabProperty,
   STYLE_LAB_ICON_OPTIONS,
@@ -305,6 +306,17 @@ export function StyleLabPanel({
               const property = getStyleLabProperty(propertyId);
               if (!property) return null;
               const activeOverrides = scope === "instance" ? instanceOverride?.overrides : overrides[role.id];
+              if (property.id === "backgroundColor") {
+                return (
+                  <div className="flex items-start gap-2" key={property.id}>
+                    <span className="w-28 shrink-0 pt-1 text-[11px] font-medium text-[#6f6785] dark:text-white/60">{property.label}</span>
+                    <StyleLabColorPalette
+                      onChange={(value) => onSetOverride(property.id, value)}
+                      value={activeOverrides?.[property.id] ?? ""}
+                    />
+                  </div>
+                );
+              }
               return (
                 <label className="flex items-center gap-2" key={property.id}>
                   <span className="w-28 shrink-0 text-[11px] font-medium text-[#6f6785] dark:text-white/60">{property.label}</span>

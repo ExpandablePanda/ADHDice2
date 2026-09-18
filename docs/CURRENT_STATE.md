@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-16
+Last reviewed: 2026-09-18
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.14`.
+- Current working app version: `7.14.15`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
