@@ -25,6 +25,8 @@ export const STYLE_LAB_BACKGROUND_COLORS = [
 
 export type StyleLabBackgroundColor = (typeof STYLE_LAB_BACKGROUND_COLORS)[number];
 
+export const STYLE_LAB_CUSTOM_COLOR_DEFAULT = "#8f6cff";
+
 export const STYLE_LAB_BACKGROUND_PALETTE = [
   { label: "Surface", token: "--surface", value: "Surface" },
   { label: "Subtle", token: "--surface-muted", value: "Subtle" },
@@ -34,6 +36,16 @@ export const STYLE_LAB_BACKGROUND_PALETTE = [
   { label: "Danger", token: "--danger-soft", value: "Danger" },
   { label: "Transparent", token: "transparent", value: "Transparent" },
 ] as const satisfies ReadonlyArray<{ label: string; token: string; value: StyleLabBackgroundColor }>;
+
+export function normalizeStyleLabCustomColor(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(normalized)) return normalized;
+  if (/^#[0-9a-f]{3}$/.test(normalized)) {
+    return `#${normalized.slice(1).split("").map((digit) => `${digit}${digit}`).join("")}`;
+  }
+  return null;
+}
 
 export const STYLE_LAB_ICON_OPTIONS = TASK_TYPE_ICON_OPTIONS.filter((option) => Boolean(option.icon) || isLucideIconName(option.key));
 
@@ -217,6 +229,7 @@ export function isStyleLabPropertyAllowed(roleId: string, propertyId: string): p
 }
 
 export function isStyleLabValueAllowed(propertyId: string, value: string): boolean {
+  if (propertyId === "backgroundColor" && normalizeStyleLabCustomColor(value)) return true;
   return getStyleLabProperty(propertyId)?.values.includes(value) ?? false;
 }
 
@@ -237,7 +250,9 @@ export function getStyleLabTextColorCssValue(value: StyleLabTextColor): string {
   return tokenByColor[value];
 }
 
-export function getStyleLabBackgroundColorCssValue(value: StyleLabBackgroundColor): string {
+export function getStyleLabBackgroundColorCssValue(value: string): string {
+  const customColor = normalizeStyleLabCustomColor(value);
+  if (customColor) return customColor;
   const tokenByColor: Record<StyleLabBackgroundColor, string> = {
     Surface: "var(--surface)",
     Subtle: "var(--surface-muted)",
@@ -247,5 +262,5 @@ export function getStyleLabBackgroundColorCssValue(value: StyleLabBackgroundColo
     Danger: "var(--danger-soft)",
     Transparent: "transparent",
   };
-  return tokenByColor[value];
+  return tokenByColor[value as StyleLabBackgroundColor] ?? "";
 }

@@ -8,6 +8,7 @@ import {
   isStyleLabIconName,
   isStyleLabPropertyAllowed,
   isStyleLabValueAllowed,
+  normalizeStyleLabCustomColor,
   normalizeStyleLabTargetPart,
   STYLE_LAB_BACKGROUND_PALETTE,
   STYLE_LAB_BACKGROUND_COLORS,
@@ -84,6 +85,11 @@ test("registry exposes constrained capabilities for representative roles", () =>
   }
   assert.equal(getStyleLabBackgroundColorCssValue("Danger"), "var(--danger-soft)");
   assert.equal(getStyleLabBackgroundColorCssValue("Transparent"), "transparent");
+  assert.equal(getStyleLabBackgroundColorCssValue("#8F6CFF"), "#8f6cff");
+  assert.equal(normalizeStyleLabCustomColor(" #8F6CFF "), "#8f6cff");
+  assert.equal(normalizeStyleLabCustomColor("#abc"), "#aabbcc");
+  assert.equal(normalizeStyleLabCustomColor("rgba(0, 0, 0, 0)"), null);
+  assert.equal(normalizeStyleLabCustomColor("#12345678"), null);
   assert.ok(isStyleLabPropertyAllowed("ui.panel.title", "lineHeight"));
   assert.ok(!isStyleLabPropertyAllowed("ui.panel.title", "gap"));
   assert.ok(isStyleLabValueAllowed("textColor", "Secondary"));
@@ -107,7 +113,8 @@ test("registry exposes constrained capabilities for representative roles", () =>
   assert.ok(isStyleLabPropertyAllowed("hud.widget.surface", "backgroundColor"));
   assert.ok(!isStyleLabPropertyAllowed("hud.widget.label", "backgroundColor"));
   assert.ok(isStyleLabValueAllowed("backgroundColor", "Accent"));
-  assert.ok(!isStyleLabValueAllowed("backgroundColor", "#ff00ff"));
+  assert.ok(isStyleLabValueAllowed("backgroundColor", "#8f6cff"));
+  assert.ok(!isStyleLabValueAllowed("backgroundColor", "#12345678"));
 });
 
 test("override updates accept only registered role properties and values", () => {
@@ -119,16 +126,25 @@ test("override updates accept only registered role properties and values", () =>
   assert.deepEqual(withFontSize, { "ui.panel.title": { fontSize: "13px" } });
   assert.deepEqual(withRejectedProperty, withFontSize);
   assert.deepEqual(withRejectedValue, withFontSize);
+  assert.deepEqual(setStyleLabOverride({}, "ui.panel.surface", "backgroundColor", "#8F6CFF"), {
+    "ui.panel.surface": { backgroundColor: "#8f6cff" },
+  });
+  assert.deepEqual(setStyleLabOverride({}, "ui.panel.surface", "backgroundColor", "rgb(1, 2, 3)"), {});
 });
 
 test("persistence normalization drops unknown roles, properties, and values", () => {
   const storage = new MemoryStorage();
   storage.setItem("adhdice-style-lab:overrides", JSON.stringify({
     "ui.panel.title": { fontSize: "14px", margin: "2rem", textColor: "#123456" },
+    "ui.panel.surface": { backgroundColor: "#8F6CFF" },
+    "ui.card.surface": { backgroundColor: "rgba(0, 0, 0, 0)" },
     "ui.not-registered": { fontSize: "13px" },
   }));
 
-  assert.deepEqual(readStyleLabOverrides(storage), { "ui.panel.title": { fontSize: "14px" } });
+  assert.deepEqual(readStyleLabOverrides(storage), {
+    "ui.panel.title": { fontSize: "14px" },
+    "ui.panel.surface": { backgroundColor: "#8f6cff" },
+  });
   assert.deepEqual(normalizeStyleLabOverrides(null), {});
   assert.deepEqual(writeStyleLabOverrides(storage, { "ui.panel.title": { fontWeight: "600" } }), {
     "ui.panel.title": { fontWeight: "600" },
@@ -183,11 +199,38 @@ test("background overrides use semantic tokens and remain separate by scope", ()
       },
     },
   );
+  const spec = getStyleLabDesignSpec("ui.card.surface", { "ui.card.surface": { backgroundColor: "Danger" } });
 
   assert.match(css, /background-color: var\(--danger-soft\) !important/);
   assert.match(css, /background-color: var\(--accent-soft\) !important/);
+  assert.match(spec, /- Background color: Danger/);
+  assert.doesNotMatch(spec, /Custom background color/);
   assert.match(css, /data-style-lab-instance="style-lab-background-instance"/);
   assert.equal(getStyleLabPropertyTargetSelector("ui.card.surface", "backgroundColor"), '[data-style-role="ui.card.surface"]:not([data-style-lab-ui] [data-style-role])');
+});
+
+test("custom background overrides apply to roles and instances without becoming tokens", () => {
+  const instanceId = "style-lab-custom-background-instance";
+  const instances: StyleLabInstanceOverrides = {
+    [instanceId]: {
+      originalText: "Card",
+      overrides: { backgroundColor: "#8F6CFF" },
+      previewText: "",
+      previewTextEligible: false,
+      roleId: "ui.card.surface",
+    },
+  };
+  const css = buildStyleLabCss({ "ui.card.surface": { backgroundColor: "#8F6CFF" } }, instances);
+  const roleSpec = getStyleLabDesignSpec("ui.card.surface", { "ui.card.surface": { backgroundColor: "#8F6CFF" } });
+  const instanceSpec = getStyleLabDesignSpec("ui.card.surface", {}, { instance: instances[instanceId], scope: "instance" });
+
+  assert.match(css, /background-color: #8f6cff !important/);
+  assert.match(css, /data-style-lab-instance="style-lab-custom-background-instance"/);
+  assert.match(roleSpec, /- Background color: Custom/);
+  assert.match(roleSpec, /- Custom background color: #8f6cff/);
+  assert.match(instanceSpec, /Scope: this instance/);
+  assert.match(instanceSpec, /- Background color: Custom/);
+  assert.doesNotMatch(roleSpec, /Background color: #8f6cff/);
 });
 
 test("Reset All clears persisted rail overrides and removes their runtime role CSS", () => {
@@ -260,6 +303,19 @@ test("instance reset clears only the selected preview while Reset All clears all
   const withPreview = setStyleLabPreviewText(withOverride, "one", "Add this task");
 
   assert.deepEqual(resetStyleLabInstance(withPreview, "one"), { two: initial.two });
+  assert.deepEqual(resetStyleLabInstances(), {});
+});
+
+test("custom instance overrides normalize and reset cleanly", () => {
+  const initial: StyleLabInstanceOverrides = {
+    one: { originalText: "Card", overrides: {}, previewText: "", previewTextEligible: false, roleId: "ui.card.surface" },
+  };
+  const withCustom = setStyleLabInstanceOverride(initial, "one", "ui.card.surface", "backgroundColor", "#8F6CFF");
+  const roleWithCustom = setStyleLabOverride({}, "ui.card.surface", "backgroundColor", "#8F6CFF");
+
+  assert.equal(withCustom.one?.overrides.backgroundColor, "#8f6cff");
+  assert.deepEqual(resetStyleLabRole(roleWithCustom, "ui.card.surface"), {});
+  assert.deepEqual(resetStyleLabInstance(withCustom, "one"), {});
   assert.deepEqual(resetStyleLabInstances(), {});
 });
 
@@ -536,6 +592,9 @@ test("production mounting is global while inspection listeners stay behind both 
   assert.match(panelStyleSource, /overflow-y-auto overscroll-contain/);
   assert.match(panelStyleSource, /sticky top-0/);
   assert.match(panelStyleSource, /StyleLabColorPalette/);
+  assert.match(paletteSource, /Custom/);
+  assert.match(paletteSource, /type="color"/);
+  assert.match(paletteSource, /aria-label="Custom background color"/);
   assert.match(paletteSource, /Default \/ Original/);
   assert.match(paletteSource, /onChange\(entry\.value\)/);
   assert.match(paletteSource, /onChange\(""\)/);

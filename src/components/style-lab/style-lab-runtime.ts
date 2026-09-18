@@ -7,6 +7,7 @@ import {
   isStyleLabIconName,
   isStyleLabPropertyAllowed,
   isStyleLabValueAllowed,
+  normalizeStyleLabCustomColor,
   STYLE_LAB_PROPERTY_IDS,
   type StyleLabPropertyId,
   type StyleLabRoleId,
@@ -97,8 +98,9 @@ export function normalizeStyleLabOverrides(input: unknown): StyleLabOverrides {
 
     for (const propertyId of STYLE_LAB_PROPERTY_IDS) {
       const value = roleInput[propertyId];
-      if (typeof value === "string" && isStyleLabPropertyAllowed(roleId, propertyId) && isStyleLabValueAllowed(propertyId, value)) {
-        roleOverrides[propertyId] = value;
+      const normalizedValue = propertyId === "backgroundColor" ? normalizeStyleLabCustomColor(value) ?? value : value;
+      if (typeof normalizedValue === "string" && isStyleLabPropertyAllowed(roleId, propertyId) && isStyleLabValueAllowed(propertyId, normalizedValue)) {
+        roleOverrides[propertyId] = normalizedValue;
       }
     }
 
@@ -201,14 +203,15 @@ export function setStyleLabOverride(
   propertyId: string,
   value: string,
 ): StyleLabOverrides {
-  if (!getStyleLabRole(roleId) || !isStyleLabPropertyAllowed(roleId, propertyId) || !isStyleLabValueAllowed(propertyId, value)) {
+  const normalizedValue = propertyId === "backgroundColor" ? normalizeStyleLabCustomColor(value) ?? value : value;
+  if (!getStyleLabRole(roleId) || !isStyleLabPropertyAllowed(roleId, propertyId) || !isStyleLabValueAllowed(propertyId, normalizedValue)) {
     return overrides;
   }
   return {
     ...overrides,
     [roleId]: {
       ...overrides[roleId as StyleLabRoleId],
-      [propertyId]: value,
+      [propertyId]: normalizedValue,
     },
   };
 }
@@ -228,7 +231,8 @@ export function setStyleLabInstanceOverride(
   value: string,
 ): StyleLabInstanceOverrides {
   const instance = instances[instanceId];
-  if (!instance || instance.roleId !== roleId || !isStyleLabPropertyAllowed(roleId, propertyId) || !isStyleLabValueAllowed(propertyId, value)) {
+  const normalizedValue = propertyId === "backgroundColor" ? normalizeStyleLabCustomColor(value) ?? value : value;
+  if (!instance || instance.roleId !== roleId || !isStyleLabPropertyAllowed(roleId, propertyId) || !isStyleLabValueAllowed(propertyId, normalizedValue)) {
     return instances;
   }
   return {
@@ -237,7 +241,7 @@ export function setStyleLabInstanceOverride(
       ...instance,
       overrides: {
         ...instance.overrides,
-        [propertyId]: value,
+        [propertyId]: normalizedValue,
       },
     },
   };
@@ -320,7 +324,7 @@ export function resetStyleLabInstances(): StyleLabInstanceOverrides {
 
 export function getStyleLabCssValue(propertyId: StyleLabPropertyId, value: string): string {
   if (propertyId === "textColor") return getStyleLabTextColorCssValue(value as StyleLabTextColor);
-  if (propertyId === "backgroundColor") return getStyleLabBackgroundColorCssValue(value as Parameters<typeof getStyleLabBackgroundColorCssValue>[0]);
+  if (propertyId === "backgroundColor") return getStyleLabBackgroundColorCssValue(value);
   return value;
 }
 
@@ -415,7 +419,11 @@ export function getStyleLabDesignSpec(
   const desired = role.capabilities.flatMap((propertyId) => {
     const value = roleOverrides[propertyId];
     const property = getStyleLabProperty(propertyId);
-    return value && property ? [`- ${property.label}: ${value}`] : [];
+    if (!value || !property) return [];
+    const customColor = property.id === "backgroundColor" ? normalizeStyleLabCustomColor(value) : null;
+    return customColor
+      ? [`- ${property.label}: Custom`, `- Custom background color: ${customColor}`]
+      : [`- ${property.label}: ${value}`];
   });
 
   return [
