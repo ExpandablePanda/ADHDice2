@@ -11,6 +11,7 @@ import type {
   TaskFocusDay as DbTaskFocusDay,
   TaskGridLayout as DbTaskGridLayout,
   TaskHistory as DbTaskHistory,
+  TaskContentFolder,
   TaskList as DbTaskList,
   TaskListContainer,
   TaskListFolder,
@@ -106,6 +107,7 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   setTaskListManualMemberships: Dispatch<SetStateAction<TaskListManualMembership[]>>;
   setTaskListContainers: Dispatch<SetStateAction<TaskListContainer[]>>;
   setTaskListFolders: Dispatch<SetStateAction<TaskListFolder[]>>;
+  setTaskContentFolders: Dispatch<SetStateAction<TaskContentFolder[]>>;
   setTaskListRailItems: Dispatch<SetStateAction<TaskListRailItem[]>>;
   setTaskLists: Dispatch<SetStateAction<TaskListDefinition[]>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -292,6 +294,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   setTaskListManualMemberships,
   setTaskListContainers,
   setTaskListFolders,
+  setTaskContentFolders,
   setTaskListRailItems,
   setTaskLists,
   setTasks,
@@ -1197,6 +1200,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         loadTaskListFolders(client, userId)
           .then((data) => ({ data, error: null }))
           .catch((error: { message?: string }) => ({ data: null, error })),
+        client
+          .from("adhdice_task_content_folders")
+          .select("*")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: true }),
       ]);
       const [{ taskResult, boundaryResult: taskScheduleBoundariesResult }, profileResult] = await criticalCoreRequest;
 
@@ -1267,7 +1275,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       void loadTaskHistoryStreakSummaries(nextTasks);
 
       const secondaryCoreStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
-      const [categoryResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult, folderStructureResult] = await secondaryCoreRequest;
+      const [categoryResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult, folderStructureResult, taskContentFolderResult] = await secondaryCoreRequest;
 
       if (!canApplyCoreWorkspaceResult()) {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -1284,6 +1292,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         manualMembershipResult.error && !isMissingTaskListManualMembershipsTableError(manualMembershipResult.error.message) ? manualMembershipResult.error : null,
         gridLayoutResult.error,
         folderStructureResult.error,
+        taskContentFolderResult.error,
       ].filter(Boolean);
 
       if (secondaryErrors.length > 0) {
@@ -1306,6 +1315,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const nextTaskListFolders = folderStructureResult.data?.folders ?? [];
       const nextTaskListContainers = folderStructureResult.data?.containers ?? [];
       const nextTaskListRailItems = folderStructureResult.data?.railItems ?? [];
+      const nextTaskContentFolders = taskContentFolderResult.data ?? [];
 
       if (
         nextCategories.length === 0 &&
@@ -1370,6 +1380,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       if (taskListLoadGeneration === taskListDataGeneration.current) {
         setTaskLists((current) => keepCurrentIfStructurallyEqual(current, nextTaskLists));
         setTaskListFolders((current) => keepCurrentIfStructurallyEqual(current, nextTaskListFolders));
+        setTaskContentFolders((current) => keepCurrentIfStructurallyEqual(current, nextTaskContentFolders));
         setTaskListContainers((current) => keepCurrentIfStructurallyEqual(current, nextTaskListContainers));
         setTaskListRailItems((current) => keepCurrentIfStructurallyEqual(current, nextTaskListRailItems));
       }
@@ -1602,6 +1613,18 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         {
           event: "*",
           schema: "public",
+          table: "adhdice_task_content_folders",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
           table: "adhdice_task_list_containers",
           filter: `user_id=eq.${userId}`,
         },
@@ -1776,6 +1799,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       setTaskHistory([]);
       setTaskListContainers([]);
       setTaskListFolders([]);
+      setTaskContentFolders([]);
       setTaskListRailItems([]);
       setAvailableTaskNotes([]);
       setTaskGridLayout(taskGridStarterLayout);
@@ -1791,6 +1815,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     setTaskHistory,
     setTaskListContainers,
     setTaskListFolders,
+    setTaskContentFolders,
     setTaskListRailItems,
     taskGridStarterLayout,
   ]);

@@ -12,6 +12,7 @@ create table public.adhdice_clean_tasks (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   parent_task_id uuid references public.adhdice_clean_tasks(id) on delete cascade,
+  task_content_folder_id uuid,
   revision integer not null default 1,
   title text not null check (char_length(trim(title)) > 0),
   task_type text not null default 'task',
@@ -56,6 +57,8 @@ create table public.adhdice_clean_tasks (
     ),
   constraint adhdice_clean_tasks_parent_task_not_self
     check (parent_task_id is null or parent_task_id <> id),
+  constraint adhdice_clean_tasks_parent_task_content_folder_check
+    check (parent_task_id is null or task_content_folder_id is null),
   constraint adhdice_clean_tasks_task_type_check
     check (task_type in ('task', 'custom'))
 );
@@ -149,6 +152,17 @@ create table public.adhdice_custom_behavior_ruleset_revisions (
   primary key (ruleset_id, effective_from_logical_date)
 );
 
+create table public.adhdice_task_content_folders (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint adhdice_task_content_folders_name_check
+    check (name = trim(name) and char_length(name) between 1 and 120),
+  constraint adhdice_task_content_folders_user_id_id_key unique (user_id, id)
+);
+
 alter table public.adhdice_clean_tasks
   add constraint adhdice_clean_tasks_user_id_id_key unique (user_id, id),
   add constraint adhdice_clean_tasks_custom_ruleset_task_type_check
@@ -159,7 +173,11 @@ alter table public.adhdice_clean_tasks
   add constraint adhdice_clean_tasks_custom_ruleset_owner_fkey
     foreign key (user_id, custom_ruleset_id)
     references public.adhdice_custom_behavior_rulesets(user_id, id)
-    on delete restrict;
+    on delete restrict,
+  add constraint adhdice_clean_tasks_task_content_folder_owner_fkey
+    foreign key (user_id, task_content_folder_id)
+    references public.adhdice_task_content_folders(user_id, id)
+    on delete set null (task_content_folder_id);
 
 create table public.adhdice_task_behavior_selections (
   id uuid not null default gen_random_uuid(),
@@ -1064,6 +1082,9 @@ create index adhdice_task_focus_days_user_date_idx
   on public.adhdice_task_focus_days (user_id, focus_date desc);
 create index adhdice_task_list_folders_container_order_idx
   on public.adhdice_task_list_folders (user_id, parent_folder_id, sort_order, id);
+create index adhdice_clean_tasks_content_folder_membership_idx
+  on public.adhdice_clean_tasks (user_id, task_content_folder_id)
+  where task_content_folder_id is not null;
 create unique index adhdice_task_list_containers_root_uidx
   on public.adhdice_task_list_containers (user_id)
   where folder_id is null;
@@ -1167,6 +1188,7 @@ alter table public.adhdice_task_active_timers enable row level security;
 alter table public.adhdice_task_focus_days enable row level security;
 alter table public.adhdice_task_lists enable row level security;
 alter table public.adhdice_task_list_folders enable row level security;
+alter table public.adhdice_task_content_folders enable row level security;
 alter table public.adhdice_task_list_rail_items enable row level security;
 alter table public.adhdice_task_list_rail_items force row level security;
 alter table public.adhdice_task_list_containers enable row level security;
@@ -1219,6 +1241,8 @@ grant select, insert, update, delete on table public.adhdice_health_journal_sign
 grant select, insert, update, delete on table public.adhdice_health_journal_signal_occurrences to authenticated;
 revoke all on table public.adhdice_task_type_behavior_profiles from anon, authenticated;
 grant select, insert, update, delete on table public.adhdice_task_type_behavior_profiles to authenticated;
+revoke all on table public.adhdice_task_content_folders from anon, authenticated;
+grant select, insert, update, delete on table public.adhdice_task_content_folders to authenticated;
 revoke all on table public.adhdice_custom_behavior_rulesets from anon, authenticated;
 revoke all on table public.adhdice_custom_behavior_ruleset_revisions from anon, authenticated;
 revoke all on table public.adhdice_task_behavior_selections from anon, authenticated;
@@ -1459,6 +1483,27 @@ create policy "Users can read their own task list folders"
   on public.adhdice_task_list_folders
   for select
   using (auth.uid() = user_id);
+
+create policy "Users can read their own Task Content Folders"
+  on public.adhdice_task_content_folders
+  for select to authenticated
+  using ((select auth.uid()) = user_id);
+
+create policy "Users can create their own Task Content Folders"
+  on public.adhdice_task_content_folders
+  for insert to authenticated
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can update their own Task Content Folders"
+  on public.adhdice_task_content_folders
+  for update to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+create policy "Users can delete their own Task Content Folders"
+  on public.adhdice_task_content_folders
+  for delete to authenticated
+  using ((select auth.uid()) = user_id);
 
 create policy "task list rail items owner select"
   on public.adhdice_task_list_rail_items
@@ -2003,6 +2048,11 @@ create trigger adhdice_task_list_folders_set_updated_at
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
+create trigger adhdice_task_content_folders_set_updated_at
+  before update on public.adhdice_task_content_folders
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
 create trigger adhdice_task_list_containers_set_updated_at
   before update on public.adhdice_task_list_containers
   for each row
@@ -2150,6 +2200,7 @@ alter publication supabase_realtime add table public.adhdice_task_active_timers;
 alter publication supabase_realtime add table public.adhdice_task_focus_days;
 alter publication supabase_realtime add table public.adhdice_task_lists;
 alter publication supabase_realtime add table public.adhdice_task_list_folders;
+alter publication supabase_realtime add table public.adhdice_task_content_folders;
 alter publication supabase_realtime add table public.adhdice_task_list_containers;
 alter publication supabase_realtime add table public.adhdice_task_list_rail_items;
 alter publication supabase_realtime add table public.adhdice_task_list_manual_memberships;

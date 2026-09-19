@@ -120,6 +120,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     energy: task.energy,
     estimatedMinutes: task.estimated_minutes ?? null,
     id: task.id,
+    parent_task_id: task.parent_task_id,
+    taskContentFolderId: task.task_content_folder_id,
     taskType: normalizeTaskType(task.task_type),
     customRulesetId: task.custom_ruleset_id,
     linkLabel: task.external_link_label ?? "",

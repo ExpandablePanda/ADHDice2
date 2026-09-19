@@ -90,6 +90,7 @@ import { MilestoneInspectorSection } from "./task-app/milestone-detail-section";
 import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-app/milestone-lifecycle-modal";
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
+import { TaskContentFoldersManager } from "./task-app/task-content-folders-manager";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { TaskCalendarView } from "./task-app/task-calendar-view";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
@@ -141,6 +142,7 @@ import { useWorkspaceData } from "@/hooks/useWorkspaceData";
 import { useTaskTypeBehaviorProfiles } from "@/hooks/useTaskTypeBehaviorProfiles";
 import { moveAssignedTasksToTaskAndDeleteRuleset } from "@/lib/custom-ruleset-delete-resolution";
 import { useTaskListFolderActions } from "@/hooks/useTaskListFolderActions";
+import { useTaskContentFolderActions } from "@/hooks/useTaskContentFolderActions";
 import { useResponsiveTaskGridColumns } from "@/hooks/useResponsiveTaskGridColumns";
 import { useTaskListSelection } from "@/hooks/useTaskListSelection";
 import { useTaskListViewStateController } from "@/hooks/useTaskListViewStateController";
@@ -360,6 +362,7 @@ import type {
   Milestone,
   Note,
   Task,
+  TaskContentFolder,
   TaskEnergy,
   TaskFocusDay as DbTaskFocusDay,
   TaskGridLayout as DbTaskGridLayout,
@@ -1413,6 +1416,9 @@ export function TaskApp() {
   const lastNonPinnedBucketRef = useRef(taskUiState.selectedBucket === "pinned" ? DEFAULT_TASK_UI_STATE.selectedBucket : taskUiState.selectedBucket);
   const [taskLists, setTaskLists] = useState<TaskListDefinition[]>([]);
   const [taskListFolders, setTaskListFolders] = useState<DbTaskListFolder[]>([]);
+  const [taskContentFolders, setTaskContentFolders] = useState<TaskContentFolder[]>([]);
+  const [collapsedTaskContentFolderIds, setCollapsedTaskContentFolderIds] = useState<Set<string>>(() => new Set());
+  const [isTaskContentFolderCollapseHydrated, setIsTaskContentFolderCollapseHydrated] = useState(false);
   const [taskListContainers, setTaskListContainers] = useState<DbTaskListContainer[]>([]);
   const [taskListRailItems, setTaskListRailItems] = useState<DbTaskListRailItem[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -1423,6 +1429,38 @@ export function TaskApp() {
   const taskSubtasks = tasks;
   const [availableTaskNotes, setAvailableTaskNotes] = useState<TaskEditorLinkedNote[]>([]);
   const [isGridEditMode, setIsGridEditMode] = useState(false);
+
+  useEffect(() => {
+    const storageKey = session?.user?.id ? `adhdice:task-content-folder-collapse:${session.user.id}` : null;
+    setIsTaskContentFolderCollapseHydrated(false);
+    if (!storageKey) {
+      setCollapsedTaskContentFolderIds(new Set());
+      setIsTaskContentFolderCollapseHydrated(true);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+      setCollapsedTaskContentFolderIds(new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : []));
+    } catch {
+      setCollapsedTaskContentFolderIds(new Set());
+    }
+    setIsTaskContentFolderCollapseHydrated(true);
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || !isTaskContentFolderCollapseHydrated) return;
+    window.localStorage.setItem(`adhdice:task-content-folder-collapse:${userId}`, JSON.stringify([...collapsedTaskContentFolderIds]));
+  }, [collapsedTaskContentFolderIds, isTaskContentFolderCollapseHydrated, session?.user?.id]);
+
+  const toggleTaskContentFolderCollapsed = useCallback((folderId: string) => {
+    setCollapsedTaskContentFolderIds((current) => {
+      const next = new Set(current);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (taskUiState.selectedBucket !== "pinned") {
@@ -1925,6 +1963,7 @@ export function TaskApp() {
     setTaskListManualMemberships,
     setTaskListContainers,
     setTaskListFolders,
+    setTaskContentFolders,
     setTaskListRailItems,
     setTaskLists,
     setTasks,
@@ -2718,6 +2757,19 @@ export function TaskApp() {
     refresh: softRefreshWorkspace,
     setMessage,
   });
+  const taskContentFolderActions = useTaskContentFolderActions({
+    client: supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>> | null,
+    folders: taskContentFolders,
+    setFolders: setTaskContentFolders,
+    setMessage,
+    setTasks,
+    updateTaskRow: (taskId, values, expectedTask) => applyTaskMutationWithoutHistory(taskId, values, { expectedTask }),
+    userId: session?.user?.id,
+  });
+  const moveTaskToContentFolder = useCallback(async (taskId: string, folderId: string | null) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    return task ? taskContentFolderActions.moveTaskToFolder(task, folderId) : false;
+  }, [taskContentFolderActions.moveTaskToFolder, tasks]);
   const compatibilityRoutingMemberships = useMemo(
     () =>
       Object.fromEntries(
@@ -4941,7 +4993,7 @@ export function TaskApp() {
 
     const didUnlink = await applyTaskMutationWithoutHistory(
       taskId,
-      { parent_task_id: null },
+      { parent_task_id: null, task_content_folder_id: null },
       { expectedTask: task },
     );
     if (!didUnlink) {
@@ -5030,7 +5082,7 @@ export function TaskApp() {
 
     const didMove = await applyTaskMutationWithoutHistory(
       taskId,
-      { parent_task_id: parentTaskId },
+      { parent_task_id: parentTaskId, task_content_folder_id: null },
       { expectedTask: task },
     );
     if (!didMove) {
@@ -6790,6 +6842,16 @@ export function TaskApp() {
     allListDirectoryEntries: allTaskListDirectoryEntries,
     appVersion: APP_VERSION,
     filterRowsNode: taskFilterRowsNode,
+    taskContentFoldersNode: taskUiState.view === "table" || taskUiState.view === "list"
+      ? (
+        <TaskContentFoldersManager
+          folders={taskContentFolders}
+          onCreate={taskContentFolderActions.createFolder}
+          onDelete={taskContentFolderActions.deleteFolder}
+          onRename={taskContentFolderActions.renameFolder}
+        />
+      )
+      : null,
     hideSearch: duplicateTitleModeActive,
     isKeyboardShortcutsMenuOpen,
     isRailHidden: activeTaskWorkspaceTab.isRailHidden,
@@ -7588,6 +7650,10 @@ export function TaskApp() {
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,
                   tasks: selectedBucketTasks,
+                  taskContentFolders,
+                  collapsedTaskContentFolderIds,
+                  onToggleTaskContentFolderCollapsed: toggleTaskContentFolderCollapsed,
+                  onMoveTaskToContentFolder: moveTaskToContentFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,
@@ -7771,6 +7837,10 @@ export function TaskApp() {
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,
                   tasks: selectedBucketTasks,
+                  taskContentFolders,
+                  collapsedTaskContentFolderIds,
+                  onToggleTaskContentFolderCollapsed: toggleTaskContentFolderCollapsed,
+                  onMoveTaskToContentFolder: moveTaskToContentFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,

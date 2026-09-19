@@ -350,6 +350,22 @@ export type TaskListFolderUpdate = Partial<
   Pick<TaskListFolder, "name" | "parent_folder_id" | "revision" | "sort_order">
 >;
 
+export type TaskContentFolder = {
+  created_at: string;
+  id: string;
+  name: string;
+  updated_at: string;
+  user_id: string;
+};
+
+export type TaskContentFolderInsert = {
+  id?: string;
+  name: string;
+  user_id: string;
+};
+
+export type TaskContentFolderUpdate = Partial<Pick<TaskContentFolder, "name">>;
+
 export type TaskListContainer = {
   created_at: string;
   folder_id: string | null;
@@ -404,6 +420,8 @@ export type Task = {
   id: string;
   user_id: string;
   parent_task_id: string | null;
+  /** Nullable assignment; optional for rows/fixtures read before 7.14.18 is applied. */
+  task_content_folder_id?: string | null;
   revision: number;
   title: string;
   task_type: import("./task-type.ts").TaskType;
@@ -449,6 +467,7 @@ export type TaskInsert = {
   id?: string;
   user_id: string;
   parent_task_id?: string | null;
+  task_content_folder_id?: string | null;
   revision?: number;
   title: string;
   task_type?: import("./task-type.ts").TaskType;
@@ -513,6 +532,7 @@ export type TaskUpdate = Partial<
     | "one_step_at_a_time"
     | "subtasks_auto_reset"
     | "parent_task_id"
+    | "task_content_folder_id"
     | "repeat_frequency"
     | "repeat_interval"
     | "repeat_days_of_week"
@@ -2826,6 +2846,12 @@ export type Database = {
         Row: TaskListFolder;
         Insert: TaskListFolderInsert;
         Update: TaskListFolderUpdate;
+        Relationships: [];
+      };
+      adhdice_task_content_folders: {
+        Row: TaskContentFolder;
+        Insert: TaskContentFolderInsert;
+        Update: TaskContentFolderUpdate;
         Relationships: [];
       };
       adhdice_task_list_containers: {

@@ -14,6 +14,8 @@ import {
   CirclePause,
   CirclePlay,
   Copy,
+  ChevronRight,
+  Folder,
   Flame,
   Footprints,
   Flag,
@@ -34,7 +36,8 @@ import {
   Trophy,
   X,
 } from "lucide-react";
-import type { CustomBehaviorRuleset, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, TaskContentFolder, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
+import { buildTaskContentFolderPresentation, type TaskContentFolderMenuOption } from "@/lib/task-content-folders";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import { TaskAttentionChip } from "@/components/task-app/task-attention-chip";
 import type { TaskAttentionReason } from "@/lib/task-attention";
@@ -485,6 +488,7 @@ type TaskRowContextMenuProps = {
   onDuplicateTask?: () => void;
   onEditTask?: () => void;
   onMoveIntoParent?: (parentTaskId: string) => void | Promise<void>;
+  onMoveToTaskContentFolder?: (folderId: string | null) => void | Promise<void>;
   onOpenInNewTab?: () => void;
   onOpenDetails?: (sourceElement?: HTMLElement | null) => void;
   onOpenHistory?: () => void;
@@ -498,10 +502,11 @@ type TaskRowContextMenuProps = {
   onToggleTaskSelection?: () => void;
   onUnlinkTask?: () => void;
   moveIntoParentOptions?: MoveIntoParentOption[];
+  taskContentFolderOptions?: TaskContentFolderMenuOption[];
   quickEditItems?: TaskRowContextMenuQuickEditItem[];
   quickEditTitle?: string;
   selectedTaskCount: number;
-  task: Pick<PrototypeTaskRow, "id" | "status" | "title">;
+  task: Pick<PrototypeTaskRow, "id" | "status" | "title" | "taskContentFolderId">;
 };
 
 export function TaskRowContextMenu({
@@ -517,6 +522,7 @@ export function TaskRowContextMenu({
   onDuplicateTask,
   onEditTask,
   onMoveIntoParent,
+  onMoveToTaskContentFolder,
   onOpenInNewTab,
   onOpenDetails,
   onOpenHistory,
@@ -530,13 +536,16 @@ export function TaskRowContextMenu({
   onToggleTaskSelection,
   onUnlinkTask,
   moveIntoParentOptions = [],
+  taskContentFolderOptions = [],
   quickEditItems = [],
   quickEditTitle = "Quick edit",
   selectedTaskCount,
   task,
 }: TaskRowContextMenuProps) {
   const [isChoosingParent, setIsChoosingParent] = useState(false);
+  const [isChoosingFolder, setIsChoosingFolder] = useState(false);
   const [parentSearch, setParentSearch] = useState("");
+  const [folderSearch, setFolderSearch] = useState("");
   const filteredMoveIntoParentOptions = useMemo(() => {
     const normalizedSearch = parentSearch.trim().toLowerCase();
     if (!normalizedSearch) {
@@ -544,6 +553,11 @@ export function TaskRowContextMenu({
     }
     return moveIntoParentOptions.filter((option) => option.label.toLowerCase().includes(normalizedSearch));
   }, [moveIntoParentOptions, parentSearch]);
+  const filteredTaskContentFolderOptions = useMemo(() => {
+    const normalizedSearch = folderSearch.trim().toLowerCase();
+    if (!normalizedSearch) return taskContentFolderOptions;
+    return taskContentFolderOptions.filter((option) => option.label.toLowerCase().includes(normalizedSearch));
+  }, [folderSearch, taskContentFolderOptions]);
 
   return (
     <div
@@ -559,7 +573,7 @@ export function TaskRowContextMenu({
       >
         <div className="border-b border-[#f0ebfb] px-2 pb-2 dark:border-white/10">
           <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
-            {isChoosingParent ? "Choose parent" : "Task actions"}
+            {isChoosingParent ? "Choose parent" : isChoosingFolder ? "Choose Folder" : "Task actions"}
           </p>
           <p className={`${UNIFIED_TABLE_TEXT_CLASS} mt-1 truncate text-[#2f294a] dark:text-white`}>
             {task.title}
@@ -605,7 +619,47 @@ export function TaskRowContextMenu({
           </div>
         ) : null}
 
-        {!isChoosingParent ? (
+        {isChoosingFolder && !isChoosingParent ? (
+          <div className="space-y-2 px-1 py-2">
+            <input
+              autoFocus
+              className="w-full rounded-[1rem] border border-[#e5def8] bg-[#fbfaff] px-3 py-2 text-sm text-[#2f294a] outline-none focus:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
+              onChange={(event) => setFolderSearch(event.target.value)}
+              placeholder="Search Folders"
+              type="text"
+              value={folderSearch}
+            />
+            <div className="adhdice-scrollbar max-h-60 space-y-1 overflow-y-auto pb-1 pr-1 overscroll-contain">
+              {filteredTaskContentFolderOptions.map((option) => (
+                <TaskTableChipButton
+                  className="w-full justify-between gap-2"
+                  key={option.id ?? "no-folder"}
+                  onClick={() => {
+                    void onMoveToTaskContentFolder?.(option.id);
+                    onDismiss();
+                  }}
+                >
+                  <span className="truncate">{option.label}</span>
+                  {option.id === task.taskContentFolderId ? <span className="text-xs opacity-60">Current</span> : null}
+                </TaskTableChipButton>
+              ))}
+              {filteredTaskContentFolderOptions.length === 0 ? (
+                <p className="px-2 py-3 text-sm text-[#8d87a7] dark:text-white/45">No Folders found.</p>
+              ) : null}
+            </div>
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => {
+                setIsChoosingFolder(false);
+                setFolderSearch("");
+              }}
+            >
+              <span>Back to actions</span>
+            </TaskTableChipButton>
+          </div>
+        ) : null}
+
+        {!isChoosingParent && !isChoosingFolder ? (
         <div className="space-y-1 px-1 py-2">
           {(enableInspector || onOpenDetails) ? (
             <TaskTableChipButton
@@ -699,6 +753,15 @@ export function TaskRowContextMenu({
               onClick={() => setIsChoosingParent(true)}
             >
               <span>Move into parent</span>
+            </TaskTableChipButton>
+          ) : null}
+          {onMoveToTaskContentFolder && taskContentFolderOptions.length > 0 ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => setIsChoosingFolder(true)}
+            >
+              <span>Move to Folder</span>
+              <Folder className="h-3.5 w-3.5" />
             </TaskTableChipButton>
           ) : null}
           {onToggleTaskSelection ? (
@@ -1003,6 +1066,8 @@ export type PrototypeTaskRow = {
   energy: TaskEnergy;
   estimatedMinutes: number | null;
   id: string;
+  parent_task_id?: string | null;
+  taskContentFolderId?: string | null;
   taskType?: TaskType;
   customRulesetId?: string | null;
   linkLabel: string;
@@ -1203,6 +1268,10 @@ type TaskManagementTableV2Props = {
   onOpenTaskInNewTab?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
   onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
+  taskContentFolders?: readonly TaskContentFolder[];
+  collapsedTaskContentFolderIds?: ReadonlySet<string>;
+  onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
+  onMoveTaskToContentFolder?: (taskId: string, folderId: string | null) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
   onPromoteTaskToMilestone?: (taskId: string) => void;
   onDetachAndPromoteTaskToMilestone?: (taskId: string) => void;
@@ -2580,6 +2649,10 @@ export function TaskManagementTableV2({
   onOpenTaskInNewTab,
   onOpenChildTask,
   onMoveTaskIntoParent,
+  taskContentFolders = [],
+  collapsedTaskContentFolderIds = new Set<string>(),
+  onToggleTaskContentFolderCollapsed,
+  onMoveTaskToContentFolder,
   onUnlinkTask,
   onPromoteTaskToMilestone,
   onDetachAndPromoteTaskToMilestone,
@@ -3330,6 +3403,18 @@ export function TaskManagementTableV2({
     () => effectiveDisplayedTasks.slice(0, renderedTaskCount),
     [effectiveDisplayedTasks, renderedTaskCount],
   );
+  const taskContentFolderPresentation = useMemo(
+    () => buildTaskContentFolderPresentation(renderedTasks, taskContentFolders),
+    [renderedTasks, taskContentFolders],
+  );
+  const taskContentFolderBlockByFirstTaskId = useMemo(
+    () => new Map(
+      taskContentFolderPresentation
+        .filter((block) => block.kind === "folder")
+        .flatMap((block) => block.members.length > 0 ? [[block.members[0].id, block] as const] : []),
+    ),
+    [taskContentFolderPresentation],
+  );
   useLayoutEffect(() => {
     startTableScrollTopHoldFrames(true);
   }, [displayedTasks, renderedTasks.length, startTableScrollTopHoldFrames]);
@@ -3362,6 +3447,18 @@ export function TaskManagementTableV2({
       })
       : [],
     [allRows, childTaskPreviewByParentTaskId, getAllRows, rowContextMenuTask, tasks],
+  );
+  const rowContextMenuTaskContentFolderOptions = useMemo<TaskContentFolderMenuOption[]>(
+    () => {
+      if (!rowContextMenuTask) return [];
+      const options: TaskContentFolderMenuOption[] = taskContentFolders
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+        .map((folder) => ({ id: folder.id, label: folder.name }));
+      if (!childTaskParentInfoByTaskId.has(rowContextMenuTask.id)) options.unshift({ id: null, label: "No Folder" });
+      return options;
+    },
+    [childTaskParentInfoByTaskId, rowContextMenuTask, taskContentFolders],
   );
   const shouldAnimateRows = !shouldReduceMotion && effectiveDisplayedTasks.length <= 80;
   const tableRowVariants: Variants | undefined = shouldAnimateRows
@@ -9238,10 +9335,27 @@ export function TaskManagementTableV2({
               const showInlineAccordion = allowInlineInspector
                 && selectedTaskId === task.id
                 && isInlineAccordionMode(overlayMode);
+              const contentFolderBlock = taskContentFolderBlockByFirstTaskId.get(task.id);
+              const contentFolderCollapsed = contentFolderBlock?.kind === "folder"
+                && collapsedTaskContentFolderIds.has(contentFolderBlock.folder.id);
 
               return (
-                <div
-                  key={`task:${getPrototypeTaskRowKey(task)}`}
+                <Fragment key={`task:${getPrototypeTaskRowKey(task)}`}>
+                  {contentFolderBlock?.kind === "folder" ? (
+                    <button
+                      aria-expanded={!contentFolderCollapsed}
+                      className="flex w-full items-center gap-2 rounded-[1rem] border border-[#e7defb] bg-[#faf8ff] px-3 py-2 text-left text-sm text-[#4b4469] transition hover:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.035] dark:text-white/80"
+                      data-style-role="tasks.content-folder.header"
+                      onClick={() => onToggleTaskContentFolderCollapsed?.(contentFolderBlock.folder.id)}
+                      type="button"
+                    >
+                      <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${contentFolderCollapsed ? "" : "rotate-90"}`} />
+                      <Folder className="h-4 w-4 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+                      <span className="min-w-0 flex-1 truncate" data-style-role="tasks.content-folder.title">{contentFolderBlock.folder.name}</span>
+                      <span className="shrink-0 text-xs text-[#8d87a7] dark:text-white/50" data-style-role="tasks.content-folder.count">{contentFolderBlock.members.length} visible {contentFolderBlock.members.length === 1 ? "Task" : "Tasks"}</span>
+                    </button>
+                  ) : null}
+                  {contentFolderCollapsed ? null : <div
                   className={`w-max min-w-full space-y-1.5 ${hasRenderedDescendants ? "bg-white dark:bg-[#181226]" : ""}`}
                   data-task-table-hierarchy-group={task.id}
                 >
@@ -9349,7 +9463,8 @@ export function TaskManagementTableV2({
                       {renderSourceStepMiniRows(task, visibleSubtasks)}
                     </motion.div>
                   ) : null}
-                </div>
+                </div>}
+                </Fragment>
               );
             })}
             {remainingRenderedTaskCount > 0 || hasMoreRows ? (
@@ -9424,6 +9539,10 @@ export function TaskManagementTableV2({
                 setRowContextMenu(null);
                 await onMoveTaskIntoParent(rowContextMenuTask.id, parentTaskId);
               } : undefined}
+              onMoveToTaskContentFolder={onMoveTaskToContentFolder ? async (folderId) => {
+                setRowContextMenu(null);
+                await onMoveTaskToContentFolder(rowContextMenuTask.id, folderId);
+              } : undefined}
               onOpenInNewTab={onOpenTaskInNewTab ? () => {
                 setRowContextMenu(null);
                 onOpenTaskInNewTab(rowContextMenuTask.id);
@@ -9456,6 +9575,7 @@ export function TaskManagementTableV2({
                 void onUnlinkTask(rowContextMenuTask.id);
               } : undefined}
               moveIntoParentOptions={rowContextMenuMoveIntoParentOptions}
+              taskContentFolderOptions={rowContextMenuTaskContentFolderOptions}
               onSelectAllVisible={onSelectAllVisible ? () => {
                 onSelectAllVisible(visibleTaskIds);
                 setRowContextMenu(null);
