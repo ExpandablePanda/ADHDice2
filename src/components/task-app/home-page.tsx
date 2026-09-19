@@ -7,6 +7,7 @@ import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { TaskTypeSelect } from "./task-type-identity";
+import { CompactDateTimeField, CompactSelectField, EditorCollapsibleSection, TagChipInput } from "./task-editor-fields";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
@@ -17,9 +18,25 @@ import { PageShellHeader } from "./page-shell-header";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import { resolveTaskStatusOptionsForTask } from "@/lib/task-state-engine/action-authority";
 import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
-import type { Task, TaskStatus } from "@/lib/database.types";
+import type { Task, TaskRepeatFrequency, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskListMembership } from "@/lib/task-lists";
+import { parseDayOfMonth, parsePositiveInteger } from "./task-editor-model";
+import {
+  formatTaskPriorityMenuLabel,
+  getSelectedTaskPriorityToneClass,
+  getTaskPriorityToneClass,
+  TASK_PRIORITY_LEVEL_OPTIONS,
+  type TaskPriorityLevel,
+  type TaskPriorityLevelOption,
+} from "@/lib/task-priority";
+import {
+  REPEAT_MONTHLY_MODE_OPTIONS,
+  REPEAT_MONTHLY_ORDINAL_OPTIONS,
+  REPEAT_WEEKDAY_FULL_LABELS,
+  WEEKDAYS_REPEAT_DAYS,
+  isWeekdaysRepeatSelection,
+} from "@/lib/task-repeat";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import {
   buildHomeTodoHierarchy,
@@ -31,15 +48,37 @@ import {
   moveHomeTodoTaskIdToEdge,
   reconcileHomeTodoTaskIds,
   sortHomeTodoSearchResults,
+  type HomeTodoTaskMetadata,
 } from "@/lib/home-todo-state";
+import {
+  CompactRepeatCadenceControls,
+  TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS,
+  TASK_TABLE_INACTIVE_CHIP_CLASS,
+} from "@/components/ui/task-table-primitives";
 
 const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-[#26324f] dark:text-white";
 const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2";
 const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7";
 const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-[12.25px] max-sm:!w-[12.25px]";
+const HOME_REPEAT_OPTIONS: ReadonlyArray<{ label: string; value: TaskRepeatFrequency }> = [
+  { label: "No Repeat", value: "none" },
+  { label: "Daily", value: "daily" },
+  { label: "Daily Until Complete", value: "daily_until_complete" },
+  { label: "Weekly", value: "weekly" },
+  { label: "Monthly", value: "monthly" },
+  { label: "Custom Cadence", value: "custom" },
+];
+const HOME_REPEAT_WEEKDAY_OPTIONS = REPEAT_WEEKDAY_FULL_LABELS.map((label, value) => ({ label: label.slice(0, 3), value }));
+const HOME_REPEAT_MONTHLY_WEEKDAY_OPTIONS = REPEAT_WEEKDAY_FULL_LABELS.map((label, value) => ({ label, value }));
+const HOME_REPEAT_UNITS: Array<{ label: string; value: TaskRepeatFrequency }> = [
+  { label: "Days", value: "daily" },
+  { label: "Weeks", value: "weekly" },
+  { label: "Months", value: "monthly" },
+];
 
 export function HomePage({
   listMembershipsByTaskId,
+  allTags,
   onCreateTaskWithType,
   onOpenTask,
   onSetStatus,
@@ -57,7 +96,8 @@ export function HomePage({
   taskTypeOptions,
 }: {
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
-  onCreateTaskWithType: (title: string, taskTypeSelectionValue: string) => Promise<Task | null>;
+  allTags: string[];
+  onCreateTaskWithType: (title: string, taskTypeSelectionValue: string, metadata: HomeTodoTaskMetadata) => Promise<Task | null>;
   onOpenTask: (taskId: string) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
@@ -80,6 +120,17 @@ export function HomePage({
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskTypeSelection, setNewTaskTypeSelection] = useState("task");
+  const [newTaskDueOn, setNewTaskDueOn] = useState("");
+  const [newTaskDueTime, setNewTaskDueTime] = useState("");
+  const [newTaskRepeatFrequency, setNewTaskRepeatFrequency] = useState<TaskRepeatFrequency>("none");
+  const [newTaskRepeatInterval, setNewTaskRepeatInterval] = useState("1");
+  const [newTaskRepeatDaysOfWeek, setNewTaskRepeatDaysOfWeek] = useState<number[]>([]);
+  const [newTaskRepeatDayOfMonth, setNewTaskRepeatDayOfMonth] = useState("");
+  const [newTaskRepeatMonthlyMode, setNewTaskRepeatMonthlyMode] = useState<TaskRepeatMonthlyMode>("day_of_month");
+  const [newTaskRepeatMonthlyOrdinal, setNewTaskRepeatMonthlyOrdinal] = useState<TaskRepeatMonthlyOrdinal | null>(null);
+  const [newTaskRepeatMonthlyWeekday, setNewTaskRepeatMonthlyWeekday] = useState<number | null>(null);
+  const [newTaskTags, setNewTaskTags] = useState<string[]>([]);
+  const [newTaskPriority, setNewTaskPriority] = useState<TaskPriorityLevelOption>("0");
   const [isCreating, setIsCreating] = useState(false);
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -125,6 +176,69 @@ export function HomePage({
     if (isCreateOpen) newTaskInputRef.current?.focus();
   }, [isCreateOpen]);
 
+  function selectNewTaskRepeatFrequency(nextFrequency: TaskRepeatFrequency) {
+    setNewTaskRepeatFrequency(nextFrequency);
+    setNewTaskRepeatInterval((current) => String(parsePositiveInteger(current) ?? 1));
+    if (nextFrequency !== "weekly" && nextFrequency !== "custom") {
+      setNewTaskRepeatDaysOfWeek([]);
+    }
+    if (nextFrequency !== "monthly") {
+      setNewTaskRepeatDayOfMonth("");
+      setNewTaskRepeatMonthlyMode("day_of_month");
+      setNewTaskRepeatMonthlyOrdinal(null);
+      setNewTaskRepeatMonthlyWeekday(null);
+    }
+  }
+
+  function applyNewTaskWeekdaysPreset() {
+    setNewTaskRepeatFrequency("weekly");
+    setNewTaskRepeatInterval("1");
+    setNewTaskRepeatDaysOfWeek([...WEEKDAYS_REPEAT_DAYS]);
+    setNewTaskRepeatDayOfMonth("");
+    setNewTaskRepeatMonthlyMode("day_of_month");
+    setNewTaskRepeatMonthlyOrdinal(null);
+    setNewTaskRepeatMonthlyWeekday(null);
+  }
+
+  function buildNewTaskMetadata(): HomeTodoTaskMetadata {
+    const repeatInterval = parsePositiveInteger(newTaskRepeatInterval) ?? 1;
+    const repeatDayOfMonth = newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "day_of_month"
+      ? parseDayOfMonth(newTaskRepeatDayOfMonth)
+      : null;
+    const isMonthlyOrdinal = newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "ordinal_weekday";
+    return {
+      due_on: newTaskDueOn || null,
+      due_time: newTaskDueOn ? (newTaskDueTime || null) : null,
+      priority_level: Number.parseInt(newTaskPriority, 10) as TaskPriorityLevel,
+      repeat_day_of_month: repeatDayOfMonth,
+      repeat_days_of_week: newTaskRepeatFrequency === "weekly" || newTaskRepeatFrequency === "custom"
+        ? [...newTaskRepeatDaysOfWeek]
+        : [],
+      repeat_frequency: newTaskRepeatFrequency,
+      repeat_interval: repeatInterval,
+      repeat_monthly_mode: newTaskRepeatFrequency === "monthly" ? newTaskRepeatMonthlyMode : "day_of_month",
+      repeat_monthly_ordinal: isMonthlyOrdinal ? (newTaskRepeatMonthlyOrdinal ?? "first") : null,
+      repeat_monthly_weekday: isMonthlyOrdinal ? (newTaskRepeatMonthlyWeekday ?? 1) : null,
+      tags: [...newTaskTags],
+    };
+  }
+
+  function resetNewTaskComposer() {
+    setNewTaskTitle("");
+    setNewTaskTypeSelection("task");
+    setNewTaskDueOn("");
+    setNewTaskDueTime("");
+    setNewTaskRepeatFrequency("none");
+    setNewTaskRepeatInterval("1");
+    setNewTaskRepeatDaysOfWeek([]);
+    setNewTaskRepeatDayOfMonth("");
+    setNewTaskRepeatMonthlyMode("day_of_month");
+    setNewTaskRepeatMonthlyOrdinal(null);
+    setNewTaskRepeatMonthlyWeekday(null);
+    setNewTaskTags([]);
+    setNewTaskPriority("0");
+  }
+
   async function handleCreateTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isCreating) return;
@@ -136,10 +250,10 @@ export function HomePage({
         newTaskTypeSelection,
         onCreateTaskWithType,
         (taskId) => updateTaskIds((taskIds) => [...taskIds, taskId]),
+        buildNewTaskMetadata(),
       );
       if (createdTask) {
-        setNewTaskTitle("");
-        setNewTaskTypeSelection("task");
+        resetNewTaskComposer();
         setIsCreateOpen(false);
       }
     } finally {
@@ -149,8 +263,7 @@ export function HomePage({
 
   function cancelCreateTask() {
     if (isCreating) return;
-    setNewTaskTitle("");
-    setNewTaskTypeSelection("task");
+    resetNewTaskComposer();
     setIsCreateOpen(false);
   }
 
@@ -457,6 +570,135 @@ export function HomePage({
                   value={newTaskTypeSelection}
                 />
               </label>
+              <div className="w-full">
+                <EditorCollapsibleSection
+                  summary="Due date, repeat cadence, tags, and priority."
+                  title="Task details"
+                >
+                  <fieldset className="grid gap-4" disabled={isCreating}>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <CompactDateTimeField
+                        clearLabel="Clear due date"
+                        label="Due date"
+                        onChange={(value) => {
+                          setNewTaskDueOn(value);
+                          if (!value) setNewTaskDueTime("");
+                        }}
+                        onClear={() => {
+                          setNewTaskDueOn("");
+                          setNewTaskDueTime("");
+                        }}
+                        type="date"
+                        value={newTaskDueOn}
+                      />
+                      <CompactDateTimeField
+                        clearLabel="Clear due time"
+                        label="Due time"
+                        onChange={setNewTaskDueTime}
+                        onClear={() => setNewTaskDueTime("")}
+                        type="time"
+                        value={newTaskDueTime}
+                      />
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <CompactSelectField
+                        label="Priority"
+                        onChange={setNewTaskPriority}
+                        optionButtonClassName={(value, selected) => selected
+                          ? getSelectedTaskPriorityToneClass(value)
+                          : getTaskPriorityToneClass(value)}
+                        options={TASK_PRIORITY_LEVEL_OPTIONS}
+                        renderValueLabel={(value) => formatTaskPriorityMenuLabel(Number.parseInt(value, 10) as TaskPriorityLevel)}
+                        triggerClassName={(value) => getTaskPriorityToneClass(value)}
+                        value={newTaskPriority}
+                      />
+                      <CompactSelectField
+                        label="Repeat"
+                        onChange={selectNewTaskRepeatFrequency}
+                        options={HOME_REPEAT_OPTIONS.map((option) => option.value)}
+                        renderValueLabel={(value) => HOME_REPEAT_OPTIONS.find((option) => option.value === value)?.label ?? value}
+                        value={newTaskRepeatFrequency}
+                      />
+                    </div>
+                    {newTaskRepeatFrequency !== "none" ? (
+                      <div className="grid gap-2 rounded-[1rem] border border-[#ece6fb] bg-white/70 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                        <CompactRepeatCadenceControls
+                          activeToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
+                          dayInputProps={{
+                            inputMode: "numeric",
+                            max: 31,
+                            min: 1,
+                            onBlur: () => setNewTaskRepeatDayOfMonth((current) => {
+                              const parsed = parseDayOfMonth(current);
+                              return parsed === null ? "" : String(parsed);
+                            }),
+                            onChange: (event) => setNewTaskRepeatDayOfMonth(event.target.value.replace(/[^\d]/g, "").slice(0, 2)),
+                            type: "text",
+                            value: newTaskRepeatDayOfMonth,
+                          }}
+                          inactiveToneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
+                          intervalInputProps={{
+                            inputMode: "numeric",
+                            min: 1,
+                            onBlur: () => setNewTaskRepeatInterval((current) => String(parsePositiveInteger(current) ?? 1)),
+                            onChange: (event) => setNewTaskRepeatInterval(event.target.value.replace(/[^\d]/g, "")),
+                            type: "text",
+                            value: newTaskRepeatInterval,
+                          }}
+                          monthlyMode={newTaskRepeatMonthlyMode}
+                          monthlyModeOptions={REPEAT_MONTHLY_MODE_OPTIONS}
+                          monthlyOrdinal={newTaskRepeatMonthlyOrdinal}
+                          monthlyOrdinalOptions={REPEAT_MONTHLY_ORDINAL_OPTIONS}
+                          monthlyWeekday={newTaskRepeatMonthlyWeekday}
+                          onMonthlyModeClick={(value) => {
+                            const nextOrdinal = value === "ordinal_weekday" ? (newTaskRepeatMonthlyOrdinal ?? "first") : null;
+                            const nextWeekday = value === "ordinal_weekday" ? (newTaskRepeatMonthlyWeekday ?? 1) : null;
+                            setNewTaskRepeatMonthlyMode(value);
+                            setNewTaskRepeatMonthlyOrdinal(nextOrdinal);
+                            setNewTaskRepeatMonthlyWeekday(nextWeekday);
+                          }}
+                          onMonthlyOrdinalClick={(value) => {
+                            setNewTaskRepeatMonthlyMode("ordinal_weekday");
+                            setNewTaskRepeatMonthlyOrdinal(value);
+                            setNewTaskRepeatMonthlyWeekday(newTaskRepeatMonthlyWeekday ?? 1);
+                          }}
+                          onMonthlyWeekdayClick={(value) => {
+                            setNewTaskRepeatMonthlyMode("ordinal_weekday");
+                            setNewTaskRepeatMonthlyOrdinal(newTaskRepeatMonthlyOrdinal ?? "first");
+                            setNewTaskRepeatMonthlyWeekday(value);
+                          }}
+                          onRepeatUnitClick={selectNewTaskRepeatFrequency}
+                          onWeekdayClick={(weekday) => setNewTaskRepeatDaysOfWeek((current) => (
+                            current.includes(weekday)
+                              ? current.filter((value) => value !== weekday)
+                              : [...current, weekday].sort((left, right) => left - right)
+                          ))}
+                          repeat={newTaskRepeatFrequency}
+                          repeatDaysOfWeek={newTaskRepeatDaysOfWeek}
+                          repeatUnits={HOME_REPEAT_UNITS}
+                          showInterval
+                          showMonthDay={newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode !== "ordinal_weekday"}
+                          showMonthlyMode={newTaskRepeatFrequency === "monthly"}
+                          showMonthlyOrdinals={newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "ordinal_weekday"}
+                          showMonthlyWeekdays={newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "ordinal_weekday"}
+                          showWeekdays={newTaskRepeatFrequency === "weekly" || newTaskRepeatFrequency === "custom"}
+                          weekdayOptions={newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "ordinal_weekday"
+                            ? HOME_REPEAT_MONTHLY_WEEKDAY_OPTIONS
+                            : HOME_REPEAT_WEEKDAY_OPTIONS}
+                        />
+                        <AdhdChip
+                          onClick={applyNewTaskWeekdaysPreset}
+                          selected={isWeekdaysRepeatSelection(newTaskRepeatFrequency, newTaskRepeatDaysOfWeek, parsePositiveInteger(newTaskRepeatInterval) ?? 1)}
+                          type="button"
+                        >
+                          Weekdays
+                        </AdhdChip>
+                      </div>
+                    ) : null}
+                    <TagChipInput allTags={allTags} onChange={setNewTaskTags} values={newTaskTags} />
+                  </fieldset>
+                </EditorCollapsibleSection>
+              </div>
               <div className="flex shrink-0 gap-1.5">
                 <AdhdChip disabled={isCreating} selected type="submit">
                   {isCreating ? "Adding…" : "Add"}

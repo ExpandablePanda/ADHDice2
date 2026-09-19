@@ -18,6 +18,7 @@ import {
   normalizeHomeTodoState,
   reconcileHomeTodoTaskIds,
   sortHomeTodoSearchResults,
+  type HomeTodoTaskMetadata,
 } from "../src/lib/home-todo-state.ts";
 import { getCalendarDayKey, getLogicalDayKey } from "../src/lib/logical-day.ts";
 import { reorderListItems } from "../src/lib/list-reorder.ts";
@@ -32,6 +33,20 @@ function task(id: string, overrides: Partial<Task> = {}) {
     ...overrides,
   } as Task;
 }
+
+const homeTaskMetadata: HomeTodoTaskMetadata = {
+  due_on: null,
+  due_time: null,
+  priority_level: 0,
+  repeat_day_of_month: null,
+  repeat_days_of_week: [],
+  repeat_frequency: "none",
+  repeat_interval: 1,
+  repeat_monthly_mode: "day_of_month",
+  repeat_monthly_ordinal: null,
+  repeat_monthly_weekday: null,
+  tags: [],
+};
 
 test("Home todo V1 state normalizes with the default capacity and no day overrides", () => {
   assert.deepEqual(normalizeHomeTodoState({
@@ -88,17 +103,34 @@ test("Home todo does not add automatic tasks to a full pinned day", () => {
   assert.deepEqual(sections[1]?.taskIds, ["automatic"]);
 });
 
-test("Home todo preserves pinned tasks above capacity and starts automatic tasks later", () => {
+test("Home todo enforces strict capacity for pinned tasks and spills them forward", () => {
   const pinned = Array.from({ length: 12 }, (_, index) => `pinned-${index}`);
-  const { sections } = buildHomeTodoDaySections(
+  const { sections, laterTaskIds } = buildHomeTodoDaySections(
     [...pinned, "automatic-1", "automatic-2"],
     10,
     new Date("2026-08-23T12:00:00-04:00"),
     "America/New_York",
     Object.fromEntries(pinned.map((taskId) => [taskId, 0])),
   );
-  assert.deepEqual(sections[0]?.taskIds, pinned);
-  assert.deepEqual(sections[1]?.taskIds, ["automatic-1", "automatic-2"]);
+  assert.deepEqual(sections[0]?.taskIds, pinned.slice(0, 10));
+  assert.deepEqual(sections[1]?.taskIds, [...pinned.slice(10), "automatic-1", "automatic-2"]);
+  assert.deepEqual(laterTaskIds, []);
+});
+
+test("Home todo spills assigned overflow through full subsequent days and then Later", () => {
+  const assigned = Array.from({ length: 7 }, (_, dayIndex) => (
+    Array.from({ length: 11 }, (_, taskIndex) => `assigned-${dayIndex}-${taskIndex}`)
+  )).flat();
+  const taskDayOffsets = Object.fromEntries(assigned.map((taskId, index) => [taskId, Math.floor(index / 11)]));
+  const sourceTaskIds = [...assigned, "explicit-later"];
+  const { sections, laterTaskIds } = buildHomeTodoDaySections(sourceTaskIds, 10, new Date("2026-08-23T12:00:00-04:00"), "America/New_York", {
+    ...taskDayOffsets,
+    "explicit-later": 7,
+  });
+
+  assert.deepEqual(sections.map((section) => section.taskIds.length), [10, 10, 10, 10, 10, 10, 10]);
+  assert.deepEqual(laterTaskIds, ["explicit-later", ...Array.from({ length: 7 }, (_, index) => `assigned-6-${index + 4}`)]);
+  assert.deepEqual([...sections.flatMap((section) => section.taskIds), ...laterTaskIds].sort(), sourceTaskIds.sort());
 });
 
 test("Home todo applies pinned capacity independently across days", () => {
@@ -138,6 +170,15 @@ test("Home todo tasks-per-day accepts 10 through 15 and safely defaults invalid 
   assert.equal(normalizeHomeTodoTasksPerDay(9), 10);
   assert.equal(normalizeHomeTodoTasksPerDay("12"), 10);
   assert.equal(normalizeHomeTodoTasksPerDay(null), 10);
+});
+
+test("Home todo re-projects every normal day within each selected capacity", () => {
+  const taskIds = Array.from({ length: 106 }, (_, index) => `task-${index}`);
+  for (const tasksPerDay of [10, 11, 12, 13, 14, 15]) {
+    const { sections, laterTaskIds } = buildHomeTodoDaySections(taskIds, tasksPerDay);
+    assert.ok(sections.every((section) => section.taskIds.length <= tasksPerDay));
+    assert.deepEqual([...sections.flatMap((section) => section.taskIds), ...laterTaskIds].sort(), [...taskIds].sort());
+  }
 });
 
 test("Home todo generates seven local calendar sections with Today, Tomorrow, weekdays, and ordinal dates", () => {
@@ -242,6 +283,7 @@ test("Home task creation ignores whitespace-only titles without calling canonica
       return task("should-not-exist");
     },
     (taskId) => appendedTaskIds.push(taskId),
+    homeTaskMetadata,
   );
 
   assert.equal(createdTask, null);
@@ -265,6 +307,7 @@ test("Home task creation trims the title and creates exactly one canonical task"
       return canonicalTask;
     },
     () => {},
+    homeTaskMetadata,
   );
 
   assert.equal(createdTask, canonicalTask);
@@ -288,6 +331,7 @@ test("Home task creation forwards the Task selection and appends the returned ca
       return canonicalTask;
     },
     (taskId) => appendedTaskIds.push(taskId),
+    homeTaskMetadata,
   );
 
   assert.equal(receivedTitle, "New task");
@@ -303,10 +347,44 @@ test("Home task creation does not append a phantom id when canonical creation fa
     "task",
     async () => null,
     (taskId) => appendedTaskIds.push(taskId),
+    homeTaskMetadata,
   );
 
   assert.equal(createdTask, null);
   assert.deepEqual(appendedTaskIds, []);
+});
+
+test("Home task creation forwards all selected metadata to canonical creation", async () => {
+  const appendedTaskIds: string[] = [];
+  let receivedMetadata: HomeTodoTaskMetadata | null = null;
+  const canonicalTask = task("canonical-task");
+  const metadata: HomeTodoTaskMetadata = {
+    due_on: "2026-09-22",
+    due_time: "09:30",
+    priority_level: 5,
+    repeat_day_of_month: null,
+    repeat_days_of_week: [1, 3, 5],
+    repeat_frequency: "weekly",
+    repeat_interval: 2,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    tags: ["planning", "morning"],
+  };
+
+  await createHomeTodoTask(
+    "Metadata task",
+    "custom:ruleset-1",
+    async (_title, _selection, nextMetadata) => {
+      receivedMetadata = nextMetadata;
+      return canonicalTask;
+    },
+    (taskId) => appendedTaskIds.push(taskId),
+    metadata,
+  );
+
+  assert.deepEqual(receivedMetadata, metadata);
+  assert.deepEqual(appendedTaskIds, [canonicalTask.id]);
 });
 
 test("Home todo eligibility follows active task ancestry", () => {
@@ -542,6 +620,12 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /onSubmit=\{handleCreateTask\}/);
   assert.match(source, /const \[newTaskTypeSelection, setNewTaskTypeSelection\] = useState\("task"\)/);
   assert.match(source, /<TaskTypeSelect[\s\S]*ariaLabel="Task Type"[\s\S]*options=\{taskTypeOptions\}[\s\S]*value=\{newTaskTypeSelection\}/);
+  assert.match(source, /<CompactDateTimeField[\s\S]*label="Due date"/);
+  assert.match(source, /<CompactDateTimeField[\s\S]*label="Due time"/);
+  assert.match(source, /<CompactRepeatCadenceControls/);
+  assert.match(source, /<TagChipInput allTags=\{allTags\}/);
+  assert.match(source, /label="Priority"[\s\S]*TASK_PRIORITY_LEVEL_OPTIONS/);
+  assert.match(source, /buildNewTaskMetadata\(\)/);
   assert.match(source, /setNewTaskTypeSelection\("task"\)/);
   assert.match(source, /New task/);
   assert.match(source, /type="submit"/);
@@ -565,12 +649,15 @@ test("TaskApp passes Home creation through the shared canonical addTask seam", (
   assert.match(homeCreation, /custom_ruleset_id: selection\.customRulesetId/);
   assert.match(homeCreation, /task_type: selection\.taskType/);
   assert.match(homeCreation, /addTask\([\s\S]*buildNewTaskDraft\(title\)/);
+  assert.match(homeCreation, /\.\.\.metadata/);
+  assert.match(homeCreation, /buildTaskPriorityUpdate\(metadata\.priority_level\)/);
   assert.match(homeCreation, /if \(!selection\) \{[\s\S]*setMessage\(\{ tone: "warn", text: "That Task Type is no longer available\." \}\);[\s\S]*return null;/);
   assert.doesNotMatch(homeCreation, /selection \?\?/);
   assert.doesNotMatch(homeCreation, /updateTask\(/);
   const homeStart = source.indexOf("<TaskHomePage");
   const homeSource = source.slice(homeStart, source.indexOf("/>", homeStart) + 2);
   assert.match(homeSource, /tasks=\{tasks\}/);
+  assert.match(homeSource, /allTags=\{allTaskTags\}/);
   assert.match(homeSource, /taskDisplayStatusByTaskId=\{taskDisplayStatusByTaskId\}/);
   assert.doesNotMatch(homeSource, /tasks=\{tasksForActiveStatusRead\}/);
 });

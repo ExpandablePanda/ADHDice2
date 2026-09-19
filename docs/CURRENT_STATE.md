@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.67`.
+- Current working app version: `7.13.68`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -43,6 +43,14 @@ Food Daily Totals now colors only the projected calorie amount green when it
 is within the target and red when it exceeds the target. A missing target keeps
 the projected amount neutral; consumed calories and all projection behavior are
 unchanged.
+
+## 2026-09-18 7.13.68 Home To-do Metadata and Strict Daily Capacity
+
+Home To-do quick creation now carries due date/time, recurrence cadence, tags,
+numeric priority, and resolved Task Type metadata through the canonical Task
+creation path. Home day projection treats Tasks Per Day as a hard capacity for
+all seven normal sections, spilling preferred-day overflow forward and then to
+Later without rewriting durable offsets or Task rows.
 
 ## 2026-09-13 7.13.63 Custom Task Type Presentation QA Correction
 

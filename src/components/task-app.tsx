@@ -249,6 +249,7 @@ import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/li
 import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import type { HomeTodoTaskMetadata } from "@/lib/home-todo-state";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { createTaskStateReplayIdentity, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
@@ -4476,7 +4477,7 @@ export function TaskApp() {
     }, { routeToCurrentBucket: true });
   }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage]);
 
-  const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string) => {
+  const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string, metadata: HomeTodoTaskMetadata) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     if (!selection) {
       setMessage({ tone: "warn", text: "That Task Type is no longer available." });
@@ -4485,6 +4486,8 @@ export function TaskApp() {
 
     return addTask({
       ...buildNewTaskDraft(title),
+      ...metadata,
+      ...buildTaskPriorityUpdate(metadata.priority_level),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     });
@@ -7269,6 +7272,7 @@ export function TaskApp() {
           </div>
         ) : activePage === "Home" ? (
           <TaskHomePage
+            allTags={allTaskTags}
             listMembershipsByTaskId={taskListMembershipsByTaskId}
             onCreateTaskWithType={createHomeTodoTaskWithType}
             onOpenTask={openTaskEditorFromId}

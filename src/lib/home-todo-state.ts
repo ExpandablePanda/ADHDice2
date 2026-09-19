@@ -1,5 +1,6 @@
 import type { Task } from "@/lib/database.types";
 import { getCalendarDayKey } from "@/lib/logical-day";
+import type { TaskPriorityLevel } from "@/lib/task-priority";
 import type { TaskListMembership } from "@/lib/task-lists";
 import { shiftDateKey } from "@/lib/task-grid-layout";
 
@@ -44,9 +45,26 @@ export type HomeTodoDaySection<T = string> = {
   taskIds: T[];
 };
 
+export type HomeTodoTaskMetadata = Pick<
+  Task,
+  | "due_on"
+  | "due_time"
+  | "repeat_frequency"
+  | "repeat_interval"
+  | "repeat_days_of_week"
+  | "repeat_day_of_month"
+  | "repeat_monthly_mode"
+  | "repeat_monthly_ordinal"
+  | "repeat_monthly_weekday"
+  | "tags"
+> & {
+  priority_level: TaskPriorityLevel;
+};
+
 export type HomeTodoTaskCreator = (
   title: string,
   taskTypeSelectionValue: string,
+  metadata: HomeTodoTaskMetadata,
 ) => Promise<Task | null>;
 
 export function normalizeHomeTodoTasksPerDay(value: unknown): HomeTodoTasksPerDay {
@@ -97,6 +115,7 @@ export function buildHomeTodoDaySections<T>(
     startIndex: 0,
     taskIds: [],
   }));
+  const manuallyAssignedTaskIds: Array<{ dayIndex: number; taskId: T }> = [];
   const unassignedTaskIds: T[] = [];
   const laterTaskIds: T[] = [];
 
@@ -104,22 +123,29 @@ export function buildHomeTodoDaySections<T>(
     const assignedDayOffset = taskDayOffsets[String(taskId)];
     if (Number.isInteger(assignedDayOffset) && assignedDayOffset >= 0 && assignedDayOffset <= 7) {
       if (assignedDayOffset === 7) laterTaskIds.push(taskId);
-      else sections[assignedDayOffset]!.taskIds.push(taskId);
+      else manuallyAssignedTaskIds.push({ dayIndex: assignedDayOffset, taskId });
     } else {
       unassignedTaskIds.push(taskId);
     }
   }
 
-  let automaticDayIndex = 0;
-  for (const taskId of unassignedTaskIds) {
-    while (automaticDayIndex < sections.length && sections[automaticDayIndex]!.taskIds.length >= normalizedTasksPerDay) {
-      automaticDayIndex += 1;
+  function placeTaskAtOrAfter(taskId: T, preferredDayIndex: number) {
+    let dayIndex = preferredDayIndex;
+    while (dayIndex < sections.length && sections[dayIndex]!.taskIds.length >= normalizedTasksPerDay) {
+      dayIndex += 1;
     }
-    if (automaticDayIndex >= sections.length) {
+    if (dayIndex >= sections.length) {
       laterTaskIds.push(taskId);
     } else {
-      sections[automaticDayIndex]!.taskIds.push(taskId);
+      sections[dayIndex]!.taskIds.push(taskId);
     }
+  }
+
+  for (const { dayIndex, taskId } of manuallyAssignedTaskIds) {
+    placeTaskAtOrAfter(taskId, dayIndex);
+  }
+  for (const taskId of unassignedTaskIds) {
+    placeTaskAtOrAfter(taskId, 0);
   }
 
   let startIndex = 0;
@@ -135,11 +161,12 @@ export async function createHomeTodoTask(
   taskTypeSelectionValue: string,
   onCreateTask: HomeTodoTaskCreator,
   appendTaskId: (taskId: string) => void,
+  metadata: HomeTodoTaskMetadata,
 ) {
   const trimmedTitle = title.trim();
   if (!trimmedTitle) return null;
 
-  const createdTask = await onCreateTask(trimmedTitle, taskTypeSelectionValue);
+  const createdTask = await onCreateTask(trimmedTitle, taskTypeSelectionValue, metadata);
   if (!createdTask) return null;
 
   appendTaskId(createdTask.id);
