@@ -371,6 +371,7 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
     energy: row.energy,
     estimatedMinutes: row.estimatedMinutes,
     id: row.id,
+    task_content_folder_id: row.task_content_folder_id,
     linkLabel: row.linkLabel,
     linkUrl: row.linkUrl,
     lists: row.lists,
@@ -515,7 +516,7 @@ type TaskRowContextMenuProps = {
   quickEditItems?: TaskRowContextMenuQuickEditItem[];
   quickEditTitle?: string;
   selectedTaskCount: number;
-  task: Pick<PrototypeTaskRow, "id" | "status" | "title" | "taskContentFolderId">;
+  task: Pick<PrototypeTaskRow, "id" | "status" | "title" | "task_content_folder_id">;
 };
 
 export function TaskRowContextMenu({
@@ -700,7 +701,7 @@ export function TaskRowContextMenu({
                   }}
                 >
                   <span className="truncate">{option.label}</span>
-                  {option.id === task.taskContentFolderId ? <span className="text-xs opacity-60">Current</span> : null}
+                  {option.id === task.task_content_folder_id ? <span className="text-xs opacity-60">Current</span> : null}
                 </TaskTableChipButton>
               ))}
               {filteredTaskContentFolderOptions.length === 0 ? (
@@ -1136,7 +1137,7 @@ export type PrototypeTaskRow = {
   estimatedMinutes: number | null;
   id: string;
   parent_task_id?: string | null;
-  taskContentFolderId?: string | null;
+  task_content_folder_id?: string | null;
   taskType?: TaskType;
   customRulesetId?: string | null;
   linkLabel: string;

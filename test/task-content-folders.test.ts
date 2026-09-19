@@ -8,6 +8,8 @@ import {
   normalizeTaskContentFolderRow,
   validateTaskContentFolderMembership,
 } from "../src/lib/task-content-folders.ts";
+import { createTask } from "../src/lib/task-buckets.ts";
+import { buildTaskTableRow } from "../src/lib/task-table-row.ts";
 
 const folders = [
   { id: "folder-a", user_id: "user-1", name: "Website Redesign", created_at: "2026-01-01", updated_at: "2026-01-01" },
@@ -81,6 +83,57 @@ test("Folder presentation groups only already-visible sorted Tasks", () => {
   assert.equal(countVisibleTaskContentFolderMembers(visible.filter((item) => item.id !== "folder-fourth"), "folder-a"), 1);
 });
 
+test("Table row projection preserves Folder membership for shared Table grouping", () => {
+  const context = {
+    focusedTaskIdSet: new Set<string>(),
+    linkedNotes: [],
+    listDefinitions: [],
+    listMemberships: [],
+    subtasks: [],
+    taskHistory: [],
+    todayDateKey: "2026-01-03",
+  };
+  const projectedRows = [
+    buildTaskTableRow(createTask({
+      created_at: "2026-01-03T09:00:00.000Z",
+      id: "table-folder-member-a",
+      status: "pending",
+      sort_order: 1,
+      task_content_folder_id: "folder-a",
+      title: "Folder member A",
+    }), context),
+    buildTaskTableRow(createTask({
+      created_at: "2026-01-03T09:01:00.000Z",
+      id: "table-standalone",
+      status: "pending",
+      sort_order: 2,
+      title: "Standalone",
+    }), context),
+    buildTaskTableRow(createTask({
+      created_at: "2026-01-03T09:02:00.000Z",
+      id: "table-folder-member-b",
+      status: "pending",
+      sort_order: 3,
+      task_content_folder_id: "folder-a",
+      title: "Folder member B",
+    }), context),
+  ];
+
+  assert.equal(projectedRows[0]?.task_content_folder_id, "folder-a");
+
+  const presentation = buildTaskContentFolderPresentation(projectedRows, folders);
+  assert.deepEqual(
+    presentation.map((block) => block.kind === "folder"
+      ? { kind: block.kind, id: block.folder.id, members: block.members.map((member) => member.id) }
+      : { kind: block.kind, id: block.task.id }),
+    [
+      { kind: "folder", id: "folder-a", members: ["table-folder-member-a", "table-folder-member-b"] },
+      { kind: "task", id: "table-standalone" },
+    ],
+  );
+  assert.deepEqual(renderTaskIds(presentation, new Set(["folder-a"])), ["table-standalone"]);
+});
+
 test("Folder members keep their own nested hierarchy while block collapse hides every member", () => {
   const member = { ...task("folder-member", "folder-a"), subtasks: [{ id: "member-step" }] };
   const presentation = buildTaskContentFolderPresentation([member, task("standalone", null)], folders);
@@ -106,6 +159,7 @@ test("Table and List use the shared Folder projection and the Folder stays outsi
   const table = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
   const list = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
   const domain = readFileSync(new URL("../src/lib/task-content-folders.ts", import.meta.url), "utf8");
+  const tableRow = readFileSync(new URL("../src/lib/task-table-row.ts", import.meta.url), "utf8");
   const taskType = readFileSync(new URL("../src/lib/task-type.ts", import.meta.url), "utf8");
   assert.match(table, /buildTaskContentFolderPresentation/);
   assert.match(list, /buildTaskContentFolderPresentation/);
@@ -113,6 +167,9 @@ test("Table and List use the shared Folder projection and the Folder stays outsi
   assert.match(list, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
   assert.match(table, /block\.members\.map\(\(task\) =>/);
   assert.match(list, /block\.members\.map\(\(task\) =>/);
+  assert.match(tableRow, /task_content_folder_id: task\.task_content_folder_id/);
+  assert.match(table, /task: Pick<PrototypeTaskRow, "id" \| "status" \| "title" \| "task_content_folder_id">/);
+  assert.match(table, /option\.id === task\.task_content_folder_id/);
   assert.doesNotMatch(table, /taskContentFolderBlockByFirstTaskId/);
   assert.doesNotMatch(list, /taskContentFolderBlockByFirstTaskId/);
   assert.doesNotMatch(domain, /task-state-engine/);
