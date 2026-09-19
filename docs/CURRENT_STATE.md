@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.70`.
+- Current working app version: `7.13.71`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.13.71 Routine Hierarchy, Ordering, and Phase Sections
+
+Home Routine now derives hierarchical groups from direct Routine membership and
+the canonical Task hierarchy. Group-anchor ordering and Routines-per-Phase are
+persisted in the existing JSON-backed Home state, while Phase sections remain a
+projection of that flat order. No Task hierarchy, Task ordering, SQL, or schema
+changed.
 
 ## 2026-09-15 7.13.64 Normalize Focus Activity Bars to Goal Completion
 

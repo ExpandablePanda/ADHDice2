@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 
 import type { Task } from "../src/lib/database.types.ts";
 import {
+  buildHomeRoutineGroups,
+  buildHomeRoutineSections,
   buildHomeTodoDaySections,
   buildHomeTodoHierarchy,
   createHomeTodoTask,
@@ -16,7 +18,9 @@ import {
   moveHomeTodoTaskIdToEdge,
   moveHomeTodoTaskIdToVisibleEdge,
   normalizeHomeTodoTasksPerDay,
+  normalizeHomeTodoRoutinesPerPhase,
   normalizeHomeTodoState,
+  reconcileHomeRoutineTaskIds,
   reconcileHomeTodoTaskIds,
   sortHomeTodoSearchResults,
   type HomeTodoTaskMetadata,
@@ -49,17 +53,19 @@ const homeTaskMetadata: HomeTodoTaskMetadata = {
   tags: [],
 };
 
-test("Home todo V1 state normalizes with the default capacity and no day overrides", () => {
+test("Home state V1/V3 payloads normalize to V4 with independent Routine defaults", () => {
   assert.deepEqual(normalizeHomeTodoState({
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
     schemaVersion: 1,
     taskIds: ["a", "a", "", 4, "b"],
   }), {
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
-    schemaVersion: 3,
+    schemaVersion: 4,
     taskIds: ["a", "b"],
     taskDayOffsets: {},
     tasksPerDay: 10,
+    routineTaskIds: [],
+    routinesPerPhase: 3,
   });
 });
 
@@ -432,10 +438,118 @@ test("Home Routine projection uses Routine membership, Home eligibility, and sou
 
   assert.deepEqual(getHomeRoutineTaskIds(tasks, memberships), [
     "routine-parent",
-    "routine-child",
     "routine-standalone",
     "both",
   ]);
+});
+
+test("Home Routine groups inherit nested descendants without duplicating direct child membership", () => {
+  const parent = task("parent");
+  const step = task("step", { parent_task_id: parent.id });
+  const substep = task("substep", { parent_task_id: step.id });
+  const standaloneChild = task("standalone-child", { parent_task_id: "missing-parent" });
+  const tasks = [parent, step, substep, standaloneChild];
+  const memberships = {
+    [parent.id]: [{ id: "routine" as const }],
+    [step.id]: [{ id: "routine" as const }],
+    [standaloneChild.id]: [{ id: "routine" as const }],
+  };
+  const anchors = getHomeRoutineTaskIds(tasks, memberships);
+  const groups = buildHomeRoutineGroups(anchors, tasks);
+
+  assert.deepEqual(anchors, [parent, standaloneChild].map((entry) => entry.id));
+  assert.deepEqual(groups[0]?.taskIds, [parent.id, step.id, substep.id]);
+  assert.deepEqual(groups[0]?.tasks.map((entry) => [entry.task.id, entry.depth, entry.isAnchor]), [
+    [parent.id, 0, true],
+    [step.id, 1, false],
+    [substep.id, 2, false],
+  ]);
+  assert.deepEqual(groups[1]?.taskIds, [standaloneChild.id]);
+});
+
+test("Home Routine uses direct membership as the anchor authority", () => {
+  const parent = task("parent");
+  const child = task("child", { parent_task_id: parent.id });
+  const tasks = [parent, child];
+
+  assert.deepEqual(
+    getHomeRoutineTaskIds(tasks, {
+      [child.id]: [{ id: "routine" as const }],
+    }, {
+      [child.id]: ["routine"],
+    }),
+    [child.id],
+  );
+  assert.deepEqual(
+    getHomeRoutineTaskIds(tasks, {
+      [parent.id]: [{ id: "routine" as const }],
+      [child.id]: [{ id: "routine" as const }],
+    }, {
+      [parent.id]: ["routine"],
+    }),
+    [parent.id],
+  );
+});
+
+test("Home Routine search representation includes inherited descendants", () => {
+  const parent = task("parent");
+  const step = task("step", { parent_task_id: parent.id });
+  const tasks = [parent, step];
+  const memberships = { [parent.id]: [{ id: "routine" as const }] };
+  const anchors = getHomeRoutineTaskIds(tasks, memberships);
+  const representedIds = buildHomeRoutineGroups(anchors, tasks).flatMap((group) => group.taskIds);
+
+  assert.deepEqual(representedIds, [parent.id, step.id]);
+  assert.equal(representedIds.includes(step.id), true);
+});
+
+test("Home Routine order reconciliation preserves, removes, deduplicates, and appends anchors", () => {
+  assert.deepEqual(
+    reconcileHomeRoutineTaskIds(["b", "missing", "b", "a"], ["a", "b", "c"]),
+    ["b", "a", "c"],
+  );
+});
+
+test("Home Routine sections use capacity without counting descendants", () => {
+  assert.equal(normalizeHomeTodoRoutinesPerPhase(undefined), 3);
+  assert.equal(normalizeHomeTodoRoutinesPerPhase(99), 3);
+  assert.deepEqual(buildHomeRoutineSections(["a", "b", "c", "d"], 3), [
+    { groupIds: ["a", "b", "c"], label: "Phase 1", phaseIndex: 1, startIndex: 0 },
+    { groupIds: ["d"], label: "Phase 2", phaseIndex: 2, startIndex: 3 },
+  ]);
+  assert.deepEqual(buildHomeRoutineSections(["a", "b", "c", "d"], 1).map((section) => section.groupIds), [["a"], ["b"], ["c"], ["d"]]);
+});
+
+test("Home Routine drag order moves whole groups and leaves To-do state independent", () => {
+  const parent = task("parent");
+  const child = task("child", { parent_task_id: parent.id });
+  const other = task("other");
+  const groups = buildHomeRoutineGroups([parent.id, other.id], [parent, child, other]);
+  const reorderedGroups = reorderListItems(groups, 0, 1);
+
+  assert.deepEqual(reorderedGroups.map((group) => group.anchorId), [other.id, parent.id]);
+  assert.deepEqual(reorderedGroups[1]?.taskIds, [parent.id, child.id]);
+  assert.deepEqual(["todo-a", "todo-b"], ["todo-a", "todo-b"]);
+});
+
+test("Home state rejects malformed Routine order and capacity while preserving To-do fields", () => {
+  assert.deepEqual(normalizeHomeTodoState({
+    clientUpdatedAt: "not-a-date",
+    schemaVersion: 3,
+    taskIds: ["todo-a", "todo-a"],
+    taskDayOffsets: { "todo-a": 2 },
+    tasksPerDay: 15,
+    routineTaskIds: ["routine-a", "routine-a", "", 4],
+    routinesPerPhase: 0,
+  }), {
+    clientUpdatedAt: new Date(0).toISOString(),
+    schemaVersion: 4,
+    taskIds: ["todo-a"],
+    taskDayOffsets: { "todo-a": 2 },
+    tasksPerDay: 15,
+    routineTaskIds: ["routine-a"],
+    routinesPerPhase: 3,
+  });
 });
 
 test("Home Routine projection is unlimited and independent of To-do capacity", () => {
@@ -584,7 +698,12 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /updateTaskDayOffset\(task\.id, 7\)/);
   assert.match(source, /Later \(\{doLaterTasks\.length\}\)/);
   assert.match(source, /Settings2/);
-  assert.match(source, /updateTasksPerDay\(tasksPerDay\)/);
+  assert.match(source, /updateTasksPerDay\(capacity\)/);
+  assert.match(source, /updateRoutinesPerPhase\(capacity\)/);
+  assert.match(source, /buildHomeRoutineSections/);
+  assert.match(source, /items=\{routineGroups\}/);
+  assert.match(source, /onReorder=\{\(nextGroups\) => updateRoutineTaskIds/);
+  assert.match(source, /Routines per phase/);
   assert.match(source, /setIsSettingsOpen\(false\)/);
   assert.match(source, /event\.key === "Escape"/);
   assert.match(sortableSource, /renderBeforeItem\?:/);
@@ -608,6 +727,7 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(logicalDaySource, /export function getLogicalDayKey/);
   assert.match(taskAppSource, /calendarNowMs=\{logicalDayNow\}/);
   assert.match(taskAppSource, /calendarTimeZone=\{userTimeZone\}/);
+  assert.match(taskAppSource, /manualMembershipsByTaskId=\{manualMembershipsByTaskId\}/);
   assert.match(source, /const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-\[#26324f\] dark:text-white"/);
   assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 3);
   assert.match(source, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto\] items-center gap-x-0/);
@@ -660,6 +780,9 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
   assert.match(source, /useState<HomePanelTab>\("todo"\)/);
   assert.match(source, /getHomeRoutineTaskIds/);
+  assert.match(source, /manualMembershipsByTaskId/);
+  assert.match(source, /routineTaskIds/);
+  assert.match(source, /routineGroups\.flatMap/);
   assert.match(source, /onSetRoutineMembership/);
   assert.match(source, /routineTasks\.map/);
   assert.match(source, /No Routine tasks yet\./);

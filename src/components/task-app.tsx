@@ -7275,6 +7275,7 @@ export function TaskApp() {
           <TaskHomePage
             allTags={allTaskTags}
             listMembershipsByTaskId={taskListMembershipsByTaskId}
+            manualMembershipsByTaskId={manualMembershipsByTaskId}
             onCreateTaskWithType={createHomeTodoTaskWithType}
             onSetRoutineMembership={(taskId, included) => setTaskManualListMembership(taskId, "routine", included)}
             onOpenTask={openTaskEditorFromId}

@@ -39,6 +39,8 @@ import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import {
   buildHomeTodoHierarchy,
   buildHomeTodoDaySections,
+  buildHomeRoutineGroups,
+  buildHomeRoutineSections,
   createHomeTodoTask,
   getHomeRoutineTaskIds,
   getHomeTodoSearchText,
@@ -46,6 +48,7 @@ import {
   mergeHomeTodoVisibleTaskIds,
   moveHomeTodoTaskIdToEdge,
   reconcileHomeTodoTaskIds,
+  reconcileHomeRoutineTaskIds,
   sortHomeTodoSearchResults,
   type HomeTodoTaskMetadata,
 } from "@/lib/home-todo-state";
@@ -84,6 +87,7 @@ type HomePanelTab = "todo" | "routine";
 
 export function HomePage({
   listMembershipsByTaskId,
+  manualMembershipsByTaskId,
   allTags,
   onCreateTaskWithType,
   onSetRoutineMembership,
@@ -103,6 +107,7 @@ export function HomePage({
   taskTypeOptions,
 }: {
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
+  manualMembershipsByTaskId: Readonly<Record<string, readonly string[]>>;
   allTags: string[];
   onCreateTaskWithType: (title: string, taskTypeSelectionValue: string, metadata: HomeTodoTaskMetadata) => Promise<Task | null>;
   onSetRoutineMembership: (taskId: string, included: boolean) => Promise<boolean>;
@@ -122,7 +127,7 @@ export function HomePage({
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
 }) {
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
-  const { state, syncStatus, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
+  const { state, syncStatus, updateRoutineTaskIds, updateRoutinesPerPhase, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("todo");
@@ -159,14 +164,22 @@ export function HomePage({
     [reconciledTaskIds, taskById],
   );
   const routineTaskIds = useMemo(
-    () => getHomeRoutineTaskIds(tasks, listMembershipsByTaskId),
-    [listMembershipsByTaskId, tasks],
+    () => getHomeRoutineTaskIds(tasks, listMembershipsByTaskId, manualMembershipsByTaskId),
+    [listMembershipsByTaskId, manualMembershipsByTaskId, tasks],
   );
-  const routineTaskIdSet = useMemo(() => new Set(routineTaskIds), [routineTaskIds]);
+  const reconciledRoutineTaskIds = useMemo(
+    () => reconcileHomeRoutineTaskIds(state.routineTaskIds, routineTaskIds),
+    [routineTaskIds, state.routineTaskIds],
+  );
+  const routineGroups = useMemo(
+    () => buildHomeRoutineGroups(reconciledRoutineTaskIds, tasks),
+    [reconciledRoutineTaskIds, tasks],
+  );
   const routineTasks = useMemo(
-    () => routineTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task)),
-    [routineTaskIds, taskById],
+    () => routineGroups.flatMap((group) => group.tasks.map(({ task }) => task)),
+    [routineGroups],
   );
+  const routineTaskIdSet = useMemo(() => new Set(routineTasks.map((task) => task.id)), [routineTasks]);
   const normalizedNewTaskTagDraft = normalizeTaskTagValue(newTaskTagDraft);
   const selectedNewTaskTagSet = new Set(newTaskTags.map((tag) => normalizeTaskTagValue(tag)));
   const dedupedNewTaskTagOptions = dedupeTaskTagLabels(allTags);
@@ -192,6 +205,10 @@ export function HomePage({
     () => buildHomeTodoDaySections(todoTasks.map((task) => task.id), state.tasksPerDay, new Date(calendarNowMs), calendarTimeZone, state.taskDayOffsets),
     [calendarNowMs, calendarTimeZone, state.taskDayOffsets, state.tasksPerDay, todoTasks],
   );
+  const routineSections = useMemo(
+    () => buildHomeRoutineSections(reconciledRoutineTaskIds, state.routinesPerPhase),
+    [reconciledRoutineTaskIds, state.routinesPerPhase],
+  );
   const dayTaskIds = daySections.flatMap((section) => section.taskIds);
   const sevenDayCapacity = dayTaskIds.length;
   const dayTasks = dayTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task));
@@ -202,9 +219,15 @@ export function HomePage({
     if (isCreateOpen) newTaskInputRef.current?.focus();
   }, [isCreateOpen]);
 
+  useEffect(() => {
+    if (!tasks.length) return;
+    updateRoutineTaskIds(() => reconciledRoutineTaskIds);
+  }, [reconciledRoutineTaskIds, tasks.length, updateRoutineTaskIds]);
+
   function selectHomeTab(nextTab: HomePanelTab) {
     setActiveHomeTab(nextTab);
     setIsSearchOpen(false);
+    setIsSettingsOpen(false);
   }
 
   function selectNewTaskRepeatFrequency(nextFrequency: TaskRepeatFrequency) {
@@ -393,8 +416,30 @@ export function HomePage({
     return daySections.reduce((dayOffset, section) => section.startIndex <= index ? section.dayIndex : dayOffset, 0);
   }
 
-  function renderHomeTask(task: Task, index: number, handle: ReactNode, mode: HomePanelTab, rowKey?: string) {
+  function renderRoutineSectionHeader(section: typeof routineSections[number]) {
+    return (
+      <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 first:mt-3 first:border-t-0 dark:border-white/10" data-sortable-drop-id={`routine-phase-${section.phaseIndex}`} data-sortable-drop-index={section.startIndex} key={`home-routine-phase-${section.phaseIndex}`}>
+        <div>
+          <h2 className="text-sm font-bold text-[#4d466d] dark:text-white/85">{section.label}</h2>
+          <p className="mt-0.5 text-xs text-[#9a92b1] dark:text-white/42">
+            {section.groupIds.length} routine group{section.groupIds.length === 1 ? "" : "s"}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  function renderHomeTask(
+    task: Task,
+    index: number,
+    handle: ReactNode,
+    mode: HomePanelTab,
+    rowKey?: string,
+    routineDepth = 0,
+    isRoutineGroupAnchor = false,
+  ) {
     const isRoutine = mode === "routine";
+    const isRoutineChild = isRoutine && !isRoutineGroupAnchor;
     const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
@@ -404,13 +449,20 @@ export function HomePage({
     const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0;
     const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state.taskIds.length - 1 && renderedDayOffset === 7;
     return (
-      <AdhdCard key={rowKey} className={isRoutine
-        ? "grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-x-0"
-        : "grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0"} padding="sm">
-        {!isRoutine ? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">{handle}</span> : null}
-        <span className="ml-1 shrink-0 text-sm font-medium leading-5 text-[#26324f] dark:text-white">
-          {index + 1}
-        </span>
+      <AdhdCard
+        key={rowKey}
+        className={isRoutineChild
+          ? "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-0"
+          : "grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0"}
+        padding="sm"
+        style={isRoutineChild ? { marginLeft: `${Math.min(Math.max(routineDepth, 1), 3) * 0.75}rem` } : undefined}
+      >
+        {!isRoutineChild ? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">{handle}</span> : null}
+        {!isRoutineChild ? (
+          <span className="ml-1 shrink-0 text-sm font-medium leading-5 text-[#26324f] dark:text-white">
+            {index + 1}
+          </span>
+        ) : null}
         <div className="relative ml-2 flex h-8 w-8 shrink-0 items-center justify-center" ref={statusMenuOpen ? statusMenuRef : undefined}>
           <button
             aria-expanded={statusMenuOpen}
@@ -458,7 +510,7 @@ export function HomePage({
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        {!isRoutineChild ? <div className="flex shrink-0 items-center gap-1">
           {isRoutine ? (
             <AdhdIconButton
               aria-label={`Remove ${task.title || "Untitled task"} from Routine`}
@@ -516,7 +568,7 @@ export function HomePage({
               </AdhdIconButton>
             </>
           )}
-        </div>
+        </div> : null}
       </AdhdCard>
     );
   }
@@ -569,11 +621,11 @@ export function HomePage({
               </div>
             </div>
             <div className="relative flex items-center gap-2" ref={settingsMenuRef}>
-              {activeHomeTab === "todo" ? (
+              {activeHomeTab === "todo" || activeHomeTab === "routine" ? (
                 <AdhdIconButton
                   aria-expanded={isSettingsOpen}
                   aria-haspopup="dialog"
-                  aria-label="To-do list settings"
+                  aria-label={`${activeHomeTab === "todo" ? "To-do list" : "Routine"} settings`}
                   onClick={() => setIsSettingsOpen((current) => !current)}
                   selected={isSettingsOpen}
                   size="sm"
@@ -582,25 +634,25 @@ export function HomePage({
                   <Settings2 aria-hidden="true" />
                 </AdhdIconButton>
               ) : null}
-              {activeHomeTab === "todo" && isSettingsOpen ? (
+              {isSettingsOpen ? (
                 <div
-                  aria-label="To-do list settings"
+                  aria-label={`${activeHomeTab === "todo" ? "To-do list" : "Routine"} settings`}
                   className="absolute right-0 top-[calc(100%+0.55rem)] z-40 grid w-[min(18rem,calc(100vw-2rem))] gap-3 rounded-[1.1rem] border border-[#ede6ff] bg-white/95 p-3 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95"
                   role="dialog"
                 >
                   <div>
-                    <h2 className="text-sm font-bold text-[#26324f] dark:text-white">To-do list settings</h2>
-                    <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">Tasks per day</p>
+                    <h2 className="text-sm font-bold text-[#26324f] dark:text-white">{activeHomeTab === "todo" ? "To-do list settings" : "Routine settings"}</h2>
+                    <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">{activeHomeTab === "todo" ? "Tasks per day" : "Routines per phase"}</p>
                   </div>
-                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="Tasks per day">
-                    {[10, 11, 12, 13, 14, 15].map((tasksPerDay) => (
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label={activeHomeTab === "todo" ? "Tasks per day" : "Routines per phase"}>
+                    {(activeHomeTab === "todo" ? [10, 11, 12, 13, 14, 15] : [1, 2, 3, 4, 5, 6]).map((capacity) => (
                       <AdhdChip
-                        key={tasksPerDay}
-                        onClick={() => updateTasksPerDay(tasksPerDay)}
-                        selected={state.tasksPerDay === tasksPerDay}
+                        key={capacity}
+                        onClick={() => activeHomeTab === "todo" ? updateTasksPerDay(capacity) : updateRoutinesPerPhase(capacity)}
+                        selected={activeHomeTab === "todo" ? state.tasksPerDay === capacity : state.routinesPerPhase === capacity}
                         type="button"
                       >
-                        {tasksPerDay}
+                        {capacity}
                       </AdhdChip>
                     ))}
                   </div>
@@ -951,10 +1003,34 @@ export function HomePage({
             </>
           ) : (
             <>
-              <div className={HOME_TODO_LIST_CLASS}>
-                {routineTasks.map((task, index) => renderHomeTask(task, index, null, "routine", task.id))}
-              </div>
-              {!routineTasks.length ? (
+              <SortableList
+                className={HOME_TODO_LIST_CLASS}
+                getId={(group) => group.anchorId}
+                getLabel={(group) => group.tasks[0]?.task.title || "Untitled task"}
+                items={routineGroups}
+                onReorder={(nextGroups) => updateRoutineTaskIds(() => nextGroups.map((group) => group.anchorId))}
+                renderAfterItems={routineSections
+                  .filter((section) => section.startIndex >= routineGroups.length)
+                  .map(renderRoutineSectionHeader)}
+                renderBeforeItem={(_, index) => routineSections
+                  .filter((section) => section.startIndex === index)
+                  .map(renderRoutineSectionHeader)}
+              >
+                {(group, index, handle) => (
+                  <div className="space-y-2">
+                    {group.tasks.map(({ depth, isAnchor, task }) => renderHomeTask(
+                      task,
+                      index,
+                      isAnchor ? handle : null,
+                      "routine",
+                      `${group.anchorId}-${task.id}`,
+                      depth,
+                      isAnchor,
+                    ))}
+                  </div>
+                )}
+              </SortableList>
+              {!routineGroups.length ? (
                 <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/[0.15] dark:bg-white/[0.03] dark:text-white/55">
                   No Routine tasks yet.
                 </p>

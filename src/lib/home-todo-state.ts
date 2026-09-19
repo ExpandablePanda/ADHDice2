@@ -3,6 +3,7 @@ import { getCalendarDayKey } from "@/lib/logical-day";
 import type { TaskPriorityLevel } from "@/lib/task-priority";
 import type { TaskListMembership } from "@/lib/task-lists";
 import { shiftDateKey } from "@/lib/task-grid-layout";
+import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 
 export type HomeTodoStateV1 = {
   clientUpdatedAt: string;
@@ -10,31 +11,42 @@ export type HomeTodoStateV1 = {
   taskIds: string[];
 };
 
-export type HomeTodoStateV2 = {
+export type HomeTodoStateV4 = {
   clientUpdatedAt: string;
-  schemaVersion: 3;
+  schemaVersion: 4;
   taskIds: string[];
   taskDayOffsets: Record<string, number>;
   tasksPerDay: HomeTodoTasksPerDay;
+  routineTaskIds: string[];
+  routinesPerPhase: HomeTodoRoutinesPerPhase;
 };
+
+export type HomeTodoStateV2 = HomeTodoStateV4;
 
 type HomeTodoStateCandidate = {
   clientUpdatedAt?: unknown;
   taskIds?: unknown;
   taskDayOffsets?: unknown;
   tasksPerDay?: unknown;
+  routineTaskIds?: unknown;
+  routinesPerPhase?: unknown;
 };
 
 export const HOME_TODO_TASKS_PER_DAY_OPTIONS = [10, 11, 12, 13, 14, 15] as const;
 export type HomeTodoTasksPerDay = typeof HOME_TODO_TASKS_PER_DAY_OPTIONS[number];
 export const DEFAULT_HOME_TODO_TASKS_PER_DAY: HomeTodoTasksPerDay = 10;
+export const HOME_ROUTINES_PER_PHASE_OPTIONS = [1, 2, 3, 4, 5, 6] as const;
+export type HomeTodoRoutinesPerPhase = typeof HOME_ROUTINES_PER_PHASE_OPTIONS[number];
+export const DEFAULT_HOME_TODO_ROUTINES_PER_PHASE: HomeTodoRoutinesPerPhase = 3;
 
-export const EMPTY_HOME_TODO_STATE: HomeTodoStateV2 = {
+export const EMPTY_HOME_TODO_STATE: HomeTodoStateV4 = {
   clientUpdatedAt: new Date(0).toISOString(),
-  schemaVersion: 3,
+  schemaVersion: 4,
   taskIds: [],
   taskDayOffsets: {},
   tasksPerDay: DEFAULT_HOME_TODO_TASKS_PER_DAY,
+  routineTaskIds: [],
+  routinesPerPhase: DEFAULT_HOME_TODO_ROUTINES_PER_PHASE,
 };
 
 export type HomeTodoDaySection<T = string> = {
@@ -43,6 +55,25 @@ export type HomeTodoDaySection<T = string> = {
   label: string;
   startIndex: number;
   taskIds: T[];
+};
+
+export type HomeRoutineSection<T = string> = {
+  groupIds: T[];
+  label: string;
+  phaseIndex: number;
+  startIndex: number;
+};
+
+export type HomeRoutineTask = {
+  depth: number;
+  isAnchor: boolean;
+  task: Task;
+};
+
+export type HomeRoutineGroup = {
+  anchorId: string;
+  taskIds: string[];
+  tasks: HomeRoutineTask[];
 };
 
 export type HomeTodoTaskMetadata = Pick<
@@ -71,6 +102,12 @@ export function normalizeHomeTodoTasksPerDay(value: unknown): HomeTodoTasksPerDa
   return HOME_TODO_TASKS_PER_DAY_OPTIONS.includes(value as HomeTodoTasksPerDay)
     ? value as HomeTodoTasksPerDay
     : DEFAULT_HOME_TODO_TASKS_PER_DAY;
+}
+
+export function normalizeHomeTodoRoutinesPerPhase(value: unknown): HomeTodoRoutinesPerPhase {
+  return HOME_ROUTINES_PER_PHASE_OPTIONS.includes(value as HomeTodoRoutinesPerPhase)
+    ? value as HomeTodoRoutinesPerPhase
+    : DEFAULT_HOME_TODO_ROUTINES_PER_PHASE;
 }
 
 function formatOrdinalDay(day: number) {
@@ -156,6 +193,24 @@ export function buildHomeTodoDaySections<T>(
   return { sections, laterTaskIds };
 }
 
+export function buildHomeRoutineSections<T>(
+  routineTaskIds: readonly T[],
+  routinesPerPhase: unknown = DEFAULT_HOME_TODO_ROUTINES_PER_PHASE,
+): HomeRoutineSection<T>[] {
+  const normalizedRoutinesPerPhase = normalizeHomeTodoRoutinesPerPhase(routinesPerPhase);
+  const sections: HomeRoutineSection<T>[] = [];
+  for (let startIndex = 0; startIndex < routineTaskIds.length; startIndex += normalizedRoutinesPerPhase) {
+    const phaseIndex = sections.length + 1;
+    sections.push({
+      groupIds: routineTaskIds.slice(startIndex, startIndex + normalizedRoutinesPerPhase),
+      label: `Phase ${phaseIndex}`,
+      phaseIndex,
+      startIndex,
+    });
+  }
+  return sections;
+}
+
 export async function createHomeTodoTask(
   title: string,
   taskTypeSelectionValue: string,
@@ -173,7 +228,7 @@ export async function createHomeTodoTask(
   return createdTask;
 }
 
-export function normalizeHomeTodoState(value: unknown): HomeTodoStateV2 {
+export function normalizeHomeTodoState(value: unknown): HomeTodoStateV4 {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...EMPTY_HOME_TODO_STATE };
   }
@@ -195,14 +250,19 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV2 {
       taskIdSet.has(taskId) && Number.isInteger(offset) && Number(offset) >= 0 && Number(offset) <= 7
     )).map(([taskId, offset]) => [taskId, Number(offset)]))
     : {};
+  const routineTaskIds = Array.isArray(candidate.routineTaskIds)
+    ? normalizeHomeRoutineTaskIds(candidate.routineTaskIds)
+    : [];
   return {
     clientUpdatedAt: Number.isFinite(parsedUpdatedAt)
       ? new Date(parsedUpdatedAt).toISOString()
       : EMPTY_HOME_TODO_STATE.clientUpdatedAt,
-    schemaVersion: 3,
+    schemaVersion: 4,
     taskIds,
     taskDayOffsets,
     tasksPerDay: normalizeHomeTodoTasksPerDay(candidate.tasksPerDay),
+    routineTaskIds,
+    routinesPerPhase: normalizeHomeTodoRoutinesPerPhase(candidate.routinesPerPhase),
   };
 }
 
@@ -236,12 +296,80 @@ export function isHomeTodoTaskEligible(
 export function getHomeRoutineTaskIds(
   tasks: readonly Task[],
   listMembershipsByTaskId: Readonly<Record<string, readonly Pick<TaskListMembership, "id">[]>>,
+  directMembershipsByTaskId?: Readonly<Record<string, readonly string[]>>,
 ) {
   const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const hierarchy = buildTaskHierarchyAdapter(tasks);
+  const directRoutineTaskIds = new Set(tasks
+    .filter((task) => directMembershipsByTaskId
+      ? (directMembershipsByTaskId[task.id] ?? []).includes("routine")
+      : (listMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === "routine"))
+    .map((task) => task.id));
   return tasks
-    .filter((task) => (listMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === "routine"))
+    .filter((task) => directRoutineTaskIds.has(task.id))
+    .filter((task) => !hierarchy.getParentChain(task.id).some((ancestor) => directRoutineTaskIds.has(ancestor.id)))
     .filter((task) => isHomeTodoTaskEligible(task, tasks, taskById))
     .map((task) => task.id);
+}
+
+export function buildHomeRoutineGroups(
+  routineTaskIds: readonly string[],
+  tasks: readonly Task[],
+) {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const hierarchy = buildTaskHierarchyAdapter(tasks);
+  const groups: HomeRoutineGroup[] = [];
+
+  for (const anchorId of routineTaskIds) {
+    const anchor = taskById.get(anchorId);
+    if (!anchor || !isHomeTodoTaskEligible(anchor, tasks, taskById)) continue;
+    const anchorDepth = hierarchy.getDepth(anchor.id) ?? 0;
+    const groupTasks: HomeRoutineTask[] = [{ depth: 0, isAnchor: true, task: anchor }];
+    for (const descendant of hierarchy.getDescendants(anchor.id)) {
+      if (!isHomeTodoTaskEligible(descendant, tasks, taskById)) continue;
+      groupTasks.push({
+        depth: Math.max(0, (hierarchy.getDepth(descendant.id) ?? anchorDepth) - anchorDepth),
+        isAnchor: false,
+        task: descendant,
+      });
+    }
+    groups.push({
+      anchorId,
+      taskIds: groupTasks.map(({ task }) => task.id),
+      tasks: groupTasks,
+    });
+  }
+
+  return groups;
+}
+
+export function reconcileHomeRoutineTaskIds(
+  routineTaskIds: readonly string[],
+  routineGroupAnchorIds: readonly string[],
+) {
+  const eligibleIds = new Set(routineGroupAnchorIds);
+  const next: string[] = [];
+  const seen = new Set<string>();
+  for (const taskId of routineTaskIds) {
+    if (!eligibleIds.has(taskId) || seen.has(taskId)) continue;
+    seen.add(taskId);
+    next.push(taskId);
+  }
+  for (const taskId of routineGroupAnchorIds) {
+    if (seen.has(taskId)) continue;
+    seen.add(taskId);
+    next.push(taskId);
+  }
+  return next;
+}
+
+function normalizeHomeRoutineTaskIds(value: readonly unknown[]) {
+  const seen = new Set<string>();
+  return value.filter((taskId): taskId is string => {
+    if (typeof taskId !== "string" || !taskId.trim() || seen.has(taskId)) return false;
+    seen.add(taskId);
+    return true;
+  });
 }
 
 export function buildHomeTodoHierarchy(
