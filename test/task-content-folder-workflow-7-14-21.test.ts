@@ -5,6 +5,7 @@ import test from "node:test";
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
 const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
+const folderHeaderSource = readFileSync(new URL("../src/components/task-app/task-content-folder-editable-header.tsx", import.meta.url), "utf8");
 const folderActionsSource = readFileSync(new URL("../src/hooks/useTaskContentFolderActions.ts", import.meta.url), "utf8");
 const taskMenuSource = tableSource;
 const folderMenuSource = readFileSync(new URL("../src/components/task-app/task-content-folder-context-menu.tsx", import.meta.url), "utf8");
@@ -33,12 +34,12 @@ test("Create Folder performs assignment and compensates a failed move", () => {
 
 test("Folder rows are the shared rename/delete management surface in Table and List", () => {
   for (const source of [tableSource, listSource]) {
-    assert.match(source, /data-style-role="tasks\.content-folder\.header"/);
     assert.match(source, /openContentFolderContextMenu\(entry\.folder\.id/);
     assert.match(source, /TaskContentFolderContextMenu/);
     assert.match(source, /onRenameTaskContentFolder/);
     assert.match(source, /onDeleteTaskContentFolder/);
   }
+  assert.match(folderHeaderSource, /data-style-role="tasks\.content-folder\.header"/);
   assert.match(folderMenuSource, /Rename Folder/);
   assert.match(folderMenuSource, /Delete Folder/);
   assert.match(folderMenuSource, /Its Tasks will stay and become ungrouped\./);

@@ -352,6 +352,7 @@ export type TaskListFolderUpdate = Partial<
 
 export type TaskContentFolder = {
   created_at: string;
+  icon_key: string;
   id: string;
   name: string;
   updated_at: string;
@@ -359,12 +360,13 @@ export type TaskContentFolder = {
 };
 
 export type TaskContentFolderInsert = {
+  icon_key?: string;
   id?: string;
   name: string;
   user_id: string;
 };
 
-export type TaskContentFolderUpdate = Partial<Pick<TaskContentFolder, "name">>;
+export type TaskContentFolderUpdate = Partial<Pick<TaskContentFolder, "icon_key" | "name">>;
 
 export type TaskListContainer = {
   created_at: string;

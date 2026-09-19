@@ -2,7 +2,7 @@ import type { Task, TaskContentFolder, TaskUpdate } from "@/lib/database.types";
 
 export const TASK_CONTENT_FOLDER_NAME_MAX_LENGTH = 120;
 
-export type TaskContentFolderRow = Pick<TaskContentFolder, "created_at" | "id" | "name" | "updated_at" | "user_id">;
+export type TaskContentFolderRow = Pick<TaskContentFolder, "created_at" | "icon_key" | "id" | "name" | "updated_at" | "user_id">;
 
 export type TaskContentFolderPresentationBlock<TTask> =
   | {
@@ -48,7 +48,9 @@ export function normalizeTaskContentFolderRow(row: unknown): TaskContentFolderRo
     return null;
   }
   const name = normalizeTaskContentFolderName(candidate.name);
-  return validateTaskContentFolderName(name) ? null : { ...candidate, name } as TaskContentFolderRow;
+  return validateTaskContentFolderName(name)
+    ? null
+    : { ...candidate, icon_key: typeof candidate.icon_key === "string" ? candidate.icon_key : "folder", name } as TaskContentFolderRow;
 }
 
 export function buildTaskContentFolderAssignmentPatch(

@@ -10,6 +10,7 @@ import {
   normalizeTaskContentFolderRow,
   validateTaskContentFolderName,
 } from "@/lib/task-content-folders";
+import { isTaskTypeIconKey } from "@/lib/task-type-presentation";
 
 type Client = NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
 type Message = { text: string; tone: "neutral" | "good" | "warn" };
@@ -112,6 +113,33 @@ export function useTaskContentFolderActions({
     return true;
   }, [client, folders, setFolders, setMessage, userId]);
 
+  const updateFolderIcon = useCallback(async (folderId: string, iconKey: string) => {
+    const folder = folders.find((entry) => entry.id === folderId);
+    if (!isTaskTypeIconKey(iconKey)) {
+      setMessage({ tone: "warn", text: "That Folder icon is not available." });
+      return false;
+    }
+    if (!client || !userId || !folder) {
+      setMessage({ tone: "warn", text: "Folder could not be found." });
+      return false;
+    }
+    const { data, error } = await client
+      .from("adhdice_task_content_folders")
+      .update({ icon_key: iconKey })
+      .eq("user_id", userId)
+      .eq("id", folderId)
+      .select("*")
+      .single();
+    const nextFolder = normalizeTaskContentFolderRow(data);
+    if (error || !nextFolder) {
+      setMessage({ tone: "warn", text: error?.message ?? "Folder icon could not be updated." });
+      return false;
+    }
+    setFolders((current) => current.map((entry) => entry.id === folderId ? nextFolder : entry));
+    setMessage({ tone: "good", text: `Folder "${nextFolder.name}" icon updated.` });
+    return true;
+  }, [client, folders, setFolders, setMessage, userId]);
+
   const deleteFolder = useCallback(async (folderId: string) => {
     const folder = folders.find((entry) => entry.id === folderId);
     if (!client || !userId || !folder) {
@@ -155,5 +183,5 @@ export function useTaskContentFolderActions({
     return didPersist;
   }, [folders, setMessage, updateTaskRow]);
 
-  return { createFolderAndMoveTask, deleteFolder, moveTaskToFolder, renameFolder };
+  return { createFolderAndMoveTask, deleteFolder, moveTaskToFolder, renameFolder, updateFolderIcon };
 }

@@ -12,8 +12,8 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import { buildTaskTableRow } from "../src/lib/task-table-row.ts";
 
 const folders = [
-  { id: "folder-a", user_id: "user-1", name: "Website Redesign", created_at: "2026-01-01", updated_at: "2026-01-01" },
-  { id: "folder-b", user_id: "user-1", name: "Music", created_at: "2026-01-02", updated_at: "2026-01-02" },
+  { id: "folder-a", user_id: "user-1", name: "Website Redesign", icon_key: "folder", created_at: "2026-01-01", updated_at: "2026-01-01" },
+  { id: "folder-b", user_id: "user-1", name: "Music", icon_key: "music", created_at: "2026-01-02", updated_at: "2026-01-02" },
 ];
 
 const task = (id: string, folderId: string | null = null, parentTaskId: string | null = null) => ({
@@ -38,6 +38,8 @@ function renderTaskIds(
 test("Task Content Folder rows normalize independently from List Folders", () => {
   const folder = normalizeTaskContentFolderRow({ ...folders[0], name: "  Website Redesign  " });
   assert.equal(folder?.name, "Website Redesign");
+  assert.equal(folder?.icon_key, "folder");
+  assert.equal(normalizeTaskContentFolderRow({ ...folders[0], icon_key: undefined })?.icon_key, "folder");
   assert.equal(normalizeTaskContentFolderRow({ id: "list-folder", name: "List Folder" }), null);
 });
 

@@ -298,8 +298,12 @@ export function searchTaskTypeIcons(query: string) {
     .map((result) => result.option);
 }
 
+export function isTaskTypeIconKey(value: unknown): value is TaskTypeIconKey {
+  return typeof value === "string" && (iconByKey.has(value) || LUCIDE_ICON_NAME_SET.has(value));
+}
+
 export function normalizeTaskTypePresentation(value: Partial<Record<"iconKey" | "accentKey" | "description", unknown>> | null | undefined): TaskTypePresentation {
-  const iconKey = (iconByKey.has(value?.iconKey as TaskTypeIconKey) || LUCIDE_ICON_NAME_SET.has(value?.iconKey)) ? value?.iconKey as TaskTypeIconKey : DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION.iconKey;
+  const iconKey = isTaskTypeIconKey(value?.iconKey) ? value.iconKey : DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION.iconKey;
   const accentKey = accentByKey.has(value?.accentKey as TaskTypeAccentKey) ? value?.accentKey as TaskTypeAccentKey : DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION.accentKey;
   const description = typeof value?.description === "string" ? value.description.trim().slice(0, 240) : "";
   return { iconKey, accentKey, description };

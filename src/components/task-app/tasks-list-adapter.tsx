@@ -1,5 +1,5 @@
 "use client";
-import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, CirclePause, CirclePlay, Clock3, Ellipsis, ExternalLink, Eye, EyeOff, Folder, Footprints, GripVertical, ListTodo, Pin, Skull, Tag, TimerReset, Trash2, Trophy, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, CirclePause, CirclePlay, Clock3, Ellipsis, ExternalLink, Eye, EyeOff, Footprints, GripVertical, ListTodo, Pin, Skull, Tag, TimerReset, Trash2, Trophy, X } from "lucide-react";
 import {
   buildMoveIntoParentOptions,
   buildTaskRowContextMenuState,
@@ -39,6 +39,7 @@ import {
   TaskContentFolderContextMenu,
   type TaskContentFolderContextMenuState,
 } from "./task-content-folder-context-menu";
+import { TaskContentFolderEditableHeader, type TaskContentFolderEditSurface } from "./task-content-folder-editable-header";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
@@ -284,6 +285,7 @@ type TasksTableSourceProps = {
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
   onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
   onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
+  onUpdateTaskContentFolderIcon?: (folderId: string, iconKey: string) => Promise<boolean>;
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
   onMoveTaskToContentFolder?: (taskId: string, folderId: string | null) => Promise<boolean> | boolean;
   allListOptions?: Array<{ id: string; label: string }>;
@@ -708,6 +710,7 @@ export function TasksTableAdapter({
           onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
           onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder}
           onRenameTaskContentFolder={tableProps.onRenameTaskContentFolder}
+          onUpdateTaskContentFolderIcon={tableProps.onUpdateTaskContentFolderIcon}
           onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
           onMoveTaskToContentFolder={tableProps.onMoveTaskToContentFolder}
           onUnlinkTask={tableProps.onUnlinkTask}
@@ -2668,6 +2671,7 @@ function TasksSimpleList({
   );
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [contentFolderContextMenu, setContentFolderContextMenu] = useState<TaskContentFolderContextMenuState | null>(null);
+  const [activeTaskContentFolderEdit, setActiveTaskContentFolderEdit] = useState<TaskContentFolderEditSurface>(null);
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
   const [visibleMetadataTaskIds, setVisibleMetadataTaskIds] = useState<Set<string>>(() => new Set());
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
@@ -3105,6 +3109,7 @@ function TasksSimpleList({
     const nextMenu = buildTaskContentFolderContextMenuState(listShellRef.current, folderId, clientX, clientY);
     if (!nextMenu) return false;
     setRowContextMenu(null);
+    setActiveTaskContentFolderEdit(null);
     setContentFolderContextMenu(nextMenu);
     return true;
   }
@@ -3230,6 +3235,7 @@ function TasksSimpleList({
               onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
               onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder}
               onRenameTaskContentFolder={tableProps.onRenameTaskContentFolder}
+              onUpdateTaskContentFolderIcon={tableProps.onUpdateTaskContentFolderIcon}
               onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
               onMoveTaskToContentFolder={tableProps.onMoveTaskToContentFolder}
               onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
@@ -3339,23 +3345,20 @@ function TasksSimpleList({
                 if (entry.kind === "folder") {
                   return (
                     <Fragment key={`content-folder:${entry.folder.id}`}>
-                      <button
-                        aria-expanded={!entry.collapsed}
-                        className="flex w-full items-center gap-2 rounded-[1rem] border border-[#e7defb] bg-[#faf8ff] px-3 py-2 text-left text-sm text-[#4b4469] transition hover:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.035] dark:text-white/80"
-                        data-style-role="tasks.content-folder.header"
-                        onClick={() => tableProps.onToggleTaskContentFolderCollapsed?.(entry.folder.id)}
-                        onContextMenu={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY);
+                      <TaskContentFolderEditableHeader
+                        activeSurface={activeTaskContentFolderEdit}
+                        collapsed={entry.collapsed}
+                        folder={entry.folder}
+                        memberCount={entry.members.length}
+                        onContextMenu={(event) => openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY)}
+                        onRename={tableProps.onRenameTaskContentFolder}
+                        onSurfaceChange={(surface) => {
+                          setActiveTaskContentFolderEdit(surface);
+                          if (surface) setContentFolderContextMenu(null);
                         }}
-                        type="button"
-                      >
-                        <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${entry.collapsed ? "" : "rotate-90"}`} />
-                        <Folder className="h-4 w-4 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
-                        <span className="min-w-0 flex-1 truncate" data-style-role="tasks.content-folder.title">{entry.folder.name}</span>
-                        <span className="shrink-0 text-xs text-[#8d87a7] dark:text-white/50" data-style-role="tasks.content-folder.count">{entry.members.length} visible {entry.members.length === 1 ? "Task" : "Tasks"}</span>
-                      </button>
+                        onToggle={() => tableProps.onToggleTaskContentFolderCollapsed?.(entry.folder.id)}
+                        onUpdateIcon={tableProps.onUpdateTaskContentFolderIcon}
+                      />
                     </Fragment>
                   );
                 }

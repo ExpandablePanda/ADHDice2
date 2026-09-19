@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Folder, Pencil, Trash2, X } from "lucide-react";
+import { Check, Pencil, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { TaskContentFolder } from "@/lib/database.types";
 import {
@@ -9,6 +9,8 @@ import {
   TASK_TABLE_INPUT_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
+import { TaskTypeIcon } from "@/components/ui/lucide-icon";
+import { isTaskTypeIconKey } from "@/lib/task-type-presentation";
 
 export type TaskContentFolderContextMenuState = {
   folderId: string;
@@ -42,7 +44,7 @@ export function buildTaskContentFolderContextMenuState(
 }
 
 type Props = {
-  folder: Pick<TaskContentFolder, "id" | "name">;
+  folder: Pick<TaskContentFolder, "icon_key" | "id" | "name">;
   menu: TaskContentFolderContextMenuState;
   onDelete: (folderId: string) => Promise<boolean>;
   onDismiss: () => void;
@@ -76,7 +78,7 @@ export function TaskContentFolderContextMenu({ folder, menu, onDelete, onDismiss
             Folder actions
           </p>
           <p className="mt-1 flex min-w-0 items-center gap-1.5 text-sm font-medium text-[#2f294a] dark:text-white">
-            <Folder className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+            <TaskTypeIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" iconKey={isTaskTypeIconKey(folder.icon_key) ? folder.icon_key : "folder"} />
             <span className="truncate">{folder.name}</span>
           </p>
         </div>

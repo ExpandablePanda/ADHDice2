@@ -156,6 +156,7 @@ create table public.adhdice_task_content_folders (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
+  icon_key text not null default 'folder',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint adhdice_task_content_folders_name_check
