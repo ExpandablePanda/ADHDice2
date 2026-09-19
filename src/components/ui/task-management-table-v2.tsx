@@ -1348,7 +1348,7 @@ type TaskManagementTableV2Props = {
   collapsedTaskContentFolderIds?: ReadonlySet<string>;
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
   onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
-  onAddTaskToContentFolder?: (folderId: string, title: string) => Promise<boolean> | boolean;
+  onAddTaskToContentFolder?: (folderId: string, title: string, taskTypeSelectionValue: string) => Promise<boolean> | boolean;
   onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
   onUpdateTaskContentFolderIcon?: (folderId: string, iconKey: string) => Promise<boolean>;
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
@@ -9404,6 +9404,7 @@ export function TaskManagementTableV2({
                         memberCount={entry.members.length}
                         onContextMenu={(event) => openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY)}
                         onAddTaskToFolder={onAddTaskToContentFolder}
+                        customBehaviorRulesets={customBehaviorRulesets}
                         onRename={onRenameTaskContentFolder}
                         onSurfaceChange={(surface) => {
                           setActiveTaskContentFolderEdit(surface);

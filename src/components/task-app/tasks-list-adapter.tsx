@@ -289,7 +289,7 @@ type TasksTableSourceProps = {
   collapsedTaskContentFolderIds?: ReadonlySet<string>;
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
   onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
-  onAddTaskToContentFolder?: (folderId: string, title: string) => Promise<boolean> | boolean;
+  onAddTaskToContentFolder?: (folderId: string, title: string, taskTypeSelectionValue: string) => Promise<boolean> | boolean;
   onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
   onUpdateTaskContentFolderIcon?: (folderId: string, iconKey: string) => Promise<boolean>;
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
@@ -3375,6 +3375,7 @@ function TasksSimpleList({
                         memberCount={entry.members.length}
                         onContextMenu={(event) => openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY)}
                         onAddTaskToFolder={tableProps.onAddTaskToContentFolder}
+                        customBehaviorRulesets={tableProps.customBehaviorRulesets}
                         onRename={tableProps.onRenameTaskContentFolder}
                         onSurfaceChange={(surface) => {
                           setActiveTaskContentFolderEdit(surface);

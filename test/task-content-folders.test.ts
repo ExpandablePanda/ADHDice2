@@ -6,6 +6,7 @@ import {
   buildTaskContentFolderAssignmentPatch,
   buildTaskContentFolderPresentation,
   countVisibleTaskContentFolderMembers,
+  getTaskContentFolderRoutineToggleTaskIds,
   normalizeTaskContentFolderRow,
   validateTaskContentFolderMembership,
 } from "../src/lib/task-content-folders.ts";
@@ -173,6 +174,25 @@ test("Folder member summaries use all direct members and keep Steps out of bulk 
   assert.equal(summary.anyRoutine, true);
   assert.equal(summary.allRoutine, false);
   assert.equal(summary.attentionCount, 1);
+  assert.deepEqual(getTaskContentFolderRoutineToggleTaskIds(summary), ["hidden"]);
+});
+
+test("Folder Routine bulk toggling adds missing direct members and removes all when selected", () => {
+  assert.deepEqual(getTaskContentFolderRoutineToggleTaskIds({
+    allRoutine: false,
+    memberTaskIds: ["task-a", "task-b", "task-c"],
+    routineTaskIds: ["task-a"],
+  }), ["task-b", "task-c"]);
+  assert.deepEqual(getTaskContentFolderRoutineToggleTaskIds({
+    allRoutine: true,
+    memberTaskIds: ["task-a", "task-b"],
+    routineTaskIds: ["task-a", "task-b"],
+  }), ["task-a", "task-b"]);
+  assert.deepEqual(getTaskContentFolderRoutineToggleTaskIds({
+    allRoutine: false,
+    memberTaskIds: [],
+    routineTaskIds: [],
+  }), []);
 });
 
 test("An empty Folder does not appear fully pinned or fully in Routine", () => {

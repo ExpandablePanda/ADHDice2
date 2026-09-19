@@ -114,7 +114,7 @@ export function getTaskListCapabilities(list: Pick<TaskListDefinition, "id" | "i
   const usesRuleEvaluation = isAttention || list.membershipMode === "rules" || list.membershipMode === "hybrid";
   return {
     acceptsManualMembership: !isAttention && list.id !== "today",
-    canAssignManualMembership: isManualTaskListDestination(list),
+    canAssignManualMembership: list.id === "routine" || isManualTaskListDestination(list),
     canDelete: list.type === "custom" && list.isDeletable,
     canEditRules: usesRuleEvaluation && (isAttention || list.isEditable),
     canRename: list.type === "custom" && list.isEditable,

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.25`.
+- Current working app version: `7.14.26`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.14.26 Restore Routine Assignment and Typed Folder Task Creation
+
+Routine remains an app-owned system list while its dedicated Task and Folder
+toolbar actions can persist manual membership through
+`adhdice_task_list_manual_memberships`. Folder Add Task now uses a compact
+left-aligned card with the shared Task Type selector, resolves active named
+Custom identities before canonical Task creation, and assigns the created Task
+to the Folder afterward. Browser QA remains Andrew's responsibility.
 
 ## 2026-09-19 7.14.25 Keep Folder Actions Beside the Title
 

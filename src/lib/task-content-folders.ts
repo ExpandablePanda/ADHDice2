@@ -66,6 +66,12 @@ export function buildTaskContentFolderMemberSummary(
   };
 }
 
+export function getTaskContentFolderRoutineToggleTaskIds(summary: Pick<TaskContentFolderMemberSummary, "allRoutine" | "memberTaskIds" | "routineTaskIds">) {
+  return summary.allRoutine
+    ? summary.routineTaskIds
+    : summary.memberTaskIds.filter((taskId) => !summary.routineTaskIds.includes(taskId));
+}
+
 export function normalizeTaskContentFolderName(value: string) {
   return value.trim().slice(0, TASK_CONTENT_FOLDER_NAME_MAX_LENGTH);
 }

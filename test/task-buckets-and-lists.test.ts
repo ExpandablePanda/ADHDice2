@@ -91,13 +91,37 @@ test("task list evaluation honors manual memberships and date-added rules", () =
   });
 });
 
-test("built-in task lists include Routine as a persisted manual system list", () => {
+test("built-in task lists keep Routine system-owned while allowing dedicated manual assignment", () => {
   const routineList = getBuiltInTaskLists().find((list) => list.id === "routine") ?? null;
 
   assert.ok(routineList);
-  assert.equal(routineList?.membershipMode, "manual");
+  assert.equal(routineList?.membershipMode, "system");
   assert.equal(routineList?.type, "system");
   assert.equal(routineList?.name, "Routine");
+  assert.equal(getTaskListCapabilities(routineList!).acceptsManualMembership, true);
+  assert.equal(getTaskListCapabilities(routineList!).canAssignManualMembership, true);
+  assert.equal(isManualTaskListDestination(routineList!), false);
+});
+
+test("Routine membership evaluates from the existing persisted manual-membership map", () => {
+  const task = createTask({ id: "routine-task", status: "pending", title: "Routine task" });
+  const lists = getBuiltInTaskLists();
+  const context = createTaskListEvaluationContext({
+    manualMembershipsByTaskId: buildManualMembershipMap([{
+      created_at: "2026-06-24T10:00:00.000Z",
+      id: "routine-membership",
+      list_id: "routine",
+      task_id: task.id,
+      user_id: "test-user",
+    }]),
+  });
+
+  assert.deepEqual(evaluateTaskListMemberships(task, lists, context).find((membership) => membership.id === "routine"), {
+    id: "routine",
+    isManual: false,
+    source: "manual",
+  });
+  assert.equal(taskBelongsToList(task, "routine", lists, context), true);
 });
 
 test("Attention is a visible system-owned derived list and ignores manual membership", () => {
@@ -114,6 +138,8 @@ test("Attention is a visible system-owned derived list and ignores manual member
   assert.equal(taskListUsesRuleEvaluation(attentionList!), true);
   assert.equal(taskListUsesRuleEvaluation(getBuiltInTaskLists().find((list) => list.id === "routine")!), false);
   assert.equal(taskListUsesRuleEvaluation(getBuiltInTaskLists().find((list) => list.id === "milestones")!), false);
+  assert.equal(getTaskListCapabilities(getBuiltInTaskLists().find((list) => list.id === "all")!).canAssignManualMembership, false);
+  assert.equal(getTaskListCapabilities(getBuiltInTaskLists().find((list) => list.id === "milestones")!).canAssignManualMembership, false);
   assert.deepEqual(resolveEffectiveTaskListRules({ id: "attention", rules: null }), attentionList?.rules);
   assert.deepEqual(resolveEffectiveTaskListRules({ id: "attention", rules: { rules: [] } }), { rules: [] });
   assert.deepEqual(getTaskListCapabilities(attentionList!), {

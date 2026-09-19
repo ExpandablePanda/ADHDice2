@@ -4152,13 +4152,22 @@ export function TaskApp() {
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
   });
-  const addTaskToContentFolder = useCallback(async (folderId: string, rawTitle: string) => {
+  const addTaskToContentFolder = useCallback(async (folderId: string, rawTitle: string, taskTypeSelectionValue = "task") => {
     const title = rawTitle.trim();
     if (!title) {
       setMessage({ tone: "warn", text: "Task title can't be empty." });
       return false;
     }
-    const createdTask = await addTask(buildNewTaskDraft(title));
+    const selection = resolveTaskTypeSelection(taskTypeSelectionValue, customBehaviorRulesets);
+    if (!selection) {
+      setMessage({ tone: "warn", text: "That Task Type is no longer available." });
+      return false;
+    }
+    const createdTask = await addTask({
+      ...buildNewTaskDraft(title),
+      custom_ruleset_id: selection.customRulesetId,
+      task_type: selection.taskType,
+    });
     if (!createdTask) return false;
 
     const didMove = await taskContentFolderActions.moveTaskToFolder(createdTask, folderId);
@@ -4170,7 +4179,7 @@ export function TaskApp() {
       return false;
     }
     return true;
-  }, [addTask, setMessage, taskContentFolderActions.moveTaskToFolder]);
+  }, [addTask, customBehaviorRulesets, setMessage, taskContentFolderActions.moveTaskToFolder]);
   async function updateTaskSubtaskStatusWithPolicy(subtaskId: string, status: TaskStatus) {
     const subtask = tasks.find((task) => task.id === subtaskId) ?? null;
     const action = taskManualActionForStatus(status);

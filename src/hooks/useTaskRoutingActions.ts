@@ -104,6 +104,11 @@ export function useTaskRoutingActions({
         .single();
 
       if (error) {
+        setTaskListManualMemberships((current) => current.filter((membership) => !(
+          membership.task_id === taskId
+          && membership.list_id === listId
+          && membership.id.startsWith("temp:")
+        )));
         if (isMissingTaskListManualMembershipsTableError(error.message)) {
           return;
         }
@@ -131,7 +136,16 @@ export function useTaskRoutingActions({
         .eq("user_id", currentUserId);
 
       if (error && !isMissingTaskListManualMembershipsTableError(error.message)) {
+        if (existingMembership) {
+          setTaskListManualMemberships((current) => current.some((membership) => membership.task_id === taskId && membership.list_id === listId)
+            ? current
+            : [...current, existingMembership]);
+        }
         setMessage({ tone: "warn", text: error.message });
+      } else if (error && existingMembership) {
+        setTaskListManualMemberships((current) => current.some((membership) => membership.task_id === taskId && membership.list_id === listId)
+          ? current
+          : [...current, existingMembership]);
       }
     }
   }
