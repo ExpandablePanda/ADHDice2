@@ -2691,14 +2691,6 @@ function TasksSimpleList({
     () => buildTaskContentFolderPresentation(windowedTasks, tableProps.taskContentFolders ?? []),
     [tableProps.taskContentFolders, windowedTasks],
   );
-  const taskContentFolderBlockByFirstTaskId = useMemo(
-    () => new Map(
-      taskContentFolderPresentation
-        .filter((block) => block.kind === "folder")
-        .flatMap((block) => block.members.length > 0 ? [[block.members[0].id, block] as const] : []),
-    ),
-    [taskContentFolderPresentation],
-  );
   useEffect(() => {
     if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
       return;
@@ -3282,7 +3274,36 @@ function TasksSimpleList({
               visibleColumns={OVERLAY_VISIBLE_COLUMNS}
             />
           ) : null}
-            {windowedTasks.map((task) => {
+            {taskContentFolderPresentation
+              .flatMap((block) => {
+                if (block.kind === "task") return [{ kind: "task" as const, task: block.task }];
+                const collapsed = tableProps.collapsedTaskContentFolderIds?.has(block.folder.id) ?? false;
+                return [
+                  { kind: "folder" as const, folder: block.folder, members: block.members, collapsed },
+                  ...(collapsed ? [] : block.members.map((task) => ({ kind: "task" as const, task }))),
+                ];
+              })
+              .map((entry) => {
+                if (entry.kind === "folder") {
+                  return (
+                    <Fragment key={`content-folder:${entry.folder.id}`}>
+                      <button
+                        aria-expanded={!entry.collapsed}
+                        className="flex w-full items-center gap-2 rounded-[1rem] border border-[#e7defb] bg-[#faf8ff] px-3 py-2 text-left text-sm text-[#4b4469] transition hover:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.035] dark:text-white/80"
+                        data-style-role="tasks.content-folder.header"
+                        onClick={() => tableProps.onToggleTaskContentFolderCollapsed?.(entry.folder.id)}
+                        type="button"
+                      >
+                        <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${entry.collapsed ? "" : "rotate-90"}`} />
+                        <Folder className="h-4 w-4 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+                        <span className="min-w-0 flex-1 truncate" data-style-role="tasks.content-folder.title">{entry.folder.name}</span>
+                        <span className="shrink-0 text-xs text-[#8d87a7] dark:text-white/50" data-style-role="tasks.content-folder.count">{entry.members.length} visible {entry.members.length === 1 ? "Task" : "Tasks"}</span>
+                      </button>
+                    </Fragment>
+                  );
+                }
+
+        const task = entry.task;
         const taskTypeOption = resolveTaskTypeSelectionOption(task.task_type, task.custom_ruleset_id, tableProps.customBehaviorRulesets);
         const taskSurface = getTaskTypeSurfaceClassName(taskTypeOption.accentKey);
         const displayStatus = rowContext.taskDisplayStatusByTaskId[task.id] ?? task.status;
@@ -3355,26 +3376,9 @@ function TasksSimpleList({
             (effectiveStepPreviewGroup && (effectiveStepPreviewGroup.items.length > 0 || parentStepDraftTaskId === task.id))
           ),
         );
-        const contentFolderBlock = taskContentFolderBlockByFirstTaskId.get(task.id);
-        const contentFolderCollapsed = contentFolderBlock?.kind === "folder"
-          && (tableProps.collapsedTaskContentFolderIds?.has(contentFolderBlock.folder.id) ?? false);
         return (
           <Fragment key={task.id}>
-            {contentFolderBlock?.kind === "folder" ? (
-              <button
-                aria-expanded={!contentFolderCollapsed}
-                className="flex w-full items-center gap-2 rounded-[1rem] border border-[#e7defb] bg-[#faf8ff] px-3 py-2 text-left text-sm text-[#4b4469] transition hover:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.035] dark:text-white/80"
-                data-style-role="tasks.content-folder.header"
-                onClick={() => tableProps.onToggleTaskContentFolderCollapsed?.(contentFolderBlock.folder.id)}
-                type="button"
-              >
-                <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${contentFolderCollapsed ? "" : "rotate-90"}`} />
-                <Folder className="h-4 w-4 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
-                <span className="min-w-0 flex-1 truncate" data-style-role="tasks.content-folder.title">{contentFolderBlock.folder.name}</span>
-                <span className="shrink-0 text-xs text-[#8d87a7] dark:text-white/50" data-style-role="tasks.content-folder.count">{contentFolderBlock.members.length} visible {contentFolderBlock.members.length === 1 ? "Task" : "Tasks"}</span>
-              </button>
-            ) : null}
-            {contentFolderCollapsed ? null : <div className="space-y-3" data-task-list-hierarchy-group={task.id}>
+            <div className="space-y-3" data-task-list-hierarchy-group={task.id}>
             <article
               className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${taskSurface} ${
                 selectedTaskIdSet.has(task.id)
@@ -3878,10 +3882,10 @@ function TasksSimpleList({
                 visibleMetadataTaskIds={visibleMetadataTaskIds}
               />
             ) : null}
-          </div>}
+          </div>
           </Fragment>
         );
-      })}
+        })}
           {windowedTasks.length < tasks.length ? <div aria-hidden="true" className="h-px" ref={loadMoreListRowsRef} /> : null}
           {rowContextMenu && rowContextMenuTask ? (
             <TaskRowContextMenu

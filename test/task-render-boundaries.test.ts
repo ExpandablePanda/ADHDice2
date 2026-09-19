@@ -10,7 +10,7 @@ const shellSource = readFileSync(new URL("../src/components/task-app/tasks-page.
 
 test("Table interaction state stays in the direct windowed hierarchy render", () => {
   assert.doesNotMatch(tableSource, /TaskTableRow|uiRevision|areTaskRowPropsEqual|render=\{\(\) => \(/);
-  assert.match(tableSource, /renderedTasks\.map\(\(task\) =>/);
+  assert.match(tableSource, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
   assert.match(tableSource, /hasRenderedDescendants/);
   assert.match(tableSource, /hasTableStepDraft/);
   assert.match(tableSource, /setOverlayMode\(mode\)/);
@@ -22,9 +22,9 @@ test("Table interaction state stays in the direct windowed hierarchy render", ()
 
 test("List interaction state stays in the direct windowed hierarchy render", () => {
   assert.doesNotMatch(listSource, /TaskListRow|uiRevision|areTaskRowPropsEqual|render=\{\(\) => \(/);
-  assert.match(listSource, /windowedTasks\.map\(\(task\) =>/);
+  assert.match(listSource, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
   assert.match(listSource, /isQuickPanelOpen/);
-  assert.match(listSource, /tableProps\.onOpenTaskEditor\?\.\(task\.id\)/);
+  assert.match(listSource, /tableProps\.onOpenTaskEditor\?\.\(task\.id, visibleTaskIds\)/);
   assert.match(listSource, /tableProps\.onOpenTaskHistory\?\.\(task\.id\)/);
   assert.match(listSource, /TaskStatusCircleRail/);
   assert.match(listSource, /runningTimerByTaskId\.get\(task\.id\)/);

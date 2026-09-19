@@ -3407,14 +3407,6 @@ export function TaskManagementTableV2({
     () => buildTaskContentFolderPresentation(renderedTasks, taskContentFolders),
     [renderedTasks, taskContentFolders],
   );
-  const taskContentFolderBlockByFirstTaskId = useMemo(
-    () => new Map(
-      taskContentFolderPresentation
-        .filter((block) => block.kind === "folder")
-        .flatMap((block) => block.members.length > 0 ? [[block.members[0].id, block] as const] : []),
-    ),
-    [taskContentFolderPresentation],
-  );
   useLayoutEffect(() => {
     startTableScrollTopHoldFrames(true);
   }, [displayedTasks, renderedTasks.length, startTableScrollTopHoldFrames]);
@@ -9300,7 +9292,36 @@ export function TaskManagementTableV2({
               <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} rounded-[1.25rem] border border-dashed border-[#ddd6fb] bg-[#fbfaff] px-6 py-10 text-center ${BODY_MUTED_VALUE_CLASS}`}>
                 No rows match the current table filters.
               </div>
-            ) : renderedTasks.map((task) => {
+            ) : taskContentFolderPresentation
+              .flatMap((block) => {
+                if (block.kind === "task") return [{ kind: "task" as const, task: block.task }];
+                const collapsed = collapsedTaskContentFolderIds.has(block.folder.id);
+                return [
+                  { kind: "folder" as const, folder: block.folder, members: block.members, collapsed },
+                  ...(collapsed ? [] : block.members.map((task) => ({ kind: "task" as const, task }))),
+                ];
+              })
+              .map((entry) => {
+                if (entry.kind === "folder") {
+                  return (
+                    <Fragment key={`content-folder:${entry.folder.id}`}>
+                      <button
+                        aria-expanded={!entry.collapsed}
+                        className="flex w-full items-center gap-2 rounded-[1rem] border border-[#e7defb] bg-[#faf8ff] px-3 py-2 text-left text-sm text-[#4b4469] transition hover:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.035] dark:text-white/80"
+                        data-style-role="tasks.content-folder.header"
+                        onClick={() => onToggleTaskContentFolderCollapsed?.(entry.folder.id)}
+                        type="button"
+                      >
+                        <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${entry.collapsed ? "" : "rotate-90"}`} />
+                        <Folder className="h-4 w-4 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+                        <span className="min-w-0 flex-1 truncate" data-style-role="tasks.content-folder.title">{entry.folder.name}</span>
+                        <span className="shrink-0 text-xs text-[#8d87a7] dark:text-white/50" data-style-role="tasks.content-folder.count">{entry.members.length} visible {entry.members.length === 1 ? "Task" : "Tasks"}</span>
+                      </button>
+                    </Fragment>
+                  );
+                }
+
+                const task = entry.task;
               const taskTypeOption = resolveTaskTypeSelectionOption(task.taskType, task.customRulesetId, customBehaviorRulesets);
               const taskSurface = getTaskTypeTableRowSurfaceClassName(taskTypeOption.accentKey);
               const visibleSubtasks = filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds);
@@ -9335,27 +9356,10 @@ export function TaskManagementTableV2({
               const showInlineAccordion = allowInlineInspector
                 && selectedTaskId === task.id
                 && isInlineAccordionMode(overlayMode);
-              const contentFolderBlock = taskContentFolderBlockByFirstTaskId.get(task.id);
-              const contentFolderCollapsed = contentFolderBlock?.kind === "folder"
-                && collapsedTaskContentFolderIds.has(contentFolderBlock.folder.id);
 
-              return (
+                return (
                 <Fragment key={`task:${getPrototypeTaskRowKey(task)}`}>
-                  {contentFolderBlock?.kind === "folder" ? (
-                    <button
-                      aria-expanded={!contentFolderCollapsed}
-                      className="flex w-full items-center gap-2 rounded-[1rem] border border-[#e7defb] bg-[#faf8ff] px-3 py-2 text-left text-sm text-[#4b4469] transition hover:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.035] dark:text-white/80"
-                      data-style-role="tasks.content-folder.header"
-                      onClick={() => onToggleTaskContentFolderCollapsed?.(contentFolderBlock.folder.id)}
-                      type="button"
-                    >
-                      <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${contentFolderCollapsed ? "" : "rotate-90"}`} />
-                      <Folder className="h-4 w-4 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
-                      <span className="min-w-0 flex-1 truncate" data-style-role="tasks.content-folder.title">{contentFolderBlock.folder.name}</span>
-                      <span className="shrink-0 text-xs text-[#8d87a7] dark:text-white/50" data-style-role="tasks.content-folder.count">{contentFolderBlock.members.length} visible {contentFolderBlock.members.length === 1 ? "Task" : "Tasks"}</span>
-                    </button>
-                  ) : null}
-                  {contentFolderCollapsed ? null : <div
+                  <div
                   className={`w-max min-w-full space-y-1.5 ${hasRenderedDescendants ? "bg-white dark:bg-[#181226]" : ""}`}
                   data-task-table-hierarchy-group={task.id}
                 >
@@ -9463,10 +9467,10 @@ export function TaskManagementTableV2({
                       {renderSourceStepMiniRows(task, visibleSubtasks)}
                     </motion.div>
                   ) : null}
-                </div>}
+                </div>
                 </Fragment>
               );
-            })}
+              })}
             {remainingRenderedTaskCount > 0 || hasMoreRows ? (
               <div
                 aria-hidden="true"

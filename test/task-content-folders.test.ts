@@ -20,6 +20,19 @@ const task = (id: string, folderId: string | null = null, parentTaskId: string |
   task_content_folder_id: folderId,
 });
 
+function renderTaskIds(
+  presentation: Array<
+    | { kind: "task"; task: { id: string } }
+    | { kind: "folder"; folder: { id: string }; members: Array<{ id: string }> }
+  >,
+  collapsedFolderIds = new Set<string>(),
+) {
+  return presentation.flatMap((block) => {
+    if (block.kind === "task") return [block.task.id];
+    return collapsedFolderIds.has(block.folder.id) ? [] : block.members.map((member) => member.id);
+  });
+}
+
 test("Task Content Folder rows normalize independently from List Folders", () => {
   const folder = normalizeTaskContentFolderRow({ ...folders[0], name: "  Website Redesign  " });
   assert.equal(folder?.name, "Website Redesign");
@@ -51,12 +64,31 @@ test("Folder Task to parent clears membership atomically and unlink remains ungr
 });
 
 test("Folder presentation groups only already-visible sorted Tasks", () => {
-  const visible = [task("standalone-first"), task("folder-second", "folder-a"), task("folder-third", "folder-a"), task("other-folder", "folder-b"), task("standalone-last")];
+  const visible = [
+    task("standalone-first"),
+    task("folder-second", "folder-a"),
+    task("standalone-middle"),
+    task("folder-fourth", "folder-a"),
+    task("other-folder", "folder-b"),
+    task("standalone-last"),
+  ];
   const presentation = buildTaskContentFolderPresentation(visible, folders);
-  assert.deepEqual(presentation.map((block) => block.kind === "folder" ? block.folder.id : block.task.id), ["standalone-first", "folder-a", "folder-b", "standalone-last"]);
-  assert.deepEqual(presentation.find((block) => block.kind === "folder" && block.folder.id === "folder-a")?.members.map((member) => member.id), ["folder-second", "folder-third"]);
+  assert.deepEqual(presentation.map((block) => block.kind === "folder" ? block.folder.id : block.task.id), ["standalone-first", "folder-a", "standalone-middle", "folder-b", "standalone-last"]);
+  assert.deepEqual(presentation.find((block) => block.kind === "folder" && block.folder.id === "folder-a")?.members.map((member) => member.id), ["folder-second", "folder-fourth"]);
+  assert.deepEqual(renderTaskIds(presentation), ["standalone-first", "folder-second", "folder-fourth", "standalone-middle", "other-folder", "standalone-last"]);
+  assert.deepEqual(renderTaskIds(presentation, new Set(["folder-a"])), ["standalone-first", "standalone-middle", "other-folder", "standalone-last"]);
   assert.equal(countVisibleTaskContentFolderMembers(visible, "folder-a"), 2);
-  assert.equal(countVisibleTaskContentFolderMembers(visible.filter((item) => item.id !== "folder-third"), "folder-a"), 1);
+  assert.equal(countVisibleTaskContentFolderMembers(visible.filter((item) => item.id !== "folder-fourth"), "folder-a"), 1);
+});
+
+test("Folder members keep their own nested hierarchy while block collapse hides every member", () => {
+  const member = { ...task("folder-member", "folder-a"), subtasks: [{ id: "member-step" }] };
+  const presentation = buildTaskContentFolderPresentation([member, task("standalone", null)], folders);
+  const folderBlock = presentation.find((block) => block.kind === "folder");
+  assert.equal(folderBlock?.kind, "folder");
+  assert.deepEqual(folderBlock?.kind === "folder" ? folderBlock.members[0].subtasks : [], [{ id: "member-step" }]);
+  assert.deepEqual(renderTaskIds(presentation, new Set(["folder-a"])), ["standalone"]);
+  assert.deepEqual(renderTaskIds(presentation), ["folder-member", "standalone"]);
 });
 
 test("A hidden Folder member is not pulled into a filtered result and collapse does not alter counts", () => {
@@ -77,6 +109,12 @@ test("Table and List use the shared Folder projection and the Folder stays outsi
   const taskType = readFileSync(new URL("../src/lib/task-type.ts", import.meta.url), "utf8");
   assert.match(table, /buildTaskContentFolderPresentation/);
   assert.match(list, /buildTaskContentFolderPresentation/);
+  assert.match(table, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
+  assert.match(list, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
+  assert.match(table, /block\.members\.map\(\(task\) =>/);
+  assert.match(list, /block\.members\.map\(\(task\) =>/);
+  assert.doesNotMatch(table, /taskContentFolderBlockByFirstTaskId/);
+  assert.doesNotMatch(list, /taskContentFolderBlockByFirstTaskId/);
   assert.doesNotMatch(domain, /task-state-engine/);
   assert.doesNotMatch(taskType, /folder/);
 });

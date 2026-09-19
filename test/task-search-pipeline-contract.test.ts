@@ -41,8 +41,8 @@ test("derive-stage logging is gated by the explicit workspace diagnostics flag",
 
 test("list hierarchy groups render directly without an unsafe render-prop memo boundary", () => {
   assert.doesNotMatch(listSource, /TaskListRow|render=\{\(\) => \(/);
-  assert.match(listSource, /<div className="space-y-3" data-task-list-hierarchy-group=\{task\.id\} key=\{task\.id\}>/);
-  assert.match(listSource, /windowedTasks\.map\(\(task\) =>/);
+  assert.match(listSource, /data-task-list-hierarchy-group=\{task\.id\}/);
+  assert.match(listSource, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
 });
 
 test("requested List overlay rows use the requested task for every rowContext lookup", () => {
@@ -60,6 +60,6 @@ test("requested List overlay rows use the requested task for every rowContext lo
 
 test("table hierarchy groups render directly without an unsafe render-prop memo boundary", () => {
   assert.doesNotMatch(tableSource, /TaskTableRow|render=\{\(\) => \(/);
-  assert.match(tableSource, /<div\s+key=\{`task:\$\{getPrototypeTaskRowKey\(task\)\}`\}/);
-  assert.match(tableSource, /renderedTasks\.map\(\(task\) =>/);
+  assert.match(tableSource, /getPrototypeTaskRowKey\(task\)/);
+  assert.match(tableSource, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
 });
